@@ -69,7 +69,7 @@ g.innerWidth = 1400; g.innerHeight = 800;
 // the two host bridges, recording every post: whole-blob writes (views, writeId) and targeted edits
 // (writeId, edit) — recorded flat as {writeId, ...edit} for the assertions
 const posted: any[] = [];
-g.__rompTimelineSetViews = (v: any, writeId: string) => posted.push({ kind: "views", v: JSON.parse(JSON.stringify(v)), writeId });
+g.__rompTimelineSetViews = (v: any, writeId: string, edited: string[]) => posted.push({ kind: "views", v: JSON.parse(JSON.stringify(v)), writeId, edited });
 g.__rompTimelineTagEdit = (writeId: string, e: any) => posted.push({ kind: "tag", e: Object.assign({ writeId }, JSON.parse(JSON.stringify(e))) });
 
 const VIEW_PATH = path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js");
@@ -251,6 +251,7 @@ test("executed: lens and order edits keep the whole-blob post, now with a writeI
   assert.equal(posted[0].kind, "views", "a lens edit is still the whole blob (the kernel owns no lens op)");
   assert.deepEqual(posted[0].v.actives.timeline, { tags: ["web"] });
   assert.ok(typeof posted[0].writeId === "string" && posted[0].writeId, "…carrying its writeId");
+  assert.deepEqual(posted[0].edited, [], "…and naming no edited tag: a refusal on a stale, untouched tag is acked ok, no notice");
   assert.ok(panel._pendingViews);
   frame(panel, S0); frame(panel, S0); frame(panel, S0); frame(panel, S0);
   assert.ok(panel._pendingViews, "stale frames never yield it");
@@ -263,13 +264,20 @@ test("executed: lens and order edits keep the whole-blob post, now with a writeI
   const nv2 = copy(S1); nv2.tags[0].members = [];
   panel._setViews(nv2);
   const S2 = copy(S1); S2.at = 140; S2.tags[0].members = [SID1, SID2]; S2.tags[0].mtime = 140;
-  const reason = 'your copy of "web" predates a newer edit to it; the newer state was kept';
+  const reason = "your copy predates a newer edit to it, so your change was not applied and the newer state was kept";
   panel._viewsDialog = makeNode("div"); let rebuilt = 0; panel._viewsDialogBuild = () => rebuilt++;
-  panel.viewsAck({ type: "viewsAck", writeId: posted[1].writeId, ok: false, refused: [{ name: "web", reason }], error: reason, views: copy(S2) });
+  panel.viewsAck({ type: "viewsAck", writeId: posted[1].writeId, ok: false, refused: [{ tid: "gA", name: "web", reason }], error: '"web": ' + reason, views: copy(S2) });
   assert.equal(panel._pendingViews, null);
   assert.deepEqual(panel._curViews(), S2, "reverted to the store's blob");
-  assert.deepEqual(panel._tagEditErr, { host: "", name: "web", error: reason });
+  assert.deepEqual(panel._tagEditErr, { host: "", name: "web", error: '"web": ' + reason }, "the kernel's line: the name once, what was refused, what was kept");
   assert.equal(rebuilt, 1, "the open dialog repaints with the refusal");
+  // ok WITH refusals listed — a stale copy of a tag this write did not edit: settled, no notice
+  panel._tagEditErr = null;
+  panel._setViews(copy(S2));
+  const S3 = copy(S2); S3.seq = 1003;
+  panel.viewsAck({ type: "viewsAck", writeId: posted[2].writeId, ok: true, refused: [{ tid: "gA", name: "web", reason }], views: copy(S3) });
+  assert.equal(panel._pendingViews, null);
+  assert.equal(panel._tagEditErr, null, "nothing the user did was refused, so nothing is said");
 });
 
 // ── ORDERING (the 2026-09-05 review, findings 1/8/19): the store's write sequence decides which blob is
@@ -371,6 +379,7 @@ test("executed: against a kernel WITHOUT the tagEdit capability, a tag gesture p
   assert.equal(posted[0].kind, "views", "no capability → the pre-cap whole-blob write");
   assert.equal(posted[0].v.tags[0].name, "site");
   assert.ok(typeof posted[0].writeId === "string", "the writeId rides anyway — an older kernel ignores it");
+  assert.deepEqual(posted[0].edited, ["gA"], "…and the tag it changed, for a kernel new enough to read it");
   // LEGACY reconciliation, for this path only: a frame that echoes the edit clears it…
   const echo = copy(L0); echo.tags[0].name = "site";
   frame(panel, echo);
@@ -446,9 +455,9 @@ test("pins: no frame count settles a stamped kernel's write; the legacy exact ec
   assert.match(rec, /viewsSeq\(this\._views\) === null\s*\n\s*&& \(this\._viewsKey\(this\._views\) === this\._viewsKey\(this\._pendingViews\)\s*\n\s*\|\| \(this\._legacyViewsAge = \(this\._legacyViewsAge \|\| 0\) \+ 1\) >= 3\)\)/,
     "both legacy clears sit under the seq-less condition — a blob with a seq comes from a kernel that acks, and only the ack settles");
   assert.equal((rec.match(/>= 3/g) || []).length, 1, "one legacy yield, nowhere else");
-  assert.match(SRC, /_postTagEdit\(nv, edit, meta\) \{\s*\n\s*if \(!this\._tagEditsTargeted\(\)\) \{ if \(nv\) this\._setViews\(nv\); return; \}/,
-    "a targeted op needs the capability AND a bridge; otherwise the whole-blob write");
-  assert.match(SRC, /window\.__rompTimelineSetViews\(v, writeId\);/, "the whole-blob hook carries the writeId");
+  assert.match(SRC, /_postTagEdit\(nv, edit, meta\) \{\s*\n\s*if \(!this\._tagEditsTargeted\(\)\) \{ if \(nv\) this\._setViews\(nv, edit\.tid \? \[edit\.tid\] : \[\]\); return; \}/,
+    "a targeted op needs the capability AND a bridge; otherwise the whole-blob write, naming the tag it changed");
+  assert.match(SRC, /window\.__rompTimelineSetViews\(v, writeId, Array\.isArray\(edited\) \? edited : \[\]\);/, "the whole-blob hook carries the writeId and the edited tag ids");
   assert.match(SRC, /window\.__rompTimelineTagEdit\(writeId, edit\);/, "the targeted hook carries the writeId beside the NESTED op");
   assert.doesNotMatch(SRC, /op: '(?:rename|recolor|addMember|removeMember|delete)', name:/, "no op but create carries a name — every one addresses by tid");
 });

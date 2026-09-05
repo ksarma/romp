@@ -95,7 +95,10 @@ export function bridgeFunctions(post: Post): Record<string, (...a: any[]) => voi
     // `{ floating: true }` so the kernel forgets the family's remembered pin
     __rompTimelineSendCommand: (name: string, cmd: string, extra?: Record<string, unknown>) => post({ type: "sendCommand", name, cmd, ...(extra || {}) }),
     __rompTimelineSetFlag: (id: string, flag: string, value: unknown) => post({ type: "setSessionFlag", id, flag, value: !!value }),
-    __rompTimelineSetViews: (views: unknown, writeId?: unknown) => post({ type: "setTimelineViews", views, writeId }),
+    // a whole-blob write; `edited` names the tag ids the gesture changed (a lens or order write: none), so
+    // the kernel acks a refusal on an untouched tag as ok with the refusal listed
+    __rompTimelineSetViews: (views: unknown, writeId?: unknown, edited?: unknown) =>
+      post({ type: "setTimelineViews", views, writeId, edited: Array.isArray(edited) ? edited : [] }),
     // one targeted tag edit: the op {op, tid, …} rides NESTED under `edit` (the kernel's tagEdit message),
     // so no field of it sits at the top level where the federation router reads session addresses
     __rompTimelineTagEdit: (writeId: unknown, edit: unknown) => post({ type: "tagEdit", writeId, edit }),

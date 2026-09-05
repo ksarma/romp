@@ -218,9 +218,10 @@ class TimelineViews(unittest.TestCase):
 
     def test_web_boot_exposes_the_set_views_hook(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
-        # the hook carries the write's id since 2026-09-05, so the kernel's viewsAck can name it
-        self.assertIn("window.__rompTimelineSetViews=function(views,writeId)", src)
-        self.assertIn('post({type:"setTimelineViews",views:views,writeId:writeId});', src)
+        # the hook carries the write's id since 2026-09-05, so the kernel's viewsAck can name it, and the
+        # tag ids the write changed (`edited`), so a refusal on an untouched tag is acked ok
+        self.assertIn("window.__rompTimelineSetViews=function(views,writeId,edited)", src)
+        self.assertIn('post({type:"setTimelineViews",views:views,writeId:writeId,edited:edited||[]});', src)
 
     # ── tag federation v0 (the user 2026-08-24): canonical pairs, the rendered union, remote views ──
 

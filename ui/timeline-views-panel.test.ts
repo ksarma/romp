@@ -353,7 +353,7 @@ test("_setViews posts through the host hook with a GUARDED, atomic Obsidian fall
   assert.match(SRC, /fs\.renameSync\(fp \+ '\.tmp', fp\);/);
   // the file IS the store on that path: the write settles on the spot (no kernel ack to wait for)
   assert.match(SRC, /fs\.renameSync\(fp \+ '\.tmp', fp\);\s*\n\s*this\._views = v; this\._pendingViews = null;/);
-  assert.match(SRC, /_setViews\(v\) \{\s*\n\s*this\._pendingViews = v;/);
+  assert.match(SRC, /_setViews\(v, edited\) \{\s*\n\s*this\._pendingViews = v;/);
   assert.match(SRC, /this\._reconcileViews\(\);\s*\/\/ \.\.\.and an optimistic view edit/);
 });
 

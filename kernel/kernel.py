@@ -2657,9 +2657,11 @@ def _set_timeline_views(blob):
                 (pt.get("name"), pt.get("color"), pt.get("members")) != \
                 (t.get("name"), t.get("color"), t.get("members")):
             refused.append('"%s"' % pt.get("name"))
+            # the reason names no tag: the ack composes '"<name>": <reason>' once (_ack_views_write),
+            # so a toast or notice never says the name twice (the 2026-09-05 review)
             rows.append({"tid": t["id"], "name": pt.get("name"),
-                         "reason": 'your copy of "%s" predates a newer edit to it; the newer state was kept'
-                                   % pt.get("name")})
+                         "reason": "your copy predates a newer edit to it, so your change was not applied "
+                                   "and the newer state was kept"})
             kept.append(json.loads(json.dumps(pt)))       # the store's newer truth stands
         else:
             kept.append(t)
@@ -2667,8 +2669,7 @@ def _set_timeline_views(blob):
         if tid not in incoming and pt.get("mtime") and int(pt["mtime"]) > ev:
             refused.append('"%s" (deletion)' % pt.get("name"))
             rows.append({"tid": tid, "name": pt.get("name"),
-                         "reason": '"%s" was edited after your copy was taken, so it was not deleted'
-                                   % pt.get("name")})
+                         "reason": "it was edited after your copy was taken, so it was not deleted"})
             kept.append(json.loads(json.dumps(pt)))       # a stale writer cannot delete newer state
     v["tags"] = kept[:_VIEWS_MAX_TAGS]
     if refused:
@@ -3278,7 +3279,11 @@ def _ack_views_write(client, kind, write_id, ok, error=None, refused=None, info=
             ack[k] = info[k]
     if refused is not None:                    # the whole-blob path: always a list, empty when clean
         ack["refused"] = [dict(r) for r in refused]
-        error = error or "; ".join(r.get("reason") or "" for r in refused)
+        # the one-line form, ONLY when the write is refused (ok false): each refused tag named ONCE,
+        # then its name-free reason. An ok ack with refusals listed (stale copies of tags the client
+        # did not edit) carries no `error` — there is nothing to tell the user.
+        if not ok:
+            error = error or "; ".join('"%s": %s' % (r.get("name") or "?", r.get("reason") or "refused") for r in refused)
     if error:
         ack["error"] = str(error)
     try:
@@ -33754,7 +33759,7 @@ window.__rompTimelineWriteOrder=function(order){if(window.__rompWriteOrder)windo
 window.__rompTimelineCompact=function(name){post({type:"compact",name:name});};
 window.__rompTimelineSendCommand=function(name,cmd,extra){post(Object.assign({type:"sendCommand",name:name,cmd:cmd},extra||{}));};
 window.__rompTimelineSetFlag=function(id,flag,value){post({type:"setSessionFlag",id:id,flag:flag,value:!!value});};
-window.__rompTimelineSetViews=function(views,writeId){post({type:"setTimelineViews",views:views,writeId:writeId});};
+window.__rompTimelineSetViews=function(views,writeId,edited){post({type:"setTimelineViews",views:views,writeId:writeId,edited:edited||[]});};
 window.__rompTimelineTagEdit=function(writeId,edit){post({type:"tagEdit",writeId:writeId,edit:edit});};
 window.__rompTimelineEditTag=function(edit){post({type:"editTag",edit:edit});};
 window.__rompTimelineDismiss=function(id){post({type:"dismissLane",id:id});};
@@ -39063,10 +39068,26 @@ class Handler(BaseHTTPRequestHandler):
             # 2026-09-05 a refusal reached stderr and the sync notices but never the client, which
             # kept building its next post from the refused copy. Tag edits themselves no longer come
             # through here from the dashboards — see tagEdit below; this door serves lens and order.
-            with _views_lock:
-                refused = _set_timeline_views(msg["views"])
+            # `edited` — the tag ids the client CHANGED in this write (a lens or order write names none):
+            # a refusal on a tag the client did not touch is a stale copy of an unedited tag, not a lost
+            # edit — the write is acked ok with the refusal listed, and the client adopts the newer blob
+            # without a notice (the 2026-09-05 review: a lens change from a dashboard that had slept
+            # through another's tag edit toasted a refusal for a tag the user never edited). A write
+            # without `edited` (an older client) keeps the strict reading: any refusal, ok false.
+            try:
+                with _views_lock:
+                    refused = _set_timeline_views(msg["views"])
+                edited = msg.get("edited")
+                if isinstance(edited, list):
+                    ok = not any(r.get("tid") in edited for r in refused)
+                else:
+                    ok = not refused
+                err = None
+            except Exception as e:
+                sys.stderr.write("setTimelineViews: %s\n" % traceback.format_exc())
+                refused, ok, err = [], False, "the write failed on the kernel: %s" % (str(e) or type(e).__name__)
             _mark_views_dirty()
-            _ack_views_write(client, "viewsAck", msg.get("writeId"), not refused, refused=refused or [])
+            _ack_views_write(client, "viewsAck", msg.get("writeId"), ok, error=err, refused=refused or [])
         elif msg and msg.get("type") == "tagEdit":
             # a dashboard's tag gesture — {writeId, edit: {op, tid, …}}: create / rename / recolor /
             # addMember / removeMember / delete, by the tag's stored id — as a TARGETED edit through

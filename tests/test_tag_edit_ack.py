@@ -341,6 +341,64 @@ class WholeBlobAcks(_Wire):
         self.assertFalse(self.notices[0][1])
         self.assertIn("stale dashboard write", self.notices[0][0])
 
+    def test_a_refusal_on_a_tag_the_client_did_not_edit_is_ok_with_the_refusal_listed(self):
+        """Finding 4: a lens change from a dashboard that had slept through another's tag edit was
+        acked as a refusal and toasted — for a tag the user never touched. `edited` names the tag
+        ids the write changed; a refusal outside them is a stale copy, not a lost edit."""
+        served = self.seed()
+        stale = json.loads(json.dumps(served))
+        time.sleep(1.1)
+        km._edit_tag("web", add=[SID2])                                   # another writer edits web
+        km._flags_cache.clear()
+        stale["actives"] = {"timeline": {"tags": ["web"]}}                # this dashboard changes only its lens…
+        stale["tags"][0]["members"] = []                                  # …carrying its stale copy of web
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale, "edited": []})
+        self.assertEqual((a["ok"], [r["tid"] for r in a["refused"]]), (True, ["gA"]),
+                         "ok — nothing the user did was refused — with the kept tag listed")
+        self.assertNotIn("error", a, "no one-line refusal to show: there is nothing to tell the user")
+        self.assertEqual(a["views"]["actives"]["timeline"], {"tags": ["web"]}, "the lens landed")
+        self.assertEqual(sorted(next(t for t in a["views"]["tags"] if t["id"] == "gA")["members"]), sorted([SID1, SID2]),
+                         "…and the ack's blob carries the newer web the client adopts")
+        # the same write naming web as EDITED is a lost edit: refused, with the reason
+        b = self.post({"type": "setTimelineViews", "writeId": "w2", "views": stale, "edited": ["gA"]})
+        self.assertFalse(b["ok"])
+        self.assertIn('"web"', b["error"])
+        # no `edited` at all (an older client): the strict reading stands
+        c = self.post({"type": "setTimelineViews", "writeId": "w3", "views": stale})
+        self.assertFalse(c["ok"])
+
+    def test_the_refusal_names_the_tag_once_and_says_what_was_kept(self):
+        """Finding 15: the reason carried the name and the client prefixed it again."""
+        served = self.seed()
+        stale = json.loads(json.dumps(served))
+        time.sleep(1.1)
+        km._edit_tag("web", add=[SID2])
+        km._flags_cache.clear()
+        stale["tags"][0]["members"] = []
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale, "edited": ["gA"]})
+        row = a["refused"][0]
+        self.assertNotIn("web", row["reason"], "the reason names no tag — the composer adds the name once")
+        self.assertIn("newer state was kept", row["reason"], "…and says what was kept")
+        self.assertIn("not applied", row["reason"], "…and what was refused")
+        self.assertEqual(a["error"], '"web": %s' % row["reason"])
+        self.assertEqual(a["error"].count("web"), 1, "the one-line form names the tag exactly once")
+        stale["tags"] = []
+        d = self.post({"type": "setTimelineViews", "writeId": "w2", "views": stale, "edited": ["gA"]})
+        self.assertEqual(d["error"], '"web": it was edited after your copy was taken, so it was not deleted')
+
+    def test_a_setter_exception_is_acked_as_a_refusal_never_left_unanswered(self):
+        self.seed()
+        real = km._set_timeline_views
+
+        def boom(blob):
+            raise RuntimeError("disk on fire")
+        km._set_timeline_views = boom
+        try:
+            a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": {"active": "all", "tags": []}})
+        finally:
+            km._set_timeline_views = real
+        self.assertEqual((a["type"], a["ok"], a["error"]), ("viewsAck", False, "the write failed on the kernel: disk on fire"))
+
     def test_a_stale_deletion_is_named_as_such(self):
         served = self.seed()
         stale = json.loads(json.dumps(served))
@@ -553,7 +611,7 @@ class WebBootWiring(unittest.TestCase):
     def test_the_bridge_and_the_ack_dispatch(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
         self.assertIn('window.__rompTimelineTagEdit=function(writeId,edit){post({type:"tagEdit",writeId:writeId,edit:edit});};', src)
-        self.assertIn('window.__rompTimelineSetViews=function(views,writeId){post({type:"setTimelineViews",views:views,writeId:writeId});};', src)
+        self.assertIn('window.__rompTimelineSetViews=function(views,writeId,edited){post({type:"setTimelineViews",views:views,writeId:writeId,edited:edited||[]});};', src)
         self.assertIn('else if((m.type==="tagEditAck"||m.type==="viewsAck")&&panel.viewsAck)panel.viewsAck(m);', src)
 
 

@@ -3061,7 +3061,7 @@ class TimelinePanel {
   // Obsidian panel writing the file; a headless run) → the PRE-2026-09-05 whole-blob write, reconciled
   // by _reconcileViews's legacy branch (_tagEditsTargeted).
   _postTagEdit(nv, edit, meta) {
-    if (!this._tagEditsTargeted()) { if (nv) this._setViews(nv); return; }
+    if (!this._tagEditsTargeted()) { if (nv) this._setViews(nv, edit.tid ? [edit.tid] : []); return; }
     if (nv) this._pendingViews = nv;
     const writeId = this._mintWriteId();
     this._viewsWrites.push(Object.assign({ id: writeId, name: '', op: edit.op }, meta || {}));
@@ -3108,13 +3108,16 @@ class TimelinePanel {
   // viewsAck with the stale-writer guard's refusals, if any). Obsidian/headless fallback: write the
   // same timeline-views.json the kernel reads (it re-normalizes on read) — the write IS the store
   // write there, so the copy is adopted as the base on the spot. Optimistic, like the lane flags.
-  _setViews(v) {
+  _setViews(v, edited) {
     this._pendingViews = v; this._legacyViewsAge = 0;
     try {
       if (typeof window !== 'undefined' && typeof window.__rompTimelineSetViews === 'function') {
         const writeId = this._mintWriteId();
         this._viewsWrites.push({ id: writeId, name: '' });
-        window.__rompTimelineSetViews(v, writeId);
+        // `edited`: the tag ids this write CHANGED — none for a lens or order edit — so the kernel acks a
+        // refusal on a tag this dialog never touched (a stale copy of it) as ok, with the refusal listed:
+        // the newer blob is adopted and no notice shows, since nothing the user did was refused
+        window.__rompTimelineSetViews(v, writeId, Array.isArray(edited) ? edited : []);
       } else if (typeof process !== 'undefined' && process.versions && process.versions.electron) {
         // Obsidian only — the Electron guard keeps a bare-node test run from ever touching the real
         // file (the 2026-07-02 _persistOrder lesson). Resolve the state root the way the kernel does

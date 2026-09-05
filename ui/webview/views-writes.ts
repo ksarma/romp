@@ -83,9 +83,13 @@ export function mintWriteId(seq: number): string {
 export function ackOutcome(inflight: readonly string[], m: ViewsAck): AckOutcome {
   const rest = inflight.filter((id) => id !== m.writeId);
   if (m.ok === false) {
-    const names = (m.refused || []).map((r) => r && r.name).filter((n): n is string => !!n);
-    const why = m.error || (m.refused || []).map((r) => r && r.reason).filter(Boolean).join("; ") || "refused";
-    return { inflight: [], clearPending: true, refusal: names.length ? names.join(", ") + ": " + why : why };
+    // the kernel's one-line `error` already names each refused tag ONCE before its reason; with only
+    // the rows, compose the same shape here — never a name prefix on top of a reason that carries it
+    const rows = (m.refused || []).filter((r) => r && (r.reason || r.name))
+      .map((r) => (r.name ? '"' + r.name + '": ' : "") + (r.reason || "refused"));
+    return { inflight: [], clearPending: true, refusal: m.error || rows.join("; ") || "refused" };
   }
+  // ok with refusals listed: the guard kept the store's copy of tags this write did not edit (a stale
+  // copy, not a lost edit) — the ack's blob carries them, and there is nothing to tell the user
   return { inflight: rest, clearPending: rest.length === 0, refusal: null };
 }

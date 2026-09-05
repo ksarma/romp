@@ -559,9 +559,12 @@ function holdViews(v: SessionViews): string {
 }
 // a WHOLE-BLOB write — the lens and order edits, which have no targeted op; the kernel's viewsAck
 // reports the stale-writer guard's refusals, if any
-function postViews(v: SessionViews) {
+function postViews(v: SessionViews, edited: string[] = []) {
   const writeId = holdViews(v);
-  if (vscodeApi) vscodeApi.postMessage({ type: "setTimelineViews", views: v, writeId });
+  // `edited`: the tag ids this write CHANGED — none for a lens or order edit — so the kernel acks a
+  // refusal on a tag this page never touched (a stale copy of it) as ok, with the refusal listed, and
+  // no toast follows: nothing the user did was refused, and the ack's blob carries the newer tag
+  if (vscodeApi) vscodeApi.postMessage({ type: "setTimelineViews", views: v, writeId, edited });
   renderTabs();
 }
 // a TARGETED tag edit (the tab menu's Tags flyout): `nv` is the optimistic copy with the gesture
@@ -574,7 +577,7 @@ function postTagEdit(nv: SessionViews, edit: TagEditOp) {
   // no `tagEdit` capability announced (a kernel from before it): the PRE-2026-09-05 path — the whole
   // blob, reconciled by the legacy exact-echo clear and three-frame yield in captureViews, since no
   // ack will come. The copy already carries the gesture, so nothing else changes.
-  if (!kernelCaps.has("tagEdit")) { postViews(nv); return; }
+  if (!kernelCaps.has("tagEdit")) { postViews(nv, [edit.tid, edit.tid_from, edit.tid_to].filter((t): t is string => !!t)); return; }
   const writeId = holdViews(nv);
   if (vscodeApi) vscodeApi.postMessage({ type: "tagEdit", writeId, edit });
   renderTabs();
@@ -609,7 +612,8 @@ function onViewsAck(m: ViewsAck) {
   viewsWrites = out.inflight;
   takeViews(m.views);   // the ack's blob is the base unless a newer frame already overtook it (the seq decides)
   if (out.clearPending) pendingSessionViews = null;
-  if (out.refusal) warnToast("tag edit refused — " + out.refusal);
+  // the reason already names the tag once and says what was kept (the kernel composes it); no second prefix naming it
+  if (out.refusal) warnToast("Tag edit not applied — " + out.refusal);
   if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek
   renderTabs();
 }

@@ -84,7 +84,7 @@ test("optimistic edits hold until the kernel echoes them exactly or acks the wri
   // write's ack (views-writes.test.ts) is the event that settles the copy
   assert.match(RENDER, /function captureViews\(v: SessionViews \| null\) \{[\s\S]{0,900}viewsKey\(v\) === viewsKey\(pendingSessionViews\)/);
   assert.doesNotMatch(RENDER, /pendingViewsAge/);
-  assert.match(RENDER, /function postViews\(v: SessionViews\) \{[\s\S]{0,300}setTimelineViews", views: v, writeId/);
+  assert.match(RENDER, /function postViews\(v: SessionViews, edited: string\[\] = \[\]\) \{[\s\S]{0,600}setTimelineViews", views: v, writeId, edited/);
 });
 
 test("a view-filtered session keeps one visible home: the picker's other-view section, and picking jumps views", () => {

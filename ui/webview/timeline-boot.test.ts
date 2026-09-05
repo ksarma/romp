@@ -110,7 +110,7 @@ test("bridges post the same kernel ops as the web boot", () => {
     { type: "timelineHover", off: true },
     // the views writes carry the id the kernel's ack names; a targeted edit's op rides NESTED under
     // `edit`, so no field of it (a tag name) sits where the federation router reads session addresses
-    { type: "setTimelineViews", views: { active: "all", tags: [] }, writeId: "w7" },
+    { type: "setTimelineViews", views: { active: "all", tags: [] }, writeId: "w7", edited: [] },
     { type: "tagEdit", writeId: "w8", edit: { op: "rename", tid: "g7", newName: "notes-api" } },
   ]);
 });

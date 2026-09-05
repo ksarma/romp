@@ -29,15 +29,20 @@ test("executed: a refusal drops everything at once and names the tag and the rea
   const why = 'a tag named "web" already exists';
   const r = ackOutcome(["w1", "w2"], { type: "tagEditAck", writeId: "w1", ok: false, error: why, views: S1 });
   assert.deepEqual(r, { inflight: [], clearPending: true, refusal: why }, "revert now: the store's blob (in the ack) is what stands");
-  // the whole-blob path's refusal lists the tags the guard kept, each with its reason
-  const reason = 'your copy of "web" predates a newer edit to it; the newer state was kept';
-  const w = ackOutcome(["w3"], { type: "viewsAck", writeId: "w3", ok: false, refused: [{ name: "web", reason }], error: reason, views: S1 });
-  assert.equal(w.refusal, "web: " + reason);
+  // the whole-blob path's refusal lists the tags the guard kept, each with a NAME-FREE reason; the
+  // kernel's one-line `error` names each tag once — and the page never prefixes the name a second time
+  const reason = "your copy predates a newer edit to it, so your change was not applied and the newer state was kept";
+  const w = ackOutcome(["w3"], { type: "viewsAck", writeId: "w3", ok: false, refused: [{ tid: "gA", name: "web", reason }], error: '"web": ' + reason, views: S1 });
+  assert.equal(w.refusal, '"web": ' + reason, "the kernel's line as-is: the name once, then what was refused and what was kept");
   assert.equal(w.clearPending, true);
   // no error text at all → still a plain word, never an empty toast
   assert.equal(ackOutcome(["w4"], { writeId: "w4", ok: false }).refusal, "refused");
-  assert.equal(ackOutcome(["w5"], { writeId: "w5", ok: false, refused: [{ name: "qa", reason: "kept" }] }).refusal, "qa: kept",
-    "reasons compose when the ack carries only the refused rows");
+  assert.equal(ackOutcome(["w5"], { writeId: "w5", ok: false, refused: [{ name: "qa", reason: "kept" }] }).refusal, '"qa": kept',
+    "with only the rows, the same shape is composed here");
+  // ok WITH refusals listed (the guard kept the store's copy of tags this write did not edit — a lens
+  // write from a stale copy): the write is settled, nothing is toasted, the ack's blob is the base
+  assert.deepEqual(ackOutcome(["w6"], { type: "viewsAck", writeId: "w6", ok: true, refused: [{ tid: "gA", name: "web", reason }], views: S1 }),
+    { inflight: [], clearPending: true, refusal: null }, "nothing the user did was refused");
 });
 
 test("executed: an ack for a write this page never made counts as information — nothing stays pinned", () => {
@@ -68,11 +73,14 @@ test("executed: write ids are unique per page across same-ms gestures", () => {
 });
 
 test("pins: render.ts posts a writeId on every views write and routes both acks to onViewsAck", () => {
-  assert.match(RENDER, /function postViews\(v: SessionViews\) \{\s*\n\s*const writeId = holdViews\(v\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "setTimelineViews", views: v, writeId \}\);/,
-    "a lens/order edit is still the whole blob (the kernel owns no lens op), now with its writeId");
+  const pv = RENDER.slice(RENDER.indexOf("function postViews(v: SessionViews, edited: string[] = [])"), RENDER.indexOf("\n}\n", RENDER.indexOf("function postViews(")));
+  assert.match(pv, /const writeId = holdViews\(v\);/);
+  assert.match(pv, /vscodeApi\.postMessage\(\{ type: "setTimelineViews", views: v, writeId, edited \}\);/,
+    "a lens/order edit is still the whole blob (the kernel owns no lens op), with its writeId and the tag ids it changed (none) — a refusal on an untouched tag is acked ok, no toast");
+  assert.match(RENDER, /warnToast\("Tag edit not applied — " \+ out\.refusal\);/, "the toast adds no second name: the reason names the tag once and says what was kept");
   const pte = RENDER.slice(RENDER.indexOf("function postTagEdit("), RENDER.indexOf("\n}\n", RENDER.indexOf("function postTagEdit(")));
-  assert.match(pte, /if \(!kernelCaps\.has\("tagEdit"\)\) \{ postViews\(nv\); return; \}/,
-    "no `tagEdit` capability announced (an older kernel) → the pre-cap whole-blob write, reconciled by the legacy path");
+  assert.match(pte, /if \(!kernelCaps\.has\("tagEdit"\)\) \{ postViews\(nv, \[edit\.tid, edit\.tid_from, edit\.tid_to\]\.filter\(\(t\): t is string => !!t\)\); return; \}/,
+    "no `tagEdit` capability announced (an older kernel) → the pre-cap whole-blob write naming the tags it changed, reconciled by the legacy path");
   assert.match(pte, /const writeId = holdViews\(nv\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "tagEdit", writeId, edit \}\);/,
     "a tag gesture is a targeted op, NESTED under `edit` so no tag name sits at the top level where the federation router reads session addresses");
   assert.match(RENDER, /else if \(m\.type === "viewsAck" \|\| m\.type === "tagEditAck"\) onViewsAck\(m\);/);
