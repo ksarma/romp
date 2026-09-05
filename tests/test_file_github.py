@@ -259,6 +259,12 @@ class GitHubUrl(_Repo):
         # the url-only caller keeps its "" verdict
         self.assertEqual(km._file_github_url(self.fp, None), "")
 
+    def test_a_repo_with_no_origin_remote_says_that_not_not_on_github(self):
+        # `remote get-url origin` fails when there is no such remote; that used to read as "the origin
+        # remote is not on GitHub", which names a remote the repo does not have
+        self.assertEqual(km._file_github_link(self.fp, None), ("", "no origin remote"))
+        self.assertEqual(km._file_github_url(self.fp, None), "")
+
     def test_a_file_staged_on_no_commit_is_not_committed(self):
         # an unborn branch: ls-files sees the index entry, but HEAD names nothing to link
         fresh = tempfile.mkdtemp()

@@ -30890,6 +30890,7 @@ _GITHUB_REMOTE = re.compile(
 GH_NO_REPO = "not in a git repository"
 GH_UNTRACKED = "not committed (untracked file)"
 GH_NO_COMMITS = "not committed (no commits yet)"
+GH_NO_ORIGIN = "no origin remote"
 GH_NOT_GITHUB = "the origin remote is not on GitHub"
 # ...and the two notes a link can carry anyway: the branch is real but GitHub has not seen it
 GH_NOT_ON_ORIGIN = "branch %s is not on origin"
@@ -30960,8 +30961,9 @@ def _file_github_link(raw, sid, check_origin=True):
     /file byte path (thumbnails must not pay the git subprocesses).
 
     An empty url is a VERDICT, not an error, and the reason names it: an untracked file, a non-repo
-    path, or a non-GitHub origin all honestly have no link (GH_NO_REPO / GH_UNTRACKED / GH_NO_COMMITS
-    / GH_NOT_GITHUB — a fixed set of plain phrases the viewer shows verbatim). The ref is the current
+    path, a repo with no origin, or a non-GitHub origin all honestly have no link (GH_NO_REPO /
+    GH_UNTRACKED / GH_NO_COMMITS / GH_NO_ORIGIN / GH_NOT_GITHUB — a fixed set of plain phrases the
+    viewer shows verbatim). The ref is the current
     branch (what a human expects to read on GitHub), or the commit sha when HEAD is detached. A
     branch that was never pushed 404s on GitHub's end, so with check_origin the url still comes back
     (it is the right one, once pushed) but carries GH_NOT_ON_ORIGIN as its reason — or
@@ -30985,7 +30987,10 @@ def _file_github_link(raw, sid, check_origin=True):
     if _git_out(["ls-files", "--error-unmatch", "--", rel], top) is None:
         return "", GH_UNTRACKED                     # exists but untracked — no link to a thing not there
     remote = _git_out(["remote", "get-url", "origin"], top)
-    m = _GITHUB_REMOTE.match(remote or "")
+    if remote is None:
+        return "", GH_NO_ORIGIN                     # no remote by that name: a different fact from a
+    #                                                 non-GitHub one, and a different fix
+    m = _GITHUB_REMOTE.match(remote)
     if not m:
         return "", GH_NOT_GITHUB
     sha = _git_out(["rev-parse", "--verify", "--quiet", "HEAD"], top)
