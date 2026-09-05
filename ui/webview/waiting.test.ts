@@ -24,6 +24,14 @@ test("the pane rides the FEED payload and gates its loader on the rows being an 
   assert.match(SRC, /vscodeApi\?\.postMessage\(\{ type: "ready" \}\)/, "the ready handshake serves the cached frame");
 });
 
+test("a raw feedDelta reaching the pane is loud and re-bases: the feed pane's guard (the 2026-09-05 review)", () => {
+  // federation.js applies deltas and re-emits whole `feed` frames; with it absent the shim dispatches the raw
+  // frame, and a handler that only matched `feed` sat on its last rows in silence. fleet-live-clock.test.ts
+  // runs the Outline's copy of this guard for real; here the source is pinned.
+  assert.match(SRC, /if \(m\.type === "feedDelta"\) \{[\s\S]*?console\.error\("waiting: a feedDelta frame reached the pane unapplied[\s\S]*?"feedDelta-unapplied"[\s\S]*?\{ type: "needFullFeed" \}[\s\S]*?return;\n\s*\}/);
+  assert.doesNotMatch(SRC, /applyFeedDelta|from "\.\/feed-delta"/, "…and it applies no delta itself");
+});
+
 test("the switch is read per frame and per HOST: the local kernel's scalar only", () => {
   assert.match(SRC, /localOn = typeof m\.userTodosOn === "boolean" \? m\.userTodosOn : null;/);
   assert.match(SRC, /let localOn: boolean \| null = null;/);
