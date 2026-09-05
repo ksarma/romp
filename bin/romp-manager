@@ -527,15 +527,16 @@ function runManager() {
 // the server here at login fixes it permanently. `exit-empty off` keeps the (initially empty) server alive
 // until real sessions join; it's a no-op if a server is already running (the user 2026-06-16).
 //
-// On Linux the server goes into a transient systemd scope of its own (2026-09-05). The manager runs as a
-// systemd user service with KillMode=control-group, so a server started here lands in the service's
-// cgroup and `systemctl --user restart romp-manager` kills it, with every session's tmux jobs inside —
-// which is what happened to two sessions' long-running work. `systemd-run --scope` starts the daemon
-// outside the service cgroup; a session's later `tmux new-session` joins that server and survives a
-// service restart. The tmux CLIENT still exits at once (it only starts the daemon), so execFileSync's
-// semantics are unchanged, and when a server already runs the call is the same no-op and the scope
-// collects itself. Any failure of the scoped path falls back to the bare call. The macOS path is as it
-// was: launchd owns the lineage there and the TCC rationale above still applies.
+// Under the Linux service the server goes into a transient systemd scope of its own (2026-09-05). The
+// manager runs as a systemd user service that relies on systemd's default KillMode=control-group (the
+// unit sets no KillMode line), so a server started here lands in the service's cgroup and `systemctl
+// --user restart romp-manager` kills it, with every session's tmux jobs inside — a service restart that
+// day killed two sessions' tmux servers and setsid jobs along with the kernel. `systemd-run --scope`
+// starts the daemon outside the service cgroup; a session's later `tmux new-session` joins that server
+// and survives a service restart. The tmux CLIENT still exits at once (it only starts the daemon), so
+// execFileSync's semantics are unchanged, and when a server already runs the call is the same no-op and
+// the scope collects itself. Any failure of the scoped path falls back to the bare call. The macOS path
+// is as it was: launchd owns the lineage there and the TCC rationale above still applies.
 const TMUX_START_ARGV = ['tmux', 'start-server', ';', 'set', '-g', 'exit-empty', 'off'];
 
 // Is `name` an executable on the env's PATH? (Node has no `which`.)
@@ -547,12 +548,19 @@ function commandOnPath(name, env = process.env) {
   return false;
 }
 
-// The PURE choice of how to start the server — exported for unit tests. Scoped only on Linux, only with
-// systemd-run on PATH, and not when ROMP_CLI_SCOPE=0 (the same switch the kernel honours for session
-// CLIs). The unit name carries a timestamp: systemd refuses a duplicate name ("already loaded") and
-// the last scope may still be alive with the server in it.
+// The PURE choice of how to start the server — exported for unit tests. null when tmux is not on PATH:
+// nothing to start and nothing to say (the behaviour before the scopes; a tmux-less box must not log a
+// scope failure at every start). Scoped exactly when the kernel scopes session CLIs (cli_scope_supported
+// in kernel/sdk_backend.py, the same switch): ROMP_CLI_SCOPE=1, or under the supervised service
+// (ROMP_SUPERVISED, what bin/romp-service's unit sets) unless ROMP_CLI_SCOPE=0 — so a terminal-run
+// manager scopes nothing unless asked — and then only on Linux with systemd-run on PATH. The unit name
+// carries a timestamp: systemd refuses a duplicate name ("already loaded") and the last scope may
+// still be alive with the server in it.
 function tmuxStartArgv({ platform = process.platform, env = process.env, onPath = commandOnPath, now = Date.now } = {}) {
-  if (platform !== 'linux' || env.ROMP_CLI_SCOPE === '0' || !onPath('systemd-run', env)) {
+  if (!onPath('tmux', env)) return null;
+  const want = env.ROMP_CLI_SCOPE;
+  const wanted = want === '1' || (Boolean(env.ROMP_SUPERVISED) && want !== '0');
+  if (platform !== 'linux' || !wanted || !onPath('systemd-run', env)) {
     return { argv: TMUX_START_ARGV.slice(), scoped: false };
   }
   return { argv: ['systemd-run', '--user', '--scope', '--quiet', '--collect', `--unit=romp-tmux-${now()}`,
@@ -561,6 +569,7 @@ function tmuxStartArgv({ platform = process.platform, env = process.env, onPath 
 
 function startTmuxServer() {
   const pick = tmuxStartArgv();
+  if (!pick) return;   // no tmux on PATH: nothing to start, and nothing to log (as before the scopes)
   try {
     execFileSync(pick.argv[0], pick.argv.slice(1), { stdio: 'ignore', timeout: 5000 });
     log(pick.scoped
@@ -568,13 +577,14 @@ function startTmuxServer() {
       : 'tmux server ensured (launchd-rooted) — new sessions won\'t inherit a terminal\'s TCC identity');
     return;
   } catch (e) {
-    if (!pick.scoped) return;   // tmux not installed, or a server is already up — nothing to do
-    log(`systemd-run could not start the tmux server in a scope (${String(e && e.message || e).split('\n')[0]}) — starting it in the service cgroup instead`);
+    if (!pick.scoped) return;   // a server is already up, or tmux itself failed — nothing more to do
+    // Honest about where it lands: this may be a terminal run with no service cgroup at all.
+    log(`systemd-run could not start the tmux server in a scope (${String(e && e.message || e).split('\n')[0]}) — starting it the plain way instead`);
   }
   try {
     execFileSync(TMUX_START_ARGV[0], TMUX_START_ARGV.slice(1), { stdio: 'ignore', timeout: 5000 });
-    log('tmux server ensured (in the service cgroup — a service restart will take it down)');
-  } catch (e) { /* tmux not installed, or a server is already up — nothing to do */ }
+    log('tmux server ensured without a scope — under the service, a service restart will take it down');
+  } catch (e) { /* a server is already up, or tmux itself failed — nothing to do */ }
 }
 
 function startManager() {
