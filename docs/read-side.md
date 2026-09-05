@@ -363,8 +363,15 @@ order change still posts the whole blob (`setTimelineViews`) together with
 `edited`, the tag ids the write changed (none for a lens or order write). The
 guard may keep the store's copy of a stale tag; the kernel answers `viewsAck`
 listing each kept tag with a reason, and `ok` is false only when a kept tag is
-one the client edited. Both acks carry the write's `writeId` and the blob's
-`seq`.
+one the client edited. The kernel's own dashboard notice follows the same rule:
+a kept tag the client edited is a lost edit and raises a dashboard notice; a
+kept tag it did not edit is one stderr line and nothing on the dashboard.
+`edited` also settles a case the guard could not judge before: a tag absent
+from the store. Named in `edited`, it is a create (the no-capability path's
+client-minted `g…` id) and lands; not named, it is a stale copy re-creating a
+tag another dashboard deleted, and is kept out with a reason. A write without
+`edited` keeps every unknown tag as new. Both acks carry the write's `writeId`
+and the blob's `seq`.
 
 `seq` is the store's write sequence. `_set_timeline_views` stamps every accepted
 write with a number greater than the last (seeded from the clock, so a store
@@ -373,11 +380,26 @@ frame that embeds the blob (the timeline skeleton, the feed frame, the tabOrder
 frames) carries it. A client adopts a blob only when its `seq` is at least the
 one it holds, so a frame the pusher built from its warmed cache before a write
 cannot replace the ack's newer blob, whatever order the socket delivered them
-in. The optimistic copy a gesture shows clears on the ack; a refusal reverts it
-at once and shows the reason (a notice in the dialog and the lane gear menu, a
-toast in the chat pane). No count of frames settles a write. The one frame-driven
-clear left is the exact-echo match, kept together with the old three-frame yield
-for blobs without a `seq`: a kernel from before the stamp acks nothing.
+in. The optimistic copy a gesture shows clears on the ack; a refusal reverts
+its own write at once and shows the reason (a notice in the dialog and the lane
+gear menu, a toast in the chat pane), and a later write still in flight keeps
+its change: the copy is re-derived from the store's blob plus the remaining
+writes. Each surface allows one create in flight at a time: the dialog's
+[+ New tag] reads "creating…" and the new-tag inputs are disabled until the
+ack. No count
+of frames settles a write. The one frame-driven clear left is the exact-echo
+match, kept together with the old three-frame yield for blobs without a `seq`:
+a kernel from before the stamp acks nothing.
+
+Three reader-side rules keep the sequence consistent. A store from before the
+stamp is stamped once on its first read, so the gate protects the first write
+after an upgrade (a store that does not exist is left alone: its first write
+starts past whatever a client holds). A file written outside the kernel (the
+timeline's Electron branch writes `timeline-views.json` itself, with the seq it
+holds) can carry a seq behind the last one served; the reader re-stamps it past
+that seq, content kept as written, so no dashboard is left ignoring the file.
+A kernel write also refreshes the read cache with the blob it wrote, so the
+ack's blob is never a stale cache hit.
 
 The kernel announces what it can do in a `{type: "caps"}` frame in reply to
 every `ready` and lists the same on `/version`; `tagEdit` covers the targeted op,
