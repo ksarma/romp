@@ -560,12 +560,14 @@ function postViews(v: SessionViews) {
   renderTabs();
 }
 // a TARGETED tag edit (the tab menu's Tags flyout): `nv` is the optimistic copy with the gesture
-// applied, `edit` the op the kernel applies by tag NAME through its /tag merge — never judged stale
-// against this page's own earlier writes (the 2026-09-05 loss: a New tag… then a Move to, posted as
-// whole blobs from the un-echoed copy, had the second refused). Answered by tagEditAck.
+// applied, `edit` the op the kernel applies by the tag's stored id through its /tag merge — never
+// judged stale against this page's own earlier writes (the 2026-09-05 loss: a New tag… then a Move
+// to, posted as whole blobs from the un-echoed copy, had the second refused). The op rides NESTED
+// under `edit`: the federation router sends the message to the local kernel, and no top-level field
+// of it can read as a session's address. Answered by tagEditAck.
 function postTagEdit(nv: SessionViews, edit: TagEditOp) {
   const writeId = holdViews(nv);
-  if (vscodeApi) vscodeApi.postMessage({ type: "tagEdit", writeId, ...edit });
+  if (vscodeApi) vscodeApi.postMessage({ type: "tagEdit", writeId, edit });
   renderTabs();
 }
 // the kernel's answer to one of this page's writes: the returned blob is the base whatever the
@@ -5459,7 +5461,7 @@ function showTabMenu(e: MouseEvent, id: string) {
           const t = viewTags(nv).find((x) => x.id === g.localId);
           if (t) {
             t.members = Array.from(new Set((t.members || []).concat(edit.add)));
-            ops.push({ op: "addMember", name: g.name, sids: edit.add.slice() });
+            ops.push({ op: "addMember", tid: g.localId, sids: edit.add.slice() });
           }
         } else if (g.remotes.length) {
           vscodeApi?.postMessage({ type: "editTag", edit: { host: g.remotes[0].host || "", name: g.name, add: edit.add.slice() } });
@@ -5472,7 +5474,7 @@ function showTabMenu(e: MouseEvent, id: string) {
           const t = viewTags(nv).find((x) => x.id === g.localId);
           if (t && (t.members || []).some((m) => edit.remove!.includes(m))) {
             t.members = (t.members || []).filter((m) => !edit.remove!.includes(m));
-            ops.push({ op: "removeMember", name: g.name, sids: edit.remove.slice() });
+            ops.push({ op: "removeMember", tid: g.localId, sids: edit.remove.slice() });
           }
         }
         for (const rt of g.remotes) {
@@ -5576,11 +5578,14 @@ function showTabMenu(e: MouseEvent, id: string) {
           const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
           const used = new Set(viewTags(nv).map((t) => t.color));
           const color = paletteColors.find((c) => !used.has(c)) || paletteColors[0] || "#1EA1EB";
-          const tg = { id: "g" + Date.now().toString(36), name, color, members: [id] };
+          // the optimistic row wears a PLACEHOLDER id: the kernel mints the tag's id and the ack's
+          // blob (which carries it) replaces this copy — no client-minted id can collide with a
+          // store it has not read
+          const tg = { id: "pending-" + Date.now().toString(36), name, color, members: [id] };
           nv.tags = viewTags(nv).concat([tg]);
           delete nv.groups;
           // ONE targeted create carrying the session — the tag and its first member land together
-          postTagEdit(nv, { op: "create", name, color, id: tg.id, sids: [id] });
+          postTagEdit(nv, { op: "create", name, color, sids: [id] });
           build(); sb.textContent = subText();
         });
         nrow.appendChild(inp);

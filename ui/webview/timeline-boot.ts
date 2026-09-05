@@ -92,8 +92,9 @@ export function bridgeFunctions(post: Post): Record<string, (...a: any[]) => voi
     __rompTimelineSendCommand: (name: string, cmd: string, extra?: Record<string, unknown>) => post({ type: "sendCommand", name, cmd, ...(extra || {}) }),
     __rompTimelineSetFlag: (id: string, flag: string, value: unknown) => post({ type: "setSessionFlag", id, flag, value: !!value }),
     __rompTimelineSetViews: (views: unknown, writeId?: unknown) => post({ type: "setTimelineViews", views, writeId }),
-    // one targeted tag edit {writeId, op, name, …} — the op's fields ARE the message (the kernel's tagEdit op)
-    __rompTimelineTagEdit: (edit: unknown) => post({ type: "tagEdit", ...((edit && typeof edit === "object") ? edit as Record<string, unknown> : {}) }),
+    // one targeted tag edit: the op {op, tid, …} rides NESTED under `edit` (the kernel's tagEdit message),
+    // so no field of it sits at the top level where the federation router reads session addresses
+    __rompTimelineTagEdit: (writeId: unknown, edit: unknown) => post({ type: "tagEdit", writeId, edit }),
     __rompTimelineEditTag: (edit: unknown) => post({ type: "editTag", edit }),
     __rompTimelineDismiss: (id: string) => post({ type: "dismissLane", id }),
     __rompTimelineHover: (sid?: string, segIds?: unknown[], t0?: number, t1?: number) =>

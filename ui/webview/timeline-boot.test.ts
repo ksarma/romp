@@ -95,7 +95,7 @@ test("bridges post the same kernel ops as the web boot", () => {
   b.__rompTimelineHover("s1", ["g1"], 5, 9);
   b.__rompTimelineHover();
   b.__rompTimelineSetViews({ active: "all", tags: [] }, "w7");
-  b.__rompTimelineTagEdit({ writeId: "w8", op: "rename", name: "tag 2", newName: "notes-api" });
+  b.__rompTimelineTagEdit("w8", { op: "rename", tid: "g7", newName: "notes-api" });
   assert.deepEqual(sent, [
     { type: "compact", name: "sess" },
     { type: "sendCommand", name: "sess", cmd: "/model" },
@@ -103,9 +103,10 @@ test("bridges post the same kernel ops as the web boot", () => {
     { type: "dismissLane", id: "id2" },
     { type: "timelineHover", sid: "s1", segIds: ["g1"], t0: 5, t1: 9 },
     { type: "timelineHover", off: true },
-    // the views writes carry the id the kernel's ack names; a targeted edit's fields ARE the op
+    // the views writes carry the id the kernel's ack names; a targeted edit's op rides NESTED under
+    // `edit`, so no field of it (a tag name) sits where the federation router reads session addresses
     { type: "setTimelineViews", views: { active: "all", tags: [] }, writeId: "w7" },
-    { type: "tagEdit", writeId: "w8", op: "rename", name: "tag 2", newName: "notes-api" },
+    { type: "tagEdit", writeId: "w8", edit: { op: "rename", tid: "g7", newName: "notes-api" } },
   ]);
 });
 

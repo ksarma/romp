@@ -641,7 +641,8 @@ test("the dialog redesign: tag TABLE with delete/rename/color actions, five filt
   // destructive convention (dim at rest, red on hover); [+ New tag] is the table's FINAL row
   assert.match(SRC, /grid-template-columns:max-content max-content max-content 1fr;/, "the tag table's four columns");
   assert.match(SRC, /the tag itself: the normal pill, NO ✕ — actions live beside it, never on it/);
-  assert.match(SRC, /this\._tagEditorFor = this\._tagEditorFor === tg\.name \? null : tg\.name;/, "rename toggles the pill into an input");
+  assert.match(SRC, /this\._tagEditorFor = this\._tagEditorFor === unionKey\(tg\) \? null : unionKey\(tg\);/,
+    "rename toggles the pill into an input — keyed by the union's stable id, which survives the rename it makes");
   assert.match(SRC, /d\.style\.color = '#F85B5A'/, "delete goes red on hover — destructive, unlike membership ✕");
   assert.match(SRC, /DELETE the tag/, "the hover says what delete does");
   assert.match(SRC, /text: '\+ New tag'/, "creation is the table's final row");

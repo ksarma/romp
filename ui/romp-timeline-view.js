@@ -44,6 +44,10 @@ function viewTags(views) { return (views && (views.tags || views.groups)) || [];
 // its seq is at least the held seq, or when either side carries none. The hand-mirror of
 // views-writes.ts seqOf/adoptViews (this file cannot import TS; timeline-views-ack.test.ts pins them).
 function viewsSeq(v) { const s = v && v.seq; return (typeof s === 'number' && isFinite(s)) ? s : null; }
+// a union's stable key for the dialog's open rename editor: its first tag id (the local tag's when one
+// exists — the id a create's ack hands back), else its name (a remote-only union). An id survives the
+// rename the editor exists to make; the name it replaced would not.
+function unionKey(g) { return (g && g.ids && g.ids[0]) || (g && g.name) || ''; }
 function viewsAdopts(held, incoming) {
   if (!incoming) return false;
   const h = viewsSeq(held), i = viewsSeq(incoming);
@@ -2865,19 +2869,22 @@ class TimelinePanel {
   // One union group = one tag identity. Edits stay routed under the hood: an ADD lands on the LOCAL
   // store when the name exists locally, else the tag's single home; a REMOVE removes the
   // (name, member) pair from EVERY store holding it — a removal never half-works; rename/recolor/
-  // delete fan out to every home the same way. Local writes are TARGETED ops by tag name
-  // (_postTagEdit — the user 2026-09-05: posting the whole blob from the un-echoed copy made the
-  // kernel judge a create-then-rename burst stale against this dialog's own first write, and the
-  // renames and assignments were lost); remote writes ride _editRemoteTag (optimistic overlay +
-  // loud tagEditFailed, federation v1).
+  // delete fan out to every home the same way. Local writes are TARGETED ops addressed by the local
+  // tag's stored id (_postTagEdit — the user 2026-09-05: posting the whole blob from the un-echoed
+  // copy made the kernel judge a create-then-rename burst stale against this dialog's own first
+  // write, and the renames and assignments were lost; by NAME, a recolor queued behind a refused
+  // rename went looking for the name the rename would have given the tag and found the other tag
+  // that already had it); remote writes ride _editRemoteTag (optimistic overlay + loud
+  // tagEditFailed, federation v1).
   _editTagUnion(g, edit) {
+    const meta = { name: g.name, tid: g.localId };
     if (edit.add && edit.add.length) {
       if (g.localId) {
         const nv = JSON.parse(JSON.stringify(this._curViews()));
         const t = viewTags(nv).find((x) => x.id === g.localId);
         if (t) {
           t.members = Array.from(new Set((t.members || []).concat(edit.add)));
-          this._postTagEdit(nv, { op: 'addMember', name: g.name, sids: edit.add.slice() });
+          this._postTagEdit(nv, { op: 'addMember', tid: g.localId, sids: edit.add.slice() }, meta);
         }
       } else if (g.remotes.length) this._editRemoteTag(g.remotes[0], { add: edit.add.slice() });
     }
@@ -2887,7 +2894,7 @@ class TimelinePanel {
         const t = viewTags(nv).find((x) => x.id === g.localId);
         if (t && (t.members || []).some((m) => edit.remove.indexOf(m) >= 0)) {
           t.members = (t.members || []).filter((m) => edit.remove.indexOf(m) < 0);
-          this._postTagEdit(nv, { op: 'removeMember', name: g.name, sids: edit.remove.slice() });
+          this._postTagEdit(nv, { op: 'removeMember', tid: g.localId, sids: edit.remove.slice() }, meta);
         }
       }
       for (const rt of g.remotes)
@@ -2900,14 +2907,14 @@ class TimelinePanel {
         if (edit.delete) {
           nv.tags = viewTags(nv).filter((x) => x.id !== g.localId); delete nv.groups;
           if (nv.active === g.localId) nv.active = 'all';
-          this._postTagEdit(nv, { op: 'delete', name: g.name });
+          this._postTagEdit(nv, { op: 'delete', tid: g.localId }, meta);
         } else {
           const t = viewTags(nv).find((x) => x.id === g.localId);
           if (t) {
-            // two ops when both arrive (the kernel applies them in order on one socket): the
-            // recolor addresses the tag by the name the rename just gave it
-            if (edit.rename) { t.name = edit.rename; this._postTagEdit(nv, { op: 'rename', name: g.name, newName: edit.rename }); }
-            if (edit.color) { t.color = edit.color; this._postTagEdit(nv, { op: 'recolor', name: edit.rename || g.name, color: edit.color }); }
+            // two ops when both arrive (the kernel applies them in order on one socket), each by
+            // the tag's id — a refused rename leaves the recolor addressing the SAME tag
+            if (edit.rename) { t.name = edit.rename; this._postTagEdit(nv, { op: 'rename', tid: g.localId, newName: edit.rename }, meta); }
+            if (edit.color) { t.color = edit.color; this._postTagEdit(nv, { op: 'recolor', tid: g.localId, color: edit.color }, meta); }
           }
         }
       }
@@ -2963,12 +2970,15 @@ class TimelinePanel {
       const nv = JSON.parse(JSON.stringify(this._curViews()));
       const used = new Set(viewTags(nv).map((t) => t.color));
       const color = (this._palette || []).find((c) => !used.has(c)) || (this._palette || [])[0] || '#1EA1EB';
-      const tg = { id: 'g' + Date.now().toString(36), name: ni.value.trim().slice(0, 40), color, members: rowIds.slice() };
+      // the optimistic row wears a PLACEHOLDER id: the kernel mints the tag's id, and the ack's blob
+      // (which carries it) replaces this copy — no client-minted id can collide with a store it has
+      // not read
+      const tg = { id: 'pending-' + Date.now().toString(36), name: ni.value.trim().slice(0, 40), color, members: rowIds.slice() };
       nv.tags = viewTags(nv).concat([tg]);
       delete nv.groups;
       this._tagAddFor = null;
       // ONE targeted create carrying the first members — the tag and its membership land together
-      this._postTagEdit(nv, { op: 'create', name: tg.name, color, id: tg.id, sids: rowIds.slice() }); rebuild();
+      this._postTagEdit(nv, { op: 'create', name: tg.name, color, sids: rowIds.slice() }, { name: tg.name }); rebuild();
     });
     box.appendChild(ni);
     ni.focus();
@@ -3005,17 +3015,20 @@ class TimelinePanel {
   }
 
   // One TARGETED tag edit: `nv` is the optimistic copy (the gesture already applied) shown until
-  // the kernel answers; `edit` is the op — {op: create|rename|recolor|addMember|removeMember|delete,
-  // name, newName?, color?, id?, sids?} — which the kernel applies by tag NAME through its /tag
+  // the kernel answers — null when there is nothing to show yet (a create the kernel names and
+  // ids); `edit` is the op — {op: create|rename|recolor|addMember|removeMember|delete, tid?, name?,
+  // newName?, color?, sids?} — which the kernel applies by the tag's stored id through its /tag
   // merge, so it is never judged stale against this dialog's own earlier writes (the 2026-09-05
-  // loss). Answered on this socket by tagEditAck → viewsAck below. No targeted bridge (an Obsidian
-  // panel writing the file, a headless run) → the whole-blob write, as before.
-  _postTagEdit(nv, edit) {
-    if (typeof window === 'undefined' || typeof window.__rompTimelineTagEdit !== 'function') { this._setViews(nv); return; }
-    this._pendingViews = nv;
+  // loss); `meta` rides on the in-flight record: {name, tid} for the refusal notice, `openRename`
+  // to open the rename input on the tid the create's ack returns. Answered on this socket by
+  // tagEditAck → viewsAck below. No targeted bridge (an Obsidian panel writing the file, a
+  // headless run) → the whole-blob write, as before.
+  _postTagEdit(nv, edit, meta) {
+    if (typeof window === 'undefined' || typeof window.__rompTimelineTagEdit !== 'function') { if (nv) this._setViews(nv); return; }
+    if (nv) this._pendingViews = nv;
     const writeId = this._mintWriteId();
-    this._viewsWrites.push({ id: writeId, name: edit.name });
-    try { window.__rompTimelineTagEdit(Object.assign({ writeId }, edit)); } catch (e) { /* the host hook threw — the ack never comes; the echo match still clears */ }
+    this._viewsWrites.push(Object.assign({ id: writeId, name: '', op: edit.op }, meta || {}));
+    try { window.__rompTimelineTagEdit(writeId, edit); } catch (e) { /* the host hook threw — the ack never comes; the reconnect's caps frame clears what is left in flight */ }
     this.draw();
   }
 
@@ -3025,24 +3038,30 @@ class TimelinePanel {
   }
 
   // The kernel's answer to ONE of this page's writes — {type: tagEditAck|viewsAck, writeId, ok,
-  // views, error?, refused?: [{name, reason}]}. `views` is the post-write client blob: adopted as
-  // the base whatever the verdict (it is the newest truth, stamps included). ok → this write is
-  // settled; the optimistic copy clears once NOTHING is in flight (a later gesture may still be
-  // pending). Refused → the copy reverts AT ONCE — the store's blob is what stands — and the reason
-  // shows in the dialog, rebuilt in place if open (the tagEditFailed door's rendering).
+  // views, seq, error?, refused?: [{tid, name, reason}], tid?, name?}. `views` is the post-write
+  // client blob: adopted as the base whatever the verdict, unless a newer frame already overtook it
+  // (the seq decides). ok → this write is settled; the optimistic copy clears once NOTHING is in
+  // flight (a later gesture may still be pending); a create's ack names the kernel-minted tag, and
+  // a [+ New tag] create opens the rename input on that id. Refused → the copy reverts AT ONCE — the
+  // store's blob is what stands — and the reason shows in the dialog, rebuilt in place if open (the
+  // tagEditFailed door's rendering).
   viewsAck(m) {
     if (!m) return;
     const i = this._viewsWrites.findIndex((w) => w.id === m.writeId);
     const mine = i >= 0 ? this._viewsWrites.splice(i, 1)[0] : null;
-    this._takeViews(m.views);   // the ack's blob is the base unless a newer frame already overtook it (the seq decides)
+    this._takeViews(m.views);
     if (m.ok === false) {
       this._pendingViews = null; this._viewsWrites = [];
       const names = (m.refused || []).map((r) => r && r.name).filter(Boolean);
       this._tagEditErr = { host: '', name: names.join(', ') || (mine && mine.name) || '',
                            error: m.error || (m.refused || []).map((r) => r.reason).filter(Boolean).join('; ') || 'refused' };
       if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();
-    } else if (!this._viewsWrites.length) {
-      this._pendingViews = null;
+    } else {
+      if (!this._viewsWrites.length) this._pendingViews = null;
+      if (mine && mine.op === 'create' && typeof m.tid === 'string') {
+        if (mine.openRename) this._tagEditorFor = m.tid;   // the new row opens straight into its rename input
+        if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();   // the row exists now
+      }
     }
     this.draw();
   }
@@ -3418,7 +3437,7 @@ class TimelinePanel {
           // input keeps the cell — no drag while editing.
           const pillCell = tgrid.createDiv();
           pillCell._tname = tg.name;
-          if (this._tagEditorFor !== tg.name || !editable) {
+          if (this._tagEditorFor !== unionKey(tg) || !editable) {
             pillCell.style.cursor = 'grab';
             pillCell.addEventListener('pointerdown', (e) => {
               e.preventDefault();
@@ -3463,7 +3482,7 @@ class TimelinePanel {
               pillCell.addEventListener('pointercancel', onUp);
             });
           }
-          if (this._tagEditorFor === tg.name && editable) {
+          if (this._tagEditorFor === unionKey(tg) && editable) {
             const nameIn = document.createElement('input');
             nameIn.value = tg.name; nameIn.maxLength = 40;
             nameIn.setAttribute('style', 'width:130px;background:' + INPUT_BG + ';color:' + INPUT_FG + ';'
@@ -3500,7 +3519,7 @@ class TimelinePanel {
             d.addEventListener('mouseenter', () => { d.style.color = '#F85B5A'; d.style.opacity = '1'; });
             d.addEventListener('mouseleave', () => { d.style.color = MENU_FG; d.style.opacity = '0.7'; });
             d.addEventListener('click', () => {
-              if (this._tagEditorFor === tg.name) this._tagEditorFor = null;
+              if (this._tagEditorFor === unionKey(tg)) this._tagEditorFor = null;
               this._editTagUnion(tg, { delete: true });
               build();
             });
@@ -3511,7 +3530,7 @@ class TimelinePanel {
             const r = action(ren, 'rename', 'rename this tag (everywhere it is defined)');
             r.addEventListener('mouseenter', () => { r.style.opacity = '1'; });
             r.addEventListener('mouseleave', () => { r.style.opacity = '0.7'; });
-            r.addEventListener('click', () => { this._tagEditorFor = this._tagEditorFor === tg.name ? null : tg.name; build(); });
+            r.addEventListener('click', () => { this._tagEditorFor = this._tagEditorFor === unionKey(tg) ? null : unionKey(tg); build(); });
           }
           // the color — the identity-palette swatches inline in the row's last column
           const colCell = tgrid.createDiv();
@@ -3538,16 +3557,15 @@ class TimelinePanel {
           + 'border-radius:5px;border:1px solid ' + OUTLINE_FG + ';color:' + MENU_FG + ';opacity:0.7;cursor:pointer;background:transparent;');
         hover(ntBtn, 'background:' + HOVER_BG + ';opacity:1;', 'background:transparent;opacity:0.7;');
         ntBtn.addEventListener('click', () => {
-          const nv = JSON.parse(JSON.stringify(this._curViews()));
-          const used = new Set(viewTags(nv).map((t) => t.color));
+          const used = new Set(viewTags(v).map((t) => t.color));
           const color = (this._palette || []).find((c) => !used.has(c)) || (this._palette || [])[0] || '#1EA1EB';
-          const tg = { id: 'g' + Date.now().toString(36), name: 'tag ' + (viewTags(nv).length + 1), color, members: [] };
-          nv.tags = viewTags(nv).concat([tg]); delete nv.groups;
-          this._tagEditorFor = tg.name;   // a new tag opens straight into its rename input
-          // a TARGETED create (the name typed next is a rename by this name — never a whole-blob
-          // post the kernel could judge stale against this very create; the 2026-09-05 loss)
-          this._postTagEdit(nv, { op: 'create', name: tg.name, color, id: tg.id });
-          build();
+          // a TARGETED create the KERNEL names and ids: the ack returns the minted tid and name, and
+          // the row opens straight into its rename input on that tid (openRename). Nothing is drawn
+          // optimistically — there is no id to draw it under, and a dialog-minted "tag N" from a row
+          // count collided with a leftover default-named tag (the 2026-09-05 review). The name
+          // typed next is a rename by tid — never a whole-blob post the kernel could judge stale
+          // against this very create (the 2026-09-05 loss).
+          this._postTagEdit(null, { op: 'create', color }, { openRename: true });
         });
       }
       // ── PANE FILTERS — five rows (the user 2026-08-25 redesign, superseding the one-line

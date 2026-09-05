@@ -70,8 +70,8 @@ test("executed: write ids are unique per page across same-ms gestures", () => {
 test("pins: render.ts posts a writeId on every views write and routes both acks to onViewsAck", () => {
   assert.match(RENDER, /function postViews\(v: SessionViews\) \{\s*\n\s*const writeId = holdViews\(v\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "setTimelineViews", views: v, writeId \}\);/,
     "a lens/order edit is still the whole blob (the kernel owns no lens op), now with its writeId");
-  assert.match(RENDER, /function postTagEdit\(nv: SessionViews, edit: TagEditOp\) \{\s*\n\s*const writeId = holdViews\(nv\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "tagEdit", writeId, \.\.\.edit \}\);/,
-    "a tag gesture is a targeted op — the op's fields ARE the message");
+  assert.match(RENDER, /function postTagEdit\(nv: SessionViews, edit: TagEditOp\) \{\s*\n\s*const writeId = holdViews\(nv\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "tagEdit", writeId, edit \}\);/,
+    "a tag gesture is a targeted op, NESTED under `edit` so no tag name sits at the top level where the federation router reads session addresses");
   assert.match(RENDER, /else if \(m\.type === "viewsAck" \|\| m\.type === "tagEditAck"\) onViewsAck\(m\);/);
   const ack = RENDER.slice(RENDER.indexOf("function onViewsAck("), RENDER.indexOf("\n}\n", RENDER.indexOf("function onViewsAck(")));
   assert.match(ack, /const out = ackOutcome\(viewsWrites, m\);/, "the pure module decides; render.ts applies");
@@ -96,14 +96,15 @@ test("pins: every views arrival in render.ts goes through the ONE seq-gated adop
 test("pins: the Tags flyout's local edits are targeted ops on ONE optimistic blob; a MOVE is two ops, one blob", () => {
   const at = RENDER.indexOf("const editUnion = (g: TagUnion");
   const body = RENDER.slice(at, at + 3200);
-  assert.ok(body.includes('ops.push({ op: "addMember", name: g.name, sids: edit.add.slice() });'), "a local add is an addMember by name");
-  assert.ok(body.includes('ops.push({ op: "removeMember", name: g.name, sids: edit.remove.slice() });'), "a local remove is a removeMember by name");
+  assert.ok(body.includes('ops.push({ op: "addMember", tid: g.localId, sids: edit.add.slice() });'), "a local add is an addMember by the tag's stored id");
+  assert.ok(body.includes('ops.push({ op: "removeMember", tid: g.localId, sids: edit.remove.slice() });'), "a local remove is a removeMember by id");
+  assert.doesNotMatch(body, /op: "(?:addMember|removeMember|rename|recolor|delete)", name:/, "no op but create carries a tag name");
   assert.match(body, /const postUnionEdits = \(nv: SessionViews, \.\.\.edits: UnionEdit\[\]\) =>/);
   assert.match(body, /for \(const op of ops\) postTagEdit\(nv, op\);/, "N ops, the one copy shown for all of them");
   assert.match(RENDER, /const a = applyUnionEdit\(nv, to, \{ add: \[id\] \}\);\s*\n\s*const r = applyUnionEdit\(nv, from, \{ remove: \[id\] \}\);\s*\n\s*postUnionEdits\(nv, a, r\);/,
     "the move: two ops on one blob — the strip never shows the half-moved state");
-  assert.match(RENDER, /postTagEdit\(nv, \{ op: "create", name, color, id: tg\.id, sids: \[id\] \}\);/,
-    "New tag… is ONE create carrying the session — the tag and its first member land together");
+  assert.match(RENDER, /postTagEdit\(nv, \{ op: "create", name, color, sids: \[id\] \}\);/,
+    "New tag… is ONE create carrying the session — the tag and its first member land together; the kernel mints the id");
   const fly = RENDER.slice(at, RENDER.indexOf("// HOVER-INTENT open", at));
   assert.doesNotMatch(fly, /postViews\(/, "no whole-blob write anywhere in the flyout's tag edits");
 });

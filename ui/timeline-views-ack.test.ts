@@ -67,9 +67,10 @@ g.window = g;
 g.innerWidth = 1400; g.innerHeight = 800;
 
 // the two host bridges, recording every post: whole-blob writes (views, writeId) and targeted edits
+// (writeId, edit) — recorded flat as {writeId, ...edit} for the assertions
 const posted: any[] = [];
 g.__rompTimelineSetViews = (v: any, writeId: string) => posted.push({ kind: "views", v: JSON.parse(JSON.stringify(v)), writeId });
-g.__rompTimelineTagEdit = (e: any) => posted.push({ kind: "tag", e: JSON.parse(JSON.stringify(e)) });
+g.__rompTimelineTagEdit = (writeId: string, e: any) => posted.push({ kind: "tag", e: Object.assign({ writeId }, JSON.parse(JSON.stringify(e))) });
 
 const VIEW_PATH = path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js");
 const SRC = fs.readFileSync(VIEW_PATH, "utf8");
@@ -110,14 +111,23 @@ function clickNewTag(panel: any) {
   assert.ok(btn, "the [+ New tag] row renders");
   btn._listeners.click();
 }
+function findNameInput(panel: any) { return walk(panel._viewsDialog).find((n) => n.tag === "input" && n._listeners.change); }
 function nameInput(panel: any) {
-  const inp = walk(panel._viewsDialog).find((n) => n.tag === "input" && n._listeners.change);
+  const inp = findNameInput(panel);
   assert.ok(inp, "a new tag opens straight into its rename input");
   return inp;
 }
 function tagOps() { return posted.filter((p) => p.kind === "tag").map((p) => p.e); }
+// the kernel answers a [+ New tag] create: the minted tid and default name, and the blob with the new row
+const NEW_TID = "g7";
+function ackCreate(panel: any, seq = 1001, name = "tag 1", color = "#1EA1EB") {
+  const S1 = copy(S0); S1.at = 113; S1.seq = seq; S1.tags.push({ id: NEW_TID, name, color, members: [], mtime: 113 });
+  const c = tagOps()[0];
+  panel.viewsAck({ type: "tagEditAck", writeId: c.writeId, ok: true, seq, tid: NEW_TID, name, views: copy(S1) });
+  return S1;
+}
 
-test("executed: [+ New tag] then typing its name posts two TARGETED ops by tag NAME — never the whole blob", () => {
+test("executed: [+ New tag] posts a create the KERNEL names and ids; the ack's tid opens the rename input; typing posts a rename by tid", () => {
   const panel = drawnPanel();
   panel._openViewsDialog(null);
   clickNewTag(panel);
@@ -125,83 +135,91 @@ test("executed: [+ New tag] then typing its name posts two TARGETED ops by tag N
   const c = posted[0];
   assert.equal(c.kind, "tag", "a tag gesture is a targeted edit, not a whole-blob write");
   assert.equal(c.e.op, "create");
-  assert.equal(c.e.name, "tag 2");
   assert.equal(c.e.color, "#1EA1EB", "the first unused palette colour, as before");
-  assert.match(c.e.id, /^g[0-9a-z]+$/, "the dialog's own id rides along (the kernel honors it)");
+  assert.equal(c.e.name, undefined, "no dialog-minted name: a 'tag N' from a row count collided with a leftover default-named tag");
+  assert.equal(c.e.id, undefined, "no dialog-minted id either — the kernel mints it");
   assert.ok(typeof c.e.writeId === "string" && c.e.writeId, "every write carries a writeId the ack names");
-  // the user types the name before ANY echo — the lost gesture
+  assert.equal(panel._pendingViews, null, "nothing is drawn optimistically — there is no id to draw it under");
+  assert.equal(findNameInput(panel), undefined, "…and no rename input yet");
+  const S1 = ackCreate(panel);
+  assert.equal(panel._tagEditorFor, NEW_TID, "the ack's tid is where the rename input opens");
+  assert.deepEqual(panel._views, S1);
   const inp = nameInput(panel);
+  assert.equal(inp.value, "tag 1", "the kernel's default name, ready to be typed over");
+  // the user types the name before ANY frame — the lost gesture
   inp.value = "notes-api"; inp._listeners.change();
   const ops = tagOps();
   assert.equal(ops.length, 2);
-  assert.deepEqual([ops[1].op, ops[1].name, ops[1].newName], ["rename", "tag 2", "notes-api"],
-    "the rename addresses the tag by its current NAME — no `at`, nothing for the guard to judge stale");
+  assert.deepEqual([ops[1].op, ops[1].tid, ops[1].newName], ["rename", NEW_TID, "notes-api"],
+    "the rename addresses the tag by its stored id — no `at`, nothing for the guard to judge stale, and no name to mistake");
+  assert.equal(ops[1].name, undefined, "no name field on a rename");
   assert.notEqual(ops[1].writeId, ops[0].writeId);
-  assert.equal(panel._curViews().tags.find((t: any) => t.id === c.e.id).name, "notes-api", "the optimistic copy shows the typed name at once");
+  assert.equal(panel._curViews().tags.find((t: any) => t.id === NEW_TID).name, "notes-api", "the optimistic copy shows the typed name at once");
   assert.equal(posted.filter((p) => p.kind === "views").length, 0, "no whole-blob write anywhere in the burst");
 });
 
-test("executed: a rename posted before the echo SURVIVES — frames never yield the optimistic copy (no frame count)", () => {
+test("executed: a rename posted before any frame SURVIVES — frames never yield the optimistic copy (no frame count)", () => {
   const panel = drawnPanel();
   panel._openViewsDialog(null);
   clickNewTag(panel);
-  const tid = tagOps()[0].id;
+  const S1 = ackCreate(panel);
   const inp = nameInput(panel); inp.value = "notes-api"; inp._listeners.change();
-  // the kernel's echo of the CREATE lands (the store: "tag 2", stamped, `at` moved)
-  const S1 = copy(S0); S1.at = 113; S1.tags.push({ id: tid, name: "tag 2", color: "#1EA1EB", members: [], mtime: 113 });
+  // the pusher's frames of the CREATE land (the store: "tag 1", stamped, `at` moved — the rename not yet in them)
   frame(panel, S1);
-  assert.ok(panel._pendingViews, "no exact match (the copy holds the rename) → the pending copy stays");
-  assert.equal(panel._curViews().tags.find((t: any) => t.id === tid).name, "notes-api");
+  assert.ok(panel._pendingViews, "a frame that does not carry the rename says nothing about it → the pending copy stays");
+  assert.equal(panel._curViews().tags.find((t: any) => t.id === NEW_TID).name, "notes-api");
   for (let i = 0; i < 6; i++) { const e = copy(S1); e.at = 120 + i; frame(panel, e); }
   assert.ok(panel._pendingViews, "six silent frames later the user's rename is STILL showing — nothing counts frames");
-  assert.equal(panel._curViews().tags.find((t: any) => t.id === tid).name, "notes-api");
+  assert.equal(panel._curViews().tags.find((t: any) => t.id === NEW_TID).name, "notes-api");
 });
 
-test("executed: the pending copy clears on the ACK — the create's ack leaves the in-flight rename pending; the rename's ack settles it", () => {
+test("executed: the pending copy clears on the ACK — the rename's ack settles it, and the dialog reads the kernel's blob", () => {
   const panel = drawnPanel();
   panel._openViewsDialog(null);
   clickNewTag(panel);
+  const S1 = ackCreate(panel);
+  assert.equal(panel._pendingViews, null, "the create had no optimistic copy; its ack leaves nothing pending");
   const inp = nameInput(panel); inp.value = "notes-api"; inp._listeners.change();
-  const [w1, w2] = tagOps().map((e) => e.writeId);
-  const tid = tagOps()[0].id;
-  const S1 = copy(S0); S1.at = 113; S1.tags.push({ id: tid, name: "tag 2", color: "#1EA1EB", members: [], mtime: 113 });
-  panel.viewsAck({ type: "tagEditAck", writeId: w1, ok: true, views: copy(S1) });
-  assert.deepEqual(panel._views, S1, "the ack's blob is adopted as the new base (stamps included)");
-  assert.ok(panel._pendingViews, "the rename is still in flight → its optimistic copy holds");
-  assert.equal(panel._curViews().tags.find((t: any) => t.id === tid).name, "notes-api");
-  const S2 = copy(S1); S2.at = 114; S2.tags[1].name = "notes-api"; S2.tags[1].mtime = 114;
-  panel.viewsAck({ type: "tagEditAck", writeId: w2, ok: true, views: copy(S2) });
+  const w2 = tagOps()[1].writeId;
+  assert.ok(panel._pendingViews, "the rename is in flight → its optimistic copy holds");
+  const S2 = copy(S1); S2.at = 114; S2.seq = 1002; S2.tags[1].name = "notes-api"; S2.tags[1].mtime = 114;
+  panel.viewsAck({ type: "tagEditAck", writeId: w2, ok: true, seq: 1002, tid: NEW_TID, name: "notes-api", views: copy(S2) });
   assert.equal(panel._pendingViews, null, "the last in-flight write's ack clears the pending copy");
   assert.deepEqual(panel._curViews(), S2, "…and the dialog now reads the kernel's blob, which holds the name");
   assert.equal(panel._viewsWrites.length, 0, "nothing left in flight");
 });
 
-test("executed: a refusal reverts the optimistic copy at once and shows the reason in the open dialog", () => {
+test("executed: a refusal reverts the optimistic copy at once and shows the reason in the open dialog; the next gesture still addresses the SAME tag", () => {
   const panel = drawnPanel();
   panel._openViewsDialog(null);
   clickNewTag(panel);
-  const tid = tagOps()[0].id;
-  const S1 = copy(S0); S1.at = 113; S1.tags.push({ id: tid, name: "tag 2", color: "#1EA1EB", members: [], mtime: 113 });
-  panel.viewsAck({ type: "tagEditAck", writeId: tagOps()[0].writeId, ok: true, views: copy(S1) });
+  const S1 = ackCreate(panel);
   const inp = nameInput(panel); inp.value = "web"; inp._listeners.change();   // a name that already exists
-  assert.equal(panel._curViews().tags.find((t: any) => t.id === tid).name, "web", "optimistic until the kernel rules");
+  assert.equal(panel._curViews().tags.find((t: any) => t.id === NEW_TID).name, "web", "optimistic until the kernel rules");
   const why = 'a tag named "web" already exists';
-  panel.viewsAck({ type: "tagEditAck", writeId: tagOps()[1].writeId, ok: false, error: why, views: copy(S1) });
+  panel.viewsAck({ type: "tagEditAck", writeId: tagOps()[1].writeId, ok: false, error: why, tid: NEW_TID, seq: 1001, views: copy(S1) });
   assert.equal(panel._pendingViews, null, "the refused copy is dropped at once");
-  assert.equal(panel._curViews().tags.find((t: any) => t.id === tid).name, "tag 2", "the dialog shows the store's truth");
-  assert.deepEqual(panel._tagEditErr, { host: "", name: "tag 2", error: why }, "the refusal names the tag and the reason");
+  assert.equal(panel._curViews().tags.find((t: any) => t.id === NEW_TID).name, "tag 1", "the dialog shows the store's truth");
+  assert.deepEqual(panel._tagEditErr, { host: "", name: "tag 1", error: why }, "the refusal names the tag and the reason");
   const shown = walk(panel._viewsDialog).map(textOf).find((s) => s.startsWith("⚠ "));
   assert.ok(shown && shown.startsWith("⚠ " + why), "…in the dialog, rebuilt in place (the tagEditFailed door's rendering, dismiss ✕ beside it)");
+  // finding 7: a recolor in the refusal window addresses the tag by ID — never by the name the
+  // rename would have given it (which is the OTHER tag's name)
+  const u = viewTagUnion(panel._curViews()).find((x: any) => x.ids.includes(NEW_TID));
+  panel._editTagUnion(u, { color: "#DD42FF" });
+  const rc = tagOps()[2];
+  assert.deepEqual([rc.op, rc.tid, rc.color, rc.name], ["recolor", NEW_TID, "#DD42FF", undefined]);
+  assert.equal(panel._curViews().tags.find((t: any) => t.id === "gA").color, "#3b82f6", "\"web\" is untouched in the copy too");
 });
 
-test("executed: membership edits are targeted too — the join menu's option adds by name; its new-tag input is ONE create with members", () => {
+test("executed: membership edits are targeted too — the join menu's option adds by tid; its new-tag input is ONE create with members, no client id", () => {
   const panel = drawnPanel();
   const box = makeNode("div");
   let rebuilt = 0;
   panel._tagJoinMenu(box, [SID2], () => rebuilt++);
   const opt = walk(box).find((n) => n.textContent === "web");
   opt._listeners.click();
-  assert.deepEqual([tagOps()[0].op, tagOps()[0].name, tagOps()[0].sids], ["addMember", "web", [SID2]]);
+  assert.deepEqual([tagOps()[0].op, tagOps()[0].tid, tagOps()[0].sids], ["addMember", "gA", [SID2]]);
   assert.equal(rebuilt, 1);
   assert.deepEqual(panel._curViews().tags[0].members.slice().sort(), [SID1, SID2].sort(), "optimistic at once");
   const box2 = makeNode("div");
@@ -209,15 +227,16 @@ test("executed: membership edits are targeted too — the join menu's option add
   const ni = walk(box2).find((n) => n.tag === "input");
   ni.value = "qa"; ni._listeners.keydown({ key: "Enter" });
   const c = tagOps()[1];
-  assert.deepEqual([c.op, c.name, c.sids], ["create", "qa", [SID1, SID2]], "one op: the tag and its first members together");
-  assert.match(c.id, /^g[0-9a-z]+$/);
-  // a chip's ✕ (remove-everywhere) and the row actions ride the same door
+  assert.deepEqual([c.op, c.name, c.sids, c.id, c.tid], ["create", "qa", [SID1, SID2], undefined, undefined], "one op: the tag and its first members together; the kernel mints the id");
+  const drawn = panel._curViews().tags.find((t: any) => t.name === "qa");
+  assert.match(drawn.id, /^pending-/, "the optimistic row wears a placeholder id until the ack's blob replaces it");
+  // a chip's ✕ (remove-everywhere) and the row actions ride the same door, by tid
   const u = viewTagUnion(panel._curViews()).find((x: any) => x.name === "web");
   panel._editTagUnion(u, { remove: [SID2] });
   panel._editTagUnion(u, { color: "#DD42FF" });
   panel._editTagUnion(u, { delete: true });
-  assert.deepEqual(tagOps().slice(2).map((e) => [e.op, e.name, e.sids || e.color || null]),
-    [["removeMember", "web", [SID2]], ["recolor", "web", "#DD42FF"], ["delete", "web", null]]);
+  assert.deepEqual(tagOps().slice(2).map((e) => [e.op, e.tid, e.sids || e.color || null, e.name]),
+    [["removeMember", "gA", [SID2], undefined], ["recolor", "gA", "#DD42FF", undefined], ["delete", "gA", null, undefined]]);
   assert.equal(posted.filter((p) => p.kind === "views").length, 0, "still no whole-blob write for any tag gesture");
 });
 
@@ -343,5 +362,6 @@ test("pins: the three-frame yield is gone; the pending copy clears on the echo's
   assert.doesNotMatch(rec, />= 3/, "_reconcileViews counts nothing");
   assert.match(rec, /this\._viewsKey\(this\._views\) === this\._viewsKey\(this\._pendingViews\)/, "the exact-match clear stays (the write's own echo IS an event)");
   assert.match(SRC, /window\.__rompTimelineSetViews\(v, writeId\);/, "the whole-blob hook carries the writeId");
-  assert.match(SRC, /window\.__rompTimelineTagEdit\(Object\.assign\(\{ writeId \}, edit\)\);/, "the targeted hook too");
+  assert.match(SRC, /window\.__rompTimelineTagEdit\(writeId, edit\);/, "the targeted hook carries the writeId beside the NESTED op");
+  assert.doesNotMatch(SRC, /op: '(?:rename|recolor|addMember|removeMember|delete)', name:/, "no op but create carries a name — every one addresses by tid");
 });

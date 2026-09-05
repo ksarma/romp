@@ -46,8 +46,9 @@ test("the Tags row sits with the session controls ABOVE the divider; Browse stay
 test("edits reuse the wire — never a fork: local edits post TARGETED tagEdit ops, remote edits ride editTag", () => {
   const at = RENDER.indexOf("const editUnion = (g: TagUnion");
   const body = RENDER.slice(at, at + 3200);
-  assert.ok(body.includes('ops.push({ op: "addMember", name: g.name, sids: edit.add.slice() });'),
-    "a local add is an addMember by tag name (2026-09-05: the whole-blob post was refused as stale against the page's own earlier write)");
+  assert.ok(body.includes('ops.push({ op: "addMember", tid: g.localId, sids: edit.add.slice() });'),
+    "a local add is an addMember by the tag's stored id (2026-09-05: the whole-blob post was refused as stale against the page's own earlier write; by name, a refused rename left the next gesture addressing the other tag)");
+  assert.ok(body.includes('ops.push({ op: "removeMember", tid: g.localId, sids: edit.remove.slice() });'), "…and a local remove");
   assert.ok(body.includes('vscodeApi?.postMessage({ type: "editTag", edit: { host: g.remotes[0].host || "", name: g.name, add: edit.add.slice() } });'),
     "an add with no local home routes to the tag's single home over the editTag wire");
   assert.ok(body.includes("for (const rt of g.remotes) {"),
@@ -62,8 +63,9 @@ test("New tag… is an inline input (menu vocabulary, no native prompt) that cre
   assert.match(RENDER, /inp\.placeholder = "New tag…"; inp\.maxLength = 40;/);
   assert.doesNotMatch(RENDER.slice(RENDER.indexOf("const editUnion")), /window\.prompt/);
   assert.match(RENDER, /const color = paletteColors\.find\(\(c\) => !used\.has\(c\)\) \|\| paletteColors\[0\] \|\| "#1EA1EB";/);
-  assert.match(RENDER, /const tg = \{ id: "g" \+ Date\.now\(\)\.toString\(36\), name, color, members: \[id\] \};\s*\n\s*nv\.tags = viewTags\(nv\)\.concat\(\[tg\]\);/);
-  assert.match(RENDER, /postTagEdit\(nv, \{ op: "create", name, color, id: tg\.id, sids: \[id\] \}\);/, "one targeted create, the session in it");
+  assert.match(RENDER, /const tg = \{ id: "pending-" \+ Date\.now\(\)\.toString\(36\), name, color, members: \[id\] \};\s*\n\s*nv\.tags = viewTags\(nv\)\.concat\(\[tg\]\);/,
+    "the optimistic row wears a placeholder id — the kernel mints the real one");
+  assert.match(RENDER, /postTagEdit\(nv, \{ op: "create", name, color, sids: \[id\] \}\);/, "one targeted create, the session in it, no client id");
   // an existing name typed into the box ADDS to that union instead of minting a duplicate tag
   assert.match(RENDER, /const existing = unionFor\(\)\.find\(\(g\) => g\.name === name\);/);
 });

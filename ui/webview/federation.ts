@@ -244,6 +244,13 @@ export function routeOutbound(msg: any, knownHosts?: ReadonlySet<string>): Route
     return [{ host: host || LOCAL, msg: rest }];
   }
 
+  // The VIEWS store is per kernel and a dashboard edits only its LOCAL one: a tag edit or a whole-blob
+  // views write goes to the local socket whatever fields it carries (the 2026-09-05 review: the tag
+  // op's fields rode at the top level, so a tag `name` that happened to look like a remote lane's
+  // display name would have taken the name-addressed route below to that host — tag names and
+  // session names share a field name, not a meaning).
+  if (msg.type === "tagEdit" || msg.type === "setTimelineViews") return [{ host: LOCAL, msg }];
+
   // order[] (reorderTabs / the timeline's writeOrder): split across the hosts it touches.
   if (Array.isArray(msg.order) && msg.order.some((x: any) => typeof x === "string")) {
     const byHost = new Map<string, string[]>();

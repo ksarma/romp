@@ -9,15 +9,20 @@
 // mirrored by hand in ui/romp-timeline-view.js (which cannot import TS).
 import type { SessionViews } from "./session-views";
 
-/** one targeted tag edit, by tag NAME — the kernel applies it through its /tag merge, which reads the
- *  store first and so is never judged stale against this page's own earlier writes */
+/** one targeted tag edit — the kernel applies it through its /tag merge, which reads the store first
+ *  and so is never judged stale against this page's own earlier writes. Every op but create addresses
+ *  the tag by its stored id (`tid`): a name is what a refused rename would have changed, so a
+ *  follow-up addressed by name could land on whichever OTHER tag already had it. The message nests
+ *  this under `edit`, so no top-level `name` can read as a session address to the federation router. */
 export interface TagEditOp {
   op: "create" | "rename" | "recolor" | "addMember" | "removeMember" | "delete";
-  name: string;
+  /** the tag's stored id — every op but create */
+  tid?: string;
+  /** create only: the typed name, or none for the kernel's default ("tag N", minted unique there) */
+  name?: string;
   newName?: string;
   color?: string;
-  /** a client-minted id on create (the same base36 shape the kernel mints), so drawn rows keep matching */
-  id?: string;
+  sid?: string;
   sids?: string[];
 }
 
@@ -31,6 +36,9 @@ export interface ViewsAck {
   error?: string;
   /** the whole-blob path: each tag the stale-writer guard kept the store's copy of, with its reason */
   refused?: { tid?: string; name?: string; reason?: string }[];
+  /** a targeted edit: the tag it touched — a create's caller learns the kernel-minted id and name here */
+  tid?: string;
+  name?: string;
 }
 
 /** the blob's write sequence, or null for a blob from a kernel that does not stamp one */

@@ -3076,34 +3076,57 @@ def _b36(n):
     return out or "0"
 
 
-def _edit_tag(name, add=(), remove=(), color=None, delete=False, rename=None, tid=None, exists=None):
-    """Targeted edit of ONE named tag in the views blob — the merge op behind POST /tag and, since
+_TAG_GONE = "that tag no longer exists — it may have been deleted from another dashboard"
+
+
+def _default_tag_name(tags):
+    """The name a create without one gets: the lowest "tag N" no existing tag carries. Minted HERE,
+    never by the dialog from a count of its rows (the 2026-09-05 review: a leftover default-named
+    tag made the dialog's next "tag N" collide, and the create was refused as a duplicate)."""
+    taken = {t.get("name") for t in tags}
+    n = 1
+    while "tag %d" % n in taken:
+        n += 1
+    return "tag %d" % n
+
+
+def _edit_tag(name=None, add=(), remove=(), color=None, delete=False, rename=None, tid=None, exists=None):
+    """Targeted edit of ONE tag in the views blob — the merge op behind POST /tag and, since
     2026-09-05, behind the dashboards' WS tagEdit op (_apply_tag_edit). The WS setTimelineViews op
     replaces the whole blob, which is right for a lens or order edit (the client holds the current
     one) and wrong for a tag edit from ANY client: an agent replaying a stale read would clobber the
     active view and every tag it never looked at, and a dashboard mid-burst posts its own un-echoed
     copy, which the stale-writer guard then refuses against the dashboard's own previous write. So:
     read, edit the one tag, write back through the normalizer — a writer built from the store always
-    carries the newest evidence. The tag is addressed by NAME (the id is a UI-internal mint); two
-    same-named tags refuse rather than guess. Members are stored ids — the route resolves live names
-    before calling. A missing tag is created on any edit, never on delete — unless `exists` says
-    otherwise: True refuses a missing tag (a dialog's rename of a tag another dashboard just deleted
-    must not resurrect it), False refuses an existing one (a create). `tid` is a client-minted id
-    honored on creation when it is well-formed and free, so the dialog's rows keep addressing the
-    tag they drew. Returns (tag-or-None, error-or-None); the returned row is the post-normalize one."""
+    carries the newest evidence.
+    Addressing: `tid` names the tag by its stored id (the dashboards, whose rows carry the id — a
+    refused rename must leave no window in which a follow-up gesture addresses SOME OTHER tag by the
+    name the rename would have given it); else `name` (the /tag route, where the user types names;
+    two same-named tags refuse rather than guess). Members are stored ids — the route resolves live
+    names before calling. By name, a missing tag is created on any edit, never on delete — unless
+    `exists` says otherwise: True refuses a missing tag (a rename of a tag another dashboard just
+    deleted must not resurrect it), False refuses an existing one (a create). By tid, a missing tag is
+    always refused (a tid is never minted by a client). A create with no name gets the kernel's
+    default (_default_tag_name). Returns (tag-or-None, error-or-None); the returned row is the
+    post-normalize one, so a create's caller learns the minted id and name from it."""
     # Clamp the name into the STORED basis before the lookup: the normalizer clamps names to
     # _VIEWS_MAX_NAME on write, so matching on the raw name would miss the stored tag and mint an
     # unaddressable same-named duplicate on every subsequent edit.
-    name = str(name)[:_VIEWS_MAX_NAME]
+    name = str(name)[:_VIEWS_MAX_NAME] if name is not None else None
     with _views_lock:   # the server is threaded; two unlocked merges would both copy the same pre-state
         v = json.loads(json.dumps(_timeline_views()))     # deep copy: never mutate the cached blob
-        hits = [t for t in v["tags"] if t["name"] == name]
-        if len(hits) > 1:
-            return None, 'two tags are named "%s" — rename one in the dashboard first' % name
-        if exists is True and not hits:
-            return None, 'no tag named "%s"' % name
-        if exists is False and hits:
-            return None, 'a tag named "%s" already exists' % name
+        if tid is not None:
+            hits = [t for t in v["tags"] if t["id"] == tid]
+            if not hits:
+                return None, _TAG_GONE
+        else:
+            hits = [t for t in v["tags"] if t["name"] == name] if name is not None else []
+            if len(hits) > 1:
+                return None, 'two tags are named "%s" — rename one in the dashboard first' % name
+            if exists is True and not hits:
+                return None, 'no tag named "%s"' % name
+            if exists is False and hits:
+                return None, 'a tag named "%s" already exists' % name
         if delete:
             if not hits:
                 return None, 'no tag named "%s"' % name
@@ -3119,10 +3142,7 @@ def _edit_tag(name, add=(), remove=(), color=None, delete=False, rename=None, ti
             taken = {t2["id"] for t2 in v["tags"]}
             while "g" + _b36(n) in taken:   # same-ms creates must not share an id — delete filters by id
                 n += 1
-            new_id = "g" + _b36(n)
-            if isinstance(tid, str) and re.fullmatch(r"g[0-9a-z]{1,16}", tid) and tid not in taken:
-                new_id = tid            # the dialog's own mint (same shape), so its drawn rows still match
-            t = {"id": new_id, "name": name, "color": "", "members": []}
+            t = {"id": "g" + _b36(n), "name": name if name else _default_tag_name(v["tags"]), "color": "", "members": []}
             v["tags"].append(t)
         if rename is not None:
             rn = str(rename)[:_VIEWS_MAX_NAME].strip()
@@ -3150,50 +3170,61 @@ _TAG_EDIT_OPS = ("create", "rename", "recolor", "addMember", "removeMember", "de
 
 
 def _apply_tag_edit(e):
-    """One targeted tag edit from a dashboard — the WS `tagEdit` op {op, name, newName?, color?,
-    id?, sid?|sids?} — applied through _edit_tag. Returns (ok, error): the error is a plain sentence
-    the dialog shows as-is. Every dashboard tag gesture posts this instead of the whole blob (the
-    user 2026-09-05: a create followed by typing the tag's name lost the name, because the second
+    """One targeted tag edit from a dashboard — the WS tagEdit message's `edit`: {op, tid?, name?,
+    newName?, color?, sid?|sids?} — applied through _edit_tag. Every op but create addresses the tag
+    by `tid`, the stored id the dashboard's rows carry (the 2026-09-05 review: addressed by name, a
+    recolor queued behind a refused rename went looking for the name the rename would have given
+    the tag, and found the OTHER tag that already had it). A create takes an optional `name`; with
+    none the kernel mints the default. Returns (ok, error, info): the error is a plain sentence the
+    dialog shows as-is; info carries the tag's `tid` and `name` after the edit (a create's caller
+    learns both from it). Every dashboard tag gesture posts this instead of the whole blob (the user
+    2026-09-05: a create followed by typing the tag's name lost the name, because the second
     whole-blob post was judged stale against the first). Members arrive as the viewer-relative id
     strings every client already posts; _member_pair canonicalizes them."""
+    if not isinstance(e, dict):
+        return False, "the edit is missing", None
     op = str(e.get("op") or "")
-    name = str(e.get("name") or "").strip()
     if op not in _TAG_EDIT_OPS:
-        return False, 'unknown tag edit "%s"' % op[:20]
-    if not name:
-        return False, "the tag name is empty"
+        return False, 'unknown tag edit "%s"' % op[:20], None
+    tid = e.get("tid") if isinstance(e.get("tid"), str) and e.get("tid") else None
     sids = [str(x) for x in (e.get("sids") if isinstance(e.get("sids"), list) else [])
             if isinstance(x, str) and x.strip()]
     if isinstance(e.get("sid"), str) and e["sid"].strip():
         sids.append(e["sid"])
     color = e.get("color") if isinstance(e.get("color"), str) else None
     if op == "create":
-        _, err = _edit_tag(name, add=sids, color=color or "", tid=e.get("id"), exists=False)
+        name = str(e.get("name") or "").strip() or None
+        t, err = _edit_tag(name, add=sids, color=color or "", exists=False)
+    elif tid is None:
+        return False, "the edit named no tag", None
     elif op == "rename":
-        _, err = _edit_tag(name, rename=str(e.get("newName") or ""), exists=True)
+        t, err = _edit_tag(tid=tid, rename=str(e.get("newName") or ""))
     elif op == "recolor":
         if color is None:
-            return False, "no color given"
-        _, err = _edit_tag(name, color=color, exists=True)
+            return False, "no color given", None
+        t, err = _edit_tag(tid=tid, color=color)
     elif op == "delete":
-        _, err = _edit_tag(name, delete=True)
+        t, err = _edit_tag(tid=tid, delete=True)
     else:
         if not sids:
-            return False, "no session named"
+            return False, "the edit named no session", None
         if op == "addMember":
-            _, err = _edit_tag(name, add=sids, exists=True)
+            t, err = _edit_tag(tid=tid, add=sids)
         else:
-            _, err = _edit_tag(name, remove=sids, exists=True)
-    return err is None, err
+            t, err = _edit_tag(tid=tid, remove=sids)
+    info = {"tid": t["id"], "name": t["name"]} if t else ({"tid": tid} if tid else None)
+    return err is None, err, info
 
 
-def _ack_views_write(client, kind, write_id, ok, error=None, refused=None):
-    """Answer a dashboard's views write ON ITS OWN SOCKET: {type: kind, writeId, ok, views, error?,
-    refused?}. `views` is the post-write client blob (stamped), which the poster adopts as its new
-    base — clearing its optimistic copy on this event rather than on a frame count — and reverts to
-    when ok is false. `refused` (the whole-blob path) lists the tags the stale-writer guard kept
-    the store's copy of, each with its reason; `error` is the one-line form of either. A dead
-    socket is the client's problem, never the write's: the edit landed before this runs."""
+def _ack_views_write(client, kind, write_id, ok, error=None, refused=None, info=None):
+    """Answer a dashboard's views write ON ITS OWN SOCKET: {type: kind, writeId, ok, views, seq,
+    error?, refused?, tid?, name?}. `views` is the post-write client blob (stamped), which the poster
+    adopts as its new base — clearing its optimistic copy on this event rather than on a frame
+    count — and reverts to when ok is false. `refused` (the whole-blob path) lists the tags the
+    stale-writer guard kept the store's copy of, each with its reason; `error` is the one-line form
+    of either. `info` (a targeted edit) names the tag the edit touched — a create's caller learns the
+    kernel-minted `tid` and `name` here and opens its rename input on that id. A dead socket is the
+    client's problem, never the write's: the edit landed before this runs."""
     if not client or not callable(client.get("send")):
         return
     views = _views_client()
@@ -3203,6 +3234,9 @@ def _ack_views_write(client, kind, write_id, ok, error=None, refused=None):
            # orders this against the frames it receives — a frame with a lower seq predates the
            # write and is ignored, whatever order the socket delivered them in
            "seq": views.get("seq")}
+    for k in ("tid", "name"):
+        if isinstance(info, dict) and info.get(k):
+            ack[k] = info[k]
     if refused is not None:                    # the whole-blob path: always a list, empty when clean
         ack["refused"] = [dict(r) for r in refused]
         error = error or "; ".join(r.get("reason") or "" for r in refused)
@@ -33629,7 +33663,7 @@ window.__rompTimelineCompact=function(name){post({type:"compact",name:name});};
 window.__rompTimelineSendCommand=function(name,cmd,extra){post(Object.assign({type:"sendCommand",name:name,cmd:cmd},extra||{}));};
 window.__rompTimelineSetFlag=function(id,flag,value){post({type:"setSessionFlag",id:id,flag:flag,value:!!value});};
 window.__rompTimelineSetViews=function(views,writeId){post({type:"setTimelineViews",views:views,writeId:writeId});};
-window.__rompTimelineTagEdit=function(edit){post(Object.assign({type:"tagEdit"},edit));};
+window.__rompTimelineTagEdit=function(writeId,edit){post({type:"tagEdit",writeId:writeId,edit:edit});};
 window.__rompTimelineEditTag=function(edit){post({type:"editTag",edit:edit});};
 window.__rompTimelineDismiss=function(id){post({type:"dismissLane",id:id});};
 window.__rompTimelineHover=function(sid,segIds,t0,t1){post(sid?{type:"timelineHover",sid:sid,segIds:segIds||[],t0:t0,t1:t1}:{type:"timelineHover",off:true});};
@@ -38938,15 +38972,24 @@ class Handler(BaseHTTPRequestHandler):
             _mark_views_dirty()
             _ack_views_write(client, "viewsAck", msg.get("writeId"), not refused, refused=refused or [])
         elif msg and msg.get("type") == "tagEdit":
-            # a dashboard's tag gesture (create / rename / recolor / addMember / removeMember /
-            # delete, by name) as a TARGETED edit through _edit_tag — the /tag route's merge, which
-            # deep-copies the store and so is never judged stale — answered on the same socket
-            # (tagEditAck) with the post-write blob or a plain refusal. _edit_tag takes _views_lock
-            # itself. Frames pushed to every other client are unchanged (the dirty mark below).
-            ok, err = _apply_tag_edit(msg)
+            # a dashboard's tag gesture — {writeId, edit: {op, tid, …}}: create / rename / recolor /
+            # addMember / removeMember / delete, by the tag's stored id — as a TARGETED edit through
+            # _edit_tag, the /tag route's merge, which deep-copies the store and so is never judged
+            # stale; answered on the same socket (tagEditAck) with the post-write blob, the tag's tid
+            # and name, or a plain refusal. The op rides NESTED under `edit` so the message has no
+            # top-level `name` or `session` for the dashboard's federation router to mistake for a
+            # remote session's address (views are per kernel; the router sends tagEdit local).
+            # _edit_tag takes _views_lock itself. Frames pushed to every other client are unchanged
+            # (the dirty mark below). A handler exception is ACKED as a refusal rather than left to
+            # the recv loop's log: an unanswered write would pin the poster's optimistic copy.
+            try:
+                ok, err, info = _apply_tag_edit(msg.get("edit"))
+            except Exception as e:
+                sys.stderr.write("tagEdit: %s\n" % traceback.format_exc())
+                ok, err, info = False, "the edit failed on the kernel: %s" % (str(e) or type(e).__name__), None
             if ok:
                 _mark_views_dirty()
-            _ack_views_write(client, "tagEditAck", msg.get("writeId"), ok, error=err)
+            _ack_views_write(client, "tagEditAck", msg.get("writeId"), ok, error=err, info=info)
         elif msg and msg.get("type") == "openTagsDialog":
             # any pane's "Configure tags…" opens THE tags dialog — which lives on the timeline pane
             # (one dialog, one implementation; the user 2026-08-25). Routed to the SAME dashboard's
