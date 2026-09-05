@@ -67,6 +67,8 @@ lands in the same `.trackchanges/` sidecar the track-changents CLIs, guard, and 
 and write, unchanged. GitHub remains a read-only pointer through the viewer's existing GitHub
 link; the loop never depends on it.
 
+[KVS: we should definitely keep some kind of log of comments that would make it into git]
+
 ## What the dashboard already does for this loop
 
 Verified against this fork on 2026-09-05.
