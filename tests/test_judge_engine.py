@@ -191,5 +191,5 @@ class CodexChildEnvIsVendorScoped(unittest.TestCase):
             except Exception:
                 pass                                  # the reply shape is not under test here
         self.assertIsNotNone(seen.get("env"), "the codex branch ran through subprocess.run")
-        self.assertNotIn("ANTHROPIC_API_KEY", seen["env"], "the Anthropic key is stripped from the codex child")
+        self.assertFalse("ANTHROPIC_API_KEY" in seen["env"], "the Anthropic key is stripped from the codex child")
         self.assertEqual(seen["env"].get("ROMP_SUMMARIZING"), "1", "…and the rest of the judge env rides as before")

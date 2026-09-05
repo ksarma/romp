@@ -148,3 +148,85 @@ def _stub_place_llm(monkeypatch):
                 seen.add(id(j))
                 monkeypatch.setattr(j, "place_llm", lambda *a, **k: "")
     yield
+
+
+# No failure report may carry a process-environment VALUE (2026-09-05). A test that renders an env
+# mapping in an assertion (assertNotIn on os.environ, on a _judge_env() copy of it, on a launch env)
+# prints the whole mapping when it fails, and on a developer's box that mapping holds live
+# credentials; the assertion rules below are the fix, this hook is the safety net for the next
+# test nobody remembered to write that way. Every failed report's text (the longrepr and the
+# captured-output sections) has every value seen in this process's environment — 16 characters or
+# longer, noted at import, before and after each test, and at report time — replaced with one
+# marker. Path-valued shell variables a traceback quotes legitimately (the cwd, the state root) are
+# exempt by NAME, and never when the name is credential-shaped. A report the hook changes becomes
+# plain text (no colour); one it leaves alone keeps pytest's own rendering.
+ENV_VALUE_MIN_LEN = 16
+ENV_VALUE_REDACTED = "[REDACTED-ENV-VALUE]"
+_ENV_VALUE_PATH_NAMES = frozenset((
+    "PWD", "OLDPWD", "HOME", "PATH", "TMPDIR", "SHELL", "VIRTUAL_ENV", "PYTHONPATH", "LS_COLORS",
+    "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR",
+    "ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV", "ROMP_DIR", "ROMP_STATE_DIR", "ROMP_CLAUDE_BIN",
+    "ROMP_SYSTEMD_DIR", "ROMP_LAUNCHD_DIR", "CLAUDE_CONFIG_DIR"))
+_ENV_VALUES_SEEN: set = set()
+
+
+def _credential_shaped(name: str) -> bool:
+    n = name.upper()
+    return (n == "ANTHROPIC_API_KEY" or n.endswith("_API_KEY") or n.endswith("_TOKEN") or n.startswith("ANTHROPIC_")
+            or "SECRET" in n or "PASSWORD" in n or "APIKEY" in n)
+
+
+def env_values_to_redact(environ=None) -> set:
+    """The values of `environ` (the process environment by default) a failure report must not
+    show: every value of ENV_VALUE_MIN_LEN characters or more, except the path-valued names above
+    when their name is not credential-shaped."""
+    env = os.environ if environ is None else environ
+    out = set()
+    for name, value in env.items():
+        if len(value) < ENV_VALUE_MIN_LEN:
+            continue
+        if name in _ENV_VALUE_PATH_NAMES and not _credential_shaped(name):
+            continue
+        out.add(value)
+    return out
+
+
+def redact_env_values(text: str, values) -> str:
+    """`text` with every occurrence of every value replaced by ENV_VALUE_REDACTED, longest first (a
+    value that contains another is replaced whole)."""
+    for v in sorted(values, key=len, reverse=True):
+        if v:
+            text = text.replace(v, ENV_VALUE_REDACTED)
+    return text
+
+
+def _note_env_values():
+    _ENV_VALUES_SEEN.update(env_values_to_redact())
+
+
+_note_env_values()
+
+
+@pytest.fixture(autouse=True)
+def _remember_env_values():
+    """A value a test exports and pops again before its assertion fails is still redacted: the set
+    grows at every test's setup and teardown, and at report time."""
+    _note_env_values()
+    yield
+    _note_env_values()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    rep = outcome.get_result()
+    if not rep.failed:
+        return
+    _note_env_values()
+    if rep.longrepr is not None:
+        text = str(rep.longrepr)
+        red = redact_env_values(text, _ENV_VALUES_SEEN)
+        if red != text:
+            rep.longrepr = red
+    if rep.sections:
+        rep.sections = [(name, redact_env_values(content, _ENV_VALUES_SEEN)) for name, content in rep.sections]

@@ -634,7 +634,7 @@ class NothingLeaks(_Lab):
         v = fixture_value()
         self.configure(self.printing({"A_TOKEN": v}))
         es.injection()
-        self.assertNotIn("A_TOKEN", os.environ)
+        self.assertFalse("A_TOKEN" in os.environ, "A_TOKEN present")
         self.assertEqual(es._values, {"A_TOKEN": v})
         got = es.injection()
         got["A_TOKEN"] = "changed by a caller"
@@ -646,7 +646,7 @@ class Floor(unittest.TestCase):
 
     def test_the_four_variables_are_absent_at_test_start(self):
         for v in es.CONFIG_VARS:
-            self.assertNotIn(v, os.environ, v)
+            self.assertFalse(v in os.environ, v)
         self.assertFalse(es.configured())
 
 

@@ -246,7 +246,7 @@ class ConstructionVerdict(_Backend):
         try:
             be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)   # the test floor: off
             self.assertFalse(be.cli_scope)
-            self.assertNotIn("ROMP_CLI_REAL", os.environ)
+            self.assertFalse("ROMP_CLI_REAL" in os.environ, "ROMP_CLI_REAL present")
         finally:
             if before is not None:
                 os.environ["ROMP_CLI_REAL"] = before
@@ -259,7 +259,7 @@ class OptionsWiring(_Backend):
         self.be.cli_scope = False
         kw = self._kw()
         self.assertEqual(kw["cli_path"], "/bin/true")
-        self.assertNotIn("ROMP_CLI_REAL", kw["env"])
+        self.assertFalse("ROMP_CLI_REAL" in kw["env"], "ROMP_CLI_REAL present")
 
     def test_on_spawns_the_wrapper_with_the_real_cli_in_the_env(self):
         self.be.cli_scope = True
@@ -289,7 +289,7 @@ class OptionsWiring(_Backend):
             sb.cli_scope_wrapper = before
         for kw in (kw1, kw2):
             self.assertEqual(kw["cli_path"], "/bin/true", "the session still starts, on the direct path")
-            self.assertNotIn("ROMP_CLI_REAL", kw["env"])
+            self.assertFalse("ROMP_CLI_REAL" in kw["env"], "ROMP_CLI_REAL present")
         loud = [(m, p) for m, p in problems if "no-such-wrapper" in m]
         self.assertEqual(len(loud), 1, "reported once per backend, as a problem: %r" % (problems,))
         self.assertTrue(loud[0][1])

@@ -439,7 +439,7 @@ class CredentialPolicy(unittest.TestCase):
         os.environ["ANTHROPIC_API_KEY"] = "synthetic-manager-env-credential"
         jd._WORK_KEY_FN = sb.work_api_key
         self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-manager-env-credential"))
-        self.assertNotIn("ANTHROPIC_API_KEY", os.environ, "claimed OUT of os.environ — no session CLI inherits it")
+        self.assertFalse("ANTHROPIC_API_KEY" in os.environ, "claimed OUT of os.environ — no session CLI inherits it")
         self.assertEqual(jd._work_key(), "synthetic-manager-env-credential",
                          "one stash: what the judges bill to is what the catalog fetch bills to")
 
@@ -458,7 +458,7 @@ class CredentialPolicy(unittest.TestCase):
     def test_an_unwired_ambient_key_is_not_read_and_the_refresh_says_so(self):
         os.environ["ANTHROPIC_API_KEY"] = "synthetic-ambient-credential"
         self.assertIsNone(km._models_api_credential(), "no claimer wired → nothing claimed, nothing read")
-        self.assertIn("ANTHROPIC_API_KEY", os.environ, "…and the environment is left as it was")
+        self.assertTrue("ANTHROPIC_API_KEY" in os.environ, "…and the environment is left as it was")
         # …and the refresh's no-credential line names what a box that wants the catalog must carry —
         # the LP key, or the manager's own work key — honestly, so nobody exports a session-auth key
         os.environ.pop("ROMP_MODEL_CATALOG", None)

@@ -422,7 +422,7 @@ class HelperSessionsConverge(_CommandMode):
     def test_a_connect_stamps_the_helpers_fingerprint_when_nothing_is_injected(self):
         s = self._live("key")
         kw = self.connect(s)
-        self.assertNotIn("ANTHROPIC_API_KEY", kw["env"], "the set carries no key: nothing injected")
+        self.assertFalse("ANTHROPIC_API_KEY" in kw["env"], "the set carries no key: nothing injected")
         self.assertEqual(kw["env"]["A_TOKEN"], self.values["A_TOKEN"], "the role variables ride the launch")
         self.assertEqual(s._launched_key_fp, es.fingerprint(self.helper_value))
         self.assertEqual(s._launched_set_fp, es.set_fingerprint(self.values))
@@ -530,7 +530,7 @@ class HelperSessionsConverge(_CommandMode):
         es._reset()
         s = self._live("key", auth="login")
         kw = self.connect(s)
-        self.assertNotIn("ANTHROPIC_API_KEY", kw["env"])
+        self.assertFalse("ANTHROPIC_API_KEY" in kw["env"], "ANTHROPIC_API_KEY present")
         self.assertEqual(s._launched_key_fp, es.fingerprint(self.helper_value))
         self.assertEqual(self.be.cycle_key(SID), "current")
         self.values["ANTHROPIC_API_KEY"] = fixture_value("key2")   # the set's key rotates: not this session's concern

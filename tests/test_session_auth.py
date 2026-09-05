@@ -91,7 +91,7 @@ class _Keyed(unittest.TestCase):
 class WorkKeyStash(_Keyed):
     def test_the_key_is_claimed_out_of_the_environment_exactly_once(self):
         self.assertEqual(self.be.work_key, FAKE_KEY)
-        self.assertNotIn("ANTHROPIC_API_KEY", os.environ,
+        self.assertFalse("ANTHROPIC_API_KEY" in os.environ, 
                          "an ambient key would bill EVERY session — the transport merges options.env "
                          "over this process's env, so the strip must happen here")
         # a re-constructed backend (the WS handler's lazy construction, tests) still finds it
@@ -186,20 +186,20 @@ class FastOrgPermissionFollowsBilling(_OptionsHarness):
     def test_an_enabled_key_account_skips_the_clis_wrong_account_probe(self):
         env = self._env(True)
         self.assertEqual(env.get("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK"), "1")
-        self.assertNotIn("CLAUDE_CODE_DISABLE_FAST_MODE", env)
+        self.assertFalse("CLAUDE_CODE_DISABLE_FAST_MODE" in env, "CLAUDE_CODE_DISABLE_FAST_MODE present")
         self.assertEqual(env.get("ANTHROPIC_API_KEY"), FAKE_KEY,
                          "the skip rides WITH the key — same connect, same account")
 
     def test_a_disabled_key_account_forces_fast_mode_off(self):
         env = self._env(False)
         self.assertEqual(env.get("CLAUDE_CODE_DISABLE_FAST_MODE"), "1")
-        self.assertNotIn("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK", env,
+        self.assertFalse("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK" in env, 
                          "the wrong-account probe could say YES to a fast mode the payer turned off")
 
     def test_no_answer_and_no_history_leaves_the_cli_default(self):
         env = self._env(None)
-        self.assertNotIn("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK", env)
-        self.assertNotIn("CLAUDE_CODE_DISABLE_FAST_MODE", env,
+        self.assertFalse("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK" in env, "CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK present")
+        self.assertFalse("CLAUDE_CODE_DISABLE_FAST_MODE" in env, 
                          "no answer is no licence to skip — the CLI's own check stands")
 
     def test_a_failure_stands_on_the_last_definitive_answer(self):
@@ -212,14 +212,14 @@ class FastOrgPermissionFollowsBilling(_OptionsHarness):
         self._env(True, n=1)
         env = self._env(False, n=2)
         self.assertEqual(env.get("CLAUDE_CODE_DISABLE_FAST_MODE"), "1")
-        self.assertNotIn("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK", env)
+        self.assertFalse("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK" in env, "CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK present")
 
     def test_login_sessions_never_ask_the_key_account(self):
         calls = []
         sb._fetch_key_fast_org = lambda key: calls.append(key) or True
         env = self._options_kw(self._sess(3, auth="login"))["env"]
         self.assertEqual(calls, [], "a login session's probe already asks the account that pays")
-        self.assertNotIn("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK", env)
+        self.assertFalse("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK" in env, "CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK present")
 
 
 class InitMismatchIsLoud(_Keyed):

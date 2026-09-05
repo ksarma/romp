@@ -330,7 +330,7 @@ class LiveSpawnEnv(_Backend):
     def test_an_empty_key_line_falls_to_login_rather_than_injecting_a_blank(self):
         self.write_env("", lines=["ROMP_PERF=1"])       # `ANTHROPIC_API_KEY=` with nothing after it
         env = self._launch_env(4)
-        self.assertNotIn("ANTHROPIC_API_KEY", env,
+        self.assertFalse("ANTHROPIC_API_KEY" in env, 
                          "an empty var reads as key-mode-without-a-key to the CLI — removal, never blanking")
         texts = [p["text"] for p in self.be.problems(10)]
         self.assertTrue(any("carries none" in t for t in texts),
@@ -378,7 +378,7 @@ class StartupFallback(_Backend):
         sb._WORK_KEY = None
         os.environ["ANTHROPIC_API_KEY"] = BOOT_KEY
         be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
-        self.assertNotIn("ANTHROPIC_API_KEY", os.environ,
+        self.assertFalse("ANTHROPIC_API_KEY" in os.environ, 
                          "an ambient key bills EVERY session — constructing a backend must still strip it")
         self.assertEqual(be.work_key, OLD_KEY, "and the FILE still decides what a launch bills")
 
@@ -1401,7 +1401,7 @@ class NothingLeaksTheKey(_Backend):
     def test_the_key_never_lands_back_in_the_kernels_own_environment(self):
         self.be.work_key
         self._launch_env(1)
-        self.assertNotIn("ANTHROPIC_API_KEY", os.environ,
+        self.assertFalse("ANTHROPIC_API_KEY" in os.environ, 
                          "the one-claimer property: an ambient key bills every session")
 
     def test_the_problem_ring_the_dashboard_reads_never_carries_a_key(self):
@@ -1468,7 +1468,7 @@ class CommandSourceLaunch(_CommandMode):
         env = self._env_for(1, "login")
         self.assertEqual(env["A_TOKEN"], self.values["A_TOKEN"])
         self.assertEqual(env["ANTHROPIC_LP_API_KEY"], self.values["ANTHROPIC_LP_API_KEY"])
-        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        self.assertFalse("ANTHROPIC_API_KEY" in env, "ANTHROPIC_API_KEY present")
         self.assertEqual(env["ROMP_SID"], "11111111-2222-3333-4444-000000000001", "romp's own entries ride over the set")
         # the set gains a key: an unpicked session is keyed (default_auth), a login pick is not
         k = fixture_value("key")
@@ -1480,12 +1480,12 @@ class CommandSourceLaunch(_CommandMode):
         self.assertEqual(self._env_for(2, "").get("ANTHROPIC_API_KEY"), k)
         self.assertEqual(self._env_for(3, "key").get("ANTHROPIC_API_KEY"), k)
         env = self._env_for(4, "login")
-        self.assertNotIn("ANTHROPIC_API_KEY", env, "removal, never blanking")
+        self.assertFalse("ANTHROPIC_API_KEY" in env, "removal, never blanking")
         self.assertEqual(env["A_TOKEN"], self.values["A_TOKEN"], "…but the role variables still ride a login launch")
 
     def test_a_key_pick_with_no_key_in_the_set_launches_without_one_loudly(self):
         env = self._env_for(1, "key")
-        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        self.assertFalse("ANTHROPIC_API_KEY" in env, "ANTHROPIC_API_KEY present")
         self.assertEqual(env["A_TOKEN"], self.values["A_TOKEN"])
         self.assertTrue(any("credential command printed no ANTHROPIC_API_KEY" in t for t in self.problems()),
                         self.problems())
@@ -1592,10 +1592,10 @@ class CommandBeatsFileAndStartup(_CommandMode):
         # and the launch used neither: the set has no key, so nothing is injected
         self.assertEqual(self.be.work_key, "")
         self.assertEqual(self.be.default_auth({}), "login")
-        self.assertNotIn("ANTHROPIC_API_KEY", self._env_for(1, "key"))
+        self.assertFalse("ANTHROPIC_API_KEY" in self._env_for(1, "key"), "ANTHROPIC_API_KEY present")
         self.write_env(OLD_KEY)                       # the file gains a line mid-life: still ignored
         self.assertEqual(self.be.work_key, "")
-        self.assertNotIn("ANTHROPIC_API_KEY", self._env_for(2, ""))
+        self.assertFalse("ANTHROPIC_API_KEY" in self._env_for(2, ""), "ANTHROPIC_API_KEY present")
 
     def test_the_commands_key_wins_when_it_prints_one(self):
         k = fixture_value("key")
@@ -1614,7 +1614,7 @@ class CommandBeatsFileAndStartup(_CommandMode):
         sb._WORK_KEY = None
         os.environ["ANTHROPIC_API_KEY"] = BOOT_KEY
         self.assertEqual(sb.work_api_key(), "", "command mode: the ambient key is claimed and ignored")
-        self.assertNotIn("ANTHROPIC_API_KEY", os.environ, "the one-claimer property holds in every mode")
+        self.assertFalse("ANTHROPIC_API_KEY" in os.environ, "the one-claimer property holds in every mode")
 
 
 class CommandSourceFailure(_CommandMode):
@@ -1662,8 +1662,8 @@ class CommandSourceFailure(_CommandMode):
         self.assertIn("nothing injected", boot[0])
         self.assertIn("romp keyswap --refresh", boot[0])
         env = self._env_for(1, "key")                          # a launch, not a refusal
-        self.assertNotIn("ANTHROPIC_API_KEY", env)
-        self.assertNotIn("A_TOKEN", env)
+        self.assertFalse("ANTHROPIC_API_KEY" in env, "ANTHROPIC_API_KEY present")
+        self.assertFalse("A_TOKEN" in env, "A_TOKEN present")
         self.assertEqual(env["ROMP_SID"], "11111111-2222-3333-4444-000000000001")
         self.assertEqual(self.be.key_source["lastRun"]["ok"], False)
         self.assertEqual(self.be.key_source["lastRun"]["exitCode"], 7)
