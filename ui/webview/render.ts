@@ -5521,8 +5521,11 @@ function showTabMenu(e: MouseEvent, id: string) {
       const ops: TagEditOp[] = [];
       let mirrored = false;
       const nvRemote = (rt: SessionTag) => (nv.remoteTags || []).find((x) => x.id === rt.id);
+      // a union whose local tag is a create still in flight (`pending`) takes no op: its id is the
+      // placeholder the ack replaces, and the kernel would refuse it as a tag that does not exist
+      // (round 4 of the 2026-09-05 review). The rows below offer no gesture on it either.
       if (edit.add?.length) {
-        if (g.localId) {
+        if (g.localId && !g.pending) {
           const t = viewTags(nv).find((x) => x.id === g.localId);
           if (t) {
             t.members = Array.from(new Set((t.members || []).concat(edit.add)));
@@ -5535,7 +5538,7 @@ function showTabMenu(e: MouseEvent, id: string) {
         }
       }
       if (edit.remove?.length) {
-        if (g.localId) {
+        if (g.localId && !g.pending) {
           const t = viewTags(nv).find((x) => x.id === g.localId);
           if (t && (t.members || []).some((m) => edit.remove!.includes(m))) {
             t.members = (t.members || []).filter((m) => !edit.remove!.includes(m));
@@ -5600,20 +5603,31 @@ function showTabMenu(e: MouseEvent, id: string) {
           const bodyE = el("span", "ctx-item-body");
           const lb = el("span", "ctx-item-label"); lb.textContent = g.name; bodyE.appendChild(lb);
           row.appendChild(bodyE);
+          if (g.pending) {
+            // a create still in flight: the row shows, and takes no gesture until the ack names the
+            // tag (round 4 of the 2026-09-05 review: a ✕ here posted the placeholder id and was
+            // refused as a tag that does not exist) — the same "creating…" the input reads
+            const busy = el("span", "ctx-item-sub"); busy.textContent = "creating…"; row.appendChild(busy);
+            sub.appendChild(row);
+            continue;
+          }
           const x = el("button", "ctx-tag-x") as HTMLButtonElement;
           x.type = "button"; x.textContent = "✕"; x.title = "remove this tag from the session — everywhere it holds it";
           x.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { remove: [id] }); build(); sb.textContent = subText(); });
           row.appendChild(x);
           sub.appendChild(row);
         }
-        const others = unionFor().filter((g) => !g.members.includes(id));
+        const others = unionFor().filter((g) => !g.members.includes(id) && !g.pending);   // a tag being created is not joinable yet
         if (holding().length && others.length) sub.appendChild(el("div", "ctx-sep"));
         // ONE-CLICK MOVE (tab groups on tags, the user 2026-09-04): a session's section is its HOME
         // tag — the first holder in tagOrder — so while the strip is sectioned and the session has
         // one, each other tag's row reads "Move to <name>": one click adds that tag and drops the
         // home tag, leaving any other tag alone (they filter, they do not section). The row's "+"
-        // adds without moving. With no home tag, "+ <name>" IS the move.
-        const home = readTabGroups().on ? holding()[0] : undefined;
+        // adds without moving. With no home tag, "+ <name>" IS the move. A home tag whose create is
+        // still in flight cannot be moved out of (no id to address); the rows read "+ <name>" until
+        // the ack.
+        const home0 = readTabGroups().on ? holding()[0] : undefined;
+        const home = home0 && !home0.pending ? home0 : undefined;
         for (const g of others) {
           const row = el("div", "ctx-item ctx-item-toggle");
           const chip = el("span", "ctx-tag-dot"); chip.style.background = g.color || "var(--dim)"; row.appendChild(chip);

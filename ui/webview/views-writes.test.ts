@@ -11,7 +11,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ackOutcome, adoptViews, applyTagEdit, createInFlight, mintWriteId, rederivePending, seqOf, lensBlob, applyLensFields, type InflightWrite } from "./views-writes";
+import { ackOutcome, adoptViews, applyTagEdit, createInFlight, mintWriteId, rederivePending, seqOf, lensBlob, applyLensFields, isPlaceholderId, type InflightWrite } from "./views-writes";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const S1 = { active: "all", at: 113, tags: [{ id: "g1", name: "qa", color: "#DD42FF", members: ["tests"], mtime: 113 }] };
@@ -156,7 +156,7 @@ test("pins: every views arrival in render.ts goes through the ONE seq-gated adop
 
 test("pins: the Tags flyout's local edits are targeted ops on ONE optimistic blob; a MOVE is two ops, one blob", () => {
   const at = RENDER.indexOf("const editUnion = (g: TagUnion");
-  const body = RENDER.slice(at, at + 3200);
+  const body = RENDER.slice(at, at + 4200);   // the union editor's two op sites and postUnionEdits (the pending-union comment sits inside this window)
   const fly = RENDER.slice(at, RENDER.indexOf("// BROWSE FILES", at));
   assert.ok(body.includes('ops.push({ op: "addMember", tid: g.localId, sids: edit.add.slice() });'), "a local add is an addMember by the tag's stored id");
   assert.ok(body.includes('ops.push({ op: "removeMember", tid: g.localId, sids: edit.remove.slice() });'), "a local remove is a removeMember by id");
@@ -208,6 +208,14 @@ test("executed: a lens or order write posts the store's blob plus its fields, sh
     { active: "g1", tags: [{ id: "g1", name: "x", color: "", members: [] }] }, "the legacy key reads as tags");
 });
 
+test("executed: isPlaceholderId names an optimistic create's row and nothing else", () => {
+  assert.equal(isPlaceholderId("pending-abc"), true);
+  assert.equal(isPlaceholderId("g7"), false);
+  assert.equal(isPlaceholderId("xpending-1"), false);
+  assert.equal(isPlaceholderId(null), false);
+  assert.equal(isPlaceholderId(undefined), false);
+});
+
 test("pins: render.ts builds every lens and order write from the store's blob (postLens), and the Tags flyout offers no gesture on a create still in flight", () => {
   assert.match(RENDER, /function postLens\(fields: LensFields\) \{\s*\n\s*const v = lensBlob\(sessionViews, fields\);\s*\n\s*const writeId = holdViews\(applyLensFields\(effViews\(\), fields\), \{ lens: fields \}\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "setTimelineViews", views: v, writeId, edited: \[\] \}\);/,
     "the posted blob is the STORE's (sessionViews) plus the fields; the copy shown is the current one plus the fields; the record keeps the fields");
@@ -222,4 +230,12 @@ test("pins: render.ts builds every lens and order write from the store's blob (p
   ]) assert.match(RENDER, site);
   assert.equal((RENDER.match(/onApply: \(l\) => \{ postLens\(\{ actives: Object\.assign\(\{\}, \(effViews\(\) \|\| \{\}\)\.actives, \{ chat: l \}\) \}\); \},/g) || []).length, 2,
     "both tag-lens menus (desktop and phone)");
+  const at = RENDER.indexOf("const editUnion = (g: TagUnion");
+  const fly = RENDER.slice(at, RENDER.indexOf("// BROWSE FILES", at));
+  assert.equal((fly.match(/if \(g\.localId && !g\.pending\) \{/g) || []).length, 2, "a pending union takes no add or remove op");
+  assert.match(fly, /if \(g\.pending\) \{[\s\S]{0,500}busy\.textContent = "creating…"; row\.appendChild\(busy\);\s*\n\s*sub\.appendChild\(row\);\s*\n\s*continue;/,
+    "a held tag whose create is in flight renders with no ✕");
+  assert.match(fly, /const others = unionFor\(\)\.filter\(\(g\) => !g\.members\.includes\(id\) && !g\.pending\);/, "…and is not offered to join or move to");
+  assert.match(fly, /const home0 = readTabGroups\(\)\.on \? holding\(\)\[0\] : undefined;\s*\n\s*const home = home0 && !home0\.pending \? home0 : undefined;/,
+    "no move OUT of a home tag whose create is in flight");
 });

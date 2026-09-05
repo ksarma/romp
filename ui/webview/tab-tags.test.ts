@@ -80,7 +80,7 @@ test("presentation: one chip per NAME, identity dot, ✕ — and never a host pr
 
 test("one-click MOVE between groups (tab groups, 2026-09-04): 'Move to <name>' adds the target and drops the HOME tag on ONE blob; '+' adds without moving", () => {
   const fly = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), RENDER.indexOf("// New tag… — an inline input"));
-  assert.match(fly, /const home = readTabGroups\(\)\.on \? holding\(\)\[0\] : undefined;/,
+  assert.match(fly, /const home0 = readTabGroups\(\)\.on \? holding\(\)\[0\] : undefined;\s*\n\s*const home = home0 && !home0\.pending \? home0 : undefined;/,
     "the home tag is the FIRST holder in the union order — the same rule that sections the strip; only while the strip is sectioned");
   assert.match(fly, /lb\.textContent = "Move to " \+ g\.name; bodyE\.appendChild\(lb\);/);
   assert.match(fly, /moveUnion\(home, g\); build\(\); sb\.textContent = subText\(\);/, "the row IS the move");

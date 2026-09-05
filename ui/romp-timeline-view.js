@@ -92,6 +92,10 @@ function rederiveViews(base, writes) {
   }
   return p;
 }
+// The placeholder id an optimistic create's row wears until the kernel's ack names the real one
+// (views-writes.ts isPlaceholderId): such a row takes no gesture — an op addressed by it is
+// refused as a tag that does not exist (round 4 of the 2026-09-05 review).
+function isPendingTagId(id) { return typeof id === 'string' && /^pending-/.test(id); }
 // A lens or order write's own content — {active?, actives?, tagOrder?} — applied to a blob (a copy),
 // and the blob such a write POSTS: the STORE's blob (the last one adopted, never the pending copy)
 // with the fields set, the tags array re-sorted to a given order (the pill-drag contract). The
@@ -130,7 +134,9 @@ function viewTagUnion(views) {
   for (const t of viewTags(views)) {
     const g = byName[t.name] || (byName[t.name] = { name: t.name || 'tag', color: '', members: [],
                                                     ids: [], localId: null, homes: [], remotes: [] });
-    if (!g.localId) { g.localId = t.id; g.color = t.color || g.color; }
+    // `pending`: the local tag is a create still in flight (its placeholder id) — the union renders
+    // and takes no gesture until the ack (isPendingTagId); every action builder checks it
+    if (!g.localId) { g.localId = t.id; g.color = t.color || g.color; if (isPendingTagId(t.id)) g.pending = true; }
     g.ids.push(t.id);
     for (const m of (t.members || [])) if (g.members.indexOf(m) < 0) g.members.push(m);
     if (out.indexOf(g) < 0) out.push(g);
@@ -2942,6 +2948,10 @@ class TimelinePanel {
   // that already had it); remote writes ride _editRemoteTag (optimistic overlay + loud
   // tagEditFailed, federation v1).
   _editTagUnion(g, edit) {
+    // a create still in flight has no id to address (its row wears the placeholder the ack
+    // replaces): the builders offer no gesture on it, and one that arrives anyway does nothing
+    // rather than posting a tid the kernel refuses as a tag that does not exist (round 4)
+    if (g.pending) return;
     const meta = { name: g.name, tid: g.localId };
     if (edit.add && edit.add.length) {
       if (g.localId) {
@@ -3001,6 +3011,14 @@ class TimelinePanel {
       ch.addEventListener('mouseenter', () => { ch.style.background = HOVER_BG; });
       ch.addEventListener('mouseleave', () => { ch.style.background = 'transparent'; });
       ch.createSpan({ text: g.name });
+      if (g.pending) {
+        // a create still in flight: the chip shows, with no ✕ and no click, until the ack names the
+        // tag (round 4 of the 2026-09-05 review) — the "creating…" the inputs read, in the tooltip
+        ch.style.cursor = 'default';
+        ch.setAttribute('title', 'creating "' + g.name + '"…');
+        ch.setAttribute('aria-disabled', 'true');
+        continue;
+      }
       const chx = ch.createSpan({ text: '✕' });
       chx.setAttribute('style', 'color:' + MODEL_FG + ';opacity:0.75;font-size:0.9em;');
       ch.setAttribute('title', 'tagged "' + g.name + '"'
@@ -3014,6 +3032,7 @@ class TimelinePanel {
   // new-tag input (a new tag mints LOCALLY, as always)
   _tagJoinMenu(box, rowIds, rebuild) {
     for (const g of viewTagUnion(this._curViews())) {
+      if (g.pending) continue;   // a create still in flight cannot be joined yet: no id to address (round 4)
       if (!rowIds.some((id) => g.members.indexOf(id) < 0)) continue;
       const tc = g.color || MENU_FG;
       const opt = box.createSpan({ text: g.name });
@@ -3599,7 +3618,10 @@ class TimelinePanel {
           return a;
         };
         for (const tg of viewTagUnion(v)) {
-          const editable = tg.localId || canEdit;
+          // a create still in flight (`pending`) is not editable and not draggable: its row wears
+          // the placeholder id the ack replaces, and an op addressed by it would be refused as a tag
+          // that does not exist (round 4 of the 2026-09-05 review) — it reads "creating…" instead
+          const editable = !tg.pending && (tg.localId || canEdit);
           const tc = tg.color || MODEL_FG;
           // the tag itself: the normal pill, NO ✕ — actions live beside it, never on it.
           // DRAGGABLE (the user 2026-08-25): grab a pill to reorder the tags — the drop writes
@@ -3610,7 +3632,7 @@ class TimelinePanel {
           // input keeps the cell — no drag while editing.
           const pillCell = tgrid.createDiv();
           pillCell._tname = tg.name;
-          if (this._tagEditorFor !== unionKey(tg) || !editable) {
+          if (!tg.pending && (this._tagEditorFor !== unionKey(tg) || !editable)) {
             pillCell.style.cursor = 'grab';
             pillCell.addEventListener('pointerdown', (e) => {
               e.preventDefault();
@@ -3695,6 +3717,12 @@ class TimelinePanel {
             if (pend.length) {
               const note = pillCell.createSpan({
                 text: pend.map((rt) => 'pending ' + rt.pending + ' on ' + (rt.host || '?')).join(', ') });
+              note.setAttribute('style', 'margin-left:6px;font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
+            }
+            if (tg.pending) {
+              // the create is in flight: the row shows the tag and says so, with no actions beside
+              // it until the ack (the same words the [+ New tag] row and the inputs use)
+              const note = pillCell.createSpan({ text: 'creating…' });
               note.setAttribute('style', 'margin-left:6px;font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
             }
           }

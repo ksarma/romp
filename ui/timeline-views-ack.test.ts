@@ -769,3 +769,59 @@ test("executed: a lens or order write is built from the STORE's blob — a renam
   assert.equal((SRC.match(/this\._setViews\(nv\);/g) || []).length, 0, "no whole-blob write from a copy remains outside the legacy tag path");
   assert.match(SRC, /_setLens\(fields\) \{\s*\n\s*this\._setViews\(lensBlob\(this\._views, fields\), \[\], fields\);/, "built from this._views, the store's blob");
 });
+
+test("executed: a tag whose create is in flight takes no gesture — the dialog row reads creating… with no actions, its chip has no ✕, the join menu does not offer it; the ack restores them", () => {
+  const panel = drawnPanel();
+  panel._openViewsDialog(null);
+  const plusFor = (i: number) => walk(panel._viewsDialog).filter((n) => n._attrs.title === "add a tag")[i];
+  plusFor(1)._listeners.click();                                   // SID2's [+]
+  const ni = walk(panel._viewsDialog).find((n) => n.tag === "input" && n.placeholder === "new tag…");
+  ni.value = "qa"; ni._listeners.keydown({ key: "Enter" });
+  assert.deepEqual([tagOps().length, tagOps()[0].op, tagOps()[0].sids], [1, "create", [SID2]]);
+  let nodes = walk(panel._viewsDialog);
+  const qaCell = nodes.find((n) => n._tname === "qa");
+  assert.ok(qaCell, "the optimistic row renders");
+  assert.ok(walk(qaCell).some((n) => n.textContent === "creating…"), "…and says the create is in flight");
+  assert.equal(qaCell._listeners.pointerdown, undefined, "…and is not draggable");
+  const delTitle = (name: string) => (n: any) => typeof n._attrs.title === "string" && n._attrs.title.startsWith("DELETE the tag “" + name);
+  assert.equal(nodes.find(delTitle("qa")), undefined, "no delete action on it");
+  assert.ok(nodes.find(delTitle("web")), "…while the settled tag keeps its actions");
+  assert.equal(nodes.filter((n) => n._attrs.title === "rename this tag (everywhere it is defined)").length, 1, "one rename action: the settled tag's");
+  const chip = nodes.find((n) => n._attrs.title === 'creating "qa"…');
+  assert.ok(chip, "the session's chip for it shows");
+  assert.equal(chip._listeners.click, undefined, "…with no ✕ and no click");
+  // the union says so, and a gesture that reaches the editor anyway posts nothing addressed to the placeholder
+  const pend = viewTagUnion(panel._curViews()).find((g: any) => g.name === "qa");
+  assert.equal(pend.pending, true);
+  panel._editTagUnion(pend, { rename: "quality" });
+  panel._editTagUnion(pend, { delete: true });
+  panel._editTagUnion(pend, { add: [SID1] });
+  panel._editTagUnion(pend, { remove: [SID2] });
+  assert.equal(tagOps().length, 1, "nothing posted");
+  assert.ok(!posted.some((p) => p.kind === "tag" && /^pending-/.test(String(p.e.tid || p.e.tid_from || p.e.tid_to || ""))), "no op ever names the placeholder");
+  // SID1's join menu does not offer it while pending
+  plusFor(0)._listeners.click();
+  nodes = walk(panel._viewsDialog);
+  // the join menu's box (grid-spanning, indented) — the pane-filter rows also render a clickable "qa" pill, a lens pick by name
+  const joinBox = () => walk(panel._viewsDialog).find((n) => String(n._attrs.style || "").startsWith("grid-column:1 / -1;margin:2px 0 4px 8px"));
+  const joinOptions = () => walk(joinBox()).filter((n) => n._listeners.click && n.textContent === "qa");
+  assert.equal(joinOptions().length, 0, "not joinable before the ack");
+  // the lane gear menu's chips follow the same rule
+  const s2 = panel.data.sessions.find((x: any) => x.id === SID2);
+  const anchor = makeNode("g"); anchor._rect = { left: 40, top: 60, right: 60, bottom: 76, width: 20, height: 16 };
+  panel._closeViewsDialog();
+  panel._openLaneMenu(s2, anchor);
+  const laneChip = walk(panel._laneMenu).find((n) => n._attrs.title === 'creating "qa"…');
+  assert.ok(laneChip && laneChip._listeners.click === undefined, "the lane menu's chip takes no click either");
+  panel._closeLaneMenu();
+  // the ack names the tag: actions, chip ✕ and the join option are back
+  panel._openViewsDialog(null);
+  const S1 = copy(S0); S1.seq = 1001; S1.at = 113; S1.tags.push({ id: "g7", name: "qa", color: "#54B204", members: [SID2], mtime: 113 });
+  panel.viewsAck({ type: "tagEditAck", writeId: tagOps()[0].writeId, ok: true, seq: 1001, tid: "g7", name: "qa", views: S1 });
+  nodes = walk(panel._viewsDialog);
+  assert.ok(nodes.find(delTitle("qa")), "delete is back");
+  assert.equal(nodes.find((n) => n._attrs.title === 'creating "qa"…'), undefined);
+  assert.ok(nodes.find((n) => typeof n._attrs.title === "string" && n._attrs.title.startsWith('tagged "qa"')), "the chip carries its ✕ again");
+  assert.equal(joinOptions().length, 1, "…and SID1's menu offers it");
+  assert.equal(viewTagUnion(panel._curViews()).find((g: any) => g.name === "qa").pending, undefined);
+});

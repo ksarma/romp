@@ -179,3 +179,20 @@ test("executed: the union renders in the USER'S order — tagOrder governs, remo
   assert.deepEqual(viewTagUnion({ tags: [{ id: "p1", name: "constructor", members: [] }], tagOrder: ["constructor"] })
     .map((u) => u.name), ["constructor"], "a prototype-key tag name builds and orders cleanly");
 });
+
+test("executed: a union whose local tag wears a create's placeholder id is marked pending — it renders and takes no gesture (round 4 of the 2026-09-05 review)", () => {
+  const A = "11111111-2222-3333-4444-555555555501", B = "11111111-2222-3333-4444-555555555502";
+  const v: any = { active: "all", tags: [{ id: "gA", name: "web", color: "#3b82f6", members: [A] }, { id: "pending-abc", name: "api", color: "#54B204", members: [B] }] };
+  const u = viewTagUnion(v);
+  assert.equal(u.find((g) => g.name === "web")!.pending, undefined);
+  assert.equal(u.find((g) => g.name === "api")!.pending, true);
+  assert.equal(u.find((g) => g.name === "api")!.localId, "pending-abc", "the placeholder still rides for rendering");
+  assert.deepEqual(u.find((g) => g.name === "api")!.members, [B], "…and the row shows its members");
+  // the ack's blob replaces the row with the kernel's id: no longer pending
+  const after = viewTagUnion({ ...v, tags: [v.tags[0], { id: "g9", name: "api", color: "#54B204", members: [B] }] });
+  assert.equal(after.find((g) => g.name === "api")!.pending, undefined);
+  // a same-named REAL tag ahead of the placeholder owns the union: not pending
+  const twin = viewTagUnion({ ...v, tags: [{ id: "g9", name: "api", color: "", members: [] }, v.tags[1]] });
+  assert.equal(twin.find((g) => g.name === "api")!.pending, undefined);
+  assert.equal(twin.find((g) => g.name === "api")!.localId, "g9");
+});

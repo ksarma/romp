@@ -65,6 +65,13 @@ export function adoptViews(held: SessionViews | null | undefined, incoming: Sess
  *  legacy scalar, the per-surface lenses, and the union display order */
 export type LensFields = Partial<Pick<SessionViews, "active" | "actives" | "tagOrder">>;
 
+/** whether a tag id is the placeholder an optimistic create's row wears until the kernel's ack
+ *  names the real one — such a row takes no gesture (round 4 of the 2026-09-05 review: a rename
+ *  or delete on it posted the placeholder as the tid and was refused as "no longer exists") */
+export function isPlaceholderId(id: string | null | undefined): boolean {
+  return typeof id === "string" && /^pending-/.test(id);
+}
+
 /** one write in flight: its id, and what it did — the targeted op (with the placeholder id its
  *  optimistic row wears, for a create), the lens/order fields it set, or the whole blob it posted
  *  (the no-capability path's tag edits) — so the pending copy can be re-derived without it when
