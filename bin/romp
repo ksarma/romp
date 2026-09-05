@@ -1863,8 +1863,8 @@ case "${1:-}" in
                            # VALUE is meaningful (explicitly setting empty), but a missing '=' or a
                            # NAME outside [A-Za-z_][A-Za-z0-9_]* is a usage error, never a silent
                            # skip. Toggles only (FEATURE_FLAG=1, CLAUDE_CODE_*) — real secrets stay
-                           # in service.env / the apiKeyHelper, since this payload is copied into
-                           # per-sid files and the session registry.
+                           # in the manager's environment / the apiKeyHelper, never in a file, since
+                           # this payload is copied into per-sid files and the session registry.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
                                echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] [--in <tag>] [--no-inherit] <name>" >&2; exit 2
                            fi

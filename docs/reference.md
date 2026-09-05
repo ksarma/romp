@@ -85,7 +85,8 @@ a running session declares its full per-session env: any var you don't name
 again is dropped, and `romp new --no-env <name>` declares the empty set — it
 clears them all. Keep real secrets out of it: each value is copied into
 per-session files and the session registry under `~/.local/state/romp/`. Keys
-and credentials stay in `service.env` or the `apiKeyHelper`.
+and credentials stay in the manager's environment or the `apiKeyHelper`, never
+in a file (see [Service environment](#service-environment-secrets)).
 
 Two things to know before building on `romp sessions --json`. **`waiting` means
 at rest**, the ordinary state of a session that has finished its turn, so
@@ -260,9 +261,10 @@ expired key — blocks the session's card with the fix named, and is never
 auto-retried.
 
 One side of that check can be the box's *design*: on a machine whose sessions
-are all meant to bill a key that arrives through `apiKeyHelper` — so it never
-appears in `service.env` — the landed-on-the-other-auth warning would fire on
-every init, permanently. Declaring the intent fixes it: set
+are all meant to bill a key that arrives through `apiKeyHelper` — so
+`ANTHROPIC_API_KEY` is never in the manager's environment — the
+landed-on-the-other-auth warning would fire on every init, permanently.
+Declaring the intent fixes it: set
 `ROMP_EXPECTED_AUTH=key` (or `login`) in `service.env`, and a session landing
 on the declared side is quiet while one landing on the other side is flagged,
 naming the declaration. The check inverts rather than disappearing; unset (or
@@ -339,24 +341,99 @@ shell leaves the supervised manager on the old one, and the two collide.
 
 ### Service environment (secrets)
 
-The manager runs as a login service (launchd on macOS, systemd --user on
-Linux), so it never sees variables your shell rc exports — a terminal having
+`~/.config/romp/service.env` holds non-secret settings only, `ROMP_EXPECTED_AUTH`
+for example; API keys never go in it. Plain `KEY=VALUE` lines:
+
+    ROMP_EXPECTED_AUTH=key
+
+Unlike the ports above it is NOT baked at install: it is read each time the
+manager starts (the systemd unit via `EnvironmentFile=-`, the macOS login
+agent's launcher by parsing it, line by line, never sourced, so a malformed
+line is skipped rather than executed). Change a value by editing the file and
+restarting the manager (`romp-service install`); a missing file is a no-op.
+
+Keys reach the manager through its environment instead. The manager inherits
+the environment of whatever starts it, so a shell startup file that loads keys
+from a secrets manager into the environment covers anything the kernel or its
+judges call directly, and nothing is written to disk. The sessions' own key
+reaches Claude Code through its `apiKeyHelper` setting, never through the
+service file.
+
+Which process starts the manager decides whether that startup file runs.
+`romp up` in a terminal starts it from your shell. The login service (launchd
+on macOS, systemd --user on Linux) does not: the unit that `romp-service
+install` writes starts the manager directly, so no shell startup file runs and
+the manager never sees variables your shell exports. A terminal having
 `ANTHROPIC_API_KEY` does nothing for the sessions the kernel spawns. On a
 machine where Claude authenticates through an OAuth login this gap is
 invisible (the credentials live in a file any process can read); on an
 API-key-only machine it means SDK sessions come up unauthenticated while
-`claude` in your terminal works fine.
+`claude` in your terminal works fine. To give the service the same environment
+your shell has, have it start the manager through your shell. On Linux a
+drop-in does that and survives a reinstall, since `romp-service install`
+rewrites only the main unit:
 
-Env like that goes in `~/.config/romp/service.env` — plain `KEY=VALUE` lines,
-`chmod 600`:
+    # ~/.config/systemd/user/romp-manager.service.d/shell.conf
+    [Service]
+    ExecStart=
+    ExecStart=/usr/bin/zsh -c 'exec /path/to/romp/bin/romp-manager up'
 
-    ANTHROPIC_API_KEY=sk-ant-...
+then `systemctl --user daemon-reload` and restart the manager. The keys must
+be loaded by a file the shell reads for every invocation (`~/.zshenv` for zsh;
+bash reads the file named by `$BASH_ENV`). On macOS the same wrapping is an
+edit to the plist `romp-service install` writes, redone after each reinstall.
 
-Unlike the ports above it is NOT baked at install: it is read each time the
-manager starts (the systemd unit via `EnvironmentFile=-`, the macOS login
-agent's launcher by parsing it — line by line, never sourced, so a malformed
-line is skipped rather than executed). Rotate a value by editing the file and
-restarting the manager (`romp-service install`); a missing file is a no-op.
+If your installation has no rule against credentials in files, `service.env`
+still works as the unit's `EnvironmentFile` for a key. Keep it key-free
+anyway: a key in a file is a copy of the credential that outlives its
+rotation. The file keeps the old value after the key is replaced, and
+anything that can read the file has the key.
+
+### What survives a restart
+
+A kernel restart ends every session's CLI. On `romp refresh`, the manager's
+restart-all or a service stop, the kernel receives SIGTERM and drains: it
+closes each CLI, and a CLI still running when the drain's bound expires gets
+SIGTERM, then SIGKILL. A crash respawn has no drain: the kernel died without
+running one, its CLIs are orphaned, and the next kernel's boot reaper
+terminates them (see below). The CLI's harness background tasks do not all end
+with it. Its timers and monitors live inside the CLI process and end when it
+does. A background shell is a separate process the CLI started, and a CLI
+killed by SIGKILL runs no cleanup, so its shells are re-parented and may keep
+running. The session resumes with its history and is told what was cut: its
+in-flight turn, if it had one, and each background task, with a request to
+check whether each is still running before relaunching it. A kernel restart has
+never touched work a session deliberately detached: tmux servers, `setsid`
+children and other processes that outlive their shell.
+
+A service restart (`systemctl --user restart romp-manager`, or the machine's
+own service management) kills everything in the service's cgroup, so on Linux
+under systemd Romp runs each session's CLI, and the default tmux server the
+manager starts, in a transient systemd scope of its own, outside that cgroup
+(`systemctl --user list-units 'romp-session-*' 'romp-tmux-*'` lists them). A
+session's tmux servers, `setsid` children and other detached work live in the
+session's scope, and a service restart leaves them alive as a kernel restart
+does; before 2026-09-05 they were in the service's cgroup and died with it. The
+CLI itself still ends: the kernel receives the service's SIGTERM and runs the
+same drain. A scoped CLI outlives a service restart only when the drain does not
+reach it: a kernel killed before its drain finishes (SIGKILL at the service's
+stop timeout), or a CLI the drain could not find. The reaper handles that case:
+at the next kernel boot, an SDK-driven CLI holding one of the kernel's sessions
+whose parent is not a live romp kernel is treated as orphaned and terminated.
+Under `systemd --user` an orphan re-parents to the user manager, not to pid 1,
+so a ppid check alone would miss it and did, before 2026-09-05.
+
+One-time caveat when this lands: the first service restart after it still
+empties the current cgroup, tmux servers included, because the running manager
+and its tmux server predate the change and are still inside the service's
+cgroup. The guarantee holds from the following restart on.
+
+`ROMP_CLI_SCOPE=0` in the service environment turns the scopes off, for
+session CLIs and the tmux server alike. A manager run outside the service
+(`romp up`) scopes nothing unless `ROMP_CLI_SCOPE=1` is set, which turns both
+on. The kernel logs which it chose at start (`cli scope: on` or `off`, with the
+reason). The macOS launchd path is unchanged: there is no cgroup kill there,
+and the tmux server keeps its launchd lineage.
 
 `ANTHROPIC_API_KEY` is the one exception to that last sentence: where an
 installation keeps a key in this file, the kernel reads that line fresh at
@@ -477,6 +554,20 @@ and `key:managed` name sources whose material the kernel never holds.
   outside the signal on both sides of the ratio). A reader that sees `inTurn >
   0` and a `lastEventAt` minutes old should treat the signal as unknown rather
   than healthy.
+- `cliScope`: `on`, the kernel's boot verdict on per-session transient scopes
+  (see "What survives a restart"); `fallbacks`, CLI launches since boot on which
+  the scope wrapper's pre-flight scope failed and it ran the CLI directly, which
+  it reports with a `romp-cli-scope: fallback: …` stderr line. Each is also a
+  problem line in the kernel log, in exactly this form: `cli scope: session
+  <name> (<sid8>) started its CLI outside a scope — <line>`, where `<sid8>` is
+  the first 8 characters of the session id and `<line>` is the wrapper's whole
+  stderr line, its `romp-cli-scope: fallback:` prefix included. The wrapper's
+  other message, `romp-cli-scope: refused: …` (`ROMP_CLI_REAL` unset, exit 127),
+  starts no CLI and is not counted: it is a launch failure, reported on the
+  session's error card. `lastFallbackAt`, epoch seconds of the newest fallback,
+  `null` when there was none. `on: true` with `fallbacks > 0` means the verdict
+  stopped holding after boot: those sessions' work is in the service cgroup, and
+  a service restart kills it.
 - `config`: the constants in force (see "Derived state").
 - `overall`: `state`, the most severe state among buckets that are not
   `unknown` (`thrashing > degraded > recovering > healthy`; `unknown` when every

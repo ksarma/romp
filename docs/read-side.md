@@ -78,11 +78,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   bundle's own `ready` lifts the hold. A `ready` on a socket that is already
   ready is a re-base: the frame is served again rather than deduped.
   The kernel dedups per client. A client
-  that announces `?caps=feedDelta` on its socket (the kernel-served feed and
-  Waiting on you pages do) then receives `{type:"feedDelta"}` frames: changed cards by `itemId`, removed
+  that announces `?caps=feedDelta` on its socket (the kernel-served feed,
+  Outline and Waiting on you pages do) then receives `{type:"feedDelta"}` frames: changed cards by `itemId`, removed
   ids, the same for ledgers by `sid`, and the small top-level fields whole under
   `top` when any changed — and an unchanged board sends such a client nothing at
-  all. Every other consumer — the Outline pane, the VS Code extension's pipes,
+  all. Every other consumer — the VS Code extension's pipes,
   federation's remote sockets, an older bundle — stays on the full-frame path,
   which keeps its 60 s repost of the unchanged frame. `federation.ts` applies a
   delta onto the last full frame it holds for the host and re-emits a merged full
@@ -92,7 +92,10 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   kernel's record of them. Card age colours are computed client-side from `t` on
   a live clock (`age-color.ts`, `feed-age.ts`: the payload's `now` plus the local
   time since it landed, so a quiet board's ages and tints keep moving), never
-  read from the wire. Full frames still carry the per-card `trgb` for older
+  read from the wire. The Outline pane keeps the same clock: its ages, the
+  current goal's elapsed time and its recency cutoff move on a 15 s refresh
+  (skipped while the pane is hidden, with one catch-up render when it is shown
+  again), since a delta client hears nothing from a quiet board. Full frames still carry the per-card `trgb` for older
   bundles that destructure it; deltas omit it, and the kernel's dedup signature
   ignores it, so a colour step is never a change (it used to re-send the whole
   board on every step: 5.76 MB a push on a board of about 660 cards, measured

@@ -218,5 +218,12 @@ jobs:
         run: npm run typecheck
       - name: Test
         run: npm test
+      - name: Manager suites (node --test)
+        # bin/romp-manager's unit tests (tests/manager-*.test.js: drain, registry, restart, tmux
+        # scope) ran nowhere in CI until 2026-09-05 — pytest, bats and the extension's npm test
+        # covered everything else. They need only the Node this job already sets up; run from the
+        # repo root, not the job's vscode-extension working directory.
+        working-directory: ${{ github.workspace }}
+        run: node --test tests/manager-*.test.js
       - name: Build
         run: npm run build
