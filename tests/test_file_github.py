@@ -89,6 +89,27 @@ def _git_version():
     return tuple(int(x) for x in out.split()[2].split(".")[:2])
 
 
+def _alive(pid):
+    """Whether `pid` is still a running process. A zombie counts as gone: it has been killed and only
+    awaits its reaper (init, once its parent died with it)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            return f.read().rsplit(")", 1)[-1].split()[0] != "Z"
+    except OSError:
+        return True
+
+
+def _kill_quiet(pid):
+    try:
+        os.kill(pid, 9)
+    except OSError:
+        pass
+
+
 class _Repo(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -318,6 +339,29 @@ class BranchOnOrigin(_WithOrigin):
             self.assertLess(time.time() - t0, 2.0, "the timeout, not the remote, ends the wait")
         finally:
             km.GH_LS_REMOTE_S = real
+
+    def test_the_cut_kills_the_ssh_git_spawned_not_git_alone(self):
+        # subprocess.run's timeout kill reached git alone; the ssh it had spawned sat in its TCP connect
+        # for minutes after the viewer was told "could not check" (reproduced 2026-09-05). The query
+        # runs in its own session now and the deadline kills the whole group.
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        pidfile = os.path.join(self.root, "stuck-ssh.pid")
+        os.environ["GIT_SSH_COMMAND"] = _script(self.root, "stuck-ssh",
+                                                "echo $$ > '%s'\nexec sleep 30\n" % pidfile)
+        real = km.GH_LS_REMOTE_S
+        km.GH_LS_REMOTE_S = 0.3
+        try:
+            self.assertEqual(km._file_github_link(self.fp, None),
+                             (self.URL % "wip", "could not check whether branch wip is on origin"))
+        finally:
+            km.GH_LS_REMOTE_S = real
+        self.assertTrue(os.path.exists(pidfile), "the stand-in ssh ran before the cut")
+        pid = int(open(pidfile).read())
+        self.addCleanup(_kill_quiet, pid)
+        deadline = time.time() + 3
+        while _alive(pid) and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertFalse(_alive(pid), "the ssh git spawned outlived the cut")
 
     def test_a_detached_sha_is_never_checked(self):
         sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.tmp,

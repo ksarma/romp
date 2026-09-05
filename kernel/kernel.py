@@ -30839,6 +30839,42 @@ def _git_out(args, cwd, timeout=5, env=None):
         return None
 
 
+def _git_net_out(args, cwd, timeout, env):
+    """_git_out for the one query that leaves the machine (ls-remote): git runs in its OWN session, and
+    the deadline kills the whole process group. subprocess.run's timeout kill reaches its direct child
+    alone, and the ssh git had spawned sat in its TCP connect for minutes after the viewer had already
+    been told "could not check" (reproduced 2026-09-05). A fresh session also has no controlling
+    terminal, so an ssh that wants a passphrase fails instead of waiting for one. Same shape as
+    envsource.run_command; not shared, because that module is the env source's and this is a git call."""
+    try:
+        p = subprocess.Popen(["git", "-C", cwd] + args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True, start_new_session=True, env=env)
+    except OSError:
+        return None
+    try:
+        out, _ = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)         # start_new_session: the child's pid is its pgid
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            p.communicate(timeout=5)
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
+        return None
+    except (OSError, subprocess.SubprocessError):
+        try:
+            p.kill()
+        except Exception:
+            pass
+        return None
+    return out.strip() if p.returncode == 0 else None
+
+
 # origin remote → the https://github.com/<owner>/<repo> base, for the spellings git actually writes:
 # scp-like ssh, ssh:// (with an optional port, and GitHub's own documented SSH-over-HTTPS host
 # ssh.github.com), https (with an explicit :443), .git suffix and all. Anchored, so
@@ -30872,8 +30908,8 @@ def _origin_has_branch(top, ref):
     if _git_out(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/" + ref], top):
         return True
     full = "refs/heads/" + ref
-    out = _git_out(["ls-remote", "--heads", "origin", full], top, timeout=GH_LS_REMOTE_S,
-                   env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+    out = _git_net_out(["ls-remote", "--heads", "origin", full], top, timeout=GH_LS_REMOTE_S,
+                       env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
     if out is None:
         return None
     return any(line.split("\t")[-1] == full for line in out.splitlines())
