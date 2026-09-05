@@ -192,44 +192,58 @@ export function registerFileViewAction(a: FileViewAction): void {
 }
 
 // ── the GitHub link (the user 2026-08-15) — the registry's first entry ─────────────────────────────
-// An anchor, not a button: the browser owns opening a new tab. Hidden until the OWNING kernel answers
-// the lazy fileGitLink ask, and the answer ALWAYS shows it (the user 2026-09-05, who could not tell
-// "not committed yet" from "the link is broken" when the button simply never appeared): a real URL
-// links; no URL renders the anchor disabled — hrefless, greyed — with the kernel's reason as its
-// tooltip (an untracked file, a non-repo path, a non-GitHub origin); a URL whose branch is not on
-// origin stays clickable and carries the note in its tooltip, since GitHub 404s it until the push.
-// One question per open, reqId-guarded.
+// One unit in the action row: the control and, when the kernel gave one, its reason as a caption
+// beside it. Hidden until the OWNING kernel answers the lazy fileGitLink ask, and the answer ALWAYS
+// shows it (the user 2026-09-05, who could not tell "not committed yet" from "the link is broken" when
+// the button simply never appeared). A real URL is an anchor — the browser owns the new tab. No URL is
+// a real disabled <button>: assistive tech reads the state and the label, and there is no href to
+// follow or to go stale. The reason rides in the tooltip AND as the caption, because a tooltip alone
+// needs a mouse — touch has no hover, and a disabled button takes no focus — so the caption is what
+// makes the reason glanceable; the sheet truncates it and the tooltip carries the full text. A URL
+// whose branch is not on origin stays an anchor, dashed, with the note as its caption, since GitHub
+// 404s it until the push. One question per open, reqId-guarded. Exported for the DOM-shape test.
+const GH_REASONLESS = "this kernel predates link reasons; restart it after updating";
 let gitSeq = 0;
 let gitHooks: { reqId: number; apply: (url: string, reason: string) => void } | null = null;
-registerFileViewAction({
+export const githubLinkAction: FileViewAction = {
   id: "github-link",
   mount({ path, sid }) {
-    const gh = el("a", "fileview-btn fileview-gh") as HTMLAnchorElement;
-    gh.textContent = "GitHub ↗";
-    gh.target = "_blank"; gh.rel = "noopener";
-    gh.hidden = true;
+    const unit = el("span", "fileview-gh");
+    unit.hidden = true;
     gitHooks = {
       reqId: ++gitSeq,
       apply: (url, reason) => {
+        let ctl: HTMLElement;
         if (url) {
-          gh.href = url;
-          gh.title = reason ? url + "\n" + reason : url;   // the full URL one hover away, and the note with it
-          if (reason) { gh.classList.add("fileview-gh-note"); gh.setAttribute("aria-label", "GitHub: " + reason); }
+          const a = el("a", "fileview-btn") as HTMLAnchorElement;
+          a.href = url; a.target = "_blank"; a.rel = "noopener";
+          a.title = reason ? url + "\n" + reason : url;      // the full URL one hover away, and the note with it
+          if (reason) { a.classList.add("fileview-gh-note"); a.setAttribute("aria-label", "GitHub: " + reason); }
+          ctl = a;
         } else {
-          // disabled, not hidden: no href means nothing to follow, and the tooltip says why. An older
-          // kernel answers without a reason — say that, rather than invent one.
-          gh.setAttribute("aria-disabled", "true");
-          gh.tabIndex = 0;                                   // reachable by keyboard, so the reason is too
-          gh.title = "No GitHub link: " + (reason || "no reason was given");
-          gh.setAttribute("aria-label", gh.title);
+          // an older kernel answers without a reason — say what that means, rather than invent one
+          const b = el("button", "fileview-btn") as HTMLButtonElement;
+          b.type = "button"; b.disabled = true;
+          b.title = "No GitHub link: " + (reason || GH_REASONLESS);
+          b.setAttribute("aria-label", b.title);
+          ctl = b;
         }
-        gh.hidden = false;
+        ctl.textContent = "GitHub ↗";
+        const why = reason || (url ? "" : GH_REASONLESS);
+        if (why) {
+          const cap = el("span", "fileview-gh-why");
+          cap.textContent = why; cap.title = why;            // the sheet truncates; the full text one hover away
+          unit.appendChild(cap);                             // before the control: it annotates what follows
+        }
+        unit.appendChild(ctl);
+        unit.hidden = false;
       },
     };
     post({ type: "fileGitLink", path, sid: sid || undefined, reqId: gitSeq });
-    return gh;
+    return unit;
   },
-});
+};
+registerFileViewAction(githubLinkAction);
 
 // ── quote a passage into the composer (the user 2026-08-23, the three-verbs consolidation) ────────
 // Selecting text in the viewer seeds the SAME labeled quote chip a VS Code editor highlight does:
