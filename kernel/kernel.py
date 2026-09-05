@@ -30113,7 +30113,18 @@ def _send_feed(c, feed, ms, sig, parts):
     when a chat or Outline client is in the push, so a feed-only connect push never has them): on the delta
     path the client keeps the ledgers it holds (feed-delta.ts applies the same keep-base rule), so the
     recorded base carries the previous ledger set forward. Recording None there made the next ledger-bearing
-    build re-send the whole set and lose every removal in between (the 2026-09-03 review)."""
+    build re-send the whole set and lose every removal in between (the 2026-09-03 review).
+
+    Under the client's slot lock, read-decide-send-write as one step, like _send_slot and _send_chat
+    (2026-09-05): the handler thread's `ready` re-base and needFullFeed forget the base and the dedup slot
+    (_client_reset_feed_base), and a pusher send DECIDED before such a pop (prev read, the delta built) could
+    land after it — the write-back re-populated efeed, and a client that had just declared it holds nothing
+    was sent a delta it could not apply. The inner _send_client takes the same lock; it is an RLock."""
+    with _client_lock(c):
+        return _send_feed_locked(c, feed, ms, sig, parts)
+
+
+def _send_feed_locked(c, feed, ms, sig, parts):
     prev = c.get("efeed")
     if prev is not None and FEED_DELTA_CAP in (c.get("caps") or ()):
         s = _feed_delta(prev, parts, feed)
@@ -30171,16 +30182,28 @@ def _send_feed_now(c):
     if w is None:
         return False
     ms = _feed_ms(w[3], int(time.time()))
-    if c.get("delta") and FEED_DELTA_CAP not in (c.get("caps") or ()):
-        with _client_lock(c):
+    with _client_lock(c):                        # send-and-record as one step, like _send_feed (see there)
+        if c.get("delta") and FEED_DELTA_CAP not in (c.get("caps") or ()):
             before = c.get("sent", {}).get(("feed",))
             _send_slot(c, "feed", w[2], ms, w[4])
             after = c.get("sent", {}).get(("feed",))
-        return after is not None and after is not before
-    if not _send_client(c, ("feed",), w[2], pre=ms, sig=w[4]):
-        return False
-    c["efeed"] = w[5]
-    return True
+            return after is not None and after is not before
+        if not _send_client(c, ("feed",), w[2], pre=ms, sig=w[4]):
+            return False
+        c["efeed"] = w[5]
+        return True
+
+
+def _client_reset_feed_base(client):
+    """Forget the feed frame we believe this client holds — the feed-delta base (efeed), the view-delta slot's
+    base (dstate["feed"]) and the dedup slot — so the next serve is a full frame on either protocol. The half
+    needFullFeed and the `ready` re-base share, under the client's slot lock like _client_reset_chat_base:
+    _send_feed and _send_slot hold the same lock across their read-decide-send-write, so a pusher send lands
+    as a whole before the reset (its base is then cleared and the full frame follows) or after it."""
+    with _client_lock(client):
+        client.pop("efeed", None)
+        client.get("sent", {}).pop(("feed",), None)
+        client.get("dstate", {}).pop("feed", None)
 
 
 # The active recency colormap (the user 2026-06-16 wanted a chooser): persisted in STATE/colormap, read
@@ -38667,8 +38690,7 @@ class Handler(BaseHTTPRequestHandler):
             # The feed's twin of needFull: the client could not apply a {type:"feedDelta"} (no base frame
             # on its side, or a bundle that never expected one). Forget what we believe it holds and serve
             # the full frame now; the delta stream re-bases from that.
-            client.pop("efeed", None)
-            client.get("sent", {}).pop(("feed",), None)
+            _client_reset_feed_base(client)
             _send_feed_now(client)
             return
         if msg and msg.get("type") == "loadOlder" and msg.get("id"):
@@ -38725,9 +38747,7 @@ class Handler(BaseHTTPRequestHandler):
             # the full frame the pusher had just delivered (the 2026-09-03 round-4 review). Exactly one
             # `ready` arrives per socket in normal operation, so the healthy path is unchanged.
             if client.get("readySeen"):
-                client.pop("efeed", None)
-                client.get("sent", {}).pop(("feed",), None)
-                client.get("dstate", {}).pop("feed", None)   # the view-delta slot's base (a ?delta=1 Outline page)
+                _client_reset_feed_base(client)     # both protocols' bases and the dedup slot, under the slot lock
             client["ready"] = True
             client["readySeen"] = True
             served = client.get("app") in ("feed", "fleet", "waiting") and _send_feed_now(client)

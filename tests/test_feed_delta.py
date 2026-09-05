@@ -863,6 +863,69 @@ class ReadyGate(unittest.TestCase):
         self.assertNotIn("_client_ready", src)
 
 
+class FeedStateUnderTheSlotLock(unittest.TestCase):
+    """The feed's per-client state (efeed, the ("feed",) dedup slot, the slot's dstate) is read and written
+    on two threads: the pusher's _send_feed / the handler's _send_feed_now, and the handler's needFullFeed /
+    `ready` re-base pops. Like _send_slot and _send_chat, the read-decide-send-write runs under the client's
+    slot lock, and the pops go through _client_reset_feed_base under the same lock — so a reset lands before
+    or after a send as a whole, never inside it."""
+
+    def test_the_send_paths_and_the_resets_share_the_clients_slot_lock(self):
+        import inspect
+        send = inspect.getsource(km._send_feed)
+        self.assertIn("with _client_lock(c):", send)
+        self.assertIn("return _send_feed_locked(c, feed, ms, sig, parts)", send)
+        now = inspect.getsource(km._send_feed_now)
+        i = now.index("with _client_lock(c):")
+        self.assertLess(i, now.index('c["efeed"] = w[5]'), "the base is recorded inside the lock")
+        self.assertLess(i, now.index('_send_slot(c, "feed", w[2], ms, w[4])'))
+        self.assertLess(i, now.index('_send_client(c, ("feed",), w[2], pre=ms, sig=w[4])'))
+        reset = inspect.getsource(km._client_reset_feed_base)
+        self.assertLess(reset.index("with _client_lock(client):"), reset.index('client.pop("efeed", None)'))
+        self.assertIn('client.get("dstate", {}).pop("feed", None)', reset, "the view-delta slot's base goes too")
+        handler = KSRC[KSRC.index('msg.get("type") == "needFullFeed"'):KSRC.index('msg.get("type") == "loadOlder"')]
+        self.assertIn("_client_reset_feed_base(client)", handler)
+        self.assertNotIn('client.pop("efeed"', handler, "no unlocked pop on the handler thread")
+        i = KSRC.index('if msg and msg.get("type") == "ready":')
+        ready = KSRC[i:KSRC.index("_consume_pending_reveal(client)", i)]
+        self.assertIn("_client_reset_feed_base(client)", ready)
+        self.assertNotIn('client.pop("efeed"', ready)
+
+    def test_a_reset_that_arrives_mid_send_lands_after_it_so_the_next_frame_is_full(self):
+        # A hook inside the delta computation holds the send open while a second thread resets the client.
+        # Unlocked, the reset landed between the read and the write-back, the write-back put efeed back, and
+        # the client that had just declared it holds nothing got a delta next. Locked, the reset waits.
+        f1 = _feed(n=30, build_id=1)
+        cards = [_card(i) for i in range(30)]; cards[3]["text"] = "Synthetic goal 3, edited"
+        f2 = _feed(n=30, build_id=2, asks=cards)
+        c, sent = _client()
+        c["dlock"] = threading.RLock()
+        _send(c, f1)
+        self.assertEqual(json.loads(sent[-1])["type"], "feed")
+        entered, reset_done = threading.Event(), threading.Event()
+        real = km._feed_delta
+        def hooked(prev, cur, feed):
+            entered.set()
+            reset_done.wait(0.5)      # cannot complete while this thread holds the lock: times out
+            return real(prev, cur, feed)
+        km._feed_delta = hooked
+        try:
+            def resetter():
+                entered.wait(5)
+                km._client_reset_feed_base(c)
+                reset_done.set()
+            t = threading.Thread(target=resetter); t.start()
+            _send(c, f2)
+            t.join(5)
+        finally:
+            km._feed_delta = real
+        self.assertTrue(reset_done.is_set())
+        self.assertEqual(json.loads(sent[-1])["type"], "feedDelta", "the in-flight send finished as a whole")
+        self.assertNotIn("efeed", c, "…and the reset landed after it, not under its write-back")
+        _send(c, f2)
+        self.assertEqual(json.loads(sent[-1])["type"], "feed", "a client that holds nothing gets the full frame")
+
+
 class StripTrgbIsExact(unittest.TestCase):
     """`_strip_trgb` removes the tint and NOTHING else (the 2026-09-03 review: a strip that also dropped
     `summary` passed every test — a summary-only change then rode no delta and busted no dedup)."""
