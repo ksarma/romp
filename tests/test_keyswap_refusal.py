@@ -5,9 +5,11 @@ Upstream's `romp keyswap <name>` rewrites the `ANTHROPIC_API_KEY=` line of the m
 from a sibling file (`service.env.<name>`). tests/test_keyswap.py carries upstream's tests for the
 parts the fork keeps — the live read, the bare report, `--cycle`. This file pins what the fork changes:
 
-  NamedSwapRefused — `romp keyswap <name>` exits 2 with one fixed message, before the file is read or
-    a kernel is dialed; no flag lets it through; the bare report's guidance names the cycle, never a
-    file to create; the CLI carries no call that writes the key.
+  NamedSwapRefused — in FILE mode `romp keyswap <name>` exits 2 with one fixed message, before the file
+    is read or a kernel is dialed; no flag lets it through; the bare report's guidance names the cycle,
+    never a file to create; the CLI carries no call that writes the key. (In COMMAND mode the same
+    argument selects a declared credential by writing the selector file — a name, never a key — which
+    tests/test_keyswap.py's KeyswapCliCommandMode pins.)
   HelperSessionsConverge — in COMMAND mode (ROMP_CREDENTIAL_COMMAND set; kernel/envsource.py) a
     session the kernel handed NO key but whose CLI reported one at init (apiKeySource: the
     apiKeyHelper) is stamped at connect with the fingerprint of the helper's output (envsource runs
@@ -198,33 +200,68 @@ class NamedSwapRefused(_Env):
         self.assertIn("romp refresh", out)
         self.assertNotIn("already swapped", out)
 
-    def test_the_cycle_explanations_know_the_helper_status(self):
-        text = cli._explain("helper")
-        self.assertIn("apiKeyHelper", text)
-        self.assertIn("once per rotation", text)
-        self.assertIn("reconnects on every run that names it", text, "honest: it never reads \"current\"")
-        self.assertNotEqual(cli._explain("helper"), "helper", "an unexplained status prints its raw word")
+    def test_the_helper_status_word_is_gone_from_the_cli(self):
+        # cycle_key's always-reconnect "helper" outcome was replaced by fingerprint convergence (kernel
+        # side: HelperSessionsConverge below), so the CLI has no explanation for it: an unexplained
+        # status prints its raw word, and no row text promises a reconnect on every run
+        self.assertEqual(cli._explain("helper"), "helper")
+        src = open(os.path.join(ROOT, "cli", "keyswap.py")).read()
+        self.assertNotIn("reconnects on every run", src)
+        self.assertNotIn("once per rotation", src)
+        self.assertIn("apiKeyHelper", cli._explain("cycling") + cli.REFUSAL, "the helper is still named where it bills")
 
-    def test_the_re_run_hint_names_the_skipped_rows_and_does_not_promise_current_for_helper_rows(self):
-        # cycle_key returns "helper" on every run (no fingerprint to converge on), so "re-run the same
-        # --cycle; sessions already moved read current" was false for a helper-billed box: every re-run
-        # reconnected every quiet helper session again. The hint now names only the skipped rows.
+    def test_the_re_run_hint_names_the_skipped_rows_and_promises_current(self):
+        # every status converges now (a session already moved reads "current" on the re-run), so the
+        # hint names only the rows skipped for in-flight work and says exactly that
         cli._kernel = lambda: "http://127.0.0.1:29855"
-        rows = [{"session": "web", "status": "working"}, {"session": "api", "status": "helper"},
+        rows = [{"session": "web", "status": "working"}, {"session": "api", "status": "current"},
                 {"session": "tests", "status": "working"}]
         cli._post = lambda u, p, b: {"ok": True, "keyFp": ks.fingerprint(OLD_KEY), "rows": rows}   # the compare step passes
         rc, out, _err = self.run_cli("--cycle-all")
         self.assertEqual(rc, 0)
-        self.assertIn("re-run --cycle web,tests once quiet", out, "the skipped rows, by name")
-        self.assertIn("Name only those", out)
-        self.assertIn("helper-billed one reconnects again on every run that names it", out)
-        self.assertNotIn("re-run the same --cycle", out)
-        self.assertNotIn("sessions already moved read", out)
-        # no working row → no re-run hint at all (the helper row's own text still says it re-runs the helper)
-        rows[:] = [{"session": "api", "status": "helper"}]
-        rc, out, _err = self.run_cli("--cycle-all")
-        self.assertNotIn("re-run --cycle", out)
+        self.assertIn("re-run --cycle web,tests once quiet; sessions already on this key read \"current\"", out)
+        self.assertNotIn("helper-billed", out)
         self.assertNotIn("Name only those", out)
+        rows[:] = [{"session": "api", "status": "current"}]
+        rc, out, _err = self.run_cli("--cycle-all")
+        self.assertNotIn("re-run --cycle", out, "no skipped row, no hint")
+
+    def test_a_cycling_row_carries_the_fingerprint_its_client_launched_on(self):
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        fp = ks.fingerprint(NEW_KEY)                       # a fingerprint taken at run time, not a literal
+        rows = [{"session": "web", "status": "cycling", "from": fp},
+                {"session": "api", "status": "cycling", "from": ""}]
+        cli._post = lambda u, p, b: {"ok": True, "keyFp": ks.fingerprint(OLD_KEY), "rows": rows}
+        rc, out, _err = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 0)
+        self.assertIn("  web            reconnecting now — history kept (from sha256:%s)" % fp, out)
+        self.assertIn("  api            reconnecting now — history kept\n", out + "\n")
+
+    def test_refresh_in_file_mode_is_a_re_read_and_the_report_says_so(self):
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((p, b)) or {
+            "ok": True, "keyFp": ks.fingerprint(OLD_KEY), "keySource": "file", "rows": [],
+            "refreshed": {"from": "deadbeefcafe", "to": ks.fingerprint(OLD_KEY), "err": ""}}
+        rc, out, _err = self.run_cli("--refresh")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.posted, [("/keycycle", {"sessions": [], "refresh": True})])
+        self.assertIn("kernel      reads sha256:%s (re-ran: was sha256:deadbeefcafe)" % ks.fingerprint(OLD_KEY), out)
+        self.assertNotIn("MISMATCH", out)
+
+    def test_a_kernel_in_command_mode_under_a_file_mode_shell_is_a_mismatch(self):
+        # the kernel's environment carries ROMP_CREDENTIAL_COMMAND and this shell's (and service.env) do
+        # not: the report says which side is which and what makes them agree
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        fp = ks.fingerprint(NEW_KEY)
+        cli._post = lambda u, p, b: {"ok": True, "keyFp": fp, "keySource": "command", "rows": []}
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("kernel      reads sha256:%s in COMMAND mode" % fp, out)
+        self.assertIn("MISMATCH    the kernel is in command mode and this shell is not", out)
+        self.assertIn("restart the manager", out)
+        rc, out, _err = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 1)
+        self.assertIn("cycle       NOT DONE", out)
 
     def test_a_second_positional_is_counted_never_echoed(self):
         # a key value typed where a name was expected must not reach stderr
