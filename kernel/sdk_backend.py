@@ -5948,7 +5948,8 @@ class SdkBackend:
 
         Returns what happened, for the CLI to print per session: "cycling" (a quiet, live, key-billed
         session is reconnecting NOW), "current" (its client already launched on the live key — nothing
-        to re-present, so a repeated --cycle-all converges instead of churning every idle session),
+        to re-present, so a repeated --cycle-all leaves a keyed session that already moved alone; a
+        helper session never reads this, see below),
         "login" (billed to the machine login — the key would not be injected, so a reconnect would cost
         a turn for nothing), "dormant" (no live CLI — its next launch reads the new key anyway),
         "working" (a turn, a queued turn, live subagents or background tasks are in flight — see below),
@@ -5971,7 +5972,9 @@ class SdkBackend:
         settings switches use: that reconnect fires unconditionally when the turn ends, so work the turn
         launches after this check would die with it (second review pass, 2026-09-04). So "cycling" means
         exactly one thing — an immediate reconnect of a session with nothing in flight — and the operator
-        re-runs --cycle-all until every session reads "current" (review find, 2026-09-04)."""
+        re-runs --cycle on the sessions the report named as skipped for in-flight work once they are quiet
+        (review find, 2026-09-04). A repeated --cycle-all is not that re-run: a helper session has no
+        fingerprint to converge on and reconnects again on every run that names it."""
         if not self.owns(sid):
             return "unknown"
         s = self.sessions.get(sid)

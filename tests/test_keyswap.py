@@ -501,8 +501,8 @@ class CycleReconnects(_Backend):
         self.assertEqual(self.reconnects, [sid])
 
     def test_a_session_whose_client_already_launched_on_the_live_key_is_current(self):
-        # idempotence: the operator re-runs --cycle-all until every session reads "current"; a session that
-        # already moved must not be reconnected again on every run
+        # idempotence: a keyed session that already moved must not be reconnected again on every run, so
+        # a repeated --cycle-all leaves it alone (a helper session is the exception: test_keyswap_refusal.py)
         sid = self.be.spawn("n", "/tmp")
         s = self._live(sid)
         s._launched_key_fp = self.be.work_key_fp()
