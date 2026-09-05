@@ -1131,6 +1131,27 @@ def _models_api_credential():
     return None
 
 
+def _credential_accepted(cred) -> bool:
+    """The Models API accepted `cred`. When that credential is the command source's own direct-call
+    key (the set's ANTHROPIC_LP_API_KEY, the first rung of _models_api_credential), this is a success
+    of the set, and the event that re-arms envsource's once-per-credential refusal path: through the
+    judges' wire (jd._ENV_OK_FN, sdk_backend.credential_auth_ok), as the set itself arrives. A
+    credential from any other rung (the environment's key, the claimed work key, a bearer) says
+    nothing about the set and re-arms nothing. Compares values inside this process only; nothing is
+    rendered. Returns whether the path was re-armed."""
+    okfn = getattr(jd, "_ENV_OK_FN", None)
+    setfn = getattr(jd, "_ENV_SET_FN", None)
+    if okfn is None or setfn is None or not cred:
+        return False
+    try:
+        lp = ((setfn() or {}).get("ANTHROPIC_LP_API_KEY") or "").strip()
+        if lp and tuple(cred) == ("x-api-key", lp):
+            return bool(okfn(""))
+    except Exception:
+        pass
+    return False
+
+
 def _fetch_models_api(cred, timeout=8):
     """Every page of GET /v1/models as [{id, display_name, created_at}] (after_id / has_more paging per
     the API reference). Raises on ANY failure — the caller owns the loudness."""
@@ -1187,6 +1208,7 @@ def _refresh_model_catalog(reason, _async=True):
                                  % (reason, _catalog_status["lastError"], _catalog_status["source"],
                                     len(_catalog_status["added"])))
                 return
+            _credential_accepted(cred)
             added = _apply_model_catalog(merge_model_catalog(_MODEL_SEED, rows), "api")
             now = int(time.time())
             _catalog_status["fetchedAt"] = now
@@ -11156,6 +11178,7 @@ def _sdk_locked():
             # key, which rides the billing decision), and the invalidation a credential refusal fires.
             jd._ENV_SET_FN = sbmod.credential_set
             jd._ENV_INVALIDATE_FN = sbmod.credential_invalidate
+            jd._ENV_OK_FN = sbmod.credential_auth_ok        # a served call re-arms that invalidation
             # T222: the live model catalog — the last fetched list installs before any picker asks,
             # then the BOOT event refreshes it (async; the key is claimable from here on)
             try:

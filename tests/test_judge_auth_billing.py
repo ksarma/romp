@@ -69,8 +69,8 @@ class _JudgeAuthBase(unittest.TestCase):
         self.addCleanup(self._restore_scrubbed)
         self._fn_before = jd._WORK_KEY_FN
         jd._WORK_KEY_FN = None
-        self._set_before = (jd._ENV_SET_FN, jd._ENV_INVALIDATE_FN)
-        jd._ENV_SET_FN = jd._ENV_INVALIDATE_FN = None
+        self._set_before = (jd._ENV_SET_FN, jd._ENV_INVALIDATE_FN, jd._ENV_OK_FN)
+        jd._ENV_SET_FN = jd._ENV_INVALIDATE_FN = jd._ENV_OK_FN = None
         jd._auth_cache[:] = [None, {}]
         jd.SDKDIR.mkdir(parents=True, exist_ok=True)
         for p in (jd.JUDGE_AUTH, jd.SDKDIR / (SID + ".json"),
@@ -86,7 +86,7 @@ class _JudgeAuthBase(unittest.TestCase):
 
     def tearDown(self):
         jd._WORK_KEY_FN = self._fn_before
-        jd._ENV_SET_FN, jd._ENV_INVALIDATE_FN = self._set_before
+        jd._ENV_SET_FN, jd._ENV_INVALIDATE_FN, jd._ENV_OK_FN = self._set_before
         jd._judge_ctx.fsid = None
         # leave NOTHING latched in the shared STATE: the suite runs every test file against one
         # XDG state home, and a leftover judge-auth.json row for the shared synthetic sid floors
@@ -245,6 +245,27 @@ class CommandSetInJudgeEnv(_JudgeAuthBase):
         finally:
             run.tearDown()
 
+    def test_a_served_call_re_arms_the_refusal_path_and_an_error_envelope_does_not(self):
+        # the other half of the wire above: a served reply is the event that makes a later refusal
+        # of the same set new information again; the call ran on the set as a whole, so no fingerprint
+        ok = []
+        run = JudgeRunLatchAndInjection("_run")
+        run.setUp()
+        try:
+            jd._ENV_OK_FN = ok.append
+            run._run({"is_error": True, "result": "Overloaded, please retry"})
+            run._run({"is_error": True, "result": NOT_LOGGED_IN})
+            self.assertEqual(ok, [], "no error envelope is a success")
+            out, _ = run._run({"result": "ok", "usage": {}, "duration_ms": 3})
+            self.assertEqual(out, "ok")
+            self.assertEqual(ok, [""], "fired once, with no fingerprint")
+            jd._ENV_OK_FN = lambda fp: (_ for _ in ()).throw(RuntimeError("boom"))
+            out, _ = run._run({"result": "still ok", "usage": {}, "duration_ms": 3})
+            self.assertEqual(out, "still ok", "a broken wire never breaks the reply path")
+            self.assertNotIn(SID, jd._auth_down_map())
+        finally:
+            run.tearDown()
+
     def test_the_codex_engine_gets_no_anthropic_name_at_all(self):
         import inspect
         src = inspect.getsource(jd._judge_run)
@@ -361,8 +382,11 @@ class KernelWiringAndFloorPins(unittest.TestCase):
         src = inspect.getsource(self.km._sdk_locked)
         self.assertIn("jd._ENV_SET_FN = sbmod.credential_set", src)
         self.assertIn("jd._ENV_INVALIDATE_FN = sbmod.credential_invalidate", src)
+        self.assertIn("jd._ENV_OK_FN = sbmod.credential_auth_ok", src, "a served call re-arms that invalidation")
         self.assertLess(src.index("jd._ENV_SET_FN = sbmod.credential_set"), src.index('_refresh_model_catalog("boot")'),
                         "the boot catalog fetch runs with the set wired: its LP key is what it rides")
+        self.assertLess(src.index("jd._ENV_OK_FN = sbmod.credential_auth_ok"), src.index('_refresh_model_catalog("boot")'),
+                        "and with the success wire, which the fetch's own success fires")
 
     def test_build_feed_floors_a_latched_session_yielding_to_the_live_floors(self):
         import inspect

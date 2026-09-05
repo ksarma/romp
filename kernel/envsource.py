@@ -19,10 +19,18 @@ terminal outside the manager tree resolves the same values):
 * `ROMP_CREDENTIAL_TIMEOUT_S` — how long one run may take (default 15; a value that is not a number
   between 0 and 300 is refused with one problem line, and the default holds).
 
-The MODE is pinned when the kernel's backend is constructed (`pin_mode`): a `service.env` edit that
-adds or removes the command line reaches the kernel at its next start (`romp refresh`), never a
-running one, so a kernel is never half in one mode. The other values (the selector file, the names,
-the timeout, the command's text) are read live. A terminal's `romp keyswap` never pins.
+The MODE is pinned when the kernel's backend is constructed (`pin_mode`): a configuration edit
+reaches the kernel at its next start, never a running one, so a kernel is never half in one mode.
+Which restart that is depends on where the kernel finds the variable. A line ADDED to `service.env`
+is read by the next kernel (`romp refresh`), since the kernel reads the file itself. A line REMOVED
+from `service.env` under the installed service is still in the manager's environment (systemd
+loaded the file into it when the manager started, and every kernel inherits that environment), so
+leaving command mode takes a manager restart (`systemctl --user restart romp-manager`, or the
+platform's equivalent); `romp refresh` restarts kernels only, and a new kernel inherits the
+variable. The same holds for the other values (the selector file, the names, the timeout, the
+command's text): they are read live, the environment first, so a service.env line the manager's
+environment already carries is shadowed by that copy until the manager restarts, while a line the
+environment does not carry is read from the file at once. A terminal's `romp keyswap` never pins.
 
 Output contract: `ANTHROPIC_API_KEY` (optional) is the work key; `ANTHROPIC_LP_API_KEY` the direct-
 call key; any other name is a role variable for the sessions' shells. Names starting with `ROMP_`
@@ -197,10 +205,12 @@ _MODE_PIN: bool | None = None      # pin_mode()'s verdict for THIS process's env
 
 def pin_mode() -> bool:
     """Decide the mode ONCE for this process, from the live configuration, and hold it: the kernel
-    calls this at backend construction, so a `service.env` edit that adds or removes the command
+    calls this at backend construction, so a configuration edit that adds or removes the command
     line cannot flip a running kernel into or out of command mode (its sessions, judges and catalog
-    would otherwise change key source mid-life, half of them on each side). A kernel restart
-    (`romp refresh`) reads the file afresh. Returns the pinned verdict."""
+    would otherwise change key source mid-life, half of them on each side). The next kernel decides
+    afresh: after `romp refresh` for a line added to `service.env`; after a manager restart for a
+    line removed from it under the installed service, whose manager environment still carries the
+    variable (see the module docstring). Returns the pinned verdict."""
     global _MODE_PIN
     _MODE_PIN = bool(command(None))
     return _MODE_PIN
@@ -397,6 +407,18 @@ class RunResult:
             return "exited %s after %.1fs, stderr %d bytes" % (self.returncode, self.duration_s, self.stderr_len)
         return ""
 
+    def reason_key(self, timeout=None) -> str:
+        """The failure's KIND, with nothing that varies from one run of the same failure to the next:
+        the exit code, or the timeout, or the start error. `reason` adds the duration and the stderr
+        byte count, which change per run, so a change-only log guard comparing it would say the same
+        failure again at every run; the guard compares this, and the per-run detail stays in the
+        record (api-health's lastRun)."""
+        if self.start_error is not None or self.timed_out:
+            return self.reason(timeout)
+        if self.returncode != 0:
+            return "exited %s" % self.returncode
+        return ""
+
 
 def _killpg(p) -> None:
     try:
@@ -410,10 +432,15 @@ def run_command(cmd: str, selector=None, timeout=None, env=None, grace=None) -> 
     session (so a wedged command's children die with it: os.killpg on the deadline). Never raises.
 
     The deadline is on the PROCESS, not on its pipes: stdout and stderr are read until EOF, or until
-    the command has exited and nothing more arrives for `grace` seconds — so a command that exits 0
+    `grace` seconds after the command has exited, whichever comes first. So a command that exits 0
     with a complete set but leaves a child holding stdout (a daemon it forked, a `sleep &` it did not
     disown) is a success, and the leftovers are killed with the group. communicate() would have
-    waited for that child's EOF and reported the run timed out."""
+    waited for that child's EOF and reported the run timed out. The grace is a fixed window, not a
+    quiet period: a leftover that keeps writing cannot hold the read open (this function runs under
+    the module lock, so an unbounded read would block every connect), and the overall deadline holds
+    in every state, so the call returns by `timeout` seconds whatever the command and its children
+    do. Past the deadline with the command still running is a timeout; past it while draining a
+    leftover after the command exited is not."""
     timeout = DEFAULT_TIMEOUT_S if timeout is None else float(timeout)
     grace = EXIT_GRACE_S if grace is None else float(grace)
     argv = ["/bin/sh", "-c", str(cmd), "sh"]
@@ -431,30 +458,25 @@ def run_command(cmd: str, selector=None, timeout=None, env=None, grace=None) -> 
     sel.register(p.stderr, selectors.EVENT_READ, err)
     deadline = t0 + timeout
     exited_at = None
-    last_data = t0
     timed_out = False
     try:
         while sel.get_map():
             now = time.monotonic()
             if exited_at is None and p.poll() is not None:
                 exited_at = now
-            if exited_at is not None:
-                if now - max(exited_at, last_data) >= grace:
-                    break                        # the command is gone; a leftover holds a pipe
-                wait = grace - (now - max(exited_at, last_data))
-            else:
-                if now >= deadline:
-                    timed_out = True
-                    break
-                wait = deadline - now
-            for key, _events in sel.select(max(0.0, min(wait, 0.05))):
+            # the moment reading stops: the deadline, and once the command has exited the END of the
+            # grace window if that comes first (a leftover holding a pipe, writing or not)
+            stop_at = deadline if exited_at is None else min(deadline, exited_at + grace)
+            if now >= stop_at:
+                timed_out = exited_at is None    # the command itself overran; a leftover being drained is not that
+                break
+            for key, _events in sel.select(max(0.0, min(stop_at - now, 0.05))):
                 try:
                     data = os.read(key.fd, 65536)
                 except OSError:
                     data = b""
                 if data:
                     key.data.extend(data)
-                    last_data = time.monotonic()
                 else:
                     sel.unregister(key.fileobj)
                     key.fileobj.close()
@@ -509,6 +531,7 @@ _helper: dict = {"gen": -1, "fp": "", "reason": "", "runs": 0}
 
 
 _auth_failed_for: tuple | None = None    # (set fp, helper fp) the last auth-failure invalidation was for
+_auth_failed_fps: frozenset = frozenset()  # the fingerprints of that credential: each value of the set, and the helper's
 
 
 def invalidate(reason: str = "") -> int:
@@ -517,9 +540,10 @@ def invalidate(reason: str = "") -> int:
     the generation moved is stale on completion and the next caller runs again. Returns the new
     generation; `reason` is for the caller's log line. An operator's invalidation (a refresh, a
     cycle, a switch) also re-arms the authentication-failure path below."""
-    global _gen, _auth_failed_for
+    global _gen, _auth_failed_for, _auth_failed_fps
     _gen += 1
     _auth_failed_for = None
+    _auth_failed_fps = frozenset()
     return _gen
 
 
@@ -528,19 +552,47 @@ def invalidate_for_auth_failure(reason: str = "") -> bool:
     invalidate ONCE per credential — keyed on the set and helper fingerprints in force. A second
     refusal while those are unchanged is not new information (the re-run handed back the same set),
     so a revoked credential cannot turn every judge call and every launch into a command run; a
-    run that yields a different set, a rotation the helper reports, or an operator's invalidate()
-    re-arms it. Returns whether the generation moved. Value-free: fingerprints only."""
-    global _gen, _auth_failed_for
+    run that yields a different set, a rotation the helper reports, an operator's invalidate(), or
+    a SUCCESS on that credential (credential_auth_ok) re-arms it. Returns whether the generation
+    moved. Value-free: fingerprints only."""
+    global _gen, _auth_failed_for, _auth_failed_fps
     key = ((_snap or {}).get("setFp") or "", _helper.get("fp") or "")
     if _auth_failed_for == key:
         return False
     _auth_failed_for = key
+    _auth_failed_fps = frozenset(fingerprint(v) for v in _values.values()) | {key[1]}
+    _auth_failed_fps -= {""}
     _gen += 1
+    return True
+
+
+def credential_auth_ok(fp: str = "") -> bool:
+    """A credential this module supplied (or the helper it fingerprints) was ACCEPTED: a session's
+    turn completed, a judge call was served, the catalog fetch succeeded. The event that re-arms the
+    once-per-credential path above: after a refusal, a re-run that handed back the same set, and then
+    a success, a later refusal is new information again (a rotation landed behind the same name
+    between the two, and the run that reveals it must happen). Without this the suppression held for
+    the life of an unchanged set, and a refusal hours later never re-ran the command. No timer.
+
+    `fp` is the fingerprint of the credential the success was on, when the caller knows it (a
+    session's launch stamp, the catalog's direct-call key): a success on a credential OTHER than the
+    one refused (a session still running on the set from before a rotation) re-arms nothing, since
+    it says nothing about the set the refusal was for. "" is a success on the current set as a whole
+    (a judge call, whose environment is the set) and re-arms unconditionally. Returns whether the
+    path was re-armed. Value-free: fingerprints only."""
+    global _auth_failed_for, _auth_failed_fps
+    if _auth_failed_for is None:
+        return False
+    if fp and fp not in _auth_failed_fps:
+        return False
+    _auth_failed_for = None
+    _auth_failed_fps = frozenset()
     return True
 
 
 def _empty_snapshot(env_cfg: bool) -> dict:
     return {"configured": env_cfg, "ok": None, "reason": "" if env_cfg else "no %s" % COMMAND_VAR,
+            "reasonKey": "" if env_cfg else "no %s" % COMMAND_VAR,
             "at": None, "exitCode": None, "durationS": None, "timedOut": False,
             "names": [], "dropped": [], "droppedAuth": [], "badLines": 0, "emptyValues": 0,
             "setFp": "", "keyFp": "", "hasKey": False, "stale": False,
@@ -574,6 +626,7 @@ def _run_locked(environ) -> None:
         # pinned command mode, and the line is gone from the configuration since the kernel started
         reason = ("%s is no longer set — this kernel keeps the mode it started in; `romp refresh` "
                   "restarts it into the configuration as it stands" % COMMAND_VAR)
+    reason_key = reason                     # the selector and configuration reasons carry nothing per-run
     if not reason:
         tmo, snap["timeoutProblem"] = _timeout_value(environ)
         r = run_command(cmd, sel, tmo)
@@ -583,7 +636,7 @@ def _run_locked(environ) -> None:
         snap["exitCode"] = r.returncode
         snap["durationS"] = round(r.duration_s, 3)
         snap["timedOut"] = r.timed_out
-        reason = r.reason(tmo)
+        reason, reason_key = r.reason(tmo), r.reason_key(tmo)
         if not reason:
             parsed = parse_set(r.stdout)
             snap["dropped"] = parsed["dropped"]
@@ -592,17 +645,19 @@ def _run_locked(environ) -> None:
             snap["emptyValues"] = parsed["empty"]
             if not parsed["values"]:
                 if not r.stdout.strip():
-                    reason = "printed nothing"
+                    reason = reason_key = "printed nothing"
                 elif parsed["bad"]:
                     reason = "printed %d line%s, none NAME=VALUE" % (parsed["bad"], "s" if parsed["bad"] != 1 else "")
+                    reason_key = "printed lines, none NAME=VALUE"        # the count is per run
                 else:
-                    reason = "printed no usable NAME=VALUE line"
+                    reason = reason_key = "printed no usable NAME=VALUE line"
             else:
                 _values = parsed["values"]
     if reason:
         _failures += 1
         snap["ok"] = False
         snap["reason"] = reason
+        snap["reasonKey"] = reason_key      # the failure's kind: what a change-only log guard compares
         snap["stale"] = bool(_values)       # the previous set stands in
     else:
         _failures = 0
@@ -709,15 +764,17 @@ def claude_config_dir(environ=None) -> str:
     return (env.get("CLAUDE_CONFIG_DIR") or "").strip() or os.path.expanduser("~/.claude")
 
 
-HELPER_SETTINGS_FILES = ("settings.json", "settings.local.json")    # the user-level pair; the local file wins
+HELPER_SETTINGS_FILES = ("settings.json",)    # the ONE user-level settings file Claude Code reads
 
 
 def helper_command(config_dir=None, environ=None) -> str:
     """The `apiKeyHelper` command Claude Code's USER settings configure ("" for none): `settings.json`
-    and `settings.local.json` under $CLAUDE_CONFIG_DIR (default ~/.claude), the local file winning
-    when both name one. Project settings (a repository's `.claude/settings*.json`) and managed
-    settings are not consulted: the kernel has no project of its own, and what it fingerprints
-    must be what every session's CLI resolves at the user level. A command string, never a key."""
+    under $CLAUDE_CONFIG_DIR (default ~/.claude). That is the only user-level settings file Claude
+    Code has: a `settings.local.json` is a PROJECT-level layer (a repository's `.claude/`), and one
+    placed beside the user file is read by nothing, so it is not consulted here either. Project
+    settings (a repository's `.claude/settings.json` and `.claude/settings.local.json`) and managed
+    settings are not consulted: the kernel has no project of its own, and what it fingerprints must
+    be what every session's CLI resolves at the user level. A command string, never a key."""
     d = config_dir or claude_config_dir(environ)
     cmd = ""
     for name in HELPER_SETTINGS_FILES:
@@ -731,22 +788,31 @@ def helper_command(config_dir=None, environ=None) -> str:
     return cmd
 
 
-def helper_fingerprint(config_dir=None, environ=None, timeout=None) -> tuple:
+def helper_fingerprint(config_dir=None, environ=None, timeout=None, values=None) -> tuple:
     """(fingerprint, reason) for the credential the configured apiKeyHelper prints right now — the
     helper is run with the same runner and its output hashed HERE; the bytes never leave this
     function. ("", reason) when no helper is configured, it fails, times out, or prints anything
     other than one printable token (the CLI's own contract for helper output). Cached until
-    invalidate(); concurrent callers coalesce.
+    invalidate(); concurrent callers coalesce. The result is stored under the generation current
+    when the run STARTED (the way _run_locked does): an invalidate() during the helper run makes
+    the result stale on completion, and the next caller runs the helper again, rather than a
+    pre-invalidation fingerprint being served as current.
 
     The helper runs in the environment a session's CLI runs it in: this process's, with the set's
     role variables merged over it (a helper that reads a role variable to pick its store must see
     it) and `ROMP_SID` absent (a kernel started from inside a session's tool shell would otherwise
     hand the helper a session identity no CLI's helper has) — so the fingerprint is of the credential
-    the sessions actually bill."""
-    with _fresh(environ):
-        overlay = {k: v for k, v in _values.items() if k != KEY_VAR}
+    the sessions actually bill. `values` is the set a caller already holds (take()'s values half):
+    a connect that took the set and then asks for the helper's fingerprint passes it, so the
+    command is not run a second time for the same connect (on a failing command, each fresh read
+    is a run); None reads the current set."""
+    if values is None:
+        with _fresh(environ):
+            values = dict(_values)
+    overlay = {k: v for k, v in values.items() if k != KEY_VAR}
     with _helper_lock:
-        if _helper["gen"] == _gen:
+        gen = _gen                           # the generation this run is FOR; an invalidate mid-run outdates it
+        if _helper["gen"] == gen:
             return _helper["fp"], _helper["reason"]
         cmd = helper_command(config_dir, environ)
         fp, reason = "", ""
@@ -769,7 +835,7 @@ def helper_fingerprint(config_dir=None, environ=None, timeout=None) -> tuple:
                     reason = "printed something that is not a printable token (%d bytes)" % len(lines[0])
                 else:
                     fp = fingerprint(lines[0].strip())
-        _helper.update({"gen": _gen, "fp": fp, "reason": reason})
+        _helper.update({"gen": gen, "fp": fp, "reason": reason})
         return fp, reason
 
 
@@ -780,10 +846,11 @@ def helper_runs() -> int:
 def _reset() -> None:
     """Tests only: forget everything, including the counters and the mode pin."""
     global _gen, _values, _snap, _snap_selector_ident, _runs, _attempts, _failures, _last_ok_at, _FILE_CFG, _MODE_PIN
-    global _auth_failed_for
+    global _auth_failed_for, _auth_failed_fps
     with _lock, _helper_lock:
         _gen += 1
         _auth_failed_for = None
+        _auth_failed_fps = frozenset()
         _values = {}
         _snap = None
         _snap_selector_ident = ()

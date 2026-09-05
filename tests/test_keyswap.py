@@ -1822,26 +1822,39 @@ class CommandSourceFailure(_CommandMode):
         self.assertEqual(env["A_TOKEN"], self.values["A_TOKEN"], "the previous set stands; a failing command's stdout is never trusted")
         lines = [t for t in self.problems() if t.startswith("credential command: failed")]
         self.assertEqual(len(lines), 1, self.problems())
-        self.assertIn("exited 3 after", lines[0])
-        self.assertIn("stderr %d bytes" % (len(w) + 1), lines[0])
+        self.assertIn("failed — exited 3.", lines[0])
+        self.assertNotIn(" after ", lines[0], "the run's timing is not in the log line")
+        self.assertNotIn("stderr", lines[0], "nor its stderr count: both differ per run of the same failure")
         self.assertIn("last successful run (sha256:%s)" % es.set_fingerprint(self.values), lines[0])
         self.assertNotIn(w, lines[0])
         last = self.be.api_health_snapshot()["keySource"]["lastRun"]
         self.assertEqual(last["ok"], False)
+        self.assertTrue(last["reason"].startswith("exited 3 after "), last["reason"])
+        self.assertIn("stderr %d bytes" % (len(w) + 1), last["reason"])
+        self.assertNotIn(w, last["reason"])
         self.assertTrue(last["stale"], "api-health says the previous set stands in")
         self.assertGreaterEqual(last["failures"], 1)
         self.assertIsNotNone(last["lastOkAt"], "…and when the set last came from a good run")
         self.assertEqual(last["exitCode"], 3)
+        # the same failure again, with another stderr length and its own duration: one line still
+        self.fail_command("echo '%s%s' >&2\nsleep 0.15\nexit 3" % (w, w))
         self.be.refresh_key_source()
         self._env_for(3, "login")
         self.assertEqual(len([t for t in self.problems() if t.startswith("credential command: failed")]), 1,
-                         "the same reason again is not new information")
+                         "the same kind of failure again is not new information, whatever its timing")
+        last2 = self.be.api_health_snapshot()["keySource"]["lastRun"]
+        self.assertNotEqual(last2["reason"], last["reason"], "the per-run detail still moves in api-health")
+        self.assertIn("stderr %d bytes" % (2 * len(w) + 1), last2["reason"])
+        self.fail_command("exit 4")
+        self.be.refresh_key_source()
+        self.assertEqual(len([t for t in self.problems() if t.startswith("credential command: failed")]), 2,
+                         "another exit code is another kind")
         self.fail_command("sleep 30")
         os.environ["ROMP_CREDENTIAL_TIMEOUT_S"] = "0.5"
         self.be.refresh_key_source()
         lines = [t for t in self.problems() if t.startswith("credential command: failed")]
-        self.assertEqual(len(lines), 2, "a new reason is a new line")
-        self.assertIn("timed out after 0.5s", lines[1])
+        self.assertEqual(len(lines), 3, "a new kind of failure is a new line")
+        self.assertIn("timed out after 0.5s", lines[2])
         st = self.be.key_source_status()
         self.assertIn("timed out", st["err"])
         self.print_set(self.values)
@@ -1899,6 +1912,82 @@ class CommandSourceFailure(_CommandMode):
         self.be._credential_auth_failed(s, "HTTP 401 on a turn")
         self._env_for(3, "login")
         self.assertEqual(es._runs, runs + 3, "after a refresh the next refusal fires once more")
+
+    def _result(self, status):
+        from types import SimpleNamespace
+        return SimpleNamespace(is_error=status is not None, api_error_status=status, parent_tool_use_id=None)
+
+    def test_a_completed_turn_on_the_refused_credential_re_arms_the_refusal_path(self):
+        # 401, run, same set, a completed turn on that credential, a later 401: the later refusal
+        # re-runs the command. Keyed on the launch stamp: a completed turn on a session launched with
+        # another credential, or with none (the login), re-arms nothing.
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        s = self._sess(1, auth="key")
+        self.be._options(s, dict)
+        self.assertEqual(s._launched_key_fp, es.fingerprint(k))
+        runs = es._runs
+        s._ah_note_result(self._result(401))
+        self._env_for(2, "key")
+        self.assertEqual(es._runs, runs + 1, "the first refusal re-runs")
+        s._ah_note_result(self._result(401))
+        self._env_for(3, "key")
+        self.assertEqual(es._runs, runs + 1, "the same set again: suppressed")
+        login = self._sess(4, auth="login")
+        self.be._options(login, dict)
+        self.assertEqual(login._launched_key_fp, "", "no key injected, no helper: nothing stamped")
+        login._ah_note_result(self._result(None))
+        s._ah_note_result(self._result(500))                  # an error result is not a success
+        s._ah_note_result(self._result(401))
+        self._env_for(5, "key")
+        self.assertEqual(es._runs, runs + 1, "a login session's turn and an error result say nothing")
+        old = self._sess(6, auth="key")
+        self.be._options(old, dict)
+        old._launched_key_fp = es.fingerprint(fixture_value("pre-rotation"))
+        old._ah_note_result(self._result(None))
+        s._ah_note_result(self._result(401))
+        self._env_for(7, "key")
+        self.assertEqual(es._runs, runs + 1, "a turn on a credential other than the refused one says nothing")
+        self.assertFalse(any("completed a turn on the credential last refused" in m for m in self.logged))
+        s._ah_note_result(self._result(None))                 # the refused credential completed a turn
+        self.assertTrue(any("completed a turn on the credential last refused (sha256:%s)" % es.fingerprint(k) in m
+                            for m in self.logged), self.logged)
+        s._ah_note_result(self._result(401))
+        self._env_for(8, "key")
+        self.assertEqual(es._runs, runs + 2, "the later refusal is new information: the command runs again")
+        # the judges' wire re-arms the same path: a served call ran on the set as a whole
+        s._ah_note_result(self._result(401))
+        self._env_for(9, "key")
+        self.assertEqual(es._runs, runs + 2)
+        self.assertTrue(sb.credential_auth_ok(""))
+        s._ah_note_result(self._result(401))
+        self._env_for(10, "key")
+        self.assertEqual(es._runs, runs + 3)
+        self.assertFalse(any(k in m for m in self.logged), "no line carries the key")
+
+    def test_a_connect_on_a_failing_command_runs_it_once_not_twice(self):
+        # a non-keyed connect takes the set (one run: a failed run is re-run per caller) and stamps the
+        # helper's fingerprint from the set it took, so the helper's own read is not a second run
+        h = fixture_value("helper")
+        d = os.environ["CLAUDE_CONFIG_DIR"]
+        os.makedirs(d, exist_ok=True)
+        helper = os.path.join(self.lab, "helper.sh")
+        with open(helper, "w") as fh:
+            fh.write("#!/bin/sh\necho '%s'\n" % h)
+        os.chmod(helper, 0o700)
+        with open(os.path.join(d, "settings.json"), "w") as fh:
+            json.dump({"apiKeyHelper": helper}, fh)
+        self.fail_command("exit 3")
+        self.be.refresh_key_source()
+        runs, hruns = es._runs, es.helper_runs()
+        s = self._sess(1, auth="login")
+        self.be._options(s, dict)
+        self.assertEqual(es._runs, runs + 1, "one run per connect on a failing command, not two")
+        self.assertEqual(es.helper_runs(), hruns, "the helper's fingerprint was cached from the refresh")
+        self.assertEqual(s._launched_key_fp, es.fingerprint(h))
+        self.assertEqual(s._launched_set_fp, es.set_fingerprint(self.values), "the previous set stands in")
 
     def test_no_key_and_no_helper_is_the_login_not_an_error(self):
         # the set carries role variables only and no apiKeyHelper is configured: the machine login

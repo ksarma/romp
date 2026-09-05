@@ -977,6 +977,8 @@ _ENV_SET_FN = None    # the kernel wires this to sdk_backend.credential_set: the
                       # standalone: nothing merged, byte for byte the environment as before
 _ENV_INVALIDATE_FN = None   # …and to sdk_backend.credential_invalidate: a credential-class refusal on
                             # a judge call is the event that makes the cached set stale
+_ENV_OK_FN = None           # …and to sdk_backend.credential_auth_ok: a served call is the event that
+                            # re-arms the once-per-credential refusal path for the set it ran on
 
 
 def _env_set():
@@ -995,6 +997,18 @@ def _env_invalidate(reason):
         return
     try:
         _ENV_INVALIDATE_FN(reason)
+    except Exception:
+        pass
+
+
+def _env_auth_ok():
+    """A judge call was served: the set its environment carried (or the helper the CLI ran) was
+    accepted. Passes no fingerprint: the call ran on the current set as a whole. A broken wire never
+    breaks the reply path."""
+    if _ENV_OK_FN is None:
+        return
+    try:
+        _ENV_OK_FN("")
     except Exception:
         pass
 
@@ -1592,6 +1606,8 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
                 _judge_ctx.last["reply"] = _mid_elide(wrap["result"])
                 _log_judge_usage(judge or tier, tier, model, fsid, wrap, sent, recv)
                 _auth_down_clear(fsid)                # billing works → unlatch (cheap no-op when unlatched)
+                _env_auth_ok()                        # …and the command source's set was accepted: a later
+                #                                       refusal of it is new information again
                 if auth == "login":
                     # only a LOGIN-billed success is evidence the login window reset early — a
                     # key-billed success says nothing about it (the user 2026-08-28; before this,

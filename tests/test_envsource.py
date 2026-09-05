@@ -21,10 +21,11 @@ What these pin, in the order the module is used:
     count, an undeclared name is refused before anything runs, a name is rendered only when it is
     declared (else by length), the write is atomic, 0600 and through a symlink.
   ModePin — pin_mode() holds the mode for the process's own environment; explicit environs stay live.
-  HelperFingerprint — the configured apiKeyHelper (settings.json, settings.local.json winning) is
-    run with the same runner, in a session CLI's environment (role variables merged, ROMP_SID
-    absent), and hashed inside the function; the bytes never leave it; one token expected; cached
-    until invalidate().
+  HelperFingerprint — the configured apiKeyHelper (the user settings.json alone; a settings.local.json
+    is a project-level file and is not read) is run with the same runner, in a session CLI's
+    environment (role variables merged, ROMP_SID absent), and hashed inside the function; the bytes
+    never leave it; one token expected; cached until invalidate(), under the generation the run
+    started in; a caller that already holds the set hands it in so the command is not run twice.
   NothingLeaks — no fixture value in any status field or reason, whatever the command does with it.
 
 Synthetic throughout: every value is "romp-test-fixture-" + a uuid, assembled at run time (no
@@ -313,6 +314,60 @@ class Runner(_Lab):
         self.assertFalse(r.ok)
         self.assertFalse(r.timed_out)
         self.assertTrue(r.reason(5).startswith("exited 4 after "), r.reason(5))
+
+    def test_a_leftover_that_never_stops_writing_cannot_hold_the_read_open(self):
+        # the command exits 0 and leaves a child that writes to stdout without pause: the grace is a
+        # window after the exit, not a quiet period, so the read ends when the window does and the
+        # writer dies with the group. Before this the loop waited for `grace` seconds of silence,
+        # which never came, under the module lock, so every connect behind it blocked for as long
+        # as the writer lived.
+        v = fixture_value()
+        pgfile = os.path.join(self.d, "pgid")
+        s = self.script("ps -o pgid= -p $$ | tr -d ' ' > %s\n(while :; do echo 'B_TOKEN=%s'; done) &\n"
+                        "echo 'A_TOKEN=%s'\nexit 0" % (pgfile, v, v))
+        t0 = time.monotonic()
+        r = es.run_command(s, "hp", 5)
+        self.assertLess(time.monotonic() - t0, 2, "the read ended with the grace window, not at the deadline or never")
+        self.assertTrue(r.ok, r.reason(5))
+        self.assertFalse(r.timed_out)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(es.parse_set(r.stdout)["values"]["A_TOKEN"], v)
+        self.assertTrue(self._wait_group_gone(pgfile), "the writer dies with the group")
+
+    def test_the_deadline_holds_while_a_leftover_is_drained_and_is_not_a_timeout_then(self):
+        # the grace window is longer than what is left of the deadline: reading stops at the
+        # deadline. The command itself had exited, so that is not a timeout; the run is its exit code
+        v = fixture_value()
+        s = self.script("(while :; do echo 'B_TOKEN=%s'; done) &\necho 'A_TOKEN=%s'\nexit 0" % (v, v))
+        t0 = time.monotonic()
+        r = es.run_command(s, "hp", 0.4, grace=30)
+        self.assertLess(time.monotonic() - t0, 2, "the deadline held in the drained state too")
+        self.assertTrue(r.ok, r.reason(0.4))
+        self.assertFalse(r.timed_out, "the command had exited; only a command still running at the deadline times out")
+        self.assertEqual(es.parse_set(r.stdout)["values"]["A_TOKEN"], v)
+        # the command itself still running at the deadline, with the same writer behind it: a timeout
+        s = self.script("(while :; do echo 'B_TOKEN=%s'; done) &\nsleep 30" % v)
+        t0 = time.monotonic()
+        r = es.run_command(s, "hp", 0.4)
+        self.assertLess(time.monotonic() - t0, 3)
+        self.assertTrue(r.timed_out)
+        self.assertEqual(r.reason(0.4), "timed out after 0.4s (killed with its process group)")
+
+    def test_the_reason_key_is_the_failures_kind_with_nothing_per_run(self):
+        # `reason` carries the run's duration and stderr byte count; `reason_key` does not, so two
+        # runs of the same failure compare equal to a change-only guard
+        v = fixture_value("stderr")
+        a = es.run_command(self.script("echo '%s' >&2\nexit 3" % v), "hp", 5)
+        b = es.run_command(self.script("echo '%s%s' >&2\nsleep 0.15\nexit 3" % (v, v)), "hp", 5)
+        self.assertNotEqual(a.reason(5), b.reason(5), "the stderr counts differ")
+        self.assertEqual(a.reason_key(5), "exited 3")
+        self.assertEqual(b.reason_key(5), "exited 3")
+        t = es.run_command(self.script("sleep 30"), "hp", 0.3)
+        self.assertEqual(t.reason_key(0.3), t.reason(0.3), "a timeout names the configured deadline, nothing per run")
+        self.assertEqual(es.run_command(self.script("true"), "hp", 5).reason_key(5), "")
+        r = es.RunResult(None, b"", 0, 0.01, start_error=OSError(2, "no such file"))
+        self.assertEqual(r.reason_key(5), r.reason(5))
+        self.assertEqual(r.reason_key(5), "could not start (errno 2)")
 
 
 class Parser(_Lab):
@@ -613,6 +668,90 @@ class CacheAndCoalescing(_Lab):
         es.helper_fingerprint()                              # the invalidation above made this a fresh run: b
         self.assertTrue(es.invalidate_for_auth_failure("401"), "the helper now prints another credential")
 
+    def test_a_success_on_the_refused_credential_re_arms_the_authentication_failure_path(self):
+        # 401, run, same set, a later success, a later 401: the second refusal is new information
+        # again (a rotation may have landed behind the same name between the two), so it re-runs.
+        # Without the success the suppression held for the life of an unchanged set, and a refusal
+        # hours later never re-ran the command. Keyed on the credential: a success on another
+        # fingerprint (a session still on the set from before a rotation) re-arms nothing.
+        k, role = fixture_value("key"), fixture_value("role")
+        self.configure(self.printing({"ANTHROPIC_API_KEY": k, "A_TOKEN": role}))
+        es.injection()
+        self.assertFalse(es.credential_auth_ok(es.fingerprint(k)), "nothing to re-arm before a refusal")
+        self.assertTrue(es.invalidate_for_auth_failure("401"))
+        es.injection()
+        self.assertEqual(es._runs, 2)
+        self.assertFalse(es.invalidate_for_auth_failure("401 again"), "the same set: suppressed")
+        self.assertFalse(es.credential_auth_ok(es.fingerprint(fixture_value("other"))),
+                         "a success on another credential says nothing about this set")
+        self.assertFalse(es.invalidate_for_auth_failure("401 again"), "still suppressed")
+        self.assertTrue(es.credential_auth_ok(es.fingerprint(k)), "a success on the refused key re-arms")
+        self.assertFalse(es.credential_auth_ok(es.fingerprint(k)), "and there is nothing to re-arm twice")
+        self.assertTrue(es.invalidate_for_auth_failure("401 later"), "so the later refusal fires")
+        es.injection()
+        self.assertEqual(es._runs, 3, "and the command runs again")
+        # a success on the set as a whole (a judge call, whose environment is the set) re-arms too,
+        # and so does one on any value of the set (a role variable's fingerprint)
+        self.assertFalse(es.invalidate_for_auth_failure("401"))
+        self.assertTrue(es.credential_auth_ok())
+        self.assertTrue(es.invalidate_for_auth_failure("401"))
+        es.injection()
+        self.assertEqual(es._runs, 4)
+        self.assertFalse(es.invalidate_for_auth_failure("401"))
+        self.assertTrue(es.credential_auth_ok(es.fingerprint(role)))
+        self.assertTrue(es.invalidate_for_auth_failure("401"))
+        es.injection()
+        self.assertEqual(es._runs, 5)
+        self.assertNotIn(k, str(es.current()))
+
+    def test_a_success_through_the_helper_re_arms_the_path_the_helper_is_part_of(self):
+        h = fixture_value("helper")
+        self.configure(self.printing({"A_TOKEN": fixture_value()}))
+        self.helper("echo '%s'" % h)
+        es.current()
+        es.helper_fingerprint()
+        self.assertTrue(es.invalidate_for_auth_failure("401"))
+        es.helper_fingerprint()
+        self.assertFalse(es.invalidate_for_auth_failure("401"))
+        self.assertTrue(es.credential_auth_ok(es.fingerprint(h)), "the helper's credential is the one the refusal was for")
+        self.assertTrue(es.invalidate_for_auth_failure("401"))
+
+    def test_the_record_carries_the_failures_kind_beside_the_full_reason(self):
+        # reason: the run's detail (duration, stderr bytes), for api-health's lastRun and the reports;
+        # reasonKey: the kind alone, for a change-only log guard
+        v = fixture_value("stderr")
+        self.configure(self.script("echo '%s' >&2\nexit 3" % v))
+        snap = es.current()
+        self.assertTrue(snap["reason"].startswith("exited 3 after "), snap["reason"])
+        self.assertIn("stderr %d bytes" % (len(v) + 1), snap["reason"])
+        self.assertEqual(snap["reasonKey"], "exited 3")
+        for body, key in (("true", "printed nothing"),
+                          ("echo 'a bare value line'\necho 'and another'", "printed lines, none NAME=VALUE"),
+                          ("echo '# only a comment'", "printed no usable NAME=VALUE line")):
+            es._reset()
+            self.configure(self.script(body))
+            snap = es.current()
+            self.assertEqual(snap["reasonKey"], key, body)
+            self.assertTrue(snap["reason"].startswith("printed "), (body, snap["reason"]))
+        es._reset()
+        self.configure(self.script("sleep 30"), timeout=0.5)
+        snap = es.current()
+        self.assertEqual(snap["reasonKey"], snap["reason"])
+        es._reset()
+        self.select("zz")
+        self.configure(self.script("true"), names="hp,lp")
+        snap = es.current()
+        self.assertEqual(snap["reasonKey"], snap["reason"], "a selector reason carries nothing per run")
+        self.assertIn("outside", snap["reason"])
+        es._reset()
+        os.unlink(os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"])
+        os.environ.pop("ROMP_CREDENTIAL_NAMES")
+        self.configure(self.printing({"A_TOKEN": fixture_value()}))
+        snap = es.current()
+        self.assertTrue(snap["ok"])
+        self.assertEqual((snap["reason"], snap["reasonKey"]), ("", ""))
+        self.assertNotIn(v, json.dumps(snap))
+
     def test_a_first_failure_is_an_empty_set_with_a_reason(self):
         for body, reason in (("exit 5", "exited 5 after "),
                              ("true", "printed nothing"),
@@ -885,24 +1024,69 @@ class HelperFingerprint(_Lab):
         self.assertEqual(fp, "")
         self.assertIn("timed out after 0.5s", reason)
 
-    def test_settings_local_json_wins_over_settings_json(self):
+    def test_a_settings_local_json_beside_the_user_file_is_not_read(self):
+        # Claude Code has no user-level local settings file: settings.local.json is a PROJECT layer
+        # (a repository's .claude/), and one placed under CLAUDE_CONFIG_DIR is read by nothing, so a
+        # fingerprint taken from it would be of a credential no session bills
         a, b = fixture_value("a"), fixture_value("b")
         d = os.environ["CLAUDE_CONFIG_DIR"]
         self.helper("echo '%s'" % a)
         local = self.script("echo '%s'" % b, "local-helper.sh")
         with open(os.path.join(d, "settings.local.json"), "w") as fh:
             json.dump({"apiKeyHelper": local}, fh)
-        self.assertEqual(es.helper_command(), local, "the local file wins")
-        self.assertEqual(es.helper_fingerprint()[0], es.fingerprint(b))
-        with open(os.path.join(d, "settings.local.json"), "w") as fh:
-            json.dump({"apiKeyHelper": ""}, fh)
-        self.assertEqual(es.helper_command(), es.helper_command(d), "an empty local entry leaves settings.json's")
-        self.assertTrue(es.helper_command().endswith("helper.sh"))
+        self.assertTrue(es.helper_command().endswith("helper.sh"), "the user settings.json alone")
+        self.assertEqual(es.helper_fingerprint()[0], es.fingerprint(a))
         os.unlink(os.path.join(d, "settings.json"))
-        with open(os.path.join(d, "settings.local.json"), "w") as fh:
-            json.dump({"apiKeyHelper": local}, fh)
-        self.assertEqual(es.helper_command(), local, "the local file alone is enough")
-        self.assertEqual(es.HELPER_SETTINGS_FILES, ("settings.json", "settings.local.json"))
+        self.assertEqual(es.helper_command(), "", "a local file alone is no helper")
+        es.invalidate()
+        fp, reason = es.helper_fingerprint()
+        self.assertEqual(fp, "")
+        self.assertEqual(reason, "no apiKeyHelper in %s" % os.path.join(d, "settings.json"))
+        self.assertEqual(es.HELPER_SETTINGS_FILES, ("settings.json",))
+
+    def test_an_invalidation_during_the_helper_run_makes_the_next_caller_run_again(self):
+        # the result is stored under the generation the run STARTED in: an invalidate() while the
+        # helper runs (a refresh, a switch, a refusal) leaves that result stale, and the next caller
+        # runs the helper again. Before this it was stored under the generation at completion, so a
+        # pre-invalidation fingerprint was served as current.
+        v = fixture_value("helper")
+        self.helper("sleep 0.4\necho '%s'" % v)
+        seen = {}
+
+        def read():
+            seen["fp"] = es.helper_fingerprint()
+
+        t = threading.Thread(target=read)
+        t.start()
+        time.sleep(0.15)                 # the helper is running
+        es.invalidate("mid-run")
+        t.join(10)
+        self.assertEqual(seen["fp"], (es.fingerprint(v), ""), "the caller under way takes its own run's result")
+        self.assertEqual(es.helper_runs(), 1)
+        self.assertNotEqual(es._helper["gen"], es._gen, "stored under the generation the run started in: stale")
+        self.assertEqual(es.helper_fingerprint(), (es.fingerprint(v), ""))
+        self.assertEqual(es.helper_runs(), 2, "the next caller runs the helper again; invalidate never waited")
+
+    def test_a_caller_that_took_the_set_hands_it_in_so_a_failing_command_is_not_run_twice(self):
+        # a connect takes the set (one run: a failed run is re-run per caller) and then asks for the
+        # helper's fingerprint; with the set handed in, the fingerprint's own read is not a second run
+        h, role = fixture_value("helper"), fixture_value("role")
+        self.helper('echo "%s-${A_TOKEN:-none}"' % h)
+        self.configure(self.script("exit 3"))
+        snap, vals = es.take()
+        self.assertFalse(snap["ok"])
+        self.assertEqual((vals, es._runs), ({}, 1))
+        fp, reason = es.helper_fingerprint(values=vals)
+        self.assertEqual((fp, reason), (es.fingerprint(h + "-none"), ""))
+        self.assertEqual(es._runs, 1, "the set handed in is used; the command did not run again")
+        self.assertEqual(es.helper_runs(), 1)
+        es.invalidate()
+        es.helper_fingerprint()
+        self.assertEqual(es._runs, 2, "with no set handed in the fingerprint reads, and on a failing command runs, itself")
+        es.invalidate()
+        fp, _reason = es.helper_fingerprint(values={"A_TOKEN": role, "ANTHROPIC_API_KEY": fixture_value("key")})
+        self.assertEqual(fp, es.fingerprint("%s-%s" % (h, role)), "the helper's environment is built from the set handed in, minus the key")
+        self.assertEqual(es._runs, 2)
 
     def test_the_helper_runs_in_a_session_clis_environment_role_variables_merged_romp_sid_absent(self):
         # a helper that picks its store by a role variable, and one that would see a session identity

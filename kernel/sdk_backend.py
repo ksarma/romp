@@ -2866,6 +2866,19 @@ def credential_invalidate(reason: str = "") -> bool:
     return False
 
 
+def credential_auth_ok(fp: str = "") -> bool:
+    """A credential from the set (or the helper envsource fingerprints) was ACCEPTED somewhere a
+    refusal would have fired credential_invalidate: a judge call served (kernel/judge.py, wired as
+    jd._ENV_OK_FN), the catalog fetch on the set's direct-call key, a session's completed turn. The
+    event that re-arms the once-per-credential path (envsource.credential_auth_ok): 401, run, same
+    set, later success, later 401 re-runs the command, where before the second 401 was suppressed for
+    as long as the set stayed the same. `fp` is the credential's fingerprint when the caller knows
+    it, "" for the current set as a whole. Returns whether it re-armed. A no-op in file mode."""
+    if _envsrc.configured():
+        return _envsrc.credential_auth_ok(fp)
+    return False
+
+
 def _check_key_file_agrees(startup: str, live: str) -> None:
     """Say ONCE, on stderr (the kernel's log wire), whether the file this process reads holds the
     same key its environment was started with. Both sides are fingerprints, never values.
@@ -4808,22 +4821,28 @@ class SdkSession:
         self._ah_gaveup = None
         turn = getattr(self, "_ah_turn", 0)
         self._ah_turn = turn + 1
-        ah = getattr(self.backend, "api_health", None)
-        if ah is None or getattr(msg, "parent_tool_use_id", None):
-            return
+        sidechain = bool(getattr(msg, "parent_tool_use_id", None))
         is_error = bool(getattr(msg, "is_error", False))
         status = getattr(msg, "api_error_status", None) if is_error else None
         status = status if isinstance(status, int) and not isinstance(status, bool) else None
-        if status == 401:
-            # the credential this turn used was refused: the exact event that makes the command
-            # source's cached set stale (a rotation landed behind the command) — re-read at the next
-            # launch; nothing here retries the turn (that is the user's call, as before)
+        if not sidechain:
+            # The command source's two events, on the parent stream only. A 401: the credential this
+            # turn used was refused, the exact event that makes the cached set stale (a rotation landed
+            # behind the command); the set is re-read at the next launch, and nothing here retries the
+            # turn (that is the user's call, as before). A completed turn: the credential this CLI
+            # launched on was accepted, the event that re-arms the once-per-credential refusal path.
             try:
-                self.backend._credential_auth_failed(self, "HTTP 401 on a turn")
+                if status == 401:
+                    self.backend._credential_auth_failed(self, "HTTP 401 on a turn")
+                elif not is_error:
+                    self.backend._credential_auth_ok(self)
             except Exception as e:
                 _lg = getattr(self.backend, "_log", None)
                 if _lg:
-                    _lg("credential command: invalidation failed (%s): %s" % (self.name, e))
+                    _lg("credential command: the turn's credential event failed (%s): %s" % (self.name, e))
+        ah = getattr(self.backend, "api_health", None)
+        if ah is None or sidechain:
+            return
         if pend is None and status is None:
             return
         try:
@@ -6295,10 +6314,12 @@ class SdkBackend:
         self._problems: list[dict] = []
         self._problem_seq = 0
         self._problem_lock = threading.Lock()
-        # The MODE is pinned here, once per backend (envsource.pin_mode): a service.env edit that adds
-        # or removes ROMP_CREDENTIAL_COMMAND reaches the kernel at its next start (`romp refresh`),
-        # never a running one, so sessions, judges and the catalog never straddle two key sources.
-        # The other ROMP_CREDENTIAL_* values stay live-readable.
+        # The MODE is pinned here, once per backend (envsource.pin_mode): an edit that adds or removes
+        # ROMP_CREDENTIAL_COMMAND reaches the NEXT kernel, never a running one, so sessions, judges and
+        # the catalog never straddle two key sources. A line added to service.env is read by the next
+        # kernel (`romp refresh`); a line removed from it under the installed service is still in the
+        # manager's environment, which every kernel inherits, so leaving the mode takes a manager
+        # restart (envsource's module docstring). The other ROMP_CREDENTIAL_* values stay live-readable.
         command_mode = _envsrc.pin_mode()
         # A credential in the env file under a declared auth is a contradiction of the box's design;
         # said once, here, where the problem ring exists to carry it (the user 2026-09-05). In command
@@ -6483,10 +6504,14 @@ class SdkBackend:
     def _note_credential_set(self, snap: dict) -> None:
         """Log what the command source is handing launches, change-only, from its value-free record:
         the set's fingerprint and names when they change; ONE problem line per failure episode (a
-        new reason is new information; the same reason again is not), and the recovery; the ROMP_*
-        names it dropped, once per distinct list. Never a value."""
+        new KIND of failure is new information; the same kind again is not), and the recovery; the
+        ROMP_* names it dropped, once per distinct list. Never a value. The episode is keyed on the
+        record's `reasonKey`, the failure's kind (the exit code, a timeout, what the output lacked):
+        the full `reason` carries the run's duration and stderr byte count, which differ at every run
+        of the same failure, so a guard on it said the same failure again per run. That per-run
+        detail stays in the record, which api-health's lastRun reports."""
         if snap.get("ok") is False:
-            reason = snap.get("reason") or "no reason recorded"
+            reason = snap.get("reasonKey") or snap.get("reason") or "no reason recorded"
             if reason != self._cred_err_said:
                 self._cred_err_said = reason
                 self._log("credential command: failed — %s. %s" % (
@@ -6610,6 +6635,20 @@ class SdkBackend:
         if _envsrc.invalidate_for_auth_failure("auth failure: " + what):
             self._log("credential command: %s reported an authentication failure (%s) — the set is re-read at the "
                       "next launch" % (getattr(sess, "name", "?"), what))
+
+    def _credential_auth_ok(self, sess) -> None:
+        """A turn on `sess` completed (a ResultMessage that is not an error): the credential its CLI
+        launched on was accepted. The event that re-arms the once-per-credential path
+        (envsource.credential_auth_ok), keyed on the session's launch stamp: a session still running
+        on the credential from before a rotation re-arms nothing, since its success says nothing
+        about the set a refusal was reported for. A session with no fingerprinted credential (the
+        login) has nothing to report. Logged when it re-arms; a no-op in file mode."""
+        if not _envsrc.configured():
+            return
+        fp = getattr(sess, "_launched_key_fp", None) or ""
+        if fp and _envsrc.credential_auth_ok(fp):
+            self._log("credential command: %s completed a turn on the credential last refused (sha256:%s); a later "
+                      "refusal re-runs the command again" % (getattr(sess, "name", "?"), fp))
 
     def cycle_key(self, sid: str) -> str:
         """Re-present the CURRENT credential set to one LIVE session by reconnecting it — the apply half
@@ -7920,7 +7959,9 @@ class SdkBackend:
         if launch_keyed:
             sess._launched_key_fp = _keysrc.fingerprint(work_key)
         elif _envsrc.configured():
-            sess._launched_key_fp = _envsrc.helper_fingerprint()[0]
+            # the set this connect already took rides along: the helper's environment is built from it
+            # rather than from a second read, which on a failing command would be a second run
+            sess._launched_key_fp = _envsrc.helper_fingerprint(values=cred[1] if cred is not None else None)[0]
         else:
             sess._launched_key_fp = ""
         sess._launched_set_fp = _envsrc.set_fingerprint(role_vars)

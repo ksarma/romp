@@ -385,6 +385,8 @@ class CredentialPolicy(unittest.TestCase):
         jd._WORK_KEY_FN = None
         self._setfn = getattr(jd, "_ENV_SET_FN", None)
         jd._ENV_SET_FN = None
+        self._okfn = getattr(jd, "_ENV_OK_FN", None)
+        jd._ENV_OK_FN = None
         self._stash = sb._WORK_KEY       # the claimer's process-lifetime stash: unclaimed, so a claim happens HERE
         sb._WORK_KEY = None
 
@@ -392,7 +394,33 @@ class CredentialPolicy(unittest.TestCase):
         sb._WORK_KEY = self._stash
         jd._WORK_KEY_FN = self._fn
         jd._ENV_SET_FN = self._setfn
+        jd._ENV_OK_FN = self._okfn
         _restore_env(self._env)
+
+    def test_a_fetch_on_the_sets_lp_key_reports_the_set_accepted_and_nothing_else_does(self):
+        # the Models API accepted the credential: when it is the set's own direct-call key, that is a
+        # success of the set, and it re-arms envsource's once-per-credential refusal path through the
+        # judges' wire (no fingerprint: the set as a whole); any other rung says nothing about the set
+        ok = []
+        jd._ENV_OK_FN = lambda fp: ok.append(fp) or True      # the real wire answers whether it re-armed
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": " synthetic-set-lp-credential ", "A_TOKEN": "x"}
+        self.assertTrue(km._credential_accepted(km._models_api_credential()))
+        self.assertEqual(ok, [""])
+        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-env-lp-credential")), "the environment's key")
+        self.assertFalse(km._credential_accepted(("Authorization", "Bearer synthetic-bearer-credential")), "a bearer")
+        self.assertFalse(km._credential_accepted(None))
+        self.assertEqual(ok, [""])
+        jd._ENV_SET_FN = lambda: {"A_TOKEN": "x"}
+        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-set-lp-credential")), "the set carries no LP key now")
+        jd._ENV_SET_FN = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-set-lp-credential")), "a broken wire re-arms nothing")
+        jd._ENV_OK_FN = None
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": "synthetic-set-lp-credential"}
+        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-set-lp-credential")), "unwired: file mode")
+        self.assertEqual(ok, [""])
+        src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
+        self.assertIn("            _credential_accepted(cred)\n            added = _apply_model_catalog(", src,
+                      "fired on the fetch's success path, before the catalog is applied")
 
     def test_the_command_sets_lp_key_comes_first(self):
         # the command source (kernel/envsource.py, 2026-09-05): its ANTHROPIC_LP_API_KEY line is the
