@@ -11,7 +11,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ackOutcome, adoptViews, applyTagEdit, createInFlight, mintWriteId, rederivePending, seqOf, type InflightWrite } from "./views-writes";
+import { ackOutcome, adoptViews, applyTagEdit, createInFlight, mintWriteId, rederivePending, seqOf, lensBlob, applyLensFields, type InflightWrite } from "./views-writes";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const S1 = { active: "all", at: 113, tags: [{ id: "g1", name: "qa", color: "#DD42FF", members: ["tests"], mtime: 113 }] };
@@ -172,4 +172,54 @@ test("pins: the Tags flyout's local edits are targeted ops on ONE optimistic blo
   assert.match(fly, /if \(e2\.key !== "Enter"\) return;\s*\n\s*if \(createInFlight\(viewsWrites\)\) return;/, "one create at a time: Enter is ignored while one is in flight");
   assert.match(fly, /nrow\.appendChild\(inp\);\s*\n\s*tagsFlyNewInput = inp; syncNewTagInput\(\);/, "the input renders disabled when a create is already in flight");
   assert.doesNotMatch(fly, /postViews\(/, "no whole-blob write anywhere in the flyout's tag edits");
+});
+
+// ── ROUND 4 of the 2026-09-05 review: a lens or order write is built from the STORE's blob, never the
+// pending copy. Built from the pending copy, the whole-blob write carried every targeted edit still in
+// flight as this page's claim on those tags, and a rename the kernel had refused as a duplicate landed
+// through the next lens toggle (two tags, one name). The copy the page SHOWS still includes the in-flight
+// edits: the write's record keeps its fields, and a re-derivation re-applies exactly them.
+test("executed: a lens or order write posts the store's blob plus its fields, shows the current copy plus the same fields, and a refused edit in flight reverts alone", () => {
+  const base: any = { active: "all", actives: { chat: { all: true }, timeline: { all: true }, outline: { all: true } }, at: 100, seq: 5,
+                      tags: [{ id: "gA", name: "web", color: "#3b82f6", members: ["s1"], mtime: 100 }, { id: "gB", name: "api", color: "#54B204", members: ["s2"], mtime: 100 }] };
+  const rename: InflightWrite = { id: "w1", edit: { op: "rename", tid: "gA", newName: "notes" } };
+  const fields = { actives: { ...base.actives, chat: { tags: ["web"] } } };
+  const posted = lensBlob(base, fields);
+  assert.equal(posted.tags![0].name, "web", "the POSTED blob carries the store's tags — never an edit still in flight");
+  assert.deepEqual(posted.actives!.chat, { tags: ["web"] });
+  assert.equal((posted as any).seq, 5); assert.equal((posted as any).at, 100);   // the store's stamps ride along: the guard's evidence time
+  const shown = rederivePending(base, [rename, { id: "w2", lens: fields }])!;
+  assert.equal(shown.tags![0].name, "notes", "the copy SHOWN keeps the in-flight rename…");
+  assert.deepEqual(shown.actives!.chat, { tags: ["web"] }, "…and the lens");
+  const out = ackOutcome([rename, { id: "w2", lens: fields }], { writeId: "w1", ok: false, error: 'a tag named "notes" already exists', views: base });
+  assert.ok(out.rederive);
+  const after = rederivePending(base, out.inflight)!;
+  assert.equal(after.tags![0].name, "web", "the refused rename reverts…");
+  assert.deepEqual(after.actives!.chat, { tags: ["web"] }, "…and the lens write still in flight keeps its fields");
+  // an ORDER write: tagOrder rides, the posted tags array re-sorts to it (the pill-drag contract), the copy shown takes the order
+  const ordered = lensBlob(base, { tagOrder: ["api", "web"] });
+  assert.deepEqual(ordered.tags!.map((t) => t.id), ["gB", "gA"]);
+  assert.deepEqual(ordered.tagOrder, ["api", "web"]);
+  assert.deepEqual(rederivePending(base, [{ id: "w3", lens: { tagOrder: ["api", "web"] } }])!.tagOrder, ["api", "web"]);
+  // copies, never the input; a page holding no blob yet writes onto the empty shape
+  assert.deepEqual(base.tags.map((t: any) => t.id), ["gA", "gB"]); assert.deepEqual(base.actives.chat, { all: true });
+  assert.deepEqual(lensBlob(null, { actives: { chat: { none: true } } }), { active: "all", tags: [], actives: { chat: { none: true } } });
+  assert.deepEqual(applyLensFields({ active: "all", groups: [{ id: "g1", name: "x", color: "", members: [] }] } as any, { active: "g1" }),
+    { active: "g1", tags: [{ id: "g1", name: "x", color: "", members: [] }] }, "the legacy key reads as tags");
+});
+
+test("pins: render.ts builds every lens and order write from the store's blob (postLens), and the Tags flyout offers no gesture on a create still in flight", () => {
+  assert.match(RENDER, /function postLens\(fields: LensFields\) \{\s*\n\s*const v = lensBlob\(sessionViews, fields\);\s*\n\s*const writeId = holdViews\(applyLensFields\(effViews\(\), fields\), \{ lens: fields \}\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "setTimelineViews", views: v, writeId, edited: \[\] \}\);/,
+    "the posted blob is the STORE's (sessionViews) plus the fields; the copy shown is the current one plus the fields; the record keeps the fields");
+  assert.equal((RENDER.match(/\bpostViews\(/g) || []).length, 2, "postViews (a whole blob as posted) has ONE caller left: the no-capability tag path");
+  assert.match(RENDER, /if \(!kernelCaps\.has\("tagEdit"\)\) \{[\s\S]{0,700}postViews\(nv, edited\);/);
+  for (const site of [
+    /postLens\(\{ actives: Object\.assign\(\{\}, \(v \|\| \{\}\)\.actives, \{ chat: l \}\) \}\);/,
+    /postLens\(\{ actives: Object\.assign\(\{\}, \(mv2 \|\| \{\}\)\.actives, \{ chat: l \}\) \}\);/,
+    /postTagOrder\(reorderTagOrder\(viewTagUnion\(effViews\(\)\)\.map\(\(u\) => u\.name\), draggedGroup, to\)\);/,
+    /function postTagOrder\(order: readonly string\[\]\) \{ postLens\(\{ tagOrder: order\.slice\(\) \}\); \}/,
+    /function revealSession\(id: string\) \{ const r = revealIn\(effViews\(\), id\); postLens\(\{ active: r\.active, actives: r\.actives \}\); \}/,
+  ]) assert.match(RENDER, site);
+  assert.equal((RENDER.match(/onApply: \(l\) => \{ postLens\(\{ actives: Object\.assign\(\{\}, \(effViews\(\) \|\| \{\}\)\.actives, \{ chat: l \}\) \}\); \},/g) || []).length, 2,
+    "both tag-lens menus (desktop and phone)");
 });

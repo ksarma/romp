@@ -605,14 +605,14 @@ test("executed: the join menu's new-tag input takes ONE Enter per create — dis
 test("executed: the join menu's new-tag input keeps its text and caret across a repaint; submit and close drop the draft", () => {
   const panel = drawnPanel();
   const box = makeNode("div");
-  panel._tagJoinMenu(box, [SID2], () => {});
+  panel._tagJoinMenu(box, [SID2], () => {}, SID2);   // the menu's identity: which [+] is open
   const ni = walk(box).find((n) => n.tag === "input");
   assert.equal(g.document.activeElement, ni, "the input took focus");
   ni.value = "do"; ni.selectionStart = 1; ni.selectionEnd = 1; ni._listeners.input();
   ni.value = "doc"; ni.selectionStart = 2; ni.selectionEnd = 2;            // the caret moved without an input event (arrow keys)
   // a refusal for some other write repaints the surface that holds the menu — here, the builder runs again
   const box2 = makeNode("div");
-  panel._tagJoinMenu(box2, [SID2], () => {});
+  panel._tagJoinMenu(box2, [SID2], () => {}, SID2);
   const ni2 = walk(box2).find((n) => n.tag === "input");
   assert.notEqual(ni2, ni, "a fresh input");
   assert.equal(ni2.value, "doc", "the typed text survives — read from the live input, not the last input event");
@@ -620,10 +620,10 @@ test("executed: the join menu's new-tag input keeps its text and caret across a 
   assert.equal(g.document.activeElement, ni2, "focus is back in the input");
   // a menu for OTHER rows starts empty; the draft for these rows is kept
   const box3 = makeNode("div");
-  panel._tagJoinMenu(box3, [SID1], () => {});
-  assert.equal(walk(box3).find((n) => n.tag === "input").value, "", "another row's menu does not inherit the draft");
+  panel._tagJoinMenu(box3, [SID1], () => {}, SID1);
+  assert.equal(walk(box3).find((n) => n.tag === "input").value, "", "another [+]'s menu does not inherit the draft");
   const box4 = makeNode("div");
-  panel._tagJoinMenu(box4, [SID2], () => {});
+  panel._tagJoinMenu(box4, [SID2], () => {}, SID2);
   const ni4 = walk(box4).find((n) => n.tag === "input");
   assert.equal(ni4.value, "doc");
   // submit posts the drafted name and drops the draft
@@ -728,4 +728,44 @@ test("pins: no frame count settles a stamped kernel's write; the legacy exact ec
   assert.match(SRC, /window\.__rompTimelineSetViews\(v, writeId, Array\.isArray\(edited\) \? edited : \[\]\);/, "the whole-blob hook carries the writeId and the edited tag ids");
   assert.match(SRC, /window\.__rompTimelineTagEdit\(writeId, edit\);/, "the targeted hook carries the writeId beside the NESTED op");
   assert.doesNotMatch(SRC, /op: '(?:rename|recolor|addMember|removeMember|delete)', name:/, "no op but create carries a name — every one addresses by tid");
+});
+
+// ── ROUND 4 of the 2026-09-05 review ──────────────────────────────────────────────────────────────────
+test("executed: a lens or order write is built from the STORE's blob — a rename still in flight never rides it, and its refusal reverts only the rename", () => {
+  const panel = drawnPanel();
+  const web = viewTagUnion(panel._curViews()).find((g: any) => g.name === "web");
+  panel._editTagUnion(web, { rename: "notes" });
+  assert.deepEqual([tagOps().length, tagOps()[0].op, tagOps()[0].newName], [1, "rename", "notes"]);
+  assert.equal(panel._curViews().tags[0].name, "notes", "the copy shows the rename");
+  // a lens toggle while the rename is in flight (the dialog's pane-filter row, the corner chip, the menu)
+  panel._setLens({ actives: Object.assign({}, panel._curViews().actives, { timeline: { tags: ["web"] } }) });
+  const w = posted.filter((p) => p.kind === "views");
+  assert.equal(w.length, 1);
+  assert.equal(w[0].v.tags[0].name, "web", "the POSTED blob carries the store's name — the rename in flight is not this write's claim");
+  assert.deepEqual([w[0].v.seq, w[0].v.at], [S0.seq, S0.at], "…with the store's stamps, the guard's evidence time");
+  assert.deepEqual(w[0].v.actives.timeline, { tags: ["web"] });
+  assert.deepEqual(w[0].edited, []);
+  assert.equal(panel._curViews().tags[0].name, "notes", "the copy SHOWN keeps the rename…");
+  assert.deepEqual(panel._curViews().actives.timeline, { tags: ["web"] }, "…and the lens");
+  // the rename is refused as a duplicate: only it reverts; the lens write's fields stay shown
+  panel.viewsAck({ type: "tagEditAck", writeId: tagOps()[0].writeId, ok: false, error: 'a tag named "notes" already exists', seq: 1000, views: copy(S0) });
+  assert.equal(panel._curViews().tags[0].name, "web");
+  assert.deepEqual(panel._curViews().actives.timeline, { tags: ["web"] });
+  assert.match(panel._tagEditErr.error, /already exists/);
+  const S1 = copy(S0); S1.seq = 1001; S1.actives = Object.assign({}, actives, { timeline: { tags: ["web"] } });
+  panel.viewsAck({ type: "viewsAck", writeId: w[0].writeId, ok: true, refused: [], views: S1 });
+  assert.equal(panel._pendingViews, null, "the lens ack settles it");
+  // an ORDER write: the store's tags re-sorted to the order, tagOrder set — from the store's blob
+  const S2 = copy(S1); S2.seq = 1002; S2.tags.push({ id: "gB", name: "api", color: "#54B204", members: [SID2], mtime: 120 });
+  frame(panel, S2);
+  panel._setLens({ tagOrder: ["api", "web"] });
+  const o = posted.filter((p) => p.kind === "views")[1];
+  assert.deepEqual(o.v.tags.map((t: any) => t.id), ["gB", "gA"]);
+  assert.deepEqual(o.v.tagOrder, ["api", "web"]);
+  assert.deepEqual(panel._curViews().tagOrder, ["api", "web"]);
+  // every lens and order site goes through _setLens: the pane-filter row, the pill drag, the corner chip, the menu
+  assert.match(SRC, /this\._setLens\(\{ actives: Object\.assign\(\{\}, this\._curViews\(\)\.actives, upd\) \}\);/, "the dialog's pane filters");
+  assert.match(SRC, /this\._setLens\(\{ tagOrder: names \}\);/, "the pill drag");
+  assert.equal((SRC.match(/this\._setViews\(nv\);/g) || []).length, 0, "no whole-blob write from a copy remains outside the legacy tag path");
+  assert.match(SRC, /_setLens\(fields\) \{\s*\n\s*this\._setViews\(lensBlob\(this\._views, fields\), \[\], fields\);/, "built from this._views, the store's blob");
 });

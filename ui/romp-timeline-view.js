@@ -86,10 +86,35 @@ function rederiveViews(base, writes) {
   if (!writes || !writes.length) return null;
   let p = JSON.parse(JSON.stringify(base || { active: 'all', tags: [] }));
   for (const w of writes) {
-    if (w.blob) p = JSON.parse(JSON.stringify(w.blob));
+    if (w.lens) p = applyLensFields(p, w.lens);
+    else if (w.blob) p = JSON.parse(JSON.stringify(w.blob));
     else if (w.edit) p = applyTagEditOp(p, w.edit, w.newId);
   }
   return p;
+}
+// A lens or order write's own content — {active?, actives?, tagOrder?} — applied to a blob (a copy),
+// and the blob such a write POSTS: the STORE's blob (the last one adopted, never the pending copy)
+// with the fields set, the tags array re-sorted to a given order (the pill-drag contract). The
+// hand-mirrors of views-writes.ts applyLensFields / lensBlob (round 4 of the 2026-09-05 review: a
+// whole-blob write built from the pending copy carried every targeted edit still in flight as this
+// page's claim on those tags, and a rename the kernel had refused landed through a lens toggle).
+function applyLensFields(v, fields) {
+  const nv = JSON.parse(JSON.stringify(v || { active: 'all', tags: [] }));
+  nv.tags = viewTags(nv).slice(); delete nv.groups;
+  if (fields.active !== undefined) nv.active = fields.active;
+  if (fields.actives !== undefined) nv.actives = JSON.parse(JSON.stringify(fields.actives));
+  if (fields.tagOrder !== undefined) nv.tagOrder = fields.tagOrder.slice();
+  return nv;
+}
+function lensBlob(base, fields) {
+  const v = applyLensFields(base, fields);
+  if (fields.tagOrder) {
+    const pos = Object.create(null);           // null-prototype (the prototype-key name hazard)
+    fields.tagOrder.forEach((n, i) => { if (!(n in pos)) pos[n] = i; });
+    const n = fields.tagOrder.length;
+    v.tags = v.tags.slice().sort((a, b) => ((a.name in pos) ? pos[a.name] : n) - ((b.name in pos) ? pos[b.name] : n));
+  }
+  return v;
 }
 // A tag IS its NAME, everywhere (user ruling 2026-08-24: "if the UX requires understanding that
 // tags exist across different kernels, it is not good"): one name = one identity, membership the
@@ -3201,12 +3226,23 @@ class TimelinePanel {
   // viewsAck with the stale-writer guard's refusals, if any). Obsidian/headless fallback: write the
   // same timeline-views.json the kernel reads (it re-normalizes on read) — the write IS the store
   // write there, so the copy is adopted as the base on the spot. Optimistic, like the lane flags.
-  _setViews(v, edited) {
-    this._pendingViews = v; this._legacyViewsAge = 0;
+  // A LENS or ORDER write — {active?, actives?, tagOrder?}: the whole blob is built from the STORE's
+  // blob (this._views, the last one adopted) plus these fields, never from the pending copy (round
+  // 4 of the 2026-09-05 review: a copy carrying targeted edits still in flight posted them as this
+  // dialog's claim on those tags, and a rename the kernel had refused as a duplicate landed through
+  // the next lens toggle). The pending copy SHOWN is the current one with the same fields applied,
+  // so in-flight edits stay visible; the in-flight record keeps the fields for rederiveViews.
+  _setLens(fields) {
+    this._setViews(lensBlob(this._views, fields), [], fields);
+  }
+
+  _setViews(v, edited, lens) {
+    this._pendingViews = lens ? applyLensFields(this._curViews(), lens) : v; this._legacyViewsAge = 0;
     try {
       if (typeof window !== 'undefined' && typeof window.__rompTimelineSetViews === 'function') {
         const writeId = this._mintWriteId();
-        this._viewsWrites.push({ id: writeId, name: '', blob: v });   // the blob IS this write's state (rederiveViews)
+        // the record is what this write DID: its lens/order fields, else the blob IS its state (rederiveViews)
+        this._viewsWrites.push(lens ? { id: writeId, name: '', lens } : { id: writeId, name: '', blob: v });
         // `edited`: the tag ids this write CHANGED — none for a lens or order edit — so the kernel acks a
         // refusal on a tag this dialog never touched (a stale copy of it) as ok, with the refusal listed:
         // the newer blob is adopted and no notice shows, since nothing the user did was refused
@@ -3322,9 +3358,7 @@ class TimelinePanel {
       x.title = 'remove \u201c' + c.label + '\u201d from this timeline\u2019s filter';
       x.addEventListener('pointerdown', (e) => {
         e.preventDefault(); e.stopPropagation();
-        const nv = JSON.parse(JSON.stringify(v));
-        nv.actives = Object.assign({}, nv.actives, { timeline: lensToggle(lens, c.pick) });
-        this._setViews(nv);
+        this._setLens({ actives: Object.assign({}, v.actives, { timeline: lensToggle(lens, c.pick) }) });
       });
       x.addEventListener('click', (e) => e.stopPropagation());
       chip.appendChild(x);
@@ -3400,9 +3434,7 @@ class TimelinePanel {
       const v = this._curViews();
       const lens = timelineLens(v);
       const apply = (nl, close) => {
-        const nv = JSON.parse(JSON.stringify(v));
-        nv.actives = Object.assign({}, nv.actives, { timeline: nl });
-        this._setViews(nv);
+        this._setLens({ actives: Object.assign({}, v.actives, { timeline: nl }) });
         if (close) this._closeViewsMenu(); else build();
       };
       item('All', { current: lensAll(lens) }).addEventListener('click', () => apply({ all: true }, true));
@@ -3608,14 +3640,9 @@ class TimelinePanel {
                 if (toIdx === fromIdx) return;
                 const names = cells.map((c) => c._tname);
                 names.splice(toIdx, 0, names.splice(fromIdx, 1)[0]);
-                const nv = JSON.parse(JSON.stringify(this._curViews()));
-                nv.tagOrder = names;                       // the union display order, remote-homed names included
-                const pos = Object.create(null);           // null-prototype (the prototype-key name hazard)
-                names.forEach((n, i) => { pos[n] = i; });
-                nv.tags = viewTags(nv).slice().sort((a, b) =>
-                  ((a.name in pos) ? pos[a.name] : names.length) - ((b.name in pos) ? pos[b.name] : names.length));
-                delete nv.groups;
-                this._setViews(nv);
+                // the union display order, remote-homed names included; lensBlob re-sorts the
+                // store's local tags array to match (the natural store for local-only readers)
+                this._setLens({ tagOrder: names });
                 build();
               };
               pillCell.addEventListener('pointermove', onMove);
@@ -3777,11 +3804,9 @@ class TimelinePanel {
         };
         const applyFor = (key, lens) => {
           if (key === '*' || key !== 'feed') {
-            const nv = JSON.parse(JSON.stringify(this._curViews()));
             const upd = key === '*' ? { chat: lens, timeline: lens, outline: lens } : {};
             if (key !== '*') upd[key] = lens;
-            nv.actives = Object.assign({}, nv.actives, upd);
-            this._setViews(nv);
+            this._setLens({ actives: Object.assign({}, this._curViews().actives, upd) });
           }
           if (key === '*' || key === 'feed') {
             try { localStorage.setItem('romp:feedTags-set', JSON.stringify({ lens, t: Date.now() })); } catch (e) {}

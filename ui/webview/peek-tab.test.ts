@@ -96,5 +96,6 @@ test("the peek is a PEEK, not a view edit: the client never posts a views change
   const focusBlock = (RENDER.match(/else if \(m\.type === "focus"\) \{[\s\S]*?\n  \}/) || [""])[0];
   assert.ok(focusBlock.length > 100, "found the focus handler");
   assert.doesNotMatch(focusBlock, /postViews|setTimelineViews|revealSession/);
-  assert.match(RENDER, /function revealSession\(id: string\) \{ postViews\(revealIn\(effViews\(\), id\)\); \}/);
+  assert.match(RENDER, /function revealSession\(id: string\) \{ const r = revealIn\(effViews\(\), id\); postLens\(\{ active: r\.active, actives: r\.actives \}\); \}/,
+    "the reveal is a LENS write: its fields ride on the store's blob, never the pending copy (round 4 of the 2026-09-05 review)");
 });

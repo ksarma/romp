@@ -61,15 +61,50 @@ export function adoptViews(held: SessionViews | null | undefined, incoming: Sess
   return h === null || i === null || i >= h;
 }
 
+/** the fields a lens or order write sets — the whole-blob write's only content of its own: the
+ *  legacy scalar, the per-surface lenses, and the union display order */
+export type LensFields = Partial<Pick<SessionViews, "active" | "actives" | "tagOrder">>;
+
 /** one write in flight: its id, and what it did — the targeted op (with the placeholder id its
- *  optimistic row wears, for a create) or the whole blob it posted — so the pending copy can be
- *  re-derived without it when another write is refused (round 3 of the 2026-09-05 review) */
+ *  optimistic row wears, for a create), the lens/order fields it set, or the whole blob it posted
+ *  (the no-capability path's tag edits) — so the pending copy can be re-derived without it when
+ *  another write is refused (round 3 of the 2026-09-05 review) */
 export interface InflightWrite {
   id: string;
   edit?: TagEditOp;
   blob?: SessionViews;
+  lens?: LensFields;
   /** a create's optimistic row id (the `pending-…` placeholder the ack's blob replaces) */
   newId?: string;
+}
+
+/** The blob a lens or order write POSTS: the store's blob (`base`, the last one adopted — never
+ *  the pending copy) with the fields set. A whole-blob write built from the pending copy carried
+ *  every targeted edit still in flight as if it were the client's own claim on those tags, and a
+ *  rename the kernel had refused as a duplicate landed through the next lens toggle (round 4 of
+ *  the 2026-09-05 review). The kernel keeps the store's copy of any tag a write with an empty
+ *  `edited` differs on, so what rides here must be exactly what the store served. The tags
+ *  array re-sorts to `tagOrder` when one is given (the timeline's pill-drag contract). */
+export function lensBlob(base: SessionViews | null | undefined, fields: LensFields): SessionViews {
+  const v = applyLensFields(base || { active: "all", tags: [] }, fields);
+  if (fields.tagOrder) {
+    const ix = new Map(fields.tagOrder.map((n, i) => [n, i] as const));
+    const rank = (name: string | undefined) => (name !== undefined && ix.has(name) ? ix.get(name)! : fields.tagOrder!.length);
+    v.tags = (Array.isArray(v.tags) ? v.tags : []).slice().sort((a, b) => rank(a.name) - rank(b.name));
+  }
+  return v;
+}
+
+/** the same fields applied to a blob the page SHOWS (the pending copy, in-flight edits included) —
+ *  a copy, never the input */
+export function applyLensFields(v: SessionViews | null | undefined, fields: LensFields): SessionViews {
+  const nv = JSON.parse(JSON.stringify(v || { active: "all", tags: [] })) as SessionViews;
+  if (!Array.isArray(nv.tags)) nv.tags = Array.isArray(nv.groups) ? nv.groups : [];
+  delete nv.groups;
+  if (fields.active !== undefined) nv.active = fields.active;
+  if (fields.actives !== undefined) nv.actives = JSON.parse(JSON.stringify(fields.actives));
+  if (fields.tagOrder !== undefined) nv.tagOrder = fields.tagOrder.slice();
+  return nv;
 }
 
 export interface AckOutcome {
@@ -154,13 +189,15 @@ export function applyTagEdit(v: SessionViews, edit: TagEditOp, newId?: string): 
 }
 
 /** The optimistic copy the page should show for the writes still in flight, rebuilt from `base`
- *  (the store's blob) oldest write first: a whole-blob write IS the state it posted; a targeted op
- *  applies on top. Null when nothing is in flight — the base itself is what shows. */
+ *  (the store's blob) oldest write first: a lens or order write sets its fields; a targeted op
+ *  applies on top; a whole-blob write (the no-capability path) IS the state it posted. Null when
+ *  nothing is in flight — the base itself is what shows. */
 export function rederivePending(base: SessionViews | null | undefined, inflight: readonly InflightWrite[]): SessionViews | null {
   if (!inflight.length) return null;
   let p: SessionViews = JSON.parse(JSON.stringify(base || { active: "all", tags: [] }));
   for (const w of inflight) {
-    if (w.blob) p = JSON.parse(JSON.stringify(w.blob));
+    if (w.lens) p = applyLensFields(p, w.lens);
+    else if (w.blob) p = JSON.parse(JSON.stringify(w.blob));
     else if (w.edit) p = applyTagEdit(p, w.edit, w.newId);
   }
   return p;

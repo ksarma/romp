@@ -99,7 +99,8 @@ test("a view-filtered session keeps one visible home: the picker's other-view se
 test("the hide MECHANISM is fully retired (the user 2026-08-24) — reveal survives as the view jump", () => {
   assert.doesNotMatch(RENDER, /Hide from chat & timeline/);
   assert.doesNotMatch(RENDER, /hideIn\(/, "no hide gesture anywhere");
-  assert.match(RENDER, /function revealSession\(id: string\) \{ postViews\(revealIn\(effViews\(\), id\)\); \}/);
+  assert.match(RENDER, /function revealSession\(id: string\) \{ const r = revealIn\(effViews\(\), id\); postLens\(\{ active: r\.active, actives: r\.actives \}\); \}/,
+    "the reveal is a lens write on the store's blob (round 4 of the 2026-09-05 review)");
 });
 
 test("federation carries the LOCAL kernel's views blob through merged tabOrder re-emits", () => {

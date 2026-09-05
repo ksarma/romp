@@ -153,7 +153,7 @@ test("the trigger sits in the corner strip and opens on pointerdown, like every 
 test("an active tag is a REMOVABLE CHIP: outline only in its colour, a dim separate ✕, air below (the user 2026-08-24)", () => {
   // the chip's own pointerdown clears the filter without a menu trip; stopPropagation keeps the
   // text element's menu handler out of it (both are pointerdown — the redraw-eats-click rule)
-  assert.match(SRC, /nv\.actives = Object\.assign\(\{\}, nv\.actives, \{ timeline: lensToggle\(lens, c\.pick\) \}\);/,
+  assert.match(SRC, /this\._setLens\(\{ actives: Object\.assign\(\{\}, v\.actives, \{ timeline: lensToggle\(lens, c\.pick\) \}\) \}\);/,
     "each chip's ✕ unselects THAT pick (per-selection chips, the user 2026-08-25)");
   // OUTLINE only on the page's own ground (the tinted fill was too much — the user 2026-08-24),
   // and the ✕ is dim and SEPARATE, the composer context chip's read — never baked into the name
@@ -353,7 +353,8 @@ test("_setViews posts through the host hook with a GUARDED, atomic Obsidian fall
   assert.match(SRC, /fs\.renameSync\(fp \+ '\.tmp', fp\);/);
   // the file IS the store on that path: the write settles on the spot (no kernel ack to wait for)
   assert.match(SRC, /fs\.renameSync\(fp \+ '\.tmp', fp\);\s*\n\s*this\._views = v; this\._pendingViews = null;/);
-  assert.match(SRC, /_setViews\(v, edited\) \{\s*\n\s*this\._pendingViews = v;/);
+  assert.match(SRC, /_setViews\(v, edited, lens\) \{\s*\n\s*this\._pendingViews = lens \? applyLensFields\(this\._curViews\(\), lens\) : v;/,
+    "a lens or order write shows the current copy with its fields applied; a whole-blob write shows the blob");
   assert.match(SRC, /this\._reconcileViews\(\);\s*\/\/ \.\.\.and an optimistic view edit/);
 });
 
@@ -615,7 +616,7 @@ test("the corner grew two icon buttons and the menus split (the user 2026-08-25)
   assert.match(SRC, /apply\(lensToggle\(lens, \{ tag: g\.name \}\), false\)/,
     "tag rows TOGGLE and the menu stays open (repaint in place)");
   assert.match(SRC, /apply\(\{ all: true \}, true\)/, "All is a plain pick and closes");
-  assert.match(SRC, /nv\.actives = Object\.assign\(\{\}, nv\.actives, \{ timeline: nl \}\)/,
+  assert.match(SRC, /this\._setLens\(\{ actives: Object\.assign\(\{\}, v\.actives, \{ timeline: nl \}\) \}\)/,
     "writes land on THIS surface's lens only");
 });
 
