@@ -381,11 +381,12 @@ empties the current cgroup, tmux servers included, because the running manager
 and its tmux server predate the change and are still inside the service's
 cgroup. The guarantee holds from the following restart on.
 
-`ROMP_CLI_SCOPE=0` in the service environment turns the scopes off;
-`ROMP_CLI_SCOPE=1` turns them on for a manager run outside the service
-(`romp up`). The kernel logs which it chose at start (`cli scope: on` or `off`,
-with the reason). The macOS launchd path is unchanged: there is no cgroup kill
-there, and the tmux server keeps its launchd lineage.
+`ROMP_CLI_SCOPE=0` in the service environment turns the scopes off, for
+session CLIs and the tmux server alike. A manager run outside the service
+(`romp up`) scopes nothing unless `ROMP_CLI_SCOPE=1` is set, which turns both
+on. The kernel logs which it chose at start (`cli scope: on` or `off`, with the
+reason). The macOS launchd path is unchanged: there is no cgroup kill there,
+and the tmux server keeps its launchd lineage.
 
 ## The API-health signal
 
