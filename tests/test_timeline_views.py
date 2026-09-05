@@ -477,6 +477,14 @@ class TagInheritance(unittest.TestCase):
         t = next(t for t in km._timeline_views()["tags"] if t["name"] == name)
         return [m["sid"] for m in t["members"] if m["host"] == ""]
 
+    def _twins(self):
+        """A store ALREADY holding two tags named "twin" — written to the file, not through the door:
+        since round 4 of the 2026-09-05 review the whole-blob path refuses a second tag under a name
+        another tag holds, so twins can only come from an older kernel's store (or a hand edit)."""
+        km._atomic_write(km._views_path(), json.dumps({"active": "all", "tags": [
+            {"id": "g1", "name": "twin", "members": []}, {"id": "g2", "name": "twin", "members": []}]}))
+        km._flags_cache.clear()
+
     def test_the_child_joins_every_local_tag_holding_the_parent_and_the_parent_keeps_them(self):
         km._set_timeline_views({"active": "all", "tags": [
             {"id": "g1", "name": "pool", "members": [self.P, "other"]},
@@ -527,8 +535,7 @@ class TagInheritance(unittest.TestCase):
         self.assertIn(self.C, self._members("pool"))
 
     def test_tag_new_session_reports_a_refused_edit_beside_what_did_land(self):
-        km._set_timeline_views({"active": "all", "tags": [
-            {"id": "g1", "name": "twin", "members": []}, {"id": "g2", "name": "twin", "members": []}]})
+        self._twins()
         names, err = km._tag_new_session(self.C, "", ["twin", "infra"])
         self.assertIn("two tags are named", err or "", "the first refusal is named — never swallowed")
         self.assertEqual(names, ["infra"], "the tags that could land, did")
@@ -596,8 +603,7 @@ class TagInheritance(unittest.TestCase):
                          "_tag_new_session is the (names, error) view of the same call")
 
     def test_tag_ack_marks_a_refused_slot_none_beside_the_ones_that_landed(self):
-        km._set_timeline_views({"active": "all", "tags": [
-            {"id": "g1", "name": "twin", "members": []}, {"id": "g2", "name": "twin", "members": []}]})
+        self._twins()
         a = km._tag_ack(self.C, "", ["twin", "qa"])
         self.assertEqual(a["tagsApplied"], [None, "qa"])
         self.assertEqual(a["tags"], ["qa"])

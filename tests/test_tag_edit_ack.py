@@ -982,6 +982,64 @@ class ForeignWriteJudged(_Wire):
         self.assertEqual(len(self.notices), 1, "no second notice")
 
 
+class WholeBlobNameCollisions(_Wire):
+    """Round 4 of the 2026-09-05 review (the verifier's reproduction): a rename the targeted op refused
+    as a duplicate landed anyway through a whole-blob lens write the dialog built from its PENDING
+    copy, and neither the whole-blob door nor the normalizer deduped names — two tags with one name,
+    which every name-keyed surface shows as one. The door now refuses a renamed or new tag whose name
+    another tag in the resulting set holds, with a reason naming the collision, and the normalizer
+    drops a second entry under one id."""
+
+    def test_the_reproduction_a_refused_rename_cannot_land_through_a_lens_write(self):
+        self.seed()
+        c = self.post({"type": "tagEdit", "writeId": "w1", "edit": {"op": "create", "name": "api", "color": "#54B204", "sids": [SID2]}})
+        api_tid = c["tid"]
+        r = self.post({"type": "tagEdit", "writeId": "w2", "edit": {"op": "rename", "tid": api_tid, "newName": "web"}})
+        self.assertEqual((r["ok"], r["error"]), (False, 'a tag named "web" already exists'))
+        pending = json.loads(json.dumps(c["views"]))                    # the dialog's pending copy still carries the rename
+        next(t for t in pending["tags"] if t["id"] == api_tid)["name"] = "web"
+        pending["actives"] = {"timeline": {"tags": ["web"]}, "chat": {"all": True}, "outline": {"all": True}}
+        a = self.post({"type": "setTimelineViews", "writeId": "w3", "views": pending, "edited": []})
+        self.assertTrue(a["ok"], "a lens write: the refused hunk is a tag this write did not claim to edit")
+        self.assertEqual([(x["tid"], x["name"]) for x in a["refused"]], [(api_tid, "api")])
+        self.assertEqual(a["refused"][0]["reason"], 'a tag named "web" already exists, so it was not renamed to it')
+        self.assertEqual(sorted(t["name"] for t in km._timeline_views()["tags"]), ["api", "web"], "ONE tag per name")
+        self.assertEqual(km._timeline_views()["actives"]["timeline"], {"tags": ["web"]}, "the lens landed")
+        self.assertEqual(self.notices, [], "nothing the user did in THIS write was refused")
+        # the same blob naming the tag as edited (an older client's whole-blob rename): refused, loud
+        b = self.post({"type": "setTimelineViews", "writeId": "w4", "views": pending, "edited": [api_tid]})
+        self.assertFalse(b["ok"])
+        self.assertEqual(b["error"], '"api": a tag named "web" already exists, so it was not renamed to it')
+        self.assertEqual(sorted(t["name"] for t in km._timeline_views()["tags"]), ["api", "web"])
+        self.assertTrue(self.notices and not self.notices[0][1])
+        self.assertIn('"api" (name collision)', self.notices[0][0])
+
+    def test_a_new_tag_under_a_taken_name_is_kept_out_and_a_swap_of_two_names_lands(self):
+        served = self.seed()
+        blob = json.loads(json.dumps(served))
+        blob["tags"].append({"id": "gnew", "name": "web", "color": "#000000", "members": []})
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": blob, "edited": ["gnew"]})
+        self.assertEqual((a["ok"], a["refused"][0]["tid"]), (False, "gnew"))
+        self.assertEqual(a["refused"][0]["reason"], 'a tag named "web" already exists, so it was not created')
+        self.assertEqual([t["id"] for t in km._timeline_views()["tags"]], ["gA"])
+        # two tags trading names in one write collide with nothing: both changed, neither name is held
+        c = self.post({"type": "tagEdit", "writeId": "w2", "edit": {"op": "create", "name": "api", "color": "#54B204"}})
+        swap = json.loads(json.dumps(c["views"]))
+        for t in swap["tags"]:
+            t["name"] = "api" if t["id"] == "gA" else "web"
+        b = self.post({"type": "setTimelineViews", "writeId": "w3", "views": swap, "edited": ["gA", c["tid"]]})
+        self.assertEqual((b["ok"], b["refused"]), (True, []))
+        self.assertEqual(store_tag("api")["id"], "gA")
+        self.assertEqual(store_tag("web")["id"], c["tid"])
+
+    def test_the_normalizer_drops_a_second_entry_under_one_id(self):
+        v = km._norm_timeline_views({"active": "all", "tags": [
+            {"id": "g1", "name": "web", "members": [SID1]}, {"id": "g1", "name": "web", "members": [SID2]},
+            {"id": "g2", "name": "api", "members": []}]})
+        self.assertEqual([t["id"] for t in v["tags"]], ["g1", "g2"])
+        self.assertEqual([m["sid"] for m in v["tags"][0]["members"]], [SID1], "the first entry is the one kept")
+
+
 class WebBootWiring(unittest.TestCase):
     """The kernel-served timeline page: the inline _TIMELINE_BOOT twin of timeline-boot.ts exposes
     the targeted-edit bridge and routes both acks to the panel (timeline-boot.test.ts pins the two

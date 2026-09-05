@@ -2518,10 +2518,14 @@ def _norm_timeline_views(d):
     # echoed hidden array is tolerated and dropped; _timeline_views migrated existing entries into
     # the "archived" tag once. Nothing hides from All anymore: that is All's meaning now.)
     tags = []
+    seen = set()   # ids are addresses: a blob carrying one id twice reads as the first entry (round 4 of the 2026-09-05 review)
     raw = d.get("tags") if isinstance(d.get("tags"), list) else d.get("groups")
     for g in _lst(raw)[:_VIEWS_MAX_TAGS]:
         if not isinstance(g, dict) or not g.get("id") or not isinstance(g.get("id"), str):
             continue
+        if g["id"][:64] in seen:
+            continue
+        seen.add(g["id"][:64])
         members = [m for m in (_member_pair(x) for x in _lst(g.get("members"))) if m]
         dedup = {(m["host"], m["sid"]): m for m in members}
         rec = {"id": g["id"][:64],
@@ -2816,7 +2820,37 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None)
             rows.append({"tid": tid, "name": pt.get("name"),
                          "reason": "it was edited after your copy was taken, so it was not deleted"})
             kept.append(json.loads(json.dumps(pt)))       # a stale writer cannot delete newer state
-    v["tags"] = kept[:_VIEWS_MAX_TAGS]
+    # NAME COLLISIONS (round 4 of the 2026-09-05 review): a whole-blob write can carry a tag
+    # renamed to, or created under, a name another tag in the resulting set already has — the
+    # verifier's reproduction was a lens write built from a dialog's pending copy, still carrying
+    # a rename the targeted op had refused as a duplicate; the door let it through and the store
+    # held two tags with one name, which every name-keyed surface then showed as one. Names
+    # address edits here (the /tag route, the union), so the door refuses the colliding CHANGE:
+    # a tag whose name the write did not change keeps its claim on that name; a renamed or new tag
+    # whose name is already claimed is refused with a reason naming the collision — a renamed tag
+    # stands as the store has it, a new one is kept out. Two unchanged tags sharing a name (a
+    # store already holding twins) are left as they are: nothing in this write changed them.
+    claimed = {}
+    for t in kept:
+        pt = prev.get(t["id"])
+        if pt is not None and pt.get("name") == t.get("name"):
+            claimed.setdefault(t["name"], t["id"])
+    resolved = []
+    for t in kept:
+        pt = prev.get(t["id"])
+        if pt is None or pt.get("name") != t.get("name"):
+            other = claimed.get(t["name"])
+            if other is not None and other != t["id"]:
+                refused.append(('"%s" (name collision)' % (pt.get("name") if pt else t.get("name")), t["id"]))
+                rows.append({"tid": t["id"], "name": pt.get("name") if pt else t.get("name"),
+                             "reason": 'a tag named "%s" already exists, so it was not %s'
+                                       % (t["name"], "renamed to it" if pt else "created")})
+                if pt is not None:
+                    resolved.append(json.loads(json.dumps(pt)))    # the store's copy, under its own name
+                continue
+            claimed[t["name"]] = t["id"]
+        resolved.append(t)
+    v["tags"] = resolved[:_VIEWS_MAX_TAGS]
     # The refusal's two audiences: a kept tag the poster EDITED is a lost edit — stderr plus a red
     # dashboard notice (the user 2026-08-31's silent loss, never again silent). A kept tag the
     # poster did not edit (`edited` names the ones it did) is a stale copy of an untouched tag,
