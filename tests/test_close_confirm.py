@@ -8,8 +8,10 @@ periodic tabs-first send, whose cycle on a loaded box runs 20-40s, past the clie
 endSession handler sends a FRESH tab set to every chat client in the same handler, off-cycle, right after
 the kill — same shape as the pusher's tabs-first frame, through the same per-client dedup slot.
 
-Deterministic: the SDK backend, the liveness read, the tab builder and the pusher wake are stubbed; the
-frames each client receives are recorded in send order. Synthetic ids only, hermetic state.
+Deterministic: the SDK backend, the liveness read, the collapse guard, the tab builder and the pusher wake
+are stubbed; the frames each client receives are recorded in send order. The fresh liveness read goes
+through `_tab_list_tmux` like the pusher's tabs-first send: every tabOrder frame passes the collapse guard,
+since an omitted id is an authoritative teardown on the client. Synthetic ids only, hermetic state.
 """
 import json
 import os
@@ -55,8 +57,10 @@ class CloseConfirmRidesTheKill(unittest.TestCase):
     def setUp(self):
         self.be = FakeBackend()
         self.saved = (km._sdk, km._send_to_app, km._push_soon, km._chat_tab_sessions, km._tmux_sessions,
-                      km._comment_kill_all, km._record_death, list(km._clients))
+                      km._comment_kill_all, km._record_death, list(km._clients), km._tab_list_tmux)
         km._sdk = lambda: self.be
+        self.guarded = []                                  # what the collapse guard was handed, in order
+        km._tab_list_tmux = lambda tmux: (self.guarded.append(tmux), tmux)[1]   # a healthy read: adopted as-is
         self.events = []                                   # every side effect, in order
         km._send_to_app = lambda app, msg: self.events.append(("app", app, msg))
         km._push_soon = lambda: self.events.append(("push_soon",))
@@ -70,7 +74,7 @@ class CloseConfirmRidesTheKill(unittest.TestCase):
 
     def tearDown(self):
         (km._sdk, km._send_to_app, km._push_soon, km._chat_tab_sessions, km._tmux_sessions,
-         km._comment_kill_all, km._record_death, clients) = self.saved
+         km._comment_kill_all, km._record_death, clients, km._tab_list_tmux) = self.saved
         del km._clients[:]
         km._clients.extend(clients)
 
@@ -117,6 +121,26 @@ class CloseConfirmRidesTheKill(unittest.TestCase):
         km._chat_tab_sessions = lambda now, tmux: (_ for _ in ()).throw(RuntimeError("boom"))
         self.assertFalse(km._confirm_close_now(ENDED))
         self.assertEqual(frames, [])
+
+    def test_the_fresh_liveness_read_goes_through_the_collapse_guard(self):
+        # the guard's answer, not the raw read, is what the frame is built from: here the raw read still
+        # lists the ended session (the backend has not dropped it yet) and the guard's map does not
+        chat, frames = _chat_client()
+        km._clients.append(chat)
+        km._tab_list_tmux = lambda tmux: (self.guarded.append(tmux), {KEPT: {}})[1]
+        self.assertTrue(km._confirm_close_now(ENDED))
+        self.assertEqual(self.guarded, [{ENDED: {}, KEPT: {}}], "the guard was handed the raw fresh read")
+        self.assertEqual(frames[-1]["order"], [KEPT], "…and the frame carries the guard's map")
+
+    def test_a_guard_with_nothing_trustworthy_sends_no_frame(self):
+        # a boot-time collapse with no carry: the pusher skips its tabOrder for the cycle rather than assert an
+        # empty board, and so does the confirmation — an omitting frame is the mass teardown the guard refuses
+        chat, frames = _chat_client()
+        km._clients.append(chat)
+        km._tab_list_tmux = lambda tmux: None
+        self.assertFalse(km._confirm_close_now(ENDED), "unconfirmed: the client's own backstop says so")
+        self.assertEqual(frames, [], "no frame at all — never one that omits every tmux tab")
+        self.assertNotIn("sent", chat)
 
     def test_the_call_site_comment_no_longer_claims_recently_died_tabs(self):
         src = open(os.path.join(BIN, "romp-kernel")).read() if not os.path.islink(os.path.join(BIN, "romp-kernel")) \

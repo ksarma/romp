@@ -31824,10 +31824,18 @@ def _confirm_close_now(sid):
     tabs-first send, through the same per-client dedup slot — the next cycle's identical send is a no-op.
     `_push_soon()` still follows for everything else the kill changed. Returns whether the fresh set is
     indeed without the id (False = the end did not take; the client's own backstop then says so, honestly).
-    Off-cycle by design: `_tmux_sessions()` outside a pusher cycle is a live Sessions.live() read."""
+    Off-cycle by design: `_tmux_sessions()` outside a pusher cycle is a live Sessions.live() read — read
+    through the same collapse guard as the pusher's tabs-first send (_tab_list_tmux): every tabOrder frame
+    goes through it, because the client treats an omitted id as an authoritative teardown, and one flaky
+    tmux read here would tear down every tmux tab in the name of confirming one close. When the guard has
+    nothing trustworthy to say (None: a boot-time collapse with no carry) no frame is sent, exactly as the
+    pusher skips its tabOrder for that cycle, and the client's backstop reports the close unconfirmed."""
     try:
         now = int(time.time())
-        chat_list = _chat_tab_sessions(now, _tmux_sessions())
+        guarded = _tab_list_tmux(_tmux_sessions())
+        if guarded is None:
+            return False
+        chat_list = _chat_tab_sessions(now, guarded)
         tab_order = [s["sid"] for s in chat_list]
         tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in chat_list]
         frame = {"type": "tabOrder", "order": tab_order, "tabs": tab_meta, "views": _views_client()}
