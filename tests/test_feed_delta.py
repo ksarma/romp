@@ -661,6 +661,7 @@ class OutlineDeltaStream(unittest.TestCase):
     def test_an_outline_client_with_the_capability_streams_deltas_after_its_first_full_frame(self):
         f = _feed(n=40)
         saved, ms, parts = _warm(f)
+        real_build = km.build_feed
         srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
         port = srv.server_address[1]
         threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -690,9 +691,16 @@ class OutlineDeltaStream(unittest.TestCase):
                     self.assertEqual(payload, b"sync")
                     break
                 frames.append(json.loads(payload.decode("utf-8")))
-            f2 = _feed(n=40, build_id=2, now=NOW + 10)             # the board changes: one card's text
+            # The board changes: the pusher's next BUILD renames one card. The kernel's own build path runs
+            # (_cached_feed → build_feed, cold so it builds whatever the clock says) with the fixture as the
+            # build's result. The first cut warmed the fixture instead and leaned on REBUILD_MIN_S for the
+            # pusher to serve it: a 2 s window that the tmux probe and Sessions.live() between the warm and
+            # the serve can exceed under load, after which the kernel built an empty board from the hermetic
+            # state and the drain below timed out (the 2026-09-05 review).
+            f2 = _feed(n=40, build_id=2, now=NOW + 10)
             f2["asks"][3]["text"] = "Synthetic goal 3 on the notes-api board, renamed"
-            _warm(f2)
+            km.build_feed = lambda now, tmux: f2
+            km._built_feed[:] = [None, None, 0.0, 0.0]            # cold: the next _cached_feed builds, whatever the clock
             km._push_all()                                         # the real pusher cycle
             while True:
                 op, payload, buf = _read_frame(s, buf)
@@ -702,7 +710,7 @@ class OutlineDeltaStream(unittest.TestCase):
                 if any("renamed" in (a.get("text") or "") for a in d.get("asks") or []):
                     break
             self.assertEqual([d["type"] for d in frames], ["feedDelta"] * len(frames), "never another full frame")
-            self.assertEqual(d["buildId"], 2)
+            self.assertEqual(d["buildId"], f2["buildId"], "the build the pusher ran (the kernel mints its id at build start)")
             self.assertEqual([a["itemId"] for a in d["asks"]], ["%s:g3" % SID], "the one card that changed, by itemId")
             self.assertNotIn("trgb", d["asks"][0], "deltas never carry the tint")
             self.assertNotIn("removeAsks", d)
@@ -711,6 +719,7 @@ class OutlineDeltaStream(unittest.TestCase):
             if s is not None:
                 s.close()
             srv.shutdown(); srv.server_close()
+            km.build_feed = real_build
             _restore(saved)
 
 
