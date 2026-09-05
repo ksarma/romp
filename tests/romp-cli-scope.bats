@@ -120,9 +120,10 @@ teardown() { rm -rf "$TEST_DIR"; }
 
 @test "a failing pre-flight falls back to the real CLI directly, with one stderr line naming the reason" {
     # systemd-run that cannot start a scope (the user bus gone): the CLI must still launch, in
-    # the caller's cgroup, and the reason must reach stderr as ONE line starting `romp-cli-scope:` —
-    # the kernel logs such a line as a problem the moment it arrives and counts it
-    # (tests/test_cli_scope.py FallbackNotice); every other stderr line it only buffers
+    # the caller's cgroup, and the reason must reach stderr as ONE line starting
+    # `romp-cli-scope: fallback:` — the kernel logs a line of that form as a problem the moment it
+    # arrives and counts it (tests/test_cli_scope.py FallbackNotice); every other stderr line,
+    # the wrapper's `refused:` line included, it only buffers
     cat > "$BIN/systemd-run" <<'SH'
 #!/bin/sh
 echo "$*" >> "$FAKE_CALLS"
@@ -140,9 +141,9 @@ SH
     # systemd-run was tried exactly once (the pre-flight), never for the CLI itself
     [ "$(wc -l < "$FAKE_CALLS")" -eq 1 ]
     [[ "$(cat "$FAKE_CALLS")" == *"-- true" ]]
-    # one stderr line: names the wrapper, the reason's first line, and the direct run
+    # one stderr line: the fallback form, the reason's first line, and the direct run
     [ "$(wc -l < "$ERR")" -eq 1 ]
-    grep -q '^romp-cli-scope: ' "$ERR"
+    grep -q '^romp-cli-scope: fallback: ' "$ERR"
     grep -q 'Failed to connect to bus' "$ERR"
     grep -q 'directly' "$ERR"
     # armed absence check (a bare mid-test `! grep` is exempt from bats' errexit and asserts nothing)
@@ -195,9 +196,9 @@ SH
     [ "$(printf '%s\n' "$output" | grep '^ARG:')" = "$(printf 'ARG:%s\n' --input-format stream-json)" ]
     [ "$(wc -l < "$FAKE_CALLS")" -eq 1 ]
     [[ "$(cat "$FAKE_CALLS")" == *"-- true" ]]
-    # one stderr line, naming the bound as the reason
+    # one stderr line, the fallback form, naming the bound as the reason
     [ "$(wc -l < "$ERR")" -eq 1 ]
-    grep -q '^romp-cli-scope: ' "$ERR"
+    grep -q '^romp-cli-scope: fallback: ' "$ERR"
     grep -q 'did not finish within 10 s' "$ERR"
     grep -q 'directly' "$ERR"
 }
@@ -298,9 +299,9 @@ exit 1
 SH
     chmod +x "$BIN/systemd-run"
     assert_direct_exec_in_place -- --input-format stream-json "two words"
-    # the notice went to stderr, never stdout
+    # the notice went to stderr, never stdout, in the fallback form
     [ "$(wc -l < "$ERR")" -eq 1 ]
-    grep -q '^romp-cli-scope: ' "$ERR"
+    grep -q '^romp-cli-scope: fallback: ' "$ERR"
     [ "$(wc -l < "$FAKE_CALLS")" -eq 1 ]
 }
 
@@ -321,11 +322,15 @@ SH
 
 # The refusal tests run the wrapper under an inner sh that reports the exit code on stdout: bats's
 # `run` warns on a bare 127 (it reads it as command-not-found), and 127 is exactly the code wanted.
-@test "an empty ROMP_CLI_REAL is refused: exit 127 and a stderr line naming the variable" {
+# The line is the `refused:` form, not `fallback:`: no CLI ran, so the kernel counts no fallback for
+# it and leaves it to the launch-error card (tests/test_cli_scope.py FallbackNotice).
+@test "an empty ROMP_CLI_REAL is refused: exit 127 and one \`refused:\` stderr line naming the variable" {
     ERR="$TEST_DIR/stderr"
     ROMP_CLI_REAL= run sh -c '"$0" a 2>"$1"; echo "exit=$?"' "$WRAPPER" "$ERR"
     [ "$status" -eq 0 ]
     [ "$output" = "exit=127" ]
+    [ "$(wc -l < "$ERR")" -eq 1 ]
+    grep -q '^romp-cli-scope: refused: ' "$ERR"
     grep -q 'ROMP_CLI_REAL' "$ERR"
     [ ! -e "$FAKE_LOG" ]
 }
@@ -336,5 +341,7 @@ SH
     run sh -c '"$0" 2>"$1"; echo "exit=$?"' "$WRAPPER" "$ERR"
     [ "$status" -eq 0 ]
     [ "$output" = "exit=127" ]
+    [ "$(wc -l < "$ERR")" -eq 1 ]
+    grep -q '^romp-cli-scope: refused: ' "$ERR"
     grep -q 'ROMP_CLI_REAL' "$ERR"
 }

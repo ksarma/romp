@@ -30,18 +30,27 @@
 # Two direct-exec paths, no scope: no ROMP_SID (a process with no session identity is a probe — the
 # SDK's per-connect `claude -v` version check — not a session, and must not get a scope of its own),
 # and a failed pre-flight (`systemd-run … -- true`: the user bus gone, scopes refused), where one
-# stderr line names the reason and the CLI runs directly rather than not at all. The kernel reads the
-# CLI's stderr; a line that starts with `romp-cli-scope:` it logs the moment it arrives, as a problem
-# naming the session, and counts (/api-health `cliScope.fallbacks`) — the rest of the CLI's stderr it
-# only buffers, for a launch that fails (SdkSession._on_cli_stderr). On this path the CLI starts, so
-# without that the line would never have been read and the boot verdict would keep saying scopes are on.
+# stderr line names the reason and the CLI runs directly rather than not at all.
+#
+# Every stderr line this wrapper writes starts with `romp-cli-scope:`, and its second word says which
+# of the two messages it is, so the kernel tells them apart without reading the prose
+# (SdkSession._on_cli_stderr):
+#   `romp-cli-scope: fallback: …` — the failed pre-flight above; the CLI runs directly. The kernel logs
+#     this line the moment it arrives, as a problem naming the session, and counts it (/api-health
+#     `cliScope.fallbacks`). On this path the CLI starts, so no launch failure ever drains the stderr
+#     tail; without that the line would never have been read and the boot verdict would keep saying
+#     scopes are on. The launch-error card drops these lines from a failed CLI's stderr tail, since
+#     the log already has them.
+#   `romp-cli-scope: refused: …` — ROMP_CLI_REAL unset, exit 127, no CLI at all. The kernel counts no
+#     fallback for it: the launch fails, and the launch-error path reports the line on its own.
+# The rest of the CLI's stderr the kernel only buffers, for a launch that fails.
 #
 # Environment: ROMP_CLI_REAL (required) — the real CLI; ROMP_SID — the session id (kernel-set);
 # ROMP_CLI_SCOPE=0 — run the CLI directly, no scope. Arguments pass through verbatim.
 set -u
 
 if [ -z "${ROMP_CLI_REAL:-}" ]; then
-    echo "romp-cli-scope: ROMP_CLI_REAL is unset or empty; it must name the real claude CLI (refusing to guess)" >&2
+    echo "romp-cli-scope: refused: ROMP_CLI_REAL is unset or empty; it must name the real claude CLI, and this wrapper does not guess one" >&2
     exit 127
 fi
 
@@ -66,7 +75,7 @@ if [ "$rc" -ne 0 ]; then
     nl='
 '
     err="${err%%"$nl"*}"
-    echo "romp-cli-scope: systemd-run cannot start a transient scope (${err:-no detail}) — running the CLI directly, outside a scope; a service restart will take its background work down" >&2
+    echo "romp-cli-scope: fallback: systemd-run cannot start a transient scope (${err:-no detail}) — running the CLI directly, outside a scope; a service restart will take its background work down" >&2
     exec "$ROMP_CLI_REAL" "$@"
 fi
 

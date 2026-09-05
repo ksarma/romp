@@ -11,8 +11,10 @@ ROMP_CLI_SCOPE=0 for every backend construction):
   * the backend caches one verdict at construction, and _options honours it: cli_path becomes the
     wrapper and ROMP_CLI_REAL carries the real CLI when on; both untouched when off;
   * a missing or non-executable wrapper degrades loudly (a problem line, once) to the direct path;
-  * the wrapper's own stderr notice (a failed pre-flight, the CLI run directly) is logged the moment
-    it arrives and counted, since on that path the CLI starts and nothing else would ever read it.
+  * the wrapper's fallback notice (a failed pre-flight, the CLI run directly; its `fallback:` form)
+    is logged the moment it arrives and counted, since on that path the CLI starts and nothing else
+    would ever read it; its `refused:` line (ROMP_CLI_REAL unset, exit 127) is only buffered — no
+    CLI started, and the launch-error path reports it.
 Synthetic fixtures only: placeholder sid, /bin/true as the CLI.
 """
 import os
@@ -308,16 +310,19 @@ class OptionsWiring(_Backend):
 
 
 class FallbackNotice(_Backend):
-    """bin/romp-cli-scope writes one stderr line, starting `romp-cli-scope:`, when it runs the CLI
-    directly after a failed pre-flight. The CLI then STARTS, so _record_launch_error never drains the
-    stderr tail and the line was never read (2026-09-05): the boot verdict kept saying scopes were on
-    while the session's work sat in the service cgroup. _on_cli_stderr now logs that line at once, as
-    a problem naming the session, and the backend counts it for /api-health; every other line is still
-    only buffered."""
+    """bin/romp-cli-scope writes one stderr line, starting `romp-cli-scope: fallback:`, when it runs
+    the CLI directly after a failed pre-flight. The CLI then STARTS, so _record_launch_error never
+    drains the stderr tail and the line was never read (2026-09-05): the boot verdict kept saying
+    scopes were on while the session's work sat in the service cgroup. _on_cli_stderr now logs that
+    line at once, as a problem naming the session, and the backend counts it for /api-health; every
+    other line is still only buffered — the wrapper's `romp-cli-scope: refused:` line included, since
+    on that path no CLI started and the launch-error card reports it from the tail."""
 
-    NOTICE = ("romp-cli-scope: systemd-run cannot start a transient scope (Failed to connect to bus: No such "
-              "file or directory) — running the CLI directly, outside a scope; a service restart will take "
-              "its background work down")
+    NOTICE = ("romp-cli-scope: fallback: systemd-run cannot start a transient scope (Failed to connect to bus: "
+              "No such file or directory) — running the CLI directly, outside a scope; a service restart will "
+              "take its background work down")
+    REFUSAL = ("romp-cli-scope: refused: ROMP_CLI_REAL is unset or empty; it must name the real claude CLI, "
+               "and this wrapper does not guess one")
 
     def _capture(self):
         problems = []
@@ -350,14 +355,27 @@ class FallbackNotice(_Backend):
         self.assertEqual(sess.stderr_tail().splitlines(),
                          ["some CLI chatter", "sh: /x/bin/romp-cli-scope: Permission denied"])
 
-    def test_the_refusal_line_is_logged_at_once_too(self):
-        # the wrapper's other line (ROMP_CLI_REAL unset, exit 127) is a launch failure the error card
-        # reports on its own; it still counts as a CLI that did not get its scope, and is logged now
+    def test_the_refusal_line_is_not_counted_as_a_fallback(self):
+        # the wrapper's other line (ROMP_CLI_REAL unset, exit 127): no CLI started, so nothing ran
+        # outside a scope, and the launch fails — _record_launch_error reports the line from the
+        # stderr tail. Counting and logging it here too reported the one event twice, the first time
+        # as a CLI "started outside a scope" when none had started.
         problems = self._capture()
-        self._sess()._on_cli_stderr("romp-cli-scope: ROMP_CLI_REAL is unset or empty; it must name the "
-                                    "real claude CLI (refusing to guess)\n")
-        self.assertEqual(len(problems), 1)
-        self.assertEqual(self.be.cli_scope_fallbacks, 1)
+        sess = self._sess()
+        sess._on_cli_stderr(self.REFUSAL + "\n")
+        self.assertEqual(problems, [], "left to the launch-error path")
+        self.assertEqual(self.be.cli_scope_fallbacks, 0)
+        self.assertIsNone(self.be.cli_scope_fallback_at)
+        self.assertEqual(sess.stderr_tail(), self.REFUSAL, "buffered: the launch-error card reads it from here")
+        self.assertEqual(self.be.api_health_snapshot()["cliScope"]["fallbacks"], 0)
+
+    def test_the_generic_prefix_alone_is_not_a_fallback(self):
+        # only the fallback FORM counts: a line with the wrapper's prefix and neither second word (a
+        # future third message, say) is buffered and nothing more, rather than miscounted
+        problems = self._capture()
+        self._sess()._on_cli_stderr(sb.CLI_SCOPE_NOTICE_PREFIX + " something else entirely\n")
+        self.assertEqual(problems, [])
+        self.assertEqual(self.be.cli_scope_fallbacks, 0)
 
     def test_the_snapshot_reports_the_verdict_and_the_fallbacks(self):
         self.assertEqual(self.be.api_health_snapshot()["cliScope"],
@@ -374,14 +392,26 @@ class FallbackNotice(_Backend):
         self.be.cli_scope = True
         self.assertTrue(self.be.api_health_snapshot()["cliScope"]["on"])
 
-    def test_the_prefix_is_what_the_wrapper_writes(self):
-        # the constant and the script agree: every stderr line the wrapper writes starts with it
+    def test_the_prefixes_are_what_the_wrapper_writes(self):
+        # the constants and the script agree: every stderr line the wrapper writes starts with the
+        # generic prefix, exactly one in the fallback form and exactly one in the refusal form
         with open(os.path.join(BIN, "romp-cli-scope")) as f:
             src = f.read()
         lines = [ln for ln in src.splitlines() if ">&2" in ln and "echo" in ln]
-        self.assertGreaterEqual(len(lines), 2, "the refusal and the fallback")
+        self.assertEqual(len(lines), 2, "the refusal and the fallback: %r" % (lines,))
         for ln in lines:
             self.assertIn('"%s ' % sb.CLI_SCOPE_NOTICE_PREFIX, ln, ln)
+        self.assertEqual(sum('"%s ' % sb.CLI_SCOPE_FALLBACK_PREFIX in ln for ln in lines), 1, lines)
+        self.assertEqual(sum('"%s ' % sb.CLI_SCOPE_REFUSAL_PREFIX in ln for ln in lines), 1, lines)
+        # both forms are instances of the generic prefix, so "every line starts with it" still holds,
+        # and neither is a prefix of the other
+        for p in (sb.CLI_SCOPE_FALLBACK_PREFIX, sb.CLI_SCOPE_REFUSAL_PREFIX):
+            self.assertTrue(p.startswith(sb.CLI_SCOPE_NOTICE_PREFIX + " "), p)
+        self.assertFalse(sb.CLI_SCOPE_FALLBACK_PREFIX.startswith(sb.CLI_SCOPE_REFUSAL_PREFIX))
+        self.assertFalse(sb.CLI_SCOPE_REFUSAL_PREFIX.startswith(sb.CLI_SCOPE_FALLBACK_PREFIX))
+        # and the fixtures above are what the script writes, word for word up to the reason
+        self.assertTrue(self.NOTICE.startswith(sb.CLI_SCOPE_FALLBACK_PREFIX + " systemd-run cannot start"))
+        self.assertIn(self.REFUSAL.split(";")[0], src)
 
 
 if __name__ == "__main__":

@@ -76,10 +76,17 @@ def _bin_on_path_env(environ) -> dict:
 CLI_SCOPE_PROBE = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--", "true"]
 CLI_SCOPE_PROBE_TIMEOUT = 10.0
 # What every line bin/romp-cli-scope writes to stderr starts with. The wrapper writes only when the
-# CLI did NOT get its scope: the pre-flight scope failed and it ran the CLI directly (the CLI starts, so
-# no launch failure ever drains the stderr tail — SdkSession._on_cli_stderr logs the line the moment it
-# arrives), or ROMP_CLI_REAL was unset and it refused (exit 127, a launch failure on its own).
+# CLI did NOT get its scope, and the line's second word says which of its two messages it is:
+#   CLI_SCOPE_FALLBACK_PREFIX — the pre-flight scope failed and it ran the CLI directly. The CLI starts,
+#     so no launch failure ever drains the stderr tail; SdkSession._on_cli_stderr logs the line the
+#     moment it arrives and the backend counts it (_note_cli_scope_fallback). launch_failure_text drops
+#     these lines from a failed launch's stderr tail, since the log already has them.
+#   CLI_SCOPE_REFUSAL_PREFIX — ROMP_CLI_REAL was unset and it refused (exit 127). No CLI started, so this
+#     is a launch failure on its own, reported by _record_launch_error like any other; it is not a
+#     fallback and is not counted as one.
 CLI_SCOPE_NOTICE_PREFIX = "romp-cli-scope:"
+CLI_SCOPE_FALLBACK_PREFIX = CLI_SCOPE_NOTICE_PREFIX + " fallback:"
+CLI_SCOPE_REFUSAL_PREFIX = CLI_SCOPE_NOTICE_PREFIX + " refused:"
 
 
 def cli_scope_wrapper() -> str:
@@ -4151,13 +4158,17 @@ class SdkSession:
         session would drown the kernel log. The tail is drained where it matters — _record_launch_error
         logs it and puts it on the session's error card.
 
-        One line IS logged at once: the scope wrapper's own notice (CLI_SCOPE_NOTICE_PREFIX, from
-        bin/romp-cli-scope), which says this CLI did not get its transient scope. On the wrapper's
-        fallback path the CLI starts, so no launch failure ever drains the tail, and until 2026-09-05
-        the line was never read: the boot verdict kept saying scopes were on while the session's work
-        sat in the service cgroup, where a service restart kills it. So the line goes to the backend's
-        problem log immediately, naming the session, and the backend counts it (_note_cli_scope_fallback;
-        api_health_snapshot reports the count) — as well as being buffered like any other line.
+        One line IS logged at once: the scope wrapper's fallback notice (CLI_SCOPE_FALLBACK_PREFIX, from
+        bin/romp-cli-scope), which says this CLI is running directly, without its transient scope,
+        after the pre-flight scope failed. On that path the CLI starts, so no launch failure ever drains
+        the tail, and until 2026-09-05 the line was never read: the boot verdict kept saying scopes were
+        on while the session's work sat in the service cgroup, where a service restart kills it. So the
+        line goes to the backend's problem log immediately, naming the session, and the backend counts
+        it (_note_cli_scope_fallback; api_health_snapshot reports the count) — as well as being buffered
+        like any other line. The wrapper's other line, the exit-127 refusal (CLI_SCOPE_REFUSAL_PREFIX,
+        ROMP_CLI_REAL unset), is only buffered: no CLI started, so the launch fails and
+        _record_launch_error reports the line from the tail. Logging it here as well reported the one
+        event twice, and the first time as a CLI "started outside a scope" when none had started.
 
         Called from the SDK's stderr reader task; it isolates exceptions per line, but keep it total
         anyway (a raise here would lose the very diagnostics this exists to keep)."""
@@ -4165,7 +4176,7 @@ class SdkSession:
             if line and line.strip():
                 text = line.rstrip("\n")
                 self._stderr_tail.append(text)
-                if text.startswith(CLI_SCOPE_NOTICE_PREFIX):
+                if text.startswith(CLI_SCOPE_FALLBACK_PREFIX):
                     self.backend._note_cli_scope_fallback(self, text)
         except Exception:
             pass
@@ -6523,11 +6534,13 @@ class SdkBackend:
         return rows[-limit:] if limit else rows
 
     def _note_cli_scope_fallback(self, sess, text: str) -> None:
-        """The scope wrapper wrote a notice on `sess`'s stderr (SdkSession._on_cli_stderr): this CLI is
-        running directly, inside the service cgroup, after the pre-flight scope failed — or, for the
-        exit-127 refusal, did not run at all. Logged at once as a problem (the error center shows it; a
-        launch that succeeds never drains the stderr tail, so nothing else would) and counted, so a
-        reader of /api-health can tell that the boot verdict "cli scope: on" stopped holding."""
+        """The scope wrapper wrote its fallback notice on `sess`'s stderr (SdkSession._on_cli_stderr,
+        CLI_SCOPE_FALLBACK_PREFIX): this CLI is running directly, inside the service cgroup, after the
+        pre-flight scope failed. Logged at once as a problem (the error center shows it; a launch that
+        succeeds never drains the stderr tail, so nothing else would) and counted, so a reader of
+        /api-health can tell that the boot verdict "cli scope: on" stopped holding. The wrapper's
+        exit-127 refusal (CLI_SCOPE_REFUSAL_PREFIX) never reaches here: no CLI started, and the
+        launch-error path reports it."""
         with self._lock:
             self.cli_scope_fallbacks += 1
             self.cli_scope_fallback_at = time.time()
