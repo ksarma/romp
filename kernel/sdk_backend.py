@@ -2117,6 +2117,15 @@ def task_death_notice(tasks: list) -> str:
 # interactive `claude --resume` never has it, so the orphan reap can never touch a tmux CLI.
 _SDK_CLI_MARK = "--input-format stream-json"
 
+# The `ps` listing the boot reaper (find_orphan_clis) and the interrupt escalation (find_session_cli)
+# read. `-ww` is load-bearing: without it procps truncates every line to $COLUMNS whenever that
+# variable is exported (BSD ps does the same by default), and the sid an SDK CLI carries sits about
+# 2 KB into its argv, behind --append-system-prompt — so a kernel started from a shell that exported
+# COLUMNS matched nothing and reaped nothing, with no error. Verified on procps-ng 4.0.4 (2026-09-05):
+# `COLUMNS=80 ps -axo …` cut a 3200-character argv at 80 columns, `-axwwo` printed it whole. `-ww`
+# means unlimited width on procps and BSD ps alike.
+PS_ARGV = ["ps", "-axwwo", "pid=,ppid=,command="]
+
 
 def _cli_carries_sid(cmd: str, sids) -> bool:
     """True when this CLI's argv names one of OUR conversation ids. The Agent SDK has spelled the
@@ -2168,7 +2177,7 @@ def find_orphan_clis(ps_lines: list[str], lastsids: list[str]) -> list[int]:
     matched nothing on Linux under the service all along. KillMode=control-group covered for it on
     service restarts; the per-session scopes (cli_scope_supported) remove that cover by design, so
     the definition now names the property the ppid-1 check approximated. Pure (takes
-    `ps -axo pid=,ppid=,command=` lines) so tests need no live processes."""
+    PS_ARGV's `ps -axwwo pid=,ppid=,command=` lines) so tests need no live processes."""
     procs: dict[int, tuple[int, str]] = {}    # pid -> (ppid, command), in listing order
     for ln in ps_lines:
         parts = ln.strip().split(None, 2)
@@ -2192,7 +2201,7 @@ def find_session_cli(ps_lines: list[str], sids: list[str], parent_pid: int) -> i
     find_orphan_clis (_cli_carries_sid + the stream-json mark) but the OPPOSITE parent check — it
     may only signal our own child, never a tmux CLI (no mark), never another kernel's, never an
     orphan (a CLI whose parent is no live kernel — the reaper's territory). Pure (takes
-    `ps -axo pid=,ppid=,command=` lines) so tests need no live processes."""
+    PS_ARGV's `ps -axwwo pid=,ppid=,command=` lines) so tests need no live processes."""
     for ln in ps_lines:
         parts = ln.strip().split(None, 2)
         if len(parts) < 3 or not parts[0].isdigit() or not parts[1].isdigit():
@@ -5616,8 +5625,7 @@ class SdkBackend:
         find_session_cli matcher, so the signal can only ever land on our own child. None (logged by
         the caller) when no such process exists."""
         try:
-            ps = subprocess.run(["ps", "-axo", "pid=,ppid=,command="],
-                                capture_output=True, text=True, timeout=10)
+            ps = subprocess.run(PS_ARGV, capture_output=True, text=True, timeout=10)
             reg = read_reg(self.state_dir, session.sid) or {}
             sids = [session.sid, str(reg.get("lastSid") or "")]
             return find_session_cli(ps.stdout.splitlines(), sids, os.getpid())
@@ -5653,8 +5661,7 @@ class SdkBackend:
             lastsids = [str(r.get("lastSid") or "") for r in alive if r.get("lastSid")]
             if lastsids:
                 try:
-                    ps = subprocess.run(["ps", "-axo", "pid=,ppid=,command="],
-                                        capture_output=True, text=True, timeout=10).stdout
+                    ps = subprocess.run(PS_ARGV, capture_output=True, text=True, timeout=10).stdout
                     for pid in find_orphan_clis(ps.splitlines(), lastsids):
                         if pid == os.getpid():
                             continue

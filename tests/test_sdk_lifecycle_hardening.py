@@ -24,6 +24,7 @@ import tempfile
 import signal
 import threading
 import time
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -277,6 +278,38 @@ class TodoIdsRideTheQueue(unittest.TestCase):
                          [{"text": self.ANSWER, "todo": "ut-77778888"}])
 
 
+class PsArgv(unittest.TestCase):
+    """The `ps` both process scans run. `-ww` is the point: procps truncates every line to $COLUMNS
+    when that variable is exported (BSD ps does by default), and an SDK CLI's sid sits ~2 KB into its
+    argv behind --append-system-prompt, so a kernel started with COLUMNS exported reaped nothing and
+    could not find its own child to signal, silently (2026-09-05; `COLUMNS=80 ps -axo` cut a 3200-char
+    argv at 80 columns on procps-ng 4.0.4, `-axwwo` printed it whole)."""
+
+    def test_the_argv_asks_for_unlimited_width(self):
+        self.assertEqual(sb.PS_ARGV, ["ps", "-axwwo", "pid=,ppid=,command="])
+
+    def test_the_interrupt_escalation_reads_ps_with_it(self):
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        sid = "11111111-aaaa-0000-0000-00000000000f"
+        _reg(d, sid)
+        # our own child (ppid = this process), its sid 2 KB into the argv — what -ww keeps intact
+        ps = "  4242 %d /x/claude --append-system-prompt %s --resume %s --input-format stream-json\n" % (
+            os.getpid(), "p" * 2100, sid)
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout=ps)) as run:
+            pid = be._session_cli_pid(types.SimpleNamespace(sid=sid, name="web"))
+        self.assertEqual(pid, 4242)
+        self.assertEqual(run.call_args_list[0][0][0], sb.PS_ARGV)
+
+    def test_the_boot_reaper_reads_ps_with_it(self):
+        # the reaper's own reap test (BootReconcile.test_reaps_orphans_but_never_tmux) pins the same
+        # argv on its call; this one pins that the two sites share ONE constant, so neither can drift
+        with open(sb.__file__) as f:
+            src = f.read()
+        self.assertNotIn('"-axo"', src, "every ps scan goes through PS_ARGV (-ww)")
+        self.assertEqual(src.count("subprocess.run(PS_ARGV"), 2, "the reaper and the escalation")
+
+
 class BootReconcile(unittest.TestCase):
     def _setup(self):
         d = tempfile.mkdtemp()
@@ -377,12 +410,13 @@ class BootReconcile(unittest.TestCase):
               "  557 90210 /x/claude --output-format stream-json --resume %s --input-format stream-json\n"
               ) % (sid, sid, sid)
         killed = []
-        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout=ps)), \
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout=ps)) as run, \
              mock.patch.object(sb.os, "kill", side_effect=lambda p, s: killed.append((p, s))):
             be._boot_reconcile([sb.read_reg(Path(d), sid)])
         self.assertEqual(killed, [(555, sb.signal.SIGTERM)],
                          "the SDK orphan is reaped; the tmux CLI and the live (parented) CLI "
                          "on the same sid are untouched")
+        self.assertEqual(run.call_args_list[0][0][0], sb.PS_ARGV, "the listing is read with PS_ARGV")
 
     def test_reconcile_is_opt_in(self):
         # Constructing the backend plain (tests, ad-hoc) must NOT spawn a reconcile thread; the
