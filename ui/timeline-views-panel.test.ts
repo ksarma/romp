@@ -470,7 +470,7 @@ test("the lane gear carries the SAME tag editor — the shared builders, never a
   assert.match(SRC, /this\._tagJoinMenu\(am, \[s\.id\], build\);/);
 });
 
-test("the lane model menu labels a family by its own label and marks a learned version as new (2026-09-01)", () => {
+test("the lane model menu labels a family by its own label and marks a learned version as new", () => {
   // the family row's text is the family label from /models — no version-table lookup — so the
   // kernel's alias default ("fable") renders exactly as a pinned id did; ✓ matches the leading word
   assert.match(SRC, /const item = menu\.createDiv\(\{ text: c\.label \}\);/);
@@ -481,7 +481,7 @@ test("the lane model menu labels a family by its own label and marks a learned v
   assert.match(SRC, /if \(v\.learned\) \{[\s\S]{0,600}font-size:0\.82em;opacity:0\.6/, "the menu vocabulary's sub-line size and opacity");
 });
 
-test("the lane version submenu opens with a Latest row that clears the family's pin through the command bridge (2026-09-01)", () => {
+test("the lane version submenu opens with a Latest row that clears the family's pin through the command bridge", () => {
   // the chat picker's floating gesture, on the lane menu: Latest sends "/model <family>" with the
   // `floating` flag, which the kernel's sendCommand arm hands to _set_model_or_park to forget the
   // family's remembered pin — the one gesture back to floating once a family is pinned
@@ -503,7 +503,7 @@ test("the lane version submenu opens with a Latest row that clears the family's 
   assert.match(KERNEL, /_route_meta_command\(be, sid, cmd, client, floating=bool\(msg\.get\("floating"\)\)\)/);
 });
 
-test("executed: the lane picker's /models list re-fetches IN PLACE on the kernel's models frame (fixer round 4, 2026-09-01)", async () => {
+test("executed: the lane picker's /models list re-fetches IN PLACE on the kernel's models frame", async () => {
   // the list was fetched once at load and never refreshed, so after a Latest un-pin the lane's next
   // family click sent the stale pinned id and silently re-pinned. loadModelChoices is the one loader
   // (page load is its first call); refreshModels — the frame's arm in both boots — calls it again,

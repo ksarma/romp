@@ -25,7 +25,7 @@ import { senderKind } from "./sender-identity";
 import { loadSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
 import { delegate } from "./actions";
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
-import { KIND_WORD } from "./spin-caption";
+import { KIND_WORD, kindWord } from "./spin-caption";
 import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
@@ -240,7 +240,7 @@ interface UserTodo { id: string; text: string; detail?: string; createdT?: numbe
 
 type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
 type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };   // a named peer behind a peer-kind wait (kernel _peer_identity, 2026-08-26)
-interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxOver?: boolean; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed. For a dispatched
@@ -4244,13 +4244,25 @@ function commitTabOrder() {
 // Settle the just-closed tabs against the kernel's authoritative list. Gone from it → the close landed, stop
 // suppressing. STILL in it past the backstop → it didn't land; say so plainly (a session left open while its
 // tab is hidden is exactly the silent-wrong-state we'd rather surface) and let the tab come back.
-function ackClosingTabs(kernelOrder: readonly string[]): void {
+// `report` is the frame's provenance under federation (federation.ts emitMergedOrder): `reemit` marks a
+// synthetic re-emission served from the manager's STORED per-host slices (a view-order storage event, a
+// host attach or drop), `freshHost` names the one host whose own push drove a fresh emission. A frame the
+// kernel sent directly (VS Code, a single-kernel page) carries neither.
+type OrderReport = { reemit?: boolean; freshHost?: string } | undefined;
+function ackClosingTabs(kernelOrder: readonly string[], report?: OrderReport): void {
   if (!closingTabs.size) return;
   const live = new Set(kernelOrder);
   const now = Date.now();
   for (const [id, ts] of Array.from(closingTabs)) {
     if (!live.has(id)) { closingTabs.delete(id); continue; }       // the kernel dropped it → confirmed
     if (now - ts < CLOSE_ACK_MS) continue;                         // still in flight; the shutdown runs behind us
+    // Past the backstop, only a FRESH report from the OWNING kernel may call the close refused (T233, the
+    // user 2026-09-03: a session the kernel had killed within the same second toasted "Couldn't close"
+    // because a federation re-emit re-served a stored slice still carrying the id 15s later). A re-emit
+    // is never new evidence, and another host's push says nothing about this id's kernel — both keep the
+    // suppression and wait for the owner's own word; the backstop stays the honest path for a close that
+    // genuinely did not take.
+    if (report && (report.reemit || (typeof report.freshHost === "string" && hostOf(id) !== report.freshHost))) continue;
     closingTabs.delete(id);
     warnToast(`Couldn't close “${tabMeta.get(id)?.name || id}” — romp still has it open.`);
   }
@@ -4267,7 +4279,7 @@ function ackClosingTabs(kernelOrder: readonly string[]): void {
 // looking alive). Add-only, never pruned: dropping an entry would hand a late stale `session` frame the
 // never-listed keep and re-mint the ghost. Client-minted ids (the create placeholder) never enter it.
 const kernelListed = new Set<string>();
-function applyTabOrder(o: any, tabs?: any) {
+function applyTabOrder(o: any, tabs?: any, report?: OrderReport) {
   // name+color per tab → renderTabs paints placeholders for tabs whose session hasn't arrived yet (tabs-first).
   // The payload is the kernel's AUTHORITATIVE current tab set, so REBUILD (not merge) — a closed tab drops out
   // and never lingers as a stale placeholder. Absent tabs (older kernel) → keep what we have.
@@ -4289,14 +4301,15 @@ function applyTabOrder(o: any, tabs?: any) {
   }
   // Adopt the kernel order verbatim, keeping any just-arrived tab the push doesn't carry yet (see tab-order.ts).
   const kernelOrder = Array.isArray(o) ? o.filter((x: any) => typeof x === "string") : [];
-  ackClosingTabs(kernelOrder);
+  ackClosingTabs(kernelOrder, report);
   // A kernel-owned tab the push no longer carries gets the SAME teardown the `closed` event runs — the
   // session map, its view, drafts and the active-tab reselect all go, not just the strip entry. Under
   // federation the merged order only omits an id when its OWNING host affirmatively reported it gone
   // (per-host slices persist across down/detached hosts), so this never fires on a tunnel blip.
   const inKernel = new Set<string>(kernelOrder);
+  const omitted = new Set(order.filter((id) => kernelListed.has(id) && !inKernel.has(id)));   // all of them first: no fallback onto one going in the same breath
   for (const id of order.slice()) {
-    if (kernelListed.has(id) && !inKernel.has(id)) dismissSession(id);
+    if (omitted.has(id)) dismissSession(id, "omitted", omitted);
   }
   const next = reconcileTabOrder(kernelOrder, order, (id) => sessions.has(id) || tabMeta.has(id),
                                  (id) => kernelListed.has(id));
@@ -4446,7 +4459,7 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   if (s.status.effort) rows.push(["Effort", s.status.effort]);
   // Backend is a plain labelled FIELD now, under the others (the user 2026-07-08 — no longer a coloured
   // "SDK backend" badge at the top of the tooltip; it reads as one of the session's config fields).
-  if (be === "sdk" || be === "tmux") rows.push(["Backend", be === "sdk" ? "SDK" : "tmux"]);
+  if (be === "sdk" || be === "tmux" || be === "codex") rows.push(["Backend", be === "sdk" ? "SDK" : be === "codex" ? "Codex" : "tmux"]);
   // Billing: whether this tab bills the API key or the Claude login — and WHICH login account (the
   // user 2026-08-09: shown whenever the backend reports it, one-auth machines included; only a tmux
   // session, whose CLI env romp does not control, reports nothing). No key material, ever.
@@ -4475,7 +4488,7 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   if (s.status.ctx) {
     const cr = el("div", "tab-tip-row tab-tip-ctx");          // extra vertical room — the battery bar is tall
     const ck = el("span", "tab-tip-k"); ck.textContent = "Context"; cr.appendChild(ck);
-    const bar = ctxBar(); setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
+    const bar = ctxBar(); setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone), s.status.ctxOver);
     cr.appendChild(bar); tip.appendChild(cr);
   }
   // ledger rows, LABELLED + aligned with the rows above (the user 2026-06-23 v3): the summary, then Recent.
@@ -4927,7 +4940,7 @@ function renderTabs() {
     const label = el("span", "tab-label");
     label.replaceChildren(...hostNameNodes(s.name, id));   // remote "host:" prefix renders as quiet metadata
     // ...and the whole tab dims when that host is unreachable, so a disconnected session reads as one at
-    // a glance rather than only on inspection (the user 2026-07-29). The struck "host:" carries the why.
+    // a glance rather than only on inspection (the user 2026-07-29). The marked "host:" carries the why.
     if (hostIsDown(id)) { tab.classList.add("host-off"); tab.title = hostDownNote(id); }
     if (s.status.faded && id !== activeId && s.color) {
       const full = s.color.bg;
@@ -5708,7 +5721,7 @@ const NAV_SCROLL_STEP = 60;
 function isTypingTarget(t: EventTarget | null): boolean {
   const elm = t as HTMLElement | null;
   if (!elm || typeof elm.tagName !== "string") return false;
-  return elm.tagName === "TEXTAREA" || elm.tagName === "INPUT" || elm.isContentEditable === true;
+  return elm.tagName === "TEXTAREA" || elm.tagName === "INPUT" || elm.tagName === "SELECT" || elm.isContentEditable === true;   // SELECT: type-ahead in a dropdown is typing too
 }
 window.addEventListener("keydown", (e) => {
   if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -5750,8 +5763,33 @@ window.addEventListener("keydown", (e) => {
     // default: Enter always lands you in the box unless you're already on a tab or in the box.
     const ae = document.activeElement;
     if (ae && ae !== document.body) return;
+    if (composerNoteHolds()) return;               // the box just changed hands under the user — a click re-binds it, not a key (T236)
     if (focusComposerOrAsk()) e.preventDefault();   // the picker card if one's up, else the message box
   }
+});
+// SELECT → TYPE → ⌘⏎ (the user 2026-09-02): a transcript selection already seeded the reply chip
+// (selectionchange), so the natural next act is just TYPING — the first printable keystroke drops
+// the cursor into the message box with the chip attached, no mouse round-trip, and ⌘⏎ stages as
+// ever. (Not selection-gated: a printable keystroke nobody claimed means "type" from anywhere —
+// the same two-state default as bare-area Enter above.) Bubble phase on window = every capture
+// handler (shell chords, overlays) and element handler (live-ask card, focused tab, slash menu)
+// has already spoken; we take only keystrokes nobody claimed. NEVER preventDefault: focusing
+// during keydown lets the NATIVE keystroke insert into the newly focused box, so the composer's
+// own input bookkeeping (draft, slash menu) sees ordinary typing.
+window.addEventListener("keydown", (e) => {
+  if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;   // chords are not typing (shift stays: capitals)
+  if (e.isComposing || e.keyCode === 229) return;   // IME mid-composition — a focus steal aborts the composition
+  if (e.key.length !== 1 || e.key === " ") return;  // printable only; Space stays a toggle/scroll key
+  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+  if (!ta || ta.disabled || document.activeElement === ta) return;   // no box / read-only session / already typing (covers key repeat)
+  if (isTypingTarget(e.target) || isTypingTarget(document.activeElement)) return;
+  if (activeId && liveAsks.has(activeId)) return;   // digits belong to the live-ask card's number keys
+  if (ctxMenuEl || document.querySelector(".picker-overlay")) return;   // an open menu / #picker / #confirm owns the keys
+  if (document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse")
+      || document.getElementById("romp-lightbox")) return;   // full-pane surfaces own their keys
+  if (document.querySelector("#rsettings:not([hidden]), #ra-back:not([hidden]), #rkeys-back, .meta-menu")) return;   // the pane's own modals + meta menus own their keys (a letter typed there must never land in the draft)
+  if (composerNoteHolds()) return;   // the box just changed hands under the user — no focus steal, the note flashes; a click re-binds (T236). Nothing to cancel either: a key on the bare body has nothing to insert into.
+  ta.focus({ preventScroll: true });   // the native keystroke lands in the box; the chip survives (a collapse never clears it)
 });
 // Cmd/Ctrl+O and Cmd/Ctrl+Shift+O — the in-PAGE fallback, from anywhere including the composer, the
 // way Obsidian's quick switcher opens over the editor (the user 2026-08-08). Inside the romp shell
@@ -5885,7 +5923,7 @@ function dropProvisional(): { queued: string[]; draft: string } {
     const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
     draft = (activeId === id && ta) ? ta.value : (drafts.get(id) ?? "");
     pendingSent.delete(id);                // the optimistic bubbles belong to a tab that is going away
-    dismissSession(id);                    // drops it from sessions/order/views and reselects
+    dismissSession(id, "close");           // drops it from sessions/order/views and reselects
   }
   return { queued, draft };
 }
@@ -6131,18 +6169,24 @@ function pickerBackendChoice(): string {
   return beSel?.dataset.be || loadSettings().backend;
 }
 
-// the Tags row exists only for SDK sessions (tab groups, 2026-09-04): the kernel refuses tags on a
-// tmux create — a terminal session's id is unknown until it starts — so on the tmux pick the row stays
+// the backends whose create takes `tags`: the kernel applies parent/tags on an SDK or a Codex create
+// (the tag store keys on the registry sid; the Codex arm has taken them since the upstream fold's
+// round 2), and a tmux create takes none — a terminal session's id is unknown until it starts, so the
+// kernel refuses tags on one. One predicate for the Tags row's state and for the create handler's
+// payload, so the two cannot disagree about which backend a chip is for.
+function backendTakesTags(be: string): boolean { return be === "sdk" || be === "codex"; }
+
+// the Tags row is for SDK and Codex sessions (tab groups, 2026-09-04): on the tmux pick the row stays
 // in place but disabled behind a short note, and the create handler sends no `tags`. Before this a
 // chip prefilled from a tagged active tab turned every terminal create into a refusal.
 function syncPickerTags(): void {
   const wrap = document.querySelector("#picker .picker-tags") as HTMLElement | null;
   if (!wrap) return;
-  const sdk = pickerBackendChoice() === "sdk";
-  wrap.classList.toggle("disabled", !sdk);
-  wrap.querySelectorAll<HTMLButtonElement>(".picker-be-opt").forEach((b) => { b.disabled = !sdk; });
+  const takes = backendTakesTags(pickerBackendChoice());
+  wrap.classList.toggle("disabled", !takes);
+  wrap.querySelectorAll<HTMLButtonElement>(".picker-be-opt").forEach((b) => { b.disabled = !takes; });
   const note = wrap.querySelector(".picker-tags-note") as HTMLElement | null;
-  if (note) note.style.display = sdk ? "none" : "";
+  if (note) note.style.display = takes ? "none" : "";
 }
 
 function syncPickerAuth(): void {
@@ -6437,7 +6481,8 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       return b;
     };
     beWrap.append(beLabel, mkBe("sdk", "SDK", "Runs via the Claude Agent SDK."),   // not "headless" — same full chat UI (the user 2026-07-12)
-                  mkBe("tmux", "tmux", "Drives a real terminal pane (tmux)."));   // SDK first — the de-facto default (the user 2026-07-02)
+                  mkBe("tmux", "tmux", "Drives a real terminal pane (tmux)."),   // SDK first — the de-facto default (the user 2026-07-02)
+                  mkBe("codex", "Codex", "Runs an OpenAI Codex agent (the host needs romp-codex-setup + codex login)."));
     // the billing and Tags rows exist only for SDK sessions — re-decide on every backend toggle
     beWrap.addEventListener("click", () => { syncPickerAuth(); syncPickerTags(); });
     // per-session BILLING row (the user 2026-08-08): Login | API key buttons when the selected host
@@ -6462,14 +6507,15 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     // VISIBLE and editable, never a silent inherit (the user's ruling): a session started beside the
     // one you are looking at joins its group unless you unpick it. Chips in the Backend row's
     // grammar, each toggling on its own (a session may hold several tags); rebuilt per open
-    // (openPicker below), hidden with no tags to offer and in pick-mode. SDK sessions only: on the
-    // tmux pick the chips disable behind a note and no `tags` ride the create (syncPickerTags) — the
-    // kernel refuses tags on a terminal create, and a prefilled chip used to turn one into a refusal.
+    // (openPicker below), hidden with no tags to offer and in pick-mode. SDK and Codex sessions
+    // (backendTakesTags): on the tmux pick the chips disable behind a note and no `tags` ride the
+    // create (syncPickerTags) — the kernel refuses tags on a terminal create, and a prefilled chip
+    // used to turn one into a refusal.
     const tgWrap = el("div", "picker-backend picker-tags");
     const tgLabel = el("span", "picker-backend-label"); tgLabel.textContent = "Tags";
     tgWrap.appendChild(tgLabel);
     const tgNote = el("span", "picker-auth-fixed picker-tags-note");   // the Billing row's written-out text style
-    tgNote.textContent = "Tags apply to SDK sessions";
+    tgNote.textContent = "Tags apply to SDK and Codex sessions";
     tgNote.style.display = "none";
     tgWrap.appendChild(tgNote);
     // per-session HOST picker (federation, the user 2026-07-02): local | each attached SSH host — the new
@@ -6511,9 +6557,10 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       const auth = pickerAuthChoice();
       // tags: the Tags row's selected chips (prefilled from the active tab, edited or not) ride the
       // create as names; the owning kernel resolves them by name, minting a missing one like POST /tag.
-      // SDK sessions only — a tmux create carries none (the row is disabled for it; the kernel would refuse)
+      // SDK and Codex creates (backendTakesTags) — a tmux create carries none (the row is disabled for
+      // it, and the kernel refuses tags on a terminal create)
       const backend = beSel?.dataset.be || loadSettings().backend;
-      const tags = backend === "sdk"
+      const tags = backendTakesTags(backend)
         ? Array.from(tgWrap.querySelectorAll<HTMLElement>(".picker-be-opt.sel")).map((x) => x.dataset.tag || "").filter(Boolean)
         : [];
       startCreate({ name, backend,
@@ -7007,14 +7054,47 @@ const commentPending = new Map<string, { text: string; t: number; imgPaths?: str
 // image paths shipped into the OPEN popover's box (the droppedPath ack) and not yet sent — the next
 // send attaches them to its pending entry so the echo renders the same thumbnails the chat's does
 let cmtShippedImgs: string[] = [];
-// THE EXCHANGE LATCH (T102, the user 2026-08-26): tid → the agent-message count at the newest SEND.
-// Set at the send GESTURE (create seeds 0 under the synth tid, transferred on adopt; a reply stamps
-// the count at its send), cleared ONLY by the reply-arrived event — the agent's reply record landing
-// in th.msgs (agentCount rising past the base; see the comments frame handler). Follow-ups re-latch
-// identically, each until ITS reply arrives. No push counting, no thread-state proxy: the old
-// push-count settle killed the create-window green while the fork booted (its frames read
-// all-quiet) and any stall in its stepping parked green forever — both ends of the reported bug.
-const cmtAwaitBase = new Map<string, number>();
+// THE SEND LATCH (T102, the user 2026-08-26; rescoped T237): tid → what the thread's projection held at
+// the newest SEND gesture — its message count, its newest message's time, its agent-message count. Set
+// at the gesture (create seeds zeros under the synth tid, transferred on adopt; a follow-up stamps its
+// thread's counts), BEFORE any kernel round-trip. Against a kernel that ships replyOwed (T237) the latch
+// covers ONLY the pre-round-trip instant: it clears once a frame's projection carries the send (a message
+// newer than the click's newest, or more messages than then — the count alone misses a thread already at
+// the projection's 40-message cap) and the kernel's owed bit owns the wash from there. Against an OLDER
+// kernel (no bit) it keeps the T102 contract: cleared by the reply-arrived event — the agent's reply record
+// landing (agentCount rising past the base) with the thread settled. No push counting, no timers.
+type CmtLatch = { you: number; youT: number; agents: number; queued: number; last: string };
+const cmtAwaitBase = new Map<string, CmtLatch>();
+const cmtYouRows = (th: CommentThread) => (th.msgs || []).filter((m) => m.who === "you");
+const cmtLatchOf = (th: CommentThread): CmtLatch => {
+  const you = cmtYouRows(th);
+  return { you: you.length, youT: you.length ? (you[you.length - 1].t || 0) : 0, agents: agentCount(th),
+           queued: th.queued || 0, last: th.lastUuid || "" };
+};
+const CMT_LATCH_ZERO: CmtLatch = { you: 0, youT: 0, agents: 0, queued: 0, last: "" };
+/** Does this frame's thread release the send latch? Against a kernel that ships replyOwed (T237), the
+ *  KERNEL'S ACKNOWLEDGEMENT of the send does — any of: the user's own "you" row newer than the click's
+ *  newest (or more "you" rows than then; the count alone never grows on a thread at the projection's
+ *  40-message cap); the backend now holding or having fed the send (queued grew — its input echo lives from
+ *  the send until the record lands, so this covers the mid-turn follow-up the backend queues AND the send
+ *  the CLI has but has not written); the send consumed as a slash command (the newest record moved —
+ *  lastUuid, cap-proof — while the kernel says nothing is owed); or the kernel marking the thread
+ *  unreachable (a broken thread owes nothing). Never an agent row alone, and never "the transcript grew"
+ *  alone: the agent's partials and the reply itself land BEFORE a held send is written, and clearing on
+ *  them dropped the green while the send was still owed (round-2/4 review). Against an older kernel (no
+ *  bit) the T102 reply-arrived clear stands. A thread leaving "open" or erroring releases either way. */
+function cmtLatchReleased(t: CommentThread, base: CmtLatch): boolean {
+  if (t.status !== "open" || !!t.error) return true;
+  if (typeof t.replyOwed === "boolean") {
+    const you = cmtYouRows(t);
+    const newestYouT = you.length ? (you[you.length - 1].t || 0) : 0;
+    if (you.length > base.you || newestYouT > base.youT) return true;   // written
+    if ((t.queued || 0) > base.queued) return true;                       // held or fed by the backend — the kernel owes it now
+    if (t.unreachable) return true;                                       // nothing can land — no green promise
+    return !!t.lastUuid && t.lastUuid !== base.last && t.replyOwed === false;   // consumed as a command: moved, nothing owed
+  }
+  return agentCount(t) > base.agents && !threadBusy(t.state);
+}
 // Creates in flight (T106 lab find, 2026-08-26): a comment made seconds after a reply lands can be
 // refused by the kernel's parse lag ("isn't in the transcript yet"). The payload holds here from the
 // send; a TRANSIENT nack keeps the optimistic mark + latch alive and the create RE-POSTS when the
@@ -7061,8 +7141,13 @@ function dropSynthThread(sid: string, uuid: string): void {
 const cmtInterrupted = new Set<string>();
 const commentInFlight = (th: CommentThread): boolean => {
   if (th.status !== "open" || !!th.error || threadStuck(th.state)) return false;
-  if (cmtAwaitBase.has(th.tid)) return true;
-  return replyOwed(th) && !cmtInterrupted.has(th.tid);
+  if (cmtAwaitBase.has(th.tid)) return true;    // the pre-round-trip instant only: from the send click until a frame carries it
+  // the kernel is the one truth for "a reply is still owed" (T237): it reads the thread's transcript with
+  // the chat's own turn-end, so an intermediate record of a multi-record turn, a state flap between
+  // records, or a frame that lost a client latch can no longer drop the green wash to yellow while the
+  // thread is still responding. An older kernel ships no bit → the msgs-derived fallback.
+  const owed = typeof th.replyOwed === "boolean" ? th.replyOwed : replyOwed(th);
+  return owed && !cmtInterrupted.has(th.tid);
 };
 const commentDrafts = new Map<string, string>();                    // draft key → unsent popover text
 // The popover-boot hold (fillCommentMsgs): tid → when the loader first held the list. Held until the
@@ -7767,10 +7852,10 @@ function commentSendFromPop(pop: HTMLElement): void {
     // so its never-listed tid unwraps through the standard sweep the moment the real thread lands
     const synth: CommentThread = { tid: "pending:" + create.uuid, anchorUuid: create.uuid,
       exact: create.exact, status: "open", createdT: Date.now() / 1000, state: "working",
-      unread: false, promotedName: "", msgs: [], name: nm || "comment", color: create.color || "" };
+      unread: false, replyOwed: true, promotedName: "", msgs: [], name: nm || "comment", color: create.color || "" };
     const cur0 = commentThreads.get(create.sid) || [];
     commentThreads.set(create.sid, [...cur0.filter((t) => t.tid !== synth.tid), synth]);
-    cmtAwaitBase.set(synth.tid, 0);   // the SEND gesture latches the pulse — before any kernel round-trip (T102)
+    cmtAwaitBase.set(synth.tid, { ...CMT_LATCH_ZERO });   // the SEND gesture latches the pulse — before any kernel round-trip (T102); released once a frame acknowledges the send (T237)
     applyCommentMarks(create.sid);
     vscodeApi.postMessage({ type: "commentCreate", id: create.sid, uuid: create.uuid, exact: create.exact,
       text, name: nm, model: create.model || "", effort: create.effort || "",
@@ -7783,7 +7868,7 @@ function commentSendFromPop(pop: HTMLElement): void {
   const cur = openCommentThread();
   if (!cur) return;
   vscodeApi.postMessage({ type: "commentReply", id: cur.sid, tid: cur.th.tid, text });
-  cmtAwaitBase.set(cur.th.tid, agentCount(cur.th));   // a follow-up RE-LATCHES at its own send, until ITS reply (T102)
+  cmtAwaitBase.set(cur.th.tid, cmtLatchOf(cur.th));   // a follow-up RE-LATCHES at its own send — until a frame carries that send; then the kernel's replyOwed owns it (T102 → T237)
   cmtInterrupted.delete(cur.th.tid);                  // a fresh send re-owes a reply — the stop tombstone retires (T138)
   cur.th.state = "working";                     // optimistic: the pulse rides the SEND, not the
   applyCommentMarks(cur.sid);                   // round-trip (the kernel's next frame confirms)
@@ -7977,8 +8062,8 @@ function renderCommentPopover(): void {
             item.addEventListener("click", (ev) => {
               ev.stopPropagation();
               // a model family sends its remembered DEFAULT — the pinned version, else the alias —
-              // exactly as the chat statusline and the timeline lane do (review 2026-09-01: this
-              // dialog sent the bare alias, so the same click floated here and pinned there)
+              // exactly as the chat statusline and the timeline lane do (this dialog sent the bare
+              // alias, so the same click floated here and pinned there)
               if (pendingCommentAnchor) pendingCommentAnchor[kind] = kind === "model" ? (c.default || c.value) : c.value;
               closeMetaMenu();
               document.getElementById("cmt-pop")?.remove();   // full rebuild shows the pick
@@ -7987,10 +8072,10 @@ function renderCommentPopover(): void {
             menu.appendChild(item);
             if (pinned) {
               // This menu is FLAT — no submenu, so no Latest row — and once a family carried a pin the
-              // family row launched on the pin and nothing here launched on the alias (fixer round 4,
-              // 2026-09-01). The family row now names the pin it launches on, and a "<Family> · Latest"
-              // row beside it sends the bare alias: a per-thread launch pref, never the family's memory
-              // (an alias records nothing at the kernel's choke point, so no floating flag rides it).
+              // family row launched on the pin and nothing here launched on the alias. The family row
+              // names the pin it launches on, and a "<Family> · Latest" row beside it sends the bare
+              // alias: a per-thread launch pref, never the family's memory (an alias records nothing at
+              // the kernel's choke point, so no floating flag rides it).
               const pinSub = el("div", "meta-item-sub");
               pinSub.textContent = modelChoiceLabel(pinnedTo).label;
               item.appendChild(pinSub);
@@ -10126,7 +10211,7 @@ function renderAwaitWhy(host: HTMLElement, s: Session | null) {
     });
     lab.append(" · " + why.replace(/^delegated to [^;]*;\s*/i, "").replace(/^(waiting on|awaiting)\s+/i, ""));
   } else {
-    lab.textContent = "Awaiting" + (kw ? " " + kw : "") + " · " + why.replace(/^(waiting on|awaiting)\s+/i, "");
+    lab.textContent = "Awaiting" + (kw ? " " + kindWord(s!.status.awaitingKind, s!.status.awaitingCount) : "") + " · " + why.replace(/^(waiting on|awaiting)\s+/i, "");
   }
   head.appendChild(lab);
   host.appendChild(head);
@@ -10652,30 +10737,37 @@ type MetaKind = "mode" | "model" | "effort" | "fast";
 // label; `sdkOnly` drops the entry on a tmux session, whose backend cannot apply it.
 interface MetaChoice { label: string; value: string; sub?: string; sdkOnly?: boolean; color?: number[] | null;
   versions?: { label: string; value: string; learned?: boolean }[]; default?: string }   // model families only (the
-  // user 2026-08-25). `default` is the family's remembered version pin, else the family ALIAS (2026-09-01);
-  // `learned` marks a version no seed table lists — a running session's CLI reported it (kernel /models).
+  // user 2026-08-25). `default` is the family's remembered version pin, else the family ALIAS; `learned`
+  // marks a version the catalog lacks — a running session's CLI reported it (kernel /models).
 // Model + effort choices come from the kernel's /models — the ONE list shared with the timeline lanes and the
 // judge-tier settings (the user 2026-07-02, who wanted one shared code path, not hardcoded in multiple places), so
 // the client holds no model literals (mirrors paletteColors above). Populated in place on load so META_CHOICES
 // keeps its reference; the session picker appends its own "Default" (use-the-CLI-default) sentinel — not a model.
 const MODEL_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
 const EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
+// A CODEX session's pickers speak Codex's vocabulary (the payload's codex section — models from
+// the app-server's own list, efforts the four Codex accepts). Empty until the codex backend has
+// run: an empty model menu beats offering another vendor's models (docs/codex.md).
+const CODEX_MODEL_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
+const CODEX_EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
 // Loaded at page load and RE-LOADED on the kernel's {type:"models"} frame — the pick memory moved (a
 // version pinned, a family un-pinned by Latest, a refused pin dropped; from this tab, another dashboard,
-// or the kernel itself). A family's `default` is what its row SENDS, so a list fetched once went stale
-// the moment anything changed it: after Latest un-pinned a family, this tab's next family click sent
-// the old pinned id and silently re-pinned (fixer round 4, 2026-09-01). Refilled IN PLACE so META_CHOICES
+// or the kernel itself) or the catalog grew. A family's `default` is what its row SENDS, so a list
+// fetched once went stale the moment anything changed it: after Latest un-pinned a family, this tab's
+// next family click sent the old pinned id and silently re-pinned. Refilled IN PLACE so META_CHOICES
 // keeps its reference; event-keyed on the frame, never a poll.
-// A response is applied only if it is not OLDER than one already applied (fixer round 5, 2026-09-01): its
-// `rev` is the pick memory's revision — the same counter the models frame carries — and two fetches can
-// overlap (a frame during the page-load fetch; two quick frames) and resolve out of order, so without the
-// check the STALE list won until the next change. A payload without a rev (an older kernel) always applies.
+// A response is applied only if it is not OLDER than one already applied: its `rev` is the pick memory's
+// revision — the same counter the models frame carries — and two fetches can overlap (a frame during the
+// page-load fetch; two quick frames) and resolve out of order, so without the check the STALE list won
+// until the next change. A payload without a rev (an older kernel) always applies.
 let modelChoicesRev = -1;
 function loadModelChoices(): void {
   fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
     if (typeof d.rev === "number") { if (d.rev < modelChoicesRev) return; modelChoicesRev = d.rev; }
     if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
     if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
+    if (d.codex && Array.isArray(d.codex.models)) { CODEX_MODEL_CHOICES.length = 0; CODEX_MODEL_CHOICES.push(...d.codex.models); }
+    if (d.codex && Array.isArray(d.codex.efforts)) { CODEX_EFFORT_CHOICES.length = 0; CODEX_EFFORT_CHOICES.push(...d.codex.efforts); }
     if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
   }).catch(() => { /* picker stays as it was until it lands */ });
 }
@@ -10726,6 +10818,13 @@ const MODE_ICONS: Record<string, string> = {
   bypasspermissions: '<path d="M8 2 L13 4 V8 C13 11.4 10.8 13.2 8 14 C5.2 13.2 3 11.4 3 8 V4 Z"/><path d="M3.2 13 L12.8 3"/>',
   dontask: '<path d="M3 3.5 H13 V10 H8.5 L5.5 12.8 V10 H3 Z"/><path d="M3.2 12.6 L12.8 2.6"/>',
 };
+// the modes that REMOVE the gate rather than move it read in a red hue on the yatharth themes
+// (the user 2026-08-31) — CSS-scoped to .chat-theme-yatharth so classic renders untouched
+function riskyMode(mode: string | undefined): boolean {
+  const k = (mode || "").toLowerCase().replace(/[\u2019' -]/g, "");
+  return k === "bypasspermissions" || k === "bypass" || k === "dontask";
+}
+
 function modeIconSvg(mode: string | undefined): string {
   // accepts wire values AND display labels (metaButton receives prettyMode's text)
   const raw = (mode || "default").toLowerCase().replace(/[\u2019' -]/g, "");
@@ -10793,12 +10892,24 @@ function prettyMode(m: string | undefined): string {
     case "auto": return "Auto";
     case "dontask": return "Don’t ask";
     case "bypasspermissions": return "Bypass";
+    case "sandboxed": return "Sandboxed";   // a Codex session's fixed posture (workspace-write)
     default: return "Normal";   // default / normal / unknown
   }
 }
 const META_CHOICES: Record<MetaKind, MetaChoice[]> = {
   mode: MODE_CHOICES, model: MODEL_CHOICES, effort: EFFORT_CHOICES, fast: FAST_CHOICES,
 };
+// The choices a menu offers depend on the session's BACKEND: a Codex session speaks Codex's
+// vocabulary (its own model list, the four efforts it accepts) — never Claude's, whose aliases
+// the codex backend refuses (docs/codex.md). Mode/fast never reach here for codex (see the
+// toggleMetaMenu guard / the fast badge's report gate).
+function metaChoices(kind: MetaKind, st: Status): MetaChoice[] {
+  if (st.backend === "codex") {
+    if (kind === "model") return CODEX_MODEL_CHOICES;
+    if (kind === "effort") return CODEX_EFFORT_CHOICES;
+  }
+  return META_CHOICES[kind];
+}
 // the live value of a meta kind for the active session
 function metaCurrent(kind: MetaKind, st: Status): string {
   return (kind === "model" ? st.model : kind === "effort" ? st.effort : kind === "fast" ? st.fast
@@ -10849,6 +10960,7 @@ function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLE
     const ico = el("span", "meta-ico mode-ico");
     ico.innerHTML = modeIconSvg(text);   // refreshed by the sync loop below from st.mode
     btn.appendChild(ico);
+    btn.classList.toggle("mode-risky", riskyMode(text));   // kept live by the sync loop
   }
   const label = el("span", "meta-label");
   label.textContent = text;
@@ -10909,6 +11021,7 @@ function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null)
     if (kind === "mode") {
       const ico = b.querySelector(".mode-ico") as HTMLElement | null;
       if (ico) ico.innerHTML = modeIconSvg(st.mode);
+      b.classList.toggle("mode-risky", riskyMode(st.mode));
     }
     // A switching MODEL shows animated dots, not the stale/premature name (the user 2026-07-03): the
     // server drives it (st.modelPending) — event-based, cleared the instant the new model actually lands —
@@ -10955,12 +11068,15 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   // slash command there would answer the prompt instead (host guards this too)
   if (status.state === "needsInput" || status.state === "awaiting") return;
   const s = { status };
+  // a Codex session's mode is fixed (sandboxed, plans/codex-backend.md phase 1) — the badge is
+  // informational, and opening Claude's permission-mode cycle under it would offer four no-ops
+  if (kind === "mode" && s.status.backend === "codex") return;
   const menu = el("div", "meta-menu");
   menu.dataset.kind = kind;
   const pickValue = (value: string, floating = false) => {
     if (vscodeApi) {
       const op: Record<string, unknown> = { type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : "setMode", id: opSid, value };
-      if (floating) op.floating = true;   // the submenu's Latest row: the kernel forgets the family's pin (2026-09-01)
+      if (floating) op.floating = true;   // the submenu's Latest row: the kernel forgets the family's pin
       vscodeApi.postMessage(op);
       const was = metaCurrent(kind, s.status);
       metaPending.set(`${opSid}:${kind}`, { was, until: Date.now() + 20_000 });
@@ -10970,13 +11086,15 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   };
   let subEl: HTMLElement | null = null;
   const closeSub = () => { subEl?.remove(); subEl = null; };
-  // An sdkOnly entry is dropped on tmux rather than shown-and-refused: the backend cannot apply it, and
-  // a menu that lists a mode you can't have is worse than one that doesn't.
-  for (const c of META_CHOICES[kind].filter((c) => !c.sdkOnly || s.status.backend === "sdk")) {
+  // An sdkOnly entry is dropped on tmux rather than shown-and-refused: the backend cannot apply it,
+  // and a menu that lists a mode you can't have is worse than one that doesn't. Codex sessions read
+  // their own vocabulary via metaChoices (docs/codex.md) before the same filter.
+  for (const c of metaChoices(kind, s.status).filter((c) => !c.sdkOnly || s.status.backend === "sdk")) {
     const item = el("div", "meta-item" + (isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
     item.tabIndex = 0;
     const rowIco = kind === "mode" ? el("span", "meta-ico mode-ico") : null;
     if (rowIco) rowIco.innerHTML = modeIconSvg(c.value);
+    if (kind === "mode" && riskyMode(c.value)) item.classList.add("mode-risky");
     // model/effort rows wear THEIR OWN rank color (the user 2026-08-31: a picker whose rows are
     // all default-gray codes nothing) — the same /models-fed color+tone the badges use
     if (kind === "model" || kind === "effort") {
@@ -11008,12 +11126,12 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     const openSub = versions.length > 1 ? () => {
       closeSub();
       const sub = el("div", "meta-menu meta-sub");
-      // "Latest" heads the submenu (review 2026-09-01): the one gesture back to floating once a family
-      // carries a pin — the family row sends the pin, the rows below pin, and a typed "/model fable"
-      // leaves the pick memory alone by design. It sends the ALIAS with the `floating` flag, which the
-      // kernel's setModel arm hands to _set_model_or_park to forget the family's remembered pin, so the
-      // family follows the CLI's newest release again. An explicit user gesture, so it may move state.
-      // ✓ when the family is unpinned and the session runs it.
+      // "Latest" heads the submenu: the one gesture back to floating once a family carries a pin — the
+      // family row sends the pin, the rows below pin, and a typed "/model fable" leaves the pick memory
+      // alone by design. It sends the ALIAS with the `floating` flag, which the kernel's setModel arm
+      // hands to _set_model_or_park to forget the family's remembered pin, so the family follows the
+      // CLI's newest release again. An explicit user gesture, so it may move state. ✓ when the family
+      // is unpinned and the session runs it.
       const pinned = !!c.default && c.default !== c.value;
       const latest = el("div", "meta-item" + (!pinned && isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
       latest.tabIndex = 0;
@@ -11034,13 +11152,13 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
         row.tabIndex = 0;
         row.textContent = v.label;
         if (v.learned) {
-          // LOUD, per the fail-loudly rule: this version is in no seed table — a running session's CLI
+          // LOUD, per the fail-loudly rule: this version is in no catalog list — a running session's CLI
           // reported it (kernel /models `learned`) — so the row says so instead of a stale menu hiding
           // a live model. The marker wears the menu vocabulary's sub-line size and opacity.
           const tag = el("span", "meta-item-sub");
           tag.textContent = " new";
           row.appendChild(tag);
-          row.title = "Reported by a running session's Claude Code; not yet in romp's built-in version list";
+          row.title = "Reported by a running session's Claude Code; not yet in romp's version list";
         }
         row.addEventListener("click", (e) => { e.stopPropagation(); pickValue(v.value); });
         row.addEventListener("keydown", (e) => {
@@ -11116,7 +11234,7 @@ function ctxBar(): HTMLElement {
   });
   return bar;
 }
-function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = false, ctxColor?: number[]) {
+function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = false, ctxColor?: number[], ctxOver = false) {
   // Compacting: hide the fill/% (the number is about to be wrong anyway) and run
   // the scanning bar instead, mirroring the timeline's battery. No ctx% needed.
   bar.classList.toggle("ctx-compacting", compacting);
@@ -11150,8 +11268,13 @@ function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = fa
   const fillBg = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
     : ctxFallbackColor(pct);   // theme-aware pair; fills stay un-re-encoded (see tabCtxGauge's note)
   if (fill) { fill.style.width = pct + "%"; fill.style.background = fillBg; }
-  if (txt) txt.textContent = pct + "%";
-  bar.title = `context ${pct}% used — click to /compact`;
+  // ctxOver: the kernel clamps the CLI's "0-100+" percentage at 100 — past it the tokens exceed the
+  // CURRENT model's window (a 1M→200k model switch does this instantly). Say so: a silent 100% right
+  // after picking a smaller model reads as a broken gauge (the user 2026-09-02).
+  if (txt) txt.textContent = ctxOver ? "100%+" : pct + "%";
+  bar.title = ctxOver
+    ? "context exceeds this model's window — the next turn compacts or trims; click to /compact now"
+    : `context ${pct}% used — click to /compact`;
 }
 
 const CHIP_LABEL: Record<ChipState, string> = {
@@ -11264,7 +11387,7 @@ function updateStatusline() {
         if (chipPeers[0].color && chipPeers[0].color.bg) nm.style.color = chipPeers[0].color.bg;
         chip.appendChild(nm);
       } else chip.append(chipPeers.length + " peers");
-    } else chip.textContent = CHIP_LABEL.awaitingBg + (kw ? " " + kw : "");
+    } else chip.textContent = CHIP_LABEL.awaitingBg + (kw ? " " + kindWord(s.status.awaitingKind, s.status.awaitingCount) : "");   // "Awaiting agent" for one, "agents" for more (T225)
     chip.title = (s.status.awaitingWhy || "idle, waiting on background work it dispatched")
                + " — clears when the result lands";
     sl.appendChild(chip);
@@ -11329,7 +11452,7 @@ function updateStatusline() {
   right.appendChild(meta);
   const bar = ctxBar();
   bar.id = "ctx-bar";   // the statusline slot's id — the 1s ticker refreshes THIS copy in place (the tab tip's carries none)
-  setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
+  setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone), s.status.ctxOver);
   right.appendChild(bar);
   // stop/interrupt button — at the FAR RIGHT of the statusline (the user 2026-08-28; it sat
   // beside the state chip on the left before), riding inside the right cluster so a wrapped
@@ -11775,8 +11898,9 @@ function renderComposerFiles(id: string | null): void {
   if (sendBtn) {
     const held = !!id && sendOnShip.has(id);
     sendBtn.classList.toggle("send-held", held);
-    if (held) sendBtn.setAttribute("title", "sends when the upload finishes");
-    else if (sendBtn.getAttribute("title") === "sends when the upload finishes") sendBtn.removeAttribute("title");
+    // through the styled tip, not a native title: the button already wears setTip("Send (Enter)"),
+    // and a native title beside it showed BOTH boxes while a hold was armed (2026-09-02)
+    setTip(sendBtn, held ? "Send (Enter)\nsends when the upload finishes" : "Send (Enter)");
   }
   strip.replaceChildren();
   const paths = (id ? composerFiles.get(id) : undefined) || [];
@@ -12211,6 +12335,7 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
   // Stash the leaving tab's draft; show the entering tab's own (usually empty).
   const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
   if (ta && activeId !== id) {
+    clearComposerNote();   // a real switch binds the box to `id` — a note about the last hand-over is stale (T236)
     if (activeId) {
       if (ta.value) drafts.set(activeId, ta.value); else drafts.delete(activeId);
       // A citation chip is a "reply to this card right now" intent — switching tabs abandons it, so drop the
@@ -12310,11 +12435,19 @@ function upsert(msg: any) {
   // fork by the ABSENCE of any shared event uuid instead.
   const forked = !!(existed && msg.events && msg.events.length && prev && prev.events.length
                     && !sharesAnyUuid(msg.events, prev.events));
+  // A view that never held an event is a PLACEHOLDER (a fork's provisional tab, a revive's stub):
+  // the payload that fills it is the tab's FIRST content-bearing build, not an append onto a
+  // transcript someone is reading. The append path measured "was the reader at the bottom?"
+  // against a one-line placeholder that cannot overflow, landed the whole arriving history at
+  // scrollTop 0, and the never-yank rule then held the top forever (the user 2026-09-02: an
+  // opened or forked session sat at the top after its context loaded). A first build takes the
+  // showActive branch below, where landActive pins the bottom exactly like a brand-new tab.
+  const firstBuild = !!(existed && prev && !prev.events.length && msg.events && msg.events.length);
   // Preserve the reader's position across ANY active-tab rebuild (fork OR slid tail-window): capture whether
   // they were at the bottom + their anchor turn BEFORE we drop/rebuild the DOM, so a push never SNAPS a
   // scrolled-up reader down (the user 2026-07-06). Only a genuinely-at-bottom reader follows new content.
   let _scrollContent: HTMLElement | null = null, _scrollAnchor: { uuid: string; y: number } | null = null, _wasNear = true;
-  if (msg.id === activeId && !(existed && !forked)) {   // only the rebuild branch (appendActive preserves on its own)
+  if (msg.id === activeId && !(existed && !forked && !firstBuild)) {   // only the rebuild branch (appendActive preserves on its own)
     _scrollContent = document.getElementById("content");
     const _v0 = views.get(msg.id);
     _wasNear = !_scrollContent || !_v0 || !_v0.shown || nearBottom(_scrollContent);
@@ -12326,13 +12459,22 @@ function upsert(msg: any) {
   }
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
   if (!existed) order.push(msg.id);
-  if (!activeId) activeId = msg.id;
+  // The torn-down session is BACK while its hand-over note still holds the box: the user has done nothing
+  // since (a click into the box, a tab switch or the ✕ would have retired it), so put them back exactly
+  // where they were — its tab active, its kept draft in the box. Merely retiring the note here left the
+  // fallback tab active with the box unheld, and the next blind keystroke landed there after all (the
+  // T236 harness, omission path: the tab is re-listed within seconds). setActive clears the note.
+  if (composerNoteSid === msg.id) setActive(msg.id);
+  const adopted = !activeId;
+  if (adopted) { activeId = msg.id; loadComposerFor(msg.id, true); }   // adopted as the only tab → its draft too (T236: the once-per-page restore below never covers a session that LEFT and came back)
   if (wantActive && msg.id === wantActive) { wantActive = null; setActive(msg.id); }   // restore persisted tab on arrival
   renderTabs();                                   // a new id appended to `order` above → strip repaints in kernel order
   // Active tab: a content refresh appends + preserves scroll (appendActive); a new tab or a fork
   // lands at the bottom/anchor (showActive). This is what keeps new pushes from snapping to bottom.
   if (msg.id === activeId) {
-    if (existed && !forked) {
+    // an ADOPTION is a first show even for a payload this page already held: the no-active-tab state hid
+    // every view, and appendActive never re-reveals one (T236 harness: a tab active over "No session open")
+    if (existed && !forked && !firstBuild && !adopted) {
       appendActive();
     } else {
       showActive();
@@ -12358,8 +12500,9 @@ function upsert(msg: any) {
 function update(msg: any) {
   retryCmtCreates(String(msg.id || ""));   // ditto for the delta path (T106)
   const s = sessions.get(msg.id);
-  if (!s) return;
+  if (!s) { requestFullSession(msg.id); return; }   // a delta with no base is PROOF of desync (see chatTail)
   s.events = msg.events || s.events;
+  const before = awaitKey(s.status);
   s.status = msg.status || s.status;
   reconcileRewind(s);                    // pending-rewind overlay + the editable-bubble set, from the fresh payload
   reconcileOptimistic(s);                // re-assert (or retire) any in-flight optimistic sends on this push
@@ -12367,6 +12510,7 @@ function update(msg: any) {
   if (msg.id === activeId) {
     appendActive();
     renderLedger(); // refresh the summary box (ages + any new items) as the active session works
+    if (awaitKey(s.status) !== before) renderBgTasks();   // the box rides the chip's own frame (T225; see chatTail)
   } else {
     const v = views.get(msg.id);
     if (v) v.stale = true; // re-render its current turn when it's next shown
@@ -12413,22 +12557,29 @@ function requestFullSession(id: string): void {
 }
 // A needFull whose REPLY is lost with the socket must not latch its slot forever: only upsert clears
 // awaitingFull, so an ask in flight across a drop would suppress every later re-ask for that sid — the
-// permanent swirl, re-minted by the repair channel itself. The socket edge is the deciding event: the
-// kernel treats a reconnect as a fresh client and re-sends full sessions, so clearing here never costs an
-// extra ask — it only re-arms the desync repair. (The shim fires these on the LOCAL socket; a remote
-// host's drop needs nothing, its reconnect is a brand-new client whose connect push heals by itself.)
+// permanent swirl, re-minted by the repair channel itself. Both socket edges clear it. The DOWN edge is
+// the deciding event: the kernel treats a reconnect as a fresh client and re-sends full sessions, so
+// clearing here never costs an extra ask — it only re-arms the desync repair. The UP edge clears again:
+// a reconnect mints a FRESH kernel-side client (its echat starts empty, so full frames are already
+// guaranteed), but an ask parked against the dead socket — or one posted between the two edges — would
+// gag the new socket's repair path forever (awaitingFull otherwise clears only when the reply lands, and
+// the dead socket's never will). (The shim fires these on the LOCAL socket; a remote host's drop needs
+// nothing, its reconnect is a brand-new client whose connect push heals by itself.)
 window.addEventListener("romp:wsdown", () => awaitingFull.clear());
 window.addEventListener("romp:wsup", () => awaitingFull.clear());
 
 function chatTail(msg: any) {
   const s = sessions.get(msg.id);
   if (!s) {
-    // No base: the kernel is TALKING about a session this client doesn't hold — the same authoritative
-    // signal as the delta gap below, one step earlier. This used to be a silent return, and it was the
-    // drop that made a torn-down tab's swirl permanent: the kernel's per-client echat advances on SEND,
-    // so after a teardown-then-relist it keeps sending deltas we keep dropping here, and the gap branch
-    // (the one repair call site) sat unreachable below this line. Ask for the full session; the
-    // closingTabs/provisional/host gates and the awaitingFull dedup live inside requestFullSession.
+    // A delta for a session we hold NO base for is PROOF of desync, not noise to ignore: the full
+    // frame was sent while this document had no message listener yet (the pusher fires from the
+    // moment the socket opens; the 1.4MB bundle can still be evaluating), and the kernel's echat
+    // advances on SEND — so deltas are all it will ever volunteer, and the tab sat on the
+    // « opening … » placeholder forever (the user 2026-09-02; a duplicated browser tab won the
+    // race via cached bundles, a reload only sometimes). The same silent drop made a torn-down
+    // tab's swirl permanent after a teardown-then-relist, with the gap branch (the one repair call
+    // site) unreachable below it. Ask for the base instead of waiting; the closingTabs/provisional/
+    // host gates and the awaitingFull dedup live inside requestFullSession.
     requestFullSession(msg.id);
     return;
   }
@@ -12468,6 +12619,7 @@ function chatTail(msg: any) {
   // view stale so the window is rebuilt from the events that actually remain.
   const shrank = s.events.length < wasLen;
   if (typeof msg.total === "number") s.headTotal = msg.total;
+  const before = awaitKey(s.status);
   if (msg.status) s.status = msg.status;
   // the top-level userTodos seam rides every delta (kernel _send_chat), like status: the chat's
   // steady state is chatTail frames, so a caught-up client that only merged the field from full
@@ -12483,6 +12635,12 @@ function chatTail(msg: any) {
     }
     appendActive();
     renderLedger();
+    // THIS is the frame that flips the chip (T225): a status-only change reaches a caught-up client as a
+    // chatTail with an empty suffix and the full status — awaitingWhy/Kind/Count/Tasks included. The box
+    // rendered only from the full-session path, so the chip read "Awaiting agents" with no box until a
+    // transcript change happened to send a full frame (31s+ in the user's shot; never, in the quiet lab).
+    // Render the box from the SAME frame, keyed on the awaited fields CHANGING — never on the per-second ticks.
+    if (awaitKey(s.status) !== before) renderBgTasks();
   } else {
     const v = views.get(msg.id);
     if (v) v.stale = true;
@@ -12573,12 +12731,30 @@ function requestOlder(sid: string, v: View, content: HTMLElement): void {
   vscodeApi?.postMessage({ type: "loadOlder", id: sid, before: s.headFrom });
 }
 
+// The awaiting fields the #bg-tasks box renders from (renderAwaitWhy / the awaited-row outline) — one
+// key per status, so a status-only frame re-renders the box exactly when THESE change (the chip's own
+// flip is one of them) and never on the per-second ticks that touch nothing the box shows.
+function awaitKey(st: Status | undefined): string {
+  if (!st) return "";
+  return JSON.stringify([st.state, st.awaitingWhy || "", st.awaitingKind || "", st.awaitingCount ?? null,
+                         st.awaitingTasks || [], st.awaitingTaskIds || [],
+                         (st.awaitingPeers || []).map((p) => [p.host || "", p.name || ""])]);
+}
+
 function statusOnly(msg: any) {
   const s = sessions.get(msg.id);
-  if (!s) { requestFullSession(msg.id); return; }   // a status push for a session we don't hold — the same desync signal as chatTail's missing base (see there)
+  if (!s) { requestFullSession(msg.id); return; }   // a status push for a session we don't hold is PROOF of desync, the same signal as chatTail's missing base (see there)
+  const before = awaitKey(s.status);
   s.status = msg.status || s.status;
   renderTabs();                          // status-only push → repaint the chip; order is untouched
-  if (msg.id === activeId) updateStatusline();
+  if (msg.id === activeId) {
+    updateStatusline();
+    // T225 (the user 2026-09-02): the awaiting BOX must be there the moment the chip says so. Both read
+    // this one payload, but the box was rendered only by the full-session frame path, so a status-only
+    // flip to Awaiting left the chip on and the box absent until the next transcript change or tab
+    // switch (31s+ observed). Same frame, same data — re-render the box when its fields changed.
+    if (awaitKey(s.status) !== before) renderBgTasks();
+  }
 }
 
 // The ✕'s own path: drop the tab now, THEN remember the close (see closingTabs). The order matters and
@@ -12600,10 +12776,10 @@ function closeTabLocally(id: string): void {
   // (and the kernel never knew the id): its ✕ is a plain local discard — tab, draft, and all.
   if (isProvisionalId(id)) {
     if (id === provisionalId) cancelProvisional();
-    else { failedProvisionals.delete(id); dismissSession(id); }
+    else { failedProvisionals.delete(id); dismissSession(id, "close"); }
     return;
   }
-  dismissSession(id);
+  dismissSession(id, "close");
   closingTabs.set(id, Date.now());
 }
 
@@ -12617,28 +12793,152 @@ function closeTabLocally(id: string): void {
 // event — is both the regression above (the ✕ path runs through here microseconds after recording the
 // close) and wrong under federation, where a `closed` ack can predate stale merged frames that still list
 // the id: the moment nothing suppresses it, the strip re-draws the swirl placeholder.
-function dismissSession(id: string): void {
+// WHY a session is leaving the panel — the one fact that decides what happens to its composer state
+// (T236, the user 2026-09-03: an unsent draft typed into one session's box turned up in another's after
+// a remote host dropped off). "close" is the user's own ✕ / End; "end" is the owning kernel's `closed`
+// frame — the session actually ended. Both are GENUINE ends and clear the draft (the user 2026-08-04).
+// "hostDrop" is federation's synthetic `closed` for every session of a host that left the mesh — the
+// session still exists on its kernel; "omitted" is a kernel tabOrder push that stopped carrying an id it
+// used to (applyTabOrder's teardown) — an absence, not a report of an end. Neither is the user's close,
+// so the draft (and citations, edit pill, attachments) is STASHED under the session's stable id and comes
+// back with the session. Deleting it here, as every teardown once did, is what lost the user's text.
+type DismissWhy = "close" | "end" | "hostDrop" | "omitted";
+
+// The active box's live text, filed under ITS OWN id. The input handler keeps `drafts` current on every
+// keystroke, but a box filled programmatically (a slash pick, a history recall) can be ahead of it — so
+// a teardown stashes explicitly before anything is cleared or the box changes hands.
+function stashActiveDraft(id: string): void {
+  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+  if (!ta || activeId !== id) return;
+  if (ta.value) drafts.set(id, ta.value); else drafts.delete(id);
+}
+
+// Bind the composer to `id`: its draft into the box (unless `keepTyped` and the box already holds live
+// typing — the never-clobber rule restoreActiveDraftOnce follows), then its citation chips, attachment
+// thumbnails and staged stack. setActive paints the same set inline (pinned there); this is the loader
+// for the two OTHER ways the box changes hands — the active tab's teardown and the `!activeId` adoption
+// of an arriving session — which used to load less (on adoption, no draft at all: a session that LEFT
+// and came back as the only tab showed an empty box over a kept draft).
+function loadComposerFor(id: string | null, keepTyped = false): void {
+  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+  if (ta) {
+    if (!(keepTyped && ta.value)) ta.value = (id && drafts.get(id)) || "";
+    growComposer(ta);
+  }
+  renderComposerChips(id);
+  renderComposerFiles(id);
+  renderStagedStrip(id);
+}
+
+// The line above the box after the ACTIVE tab was torn down under the user (T236): whose box went away,
+// why, and — for a host drop or an omission — that the unsent draft is kept. The tab strip alone did not
+// carry this (the report proves it: the user kept typing). One note at a time; it retires on the exact
+// events that make it stale — an explicit tab switch (setActive re-binds the box), the session's own
+// return (its next session frame), or its ✕ — never a timer.
+let composerNoteSid: string | null = null;
+function renderComposerNote(sid: string, why: DismissWhy, name: string): void {
+  const box = document.getElementById("composer");
+  if (!box) return;
+  clearComposerNote();
+  const note = el("div", "composer-note");
+  note.id = "composer-note";
+  const msg = el("span", "composer-note-msg");
+  const who = el("span", "composer-note-name");
+  who.replaceChildren(...hostNameNodes(name, sid));   // the same "host:" + name the tab wore
+  let tail: string;
+  if (why === "hostDrop") tail = "’s host disconnected — your unsent draft is kept and comes back with it.";
+  else if (why === "omitted") tail = " is no longer listed by romp — your unsent draft is kept and comes back with it.";
+  else {
+    const next = activeId ? (sessions.get(activeId)?.name || tabMeta.get(activeId)?.name || "") : "";
+    tail = next ? ` ended — the box below is “${next}”’s now.` : " ended.";
+  }
+  msg.append(who, document.createTextNode(tail));
+  if (activeId) {   // a survivor owns the box now — say what re-binds typing to it (the keys alone will not, see composerNoteHolds)
+    const hint = el("span", "composer-note-hint");
+    hint.textContent = " Click the box to type here.";
+    msg.appendChild(hint);
+  }
+  const x = el("button", "composer-chip-x");
+  x.setAttribute("aria-label", "Dismiss");
+  x.title = "dismiss";
+  x.textContent = "✕";
+  x.addEventListener("click", () => clearComposerNote());
+  note.append(msg, x);
+  box.insertBefore(note, box.firstChild);
+  composerNoteSid = sid;
+}
+function clearComposerNote(): void {
+  document.getElementById("composer-note")?.remove();
+  composerNoteSid = null;
+}
+// While the note is up, the box has NO keyboard owner: the two "type from anywhere" defaults below (a
+// printable keystroke nobody claimed, Enter from the bare area) stand down instead of dropping the cursor
+// into the survivor's box — the harness showed the blur alone was not enough: the first printable key
+// re-focused the box and the continuation of A's draft landed in B's anyway (T236). The keystroke is
+// swallowed and the note flashes: the eye goes to the line that explains it. The box gaining focus (a click,
+// Tab, any other route the user takes into it), a tab switch or the note's ✕ ends the hold — every one a
+// deliberate act.
+function composerNoteHolds(): boolean {
+  if (!composerNoteSid) return false;
+  flashComposerNote();
+  return true;
+}
+function flashComposerNote(): void {
+  const n = document.getElementById("composer-note");
+  if (!n) return;
+  n.classList.remove("composer-note-flash");
+  void n.offsetWidth;   // restart the one-shot animation
+  n.classList.add("composer-note-flash");
+  n.addEventListener("animationend", () => n.classList.remove("composer-note-flash"), { once: true });   // one-shot: the class leaves on the animation's own end
+}
+
+// `doomed`: the other ids the same teardown is about to run through (applyTabOrder hands over every id its
+// push omitted); a host drop needs no list — every session on that host is going. The fallback must skip
+// them: landing on a sibling that is dismissed a moment later re-binds the box twice and leaves the note
+// naming the sibling, not the box the user was typing in.
+function dismissSession(id: string, why: DismissWhy, doomed?: ReadonlySet<string>): void {
   if (peekId === id) peekId = null;   // its tab is going — the peek goes with it
+  const wasActive = activeId === id;
+  const name = sessions.get(id)?.name || tabMeta.get(id)?.name || id;   // read before the maps forget it
+  if (wasActive) stashActiveDraft(id);   // FIRST: what is on screen belongs to this id, whatever happens next
   sessions.delete(id);
   liveAsks.delete(id);
   ledgers.delete(id);
-  // ALL of the closed session's composer context goes with it — the draft, the reply-context citation
-  // chip, and any pending edit pill (the user 2026-08-04). Deleting from the maps is not enough when the
-  // closed session was ACTIVE: the shared chip strip above the composer still shows its chip until
-  // someone repaints it, and that stale chip's ✕ targets the dead id (whose map entry is gone), so the
-  // click early-returns and the chip can't even be dismissed — hence the repaint below.
-  drafts.delete(id); composerCitations.delete(id); composerEdits.delete(id); composerFiles.delete(id); persistDrafts();
+  if (why === "close" || why === "end") {
+    // ALL of the closed session's composer context goes with it — the draft, the reply-context citation
+    // chip, and any pending edit pill (the user 2026-08-04). Deleting from the maps is not enough when the
+    // closed session was ACTIVE: the shared chip strip above the composer still shows its chip until
+    // someone repaints it, and that stale chip's ✕ targets the dead id (whose map entry is gone), so the
+    // click early-returns and the chip can't even be dismissed — hence the repaint below.
+    drafts.delete(id); composerCitations.delete(id); composerEdits.delete(id); composerFiles.delete(id); persistDrafts();
+  } else {
+    persistDrafts();   // a host drop / omission KEEPS it all (see DismissWhy) — the stash above may have updated the copy
+  }
   const v = views.get(id);
   if (v) { v.el.remove(); views.delete(id); }
   const oi = order.indexOf(id); if (oi >= 0) order.splice(oi, 1);
-  const mi = mru.indexOf(id); if (mi >= 0) mru.splice(mi, 1);
+  const mi = mru.indexOf(id); if (mi >= 0) mru.splice(mi, 1);   // before the fallback read below — never the dead id
   renderTabs();                          // tab removed from `order` above → repaint without it
-  if (activeId === id) {
-    activeId = mru[0] || null; // MRU: return to the previously-active tab, not the positional neighbor
-    const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
-    if (ta) { ta.value = (activeId && drafts.get(activeId)) || ""; growComposer(ta); }
-    renderComposerChips(activeId);   // the strip was showing the CLOSED session's chip — swap in the new active tab's (usually none)
-    renderComposerFiles(activeId);   // same for its attachment thumbnails
+  if (wasActive) {
+    // MRU: return to the previously-active tab, not the positional neighbor — one still on the strip (the
+    // dead id left `mru` above; an id `order` no longer carries would bind the box to a tab nobody can see,
+    // and the next keystroke would file under it) and not one this same teardown takes next.
+    const home = hostOf(id);   // "" for a local id, and then no sibling rule: every local tab would "share" it
+    const goingToo = (x: string) => (doomed?.has(x) ?? false) || (why === "hostDrop" && !!home && hostOf(x) === home);
+    // …and with no recency left (the user only ever looked at this one tab), the first tab still on the
+    // strip: leaving activeId null with tabs showing read "No session open" under a visible strip, and
+    // handed the box to whichever session frame happened to arrive next (the harness caught both, T236).
+    activeId = mru.find((x) => order.includes(x) && !goingToo(x)) || order.find((x) => !goingToo(x)) || null;
+    loadComposerFor(activeId);   // the strip was showing the CLOSED session's chip/thumbnails/draft — swap in the new active tab's (usually none)
+    // The box just changed hands under the user. Their own ✕ is the one case they already know; for every
+    // other reason BLUR it — a keystroke a moment later must not land in the survivor's session unnoticed
+    // (the T236 report: the continuation of A's draft surfaced in B's box) — and say above it whose box
+    // went away. An explicit tab click is what binds the box to a session again.
+    if (why !== "close") {
+      const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+      if (ta) ta.blur();
+      renderComposerNote(id, why, name);
+    }
     showActive();
   }
 }
@@ -12833,8 +13133,8 @@ window.addEventListener("message", (e: MessageEvent) => {
   // The identity palette changed (gear → Session colors): refresh the right-click menu's swatch set so a
   // menu opened after the switch offers the NEW palette (the kernel remaps + repaints sessions itself).
   else if (m.type === "palette" && Array.isArray(m.colors)) paletteColors = m.colors;
-  // The kernel's pick memory moved (a pin, a Latest un-pin, a refused pin dropped): re-read /models so the
-  // family rows send the fresh default — the models-list twin of the palette frame above (2026-09-01).
+  // The kernel's pick memory moved (a pin, a Latest un-pin, a refused pin dropped) or its catalog grew:
+  // re-read /models so the family rows send the fresh default — the models-list twin of the palette frame.
   else if (m.type === "models") loadModelChoices();
   else if (m.type === "sessionList") {
     // Whose list is this? federation stamps the source host; a local reply carries none. A reply for a
@@ -12938,7 +13238,10 @@ window.addEventListener("message", (e: MessageEvent) => {
   else if (m.type === "ledger") setLedger(m.id, m.ledger ?? null);
   else if (m.type === "working") { workingSet = new Set(Array.isArray(m.names) ? m.names : []); refreshPostalDots(); }
   else if (m.type === "imgData" && typeof m.path === "string") onImgData(m.path, typeof m.url === "string" ? m.url : null, typeof m.sid === "string" ? m.sid : null);
-  else if (m.type === "tabOrder") { captureViews(m.views || null); applyTabOrder(m.order, m.tabs); }
+  else if (m.type === "tabOrder") {
+    captureViews(m.views || null);
+    applyTabOrder(m.order, m.tabs, { reemit: m.reemit === true, freshHost: typeof m.freshHost === "string" ? m.freshHost : undefined });
+  }
   else if (m.type === "renamed" && m.id && typeof m.name === "string") {
     notePendingMeta(pendingTabMeta, m.id, { name: m.name });   // kernel truth — hold it against a push built pre-rename
     const s = sessions.get(m.id);
@@ -13018,26 +13321,33 @@ window.addEventListener("message", (e: MessageEvent) => {
     // clear (the latch side never re-derives from state), so the boot-flap class T102 removed
     // cannot re-green anything. Leaving "open" (or erroring) still clears immediately.
     for (const t of threads) {
+      // T237: the latch covers ONLY the pre-round-trip instant — released once a frame's projection carries
+      // the user's own send (see cmtLatchReleased); the kernel's owed bit owns the wash from there
       const base = cmtAwaitBase.get(t.tid);
-      if (base !== undefined && ((agentCount(t) > base && !threadBusy(t.state)) || t.status !== "open" || !!t.error)) cmtAwaitBase.delete(t.tid);
+      if (base !== undefined && cmtLatchReleased(t, base)) cmtAwaitBase.delete(t.tid);
     }
+    // prune latches only for tids NO session's thread list knows (T237): this frame lists ONE session's
+    // threads, and pruning against it dropped every other session's latch — and any tid a frame
+    // momentarily lacked — leaving a fresh comment's mark plain yellow while it was still "opening"
+    const knownTids = new Set<string>();
+    commentThreads.forEach((list) => list.forEach((t) => knownTids.add(t.tid)));
     for (const k of Array.from(cmtAwaitBase.keys()))
-      if (!k.startsWith("pending:") && !threads.some((t) => t.tid === k)) cmtAwaitBase.delete(k);
+      if (!k.startsWith("pending:") && !knownTids.has(k)) cmtAwaitBase.delete(k);
     const live = new Set(threads.filter((t) => t.status !== "promoted").map((t) => t.tid));
     for (const k of Array.from(commentPending.keys())) if (!live.has(k)) commentPending.delete(k);
     for (const k of Array.from(commentDrafts.keys())) if (!k.startsWith("new:") && !live.has(k)) commentDrafts.delete(k);
     if (pendingAdoptTid && threads.some((t) => t.tid === pendingAdoptTid)) adoptCommentThread(sid, pendingAdoptTid);
-    applyCommentMarks(sid);
     if (openCommentKey && openCommentKey.sid === sid) {
-      // reading IS seeing: a reply that lands while its popover is open must not dot the mark
+      // reading IS seeing: a reply that lands while its popover is open must not dot the mark — the
+      // watermark advances BEFORE the marks paint (T237), so it never wears yellow for it, not even one tick
       const th = threads.find((t) => t.tid === openCommentKey!.tid);
       if (th && th.unread) {
         th.unread = false;
         vscodeApi?.postMessage({ type: "commentSeen", id: sid, tid: th.tid });
-        applyCommentMarks(sid);
       }
-      renderCommentPopover();
     }
+    applyCommentMarks(sid);
+    if (openCommentKey && openCommentKey.sid === sid) renderCommentPopover();
   }
   // the create ack names the new thread: adopt exactly it (never a guess). The kernel sends the
   // frame first; if this ack somehow beat it, park the tid and the next frame adopts. The draft is
@@ -13066,6 +13376,7 @@ window.addEventListener("message", (e: MessageEvent) => {
   // a reply the kernel refused: drop its optimistic bubble (it must not read as 'still thinking'
   // forever) and hand the words back for review-and-resend — the toast says why it failed
   else if (m.type === "commentSendFailed" && m.tid) {
+    cmtAwaitBase.delete(String(m.tid));           // a refused send owes nothing — the latch it armed goes with it (T237 review)
     const pl = commentPending.get(String(m.tid));
     if (pl && pl.length) {
       const lost = pl.pop()!;
@@ -13091,15 +13402,17 @@ window.addEventListener("message", (e: MessageEvent) => {
     renderTabs();
   }
   else if (m.type === "closed") {
-    // A session died on its own (or the kernel confirms our close). A HOST DETACH rides the same
-    // frame, TAGGED (federation's closeRemote synthesizes one per sid): after a detach, that host's
-    // past listings are no longer live evidence — prune its ids from kernelListed so the reattach's
-    // tabs-first connect push reads as the designed silent boot, not a re-listing that needFull-bursts
-    // every one of the host's sessions on every window while those frames are already in flight.
-    // Kernel-omission teardowns never carry the tag (add-only stays load-bearing for them), and the
-    // prune lives HERE, not in dismissSession, whose hands-off contract is pinned by tests.
-    if (m.hostDetach) kernelListed.delete(m.id);
-    dismissSession(m.id);
+    // A session died on its own (or the kernel confirms our close) — or its HOST dropped: federation's
+    // closeRemote synthesizes one `closed` per sid, STAMPED `hostDrop` because it is not the session's
+    // end (its kernel is simply out of reach), so dismissSession keeps the unsent draft for its return
+    // instead of clearing it like a close (T236). The same stamp marks the exact event after which that
+    // host's past listings are no longer live evidence — prune its ids from kernelListed so the
+    // reattach's tabs-first connect push reads as the designed silent boot, not a re-listing that
+    // needFull-bursts every one of the host's sessions on every window while those frames are already
+    // in flight. Kernel-omission teardowns never carry the stamp (add-only stays load-bearing for
+    // them), and the prune lives HERE, not in dismissSession, whose hands-off contract is pinned by tests.
+    if (m.hostDrop === true) kernelListed.delete(m.id);
+    dismissSession(m.id, m.hostDrop === true ? "hostDrop" : "end");
   }
   // any payload that rebuilt transcript DOM must get its highlights re-applied (marks live IN that DOM)
   if (m && m.id && (m.type === "session" || m.type === "chatTail" || m.type === "chatHead" || m.type === "chatEpisode"))
@@ -13135,7 +13448,7 @@ setInterval(() => {
   const meta = document.getElementById("spinner-meta");
   if (meta) syncMetaControls(meta, s.status);
   const bar = document.getElementById("ctx-bar");
-  if (bar) setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
+  if (bar) setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone), s.status.ctxOver);
 }, 1000);
 
 // the last message we delivered per session — so a Ctrl+C interrupt can put it back
@@ -13567,6 +13880,11 @@ function setupComposer() {
     return false;
   };
   ta.addEventListener("focus", () => { if (slashSid !== (activeId || "")) loadCmds(activeId || ""); });   // pre-warm the cache before "/"
+  // The box GAINING FOCUS is the deliberate re-bind the note asked for (T236): the teardown blurred it, showActive
+  // never focuses it, and the two type-from-anywhere defaults stand down while the note holds — so any focus now
+  // is the user's own act (a click, Tab, Enter over a selection, Quote, a citation seed, a slash pick, an edit
+  // recall). Retiring on pointerdown alone left the note over a box they were typing in by any other route.
+  ta.addEventListener("focus", () => { if (composerNoteSid) clearComposerNote(); });
   ta.addEventListener("blur", () => window.setTimeout(closeSlash, 120));   // close when leaving (a row's mousedown keeps focus, so it fires only on a real leave)
   window.addEventListener("resize", positionSlash);
 

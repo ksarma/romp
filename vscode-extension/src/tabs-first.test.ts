@@ -15,9 +15,11 @@ test("a tabMeta map holds the kernel's name+color per tab", () => {
 });
 
 test("applyTabOrder REBUILDS tabMeta from the authoritative payload (closed tabs don't linger)", () => {
-  assert.match(RENDER, /function applyTabOrder\(o: any, tabs\?: any\)/);
+  // report = the frame's provenance for the close backstop (T233)
+  assert.match(RENDER, /function applyTabOrder\(o: any, tabs\?: any, report\?: OrderReport\)/);
   assert.match(RENDER, /if \(Array\.isArray\(tabs\)\) \{\s*tabMeta\.clear\(\);/);
-  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{ captureViews\(m\.views \|\| null\); applyTabOrder\(m\.order, m\.tabs\); \}/);
+  // the frame's provenance rides along since T233 (captureViews still runs FIRST)
+  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}\);\s*\n\s*\}/);
 });
 
 test("renderTabs renders the union of arrived sessions and tabMeta, placeholders for the rest", () => {

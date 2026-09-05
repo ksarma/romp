@@ -448,6 +448,19 @@ class BootReconcile(unittest.TestCase):
         self.assertFalse(reg.get("modelPending"))
         self.assertEqual(be._ensured, [], "the heal alone never wakes a session")
 
+    def test_the_sweep_reads_each_registry_fresh_not_the_listing_it_was_handed(self):
+        # __init__ lists the registries, then the echo reseed may re-queue a lost send into one of
+        # them ON DISK, then the sweep walks that same listing: a row listed before the write still
+        # showed an empty queue, so the session sat dormant with a message waiting in its registry.
+        d, be = self._setup()
+        sid = "11111111-aaaa-0000-0000-00000000000f"
+        regs = [_reg(d, sid, queue=[])]                    # the listing: nothing queued yet
+        sb.write_reg(Path(d), sid, {**regs[0], "queue": ["re-queued after the listing"]})   # the reseed's write
+        sb.append_state(Path(d), sid, "waiting")
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout="")):
+            be._boot_reconcile(regs)
+        self.assertEqual(be._ensured, [sid], "the sweep decides from the registry on disk, not the stale row")
+
     def test_reaps_orphans_but_never_tmux(self):
         d, be = self._setup()
         sid = "11111111-aaaa-0000-0000-00000000000b"

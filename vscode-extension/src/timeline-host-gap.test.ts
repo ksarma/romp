@@ -15,5 +15,8 @@ test("timeline lanes are uniform — no host-boundary offsets in any geometry pa
   assert.ok(TL.includes("const laneY = (i) => M.top + i * LANE_GAP + LANE_GAP * 0.5;"), "draw");
   assert.ok(TL.includes("const ly = this._geom.top + i * LANE_GAP + LANE_GAP / 2;"), "drag invert");
   assert.ok(TL.includes("const y = g.top + i * LANE_GAP + LANE_GAP * 0.5;"), "focus pulse");
-  assert.ok(TL.includes("const jb0 = M.top + vis.length * LANE_GAP + JB_TOPGAP;"), "judge band top");
+  // the band clears the pending-host placeholder rows too (2026-09-02) — a whole-band shift by a row
+  // COUNT, the same for every lane, never a per-host offset inside the lane list
+  assert.ok(TL.includes("const jb0 = M.top + (vis.length + pend.length) * LANE_GAP + JB_TOPGAP;"), "judge band top");
+  assert.ok(TL.includes("H = M.top + (Math.max(1, vis.length) + pend.length) * LANE_GAP + bandH + M.bottom;"), "svg height reserves those rows");
 });

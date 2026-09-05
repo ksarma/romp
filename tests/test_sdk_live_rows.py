@@ -113,9 +113,8 @@ class ListingCompleteness(unittest.TestCase):
         # scandir RAISES FileNotFoundError on a missing sdk/ dir — it does not yield [] — so the
         # transient-fault arm above misread "not created yet" as a failed scan and served the
         # module cache's rows: a process holding backends over SEVERAL state roots (this suite)
-        # resurrected one root's sessions into another's listing (caught at the 2026-09-01 fold,
-        # via a foreign echo reseeded into a fresh backend). A missing dir took its regs with it:
-        # the honest answer is [], and the last-good contract is untouched for real faults.
+        # listed one root's sessions under another. A missing dir took its regs with it: the
+        # honest answer is [], and the last-good contract is untouched for real faults.
         warm = {r["sid"] for r in sb.list_regs(self.be.state_dir)}
         self.assertIn(self.SID, warm, "cache warmed from this root")
         fresh = tempfile.mkdtemp()                # a state root whose sdk/ dir does not exist yet
@@ -176,13 +175,13 @@ class ListingCompleteness(unittest.TestCase):
 
 
 class FaultServeRootScope(unittest.TestCase):
-    """The whole-listing fault serve is ROOT-SCOPED (2026-09-01, the fold's second cross-root
-    catch): _REG_CACHE is a module global keyed by absolute reg path and shared by every backend
-    in the process, so the OSError arm's 'serve every last good row' handed a PermissionError on
-    ONE root the cached rows of every OTHER root — the same cross-root session resurrection the
-    missing-dir arm closed, still open for every non-FileNotFoundError enumeration fault
-    (PermissionError, EMFILE, transient I/O). The last-good purpose is untouched: a fault on this
-    root still serves THIS root's cached rows. Synthetic; hermetic roots."""
+    """The whole-listing fault serve is ROOT-SCOPED: _REG_CACHE is a module global keyed by
+    absolute reg path and shared by every backend in the process, so the OSError arm's 'serve every
+    last good row' handed a PermissionError on ONE root the cached rows of every OTHER root — the
+    same cross-root session resurrection the missing-dir arm closed, still open for every
+    non-FileNotFoundError enumeration fault (PermissionError, EMFILE, transient I/O). The last-good
+    purpose is untouched: a fault on this root still serves THIS root's cached rows. Synthetic;
+    hermetic roots."""
 
     SID_A = "aaaaaaaa-2222-3333-4444-555555555555"
     SID_B = "bbbbbbbb-2222-3333-4444-555555555555"

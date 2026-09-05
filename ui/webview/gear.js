@@ -55,7 +55,10 @@ var GEAR_HTML =
   '<span class=rs-sub id=rs-login-acct>…</span>' +
   "<div id=rs-login-flow style='margin-top:6px'>" +
   "<button id=rs-login-btn type=button style='cursor:pointer;background:var(--btn-bg, #2a2a2a);color:var(--fg, #ccc);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 10px'>Log in to Claude Code</button>" +
-  "<span id=rs-login-state class=rs-sub style='margin-left:8px'></span>" +
+  // rs-note, NOT rs-sub: this is a live inline status ("starting the login flow…"), not the row's
+  // description — as an rs-sub it floated a SECOND hover popover under the Account row, stacked on
+  // rs-login-acct's (the user 2026-09-02, who saw two tooltips stacked; even empty it painted a box)
+  "<span id=rs-login-state class=rs-note style='margin-left:8px'></span>" +
   '</div></span></div>' +
   '<div class=rs-sec>Sessions</div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Default directory</b>" +
@@ -66,9 +69,9 @@ var GEAR_HTML =
   "<button id=rs-defaultdir-browse type=button style='flex:0 0 auto;cursor:pointer;background:var(--btn-bg, #2a2a2a);color:var(--fg, #ccc);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 8px'>Browse…</button>" +
   '</div></span></div>' +
   "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Default backend</b>" +
-  '<span class=rs-sub>What the + button uses for a NEW session — tmux drives a terminal pane; SDK runs via the Agent SDK. Both kinds run side by side; this only sets the default.</span>' +
+  '<span class=rs-sub>What the + button uses for a NEW session — tmux drives a terminal pane; SDK runs via the Agent SDK; Codex runs an OpenAI Codex agent (docs/codex.md). All kinds run side by side; this only sets the default.</span>' +
   "<select id=rs-backend style='display:none'>" +
-  '<option value=sdk>SDK</option><option value=tmux>tmux (terminal)</option>' +
+  '<option value=sdk>SDK</option><option value=tmux>tmux (terminal)</option><option value=codex>Codex</option>' +
   '</select></span></div>' +
   "<label class='rs-row rs-sep'><input type=checkbox id=rs-autonudge>" +
   '<span><b>Auto Nudge</b><span class=rs-mixed id=rs-autonudge-split hidden></span>' +
@@ -148,11 +151,11 @@ var GEAR_HTML =
   '</span></div>' +
   "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Colormap</b>" +
   '<span class=rs-sub>One ramp for the whole dashboard — feed recency, usage, and context bars. Brightest = newest / highest.</span>' +
-  "<div id=rs-cmap><button id=rs-cmap-btn type=button title='Pick the recency colormap'></button>" +
+  "<div id=rs-cmap><button id=rs-cmap-btn type=button aria-label='Pick the recency colormap'></button>" +
   '<div id=rs-cmap-list hidden></div></div></span></div>' +
   "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Session colors</b>" +
   '<span class=rs-sub>The palette sessions draw their identity color from — tabs, cards, lanes. Switching recolors every session to the same slot in the new set.</span>' +
-  "<div id=rs-pal><button id=rs-pal-btn type=button title='Pick the session palette'></button>" +
+  "<div id=rs-pal><button id=rs-pal-btn type=button aria-label='Pick the session palette'></button>" +
   '<div id=rs-pal-list hidden></div></div></span></div>' +
   '<div class=rs-sec>Keyboard shortcuts</div>' + SHORTCUT_ROWS +
   '<div class=rs-sec>Judges</div>' +
@@ -269,8 +272,9 @@ function initGear(post) {
   // ran off the card's right edge). Progressive disclosure: the CLOSED state is ONE row — the
   // current option's name + its description/preview, ellipsized so it can never overrun — and the
   // options are one click away in the house menu vocabulary (the chat .ctx-menu spec; versionMenu
-  // below inlines the same values: #252526 card, hairline border, 6px radius, the 0 4px 12px
-  // shadow, 12px text, 0.82em sub-lines, the #1EA1EB \u2713-in-circle current mark). NOT a native
+  // below inlines the same values through the menu TOKENS — var(--menu-bg/--menu-fg/--menu-border/
+  // --menu-hover, --radius-menu, --shadow-menu, --check-bg) with the dark literals as fallbacks
+  // (T226: the literals alone left every picker a dark card in the light theme). NOT a native
   // <select> like the Context-gauge row above: these options carry rich row content — the scheme
   // rows preview their own colored tiers (the user 2026-08-24: "I need to see a preview") — which
   // <option> cannot render. The open menu is position:absolute inside the row's wrapper (the
@@ -294,8 +298,8 @@ function initGear(post) {
     var menu = document.createElement('div');
     menu.hidden = true;
     menu.style.cssText = 'position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:30;padding:4px;' +
-      'background:#252526;border:1px solid rgba(255,255,255,0.12);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.35);' +
-      'font-size:12px;line-height:1.4;color:#cccccc;user-select:none';
+      'background:var(--menu-bg, #252526);border:1px solid var(--menu-border, rgba(255,255,255,0.12));border-radius:var(--radius-menu, 6px);box-shadow:var(--shadow-menu, 0 4px 12px rgba(0,0,0,0.35));' +
+      'font-size:12px;line-height:1.4;color:var(--menu-fg, #cccccc);user-select:none';
     wrap.appendChild(btn); wrap.appendChild(menu);
     var close = function () { menu.hidden = true; if (openHousePick === menu) openHousePick = null; };
     btn.addEventListener('click', function (e) {
@@ -329,10 +333,10 @@ function initGear(post) {
         row.innerHTML = rowHTML(o);
         if (cur && o.id === cur.id) {
           var ck = document.createElement('span'); ck.textContent = '\u2713';
-          ck.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
+          ck.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
           row.appendChild(ck);
         }
-        row.addEventListener('mouseenter', function () { row.style.background = 'rgba(255,255,255,0.09)'; });
+        row.addEventListener('mouseenter', function () { row.style.background = 'var(--menu-hover, rgba(255,255,255,0.09))'; });
         row.addEventListener('mouseleave', function () { row.style.background = 'transparent'; });
         row.addEventListener('click', function (e) { e.stopPropagation(); close(); pick(o.id); });
         menu.appendChild(row);
@@ -395,7 +399,7 @@ function initGear(post) {
     { id: 'never', name: 'Never' }
   ];
   function tabCtxRowHTML(o) {
-    return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#ccc">' + o.name + '</span>';
+    return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--menu-fg, #ccc)">' + o.name + '</span>';
   }
   var tcDrop = housePick(document.getElementById('rs-tabctx-pick'), 'tabctx', tabCtxRowHTML, function (id) {
     if (tc) { tc.value = id; tc.dispatchEvent(new Event('change')); }
@@ -424,7 +428,7 @@ function initGear(post) {
     wrap.setAttribute('style', 'position:relative;' + wrapStyle);
     sel.parentNode.insertBefore(wrap, sel.nextSibling);
     var rowHTML = function (o) {
-      return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#ccc">' + o.name + '</span>';
+      return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--menu-fg, #ccc)">' + o.name + '</span>';
     };
     var drop = housePick(wrap, 'val', rowHTML, function (id) {
       sel.value = id; sel.dispatchEvent(new Event('change')); paint();
@@ -472,7 +476,7 @@ function initGear(post) {
   });
   if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked, gt: Date.now() }); });
   if (cvm) cvm.addEventListener('change', function () { post({ type: 'setConserve', enabled: cvm.checked }); });
-  if (csg) csg.addEventListener('change', function () { post({ type: 'setCompactSuggest', enabled: csg.checked, gt: Date.now() }); });   // T208 rides the same stamped class
+  if (csg) csg.addEventListener('change', function () { post({ type: 'setCompactSuggest', enabled: csg.checked, gt: Date.now() }); });
   // ── the in-dashboard LOGIN flow (T157): the dashboard is already on the phone over Tailscale,
   // so streaming the CLI's paste-code OAuth URL here IS the phone login. The code input is a pure
   // pass-through to the kernel's PTY — nothing is stored or logged on any side.
@@ -581,11 +585,10 @@ function initGear(post) {
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeAll(); });
     try { window.addEventListener('storage', function (e) { if (e.key === 'romp:menu-echo' && e.newValue) closeAll(); }); } catch (e) {}
     var pick = function (val) { sel.value = val; sel.dispatchEvent(new Event('change')); syncBtn(); closeAll(); };
-    var MSTYLE = 'position:fixed;z-index:1001;min-width:130px;padding:4px;background:#252526;'
-      + 'border:1px solid rgba(255,255,255,0.12);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.35);'
-      + 'font-size:12px;line-height:1.4;color:#cccccc;user-select:none;';
+    var MSTYLE = 'position:fixed;z-index:1001;min-width:130px;padding:4px;background:var(--menu-bg, #252526);'
+      + 'border:1px solid var(--menu-border, rgba(255,255,255,0.12));border-radius:var(--radius-menu, 6px);box-shadow:var(--shadow-menu, 0 4px 12px rgba(0,0,0,0.35));'
+      + 'font-size:12px;line-height:1.4;color:var(--menu-fg, #cccccc);user-select:none;';
     var rowStyle = 'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;display:flex;align-items:center;';
-    var CHECK_STYLE = 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;';
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
       if (menu) { closeAll(); return; }
@@ -601,26 +604,26 @@ function initGear(post) {
         var famCur = sel.value === fam.value || versions.some(function (v) { return v.value === sel.value; });
         if (famCur) {
           var ck = document.createElement('span'); ck.textContent = '\u2713';
-          ck.setAttribute('style', CHECK_STYLE);
+          ck.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
           row.appendChild(ck);
         }
         var openSub = versions.length > 1 ? function () {
           if (sub) { sub.remove(); sub = null; }
           sub = document.createElement('div');
           sub.setAttribute('style', MSTYLE + 'z-index:1002;');
-          // "Latest" heads the submenu (review 2026-09-01) \u2014 the session pickers' floating gesture, on
-          // the judge tiers too: the family row sends the remembered pin and the rows below pin, so
-          // this is the row that sends the bare alias, and the tier follows the CLI's newest again
+          // "Latest" heads the submenu — the session pickers' floating gesture, on the judge tiers
+          // too: the family row sends the remembered pin and the rows below pin, so this is the row
+          // that sends the bare alias, and the tier follows the CLI's newest again
           var latest = document.createElement('div');
           latest.setAttribute('style', rowStyle);
           latest.tabIndex = 0;
           latest.appendChild(document.createTextNode('Latest'));
           if (sel.value === fam.value) {
             var c0 = document.createElement('span'); c0.textContent = '\u2713';
-            c0.setAttribute('style', CHECK_STYLE);
+            c0.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
             latest.appendChild(c0);
           }
-          latest.addEventListener('mouseenter', function () { latest.style.background = 'rgba(255,255,255,0.09)'; });
+          latest.addEventListener('mouseenter', function () { latest.style.background = 'var(--menu-hover, rgba(255,255,255,0.09))'; });
           latest.addEventListener('mouseleave', function () { latest.style.background = 'transparent'; });
           latest.addEventListener('click', function (e2) { e2.stopPropagation(); pick(fam.value); });
           latest.addEventListener('keydown', function (e2) {
@@ -634,19 +637,19 @@ function initGear(post) {
             r2.tabIndex = 0;
             r2.appendChild(document.createTextNode(v.label));
             if (v.learned) {
-              // LOUD, per the fail-loudly rule: a version no seed table lists \u2014 a running session's CLI
-              // reported it (kernel /models `learned`) \u2014 says so, as the chat and timeline pickers do
+              // LOUD, per the fail-loudly rule: a version no catalog list carries — a running session's
+              // CLI reported it (kernel /models `learned`) — says so, as the chat and timeline pickers do
               var tag = document.createElement('span'); tag.textContent = ' new';
               tag.setAttribute('style', 'font-size:0.82em;opacity:0.6;margin-left:4px;');
               r2.appendChild(tag);
-              r2.title = "Reported by a running session's Claude Code; not yet in romp's built-in version list";
+              r2.title = "Reported by a running session's Claude Code; not yet in romp's version list";
             }
             if (sel.value === v.value) {
               var c2 = document.createElement('span'); c2.textContent = '\u2713';
-              c2.setAttribute('style', CHECK_STYLE);
+              c2.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
               r2.appendChild(c2);
             }
-            r2.addEventListener('mouseenter', function () { r2.style.background = 'rgba(255,255,255,0.09)'; });
+            r2.addEventListener('mouseenter', function () { r2.style.background = 'var(--menu-hover, rgba(255,255,255,0.09))'; });
             r2.addEventListener('mouseleave', function () { r2.style.background = 'transparent'; });
             r2.addEventListener('click', function (e2) { e2.stopPropagation(); pick(v.value); });
             r2.addEventListener('keydown', function (e2) {
@@ -670,9 +673,9 @@ function initGear(post) {
           caret.textContent = '\u25B8';   // ALWAYS right-facing — it marks "expandable", not the side
           caret.setAttribute('style', 'margin-left:auto;padding-left:10px;opacity:0.55;');
           row.appendChild(caret);
-          row.addEventListener('mouseenter', function () { row.style.background = 'rgba(255,255,255,0.09)'; openSub(); });
+          row.addEventListener('mouseenter', function () { row.style.background = 'var(--menu-hover, rgba(255,255,255,0.09))'; openSub(); });
         } else {
-          row.addEventListener('mouseenter', function () { row.style.background = 'rgba(255,255,255,0.09)'; if (sub) { sub.remove(); sub = null; } });
+          row.addEventListener('mouseenter', function () { row.style.background = 'var(--menu-hover, rgba(255,255,255,0.09))'; if (sub) { sub.remove(); sub = null; } });
         }
         row.addEventListener('mouseleave', function () { row.style.background = 'transparent'; });
         row.addEventListener('click', function (e2) { e2.stopPropagation(); pick(fam.default || fam.value); });
@@ -792,7 +795,7 @@ function initGear(post) {
     'comment-fast': 'Fast comment threads', 'thinking-summaries': 'Thinking summaries',
     'user-todos': 'User todos' };
   // Dismissal is the warn-toast FAMILY treatment (the user 2026-08-25: a notice with no visible
-  // way out "gets in the way" — worst on touch, and this toast's mint site is a frozen phone tab
+  // way out gets in the way — worst on touch, and this toast's mint site is a frozen phone tab
   // flushing on recovery): a visible ✕ in the chip-✕ dress, the whole toast still click-dismisses,
   // Escape clears the stack, and the fade precedes the auto-remove. COPIED from the family home
   // (render.ts warnToast + styles.css .warn-toast-x) because the gear is its own document, loaded
@@ -838,25 +841,25 @@ function initGear(post) {
   // The model/effort <option>s come from /models — the same single source the
   // chat + timeline pickers use. Cached after the first successful fetch.
   var choices = null, choicesRev = -1;   // the list, and the highest /models `rev` applied to it
-  // A /models response is applied only if it is not OLDER than one already applied (fixer round 5,
-  // 2026-09-01): its `rev` is the pick memory's revision — the models frame's counter — and the frame's
-  // re-read can overlap the first fill, or two quick frames each other, with the responses landing out
-  // of order; without the check the STALE list won until the next change. A payload without a rev (an
-  // older kernel) always applies. Returns whether `choices` moved.
+  // A /models response is applied only if it is not OLDER than one already applied: its `rev` is the
+  // pick memory's revision — the models frame's counter — and the frame's re-read can overlap the first
+  // fill, or two quick frames each other, with the responses landing out of order; without the check the
+  // STALE list won until the next change. A payload without a rev (an older kernel) always applies.
+  // Returns whether `choices` moved.
   function adoptChoices(d) {
     if (d && typeof d.rev === 'number') { if (d.rev < choicesRev) return false; choicesRev = d.rev; }
     choices = d || { models: [], efforts: [] };
     return true;
   }
   // The ONE write path for kernel-backed selects — fill()'s (the user 2026-09-01, whose stored distill
-  // pick displayed as the default) and paintChoices' (fixer round 6 minors, 2026-09-02): a value the
-  // option list doesn't carry is INJECTED as a marked option and selected — the row shows the truth (an
-  // off-list value, named) rather than silently falling to its first option or, on a repaint, to NOTHING:
-  // per the spec a select assigned a value none of its options carries deselects every option (value ''),
-  // so a repaint that handed the held value straight back left the select blank, and the version menu's
-  // label with it, whenever the value was one fill() had injected or a learned version that has since
-  // left the list. Values are validated at write time by the kernel, so an injection here means THIS
-  // page's list is behind the store — worth seeing, never worth hiding.
+  // pick displayed as the default) and paintChoices': a value the option list doesn't carry is INJECTED
+  // as a marked option and selected — the row shows the truth (an off-list value, named) rather than
+  // silently falling to its first option or, on a repaint, to NOTHING: per the spec a select assigned a
+  // value none of its options carries deselects every option (value ''), so a repaint that handed the
+  // held value straight back would leave the select blank, and the version menu's label with it,
+  // whenever the value was one fill() had injected or a learned version that has since left the list.
+  // Values are validated at write time by the kernel, so an injection here means THIS page's list is
+  // behind the store — worth seeing, never worth hiding.
   function setShow(sel, val) {
     if (!sel) return;
     if (val && !Array.prototype.some.call(sel.options, function (o) { return o.value === val; })) {
@@ -869,11 +872,11 @@ function initGear(post) {
   }
   // Write every select's <option>s from the CURRENT list — whichever response won — and give each select
   // back the value it held, through setShow: plainly when the list still offers it, as a marked off-list
-  // option when it no longer does (fixer round 6, 2026-09-02). Rewriting a select's options resets it to
-  // its first option, which is why the round-4 listener never repainted; but round 5 also made the
-  // page-load fill skip its paint when the frame's re-read had applied a newer list first, and every later
-  // fill() then short-circuited on the cache — eight empty pickers for the life of the page. The paint
-  // keys on the list, not on which fetch carried it.
+  // option when it no longer does. Rewriting a select's options resets it to its first option, which is
+  // why a re-read alone could never repaint; and a page-load fill that skipped its paint because the
+  // frame's re-read had applied a newer list first left every later fill() short-circuiting on the cache
+  // — eight empty pickers for the life of the page. The paint keys on the list, not on which fetch
+  // carried it.
   function paintChoices() {
     var mo = (choices.models || []).map(function (m) {
       var vs = (m.versions || []).map(function (v) { return '<option value="' + v.value + '">' + v.label + '</option>'; }).join('');
@@ -899,9 +902,9 @@ function initGear(post) {
     put(cmm, '<option value="session">Same as the session</option><option value="default">Default</option>' + mo);
     put(cme, '<option value="session">Same as the session</option>' + eff);
   }
-  // The promise is the memo, not the list (upstream, 2026-08-30): a settings open racing the page-load
-  // fetch used to fire a SECOND /models fetch, and whichever resolved last rewrote every select's options
-  // after fill() had set their values. One live fetch per page; a failed one clears the memo for retry.
+  // The promise is the memo, not the list: a settings open racing the page-load fetch used to fire a
+  // SECOND /models fetch, and whichever resolved last rewrote every select's options after fill() had
+  // set their values. One live fetch per page; a failed one clears the memo for retry.
   var choicesP = null;
   function fillChoices() {
     if (choicesP) return choicesP;
@@ -912,13 +915,13 @@ function initGear(post) {
     }).catch(function () { choicesP = null; return null; });   // retry on the next open, never a second live fetch
     return choicesP;
   }
-  // The kernel's models frame (fixer round 4, 2026-09-01): the pick memory moved — a version pinned, a
-  // family un-pinned by Latest, a refused pin dropped, from any surface or dashboard — so the cached
-  // list's `default` (what a family row SENDS, read from `choices` at click time) is stale. Re-read on
-  // the event, like the settingStale listener below; never a poll. The list moving repaints the selects
-  // too (paintChoices keeps their values), so a frame that lands before the page-load fill has painted
-  // still leaves populated pickers. The frame reaches this document because the kernel sends it to the
-  // FEED app too (the gear lives in the feed bundle; fixer round 5).
+  // The kernel's models frame: the pick memory moved — a version pinned, a family un-pinned by Latest, a
+  // refused pin dropped, from any surface or dashboard — or the catalog grew, so the cached list's
+  // `default` (what a family row SENDS, read from `choices` at click time) is stale. Re-read on the
+  // event, like the browseResult listener above; never a poll. The list moving repaints the selects too
+  // (paintChoices keeps their values), so a frame that lands before the page-load fill has painted still
+  // leaves populated pickers. The frame reaches this document because the kernel sends it to the FEED
+  // app too (the gear lives in the feed bundle).
   window.addEventListener('message', function (e) {
     var m = e.data;
     if (!m || m.type !== 'models') return;
@@ -1114,17 +1117,17 @@ function initGear(post) {
     var segs = raSegments(), judgeTot = segs.reduce(function (a, s) { return a + raVal(s); }, 0);
     var maxV = Math.max(sessTot, judgeTot, 1);
     var W = 480, H = 250, top = 24, bot = 30, chartH = H - top - bot, baseY = top + chartH, barW = 92, cx1 = W * 0.30, cx2 = W * 0.70;
-    function rect(x, y, w, h, fill, title) { return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + Math.max(h, 0) + '" fill="' + fill + '" rx="2"><title>' + raEsc(title) + '</title></rect>'; }
+    function rect(x, y, w, h, fill, title) { return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + Math.max(h, 0) + '" style="fill:' + fill + '" rx="2"><title>' + raEsc(title) + '</title></rect>'; }
     var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="xMidYMid meet">';
-    svg += '<line x1="6" y1="' + baseY + '" x2="' + (W - 6) + '" y2="' + baseY + '" stroke="#3a3a3a"/>';
+    svg += '<line x1="6" y1="' + baseY + '" x2="' + (W - 6) + '" y2="' + baseY + '" style="stroke:var(--hairline, #3a3a3a)"/>';
     var sh = sessTot / maxV * chartH;
-    svg += rect(cx1 - barW / 2, baseY - sh, barW, sh, '#7d8590', 'sessions · ' + fmtTok(sess.in) + ' in / ' + fmtTok(sess.out || 0) + ' out · ' + fmtUsd(sess.cost || 0));
-    svg += '<text x="' + cx1 + '" y="' + (baseY - sh - 6) + '" text-anchor="middle" fill="#ddd" font-size="12">' + raFmt(sessTot) + '</text>';
-    svg += '<text x="' + cx1 + '" y="' + (baseY + 18) + '" text-anchor="middle" fill="#9aa0a6" font-size="12">Sessions</text>';
+    svg += rect(cx1 - barW / 2, baseY - sh, barW, sh, 'var(--text-faint, #7d8590)', 'sessions · ' + fmtTok(sess.in) + ' in / ' + fmtTok(sess.out || 0) + ' out · ' + fmtUsd(sess.cost || 0));
+    svg += '<text x="' + cx1 + '" y="' + (baseY - sh - 6) + '" text-anchor="middle" style="fill:var(--text-bright, #ddd)" font-size="12">' + raFmt(sessTot) + '</text>';
+    svg += '<text x="' + cx1 + '" y="' + (baseY + 18) + '" text-anchor="middle" style="fill:var(--text-muted, #9aa0a6)" font-size="12">Sessions</text>';
     var cum = 0; segs.forEach(function (s) { var st = raVal(s), h = st / maxV * chartH, y = baseY - cum - h; cum += h;
       svg += rect(cx2 - barW / 2, y, barW, h, s.color, s.label + ' · ' + fmtTok(s.in) + ' in / ' + fmtTok(s.out) + ' out · ' + s.calls + ' calls · ' + fmtUsd(s.cost || 0)); });
-    svg += '<text x="' + cx2 + '" y="' + (baseY - cum - 6) + '" text-anchor="middle" fill="#ddd" font-size="12">' + raFmt(judgeTot) + '</text>';
-    svg += '<text x="' + cx2 + '" y="' + (baseY + 18) + '" text-anchor="middle" fill="#9aa0a6" font-size="12">Judges</text>';
+    svg += '<text x="' + cx2 + '" y="' + (baseY - cum - 6) + '" text-anchor="middle" style="fill:var(--text-bright, #ddd)" font-size="12">' + raFmt(judgeTot) + '</text>';
+    svg += '<text x="' + cx2 + '" y="' + (baseY + 18) + '" text-anchor="middle" style="fill:var(--text-muted, #9aa0a6)" font-size="12">Judges</text>';
     svg += '</svg>'; raChart.innerHTML = svg;
     var lg = segs.map(function (s) { return '<span class=ra-li><span class=ra-sw style="background:' + s.color + '"></span>' + raEsc(s.label) + ' <b>' + raFmt(raVal(s)) + '</b></span>'; }).join('');
     raLegend.innerHTML = '<span class=ra-li><span class="ra-sw" style="background:#7d8590"></span>sessions <b>' + raFmt(sessTot) + '</b></span>' + lg;

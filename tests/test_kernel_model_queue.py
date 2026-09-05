@@ -28,6 +28,11 @@ km = SourceFileLoader("romp_kernel_modelq", os.path.join(BIN, "romp-kernel")).lo
 # limit. Pinning it off keeps them hermetic.
 km._limit_hold = lambda sid: None
 
+# The tmux PROMPT HOLD (_hold_drain: a tmux-shaped delivery holds the sid for a moment, tested in
+# tests/test_kernel_parked_ops_liveness.py) is a separate axis: off here, so back-to-back
+# _apply_pending_ops calls stand for successive cycles.
+km._TMUX_PROMPT_HOLD_S = 0.0
+
 SID = "11111111-2222-3333-4444-555555555555"
 
 
@@ -95,10 +100,16 @@ class ParkOrApply(unittest.TestCase):
         km._apply_pending_ops()                         # must not raise
         self.assertNotIn(SID, km._pending_ops, "a dead session's park is dropped, never retried forever")
 
-    def test_producer_ticks_the_apply(self):
+    def test_the_pusher_cycle_delivers_the_parked_queue_not_the_producer(self):
+        # 2026-09-03: delivery moved OFF the judge producer's tail — a pass can run for hours (one session's
+        # closer sweep, alarm-killed turn after turn) and held every parked op hostage. It rides the pusher
+        # cycle now, woken by the settle itself, and runs FIRST so the delivered op's echo rides the push.
         import inspect
-        src = inspect.getsource(km._producer)
-        self.assertIn("_apply_pending_ops()", src, "the producer tick fires parked ops")
+        self.assertNotIn("_apply_pending_ops()", inspect.getsource(km._producer),
+                         "the judge pass no longer gates delivery")
+        src = inspect.getsource(km._pusher_cycle_jobs)
+        self.assertIn("_apply_pending_ops()", src, "the pusher cycle delivers the parked queue")
+        self.assertLess(src.index("_apply_pending_ops()"), src.index("_push_all("), "…ahead of the push")
 
 
 class CompactingNowGate(unittest.TestCase):

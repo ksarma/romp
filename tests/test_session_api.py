@@ -48,14 +48,16 @@ class AbcContract(unittest.TestCase):
 
     def test_move_is_a_concrete_default_that_refuses_and_the_sdk_implements_it(self):
         # move (the user 2026-09-01: a session follows a subproject promoted to its own repo) is a
-        # CONCRETE default on the ABC — a backend with no relocation primitive (tmux) answers with the
-        # reason, never "" (which would read as success) and never a raise. The SDK backend implements
-        # it over the CLI's set_cwd control request; asserted at the source level like the abstract set.
-        self.assertNotIn("move", ABSTRACT, "move is a concrete default (tmux inherits the refusal)")
+        # CONCRETE default on the ABC — a backend with no relocation primitive answers with the reason,
+        # never "" (which would read as success), never "busy" (which would park a retry forever) and
+        # never a raise. The SDK backend implements it over the CLI's set_cwd control request; asserted
+        # at the source level like the abstract set.
+        self.assertNotIn("move", ABSTRACT, "move is a concrete default (a backend without one inherits the refusal)")
         why = sb.SessionBackend.move(object(), "sid", "/tmp")
         self.assertIsInstance(why, str)
         self.assertTrue(why, "the default is a REASON, not an empty success")
-        self.assertIn("tmux", why)
+        self.assertNotEqual(why, "busy")
+        self.assertIn("no way to move", why)
         src = open(os.path.join(BIN, "romp_sdk_backend.py"), encoding="utf-8").read()
         self.assertIn("\n    def move(self, sid: str, new_cwd: str) -> str:", src,
                       "SdkBackend implements move")

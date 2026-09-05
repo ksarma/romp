@@ -30,6 +30,11 @@ from abc import ABC, abstractmethod
 
 
 class SessionBackend(ABC):
+    # True when busy() may be overruled by the cached transcript parse, so the pusher must keep that parse
+    # current for the sids it holds parked ops for (_refresh_parked_parses); a backend whose busy() is the
+    # whole truth (SDK, Codex) leaves it False and its parked sids are never re-parsed on its account.
+    corroborates_with_transcript = False
+
     # ── liveness / identity ──────────────────────────────────────────────────────────────────────
     @abstractmethod
     def owns(self, sid: str) -> bool:
@@ -63,7 +68,11 @@ class SessionBackend(ABC):
         pressed in that window saw 'not working', bypassed the FIFO, and fired immediately — /compact jumped
         ahead of a model/message pressed right after it, and the parked ops then stalled (the user 2026-07-14,
         reproduced: compact→model→send pressed 150ms apart delivered out of order). The SDK knows its inflight
-        count exactly; tmux has no equivalent (returns None → cached-parse fallback, unchanged)."""
+        count exactly; tmux reads the hook-maintained @claude-state — working / permission / picker → True,
+        waiting / idle → False, compacting → None (the compacting gate owns it), and None for an unknown
+        word, no row, or a row another backend owns — an answer the transcript overrules when the cached
+        parse's newest record is newer than the row's since (an Esc fires no hook, so a stale row can say
+        working over an ended turn)."""
         return None
 
     def compacting(self, sid: str) -> "bool | None":
@@ -172,9 +181,10 @@ class SessionBackend(ABC):
         follow it (the user 2026-09-01, who wanted a session to follow a subproject promoted to its own
         repo). "" on success; "busy" when a turn is in flight (the kernel parks the op and retries at
         turn end); any other string is the reason it did not happen, shown to the user verbatim. SDK-only
-        control (the CLI's `set_cwd` control request — see SdkBackend.move): a tmux session's CLI has no
-        relocation primitive romp can drive, so the default says so instead of pretending."""
-        return ("this session runs in a terminal (tmux), which has no way to move a running session — "
+        control (the CLI's `set_cwd` control request — see SdkBackend.move): a backend with no relocation
+        primitive romp can drive inherits this refusal, worded for no backend in particular, so a new
+        backend never reads as movable by omission (TmuxBackend.move spells out the terminal case)."""
+        return ("this session's backend has no way to move a running session — "
                 "start a new session in that folder instead")
 
     @abstractmethod

@@ -155,10 +155,11 @@ class JudgeEnvBilling(_JudgeAuthBase):
             env = jd._judge_env("index", "login", model="haiku")
             self.assertNotIn("TMUX", env)
             self.assertEqual(env.get("ROMP_SUMMARIZING"), "1")
-            # the index tier's thinking-off lever is Haiku's alone (2026-09-01): an adaptive-thinking
-            # model takes `--effort` instead and never sees the env var — the billing plumbing is the same
+            # the index tier's thinking-off var rides UNCONDITIONALLY (PR #880 review): the honored lever on
+            # models that take thinking:disabled, a harmless no-op where the CLI drops it (Fable) and
+            # `--effort` lands instead — the billing plumbing is the same either way
             self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0")
-            self.assertNotIn("MAX_THINKING_TOKENS", jd._judge_env("index", "login", model="fable"))
+            self.assertEqual(jd._judge_env("index", "login", model="fable").get("MAX_THINKING_TOKENS"), "0")
         finally:
             os.environ.pop("TMUX", None)
 
@@ -277,7 +278,7 @@ class KernelWiringAndFloorPins(unittest.TestCase):
         import inspect
         src = inspect.getsource(self.km.build_feed)
         self.assertIn('"state": "judgeAuth"', src)
-        self.assertIn("the API key its judges bill is being refused. Fix the key (service.env)", src)
+        self.assertIn("the API key its judges bill is being refused. Fix the key (the manager's environment", src)
         self.assertIn("the login its judges bill is being refused. Sign in again (claude /login)", src)
 
     def test_the_judge_auth_classifier_mirrors_the_kernels(self):

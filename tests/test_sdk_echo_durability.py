@@ -364,15 +364,14 @@ class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
     """The redeliver arm of _mark_dropped_echoes (2026-08-23: a proven-lost HUMAN send goes back
     into the queue instead of just flagging) must write the queue that is AUTHORITATIVE for its
     caller, and must not lose what is already there (found 2026-08-26):
-      - the reg rewrite is dict-aware like every other reg['queue'] RMW (round 2, 2026-08-22) —
-        the strings-only filter it shipped with silently ERASED a persisted user-todo answer's
-        {"text","todo"} entry: the todo stayed 'answered', the answer never delivered, and
-        nothing could reopen the ask;
-      - a redelivered answer KEEPS the id its echo carries, so recall/loss can still reopen;
       - on the LIVE-session caller (a fresh spawn's _run; the resumable reconnect is flag-only —
         ReconnectStrandIsFlagOnly below) the in-memory _pending is authoritative — a reg-only
         write is clobbered by the very next _persist_queue snapshot, leaving the recovered send
-        in limbo until a future kernel boot.
+        in limbo until a future kernel boot;
+      - the reg rewrite is dict-aware like every other reg['queue'] RMW — the strings-only filter
+        it shipped with silently ERASED a persisted user-todo answer's {"text","todo"} entry: the
+        todo stayed 'answered', the answer never delivered, and nothing could reopen the ask;
+      - a redelivered answer KEEPS the id its echo carries, so recall/loss can still reopen.
     SYNTHETIC fixtures only."""
 
     ANSWER = "Re: pick a database - use sqlite"
@@ -381,6 +380,9 @@ class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
 
     def setUp(self):
         self.state = tempfile.mkdtemp()
+        # an EMPTY reg listing, not a MISSING one: list_regs treats an absent sdk/ dir as a scan
+        # fault and serves every cached row — earlier tests' regs would reseed into this boot
+        os.makedirs(os.path.join(self.state, "sdk"))
         # a real (empty) transcript, so _text_landed answers False (readable, nothing landed)
         # and the redeliver arm actually runs — unreadable fails safe toward the flag path
         os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(self.state, "claude")
@@ -392,6 +394,9 @@ class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
         self.losses = []
         self.be = sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None,
                                 todo_lost=lambda sid, tid, text: self.losses.append((sid, tid, text)))
+
+    def tearDown(self):
+        os.environ.pop("CLAUDE_CONFIG_DIR", None)
 
     def _reg(self, **extra):
         reg = {"sid": SID, "name": "web", "mode": "acceptEdits",
@@ -473,20 +478,23 @@ class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
         self.assertEqual(s.pending(), ["already back in the queue"], "one copy, not two")
 
 
+
+
 class ReconnectStrandIsFlagOnly(unittest.TestCase):
-    """Round 2 (2026-08-26), finding 4: _reconcile_stranded's RESUMABLE branch is documented
-    flag-only — the fed atom may genuinely have landed, so re-feeding risks a REAL duplicate the
-    user sees twice. The redeliver arm of _mark_dropped_echoes silently flipped that policy: a
-    missed _text_landed scan (a tail-window miss, an unusual content shape) re-fed the message
-    into the resumed conversation. On the resumable branch the loss is SURFACED (dropped flag,
-    todo-reopen seam) and never re-fed; the re-feed belongs only where the conversation is NOT
-    resumable (the no-init re-head, the boot/spawn dead paths). SYNTHETIC fixtures only."""
+    """_reconcile_stranded's RESUMABLE branch is documented flag-only — the fed atom may genuinely
+    have landed, so re-feeding risks a REAL duplicate the user sees twice. The redeliver arm of
+    _mark_dropped_echoes silently flipped that policy (found 2026-08-26): a missed _text_landed
+    scan (a tail-window miss, an unusual content shape) re-fed the message into the resumed
+    conversation. On the resumable branch the loss is SURFACED (the dropped flag, the todo-reopen
+    seam) and never re-fed; the re-feed belongs only where the conversation is NOT resumable (the
+    no-init re-head, the boot/spawn dead paths). SYNTHETIC fixtures only."""
 
     TEXT = "typed while the reconnect tore the client down"
     TID = "ut-3a8b0c22"
 
     def setUp(self):
         self.state = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.state, "sdk"))   # an empty listing, not a missing one (see above)
         # a real (empty) transcript: _text_landed answers False — the exact "missed scan" shape,
         # since the resumable branch must not trust that answer with a re-feed
         os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(self.state, "claude")
@@ -498,6 +506,9 @@ class ReconnectStrandIsFlagOnly(unittest.TestCase):
         self.losses = []
         self.be = sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None,
                                 todo_lost=lambda sid, tid, text: self.losses.append((sid, tid, text)))
+
+    def tearDown(self):
+        os.environ.pop("CLAUDE_CONFIG_DIR", None)
 
     def _sess(self, **extra):
         reg = {"sid": SID, "name": "web", "mode": "acceptEdits",

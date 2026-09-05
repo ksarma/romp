@@ -3,12 +3,12 @@
 opus became Opus 5 — silently losing legacy versions that remain live on the API. The kernel's
 /models now carries each family's versions (dateless alias ids, verified against the claude-api
 reference) plus a DEFAULT: the most recent version the user picked for that family (model-picks.json,
-a viewer pref like colormap), else the family ALIAS itself (2026-09-01: the seed table's head used to
-stand in for the alias, so a bare family click pinned every session to claude-fable-5 while the
-CLI's own `fable` alias moved on to Fable 5.1). The seed table is a SEED: ids a running session's
-CLI reports (reg.liveModelId) join the version lists, marked `learned`. The pick memory hooks the
-ONE choke point every set path flows through (_set_model_or_park). Synthetic only — hermetic temp
-STATE."""
+a viewer pref like colormap), else the family ALIAS itself (the seed table's head used to stand in
+for the alias, so a bare family click pinned every session to claude-fable-5 while the CLI's own
+`fable` alias moved on to Fable 5.1). The pick memory hooks the ONE choke point every set path flows
+through (_set_model_or_park). The seed table is a SEED: ids a running session's CLI reports
+(reg.liveModelId) join the version lists, marked `learned`, until the catalog fetch folds them in.
+Synthetic only — hermetic temp STATE."""
 import contextlib
 import inspect
 import io
@@ -126,10 +126,10 @@ class PickMemory(unittest.TestCase):
                          "unknown ids and cross-family entries never poison the default")
 
     def test_the_floating_gesture_clears_the_familys_pin_and_sends_the_alias(self):
-        # (review, 2026-09-01) once a family carried a pin there was NO picker gesture back to
-        # floating: the family row sends the pin, the submenu lists only explicit ids, and a typed
-        # "/model opus" leaves the pick memory alone by design. The submenu's "Latest" row is that
-        # gesture — an explicit user act, so it may move state — carried as `floating` on the op.
+        # once a family carried a pin there was NO picker gesture back to floating: the family row
+        # sends the pin, the submenu lists only explicit ids, and a typed "/model opus" leaves the
+        # pick memory alone by design. The submenu's "Latest" row is that gesture — an explicit user
+        # act, so it may move state — carried as `floating` on the op.
         class _BE:
             calls = []
 
@@ -171,12 +171,12 @@ class PickMemory(unittest.TestCase):
         return got
 
     def test_a_pick_or_a_forget_tells_every_open_picker_to_re_read_models(self):
-        # (fixer round 4, 2026-09-01) both webviews read a family's `default` from a /models list
-        # fetched ONCE at page load and never refreshed, and nothing mutated it after a pick. So after
-        # Latest un-pinned a family on the kernel, the same tab's next family click still sent the
-        # stale pinned id and silently RE-PINNED; another dashboard's pick moved the default without
-        # this tab knowing. The kernel now emits a models frame whenever the pick memory CHANGES —
-        # event-keyed, never a poll — and every picker re-fetches on it.
+        # both webviews read a family's `default` from a /models list fetched ONCE at page load and
+        # never refreshed, and nothing mutated it after a pick. So after Latest un-pinned a family on
+        # the kernel, the same tab's next family click still sent the stale pinned id and silently
+        # RE-PINNED; another dashboard's pick moved the default without this tab knowing. The kernel
+        # emits a models frame whenever the pick memory CHANGES — event-keyed, never a poll — and
+        # every picker re-fetches on it.
         got = self._clients()
         km._note_model_pick("claude-opus-4-8")
         for app in ("chat", "timeline", "feed"):
@@ -194,12 +194,11 @@ class PickMemory(unittest.TestCase):
         self.assertEqual(len(got["feed"]), 2)
 
     def test_the_frame_reaches_the_feed_bundle_where_the_settings_gear_lives(self):
-        # (fixer round 5, 2026-09-01) the round-4 frame went to the chat and timeline apps only — but the
-        # settings gear, whose judge-tier family rows send the cached list's `default`, is part of the
-        # FEED bundle (feed.ts requires gear.js; the web shell's rail gear and VS Code's settings command
-        # both post openSettings into the feed pane). So the gear's listener never fired where the gear
-        # actually opens, and its first-open cache kept sending a stale pinned default after another
-        # picker un-pinned. The frame goes to every app that hosts a picker: chat, timeline AND feed.
+        # the settings gear, whose judge-tier family rows send the cached list's `default`, is part of
+        # the FEED bundle (feed.ts requires gear.js; the web shell's rail gear and VS Code's settings
+        # command both post openSettings into the feed pane). A frame to the chat and timeline apps
+        # alone never reaches the gear where it actually opens, and its first-open cache keeps sending
+        # a stale pinned default after another picker un-pinned. Every app that hosts a picker hears it.
         got = self._clients()
         km._note_model_pick("claude-sonnet-4-6")
         self.assertEqual([f["type"] for f in got["feed"]], ["models"], "the feed client hears the pin")
@@ -208,9 +207,9 @@ class PickMemory(unittest.TestCase):
         self.assertEqual([f["type"] for f in got["feed"]], ["models", "models"], "…and the un-pin")
 
     def test_a_refused_version_is_forgotten_only_while_it_is_still_the_pin(self):
-        # (fixer round 4, 2026-09-01) the CLI's refusal reaches the kernel through the backend's
-        # on_model_refused hook; the family's pin goes ONLY if it still holds the refused id — a newer
-        # accepted pin for the family is not this refusal's to touch (the stand-down doctrine).
+        # the CLI's refusal reaches the kernel through the backend's on_model_refused hook; the family's
+        # pin goes ONLY if it still holds the refused id — a newer accepted pin for the family is not
+        # this refusal's to touch (a writer whose evidence predates the diary stands down)
         got = self._clients()
         sid = "11111111-2222-3333-4444-555555555555"
         km._note_model_pick("claude-opus-4-8")
@@ -229,10 +228,10 @@ class PickMemory(unittest.TestCase):
         self.assertIn("on_model_refused = staticmethod(_model_pick_refused)", src)
 
     def test_a_superseded_refusals_forget_drops_only_the_refused_pin_the_newer_pick_survives(self):
-        # (fixer round 6, 2026-09-02) the backend now fires on_model_refused for a refusal the session's
-        # own NEWER pick superseded (test_sdk_backend flips the round-4 pin). Safe for the newer pick
-        # because this side compares-and-swaps by value: the newer pick's pin — same family or another —
-        # is untouched, and only the refused id's own pin goes.
+        # the backend fires on_model_refused for a refusal the session's own NEWER pick superseded too
+        # (test_sdk_backend pins that). Safe for the newer pick because this side compares-and-swaps by
+        # value: the newer pick's pin — same family or another — is untouched, and only the refused
+        # id's own pin goes.
         sid = "11111111-2222-3333-4444-555555555555"
         km._note_model_pick("claude-fable-9-9")             # A, refused later
         km._note_model_pick("claude-sonnet-4-6")            # B, the newer pick, another family
@@ -289,11 +288,11 @@ class ModelsRoute(_ModelsServer):
             self.assertFalse(v.get("learned"), "seed-table entries are not marked as learned")
 
     def test_the_payload_carries_the_pick_memorys_revision_the_frame_announces(self):
-        # (fixer round 5, 2026-09-01) every picker answers a models frame with a fresh GET /models and
-        # applied whatever landed — so two overlapping fetches (a frame during the page-load fetch; two
-        # quick frames) could resolve out of order and the STALE list won until the next change. The
-        # payload now carries the same `rev` the frame does, so a consumer can keep the newest it has
-        # applied and drop an older response that lands late.
+        # every picker answers a models frame with a fresh GET /models and applies whatever lands — so
+        # two overlapping fetches (a frame during the page-load fetch; two quick frames) can resolve
+        # out of order and the STALE list wins until the next change. The payload carries the same
+        # `rev` the frame does, so a consumer can keep the newest it has applied and drop an older
+        # response that lands late.
         got = self._clients()
         d = self._models()
         self.assertIsInstance(d.get("rev"), int, "the payload is stamped")
@@ -316,10 +315,10 @@ class ModelsRoute(_ModelsServer):
         return got
 
     def test_a_family_with_no_pick_defaults_to_its_alias_not_the_seed_head(self):
-        # THE BUG (2026-09-01): the default fell to MODEL_VERSIONS[fam][0], so a bare "Fable" click
-        # pinned the session to claude-fable-5 — and when the CLI's `fable` alias advanced to Fable
-        # 5.1, every picker-set session stayed behind. The alias is what the CLI resolves LIVE (the
-        # authoritative source for "newest"), so a family click sends the alias.
+        # THE BUG: the default fell to MODEL_VERSIONS[fam][0], so a bare "Fable" click pinned the
+        # session to claude-fable-5 — and when the CLI's `fable` alias advanced to Fable 5.1, every
+        # picker-set session stayed behind. The alias is what the CLI resolves LIVE (the authoritative
+        # source for "newest"), so a family click sends the alias.
         rows = {m["value"]: m for m in self._models()["models"]}
         for fam in ("fable", "opus", "sonnet", "haiku"):
             self.assertEqual(rows[fam]["default"], fam, "no pick yet → the family alias, never a pinned id")
@@ -349,7 +348,7 @@ class ModelsRoute(_ModelsServer):
 
 
 class RefusedPick(_ModelsServer):
-    """The CLI refused a version the picker recorded as its family's pin (fixer round 4, 2026-09-01)."""
+    """The CLI refused a version the picker recorded as its family's pin."""
 
     def test_a_refused_version_pick_returns_the_family_default_to_the_alias(self):
         class _BE:
@@ -410,27 +409,27 @@ class LearnedVersions(_ModelsServer):
         self.assertEqual(learned, [{"value": "claude-sonnet-5-1", "label": "Sonnet 5.1", "learned": True}])
 
     def test_a_dated_snapshot_report_offers_the_dateless_alias(self):
-        # (review, 2026-09-01) a CLI may report the dated snapshot it is running; the pickable value
-        # is the DATELESS alias — the snapshot retires, the alias follows the version
+        # a CLI may report the dated snapshot it is running; the pickable value is the DATELESS
+        # alias — the snapshot retires, the alias follows the version
         self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-sonnet-5-1-20260901")
         rows = {m["value"]: m for m in self._models()["models"]}
         learned = [v for v in rows["sonnet"]["versions"] if v.get("learned")]
         self.assertEqual(learned, [{"value": "claude-sonnet-5-1", "label": "Sonnet 5.1", "learned": True}])
 
     def test_the_judge_tiers_accept_a_learned_version_the_gear_offers(self):
-        # (review, 2026-09-01) the gear's judge/index/distill/comment selects are built from /models'
-        # versions, learned rows included — so the kernel must accept what it offered, and still
-        # refuse an id nobody has ever served
+        # the gear's judge/index/distill/comment selects are built from /models' versions, learned
+        # rows included — so the kernel must accept what it offered, and still refuse an id nobody
+        # has ever served (the setter is effect-only: assert the state file)
         self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
-        self.assertTrue(km._set_judge_model("claude-opus-5-1"), "offered → accepted")
-        self.assertEqual(jd._state_str("judge-model", ""), "claude-opus-5-1")
-        self.assertFalse(km._set_judge_model("claude-opus-9-9"), "never served → refused")
-        self.assertEqual(jd._state_str("judge-model", ""), "claude-opus-5-1", "a refusal changes nothing")
+        km._set_judge_model("claude-opus-5-1")
+        self.assertEqual(jd._state_str("judge-model", ""), "claude-opus-5-1", "offered → accepted")
+        km._set_judge_model("claude-opus-9-9")
+        self.assertEqual(jd._state_str("judge-model", ""), "claude-opus-5-1", "never served → refused, nothing changes")
 
     def test_a_pin_whose_reporting_session_is_gone_survives_on_disk(self):
-        # (review, 2026-09-01) the read filter hides a pin its family can't currently vouch for; the
-        # WRITE must not erase it — a later pick for another family merges into the raw file, so
-        # the pin resolves again the moment a session reports the id
+        # the read filter hides a pin its family can't currently vouch for; the WRITE must not erase
+        # it — a later pick for another family merges into the raw file, so the pin resolves again
+        # the moment a session reports the id
         (jd.STATE / km.MODEL_PICKS_FILE_NAME).write_text(json.dumps({"opus": "claude-opus-5-1"}))
         self.assertEqual(km._model_picks(), {}, "no session vouches for it → hidden on read")
         km._note_model_pick("claude-sonnet-4-6")
@@ -441,10 +440,10 @@ class LearnedVersions(_ModelsServer):
 
 
 class AliasMigration(unittest.TestCase):
-    """One-time boot pass (2026-09-01), mirroring the CLI's own 2.1.257 `migration_fable5_to_fable_alias`:
-    a stored model equal to a family's PRE-FIX seed head (what a bare family click used to record) becomes
-    the family alias, so the next reconnect spawns `--model fable` and follows the CLI's newest. An
-    explicit non-head pick is a deliberate pin and is left alone. Idempotent, loud, synthetic state."""
+    """One-time boot pass, mirroring the CLI's own 2.1.257 `migration_fable5_to_fable_alias`: a stored
+    model equal to a family's PRE-FIX seed head (what a bare family click used to record) becomes the
+    family alias, so the next reconnect spawns `--model fable` and follows the CLI's newest. An explicit
+    non-head pick is a deliberate pin and is left alone. Idempotent, loud, synthetic state."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -476,7 +475,7 @@ class AliasMigration(unittest.TestCase):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             n = km._model_alias_boot_pass()
-        self.assertEqual(n, 4, "defaults + the fable pick + regs a and d")
+        self.assertEqual(n, 5, "defaults + the fable pick + regs a, d and e")
         self.assertEqual(json.loads((jd.STATE / "sdk-defaults.json").read_text()), {"model": "fable", "effort": "xhigh"},
                          "the remembered default follows the alias; effort untouched")
         self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-8"},
@@ -487,8 +486,8 @@ class AliasMigration(unittest.TestCase):
         self.assertEqual(self._read("b")["model"], "claude-opus-4-8", "an explicit legacy pin is deliberate")
         self.assertNotIn("model", self._read("c"), "a session on the account default stays that way")
         self.assertEqual(self._read("d")["model"], "sonnet", "every family's pre-fix head migrates, dead regs too")
-        self.assertEqual(self._read("e")["model"], "claude-fable-5-1",
-                         "a post-fix head was never a family-click artefact — an explicit pin, untouched")
+        self.assertEqual(self._read("e")["model"], "fable",
+                         "fable's 5.1 head: every family click since 2026-09-01 wrote it, so it migrates like the others")
         self.assertIn("model-alias", err.getvalue())
         self.assertIn("fable", err.getvalue(), "the stderr line names what moved")
 
@@ -511,10 +510,10 @@ class AliasMigration(unittest.TestCase):
                         "a clean pass over nothing is still the one run — stamped, so it never re-arms")
 
     def test_a_post_fix_explicit_pick_of_a_seed_head_survives_the_next_boot(self):
-        # (review, 2026-09-01) the pass had no completion record, so EVERY kernel restart rewrote any
-        # stored model equal to a seed head — including a deliberate post-fix submenu pick of that very
-        # id (three of the four heads are the CURRENT releases a user pins against a future .1). That
-        # contradicted the "an explicit legacy pin stands" guarantee. A migration runs once.
+        # without a completion record EVERY kernel restart would rewrite any stored model equal to a
+        # seed head — including a deliberate post-fix submenu pick of that very id (three of the four
+        # heads are the CURRENT releases a user pins against a future .1). That contradicts the
+        # "an explicit legacy pin stands" guarantee. A migration runs once.
         with contextlib.redirect_stderr(io.StringIO()):
             km._model_alias_boot_pass()
         # the user now pins Fable 5 from the submenu — on a session, as the remembered default, and it
@@ -535,10 +534,10 @@ class AliasMigration(unittest.TestCase):
         marker = jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER
         self.assertFalse(marker.exists(), "a state that never booted the fix carries no marker")
         with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(km._model_alias_boot_pass(), 4)
+            self.assertEqual(km._model_alias_boot_pass(), 5)
         rec = json.loads(marker.read_text())
         self.assertIsInstance(rec.get("t"), int, "stamped with the completion time")
-        self.assertEqual(rec.get("moved"), 4)
+        self.assertEqual(rec.get("moved"), 5)
         # a marker from a previous boot means SKIP ENTIRELY — even over state that looks migratable
         # (a head pinned on purpose after the fix looks exactly like pre-fix residue; the marker is
         # what tells them apart)
@@ -552,8 +551,8 @@ class AliasMigration(unittest.TestCase):
     def test_a_failed_read_withholds_the_marker_so_the_next_boot_retries(self):
         # "returned" is not "succeeded" (the rewind migration's rule): a reg the pass could not READ is
         # a reg it did not migrate, so no marker is written and the pass re-arms at the next boot. A
-        # TRANSIENT failure — the file is there, this boot could not open it (fixer round 4: a garbled
-        # file is the other kind, see the next test).
+        # TRANSIENT failure — the file is there, this boot could not open it (a garbled file is the
+        # other kind, see the next test).
         self._reg("locked", model="claude-fable-5")
         real_text, real_bytes = Path.read_text, Path.read_bytes
 
@@ -565,36 +564,36 @@ class AliasMigration(unittest.TestCase):
             refuse(p)
             return real_text(p, *a, **k)
 
-        def read_bytes(p, *a, **k):        # the pass reads bytes (round 5) — the OS refuses either way
+        def read_bytes(p, *a, **k):        # the pass reads bytes — the OS refuses either way
             refuse(p)
             return real_bytes(p, *a, **k)
         err = io.StringIO()
         with mock.patch.object(Path, "read_text", read_text), mock.patch.object(Path, "read_bytes", read_bytes), \
                 contextlib.redirect_stderr(err):
             n = km._model_alias_boot_pass()
-        self.assertEqual(n, 4, "everything readable still migrates")
+        self.assertEqual(n, 5, "everything readable still migrates")
         self.assertFalse((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists())
         self.assertIn("no marker written", err.getvalue())
         self.assertIn("locked.json", err.getvalue(), "the line names the file the next boot will retry")
         self.assertEqual(self._read("locked")["model"], "claude-fable-5", "untouched — it will migrate when readable")
 
     def test_a_garbled_store_is_named_loudly_and_never_withholds_the_marker(self):
-        # (fixer round 4, 2026-09-01) a file json.loads cannot parse holds no pin ANY reader can see —
-        # read_reg, read_sdk_defaults and the picks loader all return None/{} over it — so retrying
-        # over it can never migrate anything; yet the pass counted it a failure, never stamped, and
-        # re-floated every deliberate post-fix pin at every boot without ever naming the file. Garbage
-        # is PERMANENT: name the path loudly, treat it as nothing to migrate, and stamp.
+        # a file json.loads cannot parse holds no pin ANY reader can see — read_reg, read_sdk_defaults
+        # and the picks loader all return None/{} over it — so retrying over it can never migrate
+        # anything; counting it a failure would never stamp, and re-float every deliberate post-fix pin
+        # at every boot without ever naming the file. Garbage is PERMANENT: name the path loudly, treat
+        # it as nothing to migrate, and stamp.
         (jd.STATE / "sdk" / "broken.json").write_text("{not json")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             n = km._model_alias_boot_pass()
-        self.assertEqual(n, 4, "everything readable migrates")
+        self.assertEqual(n, 5, "everything readable migrates")
         self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists(), "stamped — the pass is done")
         self.assertIn("broken.json", err.getvalue(), "the garbled file is NAMED")
         self.assertNotIn("no marker written", err.getvalue())
         self.assertEqual((jd.STATE / "sdk" / "broken.json").read_text(), "{not json", "never rewritten by the pass")
         # the same for a garbled defaults store, and the next boot is silent: the user's post-fix
-        # pin of a seed head stands (the very re-float the missing marker caused)
+        # pin of a seed head stands (the very re-float a missing marker would cause)
         for p in list(jd.STATE.rglob("*.json")):
             p.unlink()
         (jd.STATE / "sdk-defaults.json").write_text("garbage")
@@ -612,20 +611,20 @@ class AliasMigration(unittest.TestCase):
         self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists())
 
     def test_a_store_that_is_not_utf8_is_garbage_named_loudly_and_the_rest_still_migrates(self):
-        # (fixer round 5, 2026-09-01) round 4 split reading (catching OSError) from parsing (catching
-        # ValueError) — but a file holding non-UTF-8 bytes fails in the READ: Path.read_text raises
-        # UnicodeDecodeError, a ValueError and not an OSError, which escaped both arms, aborted the whole
-        # pass at that file (every later reg unmigrated), printed a traceback, and re-armed at every boot
-        # since the marker never stamped. No reader can see a pin in such a file (read_reg,
-        # read_sdk_defaults and the picks loader all return None/{} over it), so it is garbage like any
-        # other: named by path, nothing to migrate, and the pass runs to completion and stamps.
+        # splitting reading (catching OSError) from parsing (catching ValueError) misses a file holding
+        # non-UTF-8 bytes: Path.read_text raises UnicodeDecodeError in the READ — a ValueError, not an
+        # OSError — which would escape both arms, abort the whole pass at that file (every later reg
+        # unmigrated), print a traceback, and re-arm at every boot since the marker never stamps. No
+        # reader can see a pin in such a file (read_reg, read_sdk_defaults and the picks loader all
+        # return None/{} over it), so it is garbage like any other: named by path, nothing to migrate,
+        # and the pass runs to completion and stamps.
         (jd.STATE / "sdk-defaults.json").write_bytes(b'{"model": "claude-fable-5", "note": "caf\xe9"}')   # Latin-1 byte
         (jd.STATE / "sdk" / "latin.json").write_bytes(b'{"sid": "latin", "model": "claude-fable-5\xe9"}')
         self._reg("z", model="claude-opus-5")     # sorts after latin.json — must still migrate
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             n = km._model_alias_boot_pass()
-        self.assertEqual(n, 4, "the fable pick + regs a, d and z — everything readable migrates")
+        self.assertEqual(n, 5, "the fable pick + regs a, d, e and z — everything readable migrates")
         self.assertEqual(self._read("z")["model"], "opus", "a reg sorted AFTER the garbled one still migrates")
         self.assertEqual(self._read("a")["model"], "fable")
         self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists(), "stamped — the pass is done")
@@ -638,9 +637,9 @@ class AliasMigration(unittest.TestCase):
                          "never rewritten by the pass")
 
     def test_the_pass_is_wired_into_main_before_the_backend_constructs(self):
-        # the ordering IS the correctness (review 2026-09-01, unpinned before): the pass rewrites reg
-        # `model` fields, which become chosen_model the moment the SDK backend constructs — and
-        # _boot_warm's alive-session read constructs it. main() must run the pass first, and once.
+        # the ordering IS the correctness: the pass rewrites reg `model` fields, which become
+        # chosen_model the moment the SDK backend constructs — and _boot_warm's alive-session read
+        # constructs it. main() must run the pass first, and once.
         src = inspect.getsource(km.main)
         i = src.index("_model_alias_boot_pass()")
         self.assertLess(i, src.index("_boot_warm()"), "before _boot_warm constructs the backend")
@@ -653,20 +652,20 @@ class RoutedContextTag(unittest.TestCase):
     kernel vouches for the tagged family alias like the tagged id, and its pending-switch check reads
     through the tag — the pretty live name never carries one."""
 
+    def test_the_kernels_pending_check_reads_through_the_tag(self):
+        # the literal "fable[1m]" is never a substring of "Fable 5.1", so the switching-dots would ride
+        # the kernel's stamp to its cap instead of resolving on the event
+        self.assertTrue(km._alias_reflects("Fable 5.1", "fable[1m]"))
+        self.assertTrue(km._alias_reflects("Opus 4.8", "claude-opus-4-8[1m]"))
+        self.assertFalse(km._alias_reflects("Fable 5.1", "opus[1m]"))
+
     def test_a_tagged_family_alias_is_vouched_for(self):
-        # (review, 2026-09-01) `claude-fable-5-1[1m]` already routed (the id parser strips the tag);
-        # `fable[1m]` fell to the CLI as literal text — the registry bypass the routing exists to close
+        # `claude-fable-5-1[1m]` routes (the id parser strips the tag); `fable[1m]` must too, or it
+        # falls to the CLI as literal text — the registry bypass the routing exists to close
         self.assertTrue(km._vouched_model("fable[1m]"))
         self.assertTrue(km._vouched_model("claude-fable-5-1[1m]"))
         self.assertFalse(km._vouched_model("fable[2m]x"), "a tag is a trailing [..] only")
         self.assertFalse(km._vouched_model("opsu[1m]"))
-
-    def test_the_kernels_pending_check_reads_through_the_tag(self):
-        # (review, 2026-09-01) the literal "fable[1m]" is never a substring of "Fable 5.1", so the
-        # switching-dots would ride the kernel's stamp to its cap instead of resolving on the event
-        self.assertTrue(km._alias_reflects("Fable 5.1", "fable[1m]"))
-        self.assertTrue(km._alias_reflects("Opus 4.8", "claude-opus-4-8[1m]"))
-        self.assertFalse(km._alias_reflects("Fable 5.1", "opus[1m]"))
 
 
 if __name__ == "__main__":

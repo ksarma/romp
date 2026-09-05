@@ -118,12 +118,19 @@ class DisconnectBanner(unittest.TestCase):
         # connect() is idempotent (one live attempt at a time) and stamps its start time
         self.assertIn("function connect(){if(ws&&(ws.readyState===0||ws.readyState===1))return;", js)
         self.assertIn("connT=Date.now();", js)
-        # the watchdog handles EVERY socket state: half-open OPEN, stuck CONNECTING, and lost-timer CLOSED
-        self.assertIn('if(ws.readyState===1){if(everConnected&&Date.now()-lastRecv>STALE_MS){staleDiag("watchdog-close","quiet");try{ws.close();}catch(e){}}return;}', js)
+        # the watchdog handles EVERY socket state: half-open OPEN, stuck CONNECTING, and lost-timer CLOSED.
+        # A quiet OPEN socket is ABANDONED and redialed in the same tick (2026-09-02): close() alone
+        # starts a closing handshake a dead far side never answers, and the browser holds CLOSING ~60s
+        # before onclose — the audited phone panes came back 64s after their own watchdog-close.
+        self.assertIn('if(ws.readyState===1){if(everConnected&&Date.now()-lastRecv>STALE_MS){staleDiag("watchdog-close","quiet");abandon();connect();}return;}', js)
+        self.assertIn("function abandon(){var d=ws;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;", js)
+        self.assertIn('netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}', js,
+                      "the abandoned socket's onclose is disowned, so abandon() itself does what onclose did (banner + loader)")
         self.assertIn("if(ws.readyState===0&&Date.now()-connT>15000){try{ws.close();}catch(e){}return;}", js)
         self.assertIn("if(ws.readyState===3&&Date.now()-connT>8000){connect();}", js)
-        # the foregrounding fast-path tears down a stuck CONNECTING socket too, and re-dials a closed one
-        self.assertIn("if(ws&&ws.readyState<=1)ws.close();", js)
+        # the foregrounding fast-path abandons an OPEN-but-quiet socket and redials it NOW (same 60s
+        # CLOSING stall otherwise), aborts a stuck CONNECTING one, and re-dials a closed one
+        self.assertIn("if(ws&&ws.readyState===1)abandon();else{try{if(ws&&ws.readyState===0)ws.close();}catch(e){}}", js)
         self.assertIn("if(!ws||ws.readyState===3)connect();", js)
 
     def test_error_popover_has_no_reload_button(self):

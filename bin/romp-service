@@ -93,12 +93,36 @@ _instance_env_block() {
     printf '%s' "$out"
 }
 
+# The kernel resolves the env file's path from ITS OWN environment (kernel/keysource.py reads
+# ROMP_SERVICE_ENV_FILE, else ${XDG_CONFIG_HOME:-~/.config}/romp/service.env) — and the service gets
+# neither variable from the installing shell. So a non-default path baked into EnvironmentFile= below
+# would be read by systemd/launchd and NOT by the kernel's live key read: `romp keyswap` would rewrite
+# a file the kernel never looks at (review find, 2026-09-04). Carry the resolved path across whenever
+# it is not the kernel's own default; a default install writes the same unit it always did.
+_service_env_override() {
+    [[ "$SERVICE_ENV_FILE" != "$HOME/.config/romp/service.env" ]] || return 0
+    if [[ "$1" == plist ]]; then
+        # XML-escaped: a path with & or < would otherwise yield a plist launchd cannot parse
+        printf '    <key>ROMP_SERVICE_ENV_FILE</key><string>%s</string>\n' \
+            "$(printf '%s' "$SERVICE_ENV_FILE" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g')"
+    else
+        # quoted: systemd word-splits an unquoted Environment= value, so a path with a space would be cut;
+        # a backslash or double quote inside the value is escaped, or systemd drops the whole assignment;
+        # % is doubled because Environment= undergoes specifier expansion (%h → home, %z → "invalid slot",
+        # the assignment dropped) — verified with systemd-analyze --user verify
+        printf 'Environment="ROMP_SERVICE_ENV_FILE=%s"\n' \
+            "$(printf '%s' "$SERVICE_ENV_FILE" | sed 's/\\/\\\\/g; s/"/\\"/g; s/%/%%/g')"
+    fi
+}
+
 write_plist() {
     mkdir -p "$LAUNCHD_DIR" "$STATE"
     # $() eats the trailing newline; put it back so </dict> keeps its own line. Empty → the
     # dict closes exactly as it did before this existed.
     local _plist_env; _plist_env="$(_instance_env_block plist)"
     if [[ -n "$_plist_env" ]]; then _plist_env+=$'\n'; fi
+    local _plist_envf; _plist_envf="$(_service_env_override plist)"
+    if [[ -n "$_plist_envf" ]]; then _plist_envf+=$'\n'; fi
     cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -116,7 +140,7 @@ write_plist() {
     <key>PATH</key><string>$PATH</string>
     <key>ROMP_DIR</key><string>$ROMP_DIR</string>
     <key>ROMP_SUPERVISED</key><string>1</string>
-${_plist_env}  </dict>
+${_plist_envf}${_plist_env}  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>$LOG</string>
@@ -132,6 +156,8 @@ write_unit() {
     # Empty → the block collapses to exactly the unit this wrote before it existed.
     local _unit_env; _unit_env="$(_instance_env_block unit)"
     if [[ -n "$_unit_env" ]]; then _unit_env+=$'\n'; fi
+    local _unit_envf; _unit_envf="$(_service_env_override unit)"
+    if [[ -n "$_unit_envf" ]]; then _unit_envf+=$'\n'; fi
     cat > "$UNIT" <<EOF
 [Unit]
 Description=romp kernel supervisor (romp-manager)
@@ -144,7 +170,7 @@ RestartSec=2
 Environment=PATH=$PATH
 Environment=ROMP_DIR=$ROMP_DIR
 Environment=ROMP_SUPERVISED=1
-EnvironmentFile=-$SERVICE_ENV_FILE
+${_unit_envf}EnvironmentFile=-$(printf '%s' "$SERVICE_ENV_FILE" | sed 's/%/%%/g')
 ${_unit_env}
 [Install]
 WantedBy=default.target

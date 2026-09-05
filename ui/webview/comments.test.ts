@@ -529,20 +529,22 @@ test("agentCount is the reply-arrived detector's datum — records of the exchan
 
 test("busy latches at the SEND gesture and clears exactly on the reply-arrived record (source pins)", () => {
   // create: the gesture latches under the synth tid, before any kernel round-trip
-  assert.match(UI, /cmtAwaitBase\.set\(synth\.tid, 0\);\s+\/\/ the SEND gesture latches the pulse/);
-  // follow-up: re-latches at ITS send, with the agent count at that moment as the base
-  assert.match(UI, /cmtAwaitBase\.set\(cur\.th\.tid, agentCount\(cur\.th\)\);/);
+  assert.match(UI, /cmtAwaitBase\.set\(synth\.tid, \{ \.\.\.CMT_LATCH_ZERO \}\);\s+\/\/ the SEND gesture latches the pulse/);
+  // follow-up: re-latches at ITS send, with the thread's projected counts at that moment as the base (T237)
+  assert.match(UI, /cmtAwaitBase\.set\(cur\.th\.tid, cmtLatchOf\(cur\.th\)\);/);
   // the create's latch carries onto the real thread at adopt (the synth tid retires)
   assert.match(UI, /if \(k\.startsWith\("pending:"\)\) \{ cmtAwaitBase\.set\(tid, cmtAwaitBase\.get\(k\)!\); cmtAwaitBase\.delete\(k\); \}/);
-  // the ONE clearing site: the comments frame whose msgs carry MORE agent records than the base —
-  // or the thread leaving "open"/erroring (green would lie about a reply no longer on the way)
-  assert.match(UI, /if \(base !== undefined && \(\(agentCount\(t\) > base && !threadBusy\(t\.state\)\) \|\| t\.status !== "open" \|\| !!t\.error\)\) cmtAwaitBase\.delete\(t\.tid\);/,
-    "T112: the clear is the reply-COMPLETED event — a new agent record AND the turn settled; a "
-    + "mid-turn interim (the specimen's 'checking…' text) must never clear the pulse early. "
-    + "threadBusy on the CLEAR side only delays; the latch side never re-derives from state.");
-  // the mark's predicate: the latch, or (post-reload) the records' own owed reading; never state
+  // the ONE clearing site (T237): the comments frame whose projection carries the SEND (more messages
+  // than at the click) — or the thread leaving "open"/erroring. From that frame the KERNEL's replyOwed
+  // owns the wash: it reads the thread's transcript with the event model's own turn-end, so a mid-turn
+  // interim (the specimen's 'checking…' text) or a backend state flap can never clear the pulse early.
+  assert.match(UI, /if \(base !== undefined && cmtLatchReleased\(t, base\)\) cmtAwaitBase\.delete\(t\.tid\);/,
+    "against a T237 kernel the latch covers only the pre-round-trip instant (released by the user's own send); an older kernel keeps the T102 reply-arrived clear");
+  // the mark's predicate: the latch, then the kernel's owed bit (an older kernel: the records' own owed
+  // reading); never a timer, never the client's state read
   assert.match(UI, /if \(cmtAwaitBase\.has\(th\.tid\)\) return true;/);
-  assert.match(UI, /return replyOwed\(th\) && !cmtInterrupted\.has\(th\.tid\);/,
+  assert.match(UI, /const owed = typeof th\.replyOwed === "boolean" \? th\.replyOwed : replyOwed\(th\);/);
+  assert.match(UI, /return owed && !cmtInterrupted\.has\(th\.tid\);/,
     "the owed arm carries the T138 stop tombstone — an interrupted send owes nothing until the NEXT send");
   assert.match(UI, /if \(th\.status !== "open" \|\| !!th\.error \|\| threadStuck\(th\.state\)\) return false;/);
   // the push-count proxy is GONE root and branch
@@ -672,7 +674,7 @@ test("the popover interrupt posts the THREAD sid, clears the send-latch on the g
   // the mark green forever after a stop). The tombstone is record-count-keyed, never a clock, and a
   // fresh send retires it (re-owed).
   assert.match(body, /cmtInterrupted\.add\(sid\);/);
-  assert.match(UI, /return replyOwed\(th\) && !cmtInterrupted\.has\(th\.tid\);/,
+  assert.match(UI, /return owed && !cmtInterrupted\.has\(th\.tid\);/,   // owed = the kernel's replyOwed, else the msgs read (T237)
     "gesture-pair tombstone: stop sets it, ONLY the next send clears it — the CLI files the interrupt "
     + "as a trailing user-kind record, so any record-shape re-derivation would re-fire (lab-caught)");
   assert.match(UI, /cmtInterrupted\.delete\(cur\.th\.tid\);/);

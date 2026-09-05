@@ -74,12 +74,12 @@ class ApplySettings(unittest.TestCase):
                          "garbage never reaches the files or `claude --model`")
 
     def test_an_older_propagated_value_never_overwrites_a_newer_pick(self):
-        # THE REPORTED STOMP (upstream's user 2026-08-30): their Distilling pick kept resetting —
-        # any later-arriving propagation replaced a fresher local pick wholesale, because the apply
-        # had no notion of WHEN each value was picked. This fork orders every apply by the ORIGIN
+        # THE REPORTED STOMP (the user 2026-08-30, whose Distilling pick kept resetting): any
+        # later-arriving propagation replaced a fresher local pick wholesale, because the apply
+        # had no notion of WHEN each value was picked. Every apply now orders by the ORIGIN
         # GESTURE's stamp (the body-level `gt` every propagation leg forwards); older-or-equal
-        # stands down at the store (upstream solves the same stomp with per-field mtime "stamps" —
-        # the 2026-09-01 fold kept the fork's one gt clock rather than shipping two).
+        # stands down at the store. The per-field mtime "stamps" that first fixed this stomp are
+        # re-pinned here in gesture-stamp terms — one clock decides every write, at both hops.
         now_ms = int(time.time() * 1000)
         km._apply_judge_settings({"distillModel": "claude-opus-4-8", "gt": now_ms})
         res = km._apply_judge_settings({"distillModel": "triage", "gt": now_ms - 3600 * 1000})
@@ -179,10 +179,10 @@ class PropagateFansOut(unittest.TestCase):
                          "up + token only; a down row or one with no token is not an admin path")
 
     def test_the_fanned_body_carries_the_origin_gesture_stamp(self):
-        # upstream's user 2026-08-30 ("my Distilling pick continually gets reset"): authority is
-        # per PICK TIME. In this fork the fan forwards the BODY unchanged — including the origin
-        # gesture's `gt`, the same stamp the local store just applied — so every receiver orders
-        # by the one clock (test_setting_gesture_order.py pins the receiver side).
+        # the user 2026-08-30 (whose Distilling pick kept resetting): authority is per PICK TIME.
+        # The fan forwards the BODY unchanged — including the origin gesture's `gt`, the same
+        # stamp the local store just applied — so every receiver orders by the one clock
+        # (test_setting_gesture_order.py pins the receiver side).
         km._remote_kernel_call = lambda r, m, p, payload=None, timeout=8: (
             self.calls.append(payload) or (200, {"ok": True}, None))
         km._propagate_judge_settings({"distillModel": "claude-opus-4-8", "gt": 1725000000000})

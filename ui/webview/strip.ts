@@ -129,7 +129,9 @@ export function apiCell(usage: any): ApiCell | null {
   }
   if (!segs.length) return null;
   const lines = ["API-key spend"];
-  for (const [key, label] of [["day", "1 day"], ["week", "1 week"], ["month", "1 month"]] as const) {
+  // '1 month' is ROLLING 30 days (T235); 'this month' is the calendar figure the bill accrues — an older
+  // kernel ships only a calendar `month`, which the hover files under "this month" (the same skew rule)
+  for (const [key, label] of [["day", "1 day"], ["week", "1 week"], ["month", "1 month"], ["monthToDate", "this month"]] as const) {
     const seg = sp[key];
     if (!seg || typeof seg.usd !== "number") continue;
     const turns = seg.turns || 0;
@@ -401,7 +403,8 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
 
   const LBL: Record<string, string> = {
     up: "connected", authorizing: "authorizing…", connecting: "connecting…", starting: "connecting…",
-    "no-kernel": "kernel not answering", down: "reconnecting…", error: "error",   // a row exists = intent stands; romp never stops dialing (the user 2026-08-24)
+    "no-kernel": "kernel not answering", restarting: "restarting after update…",
+    down: "reconnecting…", error: "error",   // a row exists = intent stands; romp never stops dialing (the user 2026-08-24)
   };
   // Every status explains itself on hover (the user 2026-07-22: learn it from tooltips, not the CLI).
   // Mirrors the web popover's TIP map — the two copies must say the same thing.
@@ -411,6 +414,7 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
     connecting: "The ssh tunnel is up; waiting for the remote kernel to answer on its port.",
     starting: "The ssh tunnel is up; waiting for the remote kernel to answer on its port.",
     "no-kernel": "The tunnel is open but no romp kernel is answering on that machine. Start pushes this machine's romp there and boots it.",
+    restarting: "This machine just pushed its build there; that kernel is restarting into it and will answer again in a moment. Nothing to do.",
     down: "The ssh tunnel is not up. romp keeps retrying on its own, waiting longer between tries the longer it stays down, so a machine that comes back is picked up without you doing anything. Try now dials immediately.",
     error: "The connection failed. Hover the status text for the reason romp got back. romp keeps retrying in the background.",
   };

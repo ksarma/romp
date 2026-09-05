@@ -303,9 +303,9 @@ class FetchAndFallback(unittest.TestCase):
         self.assertEqual(km.MODEL_VERSIONS["fable"][0]["value"], "claude-fable-5-1", "seed still serves")
 
     def test_a_fetch_that_adds_ids_tells_every_open_picker_to_re_read_models(self):
-        # (fold 2026-09-02) the refresh used to call _push_soon() here, its comment claiming the pickers
-        # re-read /models on the next frame — but nothing re-reads the choice lists after page load, so
-        # an open dashboard kept the page-load list until a reload. The event the pickers DO act on is the
+        # the refresh used to call _push_soon() here, its comment claiming the pickers re-read /models
+        # on the next frame — but nothing re-reads the choice lists after page load, so an open
+        # dashboard kept the page-load list until a reload. The event the pickers DO act on is the
         # models frame (chat/comment loadModelChoices, the timeline's refreshModels, the gear's
         # adoptChoices/paintChoices): the fetch that grows the list emits it, with the rev the payload carries.
         got = self._clients()
@@ -480,26 +480,6 @@ class StalenessEvent(unittest.TestCase):
         self.assertFalse(km._note_unknown_model("claude-opus-9-9"), "dedup by id — no second refresh")
         self.assertEqual(self.fired, ["unknown model id claude-opus-9-9"])
 
-    def test_a_sighting_during_an_inflight_refresh_is_not_spent(self):
-        # (fold fixer, 2026-09-02) the refresh is single-flight: an id first sighted WHILE one is inflight
-        # (the boot fetch — exactly when a running session's CLI first reports a new release) gets no
-        # refresh started for it. Its one refresh per kernel life must not be spent on that no-op: if
-        # the inflight fetch lands without the id (a failed fetch, a key that cannot see it), the next
-        # sighting is the id's own refresh. The REAL gate first, then the landing.
-        km._refresh_model_catalog = self._orig
-        os.environ.pop("ROMP_MODEL_CATALOG", None)
-        km._catalog_status["inflight"] = True
-        try:
-            self.assertFalse(km._note_unknown_model("claude-opus-9-9"), "inflight → nothing started")
-        finally:
-            km._catalog_status["inflight"] = False
-            os.environ["ROMP_MODEL_CATALOG"] = "off"
-        self.assertNotIn("claude-opus-9-9", km._catalog_asked, "nothing started, so nothing spent")
-        km._refresh_model_catalog = lambda reason, _async=True: (self.fired.append(reason), True)[1]
-        self.assertTrue(km._note_unknown_model("claude-opus-9-9"), "the next sighting asks for real")
-        self.assertEqual(self.fired, ["unknown model id claude-opus-9-9"])
-        self.assertFalse(km._note_unknown_model("claude-opus-9-9"), "…and THAT was the id's one refresh")
-
     def test_known_ids_aliases_snapshots_and_garbage_never_fire(self):
         for v in ("claude-opus-5", "claude-fable-5-1", "opus", "default", "claude-opus-4-5-20251101",
                   "claude-opus-4-6-fast", "total-nonsense", "", None):
@@ -514,15 +494,35 @@ class StalenessEvent(unittest.TestCase):
         self.assertEqual(self.fired[-1], "unknown model id claude-sonnet-7")
 
     def test_a_reported_id_the_catalog_lacks_fires_the_refresh(self):
-        # (fold 2026-09-02) a running session's CLI reporting an id the catalog does not list is exactly
-        # the staleness the event names: the id joins the pickers marked `learned` at once (the fork's
-        # lookahead) AND the catalog is asked to catch up, once per id — after which the mark drops
+        # a running session's CLI reporting an id the catalog does not list is exactly the staleness
+        # the event names: the id joins the pickers marked `learned` at once AND the catalog is asked
+        # to catch up, once per id — after which the mark drops
         _reg(jd.STATE, "11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
         learned = km._learned_versions()
         self.assertEqual([v["value"] for v in learned["opus"]], ["claude-opus-5-1"])
         self.assertEqual(self.fired, ["unknown model id claude-opus-5-1"])
         km._learned_versions()
         self.assertEqual(len(self.fired), 1, "once per id per kernel life — every /models read re-derives the list")
+
+    def test_a_sighting_during_an_inflight_refresh_is_not_spent(self):
+        # the refresh is single-flight: an id first sighted WHILE one is inflight (the boot fetch —
+        # exactly when a running session's CLI first reports a new release) gets no refresh started
+        # for it. Its one refresh per kernel life must not be spent on that no-op: if the inflight
+        # fetch lands without the id (a failed fetch, a key that cannot see it), the next sighting is
+        # the id's own refresh. The REAL gate first, then the landing.
+        km._refresh_model_catalog = self._orig
+        os.environ.pop("ROMP_MODEL_CATALOG", None)
+        km._catalog_status["inflight"] = True
+        try:
+            self.assertFalse(km._note_unknown_model("claude-opus-9-9"), "inflight → nothing started")
+        finally:
+            km._catalog_status["inflight"] = False
+            os.environ["ROMP_MODEL_CATALOG"] = "off"
+        self.assertNotIn("claude-opus-9-9", km._catalog_asked, "nothing started, so nothing spent")
+        km._refresh_model_catalog = lambda reason, _async=True: (self.fired.append(reason), True)[1]
+        self.assertTrue(km._note_unknown_model("claude-opus-9-9"), "the next sighting asks for real")
+        self.assertEqual(self.fired, ["unknown model id claude-opus-9-9"])
+        self.assertFalse(km._note_unknown_model("claude-opus-9-9"), "…and THAT was the id's one refresh")
 
 
 def _reg(state, sid, **fields):
@@ -581,7 +581,7 @@ class CliBlocks(unittest.TestCase):
 
 class ModelsRoute(unittest.TestCase):
     """GET /models serves the MERGED list plus any CLI block — every picker reads this one route. The
-    fold's rule (2026-09-02): the catalog owns the version LIST, the alias owns the DEFAULT."""
+    catalog owns the version LIST; the alias owns the DEFAULT."""
 
     SID = "11111111-2222-3333-4444-555555555555"
 
@@ -627,9 +627,9 @@ class ModelsRoute(unittest.TestCase):
                          "no pin → the family ALIAS, which the CLI resolves to its newest live — never the list's head")
 
     def test_a_family_default_is_the_alias_even_when_the_catalog_knows_a_newer_head(self):
-        # the fold's rule in one line: the catalog may lead a family with an id newer than the seed knew,
-        # and a bare family click STILL sends the alias — a pinned head was the 2026-09-01 bug (every
-        # picker-set session stayed on claude-fable-5 while `fable` moved on)
+        # the catalog may lead a family with an id newer than the seed knew, and a bare family click
+        # STILL sends the alias — a pinned head was the bug (every picker-set session stayed on
+        # claude-fable-5 while `fable` moved on)
         km._apply_model_catalog(km.merge_model_catalog(km._MODEL_SEED, FAKE_ROWS), "api")
         rows = {m["value"]: m for m in self._models()["models"]}
         self.assertEqual(rows["opus"]["versions"][0]["value"], "claude-opus-9-9", "the catalog's head leads the list")
@@ -659,7 +659,7 @@ class ModelsRoute(unittest.TestCase):
     def test_a_catalog_id_is_pickable_as_a_pin_and_a_refusal_forgets_it(self):
         # an id only the catalog knows (no seed row, no session reporting it) is a version the pick
         # memory may record — read at call time, so it counts from the moment the catalog learned it —
-        # and the CLI refusing it forgets the pin like any other (the fork's on_model_refused hook)
+        # and the CLI refusing it forgets the pin like any other (the on_model_refused hook)
         km._apply_model_catalog(km.merge_model_catalog(km._MODEL_SEED, FAKE_ROWS), "api")
         self.assertTrue(km._vouched_model("claude-opus-9-9"), "the composer's /model vouches for a catalog id")
         self.assertEqual(km._version_family("claude-opus-9-9"), "opus")

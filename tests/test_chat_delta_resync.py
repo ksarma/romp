@@ -122,6 +122,10 @@ def test_needfull_handler_is_wired_in_the_kernel():
     i = src.find('msg.get("type") == "needFull"')
     assert i > 0, "the kernel must handle the client's needFull resync request"
     body = src[i:i + 1200]
+    if "_client_reset_chat_sid(client, sid)" in body:     # the pops moved under the client's slot lock (2026-09-04):
+        j = src.find("def _client_reset_chat_sid")        # pin the helper the handler calls
+        assert j > 0
+        body = src[j:j + 1200]
     assert '"echat"' in body and ".pop(sid, None)" in body, "must forget the client's tail base"
     assert '("chat", sid)' in body, "must drop the dedup slot so the full send lands"
 
@@ -175,3 +179,39 @@ def test_build_sig_still_tracks_the_fsid_states_file(tmp_path):
     before = km._chat_build_sig(sess)
     states.write_text('{"t":1,"state":"working"}\n{"t":2,"state":"waiting"}\n')
     assert before != km._chat_build_sig(sess)
+
+
+# ───────────────────────── the lost-first-frame class (the user 2026-09-02) ─────────────────────────
+
+def test_ready_forgets_the_whole_chat_base_so_the_repush_is_full_frames():
+    """The pusher fires from the moment the socket opens (the shim dials during HTML parse), while the
+    1.4MB render bundle can still be evaluating — so the FIRST full frames can land in a document with
+    no message listener and vanish, with echat then believing the client holds those tails. `ready`
+    (posted once, when the bundle finally evaluated) must therefore reset the client's whole chat base:
+    the renderer provably holds nothing, whatever this socket was sent. The stuck-« opening … » tab;
+    duplicating the browser tab recovered because cached bundles win the race."""
+    import json
+    c = _client()
+    sid = "11111111-2222-3333-4444-555555555555"
+    m = _sess(sid, _evs(5))
+    km._send_chat(c, m, json.dumps(m), 3, False)          # the pre-listener full send — LOST client-side
+    assert sid in c["echat"] and ("chat", sid) in c["sent"], "the kernel now believes the client is based"
+    c["_out"].clear()
+
+    km._client_reset_chat_base(c)                          # what the ready branch does
+    assert not c["echat"], "every believed tail is forgotten"
+    assert not any(isinstance(k, tuple) and k and k[0] == "chat" for k in c["sent"]), \
+        "…and every chat dedup slot, or _DEDUP_REPOST_S eats the re-send for 60s"
+
+    km._send_chat(c, m, json.dumps(m), 3, False)           # the ready-triggered repush
+    got = json.loads(c["_out"][-1])
+    assert got["type"] == "session", "the repush is a FULL frame, never a delta onto a base that was lost"
+
+
+def test_ready_branch_is_wired_to_the_reset():
+    src = inspect.getsource(km)
+    i = src.find('msg.get("type") == "ready"')
+    assert i > 0
+    body = src[i:src.index("_consume_pending_reveal(client)", i)]   # the whole branch, not a fixed window
+    assert "_client_reset_chat_base(client)" in body, "ready must reset BEFORE its push"
+    assert body.find("_client_reset_chat_base(client)") < body.find("_push_one(client)")

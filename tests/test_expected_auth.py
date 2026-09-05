@@ -122,7 +122,7 @@ class DeclarationInvertsTheMismatch(_Declared):
         self.be._note_auth_source(s, "apiKeyHelper")
         texts = self._problem_texts()
         self.assertTrue(any("launched for the login but the CLI reports" in t
-                            and "Check the login (claude /login) and service.env." in t
+                            and "Check the login (claude /login) and the manager's environment" in t
                             for t in texts),
                         "no declaration → the launch-intent comparison, verbatim: %r" % texts)
 

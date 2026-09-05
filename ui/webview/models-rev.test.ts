@@ -1,9 +1,9 @@
 // Every picker answers the kernel's models frame with a fresh GET /models — and two of those fetches can
 // overlap (a frame during the page-load fetch; two quick frames) and resolve OUT OF ORDER, so a stale list
-// could land last and win until the next change. The payload now carries `rev` (the pick memory's revision,
+// could land last and win until the next change. The payload carries `rev` (the pick memory's revision,
 // the frame's own counter) and each consumer keeps the highest rev it applied, dropping an older response
-// that lands late (fixer round 5, 2026-09-01). EXECUTED against the chat's loader (lifted out of render.ts
-// and transpiled) and the timeline's (the real module); the gear's twin runs in gear-models-frame.test.ts.
+// that lands late. EXECUTED against the chat's loader (lifted out of render.ts and transpiled) and the
+// timeline's (the real module); the gear's twin runs in gear-models-frame.test.ts.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";

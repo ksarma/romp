@@ -15,11 +15,14 @@ suite's floors (conftest's ROMP_CLAUDE_BIN=/bin/false) exist to prevent by defau
     SDK venv (~/.local/state/romp/sdkvenv, what bin/romp-sdk-setup builds) — the child runs there, so the
     suite's interpreter needs no SDK,
   * a `claude` binary ($ROMP_MOVE_LIVE_CLAUDE, else PATH), and
-  * Claude Code auth the hermetic config dir can use: ANTHROPIC_API_KEY in the environment, or an
-    `apiKeyHelper` in the user's OWN Claude Code settings ($CLAUDE_CONFIG_DIR/settings.json, default
-    ~/.claude/settings.json), copied into the hermetic settings as-is — the helper COMMAND travels,
-    never a key, and no key is ever written to a file (the 2026-09-05 rule: keys live only in the
-    vault and in process environment; the ~/.config key cache this test once read no longer exists).
+  * Claude Code auth the hermetic config dir can use: ANTHROPIC_API_KEY in the environment; or
+    $ROMP_MOVE_LIVE_API_KEY_HELPER — a shell command that prints a key, written into the hermetic
+    settings as their apiKeyHelper; or, failing both, the `apiKeyHelper` from the user's OWN Claude
+    Code settings ($CLAUDE_CONFIG_DIR/settings.json, default ~/.claude/settings.json), copied into
+    the hermetic settings as-is (the hermetic dir sees none of the operator's own settings otherwise).
+    Either way the helper COMMAND travels, never a key, and no key is ever written to a file (the
+    2026-09-05 rule: keys live only in the vault and in process environment; the ~/.config key cache
+    this test once read no longer exists).
 CI has none of these and skips cleanly. Synthetic content throughout (an invented sid, an invented
 codeword, temp folders)."""
 import json
@@ -119,6 +122,12 @@ def _user_api_key_helper(config_dir=None):
     return v.strip() if isinstance(v, str) else ""
 
 
+def _api_key_helper():
+    """The apiKeyHelper command the hermetic settings get when ANTHROPIC_API_KEY is unset: the explicit
+    $ROMP_MOVE_LIVE_API_KEY_HELPER first, else the command borrowed from the user's own settings."""
+    return os.environ.get("ROMP_MOVE_LIVE_API_KEY_HELPER") or _user_api_key_helper()
+
+
 def _skip_reason():
     if os.environ.get("ROMP_MOVE_LIVE") != "1":
         return "live move test is opt-in (ROMP_MOVE_LIVE=1): it bills two model turns against a real CLI"
@@ -126,9 +135,9 @@ def _skip_reason():
         return "no interpreter with claude_agent_sdk (this one, $ROMP_SDK_PYTHON, or ~/.local/state/romp/sdkvenv)"
     if not (os.environ.get("ROMP_MOVE_LIVE_CLAUDE") or shutil.which("claude")):
         return "no `claude` binary ($ROMP_MOVE_LIVE_CLAUDE or PATH)"
-    if not (os.environ.get("ANTHROPIC_API_KEY") or _user_api_key_helper()):
-        return ("no Claude Code auth for a hermetic config dir (ANTHROPIC_API_KEY in the environment, or an "
-                "apiKeyHelper in your Claude Code settings)")
+    if not (os.environ.get("ANTHROPIC_API_KEY") or _api_key_helper()):
+        return ("no Claude Code auth for a hermetic config dir (ANTHROPIC_API_KEY in the environment, "
+                "ROMP_MOVE_LIVE_API_KEY_HELPER, or an apiKeyHelper in your Claude Code settings)")
     return ""
 
 
@@ -175,7 +184,7 @@ class LiveSetCwd(unittest.TestCase):
             env = dict(os.environ)
             env.pop("ROMP_CLAUDE_BIN", None)
             if not env.get("ANTHROPIC_API_KEY"):
-                settings["apiKeyHelper"] = _user_api_key_helper()
+                settings["apiKeyHelper"] = _api_key_helper()
             spath = os.path.join(cfg, "settings.json")
             with open(spath, "w") as f:
                 json.dump(settings, f)

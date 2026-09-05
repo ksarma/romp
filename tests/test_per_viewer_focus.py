@@ -90,7 +90,9 @@ class Wiring(unittest.TestCase):
         # it was written to replace. The tests above all hand-build clients WITH a wid, so none saw it.
         src = inspect.getsource(km.Handler)
         self.assertIn('wid = (q.get("wid") or [""])[0]', src, "the connect query is where a dashboard names itself")
-        self.assertIn('client = {"app": app, "wid": wid,', src, "…and it has to reach the client dict")
+        self.assertIn('client, sendq, lock = _new_ws_client(app, wid, self.connection', src, "…and it has to reach the client dict")
+        self.assertIn('client = {"app": app, "wid": wid,', inspect.getsource(km._new_ws_client),
+                      "…which the factory builds with it (the liveness change of 2026-09-03 moved the construction there)")
 
     def test_a_federated_pane_names_its_dashboard_to_the_REMOTE_kernel_too(self):
         # A remote kernel sees one anonymous client per federated pane unless the wid rides the relay
@@ -187,7 +189,7 @@ class CreateOpenReviveAreAimedToo(unittest.TestCase):
         # is unchanged: the asker's client is named
         self.assertIn('_sid,extra=_create_sdk_session(nm,cwd,auth=(aifain("login","key")else""),client=client,', flat,
                       "the picker's createSession follows on the asking window")
-        # the fork threads env=env_req through the same call (its args carry inline comments, so the
+        # POST /new threads env=env_req through the same call (its args carry inline comments, so the
         # pin walks the span rather than matching one literal); the PROPERTY is unchanged: no client
         self.assertIn('sid,extra=_create_sdk_session(nm,cwd,auth=(aifain("login","key")else""),prefs=b,', flat,
                       "POST /new (the CLI) has no dashboard in hand, and so names none")

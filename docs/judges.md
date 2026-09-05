@@ -321,7 +321,11 @@ event).
 - **An empty reply never counts.** `parse` means the model's own text was
   rejected, and the row carries the reply tail so the log says why. Empty
   replies (the rate gate, a failed call) log nothing at the caller and
-  never burn a retry cap.
+  never burn a retry cap — with two exceptions, both the closer's, both
+  adopting a turn loudly on their own event: a safeguards refusal of the
+  turn's content, and a *killed* call (one the timer ended; never an API
+  error or a process that ended any other way), each counted against the
+  turn it happened on. The kill streak is described below.
 - **Every judge is capped.** Three genuine parse rejects on the same work
   item (`JUDGE_FAIL_CAP`) and the judge gives up loudly, one `give-up` row
   naming the re-arm event, instead of retrying every pass forever:
@@ -331,7 +335,7 @@ event).
 | opener, live re-plan | hard-places at card level immediately | (no retries needed) |
 | planner (work run) | 3 tries, then hard-place a user message / drop a non-user segment | on its next segment |
 | placer | files at the card immediately | (no retries needed) |
-| closer | 3 tries, then skips the turn | when the turn gains atoms |
+| closer | 3 parse rejects, or 3 killed calls, then skips the turn | when the turn gains atoms |
 | archiver | 3 tries, then keeps serving the old headline | when the session gains a turn |
 | grouper, consolidator | 3 tries, then leaves the board shape as is | when the top set changes |
 | courier | 3 tries, then resolves from the sender's declared kind | (terminal; never orphans a message) |
@@ -340,6 +344,29 @@ event).
 While the account usage window is exhausted, the rate gate skips every call
 across every session and logs one `rate-limited` row per window; gate skips count
 toward nothing.
+
+- **The closer bounds its own call and its own sweep.** Behind a turn's own
+  goals the closer carries *riders*: open work nominated from elsewhere (a goal
+  whose recorded steps are all finished, a starved leaf, a lifted card, and on
+  a status-report turn every open top). One session's closer calls were once
+  killed by the call timer 192 times in a row inside a single per-session
+  sweep, silencing every judge for six hours: the menu carried 24 riders, the
+  reply did not fit under the timer, and a killed call stamps nothing, so the
+  identical menu rode the next turn. Two bounds, neither a fairness cap.
+  `CLOSE_RIDER_CAP` limits the re-nominating riders per call (never the turn's
+  own goals, never the status riders, which are one-shot per status turn),
+  never-looked riders first; a cut rider rides a later landed call, so the
+  backlog drains one landed call at a time. And a FAILED call (a kill, a
+  subprocess error, an API error envelope, on either engine) ends that
+  session's sweep for the pass with one `sweep-cut` row naming the turns left
+  behind and the shape of the menu that died; parse rejects and pause-skips
+  still walk on. Three *killed* calls on the same turn at the same size (the
+  timer ending the call; an API error, or a process that ended any way other
+  than the timer, cuts the walk too but leaves no strike) give that turn up
+  loudly (one `give-up` row; the turn growing re-arms it) and the walk moves
+  on, so a session whose one turn always dies still gets its later turns
+  swept. A dead session cut this way keeps its marker pending and waits at
+  the back of the death drain, so it cannot starve the others.
 
 ## Billing, and when the credential itself is broken
 
@@ -426,7 +453,7 @@ permission/API-error floors: one interrupt at a time, the present event first.
   Models: `STATE/judge-model` (triage), `STATE/index-model`.
 - Logs: `STATE/judge-usage.jsonl` (per-call cost, one name per prompt),
   `STATE/judge-errors.jsonl` (the row contract above; kinds are parse,
-  call, give-up, cite-miss, rate-limited, task-store, history-unreadable,
+  call, give-up, sweep-cut, cite-miss, rate-limited, task-store, history-unreadable,
   task-key-collision — a duplicated to-do mirror key, reconciled per node
   and surfaced loudly),
   `STATE/judge-auth.json` (the per-session judge-auth-down latch — see

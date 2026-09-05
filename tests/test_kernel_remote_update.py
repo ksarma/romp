@@ -115,6 +115,143 @@ class UpdateRemote(unittest.TestCase):
         self.assertIn("TESTHOST:/home/u/romp", push)
         self.assertTrue(any(str(x).startswith("HEAD:refs/heads/") for x in push), "pushes HEAD to a scratch ref")
 
+    def test_the_apply_restarts_through_the_manager_quiet_window_with_an_audit_row(self):
+        # T238: the remote apply used to `pkill` the far kernel outright — an anonymous, immediate
+        # SIGTERM (no restart-audit row, no quiet window: nine in-flight-turn cuts in three hours on a
+        # merge day, each read by the dialing side as "unreachable"). The apply now writes the audit
+        # row first and asks the far MANAGER for a quiet-window restart; pkill survives only as the
+        # last-resort branch for a host with no manager.
+        calls = self._wire(apply_out="SYNCED:abcdef0:QUIET")
+        km._remotes["TESTHOST"] = {"host": "TESTHOST"}
+        self.addCleanup(km._remotes.pop, "TESTHOST", None)
+        ok, detail = km._update_remote("TESTHOST")
+        self.assertTrue(ok, detail)
+        self.assertIn("quiet window", detail)
+        apply = next(a[-1] for a in calls if isinstance(a[-1], str) and "reset --hard" in a[-1])
+        self.assertIn("restart-audit.jsonl", apply, "the restart is never anonymous")
+        self.assertIn("p2p-update", apply)
+        self.assertIn("restart-all --quiet", apply, "the manager's quiet-window gate, not a kill")
+        self.assertLess(apply.index("restart-all --quiet"), apply.index('pkill -f "bin/romp-kern[e]l"'),
+                        "pkill is the fallback AFTER the manager path, never the first move")
+        exp = km._remotes["TESTHOST"].get("restartExpected")
+        self.assertTrue(exp and exp.get("sha") == self.LFULL and exp.get("t") and exp.get("quiet") is True,
+                        "the dialing side is told to expect the restart it just caused")
+
+    def test_a_host_with_no_owning_manager_restarts_the_old_way_and_says_so(self):
+        calls = self._wire(apply_out="SYNCED:abcdef0:FALLBACK")
+        km._remotes["TESTHOST"] = {"host": "TESTHOST"}
+        self.addCleanup(km._remotes.pop, "TESTHOST", None)
+        ok, detail = km._update_remote("TESTHOST")
+        self.assertTrue(ok, detail)
+        self.assertIn("immediate", detail)
+        self.assertNotIn("quiet window", detail)
+        self.assertIs(km._remotes["TESTHOST"]["restartExpected"]["quiet"], False)
+
+    def test_the_quiet_path_requires_the_manager_to_own_the_polled_kernel(self):
+        # a manager owning nothing (or a bare kernel beside a crash-looping managed one) answers 202
+        # and restarts nothing — trusting it turned the update into a silent never-restart (review)
+        calls = self._wire(apply_out="SYNCED:abcdef0:QUIET")
+        km._update_remote("TESTHOST")
+        apply = next(a[-1] for a in calls if isinstance(a[-1], str) and "reset --hard" in a[-1])
+        self.assertIn('romp-manager" status', apply, "ownership is read from the manager's own registry")
+        self.assertLess(apply.index('romp-manager" status'), apply.index("restart-all --quiet"))
+        self.assertIn('if [ "$OWNED" = 1 ]', apply)
+        # per-branch audit rows: the quiet row precedes the quiet call; the fallback writes its own
+        # row (no when=quiet) right before pkill, so the cut row joins the request that happened
+        self.assertEqual(apply.count("restart-audit.jsonl"), 2)
+        self.assertLess(apply.index("p2p-update"), apply.index("restart-all --quiet"),
+                        "the quiet row lands before the quiet request")
+        self.assertLess(apply.index("restart-all --quiet"), apply.index("immediate: no owning manager"),
+                        "the fallback writes its own row after the quiet branch was skipped")
+        self.assertLess(apply.index("immediate: no owning manager"), apply.index('pkill -f "bin/romp-kern[e]l"'))
+        self.assertIn('SYNCED:$NEW:FALLBACK', apply)
+
+    def test_both_generated_apply_scripts_parse_as_bash(self):
+        import shlex, subprocess as sp
+        calls = self._wire(apply_out="SYNCED:abcdef0:QUIET")
+        km._update_remote("TESTHOST")
+        wrapper = next(a[-1] for a in calls if isinstance(a[-1], str) and "reset --hard" in a[-1])
+        inner = shlex.split(wrapper.split("; if command -v setsid")[0][len("APPLY="):])[0]
+        r = sp.run(["bash", "-n"], input=inner, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855}
+        self.addCleanup(km._remotes.pop, "TESTHOST", None)
+        calls2 = []
+        real = km.subprocess.run
+        def fake2(argv, **kw):
+            calls2.append(argv)
+            if argv[0] == "git":
+                return _R(out=self.LFULL)
+            cmd = argv[-1]
+            if "for d in" in cmd:
+                return _R(out="DIR:/home/u/romp\nHEAD:%s\nDIRTY:" % self.RHEAD)
+            return _R(out="RESTARTED:1")
+        km.subprocess.run = fake2
+        try:
+            ok, _ = km._restart_remote_kernel("TESTHOST")
+        finally:
+            km.subprocess.run = real
+        self.assertTrue(ok)
+        wrapper2 = next(a[-1] for a in calls2 if isinstance(a[-1], str) and "RESTARTED" in a[-1])
+        inner2 = shlex.split(wrapper2.split("; if command -v setsid")[0][len("APPLY="):])[0]
+        r2 = sp.run(["bash", "-n"], input=inner2, capture_output=True, text=True)
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+
+    def test_the_expectation_is_stamped_before_the_apply_runs_and_popped_when_nothing_restarted(self):
+        # an idle far kernel is SIGTERMed within milliseconds of the manager's 202, and the fallback
+        # kills it mid-ssh: a stamp AFTER the ssh returned arrived after the gap it explains (review)
+        km._remotes["TESTHOST"] = {"host": "TESTHOST"}
+        self.addCleanup(km._remotes.pop, "TESTHOST", None)
+        seen = []
+        calls = self._wire(apply_out="SYNCED:abcdef0")
+        real = km.subprocess.run
+        def spy(argv, **kw):
+            if isinstance(argv[-1], str) and "reset --hard" in argv[-1]:
+                seen.append(dict(km._remotes["TESTHOST"].get("restartExpected") or {}))
+            return real(argv, **kw)
+        km.subprocess.run = spy
+        km._update_remote("TESTHOST")
+        km.subprocess.run = real
+        self.assertTrue(seen and seen[0].get("sha") == self.LFULL, "expected BEFORE the apply ssh ran: %r" % seen)
+        # a DIVERGED apply restarts nothing → the expectation is withdrawn
+        self._wire(apply_out="DIVERGED")
+        ok, _ = km._update_remote("TESTHOST")
+        self.assertFalse(ok)
+        self.assertNotIn("restartExpected", km._remotes["TESTHOST"])
+
+    def test_already_up_to_date_re_arms_the_expectation_while_the_far_kernel_lags(self):
+        # the checkout holds our build but the KERNEL still answers the old sha: a restart is pending
+        # (a quiet window forgotten across our own restart) — expect its gap instead of reading death
+        self._wire(rhead=self.LFULL)
+        km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_sha": "2222222"}
+        self.addCleanup(km._remotes.pop, "TESTHOST", None)
+        ok, detail = km._update_remote("TESTHOST")
+        self.assertTrue(ok)
+        self.assertIn("has not restarted into it yet", detail)
+        self.assertEqual(km._remotes["TESTHOST"]["restartExpected"]["sha"], self.LFULL)
+
+    def test_an_explicit_restart_expects_a_gap_with_no_sha_and_withdraws_on_failure(self):
+        km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_sha": "2" * 40, "kernel_port": 29855}
+        self.addCleanup(km._remotes.pop, "TESTHOST", None)
+        seen = []
+        real = km.subprocess.run
+        def fake(argv, **kw):
+            if argv[0] == "git":
+                return _R(out=self.LFULL)
+            cmd = argv[-1]
+            if "for d in" in cmd:
+                return _R(out="DIR:/home/u/romp\nHEAD:%s\nDIRTY:" % self.RHEAD)
+            seen.append(dict(km._remotes["TESTHOST"].get("restartExpected") or {}))
+            return _R(out="NOLAUNCH")
+        km.subprocess.run = fake
+        try:
+            ok, _ = km._restart_remote_kernel("TESTHOST")
+        finally:
+            km.subprocess.run = real
+        self.assertFalse(ok)
+        self.assertEqual(seen[0].get("sha"), "", "same build: no new sha to wait for — only the gap ends it")
+        self.assertNotIn("restartExpected", km._remotes["TESTHOST"], "nothing restarted → withdrawn")
+
     def test_already_up_to_date_short_circuits(self):
         self._wire(rhead=self.LFULL)          # remote already at local HEAD
         ok, detail = km._update_remote("TESTHOST")

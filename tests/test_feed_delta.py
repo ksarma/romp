@@ -478,6 +478,77 @@ class ReadyHandshake(unittest.TestCase):
         finally:
             _restore(saved)
 
+    def test_an_outline_client_on_the_view_delta_protocol_is_served_once_as_the_slots_base(self):
+        # The Outline page's shim announces ?delta=1 (upstream's view-delta slots) but not feedDelta. Served
+        # through _send_client, its `ready` frame was unkeyed and left dstate["feed"] empty, so the connect
+        # push's _send_slot sent the WHOLE frame again, keyed: two full frames per `ready`. Served through
+        # _send_slot the frame is keyed, it is the slot's base, and the push that follows can delta.
+        f = _feed()
+        saved, ms, parts = _warm(f)
+        try:
+            h = self._handler()
+            c, sent = _client(caps=("readyGate",), app="fleet")
+            c["delta"] = True; c["ready"] = False
+            t0 = time.time()
+            h._dispatch_ws({"type": "ready"}, c)
+            self.assertEqual(len(sent), 1)
+            got = json.loads(sent[0])
+            self.assertEqual(got["type"], "feed")
+            self.assertIn("_keys", got, "served keyed: the frame is the slot's base")
+            self.assertGreaterEqual(got["now"], int(t0), "…stamped with the clock of the serve")
+            self.assertIn("feed", c.get("dstate") or {}, "…and the slot holds it")
+            self.assertNotIn("efeed", c, "the feed-delta protocol's base is not this client's")
+            self.assertEqual(h.pushed, [c], "the Outline still gets its connect push (for the ledgers)")
+            km._push([c])                                       # the real push: it attaches ledgers (none here)
+            self.assertEqual([json.loads(x)["type"] for x in sent], ["feed", "delta"],
+                             "the push found the base held: what it adds rides as a delta, not a second full frame")
+            d = json.loads(sent[1])
+            self.assertEqual(d["slot"], "feed")
+            self.assertIn("ledgers", d.get("rest") or {}, "the ledgers attach is the change that rode it")
+            # a second `ready` is a re-base on this protocol too: the base is forgotten, the keyed full re-served
+            h._dispatch_ws({"type": "ready"}, c)
+            self.assertEqual([json.loads(x)["type"] for x in sent], ["feed", "delta", "feed"])
+            self.assertIn("_keys", json.loads(sent[2]))
+        finally:
+            _restore(saved)
+
+    def test_an_outline_socket_announcing_delta_gets_one_full_frame_per_ready(self):
+        # end to end over a real socket, with the REAL connect push (its ledgers attach changes the frame's
+        # remainder, so what follows the full frame is a delta, never a second `feed`)
+        f = _feed(n=40)
+        saved, ms, parts = _warm(f)
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        port = srv.server_address[1]
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        s = None
+        try:
+            s, buf = _connect(port, "app=fleet&wid=w9&caps=readyGate&delta=1")
+            client = _registered("w9")
+            self.assertTrue(client.get("delta"), "the shim's ?delta=1 was parsed")
+            self.assertFalse(client["ready"])
+            s.sendall(_client_frame(json.dumps({"type": "ready"})))
+            frames = []
+            s.settimeout(1.5)
+            try:
+                while True:
+                    op, payload, buf = _read_frame(s, buf)
+                    if op == 0x1:
+                        frames.append(json.loads(payload.decode("utf-8")))
+            except (socket.timeout, TimeoutError):
+                pass
+            types = [fr.get("type") for fr in frames]
+            self.assertEqual(types.count("feed"), 1, "exactly one full frame per `ready`: %s" % types)
+            self.assertIn("_keys", frames[types.index("feed")], "…the keyed one, the slot's base")
+            self.assertTrue(set(types) <= {"feed", "delta"}, types)
+            for fr in frames:
+                if fr.get("type") == "delta":
+                    self.assertEqual(fr.get("slot"), "feed")
+        finally:
+            if s is not None:
+                s.close()
+            srv.shutdown(); srv.server_close()
+            _restore(saved)
+
     def test_the_ready_handler_emits_no_tab_order_of_its_own(self):
         # The connect push's tabOrder goes through the _tab_list_tmux collapse guard; the handler used to
         # send a SECOND one from a raw _tmux_sessions() read — an omitted id is an authoritative teardown
@@ -543,7 +614,7 @@ class ReadyHandshake(unittest.TestCase):
         self.assertNotIn("_send_feed_now(", accept, "the first frame waits for `ready`")
         self.assertIn("Nothing is pushed at accept", accept)
         self.assertIn('caps = (q.get("caps") or [""])[0]', accept)
-        self.assertIn('"caps": set(x for x in caps.split(",") if x)}', accept)
+        self.assertIn('client["caps"] = set(x for x in caps.split(",") if x)', accept)
         self.assertIn('client["ready"] = READY_GATE_CAP not in client["caps"]', accept, "the hold is decided at accept")
         self.assertIn('if msg and msg.get("type") == "needFullFeed":', KSRC)
         i = KSRC.index('if msg and msg.get("type") == "ready":')
@@ -892,6 +963,69 @@ class ReadyGate(unittest.TestCase):
         self.assertNotIn("_client_ready", src)
         src = KSRC[KSRC.index("def _broadcast_restarting("):KSRC.index("def _push_all(")]
         self.assertNotIn("_client_ready", src)
+
+
+class FeedStateUnderTheSlotLock(unittest.TestCase):
+    """The feed's per-client state (efeed, the ("feed",) dedup slot, the slot's dstate) is read and written
+    on two threads: the pusher's _send_feed / the handler's _send_feed_now, and the handler's needFullFeed /
+    `ready` re-base pops. Like _send_slot and _send_chat, the read-decide-send-write runs under the client's
+    slot lock, and the pops go through _client_reset_feed_base under the same lock — so a reset lands before
+    or after a send as a whole, never inside it."""
+
+    def test_the_send_paths_and_the_resets_share_the_clients_slot_lock(self):
+        import inspect
+        send = inspect.getsource(km._send_feed)
+        self.assertIn("with _client_lock(c):", send)
+        self.assertIn("return _send_feed_locked(c, feed, ms, sig, parts)", send)
+        now = inspect.getsource(km._send_feed_now)
+        i = now.index("with _client_lock(c):")
+        self.assertLess(i, now.index('c["efeed"] = w[5]'), "the base is recorded inside the lock")
+        self.assertLess(i, now.index('_send_slot(c, "feed", w[2], ms, w[4])'))
+        self.assertLess(i, now.index('_send_client(c, ("feed",), w[2], pre=ms, sig=w[4])'))
+        reset = inspect.getsource(km._client_reset_feed_base)
+        self.assertLess(reset.index("with _client_lock(client):"), reset.index('client.pop("efeed", None)'))
+        self.assertIn('client.get("dstate", {}).pop("feed", None)', reset, "the view-delta slot's base goes too")
+        handler = KSRC[KSRC.index('msg.get("type") == "needFullFeed"'):KSRC.index('msg.get("type") == "loadOlder"')]
+        self.assertIn("_client_reset_feed_base(client)", handler)
+        self.assertNotIn('client.pop("efeed"', handler, "no unlocked pop on the handler thread")
+        i = KSRC.index('if msg and msg.get("type") == "ready":')
+        ready = KSRC[i:KSRC.index("_consume_pending_reveal(client)", i)]
+        self.assertIn("_client_reset_feed_base(client)", ready)
+        self.assertNotIn('client.pop("efeed"', ready)
+
+    def test_a_reset_that_arrives_mid_send_lands_after_it_so_the_next_frame_is_full(self):
+        # A hook inside the delta computation holds the send open while a second thread resets the client.
+        # Unlocked, the reset landed between the read and the write-back, the write-back put efeed back, and
+        # the client that had just declared it holds nothing got a delta next. Locked, the reset waits.
+        f1 = _feed(n=30, build_id=1)
+        cards = [_card(i) for i in range(30)]; cards[3]["text"] = "Synthetic goal 3, edited"
+        f2 = _feed(n=30, build_id=2, asks=cards)
+        c, sent = _client()
+        c["dlock"] = threading.RLock()
+        _send(c, f1)
+        self.assertEqual(json.loads(sent[-1])["type"], "feed")
+        entered, reset_done = threading.Event(), threading.Event()
+        real = km._feed_delta
+        def hooked(prev, cur, feed):
+            entered.set()
+            reset_done.wait(0.5)      # cannot complete while this thread holds the lock: times out
+            return real(prev, cur, feed)
+        km._feed_delta = hooked
+        try:
+            def resetter():
+                entered.wait(5)
+                km._client_reset_feed_base(c)
+                reset_done.set()
+            t = threading.Thread(target=resetter); t.start()
+            _send(c, f2)
+            t.join(5)
+        finally:
+            km._feed_delta = real
+        self.assertTrue(reset_done.is_set())
+        self.assertEqual(json.loads(sent[-1])["type"], "feedDelta", "the in-flight send finished as a whole")
+        self.assertNotIn("efeed", c, "…and the reset landed after it, not under its write-back")
+        _send(c, f2)
+        self.assertEqual(json.loads(sent[-1])["type"], "feed", "a client that holds nothing gets the full frame")
 
 
 class StripTrgbIsExact(unittest.TestCase):

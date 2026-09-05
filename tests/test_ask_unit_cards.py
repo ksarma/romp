@@ -186,12 +186,12 @@ class CourierWorld(unittest.TestCase):
         self.assertTrue(planted[0].get("frame"), "the fallback mint keeps the frame enrichment")
 
     def test_the_fanned_ask_keeps_one_visible_card_through_completion(self):
-        # THE BOARD CONSEQUENCE of the link path (2026-08-26 review of the T101 fold): the kernel's
-        # _pure_delegation_top suppressed any top whose every leaf is a handoff dict — exactly the
-        # shape T101's own link path builds for a fully-fanned ask — so one dictated ask fanned to
-        # two workers had NO card anywhere (no recipient tops by design, the ask top suppressed).
-        # The suppression exempts the ask-unit now: ONE card, visible in Working with its two
-        # tracker children, and still visible when it lands in Completed.
+        # THE BOARD CONSEQUENCE of the link path: the kernel's _pure_delegation_top suppressed any
+        # top whose every leaf is a handoff dict — exactly the shape T101's own link path builds
+        # for a fully-fanned ask — so one dictated ask fanned to two workers had NO card anywhere
+        # (no recipient tops by design, the ask top suppressed). The suppression exempts the
+        # ask-unit now: ONE card, visible in Working with its two tracker children, and still
+        # visible when it lands in Completed.
         self._mgr()
         jd.run_courier(now=NOW)
         m = jd.load_goals(MGR)
@@ -337,14 +337,14 @@ class UmbrellaDissolution(unittest.TestCase):
                          "the un-stranded ask carries its own evidence — the trace can reach it now")
 
     def test_an_undo_restored_container_survives_the_dissolution(self):
-        # THE SWEEP YIELDS TO THE USER'S UNDO (2026-08-26 review of the T101 fold): UndoClear pulls
-        # an archived pre-T101 container back into the live store (archives keep their containers),
-        # and the very next rollup dissolved it — the card the user just restored vanished into its
-        # promoted children. The un-clear IS newer information than the standing purge: it is
-        # recorded on the node by the real writers (_mark_nodes_cleared's dual-write and the
-        # unclear override replay both file the user reopen row with undo=True), and a container
-        # whose latest clear-family event is that restore is SPARED. Everything without that fresh
-        # restore — legacy leftovers, peer-adopted copies — dissolves exactly as before.
+        # THE SWEEP YIELDS TO THE USER'S UNDO: UndoClear pulls an archived pre-T101 container back
+        # into the live store (archives keep their containers), and the very next rollup dissolved
+        # it — the card the user just restored vanished into its promoted children. The un-clear
+        # IS newer information than the standing purge: it is recorded on the node by the real
+        # writers (_mark_nodes_cleared's dual-write and the unclear override replay both file the
+        # user reopen row with undo=True), and a container whose latest clear-family event is that
+        # restore is SPARED. Everything without that fresh restore — legacy leftovers, peer-adopted
+        # copies — dissolves exactly as before.
         st = self._legacy()
         u1 = st["nodes"][MGR + ":u1"]
         self.assertTrue(jd.record_verdict(st, u1, "user", "clear", NOW - 100,
@@ -388,13 +388,13 @@ MID4 = "1787499000.000004_1.TESTHOST"
 
 
 class ImageOnlyAsk(unittest.TestCase):
-    """Round 3 (2026-08-26), item 4: _human_prompt_record returns an EMPTY-TEXT record for an
-    image-only dictated prompt (a human record with no text blocks), and the fallback then minted
-    with askRef but NO userAsk (the text.strip() gate) — a top with no dictation evidence the
-    ask-unit exemption accepts, so a fully-fanned image ask rendered NOWHERE and the dedupe linked
-    later dispatches into that invisible top. The stamp now falls back to the '(user message)'
-    placeholder (_seg_label's own titleless-prompt presentation), so the exemption's userAsk check
-    holds for image asks."""
+    """_human_prompt_record returns an EMPTY-TEXT record for an image-only dictated prompt (a human
+    record with no text blocks), and a fallback that gated the userAsk stamp on text.strip()
+    minted with askRef but NO userAsk — a top with no dictation evidence the ask-unit exemption
+    accepts, so a fully-fanned image ask rendered NOWHERE and the dedupe linked later dispatches
+    into that invisible top. The stamp falls back to the '(user message)' placeholder
+    (_seg_label's own titleless-prompt presentation), so the exemption's userAsk check holds for
+    image asks."""
 
     def test_an_image_only_human_record_is_still_a_record(self):
         rec = jd._human_prompt_record({"uuid": "hu", "type": "user", "author": "human",
@@ -435,11 +435,10 @@ class ImageOnlyAsk(unittest.TestCase):
 
 
 class MergeCarriesDelegationIdentity(unittest.TestCase):
-    """Round 3 (2026-08-26), item 5: _merge_nodes dropped origin, links, and askRef when the
-    grouper folded a courier-minted top into a planner twin — a lost askRef reopened duplicate
-    minting for the next dispatch of the same ask, and a lost origin/links stranded the sender's
-    non-quiet tracker FOREVER (run_propagate's back-link and its dismissal arm both join on the
-    msgId)."""
+    """_merge_nodes dropped origin, links, and askRef when the grouper folded a courier-minted top
+    into a planner twin — a lost askRef reopened duplicate minting for the next dispatch of the
+    same ask, and a lost origin/links stranded the sender's non-quiet tracker FOREVER
+    (run_propagate's back-link and its dismissal arm both join on the msgId)."""
 
     def _world(self):
         surv = _node(WK1 + ":g1", "Drag-range selection over run rows", None)

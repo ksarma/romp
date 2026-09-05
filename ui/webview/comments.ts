@@ -17,7 +17,11 @@ export type CommentThread = {
   createdT: number;
   state: string;              // the thread session's live state ("working"/"waiting"/…, "" when dormant)
   error?: string;             // the thread CLI's launch error, when it could not start
-  unread: boolean;            // an agent reply newer than the read watermark
+  unread: boolean;            // a FINISHED agent reply newer than the read watermark — yellow (kernel truth, T237)
+  replyOwed?: boolean;        // a reply is still owed (no exchange yet / user's message newest / turn in progress / a send held) — the green wash (kernel truth, T237; absent on an older kernel)
+  queued?: number;            // sends the backend holds or has fed for this thread, not yet in the transcript (T237)
+  lastUuid?: string;          // the newest record shown/held — "did the transcript move?" without the projection caps (T237)
+  unreachable?: boolean | null;   // a broken thread (missing transcript / lost cut): the kernel owes nothing and says so (T237)
   sinceEpoch?: number;        // ms epoch the thread's current state began — the popover chip's timer
   mode?: string;              // the thread's permission mode — the popover statusline's Auto badge
   fast?: string;              // fast-mode state ("on"/"off"/"cooldown"; "" = unknown → no badge)
@@ -68,7 +72,10 @@ export function replyOwed(th: CommentThread): boolean {
 // the exchange's own records: never wall clocks (cross-host transcripts skew) and never push counts
 // (the banned proxy — the old two-quiet-pushes settle counter killed the create-window green
 // while the fork booted, and any stall in its 0→1→2 stepping parked green forever with no event to
-// clear it). agentCount is the reply-arrived detector's datum; render.ts holds the per-send base.
+// clear it). agentCount is that reply-arrived detector's datum; render.ts holds the per-send base.
+// Since T237 the KERNEL ships replyOwed (read from the thread's transcript with the event model's own
+// turn-end), and the latch covers only the pre-round-trip instant against such a kernel; the
+// agentCount clear stays the contract for an older kernel that ships no bit.
 export function agentCount(th: CommentThread): number {
   return (th.msgs || []).filter((m) => m.who === "agent").length;
 }

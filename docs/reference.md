@@ -24,6 +24,7 @@ update` starts a session called "update".
 | `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them |
 | `romp up` | Run the kernel manager in the foreground; rare, since the login service runs it |
 | `romp version` | Version report across the moving parts |
+| `romp keyswap [--cycle <session,…>\|--cycle-all]` | Which API key the sessions bill, by fingerprint, and — after a key rotation — a reconnect of the quiet running sessions so their new processes pick the new key up, with no manager restart. `romp keyswap <name>`, upstream's rewrite of `service.env` from `service.env.<name>`, is refused: this fork does not write API keys to files. See [Switching which API key the sessions bill](#switching-which-api-key-the-sessions-bill-romp-keyswap) |
 | `romp help` | The same list, from the terminal |
 
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
@@ -63,7 +64,7 @@ These are for scripting and for agents rather than daily use:
 | `romp new --effort <level> <name>` | Reasoning effort for the SDK session (`high`, `ultracode`, ...); re-asserted if `<name>` already runs |
 | `romp new --env NAME=VALUE <name>` | A per-session env var for the SDK session, repeatable; a re-run against a running `<name>` replaces the whole set — vars not re-named are dropped |
 | `romp new --no-env <name>` | Clear a running SDK session's per-session env (declares the empty set) |
-| `romp new --in <tag> <name>` | Put the new SDK session in `<tag>`, so its tab lands in that group (repeatable; a name that does not exist yet creates the tag). Applies to `<name>` if it already runs. The kernel echoes `tags` (the session's tags) and, per `--in`, the stored name it landed as (`tagsApplied`, beside `tagsRequested`): a name the store trimmed or clamped prints as "applied as"; a missing echo, or a tag the kernel refused, prints a warning |
+| `romp new --in <tag> <name>` | Put the new SDK or Codex session in `<tag>`, so its tab lands in that group (repeatable; a name that does not exist yet creates the tag). Applies to `<name>` if it already runs. The kernel echoes `tags` (the session's tags) and, per `--in`, the stored name it landed as (`tagsApplied`, beside `tagsRequested`): a name the store trimmed or clamped prints as "applied as"; a missing echo, or a tag the kernel refused, prints a warning |
 | `romp new --no-inherit <name>` | Run inside a romp session, `romp new` sends that session's stable id (`ROMP_SID`) as the new session's `parent` (marked `parentAuto`), and the kernel copies the parent's tags onto the child; inside a comment thread, the parent is the session the thread belongs to. This flag withholds the parent, so the new session starts outside them. A kernel that never ran the calling session creates the session untagged and echoes `parentIgnored`, which the CLI reports in one line. Raw POST /new callers pass `parent` (a live name or a known sid; an unknown one is a 400 unless `parentAuto` is set) and `tags` (a list of names); opening a name that already runs never inherits |
 | `romp tag [<name>] [--add <session>…] [--remove <session>…] [--color <hex>] [--rename <new>] [--delete] [--host <kernel>]` | Session tags. Bare, it lists them; with a name, it merges one tag (created on first use). A tagged session leaves the untagged view, and its tab sits in that tag's section of the strip. `--host` edits an attached kernel's tag |
 | `romp interrupt <session>` | Interrupt whatever turn a session is taking |
@@ -433,6 +434,81 @@ session CLIs and the tmux server alike. A manager run outside the service
 on. The kernel logs which it chose at start (`cli scope: on` or `off`, with the
 reason). The macOS launchd path is unchanged: there is no cgroup kill there,
 and the tmux server keeps its launchd lineage.
+
+`ANTHROPIC_API_KEY` is the one exception to that last sentence: where an
+installation keeps a key in this file, the kernel reads that line fresh at
+every session launch, so a change there needs no restart. This fork's tooling
+never writes that line — see below.
+
+### Switching which API key the sessions bill (`romp keyswap`)
+
+Upstream's `romp keyswap <name>` rewrites the `ANTHROPIC_API_KEY=` line of
+`service.env` from a sibling file (`service.env.<name>`) so that new sessions
+bill another key, and `--cycle` moves the running ones onto it. **This fork
+refuses the rewrite.** It does not write API keys to files, so the named swap
+is disabled: keys reach the sessions through Claude Code's `apiKeyHelper` or
+through the manager's environment, and a tool that wrote one into
+`service.env` would create the file the rule forbids. `romp keyswap <name>`
+exits 2 with that message, reads and writes nothing, and has no flag that
+lets it through. The kernel still reads a key line from `service.env` at
+every launch where an installation keeps one there; the fork refuses only the
+command that writes one.
+
+What remains is the rotation tool:
+
+    romp keyswap                       # which key the kernel holds (fingerprint), and whether the file agrees
+    romp keyswap --cycle-all           # after a rotation: reconnect every quiet session
+    romp keyswap --cycle web,api       # …or only these
+
+A running CLI keeps the credential its process started with, so after you
+rotate the key at its source the sessions need a new process. `--cycle-all`
+(or `--cycle <session,…>`) reconnects each quiet session, and the new process
+runs the `apiKeyHelper` again. The reconnect is the same mechanism a
+reasoning-effort or billing switch uses: the conversation resumes with its
+history intact, and the manager never restarts, so no session loses an open
+turn. Per session the command reports one of:
+
+* `reconnecting now — the kernel hands it no key; its new process re-runs the
+  apiKeyHelper …`: a session whose key comes through the `apiKeyHelper`. The
+  kernel never sees the helper's value, so it has no fingerprint to converge
+  on: such a session reconnects on every run that names it, and never reads
+  `current`. Run the cycle once per rotation.
+* `reconnecting now — history kept` or `already on this key`: a session the
+  kernel launched on a key it read itself (an installation with a key in
+  `service.env`). Repeated runs converge to `current` there.
+* `skipped: bills the machine login, not the key`: its CLI reported the login,
+  so a reconnect would cost a turn for nothing.
+* `not running — its next launch reads the new key`.
+* `skipped: a turn, subagents or background tasks are in flight`: a reconnect
+  would kill that work. The command names the skipped sessions in its re-run
+  hint; re-run `--cycle` with those names once they are quiet, rather than
+  `--cycle-all`, which would reconnect every helper-billed session again.
+
+`romp refresh --quiet` is the alternative that restarts everything: the
+manager comes back once the sessions are quiet, and every process is new.
+
+No key value is ever printed, logged, or sent over a socket. The only rendered
+form is the first 12 hex of its sha256 (`sha256:1a2b3c4d5e6f`), in the
+command's output, in the Log panel when the kernel's key changes, and in the
+kernel's answer to `--cycle`. The bare command compares the kernel's
+fingerprint with the file's and says `MISMATCH` when they differ; with no
+key line in the file both read `(none)`.
+
+Remote kernels are cycled from their own machine. `ROMP_SERVICE_ENV_FILE`
+overrides the path of the env file the kernel reads. A kernel started before
+this feature has no `/keycycle` route and says so; take the update once with
+`romp refresh` (or `romp refresh --quiet`).
+
+The kernel also guards the rule at start. If the env file carries a
+credential-shaped line (`ANTHROPIC_API_KEY`, any `*_API_KEY`, any `*_TOKEN`
+with a value) while `ROMP_EXPECTED_AUTH` declares the box's auth (`key`, the
+`apiKeyHelper` design above, or `login`), it logs one problem line naming the
+file and the variable name, never the value. For `ANTHROPIC_API_KEY` the line
+says what would happen to billing: that key would be injected at launch and
+take over from the declared auth. For any other credential-shaped name it
+says only that a credential in the file contradicts the declared auth model.
+With no declaration nothing is said; that is upstream's ordinary file-key
+installation.
 
 ## The API-health signal
 

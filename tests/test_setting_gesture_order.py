@@ -128,6 +128,48 @@ class GestureOrderAtTheStore(_Base):
         self.assertEqual(km._set_judge_model("fable", gt=T_NEW + 1), T_NEW + 1, "any newer stamp applies")
         self.assertEqual((km.jd.STATE / "judge-model").read_text(), "fable")
 
+    def test_an_equal_stamp_with_the_same_value_is_a_silent_echo(self):
+        # a judge pick reaches a remote kernel twice with one gt (dashboard broadcast + the origin
+        # kernel's fan-out); the second copy is the gesture's own echo — no stand-down line, no
+        # settingStale notice — while an equal stamp carrying a DIFFERENT value still stands down loudly
+        km._set_judge_model("opus", gt=T_NEW)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(km._set_judge_model("opus", gt=T_NEW), "nothing to apply")
+        self.assertEqual(err.getvalue(), "", "the echo is silent")
+        self.assertIsNone(km._pop_stale_notice(), "…and leaves no settingStale notice for the socket")
+        self.assertEqual((km.jd.STATE / "judge-model").read_text(), "opus")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(km._set_judge_model("fable", gt=T_NEW))
+        self.assertIn("stale gesture stood down", err.getvalue(), "a differing equal-stamp gesture is still loud")
+        self.assertIsNotNone(km._pop_stale_notice())
+        # the same rule on a boolean setter
+        self.assertEqual(km._set_auto_nudge(False, gt=T_NEW), T_NEW)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(km._set_auto_nudge(False, gt=T_NEW))
+        self.assertEqual(err.getvalue(), "")
+        self.assertIsNone(km._pop_stale_notice())
+
+    def test_the_user_todos_switch_echoes_the_same_way(self):
+        # the fork's user-todos switch follows the rule its sibling toggles follow: an equal stamp
+        # carrying the stored value is the gesture's own echo (silent, no notice), an equal stamp
+        # carrying a different value stands down loudly
+        self.assertEqual(km._set_user_todos(True, gt=T_NEW), T_NEW)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(km._set_user_todos(True, gt=T_NEW), "nothing to apply")
+        self.assertEqual(err.getvalue(), "", "the echo is silent")
+        self.assertIsNone(km._pop_stale_notice())
+        self.assertTrue(km._user_todos_on())
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(km._set_user_todos(False, gt=T_NEW))
+        self.assertIn("stale gesture stood down", err.getvalue(), "a differing equal-stamp gesture is still loud")
+        self.assertIsNotNone(km._pop_stale_notice())
+        self.assertTrue(km._user_todos_on(), "the stored ON survives the equal-stamp OFF")
+
     def test_auto_nudge_and_file_editing_order_the_same_way(self):
         self.assertEqual(km._set_auto_nudge(False, gt=T_NEW), T_NEW)
         with contextlib.redirect_stderr(io.StringIO()):
@@ -140,7 +182,7 @@ class GestureOrderAtTheStore(_Base):
         self.assertTrue(km._file_editing_on(), "the newer consent survives the stale revoke")
 
     def test_compact_suggest_orders_the_same_way_on_its_own_clock(self):
-        # T208 (upstream 2026-09-01, gt-gated at the fold): it shares auto-nudge.json but wears its
+        # T208 (2026-09-01): it shares auto-nudge.json but wears its
         # OWN stamp key (compactSuggestGt) — ordering is per SETTING, so a compact-suggest gesture
         # never outranks an auto-nudge one, or vice versa, just because they share a file.
         self.assertEqual(km._set_compact_suggest(True, gt=T_NEW), T_NEW)
@@ -228,7 +270,7 @@ class TheIncidentReplay(_Base):
         self.assertTrue(km._file_editing_on())
 
     def test_an_unstamped_message_applies_exactly_as_before(self):
-        # full compat: an older dashboard, an upstream peer, a direct HTTP caller
+        # full compat: an older dashboard, a peer kernel on older code, a direct HTTP caller
         before = int(time.time() * 1000)
         self.dispatch({"type": "setDistillModel", "model": "haiku"})
         self.assertEqual((km.jd.STATE / "distill-model").read_text(), "haiku")
@@ -609,7 +651,7 @@ class StaleGestureAnswersTheDeliveringSocket(_Base):
     def test_every_gt_gated_setting_answers(self):
         cases = [({"type": "setAutoNudge", "enabled": False}, {"type": "setAutoNudge", "enabled": True},
                   "auto-nudge", False),
-                 # T208 rides the same door beside Auto Nudge (the 2026-09-01 fold)
+                 # T208 rides the same door beside Auto Nudge
                  ({"type": "setCompactSuggest", "enabled": True}, {"type": "setCompactSuggest", "enabled": False},
                   "compact-suggest", True),
                  ({"type": "setFileEditing", "enabled": True}, {"type": "setFileEditing", "enabled": False},
@@ -624,8 +666,8 @@ class StaleGestureAnswersTheDeliveringSocket(_Base):
                   "index-effort", "high"),
                  ({"type": "setDistillModel", "model": "haiku"}, {"type": "setDistillModel", "model": "triage"},
                   "distill-model", "haiku"),
-                 # the default-comment trio (upstream 2026-08-29) rides the same queued-class door,
-                 # so it gt-gates and answers the same way (the 2026-08-30 fold)
+                 # the default-comment trio (2026-08-29) rides the same queued-class door, so it
+                 # gt-gates and answers the same way
                  ({"type": "setCommentModel", "model": "haiku"}, {"type": "setCommentModel", "model": "session"},
                   "comment-model", "haiku"),
                  ({"type": "setCommentEffort", "effort": "high"}, {"type": "setCommentEffort", "effort": "session"},
@@ -674,9 +716,10 @@ class WiringPins(unittest.TestCase):
         self.assertIn('_set_update_mode(str(msg["mode"]), gt=_gesture_ms(msg))', self.src)
 
     def test_every_stood_down_branch_tells_the_delivering_socket(self):
-        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client)"), 13,
-                                "all thirteen queued-class branches (compact-suggest joined at the "
-                                "2026-09-01 fold) answer the delivering socket on a stand-down")
+        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client)"), 15,
+                                "all fifteen gt-gated branches (six toggles + nine judge tiers; the "
+                                "user-todos switch is this fork's) answer the delivering socket on a "
+                                "stand-down")
 
     def test_the_docstring_names_all_three_none_causes(self):
         doc = km._set_judge_state.__doc__ or ""
@@ -687,7 +730,8 @@ class WiringPins(unittest.TestCase):
     def test_the_toggle_docstrings_name_the_write_failure_stand_down(self):
         # the same contract _set_judge_state documents: None's write-failure cause is named, so a
         # caller reading the docstring knows a full disk stands the gesture down rather than raising
-        for fn in (km._set_auto_nudge, km._set_compact_suggest, km._set_file_editing):
+        for fn in (km._set_auto_nudge, km._set_compact_suggest, km._set_file_editing,
+                   km._set_thinking_summaries, km._set_user_todos):
             self.assertIn("OSError", fn.__doc__ or "",
                           "%s documents the write-failure cause of None" % fn.__name__)
 
@@ -731,6 +775,25 @@ class ThinkingSummariesSetting(_Base):
         self.assertTrue(km._thinking_summaries_on(), "the newer ON survives the stale OFF")
         for needle in ("thinking-summaries", str(T_OLD), str(T_NEW), "stood down"):
             self.assertIn(needle, err.getvalue(), "the stand-down names the setting and both stamps")
+
+    def test_an_equal_stamp_with_the_same_value_is_a_silent_echo(self):
+        # the same rule the other gt-gated setters follow: one gesture delivered twice with one stamp
+        # (a re-dialed socket flushing what already landed) applies nothing and says nothing — no
+        # stand-down line, no settingStale notice — while an equal stamp carrying a DIFFERENT value
+        # still stands down loudly
+        self.assertEqual(km._set_thinking_summaries(True, gt=T_NEW), T_NEW)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(km._set_thinking_summaries(True, gt=T_NEW), "nothing to apply")
+        self.assertEqual(err.getvalue(), "", "the echo is silent")
+        self.assertIsNone(km._pop_stale_notice(), "…and leaves no settingStale notice for the socket")
+        self.assertTrue(km._thinking_summaries_on())
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(km._set_thinking_summaries(False, gt=T_NEW))
+        self.assertIn("stale gesture stood down", err.getvalue(), "a differing equal-stamp gesture is still loud")
+        self.assertIsNotNone(km._pop_stale_notice())
+        self.assertTrue(km._thinking_summaries_on(), "the stored ON survives the equal-stamp OFF")
 
     def test_a_file_without_the_field_reads_as_zero(self):
         (km.jd.STATE / self.FILE).write_text(json.dumps({"enabled": True}))

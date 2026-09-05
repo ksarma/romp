@@ -39,7 +39,12 @@ jobs:
     # Every job is time-boxed. Without this a test that BLOCKS (waiting on a tmux
     # server, a socket, a prompt that never comes) burns the 6h default before
     # anyone finds out, and a required check that hangs blocks merges silently.
-    timeout-minutes: 15
+    # T230b follow-up (the review's catch): the job cap must EXCEED the pytest phase plus the
+    # 600 s per-test timeout plus setup, or a stall that begins late in the run is killed by
+    # this cap first - the identical silence the per-test timeout exists to end. Measured pytest
+    # phases run 160-300 s, so 15 min left ~100 s of headroom; 25 min = 300 + 600 + setup, with
+    # margin for a slow runner.
+    timeout-minutes: 25
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
@@ -63,9 +68,18 @@ jobs:
         # cryptography: the kernel's Web Push soft dependency (plans/ios-app.md). Installed here
         # so tests/test_kernel_webpush.py's crypto layers RUN in CI instead of skipping — the
         # kernel itself still degrades loudly without it (that path has its own test).
-        run: python -m pip install --upgrade pip pytest cryptography
+        run: python -m pip install --upgrade pip pytest pytest-timeout cryptography
       - name: Run pytest
-        run: python -m pytest -q
+        # T230b: a hung test used to be 15 minutes of silence (five jobs since 2026-08-27, a
+        # process-global time.sleep patch consumed by a foreign thread). pytest-timeout turns the
+        # NEXT stall into a named failure with every thread's stack: thread method = guaranteed
+        # termination (the process ends; the dump's bottom frame is the blocked primitive, and the
+        # hung test is the lowest tests/ frame above the _pytest/runner frames) - the signal
+        # method cannot interrupt a C call. 600 s strictly exceeds the slowest legitimate test
+        # (~122 s, leak-scaled) and the 300 s child timeout in test_session_move_live. Its timer
+        # waits on an Event, so it can never itself consume a patched sleep. --durations names the
+        # slowest tests on every run so a creeping one is visible before it stalls.
+        run: python -m pytest -q --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
     name: Shell (bats, ${{ matrix.os }})
@@ -118,6 +132,17 @@ jobs:
           rm -f gitleaks gitleaks.tar.gz
       - name: Run bats
         run: bats --print-output-on-failure tests/*.bats
+      # T224: the manager<->kernel handshake proof (tests/manager-*.test.js: restart coalescing, the
+      # quiet-window chain, the drain-lease refusal notices) ran only by hand until now. It runs HERE,
+      # inside a check the upstream ruleset already REQUIRES, so a red handshake blocks the merge -
+      # a standalone job would have gone red while auto-merge landed the PR anyway (the ruleset lists
+      # six contexts and adding one is an owner-side change). node's built-in runner, no deps, no
+      # continue-on-error; the runtime is pinned so the step never rides whatever node the image has.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Manager handshake tests (node --test)
+        run: node --test tests/manager-*.test.js
 
   secrets:
     name: Secret scan (gitleaks)

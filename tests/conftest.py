@@ -23,6 +23,30 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sess
 # safe against every consumer. Import-time, so collection-time code is floored too.
 os.environ["ROMP_MANAGER_PORT"] = "1"
 
+# No test may read the REAL service.env (2026-09-04): sdk_backend.work_api_key now reads the manager
+# env file LIVE (kernel/keysource.py) instead of popping os.environ once, so on a machine running a
+# live romp every auth test would otherwise resolve the developer's ACTUAL API key — quietly billing
+# nothing, but making the key material a test input, putting it one assertion message away from a
+# terminal, and making the pinned fixture-key tests pass or fail on whether this box happens to have
+# a key configured. Pointed at a path inside the temp state root that is never created, so every read
+# is the "no file" case and the startup-pop fallback governs, exactly as before the live source
+# existed. Both spellings, because keysource accepts both. Import-time (collection is floored too)
+# plus a per-test re-assert below, on the same reasoning as the manager port.
+_NO_SERVICE_ENV = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
+os.environ["ROMP_SERVICE_ENV_FILE"] = _NO_SERVICE_ENV
+os.environ["ROMP_SERVICE_ENV"] = _NO_SERVICE_ENV
+
+
+@pytest.fixture(autouse=True)
+def _no_real_service_env():
+    """Re-asserted, not defaulted: a module-level write in one test file executes during collection
+    and would otherwise hold for the whole run. A test that needs its own env file points the vars at
+    a temp path in setUp, which runs AFTER this fixture (pytest fills fixtures in the item's setup
+    phase, before TestCase.run calls setUp) — so per-test intent still wins."""
+    for var in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"):
+        os.environ[var] = _NO_SERVICE_ENV
+    yield
+
 
 @pytest.fixture(autouse=True)
 def _dead_manager_port():
@@ -45,20 +69,26 @@ def _dead_manager_port():
 # own resolution pop this var themselves (test_judge.py), as they always had to.
 os.environ["ROMP_CLAUDE_BIN"] = "/bin/false"
 
-# No test kernel may fetch the Models API (2026-09-02): constructing the SDK backend fires the T222
-# catalog refresh (`_refresh_model_catalog("boot")`) at every build — an async GET to
+# No test kernel may fetch the Models API (2026-09-02): the kernel's lazy _sdk() build (_sdk_locked)
+# fires the T222 catalog refresh, `_refresh_model_catalog("boot")` — an async GET to
 # api.anthropic.com on any credential the process carries: the manager-env key
 # sdk_backend.work_api_key claimed, else a bare ANTHROPIC_API_KEY, else an ANTHROPIC_AUTH_TOKEN
-# bearer. A DEFENSIVE floor: the suite's own environment carries none of those, so the refresh stops
-# short of the network even unfloored (checked, not assumed — no test here reached the API before
-# this line), but every in-process backend construction (thread rows, user todos, judge billing, any
-# future test) is one exported key away from a real request no test asserts on, on a key the test
-# never chose. Upstream floors only its two kernel-SPAWNING tests inline; this floors every test,
+# bearer. A DEFENSIVE floor: no test reached the network before this line (checked, not assumed —
+# the one in-process _sdk() driver, test_kernel_headless_ops' SdkSingleFlight, runs the refresh
+# inside the test process with the module loader mocked, and it stopped only because the mocked
+# module's work_api_key handed http.client a credential it rejects before a socket opens), but any
+# in-process _sdk() call is one exported key away from a real request no test asserts on, on a key
+# the test never chose. The kernel-SPAWNING tests floor it in their subprocess env
+# (test_gear_select_matrix, test_ship_reship, test_awaiting_box_sync); this floors every test,
 # whatever the developer's shell exports.
 # Set, not setdefault: "off" is the only value the switch recognises, so no outer intent is being
-# overridden. The catalog suite pops the var in its own setUp for the tests that drive the fetch
-# against a local fake server, and pops it again in tearDown — hence the per-test re-assert below,
-# on the same reasoning as the manager-port one (tests/test_model_catalog_floor.py pins both).
+# overridden. The catalog suite unsets the var inside its own tests — FetchAndFallback pops it in
+# setUp to drive the fetch against a local fake server; StalenessEvent and ModelsRoute set it in
+# setUp and pop it in tearDown — leaving it absent for every test after that module in a serial
+# run; hence the per-test re-assert below, on the same reasoning as the manager-port one
+# (tests/test_model_catalog_floor.py pins both). Those pops still win inside their own tests:
+# pytest fills every fixture, autouse included, in the item's setup phase, before runtest hands
+# the case to TestCase.run(), which is what calls setUp.
 os.environ["ROMP_MODEL_CATALOG"] = "off"
 
 

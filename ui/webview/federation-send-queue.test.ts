@@ -10,8 +10,8 @@
 // - KERNEL_SETTING messages queue per connection while the socket is down — LATEST per type only
 //   (settings are latest-wins by nature; a reconnect must never replay a stale older value over the
 //   one chosen last) — and flush on the socket's OPEN event, before any post-reconnect traffic.
-//   That extends the "the flag lands first" ordering the file viewer's re-offer relies on
-//   (file-view.ts) across a down-socket window.
+//   That keeps the file viewer's "the consent lands before the save" ordering (file-view.ts posts
+//   setFileEditing, then enters edit mode) intact across a down-socket window.
 // - Non-setting messages keep their delivery behavior (replaying an arbitrary action minutes later
 //   can be worse than dropping it — a deliberate non-goal) but the drop leaves a client-diag
 //   breadcrumb naming the message type and target host, next to the warn toast: never silent.
@@ -22,7 +22,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { FederationManager } from "./federation";
+import { FederationManager, REMOTE_STALE_MS, REMOTE_REDIAL_MS } from "./federation";
 
 const U = "11111111-2222-3333-4444-555555555555";
 
@@ -216,6 +216,49 @@ test("latest-wins keeps the newest gesture's OWN stamp — never a blend of two 
     sock.open();
     assert.deepEqual(sock.sent.map((s) => JSON.parse(s)),
       [{ type: "setJudgeModel", model: "m2", gt: 2000 }]);
+  });
+});
+
+// ── composing with the relay sockets' liveness watchdog (2026-09-02): a socket OPEN but silent past
+// the keepalive bound is ABANDONED — handlers detached, closed for hygiene — and a fresh one dialed in
+// the same tick, so the redial itself opens exactly the window this queue exists for (the fresh socket
+// is CONNECTING). The queue lives on the Conn, not the socket: nothing sent in that window is lost, and
+// the flush rides the fresh socket's open like any other reconnect's.
+
+test("a setting sent after the watchdog abandons a quiet socket queues on the conn and flushes on the fresh socket's open", () => {
+  withFed((fm, _win, localSends) => {
+    const s1 = attach(fm, "TESTHOSTA");
+    s1.open();
+    fm.watchdog(Date.now() + REMOTE_STALE_MS + 1);   // silent past the bound since its open → abandoned, redialed now
+    const s2 = FakeSocket.instances[1];
+    assert.ok(s2 && s2 !== s1, "the watchdog dialed a fresh socket in the same pass");
+    assert.equal(s2.readyState, 0, "…still CONNECTING: the window a send used to drop in");
+    assert.equal(fm.conns.get("TESTHOSTA").ws, s2, "the conn owns the fresh socket");
+    fm.outbound({ type: "setFileEditing", enabled: true, gt: 1234 });
+    assert.deepEqual(s1.sent, [], "nothing rides the abandoned socket");
+    assert.deepEqual(s2.sent, [], "nothing can ride a CONNECTING socket");
+    assert.equal(diags(localSends, "senddrop").length, 0, "a setting is queued, never dropped");
+    s2.open();
+    assert.deepEqual(s2.sent.map((s) => JSON.parse(s)), [{ type: "setFileEditing", enabled: true, gt: 1234 }],
+      "the fresh socket's open delivers it, stamp intact");
+    const open = diags(localSends, "hostconn").filter((d) => d.data.ev === "open").pop();
+    assert.deepEqual(open.data, { host: "TESTHOSTA", ev: "open", flushed: ["setFileEditing"] },
+      "the open breadcrumb names what the redial carried");
+  });
+});
+
+test("a setting queued on a CLOSED socket survives the watchdog's lost-timer redial and flushes on the fresh open", () => {
+  withFed((fm) => {
+    const s1 = attach(fm, "TESTHOSTA");
+    s1.open();
+    s1.readyState = 3;                                // closed under us with no onclose — no 2s retry armed
+    fm.outbound({ type: "setAutoNudge", enabled: false, gt: 5 });
+    assert.deepEqual(s1.sent, [], "the dead socket carried nothing");
+    fm.watchdog(Date.now() + REMOTE_REDIAL_MS + 1);  // the watchdog's own redial, not the onclose path
+    const s2 = FakeSocket.instances[1];
+    assert.ok(s2 && s2 !== s1, "redialed by the watchdog");
+    s2.open();
+    assert.deepEqual(s2.sent.map((s) => JSON.parse(s)), [{ type: "setAutoNudge", enabled: false, gt: 5 }]);
   });
 });
 

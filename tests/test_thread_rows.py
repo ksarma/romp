@@ -284,18 +284,17 @@ class ThreadRowsRoute(unittest.TestCase):
 
 
 class ThreadWakePinsStand(unittest.TestCase):
-    """A dormant comment thread wakes on the model its reg holds — PINS STAND (fold fixer, 2026-09-02).
-    Upstream's T223 rider has the backend's `_ensure` consult a kernel-installed hook
-    (`SdkBackend.thread_wake_model`) that re-points a dormant thread registered on a SUPERSEDED full id
-    to its family's newest at its next explicit wake. That targeted the pre-fix artefact where a FAMILY
-    click wrote the head's full id into the reg — an accidental pin. After fork PR #140 a full id in
-    reg.model is a DELIBERATE one: the version submenu writes the pick verbatim, the create dialog sends
-    a pinned family's id, and the marker-gated boot pass treats every post-migration head as the user's
-    (the way back to floating is the Latest gesture, never a pass). With no accidental heads left to
-    heal, the remap would override only deliberate pins — so the kernel wires no wake hook, and a
-    thread pinned to a legacy version comes up ON that version; a thread on an alias floats as before.
-    Upstream's consult in `_ensure` stays as it is (inert with no hook installed): the merge surface
-    is theirs, the wiring decision is ours."""
+    """A dormant comment thread wakes on the model its reg holds — PINS STAND. The T223 rider had the
+    backend's `_ensure` consult a kernel-installed hook (`SdkBackend.thread_wake_model`) that re-points a
+    dormant thread registered on a SUPERSEDED full id to its family's newest at its next explicit wake.
+    That targeted the artefact where a FAMILY click wrote the head's full id into the reg — an
+    accidental pin. With the alias as the family default a full id in reg.model is a DELIBERATE one: the
+    version submenu writes the pick verbatim, the create dialog sends a pinned family's id, and the
+    marker-gated boot pass treats every post-migration head as the user's (the way back to floating is
+    the Latest gesture, never a pass). With no accidental heads left to heal, the remap would override
+    only deliberate pins — so the kernel wires no wake hook, and a thread pinned to a legacy version
+    comes up ON that version; a thread on an alias floats as before. The backend's consult in `_ensure`
+    stays as it is (inert with no hook installed)."""
 
     THREAD = {"threadOf": PARENT, "spawnedAt": 1700000000}   # has run before: dormant, not a fresh fork
 
@@ -360,7 +359,7 @@ class ThreadWakePinsStand(unittest.TestCase):
         import inspect
         src = inspect.getsource(km._sdk_locked)
         self.assertNotIn("thread_wake_model = _family_newest_model", src,
-                         "upstream's remap would re-point deliberate pins on the fork")
+                         "the remap would re-point deliberate pins")
         self.assertIsNone(self._kernel_wired_hook(), "no hook at all: the backend's consult stays inert")
 
 

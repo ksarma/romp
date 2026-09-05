@@ -59,7 +59,8 @@ test("executed: the canonical key ignores list order AND which key the kernel us
 });
 
 test("the tabOrder frame carries the blob and the strip filters on it, composing with #only", () => {
-  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{ captureViews\(m\.views \|\| null\); applyTabOrder\(m\.order, m\.tabs\); \}/,
+  // the frame's provenance rides along since T233 (captureViews still runs FIRST)
+  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}\);\s*\n\s*\}/,
     "echo-less frames still reach captureViews — an older kernel must age out a pending edit");
   assert.match(RENDER, /const inViewIds = ids\.filter\(tabInView\);/);
   assert.match(RENDER, /const visibleIds = only \? inViewIds\.filter\(\(id\) => matchesOnly\(nameOf\(id\), only\)\) : inViewIds;/);

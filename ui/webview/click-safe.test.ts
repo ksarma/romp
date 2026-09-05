@@ -54,8 +54,10 @@ test("chat tab bar: select + ✕ (Close / End session) are DELEGATED to the stab
   // and the tab is dropped + a new one reselected OPTIMISTICALLY (don't wait for the kernel's closed event →
   // no stale content from the just-closed session — the user 2026-06-24)
   assert.match(RENDER, /closeTab", id \}\);\s*\n\s*closeTabLocally\(id\);/);   // …and it STAYS gone: tab-close-optimistic.test.ts
-  assert.match(RENDER, /function dismissSession\(id: string\): void/);
-  assert.match(RENDER, /m\.type === "closed"\) \{[\s\S]{0,900}?dismissSession\(m\.id\);/);   // the kernel's own death event reuses it
+  assert.match(RENDER, /function dismissSession\(id: string, why: DismissWhy, doomed\?: ReadonlySet<string>\): void/);
+  // the kernel's own death event reuses it — naming its reason (T236: federation's stand-in for a dropped host is stamped, not an end);
+  // the handler is a block (the hostDrop kernelListed prune runs first — tab-ghost-heal.test.ts), so allow its body before the call
+  assert.match(RENDER, /m\.type === "closed"\) \{[\s\S]{0,1400}?dismissSession\(m\.id, m\.hostDrop === true \? "hostDrop" : "end"\);/);
 });
 
 test("Fleet: header / row open + caret fold are DELEGATED to the stable #fleet-list, not per-node", () => {

@@ -37,7 +37,7 @@
 
 /** The card fields the ladder reads. Structural, so the test can pass plain objects. */
 export interface SpinItem {
-  awaiting?: { why?: string | null; kind?: string | null; since?: number | null; tasks?: unknown[] | null } | null;   // since = the wait's own event time (kernel or-chain / _session_awaiting; the user 2026-08-23)
+  awaiting?: { why?: string | null; kind?: string | null; since?: number | null; count?: number | null; tasks?: unknown[] | null } | null;   // count = how many things are awaited (T225: the label agrees in number)   // since = the wait's own event time (kernel or-chain / _session_awaiting; the user 2026-08-23)
   waitingOn?: unknown;
   provisional?: boolean;
   column?: string;
@@ -65,6 +65,18 @@ const NONE: Spin = { caption: null, tip: "", awaitingBg: false };
 export const KIND_WORD: Record<string, string> = {
   agents: "agents", task: "task", job: "job", peer: "peer", timer: "timer",
 };
+
+/** The kind word AGREEING IN NUMBER with how many things are awaited (T225; the user 2026-09-02,
+ *  who wants one awaited agent labelled as one, not as "agents"). One helper feeds the
+ *  chat chip, the awaiting box gist, the feed pill and the spin caption, so every surface derives the
+ *  word from the same count. An unknown count (null/undefined — an older kernel, a kindless stamp)
+ *  keeps the plural KIND_WORD default the surfaces have always worn; an unknown kind stays "agents". */
+export function kindWord(kind: string | null | undefined, count: number | null | undefined): string {
+  const base = KIND_WORD[kind || ""] || "agents";
+  if (typeof count !== "number" || !Number.isFinite(count)) return base;
+  if (count === 1) return base === "agents" ? "agent" : base;
+  return base === "agents" ? base : base + "s";
+}
 
 /** dCompleted/dBlocked come from distillInputs(distillState, column) — the GENUINE resolution state, not
  *  the transient column. distillPending is passed in (rather than recomputed) so the two modules keep one
@@ -104,7 +116,7 @@ export function spinFor(it: SpinItem, distillPending: boolean, dCompleted: boole
     // actively-working cases, so the glyph needn't also freeze). A why that already leads with
     // "waiting on" is shown verbatim (capitalized); the kind word is the fallback frame.
     const why = aw.why || "";
-    const word = KIND_WORD[aw.kind || ""] || "agents";   // kindless = the box's historic default
+    const word = kindWord(aw.kind, aw.count);   // kindless = the box's historic default; agrees in number (T225)
     // how long the wait has held, from the kernel's event time — the same live readout the working
     // narration wears, so a stuck wait is visible at a glance (the user 2026-08-23)
     const waited = waitedSuffix(aw.since, nowS);

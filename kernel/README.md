@@ -25,6 +25,17 @@ Session control (how romp drives Claude Code) sits behind one seam:
 Shared lookup tables: `colormap.py` (recency tints, single source shared with
 the web bundles) and `palette.py` (session-identity colors).
 
+`keysource.py` is the live source of the manager's API key where an
+installation keeps one in `service.env`: its `ANTHROPIC_API_KEY=` line, re-read
+at every session launch so a rotation there needs no manager restart.
+`cli/keyswap.py` (`romp keyswap`) loads the same module to read and fingerprint
+that line, so the two cannot disagree about the path or the parse. This fork
+does not write API keys to files: the named swap that would write the line is
+refused, and keys reach the sessions through Claude Code's `apiKeyHelper` or the
+manager's environment. A key value never lands in the kernel's own environment
+and never reaches a log — `fingerprint()` (the sha256 head) is the only
+renderable form.
+
 Everything here is loaded by file path (`SourceFileLoader`), not installed as a
 package — the repo runs straight from a git clone. Python tests live in
 `tests/test_*.py`.

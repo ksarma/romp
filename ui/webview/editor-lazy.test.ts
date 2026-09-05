@@ -36,7 +36,7 @@ test("the editor's state carries lineWrapping — a display facet, so the buffer
   assert.equal(state.doc.toString(), doc, "wrapping is visual: the document is byte-identical, newlines included");
   // the pure set is what mount() builds the view from — the executed check above is the shipped set
   assert.match(CHUNK, /state: EditorState\.create\(\{ doc: opts\.text, extensions: extensionsFor\(opts\.ext, opts\) \}\),/);
-  assert.match(CHUNK, /\.\.\.langExt\(ext\),\n(?:\s*\/\/[^\n]*\n)*\s*EditorView\.lineWrapping,\n\s*rompTheme,/,
+  assert.match(CHUNK, /\.\.\.langExt\(ext\),\n(?:\s*\/\/[^\n]*\n)*\s*EditorView\.lineWrapping,\n\s*rompTheme\(\),/,
     "lineWrapping sits in extensionsFor, unconditionally — no toggle, like the view");
   // a plain-text file (no highlighter) wraps too
   const plain = EditorState.create({ doc: "x", extensions: extensionsFor("", { onChange: noop, onSave: noop }) });
@@ -168,5 +168,11 @@ test("edit arming stays the kernel's verdict: UTF-8-only and the ns mtime anchor
 test("the editor declares its font and reuses the panel palette — no new fonts or sizes", () => {
   assert.match(CHUNK, /fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace"/);
   assert.match(CHUNK, /fontSize: "13px"/);
-  assert.match(CHUNK, /rgba\(156, 210, 255, 0\.22\)/, "selection wears the romp accent, nothing new");
+  assert.match(CHUNK, /color-mix\(in srgb, var\(--accent, #9cd2ff\) 22%, transparent\)/,
+    "selection wears the romp accent, nothing new (via the token, so the light theme re-inks it)");
+  // and the CodeMirror-side dark branch (its base theme for panels/popups) reads the LIVE body
+  // class per mount — hardcoded { dark: true } kept the search panel near-black under
+  // body.theme-light (the user 2026-09-02)
+  assert.match(CHUNK, /document\.body\.classList\.contains\("theme-light"\)/);
+  assert.match(CHUNK, /\{ dark: !light \}/);
 });
