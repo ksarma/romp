@@ -513,7 +513,7 @@ class ReadyHandshake(unittest.TestCase):
             self.assertIs(c["efeed"], parts, "…and the delta stream re-bases on what was served")
             self.assertEqual(h.pushed, [], "a served feed client skips the connect push both times")
             # a client that never announced the hold is READY FROM ACCEPT (the accept path's own
-            # assignment, mirrored here) — the VS Code pipes, the Outline page. Its one ordinary `ready`
+            # assignment, mirrored here) — the VS Code pipes, the Outline's among them. Its one ordinary `ready`
             # is the handshake, not a re-base: the frame the pusher already delivered is NOT re-served
             # (round 4 of the 2026-09-03 review caught the first cut re-basing on it, one redundant full
             # frame per connect). Only a SECOND `ready` on the same socket re-bases.

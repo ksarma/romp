@@ -37237,13 +37237,14 @@ class Handler(BaseHTTPRequestHandler):
         app = (q.get("app") or ["chat"])[0]
         wid = (q.get("wid") or [""])[0]         # which DASHBOARD this pane belongs to → _send_to_view aims at one
         active = (q.get("active") or [""])[0]   # the tab this client is looking at → _push builds it FIRST
-        # Capabilities the client ANNOUNCES (comma-separated). The one today is FEED_DELTA_CAP: a page whose
-        # bundle can apply {type:"feedDelta"} says so on its ws URL (the shim adds it for the kernel-served
-        # feed page — see _shim's `caps`). Announced on the URL rather than in a first message because it
-        # has to be known before the first frame (the `ready`-time frame is the delta stream's base) and it
-        # has to survive every reconnect without the bundle re-announcing. Anything that does not announce
-        # — the VS Code extension's pipes, federation's remote sockets, the Outline pane, an older bundle —
-        # keeps receiving the full {type:"feed"} frame it always did.
+        # Capabilities the client ANNOUNCES (comma-separated). FEED_DELTA_CAP: a page whose bundle can apply
+        # {type:"feedDelta"} says so on its ws URL (the shim adds it for the kernel-served feed, Outline and
+        # Waiting on you pages — see _shim's `caps`); READY_GATE_CAP is the hold below. Announced on the URL
+        # rather than in a first message because it has to be known before the first frame (the `ready`-time
+        # frame is the delta stream's base) and it has to survive every reconnect without the bundle
+        # re-announcing. Anything that does not announce — the VS Code extension's pipes (its Outline pipe
+        # among them), federation's remote sockets, an older bundle — keeps receiving the full {type:"feed"}
+        # frame it always did.
         caps = (q.get("caps") or [""])[0]
         self.send_response(101)
         self.send_header("Upgrade", "websocket")
