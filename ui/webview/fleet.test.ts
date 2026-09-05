@@ -15,6 +15,13 @@ test("fleet rides the FEED payload, reading its per-session `ledgers`", () => {
   assert.match(SRC, /sessions = m\.ledgers as FleetSession\[\]/);
 });
 
+test("fleet.ts has no delta reader: the Outline page announces feedDelta (2026-09-05) and federation.js, loaded ahead of it, applies each delta and re-emits a whole `feed` frame", () => {
+  // feed-delta.test.ts pins what the pane then sees through the real manager; the kernel tests pin the page's
+  // caps and its script order (federation.js before fleet.js)
+  assert.doesNotMatch(SRC, /feedDelta|applyFeedDelta|needFullFeed/);
+  assert.match(SRC, /window\.addEventListener\("message"/);
+});
+
 test("each session renders the real LEDGER TREE — .ledger-* nodes, marks, collapse, recency time", () => {
   assert.match(SRC, /el\("div", "ledger-tree"\)/);
   assert.match(SRC, /"ledger-tnode"/);

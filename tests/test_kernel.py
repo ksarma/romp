@@ -6743,6 +6743,12 @@ class ServeSecurity(unittest.TestCase):
         # the fleet connects as its OWN app (the user 2026-06-29) so the kernel builds its per-session ledgers
         # even with no chat client open — it still rides the feed PAYLOAD, but as app=fleet, not app=feed.
         self.assertIn('app=fleet', body)
+        # …with the feed pane's caps (2026-09-05): deltas + the ready hold. On full frames alone, one browser's
+        # Outline client fell 12.7 MB behind and was dropped seven times in a morning. federation.js applies
+        # each delta and re-emits a whole `feed` frame for fleet.ts, so it must load BEFORE the bundle.
+        self.assertIn('var CAPS="feedDelta,readyGate"', body)
+        self.assertIn("/dist/federation.js", body)
+        self.assertLess(body.index("/dist/federation.js"), body.index("/dist/fleet.js"), "manager before the bundle")
         # the romp loader RE-SHOWS on a kernel restart / WS drop (the user 2026-06-29): the shim fires
         # 'romp:wsdown' on ws.onclose and the pane loader un-fades over the stale pane until reconnect.
         self.assertIn("window.addEventListener('romp:wsdown',function(){if(ready()){badge(true);}else{show();}});", body)   # T217: content → badge; empty pane → the sheet

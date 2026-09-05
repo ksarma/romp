@@ -97,11 +97,13 @@ test("a feedDelta that reaches the pane unapplied is loud and asks for a full fr
   assert.ok(i < FEED.indexOf('if (m.type === "feed") {'), "checked before the full-frame branch");
 });
 
-test("the kernel announces the delta capability on the feed page's socket only, the hold on every pane's, and the wire vocabulary matches", () => {
+test("the kernel announces the delta capability on every feed-consumer page's socket, the hold on every pane's, and the wire vocabulary matches", () => {
   assert.match(KERNEL, /FEED_DELTA_CAP = "feedDelta"/);
   assert.match(KERNEL, /READY_GATE_CAP = "readyGate"/);
-  assert.match(KERNEL, /_shim\("feed", v, caps=FEED_DELTA_CAP \+ "," \+ READY_GATE_CAP\)/);
-  for (const app of ["fleet", "chat", "timeline"]) assert.match(KERNEL, new RegExp(`_shim\\("${app}", v, caps=READY_GATE_CAP\\)`), app);
+  // the feed page, the Waiting on you page and (2026-09-05) the Outline page: each loads federation.js ahead of
+  // its bundle, and federation applies the deltas — the bundles keep reading whole `feed` frames
+  for (const app of ["feed", "waiting", "fleet"]) assert.match(KERNEL, new RegExp(`_shim\\("${app}", v, caps=FEED_DELTA_CAP \\+ "," \\+ READY_GATE_CAP\\)`), app);
+  for (const app of ["chat", "timeline"]) assert.match(KERNEL, new RegExp(`_shim\\("${app}", v, caps=READY_GATE_CAP\\)`), app);
   // the delta's keys, as the kernel writes them — the client reads exactly these
   for (const k of ['"asks":[', '"removeAsks":', '"ledgers":[', '"removeLedgers":', '"top":']) assert.ok(KERNEL.includes(k), k);
   assert.match(KERNEL, /_FEED_KEYED = \(\("asks", "itemId"\), \("ledgers", "sid"\)\)/);
@@ -219,4 +221,38 @@ test("federation stamps the arrival beside the frame on both wire paths, drops i
   assert.match(FED, /delete this\.perHostFeed\[host\];\n\s*delete this\.perHostFeedAt\[host\];/, "a detach forgets both");
   assert.match(FED, /mergeHostFeeds\(this\.perHostFeed, this\.hostSeq, this\.view\(\), dead, this\.perHostFeedAt\)/, "every emit carries the arrivals");
   assert.equal((FED.match(/perHostFeedAt\[host\] = Date\.now\(\)/g) || []).length, 2, "stamped on the two wire paths and nowhere else — never on an emit");
+});
+
+
+// ── the Outline pane's path (2026-09-05) ─────────────────────────────────────────────────────────────
+// The kernel-served Outline page announces the delta capability too (on full frames alone, one browser's
+// Outline client fell 12.7 MB behind and was dropped seven times in a morning). Its bundle (fleet.ts) reads
+// `ledgers`, `asks` and `views` off whole `feed` frames and has no delta reader (fleet.test.ts): federation
+// applies each delta onto the full frame it holds for the local host and re-emits the merge. So what the
+// pane sees is pinned here, through the real manager.
+test("a delta's ledger upserts and removals reach the Outline pane as a whole `feed` frame, and `views` carries over from the base", () => {
+  withFeedManager((fm, emitted) => {
+    fm.inbound("", { type: "feed", asks: [card(0)], now: 1000, buildId: 1, views: { v1: { name: "mine" } },
+                     ledgers: [{ sid: "TESTSID", name: "web", ledger: { tops: [] } }, { sid: "TESTSID2", name: "api", ledger: { tops: [] } }] });
+    fm.inbound("", { type: "feedDelta", now: 1010, buildId: 2,
+                     ledgers: [{ sid: "TESTSID", name: "web", ledger: { tops: ["t1"] } }], removeLedgers: ["TESTSID2"] });
+    assert.equal(emitted.length, 2);
+    const m = emitted[1];
+    assert.equal(m.type, "feed", "the merge re-emits whole frames: the only shape fleet.ts reads");
+    assert.deepEqual(m.ledgers.map((l: any) => [l.sid, l.ledger.tops]), [["TESTSID", ["t1"]]], "upserted by sid, the removed one gone");
+    assert.deepEqual(m.views, { v1: { name: "mine" } }, "no `top` in the delta ⇒ the base's non-keyed fields carry forward");
+    assert.deepEqual(m.asks.map((a: any) => a.itemId), ["TESTSID:g0"], "cards untouched by the delta stay");
+    assert.equal(m.buildId, 2);
+  });
+});
+
+test("a delta with no full frame held asks the local kernel for one (needFullFeed) and emits nothing", () => {
+  withFeedManager((fm, emitted) => {
+    const sent: any[] = [];
+    (globalThis as any).window.__rompLocalSend = (m: any) => sent.push(m);
+    fm.inbound("", { type: "feedDelta", now: 1010, buildId: 2, ledgers: [{ sid: "TESTSID", name: "web" }] });
+    assert.equal(emitted.length, 0, "nothing to apply onto, nothing emitted — the pane keeps its loader");
+    assert.deepEqual(sent.filter((m) => m.type === "needFullFeed"), [{ type: "needFullFeed" }]);
+    assert.ok(sent.some((m) => m.type === "clientDiag" && m.what === "feedDelta-nobase"), "…and it says so");
+  });
 });

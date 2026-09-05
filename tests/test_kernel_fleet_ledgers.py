@@ -29,7 +29,9 @@ class FleetLedgers(unittest.TestCase):
         self.assertIn('feed["ledgers"] = [{"sid": m["id"]', SRC)
 
     def test_the_fleet_page_connects_as_app_fleet(self):
-        self.assertIn('_pane_spin("fleet-list"), _shim("fleet", v, caps=READY_GATE_CAP)', SRC)
+        # …with the feed pane's caps (2026-09-05): deltas + the ready hold. federation.js applies the deltas
+        # for fleet.ts; test_feed_delta.py's OutlineDeltaStream pins the wire, test_kernel.py the served page.
+        self.assertIn('_pane_spin("fleet-list"), _shim("fleet", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP)', SRC)
 
 
 if __name__ == "__main__":
