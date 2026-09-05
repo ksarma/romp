@@ -5,7 +5,7 @@ The false "Couldn't close X — romp still has it open" toast: the endSession WS
 recorded the death within the same second, yet the client toasted, because the ONLY confirmation it accepts
 is a tabOrder push that no longer lists the id — and until now the only sender of that was the pusher's
 periodic tabs-first send, whose cycle on a loaded box runs 20-40s, past the client's 15s backstop. Now the
-endSession handler sends a FRESH tab set to every chat client in the same handler, off-cycle, right after
+endSession handler sends a FRESH tab set to every ready chat client in the same handler, off-cycle, right after
 the kill — same shape as the pusher's tabs-first frame, through the same per-client dedup slot.
 
 Deterministic: the SDK backend, the liveness read, the collapse guard, the tab builder and the pusher wake
@@ -141,6 +141,24 @@ class CloseConfirmRidesTheKill(unittest.TestCase):
         self.assertFalse(km._confirm_close_now(ENDED), "unconfirmed: the client's own backstop says so")
         self.assertEqual(frames, [], "no frame at all — never one that omits every tmux tab")
         self.assertNotIn("sent", chat)
+
+    def test_a_chat_page_behind_the_ready_gate_or_dead_gets_no_frame_and_a_ready_one_does(self):
+        # READY_GATE_CAP: a page that announced the cap is held until its bundle says `ready`; the pusher
+        # (_push) and _push_session_now filter their tabOrder sends on _client_ready and alive. This sender
+        # sent to every chat client, so a page still behind the gate received a frame before its bundle
+        # had asked for one, and a client already marked dead was written to
+        held, held_frames = _chat_client(); held["ready"] = False
+        dead, dead_frames = _chat_client(); dead["alive"] = False
+        ready, ready_frames = _chat_client()
+        km._clients.extend([held, dead, ready])
+        self.be.alive.discard(ENDED)
+        self.assertTrue(km._confirm_close_now(ENDED))
+        self.assertEqual(held_frames, [], "a page whose bundle has not said `ready` is held, as every other tabOrder sender holds it")
+        self.assertNotIn("sent", held, "…and nothing is recorded under its dedup slot, so its first real frame is not deduped away")
+        self.assertEqual(dead_frames, [], "a dead client is skipped, as _push_session_now skips it")
+        self.assertEqual(len(ready_frames), 1, "the ready client gets the confirmation")
+        self.assertEqual(ready_frames[0]["type"], "tabOrder")
+        self.assertEqual(ready_frames[0]["order"], [KEPT])
 
     def test_the_call_site_comment_no_longer_claims_recently_died_tabs(self):
         src = open(os.path.join(BIN, "romp-kernel")).read() if not os.path.islink(os.path.join(BIN, "romp-kernel")) \

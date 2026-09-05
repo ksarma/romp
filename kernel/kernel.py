@@ -31840,7 +31840,11 @@ def _confirm_close_now(sid):
         tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in chat_list]
         frame = {"type": "tabOrder", "order": tab_order, "tabs": tab_meta, "views": _views_client()}
         with _clients_lock:
-            targets = [c for c in _clients if c["app"] == "chat"]
+            # alive and ready, as _push_session_now filters: a chat page that announced READY_GATE_CAP is
+            # held until its bundle says `ready` (_client_ready) — every other tabOrder sender filters on
+            # it, and this one sent to every chat client, so a page still behind the gate received a frame
+            # before its bundle had asked for one
+            targets = [c for c in _clients if c["app"] == "chat" and c.get("alive", True) and _client_ready(c)]
         for c in targets:
             try:
                 _send_client(c, ("taborder",), frame)
