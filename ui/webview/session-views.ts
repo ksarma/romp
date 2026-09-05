@@ -25,6 +25,12 @@ export interface SessionViews {
    *  viewer-side so remote-homed names hold position without cross-kernel writes; locals also
    *  keep array order (the drag rewrites both). Unlisted names follow, in natural order. */
   tagOrder?: string[];
+  /** the store's write stamp (epoch s) — the stale-writer guard's evidence time, echoed back as-is */
+  at?: number;
+  /** the store's WRITE SEQUENCE (2026-09-05): strictly increasing per accepted write, on every frame
+   *  and ack the blob rides. A client adopts a blob only when its seq is at least the held one, so a
+   *  frame built before a write can never replace the ack's newer blob (views-writes.ts adoptViews). */
+  seq?: number;
 }
 // One union group = one tag NAME across every kernel defining it (user ruling 2026-08-24: kernels
 // are plumbing — no host prefixes in any tag presentation). The typed mirror of the timeline's

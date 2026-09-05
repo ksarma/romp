@@ -14,6 +14,7 @@
 import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder, pruneViewOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
 import { applyFeedDelta } from "./feed-delta";
+import { adoptViews } from "./views-writes";
 import { hostOf, bareId } from "./host-prefix";
 
 export const SEP = ":";
@@ -775,8 +776,11 @@ export class FederationManager {
       // session VIEWS (the user 2026-08-18): the blob is the LOCAL kernel's viewer pref (ids arrive
       // host-prefixed inside it already) — remote kernels' copies are their own dashboards' prefs.
       // Without this passthrough the merged re-emit silently dropped the field and the browser
-      // dashboard's chat never learned the views at all.
-      if (host === LOCAL && m.views && typeof m.views === "object") this.localViews = m.views;
+      // dashboard's chat never learned the views at all. Kept ONLY when its write sequence is at
+      // least the stored one (2026-09-05): the re-emit below replays this copy on every merged order,
+      // and a frame the kernel built before a write must not roll the replayed blob back behind an
+      // ack the pane already adopted.
+      if (host === LOCAL && m.views && typeof m.views === "object" && adoptViews(this.localViews, m.views)) this.localViews = m.views;
       this.ensureHost(host);
       this.absorbHostReport(host, prevOrder, prevTabs);   // a host just reported its sessions → the one
       this.emitMergedOrder(true, host);                   //   moment the stored arrangement may be touched
@@ -811,7 +815,12 @@ export class FederationManager {
     }
     // timeline snapshots replace the panel's state wholesale (update/applyBars) — merge per host like the feed.
     if (m && m.type === "data" && m.data && typeof m.data === "object") {
-      this.perHostTl[host] = m.data;
+      // the LOCAL lanes payload carries the views blob the merged re-emit replays: a payload whose blob
+      // has a LOWER write sequence than the stored one keeps the stored blob (its lanes still land) —
+      // the same rule the tabOrder store applies above (2026-09-05)
+      const held = host === LOCAL ? this.perHostTl[LOCAL] : null;
+      this.perHostTl[host] = (held && held.views && m.data.views && !adoptViews(held.views, m.data.views))
+        ? { ...m.data, views: held.views } : m.data;
       this.ensureHost(host);
       this.emitMergedTimeline(false);
       return;

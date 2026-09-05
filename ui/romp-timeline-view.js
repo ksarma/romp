@@ -39,6 +39,16 @@ function _rompOnlyTag() {
 // record; this is its mirror for the lanes. The kernel emits `tags`; `groups` is honored as the
 // pre-rename key an un-updated kernel still pushes, in ONE place so every rule reads through it.
 function viewTags(views) { return (views && (views.tags || views.groups)) || []; }
+// the views blob's write sequence (the kernel stamps one per accepted write, 2026-09-05), or null for a
+// blob from a kernel that does not — and whether an incoming blob may replace the held one: yes when
+// its seq is at least the held seq, or when either side carries none. The hand-mirror of
+// views-writes.ts seqOf/adoptViews (this file cannot import TS; timeline-views-ack.test.ts pins them).
+function viewsSeq(v) { const s = v && v.seq; return (typeof s === 'number' && isFinite(s)) ? s : null; }
+function viewsAdopts(held, incoming) {
+  if (!incoming) return false;
+  const h = viewsSeq(held), i = viewsSeq(incoming);
+  return h === null || i === null || i >= h;
+}
 // A tag IS its NAME, everywhere (user ruling 2026-08-24: "if the UX requires understanding that
 // tags exist across different kernels, it is not good"): one name = one identity, membership the
 // UNION across every kernel defining that name, the LOCAL store's color winning the render. The
@@ -1784,7 +1794,7 @@ class TimelinePanel {
     }
     this.data = data;
     if (data.cmapGrad) this._cmapGrad = data.cmapGrad;   // compaction-sweep colormap gradient (persists across the lighter {type:bars} pushes)
-    if (data.views) this._views = data.views;            // the views blob rides every push (skeleton included)
+    if (data.views) this._takeViews(data.views);         // the views blob rides every push (skeleton included) — adopted in store order, never wire order
     if (Array.isArray(data.palette) && data.palette.length) this._palette = data.palette;
     this._reconcilePendingFlags();   // hold an optimistic eye-toggle sticky until THIS push (or a later one) confirms it
     this._reconcileDismissed();      // ...and a Cleared dead lane, so a stale/merged push can't pop it back
@@ -2964,14 +2974,32 @@ class TimelinePanel {
     ni.focus();
   }
 
-  // The optimistic copy's ONE frame-driven clear: a push whose blob equals it exactly (the write's own
-  // echo, order-insensitive). The three-frame yield that used to sit here is gone (the user
-  // 2026-09-05): a frame that does not match carries no information about the write — it may
-  // predate it, or the kernel may have refused it — so counting frames dropped good edits and kept
-  // refused ones alike. The write's ACK (viewsAck) is the event that settles it either way.
+  // An arriving views blob (a frame's or an ack's) becomes the base only if its write sequence is at
+  // least the held one (the hand-mirror of views-writes.ts adoptViews, 2026-09-05): the pusher builds
+  // frames from a warmed cache that can predate a write whose ack already arrived, and federation
+  // re-emits stored blobs, so wire order decides nothing — the store's own order does. An ignored
+  // blob logs once per page, so a kernel serving stale frames is a visible fact.
+  _takeViews(v) {
+    if (!v) return false;
+    if (viewsAdopts(this._views, v)) { this._views = v; return true; }
+    if (!this._staleViewsLogged) {
+      this._staleViewsLogged = true;
+      try { console.warn('romp timeline: ignored a views blob older than the one held (seq ' + viewsSeq(v) + ' < ' + viewsSeq(this._views) + ')'); } catch (e) {}
+    }
+    return false;
+  }
+
+  // LEGACY kernels only — a blob without a write sequence comes from a kernel that acks nothing, so
+  // the write's own exact echo is the one frame-driven clear there. A kernel that stamps `seq` answers
+  // every write (viewsAck below), and the ack is the event that settles the copy: a frame, matching or
+  // not, says nothing about a write it cannot name — a net-zero burst (add, then remove) leaves frames
+  // equal to the copy while its writes are still in flight, so an exact match there cleared them early
+  // (the user 2026-09-05). The three-frame yield that once lived here counted frames as if they were
+  // information; it dropped good edits and kept refused ones alike, and is gone.
   _reconcileViews() {
     if (!this._pendingViews) return;
-    if (this._views && this._viewsKey(this._views) === this._viewsKey(this._pendingViews)) {
+    if (this._views && viewsSeq(this._views) === null
+        && this._viewsKey(this._views) === this._viewsKey(this._pendingViews)) {
       this._pendingViews = null; this._viewsWrites = [];
     }
   }
@@ -3006,7 +3034,7 @@ class TimelinePanel {
     if (!m) return;
     const i = this._viewsWrites.findIndex((w) => w.id === m.writeId);
     const mine = i >= 0 ? this._viewsWrites.splice(i, 1)[0] : null;
-    if (m.views) this._views = m.views;
+    this._takeViews(m.views);   // the ack's blob is the base unless a newer frame already overtook it (the seq decides)
     if (m.ok === false) {
       this._pendingViews = null; this._viewsWrites = [];
       const names = (m.refused || []).map((r) => r && r.name).filter(Boolean);

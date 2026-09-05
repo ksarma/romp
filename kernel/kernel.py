@@ -2559,6 +2559,16 @@ def _norm_timeline_views(d):
             out["at"] = int(d["at"])
     except (TypeError, ValueError):
         pass
+    # `seq` — the store's WRITE SEQUENCE (2026-09-05): strictly increasing across writes, stamped
+    # by _set_timeline_views and carried on every frame and ack the blob rides. Clients adopt a
+    # blob only when its seq is at least the one they hold, so a frame built before a write (the
+    # pusher's warmed cache, a federation re-emit) can never replace the ack's newer blob. Preserved
+    # through the rebuild like `at`; absent stays absent (a blob from before the stamp).
+    try:
+        if d.get("seq"):
+            out["seq"] = int(d["seq"])
+    except (TypeError, ValueError):
+        pass
     return out
 
 
@@ -2608,9 +2618,10 @@ def _set_timeline_views(blob):
     # merely resets the field, which reads as "no newer information" — the safe direction.
     v = _norm_timeline_views(blob)
     try:
-        prev = {t["id"]: t for t in (_timeline_views().get("tags") or [])}
+        prev_blob = _timeline_views()
+        prev = {t["id"]: t for t in (prev_blob.get("tags") or [])}
     except Exception:
-        prev = {}
+        prev_blob, prev = {}, {}
     now = int(time.time())
     # ── the stale-writer guard (the user 2026-08-31: a tag silently lost all 7 of its members) ──
     # The full-blob path (setTimelineViews) is last-writer-wins by design, so a dashboard whose
@@ -2643,7 +2654,7 @@ def _set_timeline_views(blob):
                 (pt.get("name"), pt.get("color"), pt.get("members")) != \
                 (t.get("name"), t.get("color"), t.get("members")):
             refused.append('"%s"' % pt.get("name"))
-            rows.append({"name": pt.get("name"),
+            rows.append({"tid": t["id"], "name": pt.get("name"),
                          "reason": 'your copy of "%s" predates a newer edit to it; the newer state was kept'
                                    % pt.get("name")})
             kept.append(json.loads(json.dumps(pt)))       # the store's newer truth stands
@@ -2652,7 +2663,7 @@ def _set_timeline_views(blob):
     for tid, pt in prev.items():
         if tid not in incoming and pt.get("mtime") and int(pt["mtime"]) > ev:
             refused.append('"%s" (deletion)' % pt.get("name"))
-            rows.append({"name": pt.get("name"),
+            rows.append({"tid": tid, "name": pt.get("name"),
                          "reason": '"%s" was edited after your copy was taken, so it was not deleted'
                                    % pt.get("name")})
             kept.append(json.loads(json.dumps(pt)))       # a stale writer cannot delete newer state
@@ -2674,6 +2685,18 @@ def _set_timeline_views(blob):
         elif pt.get("mtime"):
             t["mtime"] = pt["mtime"]
     v["at"] = now
+    # The write sequence (2026-09-05): every accepted write — targeted or whole-blob, partially
+    # refused or clean — moves it forward, and every frame and ack that carries the blob carries
+    # it, so a client can order what it receives (the ack's blob against a frame the pusher built
+    # from its warmed cache before the write; a federation re-emit of a stored blob). Seeded from
+    # the clock and then +1 per write: a store recreated from nothing (a deleted file, a new state
+    # dir) starts past anything a connected client can hold, so no client is left ignoring every
+    # frame until it reloads. The comparison is on this one number everywhere.
+    try:
+        prev_seq = int(prev_blob.get("seq") or 0)
+    except (TypeError, ValueError):
+        prev_seq = 0
+    v["seq"] = max(prev_seq + 1, int(time.time() * 1000))
     _atomic_write(_views_path(), json.dumps(v, sort_keys=True))
     return rows
 
@@ -3173,8 +3196,13 @@ def _ack_views_write(client, kind, write_id, ok, error=None, refused=None):
     socket is the client's problem, never the write's: the edit landed before this runs."""
     if not client or not callable(client.get("send")):
         return
+    views = _views_client()
     ack = {"type": kind, "writeId": write_id if isinstance(write_id, str) else None,
-           "ok": bool(ok), "views": _views_client()}
+           "ok": bool(ok), "views": views,
+           # the store's write sequence after this write (the blob carries it too): the poster
+           # orders this against the frames it receives — a frame with a lower seq predates the
+           # write and is ignored, whatever order the socket delivered them in
+           "seq": views.get("seq")}
     if refused is not None:                    # the whole-blob path: always a list, empty when clean
         ack["refused"] = [dict(r) for r in refused]
         error = error or "; ".join(r.get("reason") or "" for r in refused)

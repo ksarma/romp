@@ -258,9 +258,76 @@ class WholeBlobAcks(_Wire):
         self.assertEqual(store_tag("tag 2")["name"], "tag 2")
 
 
+class WriteSequence(_Wire):
+    """The store's WRITE SEQUENCE (the 2026-09-05 review, findings 1/8/19): every accepted write
+    moves `seq` forward, the blob carries it, so every frame that embeds the blob (the timeline
+    skeleton, the feed frame, the tabOrder frames — all built from _views_client) and every ack
+    carries the same number. A client adopts a blob only when its seq is at least the one it
+    holds, so the order the socket delivered frames and acks in decides nothing: the pusher's
+    warmed cache can predate a write whose ack already arrived, and the exact-echo heuristic could
+    not tell that frame from the write's own echo."""
+
+    def test_every_accepted_write_moves_the_seq_forward_and_a_refusal_does_not(self):
+        served = self.seed()
+        s0 = served.get("seq")
+        self.assertIsInstance(s0, int, "the served blob carries the stamp")
+        _, err = km._edit_tag("web", add=[SID2])                            # a targeted (RMW) write
+        self.assertIsNone(err)
+        km._flags_cache.clear()
+        s1 = km._timeline_views()["seq"]
+        self.assertGreater(s1, s0, "a targeted write moves it")
+        nv = json.loads(json.dumps(km._views_client()))
+        nv["actives"] = {"timeline": {"tags": ["web"]}}
+        a = self.post({"type": "setTimelineViews", "writeId": "w2", "views": nv})
+        self.assertTrue(a["ok"])
+        self.assertGreater(a["seq"], s1, "a whole-blob write moves it, and the ack returns the seq the write produced")
+        self.assertEqual(a["seq"], a["views"]["seq"], "the ack's seq IS the blob's")
+        self.assertEqual(a["seq"], km._timeline_views()["seq"])
+        _, err = km._edit_tag("ghost", rename="x", exists=True)              # refused: no write
+        self.assertTrue(err)
+        km._flags_cache.clear()
+        self.assertEqual(km._timeline_views()["seq"], a["seq"], "a refused edit writes nothing, so it moves nothing")
+        # a PARTIALLY refused whole-blob write still lands the rest of the write — so it moves
+        stale = json.loads(json.dumps(served))
+        time.sleep(1.1)
+        km._edit_tag("web", color="#DD42FF")
+        km._flags_cache.clear()
+        s2 = km._timeline_views()["seq"]
+        stale["tags"][0]["members"] = []
+        stale["actives"] = {"chat": {"tags": ["web"]}}
+        b = self.post({"type": "setTimelineViews", "writeId": "w3", "views": stale})
+        self.assertEqual([r["name"] for r in b["refused"]], ["web"])
+        self.assertGreater(b["seq"], s2, "the lens landed, so the store moved")
+        self.assertEqual(b["views"]["seq"], b["seq"])
+
+    def test_the_seq_rides_every_frame_that_carries_the_blob_and_survives_the_normalizer(self):
+        served = self.seed()
+        self.assertEqual(km._views_client()["seq"], served["seq"],
+                         "the rendered client blob every frame embeds carries it")
+        self.assertEqual(km._norm_timeline_views(json.loads(json.dumps(served)))["seq"], served["seq"],
+                         "clients echo the blob wholesale — the stamp survives the round trip")
+        src = open(os.path.join(BIN, "romp-kernel")).read()
+        self.assertGreaterEqual(src.count('"views": _views_client()'), 3,
+                                "the timeline skeleton, the feed frame and the tabOrder frames all embed the "
+                                "rendered blob — one carrier, so the seq rides every one of them")
+
+    def test_a_store_recreated_from_nothing_starts_past_what_a_connected_client_holds(self):
+        """The seq is seeded from the clock, then +1 per write: a deleted views file (or a new
+        state dir) must not restart at 1 — a dashboard holding the old store's seq would then
+        ignore every frame until it reloaded."""
+        s0 = self.seed()["seq"]
+        km._views_path().unlink()
+        km._flags_cache.clear()
+        time.sleep(0.002)
+        a = self.post({"type": "setTimelineViews", "writeId": "w9", "views": {"active": "all", "tags": []}})
+        self.assertGreater(a["seq"], s0)
+        b = self.post({"type": "setTimelineViews", "writeId": "w10", "views": a["views"]})
+        self.assertGreater(b["seq"], a["seq"], "…and strictly increasing within a store, same-ms writes included")
+
+
 class SetterReturnsRefusals(unittest.TestCase):
-    """_set_timeline_views now RETURNS the refused rows (name + plain reason); callers that ignored
-    None keep ignoring a list."""
+    """_set_timeline_views now RETURNS the refused rows (tid + name + plain reason); callers that
+    ignored None keep ignoring a list."""
 
     def setUp(self):
         try:
@@ -288,8 +355,8 @@ class SetterReturnsRefusals(unittest.TestCase):
         km._flags_cache.clear()
         stale["tags"][0]["members"] = []
         rows = km._set_timeline_views(stale)
-        self.assertEqual([sorted(r.keys()) for r in rows], [["name", "reason"]])
-        self.assertEqual(rows[0]["name"], "web")
+        self.assertEqual([sorted(r.keys()) for r in rows], [["name", "reason", "tid"]])
+        self.assertEqual((rows[0]["tid"], rows[0]["name"]), ("gA", "web"))
 
 
 class WebBootWiring(unittest.TestCase):

@@ -19,7 +19,11 @@ import { createRequire } from "node:module";
 
 function makeNode(tag: string): any {
   const n: any = {
-    tag, _attrs: {}, children: [] as any[], style: {}, dataset: {}, textContent: "", parentNode: null, value: "",
+    tag, _attrs: {}, children: [] as any[], style: {}, dataset: {}, _text: "", parentNode: null, value: "",
+    // the real DOM's setter REPLACES the children; the builders clear a container with `textContent = ''`
+    // before repainting it, so a fake that kept the children let post-rebuild assertions match stale nodes
+    get textContent() { return this._text; },
+    set textContent(v: any) { this._text = v == null ? "" : String(v); for (const c of this.children) c.parentNode = null; this.children.length = 0; },
     classList: { _s: new Set<string>(), add(...a: string[]) { a.forEach((c) => this._s.add(c)); },
       remove(...a: string[]) { a.forEach((c) => this._s.delete(c)); },
       toggle(c: string, f?: boolean) { f ? this._s.add(c) : this._s.delete(c); }, contains(c: string) { return this._s.has(c); } },
@@ -80,8 +84,9 @@ const sess = (id: string, name: string, color: string) => ({
   context: 40, since: now - 60, awaiting: [], compacting: [], pendingMail: 0, compactions: [], faded: false, stale: false,
 });
 const actives = { chat: { all: true }, outline: { all: true }, timeline: { all: true } };
-// the kernel's last echo: one stamped tag, the store's `at`
-const S0 = { active: "all", actives, at: 100, tags: [{ id: "gA", name: "web", color: "#3b82f6", members: [SID1], mtime: 100 }] };
+// the kernel's last echo: one stamped tag, the store's `at`, and its write sequence (`seq` — every
+// frame and ack carries the blob's own; a client adopts a blob only when its seq is at least the held one)
+const S0 = { active: "all", actives, at: 100, seq: 1000, tags: [{ id: "gA", name: "web", color: "#3b82f6", members: [SID1], mtime: 100 }] };
 const copy = (v: any) => JSON.parse(JSON.stringify(v));
 
 function drawnPanel(): any {
@@ -243,6 +248,70 @@ test("executed: lens and order edits keep the whole-blob post, now with a writeI
   assert.deepEqual(panel._curViews(), S2, "reverted to the store's blob");
   assert.deepEqual(panel._tagEditErr, { host: "", name: "web", error: reason });
   assert.equal(rebuilt, 1, "the open dialog repaints with the refusal");
+});
+
+// ── ORDERING (the 2026-09-05 review, findings 1/8/19): the store's write sequence decides which blob is
+// newer, never the order the socket delivered them in. The pusher builds frames from a warmed cache that
+// can predate a write whose ack already arrived; federation re-emits stored blobs; a net-zero burst leaves
+// frames EQUAL to the copy while its writes are still in flight. The seq is exact where the exact-echo
+// heuristic guessed.
+test("executed: a frame carrying an OLDER write sequence than the ack's blob is ignored — store order, not wire order", () => {
+  const panel = drawnPanel();                       // holds S0 (seq 1000)
+  const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
+  try {
+    const S2 = copy(S0); S2.seq = 1002; S2.at = 120; S2.tags[0].members = [SID1, SID2]; S2.tags[0].mtime = 120;
+    panel.viewsAck({ type: "tagEditAck", writeId: "w-x", ok: true, seq: 1002, views: copy(S2) });
+    assert.equal(panel._views.seq, 1002);
+    const stale = copy(S0); stale.seq = 1001;       // the pusher's warmed cache: built before the write, delivered after the ack
+    frame(panel, stale);
+    assert.equal(panel._views.seq, 1002, "the older blob does not replace the newer one");
+    assert.deepEqual(panel._curViews().tags[0].members, [SID1, SID2], "the dialog keeps showing the write");
+    frame(panel, stale);
+    assert.equal(warned.length, 1, "the ignored blob is logged once per page, not once per frame");
+    assert.match(warned[0], /older than the one held/);
+    const S3 = copy(S2); S3.seq = 1003; frame(panel, S3);
+    assert.equal(panel._views.seq, 1003, "a newer frame is adopted as before");
+    const legacy = copy(S3); delete legacy.seq;
+    frame(panel, legacy);
+    assert.equal(panel._views.seq, undefined, "a blob without a seq (a kernel from before the stamp) still adopts — nothing is gated on a field it never sends");
+  } finally { console.warn = cw; }
+});
+
+test("executed: a NET-ZERO burst (add, then remove) is not cleared early by frames that happen to equal the copy", () => {
+  const panel = drawnPanel();
+  const u = viewTagUnion(panel._curViews()).find((x: any) => x.name === "web");
+  panel._editTagUnion(u, { add: [SID2] });
+  const u2 = viewTagUnion(panel._curViews()).find((x: any) => x.name === "web");
+  panel._editTagUnion(u2, { remove: [SID2] });
+  assert.equal(panel._viewsWrites.length, 2, "two writes in flight");
+  assert.deepEqual(panel._curViews().tags[0].members, [SID1], "the copy is back to the pre-burst state — net zero");
+  frame(panel, copy(S0));                           // a frame equal to the copy: seq 1000, built before either write
+  assert.equal(panel._viewsWrites.length, 2, "an exact match is NOT a write's echo when the blob carries a seq — nothing clears");
+  assert.ok(panel._pendingViews);
+  const S1 = copy(S0); S1.seq = 1001; S1.tags[0].members = [SID1, SID2];   // the add landed on the kernel
+  frame(panel, S1);
+  assert.deepEqual(panel._curViews().tags[0].members, [SID1], "the half-applied state never shows: the copy holds until the acks");
+  const [w1, w2] = panel._viewsWrites.map((w: any) => w.id);
+  panel.viewsAck({ type: "tagEditAck", writeId: w1, ok: true, seq: 1001, views: copy(S1) });
+  assert.ok(panel._pendingViews, "the first ack leaves the second write pending");
+  const S2 = copy(S0); S2.seq = 1002;
+  panel.viewsAck({ type: "tagEditAck", writeId: w2, ok: true, seq: 1002, views: copy(S2) });
+  assert.equal(panel._pendingViews, null, "the last ack settles the burst");
+  assert.deepEqual(panel._curViews().tags[0].members, [SID1]);
+});
+
+test("executed: an ack whose blob a newer frame already overtook still settles its write, and does not roll the base back", () => {
+  const panel = drawnPanel();
+  const u = viewTagUnion(panel._curViews()).find((x: any) => x.name === "web");
+  panel._editTagUnion(u, { color: "#DD42FF" });
+  const w = panel._viewsWrites[0].id;
+  const S2 = copy(S0); S2.seq = 1002; S2.tags[0].color = "#DD42FF"; S2.tags[0].members = [SID1, SID2];   // our recolor plus another dashboard's add
+  frame(panel, S2);
+  const S1 = copy(S0); S1.seq = 1001; S1.tags[0].color = "#DD42FF";
+  panel.viewsAck({ type: "tagEditAck", writeId: w, ok: true, seq: 1001, views: copy(S1) });   // the ack, delivered after the newer frame
+  assert.equal(panel._pendingViews, null, "the ack settles the write");
+  assert.equal(panel._views.seq, 1002, "…without replacing the newer blob");
+  assert.deepEqual(panel._curViews().tags[0].members, [SID1, SID2]);
 });
 
 test("executed: an ack for a write this page never made still refreshes the base and never strands a pending copy", () => {

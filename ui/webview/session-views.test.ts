@@ -104,7 +104,8 @@ test("the hide MECHANISM is fully retired (the user 2026-08-24) — reveal survi
 
 test("federation carries the LOCAL kernel's views blob through merged tabOrder re-emits", () => {
   const FED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "federation.ts"), "utf8");
-  assert.match(FED, /if \(host === LOCAL && m\.views && typeof m\.views === "object"\) this\.localViews = m\.views;/);
+  // stored only when its write sequence is at least the stored one (federation-views-seq.test.ts executes the rule)
+  assert.match(FED, /if \(host === LOCAL && m\.views && typeof m\.views === "object" && adoptViews\(this\.localViews, m\.views\)\) this\.localViews = m\.views;/);
   assert.match(FED, /\{ type: "tabOrder", order, tabs, views: this\.localViews \?\? undefined \}/,
     "without this the browser dashboard's chat never receives the blob at all");
 });

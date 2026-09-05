@@ -16,7 +16,7 @@ import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./ta
 import { ctxFallbackColor, pickTone, readableRgb } from "./ctx-color";
 import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
-import { mintWriteId, ackOutcome, type TagEditOp, type ViewsAck } from "./views-writes";
+import { mintWriteId, ackOutcome, adoptViews, seqOf, type TagEditOp, type ViewsAck } from "./views-writes";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
 import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, PendingTabMeta } from "./tab-meta";
@@ -507,14 +507,31 @@ let pendingSessionViews: SessionViews | null = null;
 let viewsWrites: string[] = [];   // this page's views writes in flight (writeIds), oldest first
 let viewsWriteSeq = 0;
 let allHiddenBlanked = false;   // the active transcript was blanked because EVERY session is view-hidden
+let staleViewsDiagSent = false; // one breadcrumb per page load for an out-of-order views blob (below)
 function effViews(): SessionViews | null { return pendingSessionViews ?? sessionViews; }
+// an arriving views blob (a frame's or an ack's) becomes the base only if its write sequence is at
+// least the held one — a frame the pusher built from its warmed cache before a write, delivered
+// after that write's ack, must not put the older blob back (2026-09-05). Ignored blobs leave one
+// breadcrumb per page load (the kernel's client-diag log), so a kernel serving stale frames is a
+// visible fact rather than a flicker nobody can explain.
+function takeViews(v: SessionViews | null | undefined): boolean {
+  if (!v) return false;
+  if (adoptViews(sessionViews, v)) { sessionViews = v; return true; }
+  if (!staleViewsDiagSent) {
+    staleViewsDiagSent = true;
+    vscodeApi?.postMessage({ type: "clientDiag", surface: "chat", what: "views-stale-blob",
+      data: { held: seqOf(sessionViews), got: seqOf(v) } });
+  }
+  return false;
+}
 function captureViews(v: SessionViews | null) {
-  if (v) sessionViews = v;
-  // the ONE frame-driven clear: the write's own echo, exact (order-insensitive). A frame that does
-  // not match says nothing about the write — it may predate it, or the kernel may have refused it —
-  // so no count of frames yields the copy; the ack settles it either way. (v null = a tabOrder
-  // frame without the blob, an older kernel: nothing to compare.)
-  if (pendingSessionViews && v && viewsKey(v) === viewsKey(pendingSessionViews)) {
+  takeViews(v);
+  // LEGACY kernels only (a blob without a write sequence acks nothing): the write's own exact echo
+  // is the one frame-driven clear there. A kernel that stamps `seq` answers every write, and the ack
+  // is the event that settles the copy — a frame, matching or not, says nothing about a write it
+  // cannot name (a net-zero burst's frames match the copy while its writes are still in flight).
+  // (v null = a tabOrder frame without the blob, an older kernel: nothing to compare.)
+  if (pendingSessionViews && v && seqOf(v) === null && viewsKey(v) === viewsKey(pendingSessionViews)) {
     pendingSessionViews = null; viewsWrites = [];
   }
   // A VIEW CHANGE that excludes the ACTIVE session converts it into the peek instead of bouncing
@@ -557,7 +574,7 @@ function postTagEdit(nv: SessionViews, edit: TagEditOp) {
 function onViewsAck(m: ViewsAck) {
   const out = ackOutcome(viewsWrites, m);
   viewsWrites = out.inflight;
-  if (m.views) sessionViews = m.views;
+  takeViews(m.views);   // the ack's blob is the base unless a newer frame already overtook it (the seq decides)
   if (out.clearPending) pendingSessionViews = null;
   if (out.refusal) warnToast("tag edit refused — " + out.refusal);
   if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek

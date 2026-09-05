@@ -11,7 +11,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ackOutcome, mintWriteId } from "./views-writes";
+import { ackOutcome, adoptViews, mintWriteId, seqOf } from "./views-writes";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const S1 = { active: "all", at: 113, tags: [{ id: "g1", name: "qa", color: "#DD42FF", members: ["tests"], mtime: 113 }] };
@@ -47,6 +47,20 @@ test("executed: an ack for a write this page never made counts as information �
     { inflight: ["w9"], clearPending: false, refusal: null }, "…but our own in-flight write still holds its copy");
 });
 
+test("executed: a blob is adopted by write SEQUENCE, never by arrival order — older is ignored, equal or newer lands, no seq adopts", () => {
+  const held = { active: "all", tags: [], seq: 12 };
+  assert.equal(adoptViews(held, { active: "all", tags: [], seq: 11 }), false, "the pusher's warmed cache, delivered after the ack: ignored");
+  assert.equal(adoptViews(held, { active: "all", tags: [], seq: 12 }), true, "the same write, seen again (the ack's blob then its frame): fine");
+  assert.equal(adoptViews(held, { active: "all", tags: [], seq: 13 }), true);
+  assert.equal(adoptViews(held, { active: "all", tags: [] }), true, "a kernel from before the stamp sends no seq — nothing is gated on a field it never sends");
+  assert.equal(adoptViews(null, { active: "all", tags: [], seq: 3 }), true, "nothing held yet");
+  assert.equal(adoptViews({ active: "all", tags: [] }, { active: "all", tags: [], seq: 3 }), true, "a seq-less base yields to the first stamped blob");
+  assert.equal(adoptViews(held, null), false);
+  assert.equal(seqOf({ seq: 7 } as any), 7);
+  assert.equal(seqOf({ seq: "7" } as any), null, "a non-number is no seq");
+  assert.equal(seqOf(null), null);
+});
+
 test("executed: write ids are unique per page across same-ms gestures", () => {
   const a = mintWriteId(1), b = mintWriteId(2);
   assert.notEqual(a, b);
@@ -61,15 +75,22 @@ test("pins: render.ts posts a writeId on every views write and routes both acks 
   assert.match(RENDER, /else if \(m\.type === "viewsAck" \|\| m\.type === "tagEditAck"\) onViewsAck\(m\);/);
   const ack = RENDER.slice(RENDER.indexOf("function onViewsAck("), RENDER.indexOf("\n}\n", RENDER.indexOf("function onViewsAck(")));
   assert.match(ack, /const out = ackOutcome\(viewsWrites, m\);/, "the pure module decides; render.ts applies");
-  assert.match(ack, /if \(m\.views\) sessionViews = m\.views;/, "the ack's blob is the new base, verdict regardless");
+  assert.match(ack, /takeViews\(m\.views\);/, "the ack's blob is the new base unless a newer frame already overtook it (the seq decides), verdict regardless");
   assert.match(ack, /if \(out\.refusal\) warnToast\(/, "a refusal is LOUD — the flyout has no error surface of its own");
 });
 
-test("pins: the three-frame yield is gone from the tab strip — captureViews clears only on the write's exact echo", () => {
+test("pins: every views arrival in render.ts goes through the ONE seq-gated adopter, and the exact-echo clear is legacy-only", () => {
+  const take = RENDER.slice(RENDER.indexOf("function takeViews("), RENDER.indexOf("\n}\n", RENDER.indexOf("function takeViews(")));
+  assert.match(take, /if \(adoptViews\(sessionViews, v\)\) \{ sessionViews = v; return true; \}/, "adopt by write sequence, never by arrival order");
+  assert.match(take, /what: "views-stale-blob"/, "an ignored blob leaves one breadcrumb per page load — a visible fact, not a flicker");
   assert.doesNotMatch(RENDER, /pendingViewsAge/, "no frame counter anywhere in render.ts");
   const cap = RENDER.slice(RENDER.indexOf("function captureViews("), RENDER.indexOf("\n}\n", RENDER.indexOf("function captureViews(")));
+  assert.match(cap, /^\s*takeViews\(v\);/m, "a pushed frame is adopted through the gate");
   assert.doesNotMatch(cap, />= 3/);
-  assert.match(cap, /if \(pendingSessionViews && v && viewsKey\(v\) === viewsKey\(pendingSessionViews\)\) \{\s*\n\s*pendingSessionViews = null; viewsWrites = \[\];/);
+  assert.match(cap, /if \(pendingSessionViews && v && seqOf\(v\) === null && viewsKey\(v\) === viewsKey\(pendingSessionViews\)\) \{\s*\n\s*pendingSessionViews = null; viewsWrites = \[\];/,
+    "the exact-echo clear survives ONLY for a blob without a seq (a kernel that acks nothing); a stamped kernel's frames never clear a write they cannot name");
+  assert.equal((RENDER.match(/(?<!pending)(?<!\w)sessionViews = /g) || []).length, 1,
+    "the base is assigned in exactly one place — inside the gate");
 });
 
 test("pins: the Tags flyout's local edits are targeted ops on ONE optimistic blob; a MOVE is two ops, one blob", () => {

@@ -26,9 +26,28 @@ export interface ViewsAck {
   writeId?: unknown;
   ok?: boolean;
   views?: SessionViews | null;
+  /** the store's write sequence after this write — the blob's own `seq`, repeated for the poster */
+  seq?: number | null;
   error?: string;
   /** the whole-blob path: each tag the stale-writer guard kept the store's copy of, with its reason */
-  refused?: { name?: string; reason?: string }[];
+  refused?: { tid?: string; name?: string; reason?: string }[];
+}
+
+/** the blob's write sequence, or null for a blob from a kernel that does not stamp one */
+export function seqOf(v: SessionViews | null | undefined): number | null {
+  const s = v && (v as any).seq;
+  return typeof s === "number" && Number.isFinite(s) ? s : null;
+}
+
+/** Whether an incoming blob may replace the held one: yes when its seq is at least the held seq, or
+ *  when either side carries no seq (a kernel from before the stamp, or nothing held yet). The order
+ *  the socket delivered them in decides nothing — the pusher builds frames from a warmed cache that
+ *  can predate a write whose ack already arrived, and federation re-emits stored blobs; the seq is
+ *  the store's own order, so an older blob is ignored wherever it turns up. */
+export function adoptViews(held: SessionViews | null | undefined, incoming: SessionViews | null | undefined): boolean {
+  if (!incoming) return false;
+  const h = seqOf(held), i = seqOf(incoming);
+  return h === null || i === null || i >= h;
 }
 
 export interface AckOutcome {
