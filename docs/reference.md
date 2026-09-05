@@ -24,7 +24,7 @@ update` starts a session called "update".
 | `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them |
 | `romp up` | Run the kernel manager in the foreground; rare, since the login service runs it |
 | `romp version` | Version report across the moving parts |
-| `romp keyswap [--cycle <session,…>\|--cycle-all]` | Which API key the sessions bill, by fingerprint, and — after a key rotation — a reconnect of the quiet running sessions so their new processes pick the new key up, with no manager restart. `romp keyswap <name>`, upstream's rewrite of `service.env` from `service.env.<name>`, is refused here: this installation keeps API keys out of files. See [Switching which API key the sessions bill](#switching-which-api-key-the-sessions-bill-romp-keyswap) |
+| `romp keyswap [--cycle <session,…>\|--cycle-all]` | Which API key the sessions bill, by fingerprint, and — after a key rotation — a reconnect of the quiet running sessions so their new processes pick the new key up, with no manager restart. `romp keyswap <name>`, upstream's rewrite of `service.env` from `service.env.<name>`, is refused: this fork does not write API keys to files. See [Switching which API key the sessions bill](#switching-which-api-key-the-sessions-bill-romp-keyswap) |
 | `romp help` | The same list, from the terminal |
 
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
@@ -360,23 +360,22 @@ restarting the manager (`romp-service install`); a missing file is a no-op.
 
 `ANTHROPIC_API_KEY` is the one exception to that last sentence: where an
 installation keeps a key in this file, the kernel reads that line fresh at
-every session launch, so a change there needs no restart. This installation
-keeps no key in the file at all — see below.
+every session launch, so a change there needs no restart. This fork's tooling
+never writes that line — see below.
 
 ### Switching which API key the sessions bill (`romp keyswap`)
 
 Upstream's `romp keyswap <name>` rewrites the `ANTHROPIC_API_KEY=` line of
 `service.env` from a sibling file (`service.env.<name>`) so that new sessions
 bill another key, and `--cycle` moves the running ones onto it. **This fork
-refuses the rewrite.** The installation keeps API keys out of files: the
-sessions' key reaches Claude Code through its `apiKeyHelper`, the manager's
-own key reaches the manager through its environment, and `service.env`
-carries no key line. There is nothing for a swap to rewrite, and a tool that
-wrote one would create the file the rule forbids. `romp keyswap <name>` exits
-2 with that message, reads and writes nothing, and has no flag that lets it
-through. The kernel still reads a key line from `service.env` at every launch
-where an installation keeps one there; the fork refuses only the command that
-writes one.
+refuses the rewrite.** It does not write API keys to files, so the named swap
+is disabled: keys reach the sessions through Claude Code's `apiKeyHelper` or
+through the manager's environment, and a tool that wrote one into
+`service.env` would create the file the rule forbids. `romp keyswap <name>`
+exits 2 with that message, reads and writes nothing, and has no flag that
+lets it through. The kernel still reads a key line from `service.env` at
+every launch where an installation keeps one there; the fork refuses only the
+command that writes one.
 
 What remains is the rotation tool:
 
@@ -393,9 +392,10 @@ history intact, and the manager never restarts, so no session loses an open
 turn. Per session the command reports one of:
 
 * `reconnecting now — the kernel hands it no key; its new process re-runs the
-  apiKeyHelper …`: the case on this installation. The kernel never sees the
-  helper's value, so it has no fingerprint to converge on. Run the cycle once
-  per rotation, not until every session reads `current`.
+  apiKeyHelper …`: a session whose key comes through the `apiKeyHelper`. The
+  kernel never sees the helper's value, so it has no fingerprint to converge
+  on: such a session reconnects on every run that names it, and never reads
+  `current`. Run the cycle once per rotation.
 * `reconnecting now — history kept` or `already on this key`: a session the
   kernel launched on a key it read itself (an installation with a key in
   `service.env`). Repeated runs converge to `current` there.
@@ -403,7 +403,9 @@ turn. Per session the command reports one of:
   so a reconnect would cost a turn for nothing.
 * `not running — its next launch reads the new key`.
 * `skipped: a turn, subagents or background tasks are in flight`: a reconnect
-  would kill that work. Re-run once the session is quiet.
+  would kill that work. The command names the skipped sessions in its re-run
+  hint; re-run `--cycle` with those names once they are quiet, rather than
+  `--cycle-all`, which would reconnect every helper-billed session again.
 
 `romp refresh --quiet` is the alternative that restarts everything: the
 manager comes back once the sessions are quiet, and every process is new.
@@ -412,8 +414,8 @@ No key value is ever printed, logged, or sent over a socket. The only rendered
 form is the first 12 hex of its sha256 (`sha256:1a2b3c4d5e6f`), in the
 command's output, in the Log panel when the kernel's key changes, and in the
 kernel's answer to `--cycle`. The bare command compares the kernel's
-fingerprint with the file's and says `MISMATCH` when they differ; on this
-installation both read `(none)`.
+fingerprint with the file's and says `MISMATCH` when they differ; with no
+key line in the file both read `(none)`.
 
 Remote kernels are cycled from their own machine. `ROMP_SERVICE_ENV_FILE`
 overrides the path of the env file the kernel reads. A kernel started before
@@ -424,9 +426,11 @@ The kernel also guards the rule at start. If the env file carries a
 credential-shaped line (`ANTHROPIC_API_KEY`, any `*_API_KEY`, any `*_TOKEN`
 with a value) while `ROMP_EXPECTED_AUTH` declares the box's auth (`key`, the
 `apiKeyHelper` design above, or `login`), it logs one problem line naming the
-file and the variable name, never the value. A key in that file would be
-injected at launch and take over billing from the declared auth. With no
-declaration nothing is said; that is upstream's ordinary file-key
+file and the variable name, never the value. For `ANTHROPIC_API_KEY` the line
+says what would happen to billing: that key would be injected at launch and
+take over from the declared auth. For any other credential-shaped name it
+says only that a credential in the file contradicts the declared auth model.
+With no declaration nothing is said; that is upstream's ordinary file-key
 installation.
 
 ## The API-health signal

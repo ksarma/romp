@@ -1821,7 +1821,7 @@ PY
 }
 
 # ─── romp keyswap — the sessions' API key, by fingerprint; the named swap refused ──────
-# This fork keeps API keys out of files (the user 2026-09-05): `romp keyswap <name>`
+# This fork does not write API keys to files (the user 2026-09-05): `romp keyswap <name>`
 # — upstream's rewrite of service.env from service.env.<name> — is refused with exit 2
 # and touches nothing; the bare report and --cycle still dispatch to romp-keyswap.
 # End-to-end through the dispatcher and the real cli/keyswap.py, against a temp
@@ -1854,7 +1854,7 @@ _keyswap_files() {
     grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"   # read-only
 }
 
-@test "keyswap: a named source is refused (keys never live in files here) and touches nothing" {
+@test "keyswap: a named source is refused (the fork writes no key files) and touches nothing" {
     command -v python3 >/dev/null 2>&1 || skip "python3 not available"
     touch "$MOCK_LOG"
     _keyswap_files
@@ -1862,7 +1862,8 @@ _keyswap_files() {
     run run_romp keyswap lowprio
     [ "$status" -eq 2 ]
     [[ "$output" == *"refused"* ]]
-    [[ "$output" == *"keeps API keys out of files"* ]]
+    [[ "$output" == *"does not write API keys to files"* ]]
+    [[ "$output" != *"this installation"* ]]                 # a fork policy, not a claim about one box
     [[ "$output" == *"apiKeyHelper"* ]]
     [[ "$output" == *"romp keyswap --cycle-all"* ]]          # what to run instead, after a rotation
     [[ "$output" != *"no manager restart needed"* ]]         # upstream's success line never prints
@@ -1880,7 +1881,7 @@ _keyswap_files() {
     _keyswap_files
     run run_romp keyswap nosuch
     [ "$status" -eq 2 ]
-    [[ "$output" == *"keeps API keys out of files"* ]]
+    [[ "$output" == *"does not write API keys to files"* ]]
     [[ "$output" != *"no such key file"* ]]                  # the answer does not depend on the filesystem
     grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"
 }

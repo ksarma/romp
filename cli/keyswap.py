@@ -3,11 +3,10 @@
 
 Upstream's `romp keyswap <name>` rewrites the `ANTHROPIC_API_KEY=` line of the manager's env file
 (`~/.config/romp/service.env`) from a sibling file (`service.env.<name>`). THIS FORK REFUSES THAT
-(the user 2026-09-05): the installation keeps API keys out of files. The sessions' key reaches Claude
-Code through its apiKeyHelper, the manager's own key reaches the manager through its environment,
-and `service.env` carries no key line — so there is nothing for a swap to rewrite, and a tool that
-wrote one would be the file the rule forbids. `romp keyswap <name>` exits 2, touches nothing, and
-has no flag that lets it through.
+(the user 2026-09-05): the fork does not write API keys to files, so the named swap is disabled. Keys
+reach the sessions through Claude Code's apiKeyHelper or through the manager's environment, and a
+tool that wrote one into `service.env` would create the file the rule forbids. `romp keyswap <name>`
+exits 2, touches nothing, and has no flag that lets it through.
 
 What remains is upstream's rotation tool, unchanged in mechanism:
 
@@ -49,10 +48,10 @@ KPORTS = ["http://127.0.0.1:29855", "http://127.0.0.1:7878", "http://127.0.0.1:7
 # the other usage refusals use; the file is never opened for writing. One string, so a reword is a
 # deliberate edit and the bats/python tests pin the same text the operator reads.
 REFUSAL = (
-    "romp keyswap: refused — this installation keeps API keys out of files.\n"
-    "             The sessions' key reaches Claude Code through its apiKeyHelper, and the manager's\n"
-    "             key reaches the manager through its environment; service.env carries no key line,\n"
-    "             so there is nothing for a swap to rewrite. After rotating a key, run\n"
+    "romp keyswap: refused — this fork does not write API keys to files, so the named swap is disabled.\n"
+    "             Keys reach the sessions through Claude Code's apiKeyHelper or through the manager's\n"
+    "             environment; nothing here rewrites service.env, so there is nothing for a swap to do.\n"
+    "             After rotating a key, run\n"
     "                 romp keyswap --cycle-all      (or: romp refresh --quiet)\n"
     "             so the running sessions reconnect and their new processes pick the new key up.\n")
 
@@ -137,9 +136,9 @@ def _candidates(path, out):
         names = []
     live = ks.read_key(path)
     if not names:
-        # this installation keeps API keys out of files, so an empty list is the expected state —
-        # upstream's line here told the operator to create one file per key
-        out("candidates  none (this installation keeps API keys out of files)")
+        # the fork writes no key files, so an empty list is the expected state — upstream's line here
+        # told the operator to create one file per key
+        out("candidates  none (this fork does not write API keys to files; the named swap is disabled)")
         return
     out("candidates")
     for n in names:
@@ -228,8 +227,14 @@ def _cycle(sessions, all_, out, path=None):
         return 0
     for r in rows:
         out("  %-14s %s" % (str(r.get("session"))[:14], _explain(str(r.get("status") or ""))))
-    if any(str(r.get("status")) == "working" for r in rows):
-        out("            re-run the same --cycle once those are quiet; sessions already moved read \"current\"")
+    # The re-run hint speaks only of the rows that were skipped for in-flight work, and it names them:
+    # a keyed session already moved reads "current" on a re-run, but a helper-billed one has no
+    # fingerprint to converge on and reconnects again on every run that names it, so "re-run the
+    # same --cycle-all" would churn every quiet helper session for nothing.
+    working = [str(r.get("session")) for r in rows if str(r.get("status")) == "working"]
+    if working:
+        out("            re-run --cycle %s once quiet. Name only those: a keyed session already moved" % ",".join(working))
+        out("            reads \"current\", but a helper-billed one reconnects again on every run that names it")
     return 0
 
 
@@ -237,8 +242,8 @@ def _explain(status):
     return {
         "cycling": "reconnecting now — history kept",
         "helper":  "reconnecting now — the kernel hands it no key; its new process re-runs the apiKeyHelper "
-                   "(or re-reads the setting) that supplies one. History kept. No fingerprint to converge on, "
-                   "so run the cycle once per rotation, not until it reads \"current\"",
+                   "(or re-reads the setting) that supplies one. History kept. There is no fingerprint to "
+                   "converge on: it reconnects on every run that names it, so run the cycle once per rotation",
         "current": "already on this key — nothing to do",
         "login":   "skipped: bills the machine login, not the key",
         "dormant": "not running — its next launch reads the new key",
@@ -251,8 +256,11 @@ def _explain(status):
 
 
 def parse_args(argv):
-    """(source, cycle-list, cycle-all, error). Positional: at most one source name or path."""
+    """(source, cycle-list, cycle-all, error). Positional: at most one source name or path. The error for
+    a second positional counts the arguments and never echoes them: a key value typed where a name was
+    expected must not reach stderr (the rule every other surface here follows)."""
     src, cycle, cycle_all, err = "", [], False, ""
+    positional = []
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -269,11 +277,12 @@ def parse_args(argv):
                 err = err or "--cycle needs a session list, e.g. --cycle web,api"
         elif a.startswith("-"):
             err = err or ("unknown option %s" % a)
-        elif not src:
-            src = a
         else:
-            err = err or "one source at a time (got %s and %s)" % (src, a)
+            positional.append(a)
         i += 1
+    src = positional[0] if positional else ""
+    if len(positional) > 1:
+        err = err or "one source at a time (%d positional arguments given)" % len(positional)
     return src, cycle, cycle_all, err
 
 
@@ -300,8 +309,9 @@ def main(argv, out=None):
         return _cycle(cycle, cycle_all, out, path)
     rc = _kernel_check(path, out)
     out("")
-    out("rotate:     keys never live in files here — rotate the key at its source, then")
-    out("            romp keyswap --cycle-all   so quiet sessions reconnect and pick it up")
+    out("rotate:     this fork writes no key to a file — rotate the key at its source (the apiKeyHelper's")
+    out("            store, or the manager's environment), then  romp keyswap --cycle-all  so quiet")
+    out("            sessions reconnect and pick it up")
     return rc
 
 

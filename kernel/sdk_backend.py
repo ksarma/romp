@@ -2729,19 +2729,23 @@ def _credential_names_in_env_file(path: str | None = None) -> list:
 def _warn_credential_lines_in_env_file(log, path: str | None = None) -> list:
     """Say ONCE per process, loudly (a problem-ring line), when the manager's env file carries a
     credential while ROMP_EXPECTED_AUTH declares an auth that no key in that file serves (the user
-    2026-09-05; this installation keeps API keys out of files, and the declaration is how the box
-    states its design):
+    2026-09-05; this fork does not write API keys to files, and the declaration is how a box states
+    its auth design):
 
       * =login — the sessions bill the machine login. A key line in the file is read live and wins
         for every session without an explicit pick (effective_auth), so the box would bill the key.
-      * =key — on the box the declaration was written for, the key reaches Claude Code through its
-        apiKeyHelper and never rides the file (see _expected_auth). A key line in the file would be
+      * =key — on a box that declares it while keeping the key out of the file, the key reaches
+        Claude Code through its apiKeyHelper (see _expected_auth). A key line in the file would be
         injected at launch instead, and the helper would stop being what bills.
 
-    Either way the file contradicts the declared auth. Undeclared, nothing is said: an installation
-    that keeps its key in service.env and declares nothing is upstream's ordinary shape. The line
-    names the file and the variable NAMES, never a value. Returns the names it warned about ([] when
-    quiet) so the caller and the tests can see what it decided."""
+    Either way the file contradicts the declared auth. The consequence named is per variable:
+    ANTHROPIC_API_KEY is the one the launch would inject, so its line says what happens to billing;
+    any other credential-shaped name (a repository token, another service's key, a serve token) is
+    never injected by the launch, so its line says only that a credential in the file contradicts
+    the declared auth model — a billing claim there would be false. Undeclared, nothing is said: an
+    installation that keeps its key in service.env and declares nothing is upstream's ordinary shape.
+    The line names the file and the variable NAMES, never a value. Returns the names it warned about
+    ([] when quiet) so the caller and the tests can see what it decided."""
     global _CREDENTIAL_LINE_SAID
     exp = _expected_auth()
     if not exp or _CREDENTIAL_LINE_SAID:
@@ -2750,14 +2754,22 @@ def _warn_credential_lines_in_env_file(log, path: str | None = None) -> list:
     if not names:
         return []
     _CREDENTIAL_LINE_SAID = True
-    why = ("the sessions bill the machine login, and a key in this file would win for every session "
-           "without an explicit Billing pick" if exp == "login" else
-           "the sessions' key reaches Claude Code through its apiKeyHelper and never rides this file; "
-           "a key here would be injected at launch instead and the helper would stop being what bills")
-    log("auth: %s carries %s — credential line%s — while ROMP_EXPECTED_AUTH=%s declares that %s. "
-        "This installation keeps API keys out of files: remove the line (and rotate the value, "
-        "since it reached a file)."
-        % (path or _keysrc.service_env_path(), ", ".join(names), "s" if len(names) > 1 else "", exp, why),
+    parts = []
+    if "ANTHROPIC_API_KEY" in names:
+        parts.append("ANTHROPIC_API_KEY would be injected at launch: " + (
+            "the sessions bill the machine login, and a key in this file would win for every session "
+            "without an explicit Billing pick" if exp == "login" else
+            "the sessions' key reaches Claude Code through its apiKeyHelper and never rides this file; "
+            "a key here would be injected instead and the helper would stop being what bills"))
+    others = [n for n in names if n != "ANTHROPIC_API_KEY"]
+    if others:
+        parts.append("%s: a credential in a file contradicts the declared auth model" % ", ".join(others))
+    many = len(names) > 1
+    log("auth: %s carries %s — credential line%s — while ROMP_EXPECTED_AUTH=%s. %s. "
+        "This fork does not write API keys to files: remove the line%s and rotate the value%s, since "
+        "%s reached a file."
+        % (path or _keysrc.service_env_path(), ", ".join(names), "s" if many else "", exp, "; ".join(parts),
+           "s" if many else "", "s" if many else "", "they" if many else "it"),
         problem=True)
     return names
 

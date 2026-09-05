@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The fork's keyswap contract (the user 2026-09-05): this installation keeps API keys out of files.
+"""The fork's keyswap contract (the user 2026-09-05): this fork does not write API keys to files.
 
 Upstream's `romp keyswap <name>` rewrites the `ANTHROPIC_API_KEY=` line of the manager's env file
 from a sibling file (`service.env.<name>`). tests/test_keyswap.py carries upstream's tests for the
@@ -125,9 +125,10 @@ class NamedSwapRefused(_Env):
 
     def test_the_message_says_where_keys_live_and_what_to_run_instead(self):
         m = cli.REFUSAL
-        self.assertIn("keeps API keys out of files", m)
+        self.assertIn("does not write API keys to files", m, "a policy the code can stand behind, not a claim about one box")
+        self.assertNotIn("this installation", m)
         self.assertIn("apiKeyHelper", m)
-        self.assertIn("through its environment", m)
+        self.assertIn("manager's\n             environment", m)
         self.assertIn("romp keyswap --cycle-all", m)
         self.assertIn("romp refresh", m)
         self.assertNotIn("service.env.", m, "never a sibling-file recipe")
@@ -162,7 +163,8 @@ class NamedSwapRefused(_Env):
         rc, out, err = self.run_cli()
         self.assertEqual(rc, 0)
         self.assertEqual(err, "")
-        self.assertIn("candidates  none (this installation keeps API keys out of files)", out)
+        self.assertIn("candidates  none (this fork does not write API keys to files; the named swap is disabled)", out)
+        self.assertNotIn("this installation", out)
         self.assertIn("romp keyswap --cycle-all", out)
         self.assertNotIn("swap with:", out)
         self.assertNotIn("chmod 600", out, "upstream's line told the operator to create one file per key")
@@ -185,7 +187,38 @@ class NamedSwapRefused(_Env):
         text = cli._explain("helper")
         self.assertIn("apiKeyHelper", text)
         self.assertIn("once per rotation", text)
+        self.assertIn("reconnects on every run that names it", text, "honest: it never reads \"current\"")
         self.assertNotEqual(cli._explain("helper"), "helper", "an unexplained status prints its raw word")
+
+    def test_the_re_run_hint_names_the_skipped_rows_and_does_not_promise_current_for_helper_rows(self):
+        # cycle_key returns "helper" on every run (no fingerprint to converge on), so "re-run the same
+        # --cycle; sessions already moved read current" was false for a helper-billed box: every re-run
+        # reconnected every quiet helper session again. The hint now names only the skipped rows.
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        rows = [{"session": "web", "status": "working"}, {"session": "api", "status": "helper"},
+                {"session": "tests", "status": "working"}]
+        cli._post = lambda u, p, b: {"ok": True, "keyFp": ks.fingerprint(OLD_KEY), "rows": rows}   # the compare step passes
+        rc, out, _err = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 0)
+        self.assertIn("re-run --cycle web,tests once quiet", out, "the skipped rows, by name")
+        self.assertIn("Name only those", out)
+        self.assertIn("helper-billed one reconnects again on every run that names it", out)
+        self.assertNotIn("re-run the same --cycle", out)
+        self.assertNotIn("sessions already moved read", out)
+        # no working row → no hint at all
+        rows[:] = [{"session": "api", "status": "helper"}]
+        rc, out, _err = self.run_cli("--cycle-all")
+        self.assertNotIn("re-run", out)
+
+    def test_a_second_positional_is_counted_never_echoed(self):
+        # a key value typed where a name was expected must not reach stderr
+        rc, out, err = self.run_cli("lowprio", "sk-ant-TEST-9999")
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, "")
+        self.assertIn("one source at a time (2 positional arguments given)", err)
+        self.assertNotIn("sk-ant-TEST-9999", err)
+        self.assertNotIn("lowprio", err)
+        self.assertEqual(cli.parse_args(["a", "b", "c"])[3], "one source at a time (3 positional arguments given)")
 
     def test_the_cli_carries_no_call_that_writes_the_key(self):
         # no escape hatch: not a flag, not a dead branch — the only writer of the key line is upstream's
@@ -306,7 +339,10 @@ class EnvFileCredentialWarning(_Backend):
         self.assertIn(self.path, lines[0])
         self.assertIn(ks.KEY_VAR, lines[0])
         self.assertIn("ROMP_EXPECTED_AUTH=login", lines[0])
-        self.assertIn("keeps API keys out of files", lines[0])
+        self.assertIn("does not write API keys to files", lines[0])
+        self.assertNotIn("this installation", lines[0], "a fork policy, not a claim about one box")
+        self.assertIn("would be injected at launch", lines[0], "ANTHROPIC_API_KEY is the variable the launch injects")
+        self.assertIn("Billing pick", lines[0], "…so its line names the billing consequence")
         self.assertNotIn(OLD_KEY, lines[0])
         self.assertTrue(any(OLD_KEY not in m for m in self.logged))
         self.assertFalse(any(OLD_KEY in m for m in self.logged), "no log line carries the value")
@@ -361,6 +397,24 @@ class EnvFileCredentialWarning(_Backend):
         self.assertIn("credential lines", lines[0])
         for value in ("abc", "xyz", "again"):
             self.assertNotIn("=" + value, lines[0])
+        # neither is the variable the launch injects, so the line makes no billing claim about them
+        self.assertIn("FOO_API_KEY, BAR_TOKEN: a credential in a file contradicts the declared auth model", lines[0])
+        self.assertNotIn("Billing pick", lines[0])
+        self.assertNotIn("injected", lines[0])
+        self.assertNotIn("apiKeyHelper", lines[0])
+
+    def test_a_mixed_file_names_the_billing_consequence_for_the_key_and_the_plain_line_for_the_rest(self):
+        self.write_env("%s=%s\nHF_TOKEN=abc\nROMP_SERVE_TOKEN=xyz\n" % (ks.KEY_VAR, OLD_KEY))
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        sb._CREDENTIAL_LINE_SAID = False
+        self.be = self.construct()
+        lines = self._warned()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("ANTHROPIC_API_KEY would be injected at launch: the sessions' key reaches Claude Code through its apiKeyHelper", lines[0])
+        self.assertIn("HF_TOKEN, ROMP_SERVE_TOKEN: a credential in a file contradicts the declared auth model", lines[0])
+        self.assertIn("remove the lines and rotate the values, since they reached a file", lines[0])
+        for value in (OLD_KEY, "abc", "xyz"):
+            self.assertNotIn(value, lines[0])
 
     def test_the_check_reads_the_installers_variable_for_the_path(self):
         other = os.path.join(self.d, "elsewhere.env")

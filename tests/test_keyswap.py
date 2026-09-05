@@ -569,7 +569,7 @@ class KeyswapCli(_EnvFile):
             sys.stderr = was
         self.assertEqual(rc, 2)
         self.assertEqual(ks.read_key(self.path), OLD_KEY, "the file is untouched")
-        self.assertIn("keeps API keys out of files", buf.getvalue())
+        self.assertIn("does not write API keys to files", buf.getvalue())
         self.assertEqual(said, "", "the refusal is the whole answer; nothing is reported on stdout")
 
     def test_the_bare_command_reports_and_changes_nothing(self):
@@ -671,7 +671,7 @@ class KeyswapCli(_EnvFile):
         self.assertEqual([b for _u, _p, b in self.posted], [{"sessions": []}, {"sessions": ["web", "api"]}])
         self.assertIn("skipped: a turn, subagents or background tasks are in flight", said)
         self.assertIn("already on this key", said)
-        self.assertIn("re-run the same --cycle", said)
+        self.assertIn("re-run --cycle web once quiet", said, "the hint names the skipped row only")
 
     def test_the_probe_itself_honours_the_override_and_refuses_an_unusable_one(self):
         # _kernel() must USE _kernel_urls(): a revert of that one line passed every test (second review pass)
