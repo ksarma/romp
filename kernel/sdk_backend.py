@@ -82,22 +82,28 @@ def cli_scope_wrapper() -> str:
     return str(Path(__file__).resolve().parent.parent / "bin" / "romp-cli-scope")
 
 
-def cli_scope_supported(environ=None, which=shutil.which, run=subprocess.run, log=None) -> bool:
+def cli_scope_supported(environ=None, which=shutil.which, run=subprocess.run, log=None,
+                        platform=None) -> bool:
     """Whether this backend should spawn CLIs through the scope wrapper. Decided ONCE per backend, at
     construction, from the process environment and a one-shot probe — never per session, so a flaky
-    probe cannot leave sessions in mixed states. Pure on its inputs (environ/which/run injectable) so
-    the truth table is testable without a real systemd-run.
+    probe cannot leave sessions in mixed states. Pure on its inputs (environ/which/run/platform
+    injectable) so the truth table is testable without a real systemd-run, on any OS.
 
     On when ROMP_CLI_SCOPE=1, or under the supervised service (ROMP_SUPERVISED, what bin/romp-service's
     unit sets) unless ROMP_CLI_SCOPE=0 — so the default is on under the service and off from a
-    terminal or in tests. Then only if `systemd-run` is on PATH and a probe scope actually starts
-    (a user manager that cannot start scopes would otherwise fail every session start). `log`, when
-    given, receives the one-line verdict either way."""
+    terminal or in tests. Then only on Linux (transient scopes are a systemd feature; the macOS launchd
+    plist sets ROMP_SUPERVISED too, and without this check every kernel start there logged
+    "systemd-run is not on PATH" as if something were missing), only if `systemd-run` is on PATH, and
+    only if a probe scope actually starts (a user manager that cannot start scopes would otherwise
+    fail every session start). `log`, when given, receives the one-line verdict either way."""
     env = os.environ if environ is None else environ
+    plat = sys.platform if platform is None else platform
     want = env.get("ROMP_CLI_SCOPE", "")
     ok, reason = False, ""
     if want == "1" or (env.get("ROMP_SUPERVISED") and want != "0"):
-        if not which("systemd-run"):
+        if not plat.startswith("linux"):
+            reason = "not Linux (transient scopes are a systemd feature)"
+        elif not which("systemd-run"):
             reason = "systemd-run is not on PATH"
         else:
             try:
@@ -5513,6 +5519,15 @@ class SdkBackend:
         # Per-session transient scopes (see cli_scope_supported): ONE verdict per backend, cached here;
         # _options reads it at every connect. The probe runs here, never per session.
         self.cli_scope = cli_scope_supported(log=self._log)
+        if self.cli_scope:
+            # The SDK's per-connect minimum-version check spawns `[cli_path, "-v"]` with the KERNEL's
+            # environment, not options.env (claude_agent_sdk 0.2.132, _check_claude_version), so the
+            # wrapper must find ROMP_CLI_REAL here too — without it the probe exited 127, the SDK
+            # swallowed that, and the version warning was silently off while every connect paid a
+            # doomed fork. One value per backend; the per-session entry in _options stays (the
+            # session's own launch reads it). No ROMP_SID rides along, so the wrapper runs the probe
+            # directly, unscoped.
+            os.environ["ROMP_CLI_REAL"] = self.claude_bin
         self._cli_scope_wrapper_logged = False    # the missing-wrapper fallback is reported once per backend
         self._heal_attempts: dict[str, int] = {}  # sid -> crash-resume attempts since its last COMPLETED turn
         #                                           (bounds _heal_cut_session to one resume per cut; a completed

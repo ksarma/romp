@@ -57,19 +57,19 @@ class Supported(unittest.TestCase):
 
     def test_unsupervised_is_off_without_probing(self):
         run = _Run()
-        self.assertFalse(sb.cli_scope_supported({}, which=_which(), run=run))
+        self.assertFalse(sb.cli_scope_supported({}, which=_which(), platform="linux", run=run))
         self.assertEqual(run.calls, [], "no probe when the switch is off")
 
     def test_explicit_off_under_supervision(self):
         run = _Run()
         self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1", "ROMP_CLI_SCOPE": "0"},
-                                                which=_which(), run=run))
+                                                which=_which(), platform="linux", run=run))
         self.assertEqual(run.calls, [])
 
     def test_supervised_without_systemd_run_is_off(self):
         run = _Run()
         logged = []
-        self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(False), run=run,
+        self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(False), platform="linux", run=run,
                                                 log=logged.append))
         self.assertEqual(run.calls, [], "nothing to probe with")
         self.assertEqual(len(logged), 1)
@@ -79,7 +79,7 @@ class Supported(unittest.TestCase):
     def test_supervised_with_a_failing_probe_is_off(self):
         run = _Run(returncode=1, stderr=b"Failed to start transient scope unit: Access denied\n")
         logged = []
-        self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), run=run,
+        self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), platform="linux", run=run,
                                                 log=logged.append))
         self.assertEqual(len(run.calls), 1)
         self.assertTrue(logged[0].startswith("cli scope: off — "), logged)
@@ -89,26 +89,26 @@ class Supported(unittest.TestCase):
         for exc in (subprocess.TimeoutExpired(PROBE, 10), OSError("boom")):
             run = _Run(raise_=exc)
             logged = []
-            self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), run=run,
+            self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), platform="linux", run=run,
                                                     log=logged.append))
             self.assertTrue(logged[0].startswith("cli scope: off — "), logged)
 
     def test_supervised_with_a_passing_probe_is_on(self):
         run = _Run()
         logged = []
-        self.assertTrue(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), run=run,
+        self.assertTrue(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), platform="linux", run=run,
                                                log=logged.append))
         self.assertEqual(len(logged), 1)
         self.assertTrue(logged[0].startswith("cli scope: on — "), logged)
 
     def test_explicit_on_outside_supervision_probes_and_turns_on(self):
         run = _Run()
-        self.assertTrue(sb.cli_scope_supported({"ROMP_CLI_SCOPE": "1"}, which=_which(), run=run))
+        self.assertTrue(sb.cli_scope_supported({"ROMP_CLI_SCOPE": "1"}, which=_which(), platform="linux", run=run))
         self.assertEqual(len(run.calls), 1)
 
     def test_the_probe_argv_is_exact_and_bounded(self):
         run = _Run()
-        sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), run=run)
+        sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), platform="linux", run=run)
         argv, kw = run.calls[0]
         self.assertEqual(argv, PROBE)
         self.assertEqual(sb.CLI_SCOPE_PROBE, PROBE)
@@ -118,11 +118,45 @@ class Supported(unittest.TestCase):
 
     def test_an_empty_switch_value_is_not_on(self):
         run = _Run()
-        self.assertFalse(sb.cli_scope_supported({"ROMP_CLI_SCOPE": ""}, which=_which(), run=run))
+        self.assertFalse(sb.cli_scope_supported({"ROMP_CLI_SCOPE": ""}, which=_which(), platform="linux", run=run))
         self.assertEqual(run.calls, [])
 
     def test_no_log_callback_is_fine(self):
-        self.assertTrue(sb.cli_scope_supported({"ROMP_CLI_SCOPE": "1"}, which=_which(), run=_Run()))
+        self.assertTrue(sb.cli_scope_supported({"ROMP_CLI_SCOPE": "1"}, which=_which(), platform="linux", run=_Run()))
+
+    def test_not_linux_is_off_before_which_or_probe(self):
+        # the macOS launchd plist sets ROMP_SUPERVISED=1 too; scopes are a systemd feature, so the
+        # verdict there is off with a reason that says so — not "systemd-run is not on PATH"
+        for plat in ("darwin", "freebsd13", "win32"):
+            run = _Run()
+            which_calls = []
+            logged = []
+            ok = sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=lambda n: which_calls.append(n),
+                                        run=run, log=logged.append, platform=plat)
+            self.assertFalse(ok, plat)
+            self.assertEqual(which_calls, [], "no PATH lookup off Linux")
+            self.assertEqual(run.calls, [], "no probe off Linux")
+            self.assertEqual(len(logged), 1)
+            self.assertTrue(logged[0].startswith("cli scope: off — not Linux"), logged)
+            self.assertNotIn("PATH", logged[0])
+
+    def test_linux_variants_pass_the_platform_check(self):
+        for plat in ("linux", "linux2"):
+            self.assertTrue(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), run=_Run(),
+                                                   platform=plat), plat)
+
+    def test_the_switch_off_reasons_win_over_the_platform(self):
+        # off Linux, an explicit 0 or an unsupervised run still reports ITS reason, not the platform's
+        logged = []
+        sb.cli_scope_supported({"ROMP_SUPERVISED": "1", "ROMP_CLI_SCOPE": "0"}, which=_which(), run=_Run(),
+                               log=logged.append, platform="darwin")
+        self.assertIn("ROMP_CLI_SCOPE=0", logged[0])
+
+    def test_the_platform_defaults_to_this_process(self):
+        # no injected platform → sys.platform; on Linux that is the on path, elsewhere the off one
+        run = _Run()
+        ok = sb.cli_scope_supported({"ROMP_CLI_SCOPE": "1"}, which=_which(), run=run)
+        self.assertEqual(ok, sys.platform.startswith("linux"))
 
 
 class _Backend(unittest.TestCase):
@@ -173,6 +207,33 @@ class ConstructionVerdict(_Backend):
         self.assertEqual(len(calls), 1)
         self.assertIn("log", calls[0])
         self.assertTrue(be.cli_scope)
+
+    # The SDK's per-connect version check runs `[cli_path, "-v"]` with the KERNEL's os.environ, not
+    # options.env (claude_agent_sdk 0.2.132), so with the verdict on the wrapper must find ROMP_CLI_REAL
+    # in the process environment too — or the probe exits 127 and the version warning is silently off.
+    def test_on_exports_the_real_cli_into_the_kernels_environment(self):
+        before = os.environ.pop("ROMP_CLI_REAL", None)
+        saved = sb.cli_scope_supported
+        sb.cli_scope_supported = lambda **kw: True
+        try:
+            be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
+            self.assertTrue(be.cli_scope)
+            self.assertEqual(os.environ.get("ROMP_CLI_REAL"), "/bin/true")
+        finally:
+            sb.cli_scope_supported = saved
+            os.environ.pop("ROMP_CLI_REAL", None)
+            if before is not None:
+                os.environ["ROMP_CLI_REAL"] = before
+
+    def test_off_leaves_the_kernels_environment_alone(self):
+        before = os.environ.pop("ROMP_CLI_REAL", None)
+        try:
+            be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)   # the test floor: off
+            self.assertFalse(be.cli_scope)
+            self.assertNotIn("ROMP_CLI_REAL", os.environ)
+        finally:
+            if before is not None:
+                os.environ["ROMP_CLI_REAL"] = before
 
 
 class OptionsWiring(_Backend):
