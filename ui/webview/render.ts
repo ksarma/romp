@@ -604,6 +604,7 @@ function onKernelCaps(m: { caps?: unknown }) {
   viewsWrites = []; pendingSessionViews = null;
   warnToast("The connection to romp was re-established; a tag edit made just before it may not have landed. Check the tag.");
   if (activeId) assertPeekFor(activeId);
+  syncNewTagInput();                       // a dropped create no longer gates the flyout's input
   renderTabs();
 }
 // the kernel does not know an op this page posted (a dashboard newer than its kernel): the write is
@@ -629,7 +630,18 @@ function onViewsAck(m: ViewsAck) {
   // the reason already names the tag once and says what was kept (the kernel composes it); no second prefix naming it
   if (out.refusal) warnToast("Tag edit not applied — " + out.refusal);
   if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek
+  syncNewTagInput();                       // a create's ack re-arms the flyout's New tag… input in place
   renderTabs();
+}
+// The Tags flyout's New tag… input, while the flyout is open: DISABLED while a create is in flight
+// (round 3 of the 2026-09-05 review: a second Enter before the ack made a second tag), re-armed in
+// place by the ack — never by rebuilding the flyout, which would throw away text typed meanwhile.
+let tagsFlyNewInput: HTMLInputElement | null = null;
+function syncNewTagInput() {
+  if (!tagsFlyNewInput) return;
+  const busy = createInFlight(viewsWrites);
+  tagsFlyNewInput.disabled = busy;
+  tagsFlyNewInput.placeholder = busy ? "creating…" : "New tag…";
 }
 // ── EPHEMERAL PEEK TAB (the user 2026-08-24, superseding the kernel's reveal-rule view mutation):
 // activating a session the current view HIDES opens it as a TEMPORARY tab — real and scrollable,
@@ -5222,6 +5234,7 @@ let ctxMenuEl: HTMLElement | null = null;
 function dismissTabMenu() {
   ctxMenuEl?.remove();
   ctxMenuEl = null;
+  tagsFlyNewInput = null;
 }
 
 // Right-clicking a SELECTION in the transcript pops a small menu with Reply (quote
@@ -5626,6 +5639,7 @@ function showTabMenu(e: MouseEvent, id: string) {
         inp.addEventListener("click", (e2) => e2.stopPropagation());
         inp.addEventListener("keydown", (e2) => {
           if (e2.key !== "Enter") return;
+          if (createInFlight(viewsWrites)) return;   // one create at a time: the ack re-arms the input (syncNewTagInput)
           const name = inp.value.trim();
           if (!name) return;
           const existing = unionFor().find((g) => g.name === name);
@@ -5644,6 +5658,7 @@ function showTabMenu(e: MouseEvent, id: string) {
           build(); sb.textContent = subText();
         });
         nrow.appendChild(inp);
+        tagsFlyNewInput = inp; syncNewTagInput();
         sub.appendChild(nrow);
       };
       build();

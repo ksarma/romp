@@ -541,6 +541,66 @@ test("executed: a lost ack — the caps frame the kernel sends at every ready (a
   assert.equal(panel._tagEditErr, before);
 });
 
+// ── ROUND 3 (the 2026-09-05 review, verification round): the in-flight create gate, the legacy create's
+// id, the join input's draft, the create ack and an open editor, and a refusal reverting only its own write.
+test("executed: [+ New tag] takes ONE click per create — the row reads creating… until the ack, then the button is back", () => {
+  const panel = drawnPanel();
+  panel._openViewsDialog(null);
+  clickNewTag(panel);
+  assert.equal(tagOps().length, 1, "one create posted");
+  const busy = walk(panel._viewsDialog).find((n) => n.textContent === "creating…");
+  assert.ok(busy, "the row says a create is in flight");
+  assert.equal(busy._attrs["aria-disabled"], "true");
+  assert.equal(busy._listeners.click, undefined, "…and takes no click");
+  assert.equal(walk(panel._viewsDialog).find((n) => n.textContent === "+ New tag"), undefined, "the button is gone while one is in flight");
+  assert.equal(tagOps().length, 1, "a second click before the ack posts nothing — no second tag");
+  ackCreate(panel);
+  assert.ok(walk(panel._viewsDialog).find((n) => n.textContent === "+ New tag"), "the ack's repaint brings the button back");
+  assert.equal(walk(panel._viewsDialog).find((n) => n.textContent === "creating…"), undefined);
+  clickNewTag(panel);
+  assert.equal(tagOps().length, 2, "…and the next click is a new create");
+  // a refusal re-arms it too
+  panel.viewsAck({ type: "tagEditAck", writeId: tagOps()[1].writeId, ok: false, error: "the views blob caps at 32 tags", seq: 1001, views: copy(panel._views) });
+  assert.ok(walk(panel._viewsDialog).find((n) => n.textContent === "+ New tag"));
+});
+
+test("executed: the join menu's new-tag input takes ONE Enter per create — disabled and saying so until the ack repaints the menu", () => {
+  const panel = drawnPanel();
+  const s = panel.data.sessions.find((x: any) => x.id === SID2);
+  const anchor = makeNode("g"); anchor._rect = { left: 40, top: 60, right: 60, bottom: 76, width: 20, height: 16 };
+  panel._openLaneMenu(s, anchor);
+  const plus = () => walk(panel._laneMenu).find((n) => n.textContent === "+" && n._attrs.title === "add a tag");
+  plus()._listeners.click({ stopPropagation() {} });
+  const ni = walk(panel._laneMenu).find((n) => n.tag === "input");
+  assert.ok(ni, "the join menu's input");
+  assert.equal(ni.disabled, undefined);
+  ni.value = "qa"; ni._listeners.keydown({ key: "Enter" });
+  assert.equal(tagOps().length, 1);
+  assert.deepEqual([tagOps()[0].op, tagOps()[0].name], ["create", "qa"]);
+  ni._listeners.keydown({ key: "Enter" });                          // the same node, again, before the ack
+  assert.equal(tagOps().length, 1, "a second Enter before the ack posts nothing");
+  assert.equal(ni.disabled, true, "the input went dead on submit");
+  // the menu was rebuilt without the join box (it closes on submit); opening it again while the
+  // create is in flight shows a disabled input that says so
+  plus()._listeners.click({ stopPropagation() {} });
+  const ni2 = walk(panel._laneMenu).find((n) => n.tag === "input");
+  assert.notEqual(ni2, ni);
+  assert.equal(ni2.disabled, true);
+  assert.equal(ni2.placeholder, "creating…");
+  ni2.value = "docs"; ni2._listeners.keydown({ key: "Enter" });
+  assert.equal(tagOps().length, 1, "Enter on the disabled input posts nothing");
+  // the create's ack repaints the open menu: the input is live again
+  const S1 = copy(S0); S1.seq = 1001; S1.tags.push({ id: "g8", name: "qa", color: "#1EA1EB", members: [SID2], mtime: 113 });
+  panel.viewsAck({ type: "tagEditAck", writeId: tagOps()[0].writeId, ok: true, seq: 1001, tid: "g8", name: "qa", views: S1 });
+  const ni3 = walk(panel._laneMenu).find((n) => n.tag === "input");
+  assert.ok(ni3 && ni3 !== ni2, "the menu was rebuilt on the ack");
+  assert.equal(ni3.disabled, undefined);
+  assert.equal(ni3.placeholder, "new tag…");
+  ni3.value = "docs"; ni3._listeners.keydown({ key: "Enter" });
+  assert.equal(tagOps().length, 2, "…and takes the next create");
+  panel._closeLaneMenu();
+});
+
 test("executed: a refusal reverts ONLY its own write — a later write still in flight keeps its optimistic change, and its own ack settles it", () => {
   const panel = drawnPanel();
   const u = viewTagUnion(panel._curViews()).find((x: any) => x.name === "web");

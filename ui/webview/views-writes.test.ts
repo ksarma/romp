@@ -133,6 +133,11 @@ test("pins: render.ts posts a writeId on every views write and routes both acks 
   assert.match(ack, /if \(out\.clearPending\) pendingSessionViews = null;\s*\n\s*else if \(out\.rederive\) pendingSessionViews = rederivePending\(sessionViews, viewsWrites\);/,
     "a refusal with other writes in flight re-derives the copy from the base plus them — only the refused change reverts");
   assert.match(ack, /if \(out\.refusal\) warnToast\(/, "a refusal is LOUD — the flyout has no error surface of its own");
+  assert.match(ack, /syncNewTagInput\(\);/, "…and the flyout's New tag… input is re-armed in place — never by rebuilding the flyout, which would drop typed text");
+  const sync = RENDER.slice(RENDER.indexOf("function syncNewTagInput("), RENDER.indexOf("\n}\n", RENDER.indexOf("function syncNewTagInput(")));
+  assert.match(sync, /const busy = createInFlight\(viewsWrites\);\s*\n\s*tagsFlyNewInput\.disabled = busy;\s*\n\s*tagsFlyNewInput\.placeholder = busy \? "creating…" : "New tag…";/,
+    "disabled and saying so while a create is in flight (a second Enter before the ack made a second tag)");
+  assert.match(RENDER, /function dismissTabMenu\(\) \{\s*\n\s*ctxMenuEl\?\.remove\(\);\s*\n\s*ctxMenuEl = null;\s*\n\s*tagsFlyNewInput = null;/, "a closed menu forgets its input");
 });
 
 test("pins: every views arrival in render.ts goes through the ONE seq-gated adopter, and the exact-echo clear is legacy-only", () => {
@@ -152,6 +157,7 @@ test("pins: every views arrival in render.ts goes through the ONE seq-gated adop
 test("pins: the Tags flyout's local edits are targeted ops on ONE optimistic blob; a MOVE is two ops, one blob", () => {
   const at = RENDER.indexOf("const editUnion = (g: TagUnion");
   const body = RENDER.slice(at, at + 3200);
+  const fly = RENDER.slice(at, RENDER.indexOf("// BROWSE FILES", at));
   assert.ok(body.includes('ops.push({ op: "addMember", tid: g.localId, sids: edit.add.slice() });'), "a local add is an addMember by the tag's stored id");
   assert.ok(body.includes('ops.push({ op: "removeMember", tid: g.localId, sids: edit.remove.slice() });'), "a local remove is a removeMember by id");
   assert.doesNotMatch(body, /op: "(?:addMember|removeMember|rename|recolor|delete)", name:/, "no op but create carries a tag name");
@@ -161,8 +167,9 @@ test("pins: the Tags flyout's local edits are targeted ops on ONE optimistic blo
     "the move: two edits on one blob — the strip never shows the half-moved state");
   assert.match(RENDER, /\{ op: "move", tid_from: rem\.tid, tid_to: add\.tid, sid: id \}/,
     "…posted as ONE atomic op when both tags are local (both halves land or neither)");
-  assert.match(RENDER, /postTagEdit\(nv, \{ op: "create", name, color, sids: \[id\] \}\);/,
-    "New tag… is ONE create carrying the session — the tag and its first member land together; the kernel mints the id");
-  const fly = RENDER.slice(at, RENDER.indexOf("// HOVER-INTENT open", at));
+  assert.match(RENDER, /postTagEdit\(nv, \{ op: "create", name, color, sids: \[id\] \}, tg\.id\);/,
+    "New tag… is ONE create carrying the session — the tag and its first member land together; the kernel mints the id (the placeholder rides along for the legacy path's re-id)");
+  assert.match(fly, /if \(e2\.key !== "Enter"\) return;\s*\n\s*if \(createInFlight\(viewsWrites\)\) return;/, "one create at a time: Enter is ignored while one is in flight");
+  assert.match(fly, /nrow\.appendChild\(inp\);\s*\n\s*tagsFlyNewInput = inp; syncNewTagInput\(\);/, "the input renders disabled when a create is already in flight");
   assert.doesNotMatch(fly, /postViews\(/, "no whole-blob write anywhere in the flyout's tag edits");
 });

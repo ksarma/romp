@@ -3005,8 +3005,15 @@ class TimelinePanel {
     ni.placeholder = 'new tag…'; ni.maxLength = 40;
     ni.setAttribute('style', 'width:90px;background:' + INPUT_BG + ';color:' + INPUT_FG + ';border:1px solid ' + HAIRLINE + ';'
       + 'border-radius:9px;padding:1px 7px;font:inherit;font-size:0.82em;');
+    if (draft) ni.value = draft.value;
+    // one create at a time: while one is in flight the input is disabled and says so; the ack's
+    // repaint re-arms it (a second Enter before the ack made a second tag)
+    if (this._createInFlight()) { ni.disabled = true; ni.placeholder = 'creating…'; }
+    ni.addEventListener('input', () => {
+      this._tagNewDraft = { key, value: ni.value, selStart: ni.selectionStart, selEnd: ni.selectionEnd };
+    });
     ni.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter' || !ni.value.trim()) return;
+      if (e.key !== 'Enter' || !ni.value.trim() || ni.disabled || this._createInFlight()) return;
       const nv = JSON.parse(JSON.stringify(this._curViews()));
       const used = new Set(viewTags(nv).map((t) => t.color));
       const color = (this._palette || []).find((c) => !used.has(c)) || (this._palette || [])[0] || '#1EA1EB';
@@ -3016,7 +3023,8 @@ class TimelinePanel {
       const tg = { id: 'pending-' + Date.now().toString(36), name: ni.value.trim().slice(0, 40), color, members: rowIds.slice() };
       nv.tags = viewTags(nv).concat([tg]);
       delete nv.groups;
-      this._tagAddFor = null;
+      this._tagAddFor = null; this._tagNewDraft = null; this._tagNewInput = null;
+      ni.disabled = true; ni.placeholder = 'creating…';
       // ONE targeted create carrying the first members — the tag and its membership land together
       this._postTagEdit(nv, { op: 'create', name: tg.name, color, sids: rowIds.slice() }, { name: tg.name }); rebuild();
     });
@@ -3117,6 +3125,12 @@ class TimelinePanel {
     this._viewsWrites.push(Object.assign({ id: writeId, name: '', op: edit.op, edit }, meta || {}));
     try { window.__rompTimelineTagEdit(writeId, edit); } catch (e) { /* the host hook threw — the ack never comes; the reconnect's caps frame clears what is left in flight */ }
     this.draw();
+  }
+
+  // a create is in flight: the gate on a second [+ New tag] or new-tag Enter before the first is
+  // answered (round 3 of the 2026-09-05 review: two clicks before the ack made two tags)
+  _createInFlight() {
+    return this._viewsWrites.some((w) => w.edit && w.edit.op === 'create');
   }
 
   _mintWriteId() {
@@ -3668,14 +3682,23 @@ class TimelinePanel {
             }
           }
         }
-        // [+ New tag] — the table's final row, at the dialog's own scale
+        // [+ New tag] — the table's final row, at the dialog's own scale. While a create is in flight
+        // the row reads "creating…" and takes no click (round 3 of the 2026-09-05 review: a second
+        // click before the ack made a second tag); the ack's repaint brings the button back.
         const ntRow = tgrid.createDiv();
         ntRow.setAttribute('style', 'grid-column:1 / -1;');
+        if (this._createInFlight()) {
+          const busy = ntRow.createSpan({ text: 'creating…' });
+          busy.setAttribute('style', 'display:inline-flex;align-items:center;justify-content:center;padding:1px 9px;'
+            + 'border-radius:5px;border:1px solid ' + OUTLINE_FG + ';color:' + MENU_FG + ';opacity:0.45;cursor:default;background:transparent;');
+          busy.setAttribute('aria-disabled', 'true');
+        } else {
         const ntBtn = ntRow.createSpan({ text: '+ New tag' });
         ntBtn.setAttribute('style', 'display:inline-flex;align-items:center;justify-content:center;padding:1px 9px;'
           + 'border-radius:5px;border:1px solid ' + OUTLINE_FG + ';color:' + MENU_FG + ';opacity:0.7;cursor:pointer;background:transparent;');
         hover(ntBtn, 'background:' + HOVER_BG + ';opacity:1;', 'background:transparent;opacity:0.7;');
         ntBtn.addEventListener('click', () => {
+          if (this._createInFlight()) return;   // a click that beat the repaint
           const used = new Set(viewTags(v).map((t) => t.color));
           const color = (this._palette || []).find((c) => !used.has(c)) || (this._palette || [])[0] || '#1EA1EB';
           // a TARGETED create the KERNEL names and ids: the ack returns the minted tid and name, and
