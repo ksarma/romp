@@ -360,21 +360,30 @@ restarting the manager (`romp-service install`); a missing file is a no-op.
 ### What survives a restart
 
 A kernel restart (`romp refresh`, the manager's restart-all, a crash respawn)
-never touches the processes a session started: tmux servers, `setsid` children
-and other background work keep running, and the session resumes with its
-history. A service restart is different. `systemctl --user restart
-romp-manager`, or the machine's own service management, kills everything in the
-service's cgroup, and by default every process a session ever started is in it.
-So on Linux under systemd Romp runs each session's CLI, and the default tmux
-server the manager starts, in a transient systemd scope of its own
+ends every session's CLI: the drain closes each one, and a CLI still running
+when the drain's bound expires gets SIGTERM, then SIGKILL. The CLI's own
+harness background tasks (its timers, monitors and background shells) end with
+it, as they always have. The session resumes with its history and is told what
+was cut: its in-flight turn, if it had one, and each background task. A kernel
+restart has never touched work a session deliberately detached: tmux servers,
+`setsid` children and other processes that outlive their shell.
+
+A service restart (`systemctl --user restart romp-manager`, or the machine's
+own service management) kills everything in the service's cgroup, so on Linux
+under systemd Romp runs each session's CLI, and the default tmux server the
+manager starts, in a transient systemd scope of its own, outside that cgroup
 (`systemctl --user list-units 'romp-session-*' 'romp-tmux-*'` lists them). A
-session's tmux servers, `setsid` children and other background work then live
-in the session's scope, not the service's, and a service restart leaves them
-alive. A CLI that outlives its kernel (a hard kill, or now a service restart)
-is reaped at the next kernel boot: the reaper treats an SDK-driven CLI holding
-one of the kernel's sessions whose parent is not a live romp kernel as
-orphaned. Under `systemd --user` an orphan re-parents to the user manager, not
-to pid 1, so a ppid check alone would miss it and did, before 2026-09-05.
+session's tmux servers, `setsid` children and other detached work live in the
+session's scope, and a service restart leaves them alive as a kernel restart
+does; before 2026-09-05 they were in the service's cgroup and died with it. The
+CLI itself still ends: the kernel receives the service's SIGTERM and runs the
+same drain. A scoped CLI outlives a service restart only when the drain does not
+reach it: a kernel killed before its drain finishes (SIGKILL at the service's
+stop timeout), or a CLI the drain could not find. The reaper handles that case:
+at the next kernel boot, an SDK-driven CLI holding one of the kernel's sessions
+whose parent is not a live romp kernel is treated as orphaned and terminated.
+Under `systemd --user` an orphan re-parents to the user manager, not to pid 1,
+so a ppid check alone would miss it and did, before 2026-09-05.
 
 One-time caveat when this lands: the first service restart after it still
 empties the current cgroup, tmux servers included, because the running manager
