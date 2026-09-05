@@ -54,16 +54,27 @@ follow-up header rendering as a soup of 0.74/0.78/0.9em fragments.
 ### Menus and dropdowns wear ONE vocabulary (user rule, 2026-08-09)
 Every dropdown on every romp surface — the chat tab context menu, the statusline
 meta menus, the timeline's lane gear + model/effort pickers, and any future one —
-wears the same skin: `#252526` card, `rgba(255,255,255,0.12)` hairline border, 6px
-radius, `0 4px 12px rgba(0,0,0,0.35)` shadow, 12px romp sans, sub-lines `0.82em`
-at 0.6 opacity, and the `#1EA1EB` ✓-in-circle current mark. The chat pane's
-`.ctx-menu`/`.meta-menu` (`ui/webview/styles.css`) is the reference spec; the
-timeline inlines the same values as `MENU_STYLE`/`MENU_CHECK_STYLE` in
-`ui/romp-timeline-view.js`. A surface that cannot load styles.css (the timeline
-also runs inside Obsidian) MUST declare `font-family` explicitly — an adopted
-element inherits the host app's font otherwise, which is exactly how the timeline
-gear menu drifted off-brand (triggered 2026-08-09: bluish `#1c2430` card, host
-font, its own radii and sub-sizes).
+wears the same skin, expressed through the menu TOKENS each theme defines
+(`ui/webview/styles.css` `:root` + `body.theme-light`, mirrored in `feed.css`):
+`--menu-bg` card, `--menu-fg` text, `--menu-border` hairline, `--menu-hover` row
+wash, `--radius-menu`, `--shadow-menu`, and the `--check-bg` ✓-in-circle current
+mark — plus 12px romp sans and sub-lines `0.82em` at 0.6 opacity (geometry, not
+theme). The DARK themes resolve those to the values the rule always named, byte
+for byte: `#252526` card, `rgba(255,255,255,0.12)` hairline, 6px radius,
+`0 4px 12px rgba(0,0,0,0.35)` shadow, `#cccccc` text, `#1EA1EB` ✓; the light
+theme resolves them in its own palette (cream card, clay ✓). Never write those
+hex values into a menu rule or inline menu string except as a `var()` FALLBACK
+(a file:// harness or a foreign host loads no sheet) — the 2026-09-02 light-mode
+bug was exactly that: pickers hardcoding the dark card stayed dark, and the theme
+select's own options were unreadable (`menu-theme-tokens.test.ts` bans it). The
+chat pane's `.ctx-menu`/`.meta-menu` is the reference spec; the timeline inlines
+the RESOLVED twin as `MENU_STYLE`/`MENU_CHECK_STYLE` from its `PAL_DARK`/`PAL_LIGHT`
+palettes in `ui/romp-timeline-view.js`, because a surface that cannot load
+styles.css (the timeline also runs inside Obsidian) has no vars to read — and it
+MUST declare `font-family` explicitly there: an adopted element inherits the host
+app's font otherwise, which is exactly how the timeline gear menu drifted
+off-brand (triggered 2026-08-09: bluish `#1c2430` card, host font, its own radii
+and sub-sizes).
 
 ### The accent color is light blue `#9cd2ff` — use `var(--accent)`
 The romp accent is light blue `#9cd2ff` (`--accent` in `ui/webview/styles.css`, with

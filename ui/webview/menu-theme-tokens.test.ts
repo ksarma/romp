@@ -1,6 +1,6 @@
 // T226 (the user 2026-09-02, screenshot: in the light theme the settings' Theme select opened a
 // near-black card with dark-on-dark options — the way back to dark was unreadable). The menu
-// vocabulary (CLAUDE.md "Menus and dropdowns wear ONE vocabulary") had been pinned as LITERAL hex
+// vocabulary (ui/CLAUDE.md "Menus and dropdowns wear ONE vocabulary") had been pinned as LITERAL hex
 // in every inline menu string (the settings pickers, the tag menu), so the light block could never
 // reach it. The skin is TOKENS now — --menu-bg / --menu-fg / --menu-border / --menu-hover beside the
 // existing --radius-menu / --shadow-menu / --check-bg — defined in both theme blocks of both
@@ -170,8 +170,9 @@ test("the ✓ mark is themed through --check-bg on every surface: dark #1EA1EB, 
   }
 });
 
-test("the CLAUDE.md rule names the tokens and keeps the hex as the dark theme's values", () => {
-  const md = fs.readFileSync(path.resolve(process.cwd(), "..", "CLAUDE.md"), "utf8");
+test("the ui/CLAUDE.md rule names the tokens and keeps the hex as the dark theme's values", () => {
+  // the UI design rules live in ui/CLAUDE.md here (the root file points at it)
+  const md = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "CLAUDE.md"), "utf8");
   const rule = slice(md, "### Menus and dropdowns wear ONE vocabulary", "The romp accent is light blue");
   for (const tok of ["--menu-bg", "--menu-fg", "--menu-border", "--menu-hover", "--radius-menu", "--shadow-menu", "--check-bg"])
     assert.ok(rule.includes("`" + tok + "`"), "the rule names " + tok);
