@@ -371,12 +371,12 @@ bill another key, and `--cycle` moves the running ones onto it. **This fork
 refuses the rewrite.** The installation keeps API keys out of files: the
 sessions' key reaches Claude Code through its `apiKeyHelper`, the manager's
 own key reaches the manager through its environment, and `service.env`
-carries no key line — so there is nothing for a swap to rewrite, and a tool
-that wrote one would be the file the rule forbids. `romp keyswap <name>` exits
+carries no key line. There is nothing for a swap to rewrite, and a tool that
+wrote one would create the file the rule forbids. `romp keyswap <name>` exits
 2 with that message, reads and writes nothing, and has no flag that lets it
-through. (The kernel still reads a key line from `service.env` live where an
-installation keeps one there; the fork only refuses the command that writes
-one.)
+through. The kernel still reads a key line from `service.env` at every launch
+where an installation keeps one there; the fork refuses only the command that
+writes one.
 
 What remains is the rotation tool:
 
@@ -384,51 +384,50 @@ What remains is the rotation tool:
     romp keyswap --cycle-all           # after a rotation: reconnect every quiet session
     romp keyswap --cycle web,api       # …or only these
 
-A running CLI keeps the credential its process started with. So after you
-rotate the key at its source, the sessions need a new process: `--cycle-all`
-(or `--cycle <session,…>`) reconnects each quiet session — the same mechanism
-a reasoning-effort or billing switch uses, so the conversation resumes with
-its history intact — and the new process runs the `apiKeyHelper` again. The
-manager never restarts, so no session loses an open turn. Per session the
-command reports one of:
+A running CLI keeps the credential its process started with, so after you
+rotate the key at its source the sessions need a new process. `--cycle-all`
+(or `--cycle <session,…>`) reconnects each quiet session, and the new process
+runs the `apiKeyHelper` again. The reconnect is the same mechanism a
+reasoning-effort or billing switch uses: the conversation resumes with its
+history intact, and the manager never restarts, so no session loses an open
+turn. Per session the command reports one of:
 
 * `reconnecting now — the kernel hands it no key; its new process re-runs the
-  apiKeyHelper …` — the case on this installation. There is no fingerprint
-  for the kernel to converge on (it never sees the helper's value), so run
-  the cycle once per rotation rather than until every session reads
-  `current`;
-* `reconnecting now — history kept` / `already on this key` — a session the
+  apiKeyHelper …`: the case on this installation. The kernel never sees the
+  helper's value, so it has no fingerprint to converge on. Run the cycle once
+  per rotation, not until every session reads `current`.
+* `reconnecting now — history kept` or `already on this key`: a session the
   kernel launched on a key it read itself (an installation with a key in
-  `service.env`); repeated runs converge to `current` there;
-* `skipped: bills the machine login, not the key` — its CLI reported the
-  login; a reconnect would cost a turn for nothing;
-* `not running — its next launch reads the new key`;
-* `skipped: a turn, subagents or background tasks are in flight` — a
-  reconnect would kill that work; re-run once it is quiet.
+  `service.env`). Repeated runs converge to `current` there.
+* `skipped: bills the machine login, not the key`: its CLI reported the login,
+  so a reconnect would cost a turn for nothing.
+* `not running — its next launch reads the new key`.
+* `skipped: a turn, subagents or background tasks are in flight`: a reconnect
+  would kill that work. Re-run once the session is quiet.
 
-`romp refresh --quiet` is the alternative that restarts everything: the manager comes back once
-the sessions are quiet, so every process is new.
+`romp refresh --quiet` is the alternative that restarts everything: the
+manager comes back once the sessions are quiet, and every process is new.
 
 No key value is ever printed, logged, or sent over a socket. The only rendered
-form is the first 12 hex of its sha256 — `sha256:1a2b3c4d5e6f` — in the
+form is the first 12 hex of its sha256 (`sha256:1a2b3c4d5e6f`), in the
 command's output, in the Log panel when the kernel's key changes, and in the
-kernel's own answer to `--cycle`. The bare command compares the kernel's
+kernel's answer to `--cycle`. The bare command compares the kernel's
 fingerprint with the file's and says `MISMATCH` when they differ; on this
 installation both read `(none)`.
 
 Remote kernels are cycled from their own machine. `ROMP_SERVICE_ENV_FILE`
-overrides the path of the env file the kernel reads; a kernel started before
-this feature has no `/keycycle` route and says so — take the update once with
+overrides the path of the env file the kernel reads. A kernel started before
+this feature has no `/keycycle` route and says so; take the update once with
 `romp refresh` (or `romp refresh --quiet`).
 
-A guard for the rule itself: at start the kernel reads the env file, and if it
-carries a credential-shaped line (`ANTHROPIC_API_KEY`, any `*_API_KEY`, any
-`*_TOKEN` with a value) while `ROMP_EXPECTED_AUTH` declares the box's auth
-(`key` — the `apiKeyHelper` design above — or `login`), it logs one problem
-line naming the file and the variable name, never the value: a key in that
-file would be injected at launch and take over billing from the declared
-auth. With no declaration nothing is said, which is upstream's ordinary
-file-key installation.
+The kernel also guards the rule at start. If the env file carries a
+credential-shaped line (`ANTHROPIC_API_KEY`, any `*_API_KEY`, any `*_TOKEN`
+with a value) while `ROMP_EXPECTED_AUTH` declares the box's auth (`key`, the
+`apiKeyHelper` design above, or `login`), it logs one problem line naming the
+file and the variable name, never the value. A key in that file would be
+injected at launch and take over billing from the declared auth. With no
+declaration nothing is said; that is upstream's ordinary file-key
+installation.
 
 ## The API-health signal
 
