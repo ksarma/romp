@@ -2065,19 +2065,34 @@ SDK_STDERR_PLACEHOLDER = "Check stderr output for details"
 STDERR_TAIL_LINES = 40
 
 
+def _without_scope_fallback_notices(text: str) -> str:
+    """`text` less every line of the scope wrapper's fallback notice (CLI_SCOPE_FALLBACK_PREFIX). On a
+    fallback launch that notice is the FIRST line of the CLI's stderr, about 230 characters of it, and
+    _note_cli_scope_fallback logged it the moment it arrived; left in, it led the launch-error card of a
+    CLI that then failed at start and pushed the CLI's own reason past the card's 600-character cut. The
+    wrapper's exit-127 refusal (CLI_SCOPE_REFUSAL_PREFIX) is kept: it IS that launch's reason, and
+    nothing else reports it."""
+    return "\n".join(ln for ln in text.splitlines() if not ln.startswith(CLI_SCOPE_FALLBACK_PREFIX))
+
+
 def launch_failure_text(exc: BaseException, tail: str = "") -> str:
     """The most SPECIFIC human text a failed CLI launch carries. The SDK's ProcessError keeps the CLI's
     own stderr on the exception (the class that actually names the cause); `tail` is what romp captured
     off the child's stderr itself, used when the exception carries only the SDK's placeholder; everything
-    else falls back to the exception's own text. Truncated, since a stderr dump can run long and this
-    lands in a chat card."""
+    else falls back to the exception's own text. The scope wrapper's fallback notice is dropped from
+    every captured stderr part first (_without_scope_fallback_notices: the log already has it, and it
+    crowded the CLI's reason out). Truncated, since a stderr dump can run long and this lands in a chat
+    card."""
     parts = []
     for attr in ("stderr", "stdout"):
         v = getattr(exc, attr, None)
         if isinstance(v, bytes):
             v = v.decode("utf-8", "replace")
-        if isinstance(v, str) and v.strip() and SDK_STDERR_PLACEHOLDER not in v:
-            parts.append(v.strip())
+        if isinstance(v, str) and SDK_STDERR_PLACEHOLDER not in v:
+            v = _without_scope_fallback_notices(v)
+            if v.strip():
+                parts.append(v.strip())
+    tail = _without_scope_fallback_notices(tail)
     if tail.strip():
         parts.append(tail.strip())
     parts.append(("%s: %s" % (type(exc).__name__, exc)).strip())
