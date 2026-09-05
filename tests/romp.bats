@@ -547,7 +547,7 @@ MOCK
     touch "$MOCK_LOG"
     run run_romp new -t --in pool ideabox
     [ "$status" -eq 2 ]
-    [[ "$output" == *"--in needs the default (SDK) session"* ]]
+    [[ "$output" == *"--in needs an SDK or Codex session; a terminal session cannot join a group"* ]]
     [[ "$output" == *"romp tag pool --add ideabox"* ]]
     [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
     run run_romp help
@@ -1812,6 +1812,35 @@ PY
     [ "$status" -eq 2 ]
     [[ "$output" == *"need the default (SDK) session"* ]]
     [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
+}
+
+@test "new --env/--no-env on a Codex spawn refuses loudly, naming the door (--codex or the engine default), and dials no kernel" {
+    # the kernel refuses env on a Codex create too, but with a raw JSON body; the CLI's guard has the
+    # --model/--effort shape and resolves the EFFECTIVE backend, so the machine default counts exactly
+    # like an explicit --codex. An SDK default is untouched: the same flag rides /new as before.
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    unset ROMP_STATE_DIR                 # the CLI reads default-backend under XDG_STATE_HOME (hermetic here)
+    run run_romp new --codex --env FEATURE_FLAG=1 x
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--env/--no-env need an SDK session"* ]]
+    [[ "$output" == *"--codex makes this a Codex one"* ]]
+    [[ "$output" == *"takes no per-session environment"* ]]
+    run run_romp new --codex --no-env x
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--codex makes this a Codex one"* ]]
+    mkdir -p "$XDG_STATE_HOME/romp"
+    printf 'codex\n' > "$XDG_STATE_HOME/romp/default-backend"
+    run run_romp new --env FEATURE_FLAG=1 x
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"this machine's \`romp engine codex\` default makes this a Codex one"* ]]
+    [[ "$output" != *"--codex makes"* ]]
+    [ "$(grep -c '/new' "$MOCK_LOG")" -eq 0 ]
+    printf 'sdk\n' > "$XDG_STATE_HOME/romp/default-backend"
+    run run_romp new --env FEATURE_FLAG=1 x
+    [ "$status" -eq 0 ]
+    grep '/new' "$MOCK_LOG" | grep -q 'FEATURE_FLAG'
 }
 
 @test "new: help names --env (the same presence guard as --model/--effort)" {
