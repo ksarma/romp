@@ -9,7 +9,7 @@ and killing every subagent. Now:
     `sdk_backend.work_api_key` prefers it, falling back to the startup claim;
   * `_options` therefore injects the CURRENT key into every session it launches or revives;
   * `romp keyswap <name>` — upstream's rewrite of that one line from a sibling file — is REFUSED on
-    this fork (the user 2026-09-05: keys never live in files here; see tests/test_keyswap_refusal.py).
+    this fork (the user 2026-09-05: this fork does not write API keys to files; see tests/test_keyswap_refusal.py).
     The file layer below is upstream's module, carried unchanged and no longer called by the CLI;
   * `--cycle`/`--cycle-all` reconnect running sessions through `SdkBackend.cycle_key` so they
     re-present the new key with their conversations intact.
