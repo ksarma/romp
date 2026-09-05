@@ -11,7 +11,7 @@ Two kinds of document live here, and **each file's status header says which it i
   user has deliberately parked to revisit — nothing in them is scheduled, and nothing
   should be built from them unbidden. Currently: `cards-attention-rethink.md` and
   `nudge-awaiting-lift-race.md` (which the user has since ruled are one project — a
-  wait-taxonomy — to be re-planned together when revived), and `boot-visibility-card.md`
+  wait-taxonomy — to be re-planned together when revived), `boot-visibility-card.md`
   (parked 2026-08-15 as a long-term consideration; its notes on the boot reconcile's
   existing recovery behavior are current as of filing), and `file-review.md`
   (2026-09-05: a build plan for a review mode in the file viewer, awaiting the user's
