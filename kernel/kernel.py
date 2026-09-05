@@ -1101,6 +1101,18 @@ def _models_api_credential():
     designated for nothing here and is left alone. A login-only box (Claude Code's OAuth, no key) has
     no HTTP credential the kernel can borrow: the refresh says so once and serves the seed — the CLI's
     own alias table still tracks each family's newest there."""
+    # The command source's set first (2026-09-05): its ANTHROPIC_LP_API_KEY line is the direct-call
+    # key on an installation that keeps every credential out of files and out of the manager's
+    # environment. Read through the judges' wire (jd._ENV_SET_FN → sdk_backend.credential_set), so
+    # like the work key it is never read here before the backend exists; {} in file mode.
+    setfn = getattr(jd, "_ENV_SET_FN", None)
+    if setfn is not None:
+        try:
+            lp = (setfn() or {}).get("ANTHROPIC_LP_API_KEY") or ""
+        except Exception:
+            lp = ""
+        if lp.strip():
+            return ("x-api-key", lp.strip())
     lp = (os.environ.get("ANTHROPIC_LP_API_KEY") or "").strip()
     if lp:
         return ("x-api-key", lp)
@@ -11139,6 +11151,11 @@ def _sdk_locked():
             # the unwired judges inherited the post-claim env on a login-less host and every call
             # refused "Not logged in" for 13 hours while the cards sat parked in Working).
             jd._WORK_KEY_FN = sbmod.work_api_key
+            # The command source's set (kernel/envsource.py, 2026-09-05) reaches the judges and the
+            # catalog fetch through the same kind of wire: the set for a call's environment (minus the
+            # key, which rides the billing decision), and the invalidation a credential refusal fires.
+            jd._ENV_SET_FN = sbmod.credential_set
+            jd._ENV_INVALIDATE_FN = sbmod.credential_invalidate
             # T222: the live model catalog — the last fetched list installs before any picker asks,
             # then the BOOT event refreshes it (async; the key is claimable from here on)
             try:
@@ -37645,7 +37662,13 @@ class Handler(BaseHTTPRequestHandler):
                 # re-read it. So the door cannot be used to point a session at a key of the caller's
                 # choosing, and the response carries only a FINGERPRINT (sha256 head) so the caller can
                 # confirm that the kernel reads what it just wrote without either side printing a key.
-                # Body: {"sessions": [<id-or-name>…]} or {"all": true}.
+                # Body: {"sessions": [<id-or-name>…]} or {"all": true}, plus "refresh": true to make the
+                # kernel re-run its credential command FIRST (the command source, kernel/envsource.py;
+                # a plain re-read in file mode) — `romp keyswap --refresh`, and the first step of every
+                # cycle there. The answer adds keySource ("file"|"command"), keyErr (why there is no
+                # fingerprint, or the last run's failure; ""), launched ({fingerprint: live sessions on
+                # it}), refreshed ({"from","to"} when asked) and each row's `from` (the fingerprint its
+                # CLI launched on) — fingerprints and reasons with counts, never a value.
                 try:
                     b = json.loads(raw_body or b"{}")
                 except Exception:
@@ -37655,7 +37678,19 @@ class Handler(BaseHTTPRequestHandler):
                 if be is None:
                     return self._send(503, json.dumps({"ok": False, "error": "no SDK backend"}),
                                       "application/json")
+                refreshed = None
+                if b.get("refresh"):
+                    fn = getattr(be, "refresh_key_source", None)
+                    if fn is not None:
+                        try:
+                            refreshed = fn()
+                        except Exception as e:
+                            refreshed = {"error": str(e)[:80]}
                 keyfp = _work_key_fp()
+                try:
+                    kstat = getattr(be, "key_source_status", lambda: {})() or {}
+                except Exception as e:
+                    kstat = {"err": "status failed: %s" % str(e)[:80]}
                 rows = []
                 if b.get("all"):
                     # every LIVE SDK session: the dormant ones need nothing (their next launch reads
@@ -37670,14 +37705,22 @@ class Handler(BaseHTTPRequestHandler):
                                           "application/json")
                     who_list = [(str(w), _sid_of(str(w))) for w in raw if str(w or "").strip()]
                 for who, sid in who_list:
+                    live = (getattr(be, "sessions", None) or {}).get(sid)
+                    frm = str(getattr(live, "_launched_key_fp", "") or "") if live is not None else ""
                     try:
                         status = be.cycle_key(sid)
                     except Exception as e:
                         status = "error: %s" % str(e)[:80]
-                    rows.append({"session": _name_of(sid) or who, "status": status})
+                    rows.append({"session": _name_of(sid) or who, "status": status, "from": frm})
                 if any(r["status"] == "cycling" for r in rows):
                     _push_soon()                      # something changed; a fingerprint READ ({"sessions": []}) did not
-                return self._send(200, json.dumps({"ok": True, "keyFp": keyfp, "rows": rows}),
+                return self._send(200, json.dumps({"ok": True, "keyFp": keyfp, "rows": rows,
+                                                   "keySource": kstat.get("source") or "file",
+                                                   "keyErr": kstat.get("err") or "",
+                                                   "launched": kstat.get("launched") or {},
+                                                   "setFp": kstat.get("setFp") or "",
+                                                   "selector": kstat.get("selector") or "",
+                                                   "refreshed": refreshed}),
                                   "application/json")
             if u.path in ("/interrupt", "/end"):
                 # Headless session control (2026-07-05): interrupt/end existed ONLY as WS drive ops, so

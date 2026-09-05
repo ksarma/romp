@@ -402,6 +402,15 @@ class AuthErrorClass(unittest.TestCase):
                      "You've reached your Fable 5 limit", ""):
             self.assertFalse(km._is_auth_error(text), text)
 
+    def test_the_backends_launch_classifier_mirrors_the_kernels(self):
+        # sdk_backend loads standalone, so is_auth_failure_text is a copy of _is_auth_error, not an
+        # import — the two must agree on every string that matters (each may only ever grow looser together)
+        for text in ("Not logged in · Please run /login", "Failed to authenticate. API Error: 401 API key is invalid.",
+                     "invalid x-api-key", "OAuth token has expired", "oauth token revoked",
+                     'API Error: 401 {"type":"error","error":{"type":"authentication_error"}}',
+                     "500 server_error", "Request timed out", "prompt is too long", "", None):
+            self.assertEqual(sb.is_auth_failure_text(text), km._is_auth_error(text), repr(text))
+
     def test_it_is_an_on_you_class_end_to_end(self):
         import inspect
         # the classification lives in _api_error_scan since the tail-window split; _api_error is the
@@ -412,6 +421,91 @@ class AuthErrorClass(unittest.TestCase):
         feed = inspect.getsource(km.build_feed)
         self.assertIn('aerr.get("authErr") or aerr.get("refusal"))))', feed, "the card floors to needs-you")
         self.assertIn("sign-in or API key isn't working", feed, "the card names the real remedy")
+
+
+class CredentialRefusalInvalidates(_OptionsHarness):
+    """In COMMAND mode (kernel/envsource.py, 2026-09-05) a credential refusal on a session — a 401
+    give-up on a turn, a CLI refused to start as unauthenticated — is the event that makes the
+    command's cached set stale: the next launch re-runs it. In file mode there is nothing cached, so
+    the same events do nothing. A synthetic command script in a temp dir; no value is key-shaped."""
+
+    KEY = ""
+
+    def setUp(self):
+        import uuid
+        es = sb._envsrc
+        self.lab = tempfile.mkdtemp()
+        self._cmd_before = {v: os.environ.get(v) for v in es.CONFIG_VARS + ("CLAUDE_CONFIG_DIR",)}
+        os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(self.lab, "claude")
+        os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = os.path.join(self.lab, "selector")
+        cmd = os.path.join(self.lab, "cmd.sh")
+        with open(cmd, "w") as fh:
+            fh.write("#!/bin/sh\necho 'A_TOKEN=romp-test-fixture-%s'\n" % uuid.uuid4().hex)
+        os.chmod(cmd, 0o700)
+        os.environ["ROMP_CREDENTIAL_COMMAND"] = cmd
+        es._reset()
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        for v, was in self._cmd_before.items():
+            if was is None:
+                os.environ.pop(v, None)
+            else:
+                os.environ[v] = was
+        sb._envsrc._reset()
+
+    def _result(self, status):
+        from types import SimpleNamespace
+        return SimpleNamespace(is_error=status is not None, api_error_status=status, parent_tool_use_id=None)
+
+    def test_a_401_give_up_invalidates_the_set(self):
+        es = sb._envsrc
+        s = self._sess(1, auth="login")
+        self._options_kw(s)
+        runs = es._runs
+        s._ah_note_result(self._result(500))
+        self._options_kw(self._sess(2, auth="login"))
+        self.assertEqual(es._runs, runs, "a 500 is not a credential event")
+        s._ah_note_result(self._result(401))
+        self.assertEqual(es._runs, runs, "invalidation runs nothing by itself")
+        self._options_kw(self._sess(3, auth="login"))
+        self.assertEqual(es._runs, runs + 1, "the next launch re-runs the command")
+        self.assertTrue(any("authentication failure (HTTP 401 on a turn)" in p["text"] or
+                            "authentication failure (HTTP 401 on a turn)" in str(p) for p in
+                            [{"text": m} for m in self._logs()]), self._logs())
+
+    def _logs(self):
+        # the harness constructs the backend without a log callback; the problem ring is not fed by an
+        # info line, so re-construct one with a capture for the log assertion
+        logs = []
+        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None, log=logs.append)
+        s = sb.SdkSession(be, {"sid": "11111111-2222-3333-4444-000000000009", "name": "s9", "cwd": "/tmp"})
+        be._credential_auth_failed(s, "HTTP 401 on a turn")
+        return logs
+
+    def test_a_launch_refused_as_unauthenticated_invalidates_the_set(self):
+        es = sb._envsrc
+        s = self._sess(1, auth="login")
+        self._options_kw(s)
+        runs = es._runs
+        self.be._record_launch_error(s, RuntimeError("the CLI exited 1"))
+        self._options_kw(self._sess(2, auth="login"))
+        self.assertEqual(es._runs, runs, "an ordinary launch failure is not a credential event")
+        self.be._record_launch_error(s, RuntimeError("Not logged in · Please run /login"))
+        self._options_kw(self._sess(3, auth="login"))
+        self.assertEqual(es._runs, runs + 1)
+
+    def test_file_mode_has_nothing_to_invalidate(self):
+        es = sb._envsrc
+        os.environ.pop("ROMP_CREDENTIAL_COMMAND")
+        es._reset()
+        s = self._sess(1, auth="login")
+        self._options_kw(s)
+        s._ah_note_result(self._result(401))
+        self.be._record_launch_error(s, RuntimeError("Not logged in"))
+        self._options_kw(self._sess(2, auth="login"))
+        self.assertEqual(es._runs, 0, "no command configured: nothing ran, nothing to re-run")
 
 
 class Availability(unittest.TestCase):

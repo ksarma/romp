@@ -24,6 +24,11 @@ saying why. The mechanics under test:
   * build_feed floors a latched session's focus card to needs-you wearing the
     "judgeAuth" story (source pins, the build_feed test pattern), and the feed
     bundle carries the chip.
+  * The command source's set (kernel/envsource.py, 2026-09-05) reaches a judge
+    call through a second wire (_ENV_SET_FN → sdk_backend.credential_set): merged
+    into the child env MINUS ANTHROPIC_API_KEY, which still rides the explicit
+    billing decision alone; a credential refusal fires _ENV_INVALIDATE_FN so the
+    kernel re-runs the command; the codex engine gets no ANTHROPIC_* name at all.
 
 Synthetic sids only; the fixture key is an invented string; no real key material.
 """
@@ -59,6 +64,8 @@ class _JudgeAuthBase(unittest.TestCase):
         self._env_before = os.environ.pop("ANTHROPIC_API_KEY", None)
         self._fn_before = jd._WORK_KEY_FN
         jd._WORK_KEY_FN = None
+        self._set_before = (jd._ENV_SET_FN, jd._ENV_INVALIDATE_FN)
+        jd._ENV_SET_FN = jd._ENV_INVALIDATE_FN = None
         jd._auth_cache[:] = [None, {}]
         jd.SDKDIR.mkdir(parents=True, exist_ok=True)
         for p in (jd.JUDGE_AUTH, jd.SDKDIR / (SID + ".json"),
@@ -70,6 +77,7 @@ class _JudgeAuthBase(unittest.TestCase):
 
     def tearDown(self):
         jd._WORK_KEY_FN = self._fn_before
+        jd._ENV_SET_FN, jd._ENV_INVALIDATE_FN = self._set_before
         os.environ.pop("ANTHROPIC_API_KEY", None)
         if self._env_before is not None:
             os.environ["ANTHROPIC_API_KEY"] = self._env_before
@@ -162,6 +170,72 @@ class JudgeEnvBilling(_JudgeAuthBase):
             self.assertEqual(jd._judge_env("index", "login", model="fable").get("MAX_THINKING_TOKENS"), "0")
         finally:
             os.environ.pop("TMUX", None)
+
+
+class CommandSetInJudgeEnv(_JudgeAuthBase):
+    """The command source's set in a judge call's environment: every name but the key rides the
+    overlay; the key rides the billing decision (through _work_key), never the overlay."""
+
+    SET = {"ANTHROPIC_API_KEY": "romp-test-fixture-set-key", "ANTHROPIC_LP_API_KEY": "romp-test-fixture-set-lp",
+           "A_TOKEN": "romp-test-fixture-set-role"}
+
+    def test_the_set_minus_the_key_is_merged_for_every_call(self):
+        jd._ENV_SET_FN = lambda: dict(self.SET)
+        for auth in ("login", "key"):
+            env = jd._judge_env("triage", auth)
+            self.assertEqual(env.get("ANTHROPIC_LP_API_KEY"), self.SET["ANTHROPIC_LP_API_KEY"], auth)
+            self.assertEqual(env.get("A_TOKEN"), self.SET["A_TOKEN"], auth)
+        self.assertNotIn("ANTHROPIC_API_KEY", jd._judge_env("triage", "login"),
+                         "a login-billed call never receives the command's key by inheritance")
+
+    def test_the_sets_key_reaches_a_key_billed_call_only_through_the_work_key_wire(self):
+        jd._ENV_SET_FN = lambda: dict(self.SET)
+        self.assertNotIn("ANTHROPIC_API_KEY", jd._judge_env("triage", "key"),
+                         "no work-key wire: the set alone hands a key-billed call no key (one door)")
+        jd._WORK_KEY_FN = lambda: self.SET["ANTHROPIC_API_KEY"]    # what the kernel wires: work_api_key reads the same set
+        self.assertEqual(jd._judge_env("triage", "key").get("ANTHROPIC_API_KEY"), self.SET["ANTHROPIC_API_KEY"])
+        self.assertEqual(jd._judge_auth(SID), "key", "…and the billing resolution sees the key through it")
+
+    def test_the_overlay_never_outranks_the_explicit_strip(self):
+        # a set that (wrongly) carried the key under another spelling is still merged as-is; the exact
+        # name ANTHROPIC_API_KEY is popped from the overlay AND from the inherited env
+        os.environ["ANTHROPIC_API_KEY"] = FAKE_KEY
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_API_KEY": "romp-test-fixture-other"}
+        env = jd._judge_env("index", "login")
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+
+    def test_no_wire_or_a_broken_wire_is_an_empty_overlay(self):
+        before = jd._judge_env("triage", "login")
+        jd._ENV_SET_FN = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        self.assertEqual(jd._judge_env("triage", "login"), before)
+        jd._ENV_SET_FN = lambda: None
+        self.assertEqual(jd._judge_env("triage", "login"), before)
+        self.assertEqual(jd._env_set(), {})
+
+    def test_a_credential_refusal_invalidates_the_set_and_a_transient_error_does_not(self):
+        fired = []
+        jd._ENV_INVALIDATE_FN = fired.append
+        run = JudgeRunLatchAndInjection("_run")
+        run.setUp()
+        try:
+            jd._ENV_INVALIDATE_FN = fired.append
+            run._run({"is_error": True, "result": "Overloaded, please retry"})
+            self.assertEqual(fired, [])
+            run._run({"is_error": True, "result": NOT_LOGGED_IN})
+            self.assertEqual(len(fired), 1)
+            self.assertIn("planner", fired[0], "the reason names the judge")
+            jd._ENV_INVALIDATE_FN = lambda r: (_ for _ in ()).throw(RuntimeError("boom"))
+            run._run({"is_error": True, "result": NOT_LOGGED_IN})   # a broken wire never breaks the latch path
+            self.assertIn(SID, jd._auth_down_map())
+        finally:
+            run.tearDown()
+
+    def test_the_codex_engine_gets_no_anthropic_name_at_all(self):
+        import inspect
+        src = inspect.getsource(jd._judge_run)
+        self.assertIn('if not k.startswith("ANTHROPIC_")', src,
+                      "another vendor's process: strip every ANTHROPIC_* name, not only the key")
+        self.assertNotIn('if k != "ANTHROPIC_API_KEY"', src)
 
 
 class AuthErrorClass(_JudgeAuthBase):
@@ -266,6 +340,14 @@ class KernelWiringAndFloorPins(unittest.TestCase):
     def test_the_kernel_wires_judges_to_the_one_key_claimer(self):
         import inspect
         self.assertIn("jd._WORK_KEY_FN = sbmod.work_api_key", inspect.getsource(self.km._sdk_locked))
+
+    def test_the_kernel_wires_the_command_set_and_its_invalidation_the_same_way(self):
+        import inspect
+        src = inspect.getsource(self.km._sdk_locked)
+        self.assertIn("jd._ENV_SET_FN = sbmod.credential_set", src)
+        self.assertIn("jd._ENV_INVALIDATE_FN = sbmod.credential_invalidate", src)
+        self.assertLess(src.index("jd._ENV_SET_FN = sbmod.credential_set"), src.index('_refresh_model_catalog("boot")'),
+                        "the boot catalog fetch runs with the set wired: its LP key is what it rides")
 
     def test_build_feed_floors_a_latched_session_yielding_to_the_live_floors(self):
         import inspect

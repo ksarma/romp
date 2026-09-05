@@ -383,13 +383,43 @@ class CredentialPolicy(unittest.TestCase):
             os.environ.pop(k, None)
         self._fn = getattr(jd, "_WORK_KEY_FN", None)
         jd._WORK_KEY_FN = None
+        self._setfn = getattr(jd, "_ENV_SET_FN", None)
+        jd._ENV_SET_FN = None
         self._stash = sb._WORK_KEY       # the claimer's process-lifetime stash: unclaimed, so a claim happens HERE
         sb._WORK_KEY = None
 
     def tearDown(self):
         sb._WORK_KEY = self._stash
         jd._WORK_KEY_FN = self._fn
+        jd._ENV_SET_FN = self._setfn
         _restore_env(self._env)
+
+    def test_the_command_sets_lp_key_comes_first(self):
+        # the command source (kernel/envsource.py, 2026-09-05): its ANTHROPIC_LP_API_KEY line is the
+        # direct-call credential on a box that keeps every credential out of files and out of the
+        # manager's environment — read through the judges' wire, ahead of anything in os.environ
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": " synthetic-set-lp-credential ", "A_TOKEN": "x"}
+        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-env-lp-credential"
+        jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-set-lp-credential"))
+
+    def test_a_set_without_an_lp_key_falls_to_the_environment_then_the_work_key(self):
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_API_KEY": "synthetic-set-work-credential", "A_TOKEN": "x"}
+        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-env-lp-credential"
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-env-lp-credential"))
+        os.environ.pop("ANTHROPIC_LP_API_KEY")
+        self.assertIsNone(km._models_api_credential(), "the set's work key is not read here: it rides the claimer")
+        jd._WORK_KEY_FN = lambda: "synthetic-set-work-credential"    # what the kernel wires in command mode
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-set-work-credential"))
+
+    def test_a_broken_or_empty_set_wire_changes_nothing(self):
+        jd._ENV_SET_FN = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-env-lp-credential"
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-env-lp-credential"))
+        jd._ENV_SET_FN = lambda: {}
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-env-lp-credential"))
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": "   "}
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-env-lp-credential"), "blank is absent")
 
     def test_the_lp_key_is_preferred_over_the_claimed_key(self):
         os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-lp-credential"

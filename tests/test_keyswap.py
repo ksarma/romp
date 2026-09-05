@@ -23,8 +23,16 @@ What these tests pin, in the order the feature is used:
   CycleReconnects — the apply half for already-running sessions.
   NothingLeaksTheKey — no key value in any log line, any printed line, or any wire payload; the
     only rendered form anywhere is the sha256 head.
+  CommandSourceLaunch / CommandBeatsFileAndStartup / CommandSourceFailure / NothingLeaksInCommandMode
+    — the COMMAND source (kernel/envsource.py, 2026-09-05): with ROMP_CREDENTIAL_COMMAND set the
+    kernel runs the command and merges the set it prints into every launch (ANTHROPIC_API_KEY only
+    where the session's auth says so), the mode wins over a file line and the startup claim, one run
+    serves a burst of connects, a failed run keeps the previous set with one problem line per
+    episode and never refuses a launch, and no value reaches a log line, the problem ring, the
+    api-health payload or the /keycycle answer.
 
-Synthetic keys only (`sk-ant-TEST-…`), synthetic sids, temp paths. No real key material, and the
+Synthetic keys only (`sk-ant-TEST-…`; the command-mode values are "romp-test-fixture-" + a uuid,
+assembled at run time), synthetic sids, temp paths. No real key material, and the
 module points the env-file path at its own temp dir so it can never read the machine's real one.
 """
 import json
@@ -32,6 +40,7 @@ import os
 import stat
 import tempfile
 import unittest
+import uuid
 from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -53,6 +62,12 @@ cli = SourceFileLoader("romp_keyswap_cli", os.path.join(BIN, "romp-keyswap")).lo
 # call under a different name would quietly give a second copy of it (with its own _CACHE).
 ks = sb._keysrc
 assert ks is cli.ks, "the CLI and the kernel must read the key through one module"
+es = sb._envsrc
+
+
+def fixture_value(tag=""):
+    return "romp-test-fixture-%s%s" % (tag + "-" if tag else "", uuid.uuid4().hex)
+
 
 OLD_KEY = "sk-ant-TEST-0000"
 NEW_KEY = "sk-ant-TEST-1111"
@@ -238,10 +253,7 @@ class _Backend(_EnvFile):
         sb._fetch_key_fast_org = lambda key: None      # never a real HTTPS GET from a test
         sb._FAST_ORG_VERDICTS.clear()
         self.logged = []
-        # NB `log=` is a keyword: the third positional is `notify`. A line reaches self.logged only
-        # through the log wire, which is what the no-leak tests below read.
-        self.be = sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None,
-                                log=lambda m: self.logged.append(str(m)))
+        self.be = self.construct()
         import sys
         import types
         self._fake_sdk = "claude_agent_sdk" not in sys.modules and not sb.sdk_importable()
@@ -260,12 +272,23 @@ class _Backend(_EnvFile):
         sb._FAST_ORG_VERDICTS.clear()
         super().tearDown()
 
+    def construct(self):
+        # NB `log=` is a keyword: the third positional is `notify`. A line reaches self.logged only
+        # through the log wire, which is what the no-leak tests below read.
+        return sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None,
+                             log=lambda m: self.logged.append(str(m)))
+
     def _sess(self, n=1, **reg):
         return sb.SdkSession(self.be, {"sid": "11111111-2222-3333-4444-%012d" % n,
                                        "name": "s%d" % n, "cwd": "/tmp", **reg})
 
     def _launch_env(self, n=1, **reg):
         return self.be._options(self._sess(n, auth="key", **reg), dict)["env"]
+
+    def _env_for(self, n, auth, **reg):
+        if auth:
+            reg["auth"] = auth
+        return self.be._options(self._sess(n, **reg), dict)["env"]
 
 
 class LiveSpawnEnv(_Backend):
@@ -802,9 +825,13 @@ class KeycycleRoute(unittest.TestCase):
         code, resp = self._with(fake, {"sessions": ["web", "api", "gone"]})
         self.assertEqual(code, 200)
         self.assertEqual(fake.asked, ["s-web", "s-api", "s-gone"])
-        self.assertEqual(resp["rows"], [{"session": "web", "status": "cycling"},
-                                        {"session": "api", "status": "login"},
-                                        {"session": "gone", "status": "dormant"}])
+        self.assertEqual(resp["rows"], [{"session": "web", "status": "cycling", "from": ""},
+                                        {"session": "api", "status": "login", "from": ""},
+                                        {"session": "gone", "status": "dormant", "from": ""}])
+        self.assertEqual(resp["keySource"], "file", "a backend without the key-source surface reads as file mode")
+        self.assertEqual(resp["keyErr"], "")
+        self.assertEqual(resp["launched"], {})
+        self.assertIsNone(resp["refreshed"])
 
     def test_all_covers_every_live_session_and_no_dormant_one(self):
         fake = self._Fake({"s-web": object(), "s-api": object()})
@@ -842,6 +869,68 @@ class KeycycleRoute(unittest.TestCase):
             code, body = self._post({"sessions": ["web"]})
             self.assertEqual([r["status"] for r in body["rows"]], ["cycling"])
             self.assertEqual(woke, [1], "a cycle does")
+
+    class _Live:
+        def __init__(self, fp):
+            self._launched_key_fp = fp
+
+    class _Full(_Fake):
+        """A backend with the key-source surface (SdkBackend has it; the _Fake above stands for one
+        that does not, so the route's getattr fallbacks are exercised too)."""
+
+        def __init__(self, sessions):
+            super().__init__(sessions)
+            self.calls = []
+
+        def key_source_status(self):
+            self.calls.append("status")
+            return {"source": "command", "fp": ks.fingerprint(NEW_KEY), "fpKind": "key", "err": "",
+                    "setFp": "0123456789ab", "selector": "hp",
+                    "launched": {ks.fingerprint(NEW_KEY): 2, ks.fingerprint(OLD_KEY): 1, "": 1}}
+
+        def refresh_key_source(self):
+            self.calls.append("refresh")
+            return {"from": ks.fingerprint(OLD_KEY), "to": ks.fingerprint(NEW_KEY), "err": ""}
+
+        def cycle_key(self, sid):
+            self.calls.append("cycle " + sid)
+            return super().cycle_key(sid)
+
+    def test_the_answer_carries_the_key_source_fields_and_each_rows_launch_fingerprint(self):
+        fake = self._Full({"s-web": self._Live(ks.fingerprint(OLD_KEY)), "s-api": self._Live("")})
+        code, resp = self._with(fake, {"sessions": ["web", "api", "gone"]})
+        self.assertEqual(code, 200)
+        self.assertEqual(resp["keySource"], "command")
+        self.assertEqual(resp["keyErr"], "")
+        self.assertEqual(resp["setFp"], "0123456789ab")
+        self.assertEqual(resp["selector"], "hp")
+        self.assertEqual(resp["launched"], {ks.fingerprint(NEW_KEY): 2, ks.fingerprint(OLD_KEY): 1, "": 1})
+        self.assertEqual([r["from"] for r in resp["rows"]], [ks.fingerprint(OLD_KEY), "", ""],
+                         "the fingerprint each live CLI launched on; a dormant one has none")
+        self.assertIsNone(resp["refreshed"], "no refresh was asked for")
+        self.assertNotIn("refresh", fake.calls)
+        self.assertNotIn(NEW_KEY, json.dumps(resp))
+        self.assertNotIn(OLD_KEY, json.dumps(resp))
+
+    def test_refresh_re_runs_the_command_first_and_reports_what_moved(self):
+        fake = self._Full({"s-web": self._Live(ks.fingerprint(OLD_KEY))})
+        code, resp = self._with(fake, {"sessions": ["web"], "refresh": True})
+        self.assertEqual(code, 200)
+        self.assertEqual(resp["refreshed"], {"from": ks.fingerprint(OLD_KEY), "to": ks.fingerprint(NEW_KEY), "err": ""})
+        self.assertEqual(fake.calls[0], "refresh", "the refresh precedes the fingerprint read and every cycle")
+        self.assertIn("cycle s-web", fake.calls)
+        self.assertLess(fake.calls.index("refresh"), fake.calls.index("cycle s-web"))
+        code, resp = self._with(fake, {"sessions": [], "refresh": True})
+        self.assertEqual(resp["rows"], [])
+        self.assertEqual(resp["refreshed"]["to"], ks.fingerprint(NEW_KEY), "a bare --refresh: no rows, one re-run")
+
+    def test_a_key_error_rides_the_answer(self):
+        fake = self._Full({})
+        fake.key_source_status = lambda: {"source": "command", "fp": "", "err": "exited 3 after 0.4s, stderr 87 bytes",
+                                          "launched": {}}
+        code, resp = self._with(fake, {"sessions": []})
+        self.assertEqual(resp["keyErr"], "exited 3 after 0.4s, stderr 87 bytes")
+        self.assertEqual(resp["keySource"], "command")
 
     def test_a_sessions_value_that_is_not_a_list_is_a_400(self):
         code, resp = self._with(self._Fake({}), {"sessions": "web"})
@@ -931,6 +1020,316 @@ class NothingLeaksTheKey(_Backend):
             self.assertNotIn(NEW_KEY, p["text"])
             self.assertNotIn(OLD_KEY, p["text"])
 
+
+
+class _CommandMode(_Backend):
+    """A backend in COMMAND mode: a fake command printing a synthetic set (no ANTHROPIC_API_KEY unless
+    a test adds one), a temp CLAUDE_CONFIG_DIR with no apiKeyHelper, a selector file path in the lab,
+    and an env file with NO key line — the shape the mode exists for. `self.boot_logged` keeps the
+    lines of a FIRST construction made while the env file still carried OLD_KEY (the precedence case);
+    the backend under test is the second construction, on the keyless file."""
+
+    def setUp(self):
+        self.lab = tempfile.mkdtemp()
+        self._cmd_before = {v: os.environ.get(v) for v in es.CONFIG_VARS + ("CLAUDE_CONFIG_DIR",)}
+        os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(self.lab, "claude")
+        os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = os.path.join(self.lab, "selector")
+        self.values = {"ANTHROPIC_LP_API_KEY": fixture_value("lp"), "A_TOKEN": fixture_value("role")}
+        self.cmd = os.path.join(self.lab, "cmd.sh")
+        self.print_set(self.values)
+        os.environ["ROMP_CREDENTIAL_COMMAND"] = self.cmd + ' "$1"'
+        es._reset()
+        super().setUp()
+        self.boot_logged = list(self.logged)
+        self.write_env("", lines=["ROMP_PERF=1"])
+        self.logged.clear()
+        es._reset()
+        self.be = self.construct()
+
+    def tearDown(self):
+        super().tearDown()
+        for v, was in self._cmd_before.items():
+            if was is None:
+                os.environ.pop(v, None)
+            else:
+                os.environ[v] = was
+        es._reset()
+
+    def print_set(self, values, extra=""):
+        with open(self.cmd, "w") as fh:
+            fh.write("#!/bin/sh\n" + (extra + "\n" if extra else "")
+                     + "".join("echo '%s=%s'\n" % kv for kv in values.items()))
+        os.chmod(self.cmd, 0o700)
+
+    def fail_command(self, body="exit 3"):
+        with open(self.cmd, "w") as fh:
+            fh.write("#!/bin/sh\n" + body + "\n")
+        os.chmod(self.cmd, 0o700)
+
+    def problems(self):
+        return [p["text"] for p in self.be.problems()]
+
+
+class CommandSourceLaunch(_CommandMode):
+    def test_the_set_rides_every_launch_and_the_key_only_where_the_auth_says_so(self):
+        env = self._env_for(1, "login")
+        self.assertEqual(env["A_TOKEN"], self.values["A_TOKEN"])
+        self.assertEqual(env["ANTHROPIC_LP_API_KEY"], self.values["ANTHROPIC_LP_API_KEY"])
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        self.assertEqual(env["ROMP_SID"], "11111111-2222-3333-4444-000000000001", "romp's own entries ride over the set")
+        # the set gains a key: an unpicked session is keyed (default_auth), a login pick is not
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.work_key, k)
+        self.assertEqual(self.be.default_auth({}), "key")
+        self.assertEqual(self._env_for(2, "").get("ANTHROPIC_API_KEY"), k)
+        self.assertEqual(self._env_for(3, "key").get("ANTHROPIC_API_KEY"), k)
+        env = self._env_for(4, "login")
+        self.assertNotIn("ANTHROPIC_API_KEY", env, "removal, never blanking")
+        self.assertEqual(env["A_TOKEN"], self.values["A_TOKEN"], "…but the role variables still ride a login launch")
+
+    def test_a_key_pick_with_no_key_in_the_set_launches_without_one_loudly(self):
+        env = self._env_for(1, "key")
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        self.assertEqual(env["A_TOKEN"], self.values["A_TOKEN"])
+        self.assertTrue(any("credential command printed no ANTHROPIC_API_KEY" in t for t in self.problems()),
+                        self.problems())
+
+    def test_one_run_serves_a_burst_of_connects(self):
+        self.assertEqual(es._runs, 1, "the boot verdict's first run")
+        for n in range(1, 7):
+            self._env_for(n, "login")
+        self.assertEqual(es._runs, 1, "event-keyed: a burst of connects runs the command once")
+
+    def test_a_connect_stamps_the_credential_and_the_role_variables(self):
+        s = self._sess(1, auth="login")
+        self.be._options(s, dict)
+        self.assertEqual(s._launched_key_fp, "", "no key injected, no helper configured: nothing to fingerprint")
+        self.assertEqual(s._launched_set_fp, es.set_fingerprint(self.values))
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        s2 = self._sess(2, auth="key")
+        self.be._options(s2, dict)
+        self.assertEqual(s2._launched_key_fp, es.fingerprint(k))
+        role = dict(self.values)
+        role.pop("ANTHROPIC_API_KEY")
+        self.assertEqual(s2._launched_set_fp, es.set_fingerprint(role), "the key is not part of the role stamp")
+
+    def test_the_selector_file_is_the_commands_dollar_one(self):
+        with open(os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"], "w") as fh:
+            fh.write("hp\n")
+        self.print_set(self.values, extra='echo "PICKED=$1"')
+        self.be.refresh_key_source()
+        self.assertEqual(self._env_for(1, "login")["PICKED"], "hp")
+        st = self.be.key_source_status()
+        self.assertEqual(st["selector"], "hp")
+        self.assertEqual(st["source"], "command")
+        self.assertEqual(self.be.api_health_snapshot()["keySource"]["selector"], "hp")
+
+    def test_the_boot_line_names_the_set_by_fingerprint_and_names(self):
+        boot = [m for m in self.logged if m.startswith("key source: command")]
+        self.assertEqual(len(boot), 1, self.logged)
+        self.assertIn("sha256:" + es.set_fingerprint(self.values), boot[0])
+        self.assertIn("2 names: ANTHROPIC_LP_API_KEY, A_TOKEN", boot[0])
+        self.assertIn("no ANTHROPIC_API_KEY in it", boot[0])
+        self.assertEqual(self.be.key_source["mode"], "command")
+        self.assertEqual(self.be.key_source["sessionKeyPath"], "login", "no key to inject, no helper configured")
+
+    def test_status_and_refresh_report_fingerprints_and_what_moved(self):
+        st = self.be.key_source_status()
+        self.assertEqual(st["fp"], "", "no key in the set and no helper: no credential fingerprint")
+        self.assertEqual(st["fpKind"], "")
+        self.assertTrue(st["err"].startswith("no apiKeyHelper in "), st)
+        self.assertEqual(st["setFp"], es.set_fingerprint(self.values))
+        self.assertEqual(st["launched"], {})
+        sid = self.be.spawn("n", "/tmp")
+        s = self._sess(9, auth="login")
+        s.sid = sid
+        self.be._options(s, dict)
+        self.be.sessions[sid] = s
+        self.assertEqual(self.be.key_source_status()["launched"], {"": 1})
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        r = self.be.refresh_key_source()
+        self.assertEqual(r, {"from": "", "to": es.fingerprint(k), "err": ""})
+        self.assertEqual(self.be.work_key_fp(), es.fingerprint(k))
+        self.assertTrue(any("refreshed — the credential fingerprint moved" in m for m in self.logged))
+        r = self.be.refresh_key_source()
+        self.assertEqual((r["from"], r["to"]), (es.fingerprint(k), es.fingerprint(k)))
+
+    def test_dropped_romp_names_are_a_problem_line_by_name_once(self):
+        self.print_set({"ROMP_SID": "forged", "A_TOKEN": self.values["A_TOKEN"]})
+        self.be.refresh_key_source()
+        lines = [t for t in self.problems() if "dropped 1 ROMP_* variable" in t]
+        self.assertEqual(len(lines), 1, self.problems())
+        self.assertIn("(ROMP_SID)", lines[0])
+        self.assertNotIn("forged", lines[0])
+        self.be.refresh_key_source()
+        self.assertEqual(len([t for t in self.problems() if "dropped 1 ROMP_* variable" in t]), 1, "said once per list")
+        self.assertNotIn("ROMP_SID", self._env_for(1, "login").get("A_TOKEN", ""))
+        self.assertEqual(self._env_for(2, "login")["ROMP_SID"], "11111111-2222-3333-4444-000000000002",
+                         "romp's identity entry, never the command's")
+
+
+class CommandBeatsFileAndStartup(_CommandMode):
+    """The mode wins: a key line in the env file and a startup ANTHROPIC_API_KEY are IGNORED, each
+    said once by the boot verdict, naming the file or the variable — never a value."""
+
+    BOOT = BOOT_KEY
+
+    def test_a_file_line_and_the_startup_claim_are_ignored_and_named_once(self):
+        # the FIRST construction ran with OLD_KEY in the env file and BOOT_KEY as the startup claim
+        ignored = [m for m in self.boot_logged if "ignored" in m]
+        self.assertEqual(len(ignored), 2, self.boot_logged)
+        file_line = [m for m in ignored if "credential line" in m][0]
+        self.assertIn(self.path, file_line)
+        self.assertIn("ANTHROPIC_API_KEY", file_line)
+        self.assertIn("the command wins", file_line)
+        self.assertIn("rotate the value", file_line)
+        env_line = [m for m in ignored if "manager's own environment" in m][0]
+        self.assertIn("ANTHROPIC_API_KEY", env_line)
+        for m in self.boot_logged:
+            self.assertNotIn(OLD_KEY, m)
+            self.assertNotIn(BOOT_KEY, m)
+        # and the launch used neither: the set has no key, so nothing is injected
+        self.assertEqual(self.be.work_key, "")
+        self.assertEqual(self.be.default_auth({}), "login")
+        self.assertNotIn("ANTHROPIC_API_KEY", self._env_for(1, "key"))
+        self.write_env(OLD_KEY)                       # the file gains a line mid-life: still ignored
+        self.assertEqual(self.be.work_key, "")
+        self.assertNotIn("ANTHROPIC_API_KEY", self._env_for(2, ""))
+
+    def test_the_commands_key_wins_when_it_prints_one(self):
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        self.write_env(OLD_KEY)
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.work_key, k)
+        self.assertEqual(self._env_for(1, "key")["ANTHROPIC_API_KEY"], k)
+        self.assertEqual(self.be._work_key_and_source(), (k, "command"))
+        self.assertEqual(sb.work_api_key(), k, "the module-level reader the judges are wired to agrees")
+        self.assertTrue(any("the ANTHROPIC_API_KEY line the credential command printed" in m for m in self.logged),
+                        self.logged)
+
+    def test_the_startup_claim_is_still_popped_out_of_the_environment(self):
+        sb._WORK_KEY = None
+        os.environ["ANTHROPIC_API_KEY"] = BOOT_KEY
+        self.assertEqual(sb.work_api_key(), "", "command mode: the ambient key is claimed and ignored")
+        self.assertNotIn("ANTHROPIC_API_KEY", os.environ, "the one-claimer property holds in every mode")
+
+
+class CommandSourceFailure(_CommandMode):
+    def test_a_failed_run_keeps_the_previous_set_with_one_problem_line_per_episode(self):
+        self.assertEqual(self._env_for(1, "login")["A_TOKEN"], self.values["A_TOKEN"])
+        w = fixture_value("wrong")
+        self.fail_command("echo '%s' >&2\necho 'A_TOKEN=%s'\nexit 3" % (w, w))
+        self.be.refresh_key_source()
+        env = self._env_for(2, "login")
+        self.assertEqual(env["A_TOKEN"], self.values["A_TOKEN"], "the previous set stands; a failing command's stdout is never trusted")
+        lines = [t for t in self.problems() if t.startswith("credential command: failed")]
+        self.assertEqual(len(lines), 1, self.problems())
+        self.assertIn("exited 3 after", lines[0])
+        self.assertIn("stderr %d bytes" % (len(w) + 1), lines[0])
+        self.assertIn("last successful run (sha256:%s)" % es.set_fingerprint(self.values), lines[0])
+        self.assertNotIn(w, lines[0])
+        self.be.refresh_key_source()
+        self._env_for(3, "login")
+        self.assertEqual(len([t for t in self.problems() if t.startswith("credential command: failed")]), 1,
+                         "the same reason again is not new information")
+        self.fail_command("sleep 30")
+        os.environ["ROMP_CREDENTIAL_TIMEOUT_S"] = "0.5"
+        self.be.refresh_key_source()
+        lines = [t for t in self.problems() if t.startswith("credential command: failed")]
+        self.assertEqual(len(lines), 2, "a new reason is a new line")
+        self.assertIn("timed out after 0.5s", lines[1])
+        st = self.be.key_source_status()
+        self.assertIn("timed out", st["err"])
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        self.assertTrue(any(m.startswith("credential command: succeeded again") for m in self.logged))
+        st = self.be.key_source_status()
+        self.assertNotIn("timed out", st["err"], "the run is fine again")
+        self.assertTrue(st["err"].startswith("no apiKeyHelper in "),
+                        "what keyErr still says: no key in the set and no helper to fingerprint")
+
+    def test_a_first_failure_launches_with_nothing_injected_and_never_refuses(self):
+        self.fail_command("exit 7")
+        self.logged.clear()
+        es._reset()
+        self.be = self.construct()
+        boot = [t for t in self.problems() if "credential command failed" in t]
+        self.assertEqual(len(boot), 1, self.problems())
+        self.assertIn("exited 7 after", boot[0])
+        self.assertIn("nothing injected", boot[0])
+        self.assertIn("romp keyswap --refresh", boot[0])
+        env = self._env_for(1, "key")                          # a launch, not a refusal
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        self.assertNotIn("A_TOKEN", env)
+        self.assertEqual(env["ROMP_SID"], "11111111-2222-3333-4444-000000000001")
+        self.assertEqual(self.be.key_source["lastRun"]["ok"], False)
+        self.assertEqual(self.be.key_source["lastRun"]["exitCode"], 7)
+        self.assertTrue(any("printed no ANTHROPIC_API_KEY" in t for t in self.problems()),
+                        "the key pick still says it launched without one")
+
+    def test_an_authentication_failure_invalidates_the_cached_set(self):
+        s = self._sess(1, auth="login")
+        self.be._options(s, dict)
+        runs = es._runs
+        self.be._credential_auth_failed(s, "HTTP 401 on a turn")
+        self.assertEqual(es._runs, runs, "invalidation runs nothing itself")
+        self._env_for(2, "login")
+        self.assertEqual(es._runs, runs + 1, "the next launch re-runs the command")
+        self.assertTrue(any("reported an authentication failure (HTTP 401 on a turn)" in m for m in self.logged))
+
+
+class NothingLeaksInCommandMode(_CommandMode):
+    def _blob(self):
+        return "\n".join(self.logged) + json.dumps(self.problems()) + json.dumps(self.be.api_health_snapshot()) \
+            + json.dumps(self.be.key_source_status()) + json.dumps(self.be.key_source) + json.dumps(self.be.refresh_key_source())
+
+    def test_no_value_reaches_any_surface_whatever_the_command_does(self):
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        loud = "\n".join("echo '%s' >&2" % v for v in self.values.values())
+        self.print_set(self.values, extra=loud)                  # every value also on stderr
+        self.be.refresh_key_source()
+        for n, auth in ((1, "key"), (2, "login"), (3, "")):
+            self._env_for(n, auth)
+        self.fail_command(loud + "\n" + "\n".join("echo '%s'" % v for v in self.values.values()) + "\nexit 1")
+        self.be.refresh_key_source()
+        self._env_for(4, "key")
+        blob = self._blob()
+        for v in list(self.values.values()) + [OLD_KEY, BOOT_KEY]:
+            self.assertNotIn(v, blob)
+        self.assertNotIn("fixture", blob)
+        for name, value in self.values.items():
+            # the VALUES never land in the kernel's own environment (a developer's shell may carry a
+            # variable of the same name; the message names nothing, so a failure cannot dump the environ)
+            self.assertFalse(os.environ.get(name) == value, "a set value reached os.environ under " + name)
+
+    def test_the_fingerprints_are_the_only_rendered_form(self):
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        snap = self.be.api_health_snapshot()["keySource"]
+        self.assertEqual(snap["fingerprint"], es.fingerprint(k))
+        self.assertEqual(snap["fingerprintKind"], "key")
+        self.assertEqual(snap["setFingerprint"], es.set_fingerprint(self.values))
+        self.assertEqual(snap["names"], sorted(self.values))
+        self.assertEqual(snap["sessionKeyPath"], "injected")
+        self.assertEqual(snap["mode"], "command")
+        self.assertEqual(snap["lastRun"]["ok"], True)
+        self.assertEqual(snap["lastRun"]["exitCode"], 0)
+        self.assertNotIn("lines", snap)
+        for v in self.values.values():
+            self.assertNotIn(v, json.dumps(snap))
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,24 +8,33 @@ parts the fork keeps — the live read, the bare report, `--cycle`. This file pi
   NamedSwapRefused — `romp keyswap <name>` exits 2 with one fixed message, before the file is read or
     a kernel is dialed; no flag lets it through; the bare report's guidance names the cycle, never a
     file to create; the CLI carries no call that writes the key.
-  HelperSessionsCycle — `SdkBackend.cycle_key` reconnects a session the kernel handed NO key but whose
-    CLI reported one at init (apiKeySource: the apiKeyHelper) — status "helper" — because a new
-    process is the only way a rotated key reaches it. Upstream reads such a session as login-billed
-    and skips it, which made `--cycle-all` a no-op on a box whose every session bills through the
-    helper. There is no fingerprint to converge on, so a repeated cycle reconnects it again.
+  HelperSessionsConverge — in COMMAND mode (ROMP_CREDENTIAL_COMMAND set; kernel/envsource.py) a
+    session the kernel handed NO key but whose CLI reported one at init (apiKeySource: the
+    apiKeyHelper) is stamped at connect with the fingerprint of the helper's output (envsource runs
+    the configured helper and hashes inside), and `SdkBackend.cycle_key` converges on it: the same
+    fingerprint reads "current", a rotation behind the helper reads "cycling" once and "current"
+    after. This replaces the fork's earlier always-reconnect "helper" outcome (2026-09-05, the same
+    day): upstream reads such a session as login-billed and skips it, which made `--cycle-all` a
+    no-op on a box whose every session bills through the helper; the always-reconnect answer fixed
+    that but churned every quiet helper session on every run. In FILE mode the compare is upstream's
+    (a non-keyed session reads "login"). The role variables the set injects converge the same way.
   EnvFileCredentialWarning — at backend construction, a credential-shaped line in the env file
     (`ANTHROPIC_API_KEY`, any `*_API_KEY`, any `*_TOKEN`, with a non-empty value) under a declared
     `ROMP_EXPECTED_AUTH` is said once, loudly (the problem ring), naming the file and the variable
     NAME — never the value. Undeclared, nothing is said.
 
-Synthetic keys (`sk-ant-TEST-…`), synthetic sids, temp paths only. The env-file path is pointed at a
-temp dir before the loads so nothing here can read the machine's real one.
+Synthetic keys (`sk-ant-TEST-…`), synthetic sids, temp paths only; the command-mode values are
+assembled at run time ("romp-test-fixture-" + a uuid) and the fake command and helper are scripts
+written into a temp dir. The env-file path is pointed at a temp dir before the loads so nothing here
+can read the machine's real one; conftest keeps ROMP_CREDENTIAL_* unset until a test sets them.
 """
 import io
+import json
 import os
 import sys
 import tempfile
 import unittest
+import uuid
 from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -42,6 +51,12 @@ sb = SourceFileLoader("romp_sdk_backend_keyswap_refusal", os.path.join(BIN, "rom
 cli = SourceFileLoader("romp_keyswap_cli_refusal", os.path.join(BIN, "romp-keyswap")).load_module()
 ks = sb._keysrc
 assert ks is cli.ks, "the CLI and the kernel must read the key through one module"
+es = sb._envsrc
+
+
+def fixture_value(tag=""):
+    return "romp-test-fixture-%s%s" % (tag + "-" if tag else "", uuid.uuid4().hex)
+
 
 OLD_KEY = "sk-ant-TEST-0000"
 NEW_KEY = "sk-ant-TEST-1111"
@@ -273,27 +288,152 @@ class _Backend(_Env):
         return s
 
 
-class HelperSessionsCycle(_Backend):
-    def test_a_session_the_cli_reported_keyed_is_reconnected_though_the_kernel_handed_it_no_key(self):
+class _CommandMode(_Backend):
+    """The backend of _Backend (a keyless manager, the login or the apiKeyHelper bills) in COMMAND
+    mode: a fake command printing a synthetic set with no ANTHROPIC_API_KEY, and a fake apiKeyHelper
+    in a temp CLAUDE_CONFIG_DIR — the helper-billed installation the convergence exists for."""
+
+    def setUp(self):
+        self.lab = tempfile.mkdtemp()
+        self._cmd_before = {v: os.environ.get(v) for v in es.CONFIG_VARS + ("CLAUDE_CONFIG_DIR",)}
+        os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(self.lab, "claude")
+        os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = os.path.join(self.lab, "selector")
+        self.values = {"ANTHROPIC_LP_API_KEY": fixture_value("lp"), "A_TOKEN": fixture_value("role")}
+        self.cmd = os.path.join(self.lab, "cmd.sh")
+        self.print_set(self.values)
+        os.environ["ROMP_CREDENTIAL_COMMAND"] = self.cmd + ' "$1"'
+        self.helper_value = fixture_value("helper")
+        self.helper(self.helper_value)
+        es._reset()
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        for v, was in self._cmd_before.items():
+            if was is None:
+                os.environ.pop(v, None)
+            else:
+                os.environ[v] = was
+        es._reset()
+
+    def print_set(self, values):
+        with open(self.cmd, "w") as fh:
+            fh.write("#!/bin/sh\n" + "".join("echo '%s=%s'\n" % kv for kv in values.items()))
+        os.chmod(self.cmd, 0o700)
+
+    def helper(self, value):
+        d = os.environ["CLAUDE_CONFIG_DIR"]
+        os.makedirs(d, exist_ok=True)
+        h = os.path.join(self.lab, "helper.sh")
+        with open(h, "w") as fh:
+            fh.write("#!/bin/sh\necho '%s'\n" % value)
+        os.chmod(h, 0o700)
+        with open(os.path.join(d, "settings.json"), "w") as fh:
+            json.dump({"apiKeyHelper": h}, fh)
+
+    def connect(self, s):
+        """What a connect does for the stamps: _options on the live session object."""
+        import sys
+        import types
+        fake = None
+        if "claude_agent_sdk" not in sys.modules and not sb.sdk_importable():
+            fake = types.ModuleType("claude_agent_sdk")
+            fake.HookMatcher = lambda **kw: kw
+            sys.modules["claude_agent_sdk"] = fake
+        try:
+            return self.be._options(s, dict)
+        finally:
+            if fake is not None:
+                sys.modules.pop("claude_agent_sdk", None)
+
+
+class HelperSessionsConverge(_CommandMode):
+    def test_a_connect_stamps_the_helpers_fingerprint_when_nothing_is_injected(self):
         s = self._live("key")
+        kw = self.connect(s)
+        self.assertNotIn("ANTHROPIC_API_KEY", kw["env"], "the set carries no key: nothing injected")
+        self.assertEqual(kw["env"]["A_TOKEN"], self.values["A_TOKEN"], "the role variables ride the launch")
+        self.assertEqual(s._launched_key_fp, es.fingerprint(self.helper_value))
+        self.assertEqual(s._launched_set_fp, es.set_fingerprint(self.values))
+        self.assertFalse(s._launched_keyed)
+
+    def test_a_session_on_the_current_helper_output_is_current_not_reconnected(self):
+        s = self._live("key")
+        self.connect(s)
         self.assertEqual(s.effective_auth(), "login", "the kernel injects nothing: no key anywhere it reads")
-        self.assertEqual(self.be.cycle_key(SID), "helper")
+        self.assertEqual(self.be.cycle_key(SID), "current")
+        self.assertEqual(self.be.cycle_key(SID), "current", "idempotent: a repeated --cycle-all leaves it alone")
+        self.assertEqual(self.reconnects, [])
+
+    def test_a_rotation_behind_the_helper_cycles_once_then_reads_current(self):
+        s = self._live("key")
+        self.connect(s)
+        self.helper(fixture_value("rotated"))
+        self.assertEqual(self.be.cycle_key(SID), "current", "cached: the kernel has not re-run the helper yet")
+        self.be.refresh_key_source()                              # what --cycle does first
+        self.assertEqual(self.be.cycle_key(SID), "cycling")
         self.assertEqual(self.reconnects, [SID])
         self.assertEqual(self.defers, [False], "immediate-only, like every key cycle")
         line = [m for m in self.logged if m.startswith("keyswap (web)")]
         self.assertEqual(len(line), 1)
-        self.assertIn("credential helper", line[0])
-        self.assertNotIn("sha256", line[0], "there is no key fingerprint to print for a helper session")
+        self.assertIn("apiKeyHelper now prints sha256:", line[0])
+        self.assertNotIn(self.helper_value, line[0])
+        self.connect(s)                                           # the reconnect lands: new stamps
+        self.assertEqual(self.be.cycle_key(SID), "current", "converged — the second run names nothing")
+        self.assertEqual(self.reconnects, [SID])
 
-    def test_a_session_the_cli_reported_on_the_login_is_left_alone_as_before(self):
-        self._live("login")
-        self.assertEqual(self.be.cycle_key(SID), "login")
+    def test_a_rotation_of_a_role_variable_cycles_a_helper_session_too(self):
+        s = self._live("key")
+        self.connect(s)
+        self.values["ANTHROPIC_LP_API_KEY"] = fixture_value("lp2")
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(SID), "cycling")
+        line = [m for m in self.logged if m.startswith("keyswap (web)")][0]
+        self.assertIn("role variables are now sha256:", line)
+        self.connect(s)
+        self.assertEqual(self.be.cycle_key(SID), "current")
+
+    def test_a_login_billed_session_with_role_variables_cycles_on_their_rotation_only(self):
+        s = self._live("login", auth="login")
+        self.connect(s)
+        self.assertEqual(self.be.cycle_key(SID), "current", "the set it launched with is the current one")
+        self.helper(fixture_value("rotated"))
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(SID), "current", "a helper rotation is not its business: its CLI reported the login")
+        self.values["A_TOKEN"] = fixture_value("role2")
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(SID), "cycling")
+
+    def test_a_login_billed_session_with_no_role_variables_is_left_alone(self):
+        self.print_set({})                    # the command prints nothing usable → an empty set
+        es._reset()
+        os.environ["ROMP_CREDENTIAL_COMMAND"] = "true"
+        self._live("login", auth="login")
+        self.assertEqual(self.be.cycle_key(SID), "login", "nothing to re-present: a reconnect would cost a turn")
         self._live("")
-        self.assertEqual(self.be.cycle_key(SID), "login", "no init yet: nothing says a key is in play")
+        self.assertEqual(self.be.cycle_key(SID), "login", "no init yet, nothing injected: nothing in play")
         self.assertEqual(self.reconnects, [])
+
+    def test_a_helper_the_kernel_cannot_fingerprint_reconnects_on_every_run_with_the_reason(self):
+        os.remove(os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "settings.json"))
+        es._reset()
+        s = self._live("key")
+        self.connect(s)
+        self.assertEqual(s._launched_key_fp, "", "no helper the kernel can see")
+        self.assertEqual(self.be.cycle_key(SID), "cycling")
+        self.assertEqual(self.be.cycle_key(SID), "cycling", "nothing to converge on: the old behaviour, by its rule")
+        self.assertEqual(self.reconnects, [SID, SID])
+        line = [m for m in self.logged if m.startswith("keyswap (web)")][0]
+        self.assertIn("could not fingerprint", line)
+        self.assertIn("no apiKeyHelper in", line)
 
     def test_in_flight_work_still_skips_a_helper_session(self):
         s = self._live("key")
+        self.connect(s)
+        self.helper(fixture_value("rotated"))
+        self.be.refresh_key_source()
         s._bg_tasks["t1"] = {"since": 1}
         self.assertEqual(self.be.cycle_key(SID), "working")
         s._bg_tasks.clear()
@@ -301,23 +441,50 @@ class HelperSessionsCycle(_Backend):
         self.assertEqual(self.be.cycle_key(SID), "working")
         self.assertEqual(self.reconnects, [], "a reconnect would kill the work — the same rule as upstream's")
 
-    def test_a_repeated_cycle_reconnects_it_again_since_there_is_nothing_to_converge_on(self):
-        self._live("key")
-        self.assertEqual(self.be.cycle_key(SID), "helper")
-        self.assertEqual(self.be.cycle_key(SID), "helper", "no fingerprint → never \"current\"; run it once per rotation")
-        self.assertEqual(self.reconnects, [SID, SID])
-
-    def test_an_explicit_login_pick_whose_cli_still_reports_a_key_is_cycled(self):
+    def test_an_explicit_login_pick_whose_cli_still_reports_a_key_converges_on_the_helper(self):
         # the pick says login, the CLI says a key (the helper found one anyway): the kernel injects
-        # nothing either way, and a new process is what re-runs the helper — so it cycles
-        self._live("key", auth="login")
-        self.assertEqual(self.be.cycle_key(SID), "helper")
+        # nothing either way, and the helper's fingerprint is what its new process would change
+        s = self._live("key", auth="login")
+        self.connect(s)
+        self.assertEqual(self.be.cycle_key(SID), "current")
+        self.helper(fixture_value("rotated"))
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(SID), "cycling")
 
-    def test_the_kernel_injected_path_is_unchanged(self):
+    def test_a_keyed_session_converges_on_the_sets_key(self):
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        es._reset()
+        s = self._live("key", auth="key")
+        kw = self.connect(s)
+        self.assertEqual(kw["env"]["ANTHROPIC_API_KEY"], k)
+        self.assertEqual(s._launched_key_fp, es.fingerprint(k))
+        self.assertEqual(self.be.cycle_key(SID), "current")
+        self.values["ANTHROPIC_API_KEY"] = fixture_value("key2")
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(SID), "cycling")
+        self.assertIn("the work key is now sha256:", [m for m in self.logged if m.startswith("keyswap (web)")][0])
+        self.connect(s)
+        self.assertEqual(self.be.cycle_key(SID), "current")
+
+    def test_the_helper_status_word_is_gone(self):
+        src = open(os.path.join(ROOT, "kernel", "sdk_backend.py")).read()
+        self.assertNotIn('return "helper"', src, "the always-reconnect outcome was replaced by convergence")
+        self.assertNotIn("helper = True", src)
+
+    def test_the_file_mode_compare_is_upstreams(self):
+        # FILE mode (the command unset): a non-keyed session reads "login" whatever its CLI reported;
+        # a keyed one converges on the file key's fingerprint — upstream's arm, untouched
+        os.environ.pop("ROMP_CREDENTIAL_COMMAND")
+        es._reset()
+        self._live("key")
+        self.assertEqual(self.be.cycle_key(SID), "login")
         self.write_env("ROMP_PERF=1\n%s=%s\n" % (ks.KEY_VAR, OLD_KEY))
         s = self._live("key", auth="key")
         s._launched_key_fp = ks.fingerprint(NEW_KEY)          # launched on a previous key
-        self.assertEqual(self.be.cycle_key(SID), "cycling", "upstream's arm, untouched")
+        self.assertEqual(self.be.cycle_key(SID), "cycling")
         s._launched_key_fp = ks.fingerprint(OLD_KEY)
         self.assertEqual(self.be.cycle_key(SID), "current")
 

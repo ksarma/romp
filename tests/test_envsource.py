@@ -203,7 +203,7 @@ class Runner(_Lab):
 
     def test_the_selector_is_dollar_one_of_the_command_string(self):
         # the COMMAND STRING receives $1 (the /bin/sh -c contract): a command that wants the selector
-        # forwards it — `vault-cmd "$1"` — and one that ignores $1 never sees it
+        # forwards it — `credential-cmd "$1"` — and one that ignores $1 never sees it
         s = self.script('echo "SEL=$1"\necho "ARGC=$#"')
         vals = es.parse_set(es.run_command(s + ' "$1"', "lp", 5).stdout)["values"]
         self.assertEqual(vals, {"SEL": "lp", "ARGC": "1"})
@@ -363,7 +363,7 @@ class CacheAndCoalescing(_Lab):
         s = self.printing({"A_TOKEN": v})
         self.configure(s)
         self.assertEqual(es.injection(), {"A_TOKEN": v})
-        # the command now fails (the vault is down): the previous set stands, loudly
+        # the command now fails (the secret store is unreachable): the previous set stands, loudly
         w = fixture_value("wrong")
         self.script("echo '%s' >&2\necho 'A_TOKEN=%s'\nexit 2" % (w, w))
         es.invalidate()

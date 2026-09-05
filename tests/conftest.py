@@ -115,7 +115,7 @@ def _no_cli_scope():
 
 
 # No test may run the REAL credential command (2026-09-05): kernel/envsource.py runs
-# ROMP_CREDENTIAL_COMMAND — an installation's vault command — at backend construction and on every
+# ROMP_CREDENTIAL_COMMAND — an installation's secret-store command — at backend construction and on every
 # stale read, and a self-hosted romp's tool shells inherit the manager's environment, variable
 # included. Popped, so every test starts in file mode with no command, no selector file, no names
 # and the default timeout; a test that exercises the command source writes its own fake script and
