@@ -30,11 +30,14 @@ import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from 
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
+import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed,
+         reorderTagOrder, applyTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
+import { tabStateClass, sectionPip, SECTION_PIP_TITLE } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
 import { StagedStack } from "./staged-messages";
-import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional } from "./provisional";
+import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional, focusResolvesProvisional } from "./provisional";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { numberDiff, type DiffRow } from "./diff-lines";
 import { parseAgentNotif, type AgentNotif } from "./agent-notif";
@@ -547,7 +550,24 @@ function assertPeekFor(id: string): void {
   if (next !== peekId) { peekId = next; renderTabs(); }
 }
 function tabInView(id: string): boolean { return id === peekId || chatVisible(id); }
-function visibleOrder(): string[] { return order.filter(tabInView); }
+// TAB SECTIONS (tab-groups.ts): the ids the last render folded away under a collapsed section
+// header. Keyboard cycling walks the VISIBLE order, and a folded tab is not visible — the active
+// tab's section never renders folded, so the active id is always in it.
+let collapsedTabIds = new Set<string>();
+let draggedGroup: string | null = null;   // a section header mid-drag (reorders tagOrder) — never a tab
+// the tags a create in flight named (openProvisional): the provisional tab sections under its future
+// home from the first paint (planStrip's `pending`), instead of landing loose and jumping on the frame
+let provisionalTags: string[] = [];
+function visibleOrder(): string[] { return order.filter((id) => tabInView(id) && !collapsedTabIds.has(id)); }
+// THE PHONE LAYOUT: the kernel's chat page swaps the tab strip for its own session list (#mhdr/#mlist,
+// built by scraping every rendered tab) under EXACTLY this media rule (_CHAT_MOBILE_CSS in kernel.py)
+// — the same string here, so what the CSS hides and what the plan flattens cannot disagree. Sections
+// are desktop-only: the phone list has no header to unfold and no switch, so a folded section there
+// made its sessions unreachable (tests pin the two strings equal).
+const PHONE_LAYOUT_MEDIA = "(pointer:coarse) and (max-width:1024px)";
+function phoneLayout(): boolean {
+  try { return window.matchMedia(PHONE_LAYOUT_MEDIA).matches; } catch { return false; }
+}
 function revealSession(id: string) { postViews(revealIn(effViews(), id)); }
 
 let paletteColors: string[] = [];
@@ -4550,6 +4570,90 @@ function releaseTabStrip(): void {
   tabPointerHeld = false;
   if (renderPendingWhilePressed) { renderPendingWhilePressed = false; setTimeout(() => renderTabs(), 0); }
 }
+
+// A SECTION HEADER for the tab strip (tab groups on tags, the user 2026-09-04): the tag's dot and
+// name at the tab's own type size; folded, the count and one pip for the gist. It carries
+// data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip rebuilds on every
+// push) and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted union
+// order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The untagged
+// trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the loose ones
+// never read as one run.
+function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false): HTMLElement {
+  if (sec.name === null) {
+    const sep = el("div", "tab-group-sep");
+    sep.title = "sessions in no tag";
+    return sep;
+  }
+  const name = sec.name;
+  const head = el("div", "tab-group-head" + (collapsed ? " collapsed" : "") + (holdsActive ? " holds-active" : ""));
+  head.dataset.group = name;
+  // The section holding the ACTIVE tab is UNFOLDABLE while it is active — planStrip renders it open
+  // whatever the store says (keyboard focus must never land on a hidden node) — so its header carries
+  // NO fold action: a click there used to store folded=true that could not render, so "click to fold
+  // this group" did nothing visible on every click and then bit when the user switched tabs.
+  // group-active is a no-op the delegate still flashes (the click is acknowledged); the header still
+  // drags to reorder the groups. Every other header derives the click from the state it RENDERED
+  // (data-folded), never from the store.
+  head.dataset.act = holdsActive ? "group-active" : "toggle-group";
+  head.dataset.folded = collapsed ? "1" : "0";
+  head.title = holdsActive
+    ? `${name} — this group holds the active tab; drag to reorder the groups`
+    : collapsed
+      ? `${name} — ${sec.ids.length} session${sec.ids.length === 1 ? "" : "s"} folded; click to open`
+      : `${name} — click to fold this group; drag to reorder the groups`;
+  const dot = el("span", "tab-group-dot");
+  if (sec.color) dot.style.background = sec.color;
+  head.appendChild(dot);
+  const label = el("span", "tab-group-name");
+  label.textContent = name;
+  head.appendChild(label);
+  if (collapsed) {
+    const n = el("span", "tab-group-count");
+    n.textContent = String(sec.ids.length);
+    head.appendChild(n);
+    // the folded gist: one pip by the TAB's own state rule (tab-state.ts) — red for a member blocked
+    // on you or waiting for you, gold for working, amber for an API error retrying on its own (the
+    // tab strip renders that amber too; a red pip there was a false interrupt)
+    const kind = sectionPip(sec.ids.map((id) => sessions.get(id)?.status));
+    if (kind) {
+      const pip = el("span", "tab-group-pip" + (kind === "working" ? "" : " " + kind));
+      pip.title = SECTION_PIP_TITLE[kind];
+      head.appendChild(pip);
+    }
+  }
+  head.draggable = true;
+  head.addEventListener("dragstart", (e) => {
+    draggedGroup = name;
+    if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setDragImage(dragImageBlank(), 0, 0); }
+    head.classList.add("dragging");
+    hideTabTip();
+  });
+  // dragend closes the gesture whether it dropped or cancelled: release the click-safe hold the
+  // pointerdown latched (the drag swallowed the pointerup) and flush a push deferred mid-drag
+  head.addEventListener("dragend", () => {
+    draggedGroup = null;
+    head.classList.remove("dragging");
+    document.getElementById("tabs")?.querySelectorAll(".tab-group-head.drop-target").forEach((h) => h.classList.remove("drop-target"));
+    tabPointerHeld = false;
+    const pending = renderPendingWhilePressed;
+    renderPendingWhilePressed = false;
+    if (pending) setTimeout(() => renderTabs(), 0);
+  });
+  return head;
+}
+/** The section header a strip node belongs to: itself for a header, else the nearest header before
+ *  it; null past the untagged separator or on a flat strip. */
+function sectionHeadOf(node: HTMLElement): HTMLElement | null {
+  let n: Element | null = node;
+  while (n) {
+    const h = n as HTMLElement;
+    if (h.classList.contains("tab-group-head") && h.dataset.group) return h;
+    if (h.classList.contains("tab-group-sep")) return null;
+    n = n.previousElementSibling;
+  }
+  return null;
+}
+
 // A loading PLACEHOLDER tab (the user 2026-06-26): name + identity color from the kernel's tabOrder push,
 // shown while the session's build_session is still in flight so the strip's full width is reserved up front
 // (no one-by-one pop-in). CLICKABLE (the user 2026-08-25: "I'd like to click it so when the session
@@ -4649,7 +4753,10 @@ function paintTabRowLines(bar: HTMLElement): void {
   for (const old of Array.from(bar.querySelectorAll(":scope > .tab-row-line"))) old.remove();
   const rows = new Map<number, number>();   // rowTop → rowBottom (max tab bottom in that row)
   for (const t of Array.from(bar.children) as HTMLElement[]) {
-    if (!t.classList.contains("tab")) continue;
+    // tabs, and the section headers + untagged separator (tab groups): a wrapped row made only of
+    // folded headers is a row too — without a line under it the headers sat directly on the tabs
+    // below, reading as captions for tabs that are not theirs (the T134 floating look, back)
+    if (!(t.classList.contains("tab") || t.classList.contains("tab-group-head") || t.classList.contains("tab-group-sep"))) continue;
     const top = t.offsetTop, bot = t.offsetTop + t.offsetHeight;
     rows.set(top, Math.max(rows.get(top) ?? 0, bot));
   }
@@ -4713,7 +4820,23 @@ function renderTabs() {
     // then would kick the user off the very tab they just opened (the no-flap rule)
     setTimeout(() => { if (activeId !== next && activeId && !tabInView(activeId)) setActive(next); }, 0);
   }
-  for (const id of visibleIds) {
+  // TAB SECTIONS (the user 2026-09-04): groups are tags. With sectioning on (per browser — the
+  // tag-lens menu's "Group tabs by tag") and some tag holding a visible tab, the strip renders one
+  // header per HOME tag in tagOrder — the rule revealIn already states, so a tab's section and its
+  // reveal agree — then that section's tabs, and the untagged trail behind a plain separator
+  // (tab-groups.ts owns the rule). A folded section renders its header alone, with the count and
+  // a pip when a member is working or blocked, so the gist survives the fold (progressive
+  // disclosure). The ACTIVE tab's section never renders folded — keyboard focus must never land
+  // on a hidden node — and visibleOrder() drops the folded ids so ←/→ skip them. DESKTOP ONLY: on
+  // the phone layout (phoneLayout — the kernel page's own media rule) the plan is the flat strip,
+  // since the phone's session list is scraped from every rendered tab and has no header to unfold.
+  // A create in flight (the provisional tab) sections under the tags its request named.
+  const plan = planStrip(visibleIds, viewTagUnion(effViews()), readTabGroups(), activeId, phoneLayout(),
+                         provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
+  collapsedTabIds = plan.folded;
+  for (const item of plan.items) {
+    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded, item.active)); continue; }
+    const id = item.id;
     const s = sessions.get(id);
     if (!s) { bar.appendChild(makePlaceholderTab(id)); continue; }
     const tab = el("div", "tab" + (id === activeId ? " active" : ""));
@@ -4759,16 +4882,11 @@ function renderTabs() {
     }
     if (id === peekId) tab.classList.add("tab-peek");   // ephemeral peek — ghost/dashed dress (styles.css)
     const st = s.status.state;
-    if (st === "working") tab.classList.add("tab-working");
-    // "blocked" is an API error. An on-YOU one — "prompt is too long" (compact), a monthly spend cap (raise it,
-    // the user 2026-07-14), a spent model allowance (switch model, the user 2026-08-01), or a safeguards
-    // refusal (rewrite the ask, the user 2026-08-15) — is alarm-red dashed; a TRANSIENT API error is auto-retrying and needs no attention → the
-    // amber retrying treatment, not red (the user 2026-06-29).
-    else if (st === "blocked") tab.classList.add((s.status.apiTooLong || s.status.apiSpendLimit || s.status.apiModelLimit || s.status.apiAuthErr || s.status.apiRefusal) ? "tab-blocked" : "tab-retrying");
-    else if (st === "needsInput" || st === "awaiting") tab.classList.add("tab-awaiting");   // legacy name = an older remote kernel
-    else if (st === "retrying") tab.classList.add("tab-retrying");       // amber: soft-blocked on an API auto-retry
-    else if (st === "compacting" || st === "clearing") tab.classList.add("tab-compacting");   // both: a context op in flight
-    else if (st === "closed") tab.classList.add("tab-closed");       // dead session: read-only, struck-through label
+    // the state class — working gold, an on-YOU block alarm-red dashed vs a transient API error's
+    // amber auto-retry, awaiting, compacting, closed — is tab-state.ts's rule, shared with the
+    // folded section header's pip so the two can never disagree on what is red
+    const stateCls = tabStateClass(s.status);
+    if (stateCls) tab.classList.add(stateCls);
     if (s.status.faded) tab.classList.add("at-rest");
     // The FULL four-state pip language the feed's .fwork-dot and the sessions pane's .fl-workdot speak
     // (the user 2026-08-10, closing the strip's two-state gap): WORKING a gold dot; AWAITING-BG the same
@@ -4890,6 +5008,13 @@ function renderTabs() {
         v.actives = Object.assign({}, v.actives, { chat: l });
         postViews(v);
       },
+      // "Group tabs by tag" (tab groups, the user 2026-09-04): the per-browser sectioned-strip
+      // switch, at the foot beside Configure tags… — the write notifies and the strip re-renders.
+      // Desktop only: the phone layout renders the flat strip (planStrip), so it offers no switch —
+      // neither here nor on the phone mount below.
+      ...(phoneLayout() ? {} : {
+        groupToggle: { label: "Group tabs by tag", on: () => readTabGroups().on,
+                       toggle: () => { const st = readTabGroups(); writeTabGroups({ ...st, on: !st.on }); } } }),
       onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
     });
   });
@@ -5251,6 +5376,12 @@ function showTabMenu(e: MouseEvent, id: string) {
       // DERIVED — the kernel drops them from the echo — so mutating the copy is presentation-only;
       // the remote's own next push is the durable truth (a refused edit re-appears there).
       const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
+      const dirty = applyUnionEdit(nv, g, edit);
+      if (dirty) postViews(nv);
+    };
+    // the edit itself, applied to a blob the caller posts — so a MOVE between groups (below) is two
+    // edits on ONE blob, posted once
+    const applyUnionEdit = (nv: SessionViews, g: TagUnion, edit: { add?: string[]; remove?: string[] }): boolean => {
       let dirty = false;
       const nvRemote = (rt: SessionTag) => (nv.remoteTags || []).find((x) => x.id === rt.id);
       if (edit.add?.length) {
@@ -5278,7 +5409,15 @@ function showTabMenu(e: MouseEvent, id: string) {
           if (mine) { mine.members = (mine.members || []).filter((m) => !edit.remove!.includes(m)); dirty = true; }
         }
       }
-      if (dirty) postViews(nv);
+      return dirty;
+    };
+    // a MOVE between groups (tab groups, the user 2026-09-04): add the target tag, drop the HOME
+    // tag, leave every other tag alone — one blob, so the strip never shows the half-moved state
+    const moveUnion = (from: TagUnion, to: TagUnion) => {
+      const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
+      const added = applyUnionEdit(nv, to, { add: [id] });
+      const removed = applyUnionEdit(nv, from, { remove: [id] });
+      if (added || removed) postViews(nv);
     };
     // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
     // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
@@ -5314,13 +5453,30 @@ function showTabMenu(e: MouseEvent, id: string) {
         }
         const others = unionFor().filter((g) => !g.members.includes(id));
         if (holding().length && others.length) sub.appendChild(el("div", "ctx-sep"));
+        // ONE-CLICK MOVE (tab groups on tags, the user 2026-09-04): a session's section is its HOME
+        // tag — the first holder in tagOrder — so while the strip is sectioned and the session has
+        // one, each other tag's row reads "Move to <name>": one click adds that tag and drops the
+        // home tag, leaving any other tag alone (they filter, they do not section). The row's "+"
+        // adds without moving. With no home tag, "+ <name>" IS the move.
+        const home = readTabGroups().on ? holding()[0] : undefined;
         for (const g of others) {
           const row = el("div", "ctx-item ctx-item-toggle");
           const chip = el("span", "ctx-tag-dot"); chip.style.background = g.color || "var(--dim)"; row.appendChild(chip);
           const bodyE = el("span", "ctx-item-body");
-          const lb = el("span", "ctx-item-label"); lb.textContent = "+ " + g.name; bodyE.appendChild(lb);
-          row.appendChild(bodyE);
-          row.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
+          const lb = el("span", "ctx-item-label");
+          if (home) {
+            lb.textContent = "Move to " + g.name; bodyE.appendChild(lb);
+            row.appendChild(bodyE);
+            const plus = el("button", "ctx-tag-x ctx-tag-plus") as HTMLButtonElement;
+            plus.type = "button"; plus.textContent = "+"; plus.title = "add this tag too — the session stays in its current group";
+            plus.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
+            row.appendChild(plus);
+            row.addEventListener("click", (e2) => { e2.stopPropagation(); moveUnion(home, g); build(); sb.textContent = subText(); });
+          } else {
+            lb.textContent = "+ " + g.name; bodyE.appendChild(lb);
+            row.appendChild(bodyE);
+            row.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
+          }
           sub.appendChild(row);
         }
         if (holding().length || others.length) sub.appendChild(el("div", "ctx-sep"));
@@ -5693,6 +5849,7 @@ function openProvisional(req: CreateReq): void {
   pendingNewSession = display;
   const id = mintProvisionalId(Date.now().toString(36) + Math.random().toString(36).slice(2));
   provisionalId = id;
+  provisionalTags = req.tags?.slice() ?? [];   // its future home: the strip sections it there from the first paint
   // state "opening", NOT "working": updateStatusline renders the working chip with an elapsed timer off
   // sinceEpoch, and a provisional tab has no honest work clock — the seed showed "Working" + a giant
   // number for however long the first kernel payload took (the user 2026-08-10, who read it as "a random
@@ -5718,6 +5875,7 @@ function openProvisional(req: CreateReq): void {
 function dropProvisional(): { queued: string[]; draft: string } {
   const id = provisionalId;
   provisionalId = null;
+  provisionalTags = [];
   pendingNewSession = null;
   if (provisionalTimer) { clearTimeout(provisionalTimer); provisionalTimer = undefined; }
   const queued = provisionalQueue.slice();
@@ -5744,6 +5902,26 @@ function adoptProvisional(realId: string): void {
     registerOptimistic(realId, text);      // …and the bubble carries over to the tab that now owns it
   }
   if (draft) { persistDrafts(); const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null; if (ta) growComposer(ta); }
+}
+
+// The create RESOLVED TO A RUNNING SESSION: the kernel answered it by focusing the session that already
+// runs under that name (focusResolvesProvisional, in the focus handler). Retire the provisional tab
+// QUIETLY — no dialog, the focus stays on the real tab — and keep whatever was typed into it as that
+// session's draft. Held, not sent: it was typed for a session believed new, and the running one has a
+// thread the user has not looked at yet (adoptProvisional sends because a NEW session has none). Before
+// this the focus left the tab pending, so the warn that followed a tagged request read as the create's
+// FAILURE ("Couldn't start api" over a body saying api is running, the view yanked back onto a
+// struck-through dead tab), and an untagged one waited 90 s for the backstop to say the same.
+function resolveProvisionalToExisting(realId: string): void {
+  const { queued, draft } = dropProvisional();     // …and the 90 s backstop goes with it
+  const held = [...queued, draft].filter(Boolean).join("\n\n");
+  if (!held) return;
+  drafts.set(realId, [drafts.get(realId) ?? "", held].filter(Boolean).join("\n\n"));   // BEFORE the switch — setActive fills the box from drafts
+  persistDrafts();
+  // dropProvisional's reselect may already have landed on the real tab (it was the previously active
+  // one): setActive then early-returns, so fill the box here rather than leave the text in the map only
+  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+  if (activeId === realId && ta) { ta.value = drafts.get(realId) ?? ""; growComposer(ta); }
 }
 
 // A create that FAILED. The kernel's own words are the message wherever it gave any (a bad name, an
@@ -5946,12 +6124,32 @@ function requestSessionList(host: string): void {
 // sessionList reply carries authAvail (an older kernel never answers with one).
 let pickerAuthAvail: { login?: boolean; key?: boolean; acct?: string; default?: string } | null = null;
 
+// the picker's selected Backend chip — the Backend row alone (the Billing, Host and Tags rows wear the
+// same chip grammar, and a selected tag chip must never read as a backend)
+function pickerBackendChoice(): string {
+  const beSel = document.querySelector("#picker .picker-backend:not(.picker-host):not(.picker-auth):not(.picker-tags) .picker-be-opt.sel") as HTMLElement | null;
+  return beSel?.dataset.be || loadSettings().backend;
+}
+
+// the Tags row exists only for SDK sessions (tab groups, 2026-09-04): the kernel refuses tags on a
+// tmux create — a terminal session's id is unknown until it starts — so on the tmux pick the row stays
+// in place but disabled behind a short note, and the create handler sends no `tags`. Before this a
+// chip prefilled from a tagged active tab turned every terminal create into a refusal.
+function syncPickerTags(): void {
+  const wrap = document.querySelector("#picker .picker-tags") as HTMLElement | null;
+  if (!wrap) return;
+  const sdk = pickerBackendChoice() === "sdk";
+  wrap.classList.toggle("disabled", !sdk);
+  wrap.querySelectorAll<HTMLButtonElement>(".picker-be-opt").forEach((b) => { b.disabled = !sdk; });
+  const note = wrap.querySelector(".picker-tags-note") as HTMLElement | null;
+  if (note) note.style.display = sdk ? "none" : "";
+}
+
 function syncPickerAuth(): void {
   const wrap = document.querySelector("#picker .picker-auth") as HTMLElement | null;
   if (!wrap) return;
-  const beSel = document.querySelector("#picker .picker-backend:not(.picker-host):not(.picker-auth) .picker-be-opt.sel") as HTMLElement | null;
   const a = pickerAuthAvail;
-  const show = !pickMode && !!(a && (a.login || a.key)) && (beSel?.dataset.be || loadSettings().backend) === "sdk";
+  const show = !pickMode && !!(a && (a.login || a.key)) && pickerBackendChoice() === "sdk";
   wrap.style.display = show ? "" : "none";
   if (!show) return;
   const both = !!(a!.login && a!.key);
@@ -6127,7 +6325,7 @@ function dirKey(e: KeyboardEvent): boolean {
 // warned into a toast the "Opening…" cue was covering, so the create looked like it silently did
 // nothing for 30 seconds (the user 2026-07-28). The request is remembered so "Create it" can re-send
 // exactly the same create with mkdir set, host and backend included.
-interface CreateReq { name: string; backend: string; dir: string; host: string; auth?: string }
+interface CreateReq { name: string; backend: string; dir: string; host: string; auth?: string; tags?: string[] }
 let lastCreate: CreateReq | null = null;
 
 function startCreate(req: CreateReq, mkdir = false): void {
@@ -6240,8 +6438,8 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     };
     beWrap.append(beLabel, mkBe("sdk", "SDK", "Runs via the Claude Agent SDK."),   // not "headless" — same full chat UI (the user 2026-07-12)
                   mkBe("tmux", "tmux", "Drives a real terminal pane (tmux)."));   // SDK first — the de-facto default (the user 2026-07-02)
-    // the billing row exists only for SDK sessions — re-decide on every backend toggle
-    beWrap.addEventListener("click", () => syncPickerAuth());
+    // the billing and Tags rows exist only for SDK sessions — re-decide on every backend toggle
+    beWrap.addEventListener("click", () => { syncPickerAuth(); syncPickerTags(); });
     // per-session BILLING row (the user 2026-08-08): Login | API key buttons when the selected host
     // offers both; with ONE real choice the same spot writes it out as plain text (the user
     // 2026-08-09) — see syncPickerAuth. Same segmented-toggle grammar as Backend above.
@@ -6259,6 +6457,21 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     auWrap.append(auLabel, mkAu("login", "Login", "Bill this session to the machine's Claude login (subscription usage)."),
                   mkAu("key", "API key", "Bill this session to the API key the manager's environment carries (per-token)."),
                   auFixed);
+    // per-session TAGS row (tab groups on tags, the user 2026-09-04): the tags the new session
+    // joins, so its tab lands in that group. Prefilled on every open with the ACTIVE tab's tags —
+    // VISIBLE and editable, never a silent inherit (the user's ruling): a session started beside the
+    // one you are looking at joins its group unless you unpick it. Chips in the Backend row's
+    // grammar, each toggling on its own (a session may hold several tags); rebuilt per open
+    // (openPicker below), hidden with no tags to offer and in pick-mode. SDK sessions only: on the
+    // tmux pick the chips disable behind a note and no `tags` ride the create (syncPickerTags) — the
+    // kernel refuses tags on a terminal create, and a prefilled chip used to turn one into a refusal.
+    const tgWrap = el("div", "picker-backend picker-tags");
+    const tgLabel = el("span", "picker-backend-label"); tgLabel.textContent = "Tags";
+    tgWrap.appendChild(tgLabel);
+    const tgNote = el("span", "picker-auth-fixed picker-tags-note");   // the Billing row's written-out text style
+    tgNote.textContent = "Tags apply to SDK sessions";
+    tgNote.style.display = "none";
+    tgWrap.appendChild(tgNote);
     // per-session HOST picker (federation, the user 2026-07-02): local | each attached SSH host — the new
     // session is created BY that host's kernel (over its tunnel) and appears prefixed `host:name`. The
     // options are rebuilt on every open (hosts attach/detach live); the row hides with no hosts attached.
@@ -6296,8 +6509,15 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       // billing: the picker's Billing row when it is showing (both choices real on that host); ""
       // omits the field and the kernel's own default stands (the user 2026-08-08)
       const auth = pickerAuthChoice();
-      startCreate({ name, backend: beSel?.dataset.be || loadSettings().backend,
-                    dir: dirInput.value.trim(), host: hostSel, ...(auth ? { auth } : {}) });
+      // tags: the Tags row's selected chips (prefilled from the active tab, edited or not) ride the
+      // create as names; the owning kernel resolves them by name, minting a missing one like POST /tag.
+      // SDK sessions only — a tmux create carries none (the row is disabled for it; the kernel would refuse)
+      const backend = beSel?.dataset.be || loadSettings().backend;
+      const tags = backend === "sdk"
+        ? Array.from(tgWrap.querySelectorAll<HTMLElement>(".picker-be-opt.sel")).map((x) => x.dataset.tag || "").filter(Boolean)
+        : [];
+      startCreate({ name, backend,
+                    dir: dirInput.value.trim(), host: hostSel, ...(auth ? { auth } : {}), ...(tags.length ? { tags } : {}) });
     });
     actions.appendChild(newSess);
     // CREATE controls first, the resume list LAST (the user 2026-08-12): typing in the name box
@@ -6317,6 +6537,7 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     box.appendChild(dirWrap);
     box.appendChild(beWrap);
     box.appendChild(auWrap);
+    box.appendChild(tgWrap);
     box.appendChild(hostWrap);
     box.appendChild(actions);
     box.appendChild(altHead);
@@ -6395,6 +6616,25 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       });
       hostWrapEl.appendChild(b);
     }
+  }
+  const tgWrapEl = overlay.querySelector(".picker-tags") as HTMLElement | null;
+  if (tgWrapEl) {   // rebuild the Tags chips each open: the unions are live, and the prefill is the ACTIVE tab's
+    const unions = viewTagUnion(effViews());
+    const preset = new Set(activeId ? unions.filter((u) => u.members.includes(activeId!)).map((u) => u.name) : []);
+    tgWrapEl.style.display = pick || !unions.length ? "none" : "";
+    tgWrapEl.querySelectorAll(".picker-be-opt").forEach((x) => x.remove());
+    for (const u of unions) {
+      const b = el("button", "picker-be-opt" + (preset.has(u.name) ? " sel" : "")) as HTMLButtonElement;
+      b.type = "button"; b.dataset.tag = u.name;
+      const d = el("span", "picker-tag-dot"); d.style.background = u.color || "var(--dim)"; b.appendChild(d);
+      b.appendChild(document.createTextNode(u.name));
+      b.title = preset.has(u.name)
+        ? `the session you are looking at is in ${u.name} — the new one joins it too unless you unpick this`
+        : `put the new session in ${u.name}`;
+      b.addEventListener("click", () => b.classList.toggle("sel"));   // multi-select: each chip on its own
+      tgWrapEl.insertBefore(b, tgWrapEl.querySelector(".picker-tags-note"));   // chips before the tmux note
+    }
+    syncPickerTags();   // the backend toggle was just reset to the gear default above
   }
   applyBrowseState("");   // fresh open defaults back to local — enabled unless this kernel has no desktop
   const di = document.getElementById("picker-dir") as HTMLInputElement | null;
@@ -12485,6 +12725,10 @@ window.addEventListener("message", (e: MessageEvent) => {
     revealSelfPane();   // every focus is someone jumping HERE — on mobile, come forward (incl. from a remote kernel)
     closingTabs.delete(m.id);   // an explicit reveal outranks a pending close-suppression: closing a tab and
     //                             reopening it from the picker inside the ack window must show it at once
+    // a create naming a RUNNING session is answered by this focus, never by a new session (see
+    // resolveProvisionalToExisting): the pending tab is done — retire it before the switch below, so the
+    // real tab is what stays active, and a warn that follows finds no create pending and toasts
+    if (focusResolvesProvisional(m.id, sessions.get(m.id)?.name, pendingNewSession, provisionalId)) resolveProvisionalToExisting(m.id);
     if (revivePending && m.id === revivePending) clearReviveLoader();   // the revive landed — the loader's success event
     assertPeekFor(m.id);   // an out-of-view focus peeks even on the already-active fast path below (setActive is skipped there)
     // `live` (the user 2026-07-08): land on the LIVE TAIL. A blocked card's picker/permission prompt IS the
@@ -13681,6 +13925,15 @@ window.addEventListener("storage", (e) => {
     setActive(sid);
   } catch { /* malformed echo — the kernel frame corrects momentarily */ }
 });
+// TAB SECTIONS state (tab-groups.ts): a fold/open or the "Group tabs by tag" switch — from this
+// window (the CustomEvent) or a sibling pane (the storage event) — re-renders the strip
+window.addEventListener("storage", (e) => { if (e.key === TABGROUPS_KEY) renderTabs(); });
+window.addEventListener(TABGROUPS_EVENT, () => renderTabs());
+// …and so does crossing the phone/desktop boundary (an iPad rotation): renderTabs samples
+// phoneLayout() per render, and the kernel's CSS swaps the strip for its scraped session list the
+// instant the same media rule flips — so the DOM kept the desktop plan (folded tabs absent from the
+// scrape) under the phone list until the next push happened to re-render. The flip IS the event.
+try { window.matchMedia(PHONE_LAYOUT_MEDIA).addEventListener("change", () => renderTabs()); } catch { /* no matchMedia */ }
 setupComposer();
 setupSettings();
 // Tab-bar clicks are DELEGATED to the stable #tabs container (installed once), not hung on the per-tab nodes
@@ -13993,6 +14246,18 @@ setupSettings();
     // focus to the body — so Enter afterward did nothing). Now focus the (rebuilt) active tab, so the model
     // is consistent: tab focused → Enter drops into the message box; Escape there returns to the tabs.
     select: (el) => { const id = el.dataset.id; if (id) { setActive(id); focusActiveTab(); } },
+    // a section header (tab groups): fold or open that group — the new state is the opposite of the
+    // one the header RENDERED (data-folded), never a toggle of the stored bit: the active tab's
+    // section renders open whatever the store says, so a stored toggle there inverted the click. The
+    // write notifies (TABGROUPS_EVENT) and the listener re-renders — one render path for a local
+    // toggle and a sibling pane's alike.
+    "toggle-group": (el) => {
+      const name = el.dataset.group;
+      if (name) writeTabGroups(setSectionCollapsed(readTabGroups(), name, el.dataset.folded !== "1"));
+    },
+    // the header of the section holding the ACTIVE tab (makeGroupHead): unfoldable while active, so
+    // the click stores nothing — the delegate's flash is the whole acknowledgement
+    "group-active": () => { /* acknowledged by the flash; nothing to store */ },
     close: (el) => {
       const id = el.dataset.id;
       if (!id || !vscodeApi) return;
@@ -14067,6 +14332,18 @@ setupSettings();
   // (flipTabs). The no-op guard (already sitting immediately before the reference node) is what
   // keeps a pointer resting inside one slot from churning the DOM on every dragover tick.
   tabs.addEventListener("dragover", (e) => {
+    if (draggedGroup) {
+      // a GROUP drag (tab groups): the target is the section under the pointer — its header, or
+      // the header a hovered tab belongs to — and it wears the accent insertion cue; the drop
+      // commits. No live reorder of headers: the order is a kernel write, not a DOM position.
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      const over = (e.target as Element | null)?.closest?.(".tab-group-head[data-group], .tab[data-id]") as HTMLElement | null;
+      const target = over ? sectionHeadOf(over) : null;
+      for (const h of Array.from(tabs.querySelectorAll(".tab-group-head.drop-target"))) if (h !== target) h.classList.remove("drop-target");
+      if (target && target.dataset.group !== draggedGroup) target.classList.add("drop-target");
+      return;
+    }
     if (!draggedId || !dragGeom) return;
     e.preventDefault();   // the whole strip is a valid drop target
     if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
@@ -14079,8 +14356,13 @@ setupSettings();
     if (e.clientX >= dr.left && e.clientX <= dr.right && e.clientY >= dr.top && e.clientY <= dr.bottom) return;
     // the virtual layout: the OTHER tabs in current DOM order, widths from the dragstart snapshot —
     // boundaries that cannot move in response to the insert they cause (dragslot.ts owns the math)
-    const others = Array.from(tabs.querySelectorAll<HTMLElement>(".tab[data-id]")).filter((t) => t !== dragged);
-    const boxes = others.map((t) => ({ id: t.dataset.id!, w: dragGeom!.widths.get(t.dataset.id!) ?? t.getBoundingClientRect().width }));
+    // …plus the section headers and separator (tab groups): they take width in the real layout, so
+    // they join the virtual one as boxes — the simulated wrap then matches the strip's, and a slot
+    // just before a header is the end of the previous section. A drop changes no membership (the
+    // tab re-sections on the next render); "Move to" in the tab menu is the membership path.
+    const others = Array.from(tabs.querySelectorAll<HTMLElement>(".tab[data-id], .tab-group-head, .tab-group-sep")).filter((t) => t !== dragged);
+    const boxes = others.map((t) => ({ id: t.dataset.id || " head:" + (t.dataset.group || ""),
+                                       w: (t.dataset.id ? dragGeom!.widths.get(t.dataset.id) : undefined) ?? t.getBoundingClientRect().width }));
     const br = tabs.getBoundingClientRect();
     const idx = dragSlotIndex(boxes, dragGeom.containerW, dragGeom.gapX, dragGeom.rowH,
                               e.clientX - br.left, e.clientY - br.top);
@@ -14093,12 +14375,29 @@ setupSettings();
   // filtered view HIDES (present in `order`, absent from the DOM) keep their places: a wholesale
   // order-from-DOM write would silently drop them.
   tabs.addEventListener("drop", (e) => {
+    if (draggedGroup) {
+      // a GROUP drop (tab groups): the dragged tag takes the target section's slot in tagOrder —
+      // the FULL union order, written through the same views path the timeline's pill drag uses
+      // (postViews → setTimelineViews), so both surfaces read one order. pendingSessionViews
+      // shows it instantly; the kernel's echo settles it.
+      e.preventDefault();
+      const to = tabs.querySelector<HTMLElement>(".tab-group-head.drop-target")?.dataset.group;
+      if (to && to !== draggedGroup) {
+        const v = effViews();
+        postViews(applyTagOrder(v, reorderTagOrder(viewTagUnion(v).map((u) => u.name), draggedGroup, to)));
+      }
+      return;
+    }
     if (!draggedId) return;
     e.preventDefault();
     const dragged = tabs.querySelector<HTMLElement>(`.tab[data-id="${CSS.escape(draggedId)}"]`);
     if (!dragged) return;
-    const prev = dragged.previousElementSibling as HTMLElement | null;
-    const next = dragged.nextElementSibling as HTMLElement | null;
+    // the neighbours are TABS: a section header or separator beside the dropped tab is skipped, so
+    // a drop at a section's edge still names the nearest tab and its side
+    const tabBefore = (n: Element | null) => { while (n && !(n as HTMLElement).dataset?.id) n = n.previousElementSibling; return n as HTMLElement | null; };
+    const tabAfter = (n: Element | null) => { while (n && !(n as HTMLElement).dataset?.id) n = n.nextElementSibling; return n as HTMLElement | null; };
+    const prev = tabBefore(dragged.previousElementSibling);
+    const next = tabAfter(dragged.nextElementSibling);
     if (prev?.dataset?.id) reorderTo(draggedId, prev.dataset.id, true);
     else if (next?.dataset?.id) reorderTo(draggedId, next.dataset.id, false);
     tabDragCommitted = true;   // dragend must not treat this as a cancel (it fires next)

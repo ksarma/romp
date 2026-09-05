@@ -73,6 +73,9 @@ test("every cycling path walks the VISIBLE order — keyboard can never land on 
   assert.equal(hits.length, 3, "focused-tab arrows, window arrows, and the shell's cycleTab");
   assert.doesNotMatch(RENDER, /setActive\(order\[\(i \+ dir \+ order\.length\) % order\.length\]\)/,
     "no raw-order cycle survives");
+  // …and a tab folded away under a collapsed section header (tab groups, 2026-09-04) is not visible
+  // either: the visible order drops the folded ids, so ←/→ never land on a hidden node
+  assert.match(RENDER, /function visibleOrder\(\): string\[\] \{ return order\.filter\(\(id\) => tabInView\(id\) && !collapsedTabIds\.has\(id\)\); \}/);
 });
 
 test("optimistic edits hold sticky and yield to the kernel after three silent pushes", () => {
