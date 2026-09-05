@@ -359,17 +359,20 @@ restarting the manager (`romp-service install`); a missing file is a no-op.
 
 ### What survives a restart
 
-A kernel restart (`romp refresh`, the manager's restart-all, a crash respawn)
-ends every session's CLI: the drain closes each one, and a CLI still running
-when the drain's bound expires gets SIGTERM, then SIGKILL. The CLI's harness
-background tasks do not all end with it. Its timers and monitors live inside
-the CLI process and end when it does. A background shell is a separate process
-the CLI started, and a CLI killed by SIGKILL runs no cleanup, so its shells are
-re-parented and may keep running. The session resumes with its history and is
-told what was cut: its in-flight turn, if it had one, and each background task,
-with a request to check whether each is still running before relaunching it. A
-kernel restart has never touched work a session deliberately detached: tmux
-servers, `setsid` children and other processes that outlive their shell.
+A kernel restart ends every session's CLI. On `romp refresh`, the manager's
+restart-all or a service stop, the kernel receives SIGTERM and drains: it
+closes each CLI, and a CLI still running when the drain's bound expires gets
+SIGTERM, then SIGKILL. A crash respawn has no drain: the kernel died without
+running one, its CLIs are orphaned, and the next kernel's boot reaper
+terminates them (see below). The CLI's harness background tasks do not all end
+with it. Its timers and monitors live inside the CLI process and end when it
+does. A background shell is a separate process the CLI started, and a CLI
+killed by SIGKILL runs no cleanup, so its shells are re-parented and may keep
+running. The session resumes with its history and is told what was cut: its
+in-flight turn, if it had one, and each background task, with a request to
+check whether each is still running before relaunching it. A kernel restart has
+never touched work a session deliberately detached: tmux servers, `setsid`
+children and other processes that outlive their shell.
 
 A service restart (`systemctl --user restart romp-manager`, or the machine's
 own service management) kills everything in the service's cgroup, so on Linux
