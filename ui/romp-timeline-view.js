@@ -879,8 +879,10 @@ class TimelinePanel {
     this._dismissed = new Set(); // sids cleared via the dead-lane Clear pill, held STICKY the same way (see _reconcileDismissed)
     this._views = null;          // the kernel-echoed views blob (data.views); null until the first push
     this._pendingViews = null;   // an optimistic edit held until the kernel ACKS the write (viewsAck) or echoes it exactly (_reconcileViews)
-    this._viewsWrites = [];      // the writes in flight, oldest first: {id, name} — the pending copy clears when the LAST one is acked
+    this._viewsWrites = [];      // the writes in flight, oldest first: {id, name, tid, op, openRename} — the pending copy clears when the LAST one is acked
     this._viewsWriteSeq = 0;     // writeId mint — a per-page counter beside the ms stamp, so two same-ms gestures never share one
+    this._legacyViewsAge = 0;    // LEGACY kernels only (no `seq`, no acks): frames since the write — the old three-frame yield (_reconcileViews)
+    this._caps = new Set();      // what the LOCAL kernel announced at `ready` ({type:"caps"}); 'tagEdit' = targeted ops, acks, seq (setCaps)
     this._pendingTagEdits = {};  // remote-tag edits held optimistically until the owner's poll echoes (federation v1): id → {tag: shape|null(=deleted), age}
     this._tagEditErr = null;     // the LOUD failure of the last tag edit ({host, name, error}), shown in the dialog until dismissed
     this._viewsMenu = null;      // the Show-dropdown element, when open
@@ -3000,18 +3002,52 @@ class TimelinePanel {
   }
 
   // LEGACY kernels only — a blob without a write sequence comes from a kernel that acks nothing, so
-  // the write's own exact echo is the one frame-driven clear there. A kernel that stamps `seq` answers
-  // every write (viewsAck below), and the ack is the event that settles the copy: a frame, matching or
-  // not, says nothing about a write it cannot name — a net-zero burst (add, then remove) leaves frames
-  // equal to the copy while its writes are still in flight, so an exact match there cleared them early
-  // (the user 2026-09-05). The three-frame yield that once lived here counted frames as if they were
-  // information; it dropped good edits and kept refused ones alike, and is gone.
+  // the PRE-2026-09-05 reconciliation stays for that path alone: the write's own exact echo clears the
+  // copy, and three silent frames yield it (with no ack ever coming, an unechoed copy would otherwise
+  // pin forever). A kernel that stamps `seq` answers every write (viewsAck below), and the ack is the
+  // event that settles the copy: a frame, matching or not, says nothing about a write it cannot name —
+  // a net-zero burst (add, then remove) leaves frames equal to the copy while its writes are still in
+  // flight, so an exact match there cleared them early (the user 2026-09-05) — and a count of frames
+  // is not information: it dropped good edits and kept refused ones alike.
   _reconcileViews() {
     if (!this._pendingViews) return;
     if (this._views && viewsSeq(this._views) === null
-        && this._viewsKey(this._views) === this._viewsKey(this._pendingViews)) {
-      this._pendingViews = null; this._viewsWrites = [];
+        && (this._viewsKey(this._views) === this._viewsKey(this._pendingViews)
+            || (this._legacyViewsAge = (this._legacyViewsAge || 0) + 1) >= 3)) {
+      this._pendingViews = null; this._viewsWrites = []; this._legacyViewsAge = 0;
     }
+  }
+
+  // The LOCAL kernel's capabilities ({type:"caps", caps:[...]}), sent on every `ready` — the page's
+  // own at load, and the shim's re-send on a reconnected socket. A reconnect is the one event that
+  // can lose an ack (the socket died between the write and its answer), so writes still in flight
+  // when this frame arrives are unknowable: they are dropped, the copy reverts to what the kernel's
+  // frames show, and the dialog says so — never a pinned copy faking success, never a silent revert.
+  setCaps(m) {
+    this._caps = new Set((m && Array.isArray(m.caps)) ? m.caps.filter((c) => typeof c === 'string') : []);
+    if (!this._viewsWrites.length) return;
+    this._viewsWrites = []; this._pendingViews = null;
+    this._tagEditErr = { host: '', name: '', error: 'the connection was re-established; an edit made just before it may not have landed — check the list' };
+    if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();
+    this.draw();
+  }
+
+  // the kernel does not know an op this page posted (a dashboard newer than its kernel): the write is
+  // refused — the copy reverts and the dialog says why — and the capability is withdrawn, so the next
+  // gesture takes the path that kernel does know (the whole-blob write, below)
+  unknownOp(m) {
+    if (!m) return;
+    if (typeof m.op === 'string' && this._caps) this._caps.delete(m.op);
+    if (typeof m.writeId === 'string' && this._viewsWrites.some((w) => w.id === m.writeId))
+      this.viewsAck({ type: 'unknownOp', writeId: m.writeId, ok: false,
+                      error: 'the kernel does not know the ' + m.op + ' operation, so the edit was not applied — try again; this dialog now uses the older path' });
+  }
+
+  // targeted tag ops need both the kernel's `tagEdit` capability and a host bridge to carry them; with
+  // either missing (an older kernel; an Obsidian panel writing the file) a gesture takes the whole-blob path
+  _tagEditsTargeted() {
+    return !!(this._caps && this._caps.has('tagEdit')
+      && typeof window !== 'undefined' && typeof window.__rompTimelineTagEdit === 'function');
   }
 
   // One TARGETED tag edit: `nv` is the optimistic copy (the gesture already applied) shown until
@@ -3021,10 +3057,11 @@ class TimelinePanel {
   // merge, so it is never judged stale against this dialog's own earlier writes (the 2026-09-05
   // loss); `meta` rides on the in-flight record: {name, tid} for the refusal notice, `openRename`
   // to open the rename input on the tid the create's ack returns. Answered on this socket by
-  // tagEditAck → viewsAck below. No targeted bridge (an Obsidian panel writing the file, a
-  // headless run) → the whole-blob write, as before.
+  // tagEditAck → viewsAck below. No `tagEdit` capability or no targeted bridge (an older kernel; an
+  // Obsidian panel writing the file; a headless run) → the PRE-2026-09-05 whole-blob write, reconciled
+  // by _reconcileViews's legacy branch (_tagEditsTargeted).
   _postTagEdit(nv, edit, meta) {
-    if (typeof window === 'undefined' || typeof window.__rompTimelineTagEdit !== 'function') { if (nv) this._setViews(nv); return; }
+    if (!this._tagEditsTargeted()) { if (nv) this._setViews(nv); return; }
     if (nv) this._pendingViews = nv;
     const writeId = this._mintWriteId();
     this._viewsWrites.push(Object.assign({ id: writeId, name: '', op: edit.op }, meta || {}));
@@ -3072,7 +3109,7 @@ class TimelinePanel {
   // same timeline-views.json the kernel reads (it re-normalizes on read) — the write IS the store
   // write there, so the copy is adopted as the base on the spot. Optimistic, like the lane flags.
   _setViews(v) {
-    this._pendingViews = v;
+    this._pendingViews = v; this._legacyViewsAge = 0;
     try {
       if (typeof window !== 'undefined' && typeof window.__rompTimelineSetViews === 'function') {
         const writeId = this._mintWriteId();
@@ -3565,7 +3602,18 @@ class TimelinePanel {
           // count collided with a leftover default-named tag (the 2026-09-05 review). The name
           // typed next is a rename by tid — never a whole-blob post the kernel could judge stale
           // against this very create (the 2026-09-05 loss).
-          this._postTagEdit(null, { op: 'create', color }, { openRename: true });
+          if (this._tagEditsTargeted()) { this._postTagEdit(null, { op: 'create', color }, { openRename: true }); return; }
+          // LEGACY (no `tagEdit` capability, or no bridge — an older kernel, an Obsidian panel): the
+          // pre-2026-09-05 whole-blob create, named and id'd here, the row opened for renaming. The
+          // name skips the ones in use rather than counting rows.
+          const nv = JSON.parse(JSON.stringify(v));
+          const names = new Set(viewTags(nv).map((t) => t.name));
+          let n = 1; while (names.has('tag ' + n)) n++;
+          const tg = { id: 'g' + Date.now().toString(36), name: 'tag ' + n, color, members: [] };
+          nv.tags = viewTags(nv).concat([tg]); delete nv.groups;
+          this._tagEditorFor = tg.id;
+          this._setViews(nv);
+          build();
         });
       }
       // ── PANE FILTERS — five rows (the user 2026-08-25 redesign, superseding the one-line

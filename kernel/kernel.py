@@ -578,6 +578,9 @@ def _version_info():
     return {"kernel_sha": _kernel_sha(), "kernel_ver": _kernel_ver(), "pid": os.getpid(), "started": int(_STARTED),
             "boot": _BOOT_ID,   # lets a page retire update offers from a previous kernel life (2026-08-15)
             "uptime_s": int(time.time() - _STARTED), "dist_ver": _dist_ver(), "bundles": bundles,
+            # the WS ops beyond the base protocol this kernel answers (KERNEL_WS_CAPS) — the same list
+            # the `caps` frame carries at `ready`; `romp version` and a curl can read it here
+            "caps": list(KERNEL_WS_CAPS),
             # THIS kernel process's transcript-assembly counters (event_model._ASM_STATS: full/fold/
             # serve/bypass/fallback + per-gate g:<reason> demotes + ts-repair) — the designed home for
             # runtime observability: /healthz's body is a frozen liveness contract ("ok"), while this
@@ -30210,6 +30213,57 @@ FEED_DELTA_CAP = "feedDelta"   # the capability a client announces (ws ?caps=fee
 # held client — the shim consumes both itself.
 READY_GATE_CAP = "readyGate"
 
+# What THIS kernel can do for a dashboard beyond the base protocol, announced on the socket in reply to
+# every `ready` (the page's own at load, and the shim's re-send on a reconnected socket) as
+# {type: "caps", caps: [...]} and listed on /version. The caps a client announces on its ws URL
+# (FEED_DELTA_CAP, READY_GATE_CAP) go the other way; until 2026-09-05 nothing went this way, and a
+# dashboard newer than its kernel posted ops the kernel silently dropped. A client uses a targeted op
+# only when the cap is present and takes the pre-cap path otherwise.
+#   tagEdit — the targeted `tagEdit` op (create / rename / recolor / addMember / removeMember /
+#             delete / move, by tag id), the `tagEditAck` / `viewsAck` answers on the poster's socket,
+#             and the write sequence (`seq`) on every views blob.
+KERNEL_WS_CAPS = ("tagEdit",)
+
+
+def _send_caps(client):
+    """The caps frame, on the client's own socket. Sent AFTER the ready handler's pushes: the shim clears
+    its stale banner on the first non-keepalive frame after a reconnect, which must stay the resync frame
+    itself and not this one."""
+    try:
+        client["send"](json.dumps({"type": "caps", "caps": list(KERNEL_WS_CAPS)}))
+    except Exception:
+        pass
+
+
+# Ops the browser's panes post for a HOST to consume (the VS Code extension takes them; the kernel-served
+# page has no host, so they reach the kernel, which has nothing to do with them). Not unknown, not the
+# kernel's: the terminal arm below neither logs nor answers them.
+_HOST_ONLY_OPS = frozenset({"openLink", "readClipboard", "usageData", "colorSync", "settingsSync",
+                            "editorSelection", "answerPickerChoice"})
+_UNKNOWN_OPS_SEEN = set()
+
+
+def _note_unknown_op(msg, client):
+    """_dispatch_ws's terminal arm: a message no handler took — an op this kernel does not know (a
+    dashboard newer than its kernel), or a known op missing the field its arm requires. Logged ONCE per
+    type (one line of version skew, not one per gesture) and ANSWERED on the poster's socket with
+    {type: "unknownOp", op, writeId?}: a client waiting on an ack for that writeId learns the op is
+    unsupported and treats the answer as a refusal, instead of pinning its optimistic copy on an
+    answer that never comes (the 2026-09-05 review). An undecodable frame (msg None) was already
+    reported by the recv loop; a host-directed op is not the kernel's to answer."""
+    t = msg.get("type") if isinstance(msg, dict) else None
+    if not isinstance(t, str) or not t or t in _HOST_ONLY_OPS:
+        return
+    op = t[:40]
+    if op not in _UNKNOWN_OPS_SEEN:
+        _UNKNOWN_OPS_SEEN.add(op)
+        sys.stderr.write("ws: no handler took op %r from a %s client (unknown type, or a required field missing) "
+                         "— answered unknownOp; logged once per type\n" % (op, (client or {}).get("app") or "?"))
+    reply = {"type": "unknownOp", "op": op}
+    if isinstance(msg.get("writeId"), str):
+        reply["writeId"] = msg["writeId"]
+    _reply(client, reply)
+
 # A client that announces THIS cap has no live kernel-pushed view: its content is fetched over HTTP on
 # demand and its socket carries keepalives and request/response replies only (the Files pane, app=files).
 # The shim reads it off CAPS and never arms its "connection lost — what you see may be stale" prompt for
@@ -33689,6 +33743,8 @@ else if(m.type==="hover"&&panel.setHover)panel.setHover(m);
 else if(m.type==="revealEvent"&&panel.revealEvent)panel.revealEvent(m.sid,m.t,m.id);
 else if(m.type==="models"&&panel.refreshModels)panel.refreshModels();
 else if((m.type==="tagEditAck"||m.type==="viewsAck")&&panel.viewsAck)panel.viewsAck(m);
+else if(m.type==="caps"&&panel.setCaps)panel.setCaps(m);
+else if(m.type==="unknownOp"&&panel.unknownOp)panel.unknownOp(m);
 else if(m.type==="tagEditFailed"&&panel.tagEditFailed)panel.tagEditFailed(m);
 else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);});
 window.__rompTimelineOpenExternal=function(url){try{var u=new URL(url);if(u.protocol==="vscode:"){var q=u.searchParams;
@@ -38968,6 +39024,10 @@ class Handler(BaseHTTPRequestHandler):
             # and needs no ledgers, so the served frame is all the push could give it.
             if not (served and client.get("app") in ("feed", "waiting")):
                 self._push_one(client)
+            # What this kernel can do for the page (KERNEL_WS_CAPS), after the pushes above and on every
+            # `ready` — so a reconnected socket learns them again, and a page whose views writes were
+            # in flight across the drop learns, by this frame, that their answers may never come.
+            _send_caps(client)
             # The tab order rides the connect push (chat clients, through the _tab_list_tmux collapse
             # guard). This handler used to send a SECOND tabOrder built from a raw _tmux_sessions() read,
             # bypassing that guard — and the client treats an omitted id as an authoritative teardown
@@ -39740,6 +39800,9 @@ class Handler(BaseHTTPRequestHandler):
                                  args=({"commentFast": str(msg["fast"]), "gt": _jgt},), daemon=True).start()
             else:
                 _tell_stale_gesture(client)
+        else:
+            # no arm took it: say so once per type, and answer the poster (see _note_unknown_op)
+            _note_unknown_op(msg, client)
 
     def _ws(self):
         key = self.headers.get("Sec-WebSocket-Key")

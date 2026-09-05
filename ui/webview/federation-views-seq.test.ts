@@ -42,6 +42,15 @@ test("the replayed LOCAL views blob keeps the newest write sequence across tabOr
   });
 });
 
+test("a kernel's `caps` frame describes THAT kernel: the local one reaches the panes, a remote's is dropped", () => {
+  withManager((fm, emitted) => {
+    fm.inbound("TESTHOST", { type: "caps", caps: ["tagEdit"] });
+    assert.equal(emitted.filter((m) => m.type === "caps").length, 0, "a remote kernel's capabilities would read as the local kernel's — the panes write only the local views store");
+    fm.inbound("", { type: "caps", caps: ["tagEdit"] });
+    assert.deepEqual(emitted.filter((m) => m.type === "caps"), [{ type: "caps", caps: ["tagEdit"] }], "the local kernel's frame is handed to the panes as-is");
+  });
+});
+
 test("…and across lanes payloads: an older LOCAL data frame keeps the stored views while its lanes still land", () => {
   withManager((fm, emitted) => {
     const lanes = (ids: string[], now: number, v: any) => ({ type: "data", data: { sessions: ids.map((id) => ({ id, name: id.slice(0, 4) })), turns: {}, messages: [], judging: [], now, views: v } });

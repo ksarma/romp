@@ -90,14 +90,17 @@ const actives = { chat: { all: true }, outline: { all: true }, timeline: { all: 
 const S0 = { active: "all", actives, at: 100, seq: 1000, tags: [{ id: "gA", name: "web", color: "#3b82f6", members: [SID1], mtime: 100 }] };
 const copy = (v: any) => JSON.parse(JSON.stringify(v));
 
-function drawnPanel(): any {
+// a drawn panel, connected to a kernel that announced the `tagEdit` capability at `ready` (the caps
+// frame, as the kernel sends it); `views` overrides the first frame's blob (a seq-less one = a legacy kernel)
+function drawnPanel(views: any = S0, caps: string[] = ["tagEdit"]): any {
   posted.length = 0;
   const panel = new TimelinePanel(makeNode("div"));
   panel.update({
     now, sessions: [sess(SID1, "web", "#f7768e"), sess(SID2, "api", "#7aa2f7")],
     turns: { [SID1]: [{ id: "t1", start: now - 400, end: now - 100, prompt: "do the thing", tid: "f1", mids: [] }] },
-    messages: [], judging: [], views: copy(S0), palette: PALETTE.slice(),
+    messages: [], judging: [], views: copy(views), palette: PALETTE.slice(),
   });
+  panel.setCaps({ type: "caps", caps });
   return panel;
 }
 // a kernel push carrying a views blob (the two-message path's skeleton frame)
@@ -356,11 +359,95 @@ test("executed: without the targeted-edit bridge (an Obsidian panel), a tag gest
   }
 });
 
-test("pins: the three-frame yield is gone; the pending copy clears on the echo's exact match or the ack, nothing else", () => {
-  assert.doesNotMatch(SRC, /_pendingViewsAge/, "no frame counter anywhere in the panel");
-  const rec = SRC.slice(SRC.indexOf("  _reconcileViews() {"), SRC.indexOf("  _postTagEdit("));
-  assert.doesNotMatch(rec, />= 3/, "_reconcileViews counts nothing");
-  assert.match(rec, /this\._viewsKey\(this\._views\) === this\._viewsKey\(this\._pendingViews\)/, "the exact-match clear stays (the write's own echo IS an event)");
+// ── CAPABILITY (the 2026-09-05 review, findings 2/12): the kernel announces `tagEdit` at every `ready`;
+// without it the panel takes the pre-cap path (the whole blob, reconciled by the legacy exact echo and
+// three-frame yield, since no ack will come); an op the kernel does not know is answered unknownOp.
+test("executed: against a kernel WITHOUT the tagEdit capability, a tag gesture posts the whole blob — the legacy path — and legacy frames settle it by exact echo or three silent frames", () => {
+  const L0 = copy(S0); delete L0.seq;                    // an older kernel stamps no seq…
+  const panel = drawnPanel(L0, []);                      // …and announces no tagEdit
+  const u = viewTagUnion(panel._curViews()).find((x: any) => x.name === "web");
+  panel._editTagUnion(u, { rename: "site" });
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].kind, "views", "no capability → the pre-cap whole-blob write");
+  assert.equal(posted[0].v.tags[0].name, "site");
+  assert.ok(typeof posted[0].writeId === "string", "the writeId rides anyway — an older kernel ignores it");
+  // LEGACY reconciliation, for this path only: a frame that echoes the edit clears it…
+  const echo = copy(L0); echo.tags[0].name = "site";
+  frame(panel, echo);
+  assert.equal(panel._pendingViews, null, "the exact echo clears the copy (legacy)");
+  // …and three silent seq-less frames yield an unechoed one (with no ack coming, it would pin forever)
+  panel._editTagUnion(viewTagUnion(panel._curViews()).find((x: any) => x.name === "site"), { color: "#DD42FF" });
+  assert.ok(panel._pendingViews);
+  frame(panel, echo); frame(panel, echo);
+  assert.ok(panel._pendingViews, "two silent frames: still holding");
+  frame(panel, echo);
+  assert.equal(panel._pendingViews, null, "the third yields — the legacy kernel's only clear");
+  // [+ New tag] on the legacy path: a whole-blob create the dialog names and ids, the row opened for renaming
+  panel._openViewsDialog(null);
+  clickNewTag(panel);
+  const last = posted[posted.length - 1];
+  assert.equal(last.kind, "views");
+  const added = last.v.tags.find((t: any) => t.name === "tag 1");
+  assert.ok(added && /^g[0-9a-z]+$/.test(added.id), "legacy: the dialog mints the id and the lowest free 'tag N'");
+  assert.equal(panel._tagEditorFor, added.id, "…and opens the rename input on it");
+  // a New tag when the capability is present posts the targeted create (the same panel, the cap arriving)
+  panel.setCaps({ type: "caps", caps: ["tagEdit"] });
+  clickNewTag(panel);
+  assert.equal(posted[posted.length - 1].kind, "tag");
+});
+
+test("executed: an unknownOp reply surfaces as a refusal, withdraws the capability, and the next gesture takes the older path", () => {
+  const panel = drawnPanel();
+  panel._openViewsDialog(null);
+  const u = viewTagUnion(panel._curViews()).find((x: any) => x.name === "web");
+  panel._editTagUnion(u, { rename: "site" });
+  const w = tagOps()[0].writeId;
+  assert.equal(panel._curViews().tags[0].name, "site", "optimistic");
+  panel.unknownOp({ type: "unknownOp", op: "tagEdit", writeId: w });
+  assert.equal(panel._pendingViews, null, "the copy reverts — the kernel did nothing with the write");
+  assert.equal(panel._curViews().tags[0].name, "web");
+  assert.match(panel._tagEditErr.error, /does not know the tagEdit operation/, "…and the dialog says why");
+  assert.equal(panel._caps.has("tagEdit"), false, "the capability is withdrawn");
+  panel._editTagUnion(viewTagUnion(panel._curViews())[0], { color: "#DD42FF" });
+  assert.equal(posted[posted.length - 1].kind, "views", "the next gesture is a whole-blob write that kernel does know");
+  // an unknownOp for a write this page never made changes nothing but the cap
+  const n = posted.length; const before = panel._pendingViews;
+  panel.unknownOp({ type: "unknownOp", op: "somethingElse", writeId: "w-not-ours" });
+  assert.equal(posted.length, n); assert.equal(panel._pendingViews, before);
+});
+
+test("executed: a lost ack — the caps frame the kernel sends at every ready (a re-established socket) drops what was in flight, says so, and the next frame is adopted", () => {
+  const panel = drawnPanel();
+  panel._openViewsDialog(null);
+  const u = viewTagUnion(panel._curViews()).find((x: any) => x.name === "web");
+  panel._editTagUnion(u, { rename: "site" });
+  assert.equal(panel._viewsWrites.length, 1, "the rename is in flight");
+  // the socket dropped between the write and its ack; the shim reconnected and re-sent `ready`; the
+  // kernel answered with its caps — the ONE event that says the in-flight answer may never come
+  panel.setCaps({ type: "caps", caps: ["tagEdit"] });
+  assert.deepEqual(panel._viewsWrites, [], "nothing pins: the writes are unknowable and are dropped");
+  assert.equal(panel._pendingViews, null, "the copy reverts to the store's truth");
+  assert.equal(panel._curViews().tags[0].name, "web");
+  assert.match(panel._tagEditErr.error, /re-established.*may not have landed/, "the user is told — never a fake success, never a silent revert");
+  const shown = walk(panel._viewsDialog).map(textOf).find((s) => s.startsWith("⚠ "));
+  assert.ok(shown, "…in the open dialog");
+  const S2 = copy(S0); S2.seq = 1002; S2.tags[0].name = "site";      // the write HAD landed: the next frame shows it
+  frame(panel, S2);
+  assert.equal(panel._curViews().tags[0].name, "site", "the next frame is adopted as the truth");
+  // a caps frame with nothing in flight (the page's own load) changes nothing but the caps
+  const before = panel._tagEditErr;
+  panel.setCaps({ type: "caps", caps: ["tagEdit"] });
+  assert.equal(panel._tagEditErr, before);
+});
+
+test("pins: no frame count settles a stamped kernel's write; the legacy exact echo and three-frame yield live in the seq-less branch only", () => {
+  assert.doesNotMatch(SRC, /_pendingViewsAge/, "the old counter is gone");
+  const rec = SRC.slice(SRC.indexOf("  _reconcileViews() {"), SRC.indexOf("  // The LOCAL kernel's capabilities"));
+  assert.match(rec, /viewsSeq\(this\._views\) === null\s*\n\s*&& \(this\._viewsKey\(this\._views\) === this\._viewsKey\(this\._pendingViews\)\s*\n\s*\|\| \(this\._legacyViewsAge = \(this\._legacyViewsAge \|\| 0\) \+ 1\) >= 3\)\)/,
+    "both legacy clears sit under the seq-less condition — a blob with a seq comes from a kernel that acks, and only the ack settles");
+  assert.equal((rec.match(/>= 3/g) || []).length, 1, "one legacy yield, nowhere else");
+  assert.match(SRC, /_postTagEdit\(nv, edit, meta\) \{\s*\n\s*if \(!this\._tagEditsTargeted\(\)\) \{ if \(nv\) this\._setViews\(nv\); return; \}/,
+    "a targeted op needs the capability AND a bridge; otherwise the whole-blob write");
   assert.match(SRC, /window\.__rompTimelineSetViews\(v, writeId\);/, "the whole-blob hook carries the writeId");
   assert.match(SRC, /window\.__rompTimelineTagEdit\(writeId, edit\);/, "the targeted hook carries the writeId beside the NESTED op");
   assert.doesNotMatch(SRC, /op: '(?:rename|recolor|addMember|removeMember|delete)', name:/, "no op but create carries a name — every one addresses by tid");

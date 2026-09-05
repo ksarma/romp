@@ -440,6 +440,77 @@ class WriteSequence(_Wire):
         self.assertGreater(b["seq"], a["seq"], "…and strictly increasing within a store, same-ms writes included")
 
 
+class Capability(_Wire):
+    """The kernel says what it can do (the 2026-09-05 review, findings 2/12): {type: "caps"} in
+    reply to every `ready`, after the pushes; the same list on /version. A message no handler took
+    is logged once per type and answered {type: "unknownOp", op, writeId?} on the poster's socket,
+    so a client waiting on an ack learns the op is unsupported instead of pinning its copy."""
+
+    def setUp(self):
+        super().setUp()
+        km._UNKNOWN_OPS_SEEN.clear()
+
+    def test_ready_is_answered_with_the_caps_frame_after_the_pushes(self):
+        self.handler._push_one = lambda c: self.sent.append({"type": "_pushed"})   # the connect push, in order
+        self.client["ready"] = False                                                # held at accept (READY_GATE_CAP)
+        km.Handler._dispatch_ws(self.handler, {"type": "ready"}, self.client)
+        self.assertTrue(self.client["ready"])
+        types = [m["type"] for m in self.sent]
+        self.assertIn("caps", types)
+        self.assertLess(types.index("_pushed"), types.index("caps"),
+                        "after the pushes: the shim's stale banner clears on the first real frame after a "
+                        "reconnect, which must stay the resync frame itself")
+        caps = next(m for m in self.sent if m["type"] == "caps")
+        self.assertEqual(caps, {"type": "caps", "caps": ["tagEdit"]})
+        # a RE-SENT ready (the shim, on a reconnected socket) gets the caps again — the event a page
+        # with writes in flight across the drop keys on
+        n = len(self.sent)
+        km.Handler._dispatch_ws(self.handler, {"type": "ready"}, self.client)
+        self.assertEqual([m["type"] for m in self.sent[n:] if m["type"] == "caps"], ["caps"])
+
+    def test_version_lists_the_same_caps(self):
+        self.assertEqual(km._version_info()["caps"], list(km.KERNEL_WS_CAPS))
+        self.assertIn("tagEdit", km.KERNEL_WS_CAPS)
+
+    def test_an_unknown_op_is_answered_every_time_and_logged_once_per_type(self):
+        import contextlib
+        import io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            a = self.post({"type": "noSuchOp", "writeId": "w1"})
+            b = self.post({"type": "noSuchOp", "writeId": "w2"})
+            c = self.post({"type": "noSuchOp"})
+        self.assertEqual(a, {"type": "unknownOp", "op": "noSuchOp", "writeId": "w1"},
+                         "the poster learns the op is unsupported — a client waiting on that writeId treats it as a refusal")
+        self.assertEqual(b, {"type": "unknownOp", "op": "noSuchOp", "writeId": "w2"})
+        self.assertEqual(c, {"type": "unknownOp", "op": "noSuchOp"}, "no writeId → none echoed")
+        lines = [ln for ln in err.getvalue().splitlines() if "noSuchOp" in ln]
+        self.assertEqual(len(lines), 1, "one line of version skew per type, not one per gesture")
+        self.assertIn("unknownOp", lines[0])
+        # a KNOWN op missing the field its arm requires falls to the same terminal arm
+        with contextlib.redirect_stderr(io.StringIO()):
+            d = self.post({"type": "setSessionFlag", "id": "", "flag": "eye"})
+        self.assertEqual(d["type"], "unknownOp")
+        self.assertEqual(d["op"], "setSessionFlag")
+
+    def test_a_host_directed_op_and_an_undecodable_frame_are_neither_logged_nor_answered(self):
+        import contextlib
+        import io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(self.post({"type": "openLink", "href": "https://example.invalid/x"}),
+                              "the browser shim has no host to consume it; it is not the kernel's to answer")
+            self.assertIsNone(self.post({"type": "readClipboard"}))
+            self.assertIsNone(self.post(None), "an undecodable frame was already reported by the recv loop")
+            self.assertIsNone(self.post({"type": ""}))
+        self.assertEqual(err.getvalue(), "")
+
+    def test_the_inline_boot_routes_caps_and_unknown_op_to_the_panel(self):
+        src = open(os.path.join(BIN, "romp-kernel")).read()
+        self.assertIn('else if(m.type==="caps"&&panel.setCaps)panel.setCaps(m);', src)
+        self.assertIn('else if(m.type==="unknownOp"&&panel.unknownOp)panel.unknownOp(m);', src)
+
+
 class SetterReturnsRefusals(unittest.TestCase):
     """_set_timeline_views now RETURNS the refused rows (tid + name + plain reason); callers that
     ignored None keep ignoring a list."""

@@ -757,6 +757,9 @@ export class FederationManager {
     if (m && m.type === "session" && typeof m.id === "string") {
       (this.perHostSids[host] ||= new Set()).add(m.id);
     }
+    // a kernel's `caps` frame describes THAT kernel; the panes hold only the LOCAL kernel's (its views
+    // store is the one they write). A remote's would read as the local kernel's — dropped here.
+    if (m && m.type === "caps" && host !== LOCAL) return;
     // A kernel's `closed` frame is ITS OWN report that the session is gone — the one other writer allowed
     // to touch the per-host store (T233, the user 2026-09-03). The 2026-08-02 rule below forbids
     // ARRANGEMENT writes on a re-emit (a stale pane pruning another pane's drag); a `closed` frame is new

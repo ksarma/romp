@@ -70,9 +70,21 @@ test("executed: write ids are unique per page across same-ms gestures", () => {
 test("pins: render.ts posts a writeId on every views write and routes both acks to onViewsAck", () => {
   assert.match(RENDER, /function postViews\(v: SessionViews\) \{\s*\n\s*const writeId = holdViews\(v\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "setTimelineViews", views: v, writeId \}\);/,
     "a lens/order edit is still the whole blob (the kernel owns no lens op), now with its writeId");
-  assert.match(RENDER, /function postTagEdit\(nv: SessionViews, edit: TagEditOp\) \{\s*\n\s*const writeId = holdViews\(nv\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "tagEdit", writeId, edit \}\);/,
+  const pte = RENDER.slice(RENDER.indexOf("function postTagEdit("), RENDER.indexOf("\n}\n", RENDER.indexOf("function postTagEdit(")));
+  assert.match(pte, /if \(!kernelCaps\.has\("tagEdit"\)\) \{ postViews\(nv\); return; \}/,
+    "no `tagEdit` capability announced (an older kernel) → the pre-cap whole-blob write, reconciled by the legacy path");
+  assert.match(pte, /const writeId = holdViews\(nv\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "tagEdit", writeId, edit \}\);/,
     "a tag gesture is a targeted op, NESTED under `edit` so no tag name sits at the top level where the federation router reads session addresses");
   assert.match(RENDER, /else if \(m\.type === "viewsAck" \|\| m\.type === "tagEditAck"\) onViewsAck\(m\);/);
+  assert.match(RENDER, /else if \(m\.type === "caps"\) onKernelCaps\(m\);\s*\n\s*else if \(m\.type === "unknownOp"\) onUnknownOp\(m\);/,
+    "the kernel's caps (every `ready`) and its answer to an op it does not know both have a door");
+  const caps = RENDER.slice(RENDER.indexOf("function onKernelCaps("), RENDER.indexOf("\n}\n", RENDER.indexOf("function onKernelCaps(")));
+  assert.match(caps, /kernelCaps = new Set\(/);
+  assert.match(caps, /if \(!viewsWrites\.length\) return;\s*\n\s*viewsWrites = \[\]; pendingSessionViews = null;\s*\n\s*warnToast\(/,
+    "a caps frame with writes in flight is a re-established socket: their acks may never come, so they are dropped and the user is told");
+  const unk = RENDER.slice(RENDER.indexOf("function onUnknownOp("), RENDER.indexOf("\n}\n", RENDER.indexOf("function onUnknownOp(")));
+  assert.match(unk, /if \(typeof m\.op === "string"\) kernelCaps\.delete\(m\.op\);/, "the capability is withdrawn");
+  assert.match(unk, /viewsWrites\.includes\(m\.writeId\)\)\s*\n\s*onViewsAck\(\{ type: "unknownOp", writeId: m\.writeId, ok: false,/, "…and the write is refused, through the one ack door");
   const ack = RENDER.slice(RENDER.indexOf("function onViewsAck("), RENDER.indexOf("\n}\n", RENDER.indexOf("function onViewsAck(")));
   assert.match(ack, /const out = ackOutcome\(viewsWrites, m\);/, "the pure module decides; render.ts applies");
   assert.match(ack, /takeViews\(m\.views\);/, "the ack's blob is the new base unless a newer frame already overtook it (the seq decides), verdict regardless");
@@ -86,9 +98,9 @@ test("pins: every views arrival in render.ts goes through the ONE seq-gated adop
   assert.doesNotMatch(RENDER, /pendingViewsAge/, "no frame counter anywhere in render.ts");
   const cap = RENDER.slice(RENDER.indexOf("function captureViews("), RENDER.indexOf("\n}\n", RENDER.indexOf("function captureViews(")));
   assert.match(cap, /^\s*takeViews\(v\);/m, "a pushed frame is adopted through the gate");
-  assert.doesNotMatch(cap, />= 3/);
-  assert.match(cap, /if \(pendingSessionViews && v && seqOf\(v\) === null && viewsKey\(v\) === viewsKey\(pendingSessionViews\)\) \{\s*\n\s*pendingSessionViews = null; viewsWrites = \[\];/,
-    "the exact-echo clear survives ONLY for a blob without a seq (a kernel that acks nothing); a stamped kernel's frames never clear a write they cannot name");
+  assert.match(cap, /if \(pendingSessionViews && v && seqOf\(v\) === null\s*\n\s*&& \(viewsKey\(v\) === viewsKey\(pendingSessionViews\) \|\| \+\+legacyViewsAge >= 3\)\) \{\s*\n\s*pendingSessionViews = null; viewsWrites = \[\]; legacyViewsAge = 0;/,
+    "the exact-echo clear and the three-frame yield survive ONLY for a blob without a seq (a kernel that acks nothing); a stamped kernel's frames never clear a write they cannot name");
+  assert.equal((cap.match(/>= 3/g) || []).length, 1, "one legacy yield, under the seq-less condition, nowhere else");
   assert.equal((RENDER.match(/(?<!pending)(?<!\w)sessionViews = /g) || []).length, 1,
     "the base is assigned in exactly one place — inside the gate");
 });

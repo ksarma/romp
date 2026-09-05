@@ -51,6 +51,8 @@ test("dispatchFrame routes kernel frames to the panel", () => {
     setHover: (m: any) => calls.push(["setHover", m.type]),
     refreshModels: () => calls.push(["refreshModels"]),   // the kernel's models frame: the pick memory moved
     viewsAck: (m: any) => calls.push(["viewsAck", m.type, m.writeId]),   // the kernel's answer to one of this page's views writes
+    setCaps: (m: any) => calls.push(["setCaps", m.caps]),                // what the kernel can do for this page (every `ready`)
+    unknownOp: (m: any) => calls.push(["unknownOp", m.op, m.writeId]),  // an op the kernel does not know: a refusal, and the cap withdrawn
   };
   assert.equal(dispatchFrame(panel, { type: "data", data: { lanes: [] } }), true);
   assert.equal(dispatchFrame(panel, { type: "bars" }), true);
@@ -59,10 +61,13 @@ test("dispatchFrame routes kernel frames to the panel", () => {
   assert.equal(dispatchFrame(panel, { type: "models", rev: 3 }), true);
   assert.equal(dispatchFrame(panel, { type: "tagEditAck", writeId: "w1", ok: true }), true, "a targeted tag edit's ack");
   assert.equal(dispatchFrame(panel, { type: "viewsAck", writeId: "w2", ok: false }), true, "a whole-blob write's ack");
+  assert.equal(dispatchFrame(panel, { type: "caps", caps: ["tagEdit"] }), true, "the kernel's capabilities");
+  assert.equal(dispatchFrame(panel, { type: "unknownOp", op: "tagEdit", writeId: "w3" }), true, "an op the kernel does not know");
   assert.equal(dispatchFrame(panel, { type: "ka" }), false);
   assert.equal(dispatchFrame(null, { type: "data" }), false);
-  assert.deepEqual(calls.map((c) => c[0]), ["update", "applyBars", "setActiveChat", "setHover", "refreshModels", "viewsAck", "viewsAck"]);
-  assert.deepEqual(calls.slice(5), [["viewsAck", "tagEditAck", "w1"], ["viewsAck", "viewsAck", "w2"]], "both acks land on the one panel door");
+  assert.deepEqual(calls.map((c) => c[0]), ["update", "applyBars", "setActiveChat", "setHover", "refreshModels", "viewsAck", "viewsAck", "setCaps", "unknownOp"]);
+  assert.deepEqual(calls.slice(5), [["viewsAck", "tagEditAck", "w1"], ["viewsAck", "viewsAck", "w2"], ["setCaps", ["tagEdit"]], ["unknownOp", "tagEdit", "w3"]],
+    "both acks land on the one panel door; caps and unknownOp on their own");
 });
 
 test("dispatchFrame tolerates a panel without the optional methods", () => {

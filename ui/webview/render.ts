@@ -506,6 +506,8 @@ let sessionViews: SessionViews | null = null;
 let pendingSessionViews: SessionViews | null = null;
 let viewsWrites: string[] = [];   // this page's views writes in flight (writeIds), oldest first
 let viewsWriteSeq = 0;
+let legacyViewsAge = 0;           // LEGACY kernels only (no `seq`, no acks): frames since the write — the old three-frame yield (captureViews)
+let kernelCaps = new Set<string>();   // what the LOCAL kernel announced at `ready` ({type:"caps"}); "tagEdit" = targeted ops, acks, seq
 let allHiddenBlanked = false;   // the active transcript was blanked because EVERY session is view-hidden
 let staleViewsDiagSent = false; // one breadcrumb per page load for an out-of-order views blob (below)
 function effViews(): SessionViews | null { return pendingSessionViews ?? sessionViews; }
@@ -526,13 +528,16 @@ function takeViews(v: SessionViews | null | undefined): boolean {
 }
 function captureViews(v: SessionViews | null) {
   takeViews(v);
-  // LEGACY kernels only (a blob without a write sequence acks nothing): the write's own exact echo
-  // is the one frame-driven clear there. A kernel that stamps `seq` answers every write, and the ack
-  // is the event that settles the copy — a frame, matching or not, says nothing about a write it
-  // cannot name (a net-zero burst's frames match the copy while its writes are still in flight).
-  // (v null = a tabOrder frame without the blob, an older kernel: nothing to compare.)
-  if (pendingSessionViews && v && seqOf(v) === null && viewsKey(v) === viewsKey(pendingSessionViews)) {
-    pendingSessionViews = null; viewsWrites = [];
+  // LEGACY kernels only (a blob without a write sequence comes from a kernel that acks nothing): the
+  // PRE-2026-09-05 reconciliation stays for that path alone — the write's exact echo clears the copy,
+  // and three silent frames yield it (with no ack ever coming, an unechoed copy would otherwise pin
+  // forever). A kernel that stamps `seq` answers every write, and the ack is the event that settles
+  // the copy — a frame, matching or not, says nothing about a write it cannot name (a net-zero
+  // burst's frames match the copy while its writes are still in flight), and no count of frames is
+  // information. (v null = a tabOrder frame without the blob, an older kernel: nothing to compare.)
+  if (pendingSessionViews && v && seqOf(v) === null
+      && (viewsKey(v) === viewsKey(pendingSessionViews) || ++legacyViewsAge >= 3)) {
+    pendingSessionViews = null; viewsWrites = []; legacyViewsAge = 0;
   }
   // A VIEW CHANGE that excludes the ACTIVE session converts it into the peek instead of bouncing
   // (the user 2026-08-24: open All, pick a session, re-apply the tag filter — keep reading it in
@@ -546,7 +551,7 @@ function captureViews(v: SessionViews | null) {
 // paths keep the active session's peek state current.) The shared half of postViews / postTagEdit:
 // show the optimistic copy, mint and track the write's id.
 function holdViews(v: SessionViews): string {
-  pendingSessionViews = v;
+  pendingSessionViews = v; legacyViewsAge = 0;
   if (activeId) assertPeekFor(activeId);   // the optimistic edit re-derives the active session's peek too
   const writeId = mintWriteId(++viewsWriteSeq);
   viewsWrites.push(writeId);
@@ -566,9 +571,35 @@ function postViews(v: SessionViews) {
 // under `edit`: the federation router sends the message to the local kernel, and no top-level field
 // of it can read as a session's address. Answered by tagEditAck.
 function postTagEdit(nv: SessionViews, edit: TagEditOp) {
+  // no `tagEdit` capability announced (a kernel from before it): the PRE-2026-09-05 path — the whole
+  // blob, reconciled by the legacy exact-echo clear and three-frame yield in captureViews, since no
+  // ack will come. The copy already carries the gesture, so nothing else changes.
+  if (!kernelCaps.has("tagEdit")) { postViews(nv); return; }
   const writeId = holdViews(nv);
   if (vscodeApi) vscodeApi.postMessage({ type: "tagEdit", writeId, edit });
   renderTabs();
+}
+// the LOCAL kernel's capabilities, sent on every `ready` — the page's own at load, and the shim's
+// re-send on a reconnected socket. A reconnect is the one event that can lose an ack (the socket died
+// between the write and its answer), so writes still in flight when this frame arrives are unknowable:
+// they are dropped, the copy reverts to what the kernel's frames show, and the user is told — never a
+// pinned copy faking success, never a silent revert.
+function onKernelCaps(m: { caps?: unknown }) {
+  kernelCaps = new Set(Array.isArray(m.caps) ? m.caps.filter((c): c is string => typeof c === "string") : []);
+  if (!viewsWrites.length) return;
+  viewsWrites = []; pendingSessionViews = null;
+  warnToast("The connection to romp was re-established; a tag edit made just before it may not have landed. Check the tag.");
+  if (activeId) assertPeekFor(activeId);
+  renderTabs();
+}
+// the kernel does not know an op this page posted (a dashboard newer than its kernel): the write is
+// refused — the copy reverts and the toast says why — and the capability is withdrawn, so the next
+// gesture takes the path that kernel does know
+function onUnknownOp(m: { op?: unknown; writeId?: unknown }) {
+  if (typeof m.op === "string") kernelCaps.delete(m.op);
+  if (typeof m.writeId === "string" && viewsWrites.includes(m.writeId))
+    onViewsAck({ type: "unknownOp", writeId: m.writeId, ok: false,
+                 error: "the kernel does not know the " + String(m.op) + " operation, so the edit was not applied — try again; this dashboard now uses the older path" });
 }
 // the kernel's answer to one of this page's writes: the returned blob is the base whatever the
 // verdict; the pending copy settles once nothing is in flight; a refusal reverts it at once and
@@ -13218,6 +13249,9 @@ window.addEventListener("message", (e: MessageEvent) => {
   // the kernel's answer to one of THIS page's views writes (a targeted tag edit, or a whole-blob
   // lens/order write) — the optimistic copy settles or reverts on it, never on a frame count
   else if (m.type === "viewsAck" || m.type === "tagEditAck") onViewsAck(m);
+  // what the local kernel can do for this page (every `ready`, reconnects included); an op it does not know
+  else if (m.type === "caps") onKernelCaps(m);
+  else if (m.type === "unknownOp") onUnknownOp(m);
   // The kernel's pick memory moved (a pin, a Latest un-pin, a refused pin dropped) or its catalog grew:
   // re-read /models so the family rows send the fresh default — the models-list twin of the palette frame.
   else if (m.type === "models") loadModelChoices();

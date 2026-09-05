@@ -33,17 +33,18 @@ test("peek AUTO-CLOSE: activating any other tab drops it — same derivation, no
   // …and the DERIVATION call sites, each named (the census, extended 2026-08-24 with the two
   // views-arrival paths): setActive (every activation), the focus fast path (already-active),
   // captureViews (kernel-pushed views), holdViews (local optimistic edit — postViews/postTagEdit),
-  // onViewsAck (the kernel's answer to a write, 2026-09-05). Nothing else derives.
+  // onViewsAck (the kernel's answer to a write, 2026-09-05), onKernelCaps (a reconnect dropping the
+  // in-flight copy — a views arrival in effect). Nothing else derives.
   const sites = RENDER.match(/assertPeekFor\(/g) || [];
-  assert.equal(sites.length, 7, "definition + 6 call sites: setActive, focus fast path, captureViews, holdViews, onViewsAck, and the feed click echo (2026-08-24 — the instant ack derives the peek before the kernel frame)");
+  assert.equal(sites.length, 8, "definition + 7 call sites: setActive, focus fast path, captureViews, holdViews, onViewsAck, onKernelCaps, and the feed click echo (2026-08-24 — the instant ack derives the peek before the kernel frame)");
 });
 
 test("a view change that excludes the ACTIVE session converts it into the peek — never a bounce (the user 2026-08-24)", () => {
   // both views-arrival paths re-derive the active session's peek: the kernel-pushed blob…
-  assert.match(RENDER, /pendingSessionViews = null; viewsWrites = \[\];\s*\n\s*\}[\s\S]{0,700}?if \(activeId\) assertPeekFor\(activeId\);\s*\n\}/);
+  assert.match(RENDER, /pendingSessionViews = null; viewsWrites = \[\]; legacyViewsAge = 0;\s*\n\s*\}[\s\S]{0,700}?if \(activeId\) assertPeekFor\(activeId\);\s*\n\}/);
   // …and the local optimistic edit (holdViews, shared by postViews/postTagEdit), BEFORE the
   // renderTabs that follows in either poster so the repaint sees the fresh peek state
-  assert.match(RENDER, /pendingSessionViews = v;\s*\n\s*if \(activeId\) assertPeekFor\(activeId\);[\s\S]{0,900}?renderTabs\(\);/);
+  assert.match(RENDER, /pendingSessionViews = v; legacyViewsAge = 0;\s*\n\s*if \(activeId\) assertPeekFor\(activeId\);[\s\S]{0,900}?renderTabs\(\);/);
   // …and the kernel's ack, a views arrival like the pushed frame
   assert.match(RENDER, /if \(out\.clearPending\) pendingSessionViews = null;[\s\S]{0,300}?if \(activeId\) assertPeekFor\(activeId\);[\s\S]{0,200}?renderTabs\(\);/);
   // the derivation is symmetric, so a view that now INCLUDES the active peek sheds the dress — the

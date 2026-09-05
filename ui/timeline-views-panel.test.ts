@@ -59,13 +59,21 @@ test("executed: an optimistic edit holds until the kernel echoes it exactly — 
   assert.equal(p._pendingViews, null, "echo match (order-insensitive) clears the pending edit");
   assert.deepEqual(p._viewsWrites, [], "…and nothing is in flight any more");
   // a frame that does NOT echo the edit says nothing about it (it may predate the write, or the
-  // kernel may have refused it) — so no number of them yields the copy; the write's ACK settles
-  // it (timeline-views-ack.test.ts). The three-frame yield that lived here dropped good edits and
-  // kept refused ones alike (the user 2026-09-05).
+  // kernel may have refused it) — so no number of them yields the copy when the kernel STAMPS its
+  // blobs (`seq`: such a kernel acks every write, and the ack settles it — timeline-views-ack.test.ts).
+  // The three-frame yield that lived here dropped good edits and kept refused ones alike (the user
+  // 2026-09-05).
   p._pendingViews = V("g1"); p._viewsWrites = [{ id: "w2", name: "" }];
-  p._views = { active: "all", hidden: [], tags: [] };
+  p._views = { active: "all", hidden: [], tags: [], seq: 5 };
   for (let i = 0; i < 6; i++) p._reconcileViews();
   assert.ok(p._pendingViews, "six silent pushes → still holding the user's edit");
+  // LEGACY: a kernel that stamps no seq acks nothing either, so for its frames alone the old
+  // three-frame yield stays — with no ack ever coming, an unechoed copy would otherwise pin forever
+  p._views = { active: "all", hidden: [], tags: [] };
+  p._reconcileViews(); p._reconcileViews();
+  assert.ok(p._pendingViews, "two silent legacy pushes → still holding");
+  p._reconcileViews();
+  assert.equal(p._pendingViews, null, "the third legacy push yields (that kernel's only clear)");
 });
 
 test("executed: the echo key compares per-surface lenses and ignores the retired hidden set", () => {

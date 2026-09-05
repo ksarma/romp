@@ -49,6 +49,10 @@ export function dispatchFrame(panel: any, m: any): boolean {
   // the kernel's answer to one of THIS page's views writes (a targeted tag edit, or a whole-blob lens/
   // order write): the panel adopts the returned blob and settles or reverts its optimistic copy
   if ((m.type === "tagEditAck" || m.type === "viewsAck") && panel.viewsAck) { panel.viewsAck(m); return true; }
+  // what the kernel can do for this page, sent on every `ready` (a reconnect re-sends it); and the
+  // kernel's answer to an op it does not know — a refusal of that write, and the cap is withdrawn
+  if (m.type === "caps" && panel.setCaps) { panel.setCaps(m); return true; }
+  if (m.type === "unknownOp" && panel.unknownOp) { panel.unknownOp(m); return true; }
   return false;
 }
 
