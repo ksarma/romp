@@ -693,6 +693,56 @@ class LegacyStoreStampedOnce(_Wire):
             restore()
 
 
+class ForeignWriteReStamped(_Wire):
+    """A write to timeline-views.json OUTSIDE the kernel (round 3 of the 2026-09-05 review): the
+    timeline's Electron branch writes the file itself with the seq it holds, so a panel holding an
+    older frame publishes a seq lower than what every dashboard holds, and they all ignore the file
+    until the next kernel write. The reader treats a changed file whose seq fell behind the last one
+    served as such a write and re-stamps it through the setter: seq = max(last + 1, now), the content
+    kept as written. A changed file whose seq is not behind is served as-is."""
+
+    def test_a_file_whose_seq_fell_behind_is_re_stamped_past_the_last_served_seq(self):
+        served = self.seed()
+        s1 = served["seq"]
+        self.assertEqual(km._timeline_views()["seq"], s1, "served: the cache holds it")
+        p = km._views_path()
+        # the panel's write: its held (older) blob with a lens change, seq behind the store's
+        foreign = json.loads(p.read_text())
+        foreign["seq"] = s1 - 5
+        foreign["actives"] = {"timeline": {"tags": ["web"]}, "chat": {"all": True}, "outline": {"all": True}}
+        time.sleep(0.01)                                  # a new mtime, so the file changes under the cache
+        km._atomic_write(p, json.dumps(foreign))
+        v = km._timeline_views()
+        self.assertGreater(v["seq"], s1, "re-stamped past the last served seq — every dashboard adopts it")
+        self.assertEqual(v["actives"]["timeline"], {"tags": ["web"]}, "the content is kept as written")
+        on_disk = json.loads(p.read_text())
+        self.assertEqual(on_disk["seq"], v["seq"], "…and the file carries the new seq: the next kernel read is a plain hit")
+        self.assertEqual(self.notices, [], "ordering a file is not a refusal")
+        self.assertEqual(km._views_client()["seq"], v["seq"])
+        # a kernel write after it orders after the re-stamp
+        a = self.post({"type": "tagEdit", "writeId": "w1", "edit": {"op": "recolor", "tid": "gA", "color": "#54B204"}})
+        self.assertGreater(a["seq"], v["seq"])
+
+    def test_a_changed_file_whose_seq_is_not_behind_is_served_as_is(self):
+        served = self.seed()
+        s1 = served["seq"]
+        km._timeline_views()
+        p = km._views_path()
+        foreign = json.loads(p.read_text())                # a panel holding the NEWEST frame writes it back
+        foreign["actives"] = {"timeline": {"tags": ["web"]}, "chat": {"all": True}, "outline": {"all": True}}
+        time.sleep(0.01)
+        km._atomic_write(p, json.dumps(foreign))
+        before = p.read_bytes()
+        v = km._timeline_views()
+        self.assertEqual(v["seq"], s1, "an equal seq is not behind: no write")
+        self.assertEqual(p.read_bytes(), before, "byte-identical")
+        self.assertEqual(v["actives"]["timeline"], {"tags": ["web"]})
+        ahead = json.loads(p.read_text()); ahead["seq"] = s1 + 100
+        time.sleep(0.01)
+        km._atomic_write(p, json.dumps(ahead))
+        self.assertEqual(km._timeline_views()["seq"], s1 + 100, "a seq ahead of the last served is adopted as the new floor")
+
+
 class WebBootWiring(unittest.TestCase):
     """The kernel-served timeline page: the inline _TIMELINE_BOOT twin of timeline-boot.ts exposes
     the targeted-edit bridge and routes both acks to the panel (timeline-boot.test.ts pins the two

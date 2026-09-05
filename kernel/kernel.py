@@ -2648,7 +2648,15 @@ def _views_restamp(d, hit):
       write, so the seq gate could not protect that first write against a frame the pusher built
       before it. Stamped once, on the first read; a store that does not exist stays unstamped (the
       null rule is right for a deleted or recreated store, which starts past what any client holds
-      on its first write)."""
+      on its first write).
+    - A WRITE OUTSIDE THE KERNEL whose seq fell BEHIND the last one served (round 3 of the
+      2026-09-05 review): the timeline's Electron branch writes the file itself with the seq it
+      holds, and a panel holding an older frame publishes a seq lower than what every dashboard
+      holds — they would all ignore the file until the next kernel write. `hit` is the cache entry
+      the changed file missed against: the last blob this kernel served or wrote, whose seq is the
+      floor the re-stamp moves past. Equal seqs are left alone (a writer holding the newest frame
+      writes the newest seq back; every client adopts an equal seq), so an mtime-only change never
+      costs a write."""
     hid = [str(x) for x in (d.get("hidden") or []) if isinstance(x, str) and x]
     if hid:
         raw = d.get("tags") if isinstance(d.get("tags"), list) else (d.get("groups") if isinstance(d.get("groups"), list) else [])
@@ -2666,6 +2674,13 @@ def _views_restamp(d, hit):
         seq = 0
     if not seq:
         return "a store from before the write sequence, stamped once", d
+    if hit is not None:
+        try:
+            last = int(hit[1].get("seq") or 0)
+        except (TypeError, ValueError):
+            last = 0
+        if last and seq < last:
+            return "a write outside the kernel carried seq %d, behind the last served %d" % (seq, last), d
     return None
 
 
