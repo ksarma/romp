@@ -10,9 +10,10 @@
 # presence-gated (zero model calls when no browser is connected). Runs as a USER-level
 # agent (no root). PATH + ROMP_DIR are baked into the unit so the service finds
 # node / python3 / claude / the romp bins (reinstall after a PATH change to refresh).
-# Secrets the service needs but only login shells have (e.g. ANTHROPIC_API_KEY on an
-# API-key-auth box) go in ~/.config/romp/service.env — read at manager start, never
-# baked into the unit. See SERVICE_ENV_FILE below and docs/reference.md.
+# Non-secret settings the service needs but only shells have (e.g. ROMP_EXPECTED_AUTH)
+# go in ~/.config/romp/service.env — read at manager start, never baked into the unit.
+# API keys never go in that file: they reach the manager through the environment of
+# whatever starts it. See SERVICE_ENV_FILE below and docs/reference.md.
 set -euo pipefail
 
 # Resolve the repo root through any symlink (matches the other bin/ consumers).
@@ -48,11 +49,14 @@ UNIT="$SYSTEMD_DIR/romp-manager.service"
 # Extra service environment: plain KEY=VALUE lines loaded when the manager STARTS
 # (not baked at install) — systemd reads the file via EnvironmentFile=-, the macOS
 # login agent's launcher (romp-node-launch) parses it before exec. This is the
-# documented seam for env a login shell has but a service doesn't: on a box where
-# claude auth is env-var-only (no OAuth credentials file), kernel-spawned SDK
-# sessions are silently unauthenticated without ANTHROPIC_API_KEY here. Values are
-# read fresh on every manager (re)start, so rotating one never needs a reinstall.
-# chmod 600 the file; ROMP_SERVICE_ENV_FILE overrides the path (tests).
+# documented seam for NON-SECRET env a shell has but a service doesn't
+# (ROMP_EXPECTED_AUTH, say). API keys never go here: a key in a file is a copy of
+# the credential that outlives its rotation. Keys reach the manager through the
+# environment of whatever starts it (a shell startup file that loads them from a
+# secrets manager; see docs/reference.md, Service environment), and the sessions'
+# own key through Claude Code's apiKeyHelper. Values are read fresh on every
+# manager (re)start, so changing one never needs a reinstall.
+# ROMP_SERVICE_ENV_FILE overrides the path (tests).
 SERVICE_ENV_FILE="${ROMP_SERVICE_ENV_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/service.env}"
 
 # The instance-scoping env: the variables that say WHICH romp this service supervises.
@@ -235,8 +239,9 @@ case "${1:-status}" in
         fi
         echo "  Installed launchd agent: $PLIST"
         echo "  romp-manager now auto-starts at login — just open the browser."
-        echo "  Extra service env (e.g. ANTHROPIC_API_KEY): $SERVICE_ENV_FILE"
-        echo "      KEY=VALUE lines, chmod 600, picked up at manager (re)start."
+        echo "  Extra service env (non-secret settings, e.g. ROMP_EXPECTED_AUTH): $SERVICE_ENV_FILE"
+        echo "      KEY=VALUE lines, picked up at manager (re)start. API keys never go in it;"
+        echo "      they reach the manager through the environment of whatever starts it."
         if [[ -x "$ROMP_NODE" ]]; then
             echo
             echo "  Full Disk Access: grant it to romp's OWN node copy (not plain 'node'):"
@@ -253,8 +258,9 @@ case "${1:-status}" in
         fi
         echo "  Installed systemd --user service: $UNIT"
         echo "  romp-manager now auto-starts at login — just open the browser."
-        echo "  Extra service env (e.g. ANTHROPIC_API_KEY): $SERVICE_ENV_FILE"
-        echo "      KEY=VALUE lines, chmod 600, picked up at manager (re)start." ;;
+        echo "  Extra service env (non-secret settings, e.g. ROMP_EXPECTED_AUTH): $SERVICE_ENV_FILE"
+        echo "      KEY=VALUE lines, picked up at manager (re)start. API keys never go in it;"
+        echo "      they reach the manager through the environment of whatever starts it." ;;
       *) echo "romp-service: unsupported OS '$os'" >&2; exit 1 ;;
     esac ;;
   uninstall)

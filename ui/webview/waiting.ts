@@ -285,6 +285,15 @@ window.addEventListener("message", (e: MessageEvent) => {
   const m = e.data;
   if (!m) return;
   if (m.type === "feed") { applyFrame(m); return; }   // this pane rides the FEED payload (reads userTodoRows / userTodosOn)
+  if (m.type === "feedDelta") {
+    // federation applies deltas onto the full frame it holds and re-emits whole `feed` frames; one reaching
+    // this handler was not applied (federation.js absent, so the shim dispatched the raw frame): say so and
+    // re-base on a full frame rather than sit on the last one (the feed pane's guard; fail loudly, never degrade)
+    console.error("waiting: a feedDelta frame reached the pane unapplied — asking the kernel for a full frame");
+    vscodeApi?.postMessage({ type: "clientDiag", surface: "waiting", what: "feedDelta-unapplied", data: { buildId: m.buildId } });
+    vscodeApi?.postMessage({ type: "needFullFeed" });
+    return;
+  }
   if (m.type === "warn" && typeof m.text === "string" && m.text) {
     // the kernel refused or could not do what a click asked (a stale row, an ended session, the switch
     // off): show it, keep it in the shell's Log, and re-sync from the kernel's current frame so a row

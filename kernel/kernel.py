@@ -28167,7 +28167,7 @@ def _send_chat(c, m, ms, change_from, led_changed):
 # for ledgers (by sid), and the small top-level fields whole when any of them changed. Nothing changed →
 # nothing sent, exactly as before. A client that has not announced, or has not yet received a full frame on
 # this socket, gets the full {type:"feed"} frame — the legacy path, kept for every consumer that reads it
-# (the Outline pane, the VS Code extension's pipes, federation's remote sockets, older bundles). Full frames
+# (the VS Code extension's pipes, federation's remote sockets, older bundles). Full frames
 # still carry each card's `trgb`; deltas never do (an older bundle reads it, a delta client colours from `t`).
 #
 # The parts below are computed ONCE per build and shared by every client (the 2026-08-10 CPU discipline):
@@ -30792,9 +30792,10 @@ def _shim(app, v=0, caps=""):
     # "newer build" prompt, not just the dashboard landing's /version poll (the user 2026-07-13: a standalone
     # pane sat silent through rebuilds).
     # `caps` = the wire capabilities the page's BUNDLE has (comma-separated), announced on the ws URL so the
-    # kernel can send it a leaner stream: the feed page passes FEED_DELTA_CAP (its federation layer applies
-    # {type:"feedDelta"} frames), and every pane passes READY_GATE_CAP (this shim opens the socket before the
-    # bundle has loaded, so the kernel must hold its frames until the bundle's `ready`). The kernel serves
+    # kernel can send it a leaner stream: the feed, Outline and Waiting on you pages pass FEED_DELTA_CAP (their
+    # federation layer applies {type:"feedDelta"} frames), and every pane passes READY_GATE_CAP (this shim
+    # opens the socket before the bundle has loaded, so the kernel must hold its frames until the bundle's
+    # `ready`). The kernel serves
     # page and bundle from one dist, so it is the kernel's knowledge to assert; a page that passes nothing
     # gets the full frames it always did, from accept.
     return """
@@ -31311,6 +31312,11 @@ def _feed_page():
 # styles.css for the .ledger-* tree styling. Completed top goals hide behind a "Show completed" checkbox (off).
 # Its layout CSS lives in ui/webview/fleet-pane.css — ONE file, read live here and bundled into the VS Code
 # VSIX by vscode-extension/esbuild.js, so the two hosts cannot drift.
+# The page rides the feed payload with the feed pane's caps — deltas and the ready hold. federation.js (loaded
+# before fleet.js) applies each {type:"feedDelta"} onto the full frame it holds and re-emits a whole `feed`
+# frame, so fleet.ts keeps reading whole frames; a delta it cannot apply asks for a full frame (needFullFeed).
+# On full frames alone, one browser's Outline client fell 12.7 MB behind and was dropped seven times in a
+# morning (ws drop, 2026-09-05), every frame a multi-megabyte serialization on the kernel's GIL.
 def _fleet_page():
     try:
         fleet_css = (UI / "webview" / "fleet-pane.css").read_text()
@@ -31333,7 +31339,7 @@ def _fleet_page():
             "<div id=fleet-list></div><div id=fleet-foot></div>%s"
             "<script>%s</script><script src=/dist/federation.js?v=%d></script>"   # multi-kernel manager: after the shim
             "<script src=/dist/fleet.js?v=%d></script></body></html>"
-            % (v, THEME_CSS, fleet_css, _pane_spin("fleet-list"), _shim("fleet", v, caps=READY_GATE_CAP), v, v))
+            % (v, THEME_CSS, fleet_css, _pane_spin("fleet-list"), _shim("fleet", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP), v, v))
 
 
 # "Waiting on you" — every session's open USER TODOS (plans/user-todos.md) across every attached machine,
@@ -36489,7 +36495,7 @@ class Handler(BaseHTTPRequestHandler):
             # listener, and the bundle's own `ready` then got nothing — blank pane until the board changed).
             # "Already ready" means a `ready` was SEEN on this socket (readySeen), not that the hold is
             # lifted: a socket that never announced the hold is ready from accept, and its one ordinary
-            # `ready` (the VS Code pipes; the Outline page) must not read as a re-base — that re-served
+            # `ready` (the VS Code pipes) must not read as a re-base — that re-served
             # the full frame the pusher had just delivered (the 2026-09-03 round-4 review). Exactly one
             # `ready` arrives per socket in normal operation, so the healthy path is unchanged.
             if client.get("readySeen"):
@@ -37231,13 +37237,14 @@ class Handler(BaseHTTPRequestHandler):
         app = (q.get("app") or ["chat"])[0]
         wid = (q.get("wid") or [""])[0]         # which DASHBOARD this pane belongs to → _send_to_view aims at one
         active = (q.get("active") or [""])[0]   # the tab this client is looking at → _push builds it FIRST
-        # Capabilities the client ANNOUNCES (comma-separated). The one today is FEED_DELTA_CAP: a page whose
-        # bundle can apply {type:"feedDelta"} says so on its ws URL (the shim adds it for the kernel-served
-        # feed page — see _shim's `caps`). Announced on the URL rather than in a first message because it
-        # has to be known before the first frame (the `ready`-time frame is the delta stream's base) and it
-        # has to survive every reconnect without the bundle re-announcing. Anything that does not announce
-        # — the VS Code extension's pipes, federation's remote sockets, the Outline pane, an older bundle —
-        # keeps receiving the full {type:"feed"} frame it always did.
+        # Capabilities the client ANNOUNCES (comma-separated). FEED_DELTA_CAP: a page whose bundle can apply
+        # {type:"feedDelta"} says so on its ws URL (the shim adds it for the kernel-served feed, Outline and
+        # Waiting on you pages — see _shim's `caps`); READY_GATE_CAP is the hold below. Announced on the URL
+        # rather than in a first message because it has to be known before the first frame (the `ready`-time
+        # frame is the delta stream's base) and it has to survive every reconnect without the bundle
+        # re-announcing. Anything that does not announce — the VS Code extension's pipes (its Outline pipe
+        # among them), federation's remote sockets, an older bundle — keeps receiving the full {type:"feed"}
+        # frame it always did.
         caps = (q.get("caps") or [""])[0]
         self.send_response(101)
         self.send_header("Upgrade", "websocket")

@@ -18,7 +18,9 @@ tint and nothing else; a page that announced READY_GATE_CAP is HELD — the real
 push path send it nothing — until its bundle's `ready`, which is served the cached full frame at once,
 stamped with the clock as of the serve (a frame built hours earlier must not anchor the pane's ages hours
 in the past); a socket that did not announce is ready from accept; needFullFeed re-bases; the ready handler
-emits no tab order of its own (the connect push's guarded one is the only source).
+emits no tab order of its own (the connect push's guarded one is the only source); the Outline page (app=fleet)
+announces the capability too (2026-09-05) and, on a real socket, hears every change after its first full frame
+as a delta — federation.js applies them for fleet.ts, which keeps reading whole frames.
 
 Synthetic only: the notes-api demo world, TESTHOST, placeholder ids.
 """
@@ -335,6 +337,17 @@ def _client_frame(text):
     return hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data))
 
 
+def _ping_frame(data=b""):
+    """One masked client ping (RFC 6455 §5.5.2). The kernel's reader thread answers it inline with a pong echoing
+    the payload, after it has dispatched every message read before it — so a pong is proof that a `ready` sent
+    ahead of the ping, and everything its handler ran synchronously (the connect push, the client's recorded
+    delta base), are done. It orders nothing on the wire: the reader writes the pong itself (_ws_pong) while
+    data frames are queued to the client's sender thread (_mk_ws_send → _ws_sender), so a frame the handler
+    queued before the pong may still arrive after it."""
+    mask = os.urandom(4)
+    return bytes([0x89, 0x80 | len(data)]) + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+
+
 def _read_frame(s, buf):
     """One server frame (unmasked) → (opcode, payload, leftover)."""
     def need(n):
@@ -503,7 +516,7 @@ class ReadyHandshake(unittest.TestCase):
             self.assertIs(c["efeed"], parts, "…and the delta stream re-bases on what was served")
             self.assertEqual(h.pushed, [], "a served feed client skips the connect push both times")
             # a client that never announced the hold is READY FROM ACCEPT (the accept path's own
-            # assignment, mirrored here) — the VS Code pipes, the Outline page. Its one ordinary `ready`
+            # assignment, mirrored here) — the VS Code pipes, the Outline's among them. Its one ordinary `ready`
             # is the handshake, not a re-base: the frame the pusher already delivered is NOT re-served
             # (round 4 of the 2026-09-03 review caught the first cut re-basing on it, one redundant full
             # frame per connect). Only a SECOND `ready` on the same socket re-bases.
@@ -615,7 +628,7 @@ class ConnectTimeFrame(unittest.TestCase):
 
 
 class ShimAnnouncesForTheFeedPage(unittest.TestCase):
-    def test_only_the_feed_page_announces_the_delta_capability_and_every_pane_announces_the_hold(self):
+    def test_every_feed_consumer_page_announces_the_delta_capability_and_every_pane_announces_the_hold(self):
         feed = km._shim("feed", 5, caps=km.FEED_DELTA_CAP + "," + km.READY_GATE_CAP)
         self.assertIn('var CAPS="feedDelta,readyGate";', feed)
         self.assertIn('+(CAPS?"&caps="+encodeURIComponent(CAPS):"")', feed)
@@ -625,12 +638,101 @@ class ShimAnnouncesForTheFeedPage(unittest.TestCase):
         self.assertIn('_shim("feed", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP)', KSRC)
         # the Waiting on you pane (2026-09-03) rides the feed frame with the feed page's caps: deltas + the hold
         self.assertIn('_shim("waiting", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP)', KSRC)
-        for app in ("chat", "fleet", "timeline"):
+        # the Outline pane (2026-09-05) too: on full frames alone, one browser's Outline client fell 12.7 MB
+        # behind and was dropped seven times in a morning, each frame a multi-megabyte serialization on the
+        # kernel's GIL. Its page loads federation.js before fleet.js; federation applies the deltas and
+        # re-emits whole `feed` frames, so fleet.ts is unchanged (OutlineDeltaStream pins the wire).
+        self.assertIn('_shim("fleet", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP)', KSRC)
+        self.assertNotIn('_shim("fleet", v, caps=READY_GATE_CAP)', KSRC)
+        for app in ("chat", "timeline"):
             self.assertIn('_shim("%s", v, caps=READY_GATE_CAP)' % app, KSRC, app)
         # the Files pane (2026-09-03) is request/response, never a feed consumer: no deltas — the hold, plus
         # the stale opt-out (NO_STALE_CAP: no pushed view ever resyncs it, so its arm could only ever raise)
         self.assertIn('_shim("files", v, caps=READY_GATE_CAP + "," + NO_STALE_CAP)', KSRC)
         self.assertEqual(KSRC.count("_shim("), 7, "the definition and the six panes — a seventh caller must announce too")
+
+
+class OutlineDeltaStream(unittest.TestCase):
+    """The Outline page (app=fleet) announces FEED_DELTA_CAP (2026-09-05). It rode full frames until then: one
+    browser's Outline client fell 12.7 MB behind and the kernel dropped it seven times in a morning (ws drop,
+    slot=feed, 6.3 MB frames), every frame a multi-megabyte json.dumps on the kernel's GIL. The page loads
+    federation.js before fleet.js, and federation applies each delta onto the full frame it holds and re-emits
+    a whole `feed` frame, which is all fleet.ts reads (what fleet.ts gained is a live clock and the unapplied-
+    delta guard: ui/webview/fleet-live-clock.test.ts). Pinned on a real socket: after its first full frame,
+    an Outline client with the capability hears the board's changes as {type:"feedDelta"} — the changed card
+    by itemId, tint-less — and never another full frame."""
+
+    def test_an_outline_client_with_the_capability_streams_deltas_after_its_first_full_frame(self):
+        f = _feed(n=40)
+        saved, ms, parts = _warm(f)
+        real_build = km.build_feed
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        port = srv.server_address[1]
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        s = None
+        try:
+            s, buf = _connect(port, "app=fleet&wid=w9&caps=feedDelta,readyGate")
+            client = _registered("w9")
+            self.assertEqual(client["app"], "fleet")
+            self.assertIn(km.FEED_DELTA_CAP, client["caps"])
+            self.assertFalse(client["ready"], "held until its bundle says so, like every pane")
+            s.sendall(_client_frame(json.dumps({"type": "ready"})))
+            op, payload, buf = _read_frame(s, buf)
+            self.assertEqual(op, 0x1)
+            first = json.loads(payload.decode("utf-8"))
+            self.assertEqual(first["type"], "feed", "the first frame is full: the delta stream's base")
+            self.assertEqual([a["itemId"] for a in first["asks"]], [a["itemId"] for a in f["asks"]])
+            # The ready handler runs the Outline's connect push inline (the pane needs the session build's
+            # ledgers, so unlike the feed pane it is not skipped), and the build below must not race that push
+            # on the client's recorded delta base. The barrier: the reader thread answers a ping only after it
+            # has dispatched every message read before it, so the pong means the handler is done. It says
+            # nothing about the wire — the reader writes the pong itself while data frames go through the
+            # client's sender thread — so whatever the connect push sent (a ledger reconciliation, or nothing)
+            # may land on either side of the pong; the two drains take it in either position, and it must be
+            # a delta too.
+            s.sendall(_ping_frame(b"sync"))
+            frames = []
+            while True:
+                op, payload, buf = _read_frame(s, buf)
+                if op == 0xA:
+                    self.assertEqual(payload, b"sync")
+                    break
+                frames.append(json.loads(payload.decode("utf-8")))
+            # The board changes: the pusher's next BUILD renames one card. The kernel's own build path runs
+            # (_cached_feed → build_feed, cold so it builds whatever the clock says) with the fixture as the
+            # build's result. The first cut warmed the fixture instead and leaned on REBUILD_MIN_S for the
+            # pusher to serve it: a 2 s window that the tmux probe and Sessions.live() between the warm and
+            # the serve can exceed under load, after which the kernel built an empty board from the hermetic
+            # state and the drain below timed out (the 2026-09-05 review).
+            f2 = _feed(n=40, build_id=2, now=NOW + 10)
+            f2["asks"][3]["text"] = "Synthetic goal 3 on the notes-api board, renamed"
+            km.build_feed = lambda now, tmux: f2
+            km._built_feed[:] = [None, None, 0.0, 0.0]            # cold: the next _cached_feed builds, whatever the clock
+            km._push_all()                                         # the real pusher cycle
+            s.settimeout(5)                                        # the drain's bound: the renamed card's delta, or fail
+            try:
+                while True:                                        # anything ahead of it is the connect push's late frame
+                    op, payload, buf = _read_frame(s, buf)
+                    self.assertEqual(op, 0x1)
+                    d = json.loads(payload.decode("utf-8"))
+                    frames.append(d)
+                    if any("renamed" in (a.get("text") or "") for a in d.get("asks") or []):
+                        break
+            except (socket.timeout, TimeoutError):
+                self.fail("no delta carrying the renamed card within 5 s; frames seen: %r"
+                          % [(x.get("type"), x.get("buildId")) for x in frames])
+            self.assertEqual([d["type"] for d in frames], ["feedDelta"] * len(frames), "never another full frame")
+            self.assertEqual(d["buildId"], f2["buildId"], "the build the pusher ran (the kernel mints its id at build start)")
+            self.assertEqual([a["itemId"] for a in d["asks"]], ["%s:g3" % SID], "the one card that changed, by itemId")
+            self.assertNotIn("trgb", d["asks"][0], "deltas never carry the tint")
+            self.assertNotIn("removeAsks", d)
+            self.assertLess(len(payload), len(ms) // 10, "a one-card change is a small fraction of the full frame")
+        finally:
+            if s is not None:
+                s.close()
+            srv.shutdown(); srv.server_close()
+            km.build_feed = real_build
+            _restore(saved)
 
 
 def _connect(port, query):
