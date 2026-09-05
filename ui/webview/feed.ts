@@ -7,7 +7,7 @@
 // pushes and updated in place — never torn down — so hovering one doesn't flicker
 // when the fleet streams new deliverables in.
 import { distillText, distillInputs, applyDistillLine, distillPending, distillStaleNote } from "./distiller-line";
-import { spinFor, KIND_WORD, waitedSuffix } from "./spin-caption";
+import { spinFor, KIND_WORD, kindWord, waitedSuffix } from "./spin-caption";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { searchMatches, searchSids } from "./feed-search";
 import { TagLens, lensAll, lensLabel, lensVisible, lensUnions } from "./tag-lens";
@@ -1557,14 +1557,14 @@ function applySections(a: any, it: AskItem, distillShown: boolean): void {
   taskBtn.style.display = hasTasks ? "" : "none";
   // the KIND words the pill (the user 2026-08-15): "Awaiting job", "Awaiting 3 agents" — the wait's
   // class in the visible label (tooltips are dead on the touch PWA); kindless keeps the classic "task"
-  const kw = KIND_WORD[(it.awaiting && it.awaiting.kind) || ""] || "task";
-  const one = kw === "agents" ? "agent" : kw;   // singular form: "Awaiting agent", plural "N agents"
+  const awKind = (it.awaiting && it.awaiting.kind) || "";
+  const kw = KIND_WORD[awKind] || "task";
   // the wait's elapsed time rides the pill exactly as it rides the awaiting box and the working
   // narration — a stuck wait must be glanceable everywhere the state shows (the user 2026-08-23)
   const pillWaited = waitedSuffix(it.awaiting && it.awaiting.since, Date.now() / 1000);
   (a._taskLbl as HTMLElement).textContent =
-    (taskList.length === 1 ? "Awaiting " + one
-                           : "Awaiting " + taskList.length + " " + (one === kw ? kw + "s" : kw)) + pillWaited;
+    (taskList.length === 1 ? "Awaiting " + (awKind ? kindWord(awKind, 1) : kw)
+                           : "Awaiting " + taskList.length + " " + (awKind ? kindWord(awKind, taskList.length) : kw + "s")) + pillWaited;   // one number-agreeing vocabulary (T225)
   taskBtn.classList.toggle("on", choice === "tasks");
   taskBtn.setAttribute("aria-pressed", choice === "tasks" ? "true" : "false");
   taskBtn.title = choice === "tasks" ? "hide the tasks" : "show the tasks";

@@ -12,13 +12,16 @@ Two layers:
 """
 import asyncio
 import inspect
+import io
 import os
 import json
 import threading
 import time
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest import mock
 from importlib.machinery import SourceFileLoader
 from unittest import mock
 
@@ -454,9 +457,9 @@ class LiveTail(unittest.TestCase):
 
     def test_set_effort_on_a_dormant_session_still_leaves_the_acknowledging_chip(self):
         # no live thread → the value applies on the next connect — but the pick is still acknowledged
-        # (review 2026-09-01, reversing this test's earlier "stays quiet" pin): the chip is what the
-        # composer's optimistic bubble retires against, and with nothing landing on a dormant session a
-        # typed "/effort low" sat as an unconfirmed dashed bubble and then vanished without a trace
+        # (reversing this test's earlier "stays quiet" pin): the chip is what the composer's optimistic
+        # bubble retires against, and with nothing landing on a dormant session a typed "/effort low"
+        # sat as an unconfirmed dashed bubble and then vanished without a trace
         d = tempfile.mkdtemp()
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
         sid = "11111111-2222-3333-4444-666666666666"
@@ -827,6 +830,45 @@ class LiveTail(unittest.TestCase):
         s.client = _Client({"percentage": 88, "model": "claude-opus-4-8"})
         asyncio.run(s._do_refresh_context())
         self.assertEqual(s._ctx_pct(), 88, "tracks the live value across turns")
+        self.assertFalse(s._ctx_over, "88% is inside the window — no overflow flag")
+
+        # the CLI documents percentage as "0-100+": past 100 the tokens exceed the CURRENT model's
+        # window (a 1M→200k model switch does this instantly). The battery stays clamped at 100,
+        # but the overflow is surfaced (ctxOver) instead of clamped into a silent, wrong-looking
+        # 100% (the user 2026-09-02, who switched models and read the full battery as a bug).
+        s.client = _Client({"percentage": 147, "model": "claude-haiku-4-5"})
+        asyncio.run(s._do_refresh_context())
+        self.assertEqual(s._ctx_pct(), 100, "the gauge value itself stays clamped")
+        self.assertTrue(s._ctx_over, "…but the overflow is news, not noise")
+        self.assertTrue(s.snapshot()["ctxOver"], "the snapshot ships it to the statusline")
+        self.assertTrue(sb.read_reg(d, sid).get("liveCtxOver"),
+                        "persisted beside liveCtx so a dormant/restarted session keeps saying so")
+        s.client = _Client({"percentage": 61, "model": "claude-haiku-4-5"})
+        asyncio.run(s._do_refresh_context())
+        self.assertFalse(s._ctx_over, "dropping back inside the window clears the flag")
+        self.assertFalse(sb.read_reg(d, sid).get("liveCtxOver"))
+
+    def test_context_refresh_queued_when_one_is_in_flight(self):
+        """A model/effort switch can ask for a context refresh while the turn-end refresh is still in
+        flight. The in-flight guard used to DROP that call silently, leaving the old model's percentage
+        standing until the next turn (the user 2026-09-02) — now it queues exactly one rerun, so the
+        number reflects the newest world."""
+        import asyncio
+        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
+        s = sb.SdkSession(be, {"sid": "11111111-2222-3333-4444-555555555555", "name": "n", "cwd": "/tmp"})
+
+        class _Counting:
+            def __init__(self): self.calls = 0
+            async def get_context_usage(self): self.calls += 1; return {"percentage": 40}
+        s.client = _Counting()
+        s._ctx_refreshing = True                       # a refresh is mid-flight
+        asyncio.run(s._do_refresh_context())
+        self.assertEqual(s.client.calls, 0, "the guarded call never races the in-flight one")
+        self.assertTrue(s._ctx_refresh_again, "…but it is REMEMBERED, not dropped")
+        s._ctx_refreshing = False
+        asyncio.run(s._do_refresh_context())           # the in-flight one finishing runs the queued ask
+        self.assertEqual(s.client.calls, 2, "the queued rerun fires after the live refresh lands")
+        self.assertFalse(s._ctx_refresh_again, "the queue holds ONE rerun, not a storm")
 
     def test_assistant_model_sets_badge_but_synthetic_does_not_corrupt_it(self):
         """The model 'doesn't show' mid-conversation (the user 2026-06-24): injected/synthetic assistant turns
@@ -1216,9 +1258,9 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(sb.model_label(reg["liveModel"], reg["model"]), "Fable")
 
     def test_learn_model_persists_the_raw_id_beside_the_pretty_name(self):
-        # 2026-09-01: the pickers' version lists are seeded from a table and COMPLETED from what the
-        # CLI actually reports (the authoritative source for what it serves) — that needs the raw id,
-        # not just the badge text, persisted where the kernel reads regs (liveModelId).
+        # the pickers' version lists are seeded from a table and COMPLETED from what the CLI actually
+        # reports (the authoritative source for what it serves) — that needs the raw id, not just
+        # the badge text, persisted where the kernel reads regs (liveModelId)
         sid = self.be.spawn("m", self.d)
         sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
         sess._learn_model("Fable 5.1", raw="claude-fable-5-1")
@@ -1236,6 +1278,30 @@ class SetModelModePure(unittest.TestCase):
         sess3 = sb.SdkSession(self.be, sb.read_reg(self.d, sid2))
         self.assertEqual(sess3._model_id, "claude-fable-5")
 
+    def test_refresh_context_persists_the_live_model_id(self):
+        # _do_refresh_context is the pre-turn source (get_context_usage answers on connect, before any
+        # init message), so an eager-connected session that never runs a turn still contributes its
+        # version to the pickers
+        sid = self.be.spawn("m", self.d)
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+
+        class _Client:
+            async def get_context_usage(self):
+                return {"percentage": 41.6, "model": "claude-fable-5-1"}
+        sess.client = _Client()
+        asyncio.run(sess._do_refresh_context())
+        reg = sb.read_reg(self.d, sid)
+        self.assertEqual((reg["liveModelId"], reg["liveModel"], reg["liveCtx"]), ("claude-fable-5-1", "Fable 5.1", 42))
+        self.assertEqual(sess._model_id, "claude-fable-5-1")
+
+        # a [1m] variant is persisted as reported — the kernel's picker strips the tag on read
+        class _Client1m:
+            async def get_context_usage(self):
+                return {"percentage": 41.6, "model": "claude-fable-5-1[1m]"}
+        sess.client = _Client1m()
+        asyncio.run(sess._do_refresh_context())
+        self.assertEqual(sb.read_reg(self.d, sid)["liveModelId"], "claude-fable-5-1[1m]")
+
     def test_alias_label_and_model_reflects_alias(self):
         self.assertEqual(sb._alias_label("opus"), "Opus")
         self.assertEqual(sb._alias_label("claude-opus-4-8"), "Opus 4.8")
@@ -1249,9 +1315,9 @@ class SetModelModePure(unittest.TestCase):
         self.assertFalse(sb._model_reflects_alias("", "opus"), "no live name yet → not resolved")
 
     def test_a_context_tagged_pick_resolves_its_pending_switch(self):
-        # (review, 2026-09-01) "/model fable[1m]" — the CLI's 1M-context spelling — routed through the
-        # setter, but the literal "fable[1m]" is never a substring of the pretty live name "Fable 5.1",
-        # so the switching-dots stuck until the thread died. The check reads through the tag.
+        # "/model fable[1m]" — the CLI's 1M-context spelling — routes through the setter, but the literal
+        # "fable[1m]" is never a substring of the pretty live name "Fable 5.1", so the switching-dots
+        # stuck until the thread died. The check reads through the tag.
         self.assertTrue(sb._model_reflects_alias("Fable 5.1", "fable[1m]"))
         self.assertTrue(sb._model_reflects_alias("Opus 4.8", "claude-opus-4-8[1m]"))
         self.assertFalse(sb._model_reflects_alias("Fable 5.1", "opus[1m]"), "still the family that must match")
@@ -1262,10 +1328,10 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(sess._model_pending, "", "the new name clears the tagged switch — dots stop")
 
     def test_a_refused_set_model_reverts_every_layer_and_warns(self):
-        # (review, 2026-09-01) set_model PERSISTED before the CLI accepted — sdk-defaults.json (the seed
-        # for every future session), the reg (the reconnect's --model) and chosen_model — and a refusal
-        # only LOGGED, unlike _do_set_mode, which reverts every layer. A well-formed id the CLI's catalog
-        # rejects poisoned all three. The refusal now restores what was there and rings the problems.
+        # set_model PERSISTED before the CLI accepted — sdk-defaults.json (the seed for every future
+        # session), the reg (the reconnect's --model) and chosen_model — and a refusal only LOGGED,
+        # unlike _do_set_mode, which reverts every layer. A well-formed id the CLI's catalog rejects
+        # poisoned all three. The refusal now restores what was there and rings the problems.
         sid = self.be.spawn("m", self.d)
         self.assertTrue(self.be.set_model(sid, "opus"))                      # the prior, accepted pick
         sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
@@ -1325,15 +1391,15 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(sess.chosen_model, "")
         self.assertEqual(sb.read_reg(self.d, sid)["liveModel"], "Fable 5.1", "the badge shows what the CLI runs")
 
-    # ── refusal vs no-answer (fixer round 4, 2026-09-01) ──────────────────────────────────────────
-    # The installed SDK (claude_agent_sdk 0.2.132, _internal/query.py) raises a BARE Exception for
-    # two different worlds: the CLI ANSWERED a control request with an error (`Exception(response
-    # ["error"])`, built from the control_response frame — no cause), and the answer NEVER CAME
-    # (`Exception("Control request timeout: set_model") from TimeoutError` after fail_after; Query.close()
-    # cancels the reader without resolving pending requests, so a request stranded by a reconnect
-    # teardown ends the same way). A reader that dies re-raises ITS OWN typed error into every pending
-    # request; a disconnected client raises CLIConnectionError. Verified by probe against the
-    # installed package, 2026-09-01. The fakes below reproduce those exact shapes.
+    # ── refusal vs no-answer ──────────────────────────────────────────────────────────────────────
+    # The installed SDK (claude_agent_sdk 0.2.132, _internal/query.py) raises a BARE Exception for two
+    # different worlds: the CLI ANSWERED a control request with an error (`Exception(response["error"])`,
+    # built from the control_response frame — no cause), and the answer NEVER CAME (`Exception("Control
+    # request timeout: set_model") from TimeoutError` after fail_after; Query.close() cancels the reader
+    # without resolving pending requests, so a request stranded by a reconnect teardown ends the same
+    # way). A reader that dies re-raises ITS OWN typed error into every pending request; a disconnected
+    # client raises CLIConnectionError. Verified by probe against the installed package. The fakes below
+    # reproduce those exact shapes.
 
     def _live(self, prior="opus", live="Opus 4.8"):
         sid = self.be.spawn("m", self.d)
@@ -1363,14 +1429,14 @@ class SetModelModePure(unittest.TestCase):
         self.assertFalse(sb._cli_refusal(RuntimeError("stream broke")))
 
     def test_a_lost_answer_is_not_a_refusal_the_pick_stands_and_nothing_rings(self):
-        # (fixer round 4, 2026-09-01) the reproduced strand: a model AND an effort picked while the
-        # session worked, both parked, replayed back-to-back at turn end — set_model's control request
-        # went to the OLD CLI and set_effort's reconnect tore that client down with the answer unread.
-        # The NEW connection came up with --model <new> (chosen_model rides _options) and ran it; 60s
-        # later the stranded request timed out and the revert flipped chosen_model, the reg and
-        # sdk-defaults back to the PREVIOUS model while the CLI ran the new one — the registry/argv
-        # divergence this branch exists to close, re-minted, plus a false "did NOT apply" problem and,
-        # for a cheaper prev, a false model-fallback card at the next reconnect.
+        # the reproduced strand: a model AND an effort picked while the session worked, both parked,
+        # replayed back-to-back at turn end — set_model's control request went to the OLD CLI and
+        # set_effort's reconnect tore that client down with the answer unread. The NEW connection came
+        # up with --model <new> (chosen_model rides _options) and ran it; 60s later the stranded request
+        # timed out and a revert flipped chosen_model, the reg and sdk-defaults back to the PREVIOUS
+        # model while the CLI ran the new one — the registry/argv divergence this change exists to
+        # close, re-minted, plus a false "did NOT apply" problem and, for a cheaper prev, a false
+        # model-fallback card at the next reconnect.
         sid, sess, scheduled = self._live()
         logs = []
         self.be._log_cb = logs.append
@@ -1413,10 +1479,10 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(self.be.problems(), [])
 
     def test_a_refusal_landing_after_a_newer_pick_stands_down_entirely(self):
-        # (fixer round 4, 2026-09-01) same session, A then B: A's control request answers late with the
-        # CLI's error AFTER B was accepted. _revert_model wrote A's captured snapshots back
-        # unconditionally, so the ACCEPTED pick B rolled back to the pre-A model in every layer while
-        # the CLI ran B. Repo doctrine: a writer whose evidence predates the diary stands down.
+        # same session, A then B: A's control request answers late with the CLI's error AFTER B was
+        # accepted. A revert that wrote A's captured snapshots back unconditionally rolled the ACCEPTED
+        # pick B back to the pre-A model in every layer while the CLI ran B. A writer whose evidence
+        # predates the diary stands down.
         sid, sess, scheduled = self._live()
 
         class _Client:
@@ -1452,10 +1518,10 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(self.be.problems(), [], "a superseded refusal is not the user's problem — B applied")
 
     def test_a_revert_leaves_a_layer_a_newer_writer_holds(self):
-        # (fixer round 4, 2026-09-01) the cross-session twin: sdk-defaults.json is SHARED. S1 picks X
-        # (later refused); S2 — dormant, no CLI to refuse — picks Y, which lands in the defaults as
-        # every set_model does. X's refusal then restored S1's captured default over Y. Each layer
-        # reverts only while it still holds the refused value (compare-and-swap).
+        # the cross-session twin: sdk-defaults.json is SHARED. S1 picks X (later refused); S2 — dormant,
+        # no CLI to refuse — picks Y, which lands in the defaults as every set_model does. X's refusal
+        # must not restore S1's captured default over Y. Each layer reverts only while it still holds
+        # the refused value (compare-and-swap).
         s1, sess1, sched1 = self._live()
         s2 = self.be.spawn("two", self.d)
         self.assertTrue(self.be.set_model(s1, "claude-fable-9-9"))     # X: captures default = opus
@@ -1477,19 +1543,18 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(len(self.be.problems()), 1, "S1's refusal is still loud")
 
     def test_a_refusal_tells_the_kernel_to_forget_the_pick_superseded_or_not_a_lost_answer_does_not(self):
-        """(fixer round 4, 2026-09-01) the kernel records a version as its family's pin BEFORE the CLI
-        rules (_set_model_or_park → _note_model_pick), and the revert never reached that memory: after a
-        refusal the family row kept sending the refused id, re-ringing the problem on every click. The
-        backend tells the kernel through a class-level hook, the on_model_fallback idiom — on a VERDICT.
+        """The kernel records a version as its family's pin BEFORE the CLI rules (_set_model_or_park →
+        _note_model_pick), and the revert never reached that memory: after a refusal the family row kept
+        sending the refused id, re-ringing the problem on every click. The backend tells the kernel through
+        a class-level hook, the on_model_fallback idiom — on a VERDICT.
 
-        The round-4 contract said a SUPERSEDED refusal forgets nothing ("the newer pick owns the memory").
-        Flipped deliberately (fixer round 6, 2026-09-02): the newer pick owns chosen_model and the reg, but
-        the pin the kernel recorded for the REFUSED id is its own — a pick in another family, or the same
-        family's pin when the newer pick is an alias — and the CLI did rule on it. Left in place, a family
-        click re-sent the refused id. Firing the hook is safe for the newer pick because the kernel's
-        forget compares-and-swaps by value (_forget_model_pick(fam, only=id)): a newer pin for the same
-        family is never this refusal's to drop (test_model_versions pins that side). A LOST answer still
-        forgets nothing — it says nothing about the id."""
+        A SUPERSEDED refusal forgets too: the newer pick owns chosen_model and the reg, but the pin the
+        kernel recorded for the REFUSED id is its own — a pick in another family, or the same family's
+        pin when the newer pick is an alias — and the CLI did rule on it. Left in place, a family click
+        re-sent the refused id. Firing the hook is safe for the newer pick because the kernel's forget
+        compares-and-swaps by value (_forget_model_pick(fam, only=id)): a newer pin for the same family
+        is never this refusal's to drop (test_model_versions pins that side). A LOST answer forgets
+        nothing — it says nothing about the id."""
         calls = []
         type(self.be).on_model_refused = staticmethod(lambda sid, value: calls.append((sid, value)))
         try:
@@ -1534,13 +1599,12 @@ class SetModelModePure(unittest.TestCase):
             del type(self.be).on_model_refused
 
     def test_a_superseded_write_whose_answer_was_lost_forgets_nothing_and_drops_its_node(self):
-        # (fixer round 6 minors, 2026-09-02) the forget hook fired on `superseded or refusal`, and superseded
-        # is computed from chosen_model alone — so a superseded write whose answer was LOST (a timeout, a
-        # request stranded by a reconnect teardown) forgot the user's pin for it, against the contract the
-        # arm above pins: a lost answer says nothing about the id. The hook fires on a refusal alone. The
-        # superseded lost write's node goes the way a settled write's does (dropped ≡ settled, the
-        # dead-thread rule): the store keeps the newer pick, and the newer pick's own unwind lands on this
-        # write — a lost pick stands, it was never refused.
+        # superseded is computed from chosen_model alone — so a superseded write whose answer was LOST
+        # (a timeout, a request stranded by a reconnect teardown) must not forget the user's pin for it:
+        # a lost answer says nothing about the id. The hook fires on a refusal alone. The superseded lost
+        # write's node goes the way a settled write's does (dropped ≡ settled, the dead-thread rule): the
+        # store keeps the newer pick, and the newer pick's own unwind lands on this write — a lost pick
+        # stands, it was never refused.
         calls = []
         type(self.be).on_model_refused = staticmethod(lambda sid, value: calls.append((sid, value)))
         try:
@@ -1576,7 +1640,7 @@ class SetModelModePure(unittest.TestCase):
         finally:
             del type(self.be).on_model_refused
 
-    # ── the revert target is the last ACCEPTED state (fixer round 5, 2026-09-01) ─────────────────────
+    # ── the revert target is the last ACCEPTED state ──────────────────────────────────────────────
     class _RefusesAll:
         """A CLI that answers every set_model with an error and keeps running Opus 4.8."""
         async def set_model(self, model=None):
@@ -1586,13 +1650,13 @@ class SetModelModePure(unittest.TestCase):
             return {"percentage": 3, "model": "claude-opus-4-8"}
 
     def test_two_refusals_in_a_row_restore_the_accepted_model_never_the_first_refused_pick(self):
-        # (fixer round 5, 2026-09-01) A then B, BOTH refused. A's answer lands after B's optimistic writes
-        # and stands down (superseded) — right. But B's snapshot was captured AFTER A's writes, so it held
-        # A, and B's own refusal then compare-and-swapped A — a REFUSED id — back into chosen_model, the
-        # reg and the shared defaults: the poison the revert exists to remove, embedded by the revert. The
-        # revert restores the last state the CLI ACCEPTED (opus, before either pick), never the last state
-        # WRITTEN. First with NO accepted pick anywhere (a fresh store, a session on the account default):
-        # every layer returns to ABSENCE, never to A.
+        # A then B, BOTH refused. A's answer lands after B's optimistic writes and stands down
+        # (superseded) — right. But B's snapshot was captured AFTER A's writes, so it held A, and a
+        # revert to "what the write replaced" would compare-and-swap A — a REFUSED id — back into
+        # chosen_model, the reg and the shared defaults: the poison the revert exists to remove,
+        # embedded by the revert. The revert restores the last state the CLI ACCEPTED (opus, before
+        # either pick), never the last state WRITTEN. First with NO accepted pick anywhere (a fresh
+        # store, a session on the account default): every layer returns to ABSENCE, never to A.
         sid0, sess0, sched0 = self._live(prior="")
         self.assertNotIn("model", sb.read_reg(self.d, sid0))
         sess0.client = self._RefusesAll()
@@ -1672,11 +1736,10 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-fable-5-1")
         self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-5-1")
 
-    # ── the SHARED defaults are ruled per write, by token (fixer round 6, 2026-09-02) ─────────────────
-    # sdk-defaults.json is one store for every session, and round 5 decided "is the value in it still my
-    # write?" by VALUE from a per-session picture of the layer (_model_accepted["default"], the set of this
-    # session's unaccepted writes). Three ways wrong, each reproduced below; the store now carries the
-    # identity of the write that set it (`modelTok`), and a refusal unwinds exactly its own write.
+    # ── the SHARED defaults are ruled per write, by token ─────────────────────────────────────────
+    # sdk-defaults.json is one store for every session. Deciding "is the value in it still my write?" by
+    # VALUE from a per-session picture of the layer is wrong three ways, each reproduced below; the store
+    # carries the identity of the write that set it (`modelTok`), and a refusal unwinds exactly its own write.
     class _AcceptsAll:
         """A CLI that accepts every set_model and reports the picked model."""
         def __init__(self, live="claude-sonnet-5-2"):
@@ -1690,10 +1753,9 @@ class SetModelModePure(unittest.TestCase):
 
     def test_picking_the_value_the_shared_default_already_holds_then_being_refused_leaves_it_in_place(self):
         # The most common pick of all: the value another session's ACCEPTED pick left in the shared
-        # defaults — a new session seeds from it, and picking it again is one click. Round 5 could not
-        # adopt it as the baseline (the value was in this session's own unaccepted set the moment it was
-        # picked), so the refusal restored a STALE baseline — None here, this session's own model with an
-        # init-accept — over the other session's pick.
+        # defaults — a new session seeds from it, and picking it again is one click. A by-value scheme
+        # cannot adopt it as the baseline (the value is in this session's own unaccepted set the moment
+        # it is picked), so the refusal restores a STALE baseline over the other session's pick.
         sid, sess, sched = self._live()                                    # accepted opus; defaults = opus
         other = self.be.spawn("two", self.d)
         self.assertTrue(self.be.set_model(other, "claude-sonnet-5-2"))     # dormant: accepted where it stands
@@ -1720,10 +1782,10 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(sb.read_reg(self.d, s4)["model"], "claude-sonnet-5-2")
 
     def test_an_id_this_session_once_refused_stays_when_another_session_has_since_accepted_it(self):
-        # Round 5 kept a refused id in the session's unaccepted set FOREVER, so the shared default holding
-        # it — put there later by another session whose CLI accepted it (a newer CLI, another account) —
-        # could never be adopted as a baseline, and this session's next refusal restored its own stale
-        # baseline over that accepted pick.
+        # a by-value scheme keeps a refused id in the session's unaccepted set FOREVER, so the shared
+        # default holding it — put there later by another session whose CLI accepted it (a newer CLI,
+        # another account) — can never be adopted as a baseline, and this session's next refusal restores
+        # its own stale baseline over that accepted pick
         sid, sess, sched = self._live()                                    # accepted opus
         sess.client = self._RefusesAll()
         self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))        # X, refused here
@@ -1741,10 +1803,10 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(sb.read_reg(self.d, sid)["model"], "opus")
 
     def test_two_cross_session_refusals_never_seed_a_refused_id_in_either_order(self):
-        # Two live sessions pick concurrently: b's write lands on a's PENDING one. Round 5 adopted a's
-        # pending value as b's baseline (it was not in b's own unaccepted set), so when both were refused
-        # — a first, whose compare-and-swap stood down because b held the store — b's revert restored a's
-        # REFUSED id as the seed every new session launches with.
+        # Two live sessions pick concurrently: b's write lands on a's PENDING one. A by-value scheme
+        # adopts a's pending value as b's baseline (it is not in b's own unaccepted set), so when both
+        # are refused — a first, whose compare-and-swap stands down because b holds the store — b's
+        # revert restores a's REFUSED id as the seed every new session launches with.
         a, sa, qa = self._live()
         b, sb_, qb = self._live()
         sa.client = sb_.client = self._RefusesAll()
@@ -1817,13 +1879,13 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-9-9")
 
     def test_a_refusal_landing_between_the_shared_write_and_its_node_never_seeds_the_refused_id(self):
-        # (fixer round 6 minors, 2026-09-02) _seed_write_pending wrote the store under the lock, RELEASED it,
-        # and took it again to insert the node. A refusal for the write it replaced — on the SDK loop
-        # thread, through _revert_model — could run in that gap: it popped its own node and re-pointed only
-        # the nodes that EXISTED, so the new node was inserted afterwards still pointing at the refused
-        # (value, token); the head check stood down (the file's head was the new write). The new write's
-        # own refusal then restored the refused id under a token no node knew — unwindable by nothing, and
-        # the seed of every new session. Deterministic stand-in for "the other thread takes the lock the
+        # If _seed_write_pending wrote the store under the lock, RELEASED it, and took it again to insert
+        # the node, a refusal for the write it replaced — on the SDK loop thread, through _revert_model —
+        # could run in that gap: it would pop its own node and re-point only the nodes that EXISTED, so
+        # the new node would be inserted afterwards still pointing at the refused (value, token); the
+        # head check would stand down (the file's head is the new write). The new write's own refusal
+        # would then restore the refused id under a token no node knew — unwindable by nothing, and the
+        # seed of every new session. Deterministic stand-in for "the other thread takes the lock the
         # instant this one lets go": a lock whose RELEASE runs an armed action once — A's refusal — so it
         # lands wherever the first release inside set_model falls. The write and the insert are one hold.
         a, sa, qa = self._live()
@@ -1865,12 +1927,12 @@ class SetModelModePure(unittest.TestCase):
 
     # ── snapshot and write in ONE lock hold; chosen_model compare-and-assign under the session lock ──
     def test_a_defaults_or_reg_read_taken_outside_the_store_lock_never_feeds_the_revert(self):
-        # (fixer round 5, 2026-09-01) set_model captured its snapshots (read_reg, read_sdk_defaults)
-        # OUTSIDE _reg_lock / _defaults_lock and only then took the locks to write — so a writer on the
-        # other thread (a revert, another session's pick) could land between the read and the write, and
-        # the snapshot described a world the write never replaced. Deterministic stand-in for that
-        # interleave: a read made WITHOUT the store lock held reports a phantom value. If any such read
-        # feeds the revert, the phantom lands in the store; a read-modify-write under one hold never sees it.
+        # A set_model that captured its snapshots (read_reg, read_sdk_defaults) OUTSIDE _reg_lock /
+        # _defaults_lock and only then took the locks to write let a writer on the other thread (a
+        # revert, another session's pick) land between the read and the write, so the snapshot described
+        # a world the write never replaced. Deterministic stand-in for that interleave: a read made
+        # WITHOUT the store lock held reports a phantom value. If any such read feeds the revert, the
+        # phantom lands in the store; a read-modify-write under one hold never sees it.
         sid, sess, scheduled = self._live()                                 # accepted: opus
         sess.client = self._RefusesAll()
         real_defaults, real_reg = sb.read_sdk_defaults, sb.read_reg
@@ -1892,10 +1954,9 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(sess.chosen_model, "opus")
 
     def test_chosen_model_is_written_only_under_the_session_lock(self):
-        # (fixer round 5, 2026-09-01) _revert_model compared and assigned sess.chosen_model with no lock
-        # while the kernel thread's set_model assigned it — a torn compare-and-swap. Both writers now hold
-        # the session's lock around the compare-and-assign; a property stand-in records any write made
-        # without it.
+        # _revert_model compares and assigns sess.chosen_model while the kernel thread's set_model
+        # assigns it — a torn compare-and-swap unless both writers hold the session's lock around the
+        # compare-and-assign; a property stand-in records any write made without it.
         sid = self.be.spawn("m", self.d)
         self.assertTrue(self.be.set_model(sid, "opus"))
         unlocked = []
@@ -1930,10 +1991,10 @@ class SetModelModePure(unittest.TestCase):
                         "…and the hold is released before the reg lock (no nesting)")
 
     def test_set_model_and_effort_on_a_dormant_session_leave_an_acknowledgment_chip(self):
-        # (review, 2026-09-01) a composer "/model X" on a LIVE session lands the synthesized command
-        # chip and the webview's optimistic bubble retires against it; on a DORMANT session nothing
-        # landed, so the dashed bubble sat as "unconfirmed" and vanished with no trace. The chip — and
-        # its durable gesture twin — are the acknowledgment, whatever the session's liveness.
+        # a composer "/model X" on a LIVE session lands the synthesized command chip and the webview's
+        # optimistic bubble retires against it; on a DORMANT session nothing landed, so the dashed
+        # bubble sat as "unconfirmed" and vanished with no trace. The chip — and its durable gesture
+        # twin — are the acknowledgment, whatever the session's liveness.
         sid = self.be.spawn("m", self.d)                  # a reg, no thread: dormant
         self.assertTrue(self.be.set_model(sid, "fable"))
         self.assertTrue(self.be.set_effort(sid, "high"))
@@ -1950,29 +2011,6 @@ class SetModelModePure(unittest.TestCase):
         # the dormant resolution is unchanged: the badge shows the pick now, no dots
         reg = sb.read_reg(self.d, sid)
         self.assertEqual((reg["model"], reg["liveModel"], reg.get("modelPending")), ("fable", "Fable", False))
-
-    def test_refresh_context_persists_the_live_model_id(self):
-        # (review, 2026-09-01) the pin the liveModelId write was missing: _do_refresh_context is the
-        # pre-turn source (get_context_usage answers on connect, before any init message), so an
-        # eager-connected session that never runs a turn still contributes its version to the pickers
-        sid = self.be.spawn("m", self.d)
-        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
-
-        class _Client:
-            async def get_context_usage(self):
-                return {"percentage": 41.6, "model": "claude-fable-5-1"}
-        sess.client = _Client()
-        asyncio.run(sess._do_refresh_context())
-        reg = sb.read_reg(self.d, sid)
-        self.assertEqual((reg["liveModelId"], reg["liveModel"], reg["liveCtx"]), ("claude-fable-5-1", "Fable 5.1", 42))
-        self.assertEqual(sess._model_id, "claude-fable-5-1")
-        # a [1m] variant is persisted as reported — the kernel's picker strips the tag on read
-        class _Client1m:
-            async def get_context_usage(self):
-                return {"percentage": 41.6, "model": "claude-fable-5-1[1m]"}
-        sess.client = _Client1m()
-        asyncio.run(sess._do_refresh_context())
-        self.assertEqual(sb.read_reg(self.d, sid)["liveModelId"], "claude-fable-5-1[1m]")
 
     def test_learn_model_clears_pending_only_when_the_new_name_lands(self):
         sess = sb.SdkSession(self.be, {"sid": "p", "name": "n", "cwd": self.d, "model": "fable"})
@@ -2161,9 +2199,9 @@ class AskArmedBeforePresent(unittest.TestCase):
     await must already find the future armed — or it is reported lost and the coroutine waits forever.
     Production dodges the gap by microseconds (only the kernel's click handlers answer, from another
     thread); an answer delivered synchronously INSIDE the presentation callback hits it every time. That
-    is exactly how the SDK-gated round-trip classes below drive their asks, and neither CI installs the
-    SDK, so both skipped the hang. Pinned WITHOUT the SDK: _ask_one needs none, so the standard runner
-    and CI exercise the invariant. The answer rides on_ask -> resolve_ask, the kernel's own path."""
+    is exactly how the SDK-gated round-trip classes below drive their asks, and CI does not install the
+    SDK, so the hang was never seen there. Pinned WITHOUT the SDK: _ask_one needs none, so the standard
+    runner and CI exercise the invariant. The answer rides on_ask -> resolve_ask, the kernel's own path."""
 
     SID = "11111111-2222-3333-4444-555555555555"
 
@@ -2197,6 +2235,51 @@ class AskArmedBeforePresent(unittest.TestCase):
         self.assertIsNone(sess._cur_ask_fut, "the armed future clears once the ask is answered")
 
 
+class OverlappingAsksAnswerInTurn(unittest.TestCase):
+    """Two asks presented concurrently on one session (the SDK dispatches every control request as its
+    own detached task) must each get THEIR OWN answer. Before the per-session lock, arming at the sites
+    let the second ask find the first's live future and share it — one click resolved both, so an Allow
+    given to tool B was applied to tool A silently (PR #875 review). Now the second ask is not even
+    PRESENTED until the first resolves, and the answers land on the asks they were given to."""
+
+    SID = "11111111-2222-3333-4444-777777777777"
+
+    def test_the_second_ask_waits_and_each_gets_its_own_answer(self):
+        import asyncio
+        presented = []                                    # askLive ids in presentation order
+
+        def notify(app, msg):
+            if msg.get("type") == "askLive":
+                presented.append(msg["id"])
+
+        d = tempfile.mkdtemp()
+        backend = sb.SdkBackend(d, "/bin/true", notify)
+        sess = sb.SdkSession(backend, {"sid": self.SID, "name": "n", "cwd": d})
+        backend.sessions[self.SID] = sess
+        qa = {"question": "First?", "header": "A", "multiSelect": False, "options": [{"label": "a1"}, {"label": "a2"}]}
+        qb = {"question": "Second?", "header": "B", "multiSelect": False, "options": [{"label": "b1"}, {"label": "b2"}]}
+
+        async def go():
+            sess.loop = asyncio.get_running_loop()
+            ta = asyncio.ensure_future(sess._ask_one(qa, 0, 1))
+            tb = asyncio.ensure_future(sess._ask_one(qb, 0, 1))
+            await asyncio.sleep(0)                        # both tasks start; only ONE may be presented
+            self.assertEqual(len(presented), 1, "the second ask waits for the first — never two live at once")
+            self.assertTrue(backend.on_ask(presented[0], "answer", 2), "answer the FIRST ask: option 2")
+            await asyncio.wait_for(ta, timeout=5)        # the first ask resolves and releases the lock…
+            for _ in range(10):                           # …and the second acquires it within a few loop hops
+                if len(presented) == 2:
+                    break
+                await asyncio.sleep(0)
+            self.assertEqual(len(presented), 2, "the second ask is presented only after the first resolved")
+            self.assertTrue(backend.on_ask(presented[1], "answer", 1), "answer the SECOND ask: option 1")
+            return await asyncio.wait_for(asyncio.gather(ta, tb), timeout=5)
+
+        ra, rb = asyncio.run(go())
+        self.assertEqual((ra, rb), ("a2", "b1"), "each ask got the answer given to IT — no shared future")
+        self.assertIsNone(sess._cur_ask_fut)
+
+
 class ThinkingKw(unittest.TestCase):
     """The thinking-summaries decision WITHOUT the SDK (2026-09-01, round 2): `thinking_kw` is what
     _options hands ClaudeAgentOptions as `thinking=`, and `thinking_override_note` the one log line owed
@@ -2227,8 +2310,8 @@ class ThinkingKw(unittest.TestCase):
 
     def test_the_override_note_fires_only_for_a_cap_in_the_cli_environment(self):
         # The CLI resolves --thinking adaptive ahead of MAX_THINKING_TOKENS (verified in the 2.1.257
-        # binary): with a cap in the environment the toggle turns thinking ON where the cap had it off.
-        # Real, so never silent — but only when it is real.
+        # binary, re-read at 2.1.258): with a cap in the environment the toggle turns thinking ON where
+        # the cap had it off. Real, so never silent — but only when it is real.
         on = {"type": "adaptive", "display": "summarized"}
         self.assertEqual(sb.thinking_override_note(None, {"MAX_THINKING_TOKENS": "0"}), "",
                          "toggle off → the flag is not sent, so nothing is overridden")
@@ -3060,9 +3143,10 @@ class OptionsAssembly(unittest.TestCase):
         self.assertGreaterEqual(opts.max_buffer_size, 32 * 1024 * 1024,
                                 "well past any realistic single message, so a picker never dies on overflow")
 
-    # Thinking summaries (2026-09-01): CLI 2.1.257 forces thinking display "omitted" for every
-    # non-interactive session unless --thinking-display is passed explicitly (its settings.json
-    # showThinkingSummaries key is read in interactive mode only), so every SDK session returned
+    # Thinking summaries (2026-09-01). On the SDK's stream-json path the CLI requests NO thinking display
+    # (it uses an explicit --thinking-display when given, consults the showThinkingSummaries settings key
+    # only when interactive, and forces "omitted" only for --print text/json output — verified in the
+    # 2.1.257 binary, re-read at 2.1.258), so the API default applies and current models return
     # signature-only thinking blocks. The kernel's per-install gear toggle writes
     # STATE/thinking-summaries.json; _options reads it at every connect and, when on, passes the SDK's
     # TYPED ThinkingConfigAdaptive field (types.py: display "summarized" | "omitted") — never the
@@ -3081,12 +3165,12 @@ class OptionsAssembly(unittest.TestCase):
         self.assertTrue(sb.thinking_summaries_on(be.state_dir))
         opts = be._options(self._sess(be), _sdk.ClaudeAgentOptions)
         self.assertEqual(opts.thinking, {"type": "adaptive", "display": "summarized"},
-                         "the designed field, in the shape the guide names")
+                         "the designed field, in the shape the SDK types")
         self.assertNotIn("thinking-display", opts.extra_args or {},
                          "must NOT route the display through the extra_args CLI-flag escape hatch")
-        # …and the installed SDK's transport turns that field into the CLI flags the 2.1.257 binary
-        # honors (--thinking adaptive --thinking-display summarized) — verified against the SDK romp runs,
-        # not assumed from its docs.
+        # …and the installed SDK's transport turns that field into the CLI flags the binary honors
+        # (--thinking adaptive --thinking-display summarized) — verified against the SDK romp runs, not
+        # assumed from its docs.
         from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
         cmd = SubprocessCLITransport("", opts)._build_command()
         self.assertIn("--thinking-display", cmd)
@@ -4082,6 +4166,40 @@ class BgTaskLifecycle(unittest.TestCase):
         self.assertEqual(be2._ensured, [])
         self.assertEqual([t["desc"] for t in sb.read_reg(be2.state_dir, s2.sid)["bgTasks"]], ["timer"])
 
+    def test_a_threads_crash_resume_hears_dead_tasks_once_after_the_nudge(self):
+        # a comment thread's CLI dies mid-turn with the kernel alive: the crash resume spawns the
+        # fresh session through _ensure, whose thread-wake report (the boot sweep never resumes a
+        # thread, so a thread's dead life is reported at its wake) queues the task-death notice from
+        # the reg mirror — and this method's own report from the in-memory set follows with the
+        # identical text. The session hears it ONCE, after the continuation nudge: the order the
+        # boot sweep gives a top-level session.
+        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
+        sid = "11111111-2222-3333-4444-00000000c0de"
+        reg = {"sid": sid, "name": "n", "cwd": "/tmp", "alive": True,
+               "threadOf": "11111111-2222-3333-4444-000000000000"}
+        sb.write_reg(be.state_dir, sid, reg)
+        s = sb.SdkSession(be, reg)
+        self._feed(s, "task_started", {"task_id": "b1", "description": "release watcher"})
+        note = sb.task_death_notice(s._live_bg_tasks())
+        s.inflight = 1                                       # mid-turn: the crash-resume path
+        made = []
+
+        class _Rec:
+            def __init__(self, backend, reg):
+                made.append(dict(reg))
+                self.thread = mock.Mock(is_alive=lambda: True)
+                self.on_boot_settled = None
+
+            def start(self):
+                pass
+
+        with mock.patch.object(sb, "SdkSession", _Rec):
+            be._on_session_gone(s)
+        self.assertEqual(made[0].get("queue"), [sb.CRASH_RESUME_NUDGE, note], "nudge first, the notice once")
+        reg = sb.read_reg(be.state_dir, sid)
+        self.assertEqual(reg["queue"], [sb.CRASH_RESUME_NUDGE, note], "the persisted queue agrees")
+        self.assertEqual(reg["bgTasks"], [])
+
     def test_construction_heals_stranded_pending_switch_flags(self):
         # a pending /model / /effort switch that died with the previous process must not strand the
         # switching-dots (the user 2026-07-11): a fresh construction applies both at its next connect,
@@ -4237,6 +4355,312 @@ class PushSessionCallback(unittest.TestCase):
             time.sleep(0.01)
         self.assertTrue(any("session push" in str(m) for m in logs),
                         "the failure is reported, not swallowed: %r" % logs)
+
+
+class LiveSubagentsRetire(unittest.TestCase):
+    """The lane's live subagent count only ever GREW (the user 2026-09-02, whose session read Working with
+    37 subagents for hours). The CLI fires SubagentStart for every workflow agent but not SubagentStop for
+    every one of them (probe-verified on CLI 2.1.257: a run with one agent on a nonexistent model got one
+    stop hook; the failed agent's slot in the run's `workflow_progress` list read state "error" and
+    nothing else), so the set is retired on the events that DO arrive: a run's per-agent
+    progress list (an end state, or a slot re-minted for a retry), the run's end, a Task agent's own
+    task end (its task_id IS the agent id), and the client teardown. Every id and uuid here is synthetic."""
+
+    SID = "11111111-2222-3333-4444-666666666666"
+
+    def _sess(self):
+        self.logs, self.pokes = [], []
+        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None, log=self.logs.append,
+                           poke=lambda: self.pokes.append(1))
+        s = sb.SdkSession(be, {"sid": self.SID, "name": "web", "cwd": "/tmp"})
+        s.inflight = 0                                          # the main turn is idle throughout
+        return s
+
+    def _start(self, s, aid, kind="workflow-subagent"):
+        import asyncio
+        asyncio.run(s._subagent_start_hook({"agent_id": aid, "agent_type": kind}, None, None))
+
+    @staticmethod
+    def _wf(index, aid, state, label="reader"):
+        e = {"type": "workflow_agent", "index": index, "label": label, "state": state, "queuedAt": 1}
+        if aid:
+            e["agentId"] = aid
+            e["startedAt"] = 2
+        return e
+
+    def test_a_failed_workflow_agent_retires_on_the_runs_progress_list(self):
+        """The shape the probe recorded: the run's task_progress re-ships the whole per-agent list on every
+        state change; the failed agent's slot flips to "error" with no SubagentStop ever following."""
+        s = self._sess()
+        s._on_task_event("task_started", {"task_id": "w1", "task_type": "local_workflow", "description": "review"})
+        self._start(s, "a1"); self._start(s, "a2")
+        s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": [
+            self._wf(1, "a1", "start"), self._wf(2, "a2", "start"), self._wf(3, None, "start")]})   # 3rd still queued
+        self.assertEqual(set(s._subagents), {"a1", "a2"}, "start states retire nothing")
+        self.assertEqual(s.snapshot()["state"], "working", "live agents keep the session working")
+        n0 = len(self.pokes)
+        s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": [
+            self._wf(1, "a1", "progress"), self._wf(2, "a2", "error"), self._wf(3, None, "start")]})
+        self.assertEqual(set(s._subagents), {"a1"}, "the failed agent retires on its error state — no stop hook came")
+        self.assertGreater(len(self.pokes), n0, "the retirement pushes a build now, not at the backstop")
+        n1 = len(self.pokes)
+        s._on_task_event("task_progress", {"task_id": "w1"})   # a throttled tick without the list changes nothing
+        self.assertEqual(set(s._subagents), {"a1"})
+        self.assertEqual(len(self.pokes), n1, "…and a tick that changed nothing pushes nothing")
+        s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": [
+            self._wf(1, "a1", "done"), self._wf(2, "a2", "error")]})
+        self.assertEqual(s._subagents, {}, "a done state retires too (its stop hook would only be a no-op)")
+        self.assertEqual(s.snapshot()["state"], "waiting", "and the session idles once the set empties")
+
+    def test_b_the_runs_end_retires_every_agent_it_listed(self):
+        """A run's end is the end of everything it ever listed, whatever state the slot last showed."""
+        s = self._sess()
+        s._on_task_event("task_started", {"task_id": "w1", "task_type": "local_workflow"})
+        self._start(s, "a1"); self._start(s, "a2")
+        s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": [
+            self._wf(1, "a1", "start"), self._wf(2, "a2", "progress")]})
+        s._on_task_event("task_notification", {"task_id": "w1", "status": "completed"})
+        self.assertEqual(s._subagents, {}, "both listed agents retire at the run's end")
+        self.assertNotIn("w1", s._wf_agents, "the run's roster is dropped with it")
+        self.assertEqual(s.snapshot()["state"], "waiting")
+
+    def test_c_an_agent_no_run_listed_is_never_inferred_dead(self):
+        """Every retirement keys on an event about the agent. An agent no run has listed yet is NOT retired
+        because some other run ended and "no run is live any more" — that is inference from absence, and an
+        earlier draft that did it would have retired a live agent had the events ever landed in this order
+        (review 2026-09-02). It stays until its own end arrives: here its run's list naming it done."""
+        s = self._sess()
+        s._on_task_event("task_started", {"task_id": "w1", "task_type": "local_workflow"})
+        self._start(s, "b1")                                    # w2's first agent — its task_started still queued
+        s._on_task_event("task_notification", {"task_id": "w1", "status": "completed"})
+        self.assertEqual(set(s._subagents), {"b1"}, "w1's end says nothing about an agent w1 never listed")
+        self.assertEqual(s.snapshot()["state"], "working", "the live agent still holds the session working")
+        s._on_task_event("task_started", {"task_id": "w2", "task_type": "local_workflow"})
+        s._on_task_event("task_progress", {"task_id": "w2", "workflow_progress": [self._wf(1, "b1", "done")]})
+        self.assertEqual(s._subagents, {}, "its own run's list is what ends it")
+
+    def test_c2_a_retried_slot_ends_the_attempt_it_displaced(self):
+        """A retried workflow agent is re-minted with a NEW id in the SAME slot; the first attempt got a
+        SubagentStart and nothing else, so the slot changing hands is its end."""
+        s = self._sess()
+        s._on_task_event("task_started", {"task_id": "w1", "task_type": "local_workflow"})
+        self._start(s, "a1")
+        s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": [self._wf(1, "a1", "start")]})
+        self._start(s, "a1r")                                   # the retry, same slot
+        s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": [self._wf(1, "a1r", "start")]})
+        self.assertEqual(set(s._subagents), {"a1r"}, "the displaced attempt is over; the retry is live")
+        s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": [self._wf(1, "a1r", "done")]})
+        self.assertEqual(s._subagents, {})
+        s._on_task_event("task_notification", {"task_id": "w1", "status": "completed"})
+        self.assertNotIn("w1", s._wf_slots, "the run's slots are dropped with it")
+
+    def test_d_a_task_agents_own_task_end_retires_it(self):
+        """A Task/Agent subagent's lifecycle task carries the agent id as its task_id (probe-verified), so
+        the task ending retires the agent — here as a failure. Whether a failed Task agent gets a
+        SubagentStop is unverified (the probe saw a failed WORKFLOW agent get none); its task end retires
+        it either way."""
+        s = self._sess()
+        self._start(s, "t1", "general-purpose")
+        s._on_task_event("task_started", {"task_id": "t1", "task_type": "local_agent", "subagent_type": "general-purpose"})
+        self.assertEqual(s.snapshot()["state"], "working")
+        s._on_task_event("task_notification", {"task_id": "t1", "status": "failed"})
+        self.assertEqual(s._subagents, {}, "the task's end is the agent's end")
+        self.assertEqual(s._bg_tasks, {}, "the task itself cleared as before")
+        self.assertEqual(s.snapshot()["state"], "waiting")
+
+    def test_e_a_task_agents_progress_never_touches_the_workflow_path(self):
+        """A local_agent task's progress is not a workflow list; nothing retires and nothing raises."""
+        s = self._sess()
+        self._start(s, "t1", "Explore")
+        s._on_task_event("task_started", {"task_id": "t1", "task_type": "local_agent"})
+        s._on_task_event("task_progress", {"task_id": "t1", "last_tool_name": "Read"})
+        self.assertEqual(set(s._subagents), {"t1"})
+        self.assertEqual(s._wf_agents, {}, "no roster is minted for a non-workflow task")
+
+    def test_f_the_client_teardown_drops_the_abandoned_clients_agents_and_tasks(self):
+        """A reconnect abandons the CLI process the agents and background tasks ran inside: they died with
+        it and their hooks/notifications can never arrive, so the loop top forgets the agents, retires the
+        tasks, queues the same death notice a CLI death does (once), clears the reg mirror, and logs."""
+        s = self._sess()
+        sb.write_reg(s.backend.state_dir, self.SID, {"sid": self.SID, "name": "web", "cwd": "/tmp", "alive": True})
+        s._on_task_event("task_started", {"task_id": "w1", "task_type": "local_workflow", "description": "review sweep"})
+        s._on_task_event("task_started", {"task_id": "b1", "task_type": "local_bash", "description": "watch the build"})
+        self._start(s, "a1"); self._start(s, "a2")
+        s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": [self._wf(1, "a1", "start")]})
+        self.assertEqual(s.snapshot()["state"], "working")
+        s._drop_live_work("reconnect")
+        self.assertEqual(s._subagents, {})
+        self.assertEqual(s._wf_agents, {})
+        self.assertEqual(s._wf_slots, {})
+        self.assertEqual(s._bg_tasks, {}, "the tasks died with the CLI too — their notifications can never arrive")
+        self.assertEqual(s.snapshot()["state"], "waiting")
+        self.assertEqual(s.snapshot()["bgTasks"], [])
+        notes = [q for q in s.pending() if "background task" in q]
+        self.assertEqual(len(notes), 1, "the session is told what it lost: %r" % s.pending())
+        self.assertEqual(notes[0], sb.task_death_notice([{"desc": "review sweep"}, {"desc": "watch the build"}],
+                                                        cause=sb.SdkSession._RECONNECT_CAUSE),
+                         "the very copy the session reads, with the cause named truthfully")
+        self.assertIn("settings switch", notes[0])
+        self.assertNotIn("crash", notes[0], "a reconnect is neither a crash nor an unexplained restart")
+        self.assertEqual(sb.read_reg(s.backend.state_dir, self.SID).get("bgTasks"), [], "mirror cleared: reported once")
+        self.assertTrue(any("dropped 2 subagents and 2 background tasks on reconnect" in str(m) for m in self.logs), self.logs)
+        self.logs.clear()
+        s._drop_live_work("reconnect")
+        self.assertFalse(self.logs, "an empty set drops silently — the first connect is not an event worth a line")
+        self.assertEqual(len([q for q in s.pending() if "background task" in q]), 1, "no second notice for nothing")
+
+    def test_f2_a_flapping_reconnect_does_not_stack_the_same_notice(self):
+        s = self._sess()
+        for _ in range(2):
+            s._on_task_event("task_started", {"task_id": "b1", "task_type": "local_bash", "description": "watch"})
+            s._drop_live_work("reconnect")
+        self.assertEqual(len([q for q in s.pending() if "background task" in q]), 1, s.pending())
+
+    def test_g_the_reconnect_loop_top_calls_the_drop_before_reconciling(self):
+        """Pin the wiring: the drop runs at the loop top, before _reconcile_stranded, every iteration."""
+        src = open(os.path.join(BIN, "romp_sdk_backend.py"), encoding="utf-8").read()
+        i = src.index('self._drop_live_work("reconnect")')
+        j = src.index("self._reconcile_stranded()")
+        self.assertLess(i, j, "the drop precedes the stranded-turn reconcile at the loop top")
+        k = src.rfind("while not self.ended:", 0, i)
+        self.assertGreater(k, 0)
+        self.assertNotIn("async with ClaudeSDKClient", src[k:i], "…inside the reconnect loop, before the connect")
+
+    def test_i_a_run_seen_only_through_its_progress_list_still_retires(self):
+        """A backend that attached mid-run never saw the run's task_started (the self-heal path); the
+        per-agent list is shipped only by Workflow runs, so its presence types the entry and the run's
+        error states and end retire its agents like any other."""
+        s = self._sess()
+        self._start(s, "a1"); self._start(s, "a2")
+        s._on_task_event("task_progress", {"task_id": "w7", "workflow_progress": [
+            self._wf(1, "a1", "error"), self._wf(2, "a2", "progress")]})
+        self.assertEqual(s._bg_tasks["w7"]["type"], "local_workflow", "the entry learned what it is from the list")
+        self.assertEqual(set(s._subagents), {"a2"}, "the failed agent retired on the first list seen")
+        s._on_task_event("task_notification", {"task_id": "w7", "status": "completed"})
+        self.assertEqual(s._subagents, {}, "the run's end retires the rest")
+
+    def test_h_a_clean_stop_hook_still_retires_exactly_its_own_agent(self):
+        """The designed path is untouched: a SubagentStop retires its agent and no other, and a later
+        progress list naming it as done is a harmless no-op."""
+        import asyncio
+        s = self._sess()
+        s._on_task_event("task_started", {"task_id": "w1", "task_type": "local_workflow"})
+        self._start(s, "a1"); self._start(s, "a2")
+        asyncio.run(s._subagent_stop_hook({"agent_id": "a1", "agent_type": "workflow-subagent"}, None, None))
+        self.assertEqual(set(s._subagents), {"a2"})
+        s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": [
+            self._wf(1, "a1", "done"), self._wf(2, "a2", "progress")]})
+        self.assertEqual(set(s._subagents), {"a2"})
+
+
+class WorkflowProgressShapeIsLoud(unittest.TestCase):
+    """The retirement parser keys on the field names the probe recorded. If the CLI renames them, the
+    ever-growing live count comes back — and would come back SILENTLY, so a list this build cannot read is
+    reported once per process, naming what arrived (the api_retry shape warning's pattern)."""
+
+    SID = "11111111-2222-3333-4444-888888888888"
+
+    def setUp(self):
+        sb.SdkSession._wf_shape_warned = False
+
+    def tearDown(self):
+        sb.SdkSession._wf_shape_warned = False
+
+    def _sess(self):
+        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None, log=lambda m, problem=None: None)
+        s = sb.SdkSession(be, {"sid": self.SID, "name": "web", "cwd": "/tmp"})
+        s.inflight = 0
+        s._on_task_event("task_started", {"task_id": "w1", "task_type": "local_workflow"})
+        return s
+
+    def _feed(self, s, progress):
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": progress})
+        return buf.getvalue()
+
+    def test_a_renamed_list_says_so_once_and_names_what_arrived(self):
+        s = self._sess()
+        out = self._feed(s, [{"type": "wf_agent", "agent_ref": "a1", "phase": "done"}])
+        self.assertIn("workflow_progress payload", out)
+        self.assertIn("workflow_agent", out, "the diagnostic names the type it expected")
+        self.assertIn("agent_ref", out, "…and the keys it actually got")
+        self.assertIn("live subagent count", out, "…and what the user will see go wrong")
+        self.assertIn("until the session reconnects", out, "…stated for the worst case: a type/agentId rename "
+                                                          "leaves the roster empty, so a run's end retires nothing")
+        self.assertEqual(self._feed(s, [{"type": "wf_agent", "agent_ref": "a2"}]), "", "once per process, not per event")
+
+    def test_b_the_probe_recorded_shapes_are_silent(self):
+        """Every shape CLI 2.1.257 was seen to ship on an ordinary run must stay silent, or the latch is spent
+        on a false alarm and a real rename later in the process goes unreported (review 2026-09-03)."""
+        s = self._sess()
+        cases = {
+            "phases only, before any agent is queued": [
+                {"type": "workflow_phase", "index": 0, "title": "Review", "kind": "review"},
+                {"type": "workflow_phase", "index": 1, "title": "Verify"}],
+            "a log line beside the phases": [
+                {"type": "workflow_log", "message": "scanning"}, {"type": "workflow_phase", "index": 0, "title": "Review"}],
+            "a queued slot has no agentId yet": [
+                {"type": "workflow_agent", "index": 1, "label": "a", "agentId": "a1", "state": "done", "queuedAt": 1, "startedAt": 2},
+                {"type": "workflow_agent", "index": 2, "label": "b", "state": "start", "queuedAt": 1},
+                {"type": "workflow_phase", "index": 0, "title": "Review"}],
+            "a slot blocked before spawn: error, no agentId, no startedAt": [
+                {"type": "workflow_agent", "index": 1, "label": "a", "state": "error", "blocked": True,
+                 "error": "blocked", "queuedAt": 1, "lastProgressAt": 2}],
+            "a slot whose spawn threw: error, no agentId, no startedAt": [
+                {"type": "workflow_agent", "index": 1, "label": "a", "state": "error", "error": "spawn failed", "queuedAt": 1}],
+        }
+        for name, shape in cases.items():
+            self.assertEqual(self._feed(s, shape), "", name)
+        self.assertFalse(sb.SdkSession._wf_shape_warned)
+
+    def test_c_a_missing_field_is_named(self):
+        for entry, word in (({"type": "workflow_agent", "index": 1, "agentId": "a1", "startedAt": 2}, "'state'"),
+                            ({"type": "workflow_agent", "agentId": "a1", "state": "done"}, "'index'"),
+                            ({"type": "workflow_agent", "index": 1, "state": "done", "startedAt": 2}, "'agentId'"),
+                            ({"type": "workflow_step", "index": 1, "agentId": "a1", "state": "done"}, "'workflow_agent'")):
+            sb.SdkSession._wf_shape_warned = False
+            out = self._feed(self._sess(), [entry])
+            self.assertIn(word, out, "the diagnostic names the missing field: %r → %r" % (entry, out))
+
+    def test_d_an_unknown_state_word_is_named(self):
+        out = self._feed(self._sess(), [{"type": "workflow_agent", "index": 1, "agentId": "a1", "state": "failed", "startedAt": 2}])
+        self.assertIn("failed", out)
+        self.assertIn("unknown state word", out)
+
+    def test_e_a_throttled_tick_without_the_list_is_not_a_shape(self):
+        s = self._sess()
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            s._on_task_event("task_progress", {"task_id": "w1"})
+            s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": []})
+        self.assertEqual(buf.getvalue(), "")
+
+
+class SettleBeforePoke(unittest.TestCase):
+    """The kernel's parked-op drain wakes on the backend's turn-end poke (2026-09-03) and reads busy() to
+    decide whether the session is quiet — so the settle must CLOSE the turn (inflight 0, compaction over)
+    before the poke fires, or the woken cycle reads the session as still working and delivery slips to
+    the pusher's backstop with every test green. Codex got the same pin in tests/test_codex_backend.py."""
+
+    def test_the_result_branch_settles_before_it_pokes(self):
+        import inspect
+        src = inspect.getsource(sb.SdkSession._on_message)
+        i = src.index("elif isinstance(msg, ResultMessage):")
+        zero, comp, poke = (src.index("self.inflight = 0", i), src.index("self._compacting = False", i),
+                            src.index("self.backend._poke()", i))
+        self.assertLess(zero, poke, "inflight is zeroed before the poke")
+        self.assertLess(comp, poke, "…and the compaction cue is cleared before it")
+
+    def test_the_fed_turn_counts_as_in_flight_under_the_pop_lock(self):
+        # busy() is inflight>0 or _pending; the input generator pops _pending and must count the turn in
+        # flight under the SAME lock, or a drain re-running right after a delivery reads the gap as idle
+        src = open(os.path.join(BIN, "romp_sdk_backend.py"), encoding="utf-8").read()
+        body = src[src.index("async def inputs():"):src.index("async def drain(client):")]
+        self.assertLess(body.index("self.inflight += 1"), body.index("if item is None:"),
+                        "the increment sits inside the lock block that popped the item")
+        self.assertLess(body.index("self.inflight += 1"), body.index("self._persist_queue()"),
+                        "…before the registry write that used to separate them")
 
 
 if __name__ == "__main__":

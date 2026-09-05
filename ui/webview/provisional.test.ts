@@ -150,7 +150,7 @@ test("the silent-failure backstop is long, because it is no longer what you wait
 });
 
 test("closing a provisional tab aborts the pending spawn; a FAILED one is a plain local discard", () => {
-  assert.match(RENDER, /if \(id === provisionalId\) cancelProvisional\(\);\s*\n\s*else \{ failedProvisionals\.delete\(id\); dismissSession\(id\); \}/);
+  assert.match(RENDER, /if \(id === provisionalId\) cancelProvisional\(\);\s*\n\s*else \{ failedProvisionals\.delete\(id\); dismissSession\(id, "close"\); \}/);
   assert.match(RENDER, /vscodeApi\.postMessage\(\{ type: "cancelCreate", name \}\)/);
   // the kernel never knew a provisional id — the dead-tab ✕ must not post closeTab for one
   assert.match(RENDER, /if \(!isProvisionalId\(id\)\) vscodeApi\.postMessage\(\{ type: "closeTab", id \}\);/);

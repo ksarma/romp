@@ -305,3 +305,38 @@ test("an ARCHIVED node's zones deep-link too: fleetNode searches archivedTops, n
   assert.match(KERNEL, /"promptAnchorUuid": None if jd\.junk_quote\(nd\.get\("quote"\)\) else nd\.get\("promptUuid"\),/);
   assert.match(KERNEL, /"anchorUuid": nd\.get\("summaryAnchor"\),/);
 });
+
+// ── the pending-host strip (the user 2026-09-02) ─────────────────────────────────────────────────
+// After a kernel restart or a phone re-foreground, an attached host's sessions were simply ABSENT from
+// this pane for up to two minutes — no row, no cue — and read as wiped state. The feed merge names such
+// hosts (pendingHosts / pendingDead, riding the same feed message the ledgers do); this pane wears the
+// feed's own strip for them, and it leaves only on the merge's events. Source pins (no jsdom here).
+test("the fleet reads pendingHosts/pendingDead off the feed payload — the merge is the ONLY writer", () => {
+  assert.match(SRC, /pendingHosts = Array\.isArray\(m\.pendingHosts\) \? m\.pendingHosts\.filter\(\(h: any\) => typeof h === "string"\) : \[\];/);
+  assert.match(SRC, /pendingDead = Array\.isArray\(m\.pendingDead\) \? m\.pendingDead\.filter\(\(h: any\) => typeof h === "string"\) : \[\];/);
+  assert.doesNotMatch(SRC, /setTimeout\([^)]*pendingHosts/, "no timer ever edits the pending set");
+});
+
+test("one quiet line per pending host LEADS the list, the feed's copy family, swirl left of the text", () => {
+  assert.match(SRC, /if \(pendingHosts\.length\) list\.appendChild\(hostLoadStrip\(\)\);   \/\/ leads the list: what is still coming/);
+  assert.match(SRC, /strip\.id = "fleet-hostload";/);
+  assert.match(SRC, /const line = el\("div", "hostload-line"\);/);
+  assert.match(SRC, /const swirl = el\("span", "fask-awaiting-swirl"\);/);
+  assert.match(SRC, /"reconnecting to " \+ h \+ "\\u2026"/, "a dead link names itself (fail loudly)");
+  assert.match(SRC, /"loading sessions from " \+ h \+ "\\u2026"/, "an open link still waiting on its first payload");
+  assert.match(SRC, /line\.append\(swirl, txt\);/);
+  // the inbox-zero wordmark must not claim "every session is clear" while a host is still coming
+  assert.match(SRC, /\} else if \(!any && !pendingHosts\.length\) \{/);
+});
+
+test("the strip's styles live in the fleet's own sheet, mirroring feed.css — this page never loads feed.css", () => {
+  const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "fleet-pane.css"), "utf8");
+  const FEEDCSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.css"), "utf8");
+  assert.match(CSS, /#fleet-hostload\{display:flex;flex-direction:column;gap:4px;padding:8px 14px\}/);
+  assert.match(CSS, /\.hostload-line\{display:flex;align-items:center;gap:7px;color:var\(--dim,#9a9a9a\);font-size:0\.82em\}/,
+    "same geometry + scale as feed.css's .hostload-line");
+  assert.match(CSS, /\.fask-awaiting-swirl\{width:14px;height:14px;flex:0 0 auto;background:url\(\.\.\/media\/romp-swirl-glyph\.svg\) center \/ contain no-repeat;\s*animation:fask-swirl-spin 2\.4s linear infinite\}/);
+  assert.match(CSS, /@keyframes fask-swirl-spin\{to\{transform:rotate\(-360deg\)\}\}/, "reverse spin, like every romp loader");
+  assert.match(FEEDCSS, /\.hostload-line \{ display: flex; align-items: center; gap: 7px; color: var\(--dim\); font-size: 0\.82em; \}/,
+    "the feed's rule this mirrors is still the reference");
+});

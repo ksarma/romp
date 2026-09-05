@@ -7,7 +7,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { spinFor } from "./spin-caption";
+import { spinFor, kindWord } from "./spin-caption";
 import { distillInputs, distillText, distillPending } from "./distiller-line";
 
 // --- THE REGRESSION: a re-judging card always spins ----------------------------------------------
@@ -166,7 +166,7 @@ test("a settled card displaced to Working loses its line but never its caption",
 const FEED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8");
 
 test("feed.ts routes the card's swirl through spinFor and keeps no inline copy of the ladder", () => {
-  assert.match(FEED, /import \{ spinFor, KIND_WORD, waitedSuffix \} from "\.\/spin-caption";/);
+  assert.match(FEED, /import \{ spinFor, KIND_WORD, kindWord, waitedSuffix \} from "\.\/spin-caption";/);
   // the elapsed readout reaches the OTHER two awaiting surfaces through the same helper: the
   // "Awaiting task" pill and the "Awaiting <peer>" chip (the user 2026-08-23)
   assert.match(FEED, /const pillWaited = waitedSuffix\(it\.awaiting && it\.awaiting\.since, Date\.now\(\) \/ 1000\);/);
@@ -278,4 +278,38 @@ test("awaiting WITH tracked tasks says it ONCE — no caption, and never the pau
   // …and so do the richer in-motion stories (a re-judge under an awaiting pill is worth a line)
   const rj = spinFor({ awaiting: { tasks: ["t"] }, rejudging: true, column: "working" }, false, false);
   assert.equal(rj.caption, "Analyzing…");
+});
+
+// --- T225 rider (the user 2026-09-02): the kind word agrees in NUMBER, from one count -------------
+test("kindWord: exactly one agent is 'agent'; two or more are 'agents'", () => {
+  assert.equal(kindWord("agents", 1), "agent");
+  assert.equal(kindWord("agents", 2), "agents");
+  assert.equal(kindWord("agents", 7), "agents");
+});
+
+test("kindWord: the other kinds pluralize by count too", () => {
+  assert.equal(kindWord("task", 1), "task");
+  assert.equal(kindWord("task", 3), "tasks");
+  assert.equal(kindWord("job", 2), "jobs");
+  assert.equal(kindWord("peer", 1), "peer");
+  assert.equal(kindWord("peer", 2), "peers");
+  assert.equal(kindWord("timer", 4), "timers");
+});
+
+test("kindWord: an unknown count keeps the surfaces' historic default; an unknown kind stays agents", () => {
+  assert.equal(kindWord("agents", null), "agents");
+  assert.equal(kindWord("agents", undefined), "agents");
+  assert.equal(kindWord("task", null), "task");
+  assert.equal(kindWord(null, 1), "agent");
+  assert.equal(kindWord("", 2), "agents");
+  assert.equal(kindWord("nonsense", 2), "agents");
+});
+
+test("the spin caption derives its word from the kernel's count", () => {
+  const one = spinFor({ awaiting: { why: "", kind: "agents", count: 1 }, column: "working" }, false, false);
+  assert.equal(one.caption, "Awaiting agent");
+  const two = spinFor({ awaiting: { why: "", kind: "agents", count: 2 }, column: "working" }, false, false);
+  assert.equal(two.caption, "Awaiting agents");
+  const legacy = spinFor({ awaiting: { why: "", kind: "agents" }, column: "working" }, false, false);
+  assert.equal(legacy.caption, "Awaiting agents", "an older kernel with no count reads as before");
 });

@@ -233,7 +233,7 @@ class CompactSuggest(_Fixture):
 
 
 class ConcurrentSendRace(_Fixture):
-    """The double-send race (2026-09-01, refuter-confirmed): the tick checked the compactSuggested
+    """The double-send race (2026-09-01): the tick checked the compactSuggested
     latch under _NUDGE_LOCK, released it, sent, and latched only after — so two concurrent entries
     (the pusher's periodic pass racing a settings-WS re-tick) both passed the same unlatched check
     and injected the suggestion twice into one session. The fire is now CLAIMED under the lock
@@ -295,7 +295,7 @@ class ConcurrentSendRace(_Fixture):
 
 
 class DebtWriterRace(_Fixture):
-    """The claim's SIDE DOOR (2026-09-01, refuter-confirmed): the ledger's debt writers ran an
+    """The claim's SIDE DOOR (2026-09-01): the ledger's debt writers ran an
     unlocked read→write span — a snapshot of the whole blob held across a LIVE send, written back
     whole — so a debt reminder straddling a concurrent claim erased the compactSuggested latch
     (last-writer-wins over every key), and the next tick re-derived the crossing as due and sent

@@ -131,6 +131,7 @@ url=""
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
 if [[ -n "${MOCK_CURL_FAIL_SEND:-}" && "$url" == */send ]]; then exit 22; fi
 if [[ -n "${MOCK_CURL_FAIL_NEW:-}" && "$url" == */new ]]; then exit 7; fi
+if [[ -n "${MOCK_CURL_SEND_QUEUED:-}" && "$url" == */send ]]; then echo '{"ok": true, "queued": true}'; exit 0; fi
 if [[ -n "${MOCK_CURL_NEW_400:-}" && "$url" == */new ]]; then
   for a in "$@"; do
     if [[ "$a" == "-f" || "$a" == -[!-]*f* ]]; then exit 22; fi
@@ -169,6 +170,18 @@ MOCK
     [ "$status" -eq 2 ]
     [[ "$output" == *"-m needs the default (SDK) session"* ]]
     [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
+}
+
+@test "new -m: a first prompt the kernel PARKED is reported as queued, not delivered" {
+    # the /send route says which arm it took (2026-09-03); a fresh session that is not quiet yet holds the
+    # prompt, and the CLI must not claim a delivery that has not happened
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok MOCK_CURL_SEND_QUEUED=1
+    run run_romp new -m "look into the flaky test" ideabox
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"first prompt queued"* ]]
+    [[ "$output" != *"first prompt delivered"* ]]
 }
 
 @test "new -m: one command spawns AND delivers the first prompt (POST /new, then /send)" {
@@ -1805,4 +1818,65 @@ PY
     run run_romp -h
     [ "$status" -eq 0 ]
     [[ "$output" == *"--env NAME=VALUE"* ]]
+}
+
+# ─── romp keyswap — switch the sessions' API key with no restart ──────
+# End-to-end through the dispatcher and the real cli/keyswap.py, against a temp
+# env file (ROMP_SERVICE_ENV_FILE): the mock-PATH shadowing other dispatch tests
+# use cannot shadow romp-keyswap, since bin/romp prepends its own bin dir. Fake
+# keys only, and the point of the assertions is that no key value is printed.
+
+_keyswap_files() {
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    # romp keyswap now asks the running kernel which key it reads (a /keycycle read) on every run, and
+    # honours ROMP_KERNEL_PORT as the ONLY port it probes — pin a dead port so a developer box with a
+    # live kernel on the default port stays out of these cases (CI has no kernel either way)
+    export ROMP_KERNEL_PORT=1
+    printf 'ROMP_PERF=1\nANTHROPIC_API_KEY=sk-ant-TEST-0000\nROMP_EXPECTED_AUTH=key\n' \
+        > "$ROMP_SERVICE_ENV_FILE"
+    chmod 600 "$ROMP_SERVICE_ENV_FILE"
+    printf 'ANTHROPIC_API_KEY=sk-ant-TEST-1111\n' > "$ROMP_SERVICE_ENV_FILE.lowprio"
+    chmod 600 "$ROMP_SERVICE_ENV_FILE.lowprio"
+}
+
+@test "keyswap: bare reports the live key and its candidates, by fingerprint only" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _keyswap_files
+    run run_romp keyswap
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"sha256:"* ]]
+    [[ "$output" == *"lowprio"* ]]
+    [[ "$output" != *"sk-ant-TEST"* ]]          # never a key value on a surface
+    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"   # read-only
+}
+
+@test "keyswap: a named source rewrites only the key line and keeps mode 600" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _keyswap_files
+    run run_romp keyswap lowprio
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no manager restart needed"* ]]
+    [[ "$output" != *"sk-ant-TEST"* ]]
+    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-1111' "$ROMP_SERVICE_ENV_FILE"
+    grep -q 'ROMP_PERF=1' "$ROMP_SERVICE_ENV_FILE"                 # every other line survives
+    grep -q 'ROMP_EXPECTED_AUTH=key' "$ROMP_SERVICE_ENV_FILE"
+    [ "$(ls -l "$ROMP_SERVICE_ENV_FILE" | cut -c1-10)" = "-rw-------" ]
+}
+
+@test "keyswap: an unknown source is a loud refusal that touches nothing" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _keyswap_files
+    run run_romp keyswap nosuch
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"no such key file"* ]]
+    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"
+}
+
+@test "keyswap: help names it (the presence-checked command list)" {
+    run run_romp -h
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"romp keyswap"* ]]
 }

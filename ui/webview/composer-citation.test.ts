@@ -186,19 +186,21 @@ test("Enter with a live transcript selection drops into the message box with the
   // and re-seeding at Enter makes the chip exactly what's selected at that moment
   assert.match(RENDER, /const q = transcriptSelection\(\);\s*\n\s*if \(q && activeId\) \{\s*\n\s*e\.preventDefault\(\);\s*\n\s*seedTranscriptQuote\(activeId, q\.text, q\.uuid\);\s*\n\s*focusComposer\(\);\s*\n\s*return;/);
   // the bare-area fallback (Enter with no selection — the user 2026-06-26) survives untouched below it
-  assert.match(RENDER, /if \(ae && ae !== document\.body\) return;\s*\n\s*if \(focusComposerOrAsk\(\)\) e\.preventDefault\(\);/);
+  // (T236: while the hand-over note holds the box, this default stands down — see draft-teardown.test.ts)
+  assert.match(RENDER, /if \(ae && ae !== document\.body\) return;\s*\n\s*if \(composerNoteHolds\(\)\) return;[^\n]*\n\s*if \(focusComposerOrAsk\(\)\) e\.preventDefault\(\);/);
 });
 
 test("closing a session clears its composer reply context — chip, draft, and edit pill (the user 2026-08-04)", () => {
-  const body = RENDER.match(/function dismissSession\(id: string\): void \{[\s\S]*?\n\}/);
+  const body = RENDER.match(/function dismissSession\(id: string, why: DismissWhy, doomed\?: ReadonlySet<string>\): void \{[\s\S]*?\n\}/);
   assert.ok(body, "dismissSession not found");
   // the maps: the draft, the citation chip, and any pending edit mode all die with the session
   assert.match(body![0], /drafts\.delete\(id\); composerCitations\.delete\(id\); composerEdits\.delete\(id\); composerFiles\.delete\(id\); persistDrafts\(\);/);
   // …and when the CLOSED session was the active one, the shared chip strip is repainted for the newly
   // selected tab. Without this the dead session's chip lingered in the strip — and its ✕, bound to the
   // dead id whose map entry is already gone, early-returned in removeCitation, so the stale chip could
-  // not even be dismissed by hand.
-  assert.match(body![0], /renderComposerChips\(activeId\);[\s\S]*?showActive\(\);/);
+  // not even be dismissed by hand. (The repaint rides loadComposerFor since T236 — chips, thumbnails,
+  // staged stack and draft in one loader, shared with the only-tab adoption.)
+  assert.match(body![0], /loadComposerFor\(activeId\);[\s\S]*?showActive\(\);/);
 });
 
 test("quote chips send a plain message wrapped by quoteReplyBody — never askFollowUp (no goal to reopen)", () => {
@@ -281,4 +283,35 @@ test("deselecting in the editor (editorSelectionCleared) drops the editor chip, 
   // clears state + re-renders, but NEVER steals focus back to the composer (the user is in the editor)
   assert.match(fn, /if \(kept\.length\) composerCitations\.set\(id, kept\); else composerCitations\.delete\(id\);/);
   assert.doesNotMatch(fn, /focusComposer/);
+});
+
+// ── select → TYPE → ⌘⏎ (the user 2026-09-02): typing needs no click into the box ─────────────────
+test("an unclaimed printable keystroke drops the cursor into the composer — natively, never synthesized", () => {
+  const mark = RENDER.indexOf("// SELECT → TYPE → ⌘⏎");
+  assert.ok(mark > 0, "the type-to-focus handler exists");
+  const at = RENDER.indexOf('window.addEventListener("keydown"', mark);   // the CODE, past the design comment
+  assert.ok(at > mark, "the handler follows its design note");
+  const end = RENDER.indexOf("ta.focus({ preventScroll: true })", at);
+  assert.ok(end > at, "the redirect focuses the box without jolting the transcript");
+  const block = RENDER.slice(at, end);
+  // gates, in the order the hazards were mapped: upstream handlers, chords, IME, non-printables,
+  // Space (ask-card toggle / scroll), a missing or read-only box, key repeat, typing targets, the
+  // live-ask card's number keys, open menus/dialogs, and the full-pane surfaces
+  assert.match(block, /if \(e\.defaultPrevented \|\| e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey\) return;/);
+  assert.match(block, /if \(e\.isComposing \|\| e\.keyCode === 229\) return;/);
+  assert.match(block, /if \(e\.key\.length !== 1 \|\| e\.key === " "\) return;/);
+  assert.match(block, /if \(!ta \|\| ta\.disabled \|\| document\.activeElement === ta\) return;/);
+  assert.match(block, /if \(isTypingTarget\(e\.target\) \|\| isTypingTarget\(document\.activeElement\)\) return;/);
+  // the pane's own modals and meta menus own their keys, and a dropdown's type-ahead is typing: a
+  // letter typed in the settings modal must never land in the hidden draft (review 2026-09-02)
+  assert.match(block, /document\.querySelector\("#rsettings:not\(\[hidden\]\), #ra-back:not\(\[hidden\]\), #rkeys-back, \.meta-menu"\)/);
+  assert.match(RENDER, /elm\.tagName === "SELECT"/, "SELECT is a typing target");
+  assert.match(block, /if \(activeId && liveAsks\.has\(activeId\)\) return;/);
+  assert.match(block, /if \(ctxMenuEl \|\| document\.querySelector\("\.picker-overlay"\)\) return;/);
+  assert.match(block, /romp-fileview[\s\S]*romp-filebrowse[\s\S]*romp-lightbox/);
+  // NEVER preventDefault: the point is that the native keystroke inserts into the newly focused
+  // box, so the composer's own input bookkeeping (draft, slash menu) sees ordinary typing
+  assert.doesNotMatch(block, /preventDefault/);
+  // …and the armed quote chip survives the focus (a collapse never clears it), so ⌘⏎ stages
+  // selection+typing exactly as if the user had clicked in: the existing stage pins above cover it
 });

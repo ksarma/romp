@@ -91,8 +91,8 @@ class ReconcileStranded(unittest.TestCase):
         self.assertEqual(s._pending, [], "never re-fed into a resumable conversation")
         self.assertEqual(len(be.dropped_calls), 1, "the loss is surfaced immediately")
         self.assertIs(be.dropped_calls[0][2], False,
-                      "…and FLAG-ONLY (round 2, 2026-08-26): the redeliver arm's missed "
-                      "_text_landed scan must never land the message twice here")
+                      "…and FLAG-ONLY (2026-08-26): the redeliver arm's missed _text_landed scan "
+                      "must never land the message twice here")
 
     def test_clean_reconnect_is_a_no_op(self):
         s, be = _session()
@@ -136,8 +136,8 @@ class SpawnPinsRideTheFirstConnect(unittest.TestCase):
                         "pins land in the reg after spawn and BEFORE connect — connect-time, race-free")
 
     def test_the_new_route_threads_the_body_through(self):
-        # the fork's env request rides the same call, after prefs (inline comments tolerated), and
-        # since tab groups (2026-09-04) so do parent + tags — the call's last line
+        # the env request rides the same call, after prefs (inline comments tolerated), and since
+        # tab groups (2026-09-04) so do parent + tags — the call's last line
         self.assertTrue(re.search(r"_create_sdk_session\(nm, cwd, auth=\(a if a in \(\"login\", \"key\"\) else \"\"\),\s*\n\s*prefs=b,[^\n]*\n\s*env=env_req,[^\n]*\n\s*parent=psid, tags=tags_req\)", self.KERNEL),
                         "/new hands its body to the create path instead of applying pins after connect")
 

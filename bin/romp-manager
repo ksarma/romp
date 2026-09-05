@@ -323,7 +323,7 @@ function quietGate(st, busy, now, opts) {
   return { action: 'wait', reason: `${busy} turn(s) in flight` };
 }
 
-let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer, drainRefusedCount, drainArmedCount}
+let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer, drainRefusedCount, drainArmedCount, drainRefusedAfterArm}
 
 // The primary kernel's serve token. The drain arm of '/busy?drain=1' is a WRITE — it holds every
 // session's new turn starts — so the kernel now requires the token for it (a drive-by loopback page
@@ -333,16 +333,16 @@ let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer, drai
 // read stays auth-exempt), the drain hold just does not arm; the quiet-window gate still works off
 // the count. Read fresh each poll so a kernel that reminted its token is picked up.
 //
-// FAIL LOUDLY, NOT DIFFERENTLY (fixer round 3, 2026-08-30): both halves of that degrade used to
-// be SILENT — a token-read failure became '' with zero log, and the kernel's `draining` answer
-// (the refusal signal it returns in the same /busy response) was parsed out and dropped — so a
-// parked deploy could believe new turn starts were held while the kernel armed nothing; busy
-// never quieted, and the 15-minute backstop SIGTERM'd the kernel MID-TURN (the exact cut the
-// quiet window exists to prevent) with no line anywhere naming the cause. The degrade BEHAVIOR
-// stays (count-only polling keeps working; the /busy read arm needs no token) — these notices
+// FAIL LOUDLY, NOT DIFFERENTLY: left silent, both halves of that degrade disappear — a token-read
+// failure collapses to '' with zero log, and the kernel's `draining` answer (the refusal signal
+// it returns in the same /busy response) gets parsed out and dropped — so a parked deploy would
+// believe new turn starts were held while the kernel armed nothing; busy never quiets, and the
+// 15-minute backstop SIGTERMs the kernel MID-TURN (the exact cut the quiet window exists to
+// prevent) with no line anywhere naming the cause. The degrade BEHAVIOR is deliberate
+// (count-only polling keeps working; the /busy read arm needs no token) — these notices
 // make it visible, once per refusal EPISODE, not per 3s poll: queueQuietRestart re-arms them when
-// a fresh park begins, and an ARMED drain answer re-arms the refusal notice mid-park (fixer round
-// 4, 2026-08-30 — kernelToken() reads fresh per poll, so a hold can recover when the token file
+// a fresh park begins, and an ARMED drain answer re-arms the refusal notice mid-park
+// (kernelToken() reads fresh per poll, so a hold can recover when the token file
 // comes back and be refused AGAIN when it goes; each transition is new information, said once).
 let tokenNoticed = false;   // the serve-token read failed → said once
 let drainNoticed = false;   // the kernel answered a drain=1 poll with draining:false → said once per episode
@@ -367,7 +367,7 @@ function fetchBusy(port, cb, path) {
   // refreshes the kernel's drain lease, so new turn starts hold while the restart is parked and
   // the count falls on turn-end events. The lease dies by itself (~12s) when this manager stops
   // polling — no off-switch to forget — and a fresh kernel boots clear by construction. The drain
-  // arm is a gated WRITE, so present the token (X-Romp-Token, the fork's local-client idiom); a
+  // arm is a gated WRITE, so present the token (X-Romp-Token, the local-daemon header form); a
   // plain read needs none, but carrying it costs nothing.
   // The callback gets (busy, draining): `draining` is the kernel's own answer for whether the
   // hold is armed — true/false from the response, null when unknown (an older kernel without the
@@ -421,17 +421,30 @@ function clearPendingQuiet() {
 //  - the callback acts at most once (http 'timeout' destroys the request and 'error' follows — a double
 //    fire must not evaluate twice);
 //  - a throwing evaluation is LOUD and leaves the refresh queued (fail loudly, never evaporate).
+//  - GENERATION-BOUND (T224): the busy answer belongs to the park that ISSUED the probe. The park is
+//    captured at issue time and compared by identity at response time — a probe issued for park A
+//    whose answer lands after A was cleared and park B took its place is DROPPED loudly, never fed
+//    to B's gate. Before this the gate read pendingQuiet at response time, so a stale busy:0 from
+//    A applied B's refresh over turns B never saw quiet, and a stale count from A held B for nothing.
+//    Each queueQuietRestart mints a fresh park object, so identity IS the generation; no counter to
+//    keep in step.
 function quietTick(deps) {
   const { pending, fetchBusy, now, opts, apply, schedule, log } = deps;
-  if (!pending()) return;                 // an immediate restart satisfied it meanwhile
+  const park = pending();                 // the generation this probe is FOR
+  if (!park) return;                      // an immediate restart satisfied it meanwhile
   schedule();                             // schedule-first: the chain outlives any probe failure
   let acted = false;
   fetchBusy((busy) => {
     if (acted) return;
     acted = true;
-    if (!pending()) return;
+    const cur = pending();
+    if (!cur) return;
+    if (cur !== park) {
+      log(`stale busy answer (${busy === null ? 'kernel unreachable' : `${busy} in flight`}) from a replaced park dropped — a probe binds to the park that issued it, never to whichever park is pending when the answer lands`);
+      return;
+    }
     try {
-      const g = quietGate(pending(), busy, now(), opts);
+      const g = quietGate(park, busy, now(), opts);
       if (g.action === 'apply') apply(g);
     } catch (e) {
       log(`quiet-window evaluation failed (${e && e.message}) — the pending refresh stays queued`);
@@ -447,7 +460,7 @@ function queueQuietRestart(mode) {
     return pendingQuiet.count;
   }
   pendingQuiet = { since: Date.now(), count: 1, mode, timer: null,
-                   drainRefusedCount: 0, drainArmedCount: 0 };
+                   drainRefusedCount: 0, drainArmedCount: 0, drainRefusedAfterArm: 0 };
   resetDrainNotices();                   // the token/refusal notices re-arm when a fresh park begins
   log(`refresh queued — applying at the next quiet window (no SDK turn in flight; backstop ${Math.round(QUIET_MAX_DEFER_MS / 60000)} min)`);
   const tick = () => quietTick({
@@ -462,8 +475,14 @@ function queueQuietRestart(mode) {
       const park = pendingQuiet;
       const cb = (busy, draining) => {
         if (park && busy !== null) {
-          if (draining === false) park.drainRefusedCount++;
-          else if (draining === true) park.drainArmedCount++;
+          if (draining === false) {
+            park.drainRefusedCount++;
+            // ORDER matters for the apply line (T227): two bare counters cannot tell "refused, then
+            // armed" from "armed, then LOST" — a refusal that lands AFTER any arm is the loss, and
+            // it is COUNTED on its own (the review's catch: a boolean here let the line report the
+            // park's whole refusal total as "after arming", pre-arm refusals included)
+            if (park.drainArmedCount > 0) park.drainRefusedAfterArm++;
+          } else if (draining === true) park.drainArmedCount++;
         }
         done(busy);
       };
@@ -478,12 +497,16 @@ function queueQuietRestart(mode) {
       clearPendingQuiet();               // also disarms the pre-armed next tick
       // On a backstop cut, say what this park's drain evidence shows (a wrong cause misleads the
       // reader worse than none): every answer refused → the hold never armed; refused then armed
-      // → the hold arrived late, so turns started before it may still be cut. No refusals → no
-      // suffix (and draining:null answers are no evidence either way, so they count nowhere).
+      // → the hold arrived late, so turns started before it may still be cut; armed then LOST
+      // (T227: a refusal after any arm) → the hold covered the early part of the park only, so
+      // turns started after the loss may be cut. No refusals → no suffix (and draining:null
+      // answers are no evidence either way, so they count nowhere).
       const cause = g.reason !== 'backstop cap' || p.drainRefusedCount === 0 ? ''
         : p.drainArmedCount === 0
           ? ' — the kernel never armed the drain hold for this park (see the refusal line above), so in-flight turns may be cut'
-          : ` — the drain hold was refused ${p.drainRefusedCount} time(s) before arming for this park, so turns started before it armed may be cut`;
+          : p.drainRefusedAfterArm > 0
+            ? ` — the drain hold armed and was then LOST for this park (refused ${p.drainRefusedAfterArm} time(s) after arming, ${p.drainRefusedCount - p.drainRefusedAfterArm} before), so turns started after the loss may be cut`
+            : ` — the drain hold was refused ${p.drainRefusedCount} time(s) before arming for this park, so turns started before it armed may be cut`;
       log(`applying deferred refresh — ${g.reason}${cause} (${p.count} request(s) coalesced, waited ${Math.round((Date.now() - p.since) / 1000)}s)`);
       if (p.mode === 'all') restartAllOrSelf(); else restartKernel(p.mode);
     },

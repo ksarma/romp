@@ -25,7 +25,8 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   assert.ok(KERNEL.includes('if o.get("apiKey") or (not _claude_account() and (jd.STATE / "spend.json").exists()):'));
   assert.ok(KERNEL.includes('out = {"apiKey": True, "spend": _spend_windows(),'));
   // the hover's spend rows lead with the rolling hour (the user 2026-08-15); the collapsed cell keeps day+month
-  assert.ok(KERNEL.includes("var SPEND_WINS=[['hour','1 hour'],['day','1 day'],['week','1 week'],['month','1 month']];"));
+  // …'1 month' is ROLLING 30 days and 'this month' the calendar bill figure beneath it (T235, 2026-09-03)
+  assert.ok(KERNEL.includes("var SPEND_WINS=[['hour','1 hour'],['day','1 day'],['week','1 week'],['month','1 month'],['monthToDate','this month']];"));
   assert.ok(KERNEL.includes('"hour": _rolling(1),'));
   // …and the $/hour series rides beside the windows for the hover graph (the user 2026-08-13)
   assert.ok(KERNEL.includes('out["spendSeries"] = ss'));
@@ -84,9 +85,12 @@ test("the web rail's API cell is numbers under a constant label — no spend bar
   assert.ok(usageJS.includes("function apiCellHTML(live)"));
   assert.ok(usageJS.includes("'<div class=ru-name>API</div>'"));
   assert.ok(!usageJS.includes("_tail"), "no tail plumbing survives in the rail JS");
-  assert.ok(usageJS.includes("seg('day','1 day')+seg('month','1 month')"));
-  assert.ok(usageJS.includes("var d=sp.day||sp.fiveHour,m=sp.month;"), "older remote kernels stay visible");
-  assert.ok(usageJS.includes("var seg=function(k,lbl){return '<div class=ru-name>'+lbl+'</div>'"));
+  // the month segment carries the version-skew caveat (T235b): a legacy host's calendar month is left
+  // out of the rolling segment, and the segment's title says how many machines were not counted
+  assert.ok(usageJS.includes("seg('day','1 day')+seg('month','1 month',monthCav)"));
+  assert.ok(usageJS.includes("var d=sp.day||sp.fiveHour,m=sp.month;   // m: the ROLLING month only (a legacy host has none here)"), "older remote kernels stay visible on the day segment");
+  assert.ok(usageJS.includes("var seg=function(k,lbl,cav){return '<div class=ru-name>'+lbl+(cav?' \\u26a0':'')+'</div>'"),
+    "the caveat is a glyph on the segment — no native title (the rich tip is the ONE hover surface and carries the words)");
   assert.ok(usageJS.includes("'<div class=ru-pct>'+fmtUsd(sum[k].usd)+' \\u00b7 '+fmtTok(sum[k].tok)+' tok</div>'"));
   // the graph and the budget fills are gone: no spend track, no spend color ramp, no shared scale
   assert.ok(!usageJS.includes("spendColor"), "the budget-fill ramp died with the spend bars");

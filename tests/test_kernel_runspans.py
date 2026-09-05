@@ -166,11 +166,11 @@ class PureDelegationTop(unittest.TestCase):
         self.assertTrue(km._pure_delegation_top(nodes, "t"))
 
     def test_a_courier_planted_top_without_userask_stays_pure(self):
-        # SHAPE A (round 2, 2026-08-26): promptUuid is the g200 LANDABLE-ANCHOR field — apply_courier
-        # stamps the delegate MAIL's anchor on every planted top — so bare-promptUuid truthiness read
-        # every courier-planted mid-chain top as "the dictated ask" and re-showed the exact
-        # coordination card the 2026-06-23 rule suppresses. A courier top's dictated-ask evidence is
-        # T105's chain-proven userAsk, never its own anchor: without one it stays pure coordination.
+        # promptUuid is the g200 LANDABLE-ANCHOR field — apply_courier stamps the delegate MAIL's
+        # anchor on every planted top — so bare-promptUuid truthiness would read every
+        # courier-planted mid-chain top as "the dictated ask" and re-show the exact coordination
+        # card the 2026-06-23 rule suppresses. A courier top's dictated-ask evidence is T105's
+        # chain-proven userAsk, never its own anchor: without one it stays pure coordination.
         nodes = {"t": {"id": "t", "parentId": None, "promptUuid": "mail-anchor-uuid",
                        "origin": {"peer": "p0", "goalId": "g0", "msgId": "m0"}},
                  "a": {"id": "a", "parentId": "t", "handoff": {"peer": "p", "msgId": "1"}},
@@ -187,10 +187,10 @@ class PureDelegationTop(unittest.TestCase):
                          "T105's userAsk IS the courier top's dictated-ask evidence")
 
     def test_a_segment_anchored_top_resolving_machine_stays_pure(self):
-        # SHAPE A2 (round 2, 2026-08-26): _seg_anchor gives an AUTONOMOUS segment's mint the segment
-        # HEAD — an assistant atom's uuid ("a minted node always gets an anchor"). When the caller can
-        # resolve the anchor against the session's cached parse and it is provably NOT a human-dictated
-        # prompt record, the exemption must not fire.
+        # _seg_anchor gives an AUTONOMOUS segment's mint the segment HEAD — an assistant atom's
+        # uuid ("a minted node always gets an anchor"). When the caller can resolve the anchor
+        # against the session's cached parse and it is provably NOT a human-dictated prompt
+        # record, the exemption must not fire.
         nodes = {"t": {"id": "t", "parentId": None, "promptUuid": "a9"},
                  "a": {"id": "a", "parentId": "t", "handoff": {"peer": "p", "msgId": "1"}}}
         saved = km._parse_cached
@@ -245,15 +245,15 @@ class PureDelegationTop(unittest.TestCase):
 
 
 class AskAnchorLatch(unittest.TestCase):
-    """Round 3 (2026-08-26), item 1: the ask-unit exemption's anchor verdict LATCHES on the node.
-    _dictated_prompt_uuid answers None both for durable doubt AND for 'the parse is not warm this
-    beat', and the exemption fails open on None — so a machine-anchored coordination card flapped
-    shown→hidden on every restart/cache-cold beat with NO new information (the
-    cards-move-on-new-information rule). Once a WARM parse answers, the judge stamps the verdict
-    durably (askAnchor: human/machine/absent) through the planner apply path — the store's normal
-    judge-side writer, never build_feed, which stays read-only — and the kernel reads the latch
-    before ever consulting cache temperature. Cache-cold with NO latch keeps today's fail-open, so
-    the flap happens at most once per node ever, not per beat."""
+    """The ask-unit exemption's anchor verdict LATCHES on the node. _dictated_prompt_uuid answers
+    None both for durable doubt AND for 'the parse is not warm this beat', and the exemption fails
+    open on None — so a machine-anchored coordination card would flap shown→hidden on every
+    restart/cache-cold beat with NO new information (the cards-move-on-new-information rule). Once
+    a WARM parse answers, the judge stamps the verdict durably (askAnchor: human/machine/absent)
+    through the planner apply path — the store's normal judge-side writer, never build_feed, which
+    stays read-only — and the kernel reads the latch before ever consulting cache temperature.
+    Cache-cold with NO latch keeps the fail-open, so the flap happens at most once per node ever,
+    not per beat."""
 
     MACHINE = {"turns": [{"atoms": [
         {"uuid": "a9", "type": "assistant",

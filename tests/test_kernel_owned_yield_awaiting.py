@@ -114,7 +114,8 @@ class OwnedYieldAwaiting(unittest.TestCase):
         self._store()
         self.assertEqual(km._session_awaiting(SID, self.path, True, stamp=True),
                          {"kind": "task", "why": "waiting on a background task: " + DESC,
-                          "since": None},   # the owned-yield read has no single event time → no duration
+                          "since": None,   # the owned-yield read has no single event time → no duration
+                          "count": 1},   # one owned dispatch (T225)
                          "the lane/chip say awaiting instead of READY")
 
     def test_the_feed_path_is_unchanged_no_session_wide_floor(self):

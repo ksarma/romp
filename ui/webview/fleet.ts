@@ -39,6 +39,14 @@ let sessions: FleetSession[] = [];
 // the page's romp loader (_pane_spin) stays up, exactly like the other panes, until real data arrives.
 let loaded = false;
 let emptyShown = false;   // the romp wordmark is currently showing → don't replay its fade-in every push
+// Attached hosts whose feed payload this pane has not merged yet (federation.ts pendingHosts, riding the
+// same feed message the ledgers do), and which of those sit on a dead link right now (pendingDead). The
+// user 2026-09-02: after a kernel restart or a phone re-foreground the remote hosts' sessions were
+// simply ABSENT from this pane for two minutes — no row, no cue — and read as wiped state. One quiet
+// line per pending host (the feed's own strip, mirrored) says they are coming; it leaves ONLY on that
+// host's first payload or its detach, the events the merge keys on — never a timer.
+let pendingHosts: string[] = [];
+let pendingDead: string[] = [];
 let searchQuery = "";     // #fleet-search filter (the user 2026-06-29): show only sessions whose NAME matches
 let fleetViews: SessionViews | null = null;   // the rendered views blob off the feed payload — the outline lens reads it (2026-08-25)
 let syncFleetTagBtn: (() => void) | null = null;   // re-dress the tag button per the shared convention on each render
@@ -352,6 +360,26 @@ function renderFleetNode(ctx: SessCtx, n: LedgerNode, depth: number, container: 
   if (expandable && !isFolded) for (const cid of n.children!) { const c = byId.get(cid); if (c) renderFleetNode(ctx, c, depth + 1, container, now, flat); }
 }
 
+// The per-host loading strip (the user 2026-09-02): the feed's #feed-hostload, worn here — one line per
+// pending host, the shared reverse-spin swirl LEFT of the text, at the top so it announces what is
+// COMING before the sessions already here. Non-interactive, so the per-render rebuild is click-safe.
+// The copy names a dead link honestly (fail loudly) instead of an open-ended "loading".
+function hostLoadStrip(): HTMLElement {
+  const strip = el("div", "");
+  strip.id = "fleet-hostload";
+  for (const h of pendingHosts) {
+    const line = el("div", "hostload-line");
+    const swirl = el("span", "fask-awaiting-swirl");
+    const txt = el("span", "");
+    txt.textContent = pendingDead.includes(h)
+      ? "reconnecting to " + h + "\u2026"
+      : "loading sessions from " + h + "\u2026";
+    line.append(swirl, txt);
+    strip.appendChild(line);
+  }
+  return strip;
+}
+
 function render() {
   syncFleetTagBtn?.();
   const list = document.getElementById("fleet-list");
@@ -362,6 +390,7 @@ function render() {
   // 2026-06-29). A WS drop / kernel restart re-shows that same loader (romp:wsdown), so a restart shows the
   // swirl, not "no tasks".
   if (!loaded) { emptyShown = false; return; }
+  if (pendingHosts.length) list.appendChild(hostLoadStrip());   // leads the list: what is still coming
   const sd = showDone();
   const grouped = isGrouped();
   curFoldMode = foldMode();   // snapshot the sticky Collapse/Expand mode once for this render
@@ -559,7 +588,7 @@ function render() {
     nr.textContent = "No results for “" + searchQuery.trim() + "”";
     list.appendChild(nr);
     emptyShown = false;
-  } else if (!any) {
+  } else if (!any && !pendingHosts.length) {
     // GENUINELY empty (data loaded, no open work): the romp tri-color WORDMARK, centered + faded in — the
     // same calm inbox-zero treatment as the feed (the user 2026-06-29). The fade plays ONCE on the
     // not-empty→empty transition (emptyShown guard), not on every push, since render() rebuilds each time.
@@ -644,6 +673,9 @@ window.addEventListener("message", (e: MessageEvent) => {
   // that as loaded would drop the loader onto an empty pane (the user 2026-06-29). Until ledgers land, keep the
   // loader up (render() bails, leaving the list empty so _pane_spin holds).
   if (m.views && typeof m.views === "object") fleetViews = m.views as SessionViews;   // rides the feed payload (2026-08-25)
+  // the attached-but-not-yet-merged hosts, from the merge itself (the ONLY writer; absent = none pending)
+  pendingHosts = Array.isArray(m.pendingHosts) ? m.pendingHosts.filter((h: any) => typeof h === "string") : [];
+  pendingDead = Array.isArray(m.pendingDead) ? m.pendingDead.filter((h: any) => typeof h === "string") : [];
   if (!Array.isArray(m.ledgers)) return;
   loaded = true;
   sessions = m.ledgers as FleetSession[];

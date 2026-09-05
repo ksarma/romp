@@ -54,7 +54,9 @@ test("a pane answers another pane's drag by re-emitting, never by rewriting the 
   // about what exists; only a host's own report is, and that is the one caller allowed to touch the store.
   assert.match(FED, /this\.absorbHostReport\(host, prevOrder, prevTabs\);\s+\/\/ a host just reported/,
     "inbound tabOrder is the one store-mutating moment");
-  assert.match(FED, /private emitMergedOrder\(\): void \{\s*\n\s*const order = mergeHostOrder/,
+  // (the signature carries provenance since T233 — fresh/host-driven vs synthetic re-emit — but every
+  // caller still re-emits from the store, never rewrites it)
+  assert.match(FED, /private emitMergedOrder\(fresh = false, freshHost: string = LOCAL\): void \{\s*\n\s*const order = mergeHostOrder/,
     "every other caller — both drag paths included — re-emits without touching the stored order");
   assert.doesNotMatch(FED, /private gcView|this\.gcView/,
     "the old gc-on-emit hook is gone, folded into absorbHostReport");

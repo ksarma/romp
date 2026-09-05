@@ -1,12 +1,12 @@
-// Thinking summaries (2026-09-01). Two halves, pinned at the source like the other webview tests
-// (the chat renderer has no jsdom harness):
+// Thinking summaries (2026-09-01), pinned at the source like the other webview tests (the chat
+// renderer has no jsdom harness):
 //  - the FEED rule: a thinking block is opaque ("Thinking…") only when it has a signature AND no
 //    text. The old `ev.encrypted ? "Thinking…" : ev.text` hid every summary once the kernel asked
 //    the API for them, because a summarized block carries both a signature and its text. The
 //    kernel computes the flag the same way; the renderer re-checks the text so a bundle talking to
 //    an older kernel (flag = signature only) still shows any text it is handed.
 //  - the GEAR toggle: a per-install kernel-side checkbox beside the other kernel toggles, stamped
-//    with its gesture time like every kernel setting this fork emits, filled from /version, named
+//    with its gesture time like every kernel-side setting the gear posts, filled from /version, named
 //    in the stale-gesture toast — and deliberately NOT in federation's KERNEL_SETTING set, so it
 //    never queues for or reaches another machine's kernel.
 import { test } from "node:test";
@@ -52,13 +52,13 @@ test("the gear has a Thinking summaries checkbox among the kernel-side toggles, 
   assert.ok(/new SDK session/.test(row) && /running session picks the change up at its next reconnect/.test(row),
     "the sub-copy is honest that a running session is not switched live");
   // …and names the events that actually reconnect one (sdk_backend's request_reconnect callers), never a
-  // model switch: set_model applies live over the SDK control channel and reconnects nothing, so the first
-  // copy ("switching its model or effort triggers one") sent the user to switch models and wait forever.
+  // model switch: set_model applies live over the SDK control channel and reconnects nothing, so copy that
+  // named a model switch as a trigger would send the user to switch models and wait forever.
   assert.ok(/reconnect: an effort or billing switch, the first fast-mode opt-in, or a kernel restart/.test(row),
     "the real reconnect triggers are named");
   assert.ok(/Switching the model applies live and does not reconnect/.test(row),
     "a model switch is called out as NOT one");
-  assert.ok(!/model or effort triggers one/.test(row), "the false trigger clause is gone");
+  assert.ok(!/model or effort triggers one/.test(row), "no clause names a model switch as a trigger");
   // The CLI resolves --thinking adaptive ahead of MAX_THINKING_TOKENS and alwaysThinkingEnabled:false, so
   // on an install with thinking off the toggle turns adaptive thinking on; the copy owns that.
   assert.ok(/turns adaptive thinking on/.test(row),

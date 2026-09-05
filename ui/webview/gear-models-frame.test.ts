@@ -1,10 +1,9 @@
 // The settings gear's cached /models list follows the kernel's models frame — and is never overwritten by
-// an OLDER response that lands late (fixer round 5, 2026-09-01). BEHAVIORAL: the cache block of gear.js
-// (`var choices` through the models listener) is lifted out and run against a fake window and a
-// controllable fetch, so these pin what the code DOES. The round-4 pin beside this file only matched the
-// listener's text, which proved nothing about the frame reaching the gear or the cache moving — and the
-// frame did not reach it: the kernel sent it to the chat and timeline apps while the gear lives in the
-// FEED bundle (test_model_versions.py pins the kernel side).
+// an OLDER response that lands late. BEHAVIORAL: the cache block of gear.js (`var choices` through the
+// models listener) is lifted out and run against a fake window and a controllable fetch, so these pin
+// what the code DOES. A pin that only matched the listener's text would prove nothing about the frame
+// reaching the gear or the cache moving: the gear lives in the FEED bundle, and the kernel must send the
+// frame there too (test_model_versions.py pins the kernel side).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -13,13 +12,12 @@ import * as path from "node:path";
 const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
 const tick = () => new Promise((r) => setImmediate(r));
 
-// A <select> stand-in with the spec's value semantics the paint relies on (fixer round 6, 2026-09-02):
-// rewriting the options selects the FIRST one (the selectedness setting algorithm); assigning a value
-// selects it only if an option carries it, else NOTHING — selectedIndex -1, value "" (the round-6 minor:
-// the repaint handed a held value straight back and blanked the select when the new list lacked it);
-// appendChild adds an option the way setShow's off-list injection does. `values` is the option values in
-// order, for the assertions. The round-5 tests passed NULL selects (fillChoices guards each with
-// `if (jm) …`), which is exactly why they could not see the pickers left empty — nothing was there to be empty.
+// A <select> stand-in with the spec's value semantics the paint relies on: rewriting the options selects
+// the FIRST one (the selectedness setting algorithm); assigning a value selects it only if an option
+// carries it, else NOTHING — selectedIndex -1, value "" (a repaint that hands a held value straight back
+// blanks the select when the new list lacks it); appendChild adds an option the way setShow's off-list
+// injection does. `values` is the option values in order, for the assertions. Null selects (fillChoices
+// guards each with `if (jm) …`) cannot show pickers left empty — nothing is there to be empty.
 type Opt = { value: string; textContent: string };
 type Sel = { innerHTML: string; value: string; options: Opt[]; values: string[]; appendChild(o: Opt): void };
 function sel(): Sel {
@@ -116,7 +114,7 @@ test("a payload without a rev (an older kernel) always applies", async () => {
   assert.equal(api.choices().models[0].default, "fable");
 });
 
-test("the round-5 guards still hold with no selects in the document", async () => {
+test("the guards still hold with no selects in the document", async () => {
   const { api, pending } = lift(false);
   const first = api.fillChoices();
   pending[0](list(1, "fable"));
@@ -124,9 +122,9 @@ test("the round-5 guards still hold with no selects in the document", async () =
 });
 
 test("executed: when the frame's re-read overtakes the page-load fill, every picker is still painted — from the list that won", async () => {
-  // (fixer round 6, 2026-09-02) round 5 returned early from the page-load fill when the frame's re-read had
-  // already applied a newer list, BEFORE writing any <option>s — and every later fill() short-circuited on
-  // the cache, so all eight pickers stayed empty for the life of the page. The paint keys on the list.
+  // a page-load fill that returned early because the frame's re-read had already applied a newer list,
+  // BEFORE writing any <option>s, left every later fill() short-circuiting on the cache — eight empty
+  // pickers for the life of the page. The paint keys on the list, not on which fetch carried it.
   const V = [{ value: "claude-fable-5", label: "Fable 5" }];
   const { api, pending, frame, S } = lift();
   const first = api.fillChoices();                       // page load: request 1
@@ -151,8 +149,8 @@ test("executed: when the frame's re-read overtakes the page-load fill, every pic
 });
 
 test("executed: a frame's repaint keeps the value each select held while the modal is up", async () => {
-  // the round-4 listener never repainted BECAUSE a rewrite resets a select to its first option; the paint
-  // gives every select its value back when the new list still offers it — which is why it can repaint
+  // a rewrite resets a select to its first option, which is why a listener that only re-fetched could
+  // not repaint; the paint gives every select its value back when the new list still offers it
   const V = [{ value: "claude-fable-5", label: "Fable 5" }];
   const { api, pending, frame, S } = lift();
   const first = api.fillChoices();
@@ -182,11 +180,10 @@ test("executed: a frame's repaint keeps the value each select held while the mod
 });
 
 test("executed: a repaint keeps a held value the new list LACKS — as a marked off-list option, never a blank select", async () => {
-  // (fixer round 6 minors, 2026-09-02) the painter handed the held value straight back after the rewrite,
-  // and per the spec a select assigned a value none of its options carries deselects everything — value
-  // "", the version menu's label read from it empty. So a stored value fill() had injected (the kernel's
-  // truth, ahead of this page's list) or a learned version that has since left the list went BLANK on the
-  // next frame. The held value is re-injected the way fill() injects it: marked, selected, once.
+  // per the spec a select assigned a value none of its options carries deselects everything — value "",
+  // the version menu's label read from it empty. So a stored value fill() had injected (the kernel's
+  // truth, ahead of this page's list) or a learned version that has since left the list would go BLANK
+  // on the next frame. The held value is re-injected the way fill() injects it: marked, selected, once.
   const V = [{ value: "claude-fable-5", label: "Fable 5" }, { value: "claude-fable-5-1", label: "Fable 5.1" }];
   const { api, pending, frame, S } = lift();
   const first = api.fillChoices();

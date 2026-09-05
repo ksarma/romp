@@ -1,10 +1,10 @@
-// The drain gate's silent degradation (fixer round 3, 2026-08-30): kernelToken() swallowed every
-// token-read failure into '' with zero log, and fetchBusy parsed only `.busy` out of the kernel's
-// response, DISCARDING the `draining` field — the kernel's own refusal signal — so a parked deploy
-// could believe new turn starts were held while the kernel armed nothing; busy never quieted, and
-// the 15-minute backstop SIGTERM'd the kernel MID-TURN with no line anywhere naming the cause.
-// The degrade BEHAVIOR is deliberately unchanged (count-only polling keeps working; the /busy read
-// arm needs no token) — these tests pin that the degradation is now VISIBLE, once per park.
+// The drain gate's silent-degradation risk: were kernelToken() to swallow a
+// token-read failure into '' with zero log, or fetchBusy to parse only `.busy` out of the kernel's
+// response, DISCARDING the `draining` field — the kernel's own refusal signal — a parked deploy
+// would believe new turn starts were held while the kernel armed nothing; busy never quiets, and
+// the 15-minute backstop SIGTERMs the kernel MID-TURN with no line anywhere naming the cause.
+// The degrade BEHAVIOR is deliberate (count-only polling keeps working; the /busy read
+// arm needs no token) — these tests pin that the degradation is VISIBLE, once per park.
 // Run: node --test tests/manager-drain.test.js
 'use strict';
 const { test, before, after, beforeEach } = require('node:test');
@@ -222,15 +222,15 @@ test('kernelToken prefers the env, then the token file', () => {
   finally { delete process.env.ROMP_SERVE_TOKEN; }
 });
 
-// ── the park's drain EVIDENCE (fixer round 4, 2026-08-30) ───────────────────────────────────────
-// Round 3 latched a single boolean, drainRefused, on the first draining:false answer and never
-// cleared it — but kernelToken() reads the token fresh per poll, so a refusal can be TRANSIENT
-// (token restored mid-park → every later poll arms the hold), and the backstop line then claimed
-// the hold was 'never armed' — false. And the stamp read pendingQuiet at RESPONSE time, so an
-// in-flight probe from a just-cleared park could mark a brand-new park that never polled. These
-// tests drive REAL parks against the scripted kernel stub (fast polls + a near backstop, baked
-// above): evidence is counted per park, stamped only on the park that issued the poll, and the
-// apply line renders what the counts actually show.
+// ── the park's drain EVIDENCE ───────────────────────────────────────────────────────────────────
+// A single latched boolean (drainRefused, set on the first draining:false answer, never cleared)
+// would be WRONG here: kernelToken() reads the token fresh per poll, so a refusal can be TRANSIENT
+// (token restored mid-park → every later poll arms the hold), and the backstop line would then
+// claim the hold was 'never armed' — false. And a stamp that read pendingQuiet at RESPONSE time
+// would let an in-flight probe from a just-cleared park mark a brand-new park that never polled.
+// These tests drive REAL parks against the scripted kernel stub (fast polls + a near backstop,
+// baked above): evidence is counted per park, stamped only on the park that issued the poll, and
+// the apply line renders what the counts actually show.
 
 test('a transient refusal (the hold arms later) renders the armed-after-refusal cause, never "never armed"', async () => {
   fs.writeFileSync(TOKEN_FILE, 'drain-probe-credential\n');
@@ -246,6 +246,32 @@ test('a transient refusal (the hold arms later) renders the armed-after-refusal 
     'the cause is the truth this park saw: refused once, then armed');
   assert.doesNotMatch(applyLine, /never armed/,
     'a transient refusal must not read as a hold that never armed');
+});
+
+test('a hold that ARMED and was then LOST renders the lost-after-arming cause, never "before arming" (T227)', async () => {
+  // the other order: the first poll arms the hold, every later poll is refused (the token file went
+  // away mid-park). Two bare counters read this as "refused N before arming" — the ordering flag
+  // says what actually happened.
+  fs.writeFileSync(TOKEN_FILE, 'drain-probe-credential\n');
+  // two refusals BEFORE the arm, then the hold arms, then every later poll is refused: the line must
+  // count the post-arm refusals on their own and name the pre-arm ones separately (the review's
+  // catch: a boolean flag let the whole total read as "after arming")
+  kstub.answers = [JSON.stringify({ busy: 1, draining: false }), JSON.stringify({ busy: 1, draining: false }),
+                   JSON.stringify({ busy: 1, draining: true })];
+  kstub.fallback = JSON.stringify({ busy: 1, draining: false });
+  let logged;
+  try {
+    logged = await capturedUntil(/applying deferred refresh/, () => { queueQuietRestart('ghost'); });
+  } finally { clearPendingQuiet(); }
+  const applyLine = logged.split('\n').find((l) => /applying deferred refresh/.test(l));
+  assert.match(applyLine, /backstop cap/);
+  assert.match(applyLine, /armed and was then LOST/, 'the cause states the order that happened');
+  const m = /refused (\d+) time\(s\) after arming, (\d+) before/.exec(applyLine);
+  assert.ok(m, 'the line splits post-arm from pre-arm refusals: ' + applyLine);
+  assert.equal(Number(m[2]), 2, 'exactly the two scripted pre-arm refusals read as "before"');
+  assert.ok(Number(m[1]) >= 1, 'the post-arm count is the loss itself, never inflated by the pre-arm two');
+  assert.doesNotMatch(applyLine, /before arming|never armed/,
+    'the reversed order must not borrow the other cause');
 });
 
 test('an in-flight probe from a cleared park never stamps the park that replaced it', async () => {

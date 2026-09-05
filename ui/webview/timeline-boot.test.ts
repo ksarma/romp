@@ -49,7 +49,7 @@ test("dispatchFrame routes kernel frames to the panel", () => {
     applyBars: (m: any) => calls.push(["applyBars", m.type]),
     setActiveChat: (a: any) => calls.push(["setActiveChat", a]),
     setHover: (m: any) => calls.push(["setHover", m.type]),
-    refreshModels: () => calls.push(["refreshModels"]),   // the kernel's models frame: the pick memory moved (2026-09-01)
+    refreshModels: () => calls.push(["refreshModels"]),   // the kernel's models frame: the pick memory moved
   };
   assert.equal(dispatchFrame(panel, { type: "data", data: { lanes: [] } }), true);
   assert.equal(dispatchFrame(panel, { type: "bars" }), true);

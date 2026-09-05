@@ -1,0 +1,255 @@
+// The relay sockets' liveness watchdog + the timeline's pending-host signal (the user 2026-09-02).
+//
+// The audited two-minute gap: after a phone re-foreground the dashboard's relay sockets to two attached,
+// healthy hosts OPENED and then delivered nothing — dead on arrival — and, unlike the pane shim's LOCAL
+// socket (30s keepalive watchdog), federation.ts's remote sockets had no liveness check at all, so the
+// hosts rendered as simply absent until TCP gave up ~104s later. Executed against the real manager with
+// a fake WebSocket: the verdict table, the close+redial on silence, the foreground fast-path, the
+// breadcrumb, and the pending set the panes and the shell read while a host is still coming. Synthetic
+// only (host TESTHOST, placeholder uuids).
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { FederationManager, mergeHostTimelines, socketVerdict,
+         REMOTE_STALE_MS, REMOTE_CONNECT_MS, REMOTE_REDIAL_MS } from "./federation";
+
+const U = "11111111-2222-3333-4444-555555555555";
+
+// ── the pure verdict ─────────────────────────────────────────────────────────────────────────────
+test("socketVerdict: an OPEN socket silent past the keepalive bound is closed; a fresh one is left alone", () => {
+  const t = 1_000_000;
+  assert.equal(socketVerdict(1, t, t - 5000, t + REMOTE_STALE_MS + 1), "close", "31s of silence since open");
+  assert.equal(socketVerdict(1, t, t - 5000, t + REMOTE_STALE_MS), "", "at the bound, not past it");
+  assert.equal(socketVerdict(1, t + 20000, t, t + 25000), "", "a frame 5s ago keeps it");
+  // silence is measured from THIS socket's own open (lastRecv stamped at onopen), never an earlier socket's traffic
+  assert.equal(socketVerdict(1, 0, t, t + REMOTE_STALE_MS + 1), "close", "no frame at all → the connect stamp is the reference");
+});
+
+test("socketVerdict: a hung handshake is aborted; a CLOSED socket with no fresh attempt is redialed", () => {
+  const t = 1_000_000;
+  assert.equal(socketVerdict(0, 0, t, t + REMOTE_CONNECT_MS + 1), "close", "CONNECTING past 15s");
+  assert.equal(socketVerdict(0, 0, t, t + 3000), "", "a young handshake is left to finish");
+  assert.equal(socketVerdict(3, 0, t, t + REMOTE_REDIAL_MS + 1), "redial", "CLOSED 8s+ with no new connect = a lost retry timer");
+  assert.equal(socketVerdict(3, 0, t, t + 1000), "", "the 2s onclose redial is still coming");
+  assert.equal(socketVerdict(2, 0, t, t + 99999), "", "CLOSING is in flight — onclose will follow");
+});
+
+test("the bounds are the pane shim's, byte for byte (kernel keepalive 10s → stale at 30s)", () => {
+  assert.equal(REMOTE_STALE_MS, 30000);
+  assert.equal(REMOTE_CONNECT_MS, 15000);
+  assert.equal(REMOTE_REDIAL_MS, 8000);
+});
+
+// ── the manager, end to end, with a fake WebSocket ──────────────────────────────────────────────
+class FakeWS {
+  static made: FakeWS[] = [];
+  readyState = 0;
+  closed = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((ev: any) => void) | null = null;
+  onclose: ((ev: any) => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor(public url: string) { FakeWS.made.push(this); }
+  open(): void { this.readyState = 1; this.onopen && this.onopen(); }
+  frame(data: any): void { this.onmessage && this.onmessage({ data: JSON.stringify(data) }); }
+  close(): void { this.closed++; this.readyState = 3; }
+  die(code = 1006): void { this.readyState = 3; this.onclose && this.onclose({ code, wasClean: false }); }
+}
+
+// the test owns the clock: the manager stamps connT/lastRecv with Date.now(), and the watchdog is
+// ticked with an explicit `now`, so silence is advanced by hand rather than waited out
+let clock = 1_000_000_000;
+async function withManager(fn: (fm: any, emitted: any[], diag: any[], posted: any[]) => void | Promise<void>): Promise<void> {
+  const emitted: any[] = [], diag: any[] = [], posted: any[] = [];
+  const g: any = globalThis;
+  const saved: Record<string, any> = {};
+  const set = (k: string, v: any) => { saved[k] = { had: k in g, v: g[k] }; g[k] = v; };
+  FakeWS.made = [];
+  const realNow = Date.now;
+  Date.now = () => clock;
+  set("WebSocket", FakeWS);
+  set("location", { protocol: "http:", host: "TESTHOST.local:1" });
+  set("localStorage", { getItem: () => null, setItem: () => {} });
+  const parent = { postMessage: (m: any) => { posted.push(m); } };
+  set("window", {
+    dispatchEvent: (ev: any) => { if (ev && ev.data) emitted.push(ev.data); },
+    __rompLocalSend: (m: any) => { if (m && m.type === "clientDiag") diag.push(m); },
+    sessionStorage: { getItem: () => "" },
+    parent,
+  });
+  try {
+    await fn(new FederationManager(), emitted, diag, posted);   // awaited: the globals must outlive an async poll
+  } finally {
+    Date.now = realNow;
+    for (const [k, r] of Object.entries(saved)) { if (r.had) g[k] = r.v; else delete g[k]; }
+  }
+}
+const localFeed = { type: "feed", asks: [], items: [], working: [], ledgers: [], order: [], sessions: [], now: 1000, buildId: 1 };
+
+test("a relay socket that opens and then goes silent past the bound is abandoned with a breadcrumb, and a fresh one dialed at once", async () => {
+  await withManager((fm, _emitted, diag) => {
+    fm.openRemote("TESTHOST", "tok", true);
+    assert.equal(FakeWS.made.length, 1, "an up host is dialed at once");
+    const ws = FakeWS.made[0];
+    assert.match(ws.url, /\/remote\/TESTHOST\/ws\?app=chat&token=tok/, "the dial goes through the local kernel's relay");
+    ws.open();
+    clock += 10_000;
+    fm.watchdog(clock);
+    assert.equal(ws.closed, 0, "10s after open: still inside the keepalive bound");
+    clock += 15_000;
+    ws.frame({ type: "ka", dv: 1 });                       // a keepalive counts as life — that IS the heartbeat
+    clock += 20_000;                                        // 45s since open, but only 20s since the last frame
+    fm.watchdog(clock);
+    assert.equal(ws.closed, 0, "the keepalive 20s ago reset the clock");
+    clock += REMOTE_STALE_MS;                               // 50s of silence since that frame
+    fm.watchdog(clock);
+    assert.equal(ws.closed, 1, "silent past the bound → the watchdog puts the dead-on-arrival socket down");
+    const crumb = diag.find((d) => d.what === "hostconn" && d.data && d.data.ev === "watchdog-close");
+    assert.ok(crumb, "the close lands in the hostconn breadcrumb family, so client-diag says WHO closed it");
+    assert.equal(crumb.data.host, "TESTHOST");
+    assert.equal(crumb.data.why, "quiet");
+    assert.ok(crumb.data.quietMs > REMOTE_STALE_MS, "…and how long it had been silent");
+    // NOT waited for: a dead socket's closing handshake never completes (the browser holds CLOSING
+    // ~60s before onclose) — the fresh dial happens in the same pass, and the corpse is disowned
+    assert.equal(FakeWS.made.length, 2, "a fresh socket is dialed at once");
+    const conn = fm.conns.get("TESTHOST");
+    assert.equal(conn.ws, FakeWS.made[1], "the conn now owns the new socket");
+    assert.equal(ws.onclose, null, "the abandoned socket's handlers are detached — its late onclose redials nothing");
+    assert.equal(ws.onmessage, null);
+    FakeWS.made[1].open();
+    FakeWS.made[1].frame({ type: "feed", asks: [] });
+    assert.equal(diag.filter((d) => d.data && d.data.ev === "watchdog-close").length, 1, "one crumb per abandonment");
+    conn.closed = true;
+  });
+});
+
+test("the foreground fast-path kills a socket still CONNECTING, whatever its age — the sleeping tab's unfinished handshake", async () => {
+  await withManager((fm, _e, diag) => {
+    fm.openRemote("TESTHOST", "tok", true);
+    const ws = FakeWS.made[0];              // never opens (readyState 0)
+    clock += 1000;
+    fm.watchdog(clock);
+    assert.equal(ws.closed, 0, "a 1s-old handshake is left to finish on a plain tick");
+    fm.watchdog(clock, true);
+    assert.equal(ws.closed, 1, "…but a foreground pass closes it now rather than waiting the handshake bound out");
+    assert.equal(diag.filter((d) => d.data && d.data.ev === "watchdog-close" && d.data.why === "connecting" && d.data.foreground).length, 1);
+    assert.equal(FakeWS.made.length, 2, "…and dials a fresh one in the same pass");
+    fm.conns.get("TESTHOST").closed = true;
+  });
+});
+
+test("a CLOSED socket whose retry timer was lost is redialed directly (the throttled-tab case)", async () => {
+  await withManager((fm) => {
+    fm.openRemote("TESTHOST", "tok", true);
+    const conn = fm.conns.get("TESTHOST");
+    conn.ws.readyState = 3;                 // closed under us with no onclose → no 2s timer armed
+    clock += REMOTE_REDIAL_MS + 1000;
+    fm.watchdog(clock);
+    assert.equal(FakeWS.made.length, 2, "the watchdog dialed a fresh socket");
+    conn.closed = true;
+  });
+});
+
+test("a detached host is never touched by the watchdog, and a DOWN tunnel is never dialed by it", async () => {
+  await withManager((fm) => {
+    fm.openRemote("TESTHOST", "tok", false);   // /tunnels says not up → no socket
+    assert.equal(FakeWS.made.length, 0);
+    clock += 999_999;
+    fm.watchdog(clock);
+    assert.equal(FakeWS.made.length, 0, "no dial against a tunnel the kernel calls down");
+    fm.openRemote("HOSTB", "tok", true);
+    fm.closeRemote("HOSTB");                  // detach → closed:true
+    const n = FakeWS.made.length;
+    clock += 999_999;
+    fm.watchdog(clock);
+    assert.equal(FakeWS.made.length, n, "a detached conn is skipped, never redialed");
+  });
+});
+
+// ── the pending-host signal: what the panes and the shell read while a host is still coming ────
+test("mergeHostTimelines names attached hosts that have no lanes payload yet, and which of those sit on a dead link", () => {
+  const local = { sessions: [{ id: U, name: "web" }], turns: {}, messages: [], judging: [], now: 1000 };
+  const before = mergeHostTimelines({ "": local }, ["", "TESTHOST"], [], []);
+  assert.deepEqual(before.pendingHosts, ["TESTHOST"], "listed by /tunnels, no lanes yet — the placeholder window");
+  assert.deepEqual(before.pendingDead, []);
+  const dead = mergeHostTimelines({ "": local }, ["", "TESTHOST"], [], ["TESTHOST"]);
+  assert.deepEqual(dead.pendingDead, ["TESTHOST"], "pending on a closed socket = named as reconnecting");
+  const after = mergeHostTimelines({ "": local, TESTHOST: { sessions: [], turns: {}, now: 1000 } }, ["", "TESTHOST"], [], []);
+  assert.deepEqual(after.pendingHosts, [], "the first lanes payload — even an EMPTY one — is the retire event");
+  assert.deepEqual(mergeHostTimelines({ "": local }, [""]).pendingHosts, [], "the local kernel never pends");
+});
+
+test("the merged lanes emission carries the pending set, so the timeline can draw its placeholder rows", async () => {
+  await withManager((fm, emitted) => {
+    fm.app = "timeline";
+    fm.openRemote("TESTHOST", "tok", true);
+    fm.inbound("", { type: "data", data: { sessions: [{ id: U, name: "web" }], turns: {}, messages: [], judging: [], now: 1000 } });
+    const lanes = emitted.filter((m) => m.type === "data").pop();
+    assert.deepEqual(lanes.data.pendingHosts, ["TESTHOST"]);
+    assert.deepEqual(lanes.data.pendingDead, [], "the socket is dialed (CONNECTING), not dead");
+    fm.inbound("TESTHOST", { type: "data", data: { sessions: [], turns: {}, messages: [], judging: [], now: 1000 } });
+    const after = emitted.filter((m) => m.type === "data").pop();
+    assert.deepEqual(after.data.pendingHosts, [], "retired by that host's own first lanes payload");
+    fm.conns.get("TESTHOST").closed = true;
+  });
+});
+
+test("each pane tells the shell which hosts IT still waits on — by its own channel, on change only", async () => {
+  await withManager((fm, _e, _d, posted) => {
+    fm.app = "feed";
+    fm.openRemote("TESTHOST", "tok", true);
+    fm.inbound("", localFeed);
+    assert.deepEqual(posted.pop(), { romp: "hostsPending", app: "feed", hosts: ["TESTHOST"] },
+      "the feed pane pends TESTHOST until its feed payload lands");
+    fm.inbound("", { ...localFeed, buildId: 2 });
+    assert.equal(posted.length, 0, "unchanged set → nothing re-posted");
+    fm.inbound("TESTHOST", { type: "feed", asks: [], items: [], working: [], order: [], sessions: [], now: 1000 });
+    assert.deepEqual(posted.pop(), { romp: "hostsPending", app: "feed", hosts: [] }, "the payload retires it");
+    fm.closeRemote("TESTHOST");
+  });
+  await withManager((fm, _e, _d, posted) => {
+    fm.app = "timeline";
+    fm.openRemote("TESTHOST", "tok", true);
+    fm.inbound("", { type: "data", data: { sessions: [], turns: {}, messages: [], judging: [], now: 1000 } });
+    assert.deepEqual(posted.pop(), { romp: "hostsPending", app: "timeline", hosts: ["TESTHOST"] },
+      "the timeline pends on the LANES channel, not the feed");
+    fm.inbound("TESTHOST", localFeed);   // a feed payload from that host means nothing to the timeline pane
+    assert.equal(posted.length, 0, "still pending: no lanes from it yet");
+    fm.conns.get("TESTHOST").closed = true;
+  });
+});
+
+test("a host that ATTACHES is pending from that moment: the poll re-emits the merged payloads it can complete", async () => {
+  const g: any = globalThis;
+  const hadFetch = "fetch" in g, prevFetch = g.fetch;
+  g.fetch = async () => ({ json: async () => ({ tunnels: [{ host: "TESTHOST", token: "tok", localPort: 5, status: "up" }] }) });
+  try {
+    await withManager(async (fm, emitted) => {
+      fm.app = "feed";
+      fm.inbound("", localFeed);
+      const n = emitted.length;
+      await fm.poll();
+      const feed = emitted.slice(n).filter((m) => m.type === "feed").pop();
+      assert.ok(feed, "the attach itself re-emitted the merged feed");
+      assert.deepEqual(feed.pendingHosts, ["TESTHOST"], "…already naming the host as coming");
+      fm.conns.get("TESTHOST").closed = true;
+    });
+  } finally {
+    if (hadFetch) g.fetch = prevFetch; else delete g.fetch;
+  }
+});
+
+test("…but never drops an EMPTY merged feed onto a page still waiting for its local kernel", async () => {
+  const g: any = globalThis;
+  const hadFetch = "fetch" in g, prevFetch = g.fetch;
+  g.fetch = async () => ({ json: async () => ({ tunnels: [{ host: "TESTHOST", token: "tok", localPort: 5, status: "up" }] }) });
+  try {
+    await withManager(async (fm, emitted) => {
+      fm.app = "feed";
+      await fm.poll();
+      assert.equal(emitted.filter((m) => m.type === "feed").length, 0, "no local feed yet → the feed hold stands (the loader stays up)");
+      fm.conns.get("TESTHOST").closed = true;
+    });
+  } finally {
+    if (hadFetch) g.fetch = prevFetch; else delete g.fetch;
+  }
+});

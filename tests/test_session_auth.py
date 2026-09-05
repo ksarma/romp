@@ -37,6 +37,11 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+# The manager env file is a LIVE key source now (kernel/keysource.py), so floor it too: without this
+# a bare (non-pytest) run of this file on a machine with a real ~/.config/romp/service.env resolves
+# the developer's actual key instead of the fixture's. conftest.py holds the same floor for pytest.
+os.environ["ROMP_SERVICE_ENV_FILE"] = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
+os.environ["ROMP_SERVICE_ENV"] = os.environ["ROMP_SERVICE_ENV_FILE"]
 sb = SourceFileLoader("romp_sdk_backend_auth", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
 km = SourceFileLoader("romp_kernel_auth", os.path.join(BIN, "romp-kernel")).load_module()
 
@@ -164,7 +169,7 @@ class OptionsInjection(_OptionsHarness):
     def test_a_key_pick_with_no_key_is_a_logged_problem_not_a_silent_fall(self):
         src = open(os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py")).read()
         self.assertIn("session is set to the API key but the manager environment carries", src)
-        self.assertIn('ANTHROPIC_API_KEY=self.work_key', src)
+        self.assertIn('ANTHROPIC_API_KEY=work_key', src)
 
 
 class FastOrgPermissionFollowsBilling(_OptionsHarness):
@@ -399,7 +404,10 @@ class AuthErrorClass(unittest.TestCase):
 
     def test_it_is_an_on_you_class_end_to_end(self):
         import inspect
-        self.assertIn('"authErr": _is_auth_error(text)', inspect.getsource(km._api_error))
+        # the classification lives in _api_error_scan since the tail-window split; _api_error is the
+        # widening driver around it, so read the pair rather than pinning which half holds the flag
+        self.assertIn('"authErr": _is_auth_error(text)',
+                      inspect.getsource(km._api_error) + inspect.getsource(km._api_error_scan))
         self.assertIn('"apiAuthErr": bool(aerr and aerr.get("authErr"))', inspect.getsource(km.build_session))
         feed = inspect.getsource(km.build_feed)
         self.assertIn('aerr.get("authErr") or aerr.get("refusal"))))', feed, "the card floors to needs-you")

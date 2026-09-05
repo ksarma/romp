@@ -458,6 +458,10 @@ class NativeDialogWire(_Wire):
 
     def test_a_kernel_that_can_show_one_says_nothing_and_opens_it(self):
         opened = []
+        before = set(threading.enumerate())            # join only the threads THIS test starts (T230b):
+        #                                                joining every daemon in the process made this
+        #                                                test's runtime scale with the suite's leaked
+        #                                                threads (~122 s measured, 2 s per leak)
         with mock.patch.object(km, "_native_dialogs", lambda: True), \
              mock.patch.object(km, "_pick_folder", lambda: opened.append("folder") or ""), \
              mock.patch.object(km, "_pick_file", lambda: opened.append("file") or ""):
@@ -467,7 +471,7 @@ class NativeDialogWire(_Wire):
                 self.assertEqual([m for m in self.sent if m.get("type") == "warn"], [],
                                  "an available dialog must not be talked about, only shown")
         for t in threading.enumerate():                      # the dialog runs off the message loop
-            if t is not threading.current_thread() and t.daemon:
+            if t not in before and t is not threading.current_thread() and t.daemon:
                 t.join(timeout=2)
         self.assertEqual(sorted(opened), ["file", "folder"])
 

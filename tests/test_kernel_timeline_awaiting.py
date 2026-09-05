@@ -106,6 +106,27 @@ class TimelineAwaiting(unittest.TestCase):
         self.assertEqual(lane["awaitingBg"], "waiting on a background task: Watch for round3 copy")
         self.assertEqual(lane["awaitingTasks"], ["Watch for round3 copy"])
 
+    def test_the_lane_ships_the_awaited_count_beside_the_kind(self):
+        # T228 (the user's one-count rule): the lane badge words its kind from the SAME count the chat chip
+        # uses — one live task/agent reads "Awaiting task"/"Awaiting agent" on the lane too. The number is
+        # the snapshot's own; a source that cannot count ships None (the view keeps its historic plural).
+        base = {"state": "waiting", "since": NOW - 100, "model": "", "effort": "", "context": None,
+                "compactPct": None, "color": None, "mode": ""}
+        km._tmux_sessions = lambda: {SID: dict(base, bgTasks=[{"task_id": "t1", "desc": "Watch for round3 copy"}])}
+        lane = self._lane()
+        self.assertEqual((lane["awaitingKind"], lane["awaitingCount"]), ("task", 1))
+        km._tmux_sessions = lambda: {SID: dict(base, bgTasks=[{"task_id": "t1", "desc": "Watch for round3 copy"},
+                                                              {"task_id": "t2", "desc": "poll the deploy"}])}
+        self.assertEqual(self._lane()["awaitingCount"], 2)
+        km._tmux_sessions = lambda: {SID: dict(base, subagents=[{"type": "explore", "since": T0 + 5}])}
+        lane = self._lane()
+        self.assertEqual((lane["awaitingKind"], lane["awaitingCount"]), ("agents", 1), "one agent → the badge reads singular")
+        km._tmux_sessions = lambda: {SID: dict(base)}
+        self.states.write_text(json.dumps({"t": T0 + 21, "awaiting": True, "why": "bg agents"}) + "\n")
+        lane = self._lane()
+        self.assertEqual(lane["awaitingBg"], "bg agents")
+        self.assertIsNone(lane["awaitingCount"], "a bare overlay row names no count — never parsed from the why")
+
     def test_overlay_flavor_awaiting_carries_no_task_rows(self):
         self.states.write_text(json.dumps({"t": T0 + 21, "awaiting": True, "why": "bg agents"}) + "\n")
         self.assertEqual(self._lane()["awaitingTasks"], [], "no live tasks → the stretch hover falls back to the why")

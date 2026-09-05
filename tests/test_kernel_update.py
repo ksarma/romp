@@ -241,12 +241,22 @@ class CheckLoop(Fresh):
         # nor one watcher's crash starve the other.
         releases = []
         drifts = []
+        converges = []
         naps = []
 
-        def nap(s):
-            naps.append(s)
-            if len(naps) == 2:
-                raise SystemExit                       # unhook the forever-loop after two rounds
+        # T230b: the loop is unhooked through ITS OWN seam - the stop event - never by patching the
+        # process-global time.sleep (that patch, a counter raising SystemExit on call #2, was consumed
+        # by leaked heartbeat threads sleeping in the window and hung five CI jobs for 15 silent
+        # minutes each). The stub returns True on the 2nd wait (the event fired) and RAISES on any
+        # later wait: a loop wired to wait but not to return would otherwise hang this very pin.
+        class Stop:
+            def wait(self, s):
+                naps.append(s)
+                if len(naps) == 2:
+                    return True
+                if len(naps) > 2:
+                    raise AssertionError("the loop kept waiting after the stop event fired")
+                return False
 
         def release_pass():
             releases.append(1)
@@ -256,16 +266,90 @@ class CheckLoop(Fresh):
             drifts.append(1)
             if len(drifts) == 1:
                 raise RuntimeError("boom")             # …nor a dying drift probe the NEXT drift probe
+
+        def converge_pass():
+            converges.append(1)                        # stubbed: the real one spawns node + rglobs ui/
+            raise RuntimeError("boom")                 # …nor a dying dist converge any of them
+
+        # T230c: FAST-FAIL if the loop ever regresses to the shared time.sleep. Without this guard the
+        # test blocked in a real 300 s sleep until the 600 s CI backstop, whose os._exit then swallowed
+        # this pin's own named failure (reproduced: `F` + the timeout dump, the message nowhere).
+        # Main-thread-only, a plain function (never a recording mock a foreign sleeper could fill).
+        main = threading.get_ident()
+
+        def guard(s):
+            if threading.get_ident() == main:
+                raise AssertionError("the update-check loop must wait on its own seam, not the shared time.sleep")
         with mock.patch.object(km, "_update_check", side_effect=release_pass), \
              mock.patch.object(km, "_main_drift_check", side_effect=drift_pass), \
-             mock.patch.object(km.time, "sleep", side_effect=nap), \
-             self.assertRaises(SystemExit):
-            km._update_check_loop()
+             mock.patch.object(km, "_dist_converge_check", side_effect=converge_pass), \
+             mock.patch.object(km.time, "sleep", guard), \
+             mock.patch.object(km, "_CHECK_LOOP_STOP", Stop()):
+            km._update_check_loop()                    # RETURNS on the stop event
         self.assertEqual(len(releases), 1, "the six-hour stride: one release check across two fast rounds")
         self.assertEqual(len(drifts), 2, "the drift probe runs every round, surviving its own crash")
+        self.assertEqual(len(converges), 2, "the dist converge runs every round, surviving its own crash")
         self.assertEqual(naps, [km._MAIN_CHECK_EVERY_S] * 2)
         self.assertEqual(km._UPDATE_CHECK_EVERY_S, 6 * 3600)
         self.assertEqual(km._MAIN_CHECK_EVERY_S, 300)
+
+
+    def test_the_loop_never_sleeps_through_the_shared_time_sleep(self):
+        # T230b (the user 2026-09-03, five hung CI jobs since 08-27): the loop's cadence wait must be a
+        # loop-PRIVATE seam, never the process-global time.sleep. The sibling test above used to
+        # patch km.time.sleep with a counter that raised SystemExit on call #2 — and any OTHER
+        # thread sleeping in the window (test_heartbeat_thread leaks _heartbeat daemons that sleep
+        # every 10s for the rest of the run) consumed a count; when a foreign thread drew #2,
+        # threading swallowed its SystemExit and the loop spun forever on a no-op sleep: a silent
+        # 15-minute job. Deterministic, no timing: a spinning foreign sleeper runs throughout; the
+        # shared sleep is a PLAIN guard (never a recording mock the spinner would fill) that raises
+        # only on the MAIN thread — so a loop reaching time.sleep fails in milliseconds, never hangs.
+        # The seam patch deliberately has NO create=True (T230c): an absent or RENAMED seam then
+        # fails as an AttributeError in under a second — still red-first and named — where create=True
+        # would have minted a dead attribute and let the loop wait on the real Event to the backstop.
+        import threading
+        stop = threading.Event()
+        main = threading.get_ident()
+
+        def spinner():
+            while not stop.is_set():
+                time.sleep(0)
+        t = threading.Thread(target=spinner, daemon=True)
+        t.start()
+        releases, drifts, naps = [], [], []
+
+        def guard(s):
+            if threading.get_ident() == main:
+                raise AssertionError("the update-check loop must wait on its own seam, not the shared time.sleep")
+
+        class Stub:
+            def wait(self, s):
+                naps.append(s)
+                if len(naps) == 2:
+                    return True                        # the stop event fires → the loop must RETURN
+                if len(naps) > 2:
+                    raise AssertionError("the loop kept waiting after the stop event fired")
+                return False
+
+        def release_pass():
+            releases.append(1)
+            raise RuntimeError("boom")
+
+        def drift_pass():
+            drifts.append(1)
+        try:
+            with mock.patch.object(km, "_update_check", side_effect=release_pass), \
+                 mock.patch.object(km, "_main_drift_check", side_effect=drift_pass), \
+                 mock.patch.object(km, "_dist_converge_check"), \
+                 mock.patch.object(km.time, "sleep", guard), \
+                 mock.patch.object(km, "_CHECK_LOOP_STOP", Stub()):
+                km._update_check_loop()               # returns — the stop event is the loop's exit
+        finally:
+            stop.set()
+            t.join(timeout=2)
+        self.assertEqual(naps, [km._MAIN_CHECK_EVERY_S] * 2)
+        self.assertEqual(len(releases), 1)
+        self.assertEqual(len(drifts), 2)
 
 
 class RunUpdate(Fresh):

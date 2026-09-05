@@ -13,7 +13,7 @@ CLI:
   romp-judge --once               # one caption pass over the live fleet (writes captions/)
   romp-judge --test <transcript>  # caption one transcript's recent units, print them (no write)
 """
-import contextlib, json, os, re, secrets, shutil, stat, sys, time, subprocess, threading
+import contextlib, json, os, re, secrets, shutil, signal, stat, sys, time, subprocess, threading
 from pathlib import Path
 from importlib.machinery import SourceFileLoader
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -60,6 +60,7 @@ GONEDIR  = STATE / "gone"                # session-death markers {t, by[, endedA
                                          #   read by a CLOSED list: _cli_epoch, run_close's death-pending drain, and the writers'
                                          #   own idempotence check (2026-08-13; the reader list is test-pinned so it cannot creep)
 SDKDIR   = STATE / "sdk"                 # the SDK backend's per-session registry — lastSid tracks the CURRENT transcript fsid
+CODEXDIR = STATE / "codex"               # the Codex backend's root (plans/codex-backend.md): registry.json +
 # Judge scratch cwd (the user 2026-07-20): every one-shot `claude -p` judge call writes a transcript
 # under the project dir of its CWD. With cwd=/tmp those piled into the SHARED -private-tmp project
 # dir (~4,600/day, 51k files) mixed with anything else ever run from /tmp — unprunable without
@@ -106,7 +107,7 @@ def _rebind_state(path):
     save_goals wrote synthetic fixtures into the live goals/ and the triage pass then stormed
     judge-errors.jsonl over those orphans every pass forever (the user 2026-06-24). A test must call this
     instead of assigning jd.STATE alone. Not used in production (STATE is bound once at import)."""
-    global STATE, NAMES, CAPDIR, ARCHDIR, GOALDIR, GOALARCHDIR, STATESDIR, PCACHE, MESSAGES, ERRORS, USAGE, SDKDIR, EPIDIR, GONEDIR, JUDGE_AUTH
+    global STATE, NAMES, CAPDIR, ARCHDIR, GOALDIR, GOALARCHDIR, STATESDIR, PCACHE, MESSAGES, ERRORS, USAGE, SDKDIR, EPIDIR, GONEDIR, JUDGE_AUTH, CODEXDIR
     global JUDGE_SCRATCH
     STATE = path
     JUDGE_SCRATCH = str(STATE / "judge-scratch")   # state-rooted now, so it rebinds with the rest
@@ -118,6 +119,7 @@ def _rebind_state(path):
     global JUDGE_LIMIT
     JUDGE_LIMIT = STATE / "judge-limit.json"
     SDKDIR = STATE / "sdk"
+    CODEXDIR = STATE / "codex"
     EPIDIR = STATE / "episodes"
     _lastsid_memo.clear()   # sdk-registry reads are mtime-memoized per sid — a rebind must not serve the old root's values
     _episode_memo.clear()   # ...and so are the episode-log reads
@@ -166,26 +168,29 @@ def _index_model():   return _state_str("index-model", INDEX_MODEL)    # gear "I
 def _triage_effort(): return _state_str("judge-effort", "")   # "" → pass NO --effort (the long-standing default)
 def _index_effort():  return _state_str("index-effort", "")
 def _judge_fast():    return _state_str("judge-fast", "") == "on"   # gear "Fast judging" → STATE/judge-fast
+def _judge_engine():  return _state_str("judge-engine", "claude")   # "claude" | "codex" — which model
+#   harness runs the judges (docs/codex.md §judges). "codex" lets a machine with no Claude login keep
+#   the board thinking: every judge becomes a one-shot `codex exec` billing the machine's codex login.
 INDEX_EFFORT_DEFAULT = "low"   # the index tier's cost lever on models that take --effort (2026-09-01; see _judge_env)
 
 
 # Which models run adaptive thinking (and so take `--effort` as their cost lever) is GENERATIONAL, not a
-# family trait — CLI 2.1.257's own rule, re-derived from the binary (2026-09-02). Its adaptive-thinking
-# predicate is a hardcoded DENYLIST — claude-3-*, Opus 4.0 / 4.1 / 4.5, Sonnet 4.0 / 4.5, Haiku 4.5 —
-# then its baked-in catalog, then the provider default, which on first-party auth is YES. So Fable and
-# Mythos (every version), Opus 4.6+ and Sonnet 4.6+ run adaptive thinking and take effort; Haiku 4.5,
-# Sonnet 4.5, Opus 4.5 and older and every claude-3 model do not, so MAX_THINKING_TOKENS=0 is the lever
-# that keeps their thinking off (Haiku and Sonnet 4.5 also have `--effort` silently deleted; Opus 4.5
+# family trait — the CLI's own rule, read from the 2.1.257 and 2.1.258 binaries (2026-09-02). Its
+# adaptive-thinking predicate is a hardcoded DENYLIST — claude-3-*, Opus 4.0 / 4.1 / 4.5, Sonnet 4.0 / 4.5,
+# Haiku 4.5 — then its baked-in catalog, then the provider default, which on first-party auth is YES. So
+# Fable and Mythos (every version), Opus 4.6+ and Sonnet 4.6+ run adaptive thinking and take effort; Haiku
+# 4.5, Sonnet 4.5, Opus 4.5 and older and every claude-3 model do not, so MAX_THINKING_TOKENS=0 is the
+# lever that keeps their thinking off (Haiku and Sonnet 4.5 also have `--effort` silently deleted; Opus 4.5
 # takes it, but effort never turns its thinking off). And an id the CLI does not place — a family outside
 # its catalog, no readable version — is treated as adaptive, effort forwarded, and thinking:disabled
 # REFUSED (dropped from the request), so for a stranger the effort lever is the one that lands and the env
-# var is a guaranteed no-op. The first cut keyed on family alone ("not Haiku"), and an index tier pinned
-# to Sonnet 4.5 — a pick the gear's version submenu offers — got `--effort low` and full extended
-# thinking: 3.5x the cost and 2.3x the latency of the env var, measured. Round 2 read the catalog arrays
-# and sent a stranger the env var as "cost-safe"; round 3 read the CLI's decision procedure, where that
-# var is exactly the parameter a stranger loses. All of this assumes first-party auth — a login token or
-# an Anthropic API key, the two `_judge_env` manages; on Bedrock/Vertex the CLI's default flips to NO and
-# a bare `sonnet` is Sonnet 4.5, neither modeled here.
+# var is a guaranteed no-op. Two simpler rules were tried and rejected: keying on family alone ("not
+# Haiku") sends an index tier pinned to Sonnet 4.5 — a pick the gear's version submenu offers — `--effort
+# low` and no env var, i.e. full extended thinking, measured on a caption workload at 3.5x the cost and
+# 2.3x the latency of the env var; and sending a stranger the env var as the "safe" choice hands it exactly
+# the parameter the CLI drops for it. All of this assumes first-party auth — a login token or an Anthropic
+# API key, the two `_judge_env` manages; on Bedrock/Vertex the CLI's default flips to NO and a bare
+# `sonnet` is Sonnet 4.5, neither modeled here.
 _EFFORT_FLOOR = {"fable": (5, 0), "mythos": (5, 0), "opus": (4, 6), "sonnet": (4, 6), "haiku": (4, 6)}
 #   family -> first (major, minor) the CLI treats as adaptive; below it is its denylist. The catalog knows
 #   no Haiku past 4.5, so haiku's floor marks where the denylist ends, not a version that exists.
@@ -227,9 +232,9 @@ def _model_family_version(model):
 
 
 def _adaptive_thinking(model):
-    """True when `model` runs adaptive thinking under CLI 2.1.257 — the models whose index-tier cost
-    lever is `--effort` (_EFFORT_FLOOR: Fable and Mythos, every version; Opus >= 4.6; Sonnet >= 4.6; a
-    bare alias is the version the catalog resolves it to, _ALIAS_HEAD — `haiku` is Haiku 4.5, so False).
+    """True when `model` runs adaptive thinking under CLI 2.1.257 / 2.1.258 — the models whose index-tier
+    cost lever is `--effort` (_EFFORT_FLOOR: Fable and Mythos, every version; Opus >= 4.6; Sonnet >= 4.6;
+    a bare alias is the version the catalog resolves it to, _ALIAS_HEAD — `haiku` is Haiku 4.5, so False).
     False is the CLI's denylist — Haiku 4.5 and older, Sonnet 4.5 and older, Opus 4.5 and older, every
     claude-3 — the models where MAX_THINKING_TOKENS=0 is honored and is the lever. An id this cannot
     place — no family it knows, or a family with no readable version — gets the CLI's own answer for an
@@ -301,7 +306,11 @@ JUDGE_FAIL_CAP = 3                       # the same rule for every other retryin
 #                                          3 genuine parse rejects on the SAME work item → a loud "give-up" row,
 #                                          then quiet until the item's own event re-arms it (a turn gaining atoms,
 #                                          a top set changing). Call-level failures never count — only replies the
-#                                          model actually wrote. Closer / grouper / consolidator / courier; the
+#                                          model actually wrote — with ONE exception: the closer strikes a KILLED
+#                                          call (the timer ending it; never an API error or a process that ended
+#                                          another way) against the turn it died on, _call_fail_kill /
+#                                          _close_strike. Closer / grouper /
+#                                          consolidator / courier; the
 #                                          planner (PLAN_PARSE_RETRIES) and distiller/briefer (DISTILL_FAIL_CAP)
 #                                          already had their own.
 PLACEMENTS_V = 11                        # placements-identity schema version (plan P2, the user 2026-07-06).
@@ -387,7 +396,9 @@ JUDGE_JSON_CAP = 20000                    # cap a planner/closer reply BEFORE pa
 DISTILL_FAIL_CAP = 3                      # consecutive distill/brief CALL fails on ONE goal before we give up
                                          # and settle its card to the "" sentinel — so a persistently-failing
                                          # LLM call self-heals instead of looping "(generating…)" every pass
-                                         # forever (the user 2026-06-24). Mirrors PLAN_PARSE_RETRIES.
+                                         # forever (the user 2026-06-24). Mirrors PLAN_PARSE_RETRIES. Also
+                                         # bounds the closer's two no-reply streaks (_close_strike): the
+                                         # safeguards tombstone and, since 2026-09-03, the kill streak.
 DISTILL_WORK_CHARS = 24000               # cap the work history fed to a distill/brief call (keep the most
                                          # recent tail): an unbounded subtree could time out the Sonnet call
                                          # (logged "call"); the recent work is what the brief needs anyway.
@@ -403,6 +414,28 @@ CLOSE_HISTORY_CHARS = 2000               # per-goal cap in the closer's turn-end
                                          # touched goals at once (so the total scales with menu size).
 CLOSE_FAIRNESS = None                    # per-session turn-close cap — REMOVED (the user 2026-06-30): close
                                          # EVERY end-known turn each pass. The `did >= cap` guard no-ops on None.
+                                         # That stance stands — successful closes are never capped. Two bounds
+                                         # added 2026-09-03 are NOT fairness caps: CLOSE_RIDER_CAP (below) is a
+                                         # queue drain across LANDED calls, and _close_session ends a session's
+                                         # walk at its first FAILED call (parse rejects and pause-skips walk on)
+                                         # UNTIL that turn's KILLED calls — the timer ending the call; never an
+                                         # API error or a process that ended another way, which leave no
+                                         # strike — reach DISTILL_FAIL_CAP at one size: then the turn is
+                                         # adopted loudly (a give-up row) and the walk goes on.
+CLOSE_RIDER_CAP = 6                      # RIDERS per closer call — the steps-finished / starved / status /
+                                         # lifted nominations that ride BEHIND the turn's own menu (which is
+                                         # never capped). 2026-09-03: one session's closer calls were
+                                         # alarm-killed 192 times in a row inside ONE _close_session walk
+                                         # (6h22m, every judge for every session silent). Not hangs: served
+                                         # closer duration tracks OUTPUT tokens, and the menu set the output —
+                                         # 24 riders on most of the backlog, uncapped, so no reply fit under
+                                         # CALL_ALARM_S; and a killed call stamps no closerLookT, so the same
+                                         # menu rode the next turn's call and died the same way. A DRAIN, not
+                                         # a fairness cap (DEATH_DRAIN_PER_PASS's argument): the re-nominating
+                                         # riders (lifted / steps-finished / starved) ride again until a LANDED
+                                         # reply stamps them, so what is cut rides a later landed call. STATUS
+                                         # riders are never cut — one-shot per status turn, they would be lost,
+                                         # not deferred — and take their room off the cap first (why: _close_turn).
 CONCURRENCY = 6                          # concurrent claude -p calls
 # The CLOSER: the turn-end completion backstop (judge.md HYBRID; named the "closer" 2026-06-16 — it
 # closes out goals whose outcome is delivered). SHIPPED as the default 2026-06-15 after the fleet A/B
@@ -764,7 +797,9 @@ def _log_judge_error(judge, fsid, err, note=None, goal=None, seg=None):
              "unmigrated-node", "task-store" (the live task store exists but can't be read —
              plan-sync skipped for the pass rather than silently folding the transcript),
              "scratch" (the judge scratch cwd can't be made private — call skipped, never rerouted
-             to a world-writable directory; see _ensure_judge_scratch)
+             to a world-writable directory; see _ensure_judge_scratch), "sweep-cut" (the closer ended a
+             session's walk for the pass at a FAILED call — _close_session; the note names the turns left
+             behind and the shape of the menu that died)
       note   the evidence — reply tail, error message, exception name, or the give-up scope + re-arm
              event. Callers must pass it; an empty note means the caller has nothing at all to show.
       goal   the node id (or list of node ids) the judge was ruling on, when one exists — the feed's
@@ -1111,6 +1146,68 @@ def _limit_clear():
         pass
 
 
+def _judge_codex_bin():
+    """The codex binary for engine-"codex" judge calls — the claude one's resolution ladder (env
+    override, PATH, the standard user spot) plus the BUNDLED binary inside codexvenv: openai-codex
+    ships it at site-packages/codex_cli_bin/bin/codex with no PATH entry point (2026-08-14
+    proofread). romp-codex-setup links it to ~/.local/bin, but a kernel started over non-login ssh may
+    not have that dir on PATH — the same failure mode _judge_claude_bin's docstring records."""
+    import glob
+    p = (os.environ.get("ROMP_CODEX_BIN") or shutil.which("codex")
+         or os.path.expanduser("~/.local/bin/codex"))
+    if os.path.exists(p):
+        return p
+    for c in sorted(glob.glob(str(STATE / "codexvenv" / "lib" / "python3.*" /
+                                  "site-packages" / "codex_cli_bin" / "bin" / "codex"))):
+        return c
+    return p
+# Hard wall-clock cap on ONE judge call (perl alarm → SIGALRM, logged as "empty stdout (exit -14)").
+# Was 45s until 2026-07-27, when an API slow patch killed a burst of healthy-but-slow calls across four
+# sessions in one morning and the coerce floor minted a card titled with the user's raw message head from
+# the wreckage. A slow call that lands beats a killed one on both cost and heal latency (the kill burns
+# the tokens AND leaves the pass to re-run next tick), so be permissive (the user 2026-07-27): the alarm
+# guards a truly hung exec, not a slow model. The subprocess timeout below it is the backstop for a perl
+# that never ran; it tracks this constant so the two can't drift apart.
+
+def _judge_cmd_codex(model, effort, outpath):
+    """The `codex exec` argv for ONE judge call when STATE/judge-engine is "codex" (docs/codex.md).
+    The same isolation goals as the claude argv, by different means: --ephemeral (no session files —
+    the scratch-pruning problem doesn't exist), an invocation-local custom permission profile that
+    grants only Codex's minimal runtime paths plus READ access to the scratch workspace (the built-in
+    `:read-only` profile deliberately grants read access to the whole host), --skip-git-repo-check +
+    -C scratch (never the user's repo), the prompt on stdin (exec has no separate system-prompt flag
+    — system + user are concatenated), and the reply written to `outpath` via -o (the final agent
+    message alone; no event-stream parsing).
+    Model: only an explicit gpt-* override is passed — a ChatGPT-plan account 400-refuses every
+    non-default model (probed live 2026-08-14), so the account's default is THE default and a
+    claude alias (the other engine's vocabulary, incl. the classify arms') is ignored rather than
+    sent to certain failure."""
+    judge_permissions = (
+        'permissions.romp_judge={ filesystem = { ":minimal" = "read", '
+        '":workspace_roots" = { "." = "read" } }, network = { enabled = false } }'
+    )
+    cmd = ["perl", "-e", "alarm %d; exec @ARGV" % CALL_ALARM_S, _judge_codex_bin(), "exec",
+           "--ephemeral", "--ignore-user-config", "--ignore-rules", "--strict-config",
+           "--skip-git-repo-check", "-c", judge_permissions,
+           "-c", 'default_permissions="romp_judge"', "--color", "never",
+           "-C", JUDGE_SCRATCH, "-o", outpath]
+    if model and str(model).startswith("gpt"):
+        cmd += ["-m", model]
+    if effort:
+        cmd += ["-c", "model_reasoning_effort=%s" % effort]
+    return cmd
+
+def _codex_effort(effort, tier):
+    """Map a judge effort onto what codex accepts for the plan-account model family: low/medium/
+    high/xhigh pass through; minimal/none 400 there (probed) → low; max/ultracode are Claude-only →
+    xhigh/None. No explicit effort: index-tier work is mechanical → low (the cost lever, standing in
+    for the claude path's MAX_THINKING_TOKENS=0); triage keeps the model's default reasoning."""
+    m = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh",
+         "minimal": "low", "none": "low", "max": "xhigh"}
+    if effort:
+        return m.get(effort)
+    return "low" if tier == "index" else None
+
 def _judge_env(tier, auth="login", model=None):
     """The subprocess env for ONE judge call. Drops the TMUX vars (so the child isn't taken for a live
     pane) and trips the Stop-hook recursion guard. For the INDEX tier it also applies the cost lever the
@@ -1121,12 +1218,12 @@ def _judge_env(tier, auth="login", model=None):
     ~15-token caption (722 -> 24 output tokens, 7.1s -> 0.9s per call, ~92% cheaper, identical caption).
     On a model WITH adaptive thinking (Fable, Mythos, Opus 4.6+, Sonnet 4.6+, and any model the CLI does
     not place) the env var is NOT set and `--effort low` is the lever (_judge_run, INDEX_EFFORT_DEFAULT,
-    the gear's Indexing effort pick overriding): CLI 2.1.257 drops the thinking parameter for a model
-    carrying its `rejects_disabled_thinking` capability — Fable and Mythos, and its first-party default
-    grants it to every unlisted model (the API refuses thinking:disabled on them) — so there the var was
-    a silent no-op and every "thinking-off" call ran FULL-COST adaptive thinking. (Opus 4.6+ and Sonnet
-    4.6+ do honor the var; the tier still takes effort on them — one lever for every adaptive model, the
-    gear pick the knob.) `model` is the call's model; None resolves the tier's configured pick
+    the gear's Indexing effort pick overriding): the CLI (2.1.257 and 2.1.258) drops the thinking parameter
+    for a model carrying its `rejects_disabled_thinking` capability — Fable and Mythos, and its first-party
+    default grants it to every unlisted model (the API refuses thinking:disabled on them) — so there the
+    var was a silent no-op and every "thinking-off" call ran FULL-COST adaptive thinking. (Opus 4.6+ and
+    Sonnet 4.6+ do honor the var; the tier still takes effort on them — one lever for every adaptive
+    model, the gear pick the knob.) `model` is the call's model; None resolves the tier's configured pick
     (_index_model), so a bare _judge_env("index") answers about the tier as configured rather than
     assuming Haiku. TRIAGE keeps thinking on every model: the planner / closer / grouper / distiller make
     real placement + closure judgments. Output is the expensive half (Haiku $5/Mtok out) AND the latency
@@ -1156,11 +1253,13 @@ def _judge_env(tier, auth="login", model=None):
     # the user's call), flip this off so clustered calls READ instead — reads beat no-cache 10:1.
     env["DISABLE_PROMPT_CACHING"] = "1"
     if tier == "index":
-        # The lever for a model without adaptive thinking (2026-09-01): no thinking for mechanical
-        # summarization. A model with it takes `--effort` in _judge_run instead — never this var,
-        # which the CLI drops for Fable, Mythos and any model it does not place (see the docstring).
-        if not _adaptive_thinking(model if model is not None else _index_model()):
-            env["MAX_THINKING_TOKENS"] = "0"
+        # No thinking for mechanical summarization (2026-09-01): the var is set UNCONDITIONALLY on the
+        # index tier. Where the CLI honors thinking:disabled it is the lever (Haiku, Sonnet/Opus 4.5 and
+        # older — and Sonnet/Opus 4.6+, which run adaptive thinking yet still honor it, so withholding
+        # it there traded a measured thinking-off path for unmeasured adaptive-low: PR #880 review);
+        # where the CLI drops it (Fable, Mythos, strangers) it is a harmless no-op and `--effort` in
+        # _judge_run is the lever that lands. Both ride together; neither can hurt the other.
+        env["MAX_THINKING_TOKENS"] = "0"
     if auth == "key" and wk:
         env["ANTHROPIC_API_KEY"] = wk
     return env
@@ -1206,6 +1305,28 @@ def _with_user_notes(sys_prompt, judge):
             "a note conflicts with the rules above, the note wins:\n<user-notes>\n" + notes + "\n</user-notes>")
 
 
+_KILL_EXC = subprocess.TimeoutExpired    # the CALL_ALARM_S + 5 backstop firing: the ONE subprocess exception that is a
+#                                          KILL (the call ran to the timer; _call_fail_kill). Bound at import so a test
+#                                          that swaps `subprocess` for a stub cannot unbind it. Every other exception is
+#                                          the OS answering (a missing binary, a broken pipe): transient.
+_KILL_RC = -signal.SIGALRM               # the other kill shape: the perl `alarm` wrapper's SIGALRM landing on the exec'd
+#                                          child, read as the returncode at the two empty-output exits. A clean exit of
+#                                          ANY code (0: exec failed under the wrapper — a missing binary; 1: a startup
+#                                          crash, or a codex refusal) or any other signal is the process answering:
+#                                          transient (second review, 2026-09-03 — stamped on every empty exit, a broken
+#                                          install would have tombstoned every turn it touched after three passes).
+
+
+def _call_shape(model, sys_prompt, user, sent):
+    """The grep-able shape of a FAILED call for its 'call' row: the model, the prompt size in chars
+    (system + user — the SIZE only, never the text) and the wall-clock ms since it was sent. 2026-09-03:
+    192 consecutive alarm kills read as "the CLI is dying" until the served calls' usage rows showed
+    duration tracking OUTPUT size (a 24-rider closer menu no reply could finish under CALL_ALARM_S);
+    with the shape on the failure row itself, that diagnosis is a grep over judge-errors.jsonl."""
+    return "model=%s chars=%d ms=%d" % (model, len(sys_prompt or "") + len(user or ""),
+                                        int((time.time() - sent) * 1000))
+
+
 def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", mark=None):
     """Run ONE judge model call. `mark` is the caller's per-call section mark (see _mark/_sec): passing
     it appends UNTRUSTED_SYS, which tells the model that marked sections are material, not orders. It
@@ -1219,6 +1340,7 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
     except Exception:
         pass
     fsid = getattr(_judge_ctx, "fsid", None)
+    engine = _judge_engine()                          # "claude" | "codex" (docs/codex.md §judges)
     auth = _judge_auth(fsid)                          # this call bills what the judged session bills
     try:
         # RATE-LIMIT GATE (the user 2026-07-07), scoped to the calls it can actually starve (the user
@@ -1292,6 +1414,66 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
     sent = time.time()                                # literal wall-clock: the prompt goes to the API now
     rid = _active_begin(judge or tier, fsid, sent)    # live bar starts NOW (deregistered in finally below)
     try:
+        if engine == "codex":
+            # docs/codex.md §Running the judges on Codex — the same bracket (pause skip, debug stash,
+            # live bar), a different one-shot engine. The reply lands in a temp file (-o); `codex exec`
+            # reports no token usage, so the usage row keeps the call's bracket + engine for the
+            # timeline and counts, and leaves tokens/cost null (absent, not faked).
+            os.makedirs(JUDGE_SCRATCH, exist_ok=True)
+            outp = os.path.join(JUDGE_SCRATCH, "codex-%d-%d.out" % (os.getpid(), rid))
+            try:
+                try:
+                    # another vendor's process has no use for the Anthropic key (_judge_env re-injects
+                    # it for key-billed sessions); strip it from the child's environment (PR #885 review)
+                    cenv = {k: v for k, v in env.items() if k != "ANTHROPIC_API_KEY"}
+                    p = subprocess.run(_judge_cmd_codex(model, _codex_effort(effort, tier), outp),
+                                       input=(sys_prompt or "") + "\n\n" + (user or ""),
+                                       capture_output=True, text=True, cwd=JUDGE_SCRATCH, env=cenv,
+                                       timeout=CALL_ALARM_S + 5)
+                except Exception as e:
+                    # the same three traces the claude branch leaves (2026-09-03): the stash the closer's
+                    # sweep-cut keys on, the model-health latch, and the call shape for the grep — without
+                    # them an alarm-killed closer call on this engine walked on exactly as before the fix
+                    _judge_ctx.last_call_fail = {"note": type(e).__name__, "model": model,
+                                                 "kill": isinstance(e, _KILL_EXC)}   # the backstop timer only
+                    _mark_call_failed(model, type(e).__name__)
+                    _log_judge_error(judge or tier, fsid, "call",
+                                     note="%s %s" % (type(e).__name__, _call_shape(model, sys_prompt, user, sent)))
+                    return ""
+                recv = time.time()
+                try:
+                    with open(outp, "r", encoding="utf-8") as f:
+                        reply = f.read().strip()
+                except OSError:
+                    reply = ""
+                if not reply:
+                    # dead/refused call — the -o file is the only success signal; record the evidence, and
+                    # leave the same three traces the claude branch leaves (2026-09-03, see the except above)
+                    fail = "codex empty reply (exit %s)" % getattr(p, "returncode", "?")
+                    _judge_ctx.last_call_fail = {"note": fail, "model": model,
+                                                 "kill": getattr(p, "returncode", None) == _KILL_RC}
+                    # ^ a KILL only if the alarm's signal ended it. This engine has no error-envelope exit: a
+                    #   usage-limit refusal, an auth or network failure all end HERE as a clean nonzero exit with
+                    #   no -o file — the process answering, transient (second review, 2026-09-03)
+                    _mark_call_failed(model, fail)
+                    _log_judge_error(judge or tier, fsid, "call",
+                                     note="%s: %s %s"
+                                          % (fail, ((p.stderr or "") + (p.stdout or "")).strip()[-200:] or "no output",
+                                             _call_shape(model, sys_prompt, user, sent)))
+                    return ""
+                _judge_ctx.last["reply"] = _mid_elide(reply)
+                _log_judge_usage(judge or tier, tier, (model if str(model).startswith("gpt") else "codex-default"),
+                                 fsid, {"duration_ms": int((recv - sent) * 1000)}, sent, recv)
+                _auth_down_clear(fsid)                # a successful billed call clears either engine's latch
+                _mark_call_served(model)              # THIS model serves again → the give-up re-arm edge (the
+                _judge_ctx.last_call_fail = None      # claude branch's pair, review find 2026-09-03: without them a
+                                                      # failed codex call stayed 'degraded' for the process's life)
+                return reply
+            finally:
+                try:
+                    os.unlink(outp)
+                except OSError:
+                    pass
         try:
             _ensure_judge_scratch()                     # 0700 and ours; recreate per call (a purge/rm mid-run)
         except OSError as e:
@@ -1317,9 +1499,11 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
             # _judge_run owns ALL call-level logging (this, the error envelope below, the rate gate above)
             # so callers never double-log: to a caller every failed call is just "", and "call" rows always
             # carry the judge's own name + fsid (pre-07-09 rows said "index"/"triage" with no session).
-            _judge_ctx.last_call_fail = {"note": type(e).__name__, "model": model}
+            _judge_ctx.last_call_fail = {"note": type(e).__name__, "model": model,
+                                         "kill": isinstance(e, _KILL_EXC)}   # the backstop timer only (_call_fail_kill)
             _mark_call_failed(model, type(e).__name__)
-            _log_judge_error(judge or tier, fsid, "call", note=type(e).__name__)
+            _log_judge_error(judge or tier, fsid, "call",
+                             note="%s %s" % (type(e).__name__, _call_shape(model, sys_prompt, user, sent)))
             return ""
         recv = time.time()                            # literal wall-clock: the response is back
         out = p.stdout or ""
@@ -1387,12 +1571,17 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
             # fallback hides the very breakage we need to know about).
             _judge_ctx.last_call_fail = {
                 "note": "the model CLI died with no output (exit %s)" % getattr(p, "returncode", "?"),
-                "model": model}
+                "model": model,
+                "kill": getattr(p, "returncode", None) == _KILL_RC}   # the alarm's signal, and nothing else: a
+            #                                                          clean exit (0: exec failed under the
+            #                                                          wrapper; 1: a startup crash) or another
+            #                                                          signal is the process answering (transient)
             _mark_call_failed(model, _judge_ctx.last_call_fail["note"])
             _log_judge_error(judge or tier, fsid, "call",
-                             note="empty stdout (exit %s): %s"
+                             note="empty stdout (exit %s): %s %s"
                                   % (getattr(p, "returncode", "?"),
-                                     (getattr(p, "stderr", "") or "").strip()[-200:] or "no stderr"))
+                                     (getattr(p, "stderr", "") or "").strip()[-200:] or "no stderr",
+                                     _call_shape(model, sys_prompt, user, sent)))
             return ""
         _judge_ctx.last["reply"] = _mid_elide(out)
         _mark_call_served(model)                      # a raw reply is still a served call (recovery edge)
@@ -4464,16 +4653,16 @@ def rollup_status(store, session_closed, now=None):
     # removal follows the born-done backlog self-heal precedent — an umbrella has no verdicts of
     # its own to preserve.
     #
-    # THE SWEEP YIELDS TO THE USER'S UNDO (2026-08-26, the T101 fold review): archives keep their
-    # containers, so UndoClear can pull a pre-T101 umbrella back into the live store — and the
-    # sweep was eating the card the user had JUST restored, promoting its children in its place.
-    # The un-clear is NEWER information than the standing purge (a writer whose evidence predates
-    # the diary stands down): a container whose latest clear-family diary row is the user's
-    # undo-restore (the reopen/undo=True row _mark_nodes_cleared's dual-write and the unclear
-    # override replay both record) is SPARED — it stays the card the user asked back for, until
-    # they clear it again. A flag-CLEARED container is spared too: it is already off the board and
-    # the compactor archives it whole; dissolving it in that window would promote its children out
-    # of the user's seal. Peer-adopted and legacy copies carry neither mark and dissolve as before.
+    # THE SWEEP YIELDS TO THE USER'S UNDO: archives keep their containers, so UndoClear can pull a
+    # pre-T101 umbrella back into the live store — and the sweep was eating the card the user had
+    # JUST restored, promoting its children in its place. The un-clear is NEWER information than
+    # the standing purge (a writer whose evidence predates the diary stands down): a container
+    # whose latest clear-family diary row is the user's undo-restore (the reopen/undo=True row
+    # _mark_nodes_cleared's dual-write and the unclear override replay both record) is SPARED — it
+    # stays the card the user asked back for, until they clear it again. A flag-CLEARED container
+    # is spared too: it is already off the board and the compactor archives it whole; dissolving
+    # it in that window would promote its children out of the user's seal. Peer-adopted and
+    # legacy copies carry neither mark and dissolve as before.
     def _undo_restored(v):
         latest = ""
         latest_t = -1
@@ -5381,6 +5570,44 @@ _namefp_memo = {}    # names/ entry -> (its mtime, resolved project dir or None)
 #                      the number of live names/ entries, never by uptime.
 
 
+def _codex_rows(cutoff, seen):
+    """Discovery rows for Codex sessions — (fsid=STABLE SID, materialized path, anchor sid, name),
+    read from the Codex backend's registry (plans/codex-backend.md). The names/ loop above skips
+    these naturally (no <sid>.jsonl under the Claude roots); this is the ONE extra fact the read
+    side needs. Dead sessions keep discovering like dead tmux/SDK ones do — history stays browsable;
+    the WINDOW cutoff is what ages them out. No forks: a Codex thread id is stable across resumes.
+
+    The identity slot is the STABLE SID, never the app-server thread id: liveness
+    (CodexBackend.live_sessions) keys on the SID, so a TID here meant live Codex rows never joined
+    the alive set, the picker offered a not-running TID row, and reviving it shelled
+    `romp resume <TID>` through the tmux path — the TID rides only in the transcript PATH, which
+    is the one place it means anything to a reader (the v1.3.13 audit's P1, executed)."""
+    try:
+        reg = json.loads((CODEXDIR / "registry.json").read_text())
+    except Exception:
+        return []
+    rows = []
+    for sid, r in sorted(reg.items()):
+        if not isinstance(r, dict):
+            continue                      # the corrupt-row shape the migrations survive must
+        #                                   not kill every cold discover() one call later (the
+        #                                   r39 verification, executed: feed/picker/judge all
+        #                                   share this walk)
+        tid, cwd = r.get("tid"), r.get("cwd") or ""
+        if not tid or not cwd:
+            continue
+        p = CODEXDIR / "projects" / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)) / (tid + ".jsonl")
+        ps = str(p)
+        try:
+            mt = p.stat().st_mtime
+        except OSError:
+            continue
+        if mt >= cutoff and ps not in seen:
+            seen.add(ps)
+            rows.append((sid, p, sid, r.get("name", "")))
+    return rows
+
+
 def _discover_fingerprint():
     """A cheap structural signature of the transcript namespace that changes EXACTLY when discover()'s
     output would: a session ADDED/RENAMED (a names/ entry's set or mtime changes) or a FORK appearing (a
@@ -5402,7 +5629,7 @@ def _discover_fingerprint():
     MTIME is re-stat'd every call without exception: that is the fork signal this whole fingerprint exists to
     catch, and caching it would blind discover() to new forks."""
     try:
-        entries = sorted(NAMES.iterdir())
+        entries = sorted(e for e in NAMES.iterdir() if not e.name.endswith(".tmp"))
     except OSError:
         return None
     fp = []
@@ -5433,6 +5660,12 @@ def _discover_fingerprint():
         live = {row[0] for row in fp}                           # walk → evict it, so the memo stays bounded
         for name in [k for k in _namefp_memo if k not in live]:  # by the sessions that currently EXIST
             del _namefp_memo[name]
+    # the Codex namespace: a session add/rename/kill rewrites registry.json (its mtime is the
+    # signal) — the same add-not-append semantics as the Claude roots above.
+    try:
+        fp.append(("codex-reg", (CODEXDIR / "registry.json").stat().st_mtime))
+    except OSError:
+        pass
     return tuple(fp)
 
 
@@ -5512,6 +5745,8 @@ def _discover_impl(now, window=None, forks=True):
 
     for f in sorted(NAMES.iterdir()):
         sid = f.name
+        if sid.endswith(".tmp"):
+            continue                      # a writer's staging file, never a session
         try:
             parts = f.read_text().rstrip("\n").split("\t")
         except Exception:
@@ -5550,6 +5785,7 @@ def _discover_impl(now, window=None, forks=True):
                 t = _custom_title(path_str); title_memo[path_str] = t
             if t == name:
                 seen.add(path_str); out.append((stem, Path(path_str), sid, name))
+    out.extend(_codex_rows(cutoff, seen))   # Codex sessions join discovery (docs/codex.md)
     return out
 
 
@@ -5714,26 +5950,15 @@ def _session_closed(session):
     return bool(last.get("ended")) or any(a["type"] == "idle" for a in last["atoms"])
 
 
-_BG_SCAN_CACHE = {}                       # path -> ((mtime, size), running tasks) — mirrors the kernel's _bg_scan_cached
+_BG_SCAN_CACHE = {}                       # path -> em.fold_records entry (running tasks) — mirrors the kernel's _bg_scan_cached
 
 
 def _bg_unresolved(path):
-    """The transcript's still-RUNNING background launches (em._scan_bg_tasks pairing), mtime+size-cached.
+    """The transcript's still-RUNNING background launches (em._scan_bg_tasks pairing), folded append-incrementally.
     The DURABLE awaited-work source: the pairing lives in the transcript, so unlike any live backend
     snapshot it survives a kernel restart and covers tmux CLIs whose tasks outlive the kernel."""
-    try:
-        st = os.stat(path)
-        key = (st.st_mtime, st.st_size)
-    except OSError:
-        return []
-    hit = _BG_SCAN_CACHE.get(path)
-    if hit and hit[0] == key:
-        tasks = hit[1]
-    else:
-        tasks = em._scan_bg_tasks(path)
-        if len(_BG_SCAN_CACHE) > 256:     # bounded by fleet size; a wholesale clear on overflow is fine
-            _BG_SCAN_CACHE.clear()
-        _BG_SCAN_CACHE[path] = (key, tasks)
+    # folds append-incrementally since 2026-09-03: a changed transcript steps only its appended records
+    tasks = em.scan_bg_tasks_cached(path, _BG_SCAN_CACHE)
     # expiry is applied OUTSIDE the cache with a fresh now: a monitor whose CLI died mid-watch has no
     # terminal record, and an idle transcript never busts the mtime key — a cached verdict would say
     # "running" forever (see em._bg_expired)
@@ -7331,50 +7556,6 @@ def _queued_sibling(store, seg_by_id, seg_id):
     return None
 
 
-def _latch_ask_anchors(fsid, session, store):
-    """LATCH the ask-unit exemption's anchor verdict durably on the node (round 3, 2026-08-26,
-    item 1). The kernel's _pure_delegation_top must decide "is this promptUuid-anchored top the
-    dictated ask?" by resolving the anchor RECORD — but it reads the CACHED parse only
-    (build_feed's cold-start contract) and fails open on doubt, so a machine-anchored coordination
-    card flapped shown→hidden on every restart/cache-cold beat: cache temperature, not new
-    information (the cards-move-on-new-information rule). The verdict is a fact about a record
-    that never changes once readable, so resolve it ONCE from the judge's own WARM parse and stamp
-    `askAnchor` on the node: 'human' (the dictated ask), 'machine' (a peer mail, the agent's own
-    atom, romp bookkeeping — _human_prompt_record, the one definition of 'dictated'), or 'absent'
-    (the stitched chain no longer holds the uuid: rewound/compacted/pre-/clear — durable doubt,
-    which keeps failing open exactly as the per-beat read did, just stably). The write rides the
-    planner apply path (_plan_session's end-of-pass rollup+save) — judge-side, the goal store's
-    normal writer; build_feed stays read-only, and the only judge-write pin (ADR 0001) is about
-    the USER-TODO store, not goals. Only the tops the exemption actually consults are latched:
-    parentless, promptUuid-bearing, no origin (a courier top's evidence is T105's userAsk, never
-    its mail anchor), not itself a tracker. A parse with NO atoms at all latches nothing — a
-    missing/unreadable transcript is no evidence of absence, and 'absent' must never be minted
-    from one. Returns the number latched; the caller's unconditional save persists them."""
-    cands = [nd for nd in store.get("nodes", {}).values()
-             if isinstance(nd, dict) and nd.get("parentId") is None and nd.get("promptUuid")
-             and not isinstance(nd.get("origin"), dict)
-             and not isinstance(nd.get("handoff"), dict)
-             and not nd.get("askAnchor")]
-    if not cands:
-        return 0
-    by_uuid = {}
-    for turn in session.get("turns") or []:
-        for a in turn.get("atoms") or []:
-            if a.get("uuid"):
-                by_uuid[a["uuid"]] = a
-    if not by_uuid:
-        return 0
-    n = 0
-    for nd in cands:
-        a = by_uuid.get(nd["promptUuid"])
-        if a is None:
-            nd["askAnchor"] = "absent"
-        else:
-            nd["askAnchor"] = "human" if _human_prompt_record(a, fsid) else "machine"
-        n += 1
-    return n
-
-
 def _mirror_mint_ctx(session, store, fsid, path, latest_seg, now):
     """The lazy (serving, user_ask) resolver for mirror mints (T137) — memoized, so the transcript
     walk, the sender-store join, and the chain walk run at most once per pass, and only on a pass
@@ -7403,6 +7584,49 @@ def _mirror_mint_ctx(session, store, fsid, path, latest_seg, now):
         memo["v"] = (serv, ua)
         return memo["v"]
     return ctx
+
+
+def _latch_ask_anchors(fsid, session, store):
+    """LATCH the ask-unit exemption's anchor verdict durably on the node. The kernel's
+    _pure_delegation_top must decide "is this promptUuid-anchored top the dictated ask?" by
+    resolving the anchor RECORD — but it reads the CACHED parse only (build_feed's cold-start
+    contract) and fails open on doubt, so a machine-anchored coordination card would flap
+    shown→hidden on every restart/cache-cold beat: cache temperature, not new information (the
+    cards-move-on-new-information rule). The verdict is a fact about a record that never changes
+    once readable, so resolve it ONCE from the judge's own WARM parse and stamp `askAnchor` on the
+    node: 'human' (the dictated ask), 'machine' (a peer mail, the agent's own atom, romp
+    bookkeeping — _human_prompt_record, the one definition of 'dictated'), or 'absent' (the
+    stitched chain no longer holds the uuid: rewound/compacted/pre-/clear — durable doubt, which
+    keeps failing open exactly as the per-beat read did, just stably). The write rides the planner
+    apply path (_plan_session's end-of-pass rollup+save) — judge-side, the goal store's normal
+    writer; build_feed stays read-only. Only the tops the exemption actually consults are latched:
+    parentless, promptUuid-bearing, no origin (a courier top's evidence is T105's userAsk, never
+    its mail anchor), not itself a tracker. A parse with NO atoms at all latches nothing — a
+    missing/unreadable transcript is no evidence of absence, and 'absent' must never be minted
+    from one. Returns the number latched; the caller's unconditional save persists them."""
+    cands = [nd for nd in store.get("nodes", {}).values()
+             if isinstance(nd, dict) and nd.get("parentId") is None and nd.get("promptUuid")
+             and not isinstance(nd.get("origin"), dict)
+             and not isinstance(nd.get("handoff"), dict)
+             and not nd.get("askAnchor")]
+    if not cands:
+        return 0
+    by_uuid = {}
+    for turn in session.get("turns") or []:
+        for a in turn.get("atoms") or []:
+            if a.get("uuid"):
+                by_uuid[a["uuid"]] = a
+    if not by_uuid:
+        return 0
+    n = 0
+    for nd in cands:
+        a = by_uuid.get(nd["promptUuid"])
+        if a is None:
+            nd["askAnchor"] = "absent"
+        else:
+            nd["askAnchor"] = "human" if _human_prompt_record(a, fsid) else "machine"
+        n += 1
+    return n
 
 
 def _plan_session(fsid, path, now):
@@ -7892,9 +8116,9 @@ def _plan_session(fsid, path, now):
         #   segment's chain liveness, not about anchor suitability.
         _group_store(store, fsid, now)
         save_goals(fsid, store)
-    _latch_ask_anchors(fsid, session, store)          # durable ask-unit anchor verdicts (round 3,
-    #                                                   item 1) — no-LLM, idempotent (latched nodes
-    #                                                   skip), persisted by the save just below
+    _latch_ask_anchors(fsid, session, store)          # durable ask-unit anchor verdicts — no LLM,
+    #                                                   idempotent (latched nodes skip), persisted
+    #                                                   by the save just below
     rollup_status(store, _session_settled(fsid, path, session, store))
     save_goals(fsid, store)
     return placed
@@ -8375,15 +8599,15 @@ def _merge_nodes(store, dupe_id, surv_id, t, why):
         surv["promptUuid"] = dupe["promptUuid"]
     if not surv.get("userAsk") and dupe.get("userAsk"):
         surv["userAsk"] = dupe["userAsk"]
-    # THE DELEGATION IDENTITY RIDES THE MERGE (round 3, 2026-08-26, item 5): origin, links, askRef.
-    # A dispatch's msgId must stay JOINABLE on the surviving node — apply_courier's idempotency
-    # scan, run_propagate's back-link, and its dismissal arm all key on origin/links — so dropping
-    # them stranded the sender's non-quiet tracker FOREVER (no recipient node carried the msgId,
-    # and the reply sweep defers to a back-link that could no longer fire); a dropped askRef
-    # reopened duplicate minting for the next dispatch of the same ask. The survivor keeps its own
-    # birth when it has one — origin means "BORN from that delegation" and stays truthful — and the
-    # dupe's origin then rides links[], the same additional-dispatch shape the ask dedupe writes;
-    # links union by msgId; askRef fills only a lack, like quote/promptUuid above.
+    # THE DELEGATION IDENTITY RIDES THE MERGE: origin, links, askRef. A dispatch's msgId must stay
+    # JOINABLE on the surviving node — apply_courier's idempotency scan, run_propagate's back-link,
+    # and its dismissal arm all key on origin/links — so dropping them stranded the sender's
+    # non-quiet tracker FOREVER (no recipient node carried the msgId, and the reply sweep defers to
+    # a back-link that could no longer fire); a dropped askRef reopened duplicate minting for the
+    # next dispatch of the same ask. The survivor keeps its own birth when it has one — origin
+    # means "BORN from that delegation" and stays truthful — and the dupe's origin then rides
+    # links[], the same additional-dispatch shape the ask dedupe writes; links union by msgId;
+    # askRef fills only a lack, like quote/promptUuid above.
     do = dupe.get("origin")
     if isinstance(do, dict):
         if not isinstance(surv.get("origin"), dict):
@@ -9445,7 +9669,13 @@ def _close_turn(store, turn, samples=None, seg_by_id=None):
     clear-wrap — a reply that accounts for the session's work as a whole — every open working TOP rides
     the menu too (_status_report_candidates), so one all-shipped reply can settle every card it covers,
     not just the goal it was asked about. Turn-scoped and state-free: closedSig already one-shots the
-    closer per turn."""
+    closer per turn.
+
+    RIDER CAP (2026-09-03): the RE-NOMINATING riders behind the turn's own menu (lifted → steps-finished
+    → starved) are cut to the room CLOSE_RIDER_CAP leaves after the status riders, which always ride
+    (one-shot per status turn: cut, they would be lost, not deferred) — a drain across landed calls, never
+    a bound on the turn's own goals or on successful closes (see the constant and the block below).
+    The menu's SHAPE (counts only) rides _judge_ctx.close_menu for a failed call's sweep-cut row."""
     menu = _turn_menu(turn, store)
     n_touched = len(menu)                              # the TURN's own goals; candidates ride behind them
     seen_ids = {nd["id"] for nd in menu}
@@ -9456,6 +9686,37 @@ def _close_turn(store, turn, samples=None, seg_by_id=None):
     status = [nd for nd in _status_report_candidates(store, turn) if nd["id"] not in seen_ids]
     seen_ids |= {nd["id"] for nd in status}
     lifted = [(nd, why) for nd, why in _lift_riders(store) if nd["id"] not in seen_ids]
+    # RIDER CAP (2026-09-03, CLOSE_RIDER_CAP): the turn's own menu rides whole, and so do the STATUS
+    # riders — turn-scoped and ONE-SHOT (no watermark: closedSig one-shots the closer per turn,
+    # _status_report_candidates), so a status rider cut here would never be judged from THIS reply, the
+    # one the user's question was answered in (a board with more open tops than the cap would lose the
+    # same tops on every status turn — lost, not deferred). Only the RE-NOMINATING riders — lifted,
+    # steps-finished, starved — are cut, to whatever room the cap leaves after the status riders (none,
+    # on a status turn with more tops than the cap: that call is as large as the board, once per status
+    # turn). They come back until a LANDED reply stamps closerLookT below (_look_stamp gates all three
+    # channels), so what is cut rides a LATER landed call — later, not always the next: a verdict a
+    # landed call files is a newer `at` in that top's subtree, which re-arms its earlier-stamped siblings
+    # (_filed_since), and those, older-minted, re-enter ahead of the cut tail. The backlog still drains
+    # (each landed call stamps its riders; nothing is lost; no successful close is ever capped). Channel
+    # membership (the dedupe order above) and the menu's layout are unchanged: only which riders survive
+    # is decided here.
+    # NEVER-LOOKED FIRST (review find, 2026-09-03): a landed reply's own filing re-arms the riders an EARLIER
+    # call stamped (_filed_since), and those are older-minted, so under plain mint order they would outrank
+    # riders that have never ridden for as long as the top keeps receiving filings — a backlog past twice
+    # the room never drained while the effort was active. Unstamped riders take the room first; inside each
+    # group the channel order (lifted → steps-finished → starved) and the mint order are unchanged.
+    ranked = [(0, nd) for nd, _ in lifted] + [(1, nd) for nd in cands] + [(2, nd) for nd in starved]
+    ranked.sort(key=lambda p: (bool(p[1].get("closerLookT")), p[0], p[1].get("t", 0)))
+    renom = [nd for _, nd in ranked]
+    n_cut = 0
+    if CLOSE_RIDER_CAP is not None:
+        room = max(0, CLOSE_RIDER_CAP - len(status))
+        if len(renom) > room:
+            keep = {nd["id"] for nd in renom[:room]}
+            n_cut = len(renom) - room
+            cands = [nd for nd in cands if nd["id"] in keep]
+            starved = [nd for nd in starved if nd["id"] in keep]
+            lifted = [(nd, why) for nd, why in lifted if nd["id"] in keep]
     menu = menu + cands + starved + status + [nd for nd, _ in lifted]
     if not menu:
         return []
@@ -9534,21 +9795,31 @@ def _close_turn(store, turn, samples=None, seg_by_id=None):
                       "leaving it open is a fine answer if the history is not plain." % i)
     lift_text = "\n".join("#%d: %s" % (i, str(why).strip()[:220])
                           for i, why in lflagged if str(why or "").strip())
+    # the menu's SHAPE (counts only, never text) rides the per-thread ctx so that if this call FAILS,
+    # _close_session's sweep-cut row can say what the call carried
+    _judge_ctx.close_menu = {"touched": n_touched, "cands": len(cands), "starved": len(starved),
+                             "status": len(status), "lifted": len(lifted), "cut": n_cut}
     raw = closer_llm(_unit_text(turn["atoms"]), menu_text, hist, lift_text)
     out = _parse_close(raw, len(menu))
     if out is None:
         if not raw:
-            return None                                # the CALL failed (logged by _judge_run) → retry next
-            #                                            pass; never counts toward the give-up cap
+            return None                                # the CALL failed (logged by _judge_run): _close_session
+            #                                            cuts the session's walk, and strikes THIS turn only
+            #                                            for a KILL (_call_fail_kill) — any other failure
+            #                                            retries next pass with no strike
         _log_judge_error("closer", store.get("rompUuid"), "parse", note="reply tail: %r" % raw[-160:],
                          goal=[nd["id"] for nd in menu])
         fails = store.setdefault("closeFails", {})
-        fails[turn["id"]] = fails.get(turn["id"], 0) + 1
+        prev = fails.get(turn["id"])
+        # a parse streak of its own (an int): a dict here is a NO-REPLY streak — a kill or a safeguards
+        # refusal, see _close_strike — that this served reply just ended, so the parse count starts at 1
+        # (before kinds were kept apart this line did `dict + 1` on a safeguards record: a TypeError)
+        fails[turn["id"]] = (prev + 1) if isinstance(prev, int) else 1
         if fails[turn["id"]] >= JUDGE_FAIL_CAP:
             fails.pop(turn["id"], None)
             _log_judge_error("closer", store.get("rompUuid"), "give-up",
                              goal=[nd["id"] for nd in menu], note="%d parse rejects on turn %s; skipping it until the turn gains atoms"
-                                  % (JUDGE_FAIL_CAP, str(turn["id"])[:12]))
+                                  % (JUDGE_FAIL_CAP, _turn_tag(turn["id"])))
             return []                                  # give up on THIS turn: no verdicts, and the caller
             #                                            marks it closed at its current size — a new atom
             #                                            changes the size signature and re-judges (event re-arm)
@@ -9633,6 +9904,55 @@ def _turn_open(turn, turns):
             and not any(a["type"] == "idle" for a in turn["atoms"]))
 
 
+def _call_fail_kill(last):
+    """True when `last`, _judge_run's per-thread failure stash, records a KILL: the call RAN TO THE TIMER,
+    and nothing else (review finds, 2026-09-03, twice). Two shapes, both stamped by _judge_run as
+    `kill: True` and read here as that flag alone — never a match on note text: the perl `alarm`
+    wrapper's SIGALRM landing on the exec'd child, seen as returncode == -signal.SIGALRM (_KILL_RC) at the
+    two empty-output exits (the claude dead-CLI exit, the codex empty-reply exit); and
+    subprocess.TimeoutExpired (_KILL_EXC, the CALL_ALARM_S + 5 backstop) in either engine's exception
+    handler. Why the timer and only the timer: served duration tracks OUTPUT size (_call_shape), so a
+    call the timer ends is prompt-shaped — plausibly deterministic at one (turn, fp), the way a safeguards
+    refusal is at one prompt — and that is what justifies adopting a turn without verdicts. Everything
+    else is the API or the process ANSWERING, with an error in place of a reply, and says nothing about
+    the prompt: an error envelope (a 529, an auth error, a 429); a clean exit of any code with empty
+    output (0: exec failed under the wrapper — a missing binary; 1: a startup crash, or on codex — which
+    has no envelope exit — a usage-limit refusal, an auth or network failure); any other signal; any other
+    exception. Those stamp no flag and read transient here: they still cut the session's walk, loudly, and
+    leave no strike — their recovery is the storm ending or the install being fixed, and struck against a
+    turn, either would adopt a live turn for good after three passes (an end-known turn of a live session
+    never grows). Only kills are struck (_close_strike, the cut arm of _close_session). The producer knows
+    the class; this reader only asks."""
+    return isinstance(last, dict) and bool(last.get("kill"))
+
+
+def _close_strike(rec, fp, kind):
+    """The closer's strike count for one turn after one more NO-REPLY strike of `kind` — "safeguards" (the
+    filter refused this turn's content) or "kill" (the call ran to the timer: _call_fail_kill) — on a
+    turn of `fp` atoms, given the turn's current `closeFails` record. closeFails holds ONE record per
+    turn, so the rule is: the latest kind wins, and nothing adds up. The count continues only when the
+    record is the same kind at the same size; a record of another kind, or from another size (the turn
+    grew — a different prompt, new evidence), or no dict at all (the parse path's int) starts over at 1,
+    and the caller's new record replaces the old. Kinds never add up because they are different
+    evidence: a refusal is deterministic per prompt and a kill is only plausibly so, so two kills and a
+    refusal would tombstone a turn the filter refused once, and the row would say three refusals. A
+    parse reject is the third kind and lives outside this helper (an int, _close_turn): the model
+    ANSWERED that prompt, which ends any no-reply streak, and one no-reply never counts toward the parse
+    cap. A transient call failure is no strike of any kind and leaves the record as it stands (why: the
+    cut arm). A record with no kind predates kinds and was written by the safeguards arm, the only
+    writer then: it reads as safeguards and continues that count at the same fp."""
+    if not isinstance(rec, dict) or rec.get("fp") != fp or rec.get("kind", "safeguards") != kind:
+        return 1
+    return int(rec.get("fails") or 0) + 1
+
+
+def _turn_tag(tid):
+    """A turn id for a log row. Ids are `sid:t:hash` (event_model), so the first 12 chars name only the
+    session — the same for every turn of it. The tail tells turns apart; the row's fsid already has the sid."""
+    s = str(tid)
+    return s.split(":", 1)[1] if ":" in s else s[:12]
+
+
 def _closed_turns(store):
     """Turn ids the closer has already processed. Reads `closedTurns`, falling back to the pre-rename
     `sweptTurns` key so existing stores don't re-run the whole backlog after the rename."""
@@ -9670,7 +9990,36 @@ def _close_session(fsid, path, now, cap=CLOSE_FAIRNESS):
     goal sticks blocked on an already-answered question (the user 2026-06-26, via bugs: g47). closedSig
     fingerprints each turn's atom count at close; a LARGER count next pass means the turn grew → re-judge
     it. Legacy turns (closed before this, no sig) are assumed unchanged so we don't re-judge the whole
-    backlog. Returns the node ids newly completed."""
+    backlog.
+
+    A FAILED CALL ends this session's walk for the pass (2026-09-03): every end-known turn is visited each
+    pass UNTIL the first failed call — a parse reject (the model answered THIS turn's prompt) and a
+    pause-skip (no call was made) still walk on. The 192-kill incident was this loop `continue`-ing past
+    each alarm kill to the next turn, whose identical over-full menu died identically: 6h22m of every
+    judge for every session silent, since run_close awaits every session's walk. The discriminator is
+    _judge_ctx.last_call_fail — a dict only when _judge_run recorded a call-level failure (a served reply
+    clears it) — NOT `res is None`, which a parse reject under the cap also returns. The safeguards
+    tombstone keeps its own arm. A loop `break`, never a return: the store still saves below and
+    _death_finalize still runs — told NOT settled, so a dead session's marker is never finalized off a
+    walk that left turns unswept (they are reachable only through the death drain).
+
+    REPEATED KILLS ON ONE TURN GIVE IT UP (2026-09-03, the follow-up the sweep-cut row named): a cut by
+    a KILL — the call ran to the timer: the alarm's signal as its exit code, or TimeoutExpired
+    (_call_fail_kill) — is also struck against the turn it died on, at its current size, in a streak of
+    its own kind (_close_strike). The walk is cut at a failed call UNTIL that turn's kills reach
+    DISTILL_FAIL_CAP; then the turn is adopted exactly as the safeguards give-up adopts one — swept +
+    closedSig at fp, no verdicts — with one loud give-up row, and the walk CONTINUES to the next turn in
+    the same pass. Without it a live session whose head turn's call died the same way every pass (a menu
+    the timer cannot fit even capped, a prompt the model never finishes) cost one doomed call per pass
+    forever, and its later end-known turns were never reached, since every walk ended at the head; a dead
+    session at least rotated to the back of the death drain. A cut by any OTHER failure — an error
+    envelope (a 529, an auth error), a process that ended any way other than the timer (a crash, a
+    refusal, a missing binary), another exception — is the API or the process answering: it cuts the
+    walk just as loudly but is no strike, and leaves a kill streak exactly as it stands (a storm interleaved
+    with kills is evidence about the API, not about the prompt; erasing the streak would lose what the
+    kills said, and counting it would tombstone a live turn off a thirty-second storm). The re-arm event
+    is the turn GROWING (the closedSig growth check), new evidence, never a clock; a call for the turn
+    LANDING retires the record. Returns the node ids newly completed."""
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     session = parsed_session(fsid, [path], now)
     store = load_goals(fsid)
@@ -9678,8 +10027,8 @@ def _close_session(fsid, path, now, cap=CLOSE_FAIRNESS):
     swept = _closed_turns(store)
     sig = dict(store.get("closedSig") or {})
     turns = session["turns"]
-    newly, did = [], 0
-    for turn in turns:
+    newly, did, cut = [], 0, False
+    for ti, turn in enumerate(turns):
         if _turn_open(turn, turns):
             continue
         tid, fp = turn["id"], len(turn["atoms"])
@@ -9688,6 +10037,7 @@ def _close_session(fsid, path, now, cap=CLOSE_FAIRNESS):
         if cap is not None and did >= cap:             # cap is None by default now (no per-pass close cap);
             break                                      # an explicit caller (a test) can still bound a backfill
         _judge_ctx.last_call_fail = None               # a stale stash must never charge THIS turn (below)
+        _judge_ctx.close_menu = None                   # …nor a stale menu shape describe this turn's call
         res = _close_turn(store, turn, seg_by_id=seg_by_id)
         if res is None:
             # SAFEGUARDS TOMBSTONE (the user 2026-08-18): a safeguards refusal is the filter ruling on
@@ -9697,14 +10047,15 @@ def _close_session(fsid, path, now, cap=CLOSE_FAIRNESS):
             # at the cap, adopt the turn exactly as a success would (swept + closedSig at fp), loudly —
             # the turn GROWING then re-judges it through the same closedSig growth check that re-judges
             # any closed turn, so the re-arm event is new evidence, never a clock. Transient failures
-            # (529s, timeouts) keep the plain retry: their recovery is the storm ending, and each pass
-            # costs one call, not a give-up.
+            # (an error envelope: a 529, an auth error) keep the plain retry: their recovery is the storm
+            # ending, and each pass costs one call, not a give-up. A KILL streak — the call running to
+            # the timer, prompt-shaped — takes the cut arm below and its own give-up.
             if not getattr(_judge_ctx, "paused", False):
                 last = getattr(_judge_ctx, "last_call_fail", None)
-                if isinstance(last, dict) and "safeguards flagged" in str(last.get("note") or ""):
+                fail_note = str(last.get("note") or "") if isinstance(last, dict) else ""
+                if isinstance(last, dict) and "safeguards flagged" in fail_note:
                     fails = dict(store.get("closeFails") or {})
-                    rec = fails.get(tid) if isinstance(fails.get(tid), dict) else None
-                    k = (rec.get("fails", 0) + 1) if rec and rec.get("fp") == fp else 1
+                    k = _close_strike(fails.get(tid), fp, "safeguards")   # its own streak: a cut never counts here
                     if k >= DISTILL_FAIL_CAP:
                         swept.add(tid); sig[tid] = fp; did += 1
                         fails.pop(tid, None)
@@ -9712,8 +10063,70 @@ def _close_session(fsid, path, now, cap=CLOSE_FAIRNESS):
                                          note="%d safeguards refusals on this turn's content; swept "
                                               "without verdicts; the turn growing re-judges it" % k)
                     else:
-                        fails[tid] = {"fp": fp, "fails": k}
+                        fails[tid] = {"fp": fp, "fails": k, "kind": "safeguards"}
                     store["closeFails"] = fails
+                elif isinstance(last, dict):
+                    # SWEEP CUT (2026-09-03): the CALL failed — a dead CLI (the alarm kill), a subprocess
+                    # error, an API error envelope — evidence about this session's calls, not about this
+                    # one turn. Every remaining end-known turn would cost a call shaped like the one that
+                    # just died (its riders re-nominate until a LANDED reply stamps them, so the same
+                    # menu rides every turn); one session's 192 consecutive kills held every judge for
+                    # every session silent for 6h22m. End THIS session's walk for the pass, loudly, with
+                    # the shape of what was sent. A `break`, never a return: the store must still save
+                    # and _death_finalize must still run below.
+                    # …AND, FOR A KILL, STRIKE THE TURN (2026-09-03, the follow-up that row named): a
+                    # call that ran TO THE TIMER — the alarm's signal as its exit code, or TimeoutExpired
+                    # (_call_fail_kill) — is struck against this turn at its current size, the way
+                    # the arm above strikes a refusal, in its own streak (kind "kill" — a parse reject
+                    # means the model answered, a kill means it never did; _close_strike keeps the kinds
+                    # apart). Below the cap the walk is cut as above and the turn keeps the
+                    # retry-next-pass contract. AT the cap the turn is adopted exactly as the safeguards
+                    # give-up adopts one — swept + closedSig at fp, no verdicts — loudly, and the walk goes
+                    # ON to the next turn in this same pass: a live session whose head turn's call died
+                    # the same way every pass was cut at that turn every pass, so its later end-known
+                    # turns were never reached. The re-arm is the turn GROWING (the closedSig growth
+                    # check): new evidence, never a clock. A landed call for the turn retires the record
+                    # (below), as it does the parse strikes. Any OTHER failure — an error envelope, a
+                    # process that ended any other way (a crash, a refusal, a missing binary), another
+                    # exception: the API or the process answering — is TRANSIENT (review finds,
+                    # 2026-09-03: before them a thirty-second 529 storm, then a broken install, would have
+                    # adopted a live turn for good): it cuts the walk just as loudly, is no strike, and
+                    # leaves a kill streak as it stands — evidence about the API says nothing about the
+                    # prompt, so it neither adds to what the kills said nor erases it.
+                    kill = _call_fail_kill(last)
+                    fails = dict(store.get("closeFails") or {})
+                    k = _close_strike(fails.get(tid), fp, "kill") if kill else 0
+                    shape = getattr(_judge_ctx, "close_menu", None)
+                    shape_s = ("; menu %d own + %d steps-finished + %d starved + %d status + %d lifted, "
+                               "%d rider(s) cut" % (shape["touched"], shape["cands"], shape["starved"],
+                                                    shape["status"], shape["lifted"], shape["cut"])
+                               if isinstance(shape, dict) else "")
+                    if kill and k >= DISTILL_FAIL_CAP:
+                        swept.add(tid); sig[tid] = fp; did += 1
+                        fails.pop(tid, None)
+                        store["closeFails"] = fails
+                        _log_judge_error("closer", fsid, "give-up",
+                                         note="%d killed calls on turn %s at this size: %s (model %s%s); swept "
+                                              "without verdicts; the turn growing re-judges it, and the "
+                                              "walk goes on to the session's later turns"
+                                              % (k, _turn_tag(tid), fail_note[:160], last.get("model"), shape_s))
+                    else:
+                        if kill:
+                            fails[tid] = {"fp": fp, "fails": k, "kind": "kill"}
+                            store["closeFails"] = fails
+                            klass = "kill %d of %d on this turn at this size" % (k, DISTILL_FAIL_CAP)
+                        else:
+                            klass = "transient: no strike, retry next pass"
+                        remaining = sum(1 for t in turns[ti + 1:]
+                                        if not _turn_open(t, turns)
+                                        and not (t["id"] in swept
+                                                 and sig.get(t["id"], len(t["atoms"])) == len(t["atoms"])))
+                        _log_judge_error("closer", fsid, "sweep-cut",
+                                         note="%d end-known turn(s) left unswept behind turn %s: %s (model %s%s); %s"
+                                              % (remaining, _turn_tag(tid), fail_note[:160],
+                                                 last.get("model"), shape_s, klass))
+                        cut = True
+                        break
             continue                                   # LLM/parse failed → leave unswept, retry next pass
         newly += res
         if isinstance(store.get("closeFails"), dict):
@@ -9724,7 +10137,12 @@ def _close_session(fsid, path, now, cap=CLOSE_FAIRNESS):
     settled = _session_settled(fsid, path, session, store)
     rollup_status(store, settled)
     save_goals(fsid, store)
-    _death_finalize(fsid, store, settled)             # the death marker's one-shot epilogue (2026-08-13)
+    # A CUT walk left end-known turns unswept, and a dead session is swept ONLY through the death drain
+    # (_death_pending skips finalized markers): finalizing its marker now would strand those turns for
+    # good (review find, 2026-09-03). The one-shot epilogue waits for a pass that walks to the end.
+    _death_finalize(fsid, store, settled and not cut)  # the death marker's one-shot epilogue (2026-08-13)
+    if cut:
+        _death_rotate(fsid)                           # …and a cut dead session waits its turn behind the others
     return newly
 
 
@@ -9732,7 +10150,10 @@ DEATH_DRAIN_PER_PASS = CONCURRENCY   # a QUEUE-DRAIN bound on death-pending fina
 #   NOT a fairness cap on live sessions (those were removed 2026-06-30 and stay removed): the pending
 #   set is a finite backlog that strictly shrinks (every drained marker gains endedAt, superseded ones
 #   retire), so the bound only spreads the one-time upgrade backfill over successive passes instead of
-#   letting the first post-upgrade pass submit hundreds of dead stores at once.
+#   letting the first post-upgrade pass submit hundreds of dead stores at once. ONE exception (2026-09-03):
+#   a marker whose walk was sweep-CUT stays pending (its turns are reachable only through this drain),
+#   and _death_rotate moves it to the BACK of the oldest-first queue, so it costs one call per pass
+#   behind every newer marker instead of pinning a slot at the head.
 DEATH_BACKFILL_WINDOW = 365 * 86400  # how far back the drain resolves a dead sid's transcript (cached
 #   per (window, forks) like the picker's wide walk — one filesystem walk, not one per marker)
 
@@ -9798,6 +10219,24 @@ def _death_pending(exclude):
         if len(out) >= DEATH_DRAIN_PER_PASS:
             break
     return out
+
+
+def _death_rotate(fsid):
+    """A sweep-CUT walk left this dead session's marker pending (see _close_session). _death_pending drains
+    the OLDEST marker first, so a marker whose walk is cut every pass — a turn whose call dies the same way
+    each time — would hold the head of the queue for good, and DEATH_DRAIN_PER_PASS such sessions would
+    starve every newer dead session of its sweep and its 'ended' settle (review find, 2026-09-03). Touch the
+    marker so it takes its place at the BACK: one doomed call per pass, behind everyone else, and the
+    drain's bound stays honest. Bounded for kills: DISTILL_FAIL_CAP killed calls on one turn give it up
+    and the walk goes on (_close_session), so a marker waits back here at most that many passes per
+    doomed turn; a transient storm rotates it for as long as the storm lasts — the storm's bound, not ours."""
+    m = _death_marker(fsid)
+    if not isinstance(m, dict) or "endedAt" in m:
+        return
+    try:
+        os.utime(GONEDIR / (fsid + ".json"), None)
+    except OSError:
+        pass
 
 
 def _death_finalize(fsid, store, settled):
@@ -12103,12 +12542,12 @@ def _postal_from(mid):
 def _ask_stamp_text(user_ask):
     """The `userAsk` text as STAMPED on a minted top: the chain-proven record's raw text shaped by
     _ask_head — or, when that leaves NOTHING (an image-only / attachment-only dictated prompt whose
-    record carries no text; round 3, 2026-08-26, item 4), the '(user message)' placeholder
-    _seg_label already uses for a titleless prompt. Always non-empty for a dict record: skipping
-    the stamp on empty text left an askRef-bearing top with NO dictation evidence the ask-unit
-    exemption accepts, so a fully-fanned image ask rendered NOWHERE while the dedupe kept linking
-    later dispatches into that invisible top. ONE definition shared by the stamp and the dedupe's
-    identity cross-check (item 6) — the compare only holds if both sides shape alike."""
+    record carries no text), the '(user message)' placeholder _seg_label already uses for a
+    titleless prompt. Always non-empty for a dict record: skipping the stamp on empty text leaves
+    an askRef-bearing top with NO dictation evidence the ask-unit exemption accepts, so a
+    fully-fanned image ask renders NOWHERE while the dedupe keeps linking later dispatches into
+    that invisible top. ONE definition shared by the stamp and the dedupe's identity cross-check —
+    the compare only holds if both sides shape alike."""
     return _ask_head(str(user_ask.get("text") or "")) or "(user message)"
 
 
@@ -12126,22 +12565,21 @@ def apply_courier(store, seg_id, seg_t, text, origin, prompt_uuid=None, frame=No
     dispatch speaks implementation nouns, so the writers also need the root. Stored shaped
     (_ask_head). A non-dict truthy (tests stub the trace with literal True) stores nothing.
 
-    ASK-IDENTITY DEDUPE (round 2, 2026-08-26, finding 3): msgId idempotency alone let one ask
-    fanned N times to the SAME recipient mint N near-duplicate tops — every dispatch carries a
-    fresh msgId. The trace's `askRef` (the proof node's (sender sid, goal id), riding user_ask) is
-    the ask's stable identity: it is STAMPED on the minted top, and a later dispatch of the same
-    ask finds the standing VISIBLE top (_node_carded) and LINKS instead — placements point at it,
-    and a links[] backref carries the new msgId so run_propagate still ends that dispatch's
-    sender-side tracker off the one card. Stub-True traces carry no askRef and mint exactly as
-    before (the stubbed suites' contract); each recipient session still gets its own card — the
-    dedupe never reaches across stores. Round 3 (2026-08-26) hardened both legs: goal ids RECYCLE
-    after a sender store reset (sid:gN, per-store seq), so the dedupe also cross-checks the
-    standing top's own userAsk text against the incoming record (one shaping, _ask_stamp_text) —
-    the same ask still links, a recycled id over different dictation mints its own card (item 6;
-    a mismatch fails toward the mint, the recoverable side). And the standing-card test honors the
-    rollup's done-confirming window (item 3): a done-verdict-filed top whose settle is pending
-    still renders in Working, so the dispatch links into it rather than minting a twin beside the
-    doneConfirming cue."""
+    ASK-IDENTITY DEDUPE: msgId idempotency alone lets one ask fanned N times to the SAME recipient
+    mint N near-duplicate tops — every dispatch carries a fresh msgId. The trace's `askRef` (the
+    proof node's (sender sid, goal id), riding user_ask) is the ask's stable identity: it is
+    STAMPED on the minted top, and a later dispatch of the same ask finds the standing VISIBLE top
+    (_node_carded) and LINKS instead — placements point at it, and a links[] backref carries the
+    new msgId so run_propagate still ends that dispatch's sender-side tracker off the one card.
+    Stub-True traces carry no askRef and mint exactly as before (the stubbed suites' contract);
+    each recipient session still gets its own card — the dedupe never reaches across stores. Two
+    hardenings on the dedupe: goal ids RECYCLE after a sender store reset (sid:gN, per-store seq),
+    so it also cross-checks the standing top's own userAsk text against the incoming record (one
+    shaping, _ask_stamp_text) — the same ask still links, a recycled id over different dictation
+    mints its own card (a mismatch fails toward the mint, the recoverable side); and the
+    standing-card test honors the rollup's done-confirming window: a done-verdict-filed top whose
+    settle is pending still renders in Working, so the dispatch links into it rather than minting
+    a twin beside the doneConfirming cue."""
     nodes, placements = store["nodes"], store["placements"]
     mid = origin.get("msgId")
     if mid:
@@ -12304,11 +12742,11 @@ def _plant_handoff_track(store, parent_id, text, peer_sid, peer_name, t, mid, tr
             #                                            The label is the judge's RENDERING, which can
             #                                            collapse two real dispatches into one string —
             #                                            so sameness is confirmed against the messages'
-            #                                            RECORDED bodies (the authoritative postal rows,
-            #                                            2026-08-30 fold): equal or both-unrecorded reads
-            #                                            as the double-mint; differing bodies are two
-            #                                            real dispatches, each keeping its own tracker
-            #                                            (the fan-out contract, test_chain_rooted_minting)
+            #                                            RECORDED bodies (the authoritative postal rows):
+            #                                            equal or both-unrecorded reads as the
+            #                                            double-mint; differing bodies are two real
+            #                                            dispatches, each keeping its own tracker (the
+            #                                            fan-out contract, test_chain_rooted_minting)
     if tracked:
         handoff["tracked"] = True
     nodes[nid] = GuardedNode({"id": nid, "text": label[:120], "parentId": parent_id,
@@ -12348,12 +12786,12 @@ def _lift_handoff_children(store, hid):
 
 def _human_prompt_record(a, sender):
     """The {"text","sid"} record when atom `a` IS a human-dictated prompt record, else None. The
-    ONE definition of 'dictated' (factored out of _session_user_prompt_record, round 2 2026-08-26,
-    so the kernel's ask-unit exemption reads the SAME rule against its own cached parse instead of
-    growing a second one): author 'human' minus the CLI's interrupt artifacts — the board audit's
-    rule — and an attachment record (a queued_command wrapping what the user dictated mid-turn)
-    exactly when it carries no postal or romp-injected marker. Everything else — mail, romp's own
-    lines, the agent's assistant atoms, machine input — is None."""
+    ONE definition of 'dictated' (factored out of _session_user_prompt_record so the kernel's
+    ask-unit exemption reads the SAME rule against its own cached parse instead of growing a
+    second one): author 'human' minus the CLI's interrupt artifacts — the board audit's rule — and
+    an attachment record (a queued_command wrapping what the user dictated mid-turn) exactly when
+    it carries no postal or romp-injected marker. Everything else — mail, romp's own lines, the
+    agent's assistant atoms, machine input — is None."""
     if a.get("author") == "human":
         if em.is_interrupt_record(a):
             return None
@@ -12392,24 +12830,24 @@ def _session_user_prompt_record(sender, path, uuid, now):
 
 def _node_carded(live, nid, confirming=()):
     """Does `nid` currently RENDER on a visible card in its session's LIVE store? The trace's
-    `carded` and the mint's ask-identity dedupe both key on this (round 2, 2026-08-26): bare
-    live-membership said True for a user-CLEARED ask still awaiting the compactor, for a node
-    sealed under a complete/cleared ancestor (the fold displays that subtree done — the sealed-open
-    leak), and for a DANGLING node whose parent a rewind swept (the feed walks top subtrees, so it
-    renders on none) — and the courier then linked the fan-out into a card that renders nowhere,
-    the exact no-card hole T101's fallback exists to close. Visibility here reuses the store's own
-    seal/reach rules: in the live store, not itself cleared/complete (open_menu's self-seal),
-    no complete/cleared ancestor (_sealed_above, the closer channels' shared seal), and the parent
-    chain lands on a LIVE top (_top_of, cycle-safe) — a walk that dead-ends at a missing node or a
-    cycle renders nowhere. Pure over the passed nodes dict: the cleared flag is the store's own
-    dual-written record, so no journal read here.
+    `carded` and the mint's ask-identity dedupe both key on this: bare live-membership says True
+    for a user-CLEARED ask still awaiting the compactor, for a node sealed under a complete/cleared
+    ancestor (the fold displays that subtree done — the sealed-open leak), and for a DANGLING node
+    whose parent a rewind swept (the feed walks top subtrees, so it renders on none) — and the
+    courier would then link the fan-out into a card that renders nowhere, the exact no-card hole
+    T101's fallback exists to close. Visibility here reuses the store's own seal/reach rules: in
+    the live store, not itself cleared/complete (open_menu's self-seal), no complete/cleared
+    ancestor (_sealed_above, the closer channels' shared seal), and the parent chain lands on a
+    LIVE top (_top_of, cycle-safe) — a walk that dead-ends at a missing node or a cycle renders
+    nowhere. Pure over the passed nodes dict: the cleared flag is the store's own dual-written
+    record, so no journal read here.
 
-    `confirming` (round 3, 2026-08-26, item 3): the rollup's done-confirming export — tops whose
-    done verdict is filed with only the settle pending. Their column still reads Working (the
-    steady doneConfirming cue), so bare nodeComplete called a VISIBLY RENDERING card dead and a
-    same-ask dispatch minted a twin beside it. A top in the window stays carded; a genuinely
-    SETTLED completion (out of the export) stays uncarded — the sealed-open trade holds. Callers
-    thread their store's own export; the default () keeps pure-dict callers exact."""
+    `confirming`: the rollup's done-confirming export — tops whose done verdict is filed with only
+    the settle pending. Their column still reads Working (the steady doneConfirming cue), so bare
+    nodeComplete would call a VISIBLY RENDERING card dead and a same-ask dispatch would mint a
+    twin beside it. A top in the window stays carded; a genuinely SETTLED completion (out of the
+    export) stays uncarded — the sealed-open trade holds. Callers thread their store's own export;
+    the default () keeps pure-dict callers exact."""
     nd = live.get(nid)
     if not isinstance(nd, dict) or nd.get("cleared"):
         return False
@@ -12439,54 +12877,51 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb
     needs-you state (the hard-block floor + placeholder synthesize a board card from the live
     prompt with zero goal nodes; interrupt only when the human is the bottleneck).
 
-    `carded` (2026-08-26, the T101 fold review; tightened round 2 the same day): the record also
-    says whether the ask still RENDERS ON A VISIBLE CARD a tracking node can plant under —
-    _node_carded, not bare live-membership, which read True for a user-cleared ask awaiting the
-    compactor, an ask sealed under a done/cleared ancestor, and a dangling node whose parent a
-    rewind swept (all three link into a card that renders nowhere: the no-card hole). Uncarded —
-    archive-only proof, or any of those live-but-invisible shapes — is where T101's mint fallback
-    fires, because "the recipient card IS the ask's card"; the answer is deliberately identical on
-    both sides of the compaction boundary (a cleared card mints alike live and archived — the
-    compactor is bookkeeping, never a mint event). Rides up origin hops unchanged: it reports on
-    the ask node itself, wherever in the local chain it lives.
+    `carded`: the record also says whether the ask still RENDERS ON A VISIBLE CARD a tracking
+    node can plant under — _node_carded, not bare live-membership, which reads True for a
+    user-cleared ask awaiting the compactor, an ask sealed under a done/cleared ancestor, and a
+    dangling node whose parent a rewind swept (all three link into a card that renders nowhere:
+    the no-card hole). Uncarded — archive-only proof, or any of those live-but-invisible shapes —
+    is where T101's mint fallback fires, because "the recipient card IS the ask's card"; the
+    answer is deliberately identical on both sides of the compaction boundary (a cleared card
+    mints alike live and archived — the compactor is bookkeeping, never a mint event). Rides up
+    origin hops unchanged: it reports on the ask node itself, wherever in the local chain it lives.
 
-    THE HOP STAND-DOWN + `askRef` (round 2, 2026-08-26, finding 3): a climb that passes a LIVE,
-    VISIBLE userAsk-bearing top short-circuits carded:True — that top IS the ask's card at this
-    hop, so re-dispatching onward must file under it, never re-mint at every origin-hop level.
-    And the record carries `askRef`, the proof node's (sender sid, goal id) — the ask's stable
-    identity across dispatches and hops — which apply_courier stamps on the minted top and dedupes
-    on, so one ask fanned N times to one recipient stays ONE card there."""
-    # THE SHARED FALLBACK SLOT `fb` (the fold-review fix, 2026-08-30; widened round 3 the same
-    # day): EVERY carded:False record — T126's stored userAsk-on-node proof AND an uncarded human
-    # prompt record — is captured into a one-slot holder THREADED ACROSS THE RECURSION, never
-    # returned mid-climb, so it wins only when the WHOLE climb — every origin hop and
-    # container-sibling included — exhausts. Before this each origin-hop callsite did
-    # `rec = _delegate_user_rooted(...); if rec: return rec`, which took an INNER frame's uncarded
-    # record as a final answer and preempted carded evidence the OUTER climb would still reach
-    # above the origin-hop node — minting a standalone recipient top for an ask that STILL renders
-    # on a visible card (the pre-T101 duplicate-card hole) and skewing askRef with the hop level
-    # the walk happened to stop at (_walk_root_record's dedupe key). Round 2 demoted only the
-    # stored-proof arm; the prompt-record arm still returned decisively, reopening the hole in the
-    # TRUE-ORIGIN shape (the origin kernel's own ask node carries promptUuid; stored userAsk lives
-    # only on courier-planted mid-chain nodes) — the MORE common flavor. That widening is a
-    # DELIBERATE contract change from the merge base, which called every prompt record decisive:
-    # now ONLY a CARDED record is decisive mid-climb — a carded-hop stand-down or a carded human
-    # record — everything carded:False rides `fb` and returns at exhaustion, so the exhausted-climb
-    # mint (T126) keeps firing with the same record it always returned.
+    THE HOP STAND-DOWN + `askRef`: a climb that passes a LIVE, VISIBLE userAsk-bearing top
+    short-circuits carded:True — that top IS the ask's card at this hop, so re-dispatching onward
+    must file under it, never re-mint at every origin-hop level. And the record carries `askRef`,
+    the proof node's (sender sid, goal id) — the ask's stable identity across dispatches and hops
+    — which apply_courier stamps on the minted top and dedupes on, so one ask fanned N times to
+    one recipient stays ONE card there."""
+    # THE SHARED FALLBACK SLOT `fb`: EVERY carded:False record — T126's stored userAsk-on-node
+    # proof AND an uncarded human prompt record — is captured into a one-slot holder THREADED
+    # ACROSS THE RECURSION, never returned mid-climb, so it wins only when the WHOLE climb — every
+    # origin hop and container-sibling included — exhausts. Returning it inline from an origin-hop
+    # callsite (`rec = _delegate_user_rooted(...); if rec: return rec`) takes an INNER frame's
+    # uncarded record as a final answer and preempts carded evidence the OUTER climb would still
+    # reach above the origin-hop node — minting a standalone recipient top for an ask that STILL
+    # renders on a visible card (the pre-T101 duplicate-card hole) and skewing askRef with the hop
+    # level the walk happened to stop at (_walk_root_record's dedupe key). The TRUE-ORIGIN shape
+    # (the origin kernel's own ask node carries promptUuid; stored userAsk lives only on
+    # courier-planted mid-chain nodes) is the MORE common flavor, so the prompt-record arm is
+    # demoted alongside the stored-proof arm. This is a deliberate contract change from T126,
+    # which treated every prompt record as decisive: now ONLY a CARDED record is decisive
+    # mid-climb — a carded-hop stand-down or a carded human record — everything carded:False rides
+    # `fb` and returns at exhaustion, so the exhausted-climb mint keeps firing with the same record
+    # it always returned.
     #
-    # PRECEDENCE INSIDE THE SLOT (round 3, chosen deliberately): a two-rank ladder, not bare
-    # first-seen across arms — an UNCARDED HUMAN PROMPT RECORD (rank 1) REPLACES a held STORED
-    # PROOF (rank 0); within a rank the slot stays first-seen (the discipline `fallback` always
-    # had). Why: the prompt record is the chain's ROOT evidence read from the authoritative source
-    # (the session transcript), while a stored proof is the courier-written COPY of a walk — the
-    # copy must not shadow the original just because a hop visited it first. And the root node's
-    # identity is hop-invariant, so preferring it keeps askRef (apply_courier's dedupe key) stable
-    # across fan children whose climbs stop at different copies. RESIDUAL, documented not fixed
-    # (contested in review): an ALL-stored-proof climb (no prompt record, nothing carded — the ask
-    # cleared everywhere) can still hand two fan children different first-seen askRef keys when
-    # their hops traverse DIFFERENT proof nodes with divergent askRef stamps; no rank choice
-    # unifies that (the candidate keys live in different stores), and askRef propagation makes the
-    # shape rare — a courier-planted proof carries the root's own key.
+    # PRECEDENCE INSIDE THE SLOT: a two-rank ladder, not bare first-seen across arms — an UNCARDED
+    # HUMAN PROMPT RECORD (rank 1) REPLACES a held STORED PROOF (rank 0); within a rank the slot
+    # stays first-seen. Why: the prompt record is the chain's ROOT evidence read from the
+    # authoritative source (the session transcript), while a stored proof is the courier-written
+    # COPY of a walk — the copy must not shadow the original just because a hop visited it first.
+    # And the root node's identity is hop-invariant, so preferring it keeps askRef
+    # (apply_courier's dedupe key) stable across fan children whose climbs stop at different
+    # copies. RESIDUAL, documented not fixed: an ALL-stored-proof climb (no prompt record, nothing
+    # carded — the ask cleared everywhere) can still hand two fan children different first-seen
+    # askRef keys when their hops traverse DIFFERENT proof nodes with divergent askRef stamps; no
+    # rank choice unifies that (the candidate keys live in different stores), and askRef
+    # propagation makes the shape rare — a courier-planted proof carries the root's own key.
     if not link_id or _depth >= 8:
         return _fb[0][1] if (_depth == 0 and _fb) else None
     seen = _seen if _seen is not None else set()
@@ -12500,9 +12935,9 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb
 
     sstore = load_goals(sender)
     live = sstore.get("nodes") or {}
-    conf = frozenset(sstore.get("confirming") or ())  # the rollup's done-confirming window (round 3
-    #                                                   item 3): a settle-pending top still renders
-    #                                                   in Working, so it still counts as carded
+    conf = frozenset(sstore.get("confirming") or ())  # the rollup's done-confirming window: a
+    #                                                   settle-pending top still renders in Working,
+    #                                                   so it still counts as carded
     nodes = dict(load_goal_archive(sender).get("nodes") or {})
     nodes.update(live)
     x, last = link_id, None
@@ -12545,7 +12980,7 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb
                 and not o.get("peerHost") and o["peer"] in paths):
             rec = _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen, fb)
             if rec:                                    # ONLY a decisive inner record short-circuits;
-                return rec                             # a demoted inner fallback now rides `fb` instead
+                return rec                             # a demoted inner fallback rides `fb` instead
         pu = nd.get("promptUuid")
         if pu and sender in paths:
             rec = _session_user_prompt_record(sender, paths[sender], pu, now)
@@ -12554,11 +12989,11 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb
                 if _node_carded(live, x, conf):
                     rec["carded"] = True                # a carded human record is decisive — the
                     return rec                          # ask's own node still renders its card
-                # UNCARDED (round 3): the record is root evidence but its card is gone — the
-                # TRUE-ORIGIN twin of the stored-proof demotion above. Returning it here preempted
-                # carded evidence the OUTER climb would still reach (the duplicate-mint hole in
-                # its most common shape); it rides `fb` at PROMPT rank instead, replacing any
-                # stored copy, and the climb keeps walking toward a card that still renders.
+                # UNCARDED: the record is root evidence but its card is gone — the TRUE-ORIGIN
+                # twin of the stored-proof demotion above. Returning it here would preempt carded
+                # evidence the OUTER climb still reaches (the duplicate-mint hole in its most
+                # common shape); it rides `fb` at PROMPT rank instead, replacing any stored copy,
+                # and the climb keeps walking toward a card that still renders.
                 rec["carded"] = False
                 _fb_offer(1, rec)
         last = nd
@@ -13019,18 +13454,18 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             # alone never moves the ask card's column: planting a tracking child writes no verdict
             # on the ask.
             #
-            # "Has a card" is the TRACE's answer, not the link's (2026-08-26, the fold review): as
-            # merged this read `rooted and not link_id`, which can never be true — the trace
-            # returns None without a link (its own no-link pin), so `rooted` implied `link_id` and
-            # the mint below was dead code. The record's `carded` says whether the ask still
-            # RENDERS ON A VISIBLE CARD (_node_carded — live, uncleared/unsealed, reachable from a
-            # live top; round 2 tightened this from bare live-membership, which linked into
-            # cleared/dangling cards that render nowhere): visible proof links; uncarded proof —
-            # archived, cleared, sealed, or dangling alike — mints. A truthy NON-dict (tests
-            # stub the trace with literal True, the same shape apply_courier tolerates) carries no
-            # node evidence, so it falls back to the link itself — the stubbed suites' contract.
-            # A genuinely link-less dispatch stays quiet either way: no link, no chain, no proof
-            # (uncertainty quiets, the 2026-08-25 verdict).
+            # "Has a card" is the TRACE's answer, not the link's: as `rooted and not link_id` this
+            # could never be true — the trace returns None without a link (its own no-link pin), so
+            # `rooted` implied `link_id` and the local-walk leg of the mint below was dead code
+            # (only the relay-walked record ever reached it). The record's `carded` says whether
+            # the ask still RENDERS ON A VISIBLE CARD (_node_carded — live, uncleared/unsealed,
+            # reachable from a live top; bare live-membership would link into cleared/dangling
+            # cards that render nowhere): visible proof links; uncarded proof — archived, cleared,
+            # sealed, or dangling alike — mints. A truthy NON-dict (tests stub the trace with
+            # literal True, the same shape apply_courier tolerates) carries no node evidence, so it
+            # falls back to the link itself — the stubbed suites' contract. A genuinely link-less
+            # dispatch stays quiet either way: no link, no chain, no proof (uncertainty quiets,
+            # the 2026-08-25 verdict).
             #
             # The WIRED arm (T126, the walked-at-relay root above) answers only when the local
             # walk resolves nothing: the origin kernel's stamped proof licenses the mint exactly

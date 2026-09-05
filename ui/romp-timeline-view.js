@@ -226,11 +226,13 @@ const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-ser
 // The ONE menu vocabulary every romp dropdown wears (CLAUDE.md rule, the user 2026-08-09) — the chat
 // pane's .ctx-menu/.meta-menu spec (ui/webview/styles.css), inlined with its values RESOLVED because
 // this pane may live in a foreign document (Obsidian) that loads neither styles.css nor its vars, and
-// would otherwise hand the menus the host app's own font. Card #252526, hairline border, 6px radius,
+// would otherwise hand the menus the host app's own font. Card, hairline border, 6px radius,
 // 12px romp sans; the current-choice mark is the same ✓-in-circle the chat meta menus use.
-// Composed from the palette at applyPal() time (see PAL below): dark stays the chat spec verbatim
-// (card #252526, hairline rgba(255,255,255,0.12), shadow rgba(0,0,0,0.35), text #cccccc, ✓ #1EA1EB);
-// the light theme re-skins the same card (white, black hairline, clay ✓).
+// Composed from the palette at applyPal() time (see PAL below) — the RESOLVED twin of the sheets'
+// menu tokens (--menu-bg/--menu-fg/--menu-border/--menu-hover/--check-bg, T226): PAL_DARK carries
+// the dark spec verbatim (card #252526, hairline rgba(255,255,255,0.12), shadow rgba(0,0,0,0.35),
+// text #cccccc, ✓ #1EA1EB) and PAL_LIGHT the light block's values (card #FBF6EF, clay ✓). The
+// palette is this pane's fallback mechanism: Obsidian loads no sheet and no vars at all.
 const menuStyleFor = (p) => 'padding:4px;background:' + p.menuBg + ';border:1px solid ' + p.hairline + ';'
   + 'border-radius:6px;box-shadow:0 4px 12px ' + p.menuShadow + ';font:12px/1.4 ' + FONT + ';'
   + 'color:' + p.menuFg + ';user-select:none;';
@@ -439,6 +441,19 @@ function idleGaps(merged, gapCT, now) {
   return gaps;
 }
 
+// The awaited KIND worded to agree in NUMBER (T228, the user's one-count rule: a single awaited agent is
+// "agent", never "agents"). This is the RESOLVED twin of ui/webview/spin-caption.ts kindWord()/KIND_WORD —
+// this file runs standalone (Obsidian too) and cannot import it, so the table and the rule are mirrored
+// here byte for byte and timeline-awaiting.test.ts holds the two together. An unknown count (an older
+// kernel ships none) keeps the plural default each kind always wore; an unknown kind stays "agents".
+const KIND_WORD = { agents: 'agents', task: 'task', job: 'job', peer: 'peer', timer: 'timer' };
+function tlKindWord(kind, count) {
+  const base = KIND_WORD[kind || ''] || 'agents';
+  if (typeof count !== 'number' || !Number.isFinite(count)) return base;
+  if (count === 1) return base === 'agents' ? 'agent' : base;
+  return base === 'agents' ? base : base + 's';
+}
+
 function badgeFor(s) {
   if (!s || !s.live) return null;
   let m = null;
@@ -460,9 +475,9 @@ function badgeFor(s) {
   // s.awaitingBg why-field key stays as
   // the fallback (a remote host on an older kernel still reports state 'working' + the field).
   // (The LEGACY lane state 'awaiting' above means blocked-on-you — this name dodges that.)
-  // The KIND rides the label ('Awaiting job', the user 2026-08-15) — the enum values ARE the words;
-  // an older kernel ships no awaitingKind and the badge reads plain 'Awaiting' as before.
-  else if (s.state === 'awaitingBg' || s.awaitingBg) m = { label: 'Awaiting' + (s.awaitingKind ? ' ' + s.awaitingKind : ''), kind: 'awaitbg' };
+  // The KIND rides the label ('Awaiting job', the user 2026-08-15), worded by tlKindWord so one agent reads
+  // 'Awaiting agent' (T228); an older kernel ships no awaitingKind and the badge reads plain 'Awaiting' as before.
+  else if (s.state === 'awaitingBg' || s.awaitingBg) m = { label: 'Awaiting' + (s.awaitingKind ? ' ' + tlKindWord(s.awaitingKind, s.awaitingCount) : ''), kind: 'awaitbg' };   // agrees in number with the chip (T228)
   else if (s.state === 'ready' || s.state === 'waiting' || s.state === 'idle') m = { label: 'Ready', kind: 'ready' };
   if (!m) return null;
   return { label: m.label, bg: BADGE[m.kind].bg, fg: BADGE[m.kind].fg };
@@ -738,16 +753,20 @@ function laneDeviations(s) {
 // on load so _openMetaMenu keeps its reference; the lane picker appends its own 'Default' sentinel (not a model).
 const MODEL_CHOICES = [];
 const EFFORT_CHOICES = [];
+// A CODEX lane's menus speak Codex's vocabulary (the payload's codex section) — never Claude's,
+// whose aliases the codex backend refuses. Empty until the codex backend has run (docs/codex.md).
+const CODEX_MODEL_CHOICES = [];
+const CODEX_EFFORT_CHOICES = [];
 // Loaded once at page load and RE-LOADED on the kernel's {type:"models"} frame (TimelinePanel.refreshModels,
 // the frame's arm in both boots): the pick memory moved — a version pinned, a family un-pinned by Latest, a
-// refused pin dropped, from any surface or dashboard — and a family's `default` is what its row SENDS, so
-// a list fetched once went stale the moment anything changed it (fixer round 4, 2026-09-01: after Latest
+// refused pin dropped, from any surface or dashboard — or the catalog grew, and a family's `default` is
+// what its row SENDS, so a list fetched once went stale the moment anything changed it (after Latest
 // un-pinned a family, the lane's next family click sent the old pinned id and silently re-pinned). Refilled
 // IN PLACE so _openMetaMenu's reference holds. Event-keyed on the frame, never a poll. A response is applied
-// only if it is not OLDER than one already applied (fixer round 5, 2026-09-01): its `rev` is the pick memory's
-// revision — the frame's counter — and two overlapping fetches (a frame during the page-load fetch; two quick
-// frames) can resolve out of order, so without the check the STALE list won until the next change. A payload
-// without a rev (an older kernel) always applies.
+// only if it is not OLDER than one already applied: its `rev` is the pick memory's revision — the frame's
+// counter — and two overlapping fetches (a frame during the page-load fetch; two quick frames) can resolve
+// out of order, so without the check the STALE list won until the next change. A payload without a rev (an
+// older kernel) always applies.
 let modelChoicesRev = -1;
 function loadModelChoices() {
   try {
@@ -755,6 +774,8 @@ function loadModelChoices() {
       if (typeof d.rev === 'number') { if (d.rev < modelChoicesRev) return; modelChoicesRev = d.rev; }
       if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; for (const m of d.models) MODEL_CHOICES.push(m); MODEL_CHOICES.push({ label: 'Default', value: 'default' }); }
       if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; for (const e of d.efforts) EFFORT_CHOICES.push(e); }
+      if (d.codex && Array.isArray(d.codex.models)) { CODEX_MODEL_CHOICES.length = 0; for (const m of d.codex.models) CODEX_MODEL_CHOICES.push(m); }
+      if (d.codex && Array.isArray(d.codex.efforts)) { CODEX_EFFORT_CHOICES.length = 0; for (const e of d.codex.efforts) CODEX_EFFORT_CHOICES.push(e); }
     }).catch(() => {});
   } catch (e) {}
   return Promise.resolve();
@@ -2574,8 +2595,8 @@ class TimelinePanel {
   }
 
   _closeMetaMenu() { if (this._metaMenu) { if (this._metaMenu._sub) this._metaMenu._sub.remove(); this._metaMenu.remove(); this._metaMenu = null; } }
-  // the kernel's models frame: the pick memory moved → re-read /models so the lane picker's family rows
-  // send the fresh default (see loadModelChoices; 2026-09-01). Returns the fetch promise for the tests.
+  // the kernel's models frame: the pick memory moved or the catalog grew → re-read /models so the lane
+  // picker's family rows send the fresh default (see loadModelChoices). Returns the fetch promise for the tests.
   refreshModels() { return loadModelChoices(); }
 
   // Where a drop-down should live and be measured: the tip's host document (the topmost same-origin
@@ -2615,7 +2636,7 @@ class TimelinePanel {
     const h = this._menuHost(anchorEl.getBoundingClientRect());
     const pick = (value, floating) => {
       // `floating` is the version submenu's Latest row: the flag rides the command to the kernel,
-      // which forgets the family's remembered pin (2026-09-01)
+      // which forgets the family's remembered pin
       this._sendCommand(s.name, '/' + kind + ' ' + value, kind === 'model', floating ? { floating: true } : null);
       const now = (typeof Date !== 'undefined' && Date.now) ? Date.now() : 0;
       this._metaPending[s.id + ':' + kind] = { was: (kind === 'model' ? s.model : s.effort) || '', until: now + 20000 };
@@ -2623,7 +2644,12 @@ class TimelinePanel {
       this.draw();
     };
     const closeSub = () => { if (menu._sub) { menu._sub.remove(); menu._sub = null; } };
-    for (const c of (kind === 'model' ? MODEL_CHOICES : EFFORT_CHOICES)) {
+    // a CODEX lane's pickers speak its own vocabulary (docs/codex.md) — those choices carry no
+    // versions, so the family submenus below simply never arm for them
+    const choices = s.backend === 'codex'
+      ? (kind === 'model' ? CODEX_MODEL_CHOICES : CODEX_EFFORT_CHOICES)
+      : (kind === 'model' ? MODEL_CHOICES : EFFORT_CHOICES);
+    for (const c of choices) {
       const cur = isCurrentMeta(kind, s, c.value);
       const versions = kind === 'model' ? (c.versions || []) : [];
       const item = menu.createDiv({ text: c.label });
@@ -2640,11 +2666,11 @@ class TimelinePanel {
         const sub = document.body.createDiv();
         sub.setAttribute('style', 'position:fixed;z-index:1002;min-width:96px;' + MENU_STYLE);
         sub.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213) — the Latest row rides inside
-        // "Latest" heads the submenu (review 2026-09-01): the one gesture back to floating once a
-        // family carries a pin — the family row sends the pin, the rows below pin, and a typed alias
-        // leaves the pick memory alone by design. It sends the alias with the `floating` flag, which
-        // the kernel's sendCommand arm hands to _set_model_or_park to forget the family's remembered
-        // pin, so the family follows the CLI's newest release again. ✓ when unpinned and current.
+        // "Latest" heads the submenu: the one gesture back to floating once a family carries a pin —
+        // the family row sends the pin, the rows below pin, and a typed alias leaves the pick memory
+        // alone by design. It sends the alias with the `floating` flag, which the kernel's sendCommand
+        // arm hands to _set_model_or_park to forget the family's remembered pin, so the family follows
+        // the CLI's newest release again. ✓ when unpinned and current.
         const pinned = !!c.default && c.default !== c.value;
         const latest = sub.createDiv();
         latest.setAttribute('style', 'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;');
@@ -2653,7 +2679,7 @@ class TimelinePanel {
         const lsub = latest.createDiv({ text: pinned ? 'unpins — follows the newest ' + c.label : 'follows the newest ' + c.label });
         lsub.setAttribute('style', 'font-size:0.82em;opacity:0.6;');
         if (!pinned && cur) { const ck = latest.createSpan({ text: '✓' }); ck.setAttribute('style', MENU_CHECK_STYLE); }
-        latest.addEventListener('mouseenter', () => { latest.style.background = 'rgba(255,255,255,0.09)'; });
+        latest.addEventListener('mouseenter', () => { latest.style.background = HOVER_BG; });
         latest.addEventListener('mouseleave', () => { latest.style.background = 'transparent'; });
         latest.addEventListener('click', (e) => { e.stopPropagation(); pick(c.value, true); });
         latest.addEventListener('keydown', (e) => {
@@ -2666,12 +2692,12 @@ class TimelinePanel {
           row.setAttribute('style', 'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;');
           row.setAttribute('tabindex', '0');
           if (v.learned) {
-            // LOUD, per the fail-loudly rule: this version is in no seed table — a running session's
+            // LOUD, per the fail-loudly rule: this version is in no catalog list — a running session's
             // CLI reported it (kernel /models `learned`) — so the row says so instead of a stale menu
             // hiding a live model. The chat's .meta-item-sub treatment, inlined for a foreign document.
             const tag = row.createSpan({ text: ' new' });
             tag.setAttribute('style', 'font-size:0.82em;opacity:0.6;margin-left:4px;');
-            row.setAttribute('title', "Reported by a running session's Claude Code; not yet in romp's built-in version list");
+            row.setAttribute('title', "Reported by a running session's Claude Code; not yet in romp's version list");
           }
           if (cv) { const ck = row.createSpan({ text: '✓' }); ck.setAttribute('style', MENU_CHECK_STYLE); }
           row.addEventListener('mouseenter', () => { row.style.background = HOVER_BG; });
@@ -4013,7 +4039,15 @@ class TimelinePanel {
     const jShow = !!(shownJudges.length && data.judging && data.judging.some((e) => shownKeys.has(e.judge) && inWin(e.t)));
     const bandH = jShow ? (JB_TOPGAP + shownJudges.length * JROW + JB_BOTGAP) : 0;
     const W = Math.max(640, this.wrap.clientWidth || 900);
-    const plotW = W - M.left - M.right, H = M.top + Math.max(1, vis.length) * LANE_GAP + bandH + M.bottom;
+    // PENDING HOSTS (the user 2026-09-02): attached hosts whose lanes have not arrived yet (the merged
+    // payload's pendingHosts — federation.ts: listed by /tunnels, no lanes payload from it on this pane
+    // yet) each reserve ONE placeholder row under the lanes, so a restart or a phone re-foreground never
+    // reads as those hosts having vanished. Retired by the host's first lanes payload or its detach —
+    // the merge's events, never a timer here. Not lanes: never in vis/vidx, no hit targets, no drag.
+    const pend = Array.isArray(data.pendingHosts) ? data.pendingHosts.filter((h) => typeof h === 'string') : [];
+    const pendDead = Array.isArray(data.pendingDead) ? data.pendingDead : [];
+    const pendBase = Math.max(1, vis.length);   // the first placeholder row sits under the last lane (or the empty-window line)
+    const plotW = W - M.left - M.right, H = M.top + (Math.max(1, vis.length) + pend.length) * LANE_GAP + bandH + M.bottom;
     svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('height', H); svg.setAttribute('width', W);
     // x is LINEAR in compressed time → smooth pan (only zoom rescales). Identity compress = plain linear.
     const x = (t) => M.left + (compress(t) - cT0) / winSec * plotW;
@@ -4077,6 +4111,20 @@ class TimelinePanel {
     const compactSeen = new Set();   // sids whose compacting scan-bar is live this draw → reconcile the overlay after
     const workSeen = new Set();      // sids whose WORKING label overlay is live this draw → reconcile after (persistent pulse)
     const metaSeen = new Set();      // sids showing the "model switching…" dots this draw → reconcile the overlay after
+    // the pending-host placeholder rows (see `pend` above): the romp swirl glyph, reverse-spun like every
+    // romp loader, then the host named in the quiet italic the "host:" prefix wears on a real lane. A
+    // dead link says "reconnecting to" (the kernel is redialing it); an open one still waiting on its
+    // first payload says "loading sessions from". Drawn before the lanes — its own y band, no overlap.
+    pend.forEach((h, k) => {
+      const y = laneY(pendBase + k), sz = 13, cx = PADL + sz / 2;
+      const img = el('image', { x: PADL, y: y - sz / 2, width: sz, height: sz, href: mediaUrl('romp-swirl-glyph.svg'), 'pointer-events': 'none' });
+      img.appendChild(el('animateTransform', { attributeName: 'transform', type: 'rotate', from: '360 ' + cx + ' ' + y, to: '0 ' + cx + ' ' + y, dur: '2.4s', repeatCount: 'indefinite' }));
+      svg.appendChild(img);
+      const t = el('text', { x: PADL + sz + 6, y: y + 3.5, 'text-anchor': 'start', 'font-weight': 400, 'font-style': 'italic', 'font-size': 12, fill: MODEL_FG, 'pointer-events': 'none' });
+      t.setAttribute('data-pending-host', h);
+      t.textContent = (pendDead.indexOf(h) >= 0 ? 'reconnecting to ' : 'loading sessions from ') + h + '\u2026';
+      svg.appendChild(t);
+    });
     vis.forEach((s, i) => {
       const y = laneY(i);
       // perceptual idle fade: faded lanes blend their colors toward bgRGB to a uniform low luminance.
@@ -4922,7 +4970,7 @@ class TimelinePanel {
     // by the SESSION it acted on; adjacent same-session marks merge into a stretch of attention. A mark
     // within ~8s of the live edge is "running now" (white-outlined). (docs/judges.md; data.judging.)
     if (jShow) {
-      const jb0 = M.top + vis.length * LANE_GAP + JB_TOPGAP;     // top of the first judge row, under the lanes
+      const jb0 = M.top + (vis.length + pend.length) * LANE_GAP + JB_TOPGAP;     // top of the first judge row, under the lanes (+ the pending-host rows)
       const jY = (i) => jb0 + i * JROW + JROW * 0.5;
       const nameOf = (sid) => { const s = data.sessions.find((z) => z.id === sid); return s ? s.name : sid; };
       const sepY = jb0 - JB_TOPGAP * 0.5;

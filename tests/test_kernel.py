@@ -1381,6 +1381,35 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(card["awaiting"]["why"], "Waiting on the 3 research agents it dispatched.")
         self.assertIsNone(card["blocked"], "an awaiting goal is not a live block")
 
+    def test_feed_awaiting_card_carries_the_live_snapshots_count(self):
+        # T228 (the user's one-count rule, 2026-09-02): the goal-floored card's awaiting object carries the
+        # same `count` the chat chip words itself from — one live subagent reads "Awaiting agent" on the
+        # chip AND on the card (the feed's spin caption / pill derive the word from awaiting.count). Before,
+        # only the no-open-goal placeholder card threaded the count; a goal card stayed a bare plural.
+        top = SID + ":top"
+        def gn(nid, text, parent, **kw):
+            d = {"id": nid, "text": text, "parentId": parent, "nodeComplete": False,
+                 "blocked": False, "cleared": False, "trail": [], "t": T0, "mt": T0}
+            d.update(kw); return d
+        (jd.GOALDIR / (SID + ".json")).write_text(json.dumps({
+            "rompUuid": SID, "seq": 1, "lastNode": top,
+            "nodes": {top: gn(top, "research the API", None, why="user asked for the research")},
+            "placements": {}, "status": {top: "working"}}))
+        saved = km._session_awaiting
+        try:
+            for n in (1, 3):
+                km._session_awaiting = lambda sid, path, idle, stamp=False, n=n: {
+                    "kind": "agents", "why": "%d background agent%s still working" % (n, "" if n == 1 else "s"),
+                    "since": T0, "count": n}
+                card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
+                self.assertEqual(card["awaiting"]["kind"], "agents")
+                self.assertEqual(card["awaiting"]["count"], n, "the card's count is the snapshot's own")
+            km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": None, "why": "waiting on dispatched work", "since": None}
+            card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
+            self.assertIsNone(card["awaiting"]["count"], "a source that cannot count ships None, never a guess")
+        finally:
+            km._session_awaiting = saved
+
     def _blocked_card_with_bg_task(self, since, owner="blocked", second_top=False):
         """A GENUINELY blocked top (ask at T0+100) on a session running a LIVE background task, end to
         end through the REAL machinery: the task's toolUseId is the fixture transcript's actual launch
@@ -1619,7 +1648,8 @@ class ViewBuilder(unittest.TestCase):
                         "awaiting:true with no later work turn stays awaiting")
         self.assertEqual(km._session_awaiting(SID, str(self.tpath), True),
                          {"kind": None, "since": 200,   # the overlay row's own stamp → the chips' elapsed readout (the user 2026-08-23)
-                          "why": "Waiting on 2 background jobs it launched."},
+                          "why": "Waiting on 2 background jobs it launched.",
+                          "count": None},   # a bare overlay row names no count — never parsed from the why (T225)
                          "the genuine awaiting badge still shows")
 
     def test_blocked_rolls_up_the_card_tree_so_a_buried_block_is_visible(self):
@@ -1711,21 +1741,24 @@ class ViewBuilder(unittest.TestCase):
             km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "", "since": T0}, {"type": "", "since": T0}]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "agents", "why": "2 background agents still working",
-                              "since": T0},   # the oldest live agent's start → the chips' elapsed readout (the user 2026-08-23)
+                              "since": T0,   # the oldest live agent's start → the chips' elapsed readout (the user 2026-08-23)
+                              "count": 2},   # the live agent count — the chip's number agreement rides it (T225)
                              "a live subagent DOES leave an idle session awaiting (a working flavor)")
             # source 0.5: the live bg-task set — one task shows its description verbatim
             km._tmux_sessions = lambda: {SID: {"bgTasks": [timer]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "task", "since": T0 + 9,   # the dispatch stamp (the user 2026-08-23)
-                              "why": "waiting on a background task: 20-minute timer for campaign-start check"})
+                              "why": "waiting on a background task: 20-minute timer for campaign-start check",
+                              "count": 1})
             km._tmux_sessions = lambda: {SID: {"bgTasks": [timer, dict(timer, desc="power watcher")]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "task", "since": T0 + 9,
-                              "why": "waiting on 2 background tasks — 20-minute timer for campaign-start check, …"})
+                              "why": "waiting on 2 background tasks — 20-minute timer for campaign-start check, …",
+                              "count": 2})
             # subagents outrank bg tasks when both run (they're the bigger dispatch)
             km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "", "since": T0}], "bgTasks": [timer]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
-                             {"kind": "agents", "why": "1 background agent still working", "since": T0})
+                             {"kind": "agents", "why": "1 background agent still working", "since": T0, "count": 1})
         finally:
             km._tmux_sessions = saved
 
@@ -1741,7 +1774,7 @@ class ViewBuilder(unittest.TestCase):
         ]) + "\n")
         self.assertEqual(km._session_awaiting(SID, "/nonexistent", True),
                          {"kind": None, "why": "3 agents in flight",
-                          "since": T0 + 1},   # the overlay row's own stamp (the user 2026-08-23)
+                          "since": T0 + 1, "count": None},   # the overlay row's own stamp (the user 2026-08-23)
                          "the latest awaiting overlay (interleaved with state records) drives the badge")
         self.assertIsNone(km._session_awaiting(SID, "/nonexistent", False),
                           "a WORKING session is not 'awaiting' (idle=False short-circuits)")
@@ -2476,15 +2509,15 @@ class ViewBuilder(unittest.TestCase):
             km._tmux_send, jd.optimistic_followup = saved_send, saved_fu
         return sent, restore
 
-    def test_working_top_goal_picks_only_a_working_top(self):
-        g1, g2, g3, sub = SID + ":g1", SID + ":g2", SID + ":g3", SID + ":s1"
+    def test_open_top_goal_picks_a_working_top(self):
+        g1, g2, sub = SID + ":g1", SID + ":g2", SID + ":s1"
         def n(nid, parent, done, blocked, cleared):
             return {"id": nid, "text": nid, "parentId": parent, "nodeComplete": done,
                     "blocked": blocked, "cleared": cleared, "trail": [], "t": T0}
-        self._goal_store({g1: n(g1, None, True, False, False), g2: n(g2, None, False, True, False),
-                          g3: n(g3, None, False, False, False), sub: n(sub, g3, False, False, False)},
-                         {g1: "completed", g2: "blocked", g3: "working"})
-        self.assertEqual(km._working_top_goal(SID), g3, "only a working TOP goal (not done/blocked/sub) qualifies")
+        self._goal_store({g1: n(g1, None, True, False, False), g2: n(g2, None, False, False, False),
+                          sub: n(sub, g2, False, False, False)},
+                         {g1: "completed", g2: "working"})
+        self.assertEqual(km._open_top_goal(SID), g2, "a working TOP goal qualifies, not done tops or subs")
 
     def test_open_top_goal_counts_a_blocked_top_as_open(self):
         # the working-note expiry's predicate: a top goal parked on the user is OPEN (the session has not
@@ -2496,23 +2529,25 @@ class ViewBuilder(unittest.TestCase):
         self._goal_store({g1: n(g1, None, True, False, False), g2: n(g2, None, False, True, False),
                           sub: n(sub, g2, False, False, False)},
                          {g1: "completed", g2: "blocked", sub: "working"})
-        self.assertIsNone(km._working_top_goal(SID), "nothing is WORKING at the top")
-        self.assertEqual(km._open_top_goal(SID), g2, "…but the blocked top is still open work")
+        self.assertEqual(km._open_top_goal(SID), g2, "a blocked top is still open work (done/sub skipped)")
         self._goal_store({g1: n(g1, None, True, False, False), g2: n(g2, None, False, False, True)},
                          {g1: "completed", g2: "working"})
         self.assertIsNone(km._open_top_goal(SID), "done + cleared → nothing open")
 
-    def test_working_top_goal_none_when_cleared(self):
+    def test_open_top_goal_none_when_cleared(self):
         g = SID + ":g1"
         self._goal_store({g: {"id": g, "text": "x", "parentId": None, "nodeComplete": False,
                               "blocked": False, "cleared": True, "trail": [], "t": T0}}, {g: "working"})
-        self.assertIsNone(km._working_top_goal(SID), "a cleared goal is not nudge-worthy")
+        self.assertIsNone(km._open_top_goal(SID), "a cleared goal is not open work")
 
     # ── working-note auto-expire (the user 2026-06-24): lift a stale set_working claim once a session goes
-    #    idle with no working top goal, so peers stop coordinating against a finished session ──
+    #    idle with no open top goal, so peers stop coordinating against a finished session ──
+    STORE = object()                                     # _stub_expire top_goal: keep the real predicate
+
     def _stub_expire(self, notes, working, top_goal):
         # stub the deps of _clear_done_working_notes; returns (cleared_calls, restore_fn). cleared_calls
-        # records every _set_working_note(sid, text) the pass makes.
+        # records every _set_working_note(sid, text) the pass makes. top_goal=self.STORE leaves
+        # _open_top_goal unstubbed, reading the goal store the test wrote with _goal_store.
         cleared = []
         saved = (km._working_notes, km._alive_sessions, km._set_working_note,
                  km._session_working, km._open_top_goal, jd.parsed_session)
@@ -2520,7 +2555,8 @@ class ViewBuilder(unittest.TestCase):
         km._alive_sessions = lambda now, tmux: [{"sid": SID, "path": str(self.tpath)}]
         km._set_working_note = lambda sid, text: cleared.append((sid, text))
         km._session_working = lambda turns: working
-        km._open_top_goal = lambda sid: top_goal
+        if top_goal is not self.STORE:
+            km._open_top_goal = lambda sid: top_goal
         jd.parsed_session = lambda sid, paths, now: {"turns": [{"atoms": [], "ended": True}]}
 
         def restore():
@@ -2553,16 +2589,28 @@ class ViewBuilder(unittest.TestCase):
             restore()
 
     def test_working_note_kept_while_a_top_goal_is_blocked_on_the_user(self):
-        # the expiry keys on _open_top_goal, which counts a BLOCKED (parked-on-you) top goal as open: the
-        # session has not finished and the worktree its note names is still its own (census 2026-09-02)
-        cleared, restore = self._stub_expire({SID: "feed.ts"}, working=False, top_goal=SID + ":gb")
+        # a BLOCKED (parked-on-you) top goal is open work: the session has not finished and the worktree its
+        # note names is still its own. Runs the real _open_top_goal over the store, so this fails if a blocked
+        # top ever stops counting as open (the previous, working-only predicate lifted this note).
+        g1, g2 = SID + ":g1", SID + ":g2"
+        def n(nid, done, blocked):
+            return {"id": nid, "text": nid, "parentId": None, "nodeComplete": done, "blocked": blocked,
+                    "cleared": False, "trail": [], "t": T0}
+        self._goal_store({g1: n(g1, True, False), g2: n(g2, False, True)}, {g1: "completed", g2: "blocked"})
+        cleared, restore = self._stub_expire({SID: "feed.ts"}, working=False, top_goal=self.STORE)
         try:
             km._clear_done_working_notes(NOW, {SID: {"state": "idle"}})
             self.assertEqual(cleared, [], "parked on the user is not done → the claim stands")
         finally:
             restore()
-        self.assertIn("_open_top_goal(sid)", inspect.getsource(km._clear_done_working_notes),
-                      "the expiry reads the open-goal predicate, not the working-only one")
+        # …and the same session, once the answer lands and that goal completes, does have its note lifted
+        self._goal_store({g1: n(g1, True, False), g2: n(g2, True, False)}, {g1: "completed", g2: "completed"})
+        cleared, restore = self._stub_expire({SID: "feed.ts"}, working=False, top_goal=self.STORE)
+        try:
+            km._clear_done_working_notes(NOW, {SID: {"state": "idle"}})
+            self.assertEqual(cleared, [(SID, "")], "all top goals done → the claim is lifted")
+        finally:
+            restore()
 
     def test_working_note_tmux_working_short_circuits_before_parse(self):
         cleared, restore = self._stub_expire({SID: "feed.ts"}, working=False, top_goal=None)
@@ -6219,6 +6267,18 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(st["state"], "needsInput", "permission -> the needs-input chip (renamed 2026-08-15)")
         self.assertEqual(st["model"], "Opus 4.8")
         self.assertEqual(st["ctx"], "20")
+        self.assertFalse(st["ctxOver"], "tmux sessions never report a window overflow")
+
+    def test_chat_status_carries_ctx_overflow(self):
+        """The context % is clamped at 100 kernel-side; ctxOver carries the CLI's '100+' truth (tokens
+        exceed the CURRENT model's window, e.g. right after a 1M→200k model switch) so the battery says
+        'over this model's window' instead of a silent 100% (the user 2026-09-02)."""
+        km._tmux_sessions = lambda: {SID: {"state": "working", "since": NOW - 5, "model": "Haiku 4.5",
+                                           "effort": "max", "context": 100, "compactPct": None,
+                                           "color": None, "ctxOver": True}}
+        st = km.build_session(SID, NOW)["status"]
+        self.assertEqual(st["ctx"], "100")
+        self.assertTrue(st["ctxOver"], "the overflow flag rides beside the clamped %")
 
 
 class CrossPane(unittest.TestCase):

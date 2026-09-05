@@ -137,6 +137,26 @@ class ThreadsStayDormant(unittest.TestCase):
             be._boot_reconcile(regs)
         self.assertEqual(ensured, [tsid])
 
+    def test_boot_leaves_a_dormant_threads_death_flags_for_its_wake(self):
+        # a killed question / dead background tasks are reported at the thread's explicit wake
+        # (ThreadWakeHearsItsDeadLife below), so the sweep neither resumes the thread for them nor
+        # clears them: the flags stay on disk and nothing is queued — a notice persisted here would
+        # read as a queue at the next boot and earn the very resume this skip forbids
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        ensured = []
+        be._ensure = lambda sid, on_boot_settled=None: (ensured.append(sid), on_boot_settled and on_boot_settled())[0]
+        tsid = "11111111-bbbb-0000-0000-00000000f1a6"
+        tasks = [{"desc": "release watcher", "since": 1}]
+        regs = [_reg(d, tsid, threadOf="11111111-bbbb-0000-0000-000000000000", pendingAsk=True, bgTasks=tasks)]
+        sb.append_state(Path(d), tsid, "waiting")
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout="")):
+            be._boot_reconcile(regs)
+        self.assertEqual(ensured, [], "no resume for a thread's dead life alone")
+        reg = sb.read_reg(Path(d), tsid)
+        self.assertEqual((reg.get("queue") or [], bool(reg.get("pendingAsk")), reg.get("bgTasks")),
+                         ([], True, tasks), "nothing queued; both flags left for the wake to report")
+
     def test_a_persisted_todo_answer_alone_earns_the_resume_with_its_id_intact(self):
         # the fork's id-carrying answer entry ({"text","todo"}, _queue_wire) under upstream's T223
         # guard: the guard reads `queued` off the fork's _queue_texts, so a queue holding ONLY a dict
@@ -225,6 +245,94 @@ class ThreadWakeRemap(unittest.TestCase):
     def test_no_hook_means_no_remap(self):
         spawned, on_disk = self._wake(dict(self.THREAD), None)
         self.assertEqual((spawned, on_disk), ("claude-fable-5", "claude-fable-5"))
+
+
+class ThreadWakeHearsItsDeadLife(unittest.TestCase):
+    """The boot sweep leaves a dormant thread alone (ThreadsStayDormant), so the two things it tells
+    a resumed top-level session about its dead life — a question the kernel's death killed
+    (pendingAsk) and background tasks that died with the process (the bgTasks mirror) — reach a
+    thread at its EXPLICIT wake instead, in _ensure: once, ahead of the reply that woke it, and the
+    flags clear with the report. Before this nothing on the wake path read either flag: they rode
+    across every boot and wake until a later boot found the thread WITH a queued reply, and that
+    sweep prepended the stale notices ahead of the reply the user had just typed."""
+
+    class _Rec:                       # stands in for SdkSession: records the reg it was built from
+        made = []
+        fed = []
+
+        def __init__(self, backend, reg):
+            self.thread = mock.Mock(is_alive=lambda: True)
+            self.on_boot_settled = None
+            ThreadWakeHearsItsDeadLife._Rec.made.append(dict(reg))
+
+        def start(self):
+            pass
+
+        def enqueue(self, text, todo=""):   # send() passes the user-todo id (fork seam); unused here
+            ThreadWakeHearsItsDeadLife._Rec.fed.append(text)
+
+    PARENT = "11111111-bbbb-0000-0000-000000000000"
+    TASKS = [{"desc": "release watcher", "since": 1}]
+
+    def setUp(self):
+        self._Rec.made, self._Rec.fed = [], []
+        self.d = tempfile.mkdtemp()
+        self.be = _backend(self.d)
+
+    def _flags(self, sid):
+        reg = sb.read_reg(Path(self.d), sid)
+        return bool(reg.get("pendingAsk")), reg.get("bgTasks") or []
+
+    def test_the_explicit_wake_prepends_both_notices_and_clears_the_flags_once(self):
+        sid = "11111111-bbbb-0000-0000-0000000000b1"
+        _reg(self.d, sid, threadOf=self.PARENT, pendingAsk=True, bgTasks=list(self.TASKS))
+        with mock.patch.object(sb, "SdkSession", self._Rec):
+            self.be._ensure(sid)
+            self.assertEqual((self._Rec.made[0].get("queue") or []),
+                             [sb.ASK_DIED_NOTICE, sb.task_death_notice(self.TASKS)],
+                             "the fresh session is seeded with both notices, question first")
+            self.assertEqual(self._flags(sid), (False, []), "reported → cleared on disk")
+            self.be._update_reg(sid, queue=[])           # the life feeds its queue (_persist_queue)…
+            self.be.sessions.pop(sid)                    # …and ends
+            self.be._ensure(sid)                         # the next wake owes nothing
+        self.assertEqual((self._Rec.made[1].get("queue") or []), [], "once per death, never a nag")
+
+    def test_the_reply_that_woke_it_follows_the_notices(self):
+        sid = "11111111-bbbb-0000-0000-0000000000b2"
+        _reg(self.d, sid, threadOf=self.PARENT, pendingAsk=True)
+        with mock.patch.object(sb, "SdkSession", self._Rec):
+            self.assertTrue(self.be.send(sid, "the reply that woke it"))
+        self.assertEqual((self._Rec.made[0].get("queue") or []), [sb.ASK_DIED_NOTICE], "the seed carries the notice…")
+        self.assertEqual(self._Rec.fed, ["the reply that woke it"], "…and the reply enqueues behind it")
+
+    def test_a_top_level_wake_is_the_boot_sweeps_business(self):
+        sid = "11111111-bbbb-0000-0000-0000000000b3"
+        _reg(self.d, sid, pendingAsk=True, bgTasks=list(self.TASKS))
+        with mock.patch.object(sb, "SdkSession", self._Rec):
+            self.be._ensure(sid)
+        self.assertEqual((self._Rec.made[0].get("queue") or []), [])
+        self.assertEqual(self._flags(sid), (True, self.TASKS),
+                         "a top-level session's flags are the sweep's to report, at the next boot")
+
+    def test_a_thread_resumed_at_boot_for_its_reply_hears_each_notice_once(self):
+        # the sweep DOES resume a thread with a queued reply, reports and clears the flags itself,
+        # then spawns through the real _ensure — which must find nothing left to report
+        sid = "11111111-bbbb-0000-0000-0000000000b4"
+        regs = [_reg(self.d, sid, threadOf=self.PARENT, queue=["the reply"],
+                     pendingAsk=True, bgTasks=list(self.TASKS))]
+        with mock.patch.object(sb, "SdkSession", self._Rec), \
+             mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout="")):
+            self.be._boot_reconcile(regs)
+        self.assertEqual((self._Rec.made[0].get("queue") or []),
+                         [sb.ASK_DIED_NOTICE, sb.task_death_notice(self.TASKS), "the reply"])
+
+    def test_a_flagless_thread_wake_writes_nothing(self):
+        sid = "11111111-bbbb-0000-0000-0000000000b5"
+        _reg(self.d, sid, threadOf=self.PARENT)
+        before = sb._reg_path(Path(self.d), sid).read_bytes()
+        with mock.patch.object(sb, "SdkSession", self._Rec):
+            self.be._ensure(sid)
+        self.assertEqual(sb._reg_path(Path(self.d), sid).read_bytes(), before, "no reg churn on a plain wake")
 
 
 class FireBootSettled(unittest.TestCase):

@@ -518,3 +518,26 @@ class SessionIdentityEnv(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnvSecretsStayPrivate(unittest.TestCase):
+    """Env values can be secrets (PR #889 review): the per-sid flag-settings file is created 0600
+    like the serve token, and the parked chat chip renders NAMES only — never a value."""
+
+    def test_the_flag_settings_file_is_private(self):
+        import stat
+        d = tempfile.mkdtemp()
+        p = sb.flag_settings_path(d, "11111111-2222-3333-4444-555555555555", env={"TOKEN": "s3cret"})
+        self.assertTrue(p, "an env writes the file")
+        self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600, "0600, the serve-token treatment")
+        self.assertIn("s3cret", open(p).read(), "…and the value is in it (the CLI reads it), private")
+        p2 = sb.flag_settings_path(d, "11111111-2222-3333-4444-555555555555", env={"TOKEN": "other"})
+        self.assertEqual(stat.S_IMODE(os.stat(p2).st_mode), 0o600, "a rewrite keeps it private")
+
+    def test_the_parked_chip_names_the_vars_but_never_their_values(self):
+        km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_module()
+        md = km._parked_md(("env", {"B_TOKEN": "s3cret", "A_FLAG": "1"}))
+        self.assertEqual(md, "/env A_FLAG B_TOKEN", "sorted names, no values")
+        self.assertNotIn("s3cret", md)
+        self.assertEqual(km._parked_md(("env", {})), "/env (cleared)")
+

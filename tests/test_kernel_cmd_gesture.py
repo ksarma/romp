@@ -69,9 +69,9 @@ class CmdGestureSourcePins(unittest.TestCase):
     def test_backend_writes_the_marker_beside_each_synthesized_live_chip(self):
         # every setter that synthesizes a live command chip (set_model / set_effort / set_auth) writes the
         # durable twin with the SAME t and disp, so build_session's (t, text) dedup holds while the chip is
-        # live and the durable event takes over seamlessly once stale_cmd retires it. Since 2026-09-01 the
-        # three share ONE builder (_ack_cmd_chip — so the chip fires on a dormant session too); the
-        # property is pinned on the builder, and every setter must go through it.
+        # live and the durable event takes over seamlessly once stale_cmd retires it. The three share ONE
+        # builder (_ack_cmd_chip — so the chip fires on a dormant session too); the property is pinned on
+        # the builder, and every setter must go through it.
         for cmd in ("/model", "/effort", "/auth"):
             self.assertEqual(BACKEND_SRC.count('self._ack_cmd_chip(sid, "%s", "%s " + value, ' % (cmd, cmd)), 1, cmd)
         i = BACKEND_SRC.index("def _ack_cmd_chip(")

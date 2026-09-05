@@ -29,7 +29,9 @@ import { deriveStatus, freshNeedsYou, renderStatusBar, statusTooltipLines, Fleet
 import { citeText, sessionsForWorkspace, SessionInfo } from "./workspace-sessions";
 import { parsePorcelain } from "./session-diff";
 import { buildMenu, usageSummary } from "./romp-menu";
-import { resolveInstallScript, driftNotice, UPDATE_ACTION, COPY_ACTION, INSTALL_COMMAND } from "./update-target";
+import {
+  resolveInstallScript, driftNotice, UPDATE_ACTION, COPY_ACTION, INSTALL_COMMAND, CANT_REBUILD, MANUAL_REMEDY,
+} from "./update-target";
 
 const HOST = "127.0.0.1";
 
@@ -96,7 +98,7 @@ function maybeBuildNotice(dv: unknown): void {
   showDriftStatusItem(!!target);
   void vscode.window.showInformationMessage(notice.message, ...notice.actions).then((choice) => {
     if (choice === UPDATE_ACTION) void updateExtension();
-    else if (choice === COPY_ACTION) void vscode.env.clipboard.writeText(INSTALL_COMMAND);
+    else if (choice === COPY_ACTION) void copyInstallCommand();
   });
 }
 
@@ -118,9 +120,9 @@ async function updateExtension(): Promise<void> {
   if (updating) return;                                    // one run per host (double-click, or toast + palette)
   const target = resolveInstallScript(ctx?.extensionPath || "", process.env.ROMP_DIR, (p) => fs.existsSync(p));
   if (!target) {
-    void vscode.window.showErrorMessage(
-      "romp: this copy of the extension can't rebuild itself — it runs from a packaged VSIX, not a romp checkout. " +
-      "Run vscode-extension/install.sh in your romp checkout from a terminal, then reload this window.");
+    // Same wording and the same always-works action as the toast — one voice, one remedy.
+    void vscode.window.showErrorMessage(`romp: ${CANT_REBUILD} ${MANUAL_REMEDY}`, COPY_ACTION)
+      .then((choice) => { if (choice === COPY_ACTION) void copyInstallCommand(); });
     return;
   }
   const extDir = target.dir;
@@ -145,8 +147,8 @@ async function updateExtension(): Promise<void> {
         });
     } else {
       void vscode.window.showErrorMessage(
-        "romp: the extension update didn't complete — " + updateHint(out) +
-        " You can run vscode-extension/install.sh in a terminal.");
+        "romp: the extension update didn't complete — " + updateHint(out) + " " + MANUAL_REMEDY,
+        COPY_ACTION).then((choice) => { if (choice === COPY_ACTION) void copyInstallCommand(); });
     }
   } finally {
     updating = false;
@@ -175,6 +177,17 @@ function updateHint(out: { code: number; text: string }): string {
   if (/No VS Code-family editor CLI found/.test(t)) return "no editor CLI was found to install into.";
   const last = t.trim().split(/\r?\n/).filter((l) => l.trim()).slice(-1)[0] || "";
   return last ? "the build reported: " + last.slice(0, 200) : "see the terminal for details.";
+}
+
+// The action a copy that can't rebuild itself gets instead of a doomed Update button: the exact
+// command on the clipboard, so the remedy is a paste rather than something to retype from a toast
+// that has already faded. Purely client-side (the clipboard is one of the few capabilities this host
+// owns outright), so unlike the update it cannot fail — and it acknowledges immediately. Every copy
+// entry point (the drift toast, the status-bar item's command, the two error toasts) goes through here.
+function copyInstallCommand(): void {
+  void vscode.env.clipboard.writeText(INSTALL_COMMAND).then(
+    () => vscode.window.setStatusBarMessage(`romp: copied "${INSTALL_COMMAND}" — run it in your romp checkout.`, 6000),
+    () => vscode.window.showWarningMessage(`romp: couldn't reach the clipboard. ${MANUAL_REMEDY}`));
 }
 
 // Ports are CONFIGURABLE so different VS Code windows can attach to different kernels (each kernel
@@ -247,8 +260,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Rebuild + reinstall the VSIX from source, then offer a reload — the clickable form of the
     // drift toast's remedy, always reachable (a faded toast leaves nothing to click). See updateExtension.
     vscode.commands.registerCommand("rompChat.updateExtension", updateExtension),
-    vscode.commands.registerCommand("rompChat.copyInstallCommand",
-      () => vscode.env.clipboard.writeText(INSTALL_COMMAND)),
+    vscode.commands.registerCommand("rompChat.copyInstallCommand", copyInstallCommand),
     // The webviews scale to the editor font (uiZoom) — re-render them when it changes.
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("editor.fontSize")) refreshWebviewHtml();

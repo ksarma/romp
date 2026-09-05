@@ -78,9 +78,7 @@ class EffortReconnect(unittest.TestCase):
                     'self._update_reg(sid, mode=mode)',
                     'self._update_reg(sid, fast=(value == "on"), liveFast=value)',
                     'self._update_reg(sid, name=new_name,',   # + the rename ping rides the same locked RMW when owed (2026-08-24/25)
-                    # the live model write (fixer round 6, 2026-09-02: the round-5 swap twin that handed the
-                    # replaced value back is gone with the by-value bookkeeping it fed)
-                    'self._update_reg(sid, model=value, modelPending=pending)',
+                    'self._update_reg(sid, model=value, modelPending=pending)',   # the live model write
                     'self._update_reg(sid, model=value, liveModel=_alias_label(value), modelPending=False)'):
             self.assertIn(pin, BACKEND_SRC)
 

@@ -10,6 +10,11 @@
 // kernel-owned (`kernelListed`), and a later push omitting it dismisses the tab with the same teardown the
 // `closed` event runs. `closed` stays as the fast path.
 //
+// One difference since T236 (the user 2026-09-03): an OMISSION is an absence, not a report of an end — the
+// same push shape also follows a boot-partial list or a collapsed liveness read — so the teardown it runs
+// keeps the session's unsent composer draft stashed under its id (back with the session if it returns);
+// only a genuine end (the user's ✕, the kernel's own `closed`) clears it. See draft-teardown.test.ts.
+//
 // The executed model below runs the real reconcileTabOrder through the whole miss-and-heal cycle with
 // applyTabOrder's bookkeeping; the source pins hold that wiring in render.ts.
 import { test } from "node:test";
@@ -21,7 +26,8 @@ import { reconcileTabOrder } from "./tab-order";
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 
 // A stand-in for the client around a session death: the sessions map, the render order, and applyTabOrder's
-// kernelListed bookkeeping. dismiss() mirrors dismissSession's teardown surface (session + view + draft go).
+// kernelListed bookkeeping. dismiss() mirrors dismissSession's teardown surface (session + view go; the draft
+// goes only for a genuine end, never for an omission or a host drop).
 // The re-ask half (2026-08-18) mirrors requestFullSession/awaitingFull: a push that lists an id an EARLIER
 // push already listed, with no session behind it, asks the kernel for the full session — once per desync.
 function model() {
@@ -32,9 +38,10 @@ function model() {
   const dismissed: string[] = [];
   const awaitingFull = new Set<string>();
   const asked: string[] = [];
-  const dismiss = (id: string) => {
+  const dismiss = (id: string, why: "end" | "omitted" | "hostDrop") => {
     dismissed.push(id);
-    sessions.delete(id); drafts.delete(id);
+    sessions.delete(id);
+    if (why === "end") drafts.delete(id);      // a genuine end clears; an omission stashes (T236)
     order = order.filter((x) => x !== id);
   };
   const upsert = (id: string, state: string) => {
@@ -46,11 +53,12 @@ function model() {
     dismissed, asked,
     session(id: string, state = "working") { upsert(id, state); },
     draft(id: string, text: string) { drafts.set(id, text); },
-    closedEvent(id: string) { dismiss(id); },     // the kernel's one-shot frame, when it DOES arrive
-    // federation's detach teardown (closeRemote's TAGGED closed frame, 2026-08-18): same dismiss,
-    // plus the kernelListed prune — after a detach the host's past listings are no longer live
-    // evidence, so its reattach must read as the silent tabs-first boot, not a re-listing.
-    hostDetachEvent(id: string) { kernelListed.delete(id); dismiss(id); },
+    closedEvent(id: string) { dismiss(id, "end"); },     // the kernel's one-shot frame, when it DOES arrive
+    // federation's host-drop teardown (closeRemote's STAMPED closed frame, 2026-08-18): the same dismiss
+    // with the "hostDrop" reason (the draft stays — the host may come back), plus the kernelListed prune —
+    // after a drop the host's past listings are no longer live evidence, so its reattach must read as the
+    // silent tabs-first boot, not a re-listing.
+    hostDropEvent(id: string) { kernelListed.delete(id); dismiss(id, "hostDrop"); },
     // the kernel's answer to a needFull ask — and ONLY to an ask: the field case has no spontaneous
     // session frames (the kernel's echat believes this client is caught up), so the reply must be
     // CAUSED by the re-ask or the heal never happens.
@@ -62,7 +70,7 @@ function model() {
     // then the reconcile (whose keep no longer applies to kernel-owned ids), then the RE-ASK for any
     // repeat-listed id whose session this client lost, then the add-only record.
     push(kernel: string[]) {
-      for (const id of order.slice()) if (kernelListed.has(id) && !kernel.includes(id)) dismiss(id);
+      for (const id of order.slice()) if (kernelListed.has(id) && !kernel.includes(id)) dismiss(id, "omitted");
       order = reconcileTabOrder(kernel, order, (id) => sessions.has(id), (id) => kernelListed.has(id));
       for (const id of kernel) {
         if (kernelListed.has(id) && !sessions.has(id) && !awaitingFull.has(id)) { awaitingFull.add(id); asked.push(id); }
@@ -93,13 +101,18 @@ test("a session ended while the socket was down leaves the strip on the reconnec
   assert.deepEqual(m.tabs(), ["web"]);
 });
 
-test("the teardown clears the dead session's composer leftovers too", () => {
+test("the omission teardown KEEPS the session's composer draft — an absence is not the user's close (T236)", () => {
   const m = model();
   m.session("web"); m.session("api");
   m.push(["web", "api"]);
   m.draft("api", "half-typed message");
   m.push(["web"]);
-  assert.equal(m.hasDraft("api"), false, "kernel-driven drop runs the full dismissSession surface");
+  assert.deepEqual(m.tabs(), ["web"], "the tab still goes");
+  assert.equal(m.hasDraft("api"), true, "…but the draft is stashed under its id, back with the session if it returns");
+  // the kernel's own closed frame — the session actually ended — is what clears it
+  m.session("api"); m.push(["web", "api"]);
+  m.closedEvent("api");
+  assert.equal(m.hasDraft("api"), false, "a genuine end clears the draft (the user 2026-08-04)");
 });
 
 test("the closed event remains the fast path; the push after it has nothing left to do", () => {
@@ -173,12 +186,12 @@ test("a host detach + reattach boots silently — no needFull burst for sessions
   // re-emits the merged order before any of that push's session frames splice through — so with
   // kernelListed still holding the host's ids from before the detach, applyTabOrder re-asked for
   // every one of them on every window: N duplicate multi-MB full sends per window, queued ahead of
-  // fresh deltas on the tunnel. The detach's tagged closed frames prune the ids, so the re-listing
+  // fresh deltas on the tunnel. The drop's stamped closed frames prune the ids, so the re-listing
   // is a first listing again (the exempt boot pass) and the burst never fires.
   const m = model();
   m.session("gpu1:web"); m.session("gpu1:api");
   m.push(["gpu1:web", "gpu1:api"]);                       // the host's sids, kernel-owned
-  m.hostDetachEvent("gpu1:web"); m.hostDetachEvent("gpu1:api");   // detach: closeRemote's tagged frames
+  m.hostDropEvent("gpu1:web"); m.hostDropEvent("gpu1:api");   // the drop: closeRemote's stamped frames
   assert.deepEqual(m.tabs(), [], "the detach teardown still clears the strip");
   m.push(["gpu1:web", "gpu1:api"]);                       // reattach: the remote's tabs-first connect push
   assert.deepEqual(m.asked, [], "no re-ask: the connect push IS the heal those asks would request");
@@ -207,7 +220,7 @@ test("a create placeholder the kernel has never listed still survives unrelated 
 test("applyTabOrder dismisses kernel-owned omissions BEFORE reconciling, then records add-only", () => {
   // the drop loop sits between ackClosingTabs and the reconcile, and dismissSession is the shared teardown
   assert.match(RENDER,
-    /ackClosingTabs\(kernelOrder\);[\s\S]{0,700}?for \(const id of order\.slice\(\)\) \{\s*\n\s*if \(kernelListed\.has\(id\) && !inKernel\.has\(id\)\) dismissSession\(id\);\s*\n\s*\}/,
+    /ackClosingTabs\(kernelOrder, report\);[\s\S]{0,900}?const omitted = new Set\(order\.filter\(\(id\) => kernelListed\.has\(id\) && !inKernel\.has\(id\)\)\);[^\n]*\n\s*for \(const id of order\.slice\(\)\) \{\s*\n\s*if \(omitted\.has\(id\)\) dismissSession\(id, "omitted", omitted\);\s*\n\s*\}/,
     "kernel-owned tabs the push stopped carrying get the closed-event teardown");
   // the reconcile passes the kernelListed predicate, so the pure model enforces the same rule
   assert.match(RENDER,
@@ -215,7 +228,7 @@ test("applyTabOrder dismisses kernel-owned omissions BEFORE reconciling, then re
   // add-only, recorded AFTER the reconcile: dropping entries would hand a late stale `session` frame the
   // never-listed keep and re-mint the ghost
   assert.match(RENDER, /for \(const id of next\) order\.push\(id\);[\s\S]{0,1300}?for \(const id of kernelOrder\) kernelListed\.add\(id\);/);
-  const body = RENDER.match(/function dismissSession\(id: string\): void \{[\s\S]*?\n\}/);
+  const body = RENDER.match(/function dismissSession\(id: string, why: DismissWhy, doomed\?: ReadonlySet<string>\): void \{[\s\S]*?\n\}/);
   assert.ok(body, "dismissSession not found");
   assert.doesNotMatch(body![0], /kernelListed/, "the record outlives the dismiss (add-only set)");
 });
@@ -229,15 +242,15 @@ test("applyTabOrder re-asks for a re-listed id whose session this client lost �
     "the re-ask sits between the order rebuild and the add-only kernelListed record");
 });
 
-test("the detach prune is wired: closeRemote tags its frames, the closed HANDLER prunes, dismissSession stays clean", () => {
+test("the host-drop prune is wired: closeRemote stamps its frames, the closed HANDLER prunes, dismissSession stays clean", () => {
   const FED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "federation.ts"), "utf8");
-  assert.match(FED, /\{ type: "closed", id: sid, hostDetach: true \}/,
-    "the detach teardown is tagged at its one source — no kernel frame ever carries the tag");
-  assert.match(RENDER, /if \(m\.hostDetach\) kernelListed\.delete\(m\.id\);\s*\n\s*dismissSession\(m\.id\);/,
-    "the prune lives in the closed handler, BEFORE the dismiss");
+  assert.match(FED, /\{ type: "closed", id: sid, hostDrop: true \}/,
+    "the drop teardown is stamped at its one source — no kernel frame ever carries the stamp");
+  assert.match(RENDER, /if \(m\.hostDrop === true\) kernelListed\.delete\(m\.id\);\s*\n\s*dismissSession\(m\.id, m\.hostDrop === true \? "hostDrop" : "end"\);/,
+    "the prune lives in the closed handler, BEFORE the dismiss — which names the same reason (the draft stays)");
   // the add-only property stays load-bearing for kernel-omission teardowns: dismissSession itself
   // still never touches kernelListed (also pinned structurally above)
-  const body = RENDER.match(/function dismissSession\(id: string\): void \{[\s\S]*?\n\}/);
+  const body = RENDER.match(/function dismissSession\(id: string, why: DismissWhy, doomed\?: ReadonlySet<string>\): void \{[\s\S]*?\n\}/);
   assert.ok(body);
   assert.doesNotMatch(body![0], /kernelListed/);
 });

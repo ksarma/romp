@@ -45,16 +45,19 @@ test("the descriptions ellipsize in BOTH states, and the row chain can actually 
 });
 
 test("the open menu wears the house vocabulary and cannot overflow the panel", () => {
-  assert.match(pickBody, /background:#252526;border:1px solid rgba\(255,255,255,0\.12\);border-radius:6px;box-shadow:0 4px 12px rgba\(0,0,0,0\.35\)/,
-    "the .ctx-menu reference values, inlined like versionMenu's MSTYLE");
-  assert.match(pickBody, /font-size:12px;line-height:1\.4;color:#cccccc;user-select:none/);
+  // the .ctx-menu reference values, inlined like versionMenu's MSTYLE — through the menu TOKENS
+  // since T226 (the dark literal rides only as the var() fallback; menu-theme-tokens.test.ts owns
+  // the theme story: in light the same string resolves to the cream card)
+  assert.match(pickBody, /background:var\(--menu-bg, #252526\);border:1px solid var\(--menu-border, rgba\(255,255,255,0\.12\)\);border-radius:var\(--radius-menu, 6px\);box-shadow:var\(--shadow-menu, 0 4px 12px rgba\(0,0,0,0\.35\)\)/,
+    "the .ctx-menu reference values, inlined like versionMenu's MSTYLE (tokens + dark fallbacks)");
+  assert.match(pickBody, /font-size:12px;line-height:1\.4;color:var\(--menu-fg, #cccccc\);user-select:none/);
   assert.match(pickBody, /position:absolute;left:0;right:0;top:100%/,
     "anchored inside the row wrapper (the #rs-cmap/#rs-pal mechanic): width = the card's content width, no sideways overflow");
   assert.match(pickBody, /menu\.scrollIntoView\(\{ block: 'nearest' \}\)/,
     "opening reveals the menu inside the scrolling card — the bottom edge never clips it");
-  assert.match(pickBody, /background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px/,
-    "the current option wears the ✓-in-circle mark");
-  assert.match(pickBody, /rgba\(255,255,255,0\.09\)/, "row hover, the shared menu hover wash");
+  assert.match(pickBody, /background:var\(--check-bg, #1EA1EB\);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px/,
+    "the current option wears the ✓-in-circle mark (themed through --check-bg since T226)");
+  assert.match(pickBody, /var\(--menu-hover, rgba\(255,255,255,0\.09\)\)/, "row hover, the shared menu hover wash (themed)");
 });
 
 test("the tab-theme sub-lines wear the menu vocabulary's sub scale", () => {

@@ -90,5 +90,7 @@ test("attachments live the DRAFT lifecycle: switch, reload, close", () => {
   assert.match(RENDER, /renderComposerFiles\(activeId\);   \/\/ attachments persisted across the reload/);
   // closing a session drops its attachments with its draft, and repaints for the new active tab
   assert.match(RENDER, /drafts\.delete\(id\); composerCitations\.delete\(id\); composerEdits\.delete\(id\); composerFiles\.delete\(id\); persistDrafts\(\);/);
-  assert.match(RENDER, /renderComposerFiles\(activeId\);   \/\/ same for its attachment thumbnails/);
+  // …through the shared loader (T236): loadComposerFor paints thumbnails with the chips, staged stack and draft
+  assert.match(RENDER, /loadComposerFor\(activeId\);   \/\/ the strip was showing the CLOSED session/);
+  assert.match(RENDER, /function loadComposerFor\(id: string \| null, keepTyped = false\): void \{[\s\S]*?renderComposerFiles\(id\);/);
 });

@@ -85,8 +85,14 @@ test("the kernel handles needFull by forgetting what that client holds", () => {
   assert.ok(KERNEL.includes('msg.get("type") == "needFull"'), "the kernel must handle the frame");
   const i = KERNEL.indexOf('msg.get("type") == "needFull"');
   const body = KERNEL.slice(i, i + 1200);
-  assert.ok(body.includes('"echat"'), "drop the client's tail base → next push sends a full session");
-  assert.ok(body.includes('("chat", sid)'), "drop the dedup slot → the full send isn't swallowed");
+  // the two pops live in _client_reset_chat_sid since 2026-09-04 (they run under the client's slot lock, so
+  // the pusher's _send_chat lands whole before or after them) — pin the handler's call AND the helper's body
+  assert.ok(body.includes("_client_reset_chat_sid(client, sid)"), "the handler forgets through the locked helper");
+  const h = KERNEL.indexOf("def _client_reset_chat_sid(client, sid):");
+  assert.ok(h >= 0, "the helper must exist");
+  const helper = KERNEL.slice(h, h + 1500);
+  assert.ok(helper.includes('"echat"'), "drop the client's tail base → next push sends a full session");
+  assert.ok(helper.includes('("chat", sid)'), "drop the dedup slot → the full send isn't swallowed");
   assert.ok(body.includes("_push_one(client)"), "repair immediately, not on the next tick");
 });
 
@@ -107,4 +113,30 @@ test("the anchor re-query uses the same selectors as the first lookup", () => {
   // unhydrated postal turn (ids only in data-mids) still honest-failed pointer-not-rendered
   const both = RENDER.split("data-mids~=").length - 1;
   assert.ok(both >= 2, "data-mids must be in BOTH the initial query and the post-re-render re-query");
+});
+
+test("a delta with NO base at all is a desync too — every delta path asks for the full frame", () => {
+  // the lost-first-frame class (the user 2026-09-02): the full session frame landed before the bundle's
+  // message listener existed, so the pane holds nothing while the kernel volunteers only deltas. Each
+  // delta shape must ask for the base instead of silently returning (the old `if (!s) return;`).
+  const chatTailFn = RENDER.slice(RENDER.indexOf("function chatTail(msg"), RENDER.indexOf("function statusOnly(msg"));
+  assert.match(chatTailFn, /if \(!s\) \{[\s\S]{0,900}?requestFullSession\(msg\.id\);\s*\n\s*return;\s*\n\s*\}/,
+    "chatTail: no base → ask, don't wait forever");
+  const updateFn = RENDER.slice(RENDER.indexOf("function update(msg"), RENDER.indexOf("function chatTail(msg"));
+  assert.match(updateFn, /if \(!s\) \{ requestFullSession\(msg\.id\); return; \}/, "update: same");
+  const statusFn = RENDER.slice(RENDER.indexOf("function statusOnly(msg"), RENDER.indexOf("function statusOnly(msg") + 400);
+  assert.match(statusFn, /if \(!s\) \{ requestFullSession\(msg\.id\); return; \}/, "statusOnly: same");
+});
+
+test("a reconnect clears parked asks — a dead socket's pending needFull can never gag the new one", () => {
+  assert.match(RENDER, /window\.addEventListener\("romp:wsup", \(\) => awaitingFull\.clear\(\)\);/);
+});
+
+test("the kernel's ready branch resets the client's WHOLE chat base before its push", () => {
+  const i = KERNEL.indexOf('msg.get("type") == "ready"');
+  assert.ok(i > 0);
+  const body = KERNEL.slice(i, i + 1600);
+  assert.ok(body.includes("_client_reset_chat_base(client)"), "ready = the renderer holds nothing");
+  assert.ok(body.indexOf("_client_reset_chat_base(client)") < body.indexOf("_push_one(client)"),
+    "…reset first, so the push that follows is full frames");
 });

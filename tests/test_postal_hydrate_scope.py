@@ -71,6 +71,11 @@ INBOX_TOOL = "mcp__romp-postal-service__check_inbox"
 
 
 class HydrateScope(unittest.TestCase):
+    def setUp(self):
+        km._POSTAL_UNRESOLVED_RESET()                   # T234: the warning is once per (session, id) per
+        #                                                kernel life - each test is its own life, so a pin
+        #                                                that expects the loud line never inherits an
+        #                                                earlier test's sighting of the same pair
     """Only a mail reader's output (and user text) is scanned for message ids."""
 
     def _run(self, events, index, sid=ME):
@@ -143,6 +148,11 @@ class HydrateScope(unittest.TestCase):
 
 
 class HydrateRecipient(unittest.TestCase):
+    def setUp(self):
+        km._POSTAL_UNRESOLVED_RESET()                   # T234: the warning is once per (session, id) per
+        #                                                kernel life - each test is its own life, so a pin
+        #                                                that expects the loud line never inherits an
+        #                                                earlier test's sighting of the same pair
     """Only mail addressed to THIS session is rendered in its chat."""
 
     def _run(self, events, index, sid=ME):

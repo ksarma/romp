@@ -15,9 +15,12 @@ the message apart, which is the only safe outcome. The fake pane below models ex
 semantics; the live-CLI measurement is what it stands in for. Synthetic pane text throughout.
 
 XDG_STATE_HOME is redirected before the kernel loads so no test state leaks into the live store."""
+import contextlib
+import io
 import os
 import tempfile
 import threading
+import types
 import unittest
 from importlib.machinery import SourceFileLoader
 
@@ -138,9 +141,15 @@ class SendRefusesToConcatenate(unittest.TestCase):
         km._TMUX = self._saved_tmux
 
     class _RecordingPane(_FakePane):
-        def __init__(self, box_lines, honors_kill=True):
+        """`fail` names the checked delivery steps ("set_buffer" / "paste_buffer" / "enter") that answer False
+        WITHOUT acting — what a real tmux whose server died after the clear does (exit 1, and the command
+        reached no pane). By default the pane is healthy: each checked step delegates to its forgiving twin
+        and answers True, so the recorders below see exactly what a live pane would receive."""
+
+        def __init__(self, box_lines, honors_kill=True, fail=()):
             super().__init__(box_lines, honors_kill)
             self.buffers, self.pastes = [], []
+            self.fail = set(fail)
 
         def pane_in_mode(self, name, t=2):
             return False
@@ -151,17 +160,21 @@ class SendRefusesToConcatenate(unittest.TestCase):
         def paste_buffer(self, name):
             self.pastes.append(name)
 
-        # the checked variants paste() drives since the delivered-means-delivered fix (2026-08-27):
-        # this pane's tmux is healthy, so each delegates to its forgiving twin and answers True
         def set_buffer_checked(self, text):
+            if "set_buffer" in self.fail:
+                return False
             self.set_buffer(text)
             return True
 
         def paste_buffer_checked(self, name):
+            if "paste_buffer" in self.fail:
+                return False
             self.paste_buffer(name)
             return True
 
         def send_keys_checked(self, name, *keys, t=3):
+            if "enter" in self.fail:
+                return False
             self.send_keys(name, *keys, t=t)
             return True
 
@@ -180,6 +193,116 @@ class SendRefusesToConcatenate(unittest.TestCase):
         self.assertEqual(pane.buffers, ["the composer message"])
         self.assertEqual(pane.pastes, [SESSION])
         self.assertIn(("Enter",), pane.keys_sent)
+
+
+class SendAbortsWhenTmuxAnswersNonzero(unittest.TestCase):
+    """The clear-guard covers a death BEFORE the clear; these cover one after it. set-buffer, paste-buffer and
+    the submitting Enter used to run through primitives that swallow every subprocess error and never read
+    the exit code, so a tmux server or session that died once the clear had passed made all three silent
+    no-ops — the send looked complete and the message vanished with no trace. Each step now reads tmux's own
+    exit code and a nonzero answer aborts the sequence there, loudly, in the same shape as the clear-guard
+    refusal. The box is EMPTY in every case so the clear itself succeeds and the checked step is the only
+    thing that can refuse."""
+
+    TEXT = "the composer message"
+    _RecordingPane = SendRefusesToConcatenate._RecordingPane
+
+    def setUp(self):
+        self._saved_tmux = km._TMUX
+
+    def tearDown(self):
+        km._TMUX = self._saved_tmux
+
+    def _send(self, pane, **kw):
+        km._TMUX = pane
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._tmux_send(SESSION, self.TEXT, _async=False, **kw)
+        return err.getvalue()
+
+    def test_a_dead_server_at_set_buffer_stages_pastes_and_submits_nothing(self):
+        pane = self._RecordingPane([""], fail=("set_buffer",))
+        err = self._send(pane)
+        self.assertEqual(pane.buffers, [], "the failed set-buffer staged nothing")
+        self.assertEqual(pane.pastes, [], "and nothing is pasted after it")
+        self.assertNotIn(("Enter",), pane.keys_sent, "and nothing is submitted")
+        self.assertIn("set-buffer failed", err, "the abort names the step on stderr")
+
+    def test_a_dead_server_at_paste_buffer_never_submits(self):
+        pane = self._RecordingPane([""], fail=("paste_buffer",))
+        err = self._send(pane)
+        self.assertEqual(pane.buffers, [self.TEXT], "the text was staged…")
+        self.assertEqual(pane.pastes, [], "…but the paste refused, so nothing reached the input")
+        self.assertNotIn(("Enter",), pane.keys_sent, "and Enter is never pressed on an empty box")
+        self.assertIn("paste-buffer failed", err)
+
+    def test_a_failed_submitting_Enter_is_reported_not_swallowed(self):
+        # the fake records only the keys it actually sent, so a refused Enter leaves no ("Enter",) behind
+        pane = self._RecordingPane([""], fail=("enter",))
+        err = self._send(pane)
+        self.assertEqual(pane.buffers, [self.TEXT])
+        self.assertEqual(pane.pastes, [SESSION], "the paste itself landed")
+        self.assertNotIn(("Enter",), pane.keys_sent)
+        self.assertIn("submitting Enter failed", err)
+
+    def test_a_failed_first_Enter_never_sends_the_model_confirm_Enter(self):
+        # /model's second Enter accepts a confirm dialog; with the first Enter refused there is no dialog,
+        # and a stray Enter into whatever IS up would be the concatenation class of bug all over again
+        pane = self._RecordingPane([""], fail=("enter",))
+        err = self._send(pane, model_cmd=True)
+        self.assertNotIn(("Enter",), pane.keys_sent, "neither Enter is sent")
+        self.assertIn("submitting Enter failed", err)
+
+    def test_a_healthy_pane_sends_exactly_as_before_and_says_nothing(self):
+        # the success path is untouched: same three steps, same order, no extra tmux calls, silent stderr
+        pane = self._RecordingPane([""])
+        err = self._send(pane)
+        self.assertEqual(pane.buffers, [self.TEXT])
+        self.assertEqual(pane.pastes, [SESSION])
+        self.assertEqual(pane.keys_sent, [("Enter",)], "one Enter, and no keystroke the clear did not need")
+        self.assertEqual(err, "")
+
+
+class CheckedPrimitivesReadTheExitCode(unittest.TestCase):
+    """The contract of TmuxBackend's checked variants, on the real class: True iff tmux itself answered 0.
+    An exec failure or a timeout (`_run` → None), a missing tmux (the same None) and a nonzero exit all read
+    as NOT done — and the argv is byte-identical to the forgiving twin's, so the two cannot drift apart."""
+
+    TEXT = "the composer message"
+
+    def _backend(self, result):
+        tb = km.TmuxBackend()
+        seen = []
+        tb._run = lambda args, t=3: seen.append(list(args)) or result
+        tb._fire = lambda args, t=3: seen.append(list(args))
+        return tb, seen
+
+    def _checked(self, tb):
+        return [tb.set_buffer_checked(self.TEXT), tb.paste_buffer_checked(SESSION),
+                tb.send_keys_checked(SESSION, "Enter")]
+
+    def test_a_zero_exit_is_done_and_the_argv_matches_the_forgiving_twin(self):
+        tb, seen = self._backend(types.SimpleNamespace(returncode=0, stdout="", stderr=""))
+        self.assertEqual(self._checked(tb), [True, True, True])
+        checked_argv = list(seen)
+        del seen[:]
+        tb.set_buffer(self.TEXT)
+        tb.paste_buffer(SESSION)
+        tb.send_keys(SESSION, "Enter")
+        self.assertEqual(checked_argv, seen, "the checked variant issues exactly what its twin issues")
+        self.assertEqual(checked_argv[0][:1], ["set-buffer"])
+        self.assertEqual(checked_argv[1][:1], ["paste-buffer"])
+        self.assertEqual(checked_argv[2], ["send-keys", "-t", SESSION, "Enter"])
+
+    def test_a_nonzero_exit_is_not_done(self):
+        # tmux 3.4: a dead server, a missing session and a missing buffer all exit 1
+        tb, _ = self._backend(types.SimpleNamespace(returncode=1, stdout="", stderr="no server running"))
+        self.assertEqual(self._checked(tb), [False, False, False])
+
+    def test_an_exec_failure_or_absent_tmux_is_not_done(self):
+        # `_run` answers None when tmux is unavailable, when the exec raises, and when the child times out
+        tb, _ = self._backend(None)
+        self.assertEqual(self._checked(tb), [False, False, False])
 
 
 class PaneLockSerializesInterruptAndSend(unittest.TestCase):

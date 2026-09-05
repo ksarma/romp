@@ -187,9 +187,9 @@ class TraceRule(unittest.TestCase):
         self.assertFalse(jd._delegate_user_rooted(MGR, "a", self.paths, NOW))
 
     def test_the_record_reports_whether_the_asks_card_is_live(self):
-        # the T101 mint fallback's discriminator (2026-08-26 review of the fold): proof found at a
-        # LIVE ask node means the ask still has a card the tracker can link under; the record says
-        # so (`carded`), and the courier links instead of minting.
+        # the T101 mint fallback's discriminator: proof found at a LIVE ask node means the ask
+        # still has a card the tracker can link under; the record says so (`carded`), and the
+        # courier links instead of minting.
         self._store(MGR, {"g1": _node("g1", "Ship the demo", None, promptUuid="hu")})
         self._human(MGR)
         self.assertTrue(jd._delegate_user_rooted(MGR, "g1", self.paths, NOW).get("carded"))
@@ -206,10 +206,10 @@ class TraceRule(unittest.TestCase):
         self.assertFalse(rec.get("carded"), "…but no live ask node carries it")
 
     def test_a_cleared_live_ask_reads_uncarded(self):
-        # SHAPE B1 (round 2, 2026-08-26): `carded` answers "does this node currently RENDER on a
-        # visible card", not "is it in the live store" — a user-cleared ask sits live until the
-        # compactor takes it, but its card is off every column, so linking into it hides the
-        # fan-out completely. Uncarded → the fallback mints.
+        # `carded` answers "does this node currently RENDER on a visible card", not "is it in the
+        # live store" — a user-cleared ask sits live until the compactor takes it, but its card is
+        # off every column, so linking into it hides the fan-out completely. Uncarded → the
+        # fallback mints.
         self._store(MGR, {"g1": _node("g1", "Ship the demo", None, promptUuid="hu", cleared=True)})
         self._human(MGR)
         rec = jd._delegate_user_rooted(MGR, "g1", self.paths, NOW)
@@ -217,7 +217,7 @@ class TraceRule(unittest.TestCase):
         self.assertFalse(rec.get("carded"), "…but a cleared card renders nowhere")
 
     def test_a_sealed_ask_reads_uncarded(self):
-        # B1's sealed flavor: a complete/cleared ANCESTOR folds the subtree into done-display —
+        # the sealed flavor: a complete/cleared ANCESTOR folds the subtree into done-display —
         # nothing planted under the ask would render as live fan-out (the sealed-open leak).
         self._store(MGR, {"top": _node("top", "done umbrella", None, nodeComplete=True),
                           "g1": _node("g1", "the ask", "top", promptUuid="hu")})
@@ -227,8 +227,8 @@ class TraceRule(unittest.TestCase):
         self.assertFalse(rec.get("carded"))
 
     def test_a_dangling_ask_reads_uncarded(self):
-        # SHAPE B2 (round 2, 2026-08-26): a rewind-swept parent leaves the ask node live but
-        # reachable from NO live top — the feed walks top subtrees, so the node renders nowhere.
+        # a rewind-swept parent leaves the ask node live but reachable from NO live top — the feed
+        # walks top subtrees, so the node renders nowhere.
         self._store(MGR, {"g1": _node("g1", "the ask", "swept-away", promptUuid="hu")})
         self._human(MGR)
         rec = jd._delegate_user_rooted(MGR, "g1", self.paths, NOW)
@@ -236,10 +236,10 @@ class TraceRule(unittest.TestCase):
         self.assertFalse(rec.get("carded"), "a dangling node has no card to link into")
 
     def test_carded_never_flips_across_the_compaction_boundary(self):
-        # THE BOUNDARY PIN (round 2): a cleared ask answers the same before and after the
-        # compactor moves it to the archive — both uncarded, both mint. Before the fix the same
-        # cleared card read carded=True live and carded=False archived, so the mint decision
-        # flipped on a compaction pass that carried no new information.
+        # THE BOUNDARY PIN: a cleared ask answers the same before and after the compactor moves it
+        # to the archive — both uncarded, both mint. With bare live-membership the same cleared
+        # card read carded=True live and carded=False archived, so the mint decision flipped on a
+        # compaction pass that carried no new information.
         self._store(MGR, {"g1": _node("g1", "the ask", None, promptUuid="hu", cleared=True)})
         self._human(MGR)
         live_rec = jd._delegate_user_rooted(MGR, "g1", self.paths, NOW)
@@ -253,10 +253,10 @@ class TraceRule(unittest.TestCase):
         self.assertFalse(arch_rec.get("carded"))
 
     def test_a_visible_intermediate_userask_top_reads_carded(self):
-        # HOP STAND-DOWN, trace side (round 2, finding 3): the climb passes a LIVE, VISIBLE
-        # userAsk-bearing top — the ask already has a card on the intermediate's board, so the
-        # record reads carded even when the ROOT ask node is archive-only (which used to ride the
-        # origin hop up as carded=False and re-mint at every hop level).
+        # HOP STAND-DOWN, trace side: the climb passes a LIVE, VISIBLE userAsk-bearing top — the
+        # ask already has a card on the intermediate's board, so the record reads carded even when
+        # the ROOT ask node is archive-only (which would otherwise ride the origin hop up as
+        # carded=False and re-mint at every hop level).
         self._store(MGR, {"gM": _node("gM", "mid-chain ask", None,
                                       origin={"peer": GRAND, "goalId": "t1", "msgId": "m0"},
                                       userAsk={"text": "the user's ask", "sid": GRAND})})
@@ -283,14 +283,14 @@ class TraceRule(unittest.TestCase):
         self.assertFalse(rec.get("carded"), "a cleared intermediate is no card — the fallback mints")
 
     def test_inner_uncarded_fallback_yields_to_outer_carded_top(self):
-        # THE MAIN-LOOP RECURSION FIX (the fold review, 2026-08-30): sender M holds a VISIBLE carded
-        # ask top `p` with a child `x` whose origin hops to a local grand-sender G whose ask node
-        # `ga` is CLEARED — an uncarded stored-proof (T126's demoted fallback). The merge's origin-
-        # hop callsite did `rec = _delegate_user_rooted(...); if rec: return rec`, so it took that
-        # INNER frame's carded:False fallback as a final answer and stopped the walk at G/ga —
-        # instead of climbing the one hop to `p`, the ask's own live card. A carded:False answer
-        # here would mint a standalone recipient top for an ask that STILL renders on a visible
-        # card (the pre-T101 duplicate-card hole). The climb must reach `p`.
+        # THE MAIN-LOOP RECURSION RULE: sender M holds a VISIBLE carded ask top `p` with a child
+        # `x` whose origin hops to a local grand-sender G whose ask node `ga` is CLEARED — an
+        # uncarded stored-proof (T126's demoted fallback). An origin-hop callsite that did
+        # `rec = _delegate_user_rooted(...); if rec: return rec` took that INNER frame's
+        # carded:False fallback as a final answer and stopped the walk at G/ga — instead of
+        # climbing the one hop to `p`, the ask's own live card. A carded:False answer here would
+        # mint a standalone recipient top for an ask that STILL renders on a visible card (the
+        # pre-T101 duplicate-card hole). The climb must reach `p`.
         self._store(MGR, {
             "p": _node("p", "Ship the demo", None,
                        userAsk={"text": "the user's ask", "sid": MGR},
@@ -308,12 +308,12 @@ class TraceRule(unittest.TestCase):
         self.assertEqual(rec.get("sid"), MGR)
 
     def test_container_rescue_inner_fallback_yields_to_sibling_evidence(self):
-        # THE CONTAINER-RESCUE TWIN of that fix: the main climb dead-ends at an evidence-free
+        # THE CONTAINER-RESCUE TWIN of that rule: the main climb dead-ends at an evidence-free
         # umbrella, so the sibling rescue runs. childA's origin hop resolves only an uncarded
-        # stored-proof (the demoted fallback); childB carries a live human prompt record. The buggy
-        # rescue callsite (same `if rec: return rec`) returned childA's inner fallback and never
-        # reached childB. The rescue must pass over the demoted fallback and take childB's decisive
-        # record.
+        # stored-proof (the demoted fallback); childB carries a live human prompt record. A rescue
+        # callsite with the same `if rec: return rec` returned childA's inner fallback and never
+        # reached childB. The rescue must pass over the demoted fallback and take childB's
+        # decisive record.
         self._store(MGR, {
             "U": _node("U", "the dictated round", None, umbrella=True),
             "childA": _node("childA", "a fanned step", "U",
@@ -334,8 +334,8 @@ class TraceRule(unittest.TestCase):
         # plants two sibling children under the same carded top `p`, each hopping to a DIFFERENT
         # local grand-sender's uncarded proof. The record's askRef is the ask's stable identity —
         # apply_courier dedupes minted tops on it — so both walks must yield the SAME key (p's).
-        # The merge's short-circuit stopped each walk at its own grand-sender's node, so the two
-        # dispatches carried DIFFERENT askRefs and the dedupe minted a twin card where both parents
+        # An inline short-circuit stops each walk at its own grand-sender's node, so the two
+        # dispatches carry DIFFERENT askRefs and the dedupe mints a twin card where both parents
         # reused one.
         self._store(MGR, {
             "p": _node("p", "Ship the demo", None,
@@ -359,14 +359,14 @@ class TraceRule(unittest.TestCase):
                          "…the carded ask top, the identity apply_courier dedupes on")
 
     def test_inner_uncarded_prompt_record_yields_to_outer_carded_top(self):
-        # THE PROMPT-RECORD TWIN of the main-loop recursion fix (fixer round 3, 2026-08-30): round
-        # 2 threaded only the STORED-PROOF arm through the shared fallback slot — the HUMAN PROMPT
-        # RECORD arm still returned an uncarded record DECISIVELY from the inner frame. This is the
-        # TRUE-ORIGIN shape (the origin kernel's own ask node carries promptUuid; stored userAsk
-        # exists only on courier-planted mid-chain nodes), so it is the MORE common flavor of the
-        # same hole: sender M holds a VISIBLE carded ask top `p` with a fanned child `x` whose
-        # origin hops to local grand-sender G, whose CLEARED ask node `ga` resolves a live human
-        # record. A carded:False answer here re-mints below `p`, the ask's own live card.
+        # THE PROMPT-RECORD TWIN of the main-loop recursion rule: demoting only the STORED-PROOF
+        # arm through the shared fallback slot leaves the HUMAN PROMPT RECORD arm returning an
+        # uncarded record DECISIVELY from the inner frame. This is the TRUE-ORIGIN shape (the
+        # origin kernel's own ask node carries promptUuid; stored userAsk exists only on
+        # courier-planted mid-chain nodes), so it is the MORE common flavor of the same hole:
+        # sender M holds a VISIBLE carded ask top `p` with a fanned child `x` whose origin hops to
+        # local grand-sender G, whose CLEARED ask node `ga` resolves a live human record. A
+        # carded:False answer here re-mints below `p`, the ask's own live card.
         self._store(MGR, {
             "p": _node("p", "Ship the demo", None,
                        userAsk={"text": "the user's ask", "sid": MGR},
@@ -406,8 +406,8 @@ class TraceRule(unittest.TestCase):
     def test_an_exhausted_origin_hop_climb_still_mints_from_the_prompt_record(self):
         # T126 PRESERVED (the guard the demotion must not break): when NOTHING anywhere is carded,
         # the inner uncarded human record is still the climb's answer — promoted from the fallback
-        # slot at exhaustion, carded:False, exactly where the mint fallback fires. Green before and
-        # after the round-3 fix; pins that demoting the arm never lost the exhausted-climb mint.
+        # slot at exhaustion, carded:False, exactly where the mint fallback fires. Pins that
+        # demoting the arm never lost the exhausted-climb mint.
         self._store(MGR, {"x": _node("x", "a fanned step", None,
                                      origin={"peer": GRAND, "goalId": "ga", "msgId": "m0"})})
         self._store(GRAND, {"ga": _node("ga", "the original ask", None, cleared=True,
@@ -420,13 +420,12 @@ class TraceRule(unittest.TestCase):
                          "the record keeps the true origin's identity")
 
     def test_a_prompt_record_outranks_a_stored_proof_when_both_ride_the_fallback(self):
-        # THE PRECEDENCE PIN (round 3): with BOTH demoted arms riding the shared fallback slot,
-        # bare first-seen across arms of DIFFERENT strength would let a courier-written stored
-        # proof (seen first, at the origin hop) shadow the human's own prompt record found later
-        # in the same climb. The rule is a two-rank ladder — a prompt record REPLACES a held
-        # stored proof; within a rank the slot stays first-seen. Green at the base commit (the
-        # record returned decisively there); red against a naive first-seen-across-arms demotion,
-        # which is the regression this pins out.
+        # THE PRECEDENCE PIN: with BOTH demoted arms riding the shared fallback slot, bare
+        # first-seen across arms of DIFFERENT strength would let a courier-written stored proof
+        # (seen first, at the origin hop) shadow the human's own prompt record found later in the
+        # same climb. The rule is a two-rank ladder — a prompt record REPLACES a held stored proof;
+        # within a rank the slot stays first-seen. Red against a naive first-seen-across-arms
+        # demotion, which is the regression this pins out.
         self._store(MGR, {
             "q": _node("q", "the dictated ask", None, cleared=True, promptUuid="hu"),
             "x": _node("x", "a fanned step", "q",
@@ -443,14 +442,14 @@ class TraceRule(unittest.TestCase):
         self.assertEqual(rec.get("sid"), MGR)
 
     def test_an_origin_hop_to_a_live_carded_grand_ask_is_decisive_with_its_askref(self):
-        # THE DECISIVE ARM'S PIN (fixer round 4, 2026-08-30 — a coverage gap, green at HEAD): the
-        # round-3 contract keeps exactly TWO decisive mid-climb answers, and only the carded hop
-        # stand-down had a test. The other — a CARDED human prompt record resolved in an INNER
-        # origin-hop frame, returned through the hop callsite — went unpinned: every origin-hop
-        # test used an archived or cleared grand node (the fallback-slot path) or asserted bare
-        # truthiness. A refactor that lost the inner return (demoting EVERY prompt record to the
-        # fallback slot, say) would still answer truthy here — but carded:False, and the courier
-        # would mint a twin beside the grand-sender's own live card. Pin the whole record.
+        # THE DECISIVE ARM'S PIN: the contract keeps exactly TWO decisive mid-climb answers, and
+        # the carded hop stand-down has its own test. The other — a CARDED human prompt record
+        # resolved in an INNER origin-hop frame, returned through the hop callsite — needs one
+        # too: every other origin-hop test uses an archived or cleared grand node (the
+        # fallback-slot path) or asserts bare truthiness. A refactor that lost the inner return
+        # (demoting EVERY prompt record to the fallback slot, say) would still answer truthy here
+        # — but carded:False, and the courier would mint a twin beside the grand-sender's own live
+        # card. Pin the whole record.
         self._store(MGR, {"g1": _node("g1", "mid-chain ask", None,
                                       origin={"peer": GRAND, "goalId": "ga", "msgId": "m0"})})
         self._store(GRAND, {"ga": _node("ga", "the original ask", None, promptUuid="hu")})
@@ -464,11 +463,11 @@ class TraceRule(unittest.TestCase):
         self.assertEqual(rec.get("sid"), GRAND)
 
     def test_a_cycle_exit_still_promotes_the_held_fallback(self):
-        # PROMOTION-PATH PIN (round 4 — green at HEAD): the seen-guard loop exit is one of the
-        # places the climb exhausts, and nothing pinned that a record already riding the fallback
-        # slot survives it — test_cycles_terminate_quiet holds only the no-evidence half. A cleared
-        # ask inside the cycle offers its uncarded record to the slot; the walk then bites its own
-        # tail and must still promote that record at the top frame, never fall out None.
+        # PROMOTION-PATH PIN: the seen-guard loop exit is one of the places the climb exhausts,
+        # and a record already riding the fallback slot must survive it —
+        # test_cycles_terminate_quiet holds only the no-evidence half. A cleared ask inside the
+        # cycle offers its uncarded record to the slot; the walk then bites its own tail and must
+        # still promote that record at the top frame, never fall out None.
         self._store(MGR, {"a": _node("a", "the dictated ask", "b", cleared=True, promptUuid="hu"),
                           "b": _node("b", "a step", "a")})
         self._human(MGR)
@@ -478,10 +477,10 @@ class TraceRule(unittest.TestCase):
         self.assertEqual(rec.get("askRef"), {"peer": MGR, "goalId": "a"})
 
     def test_a_missing_parent_exit_still_promotes_the_held_fallback(self):
-        # PROMOTION-PATH PIN (round 4 — green at HEAD), the missing-node twin: a chain whose
-        # parent pointer dangles exits through the not-a-dict guard, which must return the held
-        # slot at the top frame — the identity half test_a_dangling_ask_reads_uncarded leaves
-        # unpinned (it asserts truthiness and carded only).
+        # PROMOTION-PATH PIN, the missing-node twin: a chain whose parent pointer dangles exits
+        # through the not-a-dict guard, which must return the held slot at the top frame — the
+        # identity half test_a_dangling_ask_reads_uncarded leaves unpinned (it asserts truthiness
+        # and carded only).
         self._store(MGR, {"g1": _node("g1", "the dictated ask", "swept-away",
                                       cleared=True, promptUuid="hu")})
         self._human(MGR)
@@ -564,15 +563,15 @@ class CourierMintMatrix(unittest.TestCase):
                         "no recipient goal will carry this msgId — the reply-sweep owns the ending")
 
     def test_a_rooted_dispatch_whose_ask_card_is_gone_mints_the_fallback_top(self):
-        # T101's FALLBACK, MADE SATISFIABLE (2026-08-26 review of the fold): as merged,
-        # `mint_recipient = rooted and not link_id` could never fire — the trace returns None
-        # without a link (test_no_link_quiets is the pin), so `rooted` implied `link_id` and the
-        # apply_courier mint below it was dead code. The condition keys on the trace's OWN answer
-        # now: the root record says whether the chain's proof still sits on a live ask node
-        # (`carded`). Here the courier links the sender's live follow-up node, but the human proof
-        # lives only in the ARCHIVE — the ask's own card is gone, so the recipient card IS the
-        # ask's card: minted, origin-stamped, frame + userAsk intact, tracker un-quiet (the origin
-        # back-link owns its ending, exactly the pre-T101 rooted-mint wiring).
+        # T101's FALLBACK, MADE SATISFIABLE: as `mint_recipient = rooted and not link_id` this
+        # could never fire — the trace returns None without a link (test_no_link_quiets is the
+        # pin), so `rooted` implied `link_id` and the apply_courier mint below it was dead code.
+        # The condition keys on the trace's OWN answer now: the root record says whether the
+        # chain's proof still sits on a live ask node (`carded`). Here the courier links the
+        # sender's live follow-up node, but the human proof lives only in the ARCHIVE — the ask's
+        # own card is gone, so the recipient card IS the ask's card: minted, origin-stamped, frame
+        # + userAsk intact, tracker un-quiet (the origin back-link owns its ending, exactly the
+        # pre-T101 rooted-mint wiring).
         jd.save_goals(MGR, {"rompUuid": MGR, "seq": 2, "nodes": {
             MGR + ":g2": _node(MGR + ":g2", "Verification follow-up", MGR + ":g1")},
             "placements": {}, "status": {}})
@@ -599,10 +598,10 @@ class CourierMintMatrix(unittest.TestCase):
                          "a recipient goal carries the msgId — the origin back-link owns the ending")
 
     def test_a_dispatch_linked_to_a_dangling_ask_mints(self):
-        # SHAPE B2 END TO END (round 2, 2026-08-26): the courier's link resolves to a live ask
-        # whose parent was rewind-swept — the node pierces the menu (a missing ancestor never
-        # seals) but renders on NO card (the feed walks top subtrees). Reading it "carded" linked
-        # the fan-out into a card that renders nowhere; it must take the fallback mint instead.
+        # END TO END: the courier's link resolves to a live ask whose parent was rewind-swept —
+        # the node pierces the menu (a missing ancestor never seals) but renders on NO card (the
+        # feed walks top subtrees). Reading it "carded" would link the fan-out into a card that
+        # renders nowhere; it must take the fallback mint instead.
         jd.save_goals(MGR, {"rompUuid": MGR, "seq": 1, "nodes": {
             MGR + ":g1": _node(MGR + ":g1", "Ship the staged-run verification", "swept-away",
                                promptUuid="hu")},
@@ -618,12 +617,12 @@ class CourierMintMatrix(unittest.TestCase):
                          "a dangling ask has no visible card — the recipient card IS the ask's card")
 
     def test_a_cleared_live_ask_mints_like_an_archived_one(self):
-        # SHAPE B1 END TO END + the compaction-boundary pin (round 2): the root ask is CLEARED but
-        # still live (the compactor hasn't run). The chain reaches it through the origin hop of a
-        # courier-planted mid-chain top (pre-T105: no userAsk on it). Before the fix the live
-        # membership read carded=True and the courier filed quiet — the same world a compaction
-        # pass later minted, so the decision flipped on bookkeeping. A cleared card renders
-        # nowhere: mint now, exactly as the archived twin does.
+        # END TO END + the compaction-boundary pin: the root ask is CLEARED but still live (the
+        # compactor hasn't run). The chain reaches it through the origin hop of a courier-planted
+        # mid-chain top (pre-T105: no userAsk on it). With bare live membership this read
+        # carded=True and the courier filed quiet — the same world a compaction pass later minted,
+        # so the decision flipped on bookkeeping. A cleared card renders nowhere: mint now, exactly
+        # as the archived twin does.
         gpath = Path(self.td.name) / (GRAND + ".jsonl")
         gpath.write_text(json.dumps(uline(T0 - 900, "the dictated round", "hu")) + "\n")
         jd.discover = lambda now, window=None, forks=True: [
@@ -647,11 +646,10 @@ class CourierMintMatrix(unittest.TestCase):
                          "a cleared-live ask is exactly as card-less as its archived twin — mint")
 
     def test_an_origin_hop_to_a_live_carded_ask_links_instead_of_minting(self):
-        # THE DECISIVE ARM END TO END (fixer round 4 — coverage pin, green at HEAD): the
-        # cleared-live twin above mints; this is the same hop shape with the grand-sender's ask
-        # node LIVE and VISIBLE, the half that must NOT mint. The chain reaches the carded human
-        # root through the origin hop, so the recipient gets no standalone top — the ask's own
-        # card carries the fan-out — and the tracker files quiet.
+        # THE DECISIVE ARM END TO END: the cleared-live twin above mints; this is the same hop
+        # shape with the grand-sender's ask node LIVE and VISIBLE, the half that must NOT mint. The
+        # chain reaches the carded human root through the origin hop, so the recipient gets no
+        # standalone top — the ask's own card carries the fan-out — and the tracker files quiet.
         gpath = Path(self.td.name) / (GRAND + ".jsonl")
         gpath.write_text(json.dumps(uline(T0 - 900, "the dictated round", "hu")) + "\n")
         jd.discover = lambda now, window=None, forks=True: [
@@ -728,13 +726,13 @@ BODY_B = ("Verify the staged run references, second pass.\n"
 
 
 class FanOutDedupe(unittest.TestCase):
-    """Round 2 (2026-08-26), finding 3: the fallback mint was idempotent per msgId ONLY, so one ask
-    fanned N times with archive-only proof minted N origin-stamped tops on the same recipient, and
-    every origin-hop level could re-mint. The mint dedupes by ASK IDENTITY — the proof node's
-    (sender sid, goal id), carried up the trace as askRef and stamped on the minted top — and an
-    intermediate userAsk-bearing top that already shows stands the whole re-mint down (the trace's
-    carded short-circuit). Each RECIPIENT session still gets its one card: the dedupe is per
-    (recipient store, ask identity), never global."""
+    """The fallback mint was idempotent per msgId ONLY, so one ask fanned N times with archive-only
+    proof minted N origin-stamped tops on the same recipient, and every origin-hop level could
+    re-mint. The mint dedupes by ASK IDENTITY — the proof node's (sender sid, goal id), carried up
+    the trace as askRef and stamped on the minted top — and an intermediate userAsk-bearing top
+    that already shows stands the whole re-mint down (the trace's carded short-circuit). Each
+    RECIPIENT session still gets its one card: the dedupe is per (recipient store, ask identity),
+    never global."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -839,11 +837,10 @@ class FanOutDedupe(unittest.TestCase):
 
 
 class ConfirmingWindowDispatch(unittest.TestCase):
-    """Round 3 (2026-08-26), item 3: a done-verdict-filed top whose settle is pending — the
-    rollup's `confirming` export — still renders visibly in Working (the steady doneConfirming
-    cue), so a same-ask dispatch must LINK into it, not mint beside it. _node_carded read bare
-    nodeComplete and called the confirming window dead. Only a genuinely SETTLED completion stays
-    uncarded — the sealed-open trade holds."""
+    """A done-verdict-filed top whose settle is pending — the rollup's `confirming` export — still
+    renders visibly in Working (the steady doneConfirming cue), so a same-ask dispatch must LINK
+    into it, not mint beside it. Bare nodeComplete would call the confirming window dead. Only a
+    genuinely SETTLED completion stays uncarded — the sealed-open trade holds."""
 
     def setUp(self):
         self._saved = jd.parsed_session
@@ -918,13 +915,13 @@ class ConfirmingWindowDispatch(unittest.TestCase):
 
 
 class AskRefRecycling(unittest.TestCase):
-    """Round 3 (2026-08-26), item 6 (probe-confirmed): goal ids are sid:gN with a per-store seq
-    that RESETS when the sender's store file is lost, so a NEW ask can recycle an OLD ask's exact
-    goal id — and a dedupe keyed on (sender sid, goal id) alone linked the new ask's dispatch into
-    the OLD ask's standing card: no card for the new ask, and the old card's completion would end
-    the new dispatch's tracker. The standing top's own userAsk text is the identity cross-check —
-    the stamp and the dedupe share one shaping (_ask_stamp_text) — so the same ask still links
-    while a recycled id over DIFFERENT dictation mints its own card."""
+    """Goal ids are sid:gN with a per-store seq that RESETS when the sender's store file is lost,
+    so a NEW ask can recycle an OLD ask's exact goal id — and a dedupe keyed on (sender sid, goal
+    id) alone links the new ask's dispatch into the OLD ask's standing card: no card for the new
+    ask, and the old card's completion would end the new dispatch's tracker. The standing top's
+    own userAsk text is the identity cross-check — the stamp and the dedupe share one shaping
+    (_ask_stamp_text) — so the same ask still links while a recycled id over DIFFERENT dictation
+    mints its own card."""
 
     def _standing(self):
         wtop = WKR + ":g1"
