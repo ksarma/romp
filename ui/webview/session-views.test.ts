@@ -79,9 +79,12 @@ test("every cycling path walks the VISIBLE order — keyboard can never land on 
   assert.match(RENDER, /function visibleOrder\(\): string\[\] \{ return order\.filter\(\(id\) => tabInView\(id\) && !collapsedTabIds\.has\(id\)\); \}/);
 });
 
-test("optimistic edits hold sticky and yield to the kernel after three silent pushes", () => {
-  assert.match(RENDER, /function captureViews\(v: SessionViews \| null\) \{[\s\S]{0,600}\+\+pendingViewsAge >= 3/);
-  assert.match(RENDER, /function postViews\(v: SessionViews\) \{[\s\S]{0,300}setTimelineViews/);
+test("optimistic edits hold until the kernel echoes them exactly or acks the write — never a frame count (2026-09-05)", () => {
+  // the three-frame yield that lived here dropped good edits and kept refused ones alike; the
+  // write's ack (views-writes.test.ts) is the event that settles the copy
+  assert.match(RENDER, /function captureViews\(v: SessionViews \| null\) \{[\s\S]{0,900}viewsKey\(v\) === viewsKey\(pendingSessionViews\)/);
+  assert.doesNotMatch(RENDER, /pendingViewsAge/);
+  assert.match(RENDER, /function postViews\(v: SessionViews\) \{[\s\S]{0,300}setTimelineViews", views: v, writeId/);
 });
 
 test("a view-filtered session keeps one visible home: the picker's other-view section, and picking jumps views", () => {

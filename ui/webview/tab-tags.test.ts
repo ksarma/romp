@@ -43,16 +43,16 @@ test("the Tags row sits with the session controls ABOVE the divider; Browse stay
     "the compact one-line row: current names, or the honest empty state");
 });
 
-test("edits reuse the wire — never a fork: local adds post the whole blob, remote edits ride editTag", () => {
+test("edits reuse the wire — never a fork: local edits post TARGETED tagEdit ops, remote edits ride editTag", () => {
   const at = RENDER.indexOf("const editUnion = (g: TagUnion");
-  const body = RENDER.slice(at, at + 2400);
-  assert.ok(body.includes("t.members = Array.from(new Set((t.members || []).concat(edit.add))); dirty = true;"),
-    "local add edits the whole blob (posted once below — pendingSessionViews echoes instantly)");
+  const body = RENDER.slice(at, at + 3200);
+  assert.ok(body.includes('ops.push({ op: "addMember", name: g.name, sids: edit.add.slice() });'),
+    "a local add is an addMember by tag name (2026-09-05: the whole-blob post was refused as stale against the page's own earlier write)");
   assert.ok(body.includes('vscodeApi?.postMessage({ type: "editTag", edit: { host: g.remotes[0].host || "", name: g.name, add: edit.add.slice() } });'),
     "an add with no local home routes to the tag's single home over the editTag wire");
   assert.ok(body.includes("for (const rt of g.remotes) {"),
     "a REMOVE walks every remote store holding the pair — remove-everywhere, never half");
-  assert.ok(body.includes("if (dirty) postViews(nv);"), "ONE optimistic blob per gesture — the flyout reads true instantly");
+  assert.ok(body.includes("postUnionEdits(nv, applyUnionEdit(nv, g, edit));"), "ONE optimistic blob per gesture — the flyout reads true instantly");
   assert.ok(body.includes("const nvRemote = (rt: SessionTag)"),
     "the remote entries mirror optimistically too — echoed remoteTags are derived, kernel-dropped, presentation-only");
   assert.match(RENDER, /x\.title = "remove this tag from the session — everywhere it holds it";/);
@@ -62,7 +62,8 @@ test("New tag… is an inline input (menu vocabulary, no native prompt) that cre
   assert.match(RENDER, /inp\.placeholder = "New tag…"; inp\.maxLength = 40;/);
   assert.doesNotMatch(RENDER.slice(RENDER.indexOf("const editUnion")), /window\.prompt/);
   assert.match(RENDER, /const color = paletteColors\.find\(\(c\) => !used\.has\(c\)\) \|\| paletteColors\[0\] \|\| "#1EA1EB";/);
-  assert.match(RENDER, /nv\.tags = viewTags\(nv\)\.concat\(\[\{ id: "g" \+ Date\.now\(\)\.toString\(36\), name, color, members: \[id\] \}\]\);/);
+  assert.match(RENDER, /const tg = \{ id: "g" \+ Date\.now\(\)\.toString\(36\), name, color, members: \[id\] \};\s*\n\s*nv\.tags = viewTags\(nv\)\.concat\(\[tg\]\);/);
+  assert.match(RENDER, /postTagEdit\(nv, \{ op: "create", name, color, id: tg\.id, sids: \[id\] \}\);/, "one targeted create, the session in it");
   // an existing name typed into the box ADDS to that union instead of minting a duplicate tag
   assert.match(RENDER, /const existing = unionFor\(\)\.find\(\(g\) => g\.name === name\);/);
 });
@@ -84,9 +85,9 @@ test("one-click MOVE between groups (tab groups, 2026-09-04): 'Move to <name>' a
   assert.match(fly, /plus\.title = "add this tag too — the session stays in its current group";/, "…and multi-tag stays one click away");
   assert.match(fly, /lb\.textContent = "\+ " \+ g\.name; bodyE\.appendChild\(lb\);/, "with no home tag, + <name> is the move");
   const mv = RENDER.slice(RENDER.indexOf("const moveUnion = (from: TagUnion, to: TagUnion)"), RENDER.indexOf("// HOVER-INTENT open"));
-  assert.match(mv, /const added = applyUnionEdit\(nv, to, \{ add: \[id\] \}\);\s*\n\s*const removed = applyUnionEdit\(nv, from, \{ remove: \[id\] \}\);\s*\n\s*if \(added \|\| removed\) postViews\(nv\);/,
-    "two edits, ONE blob, one post — the strip never shows the half-moved state");
-  assert.match(RENDER, /const applyUnionEdit = \(nv: SessionViews, g: TagUnion, edit: \{ add\?: string\[\]; remove\?: string\[\] \}\): boolean =>/,
+  assert.match(mv, /const a = applyUnionEdit\(nv, to, \{ add: \[id\] \}\);\s*\n\s*const r = applyUnionEdit\(nv, from, \{ remove: \[id\] \}\);\s*\n\s*postUnionEdits\(nv, a, r\);/,
+    "two edits, ONE blob shown, two targeted ops — the strip never shows the half-moved state");
+  assert.match(RENDER, /const applyUnionEdit = \(nv: SessionViews, g: TagUnion, edit: \{ add\?: string\[\]; remove\?: string\[\] \}\): UnionEdit =>/,
     "editUnion and moveUnion share the one edit — never a forked implementation");
 });
 

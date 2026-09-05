@@ -16,6 +16,7 @@ import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./ta
 import { ctxFallbackColor, pickTone, readableRgb } from "./ctx-color";
 import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
+import { mintWriteId, ackOutcome, type TagEditOp, type ViewsAck } from "./views-writes";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
 import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, PendingTabMeta } from "./tab-meta";
@@ -497,20 +498,24 @@ const pendingTabMeta = new Map<string, PendingTabMeta>();
 // A hidden session is a BACKGROUND session — still running, judged and carded; the + picker lists it
 // under "Hidden" and the timeline's corner panel counts it, so it is always one glance away.
 // Captured from every tabOrder push; a local gesture (hide from the tab menu, reveal from the
-// picker) applies optimistically and holds sticky until a push echoes it — yielding to the kernel
-// after three silent pushes, the same machinery the timeline's copy runs.
+// picker) applies optimistically and holds until the kernel ANSWERS the write (viewsAck /
+// tagEditAck → onViewsAck below) or echoes it exactly — never yielding on a frame count (the user
+// 2026-09-05: the three-frame yield dropped good edits and kept refused ones alike). The same
+// machinery the timeline's copy runs (views-writes.ts is the shared decision).
 let sessionViews: SessionViews | null = null;
 let pendingSessionViews: SessionViews | null = null;
-let pendingViewsAge = 0;
+let viewsWrites: string[] = [];   // this page's views writes in flight (writeIds), oldest first
+let viewsWriteSeq = 0;
 let allHiddenBlanked = false;   // the active transcript was blanked because EVERY session is view-hidden
 function effViews(): SessionViews | null { return pendingSessionViews ?? sessionViews; }
 function captureViews(v: SessionViews | null) {
   if (v) sessionViews = v;
-  // v null = a tabOrder frame WITHOUT the blob (an older kernel in a mixed-version mesh): it still
-  // ages a pending edit, or the optimistic state would fake success forever against a kernel that
-  // will never confirm it
-  if (pendingSessionViews && ((v && viewsKey(v) === viewsKey(pendingSessionViews)) || ++pendingViewsAge >= 3)) {
-    pendingSessionViews = null; pendingViewsAge = 0;
+  // the ONE frame-driven clear: the write's own echo, exact (order-insensitive). A frame that does
+  // not match says nothing about the write — it may predate it, or the kernel may have refused it —
+  // so no count of frames yields the copy; the ack settles it either way. (v null = a tabOrder
+  // frame without the blob, an older kernel: nothing to compare.)
+  if (pendingSessionViews && v && viewsKey(v) === viewsKey(pendingSessionViews)) {
+    pendingSessionViews = null; viewsWrites = [];
   }
   // A VIEW CHANGE that excludes the ACTIVE session converts it into the peek instead of bouncing
   // (the user 2026-08-24: open All, pick a session, re-apply the tag filter — keep reading it in
@@ -520,12 +525,42 @@ function captureViews(v: SessionViews | null) {
   // the deferred first-tab bounce never fires (its fire-time revalidation re-checks tabInView).
   if (activeId) assertPeekFor(activeId);
 }
-// (postViews below runs the same re-derivation for the LOCAL optimistic edit — both views-arrival
-// paths keep the active session's peek state current.)
-function postViews(v: SessionViews) {
-  pendingSessionViews = v; pendingViewsAge = 0;
+// (holdViews below runs the same re-derivation for the LOCAL optimistic edit — both views-arrival
+// paths keep the active session's peek state current.) The shared half of postViews / postTagEdit:
+// show the optimistic copy, mint and track the write's id.
+function holdViews(v: SessionViews): string {
+  pendingSessionViews = v;
   if (activeId) assertPeekFor(activeId);   // the optimistic edit re-derives the active session's peek too
-  if (vscodeApi) vscodeApi.postMessage({ type: "setTimelineViews", views: v });
+  const writeId = mintWriteId(++viewsWriteSeq);
+  viewsWrites.push(writeId);
+  return writeId;
+}
+// a WHOLE-BLOB write — the lens and order edits, which have no targeted op; the kernel's viewsAck
+// reports the stale-writer guard's refusals, if any
+function postViews(v: SessionViews) {
+  const writeId = holdViews(v);
+  if (vscodeApi) vscodeApi.postMessage({ type: "setTimelineViews", views: v, writeId });
+  renderTabs();
+}
+// a TARGETED tag edit (the tab menu's Tags flyout): `nv` is the optimistic copy with the gesture
+// applied, `edit` the op the kernel applies by tag NAME through its /tag merge — never judged stale
+// against this page's own earlier writes (the 2026-09-05 loss: a New tag… then a Move to, posted as
+// whole blobs from the un-echoed copy, had the second refused). Answered by tagEditAck.
+function postTagEdit(nv: SessionViews, edit: TagEditOp) {
+  const writeId = holdViews(nv);
+  if (vscodeApi) vscodeApi.postMessage({ type: "tagEdit", writeId, ...edit });
+  renderTabs();
+}
+// the kernel's answer to one of this page's writes: the returned blob is the base whatever the
+// verdict; the pending copy settles once nothing is in flight; a refusal reverts it at once and
+// says why — the warn toast, since the flyout has no error surface of its own
+function onViewsAck(m: ViewsAck) {
+  const out = ackOutcome(viewsWrites, m);
+  viewsWrites = out.inflight;
+  if (m.views) sessionViews = m.views;
+  if (out.clearPending) pendingSessionViews = null;
+  if (out.refusal) warnToast("tag edit refused — " + out.refusal);
+  if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek
   renderTabs();
 }
 // ── EPHEMERAL PEEK TAB (the user 2026-08-24, superseding the kernel's reveal-rule view mutation):
@@ -5367,9 +5402,11 @@ function showTabMenu(e: MouseEvent, id: string) {
   // no host prefixes): an ADD lands on the local store when the name exists locally, else the
   // tag's single home over the editTag wire; a REMOVE removes the (name, member) pair from EVERY
   // store holding it; New tag… creates locally with the next unused palette colour. Local writes
-  // post the whole blob (postViews — pendingSessionViews echoes instantly); remote writes ride the
-  // editTag op and settle on the next push (a refused edit re-appears — the kernel's loud
-  // tagEditFailed lands on the timeline dialog, 628's surface).
+  // are TARGETED tagEdit ops on one optimistic blob (postTagEdit — pendingSessionViews shows it
+  // instantly, the kernel's ack settles it; the user 2026-09-05, whose whole-blob burst was
+  // refused as stale against itself); remote writes ride the editTag op and settle on the next
+  // push (a refused edit re-appears — the kernel's loud tagEditFailed lands on the timeline
+  // dialog, 628's surface).
   {
     const unionFor = () => viewTagUnion(effViews());
     const holding = () => unionFor().filter((g) => g.members.includes(id));
@@ -5383,28 +5420,34 @@ function showTabMenu(e: MouseEvent, id: string) {
     bodyEl.appendChild(sb);
     tagsItem.appendChild(bodyEl);
     const caret = el("span", "ctx-caret"); caret.textContent = "▸"; tagsItem.appendChild(caret);
+    // what one union edit did to the copy: the TARGETED ops to post for the local store, and whether
+    // a remote entry's mirror changed (presentation only — the remote's own next push is the truth)
+    type UnionEdit = { ops: TagEditOp[]; mirrored: boolean };
     const editUnion = (g: TagUnion, edit: { add?: string[]; remove?: string[] }) => {
       // ONE optimistic blob per gesture: the local store's edit AND the remote entries' mirror both
       // land in pendingSessionViews so the flyout reads true instantly. Echoed remoteTags are
       // DERIVED — the kernel drops them from the echo — so mutating the copy is presentation-only;
       // the remote's own next push is the durable truth (a refused edit re-appears there).
       const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
-      const dirty = applyUnionEdit(nv, g, edit);
-      if (dirty) postViews(nv);
+      postUnionEdits(nv, applyUnionEdit(nv, g, edit));
     };
     // the edit itself, applied to a blob the caller posts — so a MOVE between groups (below) is two
-    // edits on ONE blob, posted once
-    const applyUnionEdit = (nv: SessionViews, g: TagUnion, edit: { add?: string[]; remove?: string[] }): boolean => {
-      let dirty = false;
+    // edits on ONE blob, shown once
+    const applyUnionEdit = (nv: SessionViews, g: TagUnion, edit: { add?: string[]; remove?: string[] }): UnionEdit => {
+      const ops: TagEditOp[] = [];
+      let mirrored = false;
       const nvRemote = (rt: SessionTag) => (nv.remoteTags || []).find((x) => x.id === rt.id);
       if (edit.add?.length) {
         if (g.localId) {
           const t = viewTags(nv).find((x) => x.id === g.localId);
-          if (t) { t.members = Array.from(new Set((t.members || []).concat(edit.add))); dirty = true; }
+          if (t) {
+            t.members = Array.from(new Set((t.members || []).concat(edit.add)));
+            ops.push({ op: "addMember", name: g.name, sids: edit.add.slice() });
+          }
         } else if (g.remotes.length) {
           vscodeApi?.postMessage({ type: "editTag", edit: { host: g.remotes[0].host || "", name: g.name, add: edit.add.slice() } });
           const mine = nvRemote(g.remotes[0]);
-          if (mine) { mine.members = Array.from(new Set((mine.members || []).concat(edit.add))); dirty = true; }
+          if (mine) { mine.members = Array.from(new Set((mine.members || []).concat(edit.add))); mirrored = true; }
         }
       }
       if (edit.remove?.length) {
@@ -5412,25 +5455,34 @@ function showTabMenu(e: MouseEvent, id: string) {
           const t = viewTags(nv).find((x) => x.id === g.localId);
           if (t && (t.members || []).some((m) => edit.remove!.includes(m))) {
             t.members = (t.members || []).filter((m) => !edit.remove!.includes(m));
-            dirty = true;
+            ops.push({ op: "removeMember", name: g.name, sids: edit.remove.slice() });
           }
         }
         for (const rt of g.remotes) {
           if (!(rt.members || []).some((m) => edit.remove!.includes(m))) continue;
           vscodeApi?.postMessage({ type: "editTag", edit: { host: rt.host || "", name: g.name, remove: edit.remove!.slice() } });
           const mine = nvRemote(rt);
-          if (mine) { mine.members = (mine.members || []).filter((m) => !edit.remove!.includes(m)); dirty = true; }
+          if (mine) { mine.members = (mine.members || []).filter((m) => !edit.remove!.includes(m)); mirrored = true; }
         }
       }
-      return dirty;
+      return { ops, mirrored };
+    };
+    // the writes for one gesture: N targeted ops, the ONE optimistic copy shown for all of them (the
+    // kernel applies them in order on this socket, so the strip never shows a half-moved state). A
+    // remote-only edit has no local op: its mirror shows until the next frame — remoteTags are not
+    // in the echo key, so that frame clears it — exactly the lifetime it had before.
+    const postUnionEdits = (nv: SessionViews, ...edits: UnionEdit[]) => {
+      const ops = edits.flatMap((e) => e.ops);
+      if (ops.length) { for (const op of ops) postTagEdit(nv, op); }
+      else if (edits.some((e) => e.mirrored)) { pendingSessionViews = nv; renderTabs(); }
     };
     // a MOVE between groups (tab groups, the user 2026-09-04): add the target tag, drop the HOME
     // tag, leave every other tag alone — one blob, so the strip never shows the half-moved state
     const moveUnion = (from: TagUnion, to: TagUnion) => {
       const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
-      const added = applyUnionEdit(nv, to, { add: [id] });
-      const removed = applyUnionEdit(nv, from, { remove: [id] });
-      if (added || removed) postViews(nv);
+      const a = applyUnionEdit(nv, to, { add: [id] });
+      const r = applyUnionEdit(nv, from, { remove: [id] });
+      postUnionEdits(nv, a, r);
     };
     // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
     // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
@@ -5507,9 +5559,11 @@ function showTabMenu(e: MouseEvent, id: string) {
           const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
           const used = new Set(viewTags(nv).map((t) => t.color));
           const color = paletteColors.find((c) => !used.has(c)) || paletteColors[0] || "#1EA1EB";
-          nv.tags = viewTags(nv).concat([{ id: "g" + Date.now().toString(36), name, color, members: [id] }]);
+          const tg = { id: "g" + Date.now().toString(36), name, color, members: [id] };
+          nv.tags = viewTags(nv).concat([tg]);
           delete nv.groups;
-          postViews(nv);
+          // ONE targeted create carrying the session — the tag and its first member land together
+          postTagEdit(nv, { op: "create", name, color, id: tg.id, sids: [id] });
           build(); sb.textContent = subText();
         });
         nrow.appendChild(inp);
@@ -13133,6 +13187,9 @@ window.addEventListener("message", (e: MessageEvent) => {
   // The identity palette changed (gear → Session colors): refresh the right-click menu's swatch set so a
   // menu opened after the switch offers the NEW palette (the kernel remaps + repaints sessions itself).
   else if (m.type === "palette" && Array.isArray(m.colors)) paletteColors = m.colors;
+  // the kernel's answer to one of THIS page's views writes (a targeted tag edit, or a whole-blob
+  // lens/order write) — the optimistic copy settles or reverts on it, never on a frame count
+  else if (m.type === "viewsAck" || m.type === "tagEditAck") onViewsAck(m);
   // The kernel's pick memory moved (a pin, a Latest un-pin, a refused pin dropped) or its catalog grew:
   // re-read /models so the family rows send the fresh default — the models-list twin of the palette frame.
   else if (m.type === "models") loadModelChoices();
