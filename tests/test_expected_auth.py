@@ -481,16 +481,20 @@ class DeclarationInTheKeySourceVerdict(unittest.TestCase):
         v = sb.key_source_verdict(dict(self.CMD, ROMP_EXPECTED_AUTH="key"), snapshot=self._snap(True), work_key_present=True)
         self.assertEqual(self._problems(v), [], "key declared and a key printed: the intended, quiet state")
 
-    def test_key_declared_with_nothing_to_inject_needs_a_helper(self):
-        for env in ({"ROMP_EXPECTED_AUTH": "key"}, dict(self.CMD, ROMP_EXPECTED_AUTH="key")):
-            snap = self._snap(False) if "ROMP_CREDENTIAL_COMMAND" in env else None
-            v = sb.key_source_verdict(env, snapshot=snap)
-            hit = [t for t in self._problems(v) if "names no apiKeyHelper" in t]
-            self.assertEqual(len(hit), 1, (env, self._problems(v)))
-            self.assertIn("land on the login", hit[0])
-            v = sb.key_source_verdict(env, snapshot=snap, helper_command="the-helper")
-            self.assertEqual([t for t in self._problems(v) if "apiKeyHelper" in t], [], env)
-            self.assertEqual(v["sessionKeyPath"], "helper")
+    def test_key_declared_with_nothing_to_inject_needs_a_helper_in_command_mode(self):
+        env = dict(self.CMD, ROMP_EXPECTED_AUTH="key")
+        v = sb.key_source_verdict(env, snapshot=self._snap(False))
+        hit = [t for t in self._problems(v) if "names no apiKeyHelper" in t]
+        self.assertEqual(len(hit), 1, self._problems(v))
+        self.assertIn("land on the login", hit[0])
+        v = sb.key_source_verdict(env, snapshot=self._snap(False), helper_command="the-helper")
+        self.assertEqual([t for t in self._problems(v) if "apiKeyHelper" in t], [])
+        self.assertEqual(v["sessionKeyPath"], "helper")
+        # file mode says nothing new at boot: the init-time mismatch line (this file's other classes)
+        # already covers a declaration the live auth does not meet
+        v = sb.key_source_verdict({"ROMP_EXPECTED_AUTH": "key"})
+        self.assertEqual(self._problems(v), [])
+        self.assertEqual(v["sessionKeyPath"], "login")
 
     def test_undeclared_or_login_declared_says_nothing_about_the_helper(self):
         for env in ({}, {"ROMP_EXPECTED_AUTH": "login"}, {"ROMP_EXPECTED_AUTH": "junk"}):

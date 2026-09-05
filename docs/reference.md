@@ -377,7 +377,8 @@ fine. [Installing without keys on disk](#installing-without-keys-on-disk)
 closes the gap with a command the kernel runs itself, so the service needs no
 shell and no environment of its own. Routing `ExecStart` through a login shell
 to load the variables is the older workaround: the variables it loads freeze
-until a manager restart, and the kernel says so at boot.
+until a manager restart. `romp-service status` reports which shape the unit
+has; in command mode the kernel also says so at boot.
 
 Keep `service.env` key-free even where your installation has no rule against
 credentials in files. The file still works as the unit's `EnvironmentFile` for
@@ -673,8 +674,11 @@ Per session the cycle reports one of:
   would kill that work. The re-run hint names the skipped sessions; re-run
   `--cycle` with those names once they are quiet.
 
-`romp refresh --quiet` is the alternative that restarts everything: the
-manager comes back once the sessions are quiet, and every process is new.
+`romp refresh --quiet` is the alternative that restarts every kernel once the
+sessions are quiet: every session's CLI is a new process. The manager itself
+keeps running, so a mode change in `service.env` is applied by that restart
+too, while an edit to the unit's own `Environment=` lines still needs
+`systemctl --user restart romp-manager`.
 
 No key value is ever printed, logged, or sent over a socket. The command's
 output, the Log panel entry when the kernel's credential changes, and the

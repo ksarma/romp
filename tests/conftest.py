@@ -135,6 +135,35 @@ def _no_credential_command():
     yield
 
 
+# No test may read the REAL service unit, launchd plist or Claude Code settings (2026-09-05):
+# constructing the SDK backend takes the key-source verdict (sdk_backend.key_source_verdict), which
+# reads the systemd unit and its drop-ins, the launchd plist and $CLAUDE_CONFIG_DIR/settings*.json —
+# so every backend construction in the suite would otherwise read this machine's unit and the
+# developer's own apiKeyHelper setting (and envsource.helper_fingerprint could RUN that helper). The
+# three are floored to empty temp dirs under the state root: no unit, no plist, no settings. The one
+# test that deliberately borrows the user's own apiKeyHelper command (the opt-in live move test)
+# reads the pre-floor location through ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, set here once. Import-time
+# plus a per-test re-assert, on the same reasoning as the manager-port floor; a test that needs its
+# own dirs points the vars at temp paths in setUp, which runs after the fixture.
+_EMPTY_DIRS = {
+    "ROMP_SYSTEMD_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-systemd-user"),
+    "ROMP_LAUNCHD_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-launch-agents"),
+    "CLAUDE_CONFIG_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-claude-config"),
+}
+os.environ.setdefault("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR",
+                      os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"))
+for _v, _d in _EMPTY_DIRS.items():
+    os.makedirs(_d, exist_ok=True)
+    os.environ[_v] = _d
+
+
+@pytest.fixture(autouse=True)
+def _no_real_unit_or_settings():
+    for var, d in _EMPTY_DIRS.items():
+        os.environ[var] = d
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _stub_place_llm(monkeypatch):
     """Card-first placer floor (2026-07-08): every loaded romp-judge instance gets a no-op place_llm so

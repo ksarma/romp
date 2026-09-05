@@ -112,8 +112,11 @@ def _user_api_key_helper(config_dir=None):
     """The `apiKeyHelper` command from the user's own Claude Code settings ("" when there is none): the
     hermetic config dir borrows the COMMAND, so the child authenticates exactly the way the user's real
     sessions do. Never a key — keys live in the vault and in process environment only, and this test
-    writes none to disk. `config_dir` defaults to $CLAUDE_CONFIG_DIR, else ~/.claude."""
-    d = config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    writes none to disk. `config_dir` defaults to the user's real config dir: under pytest the suite's
+    conftest floors $CLAUDE_CONFIG_DIR to an empty dir and saves the real location in
+    $ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, so that is read first; else $CLAUDE_CONFIG_DIR, else ~/.claude."""
+    d = (config_dir or os.environ.get("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR") or os.environ.get("CLAUDE_CONFIG_DIR")
+         or os.path.expanduser("~/.claude"))
     try:
         with open(os.path.join(d, "settings.json")) as f:
             v = json.load(f).get("apiKeyHelper")

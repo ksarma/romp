@@ -13,7 +13,9 @@ record and two booleans. Every line it returns carries NAMES and fingerprints on
     credential-shaped names in the kernel's environment (informational), credential lines in the
     unit or plist, ExecStart through a shell, login declared while the command prints a key, ROMP_*
     names dropped.
-  BothModes — ROMP_EXPECTED_AUTH=key with nothing to inject and no apiKeyHelper.
+  BothModes — ROMP_EXPECTED_AUTH=key with nothing to inject and no apiKeyHelper rings in command
+    mode only (file mode's boot log stays upstream's; its inits report the mismatch).
+  Floors — conftest points ROMP_SYSTEMD_DIR, ROMP_LAUNCHD_DIR and CLAUDE_CONFIG_DIR at empty dirs.
   UnitParsing — Environment= lines and plist pairs (names only), ExecStart shapes and drop-in
     overrides, the paths _unit_texts reads (bin/romp-service's variables).
   NoValueAnywhere — with fixture values in every input, the verdict's JSON carries none.
@@ -262,29 +264,47 @@ class CommandModeChecks(unittest.TestCase):
 
 
 class BothModes(unittest.TestCase):
-    def test_key_declared_with_nothing_to_inject_and_no_helper_rings(self):
-        for env, extra in (({"ROMP_EXPECTED_AUTH": "key"}, ""),
-                           (dict(CMD, ROMP_EXPECTED_AUTH="key"), "the credential command prints no ANTHROPIC_API_KEY")):
-            r = verdict(env, snapshot=ok_snap() if "ROMP_CREDENTIAL_COMMAND" in env else None)
-            line = [t for t in problems(r) if "names no apiKeyHelper" in t]
-            self.assertEqual(len(line), 1, (env, texts(r)))
-            self.assertIn("ROMP_EXPECTED_AUTH=key", line[0])
-            self.assertIn("land on the login", line[0])
-            if extra:
-                self.assertIn(extra, line[0])
-            else:
-                self.assertNotIn("credential command", line[0])
-            self.assertEqual([t for t in problems(verdict(env, helper_command="h",
-                                                          snapshot=ok_snap() if "ROMP_CREDENTIAL_COMMAND" in env else None))
-                              if "apiKeyHelper" in t], [], "a helper answers the declaration")
-            self.assertEqual([t for t in problems(verdict(env, work_key_present=True,
-                                                          snapshot=ok_snap() if "ROMP_CREDENTIAL_COMMAND" in env else None))
-                              if "apiKeyHelper" in t], [], "so does a key to inject")
+    def test_key_declared_with_nothing_to_inject_and_no_helper_rings_in_command_mode_only(self):
+        env = dict(CMD, ROMP_EXPECTED_AUTH="key")
+        r = verdict(env, snapshot=ok_snap())
+        line = [t for t in problems(r) if "names no apiKeyHelper" in t]
+        self.assertEqual(len(line), 1, texts(r))
+        self.assertIn("ROMP_EXPECTED_AUTH=key", line[0])
+        self.assertIn("land on the login", line[0])
+        self.assertIn("the credential command prints no ANTHROPIC_API_KEY", line[0])
+        self.assertEqual([t for t in problems(verdict(env, helper_command="h", snapshot=ok_snap())) if "apiKeyHelper" in t],
+                         [], "a helper answers the declaration")
+        self.assertEqual([t for t in problems(verdict(env, work_key_present=True, snapshot=ok_snap())) if "apiKeyHelper" in t],
+                         [], "so does a key to inject")
+        # file mode: the boot log stays upstream's — every session init already reports the
+        # declared-vs-live mismatch, so the verdict adds no line here
+        self.assertEqual(texts(verdict({"ROMP_EXPECTED_AUTH": "key"})), [])
+        self.assertEqual(texts(verdict({"ROMP_EXPECTED_AUTH": "key"}, helper_command="")), [])
 
     def test_the_declaration_is_read_from_the_given_environ(self):
         self.assertEqual(verdict({"ROMP_EXPECTED_AUTH": " Login "})["expectedAuth"], "login")
         self.assertEqual(verdict({"ROMP_EXPECTED_AUTH": "both"})["expectedAuth"], "")
         self.assertEqual(verdict()["expectedAuth"], "")
+
+
+class Floors(unittest.TestCase):
+    """conftest's floor (2026-09-05): every backend construction reads the unit, the plist and the
+    Claude Code settings through these three variables, and no test may read this machine's."""
+
+    def test_the_three_directories_are_floored_to_empty_temp_dirs(self):
+        home = os.path.expanduser("~")
+        real = {os.path.join(home, ".config", "systemd", "user"), os.path.join(home, "Library", "LaunchAgents"),
+                os.path.join(home, ".claude")}
+        for var in ("ROMP_SYSTEMD_DIR", "ROMP_LAUNCHD_DIR", "CLAUDE_CONFIG_DIR"):
+            d = os.environ.get(var) or ""
+            self.assertTrue(os.path.basename(d).startswith("floor-"), "%s is not conftest's floor directory" % var)
+            self.assertTrue(os.path.isdir(d), "%s does not point at a directory" % var)
+            self.assertFalse(os.path.realpath(d) in real, "%s points at this machine's real location" % var)
+        self.assertEqual(sb._unit_texts(), [], "no unit, no drop-in, no plist")
+        self.assertEqual(es.helper_command(), "", "no settings.json, no apiKeyHelper")
+        self.assertEqual(es.claude_config_dir(), os.environ["CLAUDE_CONFIG_DIR"])
+        self.assertTrue(os.environ.get("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR"),
+                        "the one live test that borrows the user's helper command has a way to the real location")
 
 
 class UnitParsing(unittest.TestCase):

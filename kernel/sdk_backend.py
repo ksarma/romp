@@ -3148,8 +3148,10 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
     (dropped). Other credential-shaped names in the kernel's own environment are informational.
     File mode says nothing the existing checks (_warn_credential_lines_in_env_file, _check_key_file_agrees)
     do not already say — an unset command leaves upstream's log byte for byte — except a unit
-    credential under a declared auth. Both modes: ROMP_EXPECTED_AUTH=key with nothing to inject and
-    no apiKeyHelper configured means the sessions will land on the login."""
+    credential under a declared auth. Command mode only: ROMP_EXPECTED_AUTH=key with nothing to
+    inject and no apiKeyHelper configured means the sessions will land on the login (in file mode
+    every session init already reports the declared-vs-live mismatch, and the boot log stays
+    upstream's)."""
     env = os.environ if environ is None else environ
     mode = "command" if _envsrc.configured(env) else "file"
     exp = _expected_auth_of(env)
@@ -3236,10 +3238,10 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
             say("auth: the service definition carries credential-shaped lines — %s — while ROMP_EXPECTED_AUTH=%s. "
                 "A credential in a unit contradicts the declared auth model; remove the lines and rotate the "
                 "values." % ("; ".join(unit_hits), exp))
-    if exp == "key" and not work_key_present and not helper_command:
-        say("auth: ROMP_EXPECTED_AUTH=key, but there is no key to inject%s and settings.json names no "
-            "apiKeyHelper — sessions will land on the login, and every init will say so."
-            % (" (the credential command prints no ANTHROPIC_API_KEY)" if mode == "command" else ""))
+    if mode == "command" and exp == "key" and not work_key_present and not helper_command:
+        say("auth: ROMP_EXPECTED_AUTH=key, but there is no key to inject (the credential command prints no "
+            "ANTHROPIC_API_KEY) and settings.json names no apiKeyHelper — sessions will land on the login, and "
+            "every init will say so.")
     path = "injected" if work_key_present else ("helper" if helper_command else "login")
     return {"mode": mode, "selector": sel, "sessionKeyPath": path, "expectedAuth": exp,
             "helperConfigured": bool(helper_command), "execStartShell": exec_shell,
