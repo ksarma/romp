@@ -226,9 +226,8 @@ class CredentialPattern(_WithConftest):
         red = self.cf.redact_report_text(text, {v})
         self.assertEqual(red, "env %s and token %s" % (self.cf.ENV_VALUE_REDACTED, self.cf.CREDENTIAL_REDACTED))
         self.assertEqual(self.cf.CREDENTIAL_REDACTED, "[REDACTED-CREDENTIAL]")
-        from importlib.machinery import SourceFileLoader
-        cp = SourceFileLoader("romp_tests_credential_patterns_check", PATTERNS).load_module()
-        self.assertEqual(cp.TOKEN_RE.pattern, self.cf._credpat.TOKEN_RE.pattern, "the conftest loads this file")
+        self.assertEqual(os.path.realpath(self.cf._credpat.__file__), PATTERNS, "the conftest loads this file")
+        self.assertIs(self.cf.redact_credential_tokens("x"), "x")
 
 
 class ReportShapes(_WithConftest):

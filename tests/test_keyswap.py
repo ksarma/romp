@@ -981,7 +981,7 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.assertIn("a line added to service.env reaches the kernel at", out)
         self.assertIn("a line changed or removed there, or one in the unit, at the", out)
         self.assertIn("next manager restart", out)
-        self.assertIn("(`romp refresh`)", out)
+        self.assertIn("its next start, `romp refresh`;", out)
         self.assertIn("CLAUDE_CONFIG_DIR", out)
         # the kernel's last run used another selector: the hint is the refresh, not the environment
         self.kernel_view["selector"] = "lp"

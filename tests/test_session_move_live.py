@@ -39,6 +39,13 @@ from types import SimpleNamespace
 SID = "aaaaaaaa-1111-4222-8333-444444444444"
 CODEWORD = "PLUM-FORTY-TWO"
 
+# Hermetic state BEFORE the load below: the state-isolation ratchet (tests/test_state_isolation_order.py)
+# counts every in-process load as state-touching, and only pytest runs conftest's floor. The module
+# loaded here reads no state; the two lines are the ratchet's price and change nothing for the child
+# (its config dir is the hermetic CLAUDE_CONFIG_DIR, and the SDK venv is found under HOME).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+
 # The child below runs the user's own apiKeyHelper and a real CLI, so its stdout and stderr can carry
 # a credential (a helper that echoes, a CLI that prints its headers on a failure). What a failure
 # renders of them is scrubbed with the suite's credential-shaped token list first (the same list
