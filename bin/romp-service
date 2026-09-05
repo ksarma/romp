@@ -269,6 +269,27 @@ _join_names() {   # " a b c " → "a, b, c"
     printf '%s' "${names// /, }"
 }
 
+_split_env_words() {   # <Environment= body> → one word per line, systemd's rule: whitespace-separated,
+    # a quoted stretch ("…" or '…') is part of ONE word with its quotes removed — so
+    # "A_TOKEN=x y" is one assignment, and B_TOKEN=b inside "NOT=a B_TOKEN=b" is a value, not a name
+    local body="$1" word="" q="" c i n=${#body} have=0
+    for (( i=0; i<n; i++ )); do
+        c="${body:i:1}"
+        if [[ -n "$q" ]]; then
+            if [[ "$c" == "$q" ]]; then q=""; else word+="$c"; fi
+        elif [[ "$c" == '"' || "$c" == "'" ]]; then
+            q="$c"; have=1
+        elif [[ "$c" == " " || "$c" == $'\t' ]]; then
+            [[ $have -eq 1 ]] && printf '%s\n' "$word"
+            word=""; have=0
+        else
+            word+="$c"; have=1
+        fi
+    done
+    [[ $have -eq 1 ]] && printf '%s\n' "$word"
+    return 0
+}
+
 _unit_credential_names() {   # <unit|drop-in|plist>... → credential-shaped NAMES set with a value, in order, deduped
     (
         set -f                                     # no globbing while word-splitting Environment= bodies
@@ -287,13 +308,12 @@ _unit_credential_names() {   # <unit|drop-in|plist>... → credential-shaped NAM
                 line="${line#"${line%%[![:space:]]*}"}"
                 [[ "$line" == Environment=* ]] || continue
                 body="${line#Environment=}"
-                for tok in $body; do
-                    tok="${tok#\"}"; tok="${tok#\'}"
+                while IFS= read -r tok; do
                     [[ "$tok" == *=* ]] || continue
-                    name="${tok%%=*}"; val="${tok#*=}"; val="${val%\"}"; val="${val%\'}"
+                    name="${tok%%=*}"; val="${tok#*=}"
                     [[ -n "$val" ]] || continue
                     if _is_credential_name "$name" && [[ "$names" != *" $name "* ]]; then names+="$name "; fi
-                done
+                done < <(_split_env_words "$body")
             done < "$f"
         done
         _join_names "$names"

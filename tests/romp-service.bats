@@ -433,6 +433,25 @@ EOF2
     [[ "$output" != *"credential-shaped"* ]]
 }
 
+@test "status (Linux): Environment= bodies split like systemd — a quoted assignment with spaces is ONE assignment" {
+    ROMP_OS_OVERRIDE=Linux "$SVC" install >/dev/null
+    local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
+    mkdir -p "$ROMP_SYSTEMD_DIR/romp-manager.service.d"
+    {
+        printf '[Service]\n'
+        # A_TOKEN's value has a space; B_TOKEN=b sits INSIDE NOT's quoted value (a value, not a name);
+        # C_TOKEN quotes only its value; D_TOKEN's quoted value is a space and a letter (non-empty);
+        # E_TOKEN's quoted value is empty
+        printf 'Environment="A_TOKEN=%s x" "NOT=a B_TOKEN=%s" C_TOKEN="p q" "D_TOKEN= z" E_TOKEN=""\n' "$v" "$v"
+    } > "$ROMP_SYSTEMD_DIR/romp-manager.service.d/env.conf"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"unit carries credential-shaped lines: A_TOKEN, C_TOKEN, D_TOKEN"* ]]
+    [[ "$output" != *"B_TOKEN"* ]]                            # part of NOT's value, never a variable the unit sets
+    [[ "$output" != *"E_TOKEN"* ]]                            # set to nothing
+    [[ "$output" != *"$v"* ]]
+}
+
 @test "status: a credential-shaped line in service.env is named, never shown" {
     export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
     local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"

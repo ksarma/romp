@@ -662,6 +662,38 @@ class KeyswapCli(_EnvFile):
         rc, said = self.run_cli("--cycle-all")
         self.assertNotIn("apiKeyHelper", said, "no login row, no hint")
 
+    def test_the_file_mode_cycles_failure_lines_are_upstreams_byte_for_byte(self):
+        # this is the surface upstream ships: what it prints when the cycle cannot run must not drift
+        import unittest.mock as mock
+        rc, said = self.run_cli("--cycle-all")                     # no kernel (setUp's default)
+        self.assertEqual(rc, 1)
+        self.assertEqual(said.split("\n")[-3:], [
+            "cycle       NOT DONE — no running kernel found (is romp on? `romp status`).",
+            "            Nothing was cycled. A session's next launch or revive runs a new process",
+            "            anyway; re-run `romp keyswap --cycle…` once romp is up for the running ones."])
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: {"ok": False, "error": "HTTP 404"}
+        rc, said = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 1)
+        self.assertEqual(said.split("\n")[-3:], [
+            "cycle       NOT DONE — the running kernel predates `romp keyswap` (no /keycycle route).",
+            "            Take the patch once with `romp refresh` — that restart also gives every",
+            "            session a new process — and every cycle after that is restart-free."])
+        cli._post = lambda u, p, b: {"ok": False, "error": "HTTP 503", "detail": "no SDK backend"}
+        rc, said = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 1)
+        self.assertEqual(said.split("\n")[-1], "cycle       FAILED — HTTP 503")
+        cli._post = lambda u, p, b: {"ok": False}
+        rc, said = self.run_cli("--cycle-all")
+        self.assertEqual(said.split("\n")[-1], "cycle       FAILED — unknown")
+        with mock.patch.dict(os.environ, {"ROMP_KERNEL_PORT": "not-a-port"}):
+            rc, said = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 1)
+        self.assertEqual(said.split("\n")[-1],
+                         "cycle       NOT DONE — ROMP_KERNEL_PORT='not-a-port' is not a port; fix the variable and re-run")
+        for line in said.split("\n"):
+            self.assertFalse(line.startswith("kernel      NOT ASKED"), "the cycle speaks for itself, in upstream's words")
+
     def test_a_cycle_with_no_kernel_reachable_fails_loudly(self):
         rc, said = self.run_cli("--cycle-all")
         self.assertEqual(rc, 1, "the cycle failed and must exit non-zero")
@@ -1125,6 +1157,46 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.assertIn("live key    UNAVAILABLE — the credential command exited 4 after", out)
         self.assertIn("nothing switched: the command failed for lp, so the selector is as it was.", out)
         self.assertEqual(self.posted, [])
+        self.assertClean(out, err)
+
+    def test_a_failed_undo_is_said_never_claimed(self):
+        # the switch moved nothing and the selector could not be written back: the line says the
+        # file now holds the new name, rather than "put back"
+        self.command("echo 'ANTHROPIC_API_KEY=%s'\necho 'ROLE_TOKEN=%s'" % (self.keys["hp"], self.role))   # ignores $1
+        real_write = es.write_selector
+        calls = []
+
+        def failing_second_write(token, path=None, environ=None):
+            calls.append(token)
+            if len(calls) == 2:
+                raise OSError(13, "Permission denied")
+            return real_write(token, path, environ)
+        es.write_selector = failing_second_write
+        try:
+            rc, out, err = self.run_cli("lp")
+        finally:
+            es.write_selector = real_write
+        self.assertEqual(rc, 1)
+        self.assertEqual(calls, ["lp", "hp"], "the switch, then the attempted undo")
+        self.assertIn("selector    hp -> lp, NOT put back (errno 13 writing the selector file), so it still holds lp", out)
+        self.assertNotIn("put back to", out)
+        self.assertEqual(self.selected(), "lp", "what the line says is what the file holds")
+        self.assertClean(out, err)
+
+    def test_an_unreadable_old_selector_is_not_claimed_put_back(self):
+        # the file held something that is not a name before the switch: it cannot be restored, and
+        # the line says so — never "put back to" something that was never read
+        junk = fixture_value("junk") + " with spaces"
+        self.select(junk)
+        self.command("case \"$1\" in hp) echo 'ANTHROPIC_API_KEY=%s' ;; *) exit 4 ;; esac" % self.keys["hp"])
+        rc, out, err = self.run_cli("lp")
+        self.assertEqual(rc, 1)
+        self.assertIn("selector    (none) -> lp, NOT put back — the old selector could not be read before the switch", out)
+        self.assertIn("so the file now holds lp", out)
+        self.assertNotIn("put back to", out)
+        self.assertNotIn("so the selector is as it was", out)
+        self.assertEqual(self.selected(), "lp")
+        self.assertNotIn(junk, out + err)
         self.assertClean(out, err)
 
     def test_a_switch_from_no_selector_puts_an_empty_file_back_when_it_moves_nothing(self):

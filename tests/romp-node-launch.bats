@@ -80,3 +80,21 @@ teardown() { rm -rf "$TEST_DIR"; }
     [ "$status" -eq 0 ]
     [[ "$output" == *"SECRET=[hunter2] ran: $MANAGER up"* ]]
 }
+
+@test "service.env: one layer of matching quotes comes off the value, as systemd and the kernel read it" {
+    export XDG_CONFIG_HOME="$HOME/.config"
+    mkdir -p "$XDG_CONFIG_HOME/romp"
+    {
+        echo 'ROMP_TEST_DQ="two words"'
+        echo "ROMP_TEST_SQ='x y'"
+        echo 'ROMP_TEST_ONE="abc'                      # unbalanced: kept as written
+        echo 'ROMP_TEST_EMPTY=""'
+        echo 'ROMP_TEST_INNER=a"b"c'                   # quotes inside a value are the value
+        echo 'ROMP_TEST_CMD="my-cmd \"$1\""'          # the shape a credential command line takes
+    } > "$XDG_CONFIG_HOME/romp/service.env"
+    printf '#!/bin/sh\necho "DQ=[$ROMP_TEST_DQ] SQ=[$ROMP_TEST_SQ] ONE=[$ROMP_TEST_ONE] EMPTY=[${ROMP_TEST_EMPTY-unset}] INNER=[$ROMP_TEST_INNER] CMD=[$ROMP_TEST_CMD]"\n' > "$BIN/node"
+    chmod +x "$BIN/node"
+    run "$LAUNCH" "$MANAGER" up
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'DQ=[two words] SQ=[x y] ONE=["abc] EMPTY=[] INNER=[a"b"c] CMD=[my-cmd \"$1\"]'* ]]
+}

@@ -225,7 +225,7 @@ def _compare(kfp, path, out, refreshed=None):
         return 0
     out("MISMATCH    the kernel is not reading this file's key. Usual causes: the service was installed")
     out("            with another env-file path that the kernel's environment does not carry (re-run")
-    out("            `romp service install`), the file is unreadable to the kernel, or the file has no")
+    out("            `romp-service install`), the file is unreadable to the kernel, or the file has no")
     out("            %s line and the kernel still holds its startup key." % ks.KEY_VAR)
     return 1
 
@@ -245,10 +245,31 @@ def _refreshed_note(refreshed, now_fp, verb="re-run"):
 def _cycle(sessions, all_, out, path=None, refresh=False):
     """Reconnect the named sessions through the kernel, and report what it did per session. The
     kernel's fingerprint is READ and compared with the file's FIRST: cycling a session while the kernel
-    reads another file would re-present the kernel's unchanged key, so a mismatch refuses to cycle."""
-    body, rc = _ask(out, refresh)
-    if body is None:
-        _not_done_unasked(rc, out)
+    reads another file would re-present the kernel's unchanged key, so a mismatch refuses to cycle.
+    The failure lines (an unusable port, no kernel, a kernel without the route, a refused read) are
+    upstream's, byte for byte: this is the file-mode surface upstream ships; the fork adds only the
+    refresh body and the mode check on the success path."""
+    try:
+        _kernel_urls()
+    except ValueError as e:
+        out("cycle       NOT DONE — %s; fix the variable and re-run" % e)
+        return 1
+    u = _kernel()
+    if not u:
+        out("cycle       NOT DONE — no running kernel found (is romp on? `romp status`).")
+        out("            Nothing was cycled. A session's next launch or revive runs a new process")
+        out("            anyway; re-run `romp keyswap --cycle…` once romp is up for the running ones.")
+        return 1
+    body = _post(u, "/keycycle", {"sessions": [], "refresh": True} if refresh else {"sessions": []})   # the read
+    if body.get("error") == "HTTP 404":
+        # The one restart this feature genuinely needs: a kernel started before this code has no
+        # /keycycle route AND no live key read, so it is still on the key it booted with.
+        out("cycle       NOT DONE — the running kernel predates `romp keyswap` (no /keycycle route).")
+        out("            Take the patch once with `romp refresh` — that restart also gives every")
+        out("            session a new process — and every cycle after that is restart-free.")
+        return 1
+    if not body.get("ok"):
+        out("cycle       FAILED — %s" % (body.get("error") or body.get("detail") or "unknown"))
         return 1
     if (body.get("keySource") or "file") != "file":
         _mode_mismatch(body, "file", out)
@@ -258,7 +279,7 @@ def _cycle(sessions, all_, out, path=None, refresh=False):
         out("cycle       NOT DONE — the kernel is not on this file's key, so a reconnect would re-present")
         out("            the key it already has. Fix the mismatch above first, then cycle.")
         return 1
-    return _do_cycle(_kernel(), sessions, all_, out, file_mode=True)
+    return _do_cycle(u, sessions, all_, out, file_mode=True)
 
 
 def _not_done_unasked(rc, out):
@@ -524,17 +545,23 @@ def _cycle_command(sessions, all_, out, header=True):
     return _do_cycle(_kernel(), sessions, all_, out)
 
 
-def _restore_selector(old, target):
-    """Put the selector back after a switch that switched nothing: the old token, or an empty file
-    where there was none (the target, so a dotfiles link keeps pointing where it did)."""
+def _restore_selector(old, sel_err, target, name):
+    """Put the selector back after a switch that switched nothing, and SAY what happened: the old
+    token, or an empty file where there was none (the target, so a dotfiles link keeps pointing where
+    it did). Returns the clause for the selector line — "put back to <old>" only when the write
+    succeeded; an old selector that could not be read before the switch cannot be put back, and a
+    failed write leaves the new name in place, and both say so rather than claim a restore."""
+    if sel_err:
+        return "NOT put back — the old selector could not be read before the switch (%s), so the file now holds %s" % (sel_err, name)
     try:
         if old:
             es.write_selector(old)
         else:
             with open(target, "w", encoding="utf-8"):
                 pass
-    except OSError:
-        pass
+    except OSError as e:
+        return "NOT put back (errno %s writing the selector file), so it still holds %s" % (getattr(e, "errno", None) or "?", name)
+    return "put back to %s" % _sel_word(old)
 
 
 def _switch(name, out):
@@ -559,7 +586,7 @@ def _switch(name, out):
                          "             nothing switched. Declare it there first if it is meant to exist.\n"
                          % (es.NAMES_VAR, ", ".join(es.names())))
         return 2
-    old, _sel_err = es.read_selector()
+    old, sel_err = es.read_selector()
     if old == name:
         out("selector    %s (already selected)" % name)
         out("            nothing to switch — `romp keyswap --refresh` re-runs the command; `romp keyswap --cycle-all`")
@@ -576,15 +603,16 @@ def _switch(name, out):
     after = _local()
     was = _sel_word(old)
     if after["err"]:
-        _restore_selector(old, w["target"])
-        out("selector    %s -> %s, put back to %s" % (was, name, was))
+        undo = _restore_selector(old, sel_err, w["target"], name)
+        out("selector    %s -> %s, %s" % (was, name, undo))
         out("live key    UNAVAILABLE — %s" % after["err"])
-        out("            nothing switched: the command failed for %s, so the selector is as it was." % name)
+        out("            nothing switched: the command failed for %s%s" % (
+            name, ", so the selector is as it was." if undo.startswith("put back") else "."))
         return 1
     moved = after["fp"] != before["fp"] or (after["snap"].get("setFp") or "") != (before["snap"].get("setFp") or "")
     if not moved:
-        _restore_selector(old, w["target"])
-        out("selector    %s -> %s, put back to %s" % (was, name, was))
+        undo = _restore_selector(old, sel_err, w["target"], name)
+        out("selector    %s -> %s, %s" % (was, name, undo))
         out("live key    %s   (unchanged)" % _sha(after["fp"]))
         out("            nothing switched: the command printed the same set for %s as for %s. It must read the"
             % (name, was if old else "an empty $1"))
