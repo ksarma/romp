@@ -349,6 +349,24 @@ jobs:
   Every writer of the views blob, the WS `setTimelineViews` full-blob write
   included, runs under `_views_lock`.
 
+Every dashboard write of the views blob is acknowledged on the socket that posted
+it. A tag edit from the timeline's tag table or a tab's Tags flyout (create,
+rename, recolor, add or remove a member, delete) is one `tagEdit` WS op,
+addressed by tag name and applied through the same read-modify-write merge as
+`romp tag`, so the stale-writer guard never refuses it; the kernel answers with
+`tagEditAck`. A lens or order change still posts the whole blob
+(`setTimelineViews`), which the guard may partially refuse; the kernel answers
+with `viewsAck`, listing each refused tag with a reason. Both acks carry the
+write's `writeId`, `ok`, and the post-write client blob, which the client adopts
+as its base. The client's optimistic copy clears on the ack, or on a frame that
+echoes it exactly, and a refusal reverts the copy at once and shows the reason
+(a notice in the dialog, a warn toast in the chat pane). Until 2026-09-05 the
+dialog posted the whole blob for every edit from its own un-echoed copy, so the
+guard refused a rename typed right after a create against the dialog's own first
+write, the refusal reached only stderr and the sync notices, and the dialog
+dropped its copy after three frames; renames and assignments made in a burst
+were lost.
+
 The exact project directory still defines the **comms group** sketched above.
 The directory-to-tag auto-tagging rule and the URL-hash view selection once
 planned here did not ship; the per-surface lens took the hash's place.
