@@ -32099,7 +32099,11 @@ if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElem
 // back — so none of the feed route's was-off / ack / restore machinery below applies to this branch.
 if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');
   try{window.__rompPaneToggle&&window.__rompPaneToggle('files',true);}catch(e){}
-  try{window.__rompMobileTab&&window.__rompMobileTab('files');}catch(e){}   // phone: one pane at a time
+  // phone (one pane at a time): bring the Files tab forward ONLY in the mobile layout — on desktop the column
+  // is already visible and show() would only persist a stale romp-mobile-tab for a later narrow layout — and
+  // remember the tab the click came from, so the viewer's close puts the person back (filesViewerClosed below)
+  try{if(window.__rompMobileOn&&window.__rompMobileOn()){var cur=document.body.getAttribute('data-tab')||'chat';
+    if(cur!=='files'){window.__rompFilesTabFrom=cur;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
   try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}}
 // A chat file-link click with the cards-pane preference set (fileLinkPane — gear.js; the user
 // 2026-08-20) posts viewFile up instead of opening in-document; the shell forwards it to the FEED
@@ -32117,6 +32121,12 @@ else if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');
   if(window.__rompFeedWasOffViewPend){try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
   try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
   try{vf&&vf.contentWindow&&vf.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid},'*');}catch(e){}}
+// the Files pane's viewer closed (files.ts posts it on the viewer element's removal): on a phone, where the
+// pane branch above switched tabs to show it, go back to the tab the click came from; on desktop the column
+// simply shows its recent list again. The remembered tab is dropped either way (a rotation to desktop in
+// between makes the restore a no-op, never a stale switch later).
+if(m.romp==='filesViewerClosed'){var back=window.__rompFilesTabFrom;window.__rompFilesTabFrom=null;
+  if(back&&window.__rompMobileOn&&window.__rompMobileOn()){try{window.__rompMobileTab&&window.__rompMobileTab(back);}catch(e){}}}
 // the feed's ack: the viewer really opened, so the restore obligation arms for real
 if(m.romp==='viewFileOpened'){if(window.__rompFeedWasOffViewPend)window.__rompFeedWasOffView=true;
   window.__rompFeedWasOffViewPend=false;}
@@ -32826,7 +32836,15 @@ fit();window.addEventListener('resize',fit);window.addEventListener('orientation
 window.addEventListener('pageshow',fit);
 if(window.visualViewport){window.visualViewport.addEventListener('resize',fit);
 window.visualViewport.addEventListener('scroll',fit);}
-var bar=document.getElementById('mtabs');if(!bar)return;
+var bar=document.getElementById('mtabs');
+// The mobile LAYOUT, as the stylesheet decides it: the SAME media query the grid collapses on (one constant,
+// _MOBILE_MQ, spliced by _landing()) — one pane at a time, bottom tabs, the po-* classes ignored. Exposed for
+// the pane-set broadcast (on a phone "on" means the tab showing, not the po flag) and for the viewFile
+// relay's tab switch, which is meaningless on desktop.
+var MQ=(window.matchMedia&&matchMedia(__MOBILE_MQ__))||null;
+function mobileOn(){return !!(MQ&&MQ.matches);}
+window.__rompMobileOn=mobileOn;
+if(!bar)return;
 // The bar is position:fixed (glued to the viewport bottom), so it's out of flow — reserve its real
 // rendered height (button text + padding) on .col as --mtabs-h so the iframes tile above it and the
 // fixed bar never covers the chat composer. Re-measure on resize/orientation (font metrics can shift).
@@ -32842,8 +32860,15 @@ var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-f
 var B=bar.querySelectorAll('button'),KT='romp-mobile-tab';
 function show(p){if(!F[p])return;document.body.setAttribute('data-tab',p);for(var k in F)F[k].classList.toggle('m-on',k===p);
 for(var i=0;i<B.length;i++)B[i].classList.toggle('on',B[i].getAttribute('data-pane')===p);
-try{localStorage.setItem(KT,p);}catch(e){}}
+try{localStorage.setItem(KT,p);}catch(e){}
+// a tab switch changes what is on screen → re-tell the panes (the collapse script's broadcast; absent only
+// before that script parses, and its boot apply then tells them)
+try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
 window.__rompMobileTab=show;   // the file-viewer bridge brings the feed tab forward on a phone
+// the layout flipping (a rotation, a resize across the breakpoint) changes what is on screen with no toggle
+// and no tab switch — the media query's own change event IS that flip, so re-tell the panes on it
+var retell=function(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}};
+if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',retell);else if(MQ.addListener)MQ.addListener(retell);}
 // A REVEAL un-hides a desktop-toggled-off pane before the mobile tab switch (the user 2026-08-13: a feed
 // click that jumps into a CLOSED chat used to land invisibly — the hidden iframe's WS stays live, so the
 // scroll ran under display:none and nothing appeared to happen). Same __rompPaneToggle(…, true) the Log
@@ -33053,7 +33078,10 @@ _STALE_JS = (
 # hides the pane + the gutters between visible panes). Fixed visual order — Chat, Fleet, Feed, Timeline left
 # to right (timeline is the bottom BAND). Default Chat+Feed+Timeline on, Fleet off (the user 2026-06-25);
 # state persists in localStorage and ?panes=chat,timeline bookmarks a set. Exposes window.__rompPaneToggle(
-# key,to?) so the legacy toggleFleet postMessage (_LANDING_FLEET_JS) routes through the same path.
+# key,to?) so the legacy toggleFleet postMessage (_LANDING_FLEET_JS) routes through the same path. Since
+# 2026-09-04 it also TELLS the panes what is on screen ({romp:'panes',on:{…}} into every pane iframe, on every
+# apply, on each iframe's load, and — from _LANDING_MOBILE_JS — on a mobile tab switch or layout flip; keys
+# spliced from _PANE_ORDER by _landing()) — the chat routes file links by it.
 _LANDING_COLLAPSE_JS = """
 (function(){
   var PK='romp-panes',po={chat:true,fleet:false,feed:true,timeline:true,waiting:false,files:false};
@@ -33062,6 +33090,25 @@ _LANDING_COLLAPSE_JS = """
   if(qp!==null){po={chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false};qp.split(',').forEach(function(k){k=k.trim();if(k in po)po[k]=true;});}
   function saveP(){try{localStorage.setItem(PK,JSON.stringify(po));}catch(e){}}
   var LBL={chat:'chat',fleet:'fleet',feed:'feed',timeline:'timeline',waiting:'Waiting pane',files:'Files pane'};
+  // The pane KEYS, spliced in by _landing() from _PANE_ORDER — the one list of panes, so a pane added there
+  // is broadcast below without anyone remembering this block. The panes learn which panes are ON SCREEN from
+  // the shell, the owner of that state: {romp:'panes',on:{key:bool}} goes to every pane iframe on every
+  // apply() — a toggle is the event of the set changing; the boot apply seeds it; the storage and romp:keys
+  // re-applies re-send an unchanged set (redundant, harmless) — again on each iframe's own load, so a pane
+  // that boots or reloads after the shell still hears the current set (the focus ring's "wire now + on every
+  // (re)load", _LANDING_FOCUS_JS), and from _LANDING_MOBILE_JS on a tab switch or a layout flip (what is on
+  // screen changed with no toggle). The chat routes a file-link click by it (render.ts fileLinkRoute, the
+  // user 2026-09-04: an OPEN Files pane takes the click whatever the fileLinkPane setting says — the pane
+  // being open IS the intent).
+  var KEYS=__PANE_KEYS__;
+  // on[k] is "this pane is on screen", not the po flag: in the mobile layout (one tab at a time, the po-*
+  // classes ignored — _LANDING_MOBILE_JS) it is the current tab, so a po.files left true by a desktop session
+  // or an earlier bring-forward cannot silently steer a phone's file links into a tab nobody is looking at
+  function panesMsg(){var mob=!!(window.__rompMobileOn&&window.__rompMobileOn()),tab=mob?document.body.getAttribute('data-tab'):null;
+    var on={};KEYS.forEach(function(k){on[k]=mob?(k===tab):!!po[k];});return {romp:'panes',on:on};}
+  function tell(f,m){try{f&&f.contentWindow&&f.contentWindow.postMessage(m,'*');}catch(e){}}
+  function broadcast(){var m=panesMsg();KEYS.forEach(function(k){tell(document.getElementById('f-'+k),m);});}
+  window.__rompPanesTell=broadcast;   // the mobile script re-tells on a tab switch / layout flip
   function apply(){
     document.body.classList.toggle('po-chat',!!po.chat);
     document.body.classList.toggle('po-fleet',!!po.fleet);
@@ -33076,14 +33123,17 @@ _LANDING_COLLAPSE_JS = """
       var h=(window.__rompKeyHint&&window.__rompKeyHint('pane.'+(k==='fleet'?'outline':k)))||'';
       b.title=(po[k]?'hide':'show')+' the '+(LBL[k]||k)+(h?' ('+h+')':'');});
     try{window.dispatchEvent(new Event('romp-panes'));}catch(e){}   // nudge the timeline band to auto-fit when toggled
+    broadcast();
   }
   function togglePane(k,to){if(!(k in po))return;var nv=(to===undefined)?!po[k]:!!to;
+    if(nv===!!po[k])return;   // already so (the viewFile relay's bring-forward on an open pane): nothing changed, so no re-apply and no broadcast claiming one
     if(nv&&!po[k]&&window.__rompGrowFair)window.__rompGrowFair(k);   // newly shown → fair width, not a sliver
     po[k]=nv;apply();saveP();}
   window.__rompPaneToggle=togglePane;
   Array.prototype.forEach.call(document.querySelectorAll('.rail-btn[data-pane]'),function(b){
     b.addEventListener('click',function(){togglePane(b.getAttribute('data-pane'));});});
   apply();
+  KEYS.forEach(function(k){var f=document.getElementById('f-'+k);if(f)f.addEventListener('load',function(){tell(f,panesMsg());});});
   window.addEventListener('romp:keys',apply);   // a rebind (or palette-main's boot nudge) refreshes the titles
   window.addEventListener('storage',apply);     // …including one made in another tab
 })();
@@ -33323,6 +33373,12 @@ _REFRESH_SVG = (
 # is the bug this replaces. Keys stay internal (timeline/fleet); labels are the user-facing names.
 _PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"), ("waiting", "Waiting"),
                ("files", "Files"))
+
+# The mobile layout's media query — narrow, OR a touch device up to 1024px — ONE constant for the stylesheet
+# rule that collapses the grid to one pane + bottom tabs (_landing()'s CSS) and for the shell script's
+# matchMedia (_LANDING_MOBILE_JS, __rompMobileOn: the pane-set broadcast and the viewFile relay ask it which
+# layout is up). Spliced, so the JS can never test a different query than the CSS lays out by.
+_MOBILE_MQ = "(max-width:820px),(pointer:coarse) and (max-width:1024px)"
 
 
 def _rail_buttons_html():
@@ -33762,7 +33818,7 @@ def _landing():
             "box-shadow:inset 0 0 0 2px rgba(156,210,255,0.55)}"   # the romp accent — focus cues wear it (CLAUDE.md)
             "#mtabs{display:none}"
             # narrow OR a touch device up to 1024px → one pane + bottom tabs; mouse desktops keep the grid
-            "@media (max-width:820px),(pointer:coarse) and (max-width:1024px){"
+            "@media " + _MOBILE_MQ + "{"
             # The bar is GLUED to the true viewport bottom (position:fixed;bottom:0 — see #mtabs below),
             # not flex-placed at the bottom of a body whose height is a viewport ESTIMATE. Every prior
             # approach keyed the bar's bottom to a height value (100dvh, then --app-h from
@@ -34189,9 +34245,12 @@ def _landing():
                          .replace("__ROMP_BOOT__", json.dumps(_BOOT_ID))
                          .replace("__ROMP_LOADER__", json.dumps(_loader_inner())) + "</script>"
             "<script>" + _LANDING_REMOTES_JS + "</script>"
-            "<script>" + _LANDING_MOBILE_JS + "</script>"
+            # the mobile script tests the SAME media query the CSS above lays out by (__rompMobileOn)
+            "<script>" + _LANDING_MOBILE_JS.replace("__MOBILE_MQ__", json.dumps(_MOBILE_MQ)) + "</script>"
             "<script>" + _LANDING_PUSH_JS + "</script>"
-            "<script>" + _LANDING_COLLAPSE_JS + "</script>"
+            # the pane controller broadcasts the pane set to every pane iframe by KEY — spliced from
+            # _PANE_ORDER (the one list of panes), never a second hand-written list
+            "<script>" + _LANDING_COLLAPSE_JS.replace("__PANE_KEYS__", json.dumps([k for k, _ in _PANE_ORDER])) + "</script>"
             # the command palette (Cmd/Ctrl+P) and the session quick-switcher hotkey (Cmd/Ctrl+O):
             # a dist bundle (ui/webview/palette-main.ts) like age-color-global above. Loaded last —
             # it reads the __romp* globals lazily, at command run time, so order is cosmetic.
