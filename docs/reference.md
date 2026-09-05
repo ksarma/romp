@@ -444,15 +444,17 @@ and `key:managed` name sources whose material the kernel never holds.
 - `cliScope`: `on`, the kernel's boot verdict on per-session transient scopes
   (see "What survives a restart"); `fallbacks`, CLI launches since boot on which
   the scope wrapper's pre-flight scope failed and it ran the CLI directly, which
-  it reports with a `romp-cli-scope: fallback: …` stderr line (each is also a
-  problem line in the kernel log, `cli scope: session <name> (<sid>) started its
-  CLI outside a scope — <the wrapper's reason>`). The wrapper's other message,
-  `romp-cli-scope: refused: …` (`ROMP_CLI_REAL` unset, exit 127), starts no CLI
-  and is not counted: it is a launch failure, reported on the session's error
-  card. `lastFallbackAt`, epoch seconds of the newest fallback, `null` when there
-  was none. `on: true` with `fallbacks > 0` means the verdict stopped holding
-  after boot: those sessions' work is in the service cgroup, and a service
-  restart kills it.
+  it reports with a `romp-cli-scope: fallback: …` stderr line. Each is also a
+  problem line in the kernel log, in exactly this form: `cli scope: session
+  <name> (<sid8>) started its CLI outside a scope — <line>`, where `<sid8>` is
+  the first 8 characters of the session id and `<line>` is the wrapper's whole
+  stderr line, its `romp-cli-scope: fallback:` prefix included. The wrapper's
+  other message, `romp-cli-scope: refused: …` (`ROMP_CLI_REAL` unset, exit 127),
+  starts no CLI and is not counted: it is a launch failure, reported on the
+  session's error card. `lastFallbackAt`, epoch seconds of the newest fallback,
+  `null` when there was none. `on: true` with `fallbacks > 0` means the verdict
+  stopped holding after boot: those sessions' work is in the service cgroup, and
+  a service restart kills it.
 - `config`: the constants in force (see "Derived state").
 - `overall`: `state`, the most severe state among buckets that are not
   `unknown` (`thrashing > degraded > recovering > healthy`; `unknown` when every
