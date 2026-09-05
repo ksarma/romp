@@ -10,7 +10,9 @@ ROMP_CLI_SCOPE=0 for every backend construction):
   * the cli_scope_supported truth table and the exact probe argv;
   * the backend caches one verdict at construction, and _options honours it: cli_path becomes the
     wrapper and ROMP_CLI_REAL carries the real CLI when on; both untouched when off;
-  * a missing or non-executable wrapper degrades loudly (a problem line, once) to the direct path.
+  * a missing or non-executable wrapper degrades loudly (a problem line, once) to the direct path;
+  * the wrapper's own stderr notice (a failed pre-flight, the CLI run directly) is logged the moment
+    it arrives and counted, since on that path the CLI starts and nothing else would ever read it.
 Synthetic fixtures only: placeholder sid, /bin/true as the CLI.
 """
 import os
@@ -291,6 +293,83 @@ class OptionsWiring(_Backend):
         finally:
             sb.cli_scope_wrapper = before
         self.assertEqual(kw["cli_path"], "/bin/true")
+
+
+class FallbackNotice(_Backend):
+    """bin/romp-cli-scope writes one stderr line, starting `romp-cli-scope:`, when it runs the CLI
+    directly after a failed pre-flight. The CLI then STARTS, so _record_launch_error never drains the
+    stderr tail and the line was never read (2026-09-05): the boot verdict kept saying scopes were on
+    while the session's work sat in the service cgroup. _on_cli_stderr now logs that line at once, as
+    a problem naming the session, and the backend counts it for /api-health; every other line is still
+    only buffered."""
+
+    NOTICE = ("romp-cli-scope: systemd-run cannot start a transient scope (Failed to connect to bus: No such "
+              "file or directory) — running the CLI directly, outside a scope; a service restart will take "
+              "its background work down")
+
+    def _capture(self):
+        problems = []
+        self.be._log = lambda m, problem=None: problems.append((m, problem))
+        return problems
+
+    def test_the_notice_is_logged_once_as_a_problem_naming_the_session(self):
+        problems = self._capture()
+        sess = self._sess()
+        sess._on_cli_stderr(self.NOTICE + "\n")
+        self.assertEqual(len(problems), 1, problems)
+        m, p = problems[0]
+        self.assertTrue(p, "a problem line — the error center shows it, not only the log file")
+        self.assertIn("web", m, "the session's name")
+        self.assertIn(SID[:8], m, "and its sid")
+        self.assertIn(self.NOTICE, m, "the wrapper's own reason, verbatim")
+        self.assertEqual(sess.stderr_tail(), self.NOTICE, "buffered too, like any other line")
+        self.assertEqual(self.be.cli_scope_fallbacks, 1)
+        self.assertIsNotNone(self.be.cli_scope_fallback_at)
+
+    def test_an_ordinary_line_is_only_buffered(self):
+        problems = self._capture()
+        sess = self._sess()
+        sess._on_cli_stderr("some CLI chatter\n")
+        # the prefix mid-line is not the wrapper speaking (a shell naming the wrapper's path, say)
+        sess._on_cli_stderr("sh: /x/bin/romp-cli-scope: Permission denied\n")
+        self.assertEqual(problems, [], "nothing logged per line — a chatty CLI must not drown the log")
+        self.assertEqual(self.be.cli_scope_fallbacks, 0)
+        self.assertIsNone(self.be.cli_scope_fallback_at)
+        self.assertEqual(sess.stderr_tail().splitlines(),
+                         ["some CLI chatter", "sh: /x/bin/romp-cli-scope: Permission denied"])
+
+    def test_the_refusal_line_is_logged_at_once_too(self):
+        # the wrapper's other line (ROMP_CLI_REAL unset, exit 127) is a launch failure the error card
+        # reports on its own; it still counts as a CLI that did not get its scope, and is logged now
+        problems = self._capture()
+        self._sess()._on_cli_stderr("romp-cli-scope: ROMP_CLI_REAL is unset or empty; it must name the "
+                                    "real claude CLI (refusing to guess)\n")
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(self.be.cli_scope_fallbacks, 1)
+
+    def test_the_snapshot_reports_the_verdict_and_the_fallbacks(self):
+        self.assertEqual(self.be.api_health_snapshot()["cliScope"],
+                         {"on": False, "fallbacks": 0, "lastFallbackAt": None},
+                         "the test floor: off, nothing fell back")
+        self._capture()
+        sess = self._sess()
+        sess._on_cli_stderr(self.NOTICE + "\n")
+        sess._on_cli_stderr(self.NOTICE + "\n")
+        snap = self.be.api_health_snapshot()["cliScope"]
+        self.assertEqual(snap["fallbacks"], 2)
+        self.assertIsInstance(snap["lastFallbackAt"], int)
+        self.assertGreater(snap["lastFallbackAt"], 0)
+        self.be.cli_scope = True
+        self.assertTrue(self.be.api_health_snapshot()["cliScope"]["on"])
+
+    def test_the_prefix_is_what_the_wrapper_writes(self):
+        # the constant and the script agree: every stderr line the wrapper writes starts with it
+        with open(os.path.join(BIN, "romp-cli-scope")) as f:
+            src = f.read()
+        lines = [ln for ln in src.splitlines() if ">&2" in ln and "echo" in ln]
+        self.assertGreaterEqual(len(lines), 2, "the refusal and the fallback")
+        for ln in lines:
+            self.assertIn('"%s ' % sb.CLI_SCOPE_NOTICE_PREFIX, ln, ln)
 
 
 if __name__ == "__main__":

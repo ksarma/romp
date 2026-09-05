@@ -432,6 +432,14 @@ and `key:managed` name sources whose material the kernel never holds.
   outside the signal on both sides of the ratio). A reader that sees `inTurn >
   0` and a `lastEventAt` minutes old should treat the signal as unknown rather
   than healthy.
+- `cliScope`: `on`, the kernel's boot verdict on per-session transient scopes
+  (see "What survives a restart"); `fallbacks`, CLI launches since boot that the
+  scope wrapper reported running without a scope (each is also a problem line in
+  the kernel log, `cli scope: session <name> (<sid>) started its CLI outside a
+  scope — <the wrapper's reason>`); `lastFallbackAt`, epoch seconds of the newest,
+  `null` when there was none. `on: true` with `fallbacks > 0` means the verdict
+  stopped holding after boot: those sessions' work is in the service cgroup, and
+  a service restart kills it.
 - `config`: the constants in force (see "Derived state").
 - `overall`: `state`, the most severe state among buckets that are not
   `unknown` (`thrashing > degraded > recovering > healthy`; `unknown` when every

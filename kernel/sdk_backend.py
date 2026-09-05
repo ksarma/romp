@@ -75,6 +75,11 @@ def _bin_on_path_env(environ) -> dict:
 # ppid 1.
 CLI_SCOPE_PROBE = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--", "true"]
 CLI_SCOPE_PROBE_TIMEOUT = 10.0
+# What every line bin/romp-cli-scope writes to stderr starts with. The wrapper writes only when the
+# CLI did NOT get its scope: the pre-flight scope failed and it ran the CLI directly (the CLI starts, so
+# no launch failure ever drains the stderr tail — SdkSession._on_cli_stderr logs the line the moment it
+# arrives), or ROMP_CLI_REAL was unset and it refused (exit 127, a launch failure on its own).
+CLI_SCOPE_NOTICE_PREFIX = "romp-cli-scope:"
 
 
 def cli_scope_wrapper() -> str:
@@ -4137,11 +4142,22 @@ class SdkSession:
         session would drown the kernel log. The tail is drained where it matters — _record_launch_error
         logs it and puts it on the session's error card.
 
+        One line IS logged at once: the scope wrapper's own notice (CLI_SCOPE_NOTICE_PREFIX, from
+        bin/romp-cli-scope), which says this CLI did not get its transient scope. On the wrapper's
+        fallback path the CLI starts, so no launch failure ever drains the tail, and until 2026-09-05
+        the line was never read: the boot verdict kept saying scopes were on while the session's work
+        sat in the service cgroup, where a service restart kills it. So the line goes to the backend's
+        problem log immediately, naming the session, and the backend counts it (_note_cli_scope_fallback;
+        api_health_snapshot reports the count) — as well as being buffered like any other line.
+
         Called from the SDK's stderr reader task; it isolates exceptions per line, but keep it total
         anyway (a raise here would lose the very diagnostics this exists to keep)."""
         try:
             if line and line.strip():
-                self._stderr_tail.append(line.rstrip("\n"))
+                text = line.rstrip("\n")
+                self._stderr_tail.append(text)
+                if text.startswith(CLI_SCOPE_NOTICE_PREFIX):
+                    self.backend._note_cli_scope_fallback(self, text)
         except Exception:
             pass
 
@@ -5538,6 +5554,11 @@ class SdkBackend:
             # directly, unscoped.
             os.environ["ROMP_CLI_REAL"] = self.claude_bin
         self._cli_scope_wrapper_logged = False    # the missing-wrapper fallback is reported once per backend
+        # CLI launches since boot that the wrapper reported running WITHOUT a scope (its stderr notice,
+        # see _on_cli_stderr), and when the last one was. The boot verdict above is taken once; these say
+        # whether it stopped holding afterwards. Read by api_health_snapshot.
+        self.cli_scope_fallbacks = 0
+        self.cli_scope_fallback_at: float | None = None
         self._heal_attempts: dict[str, int] = {}  # sid -> crash-resume attempts since its last COMPLETED turn
         #                                           (bounds _heal_cut_session to one resume per cut; a completed
         #                                           turn resets it, so a crash LOOP can't respawn forever)
@@ -6494,6 +6515,18 @@ class SdkBackend:
             rows = list(self._problems)
         return rows[-limit:] if limit else rows
 
+    def _note_cli_scope_fallback(self, sess, text: str) -> None:
+        """The scope wrapper wrote a notice on `sess`'s stderr (SdkSession._on_cli_stderr): this CLI is
+        running directly, inside the service cgroup, after the pre-flight scope failed — or, for the
+        exit-127 refusal, did not run at all. Logged at once as a problem (the error center shows it; a
+        launch that succeeds never drains the stderr tail, so nothing else would) and counted, so a
+        reader of /api-health can tell that the boot verdict "cli scope: on" stopped holding."""
+        with self._lock:
+            self.cli_scope_fallbacks += 1
+            self.cli_scope_fallback_at = time.time()
+        self._log("cli scope: session %s (%s) started its CLI outside a scope — %s"
+                  % (sess.name, str(sess.sid)[:8], text), problem=True)
+
     def api_health_snapshot(self, now: float | None = None, uptime_s=None) -> dict:
         """The /api-health payload (ApiHealth.snapshot) plus what only the backend knows: how many SDK
         sessions it holds and how many are in a retry storm right now — the cheapest direct thrash
@@ -6507,6 +6540,12 @@ class SdkBackend:
         out["coverage"]["inTurn"] = sum(1 for s in live if (getattr(s, "inflight", 0) or 0) > 0
                                         or getattr(s, "retrying", False))
         out["coverage"]["retrying"] = sum(1 for s in live if getattr(s, "retrying", False))
+        # The per-session scopes (cli_scope_supported): the boot verdict, and whether it stopped holding
+        # afterwards — CLI launches the wrapper reported running without a scope (_note_cli_scope_fallback).
+        with self._lock:
+            n, at = self.cli_scope_fallbacks, self.cli_scope_fallback_at
+        out["cliScope"] = {"on": bool(self.cli_scope), "fallbacks": n,
+                           "lastFallbackAt": int(at) if at else None}
         return out
 
     def _poke(self):

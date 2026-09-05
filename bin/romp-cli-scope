@@ -30,8 +30,11 @@
 # Two direct-exec paths, no scope: no ROMP_SID (a process with no session identity is a probe — the
 # SDK's per-connect `claude -v` version check — not a session, and must not get a scope of its own),
 # and a failed pre-flight (`systemd-run … -- true`: the user bus gone, scopes refused), where one
-# stderr line names the reason (the kernel captures the CLI's stderr, so it reaches the log) and
-# the CLI runs directly rather than not at all.
+# stderr line names the reason and the CLI runs directly rather than not at all. The kernel reads the
+# CLI's stderr; a line that starts with `romp-cli-scope:` it logs the moment it arrives, as a problem
+# naming the session, and counts (/api-health `cliScope.fallbacks`) — the rest of the CLI's stderr it
+# only buffers, for a launch that fails (SdkSession._on_cli_stderr). On this path the CLI starts, so
+# without that the line would never have been read and the boot verdict would keep saying scopes are on.
 #
 # Environment: ROMP_CLI_REAL (required) — the real CLI; ROMP_SID — the session id (kernel-set);
 # ROMP_CLI_SCOPE=0 — run the CLI directly, no scope. Arguments pass through verbatim.

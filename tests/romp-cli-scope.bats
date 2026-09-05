@@ -117,7 +117,9 @@ teardown() { rm -rf "$TEST_DIR"; }
 
 @test "a failing pre-flight falls back to the real CLI directly, with one stderr line naming the reason" {
     # systemd-run that cannot start a scope (the user bus gone): the CLI must still launch, in
-    # the caller's cgroup, and the reason must reach stderr (the kernel captures the CLI's stderr)
+    # the caller's cgroup, and the reason must reach stderr as ONE line starting `romp-cli-scope:` —
+    # the kernel logs such a line as a problem the moment it arrives and counts it
+    # (tests/test_cli_scope.py FallbackNotice); every other stderr line it only buffers
     cat > "$BIN/systemd-run" <<'SH'
 #!/bin/sh
 echo "$*" >> "$FAKE_CALLS"
