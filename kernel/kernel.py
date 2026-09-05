@@ -30897,22 +30897,59 @@ GH_ORIGIN_UNCHECKED = "could not check whether branch %s is on origin"
 GH_LS_REMOTE_S = 3          # the viewer is waiting on this reply; a remote that has not answered by then is "unchecked"
 
 
+# ls-remote's answers, memoized per (repo top, branch) — EVENT-keyed, no expiry: an answer holds until
+# the free local check (the tracking ref) changes its verdict, which is the event a push or fetch
+# produces. A never-pushed branch otherwise paid a network round trip on every viewer open, with as
+# many in flight as opens (2026-09-05). Only answers are kept (True/False); "did not answer" is asked
+# again next time. _ORIGIN_INFLIGHT dedupes concurrent askers of one key: they wait on the leader's
+# Event and share its answer, whatever it is, instead of each paying the timeout in turn.
+_ORIGIN_MEMO = {}                       # (top, ref) -> bool
+_ORIGIN_INFLIGHT = {}                   # (top, ref) -> [threading.Event, answer]
+_ORIGIN_LOCK = threading.Lock()
+
+
 def _origin_has_branch(top, ref):
     """Whether origin carries branch `ref`: True / False / None (unknown — origin did not answer in
     time, or refused). The local tracking ref answers first and for free (`refs/remotes/origin/<ref>`
     exists once the branch has been pushed or fetched); only its absence pays one `ls-remote` — a
-    worktree branch never pushed has no tracking ref, and that is the case the note exists for. The
-    query gets a short timeout and no terminal prompt: the viewer must never hang on it. The pattern
-    is the full ref and the answer is matched on it exactly, because ls-remote patterns match a ref's
-    TAIL (`main` would also match `refs/heads/x/main`)."""
+    worktree branch never pushed has no tracking ref, and that is the case the note exists for — and
+    only ONCE per (repo, branch): the answer is memoized until the tracking ref appears, which a push
+    from the session writes, so the free check sees the change and the memo entry is dropped (its
+    disappearance later, a `fetch --prune` after a deletion on GitHub, asks origin afresh). The check
+    trusts the local tracking ref: a branch deleted on GitHub keeps reading as present until a prune.
+    The query gets a short timeout and no terminal prompt: the viewer must never hang on it. The
+    pattern is the full ref and the answer is matched on it exactly, because ls-remote patterns match
+    a ref's TAIL (`main` would also match `refs/heads/x/main`)."""
+    key = (top, ref)
     if _git_out(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/" + ref], top):
+        with _ORIGIN_LOCK:
+            _ORIGIN_MEMO.pop(key, None)         # the free check answers now; its verdict changing re-asks
         return True
-    full = "refs/heads/" + ref
-    out = _git_net_out(["ls-remote", "--heads", "origin", full], top, timeout=GH_LS_REMOTE_S,
-                       env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
-    if out is None:
-        return None
-    return any(line.split("\t")[-1] == full for line in out.splitlines())
+    with _ORIGIN_LOCK:
+        if key in _ORIGIN_MEMO:
+            return _ORIGIN_MEMO[key]
+        flight = _ORIGIN_INFLIGHT.get(key)
+        leader = flight is None
+        if leader:
+            flight = _ORIGIN_INFLIGHT[key] = [threading.Event(), None]
+    if not leader:
+        flight[0].wait()                        # the leader's finally always sets it
+        return flight[1]
+    on = None
+    try:
+        full = "refs/heads/" + ref
+        out = _git_net_out(["ls-remote", "--heads", "origin", full], top, timeout=GH_LS_REMOTE_S,
+                           env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+        if out is not None:
+            on = any(line.split("\t")[-1] == full for line in out.splitlines())
+    finally:
+        with _ORIGIN_LOCK:
+            if on is not None:
+                _ORIGIN_MEMO[key] = on
+            _ORIGIN_INFLIGHT.pop(key, None)
+        flight[1] = on
+        flight[0].set()
+    return on
 
 
 def _file_github_link(raw, sid, check_origin=True):

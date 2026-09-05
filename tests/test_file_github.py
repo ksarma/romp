@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from importlib.machinery import SourceFileLoader
@@ -133,7 +134,7 @@ class _WithOrigin(_Repo):
     GIT_CONFIG_GLOBAL=/dev/null (honoured by git >= 2.32) and GIT_CONFIG_NOSYSTEM=1. Without the pin
     a developer's global `url."https://github.com/".insteadOf = git@github.com:` rewrote the fixture
     origin under the kernel's ls-remote and the tests reached real github.com (reproduced 2026-09-05;
-    three went red)."""
+    three went red). The kernel's memo of origin answers starts empty: every test begins unasked."""
 
     URL = "https://github.com/TESTORG/notes-api/blob/%s/src/app.py"
 
@@ -141,10 +142,29 @@ class _WithOrigin(_Repo):
         _restore_env_after(self, "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_SSH_COMMAND")
         os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
         os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+        km._ORIGIN_MEMO.clear()
+        km._ORIGIN_INFLIGHT.clear()
         super().setUp()
         _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
         self.root = _local_origin(self.tmp)          # origin has main; the push also wrote the tracking ref
         self.ssh = os.path.join(self.root, "stand-in-ssh")
+
+    def counting_ssh(self, before=""):
+        """Point the kernel at a stand-in ssh that counts the queries that went out and runs `before`
+        (shell) ahead of each; returns the count reader. Counts the git-upload-pack calls only: a
+        GIT_SSH_COMMAND not named ssh also gets git's variant probe (`-G <host>`) before each one."""
+        log = os.path.join(self.root, "asked.log")
+        os.environ["GIT_SSH_COMMAND"] = _script(
+            self.root, "counting-ssh",
+            'case "$*" in *git-upload-pack*) echo x >> "%s";; esac\n%sexec "%s" "$@"\n'
+            % (log, before, self.ssh))
+
+        def asked():
+            if not os.path.exists(log):
+                return 0
+            with open(log) as f:
+                return f.read().count("x")
+        return asked
 
 
 class GitHubUrl(_Repo):
@@ -369,6 +389,58 @@ class BranchOnOrigin(_WithOrigin):
         _git("checkout", "-q", sha, cwd=self.tmp)
         os.environ["GIT_SSH_COMMAND"] = "false"
         self.assertEqual(km._file_github_link(self.fp, None), (self.URL % sha, ""))
+
+    def test_a_second_open_reuses_the_answer_instead_of_asking_origin_again(self):
+        # a never-pushed branch paid one round trip per viewer open (2026-09-05); the answer now holds
+        # until the local check changes its verdict — no clock on it
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        asked = self.counting_ssh()
+        for _ in range(2):
+            self.assertEqual(km._file_github_link(self.fp, None),
+                             (self.URL % "wip", "branch wip is not on origin"))
+        self.assertEqual(asked(), 1, "one ls-remote per (repo, branch)")
+        _git("checkout", "-q", "-b", "other", cwd=self.tmp)
+        self.assertEqual(km._file_github_link(self.fp, None)[1], "branch other is not on origin")
+        self.assertEqual(asked(), 2, "another branch is another key")
+
+    def test_the_tracking_ref_appearing_flips_the_verdict_for_free(self):
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        asked = self.counting_ssh()
+        self.assertEqual(km._file_github_link(self.fp, None)[1], "branch wip is not on origin")
+        # what a push from the session writes (the push itself would go through the counting ssh)
+        _git("update-ref", "refs/remotes/origin/wip", "HEAD", cwd=self.tmp)
+        self.assertEqual(km._file_github_link(self.fp, None), (self.URL % "wip", ""))
+        self.assertEqual(asked(), 1, "the tracking ref answered; no new ls-remote")
+        # ...and its disappearance (a fetch --prune after a deletion on GitHub) asks origin afresh
+        _git("update-ref", "-d", "refs/remotes/origin/wip", cwd=self.tmp)
+        self.assertEqual(km._file_github_link(self.fp, None)[1], "branch wip is not on origin")
+        self.assertEqual(asked(), 2, "the local verdict changed, so the memo was dropped")
+
+    def test_concurrent_opens_share_one_query(self):
+        # rapid opens used to put as many ls-remotes in flight as opens; askers of one key now wait
+        # for the one in flight and take its answer
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        asked = self.counting_ssh(before="sleep 0.3\n")
+        got = []
+        ts = [threading.Thread(target=lambda: got.append(km._file_github_link(self.fp, None)))
+              for _ in range(6)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(15)
+        self.assertEqual(got, [(self.URL % "wip", "branch wip is not on origin")] * 6)
+        self.assertEqual(asked(), 1)
+
+    def test_an_unanswered_query_is_asked_again_next_time(self):
+        # "could not check" is not an answer; memoizing it would make one blip permanent
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        os.environ["GIT_SSH_COMMAND"] = "false"
+        self.assertEqual(km._file_github_link(self.fp, None)[1],
+                         "could not check whether branch wip is on origin")
+        asked = self.counting_ssh()
+        self.assertEqual(km._file_github_link(self.fp, None),
+                         (self.URL % "wip", "branch wip is not on origin"))
+        self.assertEqual(asked(), 1)
 
     def test_the_url_only_caller_never_asks_origin(self):
         _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
