@@ -30915,15 +30915,15 @@ def _file_github_link(raw, sid, check_origin=True):
     m = _GITHUB_REMOTE.match(remote or "")
     if not m:
         return "", GH_NOT_GITHUB
-    ref = _git_out(["rev-parse", "--abbrev-ref", "HEAD"], top)
-    if not ref:
+    sha = _git_out(["rev-parse", "--verify", "--quiet", "HEAD"], top)
+    if not sha:
         return "", GH_NO_COMMITS                    # staged into an unborn branch: in the index, on no commit
-    branch = ref
-    if ref == "HEAD":                               # detached — the sha is the only honest ref
-        branch = None
-        ref = _git_out(["rev-parse", "HEAD"], top) or ""
-        if not ref:
-            return "", GH_NO_COMMITS
+    # `branch --show-current` (git >= 2.22), NOT `rev-parse --abbrev-ref HEAD`: the latter spells a
+    # branch that shares its name with a tag as `heads/<branch>` to disambiguate, which GitHub 404s and
+    # which named a branch nobody has ("branch heads/main is not on origin") — reproduced 2026-09-05.
+    # Empty when HEAD is detached, and then the sha is the only honest ref.
+    branch = _git_out(["branch", "--show-current"], top) or None
+    ref = branch or sha
     url = "https://github.com/%s/%s/blob/%s/%s" % (
         # safe="/" keeps a slashed branch name (feat/x) literal — the form GitHub's own UI writes;
         # GitHub resolves the ref/path ambiguity by longest match, exactly as it does for its users

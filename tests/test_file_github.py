@@ -156,6 +156,14 @@ class GitHubUrl(_Repo):
         self.assertEqual(km._file_github_url(self.fp, None),
                          "https://github.com/TESTORG/notes-api/blob/%s/src/app.py" % sha)
 
+    def test_a_tag_named_like_the_branch_leaves_the_ref_alone(self):
+        # `rev-parse --abbrev-ref HEAD` disambiguates a branch/tag name clash as heads/main, and GitHub
+        # 404s that spelling (reproduced 2026-09-05); the branch name itself is what the URL wants
+        _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
+        _git("tag", "main", cwd=self.tmp)
+        self.assertEqual(km._file_github_url(self.fp, None),
+                         "https://github.com/TESTORG/notes-api/blob/main/src/app.py")
+
     def test_a_symlinked_path_prefix_still_links(self):
         # executed repro: git reports the PHYSICAL toplevel, so a logical path through a symlink
         # escaped relpath and silently un-linked every tracked file behind one
@@ -270,6 +278,18 @@ class BranchOnOrigin(_WithOrigin):
 
     def test_a_branch_never_pushed_keeps_its_url_and_says_so(self):
         _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        self.assertEqual(km._file_github_link(self.fp, None),
+                         (self.URL % "wip", "branch wip is not on origin"))
+
+    def test_a_tag_named_like_the_branch_never_bends_the_note(self):
+        # the heads/<branch> spelling would also have asked origin for a branch nobody has and said
+        # "branch heads/main is not on origin" about a branch that IS there (reproduced 2026-09-05)
+        _git("tag", "main", cwd=self.tmp)
+        os.environ["GIT_SSH_COMMAND"] = "false"       # the tracking ref answers; nothing goes out
+        self.assertEqual(km._file_github_link(self.fp, None), (self.URL % "main", ""))
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        _git("tag", "wip", cwd=self.tmp)
+        os.environ["GIT_SSH_COMMAND"] = self.ssh
         self.assertEqual(km._file_github_link(self.fp, None),
                          (self.URL % "wip", "branch wip is not on origin"))
 
