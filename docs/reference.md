@@ -357,6 +357,28 @@ agent's launcher by parsing it — line by line, never sourced, so a malformed
 line is skipped rather than executed). Rotate a value by editing the file and
 restarting the manager (`romp-service install`); a missing file is a no-op.
 
+### What survives a restart
+
+A kernel restart (`romp refresh`, the manager's restart-all, a crash respawn)
+never touches the processes a session started: tmux servers, `setsid` children
+and other background work keep running, and the session resumes with its
+history. A service restart is different. `systemctl --user restart
+romp-manager`, or the machine's own service management, kills everything in the
+service's cgroup, and by default every process a session ever started is in it.
+So on Linux under systemd Romp runs each session's CLI, and the default tmux
+server the manager starts, in a transient systemd scope of its own
+(`systemctl --user list-units 'romp-session-*' 'romp-tmux-*'` lists them). A
+session's tmux servers, `setsid` children and other background work then live
+in the session's scope, not the service's, and a service restart leaves them
+alive. A CLI that outlives a hard-killed kernel is reaped at the next boot by
+the existing orphan reap, as before.
+
+`ROMP_CLI_SCOPE=0` in the service environment turns the scopes off;
+`ROMP_CLI_SCOPE=1` turns them on for a manager run outside the service
+(`romp up`). The kernel logs which it chose at start (`cli scope: on` or `off`,
+with the reason). The macOS launchd path is unchanged: there is no cgroup kill
+there, and the tmux server keeps its launchd lineage.
+
 ## The API-health signal
 
 `GET /api-health` returns one JSON document describing how the API is treating
