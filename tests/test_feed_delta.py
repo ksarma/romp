@@ -465,6 +465,77 @@ class ReadyHandshake(unittest.TestCase):
         finally:
             _restore(saved)
 
+    def test_an_outline_client_on_the_view_delta_protocol_is_served_once_as_the_slots_base(self):
+        # The Outline page's shim announces ?delta=1 (upstream's view-delta slots) but not feedDelta. Served
+        # through _send_client, its `ready` frame was unkeyed and left dstate["feed"] empty, so the connect
+        # push's _send_slot sent the WHOLE frame again, keyed: two full frames per `ready`. Served through
+        # _send_slot the frame is keyed, it is the slot's base, and the push that follows can delta.
+        f = _feed()
+        saved, ms, parts = _warm(f)
+        try:
+            h = self._handler()
+            c, sent = _client(caps=("readyGate",), app="fleet")
+            c["delta"] = True; c["ready"] = False
+            t0 = time.time()
+            h._dispatch_ws({"type": "ready"}, c)
+            self.assertEqual(len(sent), 1)
+            got = json.loads(sent[0])
+            self.assertEqual(got["type"], "feed")
+            self.assertIn("_keys", got, "served keyed: the frame is the slot's base")
+            self.assertGreaterEqual(got["now"], int(t0), "…stamped with the clock of the serve")
+            self.assertIn("feed", c.get("dstate") or {}, "…and the slot holds it")
+            self.assertNotIn("efeed", c, "the feed-delta protocol's base is not this client's")
+            self.assertEqual(h.pushed, [c], "the Outline still gets its connect push (for the ledgers)")
+            km._push([c])                                       # the real push: it attaches ledgers (none here)
+            self.assertEqual([json.loads(x)["type"] for x in sent], ["feed", "delta"],
+                             "the push found the base held: what it adds rides as a delta, not a second full frame")
+            d = json.loads(sent[1])
+            self.assertEqual(d["slot"], "feed")
+            self.assertIn("ledgers", d.get("rest") or {}, "the ledgers attach is the change that rode it")
+            # a second `ready` is a re-base on this protocol too: the base is forgotten, the keyed full re-served
+            h._dispatch_ws({"type": "ready"}, c)
+            self.assertEqual([json.loads(x)["type"] for x in sent], ["feed", "delta", "feed"])
+            self.assertIn("_keys", json.loads(sent[2]))
+        finally:
+            _restore(saved)
+
+    def test_an_outline_socket_announcing_delta_gets_one_full_frame_per_ready(self):
+        # end to end over a real socket, with the REAL connect push (its ledgers attach changes the frame's
+        # remainder, so what follows the full frame is a delta, never a second `feed`)
+        f = _feed(n=40)
+        saved, ms, parts = _warm(f)
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        port = srv.server_address[1]
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        s = None
+        try:
+            s, buf = _connect(port, "app=fleet&wid=w9&caps=readyGate&delta=1")
+            client = _registered("w9")
+            self.assertTrue(client.get("delta"), "the shim's ?delta=1 was parsed")
+            self.assertFalse(client["ready"])
+            s.sendall(_client_frame(json.dumps({"type": "ready"})))
+            frames = []
+            s.settimeout(1.5)
+            try:
+                while True:
+                    op, payload, buf = _read_frame(s, buf)
+                    if op == 0x1:
+                        frames.append(json.loads(payload.decode("utf-8")))
+            except (socket.timeout, TimeoutError):
+                pass
+            types = [fr.get("type") for fr in frames]
+            self.assertEqual(types.count("feed"), 1, "exactly one full frame per `ready`: %s" % types)
+            self.assertIn("_keys", frames[types.index("feed")], "…the keyed one, the slot's base")
+            self.assertTrue(set(types) <= {"feed", "delta"}, types)
+            for fr in frames:
+                if fr.get("type") == "delta":
+                    self.assertEqual(fr.get("slot"), "feed")
+        finally:
+            if s is not None:
+                s.close()
+            srv.shutdown(); srv.server_close()
+            _restore(saved)
+
     def test_the_ready_handler_emits_no_tab_order_of_its_own(self):
         # The connect push's tabOrder goes through the _tab_list_tmux collapse guard; the handler used to
         # send a SECOND one from a raw _tmux_sessions() read — an omitted id is an authoritative teardown

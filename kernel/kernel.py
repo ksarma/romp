@@ -30158,11 +30158,26 @@ def _send_feed_now(c):
     2026-09-03 review: an 11 h old card read "1h ago" all morning). The dedup signature never included
     `now`, so the stamp changes no dedup outcome. Returns whether a frame was sent; a cold kernel has
     nothing cached, and the connect push serves it instead. The recorded delta base moves only when a frame
-    actually goes out: a frame the per-client dedup swallowed changes nothing the client holds."""
+    actually goes out: a frame the per-client dedup swallowed changes nothing the client holds.
+
+    Two delta protocols meet here as in _push. A page that announced `?delta=1` but not FEED_DELTA_CAP (the
+    Outline page) takes the view-delta slot path, so it is served THROUGH _send_slot: the frame goes out
+    keyed and becomes the slot's held base (dstate["feed"]), and the connect push that follows it (_push_one,
+    for the ledgers only that push attaches) finds the base and sends a delta. Served through _send_client
+    instead, the same frame went unkeyed, the slot path found nothing held, and the client received the whole
+    frame twice per `ready`. The slot path keeps its own dedup (an unchanged frame it already holds is not
+    re-sent), and a send writes a new dedup tuple, which is how "a frame went out" is read on that branch."""
     w = _feed_wire_now()
     if w is None:
         return False
-    if not _send_client(c, ("feed",), w[2], pre=_feed_ms(w[3], int(time.time())), sig=w[4]):
+    ms = _feed_ms(w[3], int(time.time()))
+    if c.get("delta") and FEED_DELTA_CAP not in (c.get("caps") or ()):
+        with _client_lock(c):
+            before = c.get("sent", {}).get(("feed",))
+            _send_slot(c, "feed", w[2], ms, w[4])
+            after = c.get("sent", {}).get(("feed",))
+        return after is not None and after is not before
+    if not _send_client(c, ("feed",), w[2], pre=ms, sig=w[4]):
         return False
     c["efeed"] = w[5]
     return True
@@ -38712,6 +38727,7 @@ class Handler(BaseHTTPRequestHandler):
             if client.get("readySeen"):
                 client.pop("efeed", None)
                 client.get("sent", {}).pop(("feed",), None)
+                client.get("dstate", {}).pop("feed", None)   # the view-delta slot's base (a ?delta=1 Outline page)
             client["ready"] = True
             client["readySeen"] = True
             served = client.get("app") in ("feed", "fleet", "waiting") and _send_feed_now(client)
