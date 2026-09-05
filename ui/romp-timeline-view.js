@@ -2997,10 +2997,23 @@ class TimelinePanel {
       opt.addEventListener('mouseenter', () => { opt.style.background = HOVER_BG; });
       opt.addEventListener('mouseleave', () => { opt.style.background = 'transparent'; });
       opt.addEventListener('click', () => {
-        this._tagAddFor = null;
+        this._tagAddFor = null; this._tagNewDraft = null;
         this._editTagUnion(g, { add: rowIds.filter((id) => g.members.indexOf(id) < 0) }); rebuild();
       });
     }
+    // The new-tag input's text and caret SURVIVE a repaint (round 3 of the 2026-09-05 review — the
+    // rename draft did not cover it): an ack or refusal for some other write rebuilds the whole
+    // surface while the user is typing here. The draft is kept on the instance per join key (the
+    // rows the menu is for); the live input is read before the rebuild tears it down, and the
+    // rebuilt input restores text and caret. Submitting, or closing the menu, drops it.
+    const key = rowIds.join(',');
+    const live = this._tagNewInput && this._tagNewInput.key === key ? this._tagNewInput.el : null;   // another row's input says nothing about this draft
+    if (live && this._tagNewDraft && this._tagNewDraft.key === key) {
+      this._tagNewDraft.value = live.value;
+      if (typeof live.selectionStart === 'number') { this._tagNewDraft.selStart = live.selectionStart; this._tagNewDraft.selEnd = live.selectionEnd; }
+    }
+    this._tagNewInput = null;
+    const draft = this._tagNewDraft && this._tagNewDraft.key === key ? this._tagNewDraft : null;
     const ni = document.createElement('input');
     ni.placeholder = 'new tag…'; ni.maxLength = 40;
     ni.setAttribute('style', 'width:90px;background:' + INPUT_BG + ';color:' + INPUT_FG + ';border:1px solid ' + HAIRLINE + ';'
@@ -3029,6 +3042,7 @@ class TimelinePanel {
       this._postTagEdit(nv, { op: 'create', name: tg.name, color, sids: rowIds.slice() }, { name: tg.name, newId: tg.id }); rebuild();
     });
     box.appendChild(ni);
+    this._tagNewInput = { key, el: ni };   // the live input, read at the next repaint of the SAME menu for its text and caret
     ni.focus();
     if (draft && typeof draft.selStart === 'number' && typeof draft.selEnd === 'number') {
       try { ni.setSelectionRange(draft.selStart, draft.selEnd); } catch (e) {}
@@ -3834,7 +3848,7 @@ class TimelinePanel {
       tagAll.setAttribute('style', btnStyle);
       hover(tagAll, 'background:' + HOVER_BG + ';', 'background:transparent;');
       tagAll.setAttribute('title', 'add a tag to every session the search shows');
-      tagAll.addEventListener('click', () => { this._tagAddFor = this._tagAddFor === '*' ? null : '*'; renderRows(); });
+      tagAll.addEventListener('click', () => { this._tagAddFor = this._tagAddFor === '*' ? null : '*'; this._tagNewDraft = null; renderRows(); });
       // (the mute-feed-for-all control left with the feed column, the user 2026-08-25 — the
       // per-session flag lives on in the lane gear)
       const gridBox = card.createDiv();
@@ -3921,7 +3935,7 @@ class TimelinePanel {
             + 'border-radius:5px;border:1px solid ' + OUTLINE_FG + ';color:' + MENU_FG + ';opacity:0.7;cursor:pointer;background:transparent;');
           hover(plus, 'background:' + HOVER_BG + ';opacity:1;', 'background:transparent;opacity:0.7;');
           plus.setAttribute('title', 'add a tag');
-          plus.addEventListener('click', () => { this._tagAddFor = this._tagAddFor === s.id ? null : s.id; renderRows(); });
+          plus.addEventListener('click', () => { this._tagAddFor = this._tagAddFor === s.id ? null : s.id; this._tagNewDraft = null; renderRows(); });
           // TAGS — one solid chip per union tag holding this session (user ruling 2026-08-24:
           // a tag is its NAME; kernels are plumbing — the twin dashed/solid render is gone), ✕ =
           // remove-everywhere. The shared builder; the lane gear renders the identical editor.
@@ -4008,7 +4022,7 @@ class TimelinePanel {
       plus.setAttribute('title', 'add a tag');
       plus.addEventListener('click', (e) => {
         e.stopPropagation();
-        this._tagAddFor = this._tagAddFor === s.id ? null : s.id; build();
+        this._tagAddFor = this._tagAddFor === s.id ? null : s.id; this._tagNewDraft = null; build();
       });
       if (this._tagAddFor === s.id) {
         const am = menu.createDiv();

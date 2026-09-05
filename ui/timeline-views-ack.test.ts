@@ -602,6 +602,49 @@ test("executed: the join menu's new-tag input takes ONE Enter per create — dis
   panel._closeLaneMenu();
 });
 
+test("executed: the join menu's new-tag input keeps its text and caret across a repaint; submit and close drop the draft", () => {
+  const panel = drawnPanel();
+  const box = makeNode("div");
+  panel._tagJoinMenu(box, [SID2], () => {});
+  const ni = walk(box).find((n) => n.tag === "input");
+  assert.equal(g.document.activeElement, ni, "the input took focus");
+  ni.value = "do"; ni.selectionStart = 1; ni.selectionEnd = 1; ni._listeners.input();
+  ni.value = "doc"; ni.selectionStart = 2; ni.selectionEnd = 2;            // the caret moved without an input event (arrow keys)
+  // a refusal for some other write repaints the surface that holds the menu — here, the builder runs again
+  const box2 = makeNode("div");
+  panel._tagJoinMenu(box2, [SID2], () => {});
+  const ni2 = walk(box2).find((n) => n.tag === "input");
+  assert.notEqual(ni2, ni, "a fresh input");
+  assert.equal(ni2.value, "doc", "the typed text survives — read from the live input, not the last input event");
+  assert.deepEqual(ni2._sel, [2, 2], "the caret is where it was");
+  assert.equal(g.document.activeElement, ni2, "focus is back in the input");
+  // a menu for OTHER rows starts empty; the draft for these rows is kept
+  const box3 = makeNode("div");
+  panel._tagJoinMenu(box3, [SID1], () => {});
+  assert.equal(walk(box3).find((n) => n.tag === "input").value, "", "another row's menu does not inherit the draft");
+  const box4 = makeNode("div");
+  panel._tagJoinMenu(box4, [SID2], () => {});
+  const ni4 = walk(box4).find((n) => n.tag === "input");
+  assert.equal(ni4.value, "doc");
+  // submit posts the drafted name and drops the draft
+  ni4.value = "docs"; ni4._listeners.input(); ni4._listeners.keydown({ key: "Enter" });
+  assert.equal(tagOps()[0].name, "docs");
+  assert.equal(panel._tagNewDraft, null);
+  ackCreate(panel, 1001, "docs");
+  // closing the menu from the lane gear's [+] drops a draft too
+  const s = panel.data.sessions.find((x: any) => x.id === SID2);
+  const anchor = makeNode("g"); anchor._rect = { left: 40, top: 60, right: 60, bottom: 76, width: 20, height: 16 };
+  panel._openLaneMenu(s, anchor);
+  const plus = () => walk(panel._laneMenu).find((n) => n.textContent === "+" && n._attrs.title === "add a tag");
+  plus()._listeners.click({ stopPropagation() {} });
+  const li = walk(panel._laneMenu).find((n) => n.tag === "input");
+  li.value = "zz"; li._listeners.input();
+  assert.equal(panel._tagNewDraft.value, "zz");
+  plus()._listeners.click({ stopPropagation() {} });                       // toggles the join box closed
+  assert.equal(panel._tagNewDraft, null, "closing the menu drops the draft");
+  panel._closeLaneMenu();
+});
+
 test("executed: LEGACY (no cap): a create from the join menu ships a client-minted g… id, never the pending- placeholder, and names it as edited", () => {
   const L0 = copy(S0); delete L0.seq;
   const panel = drawnPanel(L0, []);
