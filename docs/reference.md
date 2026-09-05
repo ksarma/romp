@@ -84,7 +84,8 @@ a running session declares its full per-session env: any var you don't name
 again is dropped, and `romp new --no-env <name>` declares the empty set — it
 clears them all. Keep real secrets out of it: each value is copied into
 per-session files and the session registry under `~/.local/state/romp/`. Keys
-and credentials stay in `service.env` or the `apiKeyHelper`.
+and credentials stay in the manager's environment or the `apiKeyHelper`, never
+in a file (see [Service environment](#service-environment-secrets)).
 
 Two things to know before building on `romp sessions --json`. **`waiting` means
 at rest**, the ordinary state of a session that has finished its turn, so
@@ -259,9 +260,10 @@ expired key — blocks the session's card with the fix named, and is never
 auto-retried.
 
 One side of that check can be the box's *design*: on a machine whose sessions
-are all meant to bill a key that arrives through `apiKeyHelper` — so it never
-appears in `service.env` — the landed-on-the-other-auth warning would fire on
-every init, permanently. Declaring the intent fixes it: set
+are all meant to bill a key that arrives through `apiKeyHelper` — so
+`ANTHROPIC_API_KEY` is never in the manager's environment — the
+landed-on-the-other-auth warning would fire on every init, permanently.
+Declaring the intent fixes it: set
 `ROMP_EXPECTED_AUTH=key` (or `login`) in `service.env`, and a session landing
 on the declared side is quiet while one landing on the other side is flagged,
 naming the declaration. The check inverts rather than disappearing; unset (or
@@ -338,24 +340,53 @@ shell leaves the supervised manager on the old one, and the two collide.
 
 ### Service environment (secrets)
 
-The manager runs as a login service (launchd on macOS, systemd --user on
-Linux), so it never sees variables your shell rc exports — a terminal having
+`~/.config/romp/service.env` holds non-secret settings only, `ROMP_EXPECTED_AUTH`
+for example; API keys never go in it. Plain `KEY=VALUE` lines:
+
+    ROMP_EXPECTED_AUTH=key
+
+Unlike the ports above it is NOT baked at install: it is read each time the
+manager starts (the systemd unit via `EnvironmentFile=-`, the macOS login
+agent's launcher by parsing it, line by line, never sourced, so a malformed
+line is skipped rather than executed). Change a value by editing the file and
+restarting the manager (`romp-service install`); a missing file is a no-op.
+
+Keys reach the manager through its environment instead. The manager inherits
+the environment of whatever starts it, so a shell startup file that loads keys
+from a secrets manager into the environment covers anything the kernel or its
+judges call directly, and nothing is written to disk. The sessions' own key
+reaches Claude Code through its `apiKeyHelper` setting, never through the
+service file.
+
+Which process starts the manager decides whether that startup file runs.
+`romp up` in a terminal starts it from your shell. The login service (launchd
+on macOS, systemd --user on Linux) does not: the unit that `romp-service
+install` writes starts the manager directly, so no shell startup file runs and
+the manager never sees variables your shell exports. A terminal having
 `ANTHROPIC_API_KEY` does nothing for the sessions the kernel spawns. On a
 machine where Claude authenticates through an OAuth login this gap is
 invisible (the credentials live in a file any process can read); on an
 API-key-only machine it means SDK sessions come up unauthenticated while
-`claude` in your terminal works fine.
+`claude` in your terminal works fine. To give the service the same environment
+your shell has, have it start the manager through your shell. On Linux a
+drop-in does that and survives a reinstall, since `romp-service install`
+rewrites only the main unit:
 
-Env like that goes in `~/.config/romp/service.env` — plain `KEY=VALUE` lines,
-`chmod 600`:
+    # ~/.config/systemd/user/romp-manager.service.d/shell.conf
+    [Service]
+    ExecStart=
+    ExecStart=/usr/bin/zsh -c 'exec /path/to/romp/bin/romp-manager up'
 
-    ANTHROPIC_API_KEY=sk-ant-...
+then `systemctl --user daemon-reload` and restart the manager. The keys must
+be loaded by a file the shell reads for every invocation (`~/.zshenv` for zsh;
+bash reads the file named by `$BASH_ENV`). On macOS the same wrapping is an
+edit to the plist `romp-service install` writes, redone after each reinstall.
 
-Unlike the ports above it is NOT baked at install: it is read each time the
-manager starts (the systemd unit via `EnvironmentFile=-`, the macOS login
-agent's launcher by parsing it — line by line, never sourced, so a malformed
-line is skipped rather than executed). Rotate a value by editing the file and
-restarting the manager (`romp-service install`); a missing file is a no-op.
+If your installation has no rule against credentials in files, `service.env`
+still works as the unit's `EnvironmentFile` for a key. Keep it key-free
+anyway: a key in a file is a copy of the credential that outlives its
+rotation. The file keeps the old value after the key is replaced, and
+anything that can read the file has the key.
 
 ## The API-health signal
 
