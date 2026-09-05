@@ -37800,16 +37800,21 @@ class Handler(BaseHTTPRequestHandler):
                 if nm in live:
                     if env_req is not None:
                         # env rides the per-sid flag-settings file, which only the SDK backend hands
-                        # its CLI — a live tmux session can't take it, and dropping it silently would
-                        # leave this machine believing an env the session never saw.
+                        # its CLI — a live tmux or Codex session can't take it, and dropping it silently
+                        # would leave this machine believing an env the session never saw. The refusal
+                        # gives the session's own reason: the tmux sentence was false of a Codex session
                         try:
                             _envbe = Sessions.backend_for(live[nm])
                         except Exception:
                             _envbe = None
                         if not hasattr(_envbe, "set_env"):
-                            return self._send(200, json.dumps({"ok": False, "error":
-                                'per-session env needs an SDK session — "%s" runs on tmux, whose CLI '
-                                "reads the tmux server's environment" % nm}), "application/json")
+                            if _envbe is not None and _envbe is _codex():
+                                why = ('per-session env needs an SDK session — "%s" is a Codex session, which '
+                                       "runs on the shared app-server and takes no per-session environment" % nm)
+                            else:
+                                why = ('per-session env needs an SDK session — "%s" runs on tmux, whose CLI '
+                                       "reads the tmux server's environment" % nm)
+                            return self._send(200, json.dumps({"ok": False, "error": why}), "application/json")
                     extra = _apply_new_session_prefs(live[nm], b)
                     # the idempotent open never INHERITS (no creation event — the ruling), but an
                     # explicit --in re-asserts like model/effort/env do, and the echo tells the truth

@@ -118,8 +118,9 @@ class NewRouteEnv(unittest.TestCase):
     (a bad name refuses the WHOLE request with a 400 — fail-loudly, never a silent skip), born into
     the SDK spawn so the eager connect already carries it, re-asserted through the park-aware
     set_env on the idempotent existing:true open, and echoed back like model/effort. SDK-only: the
-    payload rides the per-sid flag-settings file, which a tmux session's CLI never reads — asked of
-    a tmux session or the tmux backend, /new says so instead of pretending. Synthetic values only
+    payload rides the per-sid flag-settings file, which a tmux session's CLI never reads and a Codex
+    session (on the shared app-server) has no counterpart for — asked of a live tmux or Codex session
+    or of the tmux backend, /new says so with that session's own reason. Synthetic values only
     (FEATURE_FLAG=1 shapes, never anything credential-shaped — gitleaks reads this repo too)."""
 
     class _SdkBe:
@@ -145,7 +146,7 @@ class NewRouteEnv(unittest.TestCase):
         self.spawns = []
         self._saved = (km._live_names, km._tmux_sessions, km._set_env_or_park,
                        km.Sessions.backend_for, km._sdk_ready, km._create_sdk_session,
-                       km._push_soon, km._spawn_session)
+                       km._push_soon, km._spawn_session, km._codex)
         km._tmux_sessions = lambda: []
         km._live_names = lambda *_: {}
         km._set_env_or_park = lambda be, sid, v: self.calls.append(("env", sid, v))
@@ -160,7 +161,7 @@ class NewRouteEnv(unittest.TestCase):
     def tearDown(self):
         (km._live_names, km._tmux_sessions, km._set_env_or_park,
          km.Sessions.backend_for, km._sdk_ready, km._create_sdk_session,
-         km._push_soon, km._spawn_session) = self._saved
+         km._push_soon, km._spawn_session, km._codex) = self._saved
 
     def _post(self, body):
         req = urllib.request.Request("http://127.0.0.1:%d/new" % self.port,
@@ -273,6 +274,26 @@ class NewRouteEnv(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertFalse(body["ok"], "a session that can't take the env must say so, not drop it")
         self.assertIn("SDK", body["error"])
+        self.assertIn("tmux", body["error"], "the tmux session's own reason")
+        self.assertNotIn("Codex", body["error"])
+        self.assertEqual(self.calls, [])
+
+    def test_an_existing_codex_session_refuses_with_the_codex_reason(self):
+        # a live Codex session has no set_env either, and the refusal used to hand it the tmux
+        # sentence ("runs on tmux, whose CLI reads the tmux server's environment"), false of it. The
+        # backend object IS the Codex singleton (_codex()), which is how the kernel tells the two apart
+        km._live_names = lambda *_: {"opt": SID}
+        fake_codex = object()                                          # no set_env — the Codex shape
+        km.Sessions.backend_for = staticmethod(lambda sid: fake_codex)
+        km._codex = lambda: fake_codex
+        code, body = self._post({"name": "opt", "dir": self.dir, "env": {"FEATURE_FLAG": "1"}})
+        self.assertEqual(code, 200)
+        self.assertFalse(body["ok"], "a Codex session can't take the env either — say so, don't drop it")
+        self.assertIn("SDK", body["error"])
+        self.assertIn("Codex", body["error"], "the session is named as a Codex one")
+        self.assertIn("shared app-server", body["error"], "the create arm's sentence, not the tmux one")
+        self.assertNotIn("tmux", body["error"])
+        self.assertEqual(self.calls, [], "nothing re-asserted on a refusal")
 
     def test_the_tmux_backend_refuses_env_outright(self):
         code, body = self._post({"name": "term1", "dir": self.dir,
