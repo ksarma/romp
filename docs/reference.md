@@ -24,7 +24,7 @@ update` starts a session called "update".
 | `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them |
 | `romp up` | Run the kernel manager in the foreground; rare, since the login service runs it |
 | `romp version` | Version report across the moving parts |
-| `romp keyswap [<name>] [--refresh] [--cycle <session,…>\|--cycle-all]` | Which API key the sessions bill, by fingerprint, and whether the kernel reads what your shell reads. With `ROMP_CREDENTIAL_COMMAND` set, `<name>` selects a declared credential and `--refresh` makes the kernel re-run the command; `--cycle` / `--cycle-all` reconnect the quiet running sessions after a rotation so their new processes pick the new credential up, with no manager restart. Where the key lives in a file, `<name>` (upstream's rewrite of `service.env`) is refused: this fork does not write API keys to files. See [Switching which API key the sessions bill](#switching-which-api-key-the-sessions-bill-romp-keyswap) |
+| `romp keyswap [<name>] [--refresh] [--cycle <session,…>\|--cycle-all]` | Which API key the sessions bill, by fingerprint, and whether the kernel reads what your shell reads. With `ROMP_CREDENTIAL_COMMAND` set, `<name>` selects a declared credential and `--refresh` makes the kernel re-run the command; after a rotation, `--cycle` or `--cycle-all` reconnects the quiet running sessions so their new processes pick up the new credential, with no manager restart. Where the key lives in a file, `<name>` (upstream's rewrite of `service.env`) is refused: this fork does not write API keys to files. See [Switching which API key the sessions bill](#switching-which-api-key-the-sessions-bill-romp-keyswap) |
 | `romp help` | The same list, from the terminal |
 
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
@@ -342,68 +342,71 @@ shell leaves the supervised manager on the old one, and the two collide.
 
 ### API keys on disk: the file mode
 
-`~/.config/romp/service.env` holds non-secret settings only, `ROMP_EXPECTED_AUTH`
-for example; API keys never go in it. Plain `KEY=VALUE` lines:
+`~/.config/romp/service.env` holds non-secret settings only
+(`ROMP_EXPECTED_AUTH`, for example); API keys never go in it. The format is
+plain `KEY=VALUE` lines:
 
     ROMP_EXPECTED_AUTH=key
 
-Unlike the ports above it is NOT baked at install: it is read each time the
-manager starts (the systemd unit via `EnvironmentFile=-`, the macOS login
-agent's launcher by parsing it, line by line, never sourced, so a malformed
-line is skipped rather than executed). Change a value by editing the file and
-restarting the manager (`romp-service install`); a missing file is a no-op.
+Unlike the port settings, it is not baked in at install: it is read each time
+the manager starts (the systemd unit through `EnvironmentFile=-`; the macOS
+login agent's launcher by parsing it line by line, never sourcing it, so a
+malformed line is skipped rather than executed). Change a value by editing the
+file and restarting the manager (`romp-service install`); a missing file is a
+no-op.
 
-With no `ROMP_CREDENTIAL_COMMAND` line (next section) the kernel is in **file
-mode**, which is upstream's behaviour, unchanged. Keys reach the manager
-through its environment. The manager inherits the environment of whatever
-starts it, so a shell startup file that loads keys from a secrets manager into
-the environment covers anything the kernel or its judges call directly, and
-nothing is written to disk. The sessions' own key reaches Claude Code through
-its `apiKeyHelper` setting, never through the service file.
+With no `ROMP_CREDENTIAL_COMMAND` line (see [Installing without keys on
+disk](#installing-without-keys-on-disk)) the kernel is in **file mode**,
+upstream's behaviour unchanged: keys reach the manager through its
+environment. The manager inherits the environment of whatever starts it, so a
+shell startup file that loads keys from a secrets manager into the environment
+covers anything the kernel or its judges call directly, and nothing is written
+to disk. The sessions' own key reaches Claude Code through its `apiKeyHelper`
+setting, never through the service file.
 
-Which process starts the manager decides whether that startup file runs.
-`romp up` in a terminal starts it from your shell. The login service (launchd
-on macOS, systemd --user on Linux) does not: the unit that `romp-service
-install` writes starts the manager directly, so no shell startup file runs and
-the manager never sees variables your shell exports. A terminal having
-`ANTHROPIC_API_KEY` does nothing for the sessions the kernel spawns. On a
-machine where Claude authenticates through an OAuth login this gap is
-invisible (the credentials live in a file any process can read); on an
-API-key-only machine it means SDK sessions come up unauthenticated while
-`claude` in your terminal works fine. The next section closes the gap: a
-command the kernel runs itself, so the service needs no shell and no
-environment of its own. Routing `ExecStart` through a login shell to load the
-variables is the older workaround; the variables it loads freeze until a
-manager restart, and the kernel says so at boot.
+The login service does not run that startup file, so the manager it starts
+never sees the variables your shell exports. `romp up` in a terminal starts the
+manager from your shell; the login service (launchd on macOS, `systemd --user`
+on Linux) starts it directly from the unit that `romp-service install` writes,
+with no shell in between. A terminal that has `ANTHROPIC_API_KEY` therefore
+does nothing for the sessions the kernel spawns. On a machine where Claude
+authenticates through an OAuth login the gap is invisible, because the
+credentials live in a file any process can read; on an API-key-only machine,
+SDK sessions come up unauthenticated while `claude` in your terminal works
+fine. [Installing without keys on disk](#installing-without-keys-on-disk)
+closes the gap with a command the kernel runs itself, so the service needs no
+shell and no environment of its own. Routing `ExecStart` through a login shell
+to load the variables is the older workaround: the variables it loads freeze
+until a manager restart, and the kernel says so at boot.
 
-If your installation has no rule against credentials in files, `service.env`
-still works as the unit's `EnvironmentFile` for a key: where an installation
-keeps an `ANTHROPIC_API_KEY=` line there, the kernel reads it fresh at every
-session launch, so a change there needs no restart. Keep the file key-free
-anyway: a key in a file is a copy of the credential that outlives its
-rotation. The file keeps the old value after the key is replaced, and anything
+Keep `service.env` key-free even where your installation has no rule against
+credentials in files. The file still works as the unit's `EnvironmentFile` for
+a key, and where an installation keeps an `ANTHROPIC_API_KEY=` line there the
+kernel reads it fresh at every session launch, so a change there needs no
+restart. But a key in a file is a copy of the credential that outlives its
+rotation: the file keeps the old value after the key is replaced, and anything
 that can read the file has the key. This fork's tooling never writes that line
-(see `romp keyswap` below).
+(see [Switching which API key the sessions
+bill](#switching-which-api-key-the-sessions-bill-romp-keyswap)).
 
 ### Installing without keys on disk
 
-Some installations forbid a credential in any file. For them the kernel has a
-second key source: a command it runs, whose output it hands to each process it
-starts. One line in `service.env` (or an `Environment=` line in the unit) puts
-the kernel in **command mode**; with the line absent nothing about file mode
-changes.
+For installations that forbid a credential in any file, the kernel has a
+second key source, **command mode**: a command it runs, whose output it hands
+to each process it starts. One line in `service.env` (or an `Environment=` line
+in the unit) selects it; with the line absent nothing about file mode changes.
 
     ROMP_CREDENTIAL_COMMAND=my-credentials "$1"
     ROMP_CREDENTIAL_NAMES=hp,lp
     ROMP_CREDENTIAL_SELECTOR_FILE=~/.config/romp/credential-selector
     ROMP_CREDENTIAL_TIMEOUT_S=15
 
-- `ROMP_CREDENTIAL_COMMAND` is a shell command line. The kernel runs it as
-  `/bin/sh -c <command> sh <selector>`, so the selector file's token is `$1`:
-  `my-cmd "$1"` forwards it, a bare `my-cmd` never sees it. The command prints
-  `NAME=VALUE` lines; blank and `#` lines are skipped, the last assignment of a
-  name wins, one layer of matching quotes is stripped, an empty value unsets
-  the name:
+- `ROMP_CREDENTIAL_COMMAND` is a shell command line, and setting it is the
+  whole switch. The kernel runs it as `/bin/sh -c <command> sh <selector>`, so
+  the selector file's token is `$1`: `my-cmd "$1"` forwards it, a bare `my-cmd`
+  never sees it. The command prints `NAME=VALUE` lines; blank and `#` lines are
+  skipped, the last assignment of a name wins, one layer of matching quotes is
+  stripped, and an empty value unsets the name:
 
       ANTHROPIC_API_KEY=placeholder-work-key
       ANTHROPIC_LP_API_KEY=placeholder-direct-call-key
@@ -414,41 +417,41 @@ changes.
   Claude Code's `apiKeyHelper`, as before. `ANTHROPIC_LP_API_KEY` is the key for
   the kernel's own direct calls (the model catalog fetch). Any other name is a
   variable for the sessions and their tool shells. Names starting with `ROMP_`
-  are dropped, with one problem line naming them. Setting the variable is the
-  whole switch; there is no separate mode setting.
-- `ROMP_CREDENTIAL_SELECTOR_FILE` holds one token (a name such as `hp`: letters,
-  digits, `.`, `_` and `-`, up to 64 characters), passed as `$1`. Default
-  `~/.config/romp/credential-selector`. `romp keyswap <name>` writes it. An
-  installation may point it at a file its `apiKeyHelper` already reads, so one
-  switch moves both.
-- `ROMP_CREDENTIAL_NAMES` is the comma list of names an operator may select. A
-  name outside it is refused before anything runs and is never echoed. Unset,
-  any token is accepted.
-- `ROMP_CREDENTIAL_TIMEOUT_S` bounds one run (default 15). On the deadline the
-  command's whole process group is killed.
+  are dropped, with one problem line naming them.
+- `ROMP_CREDENTIAL_SELECTOR_FILE` holds one token, passed as `$1`: a name such
+  as `hp`, made of letters, digits, `.`, `_` and `-`, up to 64 characters. The
+  default is `~/.config/romp/credential-selector`. `romp keyswap <name>` writes
+  it. An installation may point it at a file its `apiKeyHelper` already reads,
+  so one switch moves both.
+- `ROMP_CREDENTIAL_NAMES` is the comma-separated list of names an operator may
+  select. A name outside it is refused before anything runs and is never
+  echoed. Unset, any token is accepted.
+- `ROMP_CREDENTIAL_TIMEOUT_S` bounds one run, in seconds (default 15). On the
+  deadline the command's whole process group is killed.
 
 The values never land in the kernel's environment, a log line, a card or the
 API-health document; the only rendered form is a fingerprint (`sha256:` and 12
-hex). A failed run keeps the previous set and logs one problem line per
-failure, with counts and exit codes only (`exited 3 after 0.4s, stderr 87
-bytes`), never the command's output. With no previous set, sessions launch
-with nothing injected (the `apiKeyHelper` or the login bills), and a launch is
-never refused for it. The command runs when its result is needed and the
-cached set is stale, and staleness is an event, not a timer: `romp keyswap
---refresh`, a `--cycle`, an authentication failure in a judge call or on a
-session.
+hex digits).
+
+The command runs when its result is needed and the cached set is stale, and
+staleness is an event, not a timer: `romp keyswap --refresh`, a `--cycle`, or
+an authentication failure in a judge call or on a session. A failed run keeps
+the previous set and logs one problem line per failure, with counts and exit
+codes only (`exited 3 after 0.4s, stderr 87 bytes`), never the command's
+output. With no previous set, sessions launch with nothing injected (the
+`apiKeyHelper` or the login bills), and a launch is never refused for it.
 
 After a rotation (a new value behind the selected name, or a new selector),
 each consumer picks the new set up at its own next step, with no manager
 restart:
 
-- sessions at their next connect (`romp keyswap --cycle-all` reconnects the
-  quiet ones now; a running process keeps what it started with until then);
-- judges per call: the set minus `ANTHROPIC_API_KEY`, which is re-added only
-  for a key-billed call;
-- the model catalog per fetch, through `ANTHROPIC_LP_API_KEY`;
-- a session's tool shells at that session's next reconnect (they inherit the
-  CLI's environment).
+- Sessions at their next connect (`romp keyswap --cycle-all` reconnects the
+  quiet ones now; a running process keeps what it started with until then)
+- Judges per call: the set minus `ANTHROPIC_API_KEY`, which is re-added only
+  for a key-billed call
+- The model catalog per fetch, through `ANTHROPIC_LP_API_KEY`
+- A session's tool shells at that session's next reconnect (they inherit the
+  CLI's environment)
 
 Two things still need a manager restart, as in file mode: an edit to
 `service.env` or the unit (the `ROMP_CREDENTIAL_*` lines included), and the
@@ -457,22 +460,27 @@ only; `systemctl --user restart romp-manager` (or `romp-service install`)
 restarts the manager.
 
 The kernel checks the configuration once at boot and logs one line per
-finding, names and fingerprints only. When the first run succeeds:
+finding, names and fingerprints only. When the first run succeeds the line is
 `key source: command (selector hp) — the set is sha256:… (3 names: …); the
-sessions' key is sha256:…`. Problem lines: the command failed, with the
-consequence (the previous set stands, or nothing is injected until a run
-succeeds); a credential-shaped line (`ANTHROPIC_API_KEY`, any `*_API_KEY`, any
-`*_TOKEN` with a value) in `service.env`, the unit, a drop-in or the plist,
-which command mode ignores and which should be removed and rotated; an
-`ANTHROPIC_API_KEY` in the manager's own environment, ignored the same way; an
-`ExecStart` routed through a shell; `ROMP_EXPECTED_AUTH=login` while the
-command prints a key; `ROMP_*` names the command printed. In file mode the
-same check says nothing new, except a credential in the unit under a declared
-`ROMP_EXPECTED_AUTH`. `GET /api-health` carries the same facts as `keySource`
-(see [The API-health signal](#the-api-health-signal)), and `romp-service
-status` prints the mode and the selector, whether `ExecStart` runs the manager
-directly or through a shell, and the credential-shaped names it finds in the
-unit or in `service.env`.
+sessions' key is sha256:…`. It logs a problem line for each of the following:
+
+- The command failed, with the consequence: the previous set stands, or
+  nothing is injected until a run succeeds.
+- A credential-shaped line (`ANTHROPIC_API_KEY`, any `*_API_KEY`, any
+  `*_TOKEN` with a value) in `service.env`, the unit, a drop-in or the plist.
+  Command mode ignores it; remove it and rotate the credential.
+- An `ANTHROPIC_API_KEY` in the manager's own environment, ignored the same
+  way.
+- An `ExecStart` routed through a shell.
+- `ROMP_EXPECTED_AUTH=login` while the command prints a key.
+- `ROMP_*` names the command printed.
+
+In file mode the same check says nothing new, except a credential in the unit
+under a declared `ROMP_EXPECTED_AUTH`. `GET /api-health` carries the same facts
+as `keySource` (see [The API-health signal](#the-api-health-signal)), and
+`romp-service status` prints the mode and the selector, whether `ExecStart`
+runs the manager directly or through a shell, and the credential-shaped names
+it finds in the unit or in `service.env`.
 
 ### What survives a restart
 
@@ -535,8 +543,9 @@ history intact, and the manager never restarts, so no session loses an open
 turn. The reconnect is the same mechanism a reasoning-effort or billing switch
 uses.
 
-**In command mode** (`ROMP_CREDENTIAL_COMMAND` set) the bare command runs the
-command in your shell and asks the kernel what its own run yields:
+**In command mode** (`ROMP_CREDENTIAL_COMMAND` set) a bare `romp keyswap` runs
+your credential command in your shell and asks the kernel what its own run
+yields:
 
     $ romp keyswap
     key source  command (ROMP_CREDENTIAL_COMMAND is set): the kernel runs it and injects the set it prints
@@ -566,10 +575,12 @@ command in your shell and asks the kernel what its own run yields:
 
 Where the set carries no `ANTHROPIC_API_KEY`, the live key is your shell's run
 of Claude Code's `apiKeyHelper` (named in `$CLAUDE_CONFIG_DIR/settings.json`),
-and the kernel fingerprints the same helper. Each session is stamped at launch
-with the fingerprint it launched under, and a cycle compares that stamp with
-the current one, so a second run reads `current` for every session already
-moved and a rotation behind the same name is one reconnect per session.
+and the kernel fingerprints the same helper.
+
+Each session is stamped at launch with the fingerprint it launched under, and
+a cycle compares that stamp with the current one, so a second run reads
+`current` for every session already moved, and a rotation behind the same
+name costs one reconnect per session.
 
 `romp keyswap <name>` writes the selector file, re-runs the command in your
 shell and confirms the fingerprint moved; an undeclared name exits 2 before
@@ -584,21 +595,21 @@ the kernel line then carries the fingerprint before and after.
 what. On the mode: `ROMP_CREDENTIAL_COMMAND` is set on one side only; an edit
 to `service.env` or the unit reaches the kernel at the next manager restart.
 On the fingerprint: the kernel's last run used another selector (`--refresh`
-re-runs it), or the two environments differ, with other `ROMP_CREDENTIAL_*`
-values in the service environment than in your shell, different selector
-files, or a different `CLAUDE_CONFIG_DIR` (the `apiKeyHelper` the kernel
-fingerprints is the one its settings name). A cycle stops on a mismatch before
-any reconnect, and a shell whose own run failed cycles nothing.
+re-runs it), or the two environments differ (the service environment and your
+shell hold different `ROMP_CREDENTIAL_*` values, different selector files, or
+a different `CLAUDE_CONFIG_DIR`; the `apiKeyHelper` the kernel fingerprints is
+the one its own settings name). A cycle stops on a mismatch before any
+reconnect, and a shell whose own run failed cycles nothing.
 
 **In file mode** (no `ROMP_CREDENTIAL_COMMAND`) upstream's `romp keyswap
 <name>` rewrites the `ANTHROPIC_API_KEY=` line of `service.env` from a sibling
-file (`service.env.<name>`). **This fork refuses the rewrite.** It does not
-write API keys to files, so the named swap exits 2 with that message, reads
-and writes nothing, and has no flag that lets it through. The bare command
-reports the key the kernel holds (fingerprint), the file it reads, and
-`MISMATCH` when the kernel is not reading this file's key; a cycle reads and
-compares the same way first and stops on a mismatch. Rotate the key at its
-source, then `--cycle-all`.
+file (`service.env.<name>`). This fork refuses the rewrite: it does not write
+API keys to files, so the named swap exits 2 with that message, reads and
+writes nothing, and has no flag that lets it through. The bare command reports
+the key the kernel holds (as a fingerprint), the file it reads, and `MISMATCH`
+when the kernel is not reading this file's key; a cycle reads and compares the
+same way first and stops on a mismatch. Rotate the key at its source, then run
+`--cycle-all`.
 
 Per session the cycle reports one of:
 
@@ -615,24 +626,27 @@ Per session the cycle reports one of:
 `romp refresh --quiet` is the alternative that restarts everything: the
 manager comes back once the sessions are quiet, and every process is new.
 
-No key value is ever printed, logged, or sent over a socket. The only rendered
-form is the first 12 hex of its sha256, in the command's output, in the Log
-panel when the kernel's credential changes, and in the kernel's answer to the
-CLI. Remote kernels are cycled from their own machine. `ROMP_SERVICE_ENV_FILE`
+No key value is ever printed, logged, or sent over a socket. The command's
+output, the Log panel entry when the kernel's credential changes, and the
+kernel's answer to the CLI all render only the first 12 hex digits of its
+sha256.
+
+Remote kernels are cycled from their own machine. `ROMP_SERVICE_ENV_FILE`
 overrides the path of the env file the kernel reads. A kernel started before
 this feature has no `/keycycle` route and says so; take the update once with
 `romp refresh` (or `romp refresh --quiet`).
 
 The kernel also guards the rule at start. If the env file carries a
 credential-shaped line (`ANTHROPIC_API_KEY`, any `*_API_KEY`, any `*_TOKEN`
-with a value) while `ROMP_EXPECTED_AUTH` declares the box's auth (`key`, the
-`apiKeyHelper` design above, or `login`), it logs one problem line naming the
-file and the variable name, never the value. For `ANTHROPIC_API_KEY` the line
-says what would happen to billing: that key would be injected at launch and
-take over from the declared auth. For any other credential-shaped name it
-says only that a credential in the file contradicts the declared auth model.
-With no declaration nothing is said; that is upstream's ordinary file-key
-installation.
+with a value) while `ROMP_EXPECTED_AUTH` declares the machine's auth (`key`,
+the `apiKeyHelper` design in [API keys on disk: the file
+mode](#api-keys-on-disk-the-file-mode), or `login`), it logs one problem line
+naming the file and the variable name, never the value. For `ANTHROPIC_API_KEY`
+the line says what would happen to billing: that key would be injected at
+launch and take over from the declared auth. For any other credential-shaped
+name it says only that a credential in the file contradicts the declared auth
+model. With no declaration nothing is said; that is upstream's ordinary
+file-key installation.
 
 ## The API-health signal
 
@@ -696,15 +710,17 @@ and `key:managed` name sources whose material the kernel never holds.
 - `keySource`: the key source the kernel decided at boot, plus what is live
   now: `mode` (`file` or `command`), `selector`, `sessionKeyPath` (`injected`,
   `helper` or `login`: how a session launched now gets its key), `expectedAuth`,
-  `helperConfigured`, `execStartShell` (the unit starts the manager through a
-  shell; `null` when no unit was found), `credentialNamesFound` (`serviceEnv`,
-  `unit`, `environment`: credential-shaped names, never values), `lastRun`
-  (command mode: `ok`, `at`, `reason`, `exitCode`, `durationS`; else `null`),
+  `helperConfigured`, `execStartShell` (`true` when the unit starts the manager
+  through a shell; `null` when no unit was found), `credentialNamesFound`
+  (`serviceEnv`, `unit`, `environment`: credential-shaped names, never values),
+  `lastRun` (command mode: `ok`, `at`, `reason`, `exitCode`, `durationS`; else
+  `null`),
   `fingerprint` and `fingerprintKind` (`key` or `helper`) of the credential a
   session launched now would bill, `setFingerprint` and `names` of the
   command's set, and `sessionsByFingerprint` (live sessions per launch
   fingerprint; `""` counts sessions launched with no credential the kernel
-  fingerprinted). See "Installing without keys on disk".
+  fingerprinted). See [Installing without keys on
+  disk](#installing-without-keys-on-disk).
 - `overall`: `state`, the most severe state among buckets that are not
   `unknown` (`thrashing > degraded > recovering > healthy`; `unknown` when every
   bucket is), and `worstBucket`, the bucket that set it. There are no pooled

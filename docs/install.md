@@ -51,8 +51,8 @@ export PATH="$PATH:$HOME/romp/bin"
 Where a credential may not sit in any file, the kernel can run a command of
 yours and hand its output to every session it starts, every judge call and the
 catalog fetch, so the unit, `service.env` and every file Romp writes stay
-credential-free. One line in `service.env` selects it; see [Installing without
-keys on disk](reference.md#installing-without-keys-on-disk).
+credential-free. One line in `service.env` turns this on; see [Installing
+without keys on disk](reference.md#installing-without-keys-on-disk).
 
 ## First run
 
