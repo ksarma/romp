@@ -6169,18 +6169,24 @@ function pickerBackendChoice(): string {
   return beSel?.dataset.be || loadSettings().backend;
 }
 
-// the Tags row exists only for SDK sessions (tab groups, 2026-09-04): the kernel refuses tags on a
-// tmux create — a terminal session's id is unknown until it starts — so on the tmux pick the row stays
+// the backends whose create takes `tags`: the kernel applies parent/tags on an SDK or a Codex create
+// (the tag store keys on the registry sid; the Codex arm has taken them since the upstream fold's
+// round 2), and a tmux create takes none — a terminal session's id is unknown until it starts, so the
+// kernel refuses tags on one. One predicate for the Tags row's state and for the create handler's
+// payload, so the two cannot disagree about which backend a chip is for.
+function backendTakesTags(be: string): boolean { return be === "sdk" || be === "codex"; }
+
+// the Tags row is for SDK and Codex sessions (tab groups, 2026-09-04): on the tmux pick the row stays
 // in place but disabled behind a short note, and the create handler sends no `tags`. Before this a
 // chip prefilled from a tagged active tab turned every terminal create into a refusal.
 function syncPickerTags(): void {
   const wrap = document.querySelector("#picker .picker-tags") as HTMLElement | null;
   if (!wrap) return;
-  const sdk = pickerBackendChoice() === "sdk";
-  wrap.classList.toggle("disabled", !sdk);
-  wrap.querySelectorAll<HTMLButtonElement>(".picker-be-opt").forEach((b) => { b.disabled = !sdk; });
+  const takes = backendTakesTags(pickerBackendChoice());
+  wrap.classList.toggle("disabled", !takes);
+  wrap.querySelectorAll<HTMLButtonElement>(".picker-be-opt").forEach((b) => { b.disabled = !takes; });
   const note = wrap.querySelector(".picker-tags-note") as HTMLElement | null;
-  if (note) note.style.display = sdk ? "none" : "";
+  if (note) note.style.display = takes ? "none" : "";
 }
 
 function syncPickerAuth(): void {
@@ -6501,14 +6507,15 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     // VISIBLE and editable, never a silent inherit (the user's ruling): a session started beside the
     // one you are looking at joins its group unless you unpick it. Chips in the Backend row's
     // grammar, each toggling on its own (a session may hold several tags); rebuilt per open
-    // (openPicker below), hidden with no tags to offer and in pick-mode. SDK sessions only: on the
-    // tmux pick the chips disable behind a note and no `tags` ride the create (syncPickerTags) — the
-    // kernel refuses tags on a terminal create, and a prefilled chip used to turn one into a refusal.
+    // (openPicker below), hidden with no tags to offer and in pick-mode. SDK and Codex sessions
+    // (backendTakesTags): on the tmux pick the chips disable behind a note and no `tags` ride the
+    // create (syncPickerTags) — the kernel refuses tags on a terminal create, and a prefilled chip
+    // used to turn one into a refusal.
     const tgWrap = el("div", "picker-backend picker-tags");
     const tgLabel = el("span", "picker-backend-label"); tgLabel.textContent = "Tags";
     tgWrap.appendChild(tgLabel);
     const tgNote = el("span", "picker-auth-fixed picker-tags-note");   // the Billing row's written-out text style
-    tgNote.textContent = "Tags apply to SDK sessions";
+    tgNote.textContent = "Tags apply to SDK and Codex sessions";
     tgNote.style.display = "none";
     tgWrap.appendChild(tgNote);
     // per-session HOST picker (federation, the user 2026-07-02): local | each attached SSH host — the new
@@ -6550,9 +6557,10 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       const auth = pickerAuthChoice();
       // tags: the Tags row's selected chips (prefilled from the active tab, edited or not) ride the
       // create as names; the owning kernel resolves them by name, minting a missing one like POST /tag.
-      // SDK sessions only — a tmux create carries none (the row is disabled for it; the kernel would refuse)
+      // SDK and Codex creates (backendTakesTags) — a tmux create carries none (the row is disabled for
+      // it, and the kernel refuses tags on a terminal create)
       const backend = beSel?.dataset.be || loadSettings().backend;
-      const tags = backend === "sdk"
+      const tags = backendTakesTags(backend)
         ? Array.from(tgWrap.querySelectorAll<HTMLElement>(".picker-be-opt.sel")).map((x) => x.dataset.tag || "").filter(Boolean)
         : [];
       startCreate({ name, backend,

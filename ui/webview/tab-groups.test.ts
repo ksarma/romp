@@ -261,18 +261,31 @@ test("row hairlines count section headers and the separator as row members (T134
   assert.match(CSS, /\.tab-group-sep \{ flex: 0 0 auto; box-sizing: border-box; width: 13px; padding: 8px 6px; background: var\(--box-border\); background-clip: content-box; \}/);
 });
 
-test("the picker's Tags row is for SDK sessions: disabled behind a note on the tmux pick, and no `tags` ride a tmux create", () => {
+test("the picker's Tags row is for SDK and Codex sessions: disabled behind a note on the tmux pick, and no `tags` ride a tmux create", () => {
   // the kernel refuses tags on a tmux create (a terminal session's id is unknown until it starts);
-  // the row, prefilled from a tagged active tab, used to turn every terminal create into a refusal
+  // the row, prefilled from a tagged active tab, used to turn every terminal create into a refusal.
+  // A Codex create takes them (the kernel applies parent/tags on one since the upstream fold's round
+  // 2), so the row and the payload follow ONE predicate — executed here on each backend name
+  const pred = RENDER.match(/function backendTakesTags\(be: string\): boolean \{ (return [^}]*); \}/);
+  assert.ok(pred, "one predicate decides which backend a chip is for");
+  const takes = new Function("be", pred![1]) as (be: string) => boolean;
+  assert.equal(takes("sdk"), true);
+  assert.equal(takes("codex"), true, "a Codex create takes tags");
+  assert.equal(takes("tmux"), false, "a terminal session's id is unknown until it starts");
+  assert.equal(takes(""), false);
+  assert.match(KERNEL, /_create_codex_session\(nm, cwd, client=client,\s+parent=psid or "", tags=ctags\)/,
+    "the premise: the kernel's createSession op applies tags on a Codex create");
   const sync = RENDER.slice(RENDER.indexOf("function syncPickerTags("), RENDER.indexOf("function syncPickerAuth("));
-  assert.match(sync, /const sdk = pickerBackendChoice\(\) === "sdk";/);
-  assert.match(sync, /wrap\.classList\.toggle\("disabled", !sdk\);/);
-  assert.match(sync, /\.forEach\(\(b\) => \{ b\.disabled = !sdk; \}\);/);
-  assert.match(sync, /note\.style\.display = sdk \? "none" : "";/);
-  assert.match(RENDER, /tgNote\.textContent = "Tags apply to SDK sessions";/);
+  assert.match(sync, /const takes = backendTakesTags\(pickerBackendChoice\(\)\);/);
+  assert.match(sync, /wrap\.classList\.toggle\("disabled", !takes\);/);
+  assert.match(sync, /\.forEach\(\(b\) => \{ b\.disabled = !takes; \}\);/);
+  assert.match(sync, /note\.style\.display = takes \? "none" : "";/);
+  assert.match(RENDER, /tgNote\.textContent = "Tags apply to SDK and Codex sessions";/);
   assert.match(RENDER, /beWrap\.addEventListener\("click", \(\) => \{ syncPickerAuth\(\); syncPickerTags\(\); \}\);/, "re-decided on every backend toggle");
   assert.match(RENDER, /syncPickerTags\(\);\s+\/\/ the backend toggle was just reset/, "…and on every open, after the backend reset");
-  assert.match(RENDER, /const tags = backend === "sdk"\s*\n\s*\? Array\.from\(tgWrap\.querySelectorAll<HTMLElement>\("\.picker-be-opt\.sel"\)\)/, "the create handler sends none for tmux");
+  assert.match(RENDER, /const tags = backendTakesTags\(backend\)\s*\n\s*\? Array\.from\(tgWrap\.querySelectorAll<HTMLElement>\("\.picker-be-opt\.sel"\)\)/,
+    "the create handler sends none for tmux, through the same predicate");
+  assert.doesNotMatch(RENDER, /const tags = backend === "sdk"/, "no second, SDK-only copy of the rule");
   assert.match(RENDER, /:not\(\.picker-host\):not\(\.picker-auth\):not\(\.picker-tags\) \.picker-be-opt\.sel/, "a selected tag chip never reads as the backend pick");
   assert.match(CSS, /\.picker-tags\.disabled \.picker-be-opt \{ opacity: 0\.45; cursor: default; pointer-events: none; \}/);
 });
