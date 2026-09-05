@@ -2582,11 +2582,19 @@ def _norm_timeline_views(d):
     return out
 
 
+_VIEWS_RESTAMP_ERR = [None]   # the last OSError the reader's re-stamp write hit, as text — one stderr line per distinct error
+
+
 def _timeline_views():
     p = _views_path()
     try:
         st = p.stat(); key = (st.st_mtime_ns, st.st_size)
     except OSError:
+        # No store: nothing served before it describes this one. The cache entry is the last blob
+        # this kernel served or wrote, and a file written outside the kernel after a delete or a
+        # restore is judged against it (_views_restamp's third case) — forgetting it here is what
+        # keeps a recreated store from being judged against a store that no longer exists.
+        _flags_cache.pop(str(p), None)
         return _norm_timeline_views({})
     hit = _flags_cache.get(str(p))
     if hit is not None and hit[0] == key:
@@ -2605,15 +2613,19 @@ def _timeline_views():
         # reading it through this function would find the same un-stamped file and re-enter here
         # (until 2026-09-05 the hidden migration did exactly that — 321 nested writes for one read,
         # ending only when Python's recursion limit tripped inside the setter's own try). The base
-        # is the file's OWN content: the re-stamp orders the file (its seq moves past the last one
-        # this kernel served or wrote, the floor) without judging it — the stale-writer guard rules
-        # on dashboard writes at the door, and a file written outside the kernel may follow a
-        # delete or a restore, where the cached blob describes a store that no longer exists and
-        # judging against it would resurrect what was deleted. Under the file lock, with a
-        # re-check: a writer may have replaced the file since the stat above — its own edit, or
-        # this same re-stamp from another thread — and that newer content is judged afresh rather
-        # than written over.
-        why, d2 = fix
+        # is the file's OWN content for the migration and the first stamp: those order the file
+        # (its seq moves past the last one this kernel served or wrote, the floor) without judging
+        # it — the stale-writer guard rules on dashboard writes at the door. A write outside the
+        # kernel whose seq fell behind is the exception (round 4 of the 2026-09-05 review): the
+        # writer held an older copy by its own seq, so the guard judges the file against the LAST
+        # SERVED blob (the cache entry it missed against) — a tag it deleted since is not brought
+        # back, a member added since is not lost, and each refusal is reported (the setter's
+        # notice, naming the tag). With nothing served (a fresh kernel; a store deleted and read
+        # as missing, which forgets the entry) there is nothing to judge against and the file is
+        # ordered as written. Under the file lock, with a re-check: a writer may have replaced
+        # the file since the stat above — its own edit, or this same re-stamp from another
+        # thread — and that newer content is judged afresh rather than written over.
+        why, d2, judge = fix
         with _views_file_lock:
             try:
                 st2 = p.stat()
@@ -2625,8 +2637,27 @@ def _timeline_views():
                 floor = int(hit[1].get("seq") or 0) if hit is not None else 0
             except (TypeError, ValueError):
                 floor = 0
-            _set_timeline_views(d2, base=_norm_timeline_views(d), seq_floor=floor)
-            sys.stderr.write("romp-kernel: views store re-stamped on read: %s\n" % why)
+            base = hit[1] if (judge and hit is not None) else _norm_timeline_views(d)
+            try:
+                _set_timeline_views(d2, base=base, seq_floor=floor,
+                                    foreign="a stale write to the views file from outside the kernel" if judge else None)
+                sys.stderr.write("romp-kernel: views store re-stamped on read: %s\n" % why)
+            except OSError as e:
+                # The state dir is unwritable or full: a READ must still answer (every frame builds
+                # on it), so the file is served as read, normalized and cached under ITS key — the
+                # next read is a hit, not another failing write — and the failure is logged once
+                # per distinct error (a full disk would otherwise log on every read). The next
+                # write that succeeds clears the note, so a recurrence is logged again.
+                # the key is the error's kind, not its text: the atomic write's temp name differs
+                # per call, so the text would read as a new error every time
+                kind = "%s errno=%s" % (type(e).__name__, getattr(e, "errno", None))
+                if _VIEWS_RESTAMP_ERR[0] != kind:
+                    _VIEWS_RESTAMP_ERR[0] = kind
+                    sys.stderr.write("romp-kernel: views store could not be re-stamped on read (%s) — "
+                                     "serving the file as read, unstamped: %s: %s\n" % (why, type(e).__name__, e))
+                d = _norm_timeline_views(d2)
+                _flags_cache[str(p)] = (key, d)
+                return d
         return _timeline_views()          # the write refreshed the cache under the file's new key
     d = _norm_timeline_views(d)
     _flags_cache[str(p)] = (key, d)
@@ -2656,35 +2687,43 @@ def _views_restamp(d, hit):
       the changed file missed against: the last blob this kernel served or wrote, whose seq is the
       floor the re-stamp moves past. Equal seqs are left alone (a writer holding the newest frame
       writes the newest seq back; every client adopts an equal seq), so an mtime-only change never
-      costs a write."""
+      costs a write. This is the one case JUDGED (the third element, True): the file goes through
+      the stale-writer guard against that last served blob, since by its own seq the writer held
+      an older copy than the store.
+    Returns (why, dict-to-write, judge). The dict is a COPY: `d` is also the diff base the migration
+    is stamped against, and mutating its tag dicts in place (the aliasing bug of round 3) left the
+    base already migrated — an existing "archived" tag gained its members with no fresh mtime, and
+    a whole-blob post from a dashboard holding the pre-migration copy stripped them again with no
+    refusal (round 4 of the 2026-09-05 review)."""
     hid = [str(x) for x in (d.get("hidden") or []) if isinstance(x, str) and x]
     if hid:
-        raw = d.get("tags") if isinstance(d.get("tags"), list) else (d.get("groups") if isinstance(d.get("groups"), list) else [])
+        d2 = json.loads(json.dumps(d))                     # a parsed file: the round trip is a deep copy
+        raw = d2.get("tags") if isinstance(d2.get("tags"), list) else (d2.get("groups") if isinstance(d2.get("groups"), list) else [])
         tags = [t for t in raw if isinstance(t, dict)]
         arch = next((t for t in tags if t.get("name") == "archived"), None)
         if arch is None:
             arch = {"id": "archived", "name": "archived", "color": "#6b7280", "members": []}   # muted slate — never a status color
             tags = tags + [arch]
         arch["members"] = [m for m in (arch.get("members") or []) if m] + hid
-        d = dict(d); d["tags"] = tags; d.pop("groups", None); d.pop("hidden", None)
-        return "hidden entries migrated into the archived tag", d
+        d2["tags"] = tags; d2.pop("groups", None); d2.pop("hidden", None)
+        return "hidden entries migrated into the archived tag", d2, False
     try:
         seq = int(d.get("seq") or 0)
     except (TypeError, ValueError):
         seq = 0
     if not seq:
-        return "a store from before the write sequence, stamped once", d
+        return "a store from before the write sequence, stamped once", d, False
     if hit is not None:
         try:
             last = int(hit[1].get("seq") or 0)
         except (TypeError, ValueError):
             last = 0
         if last and seq < last:
-            return "a write outside the kernel carried seq %d, behind the last served %d" % (seq, last), d
+            return ("a write outside the kernel carried seq %d, behind the last served %d" % (seq, last)), d, True
     return None
 
 
-def _set_timeline_views(blob, base=None, seq_floor=0, edited=None):
+def _set_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None):
     # Per-tag mtime, stamped at the store's ONE write door by diffing against the previous blob
     # (tag federation v2, the user 2026-08-29): a pending edit queued for an unreachable host must
     # be able to tell, at late-apply time, whether the host's copy changed AFTER the user's ruling —
@@ -2702,6 +2741,12 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None):
     # ack is not ok); a kept tag outside it is a stale copy of something the poster never touched —
     # the store's copy stands, the ack lists it, nothing is said to the user (round 3 of the
     # 2026-09-05 review: the benign case still filed a red "reload that dashboard" notice).
+    # `foreign` — set by the reader's re-stamp of a file written OUTSIDE the kernel whose seq fell
+    # behind the last served blob (round 4 of the 2026-09-05 review), as the words the notice uses
+    # for the writer. Such a write carries no `edited`, so its unknown tags are judged by the one
+    # mark only the kernel puts on a tag: an mtime. A tag the store lacks that carries one existed
+    # in a store once — the writer's copy of a tag deleted since — and is not re-created; one
+    # without is the writer's own create (a client-minted row) and lands.
     v = _norm_timeline_views(blob)
     ed = set(x for x in edited if isinstance(x, str)) if isinstance(edited, list) else None
     if base is None:
@@ -2739,14 +2784,16 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None):
     # reached stderr and the sync notices but never the client that needed to revert).
     for t in v["tags"]:
         pt = prev.get(t["id"])
-        if pt is None and ed is not None and t["id"] not in ed:
+        if pt is None and ((ed is not None and t["id"] not in ed) or (ed is None and foreign and t.get("mtime"))):
             # A tag the store does not have, from a client that says it did not create it: the
             # client's copy predates a DELETION made elsewhere, and posting the whole blob would
             # re-create the deleted tag (round 3 of the 2026-09-05 review — the guard refused a
             # stale deletion but not a stale resurrection; only with `edited` can the two creates
             # be told apart: a legacy-path create names its new id there). Kept OUT, with a reason
             # the ack carries; a write without `edited` keeps the old reading (every unknown tag
-            # is new), since an older client cannot say which it meant.
+            # is new), since an older client cannot say which it meant — except a file written
+            # outside the kernel (`foreign`), whose unknown tags are told apart by the mtime only a
+            # kernel stamps (the comment on `foreign` above).
             refused.append(('"%s" (re-creation)' % t.get("name"), t["id"]))
             rows.append({"tid": t["id"], "name": t.get("name"),
                          "reason": "it was deleted after your copy was taken, so it was not re-created"})
@@ -2779,9 +2826,10 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None):
     loud = sorted(set(lb for lb, tid in refused if ed is None or tid in ed))
     quiet = sorted(set(lb for lb, tid in refused if ed is not None and tid not in ed))
     if loud:
-        why = ("a stale dashboard write was partially refused: its copy of %s predates newer "
-               "edits (the newer state was kept — reload that dashboard to resync)"
-               % ", ".join(loud))
+        why = ("%s was partially refused: its copy of %s was not applied — each predates a newer edit "
+               "or takes a name another tag holds (the store's state was kept; %s)"
+               % (foreign or "a stale dashboard write", ", ".join(loud),
+                  "reload the panel that wrote it to resync" if foreign else "reload that dashboard to resync"))
         sys.stderr.write("romp-kernel: %s\n" % why)
         try:
             _sync_notice(why, ok=False)
@@ -2814,6 +2862,7 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None):
     with _views_file_lock:
         _atomic_write(_views_path(), text)
         _views_cache_refresh(text)
+    _VIEWS_RESTAMP_ERR[0] = None      # the store is writable again: a later failure logs afresh
     return rows
 
 

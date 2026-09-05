@@ -832,6 +832,156 @@ class ForeignWriteReStamped(_Wire):
         self.assertEqual(km._timeline_views()["seq"], s1 + 100, "a seq ahead of the last served is adopted as the new floor")
 
 
+class MigrationStampsTheArchivedTag(_Wire):
+    """Round 4 of the 2026-09-05 review: the hidden-to-archived migration built its diff base from the
+    same tag dicts it mutated (the archived tag's dict was aliased, and the dict copy was shallow), so
+    the base already carried the migration and an EXISTING archived tag gained its members with no
+    fresh mtime. A dashboard holding the pre-migration copy could then post the whole blob and strip
+    the migrated members with no refusal. The migration now works on a deep copy: the moved members
+    stamp the tag, and the guard refuses the stale copy."""
+
+    def test_an_existing_archived_tag_is_stamped_by_the_migration_and_a_stale_copy_cannot_strip_it(self):
+        p = km._views_path()
+        pre = {"active": "all", "tags": [dict(WEB), {"id": "archived", "name": "archived", "color": "#6b7280",
+                                                     "members": [SID2]}], "hidden": [SID3]}
+        p.write_text(json.dumps(pre))
+        v = km._timeline_views()
+        arch = next(t for t in v["tags"] if t["name"] == "archived")
+        self.assertEqual([m["sid"] for m in arch["members"]], sorted([SID2, SID3]), "the hidden entry joined the existing tag")
+        self.assertTrue(arch.get("mtime"), "the migrated tag carries a FRESH edit stamp: its members changed")
+        self.assertNotIn("mtime", next(t for t in v["tags"] if t["id"] == "gA"), "an untouched tag gets none")
+        self.assertNotIn("hidden", json.loads(p.read_text()))
+        # the pre-migration dashboard posts its whole copy (no `at`, no mtimes): the guard refuses
+        # the archived hunk — the migrated members stand — and the ack says so
+        stale = {"active": "all", "tags": [dict(WEB), {"id": "archived", "name": "archived", "color": "#6b7280", "members": [SID2]}]}
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale, "edited": ["archived"]})
+        self.assertFalse(a["ok"])
+        self.assertEqual([r["tid"] for r in a["refused"]], ["archived"])
+        self.assertEqual(sorted(m["sid"] for m in store_tag("archived")["members"]), sorted([SID2, SID3]),
+                         "the migrated members survive the stale copy")
+        self.assertTrue(self.notices and not self.notices[0][1], "and the refusal is loud")
+
+
+class ReaderRestampUnwritable(_Wire):
+    """Round 4 of the 2026-09-05 review: the reader's re-stamp write had no error handling, so an
+    unwritable or full state dir made every READ raise, and the feed's build aborted with it. Now an
+    OSError on that write is logged once per distinct error, the file is served as read (normalized)
+    and cached under its own key so reads stop retrying the write, and the next successful write
+    clears the note so a recurrence is logged again."""
+
+    def setUp(self):
+        super().setUp()
+        km._VIEWS_RESTAMP_ERR[0] = None
+
+    def test_a_read_only_state_dir_is_served_not_raised_and_logged_once(self):
+        import contextlib
+        import io
+        if os.geteuid() == 0:
+            self.skipTest("root ignores directory permissions")
+        p = km._views_path()
+        d = p.parent
+        legacy = {"active": "all", "tags": [dict(WEB)]}                # seq-less: the first read wants to stamp it
+        p.write_text(json.dumps(legacy))
+        n = [0]
+        real = km._atomic_write
+
+        def counting(path, text, mode=None):
+            n[0] += 1
+            return real(path, text, mode)
+        km._atomic_write = counting
+        os.chmod(d, 0o555)
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                v = km._timeline_views()                                # does not raise
+                self.assertEqual([t["name"] for t in v["tags"]], ["web"], "the file is served as read")
+                self.assertNotIn("seq", v, "…unstamped: the write did not land")
+                self.assertEqual(n[0], 1, "one write attempted")
+                v2 = km._timeline_views()
+                self.assertIs(v2, v, "the second read is a cache hit under the file's key")
+                self.assertEqual(n[0], 1, "…and does not retry the write")
+                km._flags_cache.clear()                                # a cold cache retries…
+                km._timeline_views()
+                self.assertEqual(n[0], 2)
+            lines = [ln for ln in err.getvalue().splitlines() if "could not be re-stamped" in ln]
+            self.assertEqual(len(lines), 1, "one stderr line for one distinct error, however many reads")
+            self.assertIn("PermissionError", lines[0])
+            self.assertEqual(p.read_text(), json.dumps(legacy), "the file is untouched")
+            self.assertEqual(self.notices, [], "an unwritable store is a log line, not a refusal notice")
+            # writable again: a kernel write succeeds and clears the note, so the next failure logs afresh
+            os.chmod(d, 0o755)
+            km._flags_cache.clear()
+            a = self.post({"type": "tagEdit", "writeId": "w1", "edit": {"op": "recolor", "tid": "gA", "color": "#54B204"}})
+            self.assertTrue(a["ok"])
+            self.assertIsNone(km._VIEWS_RESTAMP_ERR[0], "a successful write clears the note")
+            p.write_text(json.dumps(legacy))                           # seq-less again, then unwritable again
+            km._flags_cache.clear()
+            os.chmod(d, 0o555)
+            err2 = io.StringIO()
+            with contextlib.redirect_stderr(err2):
+                km._timeline_views()
+            self.assertEqual(len([ln for ln in err2.getvalue().splitlines() if "could not be re-stamped" in ln]), 1,
+                             "the same error logs again after a write cleared the note")
+        finally:
+            os.chmod(d, 0o755)
+            km._atomic_write = real
+            km._VIEWS_RESTAMP_ERR[0] = None
+
+
+class ForeignWriteJudged(_Wire):
+    """Round 4 of the 2026-09-05 review: the re-stamp of a file written outside the kernel whose seq
+    fell behind used the file's own content as the guard's base, so a stale Electron blob was blessed
+    wholesale — a tag deleted since came back, a member added since was lost, silently. The writer's
+    own seq says it held an older copy, so the file is now judged against the LAST SERVED blob: the
+    refused hunks are kept from it, the writer's own creates land, and the refusals are reported
+    through the sync notice naming each tag. With no served blob (a fresh kernel; a store read as
+    missing) there is nothing to judge against and the file is ordered as written, as before."""
+
+    def test_a_seq_behind_file_is_judged_against_the_last_served_blob(self):
+        self.seed()
+        c = self.post({"type": "tagEdit", "writeId": "w1", "edit": {"op": "create", "name": "api", "color": "#54B204", "sids": [SID2]}})
+        api_tid = c["tid"]
+        p = km._views_path()
+        panel = json.loads(p.read_text())                              # the panel's copy: web[SID1], api, this seq and `at`
+        time.sleep(1.1)
+        self.assertIsNone(km._edit_tag(tid="gA", add=[SID3])[1])       # a member added since
+        self.assertIsNone(km._edit_tag(tid=api_tid, delete=True)[1])   # a tag deleted since
+        served = km._timeline_views()
+        s_served = served["seq"]
+        # the panel writes the file itself: its stale copy plus a lens change, plus a tag it created
+        # (a client-minted id, no mtime — the one mark a kernel puts on a tag)
+        foreign = json.loads(json.dumps(panel))
+        foreign["actives"] = {"timeline": {"tags": ["web"]}, "chat": {"all": True}, "outline": {"all": True}}
+        foreign["tags"].append({"id": "gdocs", "name": "docs", "color": "#DD42FF", "members": [SID2]})
+        time.sleep(0.01)
+        km._atomic_write(p, json.dumps(foreign))
+        v = km._timeline_views()
+        self.assertGreater(v["seq"], s_served, "re-stamped past the last served seq")
+        web = next(t for t in v["tags"] if t["id"] == "gA")
+        self.assertEqual(sorted(m["sid"] for m in web["members"]), sorted([SID1, SID3]), "the member added since is KEPT")
+        self.assertIsNone(store_tag("api"), "the tag deleted since is not brought back")
+        self.assertEqual(store_tag("docs")["id"], "gdocs", "the panel's own create lands")
+        self.assertEqual(v["actives"]["timeline"], {"tags": ["web"]}, "the lens change lands")
+        self.assertEqual(json.loads(p.read_text())["tags"], v["tags"], "the file holds the judged result")
+        self.assertEqual(len(self.notices), 1)
+        text, ok = self.notices[0]
+        self.assertFalse(ok, "the refusals are loud")
+        self.assertIn("outside the kernel", text)
+        self.assertIn('"web"', text)
+        self.assertIn('"api" (re-creation)', text, "…naming each tag")
+        # no served blob: a store read as missing forgets what was served, and a file that then
+        # appears is ordered as written — nothing to judge it against
+        p.unlink()
+        self.assertEqual(km._timeline_views()["tags"], [])
+        recreated = json.loads(json.dumps(foreign))
+        recreated["seq"] = 5
+        km._atomic_write(p, json.dumps(recreated))
+        v2 = km._timeline_views()
+        self.assertEqual(sorted(t["name"] for t in v2["tags"]), ["api", "docs", "web"], "kept as written")
+        self.assertEqual(v2["seq"], 5)
+        self.assertEqual(len(self.notices), 1, "no second notice")
+
+
 class WebBootWiring(unittest.TestCase):
     """The kernel-served timeline page: the inline _TIMELINE_BOOT twin of timeline-boot.ts exposes
     the targeted-edit bridge and routes both acks to the panel (timeline-boot.test.ts pins the two
