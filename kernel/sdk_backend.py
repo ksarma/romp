@@ -65,7 +65,7 @@ def _bin_on_path_env(environ) -> dict:
 # romp-manager` — each session's CLI, its tool shells, their setsid children and any tmux server a
 # session started included. A service restart on 2026-09-05 killed sessions' tmux servers and setsid
 # jobs along with the kernel; only kernel-only restarts (`romp refresh`), which never touch the
-# service, had ever spared them. So, when supported, the CLI is spawned through bin/romp-cli-scope,
+# service, had left them running. So, when supported, the CLI is spawned through bin/romp-cli-scope,
 # which execs `systemd-run --user --scope` in place: the CLI keeps the spawned pid, parent and argv
 # (find_session_cli still finds it as this kernel's child; find_orphan_clis still reads its argv) but
 # runs in a scope of its own, and everything it later spawns goes with it. What the scopes take away
@@ -2100,7 +2100,7 @@ def task_death_notice(tasks: list) -> str:
 
     It says "cut off", not "died" (2026-09-05): under the per-session scopes (cli_scope_supported) a
     task's tool shell can outlive the CLI — the process may well still be running, and the session
-    that relaunches it blind runs two. So the ask is to check first. The voice is the person the
+    that relaunches it without checking runs two. So the ask is to check first. The voice is the person the
     session works for; the only romp noun is the sanctioned [romp] prefix (test_injected_voice)."""
     n = len(tasks)
     descs = "; ".join(d for d in ((t.get("desc") or "").strip() for t in tasks[:4]) if d)
@@ -2174,8 +2174,8 @@ def find_orphan_clis(ps_lines: list[str], lastsids: list[str]) -> list[int]:
     `systemd --user` that never happens: the user manager sets PR_SET_CHILD_SUBREAPER, so an orphan
     from the service cgroup or from a transient scope re-parents to the `systemd --user` pid (verified
     on a Linux box that day: both cases, ppid = the user manager, never 1), and this reaper had
-    matched nothing on Linux under the service all along. KillMode=control-group covered for it on
-    service restarts; the per-session scopes (cli_scope_supported) remove that cover by design, so
+    matched nothing on Linux under the service all along. KillMode=control-group killed those orphans
+    on service restarts anyway; the per-session scopes (cli_scope_supported) end that by design, so
     the definition now names the property the ppid-1 check approximated. Pure (takes
     PS_ARGV's `ps -axwwo pid=,ppid=,command=` lines) so tests need no live processes."""
     procs: dict[int, tuple[int, str]] = {}    # pid -> (ppid, command), in listing order
@@ -5557,9 +5557,9 @@ class SdkBackend:
             # The SDK's per-connect minimum-version check spawns `[cli_path, "-v"]` with the KERNEL's
             # environment, not options.env (claude_agent_sdk 0.2.132, _check_claude_version), so the
             # wrapper must find ROMP_CLI_REAL here too — without it the probe exited 127, the SDK
-            # swallowed that, and the version warning was silently off while every connect paid a
-            # doomed fork. One value per backend; the per-session entry in _options stays (the
-            # session's own launch reads it). No ROMP_SID rides along, so the wrapper runs the probe
+            # swallowed that, and the version warning was silently off while every connect forked a
+            # probe that failed. One value per backend; the per-session entry in _options stays (the
+            # session's own launch reads it). ROMP_SID is unset for it, so the wrapper runs the probe
             # directly, unscoped.
             os.environ["ROMP_CLI_REAL"] = self.claude_bin
         self._cli_scope_wrapper_logged = False    # the missing-wrapper fallback is reported once per backend

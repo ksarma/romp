@@ -33,7 +33,7 @@ test('under the supervised service on linux with systemd-run: the server starts 
   for (const flag of ['--user', '--scope', '--quiet', '--collect']) assert.ok(p.argv.includes(flag), flag);
   const unit = p.argv.find((a) => a.startsWith('--unit='));
   assert.equal(unit, '--unit=romp-tmux-1725000000000');
-  // the tmux argv rides after `--`, verbatim
+  // the tmux argv follows `--`, verbatim
   const dash = p.argv.indexOf('--');
   assert.ok(dash > 0);
   assert.deepEqual(p.argv.slice(dash + 1), BARE);

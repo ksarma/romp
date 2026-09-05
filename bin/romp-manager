@@ -578,7 +578,7 @@ function startTmuxServer() {
     return;
   } catch (e) {
     if (!pick.scoped) return;   // a server is already up, or tmux itself failed — nothing more to do
-    // Honest about where it lands: this may be a terminal run with no service cgroup at all.
+    // Say where it landed: this may be a terminal run with no service cgroup at all.
     log(`systemd-run could not start the tmux server in a scope (${String(e && e.message || e).split('\n')[0]}) — starting it the plain way instead`);
   }
   try {
