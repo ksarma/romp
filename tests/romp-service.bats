@@ -349,3 +349,128 @@ EOF2
     run grep -q "ROMP_SERVICE_ENV_FILE" "$plist"
     [ "$status" -ne 0 ]
 }
+
+# ─── status: the key source and the unit's shape (2026-09-05) ────────────────────────
+# `status` reads the same non-secret configuration the kernel reads (kernel/envsource.py: this
+# environment, then service.env) and says which key source is in force, whether ExecStart runs the
+# manager through a shell, and which credential-shaped NAMES a unit, drop-in, plist or service.env
+# carries. Values are assembled at run time and the assertions check none of them is printed.
+
+@test "status (Linux): key source is file by default, command with its selector when the command is configured" {
+    ROMP_OS_OVERRIDE=Linux "$SVC" install >/dev/null
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"key source: file"* ]]
+    [[ "$output" == *"ExecStart: runs the manager directly"* ]]
+    [[ "$output" != *"credential-shaped"* ]]
+    # the command in this environment; the selector in its default file under XDG_CONFIG_HOME
+    export XDG_CONFIG_HOME="$TEST_DIR/cfg"
+    mkdir -p "$XDG_CONFIG_HOME/romp"
+    ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"key source: command (no selector)"* ]]
+    [[ "$output" != *"cred.sh"* ]]                            # which source, never the setting's text
+    printf 'hp\n' > "$XDG_CONFIG_HOME/romp/credential-selector"
+    ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (selector hp)"* ]]
+    # a selector file holding something that is not a name is said, not shown
+    local junk="romp-test-fixture-$RANDOM $RANDOM"
+    printf '%s\n' "$junk" > "$XDG_CONFIG_HOME/romp/credential-selector"
+    ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (selector file holds something that is not a name)"* ]]
+    [[ "$output" != *"fixture"* ]]
+}
+
+@test "status: the same lines in service.env are read the way the kernel reads them (last wins, one layer of quotes)" {
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf 'lp\n' > "$TEST_DIR/sel"
+    printf 'ROMP_EXPECTED_AUTH=key\nROMP_CREDENTIAL_COMMAND=first\nROMP_CREDENTIAL_COMMAND="%s"\n  ROMP_CREDENTIAL_SELECTOR_FILE = %s\n' \
+        "$TEST_DIR/cred.sh \"\$1\"" "$TEST_DIR/sel" > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"not installed"* ]]
+    [[ "$output" == *"key source: command (selector lp)"* ]]
+    [[ "$output" != *"ExecStart"* ]]                          # no unit: nothing to say about its shape
+    [[ "$output" != *"cred.sh"* ]]
+    # an empty assignment last is "unset": file mode
+    printf 'ROMP_CREDENTIAL_COMMAND=x\nROMP_CREDENTIAL_COMMAND=\n' > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: file"* ]]
+}
+
+@test "status (Linux): names credential-shaped lines a unit or drop-in carries — names only — and a shell-wrapped ExecStart" {
+    ROMP_OS_OVERRIDE=Linux "$SVC" install >/dev/null
+    local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
+    mkdir -p "$ROMP_SYSTEMD_DIR/romp-manager.service.d"
+    {
+        printf '[Service]\n'
+        printf 'Environment=ANTHROPIC_API_KEY=%s "OTHER_TOKEN=%s x" EMPTY_TOKEN= NOT_A_SECRET=1\n' "$v" "$v"
+        printf 'Environment="SECOND_API_KEY=%s"\n' "$v"
+        printf 'ExecStart=\n'
+        printf "ExecStart=/usr/bin/zsh -lc 'exec %s up'\n" "$ROMP_MANAGER_BIN"
+    } > "$ROMP_SYSTEMD_DIR/romp-manager.service.d/shell.conf"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"unit carries credential-shaped lines: ANTHROPIC_API_KEY, OTHER_TOKEN, SECOND_API_KEY"* ]]
+    [[ "$output" != *"EMPTY_TOKEN"* ]]                        # set to nothing: not a credential
+    [[ "$output" != *"NOT_A_SECRET"* ]]
+    [[ "$output" != *"$v"* ]]                                 # never a value
+    [[ "$output" == *"ExecStart: runs the manager through a shell (its variables freeze until a manager restart)"* ]]
+    # `env` in front of the shell is still the shell; a drop-in that resets to the direct form reads direct
+    printf '[Service]\nExecStart=\nExecStart=/usr/bin/env FOO=1 bash -c "exec %s up"\n' "$ROMP_MANAGER_BIN" \
+        > "$ROMP_SYSTEMD_DIR/romp-manager.service.d/shell.conf"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"through a shell"* ]]
+    printf '[Service]\nExecStart=\nExecStart=%s up\n' "$ROMP_MANAGER_BIN" > "$ROMP_SYSTEMD_DIR/romp-manager.service.d/shell.conf"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"ExecStart: runs the manager directly"* ]]
+    [[ "$output" != *"credential-shaped"* ]]
+}
+
+@test "status: a credential-shaped line in service.env is named, never shown" {
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
+    printf 'ROMP_EXPECTED_AUTH=key\nANTHROPIC_API_KEY=%s\nMY_TOKEN=""\n# A_TOKEN=%s\nROMP_TOKEN_COUNT=3\n' "$v" "$v" > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"service.env carries credential-shaped lines: ANTHROPIC_API_KEY"* ]]
+    [[ "$output" != *"MY_TOKEN"* ]]                           # empty after the quotes: no credential
+    [[ "$output" != *"A_TOKEN"* ]]                            # a comment
+    [[ "$output" != *"$v"* ]]
+}
+
+@test "status (macOS): the plist's pairs and program are read the same way" {
+    ROMP_OS_OVERRIDE=Darwin "$SVC" install >/dev/null
+    ROMP_OS_OVERRIDE=Darwin run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"key source: file"* ]]
+    [[ "$output" == *"ExecStart: runs the manager directly"* ]]   # romp-node-launch is the program, not a shell
+    [[ "$output" != *"credential-shaped"* ]]
+    local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
+    cat > "$ROMP_LAUNCHD_DIR/com.romp.manager.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.romp.manager</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>exec $ROMP_MANAGER_BIN up</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/bin</string>
+    <key>A_TOKEN</key><string>$v</string>
+    <key>EMPTY_API_KEY</key><string></string>
+  </dict>
+</dict>
+</plist>
+EOF
+    ROMP_OS_OVERRIDE=Darwin run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"unit carries credential-shaped lines: A_TOKEN"* ]]
+    [[ "$output" != *"EMPTY_API_KEY"* ]]
+    [[ "$output" != *"$v"* ]]
+    [[ "$output" == *"ExecStart: runs the manager through a shell"* ]]
+}
