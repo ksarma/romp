@@ -35,7 +35,11 @@ in one pass, and you never copy a line out of the document by hand. The line in 
 label is checked against the file at the moment you select, so numbers that moved under
 you are caught rather than quietly carried. When several sessions work in the same
 repository, or in worktrees of it, the viewer's title bar says which one you opened the
-file from: a chip with the session's name, in the same color as its tab.
+file from: a chip with the session's name, in the same color as its tab. The title bar's
+**GitHub ↗** button opens the file on GitHub. When there is nothing to open, the button stays
+in place, dimmed, and hovering it says why (the file is not committed, or the repository's
+origin is not on GitHub); a file on a branch that has not been pushed keeps its link, with a
+note that origin does not have the branch yet.
 
 **Tags and groups.** A tag is a named, colored set of sessions; a session can be in
 several. Right-click a tab and open **Tags** to add or remove them. Tags filter every
