@@ -135,6 +135,19 @@ function ackCreate(panel: any, seq = 1001, name = "tag 1", color = "#1EA1EB") {
   return S1;
 }
 
+test("harness: setting textContent replaces the children, as the real DOM does — a rebuilt container holds no stale nodes", () => {
+  const box = makeNode("div");
+  const a = box.createSpan({ text: "old" }); box.createDiv({ text: "older" });
+  assert.equal(walk(box).length, 2);
+  box.textContent = "";
+  assert.deepEqual(walk(box), [], "the builders clear a container this way before repainting it");
+  assert.equal(a.parentNode, null, "…and the removed nodes no longer point at it");
+  box.createSpan({ text: "new" });
+  assert.deepEqual(walk(box).map((n) => n.textContent), ["new"], "a find() over the walk can only match the current build");
+  box.textContent = "plain";
+  assert.equal(box.textContent, "plain"); assert.deepEqual(walk(box), []);
+});
+
 test("executed: [+ New tag] posts a create the KERNEL names and ids; the ack's tid opens the rename input; typing posts a rename by tid", () => {
   const panel = drawnPanel();
   panel._openViewsDialog(null);
