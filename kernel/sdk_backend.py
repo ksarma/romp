@@ -59,14 +59,20 @@ def _bin_on_path_env(environ) -> dict:
 
 
 # Per-session transient systemd scopes (Linux, 2026-09-05). Under the systemd user service every
-# process the service tree starts shares the service's cgroup, and KillMode=control-group (kept on
-# purpose: a wedged kernel or bus still holding its port must die on a service restart) kills them
-# all on `systemctl --user restart romp-manager` — including each session's CLI, its tool shells,
-# their setsid children and any tmux server a session started. Users had been told tmux would
-# survive a restart; that held only for kernel-only restarts (`romp refresh`). So, when supported,
-# the CLI is spawned through bin/romp-cli-scope, which execs `systemd-run --user --scope` in place:
-# the CLI keeps the spawned pid and argv (find_session_cli / find_orphan_clis still match) but runs
-# in a scope of its own, and everything it later spawns goes with it.
+# process the service tree starts shares the service's cgroup, and the unit relies on systemd's
+# default KillMode=control-group (it sets no KillMode line; a wedged kernel or bus still holding its
+# port must die on a service restart), which empties that cgroup on `systemctl --user restart
+# romp-manager` — each session's CLI, its tool shells, their setsid children and any tmux server a
+# session started included. A service restart on 2026-09-05 killed sessions' tmux servers and setsid
+# jobs along with the kernel; only kernel-only restarts (`romp refresh`), which never touch the
+# service, had ever spared them. So, when supported, the CLI is spawned through bin/romp-cli-scope,
+# which execs `systemd-run --user --scope` in place: the CLI keeps the spawned pid, parent and argv
+# (find_session_cli still finds it as this kernel's child; find_orphan_clis still reads its argv) but
+# runs in a scope of its own, and everything it later spawns goes with it. What the scopes take away
+# is the cgroup kill as a backstop for the boot reaper: an orphaned CLI now outlives a service
+# restart too, and under `systemd --user` (a child subreaper) it re-parents to the user manager,
+# never to pid 1 — which is why find_orphan_clis keys on "parent is not a live romp kernel", not on
+# ppid 1.
 CLI_SCOPE_PROBE = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--", "true"]
 CLI_SCOPE_PROBE_TIMEOUT = 10.0
 
@@ -2110,26 +2116,53 @@ def _cli_carries_sid(cmd: str, sids) -> bool:
     return False
 
 
+def _is_kernel_cmd(cmd: str) -> bool:
+    """Does this `ps` command text name a romp kernel? The manager runs `romp-serve`, which execs
+    `<python> <repo>/bin/romp-kernel` (bin/romp-serve's last line), so a kernel shows as
+    `/usr/bin/python3.12 …/bin/romp-kernel`; a hand-run one is `bin/romp-kernel` or
+    `python3 kernel/kernel.py`. Matched on argv TOKENS — the basename `romp-kernel`, or a
+    `kernel/kernel.py` path — never on a substring, so `tail -f …/romp-kernel.log` is not a kernel."""
+    for tok in cmd.split():
+        base = tok.rsplit("/", 1)[-1]
+        if base == "romp-kernel":
+            return True
+        if tok in ("kernel.py", "kernel/kernel.py") or tok.endswith("/kernel/kernel.py"):
+            return True
+    return False
+
+
 def find_orphan_clis(ps_lines: list[str], lastsids: list[str]) -> list[int]:
     """PIDs of ORPHANED SDK-driven `claude` CLIs holding one of OUR sessions (--resume/--session-id
-    in either flag spelling, + the stream-json mark — see _cli_carries_sid). Orphaned = re-parented
-    to launchd (ppid 1): a live SDK CLI is always a child of the kernel that spawned it, so only a
-    dead kernel's leftover — a zombie writer that would fight the resume for the transcript —
-    reaches ppid 1. The parent check is load-bearing: matching on the command line alone let a
-    duplicate backend's reconcile reap freshly-resumed LIVE sessions mid-turn (2026-07-06). Pure
-    (takes `ps -axo pid=,ppid=,command=` lines) so tests need no live processes."""
-    out = []
+    in either flag spelling, + the stream-json mark — see _cli_carries_sid). Orphaned = its PARENT
+    is not a live romp kernel (absent from the listing, or a process that is not a kernel): a live
+    SDK CLI is always a child of the kernel that spawned it, so only a dead kernel's leftover — a
+    zombie writer that would fight the resume for the transcript — has any other parent. The parent
+    check is load-bearing: matching on the command line alone let a duplicate backend's reconcile
+    reap freshly-resumed LIVE sessions mid-turn (2026-07-06); and a CLI parented to a DIFFERENT live
+    kernel is that kernel's, never reaped here.
+
+    Until 2026-09-05 "orphaned" meant ppid 1 (macOS: an orphan re-parents to launchd). Under
+    `systemd --user` that never happens: the user manager sets PR_SET_CHILD_SUBREAPER, so an orphan
+    from the service cgroup or from a transient scope re-parents to the `systemd --user` pid (verified
+    on a Linux box that day: both cases, ppid = the user manager, never 1), and this reaper had
+    matched nothing on Linux under the service all along. KillMode=control-group covered for it on
+    service restarts; the per-session scopes (cli_scope_supported) remove that cover by design, so
+    the definition now names the property the ppid-1 check approximated. Pure (takes
+    `ps -axo pid=,ppid=,command=` lines) so tests need no live processes."""
+    procs: dict[int, tuple[int, str]] = {}    # pid -> (ppid, command), in listing order
     for ln in ps_lines:
         parts = ln.strip().split(None, 2)
         if len(parts) < 3 or not parts[0].isdigit() or not parts[1].isdigit():
             continue
-        pid, ppid, cmd = int(parts[0]), int(parts[1]), parts[2]
-        if ppid != 1:
+        procs[int(parts[0])] = (int(parts[1]), parts[2])
+    out = []
+    for pid, (ppid, cmd) in procs.items():
+        if _SDK_CLI_MARK not in cmd or not _cli_carries_sid(cmd, lastsids):
             continue
-        if _SDK_CLI_MARK not in cmd:
-            continue
-        if _cli_carries_sid(cmd, lastsids):
-            out.append(pid)
+        parent = procs.get(ppid)
+        if parent is not None and _is_kernel_cmd(parent[1]):
+            continue    # a live kernel's child — ours or another kernel's, either way not an orphan
+        out.append(pid)
     return out
 
 
@@ -2138,8 +2171,8 @@ def find_session_cli(ps_lines: list[str], sids: list[str], parent_pid: int) -> i
     The interrupt escalation's (and the drain reap's) target: same signature match as
     find_orphan_clis (_cli_carries_sid + the stream-json mark) but the OPPOSITE parent check — it
     may only signal our own child, never a tmux CLI (no mark), never another kernel's, never an
-    orphan (ppid 1, the reaper's territory). Pure (takes `ps -axo pid=,ppid=,command=` lines) so
-    tests need no live processes."""
+    orphan (a CLI whose parent is no live kernel — the reaper's territory). Pure (takes
+    `ps -axo pid=,ppid=,command=` lines) so tests need no live processes."""
     for ln in ps_lines:
         parts = ln.strip().split(None, 2)
         if len(parts) < 3 or not parts[0].isdigit() or not parts[1].isdigit():
@@ -5550,8 +5583,9 @@ class SdkBackend:
     def _boot_reconcile(self, regs: list[dict]) -> None:
         """The kernel just booted — reconcile what the previous kernel's death left behind. Event-keyed
         on the boot itself plus each session's state tail, never on ages or timers:
-          * REAP orphaned SDK CLIs still resuming our sessions: a dead kernel's children re-parent to
-            launchd and keep writing the transcript, so a resume would give the conversation two writers.
+          * REAP orphaned SDK CLIs still resuming our sessions: a dead kernel's children re-parent
+            (to launchd on macOS, to the `systemd --user` subreaper on Linux) and keep writing the
+            transcript, so a resume would give the conversation two writers.
           * A session whose state tail is 'working' had its turn CUT by the kernel death — a user
             interrupt writes 'idle', a finished turn 'waiting'; only a kill leaves 'working' — so resume
             it with a visible continuation nudge (BOOT_RESUME_NUDGE) ahead of its restored queue. The

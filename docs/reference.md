@@ -370,8 +370,16 @@ server the manager starts, in a transient systemd scope of its own
 (`systemctl --user list-units 'romp-session-*' 'romp-tmux-*'` lists them). A
 session's tmux servers, `setsid` children and other background work then live
 in the session's scope, not the service's, and a service restart leaves them
-alive. A CLI that outlives a hard-killed kernel is reaped at the next boot by
-the existing orphan reap, as before.
+alive. A CLI that outlives its kernel (a hard kill, or now a service restart)
+is reaped at the next kernel boot: the reaper treats an SDK-driven CLI holding
+one of the kernel's sessions whose parent is not a live romp kernel as
+orphaned. Under `systemd --user` an orphan re-parents to the user manager, not
+to pid 1, so a ppid check alone would miss it and did, before 2026-09-05.
+
+One-time caveat when this lands: the first service restart after it still
+empties the current cgroup, tmux servers included, because the running manager
+and its tmux server predate the change and are still inside the service's
+cgroup. The guarantee holds from the following restart on.
 
 `ROMP_CLI_SCOPE=0` in the service environment turns the scopes off;
 `ROMP_CLI_SCOPE=1` turns them on for a manager run outside the service
