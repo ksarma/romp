@@ -338,9 +338,12 @@ def _client_frame(text):
 
 
 def _ping_frame(data=b""):
-    """One masked client ping (RFC 6455 §5.5.2). The kernel's reader answers it inline with a pong echoing the
-    payload, AFTER it has dispatched every message read before it — so a pong is proof that the `ready` sent
-    ahead of the ping, and the connect push the ready handler runs synchronously, are done."""
+    """One masked client ping (RFC 6455 §5.5.2). The kernel's reader thread answers it inline with a pong echoing
+    the payload, after it has dispatched every message read before it — so a pong is proof that a `ready` sent
+    ahead of the ping, and everything its handler ran synchronously (the connect push, the client's recorded
+    delta base), are done. It orders nothing on the wire: the reader writes the pong itself (_ws_pong) while
+    data frames are queued to the client's sender thread (_mk_ws_send → _ws_sender), so a frame the handler
+    queued before the pong may still arrive after it."""
     mask = os.urandom(4)
     return bytes([0x89, 0x80 | len(data)]) + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data))
 
@@ -654,7 +657,8 @@ class OutlineDeltaStream(unittest.TestCase):
     browser's Outline client fell 12.7 MB behind and the kernel dropped it seven times in a morning (ws drop,
     slot=feed, 6.3 MB frames), every frame a multi-megabyte json.dumps on the kernel's GIL. The page loads
     federation.js before fleet.js, and federation applies each delta onto the full frame it holds and re-emits
-    a whole `feed` frame, so fleet.ts needs no change. Pinned on a real socket: after its first full frame,
+    a whole `feed` frame, which is all fleet.ts reads (what fleet.ts gained is a live clock and the unapplied-
+    delta guard: ui/webview/fleet-live-clock.test.ts). Pinned on a real socket: after its first full frame,
     an Outline client with the capability hears the board's changes as {type:"feedDelta"} — the changed card
     by itemId, tint-less — and never another full frame."""
 
@@ -679,10 +683,13 @@ class OutlineDeltaStream(unittest.TestCase):
             self.assertEqual(first["type"], "feed", "the first frame is full: the delta stream's base")
             self.assertEqual([a["itemId"] for a in first["asks"]], [a["itemId"] for a in f["asks"]])
             # The ready handler runs the Outline's connect push inline (the pane needs the session build's
-            # ledgers, so unlike the feed pane it is not skipped) before the reader takes the next frame, so
-            # the pong to a ping sent now marks that push done: the build below must not race it on the
-            # client's recorded base. Whatever the connect push sent (a ledger reconciliation, or nothing)
-            # arrives ahead of the pong, and must be a delta too.
+            # ledgers, so unlike the feed pane it is not skipped), and the build below must not race that push
+            # on the client's recorded delta base. The barrier: the reader thread answers a ping only after it
+            # has dispatched every message read before it, so the pong means the handler is done. It says
+            # nothing about the wire — the reader writes the pong itself while data frames go through the
+            # client's sender thread — so whatever the connect push sent (a ledger reconciliation, or nothing)
+            # may land on either side of the pong; the two drains take it in either position, and it must be
+            # a delta too.
             s.sendall(_ping_frame(b"sync"))
             frames = []
             while True:
@@ -702,13 +709,18 @@ class OutlineDeltaStream(unittest.TestCase):
             km.build_feed = lambda now, tmux: f2
             km._built_feed[:] = [None, None, 0.0, 0.0]            # cold: the next _cached_feed builds, whatever the clock
             km._push_all()                                         # the real pusher cycle
-            while True:
-                op, payload, buf = _read_frame(s, buf)
-                self.assertEqual(op, 0x1)
-                d = json.loads(payload.decode("utf-8"))
-                frames.append(d)
-                if any("renamed" in (a.get("text") or "") for a in d.get("asks") or []):
-                    break
+            s.settimeout(5)                                        # the drain's bound: the renamed card's delta, or fail
+            try:
+                while True:                                        # anything ahead of it is the connect push's late frame
+                    op, payload, buf = _read_frame(s, buf)
+                    self.assertEqual(op, 0x1)
+                    d = json.loads(payload.decode("utf-8"))
+                    frames.append(d)
+                    if any("renamed" in (a.get("text") or "") for a in d.get("asks") or []):
+                        break
+            except (socket.timeout, TimeoutError):
+                self.fail("no delta carrying the renamed card within 5 s; frames seen: %r"
+                          % [(x.get("type"), x.get("buildId")) for x in frames])
             self.assertEqual([d["type"] for d in frames], ["feedDelta"] * len(frames), "never another full frame")
             self.assertEqual(d["buildId"], f2["buildId"], "the build the pusher ran (the kernel mints its id at build start)")
             self.assertEqual([a["itemId"] for a in d["asks"]], ["%s:g3" % SID], "the one card that changed, by itemId")
