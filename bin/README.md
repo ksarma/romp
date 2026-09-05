@@ -35,7 +35,8 @@ no separate implementation to point at.
 | `romp-judge` | `kernel/judge.py` | Layer 2: the judge engine + all judge prompts (captioner, archiver, planner, …). `docs/judges.md`. |
 | `romp-askparse` | `kernel/askparse.py` | Parses the AskUserQuestion picker out of a captured tmux pane (tmux backend only; SDK sessions get the picker natively). |
 | `romp_sdk_backend.py` | `kernel/sdk_backend.py` | The **SDK session backend** (current default): drives sessions via the Claude Agent SDK. |
-| _(no bin entry)_ | `kernel/keysource.py` | The live source of the manager's API key where an installation keeps one in `service.env`: its `ANTHROPIC_API_KEY=` line, re-read at every session launch. Shared by the kernel and `romp keyswap`'s report, so the two cannot disagree about the path or the parse. This fork writes no key line (the named swap is refused). |
+| _(no bin entry)_ | `kernel/keysource.py` | The live source of the manager's API key where an installation keeps one in `service.env`: its `ANTHROPIC_API_KEY=` line, re-read at every session launch (file mode). Shared by the kernel and `romp keyswap`'s report, so the two cannot disagree about the path or the parse. This fork writes no key line (the named swap is refused in file mode). |
+| _(no bin entry)_ | `kernel/envsource.py` | The second key source, for installations that keep credentials out of files: with `ROMP_CREDENTIAL_COMMAND` set the kernel runs that command (the selector file's token as `$1`) and hands the `NAME=VALUE` set it prints to each session CLI, judge call and catalog fetch, never to its own environment or a file. Value-free everywhere but one accessor; fingerprints are the only rendered form. `romp keyswap` and `romp-service status` read the same module's configuration. |
 | `romp_session_backend.py` | `kernel/session_backend.py` | The `SessionBackend` ABC — the one seam both backends (SDK, tmux) implement. |
 | `romp_colormap.py` | `kernel/colormap.py` | The recency colormaps, single source of truth shared with the web bundles. |
 | `romp_palette.py` | `kernel/palette.py` | The session-identity color palettes. |
@@ -52,7 +53,7 @@ no separate implementation to point at.
 |---|---|---|
 | `romp-update` | `cli/update.py` | Pushes this machine's committed romp to attached remote kernels and restarts them (`romp update [host]`). |
 | `romp-version` | `cli/version.py` | Version report across the moving parts (`romp version`). |
-| `romp-keyswap` | `cli/keyswap.py` | Reports which API key the sessions bill (fingerprints only) and, after a key rotation, reconnects quiet running sessions so their new processes pick the new key up, with no manager restart (`romp keyswap --cycle-all`). Upstream's named swap (`romp keyswap <name>`, a rewrite of `service.env`) is refused: this fork does not write API keys to files. |
+| `romp-keyswap` | `cli/keyswap.py` | Reports which API key the sessions bill (fingerprints only) and whether the kernel reads what the shell reads; with `ROMP_CREDENTIAL_COMMAND` set, `romp keyswap <name>` selects a declared credential by writing the selector file and `--refresh` makes the kernel re-run the command; after a rotation, `--cycle-all` reconnects quiet running sessions so their new processes pick the new credential up, with no manager restart. Where the key lives in a file, upstream's named swap (a rewrite of `service.env`) is refused: this fork does not write API keys to files. |
 | `romp-idle-dots` | `cli/idle_dots.py` | tmux backend only: heals stranded `working` state / fades idle tab dots by inspecting tmux panes. Fired from `hooks/tmux-status.sh`. |
 
 ## tmux backend only (real files)

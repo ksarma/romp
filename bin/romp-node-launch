@@ -48,9 +48,10 @@ fi
 # Extra service environment (parity with the systemd unit's EnvironmentFile=-):
 # plain KEY=VALUE lines exported to the manager, so non-secret env a shell has
 # but launchd doesn't (e.g. ROMP_EXPECTED_AUTH) reaches kernel-spawned sessions.
-# API keys never go in it (see docs/reference.md, Service environment): they
-# reach the manager through the environment of whatever starts it, and the
-# sessions' own key through apiKeyHelper. Parsed line-by-line, never sourced: a
+# API keys never go in it (docs/reference.md, "API keys on disk: the file mode"):
+# they reach the manager through the environment of whatever starts it, or
+# through ROMP_CREDENTIAL_COMMAND set HERE ("Installing without keys on disk"),
+# and the sessions' own key through apiKeyHelper. Parsed line-by-line, never sourced: a
 # malformed line is skipped instead of executing code or (under set -eu)
 # taking the manager — and the whole kernel — down with it.
 ENV_FILE="${ROMP_SERVICE_ENV_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/service.env}"
