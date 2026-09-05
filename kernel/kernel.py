@@ -9691,20 +9691,30 @@ def _create_sdk_session(nm, cwd, auth="", prefs=None, client=None, env=None, par
     return sid, extra
 
 
-def _create_codex_session(nm, cwd, client=None):
-    return _create_codex_session_inner(nm, cwd, client=client)
+def _create_codex_session(nm, cwd, client=None, parent="", tags=()):
+    return _create_codex_session_inner(nm, cwd, client=client, parent=parent, tags=tags)
 
 
-def _create_codex_session_inner(nm, cwd, client=None):
+def _create_codex_session_inner(nm, cwd, client=None, parent="", tags=()):
     """Create + open a new Codex-backed session — the same ACK-FAST shape as _create_sdk_session
     (focus first, dirty-mark wake, one direct push; never a synchronous fleet build here). spawn()
     starts the app-server thread, touches the materialized transcript (so discover() lists it
     immediately) and writes the shared names/ identity file. Focus rides _reveal_chat_for — the
     v1.3.6 merge renamed _reveal_chat and this caller kept the old name, so every Codex create
     raised NameError AFTER spawning (an orphan session + a failed /new; the user's audit,
-    2026-08-19, ruff's sole F821)."""
+    2026-08-19, ruff's sole F821).
+
+    `parent` (a sid) + `tags` (names) land exactly as in _create_sdk_session: the tag store keys on
+    the registry sid and knows nothing of backends, so a Codex child inherits its parent's tags and
+    joins the named ones BEFORE the direct push, and the same `tags`/`tagsRequested`/`tagsApplied`
+    echo (plus `tagError`) rides back. Before this the Codex arm of POST /new applied nothing and
+    echoed nothing, so a plain `romp new <name>` from inside a session on a Codex-default box landed
+    outside its parent's group while the CLI blamed an older kernel. Returns (sid, echo)."""
     bg, fg = _pick_identity_color()
     sid = _codex().spawn(nm, cwd, bg, fg)
+    extra = {}
+    if parent or tags:
+        extra.update(_tag_ack(sid, parent, tags))
     if client is not None:
         # like _create_sdk_session/_fork_session: a client-less caller (POST /new — a headless
         # `romp new`) reveals to NOBODY; None fell through to the legacy every-window broadcast,
@@ -9712,7 +9722,7 @@ def _create_codex_session_inner(nm, cwd, client=None):
         _reveal_chat_for(client, {"type": "focus", "id": sid})
     _mark_views_dirty()
     _push_session_now(sid)
-    return sid
+    return sid, extra
 
 
 def _fork_session(parent_sid, cut_msg_uuid, new_name, now=None, client=None):
@@ -37788,14 +37798,23 @@ class Handler(BaseHTTPRequestHandler):
                         why = (getattr(cxbe, "_client_err", "") or CODEX_SETUP_HINT) if cxbe else CODEX_SETUP_HINT
                         return self._send(200, json.dumps({"ok": False, "error": why}),
                                           "application/json")
-                    sid = _create_codex_session(nm, cwd)
+                    if env_req is not None:
+                        # env rides the per-sid flag-settings file the SDK backend hands its CLI; a
+                        # Codex thread runs on the shared app-server and has no per-session
+                        # environment to take it — refuse, like the tmux arm, never a silent drop
+                        return self._send(200, json.dumps({"ok": False, "error":
+                            "per-session env needs the SDK backend — a Codex session runs on the "
+                            "shared app-server and takes no per-session environment"}), "application/json")
+                    # parent/tags ride the create like the SDK arm's (the tag store is backend-
+                    # agnostic), so the echo below carries the same `tags` the CLI checks
+                    sid, extra = _create_codex_session(nm, cwd, parent=psid, tags=tags_req)
                     if not sid:
                         return self._send(200, json.dumps({"ok": False,
                                                            "error": "the Codex session could not "
                                                                     "be created — is the codex "
                                                                     "app-server running?"}),
                                           "application/json")
-                    return self._send(200, json.dumps({"ok": True, "id": sid, "dir": cwd}),
+                    return self._send(200, json.dumps({"ok": True, "id": sid, "dir": cwd, **pextra, **extra}),
                                       "application/json")
                 if be_req == "sdk":
                     if not _sdk_ready():          # see _sdk_ready — a built backend is not a working one
@@ -37821,8 +37840,8 @@ class Handler(BaseHTTPRequestHandler):
                     # a tmux spawn is threaded and its sid is unknown at ack time, so nothing here could
                     # tag it — refuse loudly rather than spawn it outside the group it was asked into
                     return self._send(200, json.dumps({"ok": False, "error":
-                        "tags and parent need the SDK backend — a terminal session's id is not known "
-                        "until it starts"}), "application/json")
+                        "tags and parent need an SDK or Codex session — a terminal session's id is not "
+                        "known until it starts"}), "application/json")
                 threading.Thread(target=_spawn_session, args=(nm, cwd), daemon=True).start()
                 return self._send(200, json.dumps({"ok": True, "pending": True, "dir": cwd}),
                                   "application/json")
@@ -39072,15 +39091,13 @@ class Handler(BaseHTTPRequestHandler):
                         # NEVER silently fall back to tmux (the user asked for SDK and got a mystery tmux
                         # session on a remote host without the venv, 2026-07-02). Say what's missing.
                         client["send"](json.dumps({"type": "warn", "text": SDK_SETUP_HINT}))
-                elif msg.get("parent") or msg.get("tags"):
-                    # a tmux spawn's sid is unknown at ack time — nothing could tag it (the /new contract); a
-                    # Codex thread takes no parent/tags either — refuse loudly, never a spawn outside its group
-                    client["send"](json.dumps({"type": "warn", "text":
-                        "tags and parent need the SDK backend — a terminal session's id is not known until it starts"}))
                 elif msg.get("backend") == "codex":   # an OpenAI Codex thread (plans/codex-backend.md)
                     if _codex_ready():
                         try:
-                            _create_codex_session(nm, cwd, client=client)
+                            # parent/tags land like the SDK arm's: the tag store keys on the registry
+                            # sid, so a Codex child sections under its group from its first frame
+                            _sid, extra = _create_codex_session(nm, cwd, client=client,
+                                                                parent=psid or "", tags=ctags)
                         except Exception as e:
                             # the generic dispatcher handler logs to stderr only — the picker's
                             # "Opening…" cue got no answer (the r28 verification). stderr FIRST:
@@ -39092,6 +39109,9 @@ class Handler(BaseHTTPRequestHandler):
                                                                    "failed: %s" % e}))
                             except Exception:
                                 pass
+                        else:
+                            if extra.get("tagError"):
+                                client["send"](json.dumps({"type": "warn", "text": "tagging the new session: %s" % extra["tagError"]}))
                     else:
                         # same rule as SDK: the user asked for Codex — refuse loudly, never a
                         # mystery tmux session. _codex_ready is False for a missing dep, a dead
@@ -39099,6 +39119,11 @@ class Handler(BaseHTTPRequestHandler):
                         be = _codex()
                         why = (getattr(be, "_client_err", "") or CODEX_SETUP_HINT) if be else CODEX_SETUP_HINT
                         client["send"](json.dumps({"type": "warn", "text": why}))
+                elif msg.get("parent") or msg.get("tags"):
+                    # a tmux spawn's sid is unknown at ack time — nothing could tag it (the /new
+                    # contract) — refuse loudly, never a spawn outside its group
+                    client["send"](json.dumps({"type": "warn", "text":
+                        "tags and parent need an SDK or Codex session — a terminal session's id is not known until it starts"}))
                 else:
                     threading.Thread(target=_spawn_session, args=(nm, cwd), daemon=True).start()
         elif msg and msg.get("type") == "cancelCreate" and msg.get("name"):

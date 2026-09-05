@@ -638,7 +638,7 @@ EOF
     _romp_cmd "romp new --effort <level> <name>" -      "Reasoning effort for the SDK session (e.g. high, ultracode); re-asserted if <name> already runs"
     _romp_cmd "romp new --env NAME=VALUE <name>" -      "Per-session env var for the SDK session (repeatable; toggles, never secrets); a re-run on a running <name> replaces the whole set"
     _romp_cmd "romp new --no-env <name>"   -            "Clear a running SDK session's per-session env (declares the empty set)"
-    _romp_cmd "romp new --in <tag> <name>" -            "Put the new SDK session in a tag (repeatable; a new name creates the tag) — its tab lands in that group"
+    _romp_cmd "romp new --in <tag> <name>" -            "Put the new SDK or Codex session in a tag (repeatable; a new name creates the tag) — its tab lands in that group"
     _romp_cmd "romp new --no-inherit <name>" -          "Run from inside a session, a new session joins that session's tags by default; this starts it outside them"
     _romp_cmd "romp resume [<id>]"         -            "Resume a past conversation (full-screen picker; or an exact UUID)"
     _romp_cmd "romp status"                romp-manager "Show manager + kernel status"

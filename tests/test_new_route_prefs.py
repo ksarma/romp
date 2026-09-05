@@ -31,6 +31,7 @@ km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_modu
 
 SID = "11111111-2222-3333-4444-555555555555"
 SID2 = "66666666-7777-8888-9999-000000000000"
+SID3 = "33333333-4444-5555-6666-777777777777"   # the Codex arm's synthetic child
 
 
 class NewRoutePrefs(unittest.TestCase):
@@ -291,7 +292,11 @@ class NewRouteTags(unittest.TestCase):
     unknown parent or a malformed list is a 400 and nothing is created. The idempotent existing:true
     open never INHERITS (no creation event) but re-asserts an explicit --in like model/effort/env; a
     thread's name tags nothing and says so; the tmux backend refuses. The `tags` echo is the child's
-    names after everything, so the CLI is loud when a kernel drops the ask. Synthetic sids only."""
+    names after everything, so the CLI is loud when a kernel drops the ask. A Codex spawn takes the
+    same parent/tags through the same seam (the tag store keys on the registry sid, not the
+    backend): before that, the Codex arm applied nothing and echoed nothing, so a plain `romp new`
+    from inside a session on a Codex-default box landed outside its parent's group while the CLI
+    blamed an older kernel. Synthetic sids only."""
 
     @classmethod
     def setUpClass(cls):
@@ -307,10 +312,11 @@ class NewRouteTags(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self.created = []
+        self.created_codex = []
         self.spawns = []
         self._saved = (km._live_names, km._tmux_sessions, km.Sessions.backend_for, km._sdk_ready,
                        km._create_sdk_session, km._push_soon, km._spawn_session, km._mark_views_dirty,
-                       km.jd.STATE)
+                       km.jd.STATE, km._codex_ready, km._create_codex_session, km._default_backend)
         km.jd.STATE = __import__("pathlib").Path(self.td.name)
         km._flags_cache.clear()
         (km.jd.STATE / "names").mkdir(parents=True, exist_ok=True)
@@ -332,10 +338,17 @@ class NewRouteTags(unittest.TestCase):
             return SID2, extra
         km._create_sdk_session = create
 
+        km._codex_ready = lambda: True
+        def create_codex(nm, cwd, client=None, parent="", tags=()):
+            # the same seam as the SDK stub: tags land INSIDE the create, before its push
+            self.created_codex.append((nm, parent, list(tags)))
+            return SID3, (km._tag_ack(SID3, parent, tags) if parent or tags else {})
+        km._create_codex_session = create_codex
+
     def tearDown(self):
         (km._live_names, km._tmux_sessions, km.Sessions.backend_for, km._sdk_ready,
          km._create_sdk_session, km._push_soon, km._spawn_session, km._mark_views_dirty,
-         km.jd.STATE) = self._saved
+         km.jd.STATE, km._codex_ready, km._create_codex_session, km._default_backend) = self._saved
         km._flags_cache.clear()
         self.td.cleanup()
 
@@ -429,7 +442,7 @@ class NewRouteTags(unittest.TestCase):
         code, body = self._post({"name": "term1", "dir": self.dir, "backend": "tmux", "tags": ["pool"]})
         self.assertEqual(code, 200)
         self.assertFalse(body["ok"], "no tmux spawn with the tags silently dropped")
-        self.assertIn("SDK backend", body["error"])
+        self.assertIn("SDK or Codex", body["error"])
         code, body = self._post({"name": "term1", "dir": self.dir, "backend": "tmux", "parent": SID})
         self.assertFalse(body["ok"])
         time.sleep(0.2)
@@ -465,6 +478,60 @@ class NewRouteTags(unittest.TestCase):
         # without the marker the same parent is the 400 the explicit contract promises
         code, body = self._post({"name": "api", "dir": self.dir, "parent": U})
         self.assertEqual(code, 400)
+
+    def test_a_codex_spawn_inherits_and_joins_like_an_sdk_one(self):
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": [SID]}]})
+        code, body = self._post({"name": "api", "dir": self.dir, "backend": "codex", "parent": SID, "tags": ["infra"]})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"], body)
+        self.assertEqual(body["id"], SID3)
+        self.assertEqual(self.created_codex, [("api", SID, ["infra"])],
+                         "parent and tags reach the Codex create — applied before its push, like the SDK arm")
+        self.assertEqual(self.created, [], "no SDK session was minted in its place")
+        self.assertEqual(sorted(body.get("tags") or []), ["infra", "pool"], "the echo the CLI checks")
+        self.assertEqual(body.get("tagsRequested"), ["infra"])
+        self.assertEqual(body.get("tagsApplied"), ["infra"])
+        self.assertEqual(self._members("pool"), sorted([SID, SID3]), "the child joined; the parent kept it")
+        self.assertEqual(self._members("infra"), [SID3], "--in mints the tag like POST /tag would")
+
+    def test_a_plain_new_on_a_codex_default_box_inherits_its_parents_tags(self):
+        # the reported case: no --codex, no --in — the CLI's auto parent alone, against a kernel
+        # whose default backend is Codex. This used to land untagged with a misleading
+        # "older kernel?" warning, because the echo was missing
+        km._default_backend = lambda: "codex"
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": [SID]}]})
+        code, body = self._post({"name": "api", "dir": self.dir, "parent": SID, "parentAuto": True})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"], body)
+        self.assertEqual(self.created_codex, [("api", SID, [])])
+        self.assertEqual(body.get("tags"), ["pool"], "the echo is present, so the CLI does not blame the kernel")
+        self.assertNotIn("parentIgnored", body)
+        self.assertEqual(self._members("pool"), sorted([SID, SID3]))
+
+    def test_a_codex_spawn_with_an_ignored_auto_parent_says_so(self):
+        U = "99999999-0000-0000-0000-000000000000"
+        code, body = self._post({"name": "api", "dir": self.dir, "backend": "codex", "parent": U, "parentAuto": True})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"], body)
+        self.assertEqual(body.get("parentIgnored"), U)
+        self.assertEqual(body.get("tags"), [], "the ask was answered: nothing inherited")
+        self.assertEqual(self.created_codex, [("api", "", [])], "created with no parent")
+
+    def test_a_codex_spawn_asked_nothing_echoes_nothing(self):
+        code, body = self._post({"name": "api", "dir": self.dir, "backend": "codex"})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"], body)
+        self.assertNotIn("tags", body, "not asked → not echoed (the model/effort/env contract)")
+        self.assertEqual(self.created_codex, [("api", "", [])])
+
+    def test_a_codex_spawn_refuses_env_loudly(self):
+        # the Codex backend has no set_env: a Codex thread runs on the shared app-server. The arm
+        # used to swallow the env silently; it refuses like the tmux arm now
+        code, body = self._post({"name": "api", "dir": self.dir, "backend": "codex", "env": {"X": "1"}})
+        self.assertEqual(code, 200)
+        self.assertFalse(body["ok"], "no Codex spawn with the env silently dropped")
+        self.assertIn("SDK backend", body["error"])
+        self.assertEqual(self.created_codex, [], "the refusal comes before the spawn")
 
     def test_a_threads_name_answers_the_tags_ask_with_nothing_applied_and_the_reason(self):
         TSID = "77777777-8888-9999-0000-111111111111"

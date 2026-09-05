@@ -238,7 +238,9 @@ class CreateSessionTags(_Wire):
     Tags row it prefilled from the active tab; the kernel hands both to _create_sdk_session so they
     land BEFORE the first push. The same loud contract as POST /new: an unknown parent or a malformed
     tags list refuses the create with a warn frame and nothing is spawned; a refused tag edit after a
-    successful spawn is warned, never swallowed. Synthetic sids only."""
+    successful spawn is warned, never swallowed. A Codex create takes both through the same seam
+    (_create_codex_session): the tag store keys on the registry sid, not the backend, so the op
+    used to refuse a Codex create asked into a group for no reason of its own. Synthetic sids only."""
 
     PARENT = "11111111-2222-3333-4444-555555555555"
 
@@ -246,14 +248,20 @@ class CreateSessionTags(_Wire):
         super().setUp()
         self.spawned = []
         self.extra = {}
-        saved = (km._create_sdk_session, km._sdk_ready, km._spawn_session)
+        saved = (km._create_sdk_session, km._sdk_ready, km._spawn_session,
+                 km._create_codex_session, km._codex_ready)
         km._create_sdk_session = lambda nm, cwd, auth="", client=None, **kw: (
             self.spawned.append((nm, dict(kw))), ("TESTSID", dict(self.extra)))[1]
         km._sdk_ready = lambda: True
         km._spawn_session = lambda nm, cwd=None: self.spawned.append((nm, "tmux"))
+        km._create_codex_session = lambda nm, cwd, client=None, **kw: (
+            self.spawned.append((nm, "codex", dict(kw))), ("TESTCODEX", dict(self.extra)))[1]
+        km._codex_ready = lambda: True
         self.addCleanup(lambda: (setattr(km, "_create_sdk_session", saved[0]),
                                  setattr(km, "_sdk_ready", saved[1]),
-                                 setattr(km, "_spawn_session", saved[2])))
+                                 setattr(km, "_spawn_session", saved[2]),
+                                 setattr(km, "_create_codex_session", saved[3]),
+                                 setattr(km, "_codex_ready", saved[4])))
         (km.jd.STATE / "names").mkdir(parents=True, exist_ok=True)
         (km.jd.STATE / "names" / self.PARENT).write_text("web\t/tmp\t#123456\twhite\n")
 
@@ -295,8 +303,34 @@ class CreateSessionTags(_Wire):
     def test_a_tmux_create_with_tags_refuses_instead_of_dropping_them(self):
         r = self.send({"type": "createSession", "name": "term1", "dir": self.tmp, "backend": "tmux", "tags": ["pool"]})
         self.assertEqual(r["type"], "warn")
-        self.assertIn("SDK backend", r["text"])
+        self.assertIn("SDK or Codex", r["text"])
         self.assertEqual(self.spawned, [], "no tmux spawn with the tags silently gone")
+
+    def test_a_codex_create_takes_tags_and_a_parent_like_an_sdk_one(self):
+        self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "codex",
+                   "tags": ["pool", " infra "], "parent": self.PARENT})
+        self.assertEqual(len(self.spawned), 1, "a Codex create asked into a group is spawned, not refused")
+        nm, be, kw = self.spawned[0]
+        self.assertEqual((nm, be), ("api", "codex"))
+        self.assertEqual(kw.get("tags"), ["pool", "infra"], "names trimmed; applied inside the create, before its push")
+        self.assertEqual(kw.get("parent"), self.PARENT)
+        self.assertEqual(self.sent, [], "nothing to warn about")
+
+    def test_a_codex_create_warns_a_refused_tag_edit_like_the_sdk_arm(self):
+        self.extra = {"tags": [], "tagError": 'two tags are named "pool"'}
+        r = self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "codex", "tags": ["pool"]})
+        self.assertEqual(len(self.spawned), 1, "the session exists — the refusal rides beside it")
+        self.assertEqual(r["type"], "warn")
+        self.assertIn('two tags are named "pool"', r["text"])
+
+    def test_a_codex_create_still_validates_parent_and_tags_up_front(self):
+        r = self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "codex",
+                       "parent": "99999999-0000-0000-0000-000000000000"})
+        self.assertEqual(r["type"], "warn")
+        self.assertIn("not a session this kernel knows", r["text"])
+        r = self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "codex", "tags": ["", "x"]})
+        self.assertIn("tags must be", r["text"])
+        self.assertEqual(self.spawned, [], "a child must never spawn outside the group it was asked into")
 
     LIVE = "22222222-3333-4444-5555-666666666666"
 
