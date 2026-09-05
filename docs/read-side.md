@@ -370,8 +370,14 @@ kept tag it did not edit is one stderr line and nothing on the dashboard.
 from the store. Named in `edited`, it is a create (the no-capability path's
 client-minted `g…` id) and lands; not named, it is a stale copy re-creating a
 tag another dashboard deleted, and is kept out with a reason. A write without
-`edited` keeps every unknown tag as new. Both acks carry the write's `writeId`
-and the blob's `seq`.
+`edited` keeps every unknown tag as new. The door also refuses a tag renamed to,
+or created under, a name another tag in the resulting set holds, with a reason
+naming the collision: a renamed tag stands as the store has it, a new one is kept
+out. Names address edits, so the store holds one tag per name. A lens or order
+write is built from the store's blob the client last adopted plus the fields it
+sets. It never carries a targeted edit still in flight, which is that edit's own
+claim; the copy the client shows keeps such edits, and a refusal of one reverts
+it alone. Both acks carry the write's `writeId` and the blob's `seq`.
 
 `seq` is the store's write sequence. `_set_timeline_views` stamps every accepted
 write with a number greater than the last (seeded from the clock, so a store
@@ -386,20 +392,32 @@ gear menu, a toast in the chat pane), and a later write still in flight keeps
 its change: the copy is re-derived from the store's blob plus the remaining
 writes. Each surface allows one create in flight at a time: the dialog's
 [+ New tag] reads "creating…" and the new-tag inputs are disabled until the
-ack. No count
+ack. The row the create draws meanwhile takes no gesture (no rename, delete,
+recolor, drag, join, or move) until the ack names the tag's id. The join menu's
+new-tag draft belongs to the open [+], survives repaints however the listed rows
+change, and is dropped when the menu or the dialog closes. No count
 of frames settles a write. The one frame-driven clear left is the exact-echo
 match, kept together with the old three-frame yield for blobs without a `seq`:
 a kernel from before the stamp acks nothing.
 
-Three reader-side rules keep the sequence consistent. A store from before the
-stamp is stamped once on its first read, so the gate protects the first write
-after an upgrade (a store that does not exist is left alone: its first write
-starts past whatever a client holds). A file written outside the kernel (the
+Reader-side rules keep the sequence consistent. A store from before the stamp
+is stamped once on its first read, so the gate protects the first write after
+an upgrade (a store that does not exist is left alone: its first write starts
+past whatever a client holds). A file written outside the kernel (the
 timeline's Electron branch writes `timeline-views.json` itself, with the seq it
-holds) can carry a seq behind the last one served; the reader re-stamps it past
-that seq, content kept as written, so no dashboard is left ignoring the file.
-A kernel write also refreshes the read cache with the blob it wrote, so the
-ack's blob is never a stale cache hit.
+holds) can carry a seq behind the last one served. By its own seq the writer
+held an older copy, so the reader judges the file against the last served blob
+through the stale-writer guard, then re-stamps it past that seq: a tag deleted
+since is not brought back (an unknown tag carrying an mtime existed in a store
+once; one without is the writer's own create and lands), a member added since
+is kept, and each refusal is reported through the sync notice. With nothing
+served, the file is ordered as written. A kernel write also refreshes the read
+cache with the blob it wrote, so the ack's blob is never a stale cache hit. The
+hidden-to-archived migration works on a copy of the file, so the tag it fills
+is stamped and a pre-migration copy cannot strip it. When the re-stamp write
+itself fails (an unwritable or full state dir), the read serves the file as
+read, logs once per distinct error, and stops retrying until the file changes
+or a write succeeds.
 
 The kernel announces what it can do in a `{type: "caps"}` frame in reply to
 every `ready` and lists the same on `/version`; `tagEdit` covers the targeted op,
