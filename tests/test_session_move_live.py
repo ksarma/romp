@@ -15,8 +15,11 @@ suite's floors (conftest's ROMP_CLAUDE_BIN=/bin/false) exist to prevent by defau
     SDK venv (~/.local/state/romp/sdkvenv, what bin/romp-sdk-setup builds) — the child runs there, so the
     suite's interpreter needs no SDK,
   * a `claude` binary ($ROMP_MOVE_LIVE_CLAUDE, else PATH), and
-  * Claude Code auth the hermetic config dir can use: $HOME/.config/claude-code-session-key (read by an
-    apiKeyHelper in the hermetic settings) or ANTHROPIC_API_KEY in the environment.
+  * Claude Code auth the hermetic config dir can use: ANTHROPIC_API_KEY in the environment, or an
+    `apiKeyHelper` in the user's OWN Claude Code settings ($CLAUDE_CONFIG_DIR/settings.json, default
+    ~/.claude/settings.json), copied into the hermetic settings as-is — the helper COMMAND travels,
+    never a key, and no key is ever written to a file (the 2026-09-05 rule: keys live only in the
+    vault and in process environment; the ~/.config key cache this test once read no longer exists).
 CI has none of these and skips cleanly. Synthetic content throughout (an invented sid, an invented
 codeword, temp folders)."""
 import json
@@ -102,6 +105,20 @@ def _sdk_python():
     return ""
 
 
+def _user_api_key_helper(config_dir=None):
+    """The `apiKeyHelper` command from the user's own Claude Code settings ("" when there is none): the
+    hermetic config dir borrows the COMMAND, so the child authenticates exactly the way the user's real
+    sessions do. Never a key — keys live in the vault and in process environment only, and this test
+    writes none to disk. `config_dir` defaults to $CLAUDE_CONFIG_DIR, else ~/.claude."""
+    d = config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    try:
+        with open(os.path.join(d, "settings.json")) as f:
+            v = json.load(f).get("apiKeyHelper")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return v.strip() if isinstance(v, str) else ""
+
+
 def _skip_reason():
     if os.environ.get("ROMP_MOVE_LIVE") != "1":
         return "live move test is opt-in (ROMP_MOVE_LIVE=1): it bills two model turns against a real CLI"
@@ -109,10 +126,41 @@ def _skip_reason():
         return "no interpreter with claude_agent_sdk (this one, $ROMP_SDK_PYTHON, or ~/.local/state/romp/sdkvenv)"
     if not (os.environ.get("ROMP_MOVE_LIVE_CLAUDE") or shutil.which("claude")):
         return "no `claude` binary ($ROMP_MOVE_LIVE_CLAUDE or PATH)"
-    if not (os.environ.get("ANTHROPIC_API_KEY")
-            or os.path.exists(os.path.expanduser("~/.config/claude-code-session-key"))):
-        return "no Claude Code auth for a hermetic config dir"
+    if not (os.environ.get("ANTHROPIC_API_KEY") or _user_api_key_helper()):
+        return ("no Claude Code auth for a hermetic config dir (ANTHROPIC_API_KEY in the environment, or an "
+                "apiKeyHelper in your Claude Code settings)")
     return ""
+
+
+class UserApiKeyHelper(unittest.TestCase):
+    """The lookup the live test's hermetic settings borrow their apiKeyHelper from: the command string
+    when the user's settings name one; "" for a missing dir, unreadable JSON, or settings without the
+    key — never a default that reads a key file (the 2026-09-05 rule: no key on disk anywhere)."""
+
+    def test_returns_the_configured_command(self):
+        td = tempfile.mkdtemp(prefix="romp-move-live-cfg-")
+        try:
+            with open(os.path.join(td, "settings.json"), "w") as f:
+                json.dump({"apiKeyHelper": " /opt/example/helper --print "}, f)
+            self.assertEqual(_user_api_key_helper(td), "/opt/example/helper --print")
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_empty_without_a_helper(self):
+        td = tempfile.mkdtemp(prefix="romp-move-live-cfg-")
+        try:
+            self.assertEqual(_user_api_key_helper(os.path.join(td, "absent")), "")
+            with open(os.path.join(td, "settings.json"), "w") as f:
+                f.write("{not json")
+            self.assertEqual(_user_api_key_helper(td), "")
+            with open(os.path.join(td, "settings.json"), "w") as f:
+                json.dump({"permissions": {"defaultMode": "default"}, "apiKeyHelper": 7}, f)
+            self.assertEqual(_user_api_key_helper(td), "")
+            with open(os.path.join(td, "settings.json"), "w") as f:
+                json.dump(["not", "an", "object"], f)
+            self.assertEqual(_user_api_key_helper(td), "")
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
 
 
 @unittest.skipIf(_skip_reason(), _skip_reason())
@@ -127,7 +175,7 @@ class LiveSetCwd(unittest.TestCase):
             env = dict(os.environ)
             env.pop("ROMP_CLAUDE_BIN", None)
             if not env.get("ANTHROPIC_API_KEY"):
-                settings["apiKeyHelper"] = "cat $HOME/.config/claude-code-session-key"
+                settings["apiKeyHelper"] = _user_api_key_helper()
             spath = os.path.join(cfg, "settings.json")
             with open(spath, "w") as f:
                 json.dump(settings, f)
