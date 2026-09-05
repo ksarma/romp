@@ -3,9 +3,10 @@
 // 2026-09-05): a real URL is an anchor; no URL is a real disabled button with the kernel's reason as
 // a caption beside it and in its tooltip; a URL whose branch is not on origin is a dashed anchor
 // with the note as its caption. The three states run FOR REAL against a small DOM stand-in (the
-// fleet-live-clock precedent): the module mounts through document.createElement and hears the reply
-// off a window message, so plain objects carrying the handful of DOM members it touches stand in
-// for the page. What the DOM cannot show (the CSS, the kernel's side) stays pinned at source.
+// Outline pane's live-clock test is the precedent): the module mounts through document.createElement
+// and hears the reply off a window message, so plain objects carrying the handful of DOM members it
+// touches stand in for the page. What the DOM cannot show (the CSS, the kernel's side) stays pinned
+// at source.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
