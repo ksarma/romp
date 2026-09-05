@@ -176,6 +176,10 @@ class _Backend(unittest.TestCase):
             fake.HookMatcher = lambda **kw: kw
             sys.modules["claude_agent_sdk"] = fake
         self.logged = []
+        # A backend whose verdict is ON exports ROMP_CLI_REAL into os.environ (the SDK's version probe
+        # needs it there). Tests that turn the verdict on restore the variable themselves; this snapshot
+        # is the backstop, so no test in these classes can leak it into the rest of the pytest process.
+        self._real_before = os.environ.get("ROMP_CLI_REAL")
         self.be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, log=self.logged.append)
 
     def tearDown(self):
@@ -183,6 +187,10 @@ class _Backend(unittest.TestCase):
         sb._fetch_key_fast_org = self._fetch_before
         if self._fake_sdk:
             sys.modules.pop("claude_agent_sdk", None)
+        if self._real_before is None:
+            os.environ.pop("ROMP_CLI_REAL", None)
+        else:
+            os.environ["ROMP_CLI_REAL"] = self._real_before
 
     def _sess(self):
         return sb.SdkSession(self.be, {"sid": SID, "name": "web", "cwd": self.d, "mode": "acceptEdits"})
@@ -201,11 +209,15 @@ class ConstructionVerdict(_Backend):
     def test_the_verdict_is_taken_once_and_cached(self):
         calls = []
         before = sb.cli_scope_supported
+        real_before = os.environ.pop("ROMP_CLI_REAL", None)   # an ON verdict exports it — restore below
         sb.cli_scope_supported = lambda **kw: calls.append(kw) or True
         try:
             be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
         finally:
             sb.cli_scope_supported = before
+            os.environ.pop("ROMP_CLI_REAL", None)
+            if real_before is not None:
+                os.environ["ROMP_CLI_REAL"] = real_before
         self.assertEqual(len(calls), 1)
         self.assertIn("log", calls[0])
         self.assertTrue(be.cli_scope)
