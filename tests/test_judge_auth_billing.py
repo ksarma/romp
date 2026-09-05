@@ -30,9 +30,12 @@ Synthetic sids only; the fixture key is an invented string; no real key material
 import json
 import os
 import tempfile
+import time
 import unittest
 from importlib.machinery import SourceFileLoader
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -43,6 +46,9 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+os.environ["ROMP_SERVICE_ENV_FILE"] = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
+os.environ["ROMP_SERVICE_ENV"] = os.environ["ROMP_SERVICE_ENV_FILE"]
+os.environ.pop("ROMP_API_KEY_REF", None)
 jd = SourceFileLoader("romp_judge_authbill", os.path.join(BIN, "romp-judge")).load_module()
 
 FAKE_KEY = "romp-test-fixture-key-not-real"   # nothing under test validates the shape, so no sk- prefix:
@@ -58,7 +64,11 @@ class _JudgeAuthBase(unittest.TestCase):
     def setUp(self):
         self._env_before = os.environ.pop("ANTHROPIC_API_KEY", None)
         self._fn_before = jd._WORK_KEY_FN
+        self._configured_before = jd._WORK_KEY_CONFIGURED_FN
+        self._login_before = jd._LOGIN_AUTH_ENV_FN
         jd._WORK_KEY_FN = None
+        jd._WORK_KEY_CONFIGURED_FN = None
+        jd._LOGIN_AUTH_ENV_FN = None
         jd._auth_cache[:] = [None, {}]
         jd.SDKDIR.mkdir(parents=True, exist_ok=True)
         for p in (jd.JUDGE_AUTH, jd.SDKDIR / (SID + ".json"),
@@ -70,10 +80,13 @@ class _JudgeAuthBase(unittest.TestCase):
 
     def tearDown(self):
         jd._WORK_KEY_FN = self._fn_before
+        jd._WORK_KEY_CONFIGURED_FN = self._configured_before
+        jd._LOGIN_AUTH_ENV_FN = self._login_before
         os.environ.pop("ANTHROPIC_API_KEY", None)
         if self._env_before is not None:
             os.environ["ANTHROPIC_API_KEY"] = self._env_before
         jd._judge_ctx.fsid = None
+        jd._judge_ctx.paused = False
         # leave NOTHING latched in the shared STATE: the suite runs every test file against one
         # XDG state home, and a leftover judge-auth.json row for the shared synthetic sid floors
         # OTHER files' build_feed cards to needs-you (25 stays-in-Working tests, found 2026-08-12)
@@ -99,9 +112,10 @@ class WorkKeyRead(_JudgeAuthBase):
         # never a second claimer: the variable is still there for sdk_backend's own pop
         self.assertEqual(os.environ.get("ANTHROPIC_API_KEY"), FAKE_KEY)
 
-    def test_a_broken_wire_reads_as_no_key_not_a_crash(self):
+    def test_a_broken_wire_propagates_instead_of_selecting_login(self):
         jd._WORK_KEY_FN = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
-        self.assertEqual(jd._work_key(), "")
+        with self.assertRaises(RuntimeError):
+            jd._work_key()
 
 
 class JudgeBillingResolution(_JudgeAuthBase):
@@ -124,9 +138,11 @@ class JudgeBillingResolution(_JudgeAuthBase):
         self._reg("key")
         self.assertEqual(jd._judge_auth(SID), "key")
 
-    def test_a_key_pick_with_no_key_falls_to_login_like_the_session_itself(self):
-        self._reg("key")   # effective_auth logs the fall loudly and launches on login; judges mirror it
-        self.assertEqual(jd._judge_auth(SID), "login")
+    def test_a_key_pick_with_no_key_keeps_its_billing_intent(self):
+        self._reg("key")
+        self.assertEqual(jd._judge_auth(SID), "key")
+        with self.assertRaises(jd._keysrc.KeySourceError):
+            jd._judge_env("triage", "key")
 
 
 class JudgeEnvBilling(_JudgeAuthBase):
@@ -162,6 +178,120 @@ class JudgeEnvBilling(_JudgeAuthBase):
             self.assertEqual(jd._judge_env("index", "login", model="fable").get("MAX_THINKING_TOKENS"), "0")
         finally:
             os.environ.pop("TMUX", None)
+
+
+class RuntimeJudgeBilling(_JudgeAuthBase):
+    def test_runtime_reference_resolves_once_per_key_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "service.env")
+            with open(path, "w") as config:
+                config.write("ROMP_API_KEY_REF=op://test-vault/test-item/credential\n")
+            with patch.dict(os.environ, {"ROMP_SERVICE_ENV_FILE": path}), \
+                    patch.object(jd._keysrc.subprocess, "run", return_value=SimpleNamespace(
+                        returncode=0, stdout=FAKE_KEY.encode())) as provider:
+                for count in (1, 2):
+                    auth = jd._judge_auth(SID)
+                    self.assertEqual(provider.call_count, count - 1, "billing metadata never resolves")
+                    env = jd._judge_env("triage", auth)
+                    self.assertEqual(env["ANTHROPIC_API_KEY"], FAKE_KEY)
+                    self.assertEqual(provider.call_count, count)
+
+    def test_successful_key_call_resolves_the_provider_wire_once(self):
+        jd._WORK_KEY_FN = Mock(return_value=FAKE_KEY)
+        jd._WORK_KEY_CONFIGURED_FN = Mock(return_value=True)
+        jd._judge_ctx.fsid = SID
+        with patch.object(jd, "_judge_engine", return_value="claude"), \
+                patch.object(jd.subprocess, "run", return_value=SimpleNamespace(
+                    returncode=0, stderr="", stdout=json.dumps({"result": "ok"}))) as run:
+            self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "ok")
+        jd._WORK_KEY_FN.assert_called_once_with()
+        run.assert_called_once()
+        self.assertEqual(run.call_args.kwargs["env"]["ANTHROPIC_API_KEY"], FAKE_KEY)
+
+    def test_login_env_does_not_resolve_and_restores_claimed_login_tokens(self):
+        jd._WORK_KEY_FN = Mock(side_effect=RuntimeError("must not resolve"))
+        jd._LOGIN_AUTH_ENV_FN = lambda: {"CLAUDE_CODE_OAUTH_TOKEN": "synthetic-login-token"}
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic-ambient-key",
+                                     "ANTHROPIC_AUTH_TOKEN": "synthetic-ambient-bearer"}):
+            env = jd._judge_env("triage", "login")
+        jd._WORK_KEY_FN.assert_not_called()
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", env)
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "synthetic-login-token")
+
+    def test_exhausted_login_window_pauses_without_inspecting_or_resolving_a_key(self):
+        self._reg("login")
+        jd._WORK_KEY_FN = Mock(side_effect=RuntimeError("must not resolve"))
+        jd._WORK_KEY_CONFIGURED_FN = Mock(side_effect=RuntimeError("must not inspect"))
+        jd._judge_ctx.fsid = SID
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / "usage.json").write_text(json.dumps({
+                "five_hour": {"pct": 100, "resets_at": int(time.time()) + 3600}}))
+            # Keep the usage fixture, limit latch, log, and in-memory gate state local to this test.
+            with patch.multiple(jd, STATE=state, JUDGE_LIMIT=state / "judge-limit.json",
+                                _limit_cache=[None, {}], _RATE_GATE_LOGGED={}), \
+                    patch.object(jd, "_judge_engine", return_value="claude"), \
+                    patch.object(jd.subprocess, "run") as run:
+                self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "")
+                run.assert_not_called()
+                jd._WORK_KEY_FN.assert_not_called()
+                jd._WORK_KEY_CONFIGURED_FN.assert_not_called()
+                self.assertTrue(jd._judge_ctx.paused)
+                self.assertEqual(jd._limit_down()["bucket"], "five_hour")
+                self.assertEqual(jd._auth_down_map(), {}, "a usage pause is not an auth failure")
+
+    def test_codex_call_never_selects_or_retrieves_an_anthropic_credential(self):
+        jd._WORK_KEY_FN = Mock(side_effect=RuntimeError("must not resolve"))
+        jd._WORK_KEY_CONFIGURED_FN = Mock(side_effect=RuntimeError("must not inspect"))
+        jd._judge_ctx.fsid = SID
+
+        def codex_reply(command, **kwargs):
+            with open(command[command.index("-o") + 1], "w") as output:
+                output.write("ok")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch.object(jd, "_judge_engine", return_value="codex"), \
+                patch.dict(os.environ, {name: "synthetic-ambient-credential" for name in
+                           ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")}), \
+                patch.object(jd.subprocess, "run", side_effect=codex_reply) as run:
+            self.assertEqual(jd._judge_run("synthetic-model", "SYS", "input", judge="planner"), "ok")
+        jd._WORK_KEY_FN.assert_not_called()
+        jd._WORK_KEY_CONFIGURED_FN.assert_not_called()
+        run.assert_called_once()
+        for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
+            self.assertNotIn(name, run.call_args.kwargs["env"])
+
+    def test_provider_failure_pauses_judging_and_never_falls_back_to_ambient_auth(self):
+        private_output = "synthetic-sensitive-provider-output"
+        jd._WORK_KEY_FN = Mock(side_effect=RuntimeError(private_output))
+        jd._WORK_KEY_CONFIGURED_FN = lambda: True
+        jd._judge_ctx.fsid = SID
+        with patch.object(jd, "_judge_engine", return_value="claude"), \
+                patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic-ambient-key",
+                                       "ANTHROPIC_AUTH_TOKEN": "synthetic-ambient-bearer"}), \
+                patch.object(jd.subprocess, "run") as run, \
+                patch.object(jd, "_log_judge_error") as log:
+            self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "")
+        run.assert_not_called()
+        jd._WORK_KEY_FN.assert_called_once_with()
+        self.assertTrue(jd._judge_ctx.paused, "configuration outages must not consume summary give-up attempts")
+        row = jd._auth_down_map()[SID]
+        self.assertEqual(row["mode"], "key")
+        self.assertEqual(row["note"], "API credential source failed")
+        self.assertNotIn(private_output, str(log.call_args))
+        self.assertNotIn(private_output, json.dumps(row))
+
+    def test_missing_explicit_key_pauses_the_call_and_reports_auth_down(self):
+        self._reg("key")
+        jd._WORK_KEY_FN = lambda: ""
+        jd._judge_ctx.fsid = SID
+        with patch.object(jd, "_judge_engine", return_value="claude"), \
+                patch.object(jd.subprocess, "run") as run:
+            self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "")
+        run.assert_not_called()
+        self.assertTrue(jd._judge_ctx.paused)
+        self.assertEqual(jd._auth_down_map()[SID]["mode"], "key")
 
 
 class AuthErrorClass(_JudgeAuthBase):

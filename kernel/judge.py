@@ -20,6 +20,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 HERE = Path(__file__).resolve().parent
 em = SourceFileLoader("romp_event_model", str(HERE / "event_model.py")).load_module()
+_keysrc = sys.modules.get("romp_keysource") or SourceFileLoader(
+    "romp_keysource", str(HERE / "keysource.py")).load_module()
 
 HOME     = Path.home()
 STATE    = Path(os.environ.get("ROMP_STATE_DIR")   # per-kernel state root override (plans/multi-kernel.md)
@@ -940,6 +942,8 @@ def _log_judge_usage(judge, tier, model, fsid, wrap, sent=None, recv=None):
 
 _WORK_KEY_FN = None   # the kernel wires this to sdk_backend.work_api_key when it loads that module
                       # (_sdk_locked), so judges read the SAME once-per-process stash sessions bill from
+_WORK_KEY_CONFIGURED_FN = None  # metadata only; never retrieve a secret to decide billing
+_LOGIN_AUTH_ENV_FN = None      # login tokens claimed out of the manager's ambient environment
 
 
 def _work_key():
@@ -954,11 +958,28 @@ def _work_key():
     post-claim environment on a host with no login, and every call refused "Not logged in" for
     13 hours (~53k errors) while the cards sat parked in Working."""
     if _WORK_KEY_FN is not None:
-        try:
-            return _WORK_KEY_FN() or ""
-        except Exception:
-            return ""
-    return os.environ.get("ANTHROPIC_API_KEY", "") or ""
+        return _WORK_KEY_FN() or ""
+    return _keysrc.select_source(os.environ.get("ANTHROPIC_API_KEY", "") or "").resolve()
+
+
+def _work_key_configured():
+    if _WORK_KEY_CONFIGURED_FN is not None:
+        return bool(_WORK_KEY_CONFIGURED_FN())
+    # Compatibility for standalone callers wiring only the original callback.
+    if _WORK_KEY_FN is not None:
+        return bool(_work_key())
+    return _keysrc.select_source(os.environ.get("ANTHROPIC_API_KEY", "") or "").configured
+
+
+def _login_auth_env():
+    if _LOGIN_AUTH_ENV_FN is not None:
+        return _LOGIN_AUTH_ENV_FN()
+    return {k: os.environ[k] for k in ("ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+            if os.environ.get(k)}
+
+
+def _credential_error_note(exc):
+    return str(exc) if isinstance(exc, _keysrc.KeySourceError) else "API credential source failed"
 
 
 def _judge_auth(fsid):
@@ -976,9 +997,9 @@ def _judge_auth(fsid):
             a = json.loads((SDKDIR / (fsid + ".json")).read_text()).get("auth") or ""
         except Exception:
             a = ""
-    if a == "login":
-        return "login"
-    return "key" if _work_key() else "login"
+    if a in ("login", "key"):
+        return a
+    return "key" if _work_key_configured() else "login"
 
 
 def _is_auth_error(text):
@@ -1205,9 +1226,11 @@ def _judge_env(tier, auth="login", model=None):
     inheritance — and injected back EXPLICITLY for a key-mode call only. Removal, not blanking, same
     rule as sdk_backend._options: the CLI treats even an empty var as key-mode-without-a-key and
     refuses with "Not logged in"."""
-    wk = _work_key()                                  # read before the strip (standalone: same env)
     env = dict(os.environ)
-    env.pop("ANTHROPIC_API_KEY", None)                # never ambient: billing is an explicit choice per call
+    for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
+        env.pop(k, None)                             # billing is an explicit choice per call
+    if auth == "login":
+        env.update(_login_auth_env())
     for k in ("TMUX", "TMUX_PANE"):
         env.pop(k, None)
     env["ROMP_SUMMARIZING"] = "1"                     # trips the Stop-hook recursion guard
@@ -1229,7 +1252,10 @@ def _judge_env(tier, auth="login", model=None):
         # where the CLI drops it (Fable, Mythos, strangers) it is a harmless no-op and `--effort` in
         # _judge_run is the lever that lands. Both ride together; neither can hurt the other.
         env["MAX_THINKING_TOKENS"] = "0"
-    if auth == "key" and wk:
+    if auth == "key":
+        wk = _work_key()                             # resolve only at the call boundary
+        if not wk:
+            raise _keysrc.KeySourceError("No API key source is configured for this judge call")
         env["ANTHROPIC_API_KEY"] = wk
     return env
 
@@ -1310,7 +1336,14 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
         pass
     fsid = getattr(_judge_ctx, "fsid", None)
     engine = _judge_engine()                          # "claude" | "codex" (docs/codex.md §judges)
-    auth = _judge_auth(fsid)                          # this call bills what the judged session bills
+    try:
+        auth = "codex" if engine == "codex" else _judge_auth(fsid)
+    except Exception as e:
+        note = _credential_error_note(e)
+        _judge_ctx.paused = True
+        _auth_down_mark(fsid, "key", note)
+        _log_judge_error(judge or tier, fsid, "auth", note=note)
+        return ""
     try:
         # RATE-LIMIT GATE (the user 2026-07-07), scoped to the calls it can actually starve (the user
         # 2026-08-28, who watched key-billed cards keep landing under a "paused" banner): usage.json is
@@ -1351,7 +1384,14 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
         # win against. Nothing else about it changes — it still rides the SYSTEM prompt, never the
         # payload, and a call with no marked sections still gets no suffix at all.
         sys_prompt += UNTRUSTED_SYS % (mark, mark)
-    env = _judge_env(tier, auth, model)               # auth resolved above, before the gate (2026-08-28);
+    try:
+        env = _judge_env(tier, auth, model)
+    except Exception as e:
+        note = _credential_error_note(e)
+        _judge_ctx.paused = True
+        _auth_down_mark(fsid, auth, note)
+        _log_judge_error(judge or tier, fsid, "auth", note=note)
+        return ""
     #                                                   the MODEL decides the index tier's lever (below)
     # Per-tier effort from the gear (STATE/judge-effort | index-effort | distill-effort) when the caller
     # didn't pass one — "" or None means NO --effort flag, the long-standing default. An explicit caller

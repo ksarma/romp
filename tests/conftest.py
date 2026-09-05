@@ -35,6 +35,10 @@ os.environ["ROMP_MANAGER_PORT"] = "1"
 _NO_SERVICE_ENV = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
 os.environ["ROMP_SERVICE_ENV_FILE"] = _NO_SERVICE_ENV
 os.environ["ROMP_SERVICE_ENV"] = _NO_SERVICE_ENV
+# A runtime provider can also be selected directly from the manager's environment. Remove its
+# inherited reference before module loading, so an auth test cannot resolve a developer's vault
+# merely because the isolated service.env is absent. Tests set synthetic references explicitly.
+os.environ.pop("ROMP_API_KEY_REF", None)
 
 
 @pytest.fixture(autouse=True)
@@ -45,6 +49,7 @@ def _no_real_service_env():
     phase, before TestCase.run calls setUp) — so per-test intent still wins."""
     for var in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"):
         os.environ[var] = _NO_SERVICE_ENV
+    os.environ.pop("ROMP_API_KEY_REF", None)
     yield
 
 

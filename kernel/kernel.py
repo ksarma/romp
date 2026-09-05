@@ -1044,14 +1044,12 @@ def _models_api_credential():
     fn = getattr(jd, "_WORK_KEY_FN", None)
     key = ""
     if fn is not None:
-        try:
-            key = fn() or ""
-        except Exception:
-            key = ""
-    key = key or os.environ.get("ANTHROPIC_API_KEY", "") or ""
+        key = fn() or ""  # A selected provider's failure must not borrow another credential.
+    else:
+        key = jd._keysrc.select_source(os.environ.get("ANTHROPIC_API_KEY", "") or "").resolve()
     if key:
         return ("x-api-key", key)
-    tok = os.environ.get("ANTHROPIC_AUTH_TOKEN", "") or ""
+    tok = jd._login_auth_env().get("ANTHROPIC_AUTH_TOKEN", "") or ""
     if tok:
         return ("Authorization", "Bearer " + tok)
     return None
@@ -1095,14 +1093,14 @@ def _refresh_model_catalog(reason, _async=True):
 
     def go():
         try:
-            cred = _models_api_credential()
-            if cred is None:
-                _catalog_status["lastError"] = "no API credential in the kernel's environment"
-                sys.stderr.write("model catalog (%s): no API credential the kernel can use — serving the "
-                                 "%s list; new models need ANTHROPIC_API_KEY in the manager env (or a "
-                                 "MODEL_VERSIONS edit)\n" % (reason, _catalog_status["source"]))
-                return
             try:
+                cred = _models_api_credential()
+                if cred is None:
+                    _catalog_status["lastError"] = "no API credential in the kernel's environment"
+                    sys.stderr.write("model catalog (%s): no API credential the kernel can use — serving the "
+                                     "%s list; configure an API key source to refresh it\n"
+                                     % (reason, _catalog_status["source"]))
+                    return
                 rows = _fetch_models_api(cred)
             except Exception as e:
                 _catalog_status["lastError"] = "%s: %s" % (type(e).__name__, str(e)[:200])
@@ -8108,6 +8106,9 @@ def _env_error(env):
         if k in _ENV_RESERVED_NAMES:
             return ("env: %s is reserved — romp sets the session's identity env "
                     "(ROMP_SID, ROMP_SESSION_NAME) itself" % k)
+        if (k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+                and jd._keysrc.select_source().kind in ("op", "error")):
+            return "env: %s is reserved while runtime API key retrieval is configured" % k
         if not isinstance(v, str):
             return "env: the value for %r must be a string" % (k,)
         if "\x00" in v:
@@ -9634,6 +9635,8 @@ def _sdk_locked():
             # the unwired judges inherited the post-claim env on a login-less host and every call
             # refused "Not logged in" for 13 hours while the cards sat parked in Working).
             jd._WORK_KEY_FN = sbmod.work_api_key
+            jd._WORK_KEY_CONFIGURED_FN = lambda: sbmod.work_api_key_source().configured
+            jd._LOGIN_AUTH_ENV_FN = sbmod.startup_auth_env
             # T222: the live model catalog — the last fetched list installs before any picker asks,
             # then the BOOT event refreshes it (async; the key is claimable from here on)
             try:
@@ -9784,7 +9787,7 @@ def _auth_key_present():
     display everywhere, and host names already tell keys apart in the per-host hover). Cheap: an
     attribute read off the backend singleton, safe per-push."""
     be = _sdk()
-    return bool(str(getattr(be, "work_key", "") or "") if be else "")
+    return bool(getattr(be, "work_key_configured", False)) if be else False
 
 
 def _work_key_fp():
@@ -34677,7 +34680,28 @@ class Handler(BaseHTTPRequestHandler):
                 if be is None:
                     return self._send(503, json.dumps({"ok": False, "error": "no SDK backend"}),
                                       "application/json")
-                keyfp = _work_key_fp()
+                try:
+                    source_reader = getattr(be, "_work_key_source", None)
+                    if source_reader is not None:
+                        source = source_reader()
+                        source.validate()
+                        sourcefp = source.fingerprint()
+                        # A status read must never fetch a provider. Its reference identity is
+                        # sufficient to confirm that keyswap and this kernel see the same source.
+                        keyfp = "" if source.kind == "op" else sourcefp
+                    else:
+                        keyfp = sourcefp = _work_key_fp()  # older backend/test doubles
+                except Exception as e:
+                    return self._send(200, json.dumps({"ok": False,
+                        "error": jd._credential_error_note(e)}), "application/json")
+                expected_source_fp = b.get("expectedSourceFp")
+                if "expectedSourceFp" in b:
+                    if not isinstance(expected_source_fp, str):
+                        return self._send(400, json.dumps({"ok": False,
+                            "error": "expectedSourceFp must be a string"}), "application/json")
+                    if expected_source_fp != sourcefp:
+                        return self._send(409, json.dumps({"ok": False,
+                            "error": "API key source changed; check it before cycling again"}), "application/json")
                 rows = []
                 if b.get("all"):
                     # every LIVE SDK session: the dormant ones need nothing (their next launch reads
@@ -34693,13 +34717,17 @@ class Handler(BaseHTTPRequestHandler):
                     who_list = [(str(w), _sid_of(str(w))) for w in raw if str(w or "").strip()]
                 for who, sid in who_list:
                     try:
-                        status = be.cycle_key(sid)
+                        if expected_source_fp is not None and source_reader is not None:
+                            status = be.cycle_key(sid, expected_source_fp=expected_source_fp)
+                        else:
+                            status = be.cycle_key(sid)
                     except Exception as e:
-                        status = "error: %s" % str(e)[:80]
+                        status = "error: %s" % jd._credential_error_note(e)
                     rows.append({"session": _name_of(sid) or who, "status": status})
                 if any(r["status"] == "cycling" for r in rows):
                     _push_soon()                      # something changed; a fingerprint READ ({"sessions": []}) did not
-                return self._send(200, json.dumps({"ok": True, "keyFp": keyfp, "rows": rows}),
+                return self._send(200, json.dumps({"ok": True, "keyFp": keyfp,
+                                                  "sourceFp": sourcefp, "rows": rows}),
                                   "application/json")
             if u.path in ("/interrupt", "/end"):
                 # Headless session control (2026-07-05): interrupt/end existed ONLY as WS drive ops, so
