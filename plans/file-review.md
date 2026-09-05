@@ -1,9 +1,9 @@
 # Review in the file viewer: tracked changes and anchored comments
 
-**Status: PROPOSED, NOT COMMITTED** (awaiting the user's approval, 2026-09-05). Nothing is
-scheduled and nothing should be built from it unbidden. Once approved, the implementing romp
-session builds it in this fork slice by slice, the header changes to the build status, and the
-`plans/README.md` entry moves out of the proposed list. File and line references describe this
+**Status: PROPOSED, NOT COMMITTED** (the user's review of 2026-09-05 applied; awaiting final
+approval). Nothing is scheduled and nothing should be built from it unbidden. Once approved, the
+implementing romp session builds all six slices in one push in this fork, the header changes to
+the build status, and the `plans/README.md` entry moves out of the proposed list. File and line references describe this
 fork at its 2026-09-05 merge base and the track-changents repo as of the same day; as with every
 plans/ document, treat them as dated.
 
@@ -26,9 +26,12 @@ the Files pane that shows the agent's pending changes, holds persistent comments
 images, and on PDFs, sends one review message, and accepts or rejects the agent's revisions in
 place. It reaches the loop above with no GitHub visit and no Obsidian, in six independently
 useful slices, and keeps the sidecar byte-compatible so the agent-side tooling works unchanged.
-It asks the user to approve the slice plan and to answer the open questions at the end. After
-approval the implementing session publishes a working note naming the files it owns and lands
-each slice as one fork PR with an adversarial review pass, as the file browser did.
+The user reviewed it on 2026-09-05 and ruled on its open questions; the rulings are recorded
+under Decisions at the end, and the whole slice set is to be built together, the user having
+suggested a dedicated new session for it. The implementing session publishes a working note
+naming the files it owns and lands each slice as one fork PR with an adversarial review pass, as
+the file browser did. A committed review log, added at the user's request, gives git a durable
+record of every review.
 
 Terminology: track-changents' own README calls the JSON file the store; this document says
 **sidecar** for the file, **`store-io`** for the module that reads and writes it, **host script**
@@ -67,7 +70,11 @@ lands in the same `.trackchanges/` sidecar the track-changents CLIs, guard, and 
 and write, unchanged. GitHub remains a read-only pointer through the viewer's existing GitHub
 link; the loop never depends on it.
 
-[KVS: we should definitely keep some kind of log of comments that would make it into git]
+**A durable record.** The user asked that a review leave a log in git (the user 2026-09-05).
+Comments already persist in the committed sidecar, but the sidecar forgets accepted and rejected
+suggestions and deletes itself when a file has nothing pending. Review mode therefore also appends
+a review log beside the sidecar, committed with it, that records every send and every accept or
+reject; see The review log under Kernel.
 
 ## What the dashboard already does for this loop
 
@@ -137,7 +144,9 @@ repo:
    romp mints no second schema. That is what keeps the agent half (CLIs, guard, skill) and the
    other two hosts working unchanged, and it is what keeps the romp side small. The one addition,
    an optional `target` on a thread for image and PDF regions, follows the contract's own rule
-   for additive fields (see The contract).
+   for additive fields (see The contract). A second romp-only file, the review log, sits beside the
+   sidecar in the same directory and is outside the contract; the other hosts' directory scans
+   match only `.json` names and ignore it.
 2. **The kernel does the disk work, on the owning kernel, by running a small node host script
    built on track-changents' own `store-io` and engine.** The browser renders JSON and never
    holds a sidecar it writes back. This is the `listDir`/`saveFile` shape: a sid-routed WebSocket
@@ -194,8 +203,9 @@ Four properties of the contract shape the design:
   the field (both write the whole object back). For a figure embedded in a report, the thread
   carries both the anchor on the embed's source line, which every host can place, and the
   region, which this viewer paints on the rendered image. The README's version rule says to bump
-  `v` only for a breaking change; an optional field older readers ignore is not one. Documenting
-  the field in the track-changents README is a dependency on its author.
+  `v` only for a breaking change; an optional field older readers ignore is not one. The field is
+  built romp-only for now (the user 2026-09-05); documenting it in the track-changents README is a
+  later offer to its author, not a dependency.
 - **A file created through `track-edit` is one insertion** spanning the whole file, and while any
   same-author insertion is pending, that author's further edits inside or beside it coalesce
   into it (`engine.js:204-218`) and do not appear as separate changes. A morning review of a
@@ -219,7 +229,7 @@ agent toward `track-edit` on a tracked image. A non-text refusal in the guard an
 is therefore a dependency on the author before folders that hold figures are tracked.
 
 Human authorship uses the label `you` with no `authorId`, matching the VS Code host's default;
-see open question 6.
+see decision 6.
 
 ## Kernel: two ops and a host script
 
@@ -232,7 +242,7 @@ strings.
 ```
 request  {type:"trackReview", reqId, sid, path, verb, args?,
           fence?: {storeMtimeNs: str|"", fileMtimeNs?: str, configMtimeNs?: str|""}}
-reply    {type:"trackReviewResult", reqId, verb, root, storePath, trackedBy,
+reply    {type:"trackReviewResult", reqId, verb, root, storePath, trackedBy, agentTooling,
           fileMtimeNs, storeMtimeNs|null, configMtimeNs|null, store|null, hunks, baseline?}
 refusal  {type:"trackReviewFailed", reqId, verb, code, error}
 ```
@@ -242,7 +252,10 @@ refusal  {type:"trackReviewFailed", reqId, verb, code, error}
 curFrom, curTo, baseFrom, baseTo, oldText, newText, anchor`, sorted by offset. `baseline`, the
 clean text with every suggestion rejected (`engine.baselineOf`), is the whole file and is returned
 only when the request asks for it. `trackedBy` is `{kind: "file"|"folder"|"inherited", entry}` or
-null, so the panel can say which `config.json` entry covers the file. `configMtimeNs` is null
+null, so the panel can say which `config.json` entry covers the file. `agentTooling` is
+`"present"` or `"absent"` for the agent-side CLIs on the owning kernel; when absent the panel
+works but warns that the session cannot reply until track-changents' `install.sh` has run there.
+`configMtimeNs` is null
 when `config.json` does not exist; the client sends `""` for null, the same convention as
 `storeMtimeNs`. The browser builds its cards from `store` and `hunks`; no card model crosses the
 wire.
@@ -263,8 +276,8 @@ the same way, since it writes `config.json`, not the sidecar, and the host scrip
 re-issues `status`, re-renders, and retries by stable op or thread id, surfacing a second refusal
 verbatim. Nothing merges.
 
-Refusal codes name the resolved path, tilde-collapsed: `no-host` (tooling absent on the owning
-kernel; `status` returns it quietly and Review never appears), `no-node`, `no-root`,
+Refusal codes name the resolved path, tilde-collapsed: `no-node` (node absent on the owning
+kernel; `status` returns it quietly and Review never appears), `no-root`,
 `editing-off` (an `error` containing the phrase "file editing is off", the regex the viewer
 already matches, phrased for review: cannot write the review for the file, dashboard file
 editing is off on this machine), `store-moved`, `file-moved`, `config-moved`,
@@ -279,17 +292,15 @@ list, a 10 s timeout, in a thread as `fileGitLink` does so the receive loop neve
 `kernel.py:5391`); parse one JSON object from stdout; a non-zero exit or bad stdout becomes
 `trackReviewFailed` with the stderr tail. The kernel never exports `TRACKCHANGES_ROOT` (it would
 override every file's root for the CLIs, survey item A8). The authenticated `/defaults` payload
-the gear already reads reports the review verdict per kernel (`ok`, `no-host`, or `no-node`), not
+the gear already reads reports the review verdict per kernel (`ok`, `no-node`, or `agent-tooling-absent`), not
 `/version`, which is served before authorization.
 
-**The host script** (`tools/track-review-host.mjs` in this repo, about 250 lines; see open
-question 3 for the alternative home) finds the track-changents checkout as
-`dirname(dirname(realpath(~/.claude/hooks/track-edit.mjs)))`, since `install.sh` symlinks
-`~/.claude/hooks/track-edit.mjs` to `<checkout>/cli/track-edit.mjs`, or through a new romp-defined
-override for installs that never ran `install.sh` (track-changents defines only
-`TRACKCHANGES_ROOT` and `TRACKCHANGES_SESSION`). It imports `store-io.mjs`, `engine.js`, and the
-`addReply` function of `cli/track-reply.mjs` by file URL from that root (the package's exports
-map covers `./store-io` and `./engine` but not `./cli/*`). It performs each verb as one
+**The host script** (`tools/track-review-host.mjs` in this repo, about 250 lines; decision 3)
+imports `store-io.mjs`, `engine.js`, and the `addReply` function of `cli/track-reply.mjs` from the
+copy of track-changents vendored into this repo (see Vendoring below), so the kernel side needs no
+track-changents install on the owning kernel. It also reports whether the agent-side tooling is
+installed there, by the presence of `~/.claude/hooks/track-reply.mjs` (placed by track-changents'
+`install.sh`), since the session cannot answer a review without it. It performs each verb as one
 load-mutate-write in a single process: root discovery, sidecar path, the load-time rebase that
 re-places ops after external edits, anchor location, thread construction, accept and reject
 through the engine, fingerprint, atomic write, prune-when-empty. For `comment` it builds the
@@ -381,6 +392,49 @@ gains the ping body and the review trace body in its rendered set. The skill's p
 should gain one sentence saying a ping may list several threads (a change in the track-changents
 repo, by its author).
 
+### Vendoring
+
+The user ruled to vendor now rather than wait for track-changents to be public (the user
+2026-09-05). `vendor/track-changents/` holds a pinned copy of the MIT core with its LICENSE and
+source commit: `engine.js`, `display.js`, `protocol.js`, `store-io.mjs`, `cli/track-reply.mjs`
+(for `addReply`), `obsidian/src/track-cm.js`, `obsidian/src/track-logic.js`, and the decorations
+block of `obsidian/src/track-snapshot.js` adapted as described in Slice 5. The host script imports
+the node modules from it, and the review and editor chunks bundle the browser modules from it, so
+the kernel side and the browser side depend on nothing outside this repo. A test fails when a
+checkout of track-changents is present on the machine and its files differ from the vendored
+copy, so drift is seen rather than discovered. The agent-side tooling (the four CLIs, the guard
+hook, the skill) stays a per-machine install of track-changents for now; open question 1 asks
+whether romp should ship and install it too, which the user's plan to offer the whole feature
+upstream argues for.
+
+### The review log
+
+Comments persist in the sidecar, but the sidecar forgets accepted and rejected suggestions and
+deletes itself when a file has nothing pending, so a review would leave no record in git. The user
+asked for one (the user 2026-09-05). The host script therefore keeps an append-only log beside the
+sidecar, `<root>/.trackchanges/<encodeURIComponent(relpath)>.review.jsonl`, committed with the
+directory like everything in it and outside the v3 contract: the other hosts' directory scans
+match only `.json` names (`store-io.mjs:365`, and the Obsidian host's park scan), so they never
+read it, and the VS Code host reads only the sidecar path. One JSON object per line, each with
+`ts` (stamped by the host script on the owning kernel), `kind`, and `author`:
+
+- `send`: the review as sent, with `sid`, the thread ids, the `desc` and `body` of each, the
+  counts accepted and rejected since the previous send, and `queued`.
+- `accept` and `reject`: the op ids and their `oldText` and `newText` at the time, so a decision
+  survives the op leaving the sidecar.
+- `set-tracked`: the entry written or removed.
+
+`trackReviewSend` appends its entry after a sent or queued reply, never after a refusal; the
+accept and reject verbs append theirs in the same process as the sidecar write. The host script
+never rewrites or prunes the log. It serves two readers. The panel shows it as a History section,
+one row per entry, so the user can see what was sent and decided on earlier mornings. And it
+replaces any browser-held state for what is unsent: the watermark is the largest thread or reply
+`ts` recorded in the last `send` entry, a `you` comment or reply is unsent when its `ts` is
+later, and accepts and rejects since the last send are counted from the log. A browser crash, a
+second browser, or a fresh machine all see the same answer, which resolves the user's concern
+about a browser-local ledger (decision 10). The log is machine-readable by design; a rendered
+export for reading on GitHub can follow if wanted (open question 2).
+
 ### Consent, trace, routing
 
 Every verb that writes disk, sidecar included, sits behind the file-editing consent
@@ -388,7 +442,7 @@ Every verb that writes disk, sidecar included, sits behind the file-editing cons
 the sidecar is a committed file in the user's repo. The first review triggers the existing popup
 once. That popup's copy promises the session is told when the user edits under it
 (`file-view.ts:460-463`); Slice 1 amends it for the review case, since comments reach the
-session only when the review is sent (open question 5).
+session only when the review is sent (decision 5).
 
 Verbs that change file bytes (`reject`, `reject-all`, `save`) send a review-specific trace to the
 session whose cwd contains the file, first person like `_edit_trace_body`: I rejected N of your
@@ -454,18 +508,14 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   suggestions rather than coalescing into a pending insertion. The sequence is fixed: the message
   is built from the current sidecar, then `set-tracked`, then `accept-all`, then
   `trackReviewSend` with `tracked` set to the post-toggle verdict; a refusal at any step aborts
-  the sequence before the send and shows the refusal. One review per file: when a todo names
+  the sequence before the send and shows the refusal; the review log entry is appended after
+  the send succeeds or queues. One review per file: when a todo names
   several files, the first send answers it and later sends for the other files show no todo
   checkbox.
-- **What counts as unsent.** The sidecar carries no send state (choice 1), so the client keeps a
-  per-sidecar ledger in `localStorage` keyed by the sidecar's `id`: `{lastSentTs, accepted,
-  rejected}`. `lastSentTs` is set to the largest `ts` among the threads and replies included in
-  the send, read from the sidecar, never from the browser clock, since the host script stamps
-  `ts` on the owning kernel. A comment or reply counts when its author is `you` and its `ts` is
-  after `lastSentTs`; accepts and rejects are tallied by the panel and reset on a successful send;
-  a refusal leaves the ledger unchanged. A browser with no ledger offers every `you` thread that
-  has no agent reply. The confirm always lists what goes, so a stale count is visible before it
-  is sent.
+- **What counts as unsent** is derived from the review log on the owning kernel (see The review
+  log), never from browser state: `you` comments and replies with a `ts` later than the last
+  send's watermark, plus the accepts and rejects logged since. The `status` reply carries the
+  derivation, and the confirm always lists what goes.
 - **Edit while changes are pending** (Slices 1 to 4): the Edit button refuses with a one-line
   reason naming the count of pending changes, because a raw save over pending ops rewrites their
   offsets. In Slice 1 the reason says that accept and reject arrive with the next slice and that
@@ -602,10 +652,10 @@ row and panel). The action row itself stays registry-only. `track-review.ts` reg
   (`kernel.py:34486-34493`); the shell forwards `todoId`, `files.ts` passes it to
   `openFileView(path, sid, {todoId})`, and relative paths resolve on the kernel through
   `_resolve_open_path`. When the pane is not framed by the shell, the detail stays plain text.
-- From the viewer: the Review action, for any file under a track-changents root on a machine
-  whose kernel reports the tooling. If Review is missing, the gear's row beside "File links open
-  in" names the machine and the reason (`no-host` or `no-node`), and the guide says to look
-  there.
+- From the viewer: the Review action, for any file under a root (`.git/`, `.obsidian/`, or
+  `.trackchanges/`) on a machine whose kernel has node. If Review is missing, the gear's row
+  beside "File links open in" names the machine and the reason (`no-node`), and the same row
+  warns when the agent-side tooling is absent; the guide says to look there.
 - From the chat: a file link on a tracked file opens the viewer as today; Review is one click
   further.
 - An ended session's todo is hidden from Waiting on you until the session is revived, since the
@@ -616,8 +666,11 @@ row and panel). The action row itself stays registry-only. `track-review.ts` reg
 
 ## Build slices
 
-Each slice is independently useful and lands as its own fork PR with an adversarial review pass.
-Sizes are approximate new lines, webview TypeScript / kernel Python / node.
+The user ruled that all six slices are built in one push (the user 2026-09-05), leaving how to
+staff and sequence it to the implementing session, with a dedicated new session suggested. Each
+slice stays independently useful and lands as its own fork PR with an adversarial review pass, in
+the order below unless the implementing session finds a reason to reorder. Sizes are approximate
+new lines, webview TypeScript / kernel Python / node.
 
 ### Slice 0: from the morning todo to the report in one click
 
@@ -649,7 +702,7 @@ thread cards; Comment on a selection in either view of any text format; Comment 
 a standalone image or PDF; highlights in both views; replies from `track-reply` appearing within
 the poll interval; Send review as one message with two of the confirm checkboxes (answer the
 todo, turn Track changes on); the Edit refusal while suggestions are pending; the gear row
-reporting the review verdict.
+reporting the review verdict; a History section in the panel from the review log.
 
 Acceptance: the criteria under Commenting from either view; a first comment on a clean file
 creates `.trackchanges/` and the sidecar exactly where `storePathFor` puts it; the toggle writes
@@ -659,18 +712,19 @@ retries; the Send review text carries the `[obsidian-diff]` prefix, the absolute
 thread id in the form the skill describes, and the kernel and webview builders produce identical
 text for one and for several threads; a send with `todoId` follows the helper's branches (switch
 off, settled, ended, and the send arm's parked, sent, and refused outcomes); the first mutating
-click triggers the consent popup once; on a live SDK session the guard denies a raw Write on a
+click triggers the consent popup once; the review log gains a `send` entry after each send and
+the unsent count is derived from it; on a live SDK session the guard denies a raw Write on a
 tracked fixture and `track-config` answers.
 
 Files: new `ui/webview/track-review.ts` (registration, panel, highlight pass and the two mapping
-walks, Comment button, poll, ledger, send composer), `tools/track-review-host.mjs` and its node
-tests, `tests/test_track_review.py`, `ui/webview/track-review.test.ts`; touched:
+walks, Comment button, poll, History, send composer), `vendor/track-changents/` with its pin and
+drift test, `tools/track-review-host.mjs` and its node tests, `tests/test_track_review.py`, `ui/webview/track-review.test.ts`; touched:
 `kernel/kernel.py` (the two ops, the shared todo-answer helper, the `/defaults` verdict),
 `file-view.ts` (the seam above), `files.ts` (the `/sessions` color map), `gear.js` (the verdict
 row), `styles.css` and `files-pane.css` (about 80 lines adapted from the Obsidian host's
 stylesheet, mapped to `--accent`, `--bg`, `--fg`), `docs/guide.md`. track-changents code reused
-unchanged: `store-io.mjs`, `engine.js` (`makeAnchor`, `locateAnchor`, `toHunks`, `baselineOf`),
-`addReply`. Size: ~600 to 750 for `track-review.ts` (the Rendered walk is the largest part) plus
+unchanged from the vendored copy: `store-io.mjs`, `engine.js` (`makeAnchor`, `locateAnchor`,
+`toHunks`, `baselineOf`), `addReply`. Size: ~600 to 750 for `track-review.ts` (the Rendered walk is the largest part) plus
 ~110 to 140 for the seam and ~30 for `files.ts` and the relay / ~150 / ~250, plus about 150 lines
 of tests on each side.
 
@@ -713,9 +767,8 @@ flips the thread to stale by `hash`; the rectangle re-paints correctly at any vi
 
 Files: `track-review.ts` (the overlay, the drag, the crop), `file-view.ts` (a hook exposing the
 rendered image elements), the host script (`comment` accepts `target`; `hash` computed from the
-bytes), `kernel.py` (none beyond passing the field), CSS. Dependency: the `target` field
-documented in the track-changents README by its author; the non-text refusal in the guard and
-`track-edit`. Size: ~250 / ~10 / ~40.
+bytes), `kernel.py` (none beyond passing the field), CSS. Dependency: the non-text refusal in the guard and `track-edit`; the `target` field is romp-only
+(decision 13). Size: ~250 / ~10 / ~40.
 
 ### Slice 4: PDFs rendered in the viewer, with page and region comments
 
@@ -729,7 +782,7 @@ on pdf.js (Apache-2.0, matching romp's license), in the same on-demand pattern a
 chunk, loaded only when a PDF opens; the fallback for a failed chunk load is today's frame with
 file-level comments only. Alternative: rasterize pages on the owning kernel with a command-line
 tool and serve page images, which avoids a browser dependency at the cost of a kernel-side tool
-and a new route (open question 12).
+and a new route (decision 12).
 
 Acceptance: pages render within the viewer's text cap policy for PDFs (a stated size cap, loudly
 refused above it); a region thread carries `target {kind: "pdf", page, region, hash}`; a
@@ -757,13 +810,13 @@ moved and keeps the buffer; `editor-lazy.test.ts` pins that the main bundles sta
 
 Files: `editor-chunk.ts` (a typed `track` mount option curated inside `extensionsFor`,
 `editor-chunk.ts:113-135`, consumed only by `file-view.ts`; the header doctrine comment names
-it), a new lazy `review-chunk` esbuild entry bundling the engine, the 78-line CodeMirror state
-field (`obsidian/src/track-cm.js`, unchanged), the decorations block
+it), a new lazy `review-chunk` esbuild entry bundling, from the vendored copy, the engine, the
+78-line CodeMirror state field (`obsidian/src/track-cm.js`, unchanged), the decorations block
 (`obsidian/src/track-snapshot.js:433-839`) together with `obsidian/src/track-logic.js` (215
 lines of display-planning and click and layout helpers the block calls), with the one Obsidian
 read at `:595-596` replaced by a constant and the `mouseover` handler at `:774-781` fixed to take
 the editor view (survey A6), `file-view.ts` `doSave` sending the `save` verb instead of
-`saveFile` when Review is active. Size: ~500 / ~60 / ~40, plus the vendoring decision. Lowest
+`saveFile` when Review is active. Size: ~500 / ~60 / ~40. Lowest
 confidence of the six; it is the one slice that touches the editor chunk's contract.
 
 ### Optional: per-thread fork dispatch
@@ -828,9 +881,10 @@ payload rather than `/version`.
 - **Ended overnight session.** Its todo is hidden from Waiting on you and `_send_or_park` revives
   dormant sessions, not ended ones (`kernel.py:24047-24062, 12227-12234`). Mitigation: the guide
   note above; Send review surfaces the refusal; the review is already on disk.
-- **Prerequisites on the owning kernel** (node on the kernel's PATH, track-changents installed,
-  the file under a root). Mitigation: `no-host` and `no-node` are explicit no-verdicts surfaced
-  in the gear; Review never appears broken. Node on the kernel's PATH under every service unit
+- **Prerequisites on the owning kernel** (node on the kernel's PATH for the host script, the
+  agent-side tooling installed for the session to reply, the file under a root). Mitigation:
+  `no-node` and the agent-tooling warning are explicit verdicts surfaced in the gear and the
+  panel; Review never appears broken. Node on the kernel's PATH under every service unit
   is unverified and is the first thing Slice 1 checks.
 - **Tracking inheritance.** The CLIs treat notes reachable through whole-line links and embeds as
   tracked (`store-io.mjs:100-197`). Mitigation: the host script uses `isTrackedFile`, the same
@@ -860,7 +914,8 @@ payload rather than `/version`.
 Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
 
 - `tests/test_track_review.py` (the `tests/test_savefile.py` hermetic pattern): path resolution,
-  consent refusal before content checks, host discovery and `no-host`, timeout and bad-stdout
+  consent refusal before content checks, the vendored import path, `no-node` and the
+  agent-tooling verdict, timeout and bad-stdout
   handling, `sid` routing, trace after reject and not after comment, the todo helper's branches
   (switch off, settled, ended, and the send arm's parked, sent, and refused outcomes, plus the
   handler's own unchanged behavior), ping text for one and several threads and for `tracked` on
@@ -872,7 +927,10 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   rollback when the file write fails, including removal of a sidecar the verb created; fence
   refusals with `""` and with a stale value; nothing written on `v: 4` or unparseable JSON;
   `comment` with an ambiguous anchor refuses; a file-level thread and a `target` thread round-trip
-  through `store-io` unchanged; `set-tracked off` on an inherited file refuses.
+  through `store-io` unchanged; `set-tracked off` on an inherited file refuses; the review log
+  gains one entry per send, accept, reject, and toggle, is never rewritten, and the unsent
+  derivation from it matches the panel's; the vendored copy matches a present checkout (the
+  drift test).
 - `ui/webview/track-review.test.ts`: source pins (registry entry, both ops carry `sid`, one
   `delegate()` root, string mtime comparison, no client-computed sidecar path, keyed expand
   state), pure tests for the card model, the unsent-ledger derivation, the Raw and Rendered
@@ -891,8 +949,9 @@ notes the linked path and the ended-session case; "Files" (`:126-138`) gains the
 the consent gate the guide omits today, commenting in either view and on images and PDFs, and
 where to look when Review is missing. `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the morning loop and the node plus track-changents
-requirement on the owning kernel. In track-changents (its author): README "Hosts" gains romp and
-the thread shape gains `target`; the skill's ping paragraph gains the batched form.
+requirement on the owning kernel. In track-changents (its author): README "Hosts" gains romp; the skill's ping paragraph gains
+the batched form. In this repo, `vendor/track-changents/README.md` records the source commit and
+what was adapted.
 
 ## Deliberately not in v1
 
@@ -902,75 +961,78 @@ viewer or editor extension API; rendering HTML files (the viewer serves them as 
 design); text-quote anchors inside PDFs (the CLIs cannot read a PDF's text, so PDF comments are
 file-level or region); the Obsidian host's embed trees, explorer badges, status bar, multi-pane
 sync, and vault rename re-keying; a scheduler for overnight work; changes to the Obsidian and VS
-Code hosts beyond the documented `target` field; inline deletions in the Rendered view; undo of
+Code hosts; inline deletions in the Rendered view; undo of
 accept and reject before Slice 5; multi-file review batching (one review per file).
 
 ## Dependencies
 
-On the owning kernel: node on the kernel's PATH; track-changents installed through its
-`install.sh` (the `~/.claude/hooks/` symlinks are how the kernel finds the checkout and how the
-skill invokes the CLIs); the file inside a root with `.git/`, `.obsidian/`, or `.trackchanges/`;
-the report's path or folder listed in `config.json` before the session writes it; the User todos
-switch on for the morning todo to exist; the file-editing consent given once. On track-changents'
-author: the A1 fix in both CLIs before Slice 1 ships; the skill sentence and the README row; the
-`target` field documented before Slice 3; the non-text refusal in the guard and `track-edit`
-before folders holding figures are tracked; for Slice 5, the vendoring decision. For Slice 4, the
-PDF rendering dependency. The feature is fork-only until track-changents is public, since it
-depends on that repo's CLIs.
+On the owning kernel: node on the kernel's PATH; for the session to answer a review, the
+agent-side tooling installed through track-changents' `install.sh` (the CLIs, the guard, and the
+skill under `~/.claude/`), until romp ships them itself (open question 1); the file inside a root
+with `.git/`, `.obsidian/`, or `.trackchanges/`; the report's path or folder listed in
+`config.json` before the session writes it; the User todos switch on for the morning todo to
+exist; the file-editing consent given once. On track-changents' author: the A1 fix in both CLIs
+before Slice 1 ships (or the same fix applied in the vendored copy and offered back); the skill
+sentence; the non-text refusal in the guard and `track-edit` before folders holding figures are
+tracked. For Slice 4, the PDF rendering dependency. The `target` field and the review log are
+romp-only and need nothing from the author.
+
+## Decisions (the user, 2026-09-05)
+
+The user reviewed the first full draft on GitHub and ruled on its open questions. Recorded here
+so the document stands on its own, each with the reasoning it was given.
+
+1. **Slice order and cadence.** All six slices are built in one push; the order in Build slices
+   is the default landing order, and the implementing session decides staffing, with a dedicated
+   new session suggested. The fork dispatch stays parked until asked for.
+2. **Write path.** The node host script on the owning kernel, over track-changents' `store-io`
+   and engine unchanged. A second implementation of a cross-tool contract is where shared files
+   get corrupted.
+3. **Where the host script lives.** In this fork, importing the vendored copy. The user intends
+   to offer the whole feature upstream to romp eventually, so everything it needs is built into
+   this repo first and offered to track-changents later.
+4. **Vendoring.** Now, without waiting for track-changents to be public: the MIT core pinned to a
+   commit under `vendor/track-changents/` (see Vendoring).
+5. **Consent scope.** Every mutating verb, sidecar-only included, behind the one file-editing
+   consent, with the popup's copy amended so it stays true for comments.
+6. **Human author label.** `you`, so one person is one author across hosts; no `authorId`.
+7. **Trace policy.** A review-specific trace after `reject`, `reject-all`, and `save`; nothing
+   after sidecar-only verbs, since the review message is the notification for comments.
+8. **Send review defaults.** All confirm checkboxes checked by default, each visible before the
+   send.
+9. **Per-reply pings.** Batch only.
+10. **The unsent state.** Not browser-local. The user asked whether a browser crash could lose the
+    review. It could not, since comments and suggestions live in the sidecar on disk, but the
+    send watermark would have been lost. The review log now holds it on the owning kernel (see
+    The review log), so no review state lives in the browser.
+11. **Turning tracking off on an inherited file.** Refuse with the parent named.
+12. **PDF rendering.** The lazily loaded pdf.js chunk, with the browser's frame as the fallback.
+13. **The region field.** Built romp-only for now; documenting it for the other hosts is a later
+    offer, not a dependency.
+14. **The Slice 5 doctrine question.** Yes: a typed, internal `track` option in the editor chunk,
+    with the header updated.
 
 ## Open questions for the user
 
-1. **Slice order.** 0, 1, 2, then 3 (image regions), 4 (PDFs), and 5 (live editing), each as its
-   own PR, or live editing before the region slices? Recommended: the order as written, since
-   the morning report is text plus figures and live editing serves it least; the fork dispatch
-   stays parked until asked for.
-   [KVS: we should build the whole thing 0-5 in one push, but this will be up to romp-general to determine (I recommend romp-general spin off a new romp session to work on this project]
-3. **Write path.** A node host script on the owning kernel using track-changents' `store-io` and
-   engine unchanged, or a Python reimplementation of the sidecar I/O in the kernel? Recommended:
-   the host script; a second implementation of a cross-tool contract is where shared files get
-   corrupted.
-   [KVS: ok]
-5. **Where the host script lives.** In this fork (`tools/track-review-host.mjs`, importing the
-   installed checkout by file path), or in the track-changents repo as a fifth CLI? Recommended:
-   this fork, so the implementing session ships it without a cross-repo dependency; offer it to
-   track-changents later. [KVS: yes we should build it all into our romp, can offer later. I plan ultimately to offer this whole feature upstream to romp]
-6. **Vendoring.** None in Slices 0 to 4; if Slice 5 is approved, vendor the engine, display
-   planner, protocol constants, the CodeMirror field, and the logic helpers (MIT, about 1,500
-   lines) pinned to a commit, or require the package to be public first? Recommended: vendor,
-   unless it is public by then. [KVS: no need to wait for it to be public, vendor]
-7. **Consent scope.** Every mutating verb, sidecar-only included, behind the one existing
-   file-editing consent, or sidecar-only verbs ungated since they change no file bytes?
-   Recommended: the former, one mental model, with the popup's copy amended so it stays true for
-   comments (the session learns of them when the review is sent). [KVS: agreed]
-8. **Human author label.** `you`, matching the VS Code host's default so one person is one author
-   across hosts, or `reviewer`, which reads better in the agent's message? Recommended: `you`; no
-   `authorId`. [KVS: agree that we should maintain one author across hosts]
-9. **Trace policy.** A review-specific trace after `reject`, `reject-all`, `save` and nothing
-   after sidecar-only verbs, or a trace after every write? Recommended: the former; the review
-   message is the notification for comments. [KVS: agree]
-10. **Send review defaults.** The confirm checkboxes (answer the todo, turn tracking on, accept
-   pending changes as reviewed) all checked by default, or off by default? Recommended: checked;
-   each is visible in the confirm before the send. [KVS: agree]
-11. **Per-reply pings** (the VS Code host's behavior; the Obsidian host's ping is a no-op stub in
-   its repo) in addition to the batch? Recommended: batch only. [KVS: agree]
-12. **The unsent ledger.** Browser-local per sidecar id (a second browser offers every `you`
-    thread without an agent reply), or mirrored in the kernel's state directory so two browsers
-    agree? Recommended: browser-local; the confirm always lists what goes. [KVS: hmm isn't there a risk then all suggestions will be lost if there is a browser crash or something?]
-13. **Turning tracking off on an inherited file.** Refuse with the parent named, or write the
-    file into the `untracked` veto list? Recommended: refuse in v1; the veto list is a
-    track-changents behavior the guide does not explain yet. [KVS: agree]
-14. **PDF rendering.** A lazily loaded pdf.js chunk in the browser, or page rasterization on the
-    owning kernel served as images? Recommended: the chunk, since it keeps the kernel free of a
-    new tool and follows the editor chunk's pattern; the frame stays as the fallback. [KVS: agree]
-15. **The region field.** Propose `target {kind, region, page?, hash}` to the track-changents
-    author now, before Slice 3, or build it romp-only and document it later? Recommended:
-    propose now, so the other hosts can choose to render it. [KVS: build it romp-only for now]
-16. **The Slice 5 doctrine question**: a curated `track` option in the editor chunk. Yes, typed
-    and internal with the header updated, or no live editing over pending changes at all?
-    Recommended: yes. [KVS: agree]
+Two questions follow from the rulings.
+
+1. **Ship the agent-side tooling with romp?** With the core vendored, only the four CLIs, the
+   guard hook, and the skill still come from a per-machine track-changents install. Should romp
+   vendor those too and have its installer link them into `~/.claude/`, as track-changents'
+   `install.sh` does, so a machine that runs romp can run the whole loop with nothing else
+   installed? Recommended: yes, in Slice 1, since the plan to offer the feature upstream needs
+   the loop to be self-contained; the A1 fix and the non-text refusal then land in the vendored
+   copy and are offered back to the author.
+2. **The review log's shape.** One JSON object per line in `.trackchanges/`, rendered by the
+   panel's History section, or a markdown log beside the report for reading on GitHub?
+   Recommended: the JSON lines file, since it is what the unsent computation reads and it keeps
+   the report's folder clean; a markdown export can be added to the panel later if reading it on
+   GitHub matters.
 
 ## Upstream
 
-Slice 0 is a pure romp change and a candidate upstream row. Slices 1 to 5 depend on a private
-repo's tooling and stay fork-only until that changes; the offer decisions belong to the offer
-flow, not this plan.
+The user intends to offer the whole feature upstream to romp eventually (the user 2026-09-05).
+The vendoring decision makes the kernel and browser sides self-contained; shipping the agent-side
+tooling with romp (open question 1) would make the loop self-contained too. Until then Slice 0 is
+the one pure romp change and a candidate upstream row on its own; the offer decisions belong to
+the offer flow, not this plan.
