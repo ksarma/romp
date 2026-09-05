@@ -451,6 +451,26 @@ class HelperSessionsConverge(_CommandMode):
         self.be.refresh_key_source()
         self.assertEqual(self.be.cycle_key(SID), "cycling")
 
+    def test_a_login_pick_beside_a_set_that_carries_a_key_converges_on_the_helper_not_the_key(self):
+        # the set has a key (other sessions inject it); THIS session picked login and its CLI still
+        # reported a key — the helper's. Its compare is the helper's fingerprint, never the set's key
+        self.values["ANTHROPIC_API_KEY"] = fixture_value("key")
+        self.print_set(self.values)
+        es._reset()
+        s = self._live("key", auth="login")
+        kw = self.connect(s)
+        self.assertNotIn("ANTHROPIC_API_KEY", kw["env"])
+        self.assertEqual(s._launched_key_fp, es.fingerprint(self.helper_value))
+        self.assertEqual(self.be.cycle_key(SID), "current")
+        self.values["ANTHROPIC_API_KEY"] = fixture_value("key2")   # the set's key rotates: not this session's concern
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(SID), "current")
+        self.helper(fixture_value("rotated"))                       # the helper rotates: it is
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(SID), "cycling")
+        self.assertEqual(self.reconnects, [SID])
+
     def test_a_keyed_session_converges_on_the_sets_key(self):
         k = fixture_value("key")
         self.values["ANTHROPIC_API_KEY"] = k

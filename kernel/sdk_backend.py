@@ -6626,14 +6626,18 @@ class SdkBackend:
                     reasons.append("the work key is now sha256:%s (launched on sha256:%s)"
                                    % (cur_fp or "(none)", stamped_key or "(none)"))
             elif helper_billed:
-                if kind == "helper" and cur_fp:
-                    if stamped_key != cur_fp:
+                # the helper's own fingerprint, whatever the set carries: this session was launched
+                # without the set's key (a login pick, or no key in the set) and its CLI found one
+                # through the helper — _options stamped the helper's output, so that is the compare
+                hfp, hreason = _envsrc.helper_fingerprint()
+                if hfp:
+                    if stamped_key != hfp:
                         reasons.append("the apiKeyHelper now prints sha256:%s (launched on sha256:%s)"
-                                       % (cur_fp, stamped_key or "(none)"))
+                                       % (hfp, stamped_key or "(none)"))
                 else:
                     reasons.append("its CLI bills through a helper the kernel could not fingerprint (%s), so "
                                    "there is nothing to converge on — its new process re-runs the helper"
-                                   % (_envsrc.helper_fingerprint()[1] or "no fingerprint"))
+                                   % (hreason or "no fingerprint"))
             if stamped_role != cur_role:
                 reasons.append("the role variables are now sha256:%s (launched with sha256:%s)"
                                % (cur_role or "(none)", stamped_role or "(none)"))
