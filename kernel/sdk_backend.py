@@ -2085,19 +2085,28 @@ def is_launch_limit(text: str) -> bool:
 
 
 def task_death_notice(tasks: list) -> str:
-    """The visible romp notice for BACKGROUND TASKS that died with their claude process. Bg tasks are
-    the CLI's children, so a kernel restart or CLI crash silently kills a session's timers/watchers —
-    and a session idle-waiting on one would wait FOREVER for a completion notification that can never
-    arrive (nimbus's dead campaign watcher, the user 2026-07-11). The notice names what was lost (the
-    task descriptions from the lifecycle stream) so the session can relaunch exactly what still
-    matters. Enqueued by _on_session_gone (CLI died, kernel alive) or the boot reconcile (kernel died;
-    read from the reg's bgTasks mirror)."""
+    """The visible romp notice for BACKGROUND TASKS a session lost when its claude process ended. Bg
+    tasks are the CLI's children, so a kernel restart or CLI crash cuts a session off from its
+    timers/watchers — and a session idle-waiting on one would wait FOREVER for a completion
+    notification that can never arrive (nimbus's dead campaign watcher, the user 2026-07-11). The
+    notice names what was lost (the task descriptions from the lifecycle stream) so the session can
+    relaunch exactly what still matters. Enqueued by _on_session_gone (CLI died, kernel alive) or the
+    boot reconcile (kernel died; read from the reg's bgTasks mirror).
+
+    It says "cut off", not "died" (2026-09-05): under the per-session scopes (cli_scope_supported) a
+    task's tool shell can outlive the CLI — the process may well still be running, and the session
+    that relaunches it blind runs two. So the ask is to check first. The voice is the person the
+    session works for; the only romp noun is the sanctioned [romp] prefix (test_injected_voice)."""
     n = len(tasks)
     descs = "; ".join(d for d in ((t.get("desc") or "").strip() for t in tasks[:4]) if d)
+    one = n == 1
     return ("<!-- romp-injected --><!-- romp-system -->[romp] %d background task%s this session had "
-            "running died with its claude process (a restart or crash)%s. Their completion "
-            "notifications will never arrive — relaunch any that are still needed, or carry on if "
-            "they aren't." % (n, "" if n == 1 else "s", (": " + descs) if descs else ""))
+            "running %s cut off from the session when its claude process ended (a restart or crash)%s. "
+            "%s completion notification%s will never arrive. Check whether %s still running before "
+            "relaunching %s; if %s needed, carry on."
+            % (n, "" if one else "s", "was" if one else "were", (": " + descs) if descs else "",
+               "Its" if one else "Their", "" if one else "s", "it is" if one else "each is",
+               "it", "it isn't" if one else "they aren't"))
 
 # The marker only SDK-driven claude CLIs carry (the kernel drives them over stdin); a tmux session's
 # interactive `claude --resume` never has it, so the orphan reap can never touch a tmux CLI.
