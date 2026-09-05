@@ -338,24 +338,38 @@ def _explain(status):
 def _mode_mismatch(body, local_mode, out):
     """The kernel and this shell resolve DIFFERENT modes: ROMP_CREDENTIAL_COMMAND is set for one and not
     the other. The kernel decides its mode ONCE, when it starts (envsource.pin_mode), from its
-    environment (the unit's) and service.env; this shell reads its own environment and then
-    service.env now — so the usual cause is an edit the running kernel has not seen, and the fix is
-    the kernel restart that reads it (`romp refresh`; an edit to the unit's own Environment= lines
-    needs the manager restart). Names the variable and the two places; never a value."""
+    environment and then service.env; this shell reads its own environment and then service.env
+    now. Under the installed service the kernel's environment is the manager's, which holds every
+    service.env line as of the MANAGER's start (systemd's EnvironmentFile=) plus the unit's own
+    Environment= lines, and every kernel inherits it. So which restart makes the two agree depends
+    on where the variable is, and the line says which case applies: a line ADDED to service.env
+    reaches the next kernel (`romp refresh`; the kernel reads the file itself); a line REMOVED from
+    service.env is still in the manager's environment, which a new kernel inherits, so leaving
+    command mode takes a manager restart; a value in this shell's environment alone reaches no
+    kernel. Names the variable and the places; never a value."""
     kmode = body.get("keySource") or "file"
     out("kernel      reads %s in %s mode" % (_sha(body.get("keyFp") or ""), kmode.upper()))
     if kmode == "command":
-        out("MISMATCH    the kernel is in command mode and this shell is not: ROMP_CREDENTIAL_COMMAND was set when the")
-        out("            kernel started (the unit or service.env) but is not in this shell's environment or in")
-        out("            service.env now. A running kernel keeps the mode it started in. If the line was removed,")
-        out("            `romp refresh` restarts the kernels into file mode; if it should be set, put it back in")
-        out("            service.env (this shell reads it from there).")
+        out("MISMATCH    the kernel is in command mode and this shell is not: the kernel's environment carries")
+        out("            ROMP_CREDENTIAL_COMMAND (the unit's Environment= line, or a service.env line the manager loaded")
+        out("            when it started) and this shell's environment and service.env do not carry it now. A running")
+        out("            kernel keeps the mode it started in. To leave command mode, restart the manager (`systemctl")
+        out("            --user restart romp-manager`, or `romp-service install`): its environment still carries the")
+        out("            variable, so `romp refresh` alone starts kernels that inherit it and stay in command mode. If")
+        out("            the line should be set, put it back in service.env (this shell reads it from there).")
+    elif es.command({}):
+        # the file carries the line (an empty environ reads the file alone): the kernel reads the file
+        # at its start, so the kernel restart is enough
+        out("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in service.env")
+        out("            and was not when the kernel started. A running kernel keeps the mode it started in: `romp refresh`")
+        out("            restarts the kernels into command mode (a kernel reads service.env at its start, so a line added")
+        out("            there needs no manager restart). Until then the kernel injects no set.")
     else:
-        out("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set here (this")
-        out("            shell's environment or service.env) but was not when the kernel started. A running kernel")
-        out("            keeps the mode it started in: `romp refresh` restarts the kernels into command mode (an")
-        out("            edit to the unit's own Environment= lines needs `systemctl --user restart romp-manager`);")
-        out("            until then the kernel injects no set.")
+        out("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in this shell's")
+        out("            environment only, not in service.env, so a restarted kernel would not see it either. A running")
+        out("            kernel keeps the mode it started in. Put the line in service.env, then `romp refresh` restarts the")
+        out("            kernels into command mode; a line in the unit's own Environment= reaches them at the next manager")
+        out("            restart (`systemctl --user restart romp-manager`). Until then the kernel injects no set.")
     return 1
 
 
@@ -494,8 +508,9 @@ def _kernel_lines(body, st, out):
         out("            makes the kernel re-run it now.")
     else:
         out("            Usual causes: the service environment (service.env, or the unit) carries other")
-        out("            ROMP_CREDENTIAL_* values than this shell — an edit to service.env reaches the kernel at")
-        out("            its next start (`romp refresh`), one to the unit at the next manager restart — the two")
+        out("            ROMP_CREDENTIAL_* values than this shell (a line added to service.env reaches the kernel at")
+        out("            its next start, `romp refresh`; a line changed or removed there, or one in the unit, at the")
+        out("            next manager restart, whose environment holds the copy loaded at its start), the two")
         out("            resolve different selector files, or CLAUDE_CONFIG_DIR differs (the apiKeyHelper the")
         out("            kernel fingerprints is the one its own settings name).")
     return 1

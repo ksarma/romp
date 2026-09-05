@@ -452,6 +452,65 @@ EOF2
     [[ "$output" != *"$v"* ]]
 }
 
+# _split_env_words called directly: the function's text is taken from the script (running the script
+# would dispatch a subcommand) and defined in this shell, which has no `body` variable of its own.
+_load_split_env_words() { eval "$(sed -n '/^_split_env_words() {/,/^}/p' "$SVC")"; }
+
+@test "_split_env_words: splits its ARGUMENT from a caller with no body variable" {
+    # `local body="$1" ... n=${#body}` expanded ${#body} before local assigned body, so n was the
+    # length of the CALLER's body (0 here): nothing was printed. The one caller in the script happens
+    # to hold the same string in a variable of that name, which is why status never showed it.
+    _load_split_env_words
+    unset body
+    run _split_env_words 'A_TOKEN=x "B_TOKEN=y z" C=1'
+    [ "$status" -eq 0 ]
+    [ "$output" = $'A_TOKEN=x\nB_TOKEN=y z\nC=1' ]
+    body="short"                                              # a caller's shorter body: still the argument
+    run _split_env_words 'LONGER_TOKEN=a-value-longer-than-the-word-short D=2'
+    [ "$status" -eq 0 ]
+    [ "$output" = $'LONGER_TOKEN=a-value-longer-than-the-word-short\nD=2' ]
+}
+
+@test "_split_env_words: a backslash escapes the next character inside and outside quotes; an unterminated quote refuses the body" {
+    _load_split_env_words
+    unset body
+    run _split_env_words 'A_TOKEN=a\ b "B_TOKEN=c\"d e" C_TOKEN=\"f D=\\x'
+    [ "$status" -eq 0 ]
+    [ "$output" = $'A_TOKEN=a b\nB_TOKEN=c"d e\nC_TOKEN="f\nD=\\x' ]
+    run _split_env_words "'S_TOKEN=it\\'s' T=1"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'S_TOKEN=it\'s\nT=1' ]
+    run _split_env_words 'A_TOKEN=trail\'
+    [ "$status" -eq 0 ]
+    [ "$output" = 'A_TOKEN=trail' ]
+    run _split_env_words 'X=1 "A_TOKEN=open B_TOKEN=b'
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]                                          # nothing from the body, not even the words before the quote
+    run _split_env_words ""
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "status (Linux): an escaped quote in an Environment= value is a value, and an unterminated line names nothing" {
+    ROMP_OS_OVERRIDE=Linux "$SVC" install >/dev/null
+    local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
+    mkdir -p "$ROMP_SYSTEMD_DIR/romp-manager.service.d"
+    {
+        printf '[Service]\n'
+        # A_TOKEN's value carries an escaped quote followed by what looks like a second assignment: one word
+        printf 'Environment="A_TOKEN=%s\\" B_TOKEN=%s"\n' "$v" "$v"
+        # an unterminated quote: systemd ignores the assignment, and so does this (C_TOKEN is not named)
+        printf 'Environment="C_TOKEN=%s\n' "$v"
+        printf 'Environment=D_TOKEN=%s\n' "$v"
+    } > "$ROMP_SYSTEMD_DIR/romp-manager.service.d/env.conf"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"unit carries credential-shaped lines: A_TOKEN, D_TOKEN"* ]]
+    [[ "$output" != *"B_TOKEN"* ]]
+    [[ "$output" != *"C_TOKEN"* ]]
+    [[ "$output" != *"$v"* ]]
+}
+
 @test "status: a credential-shaped line in service.env is named, never shown" {
     export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
     local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"

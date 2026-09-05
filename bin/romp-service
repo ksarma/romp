@@ -269,24 +269,38 @@ _join_names() {   # " a b c " → "a, b, c"
     printf '%s' "${names// /, }"
 }
 
-_split_env_words() {   # <Environment= body> → one word per line, systemd's rule: whitespace-separated,
-    # a quoted stretch ("…" or '…') is part of ONE word with its quotes removed — so
-    # "A_TOKEN=x y" is one assignment, and B_TOKEN=b inside "NOT=a B_TOKEN=b" is a value, not a name
-    local body="$1" word="" q="" c i n=${#body} have=0
+_split_env_words() {   # <Environment= body> → one word per line, systemd's rule (systemd.syntax(7), Quoting):
+    # whitespace-separated; a quoted stretch ("…" or '…') is part of ONE word with its quotes removed, so
+    # "A_TOKEN=x y" is one assignment and B_TOKEN=b inside "NOT=a B_TOKEN=b" is a value, not a name; a
+    # backslash escapes the next character, inside and outside quotes (\" does not close a quote, "\ "
+    # does not split a word); an unterminated quote is the body systemd refuses ("ignoring"): nothing is
+    # printed for it and the status is 1. Approximate on purpose, since the output is NAMES: systemd's
+    # C-style escapes (\n, \xNN) become the character after the backslash, which can change a value but
+    # never which name an assignment sets. The assignments happen on separate lines: `local a=1 b=${#a}`
+    # expands ${#a} before `local` assigns a, so a one-line form read the CALLER's variable of that name.
+    local body word q c i n have out
+    body="$1"; word=""; q=""; have=0; out=""
+    n=${#body}
     for (( i=0; i<n; i++ )); do
         c="${body:i:1}"
-        if [[ -n "$q" ]]; then
+        if [[ "$c" == '\' ]]; then
+            (( i++ ))
+            (( i < n )) && word+="${body:i:1}"       # a trailing backslash escapes nothing
+            have=1
+        elif [[ -n "$q" ]]; then
             if [[ "$c" == "$q" ]]; then q=""; else word+="$c"; fi
         elif [[ "$c" == '"' || "$c" == "'" ]]; then
             q="$c"; have=1
         elif [[ "$c" == " " || "$c" == $'\t' ]]; then
-            [[ $have -eq 1 ]] && printf '%s\n' "$word"
+            [[ $have -eq 1 ]] && out+="$word"$'\n'
             word=""; have=0
         else
             word+="$c"; have=1
         fi
     done
-    [[ $have -eq 1 ]] && printf '%s\n' "$word"
+    [[ -n "$q" ]] && return 1                         # unterminated: the whole body is refused, no word of it
+    [[ $have -eq 1 ]] && out+="$word"$'\n'
+    printf '%s' "$out"
     return 0
 }
 

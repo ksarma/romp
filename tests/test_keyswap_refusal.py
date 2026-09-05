@@ -262,9 +262,16 @@ class NamedSwapRefused(_Env):
         rc, out, _err = self.run_cli()
         self.assertEqual(rc, 1)
         self.assertIn("kernel      reads sha256:%s in COMMAND mode" % fp, out)
-        self.assertIn("MISMATCH    the kernel is in command mode and this shell is not", out)
-        self.assertIn("A running kernel keeps the mode it started in", out)
-        self.assertIn("`romp refresh` restarts the kernels into file mode", out)
+        self.assertIn("MISMATCH    the kernel is in command mode and this shell is not: the kernel's environment carries", out)
+        self.assertIn("kernel keeps the mode it started in", out)
+        # leaving command mode is a MANAGER restart: the manager's environment still carries the
+        # variable (systemd loaded service.env into it at the manager's start), and a kernel `romp
+        # refresh` starts inherits it; the old advice named `romp refresh` for this case and was wrong
+        self.assertIn("To leave command mode, restart the manager (`systemctl", out)
+        self.assertIn("--user restart romp-manager`, or `romp-service install`)", out)
+        self.assertIn("`romp refresh` alone starts kernels that inherit it and stay in command mode", out)
+        self.assertNotIn("`romp refresh` restarts the kernels into file mode", out)
+        self.assertIn("put it back in service.env", out)
         rc, out, _err = self.run_cli("--cycle-all")
         self.assertEqual(rc, 1)
         self.assertIn("cycle       NOT DONE", out)

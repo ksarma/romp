@@ -403,10 +403,11 @@ in the unit) selects it; with the line absent nothing about file mode changes.
     ROMP_CREDENTIAL_TIMEOUT_S=15
 
 - `ROMP_CREDENTIAL_COMMAND` is a shell command line, and setting it is the
-  whole switch. The kernel decides the mode once, when it starts: a
-  `service.env` edit that adds or removes this line reaches the kernel at its
-  next start (`romp refresh`), never a running one, so its sessions, judges
-  and catalog fetch never straddle two key sources. The kernel runs the
+  whole switch. The kernel decides the mode once, when it starts, never
+  mid-life, so its sessions, judges and catalog fetch never straddle two key
+  sources. A line added to `service.env` reaches the kernel at its next start
+  (`romp refresh`); removing the line takes a manager restart (see [Two things
+  still need a restart](#two-things-still-need-a-restart)). The kernel runs the
   command as `/bin/sh -c <command> sh <selector>`, so the selector file's
   token is `$1`: `my-cmd "$1"` forwards it, a bare `my-cmd` never sees it. The
   command prints `NAME=VALUE` lines (an `export NAME=VALUE` line is accepted
@@ -430,7 +431,13 @@ in the unit) selects it; with the line absent nothing about file mode changes.
   Code reads as its own authentication or endpoint (`ANTHROPIC_AUTH_TOKEN`,
   `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`):
   a set carrying one would re-route or re-bill every session behind the one
-  door the mode keeps for the key.
+  door the mode keeps for the key. A legitimate `ANTHROPIC_BASE_URL` (a proxy
+  every session should use) belongs in the manager's environment or in
+  `service.env` as a plain setting, which every kernel and session inherits,
+  or in Claude Code's own settings; the command's output is not the place for
+  it. A proxy secret in `ANTHROPIC_CUSTOM_HEADERS` is not carried by the
+  command either: a proxy that needs one authenticates through Claude Code's
+  settings, not through this set.
 - `ROMP_CREDENTIAL_SELECTOR_FILE` holds one token, passed as `$1`: a name such
   as `hp`, made of letters, digits, `.`, `_` and `-`, up to 64 characters. The
   default is `~/.config/romp/credential-selector`. `romp keyswap <name>` writes
@@ -480,14 +487,24 @@ restart:
 - A session's tool shells at that session's next reconnect (they inherit the
   CLI's environment)
 
-Two things still need a restart. Adding or removing the
-`ROMP_CREDENTIAL_COMMAND` line in `service.env` changes the mode, which a
-running kernel keeps until `romp refresh` restarts it (the other
-`ROMP_CREDENTIAL_*` values are read live). An edit to the unit's own
-`Environment=` lines, and the variables a shell-wrapped `ExecStart` loaded,
-reach the kernel at the next manager restart (`systemctl --user restart
-romp-manager`, or `romp-service install`); `romp refresh` restarts kernels
-only.
+#### Two things still need a restart
+
+Which restart depends on where the kernel finds the value. Adding the
+`ROMP_CREDENTIAL_COMMAND` line to `service.env` changes the mode at the next
+kernel start: `romp refresh` is enough, because the kernel reads `service.env`
+itself. Removing the line under the installed service needs a manager restart
+(`systemctl --user restart romp-manager`, or `romp-service install`; on macOS
+the equivalent for the launch agent): systemd loaded `service.env` into the
+manager's environment when the manager started, every kernel inherits that
+environment, and `romp refresh` restarts kernels only, so a new kernel still
+carries the variable and stays in command mode. The other `ROMP_CREDENTIAL_*`
+values are read live, the environment first, with the same consequence: a
+line the manager's environment already carries is shadowed by that copy until
+the manager restarts, while a line the environment does not carry (one added
+since the manager started) is read from the file at once. An edit to the
+unit's own `Environment=` lines, and the variables a shell-wrapped `ExecStart`
+loaded, reach the kernel at the next manager restart as well. `romp keyswap`
+says which case applies when it reports a mode `MISMATCH`.
 
 The kernel checks the configuration once at boot and logs one line per
 finding, names and fingerprints only. When the first run succeeds the line is
@@ -611,9 +628,10 @@ yields:
                 re-run --cycle tests once quiet; sessions already on this key read "current"
 
 Where the set carries no `ANTHROPIC_API_KEY`, the live key is your shell's run
-of Claude Code's `apiKeyHelper` (named in `$CLAUDE_CONFIG_DIR/settings.json`
-or `settings.local.json`, the local file winning; project and managed settings
-are not consulted), and the kernel fingerprints the same helper. The helper
+of Claude Code's `apiKeyHelper` (named in `$CLAUDE_CONFIG_DIR/settings.json`,
+the one user-level settings file; a `settings.local.json` is a project-level
+file, and project and managed settings are not consulted), and the kernel
+fingerprints the same helper. The helper
 runs the way a session's CLI runs it: with the set's other variables in its
 environment and no `ROMP_SID`. With no key in the set and no helper
 configured, the sessions bill the machine login; the report says so as a
@@ -635,9 +653,13 @@ the kernel line then carries the fingerprint before and after.
 
 `MISMATCH` means the kernel and your shell disagree, and the line says on
 what. On the mode: `ROMP_CREDENTIAL_COMMAND` is set on one side only; a
-running kernel keeps the mode it started in, and `romp refresh` restarts it
-into the configuration as it stands (an edit to the unit's own `Environment=`
-lines needs a manager restart). On the fingerprint: the kernel's last run used
+running kernel keeps the mode it started in, and the line says which restart
+applies: `romp refresh` when the line was added to `service.env` (the kernel
+reads the file at its start); a manager restart when the line was removed
+(the manager's environment still carries it, and a kernel `romp refresh`
+starts inherits it) or when it lives in the unit's own `Environment=` lines;
+and a line set in your shell's environment only reaches no kernel until it is
+in `service.env`. On the fingerprint: the kernel's last run used
 another selector (`--refresh` re-runs it), or the two environments differ (the
 service environment and your shell hold different `ROMP_CREDENTIAL_*` values,
 different selector files, or a different `CLAUDE_CONFIG_DIR`; the
@@ -676,9 +698,10 @@ Per session the cycle reports one of:
 
 `romp refresh --quiet` is the alternative that restarts every kernel once the
 sessions are quiet: every session's CLI is a new process. The manager itself
-keeps running, so a mode change in `service.env` is applied by that restart
-too, while an edit to the unit's own `Environment=` lines still needs
-`systemctl --user restart romp-manager`.
+keeps running, so a `ROMP_CREDENTIAL_COMMAND` line added to `service.env` is
+applied by that restart, while a line removed from it, and an edit to the
+unit's own `Environment=` lines, still need `systemctl --user restart
+romp-manager` (the manager's environment carries what it loaded at its start).
 
 No key value is ever printed, logged, or sent over a socket. The command's
 output, the Log panel entry when the kernel's credential changes, and the

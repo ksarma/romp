@@ -940,17 +940,36 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.assertIn("            1 live session(s) still on sha256:" + self.fp("lp"), out)
         self.assertIn("            1 live session(s) launched with no credential the kernel fingerprinted", out)
 
-    def test_mismatch_when_the_kernel_is_in_file_mode_names_the_manager_restart(self):
+    def test_mismatch_when_the_kernel_is_in_file_mode_and_the_line_is_in_this_shell_only(self):
+        # the command is in this shell's environment (setUp) and service.env does not carry it: a
+        # restarted kernel would not see it either, so the advice is to put it in the file first
         self.kernel_view.update({"keySource": "file", "keyFp": "", "launched": {"": 3}})
         rc, out, _err = self.run_cli()
         self.assertEqual(rc, 1)
         self.assertIn("kernel      reads (none) in FILE mode", out)
-        self.assertIn("MISMATCH    the kernel is in file mode and this shell is not", out)
-        self.assertIn("A running kernel", out)
+        self.assertIn("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in this shell's", out)
+        self.assertIn("environment only, not in service.env", out)
         self.assertIn("keeps the mode it started in", out)
-        self.assertIn("`romp refresh` restarts the kernels into command mode", out)
-        self.assertIn("service.env", out)
-        self.assertNotIn("restart the manager", out, "a mode change is a kernel restart, not a manager restart")
+        self.assertIn("Put the line in service.env, then `romp refresh` restarts the", out)
+        self.assertIn("kernels into command mode", out)
+        self.assertNotIn("set in service.env\n", out)
+
+    def test_mismatch_when_the_kernel_is_in_file_mode_and_the_line_is_in_service_env_names_romp_refresh(self):
+        # the line was ADDED to service.env after the kernel started: the kernel reads the file at
+        # its start, so `romp refresh` is the whole fix; no manager restart is named
+        with open(os.environ["ROMP_SERVICE_ENV_FILE"], "w") as fh:
+            fh.write("ROMP_PERF=1\nROMP_CREDENTIAL_COMMAND=%s \"$1\"\n" % self.cmd)
+        os.environ.pop("ROMP_CREDENTIAL_COMMAND")
+        es._reset()
+        self.kernel_view.update({"keySource": "file", "keyFp": "", "launched": {"": 3}})
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in service.env", out)
+        self.assertIn("A running kernel keeps the mode it started in: `romp refresh`", out)
+        self.assertIn("restarts the kernels into command mode (a kernel reads service.env at its start, so a line added", out)
+        self.assertIn("there needs no manager restart)", out)
+        self.assertNotIn("systemctl", out, "adding the line is a kernel restart, never a manager restart")
+        self.assertNotIn("set in this shell's", out)
 
     def test_mismatch_when_the_kernels_fingerprint_differs_names_the_two_environments(self):
         self.kernel_view.update({"keyFp": self.fp("lp"), "setFp": self.set_fp("lp"), "launched": {self.fp("lp"): 1}})
@@ -959,7 +978,9 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.assertIn("MISMATCH    the kernel's run of the command and this shell's disagree on the credential "
                       "fingerprint and the set's fingerprint.", out)
         self.assertIn("service environment", out)
-        self.assertIn("an edit to service.env reaches the kernel at", out)
+        self.assertIn("a line added to service.env reaches the kernel at", out)
+        self.assertIn("a line changed or removed there, or one in the unit, at the", out)
+        self.assertIn("next manager restart", out)
         self.assertIn("(`romp refresh`)", out)
         self.assertIn("CLAUDE_CONFIG_DIR", out)
         # the kernel's last run used another selector: the hint is the refresh, not the environment
