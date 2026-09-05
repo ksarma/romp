@@ -134,3 +134,18 @@ test("ages and the recency cutoff move on the kernel's live clock between frames
   assert.equal(list.byClass("fl-session").length, 1, "its session stays: the filter is per top, not per session");
   assert.equal(posted.length, before, "…all of it on the local clock: the pane asked the kernel for nothing");
 });
+
+test("a raw feedDelta reaching the pane is loud, asks for a full frame, and applies nothing", () => {
+  const err = mock.method(console, "error", () => {});
+  const shown = rows();
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "feedDelta", buildId: 9, now: K0 + 500,
+    asks: [], ledgers: [{ sid: SID, name: "web", ledger: { tree: [] } }] } }));
+  assert.equal(err.mock.callCount(), 1);
+  assert.match(String(err.mock.calls[0].arguments[0]), /feedDelta frame reached the pane unapplied/);
+  assert.deepEqual(posted.filter((m) => m.type === "clientDiag"),
+    [{ type: "clientDiag", surface: "outline", what: "feedDelta-unapplied", data: { buildId: 9 } }]);
+  assert.equal(posted.filter((m) => m.type === "needFullFeed").length, 1, "the re-base request the kernel answers with the cached full frame");
+  assert.deepEqual(rows(), shown, "the rows are as the last full frame left them: this pane applies no delta itself");
+  err.mock.restore();
+  mock.timers.reset();
+});

@@ -15,11 +15,15 @@ test("fleet rides the FEED payload, reading its per-session `ledgers`", () => {
   assert.match(SRC, /sessions = m\.ledgers as FleetSession\[\]/);
 });
 
-test("fleet.ts has no delta reader: the Outline page announces feedDelta (2026-09-05) and federation.js, loaded ahead of it, applies each delta and re-emits a whole `feed` frame", () => {
+test("fleet.ts applies no delta itself: the Outline page announces feedDelta (2026-09-05) and federation.js, loaded ahead of it, applies each delta and re-emits a whole `feed` frame", () => {
   // feed-delta.test.ts pins what the pane then sees through the real manager; the kernel tests pin the page's
   // caps and its script order (federation.js before fleet.js)
-  assert.doesNotMatch(SRC, /feedDelta|applyFeedDelta|needFullFeed/);
+  assert.doesNotMatch(SRC, /applyFeedDelta|from "\.\/feed-delta"/);
   assert.match(SRC, /window\.addEventListener\("message"/);
+  // …but never silent about a delta it was handed anyway (federation.js absent → the shim dispatches the raw
+  // frame): the feed pane's guard — console.error, a clientDiag breadcrumb, a needFullFeed re-base — and no
+  // attempt to read the delta's slices. Run for real in fleet-live-clock.test.ts.
+  assert.match(SRC, /if \(m\.type === "feedDelta"\) \{[\s\S]*?"feedDelta-unapplied"[\s\S]*?\{ type: "needFullFeed" \}[\s\S]*?return;\n\s*\}\n\s*if \(m\.type !== "feed"\) return;/);
 });
 
 test("each session renders the real LEDGER TREE — .ledger-* nodes, marks, collapse, recency time", () => {

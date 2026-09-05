@@ -650,7 +650,19 @@ function mountControls() {
 
 window.addEventListener("message", (e: MessageEvent) => {
   const m = e.data;
-  if (!m || m.type !== "feed") return;               // the Outline rides the FEED payload (proven channel); reads its `ledgers`
+  if (!m) return;
+  if (m.type === "feedDelta") {
+    // Deltas are applied by the federation layer (federation.ts inbound), which holds the last full frame
+    // and re-emits a merged whole `feed`; this pane never applies one itself. One reaching this handler
+    // means no such layer consumed it (federation.js absent, so the shim dispatched the raw frame): say so
+    // and ask for a full frame rather than sit on the last one (fail loudly, never degrade) — the feed
+    // pane's guard, verbatim in spirit. Run for real in fleet-live-clock.test.ts.
+    console.error("outline: a feedDelta frame reached the pane unapplied — asking the kernel for a full frame");
+    vscodeApi?.postMessage({ type: "clientDiag", surface: "outline", what: "feedDelta-unapplied", data: { buildId: m.buildId } });
+    vscodeApi?.postMessage({ type: "needFullFeed" });
+    return;
+  }
+  if (m.type !== "feed") return;                     // the Outline rides the FEED payload (proven channel); reads its `ledgers`
   // "loaded" means the kernel actually BUILT the Outline's ledgers (the key is present, even if []) — NOT merely
   // that some feed message arrived. A feed push can reach us before the (cold) ledger build finishes; treating
   // that as loaded would drop the loader onto an empty pane (the user 2026-06-29). Until ledgers land, keep the
