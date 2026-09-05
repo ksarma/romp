@@ -2,9 +2,12 @@
 """_file_github_url + the fileGitLink WS op — the viewer's GitHub link (the user 2026-08-15).
 
 An empty url is a VERDICT, not an error: untracked files, non-repo paths, and non-GitHub origins
-honestly have no link, and the viewer never shows the button. The ref is the current branch (what a
-human expects to read), or the sha when HEAD is detached. Real temp git repos, synthetic names only
-(TESTORG / notes-api — the demo world).
+honestly have no link — and since 2026-09-05 the verdict carries a REASON (_file_github_link returns
+(url, reason)), so the viewer shows the button disabled with the reason instead of hiding it; a branch
+that is not on origin keeps its url and carries a note. The ref is the current branch (what a human
+expects to read), or the sha when HEAD is detached. Real temp git repos, synthetic names only
+(TESTORG / notes-api — the demo world); the one network query (ls-remote) is served by a LOCAL bare
+repo through a stand-in ssh, so no test reaches GitHub.
 """
 import json
 import os
@@ -25,9 +28,45 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 km = SourceFileLoader("romp_kernel_github", os.path.join(BIN, "romp-kernel")).load_module()
 
 
+# The fixture repos ignore the developer's global and system git config: a global core.hooksPath or
+# LFS filter would otherwise run THEIR hooks on the fixture push below (on one dev box, git-lfs asked
+# the stand-in ssh for git-lfs-authenticate and failed the push). What the kernel itself runs is the
+# process environment's git, as in production.
+_GIT_ENV = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+
+
 def _git(*args, cwd):
     subprocess.run(["git", "-c", "user.email=t@testhost", "-c", "user.name=t"] + list(args),
-                   cwd=cwd, check=True, capture_output=True)
+                   cwd=cwd, check=True, capture_output=True,
+                   env=dict(_GIT_ENV, GIT_SSH_COMMAND=os.environ.get("GIT_SSH_COMMAND", "ssh")))
+
+
+def _local_origin(repo):
+    """Serve `git@github.com:TESTORG/notes-api.git` from a LOCAL bare repo, no network. git runs
+    `$GIT_SSH_COMMAND [opts] git@github.com "git-upload-pack 'TESTORG/notes-api.git'"`; the stand-in
+    ignores everything but that last argument and runs it in a root that holds the bare repo at that
+    relative path — real git on both ends. The remote URL stays a GitHub one, so _GITHUB_REMOTE still
+    matches (a url.insteadOf rewrite would not do: `remote get-url` expands it). Pushes `repo`'s main,
+    so origin starts with that branch. Returns the root; the caller owns restoring GIT_SSH_COMMAND."""
+    root = tempfile.mkdtemp()
+    bare = os.path.join(root, "TESTORG", "notes-api.git")
+    os.makedirs(os.path.dirname(bare))
+    _git("init", "-q", "--bare", bare, cwd=root)
+    sh = os.path.join(root, "stand-in-ssh")
+    with open(sh, "w") as f:
+        f.write('#!/bin/sh\nfor a in "$@"; do cmd=$a; done\ncd "%s" && eval "$cmd"\n' % root)
+    os.chmod(sh, 0o755)
+    os.environ["GIT_SSH_COMMAND"] = sh
+    _git("push", "-q", "origin", "main", cwd=repo)
+    return root
+
+
+def _script(root, name, body):
+    p = os.path.join(root, name)
+    with open(p, "w") as f:
+        f.write("#!/bin/sh\n" + body)
+    os.chmod(p, 0o755)
+    return p
 
 
 class _Repo(unittest.TestCase):
@@ -119,13 +158,28 @@ class GitHubUrl(_Repo):
         self.assertEqual(km._file_github_url(dd, None),
                          "https://github.com/TESTORG/notes-api/blob/main/..cfg")
 
-    def test_no_link_verdicts_untracked_nonrepo_and_nongithub(self):
+    def test_no_link_verdicts_name_their_reason(self):
+        # the user 2026-09-05 could not tell "not committed yet" from "the link is broken": every
+        # no-link verdict now says which, in a plain phrase the viewer shows verbatim
         _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
-        self.assertEqual(km._file_github_url(os.path.join(self.tmp, "loose.txt"), None), "",
-                         "untracked file — no link to a thing not there")
-        self.assertEqual(km._file_github_url("/tmp", None), "", "not a repo")
+        self.assertEqual(km._file_github_link(os.path.join(self.tmp, "loose.txt"), None),
+                         ("", "not committed (untracked file)"), "untracked file — no link to a thing not there")
+        self.assertEqual(km._file_github_link(tempfile.mkdtemp(), None), ("", "not in a git repository"))
         _git("remote", "set-url", "origin", "git@gitlab.example.com:TESTORG/notes-api.git", cwd=self.tmp)
-        self.assertEqual(km._file_github_url(self.fp, None), "", "origin is not GitHub")
+        self.assertEqual(km._file_github_link(self.fp, None), ("", "the origin remote is not on GitHub"))
+        # the url-only caller keeps its "" verdict
+        self.assertEqual(km._file_github_url(self.fp, None), "")
+
+    def test_a_file_staged_on_no_commit_is_not_committed(self):
+        # an unborn branch: ls-files sees the index entry, but HEAD names nothing to link
+        fresh = tempfile.mkdtemp()
+        _git("init", "-q", "-b", "main", cwd=fresh)
+        _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=fresh)
+        fp = os.path.join(fresh, "new.py")
+        with open(fp, "w") as f:
+            f.write("pass\n")
+        _git("add", "new.py", cwd=fresh)
+        self.assertEqual(km._file_github_link(fp, None), ("", "not committed (no commits yet)"))
 
     def test_a_relative_path_resolves_against_the_sessions_cwd(self):
         _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
@@ -134,9 +188,84 @@ class GitHubUrl(_Repo):
         try:
             self.assertEqual(km._file_github_url("src/app.py", "11111111-2222-3333-4444-000000000001"),
                              "https://github.com/TESTORG/notes-api/blob/main/src/app.py")
-            self.assertEqual(km._file_github_url("src/app.py", None), "", "no sid, no base — no guess")
+            self.assertEqual(km._file_github_link("src/app.py", None), ("", "not in a git repository"),
+                             "no sid, no base — no guess, and the reason a viewer would show")
         finally:
             km._cwd_of = real
+
+
+class BranchOnOrigin(_Repo):
+    """The branch note (the user 2026-09-05): a worktree branch never pushed 404s on GitHub, so the
+    url comes back WITH a reason. The local tracking ref answers first and free; only its absence
+    pays one ls-remote, served here by _local_origin's stand-in ssh — never the network."""
+
+    URL = "https://github.com/TESTORG/notes-api/blob/%s/src/app.py"
+
+    def setUp(self):
+        super().setUp()
+        _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
+        self.old_ssh = os.environ.get("GIT_SSH_COMMAND")
+        self.root = _local_origin(self.tmp)          # origin has main; the push also wrote the tracking ref
+
+    def tearDown(self):
+        if self.old_ssh is None:
+            os.environ.pop("GIT_SSH_COMMAND", None)
+        else:
+            os.environ["GIT_SSH_COMMAND"] = self.old_ssh
+
+    def test_a_pushed_branch_carries_no_note_and_asks_origin_nothing(self):
+        os.environ["GIT_SSH_COMMAND"] = "false"       # any network query would come back "unchecked"
+        self.assertEqual(km._file_github_link(self.fp, None), (self.URL % "main", ""))
+
+    def test_a_missing_tracking_ref_falls_to_ls_remote(self):
+        # a clone that never fetched the ref: the local answer is absent, origin itself has the branch
+        _git("update-ref", "-d", "refs/remotes/origin/main", cwd=self.tmp)
+        self.assertEqual(km._file_github_link(self.fp, None), (self.URL % "main", ""))
+
+    def test_a_branch_never_pushed_keeps_its_url_and_says_so(self):
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        self.assertEqual(km._file_github_link(self.fp, None),
+                         (self.URL % "wip", "branch wip is not on origin"))
+
+    def test_a_slashed_branch_is_matched_whole_not_by_tail(self):
+        # ls-remote patterns match a ref's TAIL: `wip` alone would also match refs/heads/x/wip
+        _git("checkout", "-q", "-b", "feat/wip", cwd=self.tmp)
+        _git("push", "-q", "origin", "feat/wip:refs/heads/other/feat/wip", cwd=self.tmp)
+        self.assertEqual(km._file_github_link(self.fp, None),
+                         (self.URL % "feat/wip", "branch feat/wip is not on origin"))
+
+    def test_an_unreachable_origin_is_unchecked_not_asserted(self):
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        os.environ["GIT_SSH_COMMAND"] = "false"
+        self.assertEqual(km._file_github_link(self.fp, None),
+                         (self.URL % "wip", "could not check whether branch wip is on origin"))
+
+    def test_a_slow_origin_is_cut_off_because_the_viewer_is_waiting(self):
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        os.environ["GIT_SSH_COMMAND"] = _script(self.root, "slow-ssh", "sleep 5\n")
+        real = km.GH_LS_REMOTE_S
+        km.GH_LS_REMOTE_S = 0.3
+        try:
+            t0 = time.time()
+            self.assertEqual(km._file_github_link(self.fp, None),
+                             (self.URL % "wip", "could not check whether branch wip is on origin"))
+            self.assertLess(time.time() - t0, 2.0, "the timeout, not the remote, ends the wait")
+        finally:
+            km.GH_LS_REMOTE_S = real
+
+    def test_a_detached_sha_is_never_checked(self):
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.tmp,
+                             capture_output=True, text=True).stdout.strip()
+        _git("checkout", "-q", sha, cwd=self.tmp)
+        os.environ["GIT_SSH_COMMAND"] = "false"
+        self.assertEqual(km._file_github_link(self.fp, None), (self.URL % sha, ""))
+
+    def test_the_url_only_caller_never_asks_origin(self):
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        marker = os.path.join(self.root, "asked")
+        os.environ["GIT_SSH_COMMAND"] = _script(self.root, "probe-ssh", "touch '%s'\nexit 255\n" % marker)
+        self.assertEqual(km._file_github_url(self.fp, None), self.URL % "wip")
+        self.assertFalse(os.path.exists(marker), "_file_github_url pays no network query")
 
 
 class GitLinkWire(_Repo):
@@ -146,6 +275,8 @@ class GitLinkWire(_Repo):
     def setUp(self):
         super().setUp()
         _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
+        self.old_ssh = os.environ.get("GIT_SSH_COMMAND")
+        self.root = _local_origin(self.tmp)
         self.sent = []
         self.client = {"app": "feed", "alive": True,
                        "send": lambda s: self.sent.append(json.loads(s))}
@@ -164,11 +295,26 @@ class GitLinkWire(_Repo):
         self.assertEqual(r["type"], "fileGitLink")
         self.assertEqual(r["reqId"], 6, "echoed so a reply landing after a newer open is dropped")
         self.assertEqual(r["url"], "https://github.com/TESTORG/notes-api/blob/main/src/app.py")
+        self.assertEqual(r["reason"], "", "a pushed branch has nothing to add")
 
-    def test_the_no_link_verdict_still_replies(self):
+    def tearDown(self):
+        if self.old_ssh is None:
+            os.environ.pop("GIT_SSH_COMMAND", None)
+        else:
+            os.environ["GIT_SSH_COMMAND"] = self.old_ssh
+
+    def test_the_no_link_verdict_still_replies_and_says_why(self):
         r = self.send_and_wait({"type": "fileGitLink", "path": os.path.join(self.tmp, "loose.txt"),
                                 "reqId": 7})
         self.assertEqual(r["url"], "", "an empty url is the verdict, never a dropped reply")
+        self.assertEqual(r["reason"], "not committed (untracked file)",
+                         "the reason rides the reply — the viewer shows it instead of hiding the button")
+
+    def test_a_branch_not_on_origin_keeps_the_url_and_carries_the_note(self):
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        r = self.send_and_wait({"type": "fileGitLink", "path": self.fp, "reqId": 8})
+        self.assertEqual(r["url"], "https://github.com/TESTORG/notes-api/blob/wip/src/app.py")
+        self.assertEqual(r["reason"], "branch wip is not on origin")
 
 
 if __name__ == "__main__":

@@ -30827,11 +30827,13 @@ def _edit_trace(path, sid):
         sys.stderr.write("edit-trace to %s failed: %s\n" % (target, ex))
 
 
-def _git_out(args, cwd, timeout=5):
+def _git_out(args, cwd, timeout=5, env=None):
     """One read-only git query → stripped stdout, or None on any failure (no repo, no git, timeout).
-    List argv, never a shell; quiet — an absent repo is a normal answer here, not an error."""
+    List argv, never a shell; quiet — an absent repo is a normal answer here, not an error. `env`
+    replaces the child's environment when given (the one network query below forbids a prompt)."""
     try:
-        r = subprocess.run(["git", "-C", cwd] + args, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(["git", "-C", cwd] + args, capture_output=True, text=True, timeout=timeout,
+                           env=env)
         return r.stdout.strip() if r.returncode == 0 else None
     except (OSError, subprocess.SubprocessError):
         return None
@@ -30846,20 +30848,54 @@ _GITHUB_REMOTE = re.compile(
     r"([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
 
 
-def _file_github_url(raw, sid):
-    """The GitHub web URL for a viewed file, or "" when there is none to give (the user 2026-08-15:
-    the viewer links to the file on GitHub when it is tracked there). Answered by the kernel that
-    OWNS the file — git on ITS disk is the authoritative source — and lazily, per viewer open, never
-    on the /file byte path (thumbnails must not pay three subprocesses each).
+# The no-link verdicts, as the viewer shows them (the user 2026-09-05, who could not tell "not
+# committed yet" from "the link is broken" when the button simply never appeared). Plain phrases,
+# a fixed set: the viewer puts one in the disabled button's tooltip verbatim.
+GH_NO_REPO = "not in a git repository"
+GH_UNTRACKED = "not committed (untracked file)"
+GH_NO_COMMITS = "not committed (no commits yet)"
+GH_NOT_GITHUB = "the origin remote is not on GitHub"
+# ...and the two notes a link can carry anyway: the branch is real but GitHub has not seen it
+GH_NOT_ON_ORIGIN = "branch %s is not on origin"
+GH_ORIGIN_UNCHECKED = "could not check whether branch %s is on origin"
+GH_LS_REMOTE_S = 3          # the viewer is waiting on this reply; a remote that has not answered by then is "unchecked"
 
-    "" is a VERDICT, not an error: an untracked file, a non-repo path, or a non-GitHub origin all
-    honestly have no link, and the viewer simply never shows the button. The ref is the current
-    branch (what a human expects to read on GitHub), or the commit sha when HEAD is detached; a
-    branch that was never pushed 404s on GitHub's end, which is the truthful outcome for a file
-    that is not there yet."""
+
+def _origin_has_branch(top, ref):
+    """Whether origin carries branch `ref`: True / False / None (unknown — origin did not answer in
+    time, or refused). The local tracking ref answers first and for free (`refs/remotes/origin/<ref>`
+    exists once the branch has been pushed or fetched); only its absence pays one `ls-remote` — a
+    worktree branch never pushed has no tracking ref, and that is the case the note exists for. The
+    query gets a short timeout and no terminal prompt: the viewer must never hang on it. The pattern
+    is the full ref and the answer is matched on it exactly, because ls-remote patterns match a ref's
+    TAIL (`main` would also match `refs/heads/x/main`)."""
+    if _git_out(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/" + ref], top):
+        return True
+    full = "refs/heads/" + ref
+    out = _git_out(["ls-remote", "--heads", "origin", full], top, timeout=GH_LS_REMOTE_S,
+                   env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+    if out is None:
+        return None
+    return any(line.split("\t")[-1] == full for line in out.splitlines())
+
+
+def _file_github_link(raw, sid, check_origin=True):
+    """(url, reason) for a viewed file: the GitHub web URL when there is one to give, and otherwise
+    WHY there is none (the user 2026-08-15: the viewer links to the file on GitHub when it is tracked
+    there; the user 2026-09-05: when it cannot, it must say so). Answered by the kernel that OWNS the
+    file — git on ITS disk is the authoritative source — and lazily, per viewer open, never on the
+    /file byte path (thumbnails must not pay the git subprocesses).
+
+    An empty url is a VERDICT, not an error, and the reason names it: an untracked file, a non-repo
+    path, or a non-GitHub origin all honestly have no link (GH_NO_REPO / GH_UNTRACKED / GH_NO_COMMITS
+    / GH_NOT_GITHUB — a fixed set of plain phrases the viewer shows verbatim). The ref is the current
+    branch (what a human expects to read on GitHub), or the commit sha when HEAD is detached. A
+    branch that was never pushed 404s on GitHub's end, so with check_origin the url still comes back
+    (it is the right one, once pushed) but carries GH_NOT_ON_ORIGIN as its reason — or
+    GH_ORIGIN_UNCHECKED when origin did not answer in time; a detached sha is never checked."""
     p = _resolve_open_path(str(raw or ""), sid)
     if not os.path.isabs(p):
-        return ""
+        return "", GH_NO_REPO                       # a relative path with no base can be placed in no repo
     # realpath, not normpath (two executed repros): a lexical '..' collapse built a URL for a
     # DIFFERENT file than the bytes the viewer shows when the '..' followed a symlink — a wrong link,
     # strictly worse than none — and a symlinked path PREFIX made relpath escape the PHYSICAL toplevel
@@ -30868,29 +30904,46 @@ def _file_github_url(raw, sid):
     d = os.path.dirname(p)
     top = _git_out(["rev-parse", "--show-toplevel"], d)
     if not top:
-        return ""
+        return "", GH_NO_REPO
     rel = os.path.relpath(p, top)
     if rel == ".." or rel.startswith(".." + os.sep):
-        return ""                                   # escaped the repo — NOT a name-prefix test: a root
+        return "", GH_NO_REPO                       # escaped the repo — NOT a name-prefix test: a root
     #                                                 file literally named ..cfg is inside and links fine
     if _git_out(["ls-files", "--error-unmatch", "--", rel], top) is None:
-        return ""                                   # exists but untracked — no link to a thing not there
+        return "", GH_UNTRACKED                     # exists but untracked — no link to a thing not there
     remote = _git_out(["remote", "get-url", "origin"], top)
     m = _GITHUB_REMOTE.match(remote or "")
     if not m:
-        return ""
+        return "", GH_NOT_GITHUB
     ref = _git_out(["rev-parse", "--abbrev-ref", "HEAD"], top)
     if not ref:
-        return ""
+        return "", GH_NO_COMMITS                    # staged into an unborn branch: in the index, on no commit
+    branch = ref
     if ref == "HEAD":                               # detached — the sha is the only honest ref
+        branch = None
         ref = _git_out(["rev-parse", "HEAD"], top) or ""
         if not ref:
-            return ""
-    return "https://github.com/%s/%s/blob/%s/%s" % (
+            return "", GH_NO_COMMITS
+    url = "https://github.com/%s/%s/blob/%s/%s" % (
         # safe="/" keeps a slashed branch name (feat/x) literal — the form GitHub's own UI writes;
         # GitHub resolves the ref/path ambiguity by longest match, exactly as it does for its users
         m.group(1), m.group(2), quote(ref, safe="/"),
         "/".join(quote(seg) for seg in rel.split(os.sep)))
+    reason = ""
+    if check_origin and branch:
+        on = _origin_has_branch(top, branch)
+        if on is False:
+            reason = GH_NOT_ON_ORIGIN % branch
+        elif on is None:
+            reason = GH_ORIGIN_UNCHECKED % branch
+    return url, reason
+
+
+def _file_github_url(raw, sid):
+    """The GitHub web URL for a viewed file, or "" when there is none — _file_github_link's url
+    alone, without the origin check (no network query for a caller that wants only the address).
+    Kept for callers that predate the reason; the viewer's op uses _file_github_link."""
+    return _file_github_link(raw, sid, check_origin=False)[0]
 
 
 # Inline-code spans that name an EXISTING file despite containing spaces (the user 2026-08-04: a note
@@ -39428,11 +39481,13 @@ class Handler(BaseHTTPRequestHandler):
             # kernel that OWNS the file — git on ITS disk is the authority, and a remote page's WS
             # already terminates on the owning kernel (the /remote/<host>/ws splice), so no relay
             # clause is needed; sid only resolves a relative path against that session's cwd. reqId
-            # is echoed for the stale-drop; an empty url is the no-link verdict and the viewer just
-            # never shows the button. Threaded: three git subprocesses must not block the recv loop.
+            # is echoed for the stale-drop; an empty url is the no-link verdict and `reason` says why,
+            # so the viewer shows the button disabled with the reason instead of hiding it (the user
+            # 2026-09-05); a url whose branch is not on origin carries the note in `reason` too.
+            # Threaded: the git subprocesses (and one possible ls-remote) must not block the recv loop.
             def _gl(c=client, m=msg):
-                _reply(c, {"type": "fileGitLink", "reqId": m.get("reqId"),
-                           "url": _file_github_url(m.get("path"), m.get("sid") or None)})
+                url, reason = _file_github_link(m.get("path"), m.get("sid") or None)
+                _reply(c, {"type": "fileGitLink", "reqId": m.get("reqId"), "url": url, "reason": reason})
             threading.Thread(target=_gl, daemon=True).start()
         elif msg and msg.get("type") == "browseDir":
             tgt = str(msg.get("target") or "picker")          # which dir field to fill: the new-session picker or the gear
