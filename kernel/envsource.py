@@ -440,7 +440,9 @@ def run_command(cmd: str, selector=None, timeout=None, env=None, grace=None) -> 
     the module lock, so an unbounded read would block every connect), and the overall deadline holds
     in every state, so the call returns by `timeout` seconds whatever the command and its children
     do. Past the deadline with the command still running is a timeout; past it while draining a
-    leftover after the command exited is not."""
+    leftover after the command exited is not. A command that hands both pipes back and runs on
+    (`exec >/dev/null 2>&1; sleep 30`) ends the read at EOF, and the deadline then holds on the
+    wait for its exit: still running at the deadline is the same timeout."""
     timeout = DEFAULT_TIMEOUT_S if timeout is None else float(timeout)
     grace = EXIT_GRACE_S if grace is None else float(grace)
     argv = ["/bin/sh", "-c", str(cmd), "sh"]
@@ -487,6 +489,16 @@ def run_command(cmd: str, selector=None, timeout=None, env=None, grace=None) -> 
             key.fileobj.close()
     finally:
         sel.close()
+    if exited_at is None and not timed_out:
+        # Both pipes at EOF with the command not seen exited: it released them and ran on. The
+        # deadline is on this wait. A fixed wait here misclassified such a run: killed by the
+        # fallback below and reported `exited -9`, or a success when it exited within the fallback's
+        # window but past the deadline.
+        try:
+            p.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _killpg(p)
     try:
         p.wait(timeout=5)
     except Exception:
@@ -547,16 +559,29 @@ def invalidate(reason: str = "") -> int:
     return _gen
 
 
-def invalidate_for_auth_failure(reason: str = "") -> bool:
+def invalidate_for_auth_failure(reason: str = "", fp: str = "") -> bool:
     """An authentication failure where the set (or the helper this module fingerprints) was used:
     invalidate ONCE per credential — keyed on the set and helper fingerprints in force. A second
     refusal while those are unchanged is not new information (the re-run handed back the same set),
     so a revoked credential cannot turn every judge call and every launch into a command run; a
     run that yields a different set, a rotation the helper reports, an operator's invalidate(), or
     a SUCCESS on that credential (credential_auth_ok) re-arms it. Returns whether the generation
-    moved. Value-free: fingerprints only."""
+    moved. Value-free: fingerprints only.
+
+    `fp` is the fingerprint of the credential that was REFUSED, when the caller knows it (a
+    session's launch stamp): a refusal of a credential that is neither a value of the current set
+    nor the helper's current output says nothing about the set this module would re-run the
+    command for, so it invalidates nothing and is not recorded. That is a session still running on
+    the credential from before a rotation, refused on every turn: before this each of its refusals
+    invalidated the CURRENT set and each success on the current credential re-armed the path, so an
+    uncycled session cost one command run, one helper run and two log lines per turn for as long
+    as it was left. "" is a refusal where the caller knows no stamp (a judge call, whose environment
+    is the set as a whole; a session launched with nothing to fingerprint) and is keyed on the set
+    and helper fingerprints alone, as before."""
     global _gen, _auth_failed_for, _auth_failed_fps
     key = ((_snap or {}).get("setFp") or "", _helper.get("fp") or "")
+    if fp and fp not in ({fingerprint(v) for v in _values.values()} | {key[1]}):
+        return False                          # not the credential the command would be run for
     if _auth_failed_for == key:
         return False
     _auth_failed_for = key
@@ -740,7 +765,8 @@ def take(environ=None) -> tuple:
     """(record, values) from ONE read under the lock — for a connect that needs both the value-free
     record (to log and stamp) and the set (to inject): read separately, a run could land between
     the two and the key injected would not be the set the log names. The `values` half is
-    injection()'s and under its rule."""
+    injection()'s and under its rule. The record's `generation` is the generation the values were
+    served under: a caller handing the values to helper_fingerprint() hands that in beside them."""
     with _fresh(environ):
         return dict(_snap), dict(_values)
 
@@ -788,7 +814,7 @@ def helper_command(config_dir=None, environ=None) -> str:
     return cmd
 
 
-def helper_fingerprint(config_dir=None, environ=None, timeout=None, values=None) -> tuple:
+def helper_fingerprint(config_dir=None, environ=None, timeout=None, values=None, generation=None) -> tuple:
     """(fingerprint, reason) for the credential the configured apiKeyHelper prints right now — the
     helper is run with the same runner and its output hashed HERE; the bytes never leave this
     function. ("", reason) when no helper is configured, it fails, times out, or prints anything
@@ -805,13 +831,24 @@ def helper_fingerprint(config_dir=None, environ=None, timeout=None, values=None)
     the sessions actually bill. `values` is the set a caller already holds (take()'s values half):
     a connect that took the set and then asks for the helper's fingerprint passes it, so the
     command is not run a second time for the same connect (on a failing command, each fresh read
-    is a run); None reads the current set."""
+    is a run); None reads the current set. `generation` is the generation those values were served
+    under (take()'s record carries it): the run is FOR that generation and is stored under it, so a
+    set taken before an invalidate() yields an entry that is already stale, and the next caller
+    runs the helper again on the current set. Before this the generation was read here, after the
+    overlay was built, so an invalidate() between a connect's take() and this call stored the
+    pre-invalidation overlay's fingerprint under the post-invalidation generation, and every caller
+    after was served it as current. With `values` given and no generation, the current one (the
+    caller did not say); with `values` None, the generation of the set read here."""
     if values is None:
         with _fresh(environ):
             values = dict(_values)
+            if generation is None:
+                generation = _snap.get("generation")
     overlay = {k: v for k, v in values.items() if k != KEY_VAR}
     with _helper_lock:
-        gen = _gen                           # the generation this run is FOR; an invalidate mid-run outdates it
+        # the generation this run is FOR: the set's own, so an invalidate between the set's read and
+        # here, or during the run, leaves the result stale on completion
+        gen = _gen if generation is None else int(generation)
         if _helper["gen"] == gen:
             return _helper["fp"], _helper["reason"]
         cmd = helper_command(config_dir, environ)

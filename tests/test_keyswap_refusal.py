@@ -15,7 +15,9 @@ parts the fork keeps — the live read, the bare report, `--cycle`. This file pi
     apiKeyHelper) is stamped at connect with the fingerprint of the helper's output (envsource runs
     the configured helper and hashes inside), and `SdkBackend.cycle_key` converges on it: the same
     fingerprint reads "current", a rotation behind the helper reads "cycling" once and "current"
-    after. This replaces the fork's earlier always-reconnect "helper" outcome (2026-09-05, the same
+    after; a refusal on a session still stamped with the pre-rotation output re-runs neither the
+    command nor the helper; a refresh landing between a connect's read of the set and its helper
+    fingerprint leaves that fingerprint stored stale, not served as current. This replaces the fork's earlier always-reconnect "helper" outcome (2026-09-05, the same
     day): upstream reads such a session as login-billed and skips it, which made `--cycle-all` a
     no-op on a box whose every session bills through the helper; the always-reconnect answer fixed
     that but churned every quiet helper session on every run. In FILE mode the compare is upstream's
@@ -262,16 +264,23 @@ class NamedSwapRefused(_Env):
         rc, out, _err = self.run_cli()
         self.assertEqual(rc, 1)
         self.assertIn("kernel      reads sha256:%s in COMMAND mode" % fp, out)
-        self.assertIn("MISMATCH    the kernel is in command mode and this shell is not: the kernel's environment carries", out)
-        self.assertIn("kernel keeps the mode it started in", out)
-        # leaving command mode is a MANAGER restart: the manager's environment still carries the
-        # variable (systemd loaded service.env into it at the manager's start), and a kernel `romp
-        # refresh` starts inherits it; the old advice named `romp refresh` for this case and was wrong
-        self.assertIn("To leave command mode, restart the manager (`systemctl", out)
-        self.assertIn("--user restart romp-manager`, or `romp-service install`)", out)
-        self.assertIn("`romp refresh` alone starts kernels that inherit it and stay in command mode", out)
+        self.assertIn("MISMATCH    the kernel is in command mode and this shell is not: the kernel pinned command mode when it", out)
+        self.assertIn("this shell reads no ROMP_CREDENTIAL_COMMAND now (its environment, then service.env)", out)
+        # the /keycycle answer cannot say WHERE the line still is (the manager's environment, a service.env
+        # line removed since the kernel started, or the shell that ran `romp up` all read the same), so the
+        # report asserts no cause: it lists the three places, each with its remedy
+        self.assertNotIn("the kernel's environment carries", out, "a cause to check, not a fact")
+        self.assertIn("- the manager's environment (the unit's Environment=, or service.env as the manager loaded it at", out)
+        self.assertIn("still carries it: restart the manager; every kernel inherits that copy, `romp refresh` too", out)
+        self.assertIn("- service.env carried it when the kernel started and lost it since: `romp refresh`", out)
+        self.assertIn("- the shell that ran `romp up` exported it: stop that `romp up`; start it from a shell without the line", out)
+        # the manager restart is named by the commands that restart one: `romp-service install` is not
+        # among them (on Linux it writes and enables the unit and leaves a running manager as it is)
+        self.assertIn("The manager restart is `systemctl --user restart romp-manager`, or on macOS `launchctl kickstart -k", out)
+        self.assertIn("gui/$(id -u)/com.romp.manager`", out)
+        self.assertNotIn("romp-service install", out)
         self.assertNotIn("`romp refresh` restarts the kernels into file mode", out)
-        self.assertIn("put it back in service.env", out)
+        self.assertIn("put the line back in service.env instead", out)
         rc, out, _err = self.run_cli("--cycle-all")
         self.assertEqual(rc, 1)
         self.assertIn("cycle       NOT DONE", out)
@@ -572,6 +581,82 @@ class HelperSessionsConverge(_CommandMode):
         self.assertIn("the work key is now sha256:", [m for m in self.logged if m.startswith("keyswap (web)")][0])
         self.connect(s)
         self.assertEqual(self.be.cycle_key(SID), "current")
+
+    def _sessions(self, *ns):
+        return [sb.SdkSession(self.be, {"sid": "11111111-2222-3333-4444-%012d" % n, "name": "s%d" % n, "cwd": "/tmp"})
+                for n in ns]
+
+    @staticmethod
+    def _result(status):
+        from types import SimpleNamespace
+        return SimpleNamespace(is_error=status is not None, api_error_status=status, parent_tool_use_id=None)
+
+    def test_a_refusal_on_a_session_still_on_the_pre_rotation_helper_output_runs_nothing(self):
+        # the reproduction on the helper-billed box: a session stamped with the helper's output from
+        # before a rotation behind the helper is refused on every turn, and a session on the current
+        # output completes turns between. Before this every 401 was forwarded without the session's
+        # stamp, so each refusal invalidated the current set (a command run AND a helper run at the
+        # next connect, a log line) and each success re-armed the path (a second log line), for as
+        # long as the old session was left uncycled.
+        old, cur = self._sessions(1, 2)
+        self.connect(old)
+        self.assertEqual(old._launched_key_fp, es.fingerprint(self.helper_value))
+        rotated = fixture_value("rotated")
+        self.helper(rotated)
+        self.be.refresh_key_source()                              # what --cycle does first
+        self.connect(cur)
+        self.assertEqual(cur._launched_key_fp, es.fingerprint(rotated))
+        runs, hruns = es._runs, es.helper_runs()
+        self.logged.clear()
+        for n in range(5):
+            old._ah_note_result(self._result(401))
+            self.connect(self._sessions(10 + n)[0])               # a connect between: nothing to re-run
+            cur._ah_note_result(self._result(None))
+        self.assertEqual((es._runs, es.helper_runs()), (runs, hruns), "no command run and no helper run for the burst")
+        self.assertEqual([m for m in self.logged if m.startswith("credential command:")], [],
+                         "neither the refusal line nor the re-arm line, turn after turn")
+        cur._ah_note_result(self._result(401))                    # the current output refused: fires once
+        self.connect(self._sessions(20)[0])
+        self.assertEqual((es._runs, es.helper_runs()), (runs + 1, hruns + 1))
+        self.assertEqual(len([m for m in self.logged if "reported an authentication failure" in m]), 1, self.logged)
+        self.assertFalse(any(self.helper_value in m or rotated in m for m in self.logged), "no line carries a value")
+
+    def test_a_refresh_between_a_connects_read_and_its_helper_fingerprint_leaves_no_stale_entry_current(self):
+        # a connect takes the set, then asks for the helper's fingerprint with it; an invalidate that
+        # lands between the two (a --refresh, a refusal on another session) must not leave the
+        # fingerprint of the connect's pre-refresh overlay stored as the current one. The helper here
+        # reads a role variable, so the overlay decides what it prints.
+        h = fixture_value("helper")
+        hp = os.path.join(self.lab, "helper.sh")
+        with open(hp, "w") as fh:
+            fh.write('#!/bin/sh\necho "%s-${A_TOKEN:-none}"\n' % h)
+        os.chmod(hp, 0o700)
+        with open(os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "settings.json"), "w") as fh:
+            json.dump({"apiKeyHelper": hp}, fh)
+        es.invalidate("the helper changed")
+        role_a, role_b = self.values["A_TOKEN"], fixture_value("role-b")
+        real_take = es.take
+
+        def take_then_rotate(environ=None):
+            out = real_take(environ)
+            self.values["A_TOKEN"] = role_b
+            self.print_set(self.values)
+            es.invalidate("a refresh landed between the connect's read and its helper fingerprint")
+            return out
+
+        s = self._live("key")
+        es.take = take_then_rotate
+        try:
+            self.connect(s)
+        finally:
+            es.take = real_take
+        self.assertEqual(s._launched_key_fp, es.fingerprint("%s-%s" % (h, role_a)),
+                         "stamped with what its CLI's helper prints in the environment it launched with")
+        hruns = es.helper_runs()
+        fp, kind = self.be.credential_fingerprint()
+        self.assertEqual((fp, kind), (es.fingerprint("%s-%s" % (h, role_b)), "helper"),
+                         "the current fingerprint is of the current set's overlay, not the connect's")
+        self.assertEqual(es.helper_runs(), hruns + 1, "the connect's entry was stale: the helper ran again")
 
     def test_the_helper_status_word_is_gone(self):
         src = open(os.path.join(ROOT, "kernel", "sdk_backend.py")).read()

@@ -28,8 +28,9 @@ What these tests pin, in the order the feature is used:
     kernel runs the command and merges the set it prints into every launch (ANTHROPIC_API_KEY only
     where the session's auth says so), the mode wins over a file line and the startup claim, one run
     serves a burst of connects, a failed run keeps the previous set with one problem line per
-    episode and never refuses a launch, and no value reaches a log line, the problem ring, the
-    api-health payload or the /keycycle answer.
+    episode and never refuses a launch, a refusal is keyed on the session's launch stamp (a session
+    still on the key from before a rotation re-runs nothing), and no value reaches a log line, the
+    problem ring, the api-health payload or the /keycycle answer.
 
 Synthetic keys only (`sk-ant-TEST-…`; the command-mode values are "romp-test-fixture-" + a uuid,
 assembled at run time), synthetic sids, temp paths. No real key material, and the
@@ -1987,6 +1988,54 @@ class CommandSourceFailure(_CommandMode):
         self._env_for(10, "key")
         self.assertEqual(es._runs, runs + 3)
         self.assertFalse(any(k in m for m in self.logged), "no line carries the key")
+
+    def test_a_refusal_on_a_session_still_on_the_pre_rotation_key_runs_nothing(self):
+        # the reproduction: a keyed session launched before a rotation is refused on every turn, and
+        # a session on the current key completes turns between. Before this every 401 was forwarded
+        # without the session's stamp, so each refusal invalidated the CURRENT set (a command run at
+        # the next connect, a log line) and each current-key success re-armed the path (a second log
+        # line), for as long as the old session was left uncycled.
+        old_k, new_k = fixture_value("old-key"), fixture_value("new-key")
+        self.values["ANTHROPIC_API_KEY"] = old_k
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        old = self._sess(1, auth="key")
+        self.be._options(old, dict)
+        self.assertEqual(old._launched_key_fp, es.fingerprint(old_k))
+        self.values["ANTHROPIC_API_KEY"] = new_k
+        self.print_set(self.values)
+        self.be.refresh_key_source()                          # the operator's refresh after the rotation
+        cur = self._sess(2, auth="key")
+        self.be._options(cur, dict)
+        self.assertEqual(cur._launched_key_fp, es.fingerprint(new_k))
+        runs = es._runs
+        self.logged.clear()
+        for n in range(5):
+            old._ah_note_result(self._result(401))
+            self._env_for(10 + n, "key")                      # a connect between: nothing to re-run
+            cur._ah_note_result(self._result(None))
+        self.assertEqual(es._runs, runs, "no run: the refused key is not the one the command would be run for")
+        self.assertEqual([m for m in self.logged if m.startswith("credential command:")], [],
+                         "neither the refusal line nor the re-arm line, turn after turn")
+        # a refusal on the CURRENT key still fires, once, and the next connect re-runs
+        cur._ah_note_result(self._result(401))
+        self._env_for(20, "key")
+        self.assertEqual(es._runs, runs + 1)
+        said = [m for m in self.logged if "reported an authentication failure" in m]
+        self.assertEqual(len(said), 1, self.logged)
+        self.assertIn("s2 reported", said[0])
+        cur._ah_note_result(self._result(401))
+        old._ah_note_result(self._result(401))
+        self._env_for(21, "key")
+        self.assertEqual(es._runs, runs + 1, "suppressed: the same set, and the stale stamp still says nothing")
+        # a launch refused as unauthenticated carries the stamp of the set that connect took: it fires
+        cur._ah_note_result(self._result(None))               # the current key completed a turn: re-armed
+        fresh = self._sess(22, auth="key")
+        self.be._options(fresh, dict)
+        self.be._credential_auth_failed(fresh, "the CLI refused to start: not authenticated")
+        self._env_for(23, "key")
+        self.assertEqual(es._runs, runs + 2)
+        self.assertFalse(any(old_k in m or new_k in m for m in self.logged), "no line carries a key")
 
     def test_a_connect_on_a_failing_command_runs_it_once_not_twice(self):
         # a non-keyed connect takes the set (one run: a failed run is re-run per caller) and stamps the

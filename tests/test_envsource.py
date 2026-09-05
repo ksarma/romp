@@ -8,7 +8,8 @@ What these pin, in the order the module is used:
     kernel reads; the defaults; junk timeouts.
   Runner — /bin/sh -c with the selector as $1, stdin closed, a nonzero exit or a deadline is a reason
     with counts and exit codes only, a timed-out command's whole process group is killed, and the
-    deadline is on the PROCESS: a command that exits 0 but leaves a child holding stdout succeeds.
+    deadline is on the PROCESS: a command that exits 0 but leaves a child holding stdout succeeds,
+    and one that hands both pipes back and runs on is held to the deadline all the same.
   Parser — keysource's line rule generalised to every name (pinned equal to keysource.parse_key for
     the key line): last wins, one layer of quotes, blank and # lines skipped, ROMP_* names dropped
     and named, lines that are not NAME=VALUE counted, empty values dropped; newlines are the only
@@ -16,7 +17,10 @@ What these pin, in the order the module is used:
   CacheAndCoalescing — one successful run serves every read until invalidate() or a selector-file
     edit; concurrent callers coalesce on one run; a failed run keeps the previous set, says so, and
     the NEXT caller re-runs (one run per caller); a first failure is an empty set; an invalidation
-    during a run makes the next caller run again; take() reads record and values together.
+    during a run makes the next caller run again; take() reads record and values together; an
+    authentication failure invalidates once per credential, a success re-arms it, and a refusal
+    stamped with a credential that is not the current one (a session still on the set from before
+    a rotation) invalidates nothing.
   Selector — the one-token file: missing is "no selector", a non-token is an error carrying a byte
     count, an undeclared name is refused before anything runs, a name is rendered only when it is
     declared (else by length), the write is atomic, 0600 and through a symlink.
@@ -24,8 +28,10 @@ What these pin, in the order the module is used:
   HelperFingerprint — the configured apiKeyHelper (the user settings.json alone; a settings.local.json
     is a project-level file and is not read) is run with the same runner, in a session CLI's
     environment (role variables merged, ROMP_SID absent), and hashed inside the function; the bytes
-    never leave it; one token expected; cached until invalidate(), under the generation the run
-    started in; a caller that already holds the set hands it in so the command is not run twice.
+    never leave it; one token expected; cached until invalidate(), under the generation of the set
+    it ran with (the run's own read, or the generation handed in beside a set a connect took), so
+    an invalidation before or during the run leaves the entry stale; a caller that already holds
+    the set hands it in so the command is not run twice.
   NothingLeaks — no fixture value in any status field or reason, whatever the command does with it.
 
 Synthetic throughout: every value is "romp-test-fixture-" + a uuid, assembled at run time (no
@@ -352,6 +358,41 @@ class Runner(_Lab):
         self.assertLess(time.monotonic() - t0, 3)
         self.assertTrue(r.timed_out)
         self.assertEqual(r.reason(0.4), "timed out after 0.4s (killed with its process group)")
+
+    def test_a_command_that_hands_its_pipes_back_and_runs_on_is_held_to_the_deadline(self):
+        # `exec >/dev/null 2>&1` in the command string returns both pipes with the command still
+        # running: the read loop ends at EOF, and the deadline has to hold on the wait for the exit
+        # that follows. Before this that wait was a fixed 5 s, so such a run was misclassified:
+        # killed by the fallback and reported `exited -9`, or a success when it exited within the
+        # 5 s but past the deadline. The redirect is in the shell the runner spawned, on purpose: a
+        # script doing the same behind `sh -c <path>` leaves the outer shell holding the pipes.
+        pgfile = os.path.join(self.d, "pgid")
+        cmd = "ps -o pgid= -p $$ | tr -d ' ' > %s; echo A=x; exec >/dev/null 2>&1; sleep 30" % pgfile
+        t0 = time.monotonic()
+        r = es.run_command(cmd, "hp", 0.5)
+        self.assertLess(time.monotonic() - t0, 3, "the deadline held; the wait was not the fallback's 5 s")
+        self.assertTrue(r.timed_out, "still running at the deadline: a timeout, not an exit code")
+        self.assertFalse(r.ok)
+        self.assertEqual(r.reason(0.5), "timed out after 0.5s (killed with its process group)")
+        self.assertEqual(sorted(es.parse_set(r.stdout)["values"]), ["A"], "what it printed first was read")
+        self.assertTrue(self._wait_group_gone(pgfile), "the sleep dies with the group")
+        # the variant that exits on its own 2 s later: past the deadline all the same, not a success
+        t0 = time.monotonic()
+        r = es.run_command("echo A=x; exec >/dev/null 2>&1; sleep 2", "hp", 0.5)
+        self.assertLess(time.monotonic() - t0, 1.5, "not waited for past the deadline")
+        self.assertTrue(r.timed_out, "the command was still running at the deadline")
+        self.assertFalse(r.ok)
+        # exiting BEFORE the deadline with the pipes handed back is the exit code, at the exit
+        t0 = time.monotonic()
+        r = es.run_command("echo A=x; exec >/dev/null 2>&1; sleep 0.2; exit 0", "hp", 5)
+        self.assertLess(time.monotonic() - t0, 3, "the run returned at the exit, not at the deadline")
+        self.assertTrue(r.ok, r.reason(5))
+        self.assertFalse(r.timed_out)
+        self.assertEqual(sorted(es.parse_set(r.stdout)["values"]), ["A"])
+        r = es.run_command("echo A=x; exec >/dev/null 2>&1; sleep 0.2; exit 4", "hp", 5)
+        self.assertFalse(r.ok)
+        self.assertFalse(r.timed_out)
+        self.assertEqual(r.reason_key(5), "exited 4")
 
     def test_the_reason_key_is_the_failures_kind_with_nothing_per_run(self):
         # `reason` carries the run's duration and stderr byte count; `reason_key` does not, so two
@@ -715,6 +756,69 @@ class CacheAndCoalescing(_Lab):
         self.assertFalse(es.invalidate_for_auth_failure("401"))
         self.assertTrue(es.credential_auth_ok(es.fingerprint(h)), "the helper's credential is the one the refusal was for")
         self.assertTrue(es.invalidate_for_auth_failure("401"))
+
+    def test_a_refusal_of_a_credential_that_is_not_the_current_one_invalidates_nothing(self):
+        # the reproduction: a session still running on the key from before a rotation is refused on
+        # every turn, and sessions on the current key complete turns between. Before this each such
+        # refusal invalidated the CURRENT set and each success re-armed the path, so the uncycled
+        # session cost one command run and one helper run per turn for as long as it was left.
+        old, new, h = fixture_value("old"), fixture_value("new"), fixture_value("helper")
+        self.configure(self.printing({"ANTHROPIC_API_KEY": old}))
+        self.helper("echo '%s'" % h)
+        old_fp = es.current()["keyFp"]                         # the stamp of a session launched now
+        self.assertEqual(old_fp, es.fingerprint(old))
+        self.printing({"ANTHROPIC_API_KEY": new})
+        es.invalidate("the operator's refresh after the rotation")
+        new_fp = es.current()["keyFp"]
+        self.assertEqual(new_fp, es.fingerprint(new))
+        es.helper_fingerprint()
+        runs, hruns = es._runs, es.helper_runs()
+        for _ in range(5):
+            self.assertFalse(es.invalidate_for_auth_failure("401 on a turn", old_fp),
+                             "neither a value of the current set nor the helper's output: nothing to re-run for")
+            es.current()
+            es.helper_fingerprint()
+            self.assertFalse(es.credential_auth_ok(new_fp), "nothing was armed for the success to re-arm")
+        self.assertEqual((es._runs, es.helper_runs()), (runs, hruns), "no command run and no helper run for the burst")
+        # a refusal of the CURRENT key still fires, once
+        self.assertTrue(es.invalidate_for_auth_failure("401", new_fp))
+        es.current()
+        es.helper_fingerprint()
+        self.assertEqual((es._runs, es.helper_runs()), (runs + 1, hruns + 1))
+        self.assertFalse(es.invalidate_for_auth_failure("401", new_fp), "the same set again: suppressed")
+        self.assertFalse(es.invalidate_for_auth_failure("401", old_fp), "and the stale stamp still says nothing")
+        self.assertTrue(es.credential_auth_ok(new_fp), "the success on the refused key re-arms")
+        # no stamp (a judge call: the set as a whole) keys on the set and helper fingerprints alone
+        self.assertTrue(es.invalidate_for_auth_failure("401"))
+        es.current()
+        self.assertEqual(es._runs, runs + 2)
+        self.assertNotIn(old, str(es.current()))
+        self.assertNotIn(new, str(es.current()))
+
+    def test_a_refusal_stamped_with_a_pre_rotation_helper_output_invalidates_nothing_either(self):
+        # the helper-billed shape of the same: a session stamped with the helper's output from
+        # before a rotation behind the helper, refused on every turn
+        a, b = fixture_value("a"), fixture_value("b")
+        self.configure(self.printing({"A_TOKEN": fixture_value("role")}))
+        self.helper("echo '%s'" % a)
+        es.current()
+        old_fp = es.helper_fingerprint()[0]
+        self.assertEqual(old_fp, es.fingerprint(a))
+        self.helper("echo '%s'" % b)
+        es.invalidate("refresh")
+        es.current()
+        self.assertEqual(es.helper_fingerprint()[0], es.fingerprint(b))
+        runs, hruns = es._runs, es.helper_runs()
+        for _ in range(3):
+            self.assertFalse(es.invalidate_for_auth_failure("401", old_fp))
+            es.current()
+            es.helper_fingerprint()
+        self.assertEqual((es._runs, es.helper_runs()), (runs, hruns))
+        self.assertTrue(es.invalidate_for_auth_failure("401", es.fingerprint(b)), "the current helper output: fires once")
+        es.current()
+        es.helper_fingerprint()
+        self.assertEqual((es._runs, es.helper_runs()), (runs + 1, hruns + 1))
+        self.assertFalse(es.invalidate_for_auth_failure("401", es.fingerprint(b)))
 
     def test_the_record_carries_the_failures_kind_beside_the_full_reason(self):
         # reason: the run's detail (duration, stderr bytes), for api-health's lastRun and the reports;
@@ -1087,6 +1191,36 @@ class HelperFingerprint(_Lab):
         fp, _reason = es.helper_fingerprint(values={"A_TOKEN": role, "ANTHROPIC_API_KEY": fixture_value("key")})
         self.assertEqual(fp, es.fingerprint("%s-%s" % (h, role)), "the helper's environment is built from the set handed in, minus the key")
         self.assertEqual(es._runs, 2)
+
+    def test_an_invalidation_between_take_and_the_fingerprint_stores_the_entry_under_the_sets_generation(self):
+        # a connect takes the set, an invalidate lands (a refresh, a refusal), and the connect asks
+        # for the helper's fingerprint with the set it took: the run is FOR that set's generation
+        # and is stored under it, stale. Before this the generation was read under the helper lock
+        # after the overlay was built, so the pre-invalidation overlay's fingerprint was stored under
+        # the post-invalidation generation and served as current to every caller after.
+        h, role_a, role_b = fixture_value("helper"), fixture_value("role-a"), fixture_value("role-b")
+        self.helper('echo "%s-${A_TOKEN:-none}"' % h)
+        self.configure(self.printing({"A_TOKEN": role_a}))
+        snap, vals = es.take()
+        self.assertEqual(snap["generation"], es._gen, "the record names the generation it was served under")
+        self.printing({"A_TOKEN": role_b})
+        es.invalidate("a refresh between the connect's take and its helper fingerprint")
+        fp, reason = es.helper_fingerprint(values=vals, generation=snap["generation"])
+        self.assertEqual((fp, reason), (es.fingerprint("%s-%s" % (h, role_a)), ""),
+                         "the connect's own set: the fingerprint of the credential its CLI bills")
+        self.assertEqual(es.helper_runs(), 1)
+        self.assertNotEqual(es._helper["gen"], es._gen, "stored under the generation the set was taken in: stale")
+        fp2, reason2 = es.helper_fingerprint()
+        self.assertEqual(es.helper_runs(), 2, "the next caller runs the helper again, on the current set")
+        self.assertEqual((fp2, reason2), (es.fingerprint("%s-%s" % (h, role_b)), ""))
+        self.assertEqual(es._helper["gen"], es._gen)
+        self.assertEqual(es.helper_fingerprint()[0], fp2)
+        self.assertEqual(es.helper_runs(), 2, "and that one is current: cached")
+        # values handed in with no generation: the run is for the current generation (the caller did not say)
+        es.invalidate("again")
+        es.helper_fingerprint(values={"A_TOKEN": role_b})
+        self.assertEqual(es._helper["gen"], es._gen)
+        self.assertEqual(es.helper_runs(), 3)
 
     def test_the_helper_runs_in_a_session_clis_environment_role_variables_merged_romp_sid_absent(self):
         # a helper that picks its store by a role variable, and one that would see a session identity

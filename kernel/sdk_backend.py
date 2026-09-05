@@ -6629,10 +6629,19 @@ class SdkBackend:
         goes stale on: invalidate, so the next launch re-runs the command — ONCE per credential
         (envsource.invalidate_for_auth_failure): a second refusal of the same set is not new
         information, and a revoked credential must not turn every refusal into a command run.
-        Logged when it fires; a no-op in file mode (nothing cached to refresh)."""
+        Keyed on the session's launch stamp, like _credential_auth_ok below: a refusal on a session
+        still running on the credential from before a rotation is not a refusal of the current set,
+        so it invalidates nothing. Before this every 401 was forwarded without the stamp, and an
+        uncycled session on the old credential cost one command run, one helper run and two log
+        lines per turn (its refusal invalidated the current set; the next current-credential turn
+        re-armed the path). A session with no stamp (nothing to fingerprint at its launch) forwards
+        "" and is keyed on the set alone. A launch refused as unauthenticated carries the stamp of
+        the set that connect just took. Logged when it fires; a no-op in file mode (nothing cached
+        to refresh)."""
         if not _envsrc.configured():
             return
-        if _envsrc.invalidate_for_auth_failure("auth failure: " + what):
+        fp = getattr(sess, "_launched_key_fp", None) or ""
+        if _envsrc.invalidate_for_auth_failure("auth failure: " + what, fp):
             self._log("credential command: %s reported an authentication failure (%s) — the set is re-read at the "
                       "next launch" % (getattr(sess, "name", "?"), what))
 
@@ -7960,8 +7969,12 @@ class SdkBackend:
             sess._launched_key_fp = _keysrc.fingerprint(work_key)
         elif _envsrc.configured():
             # the set this connect already took rides along: the helper's environment is built from it
-            # rather than from a second read, which on a failing command would be a second run
-            sess._launched_key_fp = _envsrc.helper_fingerprint(values=cred[1] if cred is not None else None)[0]
+            # rather than from a second read, which on a failing command would be a second run; its
+            # generation rides with it, so an invalidate that landed since the take leaves the
+            # fingerprint stored stale rather than served as current
+            sess._launched_key_fp = _envsrc.helper_fingerprint(
+                values=cred[1] if cred is not None else None,
+                generation=cred[0].get("generation") if cred is not None else None)[0]
         else:
             sess._launched_key_fp = ""
         sess._launched_set_fp = _envsrc.set_fingerprint(role_vars)
