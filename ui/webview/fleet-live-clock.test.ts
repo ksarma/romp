@@ -9,8 +9,11 @@
 // Run for real, not pinned at source: fleet.ts renders through document.createElement and reads frames off a
 // window message, so the page is stood in for by a small tree of plain objects carrying the handful of DOM
 // methods the render uses, under node:test's mock timers (Date and setInterval). The same harness runs the
-// unapplied-delta guard: a raw {type:"feedDelta"} reaching the pane (federation.js absent, so the shim
-// dispatched the raw frame) is loud, asks for a full frame, and applies nothing.
+// clock's two anchors (a frame stamped `nowAt` by federation; one without, off the VS Code pipe, anchored at
+// its arrival), the refresh's visibility gate (a hidden document or a zero-size iframe skips the tick and the
+// pane catches up once on the way back — the second review round found it rebuilding a list nobody could
+// see), and the unapplied-delta guard: a raw {type:"feedDelta"} reaching the pane (federation.js absent, so
+// the shim dispatched the raw frame) is loud, asks for a full frame, and applies nothing.
 import { test, mock } from "node:test";
 import * as assert from "node:assert/strict";
 
@@ -79,15 +82,16 @@ win.setTimeout = (...a: Parameters<typeof setTimeout>) => setTimeout(...a);
 win.clearTimeout = (t: ReturnType<typeof setTimeout>) => clearTimeout(t);
 win.acquireVsCodeApi = () => ({ postMessage: (m: any) => posted.push(m) });
 (globalThis as any).window = win;
-(globalThis as any).document = {
-  body, documentElement: new El("html"),
+const doc: any = new EventTarget();       // document: visibilitychange dispatches through EventTarget; `hidden` is the Page Visibility bit
+Object.assign(doc, {
+  body, documentElement: new El("html"), hidden: false,
   createElement: (tag: string) => new El(tag),
   createTextNode: (s: string) => new Txt(s),
   getElementById: (id: string) => body.byId(id),
   querySelectorAll: () => [],
-  addEventListener: () => {}, removeEventListener: () => {},
   contains: (x: El) => body.contains(x),
-};
+});
+(globalThis as any).document = doc;
 (globalThis as any).localStorage = {
   getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
   setItem: (k: string, v: string) => { store.set(k, String(v)); },
@@ -133,6 +137,54 @@ test("ages and the recency cutoff move on the kernel's live clock between frames
     "the done top (now 100 s old) aged out of the 84.85 s cutoff window and left the list; the current top (80 s) stays");
   assert.equal(list.byClass("fl-session").length, 1, "its session stays: the filter is per top, not per session");
   assert.equal(posted.length, before, "…all of it on the local clock: the pane asked the kernel for nothing");
+});
+
+test("a frame without `nowAt` (the VS Code pipe hands frames straight to the pane) anchors the clock at its arrival", () => {
+  // Federation stamps `nowAt` on the frames it re-emits; the extension's pipe hands the kernel's frame over
+  // unstamped, so the pane records the arrival itself and the ages count from the frame's own `now` from
+  // that moment. Still under the first test's mock timers: the browser clock reads T0 + 60 s here.
+  assert.equal(Date.now(), T0 * 1000 + 60_000, "the mock clock where the first test left it");
+  win.dispatchEvent(new MessageEvent("message", { data: { ...frame(), nowAt: undefined } }));
+  assert.deepEqual(rows(), { g1: "(10s)", g2: "(30s ago)" },
+    "anchored at arrival: the frame's `now` IS the kernel clock right now; the browser clock (6 min ahead) never enters");
+  mock.timers.tick(15_000);
+  assert.deepEqual(rows(), { g1: "(25s)", g2: "(45s ago)" }, "15 s later both ages moved 15 s, counted from the frame's `now`");
+});
+
+test("the 15 s refresh skips a hidden document and catches up once it is visible again", () => {
+  win.dispatchEvent(new MessageEvent("message", { data: { ...frame(), nowAt: Date.now() } }));   // a fresh anchor: (10s) / (30s ago)
+  const rebuilt = mock.method(list, "replaceChildren");   // render() starts with #fleet-list.replaceChildren(): every rebuild shows here
+  const shown = rows();
+  doc.hidden = true;
+  mock.timers.tick(30_000);               // two refreshes fall while hidden
+  assert.equal(rebuilt.mock.callCount(), 0, "no rebuild for a pane nobody can see");
+  assert.deepEqual(rows(), shown);
+  doc.hidden = false;
+  doc.dispatchEvent(new Event("visibilitychange"));
+  assert.equal(rebuilt.mock.callCount(), 1, "one catch-up rebuild on the way back");
+  assert.deepEqual(rows(), { g1: "(40s)", g2: "(1m ago)" }, "…with the ages moved by the hidden 30 s");
+  mock.timers.tick(15_000);               // the cadence resumes
+  assert.equal(rebuilt.mock.callCount(), 2);
+  assert.deepEqual(rows(), { g1: "(55s)", g2: "(1m ago)" });
+  doc.dispatchEvent(new Event("visibilitychange"));
+  assert.equal(rebuilt.mock.callCount(), 2, "a flip with no skipped tick owes nothing: the catch-up is once, not per flip");
+  rebuilt.mock.restore();
+});
+
+test("a pane the shell has hidden (a zero-size iframe, the shim's paneHidden test) skips too, and the resize it gets when shown catches up", () => {
+  win.dispatchEvent(new MessageEvent("message", { data: { ...frame(), nowAt: Date.now() } }));   // (10s) / (30s ago)
+  const rebuilt = mock.method(list, "replaceChildren");
+  win.innerWidth = 0;                     // display:none on the pane iframe: document.hidden stays false, the viewport is 0×0
+  mock.timers.tick(15_000);
+  assert.equal(rebuilt.mock.callCount(), 0, "no rebuild while the iframe has no size");
+  assert.deepEqual(rows(), { g1: "(10s)", g2: "(30s ago)" });
+  win.innerWidth = 1200;
+  win.dispatchEvent(new Event("resize"));  // what the iframe's window gets when the shell shows it again
+  assert.equal(rebuilt.mock.callCount(), 1);
+  assert.deepEqual(rows(), { g1: "(25s)", g2: "(45s ago)" }, "caught up by the hidden 15 s");
+  win.dispatchEvent(new Event("resize"));
+  assert.equal(rebuilt.mock.callCount(), 1, "an ordinary resize rebuilds nothing");
+  rebuilt.mock.restore();
 });
 
 test("a raw feedDelta reaching the pane is loud, asks for a full frame, and applies nothing", () => {

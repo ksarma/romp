@@ -914,8 +914,23 @@ vscodeApi?.postMessage({ type: "ready" });   // ask the kernel to push the initi
 // between frames: a quiet board sends a delta client nothing, so the clock-derived parts move on the local
 // clock's deltas (nowSec), on the feed pane's 15 s cadence. A whole render(), not a per-element repaint: it
 // is what every frame already runs, the ledgers are small, and the cutoff filter has to be able to DROP a
-// row as it ages out of the window — which no repaint of the row's own text could do.
-setInterval(() => { if (loaded) render(); }, 15000);
+// row as it ages out of the window — which no repaint of the row's own text could do. Not for a pane nobody
+// can see: a hidden tab (document.hidden) or a pane the shell has hidden (display:none gives the iframe a
+// ZERO viewport — the shim's paneHidden test; document.hidden stays false for it) skips the tick, and the
+// first visible moment catches up once (visibilitychange, or the resize the iframe gets when it is shown
+// again) — not on every flip, only after a tick was skipped. Frames still render as they arrive.
+const paneHidden = () => document.hidden || window.innerWidth === 0 || window.innerHeight === 0;
+let tickSkipped = false;   // a refresh fell while hidden: the pane owes one catch-up render
+const refreshIfVisible = () => {
+  if (!loaded) return;
+  if (paneHidden()) { tickSkipped = true; return; }
+  tickSkipped = false;
+  render();
+};
+setInterval(refreshIfVisible, 15000);
+const catchUp = () => { if (tickSkipped) refreshIfVisible(); };
+document.addEventListener("visibilitychange", catchUp);
+window.addEventListener("resize", catchUp);
 
 // Hold the romp loader up until the ledgers actually land (the user 2026-06-29, who wanted the loading thing shown until
 // the tasks are ready to render). The shared _pane_spin loader has an 8s backstop that would otherwise hide

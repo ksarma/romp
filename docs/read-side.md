@@ -93,8 +93,9 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   a live clock (`age-color.ts`, `feed-age.ts`: the payload's `now` plus the local
   time since it landed, so a quiet board's ages and tints keep moving), never
   read from the wire. The Outline pane keeps the same clock: its ages, the
-  current goal's elapsed time and its recency cutoff move on a 15 s refresh,
-  since a delta client hears nothing from a quiet board. Full frames still carry the per-card `trgb` for older
+  current goal's elapsed time and its recency cutoff move on a 15 s refresh
+  (skipped while the pane is hidden, with one catch-up render when it is shown
+  again), since a delta client hears nothing from a quiet board. Full frames still carry the per-card `trgb` for older
   bundles that destructure it; deltas omit it, and the kernel's dedup signature
   ignores it, so a colour step is never a change (it used to re-send the whole
   board on every step: 5.76 MB a push on a board of about 660 cards, measured
