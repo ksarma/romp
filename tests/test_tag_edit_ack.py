@@ -58,7 +58,6 @@ class _Wire(unittest.TestCase):
             km._views_path().unlink()
         except OSError:
             pass
-        km._flags_cache.clear()
         self.notices = []
         self._sync = km._sync_notice
         km._sync_notice = lambda text, ok=True: self.notices.append((text, ok))
@@ -73,14 +72,12 @@ class _Wire(unittest.TestCase):
             km._views_path().unlink()
         except OSError:
             pass
-        km._flags_cache.clear()
 
     def post(self, msg, client=None):
         """Dispatch one client frame; return the reply it produced on that socket (or None)."""
         c = client or self.client
         before = len(self.sent) if c is self.client else None
         km.Handler._dispatch_ws(self.handler, msg, c)
-        km._flags_cache.clear()
         if before is None:
             return None
         new = self.sent[before:]
@@ -301,7 +298,6 @@ class TargetedTagEdits(_Wire):
         t, err = km._edit_tag("qa", add=[SID2])
         self.assertIsNone(err)
         self.assertEqual((t["name"], t["members"]), ("qa", [SID2]))
-        km._flags_cache.clear()
         t, err = km._edit_tag("qa", color="#DD42FF")
         self.assertEqual((err, t["color"]), (None, "#DD42FF"))
 
@@ -324,7 +320,6 @@ class WholeBlobAcks(_Wire):
         time.sleep(1.1)                                                  # int-second stamps: land in a later second
         t, err = km._edit_tag("web", add=[SID2])                         # …then another writer adds a member
         self.assertIsNone(err)
-        km._flags_cache.clear()
         stale["actives"] = {"timeline": {"tags": ["web"]}}               # the stale dashboard changes its lens…
         stale["tags"][0]["members"] = []                                 # …and its copy of web has no members at all
         a = self.post({"type": "setTimelineViews", "writeId": "w2", "views": stale})
@@ -349,7 +344,6 @@ class WholeBlobAcks(_Wire):
         stale = json.loads(json.dumps(served))
         time.sleep(1.1)
         km._edit_tag("web", add=[SID2])                                   # another writer edits web
-        km._flags_cache.clear()
         stale["actives"] = {"timeline": {"tags": ["web"]}}                # this dashboard changes only its lens…
         stale["tags"][0]["members"] = []                                  # …carrying its stale copy of web
         a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale, "edited": []})
@@ -373,7 +367,6 @@ class WholeBlobAcks(_Wire):
         stale = json.loads(json.dumps(served))
         time.sleep(1.1)
         km._edit_tag("web", add=[SID2])
-        km._flags_cache.clear()
         stale["tags"][0]["members"] = []
         a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale, "edited": ["gA"]})
         row = a["refused"][0]
@@ -404,7 +397,6 @@ class WholeBlobAcks(_Wire):
         stale = json.loads(json.dumps(served))
         time.sleep(1.1)
         km._edit_tag("web", add=[SID2])
-        km._flags_cache.clear()
         stale["tags"] = []
         a = self.post({"type": "setTimelineViews", "writeId": "w3", "views": stale})
         self.assertFalse(a["ok"])
@@ -446,7 +438,6 @@ class WriteSequence(_Wire):
         self.assertIsInstance(s0, int, "the served blob carries the stamp")
         _, err = km._edit_tag("web", add=[SID2])                            # a targeted (RMW) write
         self.assertIsNone(err)
-        km._flags_cache.clear()
         s1 = km._timeline_views()["seq"]
         self.assertGreater(s1, s0, "a targeted write moves it")
         nv = json.loads(json.dumps(km._views_client()))
@@ -458,13 +449,11 @@ class WriteSequence(_Wire):
         self.assertEqual(a["seq"], km._timeline_views()["seq"])
         _, err = km._edit_tag("ghost", rename="x", exists=True)              # refused: no write
         self.assertTrue(err)
-        km._flags_cache.clear()
         self.assertEqual(km._timeline_views()["seq"], a["seq"], "a refused edit writes nothing, so it moves nothing")
         # a PARTIALLY refused whole-blob write still lands the rest of the write — so it moves
         stale = json.loads(json.dumps(served))
         time.sleep(1.1)
         km._edit_tag("web", color="#DD42FF")
-        km._flags_cache.clear()
         s2 = km._timeline_views()["seq"]
         stale["tags"][0]["members"] = []
         stale["actives"] = {"chat": {"tags": ["web"]}}
@@ -490,7 +479,6 @@ class WriteSequence(_Wire):
         ignore every frame until it reloaded."""
         s0 = self.seed()["seq"]
         km._views_path().unlink()
-        km._flags_cache.clear()
         time.sleep(0.002)
         a = self.post({"type": "setTimelineViews", "writeId": "w9", "views": {"active": "all", "tags": []}})
         self.assertGreater(a["seq"], s0)
@@ -578,7 +566,6 @@ class SetterReturnsRefusals(unittest.TestCase):
             km._views_path().unlink()
         except OSError:
             pass
-        km._flags_cache.clear()
         self._sync = km._sync_notice
         km._sync_notice = lambda text, ok=True: None
 
@@ -588,19 +575,53 @@ class SetterReturnsRefusals(unittest.TestCase):
             km._views_path().unlink()
         except OSError:
             pass
-        km._flags_cache.clear()
 
     def test_clean_writes_return_an_empty_list_and_stale_ones_the_rows(self):
         self.assertEqual(km._set_timeline_views({"active": "all", "tags": [dict(WEB)]}), [])
-        km._flags_cache.clear()
         stale = json.loads(json.dumps(km._timeline_views()))
         time.sleep(1.1)
         km._edit_tag("web", add=[SID2])
-        km._flags_cache.clear()
         stale["tags"][0]["members"] = []
         rows = km._set_timeline_views(stale)
         self.assertEqual([sorted(r.keys()) for r in rows], [["name", "reason", "tid"]])
         self.assertEqual((rows[0]["tid"], rows[0]["name"]), ("gA", "web"))
+
+
+class ReadCacheAfterWrite(_Wire):
+    """The views read cache is keyed on the file's (mtime_ns, size) and was never touched by a write
+    (round 3 of the 2026-09-05 review). The kernel's file mtime clock is coarse (a few ms), so two
+    same-size writes in one tick shared a key, and the second write's ack — built by reading the store
+    — could serve the FIRST write's blob. Now the write itself refreshes the cache entry with the blob
+    it wrote. This harness runs with the production cache (no clears): every ack in this file is
+    served through it."""
+
+    def test_the_cache_holds_the_blob_just_written_and_a_shared_stat_key_cannot_serve_the_older_one(self):
+        self.seed()                                                          # web = #3b82f6
+        p = km._views_path()
+        st1 = p.stat()
+        first = km._timeline_views()
+        self.assertIs(km._flags_cache[str(p)][1], first, "the read warmed the cache")
+        # a same-size write (a 7-char colour for a 7-char colour): the file's size does not change
+        _, err = km._edit_tag("web", color="#54B204")
+        self.assertIsNone(err)
+        self.assertEqual(km._flags_cache[str(p)][1]["tags"][0]["color"], "#54B204",
+                         "the write replaced the cache entry with what it wrote — no read needed")
+        self.assertEqual(p.stat().st_size, st1.st_size, "(the write is the same size: the key's other half cannot tell them apart)")
+        # the coarse-clock case, forced: give the second write the first's mtime, so the stat key is
+        # exactly the one the first read was cached under
+        os.utime(p, ns=(st1.st_mtime_ns, st1.st_mtime_ns))
+        self.assertEqual(km._timeline_views()["tags"][0]["color"], "#54B204",
+                         "the next read serves the newer write — never the older blob under a shared key")
+
+    def test_a_targeted_edits_ack_is_fresh_through_the_production_cache(self):
+        self.seed()
+        a = self.post({"type": "tagEdit", "writeId": "w1", "edit": {"op": "recolor", "tid": "gA", "color": "#54B204"}})
+        self.assertTrue(a["ok"])
+        self.assertEqual(next(t for t in a["views"]["tags"] if t["id"] == "gA")["color"], "#54B204",
+                         "the ack's blob is the post-write store, read through the cache the write refreshed")
+        b = self.post({"type": "tagEdit", "writeId": "w2", "edit": {"op": "recolor", "tid": "gA", "color": "#DD42FF"}})
+        self.assertEqual(next(t for t in b["views"]["tags"] if t["id"] == "gA")["color"], "#DD42FF")
+        self.assertGreater(b["seq"], a["seq"])
 
 
 class WebBootWiring(unittest.TestCase):

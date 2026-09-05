@@ -2701,8 +2701,27 @@ def _set_timeline_views(blob):
     except (TypeError, ValueError):
         prev_seq = 0
     v["seq"] = max(prev_seq + 1, int(time.time() * 1000))
-    _atomic_write(_views_path(), json.dumps(v, sort_keys=True))
+    text = json.dumps(v, sort_keys=True)
+    _atomic_write(_views_path(), text)
+    _views_cache_refresh(text)
     return rows
+
+
+def _views_cache_refresh(text):
+    """After a write of the views store: the read cache holds the blob just written, keyed on the
+    file's new (mtime, size), so the very next read — the ack's blob, the pusher's frame — is this
+    write and never a stale hit (2026-09-05 round 3: the (mtime, size) key was never invalidated on
+    write, and the kernel's mtime clock is coarse, so two same-size writes a few ms apart shared a
+    key and the second's ack could serve the first's blob). Replacing the entry rather than popping
+    it keeps the LAST blob this kernel wrote or served in the cache, which is what the reader
+    compares a changed file against (a write outside the kernel, _timeline_views). A stat failure
+    (the file vanished under us) drops the entry instead — the next read starts from the file."""
+    p = _views_path()
+    try:
+        st = p.stat()
+        _flags_cache[str(p)] = ((st.st_mtime_ns, st.st_size), _norm_timeline_views(json.loads(text)))
+    except Exception:
+        _flags_cache.pop(str(p), None)
 
 
 def _remote_tag_member_str(owner_host, m):
