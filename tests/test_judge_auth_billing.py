@@ -427,5 +427,99 @@ class KernelWiringAndFloorPins(unittest.TestCase):
         self.assertIn(".fask-jauth", css)
 
 
+class OpCredentialAndRetrievalGate(_JudgeAuthBase):
+    """Review finds of 2026-09-05, at the judge boundary."""
+
+    def test_a_judge_child_never_inherits_the_op_credential_when_romp_runs_op(self):
+        with patch.dict(os.environ, {"OP_SERVICE_ACCOUNT_TOKEN": "synthetic-op-token", "OP_SESSION_acct": "s",
+                                     "ROMP_API_KEY_REF": "op://test-vault/test-item/credential"}):
+            env = jd._judge_env("triage", auth="login")
+        self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN", env)
+        self.assertNotIn("OP_SESSION_acct", env)
+
+    def test_a_helper_box_keeps_op_in_its_judge_children(self):
+        """No reference configured: the sessions (and judges) may authenticate through a helper that runs op
+        itself, so romp leaves op's environment alone."""
+        with patch.dict(os.environ, {"OP_SERVICE_ACCOUNT_TOKEN": "synthetic-op-token"}), \
+             patch.object(jd._keysrc, "_OP_ENV", {}):
+            env = jd._judge_env("triage", auth="login")
+        self.assertEqual(env.get("OP_SERVICE_ACCOUNT_TOKEN"), "synthetic-op-token")
+
+    def test_a_failed_retrieval_is_not_retried_until_the_next_pass_or_a_new_source(self):
+        calls = []
+        def failing():
+            calls.append(1)
+            raise jd._keysrc.KeySourceError("1Password credential retrieval timed out; check op authentication")
+        jd._WORK_KEY_FN = failing
+        jd._WORK_KEY_CONFIGURED_FN = lambda: True
+        saved = dict(jd._KEY_GATE); saved_gen = jd._PASS_GEN[0]
+        try:
+            jd._KEY_GATE.update(fp=None, gen=None, note="")
+            jd.begin_pass_frame()                                  # a pass is running
+            with self.assertRaisesRegex(jd._keysrc.KeySourceError, "timed out"):
+                jd._judge_env("triage", auth="key")
+            with self.assertRaisesRegex(jd._keysrc.KeySourceError, "timed out"):
+                jd._judge_env("triage", auth="key")                # same pass, same source: fails at once
+            self.assertEqual(len(calls), 1, "one retrieval per pass, not one per call")
+            self.assertFalse(jd.begin_pass_frame(), "a tier joining the open pass…")
+            with self.assertRaises(jd._keysrc.KeySourceError):
+                jd._judge_env("triage", auth="key")
+            self.assertEqual(len(calls), 1, "…shares its gate: no retry mid-pass")
+            jd.end_pass_frame(); jd.begin_pass_frame()             # the NEXT pass is the deciding event
+            with self.assertRaises(jd._keysrc.KeySourceError):
+                jd._judge_env("triage", auth="key")
+            self.assertEqual(len(calls), 2)
+            jd._WORK_KEY_FN = lambda: FAKE_KEY                     # …and a retrieval that works clears nothing it need not
+            jd.end_pass_frame(); jd.begin_pass_frame()
+            self.assertEqual(jd._judge_env("triage", auth="key")["ANTHROPIC_API_KEY"], FAKE_KEY)
+        finally:
+            jd._KEY_GATE.update(saved); jd._PASS_GEN[0] = saved_gen
+            jd.end_pass_frame()
+
+    def test_the_first_retrieval_of_a_pass_gates_the_concurrent_wave(self):
+        """Six judge threads reach a pass's first key call together; the first retrieves, the rest wait for
+        its verdict instead of each spawning op and waiting out a timeout (review find, 2026-09-05)."""
+        import threading
+        calls, gate = [], threading.Event()
+        def slow_failing():
+            calls.append(1); gate.wait(2.0)
+            raise jd._keysrc.KeySourceError("1Password credential retrieval timed out; check op authentication")
+        jd._WORK_KEY_FN = slow_failing
+        saved = dict(jd._KEY_GATE); saved_gen = jd._PASS_GEN[0]
+        results = []
+        def worker():
+            try:
+                jd._judge_env("triage", auth="key"); results.append("ok")
+            except jd._keysrc.KeySourceError as e:
+                results.append(str(e))
+        try:
+            jd._KEY_GATE.update(fp=None, gen=None, note=""); jd.begin_pass_frame()
+            threads = [threading.Thread(target=worker) for _ in range(6)]
+            for th in threads: th.start()
+            time.sleep(0.3); gate.set()
+            for th in threads: th.join(5.0)
+            self.assertEqual(len(calls), 1, "one retrieval for the whole wave")
+            self.assertEqual(len(results), 6)
+            self.assertTrue(all("timed out" in r for r in results))
+        finally:
+            jd._KEY_GATE.update(saved); jd._PASS_GEN[0] = saved_gen; jd.end_pass_frame()
+
+    def test_standalone_callers_without_a_pass_frame_retry_every_call(self):
+        calls = []
+        def failing():
+            calls.append(1)
+            raise jd._keysrc.KeySourceError("1Password credential retrieval failed")
+        jd._WORK_KEY_FN = failing
+        saved = dict(jd._KEY_GATE); saved_gen = jd._PASS_GEN[0]
+        try:
+            jd._KEY_GATE.update(fp=None, gen=None, note=""); jd._PASS_GEN[0] = 0
+            for _ in range(2):
+                with self.assertRaises(jd._keysrc.KeySourceError):
+                    jd._judge_env("triage", auth="key")
+            self.assertEqual(len(calls), 2)
+        finally:
+            jd._KEY_GATE.update(saved); jd._PASS_GEN[0] = saved_gen
+
+
 if __name__ == "__main__":
     unittest.main()

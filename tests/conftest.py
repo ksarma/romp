@@ -39,6 +39,24 @@ os.environ["ROMP_SERVICE_ENV"] = _NO_SERVICE_ENV
 # inherited reference before module loading, so an auth test cannot resolve a developer's vault
 # merely because the isolated service.env is absent. Tests set synthetic references explicitly.
 os.environ.pop("ROMP_API_KEY_REF", None)
+# Every shell under a romp-managed session inherits ROMP_SUPERVISED=1 from the kernel (the service
+# unit exports it), and keysource gives that variable authority: a supervised manager reads the env
+# file only and ignores a startup key. Twenty-five tests that stage a startup key went red when the
+# suite ran from inside a romp session while CI stayed green (review find, 2026-09-05). The floor is
+# the unsupervised case; a test that wants supervision sets the variable itself.
+os.environ.pop("ROMP_SUPERVISED", None)
+
+
+def _reset_keysource_state():
+    """keysource remembers which path selected which source for the PROCESS (that is the resurrection
+    guard); under one pytest process that memory would leak between test modules. Every loaded copy of
+    the module (each SourceFileLoader name is its own module object) is reset."""
+    import sys
+    for name, m in list(sys.modules.items()):
+        if "keysource" in name and hasattr(m, "_AUTHORITATIVE_PATHS"):
+            m._AUTHORITATIVE_PATHS.clear()
+            getattr(m, "_ENV_PROVIDER_PATHS", set()).clear()
+            m._CACHE = ((), "")
 
 
 @pytest.fixture(autouse=True)
@@ -50,6 +68,8 @@ def _no_real_service_env():
     for var in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"):
         os.environ[var] = _NO_SERVICE_ENV
     os.environ.pop("ROMP_API_KEY_REF", None)
+    os.environ.pop("ROMP_SUPERVISED", None)
+    _reset_keysource_state()
     yield
 
 

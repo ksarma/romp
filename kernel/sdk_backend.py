@@ -1549,7 +1549,7 @@ ENV_RESERVED_NAMES = ("ROMP_SID", "ROMP_SESSION_NAME")
 AUTH_ENV_NAMES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 
 
-def env_request_error(env) -> str:
+def env_request_error(env, auth: str = "") -> str:
     """Why `env` is NOT a valid per-session env payload — "" when it is (an empty dict is a valid,
     vacuous one). A payload is a dict of NAME → string-value pairs, names in the shell-identifier
     alphabet and outside the reserved identity names (ENV_RESERVED_NAMES): it lands in the per-sid
@@ -1566,7 +1566,7 @@ def env_request_error(env) -> str:
         if k in ENV_RESERVED_NAMES:
             return ("env: %s is reserved — romp sets the session's identity env "
                     "(ROMP_SID, ROMP_SESSION_NAME) itself" % k)
-        if k in AUTH_ENV_NAMES and work_api_key_source().kind in ("op", "error"):
+        if k in AUTH_ENV_NAMES and k in _keysrc.runtime_reserved_names(auth or "", work_api_key_source()):
             return "env: %s is reserved while runtime API key retrieval is configured" % k
         if not isinstance(v, str):
             return "env: the value for %r must be a string" % (k,)
@@ -1788,6 +1788,7 @@ def _cli_refusal(e: BaseException) -> bool:
 
 
 _WORK_KEY: str | None = None   # process-lifetime stash; None = not yet claimed from the environment
+_STARTUP_KEY_DISCARD_SAID = False   # the one-line "your startup key is ignored" notice, once per process
 _KEY_FILE_CHECKED = False      # the startup-vs-file agreement check (one line, once per process)
 _STARTUP_AUTH_ENV: dict | None = None
 _WORK_AUTH_LOCK = threading.RLock()
@@ -1826,6 +1827,7 @@ def startup_auth_env() -> dict:
         if _STARTUP_AUTH_ENV is None:
             _STARTUP_AUTH_ENV = {name: os.environ.pop(name)
                                  for name in AUTH_ENV_NAMES[1:] if name in os.environ}
+        _keysrc.claim_op_env()   # op's own credential: for the `op read` subprocess only, never a session's (2026-09-05)
         return dict(_STARTUP_AUTH_ENV)
 
 
@@ -1835,14 +1837,34 @@ def work_api_key_source():
     Once a file or runtime source takes over, discard the startup key. Removing that
     source must never restore a credential that the operator already replaced.
     """
-    global _WORK_KEY
+    global _WORK_KEY, _STARTUP_KEY_DISCARD_SAID
     with _WORK_AUTH_LOCK:
         startup = startup_api_key()
         source = _keysrc.select_source(startup)
         if source.kind == "file":
             _check_key_file_agrees(startup, source.value)
-        if source.kind in ("file", "op", "error"):
+        if source.kind in ("file", "op"):
+            # A real selection retires the startup key for good. Said ONCE when that key was non-empty:
+            # an operator who delivers the key through a systemd drop-in or a launchd plist rather than
+            # service.env would otherwise watch every session bill the login with nothing in the log
+            # (review find, 2026-09-05) — the silent fallback this module exists to end.
+            # (the standard install exports the file's own key line into the manager environment, so the
+            # SAME key on both sides is nothing to say; a DIFFERENT file key is _check_key_file_agrees's line)
+            discarded = source.kind == "op" or (source.kind == "file" and not source.value)
+            if startup and discarded and not _STARTUP_KEY_DISCARD_SAID:
+                _STARTUP_KEY_DISCARD_SAID = True
+                why = ("supervised managers read %s only" % _keysrc.service_env_path()
+                       if source.kind == "file" and os.environ.get("ROMP_SUPERVISED") == "1"
+                       else "%s selects the 1Password source" % _keysrc.REF_VAR if source.kind == "op"
+                       else "the env file's key line is empty")
+                sys.stderr.write("work key: the startup key (sha256:%s) is IGNORED — %s. Sessions without an "
+                                 "explicit Billing pick %s.\n"
+                                 % (_keysrc.fingerprint(startup), why,
+                                    "launch on the login" if not source.configured else "use that source"))
             _WORK_KEY = ""
+        # "error" (an unreadable or undecodable file) is not a selection: it fails the operation that asked
+        # while it lasts, and the startup key stays claimed so a transient permission blemish cannot
+        # quietly turn a keyed box into a login one once it clears (review find, 2026-09-05).
         return source
 
 
@@ -4856,7 +4878,8 @@ class SdkBackend:
                 src = "read from %s" % _keysrc.service_env_path()
             self._log("work key: sessions now launch on the key sha256:%s (%s)" % (fp, src))
 
-    def cycle_key(self, sid: str, expected_source_fp: str | None = None) -> str:
+    def cycle_key(self, sid: str, expected_source_fp: str | None = None, current_key_fp: str | None = None,
+                  probe: bool = False, resolve_error: str | None = None) -> str:
         """Re-present the CURRENT work key to one LIVE session by reconnecting it — the apply half of
         `romp keyswap --cycle` (the user 2026-09-04).
 
@@ -4887,6 +4910,14 @@ class SdkBackend:
         An optional source fingerprint binds the request to the CLI's preflight check. Check
         metadata again after provider retrieval, which can take time, before scheduling a reconnect.
         The actual launch still reads its source afresh; no credential is retained for that launch.
+        `current_key_fp` is the fingerprint of a key the CALLER resolved once for a whole request
+        (the /keycycle route, cycling many sessions): passed, this session is compared against it and
+        nothing is retrieved here — a dozen quiet sessions used to mean a dozen serial `op read`s on
+        one request thread (review find, 2026-09-05). `probe=True` classifies only — "unknown" /
+        "dormant" / "login" / "working", or "cycle" for a session that WOULD need the key — so the
+        caller can resolve once only when some session needs it; `resolve_error` is that request-level
+        failure, raised here at the point retrieval would have happened, so the rows that never needed
+        a key keep their own classification.
         """
         if not self.owns(sid):
             return "unknown"
@@ -4900,18 +4931,25 @@ class SdkBackend:
             live_work = len(s._subagents) + len(s._bg_tasks)
         if live_work or s.inflight > 0 or s._pending:
             return "working"
+        if probe:
+            return "cycle"
+        if resolve_error is not None:
+            raise _keysrc.KeySourceError(resolve_error)
         source.validate()
         source_fp = source.fingerprint()
         if expected_source_fp is not None and source_fp != expected_source_fp:
             raise _keysrc.KeySourceError("API key source changed; check it before cycling again")
-        key, _source = self._work_key_and_source(source)
-        if not key:
-            raise _keysrc.KeySourceError("API key billing selected but no API key source is configured")
-        current_source = self._work_key_source()
-        current_source.validate()
-        if current_source.fingerprint() != source_fp:
-            raise _keysrc.KeySourceError("API key source changed during retrieval; check it before cycling again")
-        fp = _keysrc.fingerprint(key)
+        if current_key_fp is not None:
+            fp = current_key_fp
+        else:
+            key, _source = self._work_key_and_source(source)
+            if not key:
+                raise _keysrc.KeySourceError("API key billing selected but no API key source is configured")
+            current_source = self._work_key_source()
+            current_source.validate()
+            if current_source.fingerprint() != source_fp:
+                raise _keysrc.KeySourceError("API key source changed during retrieval; check it before cycling again")
+            fp = _keysrc.fingerprint(key)
         if getattr(s, "_launched_key_fp", None) == fp:
             return "current"
         s.request_reconnect(defer=False)
@@ -5998,7 +6036,10 @@ class SdkBackend:
         # kernel's log wire and in the problem ring the dashboard's error center reads).
         env_vars = sess.env_vars
         key_source = self._work_key_source()
-        reserved = ENV_RESERVED_NAMES + (AUTH_ENV_NAMES if key_source.kind in ("op", "error") else ())
+        # Under runtime retrieval a per-session API key is always a competing credential; a login
+        # session's own token override is not (review find, 2026-09-05) — keysource.runtime_reserved_names
+        # is the one rule the doors, this launch and the fork copy share.
+        reserved = ENV_RESERVED_NAMES + _keysrc.runtime_reserved_names(sess.auth, key_source)
         legacy = [k for k in reserved if k in env_vars]
         if legacy:
             env_vars = {k: v for k, v in env_vars.items() if k not in reserved}
@@ -6035,7 +6076,7 @@ class SdkBackend:
             # refused OUTRIGHT rather than written into a reg every future connect would launch
             # with. The /new handler validates before calling; this raise is the backend's own
             # fail-loudly backstop for any other caller.
-            err = env_request_error(env)
+            err = env_request_error(env, auth or "")
             if err:
                 raise ValueError(err)
         sid = sid or str(uuid.uuid4())
@@ -6160,8 +6201,7 @@ class SdkBackend:
             # the reserved identity names never cross the copy: a parent reg from before
             # ENV_RESERVED_NAMES existed carries them (the _options apply seam skips them there),
             # and the copy is where that legacy poison stops propagating into fresh regs
-            reserved = ENV_RESERVED_NAMES + (AUTH_ENV_NAMES if self._work_key_source().kind
-                                              in ("op", "error") else ())
+            reserved = ENV_RESERVED_NAMES + _keysrc.runtime_reserved_names(reg.get("auth") or "", self._work_key_source())   # the launch rule, not a wider one (2026-09-05)
             env = {k: v for k, v in parent["env"].items() if k not in reserved}
             dropped = [k for k in parent["env"] if k in reserved]
             if dropped:
@@ -7613,9 +7653,9 @@ class SdkBackend:
         default (write_sdk_default): a var one session needed is not a seed for the next. No pending
         badge or chat chip yet — that surface ships with the env UI slice; the Log records the
         change (spawn-time slice, the user 2026-08-17)."""
-        if env_request_error(env):
-            return False
         reg = read_reg(self.state_dir, sid)
+        if env_request_error(env, (reg or {}).get("auth") or ""):
+            return False
         if not reg:
             return False
         env = dict(env)

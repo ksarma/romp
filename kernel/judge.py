@@ -1229,6 +1229,7 @@ def _judge_env(tier, auth="login", model=None):
     env = dict(os.environ)
     for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
         env.pop(k, None)                             # billing is an explicit choice per call
+    _keysrc.strip_op_env(env)                        # op's own credential never rides a judge child (2026-09-05)
     if auth == "login":
         env.update(_login_auth_env())
     for k in ("TMUX", "TMUX_PANE"):
@@ -1253,11 +1254,57 @@ def _judge_env(tier, auth="login", model=None):
         # _judge_run is the lever that lands. Both ride together; neither can hurt the other.
         env["MAX_THINKING_TOKENS"] = "0"
     if auth == "key":
-        wk = _work_key()                             # resolve only at the call boundary
+        wk = _resolve_work_key_gated()               # resolve only at the call boundary — once per pass on failure
         if not wk:
             raise _keysrc.KeySourceError("No API key source is configured for this judge call")
         env["ANTHROPIC_API_KEY"] = wk
     return env
+
+
+# A failed retrieval is remembered for the rest of the PASS it happened in, keyed on the source's
+# identity: the next key-billed call in that pass fails at once with the same note instead of spawning
+# `op` and waiting out its 15 s timeout again (six judge threads, hundreds of calls a pass — review
+# find, 2026-09-05). The deciding events that retry are exact, not timed: the source changes (another
+# fingerprint), or a new pass begins (begin_pass_frame). Standalone callers with no pass frame retry
+# every call, as before.
+_KEY_GATE = {"fp": None, "gen": None, "note": ""}
+_PASS_GEN = [0]
+_KEY_GATE_CV = threading.Condition()                 # guards _KEY_GATE and the in-flight first retrieval of a pass
+_KEY_INFLIGHT = [None]                               # (fp, gen) being retrieved right now, or None
+
+
+def _resolve_work_key_gated():
+    try:
+        src = _keysrc.select_source(os.environ.get("ANTHROPIC_API_KEY", "") or "")
+        fp = src.fingerprint() if src.kind != "error" else "error"
+    except Exception:
+        fp = None
+    gen = _PASS_GEN[0]
+    key = (fp, gen) if (fp is not None and gen) else None
+    if key is None:
+        return _work_key()                           # no pass frame (standalone) or no source identity: as before
+    with _KEY_GATE_CV:
+        # The first wave: six judge threads reach a pass's first key call together, and every one of them
+        # would spawn `op` and wait out its own timeout. The first to arrive retrieves; the others wait for
+        # its verdict — then raise the remembered failure, or retrieve for themselves (no value is shared).
+        while _KEY_INFLIGHT[0] == key:
+            _KEY_GATE_CV.wait(timeout=_keysrc.OP_TIMEOUT + 1)
+        if _KEY_GATE["fp"] == fp and _KEY_GATE["gen"] == gen:
+            raise _keysrc.KeySourceError(_KEY_GATE["note"] or "API credential retrieval failed earlier in this pass")
+        first = _KEY_INFLIGHT[0] is None
+        if first:
+            _KEY_INFLIGHT[0] = key
+    try:
+        return _work_key()
+    except _keysrc.KeySourceError as e:
+        with _KEY_GATE_CV:
+            _KEY_GATE.update(fp=fp, gen=gen, note=str(e))
+        raise
+    finally:
+        if first:
+            with _KEY_GATE_CV:
+                _KEY_INFLIGHT[0] = None
+                _KEY_GATE_CV.notify_all()
 
 
 _RATE_GATE_LOGGED = {}                   # bucket -> resets_at already announced (one line per window)
@@ -2112,8 +2159,9 @@ def begin_pass_frame():
     global _frame
     with _frame_lock:
         if _frame is not None:
-            return False
+            return False                             # a joiner shares the creator's pass — and its key gate
         _frame = {"parses": {}, "keys": {}}
+        _PASS_GEN[0] += 1                            # a CREATED pass is the event that lets a failed key retrieval retry
         return True
 
 

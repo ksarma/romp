@@ -2252,6 +2252,14 @@ if tmux has-session -t "=$name" 2>/dev/null; then
         tmux attach-session -t "$name"
     fi
 else
+    # op's credential never rides a session: when romp itself runs `op` (a reference is configured), the
+    # tmux SERVER's globals — what every new pane inherits — are scrubbed of it before the pane exists
+    # (review, 2026-09-05: the server the manager started carried service.env's token to `exec claude`).
+    if [[ -n "${ROMP_API_KEY_REF:-}" ]]; then
+        while IFS= read -r op_var; do
+            [[ -n "$op_var" ]] && tmux set-environment -gu "$op_var" 2>/dev/null || true
+        done < <(tmux show-environment -g 2>/dev/null | sed -n -E 's/^(OP_SERVICE_ACCOUNT_TOKEN|OP_CONNECT_HOST|OP_CONNECT_TOKEN|OP_ACCOUNT|OP_SESSION_[A-Za-z0-9_]*)=.*/\1/p')
+    fi
     # Create new detached session in working directory
     tmux new-session -d -s "$name" -c "$work_dir"
 

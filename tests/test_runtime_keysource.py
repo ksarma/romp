@@ -497,3 +497,90 @@ def test_loading_a_consumer_preserves_prior_provider_removal(env, monkeypatch, c
         env.op.assert_not_called()
     finally:
         sys.modules.pop(module_name, None)
+
+
+def test_op_credentials_are_claimed_out_of_the_environment_and_reach_only_the_op_subprocess(env, monkeypatch):
+    """op's own credential (a service-account token, a signed-in session token) must reach the kernel for
+    headless use — and no child of the kernel: claim_op_env() takes the names out of os.environ once, and
+    resolve() gives them back to the `op read` subprocess alone (review find, 2026-09-05: they were inherited
+    by every Claude session and every judge call, a vault-wide credential in every agent's shell)."""
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "synthetic-op-token")
+    monkeypatch.setenv("OP_SESSION_my_account", "synthetic-op-session")
+    monkeypatch.setenv("OP_ACCOUNT", "my.1password.example")
+    monkeypatch.setenv("UNRELATED_VAR", "kept")
+    ks._OP_ENV.clear(); ks._OP_CLAIM_SAID = False
+    try:
+        # no reference anywhere: romp is not the op consumer (a session-side helper may be) → hands off
+        assert ks.claim_op_env() == {} and "OP_SERVICE_ACCOUNT_TOKEN" in os.environ
+        assert ks.strip_op_env({"OP_SERVICE_ACCOUNT_TOKEN": "x", "A": "1"}) == {"OP_SERVICE_ACCOUNT_TOKEN": "x", "A": "1"}
+        monkeypatch.setenv("ROMP_API_KEY_REF", REF)                  # now romp runs op itself
+        claimed = ks.claim_op_env()
+        assert set(claimed) == {"OP_SERVICE_ACCOUNT_TOKEN", "OP_SESSION_my_account", "OP_ACCOUNT"}
+        for name in claimed:
+            assert name not in os.environ, name
+        assert os.environ["UNRELATED_VAR"] == "kept"
+        # a value that appears later is claimed too, and the stash is idempotent
+        monkeypatch.setenv("OP_CONNECT_TOKEN", "synthetic-connect")
+        assert "OP_CONNECT_TOKEN" in ks.claim_op_env() and "OP_CONNECT_TOKEN" not in os.environ
+        env.op.side_effect = None
+        env.op.return_value = result(NEW_KEY.encode())
+        assert ks.KeySource("op", REF).resolve() == NEW_KEY
+        sub_env = env.op.call_args.kwargs["env"]
+        assert sub_env["OP_SERVICE_ACCOUNT_TOKEN"] == "synthetic-op-token"
+        assert sub_env["OP_SESSION_my_account"] == "synthetic-op-session"
+        assert sub_env["UNRELATED_VAR"] == "kept", "op still sees the ordinary environment (PATH, HOME, config)"
+        assert "OP_SERVICE_ACCOUNT_TOKEN" not in os.environ, "resolving hands nothing back to the process"
+        # a child env built before the claim is scrubbed the same way
+        child = {"OP_SERVICE_ACCOUNT_TOKEN": "x", "OP_SESSION_acct": "y", "PATH": "/bin", "OPTIONAL": "keep"}
+        assert ks.strip_op_env(child) == {"PATH": "/bin", "OPTIONAL": "keep"}
+        assert ks.is_op_env_name("OP_SESSION_anything") and not ks.is_op_env_name("OPTIONAL")
+    finally:
+        ks._OP_ENV.clear()
+
+
+def test_a_stray_byte_in_an_unrelated_line_does_not_turn_the_source_into_an_error(env):
+    env.path.write_bytes(b"# caf\xe9 note\nROMP_API_KEY_REF=" + REF.encode() + b"\n")
+    assert ks.read_source(str(env.path)) == ks.KeySource("op", REF)
+
+
+def test_the_claim_says_which_names_it_took_once_and_never_a_value(env, monkeypatch, capsys):
+    monkeypatch.setenv("ROMP_API_KEY_REF", REF)
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "synthetic-op-token-value")
+    ks._OP_ENV.clear(); ks._OP_CLAIM_SAID = False
+    try:
+        ks.claim_op_env(); ks.claim_op_env()
+        err = capsys.readouterr().err
+        assert err.count("op credentials claimed") == 1
+        assert "OP_SERVICE_ACCOUNT_TOKEN" in err and "synthetic-op-token-value" not in err
+    finally:
+        ks._OP_ENV.clear(); ks._OP_CLAIM_SAID = False
+
+
+def test_one_reserved_names_rule_for_the_doors_the_launch_and_the_fork():
+    op = ks.KeySource("op", REF); err = ks.KeySource("error", error="x"); plain = ks.KeySource("file", "k")
+    all3 = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+    assert ks.runtime_reserved_names("key", op) == all3
+    assert ks.runtime_reserved_names("", op) == all3, "no pick with a configured source launches keyed"
+    assert ks.runtime_reserved_names("login", op) == ("ANTHROPIC_API_KEY",), "a login session keeps its own token"
+    assert ks.runtime_reserved_names("login", err) == ("ANTHROPIC_API_KEY",)
+    assert ks.runtime_reserved_names("key", plain) == () and ks.runtime_reserved_names("", None) == ()
+
+
+def test_a_garbled_key_line_is_an_error_while_a_garbled_comment_is_not(env):
+    env.path.write_bytes(b"ANTHROPIC_API_KEY=sk-ant-TEST-\xff\xfe-garbled\n")
+    src = ks.read_source(str(env.path))
+    assert src.kind == "error" and "not valid UTF-8" in src.error and "ANTHROPIC_API_KEY" in src.error
+    env.path.write_bytes(b"# caf\xe9\nROMP_API_KEY_REF=" + REF.encode() + b"\n")
+    ks._CACHE = ((), "")
+    assert ks.read_source(str(env.path)) == ks.KeySource("op", REF)
+
+
+def test_tmux_server_scrub_runs_one_unset_per_credential_name(env):
+    with mock.patch.object(ks.subprocess, "run") as run:
+        ran = ks.tmux_unset_global(["OP_SERVICE_ACCOUNT_TOKEN", "OP_SESSION_acct", "PATH", "OP_ACCOUNT"], socket="probe")
+    assert ran == [["tmux", "-L", "probe", "set-environment", "-gu", "OP_ACCOUNT"],
+                   ["tmux", "-L", "probe", "set-environment", "-gu", "OP_SERVICE_ACCOUNT_TOKEN"],
+                   ["tmux", "-L", "probe", "set-environment", "-gu", "OP_SESSION_acct"]]
+    assert run.call_count == 3
+    with mock.patch.object(ks.subprocess, "run", side_effect=FileNotFoundError):
+        assert ks.tmux_unset_global(["OP_ACCOUNT"]) == [], "no tmux: nothing to do, nothing raised"

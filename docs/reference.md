@@ -337,8 +337,11 @@ migrating; `romp keyswap` does this automatically when selecting a profile.
 Romp runs [`op read --no-newline`](https://www.1password.dev/cli/reference/commands/read)
 for each Claude SDK session launch or reconnect, each API-key-billed judge
 call, and each direct model-catalog refresh. A paginated catalog refresh uses
-that credential for all its pages. An explicit `romp keyswap --cycle` also
-resolves the key to check whether each quiet session needs a reconnect. Romp
+that credential for all its pages. An explicit `romp keyswap --cycle` resolves
+the key once per request to check which quiet sessions need a reconnect. When
+a retrieval fails, the judges do not retry it on every call: the failure holds
+for the rest of that judging pass and is retried when the next pass begins or
+the source changes, so an unreachable `op` costs one timeout per pass. Romp
 captures the value in memory and passes it to that operation. It does not write the resolved key
 to disk or cache it for later operations. A running Claude process retains
 the key it received at launch until it reconnects; this is not retrieval
@@ -347,11 +350,41 @@ before every message in an existing session.
 The `op` executable must be on the **service's PATH**, and 1Password access
 must work for the OS user running the service. The service installer records
 PATH at install time; run `romp-service install` again after changing it.
-Arrange authentication for unattended use through an approved 1Password
-setup separately from Romp. An interactive terminal sign-in does not by
-itself establish that a headless login service can read the same secret.
-Keep any credentials needed to authenticate `op` out of Romp's files and
-per-session environment settings.
+An interactive terminal sign-in does not by itself establish that a headless
+login service can read the same secret: a service has no desktop app to
+unlock. The supported unattended route is a
+[1Password service account](https://developer.1password.com/docs/service-accounts/):
+put its token in `service.env` beside the reference,
+
+    OP_SERVICE_ACCOUNT_TOKEN=ops_...
+    ROMP_API_KEY_REF=op://vault/item/field
+
+and give the account read access to that one vault, and nothing else. When a
+reference is configured, Romp takes `op`'s own credential names
+(`OP_SERVICE_ACCOUNT_TOKEN`, `OP_SESSION_*`, `OP_CONNECT_*`, `OP_ACCOUNT`) out
+of its environment as its first act at startup, says which names it claimed in
+the kernel log, hands them to the `op read` subprocess alone, and scrubs them
+from the tmux server's global environment: no Claude session, judge call, or
+tmux launch inherits them, so an agent running `env` sees neither the API key
+nor the credential. This keeps the token out of every agent's shell by
+default; it is inheritance hygiene, not isolation. The file stays readable to
+the same OS user (keep it `chmod 600`), and a same-user process can read the
+manager's original environment, which is why the account must see only the
+one vault. Like the rest of `service.env`, the token line loads when the
+manager starts; changing it needs a manager restart, where the reference
+itself is read live. Do not put the token in a per-session environment
+(`romp new --env`), which is copied into per-session files.
+
+On a box where the sessions fetch their key through Claude Code's
+`apiKeyHelper` calling `op`, and no reference is configured, Romp leaves
+`op`'s environment alone: the sessions need it.
+
+A supervised manager (the systemd or launchd service) reads its key source
+from `service.env` **only**. A key that reaches the manager some other way, a
+systemd drop-in `Environment=` or a launchd plist entry, is ignored and said
+so once in the kernel log with its fingerprint; sessions without an explicit
+Billing pick then launch on the login. Move such a key into `service.env`, or
+replace it with a reference.
 
 For a foreground manager, the same reference can be supplied in its
 environment:
