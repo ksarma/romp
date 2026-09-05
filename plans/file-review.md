@@ -924,48 +924,50 @@ depends on that repo's CLIs.
    own PR, or live editing before the region slices? Recommended: the order as written, since
    the morning report is text plus figures and live editing serves it least; the fork dispatch
    stays parked until asked for.
-2. **Write path.** A node host script on the owning kernel using track-changents' `store-io` and
+   [KVS: we should build the whole thing 0-5 in one push, but this will be up to romp-general to determine (I recommend romp-general spin off a new romp session to work on this project]
+3. **Write path.** A node host script on the owning kernel using track-changents' `store-io` and
    engine unchanged, or a Python reimplementation of the sidecar I/O in the kernel? Recommended:
    the host script; a second implementation of a cross-tool contract is where shared files get
    corrupted.
-3. **Where the host script lives.** In this fork (`tools/track-review-host.mjs`, importing the
+   [KVS: ok]
+5. **Where the host script lives.** In this fork (`tools/track-review-host.mjs`, importing the
    installed checkout by file path), or in the track-changents repo as a fifth CLI? Recommended:
    this fork, so the implementing session ships it without a cross-repo dependency; offer it to
-   track-changents later.
-4. **Vendoring.** None in Slices 0 to 4; if Slice 5 is approved, vendor the engine, display
+   track-changents later. [KVS: yes we should build it all into our romp, can offer later. I plan ultimately to offer this whole feature upstream to romp]
+6. **Vendoring.** None in Slices 0 to 4; if Slice 5 is approved, vendor the engine, display
    planner, protocol constants, the CodeMirror field, and the logic helpers (MIT, about 1,500
    lines) pinned to a commit, or require the package to be public first? Recommended: vendor,
-   unless it is public by then.
-5. **Consent scope.** Every mutating verb, sidecar-only included, behind the one existing
+   unless it is public by then. [KVS: no need to wait for it to be public, vendor]
+7. **Consent scope.** Every mutating verb, sidecar-only included, behind the one existing
    file-editing consent, or sidecar-only verbs ungated since they change no file bytes?
    Recommended: the former, one mental model, with the popup's copy amended so it stays true for
-   comments (the session learns of them when the review is sent).
-6. **Human author label.** `you`, matching the VS Code host's default so one person is one author
+   comments (the session learns of them when the review is sent). [KVS: agreed]
+8. **Human author label.** `you`, matching the VS Code host's default so one person is one author
    across hosts, or `reviewer`, which reads better in the agent's message? Recommended: `you`; no
-   `authorId`.
-7. **Trace policy.** A review-specific trace after `reject`, `reject-all`, `save` and nothing
+   `authorId`. [KVS: agree that we should maintain one author across hosts]
+9. **Trace policy.** A review-specific trace after `reject`, `reject-all`, `save` and nothing
    after sidecar-only verbs, or a trace after every write? Recommended: the former; the review
-   message is the notification for comments.
-8. **Send review defaults.** The confirm checkboxes (answer the todo, turn tracking on, accept
+   message is the notification for comments. [KVS: agree]
+10. **Send review defaults.** The confirm checkboxes (answer the todo, turn tracking on, accept
    pending changes as reviewed) all checked by default, or off by default? Recommended: checked;
-   each is visible in the confirm before the send.
-9. **Per-reply pings** (the VS Code host's behavior; the Obsidian host's ping is a no-op stub in
-   its repo) in addition to the batch? Recommended: batch only.
-10. **The unsent ledger.** Browser-local per sidecar id (a second browser offers every `you`
+   each is visible in the confirm before the send. [KVS: agree]
+11. **Per-reply pings** (the VS Code host's behavior; the Obsidian host's ping is a no-op stub in
+   its repo) in addition to the batch? Recommended: batch only. [KVS: agree]
+12. **The unsent ledger.** Browser-local per sidecar id (a second browser offers every `you`
     thread without an agent reply), or mirrored in the kernel's state directory so two browsers
-    agree? Recommended: browser-local; the confirm always lists what goes.
-11. **Turning tracking off on an inherited file.** Refuse with the parent named, or write the
+    agree? Recommended: browser-local; the confirm always lists what goes. [KVS: hmm isn't there a risk then all suggestions will be lost if there is a browser crash or something?]
+13. **Turning tracking off on an inherited file.** Refuse with the parent named, or write the
     file into the `untracked` veto list? Recommended: refuse in v1; the veto list is a
-    track-changents behavior the guide does not explain yet.
-12. **PDF rendering.** A lazily loaded pdf.js chunk in the browser, or page rasterization on the
+    track-changents behavior the guide does not explain yet. [KVS: agree]
+14. **PDF rendering.** A lazily loaded pdf.js chunk in the browser, or page rasterization on the
     owning kernel served as images? Recommended: the chunk, since it keeps the kernel free of a
-    new tool and follows the editor chunk's pattern; the frame stays as the fallback.
-13. **The region field.** Propose `target {kind, region, page?, hash}` to the track-changents
+    new tool and follows the editor chunk's pattern; the frame stays as the fallback. [KVS: agree]
+15. **The region field.** Propose `target {kind, region, page?, hash}` to the track-changents
     author now, before Slice 3, or build it romp-only and document it later? Recommended:
-    propose now, so the other hosts can choose to render it.
-14. **The Slice 5 doctrine question**: a curated `track` option in the editor chunk. Yes, typed
+    propose now, so the other hosts can choose to render it. [KVS: build it romp-only for now]
+16. **The Slice 5 doctrine question**: a curated `track` option in the editor chunk. Yes, typed
     and internal with the header updated, or no live editing over pending changes at all?
-    Recommended: yes.
+    Recommended: yes. [KVS: agree]
 
 ## Upstream
 
