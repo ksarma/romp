@@ -52,7 +52,17 @@ fi
 
 # Pre-flight: can this user manager start a scope right now? The kernel probed once at its own start,
 # but the bus can go away later, and a launch that fails outright is worse than one in the wrong cgroup.
-if ! err="$(systemd-run --user --scope --quiet --collect -- true 2>&1)"; then
+# Bounded to 10 s when `timeout` (coreutils) is on PATH: a bus that accepts the connection and never
+# answers holds systemd-run for its own 90 s default, past the SDK's 60 s initialize timeout, so the
+# fallback below would never engage in the case it exists for. Any non-zero exit, 124 (the bound hit)
+# included, is a failed pre-flight. Without `timeout` the pre-flight runs unbounded, as it did before.
+if command -v timeout >/dev/null 2>&1; then
+    err="$(timeout 10 systemd-run --user --scope --quiet --collect -- true 2>&1)"; rc=$?
+    [ "$rc" -eq 124 ] && err="the pre-flight scope did not finish within 10 s"
+else
+    err="$(systemd-run --user --scope --quiet --collect -- true 2>&1)"; rc=$?
+fi
+if [ "$rc" -ne 0 ]; then
     nl='
 '
     err="${err%%"$nl"*}"
