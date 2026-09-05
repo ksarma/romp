@@ -2834,7 +2834,13 @@ class TimelinePanel {
     this._metaMenu = menu;
   }
 
-  _closeLaneMenu() { if (this._laneMenu) { this._laneMenu.remove(); this._laneMenu = null; } }
+  // closing a surface that held the join menu drops its new-tag draft (round 4 of the 2026-09-05
+  // review: the draft outlived the menu and reappeared in the next one opened for the same rows)
+  _closeLaneMenu() {
+    if (!this._laneMenu) return;
+    this._laneMenu.remove(); this._laneMenu = null;
+    this._tagNewDraft = null; this._tagNewInput = null;
+  }
 
   // The per-lane settings drop-down is BACK (the user 2026-07-28, superseding their 2026-06-22 removal:
   // that rule held for ONE flag, where a direct icon beat a menu — at THREE flags the icons crowded the
@@ -3029,8 +3035,11 @@ class TimelinePanel {
   }
 
   // the join menu for one-or-many sessions: one option per union tag some rowId lacks, plus the
-  // new-tag input (a new tag mints LOCALLY, as always)
-  _tagJoinMenu(box, rowIds, rebuild) {
+  // new-tag input (a new tag mints LOCALLY, as always). `menuKey` is the menu's identity for the
+  // new-tag draft below: which [+] is open (this._tagAddFor — a sid, or '*' for the bulk bar),
+  // stable across repaints however the row set changes; callers that build the menu for other
+  // rows name their own.
+  _tagJoinMenu(box, rowIds, rebuild, menuKey) {
     for (const g of viewTagUnion(this._curViews())) {
       if (g.pending) continue;   // a create still in flight cannot be joined yet: no id to address (round 4)
       if (!rowIds.some((id) => g.members.indexOf(id) < 0)) continue;
@@ -3047,10 +3056,12 @@ class TimelinePanel {
     }
     // The new-tag input's text and caret SURVIVE a repaint (round 3 of the 2026-09-05 review — the
     // rename draft did not cover it): an ack or refusal for some other write rebuilds the whole
-    // surface while the user is typing here. The draft is kept on the instance per join key (the
-    // rows the menu is for); the live input is read before the rebuild tears it down, and the
-    // rebuilt input restores text and caret. Submitting, or closing the menu, drops it.
-    const key = rowIds.join(',');
+    // surface while the user is typing here. The draft is kept on the instance per MENU (the [+]
+    // that is open, not the rows it lists — round 4: keyed by the row set, the bulk menu's draft
+    // hid whenever the search filter or a session's liveness changed the rows, and came back when
+    // they changed back); the live input is read before the rebuild tears it down, and the rebuilt
+    // input restores text and caret. Submitting, or closing the menu or the dialog, drops it.
+    const key = menuKey !== undefined ? String(menuKey) : String(this._tagAddFor);
     const live = this._tagNewInput && this._tagNewInput.key === key ? this._tagNewInput.el : null;   // another row's input says nothing about this draft
     if (live && this._tagNewDraft && this._tagNewDraft.key === key) {
       this._tagNewDraft.value = live.value;
@@ -3401,6 +3412,7 @@ class TimelinePanel {
   _closeViewsDialog() {
     if (!this._viewsDialog) return;
     this._viewsDialog.remove(); this._viewsDialog = null; this._viewsDialogBuild = null;
+    this._tagNewDraft = null; this._tagNewInput = null;   // the join menu's draft dies with the dialog (_closeLaneMenu's rule)
     if (this._viewsDialogKey) {   // the Escape hook dies with the dialog on EVERY close path, not just Escape
       try { this._viewsDialogKey.doc.removeEventListener('keydown', this._viewsDialogKey.fn); } catch (e) {}
       this._viewsDialogKey = null;

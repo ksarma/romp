@@ -825,3 +825,40 @@ test("executed: a tag whose create is in flight takes no gesture — the dialog 
   assert.equal(joinOptions().length, 1, "…and SID1's menu offers it");
   assert.equal(viewTagUnion(panel._curViews()).find((g: any) => g.name === "qa").pending, undefined);
 });
+
+test("executed: the join menu's new-tag draft is keyed by the open [+], survives a change of the rows it lists, and dies with the menu or the dialog", () => {
+  const panel = drawnPanel();
+  panel._openViewsDialog(null);
+  walk(panel._viewsDialog).find((n) => n.textContent === "tag all")._listeners.click();     // the bulk [+]
+  const input = () => walk(panel._viewsDialog).find((n) => n.tag === "input" && n.placeholder === "new tag…");
+  const ni = input();
+  ni.value = "do"; ni._listeners.input();
+  assert.equal(panel._tagNewDraft.key, "*", "the draft belongs to the MENU (the bulk [+]), not to the rows it lists");
+  // the search filter changes the row set under the open menu: the draft is still this menu's
+  const q = walk(panel._viewsDialog).find((n) => n.tag === "input" && n.placeholder === "search name or host…");
+  q.value = "we"; q._listeners.input();
+  const ni2 = input();
+  assert.notEqual(ni2, ni, "the menu was rebuilt for fewer rows");
+  assert.equal(ni2.value, "do", "…and the draft came with it (keyed by the row set it hid here)");
+  q.value = ""; q._listeners.input();
+  assert.equal(input().value, "do");
+  // closing the dialog drops it — it does not reappear in the next menu opened for the same rows
+  panel._closeViewsDialog();
+  assert.equal(panel._tagNewDraft, null);
+  assert.equal(panel._tagNewInput, null);
+  panel._openViewsDialog(null);                                                            // the bulk [+] is still the open one (the key rides the instance)
+  assert.equal(input().value, "", "…the reopened menu starts empty");
+  panel._closeViewsDialog();
+  // the lane gear menu: closing the MENU (not only toggling its [+]) drops the draft too
+  const s2 = panel.data.sessions.find((x: any) => x.id === SID2);
+  const anchor = makeNode("g"); anchor._rect = { left: 40, top: 60, right: 60, bottom: 76, width: 20, height: 16 };
+  panel._openLaneMenu(s2, anchor);
+  walk(panel._laneMenu).find((n) => n.textContent === "+" && n._attrs.title === "add a tag")._listeners.click({ stopPropagation() {} });
+  const li = walk(panel._laneMenu).find((n) => n.tag === "input");
+  li.value = "zz"; li._listeners.input();
+  assert.equal(panel._tagNewDraft.key, SID2);
+  panel._onDocClick();                                                                      // a click outside closes the menu
+  assert.equal(panel._laneMenu, null);
+  assert.equal(panel._tagNewDraft, null, "the draft died with the menu");
+  assert.equal(panel._tagNewInput, null);
+});
