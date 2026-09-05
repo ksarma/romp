@@ -425,7 +425,11 @@ in the unit) selects it; with the line absent nothing about file mode changes.
   Claude Code's `apiKeyHelper`, as before. `ANTHROPIC_LP_API_KEY` is the key for
   the kernel's own direct calls (the model catalog fetch). Any other name is a
   variable for the sessions and their tool shells. Names starting with `ROMP_`
-  are dropped, with one problem line naming them.
+  are dropped, with one problem line naming them, and so are the names Claude
+  Code reads as its own authentication or endpoint (`ANTHROPIC_AUTH_TOKEN`,
+  `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`):
+  a set carrying one would re-route or re-bill every session behind the one
+  door the mode keeps for the key.
 - `ROMP_CREDENTIAL_SELECTOR_FILE` holds one token, passed as `$1`: a name such
   as `hp`, made of letters, digits, `.`, `_` and `-`, up to 64 characters. The
   default is `~/.config/romp/credential-selector`. `romp keyswap <name>` writes
@@ -498,7 +502,14 @@ sessions' key is sha256:…`. It logs a problem line for each of the following:
   way.
 - An `ExecStart` routed through a shell.
 - `ROMP_EXPECTED_AUTH=login` while the command prints a key.
-- `ROMP_*` names the command printed.
+- `ROMP_*` names, or the CLI's own authentication and endpoint names, that the
+  command printed.
+- `ROMP_CREDENTIAL_TIMEOUT_S` outside its range.
+
+An authentication failure invalidates the set once per credential: a second
+refusal while the set (and the helper's output) is unchanged does not re-run
+the command, so a revoked credential does not turn every judge call into a
+run; `romp keyswap --refresh` re-arms it.
 
 In file mode the same check says nothing new, except a credential in the unit
 under a declared `ROMP_EXPECTED_AUTH`. `GET /api-health` carries the same facts
@@ -603,7 +614,9 @@ of Claude Code's `apiKeyHelper` (named in `$CLAUDE_CONFIG_DIR/settings.json`
 or `settings.local.json`, the local file winning; project and managed settings
 are not consulted), and the kernel fingerprints the same helper. The helper
 runs the way a session's CLI runs it: with the set's other variables in its
-environment and no `ROMP_SID`.
+environment and no `ROMP_SID`. With no key in the set and no helper
+configured, the sessions bill the machine login; the report says so as a
+state, not a failure, and a cycle then covers the set's other variables.
 
 Each session is stamped at launch with the fingerprint it launched under, and
 a cycle compares that stamp with the current one, so a second run reads
@@ -639,7 +652,13 @@ writes nothing, and has no flag that lets it through. The bare command reports
 the key the kernel holds (as a fingerprint), the file it reads, and `MISMATCH`
 when the kernel is not reading this file's key; a cycle reads and compares the
 same way first and stops on a mismatch. Rotate the key at its source, then run
-`--cycle-all`.
+`--cycle-all` for the key-billed sessions. In file mode the kernel hands a
+session billed through the `apiKeyHelper` no key, so such a session reads as
+the login and the cycle skips it: a rotated helper key reaches those sessions
+through `romp refresh --quiet` (every process is new), or through `--cycle-all`
+in command mode, where the kernel fingerprints the helper and converges on it.
+The cycle report prints one hint line to that effect when it skips a login
+row in file mode.
 
 Per session the cycle reports one of:
 
@@ -647,7 +666,8 @@ Per session the cycle reports one of:
   fingerprint its process launched on.
 * `already on this key — nothing to do`.
 * `skipped: bills the machine login, not the key`: its CLI reported the login,
-  so a reconnect would cost a turn for nothing.
+  so a reconnect would cost a turn for nothing (in file mode a session billed
+  through the `apiKeyHelper` reads this way too; see above).
 * `not running — its next launch reads the new key`.
 * `skipped: a turn, subagents or background tasks are in flight`: a reconnect
   would kill that work. The re-run hint names the skipped sessions; re-run

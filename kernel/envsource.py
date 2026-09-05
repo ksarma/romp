@@ -26,7 +26,10 @@ the timeout, the command's text) are read live. A terminal's `romp keyswap` neve
 
 Output contract: `ANTHROPIC_API_KEY` (optional) is the work key; `ANTHROPIC_LP_API_KEY` the direct-
 call key; any other name is a role variable for the sessions' shells. Names starting with `ROMP_`
-are dropped (romp owns them). The parsing rule is keysource's, generalised to every name: blank
+are dropped (romp owns them), and so are the names the CLI reads as its own authentication or
+endpoint (`ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_CUSTOM_HEADERS`): a set that carried one would re-route or re-bill every session behind
+the one door this module keeps for the key; each drop is one problem line naming the names. The parsing rule is keysource's, generalised to every name: blank
 and `#` lines skipped, `NAME=value` (an `export ` prefix is accepted here — romp's own contract for
 the command's output, not the env file's), last assignment wins, one layer of matching quotes
 stripped; lines are split on newlines only, and a value with a NUL is a bad line, never injected.
@@ -89,6 +92,8 @@ EXIT_GRACE_S = 0.2                     # after the command exits, how long a pip
 KEY_VAR = "ANTHROPIC_API_KEY"          # the work key, when the set carries one
 LP_KEY_VAR = "ANTHROPIC_LP_API_KEY"    # the direct-call key (the catalog fetch)
 RESERVED_PREFIX = "ROMP_"              # names romp owns: dropped from any set
+AUTH_NAMES = ("ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",      # names the CLI treats as its authentication
+              "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS")       # or its endpoint: dropped from any set
 
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")                 # the shell-identifier alphabet
 SELECTOR_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")     # one token: a name, never a value
@@ -473,14 +478,16 @@ def run_command(cmd: str, selector=None, timeout=None, env=None, grace=None) -> 
 
 
 def parse_set(stdout) -> dict:
-    """A command's stdout as a set: {"values", "dropped", "bad", "empty"} — the assignments, the ROMP_*
-    names dropped (names only), and the two counts. `values` is for the injection path alone."""
+    """A command's stdout as a set: {"values", "dropped", "droppedAuth", "bad", "empty"} — the
+    assignments, the ROMP_* names dropped, the CLI-auth names dropped (AUTH_NAMES; names only), and
+    the two counts. `values` is for the injection path alone."""
     text = stdout.decode("utf-8", "replace") if isinstance(stdout, (bytes, bytearray)) else str(stdout or "")
     vals, bad, empty = parse_lines(text, allow_export=True)
     dropped = sorted(k for k in vals if k.startswith(RESERVED_PREFIX))
-    for k in dropped:
+    dropped_auth = sorted(k for k in vals if k in AUTH_NAMES)
+    for k in dropped + dropped_auth:
         del vals[k]
-    return {"values": vals, "dropped": dropped, "bad": bad, "empty": empty}
+    return {"values": vals, "dropped": dropped, "droppedAuth": dropped_auth, "bad": bad, "empty": empty}
 
 
 # ---------------------------------------------------------------------------
@@ -501,20 +508,41 @@ _helper_lock = threading.Lock()
 _helper: dict = {"gen": -1, "fp": "", "reason": "", "runs": 0}
 
 
+_auth_failed_for: tuple | None = None    # (set fp, helper fp) the last auth-failure invalidation was for
+
+
 def invalidate(reason: str = "") -> int:
     """Mark the cached set (and the helper fingerprint) stale: the next caller re-runs. Lock-free by
     design — an invalidation must never wait behind a run in progress; a run that was under way when
     the generation moved is stale on completion and the next caller runs again. Returns the new
-    generation; `reason` is for the caller's log line."""
-    global _gen
+    generation; `reason` is for the caller's log line. An operator's invalidation (a refresh, a
+    cycle, a switch) also re-arms the authentication-failure path below."""
+    global _gen, _auth_failed_for
     _gen += 1
+    _auth_failed_for = None
     return _gen
+
+
+def invalidate_for_auth_failure(reason: str = "") -> bool:
+    """An authentication failure where the set (or the helper this module fingerprints) was used:
+    invalidate ONCE per credential — keyed on the set and helper fingerprints in force. A second
+    refusal while those are unchanged is not new information (the re-run handed back the same set),
+    so a revoked credential cannot turn every judge call and every launch into a command run; a
+    run that yields a different set, a rotation the helper reports, or an operator's invalidate()
+    re-arms it. Returns whether the generation moved. Value-free: fingerprints only."""
+    global _gen, _auth_failed_for
+    key = ((_snap or {}).get("setFp") or "", _helper.get("fp") or "")
+    if _auth_failed_for == key:
+        return False
+    _auth_failed_for = key
+    _gen += 1
+    return True
 
 
 def _empty_snapshot(env_cfg: bool) -> dict:
     return {"configured": env_cfg, "ok": None, "reason": "" if env_cfg else "no %s" % COMMAND_VAR,
             "at": None, "exitCode": None, "durationS": None, "timedOut": False,
-            "names": [], "dropped": [], "badLines": 0, "emptyValues": 0,
+            "names": [], "dropped": [], "droppedAuth": [], "badLines": 0, "emptyValues": 0,
             "setFp": "", "keyFp": "", "hasKey": False, "stale": False,
             "runs": _runs, "failures": _failures, "lastOkAt": _last_ok_at, "generation": _gen,
             "selector": "", "selectorNote": "", "timeoutProblem": ""}
@@ -559,6 +587,7 @@ def _run_locked(environ) -> None:
         if not reason:
             parsed = parse_set(r.stdout)
             snap["dropped"] = parsed["dropped"]
+            snap["droppedAuth"] = parsed["droppedAuth"]
             snap["badLines"] = parsed["bad"]
             snap["emptyValues"] = parsed["empty"]
             if not parsed["values"]:
@@ -751,8 +780,10 @@ def helper_runs() -> int:
 def _reset() -> None:
     """Tests only: forget everything, including the counters and the mode pin."""
     global _gen, _values, _snap, _snap_selector_ident, _runs, _attempts, _failures, _last_ok_at, _FILE_CFG, _MODE_PIN
+    global _auth_failed_for
     with _lock, _helper_lock:
         _gen += 1
+        _auth_failed_for = None
         _values = {}
         _snap = None
         _snap_selector_ident = ()

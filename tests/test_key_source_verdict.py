@@ -235,6 +235,16 @@ class CommandModeChecks(unittest.TestCase):
         self.assertIn("(ROMP_SID, ROMP_STATE_DIR)", line[0])
         self.assertIn("dropped from the set", line[0])
 
+    def test_dropped_cli_auth_names_ring_by_name(self):
+        r = verdict(CMD, snapshot=ok_snap(droppedAuth=["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]))
+        line = [t for t in problems(r) if "authentication or endpoint" in t]
+        self.assertEqual(len(line), 1, problems(r))
+        self.assertIn("ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL — names the CLI reads", line[0])
+        self.assertIn("dropped from the set", line[0])
+        r = verdict(CMD, snapshot=ok_snap(droppedAuth=["CLAUDE_CODE_OAUTH_TOKEN"]))
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN — a name the CLI reads", [t for t in problems(r) if "endpoint" in t][0])
+        self.assertEqual([t for t in problems(verdict(CMD, snapshot=ok_snap())) if "endpoint" in t], [])
+
     def test_an_unconfigured_snapshot_in_command_mode_produces_no_run_line(self):
         r = verdict(CMD, snapshot=None)
         self.assertEqual([t for t in texts(r) if "the set is" in t or "failed" in t], [])

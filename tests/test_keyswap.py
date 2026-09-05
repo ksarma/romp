@@ -645,6 +645,23 @@ class KeyswapCli(_EnvFile):
         self.assertEqual([b for _u, _p, b in self.posted], [{"sessions": []}, {"all": True}],
                          "the read, then the cycle — and never a session named by the CLI itself")
 
+    def test_a_login_row_in_file_mode_gets_one_hint_about_helper_billed_sessions(self):
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "keyFp": ks.fingerprint(OLD_KEY),
+            "rows": [{"session": "web", "status": "login"}, {"session": "api", "status": "cycling"}]}
+        rc, said = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 0)
+        self.assertIn("  web            skipped: bills the machine login, not the key", said)
+        hint = [ln for ln in said.split("\n") if "billed through the apiKeyHelper" in ln]
+        self.assertEqual(len(hint), 1, said)
+        self.assertIn("cycle in command mode (set ROMP_CREDENTIAL_COMMAND)", said)
+        self.assertIn("romp refresh --quiet", said)
+        cli._post = lambda u, p, b: {"ok": True, "keyFp": ks.fingerprint(OLD_KEY),
+                                     "rows": [{"session": "api", "status": "cycling"}]}
+        rc, said = self.run_cli("--cycle-all")
+        self.assertNotIn("apiKeyHelper", said, "no login row, no hint")
+
     def test_a_cycle_with_no_kernel_reachable_fails_loudly(self):
         rc, said = self.run_cli("--cycle-all")
         self.assertEqual(rc, 1, "the cycle failed and must exit non-zero")
@@ -948,14 +965,26 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.assertNotIn("MISMATCH", out)
         self.assertNotIn(helper_value, out + err)
 
-    def test_no_key_and_no_helper_reads_as_the_login_billing(self):
+    def test_no_key_and_no_helper_reads_as_the_login_billing_not_a_failure(self):
         self.command("echo 'ROLE_TOKEN=%s'" % self.role)
-        self.kernel_view.update({"keyFp": "", "setFp": es.set_fingerprint({"ROLE_TOKEN": self.role}),
-                                 "launched": {"": 2}, "keyErr": "no apiKeyHelper in settings.json"})
-        rc, out, _err = self.run_cli()
+        set_fp = es.set_fingerprint({"ROLE_TOKEN": self.role})
+        self.kernel_view.update({"keyFp": "", "keyKind": "login", "setFp": set_fp, "launched": {"": 2}, "keyErr": ""})
+        rc, out, err = self.run_cli()
         self.assertIn("live key    (none) — the set carries no ANTHROPIC_API_KEY and no apiKeyHelper in", out)
-        self.assertIn("sessions bill the login", out)
-        self.assertEqual(rc, 1, "the kernel reported keyErr: said, non-zero")
+        self.assertIn("sessions bill the machine login, and a", out)
+        self.assertIn("cycle covers the role variables in the set", out)
+        self.assertIn("kernel      reads no key (its own run): sessions bill the machine login; a cycle covers the role", out)
+        self.assertIn("variables (set sha256:%s); 2 live session(s) launched with no key" % set_fp, out)
+        self.assertNotIn("UNAVAILABLE", out)
+        self.assertNotIn("MISMATCH", out)
+        self.assertNotIn("launched with no credential the kernel fingerprinted", out, "the login rows are the expected rows")
+        self.assertEqual(rc, 0, "a login-billed installation is a state, not a failure")
+        self.assertClean(out, err)
+        # …and the cycle proceeds on that footing
+        self.kernel_view["rows"] = [{"session": "web", "status": "cycling", "from": ""}]
+        rc, out, _err = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.posted[-1], ("/keycycle", {"all": True}))
 
     def test_a_local_command_failure_is_loud_and_cycles_nothing(self):
         self.command("echo 'noise: %s' >&2\nexit 3" % self.keys["hp"])
@@ -1594,8 +1623,8 @@ class CommandSourceLaunch(_CommandMode):
     def test_status_and_refresh_report_fingerprints_and_what_moved(self):
         st = self.be.key_source_status()
         self.assertEqual(st["fp"], "", "no key in the set and no helper: no credential fingerprint")
-        self.assertEqual(st["fpKind"], "")
-        self.assertTrue(st["err"].startswith("no apiKeyHelper in "), st)
+        self.assertEqual(st["fpKind"], "login", "…the machine login bills, which is a state, not a failure")
+        self.assertEqual(st["err"], "")
         self.assertEqual(st["setFp"], es.set_fingerprint(self.values))
         self.assertEqual(st["launched"], {})
         sid = self.be.spawn("n", "/tmp")
@@ -1676,6 +1705,41 @@ class CommandBeatsFileAndStartup(_CommandMode):
         self.assertFalse("ANTHROPIC_API_KEY" in os.environ, "the one-claimer property holds in every mode")
 
 
+class CommandModeSkipsTheFileWarning(_CommandMode):
+    def test_a_key_line_under_a_declared_auth_is_said_once_by_the_verdict_alone(self):
+        # file mode's _warn_credential_lines_in_env_file and the verdict would both speak about the
+        # same line, and disagree (one says the key would be injected, the other that it is ignored)
+        self._exp_before = os.environ.get("ROMP_EXPECTED_AUTH")
+        self._said_before = sb._CREDENTIAL_LINE_SAID
+        try:
+            os.environ["ROMP_EXPECTED_AUTH"] = "key"
+            sb._CREDENTIAL_LINE_SAID = False
+            self.write_env(OLD_KEY)
+            self.logged.clear()
+            es._reset()
+            self.be = self.construct()
+            about_file = [t for t in self.problems() if "carries" in t and "ANTHROPIC_API_KEY" in t]
+            self.assertEqual(len(about_file), 1, self.problems())
+            self.assertTrue(about_file[0].startswith("key source: "), about_file[0])
+            self.assertIn("the command wins", about_file[0])
+            self.assertEqual([t for t in self.problems() if t.startswith("auth: ") and "carries" in t], [],
+                             "file mode's warning stays quiet in command mode")
+            self.assertFalse(sb._CREDENTIAL_LINE_SAID, "…and did not spend its one shot")
+            # file mode, same file, same declaration: the file-mode warning speaks and the verdict does not
+            os.environ.pop("ROMP_CREDENTIAL_COMMAND")
+            es._reset()
+            self.logged.clear()
+            self.be = self.construct()
+            self.assertEqual(len([t for t in self.problems() if t.startswith("auth: ") and "carries" in t]), 1)
+            self.assertEqual([t for t in self.problems() if t.startswith("key source: ")], [])
+        finally:
+            sb._CREDENTIAL_LINE_SAID = self._said_before
+            if self._exp_before is None:
+                os.environ.pop("ROMP_EXPECTED_AUTH", None)
+            else:
+                os.environ["ROMP_EXPECTED_AUTH"] = self._exp_before
+
+
 class CommandSourceFailure(_CommandMode):
     def test_a_failed_run_keeps_the_previous_set_with_one_problem_line_per_episode(self):
         self.assertEqual(self._env_for(1, "login")["A_TOKEN"], self.values["A_TOKEN"])
@@ -1712,9 +1776,8 @@ class CommandSourceFailure(_CommandMode):
         self.be.refresh_key_source()
         self.assertTrue(any(m.startswith("credential command: succeeded again") for m in self.logged))
         st = self.be.key_source_status()
-        self.assertNotIn("timed out", st["err"], "the run is fine again")
-        self.assertTrue(st["err"].startswith("no apiKeyHelper in "),
-                        "what keyErr still says: no key in the set and no helper to fingerprint")
+        self.assertEqual(st["err"], "", "the run is fine again; no key and no helper is the login, not an error")
+        self.assertEqual(st["fpKind"], "login")
 
     def test_a_first_failure_launches_with_nothing_injected_and_never_refuses(self):
         self.fail_command("exit 7")
@@ -1744,6 +1807,71 @@ class CommandSourceFailure(_CommandMode):
         self._env_for(2, "login")
         self.assertEqual(es._runs, runs + 1, "the next launch re-runs the command")
         self.assertTrue(any("reported an authentication failure (HTTP 401 on a turn)" in m for m in self.logged))
+
+    def test_a_burst_of_refusals_is_one_command_run(self):
+        # a revoked credential: every judge call and every launch reports a refusal, and the store
+        # keeps handing back the same set — the first refusal re-runs the command, the rest do not
+        s = self._sess(1, auth="login")
+        self.be._options(s, dict)
+        runs = es._runs
+        for _ in range(4):
+            self.be._credential_auth_failed(s, "HTTP 401 on a turn")
+            self.assertTrue(sb.credential_invalidate("judge call refused as unauthenticated (planner)") is False
+                            or es._runs == runs, "the judges' wire is the same once-per-credential path")
+            self._env_for(2, "login")
+        self.assertEqual(es._runs, runs + 1, "one run for the burst")
+        said = [m for m in self.logged if "reported an authentication failure" in m]
+        self.assertEqual(len(said), 1, "said when it fires, not per refusal")
+        self.be.refresh_key_source()                          # the operator's refresh re-arms the path
+        self.assertEqual(es._runs, runs + 2)
+        self.be._credential_auth_failed(s, "HTTP 401 on a turn")
+        self._env_for(3, "login")
+        self.assertEqual(es._runs, runs + 3, "after a refresh the next refusal fires once more")
+
+    def test_no_key_and_no_helper_is_the_login_not_an_error(self):
+        # the set carries role variables only and no apiKeyHelper is configured: the machine login
+        # bills, there is nothing to fingerprint, and that is a state, not a failure
+        st = self.be.key_source_status()
+        self.assertEqual((st["fp"], st["fpKind"], st["err"]), ("", "login", ""))
+        self.assertEqual(self.be.credential_fingerprint(), ("", "login"))
+        snap = self.be.api_health_snapshot()["keySource"]
+        self.assertEqual((snap["fingerprint"], snap["fingerprintKind"], snap["sessionKeyPath"]), ("", "login", "login"))
+        # cycle_key converges such a session on the role variables it launched with
+        s = self._sess(1, auth="login")
+        self.be.spawn("web", "/tmp", sid=s.sid)
+        self.be._options(s, dict)
+        s.auth_live = "login"
+        moved = []
+        s.request_reconnect = lambda defer=True: moved.append(defer)
+        self.be.sessions[s.sid] = s
+        self.assertEqual(self.be.cycle_key(s.sid), "current")
+        self.values["A_TOKEN"] = fixture_value("rotated-role")
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(s.sid), "cycling", "the role variables moved: that is what the cycle covers")
+        self.assertEqual(moved, [False])
+        why = [m for m in self.logged if m.startswith("keyswap (s1): reconnecting")]
+        self.assertEqual(len(why), 1, self.logged)
+        self.assertIn("role variables", why[0])
+        self.assertNotIn("helper", why[0].lower(), "no helper is configured: nothing about one is said")
+
+    def test_the_clis_auth_names_are_dropped_with_one_problem_line(self):
+        v = fixture_value("auth")
+        self.values["ANTHROPIC_AUTH_TOKEN"] = v
+        self.values["ANTHROPIC_BASE_URL"] = "https://example.invalid"
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        env = self._env_for(1, "login")
+        self.assertFalse("ANTHROPIC_AUTH_TOKEN" in env, "ANTHROPIC_AUTH_TOKEN present")
+        self.assertFalse("ANTHROPIC_BASE_URL" in env, "ANTHROPIC_BASE_URL present")
+        self.assertTrue("A_TOKEN" in env, "A_TOKEN absent")
+        lines = [t for t in self.problems() if "authentication or endpoint" in t]
+        self.assertEqual(len(lines), 1, self.problems())
+        self.assertIn("dropped ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL it printed", lines[0])
+        self.assertNotIn(v, lines[0])
+        self.be.refresh_key_source()
+        self._env_for(2, "login")
+        self.assertEqual(len([t for t in self.problems() if "authentication or endpoint" in t]), 1, "said once per distinct list")
 
 
 class NothingLeaksInCommandMode(_CommandMode):

@@ -2855,12 +2855,15 @@ def credential_set() -> dict:
     return _envsrc.injection()
 
 
-def credential_invalidate(reason: str = "") -> None:
+def credential_invalidate(reason: str = "") -> bool:
     """An authentication failure somewhere a credential from the set was used (a judge call, a
     session's turn or launch): the cached set is stale, the next reader re-runs the command. The
-    exact event, never a timer. A no-op in file mode."""
+    exact event, never a timer — and once per credential (envsource.invalidate_for_auth_failure):
+    a second refusal of the same set is not new information, so a revoked credential does not turn
+    every judge call into a command run. Returns whether it fired. A no-op in file mode."""
     if _envsrc.configured():
-        _envsrc.invalidate(reason)
+        return _envsrc.invalidate_for_auth_failure(reason)
+    return False
 
 
 def _check_key_file_agrees(startup: str, live: str) -> None:
@@ -3191,6 +3194,11 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
             d = list(snap.get("dropped") or [])
             say("key source: the credential command printed %d ROMP_* variable%s (%s) — romp owns those names; "
                 "dropped from the set" % (len(d), "" if len(d) == 1 else "s", ", ".join(d)))
+        if snap.get("droppedAuth"):
+            d = list(snap.get("droppedAuth") or [])
+            say("key source: the credential command printed %s — %s the CLI reads as its own authentication or "
+                "endpoint, which would re-route or re-bill every session; dropped from the set (the key rides "
+                "ANTHROPIC_API_KEY alone)" % (", ".join(d), "a name" if len(d) == 1 else "names"))
         if snap.get("timeoutProblem"):
             say("key source: %s" % snap["timeoutProblem"])
         if file_names:
@@ -6285,9 +6293,17 @@ class SdkBackend:
         self._problems: list[dict] = []
         self._problem_seq = 0
         self._problem_lock = threading.Lock()
+        # The MODE is pinned here, once per backend (envsource.pin_mode): a service.env edit that adds
+        # or removes ROMP_CREDENTIAL_COMMAND reaches the kernel at its next start (`romp refresh`),
+        # never a running one, so sessions, judges and the catalog never straddle two key sources.
+        # The other ROMP_CREDENTIAL_* values stay live-readable.
+        command_mode = _envsrc.pin_mode()
         # A credential in the env file under a declared auth is a contradiction of the box's design;
-        # said once, here, where the problem ring exists to carry it (the user 2026-09-05).
-        _warn_credential_lines_in_env_file(self._log)
+        # said once, here, where the problem ring exists to carry it (the user 2026-09-05). In command
+        # mode the key-source verdict below covers the same file (the command wins, the line is
+        # ignored), so this stays quiet there: one line about that file, not two that disagree.
+        if not command_mode:
+            _warn_credential_lines_in_env_file(self._log)
         # The key-source verdict (key_source_verdict): ONE check per backend, here, before the boot
         # reconcile below can resume a session — in command mode this is the command's FIRST run, so a
         # broken credential command is said before any launch stands on nothing. Its lines go through _log
@@ -6295,12 +6311,8 @@ class SdkBackend:
         self._cred_fp_said = None                 # last set fingerprint written to the log (change-only)
         self._cred_err_said = None                # the failure reason last said (one line per episode)
         self._cred_dropped_said = ()              # the ROMP_* names last said dropped (change-only)
+        self._cred_dropped_auth_said = ()         # the CLI-auth names last said dropped (change-only)
         self._cred_timeout_said = None            # the ROMP_CREDENTIAL_TIMEOUT_S problem last said (change-only)
-        # The MODE is pinned here, once per backend (envsource.pin_mode): a service.env edit that adds
-        # or removes ROMP_CREDENTIAL_COMMAND reaches the kernel at its next start (`romp refresh`),
-        # never a running one, so sessions, judges and the catalog never straddle two key sources.
-        # The other ROMP_CREDENTIAL_* values stay live-readable.
-        _envsrc.pin_mode()
         self.key_source = self._boot_key_source_verdict()
         # The /api-health aggregator (one ring, one lock; see ApiHealth). Fed from _on_message on each
         # session's thread, read by the kernel's route; the salt is minted lazily at the first label.
@@ -6417,14 +6429,18 @@ class SdkBackend:
     def credential_fingerprint(self, snap=None) -> tuple:
         """(fingerprint, kind) of the credential a session launched NOW would bill: in command mode
         the set's ANTHROPIC_API_KEY ("key"), else the configured apiKeyHelper's output ("helper" —
-        run and hashed inside envsource, the bytes never seen here), else ("", ""); in file mode the
-        file's or the startup key ("key"). The value cycle_key converges sessions on, and what the
-        kernel's /keycycle answer carries as keyFp. `snap` is a record the caller already took, so
-        one operation reads the set once."""
+        run and hashed inside envsource, the bytes never seen here), else ("", "login") when no
+        helper is configured at all (the machine login bills, and there is nothing to fingerprint —
+        not a failure) or ("", "") when a configured helper could not be fingerprinted; in file mode
+        the file's or the startup key ("key"). The value cycle_key converges sessions on, and what
+        the kernel's /keycycle answer carries as keyFp and keyKind. `snap` is a record the caller
+        already took, so one operation reads the set once."""
         if _envsrc.configured():
             snap = snap if snap is not None else _envsrc.current()
             if snap.get("hasKey"):
                 return snap.get("keyFp") or "", "key"
+            if not _envsrc.helper_command():
+                return "", "login"                # no key in the set, no helper: the machine login bills
             fp, _reason = _envsrc.helper_fingerprint()
             return fp, ("helper" if fp else "")
         fp = _keysrc.fingerprint(self.work_key)
@@ -6496,6 +6512,12 @@ class SdkBackend:
             self._cred_dropped_said = dropped
             self._log("credential command: dropped %d ROMP_* variable%s it printed (%s) — romp owns those names"
                       % (len(dropped), "" if len(dropped) == 1 else "s", ", ".join(dropped)), problem=True)
+        dropped_auth = tuple(snap.get("droppedAuth") or ())
+        if dropped_auth and dropped_auth != self._cred_dropped_auth_said:
+            self._cred_dropped_auth_said = dropped_auth
+            self._log("credential command: dropped %s it printed — %s the CLI reads as its own authentication or "
+                      "endpoint; the key rides ANTHROPIC_API_KEY alone"
+                      % (", ".join(dropped_auth), "a name" if len(dropped_auth) == 1 else "names"), problem=True)
         tmo = snap.get("timeoutProblem") or ""
         if tmo and tmo != self._cred_timeout_said:
             self._cred_timeout_said = tmo
@@ -6542,8 +6564,10 @@ class SdkBackend:
     def key_source_status(self) -> dict:
         """The value-free key-source facts the /keycycle route reports beside its rows: source
         ("file"|"command"), fp (the current credential fingerprint, keyFp on the wire), fpKind
-        ("key"|"helper"|""), err (why there is no fingerprint or the last run failed; "" when fine),
-        setFp and selector (command mode), launched (the histogram)."""
+        ("key"|"helper"|"login"|""; keyKind on the wire — "login" is a set with no key and no helper
+        configured: the machine login bills, nothing to fingerprint, no error), err (why there is
+        no fingerprint or the last run failed; "" when fine), setFp and selector (command mode),
+        launched (the histogram)."""
         snap = _envsrc.current() if _envsrc.configured() else None
         fp, kind = self.credential_fingerprint(snap)
         out = {"source": key_source_mode(), "fp": fp, "fpKind": kind, "err": "", "setFp": "",
@@ -6553,8 +6577,8 @@ class SdkBackend:
             out["selector"] = _envsrc.selector_label(snap)
             if snap.get("ok") is False:
                 out["err"] = snap.get("reason") or "the credential command failed"
-            elif not snap.get("hasKey") and not fp:
-                out["err"] = _envsrc.helper_fingerprint()[1]
+            elif not snap.get("hasKey") and not fp and kind != "login":
+                out["err"] = _envsrc.helper_fingerprint()[1]      # a configured helper that gave no fingerprint
         return out
 
     def refresh_key_source(self) -> dict:
@@ -6575,13 +6599,15 @@ class SdkBackend:
     def _credential_auth_failed(self, sess, what: str) -> None:
         """A credential the command source supplied (or the helper it fingerprints) was refused on
         `sess` — a 401 give-up, a launch refused as unauthenticated. The exact event the cached set
-        goes stale on: invalidate, so the next launch re-runs the command. Logged once per event;
-        a no-op in file mode (nothing cached to refresh)."""
+        goes stale on: invalidate, so the next launch re-runs the command — ONCE per credential
+        (envsource.invalidate_for_auth_failure): a second refusal of the same set is not new
+        information, and a revoked credential must not turn every refusal into a command run.
+        Logged when it fires; a no-op in file mode (nothing cached to refresh)."""
         if not _envsrc.configured():
             return
-        _envsrc.invalidate("auth failure: " + what)
-        self._log("credential command: %s reported an authentication failure (%s) — the set is re-read at the "
-                  "next launch" % (getattr(sess, "name", "?"), what))
+        if _envsrc.invalidate_for_auth_failure("auth failure: " + what):
+            self._log("credential command: %s reported an authentication failure (%s) — the set is re-read at the "
+                      "next launch" % (getattr(sess, "name", "?"), what))
 
     def cycle_key(self, sid: str) -> str:
         """Re-present the CURRENT credential set to one LIVE session by reconnecting it — the apply half

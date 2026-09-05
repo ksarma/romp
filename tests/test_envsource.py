@@ -363,6 +363,26 @@ class Parser(_Lab):
         out = es.parse_set(("ROMP_SID=abc\nROMP_PERF=1\nA_TOKEN=%s\n" % v).encode())
         self.assertEqual(out["values"], {"A_TOKEN": v})
         self.assertEqual(out["dropped"], ["ROMP_PERF", "ROMP_SID"])
+        self.assertEqual(out["droppedAuth"], [])
+
+    def test_the_clis_own_auth_and_endpoint_names_are_dropped_and_named(self):
+        # a set carrying one of these would re-route or re-bill every session behind the one door the
+        # module keeps for the key; the key itself and the direct-call key are not among them
+        v = fixture_value()
+        body = ("ANTHROPIC_AUTH_TOKEN=%s\nCLAUDE_CODE_OAUTH_TOKEN=%s\nANTHROPIC_BASE_URL=https://example.invalid\n"
+                "ANTHROPIC_CUSTOM_HEADERS=x: y\nANTHROPIC_API_KEY=%s\nANTHROPIC_LP_API_KEY=%s\nA_TOKEN=%s\n") % (v, v, v, v, v)
+        out = es.parse_set(body.encode())
+        self.assertEqual(out["values"], {"ANTHROPIC_API_KEY": v, "ANTHROPIC_LP_API_KEY": v, "A_TOKEN": v})
+        self.assertEqual(out["droppedAuth"], ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS",
+                                              "CLAUDE_CODE_OAUTH_TOKEN"])
+        self.assertEqual(out["dropped"], [])
+        self.assertEqual(set(es.AUTH_NAMES), set(out["droppedAuth"]))
+        self.configure(self.script("printf '%s'" % body.replace("\n", "\\n")))
+        snap = es.current()
+        self.assertTrue(snap["ok"])
+        self.assertEqual(snap["droppedAuth"], out["droppedAuth"])
+        self.assertEqual(sorted(es.injection()), ["ANTHROPIC_API_KEY", "ANTHROPIC_LP_API_KEY", "A_TOKEN"])
+        self.assertNotIn(v, json.dumps(snap))
 
     def test_lines_that_are_not_assignments_and_empty_values_are_counted(self):
         v = fixture_value()
@@ -554,6 +574,44 @@ class CacheAndCoalescing(_Lab):
         os.unlink(os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"])
         self.assertEqual(es.injection(), {"SEL": "none"}, "and its removal")
         self.assertEqual(es._runs, 4)
+
+    def test_an_authentication_failure_invalidates_once_per_credential(self):
+        # a revoked credential: the store keeps handing back the same set, and every judge call and
+        # launch reports a refusal — the first re-runs the command, the rest are not new information
+        v = fixture_value()
+        self.configure(self.printing({"ANTHROPIC_API_KEY": v}))
+        self.assertEqual(es.injection()["ANTHROPIC_API_KEY"], v)
+        self.assertTrue(es.invalidate_for_auth_failure("a 401"), "the first refusal fires")
+        self.assertEqual(es.injection()["ANTHROPIC_API_KEY"], v)
+        self.assertEqual(es._runs, 2, "…and the next caller re-runs")
+        for _ in range(5):
+            self.assertFalse(es.invalidate_for_auth_failure("another 401"), "the same set again: not new information")
+            es.injection()
+        self.assertEqual(es._runs, 2, "a burst of refusals is one run")
+        # a rotation the re-run reveals is new information
+        w = fixture_value("rotated")
+        self.printing({"ANTHROPIC_API_KEY": w})
+        es.invalidate("operator refresh")                  # an operator's invalidation re-arms the path
+        self.assertEqual(es.injection()["ANTHROPIC_API_KEY"], w)
+        self.assertEqual(es._runs, 3)
+        self.assertTrue(es.invalidate_for_auth_failure("a 401 on the new set"), "a different set: fires once")
+        es.injection()
+        self.assertEqual(es._runs, 4)
+        self.assertFalse(es.invalidate_for_auth_failure("and again"))
+        es.injection()
+        self.assertEqual(es._runs, 4)
+
+    def test_a_helper_rotation_re_arms_the_authentication_failure_path(self):
+        self.configure(self.printing({"A_TOKEN": fixture_value()}))
+        a, b = fixture_value("a"), fixture_value("b")
+        self.helper("echo '%s'" % a)
+        es.current()
+        es.helper_fingerprint()
+        self.assertTrue(es.invalidate_for_auth_failure("401"))
+        self.assertFalse(es.invalidate_for_auth_failure("401"), "same set, same helper output as last fingerprinted")
+        self.helper("echo '%s'" % b)
+        es.helper_fingerprint()                              # the invalidation above made this a fresh run: b
+        self.assertTrue(es.invalidate_for_auth_failure("401"), "the helper now prints another credential")
 
     def test_a_first_failure_is_an_empty_set_with_a_reason(self):
         for body, reason in (("exit 5", "exited 5 after "),

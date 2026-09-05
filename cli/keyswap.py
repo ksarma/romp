@@ -63,9 +63,12 @@ REFUSAL = (
     "romp keyswap: refused — this fork does not write API keys to files, so the named swap is disabled.\n"
     "             Keys reach the sessions through Claude Code's apiKeyHelper or through the manager's\n"
     "             environment; nothing here rewrites service.env, so there is nothing for a swap to do.\n"
-    "             After rotating a key, run\n"
-    "                 romp keyswap --cycle-all      (or: romp refresh --quiet)\n"
-    "             so the running sessions reconnect and their new processes pick the new key up.\n")
+    "             After rotating the manager's key, run\n"
+    "                 romp keyswap --cycle-all\n"
+    "             so quiet key-billed sessions reconnect and pick it up. In this file mode that cycle\n"
+    "             skips sessions billed through the apiKeyHelper (they read as the login): a rotated\n"
+    "             helper key reaches them through  romp refresh --quiet  (every process is new), or\n"
+    "             through --cycle-all in command mode (set ROMP_CREDENTIAL_COMMAND; docs/reference.md).\n")
 
 
 def _kernel_urls():
@@ -255,7 +258,7 @@ def _cycle(sessions, all_, out, path=None, refresh=False):
         out("cycle       NOT DONE — the kernel is not on this file's key, so a reconnect would re-present")
         out("            the key it already has. Fix the mismatch above first, then cycle.")
         return 1
-    return _do_cycle(_kernel(), sessions, all_, out)
+    return _do_cycle(_kernel(), sessions, all_, out, file_mode=True)
 
 
 def _not_done_unasked(rc, out):
@@ -269,8 +272,10 @@ def _not_done_unasked(rc, out):
         out("cycle       NOT DONE — see above. Nothing was cycled.")
 
 
-def _do_cycle(u, sessions, all_, out):
-    """The cycle itself, once the read agreed: one POST naming the sessions (or all), then the rows."""
+def _do_cycle(u, sessions, all_, out, file_mode=False):
+    """The cycle itself, once the read agreed: one POST naming the sessions (or all), then the rows. In
+    file mode a row skipped as the login may be a session billed through the apiKeyHelper (the kernel
+    hands it no key, so it reads as the login there): one hint line says where such sessions cycle."""
     body = _post(u, "/keycycle", {"all": True} if all_ else {"sessions": sessions})
     if not body.get("ok"):
         out("cycle       FAILED — %s" % (body.get("error") or body.get("detail") or "unknown"))
@@ -289,6 +294,9 @@ def _do_cycle(u, sessions, all_, out):
     working = [str(r.get("session")) for r in rows if str(r.get("status")) == "working"]
     if working:
         out("            re-run --cycle %s once quiet; sessions already on this key read \"current\"" % ",".join(working))
+    if file_mode and any(str(r.get("status")) == "login" for r in rows):
+        out("            a session billed through the apiKeyHelper reads as the login here and is skipped: such")
+        out("            sessions cycle in command mode (set ROMP_CREDENTIAL_COMMAND); romp refresh --quiet reaches them too")
     return 0
 
 
@@ -348,13 +356,14 @@ def _local():
     elif snap.get("hasKey"):
         st["fp"], st["kind"] = snap.get("keyFp") or "", "key"
     else:
-        hfp, hreason = es.helper_fingerprint()
-        if hfp:
-            st["fp"], st["kind"] = hfp, "helper"
-        elif not es.helper_command():
-            st["noHelper"] = hreason
+        if not es.helper_command():
+            st["kind"], st["noHelper"] = "login", es.helper_fingerprint()[1]      # nothing to run: the reason names the files
         else:
-            st["err"] = "the set carries no %s and the apiKeyHelper %s" % (es.KEY_VAR, hreason)
+            hfp, hreason = es.helper_fingerprint()
+            if hfp:
+                st["fp"], st["kind"] = hfp, "helper"
+            else:
+                st["err"] = "the set carries no %s and the apiKeyHelper %s" % (es.KEY_VAR, hreason)
     return st
 
 
@@ -400,7 +409,9 @@ def _header(st, out):
             out("live key    %s   (this shell's run of the apiKeyHelper; the set carries no %s)"
                 % (_sha(st["fp"]), es.KEY_VAR))
         else:
-            out("live key    (none) — the set carries no %s and %s; sessions bill the login" % (es.KEY_VAR, st["noHelper"]))
+            out("live key    (none) — the set carries no %s and %s; sessions bill the machine login, and a"
+                % (es.KEY_VAR, st["noHelper"]))
+            out("            cycle covers the role variables in the set")
     return rc
 
 
@@ -417,6 +428,7 @@ def _kernel_lines(body, st, out):
         return _mode_mismatch(body, "command", out)
     kfp = body.get("keyFp") or ""
     kerr = body.get("keyErr") or ""
+    kkind = body.get("keyKind") or ""
     launched = body.get("launched") or {}
     note = _refreshed_note(body.get("refreshed"), kfp)
     rc = 0
@@ -427,11 +439,17 @@ def _kernel_lines(body, st, out):
         out("kernel      reads %s (its own run%s; the latest run failed — %s — so it stands on the previous set)"
             % (_sha(kfp), (", " + note) if note else "", kerr))
         rc = 1
+    elif not kfp and kkind == "login":
+        # no key in the set and no apiKeyHelper configured: the machine login bills, there is nothing
+        # to fingerprint, and that is not a failure — the cycle still re-presents the role variables
+        out("kernel      reads no key (its own run%s): sessions bill the machine login; a cycle covers the role"
+            % ((", " + note) if note else ""))
+        out("            variables (set %s); %d live session(s) launched with no key" % (_sha(body.get("setFp") or ""), launched.get("", 0)))
     else:
         out("kernel      reads %s (its own run%s); %d live session(s) on it"
             % (_sha(kfp), (", " + note) if note else "", launched.get(kfp, 0)))
     for fp2 in sorted(launched):
-        if fp2 == kfp:
+        if fp2 == kfp or (kkind == "login" and not fp2 and not kerr):
             continue
         if fp2:
             out("            %d live session(s) still on sha256:%s" % (launched[fp2], fp2))
@@ -654,7 +672,9 @@ def main(argv, out=None):
     out("")
     out("rotate:     this fork writes no key to a file — rotate the key at its source (the apiKeyHelper's")
     out("            store, or the manager's environment), then  romp keyswap --cycle-all  so quiet")
-    out("            sessions reconnect and pick it up")
+    out("            key-billed sessions reconnect and pick it up. Sessions billed through the apiKeyHelper")
+    out("            read as the login in this mode and are skipped by that cycle: they cycle in command mode")
+    out("            (set ROMP_CREDENTIAL_COMMAND), or  romp refresh --quiet  restarts every process")
     return rc
 
 

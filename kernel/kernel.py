@@ -37665,10 +37665,14 @@ class Handler(BaseHTTPRequestHandler):
                 # Body: {"sessions": [<id-or-name>…]} or {"all": true}, plus "refresh": true to make the
                 # kernel re-run its credential command FIRST (the command source, kernel/envsource.py;
                 # a plain re-read in file mode) — `romp keyswap --refresh`, and the first step of every
-                # cycle there. The answer adds keySource ("file"|"command"), keyErr (why there is no
-                # fingerprint, or the last run's failure; ""), launched ({fingerprint: live sessions on
-                # it}), refreshed ({"from","to"} when asked) and each row's `from` (the fingerprint its
-                # CLI launched on) — fingerprints and reasons with counts, never a value.
+                # cycle there. The answer adds keySource ("file"|"command"), keyKind ("key"|"helper"|
+                # "login"|"": what keyFp is of — "login" is a command-mode set with no key and no
+                # apiKeyHelper configured, so there is nothing to fingerprint and no error), keyErr (why
+                # there is no fingerprint, or the last run's failure; ""), setFp (the command's whole set,
+                # role variables included), selector (the declared token, or "(undeclared, N chars)"),
+                # launched ({fingerprint: live sessions on it}), refreshed ({"from","to"} when asked) and
+                # each row's `from` (the fingerprint its CLI launched on) — fingerprints and reasons with
+                # counts, never a value.
                 try:
                     b = json.loads(raw_body or b"{}")
                 except Exception:
@@ -37716,6 +37720,7 @@ class Handler(BaseHTTPRequestHandler):
                     _push_soon()                      # something changed; a fingerprint READ ({"sessions": []}) did not
                 return self._send(200, json.dumps({"ok": True, "keyFp": keyfp, "rows": rows,
                                                    "keySource": kstat.get("source") or "file",
+                                                   "keyKind": kstat.get("fpKind") or "",
                                                    "keyErr": kstat.get("err") or "",
                                                    "launched": kstat.get("launched") or {},
                                                    "setFp": kstat.get("setFp") or "",

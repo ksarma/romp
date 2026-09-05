@@ -477,8 +477,11 @@ class CredentialRefusalInvalidates(_OptionsHarness):
 
     def _logs(self):
         # the harness constructs the backend without a log callback; the problem ring is not fed by an
-        # info line, so re-construct one with a capture for the log assertion
+        # info line, so re-construct one with a capture for the log assertion. The invalidation fires
+        # once per credential (a second refusal of the same set is not new information), so the
+        # operator's refresh re-arms it first: that is the one path a repeat is allowed through.
         logs = []
+        sb._envsrc.invalidate("operator refresh")
         be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None, log=logs.append)
         s = sb.SdkSession(be, {"sid": "11111111-2222-3333-4444-000000000009", "name": "s9", "cwd": "/tmp"})
         be._credential_auth_failed(s, "HTTP 401 on a turn")

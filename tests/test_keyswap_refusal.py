@@ -148,6 +148,9 @@ class NamedSwapRefused(_Env):
         self.assertIn("manager's\n             environment", m)
         self.assertIn("romp keyswap --cycle-all", m)
         self.assertIn("romp refresh", m)
+        self.assertIn("skips sessions billed through the apiKeyHelper", m,
+                      "honest about file mode: a non-keyed session reads as the login there and is not cycled")
+        self.assertIn("--cycle-all in command mode (set ROMP_CREDENTIAL_COMMAND", m)
         self.assertNotIn("service.env.", m, "never a sibling-file recipe")
         for key in (OLD_KEY, NEW_KEY):
             self.assertNotIn(key, m)
@@ -183,6 +186,8 @@ class NamedSwapRefused(_Env):
         self.assertIn("candidates  none (this fork does not write API keys to files; the named swap is disabled)", out)
         self.assertNotIn("this installation", out)
         self.assertIn("romp keyswap --cycle-all", out)
+        self.assertIn("key-billed sessions reconnect", out, "the file-mode cycle reaches key-billed sessions")
+        self.assertIn("they cycle in command mode", out, "…helper-billed ones are named as cycling in command mode")
         self.assertNotIn("swap with:", out)
         self.assertNotIn("chmod 600", out, "upstream's line told the operator to create one file per key")
         self.assertNotIn("keep one file per key", out)
