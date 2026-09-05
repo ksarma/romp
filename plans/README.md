@@ -13,7 +13,9 @@ Two kinds of document live here, and **each file's status header says which it i
   `nudge-awaiting-lift-race.md` (which the user has since ruled are one project — a
   wait-taxonomy — to be re-planned together when revived), and `boot-visibility-card.md`
   (parked 2026-08-15 as a long-term consideration; its notes on the boot reconcile's
-  existing recovery behavior are current as of filing).
+  existing recovery behavior are current as of filing), and `file-review.md`
+  (2026-09-05: a build plan for a review mode in the file viewer, awaiting the user's
+  approval rather than parked; nothing in it is scheduled until then).
 
 Living architecture references (the event model, the read side) live in `docs/`
 instead — see `docs/architecture.md`.
