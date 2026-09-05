@@ -246,17 +246,21 @@ _is_credential_name() {   # sdk_backend._is_credential_name's rule
     case "$1" in ANTHROPIC_API_KEY|*_API_KEY|*_TOKEN) return 0 ;; *) return 1 ;; esac
 }
 
-_selector_word() {   # "(selector <name>)" | "(no selector)" | "(selector file holds something that is not a name)"
-    local f tok
+_selector_word() {   # "(selector <name>)" | "(selector undeclared, N chars)" | "(no selector)" | "(selector file holds something that is not a name)"
+    # the token is printed by NAME only when ROMP_CREDENTIAL_NAMES declares it — an undeclared token
+    # could be anything, a pasted secret included, so it is described by its length alone
+    local f tok names n
     f="$(_svc_cfg ROMP_CREDENTIAL_SELECTOR_FILE)"
     [[ -n "$f" ]] || f="${XDG_CONFIG_HOME:-$HOME/.config}/romp/credential-selector"
     [[ "$f" == "~/"* ]] && f="$HOME/${f#\~/}"
     if [[ ! -f "$f" ]]; then printf '(no selector)'; return 0; fi
     tok="$(head -c 4096 "$f" 2>/dev/null | tr -d '\r')"
     tok="${tok#"${tok%%[![:space:]]*}"}"; tok="${tok%"${tok##*[![:space:]]}"}"
-    if [[ -z "$tok" ]]; then printf '(no selector)'
-    elif [[ "$tok" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then printf '(selector %s)' "$tok"
-    else printf '(selector file holds something that is not a name)'; fi
+    if [[ -z "$tok" ]]; then printf '(no selector)'; return 0; fi
+    if [[ ! "$tok" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then printf '(selector file holds something that is not a name)'; return 0; fi
+    names=",$(_svc_cfg ROMP_CREDENTIAL_NAMES),"; names="${names// /}"
+    if [[ "$names" == *",$tok,"* ]]; then printf '(selector %s)' "$tok"
+    else printf '(selector undeclared, %d chars)' "${#tok}"; fi
 }
 
 _join_names() {   # " a b c " → "a, b, c"

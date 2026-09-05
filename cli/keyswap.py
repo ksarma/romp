@@ -116,11 +116,14 @@ def _kernel():
 
 
 def _post(u, path, body):
+    # the kernel may run its credential command (and the apiKeyHelper) before answering, each bounded
+    # by ROMP_CREDENTIAL_TIMEOUT_S — so the wait here scales with it rather than cutting a slow but
+    # working command off: 10 s plus twice the deadline (30 s in file mode, where the default holds)
     req = urllib.request.Request(u + path, data=json.dumps(body).encode(),
                                 headers={"Content-Type": "application/json",
                                          "X-Romp-Token": _token()}, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=10 + 2 * es.timeout_s()) as r:
             return json.loads(r.read().decode() or "{}")
     except urllib.error.HTTPError as e:
         try:
@@ -305,23 +308,25 @@ def _explain(status):
 
 def _mode_mismatch(body, local_mode, out):
     """The kernel and this shell resolve DIFFERENT modes: ROMP_CREDENTIAL_COMMAND is set for one and not
-    the other. The kernel reads its environment (the unit's, plus service.env at manager start), this
-    shell its own and then service.env — so the usual cause is an edit that the running manager has
-    not seen, and the fix is the manager restart that reads it. Names the variable and the two places;
-    never a value."""
+    the other. The kernel decides its mode ONCE, when it starts (envsource.pin_mode), from its
+    environment (the unit's) and service.env; this shell reads its own environment and then
+    service.env now — so the usual cause is an edit the running kernel has not seen, and the fix is
+    the kernel restart that reads it (`romp refresh`; an edit to the unit's own Environment= lines
+    needs the manager restart). Names the variable and the two places; never a value."""
     kmode = body.get("keySource") or "file"
     out("kernel      reads %s in %s mode" % (_sha(body.get("keyFp") or ""), kmode.upper()))
     if kmode == "command":
-        out("MISMATCH    the kernel is in command mode and this shell is not: ROMP_CREDENTIAL_COMMAND is in the")
-        out("            kernel's environment (the unit or service.env at its last start) but not in this shell's")
-        out("            and not in service.env now. If the line was removed, restart the manager so it reads")
-        out("            file mode; if it should be set, put it back in service.env (this shell reads it from there).")
+        out("MISMATCH    the kernel is in command mode and this shell is not: ROMP_CREDENTIAL_COMMAND was set when the")
+        out("            kernel started (the unit or service.env) but is not in this shell's environment or in")
+        out("            service.env now. A running kernel keeps the mode it started in. If the line was removed,")
+        out("            `romp refresh` restarts the kernels into file mode; if it should be set, put it back in")
+        out("            service.env (this shell reads it from there).")
     else:
         out("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set here (this")
-        out("            shell's environment or service.env) but was not in the kernel's environment when the")
-        out("            manager started. An edit to service.env or the unit reaches the kernel at the next manager")
-        out("            restart (`systemctl --user restart romp-manager`, or `romp-service install`); until then")
-        out("            the kernel injects no set.")
+        out("            shell's environment or service.env) but was not when the kernel started. A running kernel")
+        out("            keeps the mode it started in: `romp refresh` restarts the kernels into command mode (an")
+        out("            edit to the unit's own Environment= lines needs `systemctl --user restart romp-manager`);")
+        out("            until then the kernel injects no set.")
     return 1
 
 
@@ -353,6 +358,14 @@ def _local():
     return st
 
 
+def _sel_word(token):
+    """A selector token as the report may show it: by name when it is declared in ROMP_CREDENTIAL_NAMES,
+    else by length only — an undeclared token could be anything, a pasted secret included."""
+    if not token:
+        return "(none)"
+    return token if token in es.names() else "(undeclared, %d chars)" % len(token)
+
+
 def _header(st, out):
     """The command-mode report's local half: source, selector, candidates, set, live key. Returns 1 when
     this shell could not fingerprint anything it should have (the command or the helper failed)."""
@@ -362,14 +375,17 @@ def _header(st, out):
     if st["selErr"]:
         out("selector    UNREADABLE     %s — %s" % (sel_path, st["selErr"]))
     elif st["selector"]:
-        out("selector    %-14s %s" % (st["selector"], sel_path))
+        out("selector    %-14s %s" % (_sel_word(st["selector"]), sel_path))
     else:
         out("selector    %-14s %s (absent: the command runs with an empty $1)" % ("(none)", sel_path))
     declared = es.names()
     if declared:
         out("candidates  " + ", ".join(n + (" <- selected" if n == st["selector"] else "") for n in declared))
     else:
-        out("candidates  none declared (%s is unset; any name is accepted)" % es.NAMES_VAR)
+        out("candidates  none declared (%s is unset; `romp keyswap <name>` needs it, and the selector is shown by "
+            "length only)" % es.NAMES_VAR)
+    if snap.get("timeoutProblem"):
+        out("timeout     %s" % snap["timeoutProblem"])
     rc = 0
     if st["err"]:
         if snap.get("ok") and snap.get("setFp"):
@@ -431,16 +447,18 @@ def _kernel_lines(body, st, out):
     if not diffs:
         return 0
     out("MISMATCH    the kernel's run of the command and this shell's disagree on %s." % " and ".join(diffs))
-    ksel = body.get("selector") or ""
-    if ksel != (st["selector"] or ""):
+    ksel = body.get("selector") or ""                 # the kernel renders its selector the same way: a
+    lsel = _sel_word(st["selector"]) if st["selector"] else ""   # declared name, or a length
+    if ksel != lsel:
         out("            The kernel's last run used selector %s, this shell's %s: `romp keyswap --refresh`"
-            % (ksel or "(none)", st["selector"] or "(none)"))
+            % (ksel or "(none)", lsel or "(none)"))
         out("            makes the kernel re-run it now.")
     else:
         out("            Usual causes: the service environment (service.env, or the unit) carries other")
-        out("            ROMP_CREDENTIAL_* values than this shell — an edit there reaches the kernel at the next")
-        out("            manager restart — the two resolve different selector files, or CLAUDE_CONFIG_DIR differs")
-        out("            (the apiKeyHelper the kernel fingerprints is the one its settings.json names).")
+        out("            ROMP_CREDENTIAL_* values than this shell — an edit to service.env reaches the kernel at")
+        out("            its next start (`romp refresh`), one to the unit at the next manager restart — the two")
+        out("            resolve different selector files, or CLAUDE_CONFIG_DIR differs (the apiKeyHelper the")
+        out("            kernel fingerprints is the one its own settings name).")
     return 1
 
 
@@ -513,6 +531,11 @@ def _switch(name, out):
         sys.stderr.write("romp keyswap: a selector is one name — letters, digits, '.', '_' or '-', up to 64\n"
                          "             characters (%d characters given); nothing switched.\n" % len(name))
         return 2
+    if not es.names():
+        # nothing declared: no name can be checked, so none is written — and the argument is not echoed
+        sys.stderr.write("romp keyswap: declare %s first (the comma list of names this command may select,\n"
+                         "             in service.env or the service environment); nothing switched.\n" % es.NAMES_VAR)
+        return 2
     if not es.selector_allowed(name):
         sys.stderr.write("romp keyswap: that name is not declared in %s (declared: %s);\n"
                          "             nothing switched. Declare it there first if it is meant to exist.\n"
@@ -533,7 +556,7 @@ def _switch(name, out):
         return 1
     es.invalidate("switch")
     after = _local()
-    was = old or "(none)"
+    was = _sel_word(old)
     if after["err"]:
         _restore_selector(old, w["target"])
         out("selector    %s -> %s, put back to %s" % (was, name, was))
@@ -546,7 +569,7 @@ def _switch(name, out):
         out("selector    %s -> %s, put back to %s" % (was, name, was))
         out("live key    %s   (unchanged)" % _sha(after["fp"]))
         out("            nothing switched: the command printed the same set for %s as for %s. It must read the"
-            % (name, old or "an empty $1"))
+            % (name, was if old else "an empty $1"))
         out("            selector as $1 — `my-cmd \"$1\"`, not a bare `my-cmd` — and the two names must resolve to")
         out("            different credentials.")
         return 1

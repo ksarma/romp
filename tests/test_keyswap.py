@@ -310,7 +310,8 @@ class LiveSpawnEnv(_Backend):
         src = open(os.path.join(ROOT, "kernel", "sdk_backend.py")).read()
         self.assertEqual(src.count("ANTHROPIC_API_KEY=work_key"), 1,
                          "one injection site only — a second would need its own live read")
-        self.assertIn("work_key, key_src = self._work_key_and_source()", src)
+        self.assertTrue("work_key, key_src = self._work_key_and_source(cred)" in src,
+                        "the one call site reads the key through _work_key_and_source, on the connect's own snapshot")
 
     def test_the_key_is_read_once_per_connect_so_a_launch_cannot_straddle_a_swap(self):
         reads = []
@@ -896,9 +897,11 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("kernel      reads (none) in FILE mode", out)
         self.assertIn("MISMATCH    the kernel is in file mode and this shell is not", out)
-        self.assertIn("manager", out)
+        self.assertIn("A running kernel", out)
+        self.assertIn("keeps the mode it started in", out)
+        self.assertIn("`romp refresh` restarts the kernels into command mode", out)
         self.assertIn("service.env", out)
-        self.assertIn("restart", out)
+        self.assertNotIn("restart the manager", out, "a mode change is a kernel restart, not a manager restart")
 
     def test_mismatch_when_the_kernels_fingerprint_differs_names_the_two_environments(self):
         self.kernel_view.update({"keyFp": self.fp("lp"), "setFp": self.set_fp("lp"), "launched": {self.fp("lp"): 1}})
@@ -907,7 +910,8 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.assertIn("MISMATCH    the kernel's run of the command and this shell's disagree on the credential "
                       "fingerprint and the set's fingerprint.", out)
         self.assertIn("service environment", out)
-        self.assertIn("manager restart", out)
+        self.assertIn("an edit to service.env reaches the kernel at", out)
+        self.assertIn("(`romp refresh`)", out)
         self.assertIn("CLAUDE_CONFIG_DIR", out)
         # the kernel's last run used another selector: the hint is the refresh, not the environment
         self.kernel_view["selector"] = "lp"
@@ -1009,14 +1013,65 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.assertEqual(es._runs, 0)
         self.assertEqual(self.selected(), "hp")
 
-    def test_with_no_names_declared_any_token_is_accepted(self):
+    def test_with_no_names_declared_the_switch_is_refused_and_the_selector_shown_by_length(self):
         os.environ.pop("ROMP_CREDENTIAL_NAMES")
-        self.kernel_view.update({"keyFp": self.fp("lp"), "setFp": self.set_fp("lp"), "selector": "lp"})
-        rc, out, _err = self.run_cli("lp")
-        self.assertEqual(rc, 0, out)
-        self.assertEqual(self.selected(), "lp")
+        for name in ("lp", "sk-ant-TEST-9999"):
+            rc, out, err = self.run_cli(name)
+            self.assertEqual(rc, 2, name)
+            self.assertEqual(out, "")
+            self.assertIn("declare ROMP_CREDENTIAL_NAMES first", err)
+            self.assertIn("nothing switched", err)
+            self.assertNotIn(name, err, "the argument is never echoed")
+        self.assertEqual(self.selected(), "hp", "nothing written")
+        self.assertEqual(es._runs, 0)
+        self.kernel_view.update({"selector": "(undeclared, 2 chars)"})
         rc, out, _err = self.run_cli()
-        self.assertIn("candidates  none declared (ROMP_CREDENTIAL_NAMES is unset; any name is accepted)", out)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("candidates  none declared (ROMP_CREDENTIAL_NAMES is unset; `romp keyswap <name>` needs it", out)
+        self.assertIn("selector    (undeclared, 2 chars) " , out)
+        self.assertNotIn("selector    hp", out, "an undeclared token is rendered by length only")
+        self.assertNotIn("MISMATCH", out, "both sides render the undeclared selector the same way")
+
+    def test_a_switch_from_an_undeclared_selector_never_echoes_the_old_token(self):
+        # the file held a token outside ROMP_CREDENTIAL_NAMES (a refused state: the kernel runs nothing
+        # on it); switching to a declared name is a real move, and the old token is shown by length only
+        pasted = fixture_value("pasted")
+        self.select(pasted)
+        self.kernel_view.update({"keyFp": self.fp("lp"), "setFp": self.set_fp("lp"), "selector": "lp",
+                                 "launched": {}, "refreshFrom": ""})
+        rc, out, err = self.run_cli("lp")
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(self.selected(), "lp")
+        self.assertIn("selector    (undeclared, %d chars) -> lp" % len(pasted), out)
+        self.assertIn("live key    sha256:%s   (was (none))" % self.fp("lp"), out)
+        self.assertNotIn(pasted, out + err)
+        self.assertClean(out, err)
+        # …and undone, when the command then fails for the new name, the old token goes back unnamed
+        self.select(pasted)
+        es._reset()
+        self.command("echo '%s' >&2; exit 4" % self.keys["lp"])
+        rc, out, err = self.run_cli("lp")
+        self.assertEqual(rc, 1)
+        self.assertIn("selector    (undeclared, %d chars) -> lp, put back to (undeclared, %d chars)" % (len(pasted), len(pasted)), out)
+        self.assertEqual(self.selected(), pasted, "put back as it was")
+        self.assertNotIn(pasted, out + err)
+        self.assertClean(out, err)
+
+    def test_the_kernel_ask_waits_in_step_with_the_credential_deadline(self):
+        # the kernel may run its command (and the apiKeyHelper) before answering: the wait is
+        # 10 s plus twice ROMP_CREDENTIAL_TIMEOUT_S, never a flat 30 s cutting a slow store off
+        import unittest.mock as mock
+        real_post = self._saved[1]                          # setUp stubs cli._post; this is the real one
+        seen = []
+
+        def fake_urlopen(req, timeout=None):
+            seen.append(timeout)
+            raise OSError("refused")
+        with mock.patch.object(cli.urllib.request, "urlopen", fake_urlopen):
+            real_post("http://127.0.0.1:1", "/keycycle", {})
+            os.environ["ROMP_CREDENTIAL_TIMEOUT_S"] = "45"
+            real_post("http://127.0.0.1:1", "/keycycle", {})
+        self.assertEqual(seen, [10 + 2 * es.DEFAULT_TIMEOUT_S, 10 + 2 * 45])
 
     def test_a_switch_that_moves_nothing_is_undone_and_exits_1(self):
         # the command ignores $1: both names print one set, so the switch would change what no launch sees
@@ -1519,8 +1574,12 @@ class CommandSourceLaunch(_CommandMode):
         self.be.refresh_key_source()
         self.assertEqual(self._env_for(1, "login")["PICKED"], "hp")
         st = self.be.key_source_status()
-        self.assertEqual(st["selector"], "hp")
+        self.assertEqual(st["selector"], "(undeclared, 2 chars)", "no ROMP_CREDENTIAL_NAMES: the token is shown by length only")
         self.assertEqual(st["source"], "command")
+        self.assertEqual(self.be.api_health_snapshot()["keySource"]["selector"], "(undeclared, 2 chars)")
+        os.environ["ROMP_CREDENTIAL_NAMES"] = "hp,lp"
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.key_source_status()["selector"], "hp", "declared: by name")
         self.assertEqual(self.be.api_health_snapshot()["keySource"]["selector"], "hp")
 
     def test_the_boot_line_names_the_set_by_fingerprint_and_names(self):
@@ -1631,6 +1690,12 @@ class CommandSourceFailure(_CommandMode):
         self.assertIn("stderr %d bytes" % (len(w) + 1), lines[0])
         self.assertIn("last successful run (sha256:%s)" % es.set_fingerprint(self.values), lines[0])
         self.assertNotIn(w, lines[0])
+        last = self.be.api_health_snapshot()["keySource"]["lastRun"]
+        self.assertEqual(last["ok"], False)
+        self.assertTrue(last["stale"], "api-health says the previous set stands in")
+        self.assertGreaterEqual(last["failures"], 1)
+        self.assertIsNotNone(last["lastOkAt"], "…and when the set last came from a good run")
+        self.assertEqual(last["exitCode"], 3)
         self.be.refresh_key_source()
         self._env_for(3, "login")
         self.assertEqual(len([t for t in self.problems() if t.startswith("credential command: failed")]), 1,

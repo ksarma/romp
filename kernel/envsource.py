@@ -16,12 +16,20 @@ terminal outside the manager tree resolves the same values):
   Default `${XDG_CONFIG_HOME:-~/.config}/romp/credential-selector`.
 * `ROMP_CREDENTIAL_NAMES` — the comma list of selector names an operator may pick. A token outside
   the list is refused before the command runs.
-* `ROMP_CREDENTIAL_TIMEOUT_S` — how long one run may take (default 15).
+* `ROMP_CREDENTIAL_TIMEOUT_S` — how long one run may take (default 15; a value that is not a number
+  between 0 and 300 is refused with one problem line, and the default holds).
+
+The MODE is pinned when the kernel's backend is constructed (`pin_mode`): a `service.env` edit that
+adds or removes the command line reaches the kernel at its next start (`romp refresh`), never a
+running one, so a kernel is never half in one mode. The other values (the selector file, the names,
+the timeout, the command's text) are read live. A terminal's `romp keyswap` never pins.
 
 Output contract: `ANTHROPIC_API_KEY` (optional) is the work key; `ANTHROPIC_LP_API_KEY` the direct-
 call key; any other name is a role variable for the sessions' shells. Names starting with `ROMP_`
 are dropped (romp owns them). The parsing rule is keysource's, generalised to every name: blank
-and `#` lines skipped, `NAME=value`, last assignment wins, one layer of matching quotes stripped.
+and `#` lines skipped, `NAME=value` (an `export ` prefix is accepted here — romp's own contract for
+the command's output, not the env file's), last assignment wins, one layer of matching quotes
+stripped; lines are split on newlines only, and a value with a NUL is a bad line, never injected.
 
 Three properties this module holds, the same three keysource.py holds:
 
@@ -31,23 +39,31 @@ Three properties this module holds, the same three keysource.py holds:
   exit codes and fingerprints (`sha256` head, 12 hex). Failure reasons carry counts and exit codes
   only ("exited 3 after 0.4s, stderr 87 bytes") — the command's stdout and stderr bytes are never
   quoted, since a command that echoes a credential to stderr would otherwise leak it into the log.
-* **A failed run keeps the previous set.** The cache is event-keyed, with no timer: it holds until
-  `invalidate()` (an operator's refresh, a cycle, an authentication failure in a judge call or a
-  session). Concurrent callers coalesce on one lock — a boot that revives many sessions runs the
-  command once, not once per session — and a caller arriving mid-run takes the fresh result.
+* **A failed run keeps the previous set, and is not served like a good one.** A successful run is
+  cached with no timer: it holds until `invalidate()` (an operator's refresh, a cycle, an
+  authentication failure in a judge call or a session) or until the selector file's own stat
+  identity changes (a hand edit of a shared mode file is an event). After a failed run the NEXT
+  caller re-runs the command — one run per caller — so an installation whose secret store was
+  briefly unreachable recovers at the next launch or call without an operator action; between
+  runs the previous set stands and the record says `stale`. Concurrent callers coalesce on one
+  lock — a boot that revives many sessions runs the command once, not once per session — and a
+  caller arriving mid-run takes that run's result, good or bad, rather than running again.
 
 The apiKeyHelper fingerprint lives here too: on an installation whose set carries no work key the
 sessions authenticate through Claude Code's own `apiKeyHelper`, and the kernel never sees that
 value. To tell whether a running session is on the current credential, `helper_fingerprint()` runs
-the configured helper with the same runner and hashes its output inside this function; the bytes
-never leave it.
+the configured helper with the same runner — in the environment a session CLI gets (the set's role
+variables merged, `ROMP_SID` absent) — and hashes its output inside this function; the bytes never
+leave it.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
+import selectors
 import signal
 import subprocess
 import tempfile
@@ -67,6 +83,8 @@ NAMES_VAR = "ROMP_CREDENTIAL_NAMES"
 TIMEOUT_VAR = "ROMP_CREDENTIAL_TIMEOUT_S"
 CONFIG_VARS = (COMMAND_VAR, SELECTOR_FILE_VAR, NAMES_VAR, TIMEOUT_VAR)
 DEFAULT_TIMEOUT_S = 15.0
+MAX_TIMEOUT_S = 300.0                  # a longer deadline is a misconfiguration: the default holds, said once
+EXIT_GRACE_S = 0.2                     # after the command exits, how long a pipe a leftover child holds is read
 
 KEY_VAR = "ANTHROPIC_API_KEY"          # the work key, when the set carries one
 LP_KEY_VAR = "ANTHROPIC_LP_API_KEY"    # the direct-call key (the catalog fetch)
@@ -91,22 +109,36 @@ def service_env_path() -> str:
     return _keysrc.service_env_path()
 
 
-def parse_lines(text) -> tuple[dict, int, int]:
+_EXPORT_RE = re.compile(r"export[ \t]+(.*)\Z", re.S)
+
+
+def parse_lines(text, allow_export: bool = False) -> tuple[dict, int, int]:
     """Every assignment an env-file body (or a command's stdout) makes: {NAME: value}, plus the count
     of lines that are not `NAME=value` and the count of assignments whose value is empty. Blank and
     `#` lines are skipped, the LAST assignment of a name wins, and one layer of matching quotes is
     stripped — keysource.parse_key's rule for one name, applied to all of them (pinned equal by
     test). An empty value is dropped: for the key that is "no key", for a role variable a var the
-    child would see set-but-empty, which for the CLI's own key var means "key mode, no key"."""
+    child would see set-but-empty, which for the CLI's own key var means "key mode, no key".
+
+    Lines are split on newlines only (CRLF normalised first) — never str.splitlines(), which also
+    splits on \\x0b, \\x0c, \\x1c-\\x1e and the Unicode separators, so a value carrying one of those
+    would have been injected truncated. A value with a NUL is a bad line: no environment can carry
+    it, and a launch must not die on it. With `allow_export` an `export NAME=value` line is the
+    assignment it names — the command-output contract (parse_set); the env file keeps the plain
+    form the launchers and systemd read."""
     out: dict = {}
     bad = empty = 0
-    for raw in str(text or "").splitlines():
+    for raw in str(text or "").replace("\r\n", "\n").split("\n"):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
+        if allow_export:
+            m = _EXPORT_RE.match(line)
+            if m:
+                line = m.group(1).strip()
         name, sep, value = line.partition("=")
         name = name.strip()
-        if not sep or not NAME_RE.match(name):
+        if not sep or not NAME_RE.match(name) or "\x00" in value:
             bad += 1
             continue
         value = value.strip()
@@ -155,8 +187,26 @@ def command(environ=None) -> str:
     return config_value(COMMAND_VAR, environ)
 
 
+_MODE_PIN: bool | None = None      # pin_mode()'s verdict for THIS process's environment; None = unpinned (live)
+
+
+def pin_mode() -> bool:
+    """Decide the mode ONCE for this process, from the live configuration, and hold it: the kernel
+    calls this at backend construction, so a `service.env` edit that adds or removes the command
+    line cannot flip a running kernel into or out of command mode (its sessions, judges and catalog
+    would otherwise change key source mid-life, half of them on each side). A kernel restart
+    (`romp refresh`) reads the file afresh. Returns the pinned verdict."""
+    global _MODE_PIN
+    _MODE_PIN = bool(command(None))
+    return _MODE_PIN
+
+
 def configured(environ=None) -> bool:
-    """Whether the command source is selected — the ONE mode switch: a non-empty command."""
+    """Whether the command source is selected — the ONE mode switch: a non-empty command. For the
+    process's own environment the pinned verdict (pin_mode) answers once it exists; an explicit
+    environ is a hypothetical (the pure verdict, a test) and is always read as given."""
+    if _MODE_PIN is not None and (environ is None or environ is os.environ):
+        return _MODE_PIN
     return bool(command(environ))
 
 
@@ -179,13 +229,30 @@ def names(environ=None) -> list:
     return out
 
 
-def timeout_s(environ=None) -> float:
+def _timeout_value(environ) -> tuple:
+    """(seconds, problem): the configured deadline, or the default with a one-line reason when the
+    setting is not a number in (0, MAX_TIMEOUT_S] — junk, zero, negative, inf, nan, or longer than
+    a launch should ever wait. The reason names the variable, never its text."""
     raw = config_value(TIMEOUT_VAR, environ)
+    if not raw:
+        return DEFAULT_TIMEOUT_S, ""
     try:
         v = float(raw)
     except (TypeError, ValueError):
-        return DEFAULT_TIMEOUT_S
-    return v if v > 0 else DEFAULT_TIMEOUT_S
+        v = math.nan
+    if not math.isfinite(v) or v <= 0 or v > MAX_TIMEOUT_S:
+        return DEFAULT_TIMEOUT_S, ("%s is not a number of seconds between 0 and %g; the default %gs holds"
+                                   % (TIMEOUT_VAR, MAX_TIMEOUT_S, DEFAULT_TIMEOUT_S))
+    return v, ""
+
+
+def timeout_s(environ=None) -> float:
+    return _timeout_value(environ)[0]
+
+
+def timeout_problem(environ=None) -> str:
+    """"" when ROMP_CREDENTIAL_TIMEOUT_S is usable (or unset), else the one problem line's text."""
+    return _timeout_value(environ)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -197,12 +264,28 @@ def valid_selector(token) -> bool:
 
 
 def selector_allowed(token: str, environ=None) -> bool:
-    """Whether `token` may be selected: among the declared names, or anything valid when none are
-    declared. The token itself is never part of any message built from a refusal."""
-    if not valid_selector(token):
-        return False
-    declared = names(environ)
-    return (token in declared) if declared else True
+    """Whether `token` may be selected by `romp keyswap <name>`: a valid token AMONG THE DECLARED
+    NAMES. With nothing declared no name may be selected — a selector is only ever rendered by name
+    when it is declared, so an undeclared one could be anything, a pasted secret included. The
+    token itself is never part of any message built from a refusal."""
+    return bool(valid_selector(token) and token in names(environ))
+
+
+def selector_label(snap: dict) -> str:
+    """The one renderable form of the selector in a record: the token when it is declared in
+    ROMP_CREDENTIAL_NAMES, else `(undeclared, N chars)` — a length, never the text — else ""."""
+    return (snap or {}).get("selector") or (snap or {}).get("selectorNote") or ""
+
+
+def _selector_ident(environ=None) -> tuple:
+    """The selector file's stat identity (path, inode, mtime_ns, size) — part of the cache identity,
+    so a hand edit of a shared mode file re-runs the command without anyone calling invalidate()."""
+    p = selector_path(environ)
+    try:
+        st = os.stat(p)
+        return (p, st.st_ino, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (p, "absent")
 
 
 def read_selector(path=None, environ=None) -> tuple:
@@ -310,10 +393,24 @@ class RunResult:
         return ""
 
 
-def run_command(cmd: str, selector=None, timeout=None, env=None) -> RunResult:
+def _killpg(p) -> None:
+    try:
+        os.killpg(p.pid, signal.SIGKILL)         # start_new_session: the child's pid is its pgid
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def run_command(cmd: str, selector=None, timeout=None, env=None, grace=None) -> RunResult:
     """Run `cmd` through `/bin/sh -c`, with `selector` as `$1` when given, stdin closed, in its own
-    session (so a wedged command's children die with it: os.killpg on the deadline). Never raises."""
+    session (so a wedged command's children die with it: os.killpg on the deadline). Never raises.
+
+    The deadline is on the PROCESS, not on its pipes: stdout and stderr are read until EOF, or until
+    the command has exited and nothing more arrives for `grace` seconds — so a command that exits 0
+    with a complete set but leaves a child holding stdout (a daemon it forked, a `sleep &` it did not
+    disown) is a success, and the leftovers are killed with the group. communicate() would have
+    waited for that child's EOF and reported the run timed out."""
     timeout = DEFAULT_TIMEOUT_S if timeout is None else float(timeout)
+    grace = EXIT_GRACE_S if grace is None else float(grace)
     argv = ["/bin/sh", "-c", str(cmd), "sh"]
     if selector is not None:
         argv.append(str(selector))
@@ -323,31 +420,63 @@ def run_command(cmd: str, selector=None, timeout=None, env=None) -> RunResult:
                              stderr=subprocess.PIPE, start_new_session=True, env=env)
     except OSError as e:
         return RunResult(None, b"", 0, time.monotonic() - t0, start_error=e)
+    out, err = bytearray(), bytearray()
+    sel = selectors.DefaultSelector()
+    sel.register(p.stdout, selectors.EVENT_READ, out)
+    sel.register(p.stderr, selectors.EVENT_READ, err)
+    deadline = t0 + timeout
+    exited_at = None
+    last_data = t0
     timed_out = False
     try:
-        out, err = p.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
+        while sel.get_map():
+            now = time.monotonic()
+            if exited_at is None and p.poll() is not None:
+                exited_at = now
+            if exited_at is not None:
+                if now - max(exited_at, last_data) >= grace:
+                    break                        # the command is gone; a leftover holds a pipe
+                wait = grace - (now - max(exited_at, last_data))
+            else:
+                if now >= deadline:
+                    timed_out = True
+                    break
+                wait = deadline - now
+            for key, _events in sel.select(max(0.0, min(wait, 0.05))):
+                try:
+                    data = os.read(key.fd, 65536)
+                except OSError:
+                    data = b""
+                if data:
+                    key.data.extend(data)
+                    last_data = time.monotonic()
+                else:
+                    sel.unregister(key.fileobj)
+                    key.fileobj.close()
+        if timed_out or sel.get_map():
+            _killpg(p)                           # the deadline, or leftovers holding our pipes
+        for key in list(sel.get_map().values()):
+            sel.unregister(key.fileobj)
+            key.fileobj.close()
+    finally:
+        sel.close()
+    try:
+        p.wait(timeout=5)
+    except Exception:
         try:
-            os.killpg(p.pid, signal.SIGKILL)     # start_new_session: the child's pid is its pgid
-        except (ProcessLookupError, PermissionError):
-            pass
-        try:
-            out, err = p.communicate(timeout=5)
+            p.kill()
+            p.wait(timeout=1)
         except Exception:
-            try:
-                p.kill()
-            except Exception:
-                pass
-            out, err = b"", b""
-    return RunResult(p.returncode, out or b"", len(err or b""), time.monotonic() - t0, timed_out=timed_out)
+            pass
+    duration = (exited_at if exited_at is not None else time.monotonic()) - t0
+    return RunResult(p.returncode, bytes(out), len(err), duration, timed_out=timed_out)
 
 
 def parse_set(stdout) -> dict:
     """A command's stdout as a set: {"values", "dropped", "bad", "empty"} — the assignments, the ROMP_*
     names dropped (names only), and the two counts. `values` is for the injection path alone."""
-    text = stdout.decode("utf-8", "replace") if isinstance(stdout, bytes) else str(stdout or "")
-    vals, bad, empty = parse_lines(text)
+    text = stdout.decode("utf-8", "replace") if isinstance(stdout, (bytes, bytearray)) else str(stdout or "")
+    vals, bad, empty = parse_lines(text, allow_export=True)
     dropped = sorted(k for k in vals if k.startswith(RESERVED_PREFIX))
     for k in dropped:
         del vals[k]
@@ -362,8 +491,11 @@ _lock = threading.Lock()          # serialises runs: a caller arriving mid-run w
 _gen = 0                          # bumped by invalidate(); a snapshot is current while its gen matches
 _values: dict = {}                # the LAST GOOD set — the one thing here that holds values
 _snap: dict | None = None         # the value-free record of the last run (None: never ran)
+_snap_selector_ident: tuple = ()  # the selector file's stat identity the record was taken under
 _runs = 0                         # command executions, total (tests count coalescing with this)
+_attempts = 0                     # _run_locked completions, total — what a waiting caller coalesces on
 _failures = 0                     # consecutive failed runs
+_last_ok_at: float | None = None  # wall-clock time of the last successful run (None: none yet)
 
 _helper_lock = threading.Lock()
 _helper: dict = {"gen": -1, "fp": "", "reason": "", "runs": 0}
@@ -384,27 +516,38 @@ def _empty_snapshot(env_cfg: bool) -> dict:
             "at": None, "exitCode": None, "durationS": None, "timedOut": False,
             "names": [], "dropped": [], "badLines": 0, "emptyValues": 0,
             "setFp": "", "keyFp": "", "hasKey": False, "stale": False,
-            "runs": _runs, "failures": _failures, "generation": _gen, "selector": ""}
+            "runs": _runs, "failures": _failures, "lastOkAt": _last_ok_at, "generation": _gen,
+            "selector": "", "selectorNote": "", "timeoutProblem": ""}
 
 
 def _run_locked(environ) -> None:
     """Under _lock: run the command once and record the outcome. A failure keeps `_values`."""
-    global _values, _snap, _runs, _failures
+    global _values, _snap, _snap_selector_ident, _runs, _attempts, _failures, _last_ok_at
     gen = _gen
     cmd = command(environ)
-    snap = _empty_snapshot(bool(cmd))
-    if not cmd:
+    snap = _empty_snapshot(configured(environ))
+    if not snap["configured"]:
         _values = {}
         snap["generation"] = gen
         _snap = snap
+        _attempts += 1
         return
+    _snap_selector_ident = _selector_ident(environ)
     sel, sel_err = read_selector(None, environ)
-    snap["selector"] = sel
+    declared = names(environ)
+    if sel and sel in declared:
+        snap["selector"] = sel                    # rendered by name only when the name is declared
+    elif sel:
+        snap["selectorNote"] = "(undeclared, %d chars)" % len(sel)
     reason = sel_err
-    if not reason and sel and names(environ) and sel not in names(environ):
+    if not reason and sel and declared and sel not in declared:
         reason = "the selector file holds a name outside %s" % NAMES_VAR
+    if not reason and not cmd:
+        # pinned command mode, and the line is gone from the configuration since the kernel started
+        reason = ("%s is no longer set — this kernel keeps the mode it started in; `romp refresh` "
+                  "restarts it into the configuration as it stands" % COMMAND_VAR)
     if not reason:
-        tmo = timeout_s(environ)
+        tmo, snap["timeoutProblem"] = _timeout_value(environ)
         r = run_command(cmd, sel, tmo)
         _runs += 1
         snap["runs"] = _runs
@@ -434,19 +577,59 @@ def _run_locked(environ) -> None:
         snap["stale"] = bool(_values)       # the previous set stands in
     else:
         _failures = 0
+        _last_ok_at = snap["at"]
         snap["ok"] = True
     snap["failures"] = _failures
+    snap["lastOkAt"] = _last_ok_at
     snap["names"] = sorted(_values)
     snap["setFp"] = set_fingerprint(_values)
     snap["keyFp"] = fingerprint(_values.get(KEY_VAR, ""))
     snap["hasKey"] = KEY_VAR in _values
     snap["generation"] = gen
     _snap = snap
+    _attempts += 1                          # at completion: a caller that read the counter mid-run sees it move
 
 
-def _ensure_locked(environ) -> None:
+def _ensure_locked(environ, retry_failed: bool = True) -> None:
+    """Under _lock: make the record current. A run happens when there is none, when invalidate()
+    moved the generation, when the mode switch changed, when the selector file's stat identity
+    changed — and, with `retry_failed`, when the last run failed: a failure is not served like a
+    good result, so the next caller runs again (one run per caller; a caller that waited behind a
+    run takes that run's result instead, see _fresh)."""
     if _snap is None or _snap.get("generation") != _gen or _snap.get("configured") != configured(environ):
         _run_locked(environ)
+        return
+    if not _snap.get("configured"):
+        return
+    if _snap_selector_ident != _selector_ident(environ):
+        _run_locked(environ)
+        return
+    if retry_failed and _snap.get("ok") is False:
+        _run_locked(environ)
+
+
+class _fresh:
+    """`with _fresh(environ):` — _lock held and the record current on entry. A caller that waited
+    behind another caller's run (the attempt counter moved while it waited) takes that result even
+    when it failed: concurrent callers coalesce on one run; only a caller arriving AFTER a failed
+    run completed triggers the next one."""
+
+    def __init__(self, environ):
+        self.environ = environ
+
+    def __enter__(self):
+        attempts0 = _attempts
+        _lock.acquire()
+        try:
+            _ensure_locked(self.environ, retry_failed=(_attempts == attempts0))
+        except BaseException:
+            _lock.release()
+            raise
+        return self
+
+    def __exit__(self, *exc):
+        _lock.release()
+        return False
 
 
 def current(environ=None) -> dict:
@@ -454,9 +637,9 @@ def current(environ=None) -> dict:
     (True/False; None when no command is configured), reason, at, exitCode, durationS, timedOut,
     names (the set's variable names), dropped (ROMP_* names refused), badLines, emptyValues, setFp,
     keyFp (of the set's ANTHROPIC_API_KEY, "" when absent), hasKey, stale (a failed run is standing
-    on the previous set), runs, failures, generation, selector. Never a value."""
-    with _lock:
-        _ensure_locked(environ)
+    on the previous set), runs, failures, lastOkAt, generation, selector (the token, when declared),
+    selectorNote ("(undeclared, N chars)" otherwise), timeoutProblem. Never a value."""
+    with _fresh(environ):
         return dict(_snap)
 
 
@@ -465,18 +648,26 @@ def injection(environ=None) -> dict:
     (a session CLI's options.env, a judge call's env, the catalog fetch's header). Every other
     function in this module is value-free; nothing calling this may log, store or send what it
     gets. {} when no command is configured or no run has succeeded yet."""
-    with _lock:
-        _ensure_locked(environ)
+    with _fresh(environ):
         return dict(_values)
 
 
+def take(environ=None) -> tuple:
+    """(record, values) from ONE read under the lock — for a connect that needs both the value-free
+    record (to log and stamp) and the set (to inject): read separately, a run could land between
+    the two and the key injected would not be the set the log names. The `values` half is
+    injection()'s and under its rule."""
+    with _fresh(environ):
+        return dict(_snap), dict(_values)
+
+
 def status(environ=None) -> dict:
-    """`current()` plus the configuration, for reports: command (bool: configured), selectorFile,
-    names (declared), timeoutS. Value-free."""
+    """`current()` plus the configuration, for reports: selectorFile, declaredNames, timeoutS,
+    timeoutProblem (also when no run happened). Value-free."""
     out = current(environ)
     out["selectorFile"] = selector_path(environ)
     out["declaredNames"] = names(environ)
-    out["timeoutS"] = timeout_s(environ)
+    out["timeoutS"], out["timeoutProblem"] = _timeout_value(environ)
     return out
 
 
@@ -489,16 +680,26 @@ def claude_config_dir(environ=None) -> str:
     return (env.get("CLAUDE_CONFIG_DIR") or "").strip() or os.path.expanduser("~/.claude")
 
 
+HELPER_SETTINGS_FILES = ("settings.json", "settings.local.json")    # the user-level pair; the local file wins
+
+
 def helper_command(config_dir=None, environ=None) -> str:
-    """The `apiKeyHelper` command Claude Code's settings.json configures ("" for none): the
-    user-level file under $CLAUDE_CONFIG_DIR (default ~/.claude). A command string, never a key."""
+    """The `apiKeyHelper` command Claude Code's USER settings configure ("" for none): `settings.json`
+    and `settings.local.json` under $CLAUDE_CONFIG_DIR (default ~/.claude), the local file winning
+    when both name one. Project settings (a repository's `.claude/settings*.json`) and managed
+    settings are not consulted: the kernel has no project of its own, and what it fingerprints
+    must be what every session's CLI resolves at the user level. A command string, never a key."""
     d = config_dir or claude_config_dir(environ)
-    try:
-        with open(os.path.join(d, "settings.json"), "r", encoding="utf-8") as fh:
-            v = json.load(fh).get("apiKeyHelper")
-    except (OSError, ValueError, AttributeError):
-        return ""
-    return v.strip() if isinstance(v, str) else ""
+    cmd = ""
+    for name in HELPER_SETTINGS_FILES:
+        try:
+            with open(os.path.join(d, name), "r", encoding="utf-8") as fh:
+                v = json.load(fh).get("apiKeyHelper")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(v, str) and v.strip():
+            cmd = v.strip()
+    return cmd
 
 
 def helper_fingerprint(config_dir=None, environ=None, timeout=None) -> tuple:
@@ -506,7 +707,15 @@ def helper_fingerprint(config_dir=None, environ=None, timeout=None) -> tuple:
     helper is run with the same runner and its output hashed HERE; the bytes never leave this
     function. ("", reason) when no helper is configured, it fails, times out, or prints anything
     other than one printable token (the CLI's own contract for helper output). Cached until
-    invalidate(); concurrent callers coalesce."""
+    invalidate(); concurrent callers coalesce.
+
+    The helper runs in the environment a session's CLI runs it in: this process's, with the set's
+    role variables merged over it (a helper that reads a role variable to pick its store must see
+    it) and `ROMP_SID` absent (a kernel started from inside a session's tool shell would otherwise
+    hand the helper a session identity no CLI's helper has) — so the fingerprint is of the credential
+    the sessions actually bill."""
+    with _fresh(environ):
+        overlay = {k: v for k, v in _values.items() if k != KEY_VAR}
     with _helper_lock:
         if _helper["gen"] == _gen:
             return _helper["fp"], _helper["reason"]
@@ -514,10 +723,13 @@ def helper_fingerprint(config_dir=None, environ=None, timeout=None) -> tuple:
         fp, reason = "", ""
         if not cmd:
             reason = "no apiKeyHelper in %s" % os.path.join(claude_config_dir(environ) if not config_dir else config_dir,
-                                                            "settings.json")
+                                                            " or ".join(HELPER_SETTINGS_FILES))
         else:
             tmo = timeout_s(environ) if timeout is None else float(timeout)
-            r = run_command(cmd, None, tmo)
+            env = dict(os.environ if environ is None else environ)
+            env.update(overlay)
+            env.pop("ROMP_SID", None)
+            r = run_command(cmd, None, tmo, env=env)
             _helper["runs"] += 1
             reason = r.reason(tmo)
             if not reason:
@@ -537,13 +749,17 @@ def helper_runs() -> int:
 
 
 def _reset() -> None:
-    """Tests only: forget everything, including the counters."""
-    global _gen, _values, _snap, _runs, _failures, _FILE_CFG
+    """Tests only: forget everything, including the counters and the mode pin."""
+    global _gen, _values, _snap, _snap_selector_ident, _runs, _attempts, _failures, _last_ok_at, _FILE_CFG, _MODE_PIN
     with _lock, _helper_lock:
         _gen += 1
         _values = {}
         _snap = None
+        _snap_selector_ident = ()
         _runs = 0
+        _attempts = 0
         _failures = 0
+        _last_ok_at = None
         _FILE_CFG = ((), {})
+        _MODE_PIN = None
         _helper.update({"gen": -1, "fp": "", "reason": "", "runs": 0})

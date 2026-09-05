@@ -7,18 +7,24 @@ What these pin, in the order the module is used:
     same line in the manager's env file, so a terminal outside the manager tree reads what the
     kernel reads; the defaults; junk timeouts.
   Runner — /bin/sh -c with the selector as $1, stdin closed, a nonzero exit or a deadline is a reason
-    with counts and exit codes only, and a timed-out command's whole process group is killed.
+    with counts and exit codes only, a timed-out command's whole process group is killed, and the
+    deadline is on the PROCESS: a command that exits 0 but leaves a child holding stdout succeeds.
   Parser — keysource's line rule generalised to every name (pinned equal to keysource.parse_key for
     the key line): last wins, one layer of quotes, blank and # lines skipped, ROMP_* names dropped
-    and named, lines that are not NAME=VALUE counted, empty values dropped.
-  CacheAndCoalescing — one run serves every read until invalidate(); concurrent callers coalesce on
-    one run; a failed run keeps the previous set and says so; a first failure is an empty set; an
-    invalidation during a run makes the next caller run again.
+    and named, lines that are not NAME=VALUE counted, empty values dropped; newlines are the only
+    separators, a NUL makes a bad line, and the command's output may say `export NAME=VALUE`.
+  CacheAndCoalescing — one successful run serves every read until invalidate() or a selector-file
+    edit; concurrent callers coalesce on one run; a failed run keeps the previous set, says so, and
+    the NEXT caller re-runs (one run per caller); a first failure is an empty set; an invalidation
+    during a run makes the next caller run again; take() reads record and values together.
   Selector — the one-token file: missing is "no selector", a non-token is an error carrying a byte
-    count, an undeclared name is refused before anything runs, the write is atomic, 0600 and
-    through a symlink.
-  HelperFingerprint — the configured apiKeyHelper is run with the same runner and hashed inside the
-    function; the bytes never leave it; one token expected; cached until invalidate().
+    count, an undeclared name is refused before anything runs, a name is rendered only when it is
+    declared (else by length), the write is atomic, 0600 and through a symlink.
+  ModePin — pin_mode() holds the mode for the process's own environment; explicit environs stay live.
+  HelperFingerprint — the configured apiKeyHelper (settings.json, settings.local.json winning) is
+    run with the same runner, in a session CLI's environment (role variables merged, ROMP_SID
+    absent), and hashed inside the function; the bytes never leave it; one token expected; cached
+    until invalidate().
   NothingLeaks — no fixture value in any status field or reason, whatever the command does with it.
 
 Synthetic throughout: every value is "romp-test-fixture-" + a uuid, assembled at run time (no
@@ -158,11 +164,32 @@ class Config(_Lab):
     def test_the_timeout_defaults_and_refuses_junk(self):
         self.assertEqual(es.timeout_s(), es.DEFAULT_TIMEOUT_S)
         self.assertEqual(es.DEFAULT_TIMEOUT_S, 15.0)
-        for junk in ("abc", "0", "-3", ""):
+        self.assertEqual(es.timeout_problem(), "", "unset: the default, no problem")
+        for junk in ("abc", "0", "-3", "inf", "-inf", "nan", "301", "1e9"):
             os.environ["ROMP_CREDENTIAL_TIMEOUT_S"] = junk
             self.assertEqual(es.timeout_s(), es.DEFAULT_TIMEOUT_S, repr(junk))
+            problem = es.timeout_problem()
+            self.assertIn("ROMP_CREDENTIAL_TIMEOUT_S is not a number of seconds between 0 and 300", problem, repr(junk))
+            self.assertIn("the default 15s holds", problem)
+            self.assertNotIn(junk, problem.replace("300", "").replace("15s", "").replace(" 0 ", " "),
+                             "the problem names the variable, never its text")
+        os.environ["ROMP_CREDENTIAL_TIMEOUT_S"] = ""
+        self.assertEqual((es.timeout_s(), es.timeout_problem()), (es.DEFAULT_TIMEOUT_S, ""), "blank is unset")
         os.environ["ROMP_CREDENTIAL_TIMEOUT_S"] = "2.5"
-        self.assertEqual(es.timeout_s(), 2.5)
+        self.assertEqual((es.timeout_s(), es.timeout_problem()), (2.5, ""))
+        os.environ["ROMP_CREDENTIAL_TIMEOUT_S"] = "300"
+        self.assertEqual(es.timeout_s(), 300.0, "the ceiling itself is accepted")
+        self.assertEqual(es.MAX_TIMEOUT_S, 300.0)
+
+    def test_a_bad_timeout_rides_the_record_as_a_problem_and_the_run_uses_the_default(self):
+        self.configure(self.printing({"A_TOKEN": fixture_value()}), timeout="nan")
+        snap = es.status()
+        self.assertTrue(snap["ok"])
+        self.assertIn("ROMP_CREDENTIAL_TIMEOUT_S", snap["timeoutProblem"])
+        self.assertEqual(snap["timeoutS"], es.DEFAULT_TIMEOUT_S)
+        os.environ["ROMP_CREDENTIAL_TIMEOUT_S"] = "4"
+        es.invalidate()
+        self.assertEqual(es.current()["timeoutProblem"], "", "fixed: nothing to say")
 
     def test_the_selector_path_defaults_under_the_config_home(self):
         os.environ.pop("ROMP_CREDENTIAL_SELECTOR_FILE")
@@ -242,6 +269,52 @@ class Runner(_Lab):
         self.assertFalse(alive, "the background `sleep 30 &` must die with its group, not linger under the kernel")
 
 
+    def _wait_group_gone(self, pgfile):
+        with open(pgfile) as fh:
+            pgid = int(fh.read().strip())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(pgid, 0)
+                time.sleep(0.05)
+            except ProcessLookupError:
+                return True
+        return False
+
+    def test_the_deadline_is_on_the_process_not_on_the_pipe_a_leftover_child_holds(self):
+        # the command exits 0 with a complete set but forked `sleep 30 &` without redirecting its
+        # stdout: communicate() would wait for that child's EOF and call the run timed out; the
+        # runner reads until the process is gone and nothing more arrives, then kills the leftovers
+        v = fixture_value()
+        pgfile = os.path.join(self.d, "pgid")
+        s = self.script("ps -o pgid= -p $$ | tr -d ' ' > %s\nsleep 30 &\necho 'A_TOKEN=%s'\nexit 0" % (pgfile, v))
+        t0 = time.monotonic()
+        r = es.run_command(s, "hp", 5)
+        self.assertLess(time.monotonic() - t0, 3, "the run returned when the command exited, not at the deadline")
+        self.assertTrue(r.ok, r.reason(5))
+        self.assertFalse(r.timed_out)
+        self.assertEqual(r.returncode, 0)
+        self.assertLess(r.duration_s, 3)
+        self.assertEqual(es.parse_set(r.stdout)["values"], {"A_TOKEN": v}, "the set it printed is complete")
+        self.assertTrue(self._wait_group_gone(pgfile), "the leftover `sleep 30 &` dies with the group")
+
+    def test_a_leftover_that_keeps_printing_is_read_until_it_goes_quiet_then_killed(self):
+        # a child that prints after the command exited: what arrives within the grace is read; the
+        # exit code is the command's own
+        v = fixture_value()
+        s = self.script("(sleep 0.05; echo 'B_TOKEN=%s') &\necho 'A_TOKEN=%s'\nexit 0" % (v, v))
+        r = es.run_command(s, "hp", 5)
+        self.assertTrue(r.ok)
+        self.assertEqual(es.parse_set(r.stdout)["values"], {"A_TOKEN": v, "B_TOKEN": v})
+
+    def test_a_nonzero_exit_with_a_leftover_is_still_the_exit_codes_failure(self):
+        s = self.script("sleep 30 &\nexit 4")
+        r = es.run_command(s, "hp", 5)
+        self.assertFalse(r.ok)
+        self.assertFalse(r.timed_out)
+        self.assertTrue(r.reason(5).startswith("exited 4 after "), r.reason(5))
+
+
 class Parser(_Lab):
     def test_last_wins_quotes_stripped_blank_and_comment_lines_skipped(self):
         a, b = fixture_value("a"), fixture_value("b")
@@ -258,11 +331,32 @@ class Parser(_Lab):
                      "ANTHROPIC_API_KEY=\n",
                      "ANTHROPIC_API_KEY=%s\nANTHROPIC_API_KEY=\n" % v,   # a later empty assignment unsets
                      "# ANTHROPIC_API_KEY=%s\n" % v,
-                     "export ANTHROPIC_API_KEY=%s\n" % v,           # not an assignment to either parser
+                     "export ANTHROPIC_API_KEY=%s\n" % v,           # the file parsers take no `export`; parse_set does
                      "ANTHROPIC_API_KEY2=%s\n" % v,
                      "ANTHROPIC_API_KEY=%s=with=equals\n" % v,
                      "ANTHROPIC_API_KEY=''\n"):
             self.assertEqual(es.parse_lines(body)[0].get("ANTHROPIC_API_KEY", ""), ks.parse_key(body), repr(body))
+
+    def test_the_commands_output_may_say_export_the_env_file_may_not(self):
+        v = fixture_value()
+        body = "export A_TOKEN=%s\nexport\tB_TOKEN='%s'\nexport C_TOKEN\nexportD_TOKEN=%s\n" % (v, v, v)
+        out = es.parse_set(body.encode())
+        self.assertEqual(out["values"], {"A_TOKEN": v, "B_TOKEN": v, "exportD_TOKEN": v},
+                         "romp's own contract for the command's output; a run-together word is a plain name")
+        self.assertEqual(out["bad"], 1, "`export C_TOKEN` assigns nothing")
+        vals, bad, _ = es.parse_lines(body)
+        self.assertEqual(vals, {"exportD_TOKEN": v}, "the env file keeps the plain form the launchers and systemd read")
+        self.assertEqual(bad, 3)
+
+    def test_lines_split_on_newlines_only_and_a_nul_is_a_bad_line(self):
+        v = fixture_value()
+        # CRLF is normalised; the other characters str.splitlines() would split on are part of a value
+        vals, bad, _ = es.parse_lines("A=%s\r\nB=x\x0by\nC=p\x1cq\nD=m\x85n\nE=u\u2028w\n" % v)
+        self.assertEqual(vals, {"A": v, "B": "x\x0by", "C": "p\x1cq", "D": "m\x85n", "E": "u\u2028w"})
+        self.assertEqual(bad, 0)
+        vals, bad, _ = es.parse_lines("A=%s\nB=with\x00nul\nC\x00=x\n" % v)
+        self.assertEqual(vals, {"A": v}, "a value no environment can carry is never injected")
+        self.assertEqual(bad, 2)
 
     def test_romp_names_are_dropped_and_named_not_kept(self):
         v = fixture_value()
@@ -374,17 +468,92 @@ class CacheAndCoalescing(_Lab):
         self.assertEqual(snap["failures"], 1)
         self.assertTrue(snap["reason"].startswith("exited 2 after "), snap["reason"])
         self.assertEqual(es.injection(), {"A_TOKEN": v}, "a failing command's stdout is never trusted")
-        self.assertEqual(es._runs, 2)
-        es.injection()
-        self.assertEqual(es._runs, 2, "a failed run is cached too: a broken command is not re-run per read")
-        # recovery: the command works again
+        self.assertEqual(es._runs, 3, "the injection() after a failed run ran the command again: one run per caller")
+        self.assertEqual(es.current()["failures"], 3)
+        self.assertEqual(es._runs, 4)
+        # recovery: the command works again — and nobody had to call invalidate() for it
         self.printing({"A_TOKEN": w})
-        es.invalidate()
         snap = es.current()
-        self.assertTrue(snap["ok"])
+        self.assertTrue(snap["ok"], "the next caller after a failure re-runs and finds the store back")
         self.assertFalse(snap["stale"])
         self.assertEqual(snap["failures"], 0)
         self.assertEqual(es.injection(), {"A_TOKEN": w})
+        self.assertEqual(es._runs, 5)
+        es.injection()
+        self.assertEqual(es._runs, 5, "a successful run is cached again")
+
+    def test_a_failed_run_is_not_served_like_a_good_one_but_concurrent_callers_still_coalesce(self):
+        v = fixture_value()
+        self.configure(self.printing({"A_TOKEN": v}))
+        self.assertEqual(es.injection(), {"A_TOKEN": v})
+        self.script("sleep 0.3\nexit 2")
+        es.invalidate()
+        got = []
+
+        def read():
+            got.append(es.current()["ok"])
+
+        ts = [threading.Thread(target=read) for _ in range(6)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(10)
+        self.assertEqual(got, [False] * 6, "every caller saw the failure")
+        self.assertEqual(es._runs, 2, "the callers that waited behind the run took its result, failed or not")
+        es.current()
+        self.assertEqual(es._runs, 3, "a caller arriving after the failed run completed runs again")
+        self.assertEqual(es.injection(), {"A_TOKEN": v}, "the previous set stands throughout")
+
+    def test_last_ok_at_survives_failures_and_moves_on_recovery(self):
+        v = fixture_value()
+        self.configure(self.printing({"A_TOKEN": v}))
+        self.assertIsNone(es.current()["lastOkAt"] and None, "a float or None: shape only")
+        ok_at = es.current()["lastOkAt"]
+        self.assertIsNotNone(ok_at)
+        self.assertEqual(ok_at, es.current()["at"])
+        self.script("exit 2")
+        es.invalidate()
+        snap = es.current()
+        self.assertFalse(snap["ok"])
+        self.assertEqual(snap["lastOkAt"], ok_at, "the last success is remembered through failures")
+        self.assertGreater(snap["at"], 0)
+        time.sleep(0.01)
+        self.printing({"A_TOKEN": v})
+        snap = es.current()
+        self.assertTrue(snap["ok"])
+        self.assertGreaterEqual(snap["lastOkAt"], ok_at)
+        self.assertEqual(snap["lastOkAt"], snap["at"])
+
+    def test_take_hands_record_and_values_from_one_read(self):
+        v = fixture_value()
+        self.configure(self.printing({"A_TOKEN": v, "ANTHROPIC_API_KEY": fixture_value("key")}))
+        snap, vals = es.take()
+        self.assertEqual(es._runs, 1)
+        self.assertEqual(sorted(vals), snap["names"])
+        self.assertEqual(es.set_fingerprint(vals), snap["setFp"])
+        self.assertEqual(es.fingerprint(vals["ANTHROPIC_API_KEY"]), snap["keyFp"])
+        vals["A_TOKEN"] = "changed by a caller"
+        self.assertEqual(es.take()[1]["A_TOKEN"], v, "callers get a copy")
+        self.assertEqual(es._runs, 1)
+
+    def test_a_hand_edit_of_the_selector_file_re_runs_the_command(self):
+        # the selector file may be one an apiKeyHelper already reads and an operator edits by hand:
+        # its stat identity is part of the cache identity, so the edit is an event, not a wait
+        self.configure(self.script('echo "SEL=${1:-none}"') + ' "$1"', names="hp,lp")
+        self.assertEqual(es.injection(), {"SEL": "none"})
+        self.select("hp")
+        self.assertEqual(es.injection(), {"SEL": "hp"}, "the file appeared: a run")
+        self.assertEqual(es._runs, 2)
+        es.injection()
+        self.assertEqual(es._runs, 2, "unchanged file, no run")
+        with open(os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"], "w") as fh:
+            fh.write("lp\n")
+        os.utime(os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"], ns=(time.time_ns() + 10**9, time.time_ns() + 10**9))
+        self.assertEqual(es.injection(), {"SEL": "lp"}, "the edit re-ran the command")
+        self.assertEqual(es._runs, 3)
+        os.unlink(os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"])
+        self.assertEqual(es.injection(), {"SEL": "none"}, "and its removal")
+        self.assertEqual(es._runs, 4)
 
     def test_a_first_failure_is_an_empty_set_with_a_reason(self):
         for body, reason in (("exit 5", "exited 5 after "),
@@ -443,9 +612,27 @@ class Selector(_Lab):
     def test_the_token_is_read_and_passed_as_dollar_one(self):
         self.select("  hp\n")
         self.assertEqual(es.read_selector(), ("hp", ""))
-        self.configure(self.script('echo "SEL=$1"') + ' "$1"')
+        self.configure(self.script('echo "SEL=$1"') + ' "$1"', names="hp,lp")
         self.assertEqual(es.injection(), {"SEL": "hp"})
-        self.assertEqual(es.current()["selector"], "hp")
+        snap = es.current()
+        self.assertEqual(snap["selector"], "hp", "declared: rendered by name")
+        self.assertEqual(snap["selectorNote"], "")
+        self.assertEqual(es.selector_label(snap), "hp")
+
+    def test_an_undeclared_token_is_rendered_by_length_only(self):
+        # with no names declared the command still gets the token as $1, but nothing renders it: an
+        # undeclared token could be anything, a pasted secret included
+        v = fixture_value("pasted")
+        self.select(v)
+        self.configure(self.script('echo "SEL=$1"') + ' "$1"')
+        self.assertEqual(es.injection(), {"SEL": v})
+        snap = es.current()
+        self.assertEqual(snap["selector"], "")
+        self.assertEqual(snap["selectorNote"], "(undeclared, %d chars)" % len(v))
+        self.assertEqual(es.selector_label(snap), "(undeclared, %d chars)" % len(v))
+        self.assertNotIn(v, json.dumps(snap))
+        self.assertEqual(es.selector_label({}), "")
+        self.assertEqual(es.selector_label({"selector": "", "selectorNote": ""}), "")
 
     def test_a_non_token_is_an_error_carrying_a_byte_count_never_the_content(self):
         v = fixture_value("pasted")
@@ -474,10 +661,11 @@ class Selector(_Lab):
         self.assertEqual(es.injection(), {"A": "1"})
         self.assertEqual(es._runs, 1)
 
-    def test_with_no_names_declared_any_token_is_allowed(self):
+    def test_with_no_names_declared_the_kernel_still_passes_the_token_but_no_switch_may_select_one(self):
         self.select("anything.goes-1")
         self.configure(self.script('echo "SEL=$1"') + ' "$1"')
         self.assertEqual(es.injection(), {"SEL": "anything.goes-1"})
+        self.assertFalse(es.selector_allowed("anything.goes-1"), "nothing declared: `romp keyswap <name>` has nothing to check against")
 
     def test_validity_is_the_one_token_regex(self):
         for ok in ("hp", "a", "a.b-c_d", "A" * 64, "x1", "1x"):
@@ -485,12 +673,56 @@ class Selector(_Lab):
         for bad in ("", "-x", ".x", "_x", "A" * 65, "a b", "a/b", "a\n", "a=b", None, 3):
             self.assertFalse(es.valid_selector(bad), repr(bad))
 
-    def test_selector_allowed_checks_the_declared_names(self):
-        self.assertTrue(es.selector_allowed("hp"))
+    def test_selector_allowed_requires_a_declaration(self):
+        self.assertFalse(es.selector_allowed("hp"), "undeclared: refused")
         os.environ["ROMP_CREDENTIAL_NAMES"] = "hp,lp"
+        self.assertTrue(es.selector_allowed("hp"))
         self.assertTrue(es.selector_allowed("lp"))
         self.assertFalse(es.selector_allowed("other"))
         self.assertFalse(es.selector_allowed("a b"))
+
+
+class ModePin(_Lab):
+    def test_pin_mode_holds_the_process_verdict_until_reset(self):
+        self.assertFalse(es.pin_mode())
+        self.configure(self.script("echo A=1"))
+        self.assertFalse(es.configured(), "pinned file mode: the new line does not flip a running kernel")
+        self.assertEqual(es.injection(), {}, "…so nothing runs")
+        self.assertEqual(es._runs, 0)
+        self.assertTrue(es.configured({"ROMP_CREDENTIAL_COMMAND": "x"}), "an explicit environ is read as given")
+        self.assertFalse(es.configured({}))
+        es._reset()
+        self.assertTrue(es.configured(), "unpinned: live again")
+
+    def test_a_pinned_command_mode_survives_the_line_going_away_loudly(self):
+        v = fixture_value()
+        self.configure(self.printing({"A_TOKEN": v}))
+        self.assertTrue(es.pin_mode())
+        self.assertEqual(es.injection(), {"A_TOKEN": v})
+        os.environ.pop("ROMP_CREDENTIAL_COMMAND")
+        self.assertTrue(es.configured(), "the kernel keeps its boot mode")
+        es.invalidate()
+        snap = es.current()
+        self.assertFalse(snap["ok"])
+        self.assertTrue(snap["stale"], "the previous set stands")
+        self.assertIn("ROMP_CREDENTIAL_COMMAND is no longer set", snap["reason"])
+        self.assertIn("romp refresh", snap["reason"])
+        self.assertEqual(es.injection(), {"A_TOKEN": v})
+        self.assertEqual(es._runs, 1, "no command to run: nothing ran")
+        self.configure(self.printing({"A_TOKEN": v}))
+        self.assertTrue(es.current()["ok"], "the line is back: the next caller runs it")
+
+    def test_the_pin_is_taken_from_the_env_file_too(self):
+        p = os.path.join(self.d, "service.env")
+        with open(p, "w") as fh:
+            fh.write("ROMP_CREDENTIAL_COMMAND=%s\n" % self.script("echo A=1"))
+        os.environ["ROMP_SERVICE_ENV_FILE"] = os.environ["ROMP_SERVICE_ENV"] = p
+        self.assertTrue(es.pin_mode())
+        with open(p, "w") as fh:
+            fh.write("ROMP_PERF=1\n")
+        os.utime(p, ns=(time.time_ns() + 10**9, time.time_ns() + 10**9))
+        self.assertEqual(es.command(), "", "the text is live…")
+        self.assertTrue(es.configured(), "…the mode is not")
 
     def test_the_write_is_atomic_0600_creates_the_directory_and_leaves_no_temp_file(self):
         p = os.path.join(self.d, "deep", "er", "selector")
@@ -594,6 +826,40 @@ class HelperFingerprint(_Lab):
         fp, reason = es.helper_fingerprint(timeout=0.5)
         self.assertEqual(fp, "")
         self.assertIn("timed out after 0.5s", reason)
+
+    def test_settings_local_json_wins_over_settings_json(self):
+        a, b = fixture_value("a"), fixture_value("b")
+        d = os.environ["CLAUDE_CONFIG_DIR"]
+        self.helper("echo '%s'" % a)
+        local = self.script("echo '%s'" % b, "local-helper.sh")
+        with open(os.path.join(d, "settings.local.json"), "w") as fh:
+            json.dump({"apiKeyHelper": local}, fh)
+        self.assertEqual(es.helper_command(), local, "the local file wins")
+        self.assertEqual(es.helper_fingerprint()[0], es.fingerprint(b))
+        with open(os.path.join(d, "settings.local.json"), "w") as fh:
+            json.dump({"apiKeyHelper": ""}, fh)
+        self.assertEqual(es.helper_command(), es.helper_command(d), "an empty local entry leaves settings.json's")
+        self.assertTrue(es.helper_command().endswith("helper.sh"))
+        os.unlink(os.path.join(d, "settings.json"))
+        with open(os.path.join(d, "settings.local.json"), "w") as fh:
+            json.dump({"apiKeyHelper": local}, fh)
+        self.assertEqual(es.helper_command(), local, "the local file alone is enough")
+        self.assertEqual(es.HELPER_SETTINGS_FILES, ("settings.json", "settings.local.json"))
+
+    def test_the_helper_runs_in_a_session_clis_environment_role_variables_merged_romp_sid_absent(self):
+        # a helper that picks its store by a role variable, and one that would see a session identity
+        # if the kernel had been started from inside a session's tool shell
+        role = fixture_value("role")
+        self.configure(self.printing({"A_TOKEN": role, "ANTHROPIC_API_KEY": fixture_value("key")}))
+        self.helper('echo "${A_TOKEN}-${ROMP_SID:-nosid}-${ANTHROPIC_API_KEY:-nokey}"')
+        os.environ["ROMP_SID"] = "11111111-2222-3333-4444-555555555555"
+        try:
+            fp, reason = es.helper_fingerprint()
+        finally:
+            os.environ.pop("ROMP_SID", None)
+        self.assertEqual(reason, "")
+        self.assertEqual(fp, es.fingerprint("%s-nosid-nokey" % role),
+                         "the role variables reach the helper, ROMP_SID and the set's own key do not")
 
     def test_the_config_dir_argument_and_the_environment_variable_name_the_same_file(self):
         v = fixture_value()

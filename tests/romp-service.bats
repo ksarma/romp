@@ -371,8 +371,14 @@ EOF2
     [[ "$output" == *"key source: command (no selector)"* ]]
     [[ "$output" != *"cred.sh"* ]]                            # which source, never the setting's text
     printf 'hp\n' > "$XDG_CONFIG_HOME/romp/credential-selector"
+    # the token is shown by name only when ROMP_CREDENTIAL_NAMES declares it; undeclared, by length
     ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (selector undeclared, 2 chars)"* ]]
+    [[ "$output" != *"selector hp"* ]]
+    ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_CREDENTIAL_NAMES="hp, lp" ROMP_OS_OVERRIDE=Linux run "$SVC" status
     [[ "$output" == *"key source: command (selector hp)"* ]]
+    ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_CREDENTIAL_NAMES="lp" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (selector undeclared, 2 chars)"* ]]
     # a selector file holding something that is not a name is said, not shown
     local junk="romp-test-fixture-$RANDOM $RANDOM"
     printf '%s\n' "$junk" > "$XDG_CONFIG_HOME/romp/credential-selector"
@@ -384,7 +390,7 @@ EOF2
 @test "status: the same lines in service.env are read the way the kernel reads them (last wins, one layer of quotes)" {
     export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
     printf 'lp\n' > "$TEST_DIR/sel"
-    printf 'ROMP_EXPECTED_AUTH=key\nROMP_CREDENTIAL_COMMAND=first\nROMP_CREDENTIAL_COMMAND="%s"\n  ROMP_CREDENTIAL_SELECTOR_FILE = %s\n' \
+    printf 'ROMP_EXPECTED_AUTH=key\nROMP_CREDENTIAL_COMMAND=first\nROMP_CREDENTIAL_COMMAND="%s"\n  ROMP_CREDENTIAL_SELECTOR_FILE = %s\nROMP_CREDENTIAL_NAMES=hp,lp\n' \
         "$TEST_DIR/cred.sh \"\$1\"" "$TEST_DIR/sel" > "$ROMP_SERVICE_ENV_FILE"
     ROMP_OS_OVERRIDE=Linux run "$SVC" status
     [ "$status" -eq 0 ]

@@ -98,7 +98,13 @@ class Modes(unittest.TestCase):
         self.assertTrue(v["helperConfigured"])
         self.assertIsNone(v["execStartShell"], "no unit text: unknown")
         self.assertEqual(v["credentialNamesFound"], {"serviceEnv": [], "unit": [], "environment": []})
-        self.assertEqual(v["lastRun"], {"ok": True, "at": 1_700_000_000, "reason": "", "exitCode": 0, "durationS": 0.412})
+        self.assertEqual(v["lastRun"], {"ok": True, "at": 1_700_000_000, "reason": "", "exitCode": 0, "durationS": 0.412,
+                                        "stale": False, "failures": 0, "lastOkAt": None})
+        v = verdict(CMD, snapshot=ok_snap(ok=False, reason="exited 3 after 0.4s, stderr 87 bytes", stale=True,
+                                          failures=2, lastOkAt=1_699_999_000.2))
+        self.assertEqual(v["lastRun"], {"ok": False, "at": 1_700_000_000, "reason": "exited 3 after 0.4s, stderr 87 bytes",
+                                        "exitCode": 0, "durationS": 0.412, "stale": True, "failures": 2,
+                                        "lastOkAt": 1_699_999_000}, "a failed run says it stands on the previous set")
         self.assertIsNone(verdict()["lastRun"], "file mode has no command run")
         self.assertEqual(verdict()["selector"], "")
         json.dumps(v)
@@ -232,7 +238,17 @@ class CommandModeChecks(unittest.TestCase):
     def test_an_unconfigured_snapshot_in_command_mode_produces_no_run_line(self):
         r = verdict(CMD, snapshot=None)
         self.assertEqual([t for t in texts(r) if "the set is" in t or "failed" in t], [])
-        self.assertEqual(r["lastRun"], {"ok": None, "at": None, "reason": "", "exitCode": None, "durationS": None})
+        self.assertEqual(r["lastRun"], {"ok": None, "at": None, "reason": "", "exitCode": None, "durationS": None,
+                                        "stale": False, "failures": 0, "lastOkAt": None})
+
+    def test_an_undeclared_selector_is_rendered_by_length_and_a_bad_timeout_rings(self):
+        r = verdict(CMD, snapshot=ok_snap(selector="", selectorNote="(undeclared, 5 chars)"))
+        self.assertEqual(r["selector"], "(undeclared, 5 chars)")
+        self.assertIn("key source: command (selector undeclared, 5 chars) — the set is", r["lines"][0]["text"])
+        r = verdict(CMD, snapshot=ok_snap(timeoutProblem="ROMP_CREDENTIAL_TIMEOUT_S is not a number of seconds between 0 and 300; the default 15s holds"))
+        line = [t for t in problems(r) if "ROMP_CREDENTIAL_TIMEOUT_S" in t]
+        self.assertEqual(len(line), 1)
+        self.assertTrue(line[0].startswith("key source: ROMP_CREDENTIAL_TIMEOUT_S is not a number"), line[0])
 
 
 class BothModes(unittest.TestCase):
@@ -435,6 +451,33 @@ class BootAndHealth(unittest.TestCase):
         self.assertTrue(any("through a shell" in t for t in probs), probs)
         self.assertTrue(any("service definition carries" in t and "(HF_TOKEN)" in t for t in probs), probs)
         self.assertNotIn(v, json.dumps(probs))
+
+    def test_the_mode_is_pinned_at_construction(self):
+        # a service.env edit that removes the line does not flip a running kernel: the sessions it
+        # launches, its judges and its catalog fetch stay on one key source until `romp refresh`
+        v = fixture_value()
+        self.command({"A_TOKEN": v})
+        be = self.construct()
+        self.assertEqual(be.key_source["mode"], "command")
+        os.environ.pop("ROMP_CREDENTIAL_COMMAND")
+        self.assertEqual(be.key_source_mode(), "command", "the boot mode holds")
+        be.refresh_key_source()
+        st = be.key_source_status()
+        self.assertEqual(st["source"], "command")
+        self.assertIn("ROMP_CREDENTIAL_COMMAND is no longer set", st["err"])
+        self.assertTrue(any("ROMP_CREDENTIAL_COMMAND is no longer set" in p["text"] and "romp refresh" in p["text"]
+                            for p in be.problems()), [p["text"] for p in be.problems()])
+        self.assertEqual(be.api_health_snapshot()["keySource"]["mode"], "command")
+        self.assertTrue(be.api_health_snapshot()["keySource"]["lastRun"]["stale"])
+        # …and the other way: a kernel that booted in file mode ignores a command that appears later
+        es._reset()
+        self.logged.clear()
+        be = self.construct()
+        self.assertEqual(be.key_source["mode"], "file")
+        self.command({"A_TOKEN": v})
+        self.assertEqual(be.key_source_mode(), "file")
+        self.assertEqual(es._runs, 0, "nothing runs in a kernel pinned to file mode")
+        self.assertEqual(be.api_health_snapshot()["keySource"]["mode"], "file")
 
     def test_a_verdict_that_cannot_be_taken_is_a_logged_problem_not_a_failed_construction(self):
         self.command({"A_TOKEN": fixture_value()})

@@ -3025,6 +3025,18 @@ _SHELLS = ("sh", "bash", "zsh", "dash", "ksh", "fish")
 LAUNCHD_LABEL = "com.romp.manager"          # bin/romp-service's LABEL
 
 
+def _last_run_of(snap) -> dict:
+    """The command source's last run as the verdict and /api-health report it: ok, at, reason,
+    exitCode, durationS, stale (a failed run standing on the previous set), failures (consecutive),
+    lastOkAt. Value-free by construction (the record is)."""
+    snap = snap or {}
+    return {"ok": snap.get("ok"), "at": int(snap["at"]) if snap.get("at") else None,
+            "reason": snap.get("reason") or "", "exitCode": snap.get("exitCode"),
+            "durationS": snap.get("durationS"), "stale": bool(snap.get("stale")),
+            "failures": int(snap.get("failures") or 0),
+            "lastOkAt": int(snap["lastOkAt"]) if snap.get("lastOkAt") else None}
+
+
 def _expected_auth_of(env) -> str:
     """_expected_auth's rule over a given environ (the verdict takes its inputs, never the process)."""
     v = (env.get("ROMP_EXPECTED_AUTH") or "").strip().lower()
@@ -3160,7 +3172,7 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
     found = {"serviceEnv": file_names, "unit": unit_names, "environment": env_names}
     env_file = _keysrc.service_env_path()
     if mode == "command":
-        sel = snap.get("selector") or ""
+        sel = _envsrc.selector_label(snap)
         if snap.get("ok") is False:
             say("key source: the credential command failed — %s. %s" % (
                 snap.get("reason") or "no reason recorded",
@@ -3171,7 +3183,7 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
         elif snap.get("ok"):
             names = snap.get("names") or []
             say("key source: command%s — the set is sha256:%s (%d name%s: %s); %s" % (
-                (" (selector %s)" % sel) if sel else "", snap.get("setFp") or "", len(names),
+                (" (selector %s)" % sel.strip("()")) if sel else "", snap.get("setFp") or "", len(names),
                 "" if len(names) == 1 else "s", ", ".join(names),
                 ("the sessions' key is sha256:%s" % snap.get("keyFp")) if snap.get("hasKey") else
                 "no ANTHROPIC_API_KEY in it, so the apiKeyHelper or the login bills the sessions"), problem=False)
@@ -3179,6 +3191,8 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
             d = list(snap.get("dropped") or [])
             say("key source: the credential command printed %d ROMP_* variable%s (%s) — romp owns those names; "
                 "dropped from the set" % (len(d), "" if len(d) == 1 else "s", ", ".join(d)))
+        if snap.get("timeoutProblem"):
+            say("key source: %s" % snap["timeoutProblem"])
         if file_names:
             many = len(file_names) > 1
             say("key source: %s carries %s — credential line%s — while ROMP_CREDENTIAL_COMMAND supplies the "
@@ -3201,14 +3215,12 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
         if exec_shell:
             say("key source: ExecStart runs the manager through a shell — the variables that shell loads "
                 "freeze until a manager restart. The command mode needs none of them: the generated unit "
-                "runs the manager directly (`romp service install` rewrites it).")
+                "runs the manager directly (`romp-service install` rewrites it).")
         if exp == "login" and snap.get("hasKey"):
             say("key source: ROMP_EXPECTED_AUTH=login while the credential command prints ANTHROPIC_API_KEY "
                 "(sha256:%s) — every session without an explicit Billing pick will bill the key."
                 % (snap.get("keyFp") or ""))
-        last_run = {"ok": snap.get("ok"), "at": int(snap["at"]) if snap.get("at") else None,
-                    "reason": snap.get("reason") or "", "exitCode": snap.get("exitCode"),
-                    "durationS": snap.get("durationS")}
+        last_run = _last_run_of(snap)
     else:
         sel = ""
         last_run = None
@@ -6283,6 +6295,12 @@ class SdkBackend:
         self._cred_fp_said = None                 # last set fingerprint written to the log (change-only)
         self._cred_err_said = None                # the failure reason last said (one line per episode)
         self._cred_dropped_said = ()              # the ROMP_* names last said dropped (change-only)
+        self._cred_timeout_said = None            # the ROMP_CREDENTIAL_TIMEOUT_S problem last said (change-only)
+        # The MODE is pinned here, once per backend (envsource.pin_mode): a service.env edit that adds
+        # or removes ROMP_CREDENTIAL_COMMAND reaches the kernel at its next start (`romp refresh`),
+        # never a running one, so sessions, judges and the catalog never straddle two key sources.
+        # The other ROMP_CREDENTIAL_* values stay live-readable.
+        _envsrc.pin_mode()
         self.key_source = self._boot_key_source_verdict()
         # The /api-health aggregator (one ring, one lock; see ApiHealth). Fed from _on_message on each
         # session's thread, read by the kernel's route; the salt is minted lazily at the first label.
@@ -6370,20 +6388,22 @@ class SdkBackend:
     def work_key(self, value) -> None:
         self._work_key_pin = str(value or "")
 
-    def _work_key_and_source(self) -> tuple:
+    def _work_key_and_source(self, cred=None) -> tuple:
         """(key, source) in ONE read — "command" (the configured command's ANTHROPIC_API_KEY line),
         "file" (the env file's line), "startup" (the claim made at boot, because the file has no
         usable line), "pin" (a test's explicit value), "" (no key anywhere). _options wants both,
         and must not read the source twice per connect: a keyswap can land between two reads, and
-        the source named in the log must be the source injected. In command mode the file and the
-        startup claim are not consulted (the mode wins; the boot verdict said so once)."""
+        the source named in the log must be the source injected. In command mode `cred` is the
+        (record, values) pair _options took from envsource.take() — ONE read of the set, so the key
+        decided on here and the role variables merged there come from the same run; the file and
+        the startup claim are not consulted (the mode wins; the boot verdict said so once)."""
         if self._work_key_pin is not None:
             return self._work_key_pin, ("pin" if self._work_key_pin else "")
         startup = startup_api_key()
         if _envsrc.configured():
-            snap = _envsrc.current()
+            snap, vals = cred if cred is not None else _envsrc.take()
             self._note_credential_set(snap)
-            key = _envsrc.injection().get(_envsrc.KEY_VAR, "")
+            key = vals.get(_envsrc.KEY_VAR, "")
             return key, ("command" if key else "")
         live = _keysrc.read_key()
         _check_key_file_agrees(startup, live)
@@ -6394,14 +6414,15 @@ class SdkBackend:
     def key_source_mode(self) -> str:
         return key_source_mode()
 
-    def credential_fingerprint(self) -> tuple:
+    def credential_fingerprint(self, snap=None) -> tuple:
         """(fingerprint, kind) of the credential a session launched NOW would bill: in command mode
         the set's ANTHROPIC_API_KEY ("key"), else the configured apiKeyHelper's output ("helper" —
         run and hashed inside envsource, the bytes never seen here), else ("", ""); in file mode the
         file's or the startup key ("key"). The value cycle_key converges sessions on, and what the
-        kernel's /keycycle answer carries as keyFp."""
+        kernel's /keycycle answer carries as keyFp. `snap` is a record the caller already took, so
+        one operation reads the set once."""
         if _envsrc.configured():
-            snap = _envsrc.current()
+            snap = snap if snap is not None else _envsrc.current()
             if snap.get("hasKey"):
                 return snap.get("keyFp") or "", "key"
             fp, _reason = _envsrc.helper_fingerprint()
@@ -6475,6 +6496,10 @@ class SdkBackend:
             self._cred_dropped_said = dropped
             self._log("credential command: dropped %d ROMP_* variable%s it printed (%s) — romp owns those names"
                       % (len(dropped), "" if len(dropped) == 1 else "s", ", ".join(dropped)), problem=True)
+        tmo = snap.get("timeoutProblem") or ""
+        if tmo and tmo != self._cred_timeout_said:
+            self._cred_timeout_said = tmo
+            self._log("credential command: " + tmo, problem=True)
 
     def _boot_key_source_verdict(self) -> dict:
         """key_source_verdict on the real inputs, its lines logged. Never raises: a verdict that cannot
@@ -6519,13 +6544,13 @@ class SdkBackend:
         ("file"|"command"), fp (the current credential fingerprint, keyFp on the wire), fpKind
         ("key"|"helper"|""), err (why there is no fingerprint or the last run failed; "" when fine),
         setFp and selector (command mode), launched (the histogram)."""
-        fp, kind = self.credential_fingerprint()
+        snap = _envsrc.current() if _envsrc.configured() else None
+        fp, kind = self.credential_fingerprint(snap)
         out = {"source": key_source_mode(), "fp": fp, "fpKind": kind, "err": "", "setFp": "",
                "selector": "", "launched": self._launched_histogram()}
-        if _envsrc.configured():
-            snap = _envsrc.current()
+        if snap is not None:
             out["setFp"] = snap.get("setFp") or ""
-            out["selector"] = snap.get("selector") or ""
+            out["selector"] = _envsrc.selector_label(snap)
             if snap.get("ok") is False:
                 out["err"] = snap.get("reason") or "the credential command failed"
             elif not snap.get("hasKey") and not fp:
@@ -7621,20 +7646,18 @@ class SdkBackend:
         # fingerprint and which live sessions launched on which. Never a value.
         ksrc = {k: v for k, v in (self.key_source or {}).items() if k != "lines"}
         try:
-            fp, kind = self.credential_fingerprint()
+            snap = _envsrc.current() if _envsrc.configured() else None
+            fp, kind = self.credential_fingerprint(snap)
         except Exception:
-            fp, kind = "", ""
+            snap, fp, kind = None, "", ""
         ksrc["fingerprint"], ksrc["fingerprintKind"] = fp, kind
         ksrc["setFingerprint"], ksrc["names"] = "", []
-        if _envsrc.configured():
-            snap = _envsrc.current()
+        if snap is not None:
             ksrc["mode"] = "command"
-            ksrc["selector"] = snap.get("selector") or ""
+            ksrc["selector"] = _envsrc.selector_label(snap)
             ksrc["setFingerprint"] = snap.get("setFp") or ""
             ksrc["names"] = list(snap.get("names") or [])
-            ksrc["lastRun"] = {"ok": snap.get("ok"), "at": int(snap["at"]) if snap.get("at") else None,
-                               "reason": snap.get("reason") or "", "exitCode": snap.get("exitCode"),
-                               "durationS": snap.get("durationS")}
+            ksrc["lastRun"] = _last_run_of(snap)
             ksrc["sessionKeyPath"] = "injected" if snap.get("hasKey") else (
                 "helper" if ksrc.get("helperConfigured") else "login")
         ksrc["sessionsByFingerprint"] = self._launched_histogram()
@@ -7834,12 +7857,16 @@ class SdkBackend:
         # The key is read ONCE here, per connect, and the value the auth decision was made on is the
         # value injected: the source is live now (a keyswap can land between two reads). An empty read
         # decides login — blanking the var would leave the CLI in key-mode-without-a-key.
-        work_key, key_src = self._work_key_and_source()
+        # In command mode the set is read ONCE per connect (envsource.take: the record and the values
+        # under one lock) and shared with the key decision, so the key injected and the role variables
+        # merged come from the same run — read twice, a re-run could land between them.
+        cred = _envsrc.take() if _envsrc.configured() else None
+        work_key, key_src = self._work_key_and_source(cred)
         launch_keyed = sess.effective_auth(work_key) == "key"
         # The command source's ROLE VARIABLES (its set minus ANTHROPIC_API_KEY — the key reaches a
         # child only through the decision below) ride UNDER romp's own entries: the CLI and every
         # tool shell it runs see them, and a reconnect re-presents the current set. {} in file mode.
-        role_vars = _envsrc.injection()
+        role_vars = dict(cred[1]) if cred is not None else {}
         role_vars.pop(_envsrc.KEY_VAR, None)
         if role_vars:
             kw["env"] = {**role_vars, **kw["env"]}
