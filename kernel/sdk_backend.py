@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -55,6 +56,68 @@ def _bin_on_path_env(environ) -> dict:
     if rbin in cur.split(os.pathsep):
         return {}
     return {"PATH": (rbin + os.pathsep + cur) if cur else rbin}
+
+
+# Per-session transient systemd scopes (Linux, 2026-09-05). Under the systemd user service every
+# process the service tree starts shares the service's cgroup, and KillMode=control-group (kept on
+# purpose: a wedged kernel or bus still holding its port must die on a service restart) kills them
+# all on `systemctl --user restart romp-manager` — including each session's CLI, its tool shells,
+# their setsid children and any tmux server a session started. Users had been told tmux would
+# survive a restart; that held only for kernel-only restarts (`romp refresh`). So, when supported,
+# the CLI is spawned through bin/romp-cli-scope, which execs `systemd-run --user --scope` in place:
+# the CLI keeps the spawned pid and argv (find_session_cli / find_orphan_clis still match) but runs
+# in a scope of its own, and everything it later spawns goes with it.
+CLI_SCOPE_PROBE = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--", "true"]
+CLI_SCOPE_PROBE_TIMEOUT = 10.0
+
+
+def cli_scope_wrapper() -> str:
+    """The wrapper's absolute path: the repo's bin/, located the same way _bin_on_path_env finds it."""
+    return str(Path(__file__).resolve().parent.parent / "bin" / "romp-cli-scope")
+
+
+def cli_scope_supported(environ=None, which=shutil.which, run=subprocess.run, log=None) -> bool:
+    """Whether this backend should spawn CLIs through the scope wrapper. Decided ONCE per backend, at
+    construction, from the process environment and a one-shot probe — never per session, so a flaky
+    probe cannot leave sessions in mixed states. Pure on its inputs (environ/which/run injectable) so
+    the truth table is testable without a real systemd-run.
+
+    On when ROMP_CLI_SCOPE=1, or under the supervised service (ROMP_SUPERVISED, what bin/romp-service's
+    unit sets) unless ROMP_CLI_SCOPE=0 — so the default is on under the service and off from a
+    terminal or in tests. Then only if `systemd-run` is on PATH and a probe scope actually starts
+    (a user manager that cannot start scopes would otherwise fail every session start). `log`, when
+    given, receives the one-line verdict either way."""
+    env = os.environ if environ is None else environ
+    want = env.get("ROMP_CLI_SCOPE", "")
+    ok, reason = False, ""
+    if want == "1" or (env.get("ROMP_SUPERVISED") and want != "0"):
+        if not which("systemd-run"):
+            reason = "systemd-run is not on PATH"
+        else:
+            try:
+                r = run(CLI_SCOPE_PROBE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                        timeout=CLI_SCOPE_PROBE_TIMEOUT)
+            except Exception as e:      # timeout, missing binary raced away, anything else
+                reason = "the probe (%s) failed: %s" % (" ".join(CLI_SCOPE_PROBE), e)
+            else:
+                if r.returncode == 0:
+                    ok = True
+                else:
+                    err = (r.stderr or b"")
+                    err = err.decode("utf-8", "replace") if isinstance(err, bytes) else str(err)
+                    reason = "the probe (%s) exited %s%s" % (" ".join(CLI_SCOPE_PROBE), r.returncode,
+                                                             (": " + err.strip()) if err.strip() else "")
+    elif want == "0":
+        reason = "ROMP_CLI_SCOPE=0"
+    else:
+        reason = "not under the supervised service (ROMP_SUPERVISED unset) and ROMP_CLI_SCOPE is not 1"
+    if log:
+        if ok:
+            log("cli scope: on — each session's CLI runs in its own transient systemd scope; a manager "
+                "restart leaves session-spawned tmux/setsid work alive")
+        else:
+            log("cli scope: off — %s" % reason)
+    return ok
 
 
 def pick_identity_color(sid: str, state_dir=None) -> tuple[str, str]:
@@ -5414,6 +5477,10 @@ class SdkBackend:
         if self._sdk_missing and log:
             self._log("claude_agent_sdk is NOT importable — every SDK session will report itself unable to "
                       "start (run bin/romp-sdk-setup). tmux sessions are unaffected.", problem=True)
+        # Per-session transient scopes (see cli_scope_supported): ONE verdict per backend, cached here;
+        # _options reads it at every connect. The probe runs here, never per session.
+        self.cli_scope = cli_scope_supported(log=self._log)
+        self._cli_scope_wrapper_logged = False    # the missing-wrapper fallback is reported once per backend
         self._heal_attempts: dict[str, int] = {}  # sid -> crash-resume attempts since its last COMPLETED turn
         #                                           (bounds _heal_cut_session to one resume per cut; a completed
         #                                           turn resets it, so a crash LOOP can't respawn forever)
@@ -6447,6 +6514,21 @@ class SdkBackend:
             effort=("xhigh" if (sess.effort or DEFAULT_EFFORT) == "ultracode" else (sess.effort or DEFAULT_EFFORT)),
             max_buffer_size=SDK_MAX_BUFFER,   # a >1MB stdout message would crash the receive loop → kill any live picker
         )
+        # Per-session transient scope (cli_scope_supported): cli_path becomes the exec-in-place wrapper
+        # and ROMP_CLI_REAL carries the real CLI to it. The SDK spawns `[cli_path, *args]`, and the
+        # wrapper execs systemd-run, which execs the CLI, so the pid and argv the SDK sees ARE the
+        # CLI's. A missing or non-executable wrapper is a packaging bug, reported once and loudly —
+        # the session still starts on the direct path, inside the service cgroup.
+        if self.cli_scope:
+            wrapper = cli_scope_wrapper()
+            if os.access(wrapper, os.X_OK):
+                kw["cli_path"] = wrapper
+                kw["env"]["ROMP_CLI_REAL"] = self.claude_bin
+            elif not self._cli_scope_wrapper_logged:
+                self._cli_scope_wrapper_logged = True
+                self._log("cli scope: the wrapper %s is missing or not executable (a packaging bug) — "
+                          "sessions start with the CLI directly, inside the service cgroup, until it is "
+                          "restored" % wrapper, problem=True)
         # Thinking summaries (the kernel's per-install gear toggle, 2026-09-01). CLI 2.1.257 forces
         # thinking display "omitted" for every non-interactive session unless --thinking-display is passed
         # explicitly (its showThinkingSummaries settings key is consulted in interactive mode only), so

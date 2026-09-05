@@ -1,0 +1,45 @@
+#!/bin/sh
+# romp-cli-scope — run one session's `claude` CLI inside its own transient systemd scope.
+#
+# WHY: on Linux the manager runs as a systemd user service with KillMode=control-group (kept on
+# purpose: it is what guarantees a wedged kernel or postal bus still holding its port dies on a
+# service restart). Every process the service tree starts lands in the service's cgroup, and that
+# includes each session's CLI, its tool shells, their setsid children and any tmux server a session
+# starts — so `systemctl --user restart romp-manager` killed sessions' long-running tmux jobs
+# (2026-09-05), even though users were told tmux would survive a restart. That promise held only for
+# kernel-only restarts (`romp refresh`), which never touch the service. `systemd-run --scope` moves
+# the CLI, and so everything it later spawns, into a scope of its own outside the service cgroup.
+#
+# WHY exec-in-place matters: the kernel's interrupt escalation (find_session_cli in sdk_backend.py)
+# finds the CLI as a DIRECT CHILD of the kernel, and the boot orphan reaper (find_orphan_clis)
+# matches `--input-format stream-json` in the argv. Both hold only if the CLI ends up with this
+# wrapper's pid and the argv tail the SDK passed: `exec` here hands our pid to systemd-run, and
+# systemd-run in --scope mode moves itself into the new scope and then execs the command in place,
+# so the CLI keeps the pid the SDK spawned and its parent stays the kernel.
+#
+# The scope name carries the first 8 characters of the session id and this pid (the pid the CLI will
+# run as), so `systemctl --user list-units 'romp-session-*'` doubles as a pid record. A duplicate
+# unit name is refused by systemd ("already loaded"), which is why the pid is in the name.
+#
+# Environment: ROMP_CLI_REAL (required) — the real CLI; ROMP_SID — the session id (kernel-set);
+# ROMP_CLI_SCOPE=0 — run the CLI directly, no scope. Arguments pass through verbatim.
+set -u
+
+if [ -z "${ROMP_CLI_REAL:-}" ]; then
+    echo "romp-cli-scope: ROMP_CLI_REAL is unset or empty; it must name the real claude CLI (refusing to guess)" >&2
+    exit 127
+fi
+
+if [ "${ROMP_CLI_SCOPE:-}" = "0" ] || ! command -v systemd-run >/dev/null 2>&1; then
+    exec "$ROMP_CLI_REAL" "$@"
+fi
+
+sid="${ROMP_SID:-}"
+if [ -n "$sid" ]; then
+    unit="romp-session-$(printf '%.8s' "$sid")-$$"
+else
+    unit="romp-session-unknown-$$"
+fi
+
+exec systemd-run --user --scope --quiet --collect --unit="$unit" \
+    --description="romp session ${sid:-unknown}" -- "$ROMP_CLI_REAL" "$@"

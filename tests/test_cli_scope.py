@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""Per-session transient systemd scopes (2026-09-05). Under the systemd user service every process
+the service tree starts shares the service's cgroup, and KillMode=control-group (deliberately kept)
+empties it on `systemctl --user restart romp-manager` — sessions' tmux jobs died with it. The fix
+spawns each session's CLI through bin/romp-cli-scope (exec-in-place `systemd-run --scope`), decided
+ONCE per backend by cli_scope_supported and applied in _options.
+
+Under test here, with NO real systemd-run ever invoked (which/run are injected; conftest floors
+ROMP_CLI_SCOPE=0 for every backend construction):
+  * the cli_scope_supported truth table and the exact probe argv;
+  * the backend caches one verdict at construction, and _options honours it: cli_path becomes the
+    wrapper and ROMP_CLI_REAL carries the real CLI when on; both untouched when off;
+  * a missing or non-executable wrapper degrades loudly (a problem line, once) to the direct path.
+Synthetic fixtures only: placeholder sid, /bin/true as the CLI.
+"""
+import os
+import subprocess
+import sys
+import tempfile
+import types
+import unittest
+from importlib.machinery import SourceFileLoader
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+BIN = os.path.join(os.path.dirname(HERE), "bin")
+os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
+os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)
+os.environ["ROMP_CLI_SCOPE"] = "0"   # the conftest floor, re-asserted for a bare unittest run
+sb = SourceFileLoader("romp_sdk_backend_cli_scope", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+
+SID = "11111111-2222-3333-4444-555555555555"
+PROBE = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--", "true"]
+
+
+def _which(found=True):
+    return lambda name: ("/usr/bin/" + name) if found else None
+
+
+class _Run:
+    """A recording stand-in for subprocess.run: returns a fixed result, or raises."""
+
+    def __init__(self, returncode=0, stderr=b"", raise_=None):
+        self.calls = []
+        self.rc, self.stderr, self.raise_ = returncode, stderr, raise_
+
+    def __call__(self, argv, **kw):
+        self.calls.append((list(argv), kw))
+        if self.raise_:
+            raise self.raise_
+        return subprocess.CompletedProcess(argv, self.rc, stdout=b"", stderr=self.stderr)
+
+
+class Supported(unittest.TestCase):
+    """cli_scope_supported's truth table, on injected inputs."""
+
+    def test_unsupervised_is_off_without_probing(self):
+        run = _Run()
+        self.assertFalse(sb.cli_scope_supported({}, which=_which(), run=run))
+        self.assertEqual(run.calls, [], "no probe when the switch is off")
+
+    def test_explicit_off_under_supervision(self):
+        run = _Run()
+        self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1", "ROMP_CLI_SCOPE": "0"},
+                                                which=_which(), run=run))
+        self.assertEqual(run.calls, [])
+
+    def test_supervised_without_systemd_run_is_off(self):
+        run = _Run()
+        logged = []
+        self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(False), run=run,
+                                                log=logged.append))
+        self.assertEqual(run.calls, [], "nothing to probe with")
+        self.assertEqual(len(logged), 1)
+        self.assertTrue(logged[0].startswith("cli scope: off — "), logged)
+        self.assertIn("systemd-run", logged[0])
+
+    def test_supervised_with_a_failing_probe_is_off(self):
+        run = _Run(returncode=1, stderr=b"Failed to start transient scope unit: Access denied\n")
+        logged = []
+        self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), run=run,
+                                                log=logged.append))
+        self.assertEqual(len(run.calls), 1)
+        self.assertTrue(logged[0].startswith("cli scope: off — "), logged)
+        self.assertIn("Access denied", logged[0], "the probe's stderr is the reason the user reads")
+
+    def test_a_probe_that_raises_is_off(self):
+        for exc in (subprocess.TimeoutExpired(PROBE, 10), OSError("boom")):
+            run = _Run(raise_=exc)
+            logged = []
+            self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), run=run,
+                                                    log=logged.append))
+            self.assertTrue(logged[0].startswith("cli scope: off — "), logged)
+
+    def test_supervised_with_a_passing_probe_is_on(self):
+        run = _Run()
+        logged = []
+        self.assertTrue(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), run=run,
+                                               log=logged.append))
+        self.assertEqual(len(logged), 1)
+        self.assertTrue(logged[0].startswith("cli scope: on — "), logged)
+
+    def test_explicit_on_outside_supervision_probes_and_turns_on(self):
+        run = _Run()
+        self.assertTrue(sb.cli_scope_supported({"ROMP_CLI_SCOPE": "1"}, which=_which(), run=run))
+        self.assertEqual(len(run.calls), 1)
+
+    def test_the_probe_argv_is_exact_and_bounded(self):
+        run = _Run()
+        sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), run=run)
+        argv, kw = run.calls[0]
+        self.assertEqual(argv, PROBE)
+        self.assertEqual(sb.CLI_SCOPE_PROBE, PROBE)
+        self.assertEqual(kw.get("timeout"), sb.CLI_SCOPE_PROBE_TIMEOUT)
+        self.assertGreater(sb.CLI_SCOPE_PROBE_TIMEOUT, 0)
+        self.assertLessEqual(sb.CLI_SCOPE_PROBE_TIMEOUT, 10)
+
+    def test_an_empty_switch_value_is_not_on(self):
+        run = _Run()
+        self.assertFalse(sb.cli_scope_supported({"ROMP_CLI_SCOPE": ""}, which=_which(), run=run))
+        self.assertEqual(run.calls, [])
+
+    def test_no_log_callback_is_fine(self):
+        self.assertTrue(sb.cli_scope_supported({"ROMP_CLI_SCOPE": "1"}, which=_which(), run=_Run()))
+
+
+class _Backend(unittest.TestCase):
+    """A backend on a temp state dir, no real CLI, no real key claim, no SDK dependency."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self._stash_before = sb._WORK_KEY
+        sb._WORK_KEY = ""
+        self._fetch_before = sb._fetch_key_fast_org
+        sb._fetch_key_fast_org = lambda key: None
+        self._fake_sdk = "claude_agent_sdk" not in sys.modules and not sb.sdk_importable()
+        if self._fake_sdk:
+            fake = types.ModuleType("claude_agent_sdk")
+            fake.HookMatcher = lambda **kw: kw
+            sys.modules["claude_agent_sdk"] = fake
+        self.logged = []
+        self.be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, log=self.logged.append)
+
+    def tearDown(self):
+        sb._WORK_KEY = self._stash_before
+        sb._fetch_key_fast_org = self._fetch_before
+        if self._fake_sdk:
+            sys.modules.pop("claude_agent_sdk", None)
+
+    def _sess(self):
+        return sb.SdkSession(self.be, {"sid": SID, "name": "web", "cwd": self.d, "mode": "acceptEdits"})
+
+    def _kw(self):
+        return self.be._options(self._sess(), dict)
+
+
+class ConstructionVerdict(_Backend):
+    """One verdict per backend, at construction."""
+
+    def test_the_test_floor_leaves_the_scope_off(self):
+        self.assertFalse(self.be.cli_scope)
+        self.assertTrue(any(m.startswith("cli scope: off — ") for m in self.logged), self.logged)
+
+    def test_the_verdict_is_taken_once_and_cached(self):
+        calls = []
+        before = sb.cli_scope_supported
+        sb.cli_scope_supported = lambda **kw: calls.append(kw) or True
+        try:
+            be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
+        finally:
+            sb.cli_scope_supported = before
+        self.assertEqual(len(calls), 1)
+        self.assertIn("log", calls[0])
+        self.assertTrue(be.cli_scope)
+
+
+class OptionsWiring(_Backend):
+    """_options routes the spawn through the wrapper exactly when the verdict is on."""
+
+    def test_off_leaves_cli_path_and_env_untouched(self):
+        self.be.cli_scope = False
+        kw = self._kw()
+        self.assertEqual(kw["cli_path"], "/bin/true")
+        self.assertNotIn("ROMP_CLI_REAL", kw["env"])
+
+    def test_on_spawns_the_wrapper_with_the_real_cli_in_the_env(self):
+        self.be.cli_scope = True
+        kw = self._kw()
+        self.assertEqual(kw["cli_path"], sb.cli_scope_wrapper())
+        self.assertEqual(kw["env"]["ROMP_CLI_REAL"], "/bin/true")
+        # the identity vars the CLI relied on are still there — the overlay is additive
+        self.assertEqual(kw["env"]["ROMP_SID"], SID)
+        self.assertEqual(kw["env"]["ROMP_SESSION_NAME"], "web")
+
+    def test_the_wrapper_is_the_repos_executable(self):
+        w = sb.cli_scope_wrapper()
+        self.assertTrue(os.path.isabs(w))
+        self.assertEqual(os.path.realpath(w), os.path.realpath(os.path.join(BIN, "romp-cli-scope")))
+        self.assertTrue(os.access(w, os.X_OK), "bin/romp-cli-scope must be executable in the checkout")
+
+    def test_a_missing_wrapper_falls_back_loudly_once(self):
+        self.be.cli_scope = True
+        before = sb.cli_scope_wrapper
+        sb.cli_scope_wrapper = lambda: os.path.join(self.d, "no-such-wrapper")
+        problems = []
+        self.be._log = lambda m, problem=None: problems.append((m, problem))
+        try:
+            kw1 = self._kw()
+            kw2 = self._kw()
+        finally:
+            sb.cli_scope_wrapper = before
+        for kw in (kw1, kw2):
+            self.assertEqual(kw["cli_path"], "/bin/true", "the session still starts, on the direct path")
+            self.assertNotIn("ROMP_CLI_REAL", kw["env"])
+        loud = [(m, p) for m, p in problems if "no-such-wrapper" in m]
+        self.assertEqual(len(loud), 1, "reported once per backend, as a problem: %r" % (problems,))
+        self.assertTrue(loud[0][1])
+
+    def test_a_non_executable_wrapper_falls_back_too(self):
+        self.be.cli_scope = True
+        p = os.path.join(self.d, "romp-cli-scope")
+        with open(p, "w") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(p, 0o644)
+        before = sb.cli_scope_wrapper
+        sb.cli_scope_wrapper = lambda: p
+        try:
+            kw = self._kw()
+        finally:
+            sb.cli_scope_wrapper = before
+        self.assertEqual(kw["cli_path"], "/bin/true")
+
+
+if __name__ == "__main__":
+    unittest.main()
