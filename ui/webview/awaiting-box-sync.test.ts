@@ -43,8 +43,9 @@ test("a status-only frame re-renders the awaiting box when its fields change —
   assert.match(body, /const before = awaitKey\(s\.status\);/);
   assert.match(body, /if \(msg\.id === activeId\) \{\s*\n\s*updateStatusline\(\);/, "the chip repaint stays");
   assert.match(body, /if \(awaitKey\(s\.status\) !== before\) renderBgTasks\(\);/);
-  // …and the kernel's delta carries the full status the box reads from
-  assert.match(KERNEL, /tail = \{"type": "chatTail", "id": sid, "from": change_from,\s*\n\s*"events": evs\[change_from:\], "total": total, "status": m\.get\("status"\)\}/);
+  // …and the kernel's delta carries the full status the box reads from (the literal may go on — the
+  // user-todos seam rides the same delta after "status" — so the pin ends at the key, not the brace)
+  assert.match(KERNEL, /tail = \{"type": "chatTail", "id": sid, "from": change_from,\s*\n\s*"events": evs\[change_from:\], "total": total, "status": m\.get\("status"\)[,}]/);
 });
 
 test("the await key covers every field the box renders from, and nothing that ticks per second", () => {

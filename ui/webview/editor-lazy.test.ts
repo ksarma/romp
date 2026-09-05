@@ -36,7 +36,7 @@ test("the editor's state carries lineWrapping — a display facet, so the buffer
   assert.equal(state.doc.toString(), doc, "wrapping is visual: the document is byte-identical, newlines included");
   // the pure set is what mount() builds the view from — the executed check above is the shipped set
   assert.match(CHUNK, /state: EditorState\.create\(\{ doc: opts\.text, extensions: extensionsFor\(opts\.ext, opts\) \}\),/);
-  assert.match(CHUNK, /\.\.\.langExt\(ext\),\n(?:\s*\/\/[^\n]*\n)*\s*EditorView\.lineWrapping,\n\s*rompTheme,/,
+  assert.match(CHUNK, /\.\.\.langExt\(ext\),\n(?:\s*\/\/[^\n]*\n)*\s*EditorView\.lineWrapping,\n\s*rompTheme\(\),/,
     "lineWrapping sits in extensionsFor, unconditionally — no toggle, like the view");
   // a plain-text file (no highlighter) wraps too
   const plain = EditorState.create({ doc: "x", extensions: extensionsFor("", { onChange: noop, onSave: noop }) });

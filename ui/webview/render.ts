@@ -12567,7 +12567,8 @@ function chatTail(msg: any) {
     // frame was sent while this document had no message listener yet (the pusher fires from the
     // moment the socket opens; the 1.4MB bundle can still be evaluating), and the kernel's echat
     // advances on SEND — so deltas are all it will ever volunteer, and the tab sat on the
-    // « opening … » placeholder forever (the user 2026-09-02). The same silent drop made a torn-down
+    // « opening … » placeholder forever (the user 2026-09-02; a duplicated browser tab won the
+    // race via cached bundles, a reload only sometimes). The same silent drop made a torn-down
     // tab's swirl permanent after a teardown-then-relist, with the gap branch (the one repair call
     // site) unreachable below it. Ask for the base instead of waiting; the closingTabs/provisional/
     // host gates and the awaitingFull dedup live inside requestFullSession.

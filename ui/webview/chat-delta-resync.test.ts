@@ -49,7 +49,7 @@ test("the kernel talking about a session this client doesn't hold triggers the S
   // repair channel's only call site sat BELOW this return, unreachable. The missing base is the same
   // authoritative signal as the delta gap ("the kernel is talking about a session I don't have").
   assert.match(RENDER,
-    /function chatTail\(msg: any\) \{\s*\n\s*const s = sessions\.get\(msg\.id\);\s*\n\s*if \(!s\) \{[\s\S]{0,800}?requestFullSession\(msg\.id\);\s*\n\s*return;\s*\n\s*\}/,
+    /function chatTail\(msg: any\) \{\s*\n\s*const s = sessions\.get\(msg\.id\);\s*\n\s*if \(!s\) \{[\s\S]{0,900}?requestFullSession\(msg\.id\);\s*\n\s*return;\s*\n\s*\}/,
     "chatTail with no base asks for the full session instead of dropping the evidence");
   assert.match(RENDER,
     /function statusOnly\(msg: any\) \{\s*\n\s*const s = sessions\.get\(msg\.id\);\s*\n\s*if \(!s\) \{ requestFullSession\(msg\.id\); return; \}/,
@@ -135,7 +135,11 @@ test("a reconnect clears parked asks — a dead socket's pending needFull can ne
 test("the kernel's ready branch resets the client's WHOLE chat base before its push", () => {
   const i = KERNEL.indexOf('msg.get("type") == "ready"');
   assert.ok(i > 0);
-  const body = KERNEL.slice(i, i + 1600);
+  // the whole `ready` arm, up to the next frame type's arm: its comment explains both the reset and the
+  // ready-gate lift, so a fixed byte window would end before the push it must find
+  const next = KERNEL.indexOf('elif msg and msg.get("type") ==', i + 1);
+  assert.ok(next > i, "a frame arm follows ready");
+  const body = KERNEL.slice(i, next);
   assert.ok(body.includes("_client_reset_chat_base(client)"), "ready = the renderer holds nothing");
   assert.ok(body.indexOf("_client_reset_chat_base(client)") < body.indexOf("_push_one(client)"),
     "…reset first, so the push that follows is full frames");

@@ -290,8 +290,9 @@ test("every teardown names its reason, and only a genuine end clears the compose
   assert.match(RENDER, /function dismissSession\(id: string, why: DismissWhy, doomed\?: ReadonlySet<string>\): void \{/);
   // the user's ✕ / End
   assert.match(RENDER, /function closeTabLocally\(id: string\): void \{[\s\S]*?dismissSession\(id, "close"\);\s*\n\s*closingTabs\.set\(id, Date\.now\(\)\);/);
-  // the kernel's closed frame — or federation's stamped stand-in for a dropped host
-  assert.match(RENDER, /else if \(m\.type === "closed"\) dismissSession\(m\.id, m\.hostDrop === true \? "hostDrop" : "end"\);/);
+  // the kernel's closed frame — or federation's stamped stand-in for a dropped host. The arm is a block:
+  // the same stamp prunes the host's ids from kernelListed first (pinned in tab-ghost-heal.test.ts)
+  assert.match(RENDER, /else if \(m\.type === "closed"\) \{[\s\S]{0,1400}?dismissSession\(m\.id, m\.hostDrop === true \? "hostDrop" : "end"\);\s*\n\s*\}/);
   // applyTabOrder's kernel-order omission
   assert.match(RENDER, /const omitted = new Set\(order\.filter\(\(id\) => kernelListed\.has\(id\) && !inKernel\.has\(id\)\)\);[^\n]*\n\s*for \(const id of order\.slice\(\)\) \{\s*\n\s*if \(omitted\.has\(id\)\) dismissSession\(id, "omitted", omitted\);/);
   // the clear is gated: the existing one-liner (composer-draft-persist.test.ts pins it) now runs for an end only
