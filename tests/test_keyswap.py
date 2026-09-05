@@ -980,7 +980,7 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.assertIn("set         sha256:%s   (was sha256:%s)" % (self.set_fp("lp"), self.set_fp("hp")), out)
         self.assertEqual(self.posted, [("/keycycle", {"sessions": [], "refresh": True})],
                          "the kernel is asked to re-run its command now, nothing is cycled")
-        self.assertIn("kernel      reads sha256:%s (its own run (re-ran: was sha256:%s)); 0 live session(s) on it"
+        self.assertIn("kernel      reads sha256:%s (its own run, re-run now: was sha256:%s); 0 live session(s) on it"
                       % (self.fp("lp"), self.fp("hp")), out)
         self.assertIn("            3 live session(s) still on sha256:" + self.fp("hp"), out)
         self.assertNotIn("MISMATCH", out)
@@ -1091,11 +1091,11 @@ class KeyswapCliCommandMode(unittest.TestCase):
         rc, out, _err = self.run_cli("--refresh")
         self.assertEqual(rc, 0, out)
         self.assertEqual(self.posted, [("/keycycle", {"sessions": [], "refresh": True})])
-        self.assertIn("kernel      reads sha256:%s (its own run (re-ran: was sha256:%s)); 3 live session(s) on it"
+        self.assertIn("kernel      reads sha256:%s (its own run, re-run now: was sha256:%s); 3 live session(s) on it"
                       % (self.fp("hp"), self.fp("lp")), out)
         self.kernel_view.pop("refreshFrom")
         rc, out, _err = self.run_cli("--refresh")
-        self.assertIn("(re-ran: unchanged)", out)
+        self.assertIn("(its own run, re-run now: unchanged)", out)
 
     def test_the_cycle_refreshes_first_then_reports_rows_with_their_launch_fingerprint(self):
         self.kernel_view["rows"] = [{"session": "web", "status": "cycling", "from": self.fp("lp")},

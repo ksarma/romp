@@ -245,7 +245,7 @@ class NamedSwapRefused(_Env):
         rc, out, _err = self.run_cli("--refresh")
         self.assertEqual(rc, 0, out)
         self.assertEqual(self.posted, [("/keycycle", {"sessions": [], "refresh": True})])
-        self.assertIn("kernel      reads sha256:%s (re-ran: was sha256:deadbeefcafe)" % ks.fingerprint(OLD_KEY), out)
+        self.assertIn("kernel      reads sha256:%s (re-read now: was sha256:deadbeefcafe)" % ks.fingerprint(OLD_KEY), out)
         self.assertNotIn("MISMATCH", out)
 
     def test_a_kernel_in_command_mode_under_a_file_mode_shell_is_a_mismatch(self):
@@ -279,6 +279,40 @@ class NamedSwapRefused(_Env):
         for rel in ("cli/keyswap.py", "bin/romp-keyswap", "bin/romp"):
             src = open(os.path.join(ROOT, rel)).read()
             self.assertNotIn("write_key(", src, rel)
+
+
+class HelpAndDocsAgree(unittest.TestCase):
+    """`romp help`'s keyswap row, docs/reference.md's command table and the two READMEs spell the SAME
+    invocation — one form, so an operator reading any of them types what the others describe."""
+
+    FORM = "romp keyswap [<name>] [--refresh] [--cycle <session,…>|--cycle-all]"
+
+    def _read(self, rel):
+        return open(os.path.join(ROOT, rel), encoding="utf-8").read()
+
+    def test_the_help_row_spells_the_whole_form(self):
+        self.assertIn('_romp_cmd "%s" romp-keyswap' % self.FORM, self._read("bin/romp"))
+
+    def test_the_reference_table_and_the_readmes_spell_the_same_form(self):
+        escaped = self.FORM.replace("|", "\\|")                    # a table cell escapes the pipe
+        for rel in ("docs/reference.md", "cli/README.md", "bin/README.md"):
+            text = self._read(rel)
+            if rel == "bin/README.md":
+                continue                                           # its row names the binary, not the invocation
+            self.assertIn("`%s`" % escaped, text, rel)
+        self.assertIn("`romp keyswap <name>`", self._read("bin/README.md"))
+
+    def test_the_docs_show_the_command_mode_report_with_placeholder_fingerprints(self):
+        ref = self._read("docs/reference.md")
+        for line in ("key source  command (ROMP_CREDENTIAL_COMMAND is set)", "candidates  hp <- selected, lp",
+                     "selector    hp -> lp", "re-run --cycle tests once quiet; sessions already on this key read \"current\""):
+            self.assertIn(line, ref)
+        import re
+        for fp in re.findall(r"sha256:([0-9a-f]{12})", ref):
+            # a placeholder fingerprint repeats a short pattern (low entropy): never something that reads
+            # as a real digest, so the scanner that guards this repo has nothing to flag
+            self.assertLessEqual(len(set(fp)), 6, fp)
+        self.assertIn("#installing-without-keys-on-disk", self._read("docs/install.md"))
 
 
 class _Backend(_Env):

@@ -213,7 +213,8 @@ def _kernel_check(path, out, refresh=False):
 
 def _compare(kfp, path, out, refreshed=None):
     """Print the kernel's fingerprint and, when it is not the file's, say so and why it may be."""
-    out("kernel      reads %s%s" % (_sha(kfp), _refreshed_note(refreshed, kfp)))
+    note = _refreshed_note(refreshed, kfp, "re-read")
+    out("kernel      reads %s%s" % (_sha(kfp), (" (%s)" % note) if note else ""))
     if kfp == ks.fingerprint(ks.read_key(path)):
         return 0
     out("MISMATCH    the kernel is not reading this file's key. Usual causes: the service was installed")
@@ -223,15 +224,16 @@ def _compare(kfp, path, out, refreshed=None):
     return 1
 
 
-def _refreshed_note(refreshed, now_fp):
-    """" (re-ran: was sha256:…)" when a --refresh moved the kernel's fingerprint, " (re-ran: unchanged)"
-    when it did not, "" when no refresh was asked for."""
+def _refreshed_note(refreshed, now_fp, verb="re-run"):
+    """The clause a --refresh adds to the kernel line: "re-run now: was sha256:…" when the kernel's
+    fingerprint moved, "re-run now: unchanged" when it did not, "" when no refresh was asked for.
+    `verb` is "re-read" in file mode, where the refresh is a re-read of the env file."""
     if not isinstance(refreshed, dict):
         return ""
     if refreshed.get("error"):
-        return " (the refresh failed — %s)" % refreshed["error"]
+        return "the refresh failed — %s" % refreshed["error"]
     frm = refreshed.get("from") or ""
-    return " (re-ran: was %s)" % _sha(frm) if frm != now_fp else " (re-ran: unchanged)"
+    return "%s now: was %s" % (verb, _sha(frm)) if frm != now_fp else "%s now: unchanged" % verb
 
 
 def _cycle(sessions, all_, out, path=None, refresh=False):
@@ -403,14 +405,15 @@ def _kernel_lines(body, st, out):
     note = _refreshed_note(body.get("refreshed"), kfp)
     rc = 0
     if kerr and not kfp:
-        out("kernel      UNAVAILABLE — %s%s" % (kerr, note))
+        out("kernel      UNAVAILABLE — %s%s" % (kerr, (" (%s)" % note) if note else ""))
         rc = 1
     elif kerr:
-        out("kernel      reads %s (its own run; the latest run failed — %s — so it stands on the previous set)%s"
-            % (_sha(kfp), kerr, note))
+        out("kernel      reads %s (its own run%s; the latest run failed — %s — so it stands on the previous set)"
+            % (_sha(kfp), (", " + note) if note else "", kerr))
         rc = 1
     else:
-        out("kernel      reads %s (its own run%s); %d live session(s) on it" % (_sha(kfp), note, launched.get(kfp, 0)))
+        out("kernel      reads %s (its own run%s); %d live session(s) on it"
+            % (_sha(kfp), (", " + note) if note else "", launched.get(kfp, 0)))
     for fp2 in sorted(launched):
         if fp2 == kfp:
             continue
