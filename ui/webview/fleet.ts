@@ -911,6 +911,10 @@ function showHoverCard(row: HTMLElement, sid: string, nid: string): void {
           const v = JSON.parse(JSON.stringify(fleetViews || { active: "all", tags: [] }));
           v.actives = Object.assign({}, v.actives, { outline: l });
           fleetViews = v;                                        // optimistic: the next feed push echoes it
+          // this pane's lens write is the one views write still posted WITHOUT a writeId or `edited`:
+          // it ignores the kernel's viewsAck and settles from the next feed frame, as it always has
+          // (docs/read-side.md, the views contract). A refusal here can only concern a tag this write
+          // did not edit, and the next frame carries the kernel's copy of it.
           vscodeApi?.postMessage({ type: "setTimelineViews", views: v });
           render();
         },

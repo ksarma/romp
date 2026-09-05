@@ -350,22 +350,53 @@ jobs:
   included, runs under `_views_lock`.
 
 Every dashboard write of the views blob is acknowledged on the socket that posted
-it. A tag edit from the timeline's tag table or a tab's Tags flyout (create,
-rename, recolor, add or remove a member, delete) is one `tagEdit` WS op,
-addressed by tag name and applied through the same read-modify-write merge as
-`romp tag`, so the stale-writer guard never refuses it; the kernel answers with
-`tagEditAck`. A lens or order change still posts the whole blob
-(`setTimelineViews`), which the guard may partially refuse; the kernel answers
-with `viewsAck`, listing each refused tag with a reason. Both acks carry the
-write's `writeId`, `ok`, and the post-write client blob, which the client adopts
-as its base. The client's optimistic copy clears on the ack, or on a frame that
-echoes it exactly, and a refusal reverts the copy at once and shows the reason
-(a notice in the dialog, a warn toast in the chat pane). Until 2026-09-05 the
-dialog posted the whole blob for every edit from its own un-echoed copy, so the
-guard refused a rename typed right after a create against the dialog's own first
-write, the refusal reached only stderr and the sync notices, and the dialog
-dropped its copy after three frames; renames and assignments made in a burst
-were lost.
+it. A tag edit from the timeline's tag table, its lane gear menu, or a tab's Tags
+flyout is one `tagEdit` WS op, `{writeId, edit: {op, tid, …}}`, where `op` is
+create, rename, recolor, addMember, removeMember, delete or move. It is applied
+through the same read-modify-write merge as `romp tag`, so the stale-writer guard
+never refuses it. Every op but create names the tag by its stored id, never by
+name; a create takes an optional name, and the kernel mints the id and, given no
+name, the lowest free "tag N". A move (off one tag, onto another) is one write:
+both halves land or neither does. The kernel answers `tagEditAck` with `ok`, the
+post-write client blob, the tag's `tid` and `name`, or a plain refusal. A lens or
+order change still posts the whole blob (`setTimelineViews`) together with
+`edited`, the tag ids the write changed (none for a lens or order write). The
+guard may keep the store's copy of a stale tag; the kernel answers `viewsAck`
+listing each kept tag with a reason, and `ok` is false only when a kept tag is
+one the client edited. Both acks carry the write's `writeId` and the blob's
+`seq`.
+
+`seq` is the store's write sequence. `_set_timeline_views` stamps every accepted
+write with a number greater than the last (seeded from the clock, so a store
+recreated from nothing starts past what any connected client holds), and every
+frame that embeds the blob (the timeline skeleton, the feed frame, the tabOrder
+frames) carries it. A client adopts a blob only when its `seq` is at least the
+one it holds, so a frame the pusher built from its warmed cache before a write
+cannot replace the ack's newer blob, whatever order the socket delivered them
+in. The optimistic copy a gesture shows clears on the ack; a refusal reverts it
+at once and shows the reason (a notice in the dialog and the lane gear menu, a
+toast in the chat pane). No count of frames settles a write. The one frame-driven
+clear left is the exact-echo match, kept together with the old three-frame yield
+for blobs without a `seq`: a kernel from before the stamp acks nothing.
+
+The kernel announces what it can do in a `{type: "caps"}` frame in reply to
+every `ready` and lists the same on `/version`; `tagEdit` covers the targeted op,
+the acks and the `seq`. A client uses the targeted op only when the cap is
+present and posts the whole blob otherwise. A message no handler takes is
+answered `{type: "unknownOp", op, writeId}`, which the client treats as a refusal
+of that write and as withdrawing the cap. The caps frame is also the reconnect
+signal: writes still in flight when it arrives cannot be answered, so the client
+drops them, reverts the copy, and says so.
+
+The Outline pane's tag filter is the exception: it still posts its lens as a
+whole blob without a `writeId` or `edited`, ignores acks, and settles from the
+next feed frame as before.
+
+Until 2026-09-05 the dialog posted the whole blob for every edit from its own
+un-echoed copy, so the guard refused a rename typed right after a create against
+the dialog's own first write, the refusal reached only stderr and the sync
+notices, and the dialog dropped its copy after three frames; renames and
+assignments made in a burst were lost.
 
 The exact project directory still defines the **comms group** sketched above.
 The directory-to-tag auto-tagging rule and the URL-hash view selection once
