@@ -221,7 +221,8 @@ test("the pickers re-read /models on the kernel's models frame — the pick memo
   assert.match(RENDER, /^loadModelChoices\(\);$/m, "…and page load is just the first call");
   assert.match(RENDER, /else if \(m\.type === "models"\) loadModelChoices\(\);/, "the frame arm");
   // the kernel side: one emitter, fired by every writer of the pick memory, to EVERY app that hosts a
-  // picker — chat, timeline, and the feed, where the settings gear's judge-tier pickers live
+  // picker — chat, timeline, and the feed, where the settings gear's judge-tier pickers live (a
+  // round left the feed out once, so the gear never heard the frame where it actually opens)
   assert.match(KERNEL, /frame = \{"type": "models", "rev": _models_rev\[0\]\}/);
   assert.match(KERNEL, /for app in \("chat", "timeline", "feed"\):\s*\n\s*_send_to_app\(app, frame\)/);
   // …and the payload carries the same counter, so a consumer can drop a response older than one applied
@@ -255,46 +256,3 @@ test("the create name input wears no underline at rest (the user 2026-08-25)", (
   assert.match(CSS, /\.cmt-name:focus \{ outline: none; border-bottom-color: var\(--accent\); \}/, "focus still shows the editing affordance");
 });
 
-test("the pickers re-read /models on the kernel's models frame — the pick memory moved (fixer round 4, 2026-09-01)", () => {
-  // Both pickers read a family's `default` from a /models list fetched ONCE at page load; nothing
-  // mutated it after a pick and no push carried it. So after Latest un-pinned a family on the kernel,
-  // the same tab's next family click sent the STALE pinned id and silently re-pinned; another
-  // dashboard's pick moved the default unseen. Event-keyed: the kernel emits a models frame whenever
-  // model-picks.json changes (a pin, a Latest un-pin, a refused pin dropped) and the list is
-  // re-fetched IN PLACE on it — META_CHOICES keeps its reference, so the next family click reads the
-  // fresh default. Never a poll.
-  assert.match(RENDER, /function loadModelChoices\(\): void \{/);
-  const loader = RENDER.split("function loadModelChoices(): void {")[1].split("\n}\n")[0];
-  assert.ok(loader.includes('fetch(kernelUrl("/models"), { cache: "no-store" })'), "the same fetch as page load");
-  assert.ok(loader.includes("MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models"), "refilled in place — the shared reference holds");
-  assert.match(RENDER, /^loadModelChoices\(\);$/m, "…and page load is just the first call");
-  assert.match(RENDER, /else if \(m\.type === "models"\) loadModelChoices\(\);/, "the frame arm");
-  // the kernel side: one emitter, fired by every writer of the pick memory, to EVERY app that hosts a
-  // picker — chat, timeline, and the feed, where the settings gear's judge-tier pickers live (fixer
-  // round 5: round 4 left the feed out, so the gear never heard the frame where it actually opens)
-  assert.match(KERNEL, /frame = \{"type": "models", "rev": _models_rev\[0\]\}/);
-  assert.match(KERNEL, /for app in \("chat", "timeline", "feed"\):\s*\n\s*_send_to_app\(app, frame\)/);
-  // …and the payload carries the same counter, so a consumer can drop a response older than one applied
-  assert.match(KERNEL, /\{"rev": _rev,\s*\n\s*"models": \[/);
-  assert.match(KERNEL, /_rev = _models_rev\[0\]\s*\n\s*_learned = _learned_versions\(\)/, "read before the list, never after it");
-  const note = KERNEL.split("def _note_model_pick(")[1].split("\ndef ")[0];
-  const forget = KERNEL.split("def _forget_model_pick(")[1].split("\ndef ")[0];
-  assert.ok(note.includes("_models_changed()"), "a pin emits");
-  assert.ok(forget.includes("_models_changed()"), "a forget emits");
-});
-
-test("the create dialog offers Latest for a pinned family — a new thread can start on the alias from here too (fixer round 4, 2026-09-01)", () => {
-  // The dialog's menu is FLAT (no submenu, so no Latest row): once a family carried a pin, the family
-  // row launched on the pin and nothing here launched on the alias. A pinned family now names its pin
-  // on the family row and grows a "<Family> · Latest" row that sends the bare alias — a per-thread
-  // launch pref, never the family's memory (an alias records nothing at the kernel's choke point).
-  const dialog = RENDER.split("const buildMetaRow = (): HTMLElement => {")[1].split("\n    };\n")[0];
-  assert.ok(dialog.includes("const pinnedTo = kind === \"model\" ? (c.default || \"\") : \"\";"), "the pin, from the /models default");
-  assert.ok(dialog.includes("const pinned = !!pinnedTo && pinnedTo !== c.value;"));
-  assert.ok(dialog.includes("pinSub.textContent = modelChoiceLabel(pinnedTo).label;"), "the family row names the pin it launches on");
-  assert.ok(dialog.includes('lh.textContent = c.label + " · Latest";'), "the extra row");
-  assert.ok(dialog.includes("if (pendingCommentAnchor) pendingCommentAnchor[kind] = c.value;"), "…sends the ALIAS");
-  assert.ok(dialog.includes('latest = el("div", "meta-item" + (effVal === c.value ? " current" : ""))'), "✓ when the thread is set to float");
-  assert.ok(dialog.includes("pinned ? effVal === pinnedTo :"), "the family row's ✓ means the pin, once there is a Latest row beside it");
-  assert.ok(!dialog.includes("op.floating"), "no floating flag: the dialog never moves the family's memory");
-});
