@@ -573,8 +573,9 @@ function postViews(v: SessionViews, edited: string[] = []) {
 // judged stale against this page's own earlier writes (the 2026-09-05 loss: a New tag… then a Move
 // to, posted as whole blobs from the un-echoed copy, had the second refused). The op rides NESTED
 // under `edit`: the federation router sends the message to the local kernel, and no top-level field
-// of it can read as a session's address. Answered by tagEditAck.
-function postTagEdit(nv: SessionViews, edit: TagEditOp) {
+// of it can read as a session's address. Answered by tagEditAck. `newId` is a create's optimistic
+// row id (the `pending-…` placeholder the ack's blob replaces).
+function postTagEdit(nv: SessionViews, edit: TagEditOp, newId?: string) {
   // no `tagEdit` capability announced (a kernel from before it): the PRE-2026-09-05 path — the whole
   // blob, reconciled by the legacy exact-echo clear and three-frame yield in captureViews, since no
   // ack will come. The copy already carries the gesture, so nothing else changes — except a create's
@@ -5654,7 +5655,7 @@ function showTabMenu(e: MouseEvent, id: string) {
           nv.tags = viewTags(nv).concat([tg]);
           delete nv.groups;
           // ONE targeted create carrying the session — the tag and its first member land together
-          postTagEdit(nv, { op: "create", name, color, sids: [id] });
+          postTagEdit(nv, { op: "create", name, color, sids: [id] }, tg.id);
           build(); sb.textContent = subText();
         });
         nrow.appendChild(inp);

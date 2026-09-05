@@ -65,7 +65,7 @@ test("New tag… is an inline input (menu vocabulary, no native prompt) that cre
   assert.match(RENDER, /const color = paletteColors\.find\(\(c\) => !used\.has\(c\)\) \|\| paletteColors\[0\] \|\| "#1EA1EB";/);
   assert.match(RENDER, /const tg = \{ id: "pending-" \+ Date\.now\(\)\.toString\(36\), name, color, members: \[id\] \};\s*\n\s*nv\.tags = viewTags\(nv\)\.concat\(\[tg\]\);/,
     "the optimistic row wears a placeholder id — the kernel mints the real one");
-  assert.match(RENDER, /postTagEdit\(nv, \{ op: "create", name, color, sids: \[id\] \}\);/, "one targeted create, the session in it, no client id");
+  assert.match(RENDER, /postTagEdit\(nv, \{ op: "create", name, color, sids: \[id\] \}, tg\.id\);/, "one targeted create, the session in it, no client id on the op (the placeholder rides beside it for the legacy path to re-id)");
   // an existing name typed into the box ADDS to that union instead of minting a duplicate tag
   assert.match(RENDER, /const existing = unionFor\(\)\.find\(\(g\) => g\.name === name\);/);
 });

@@ -3026,7 +3026,7 @@ class TimelinePanel {
       this._tagAddFor = null; this._tagNewDraft = null; this._tagNewInput = null;
       ni.disabled = true; ni.placeholder = 'creating…';
       // ONE targeted create carrying the first members — the tag and its membership land together
-      this._postTagEdit(nv, { op: 'create', name: tg.name, color, sids: rowIds.slice() }, { name: tg.name }); rebuild();
+      this._postTagEdit(nv, { op: 'create', name: tg.name, color, sids: rowIds.slice() }, { name: tg.name, newId: tg.id }); rebuild();
     });
     box.appendChild(ni);
     ni.focus();
@@ -3119,7 +3119,19 @@ class TimelinePanel {
   // kernel; an Obsidian panel writing the file; a headless run) → the PRE-2026-09-05 whole-blob
   // write, reconciled by _reconcileViews's legacy branch (_tagEditsTargeted).
   _postTagEdit(nv, edit, meta) {
-    if (!this._tagEditsTargeted()) { if (nv) this._setViews(nv, edit.tid ? [edit.tid] : []); return; }
+    if (!this._tagEditsTargeted()) {
+      if (!nv) return;
+      // LEGACY: the whole blob IS the store write here, so a create's placeholder id would be
+      // persisted as-is (round 3 of the 2026-09-05 review) — the row takes a client-minted `g…` id,
+      // the scheme the dialog's own pre-2026-09-05 create used, and the write names it as edited,
+      // which a kernel that reads `edited` needs to tell a create from a stale copy re-creating a
+      // deleted tag
+      const edited = [edit.tid, edit.tid_from, edit.tid_to].filter(Boolean);
+      const row = meta && meta.newId ? viewTags(nv).find((t) => t.id === meta.newId) : null;
+      if (row) { if (/^pending-/.test(row.id)) row.id = 'g' + Date.now().toString(36); edited.push(row.id); }
+      this._setViews(nv, edited);
+      return;
+    }
     if (nv) this._pendingViews = nv;
     const writeId = this._mintWriteId();
     this._viewsWrites.push(Object.assign({ id: writeId, name: '', op: edit.op, edit }, meta || {}));
@@ -3719,7 +3731,7 @@ class TimelinePanel {
           const tg = { id: 'g' + Date.now().toString(36), name: 'tag ' + n, color, members: [] };
           nv.tags = viewTags(nv).concat([tg]); delete nv.groups;
           this._tagEditorFor = tg.id;
-          this._setViews(nv);
+          this._setViews(nv, [tg.id]);
           build();
         });
         }

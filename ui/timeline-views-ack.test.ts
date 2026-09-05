@@ -490,6 +490,7 @@ test("executed: against a kernel WITHOUT the tagEdit capability, a tag gesture p
   assert.equal(last.kind, "views");
   const added = last.v.tags.find((t: any) => t.name === "tag 1");
   assert.ok(added && /^g[0-9a-z]+$/.test(added.id), "legacy: the dialog mints the id and the lowest free 'tag N'");
+  assert.deepEqual(last.edited, [added.id], "…names it as edited (a kernel that reads `edited` takes an unnamed unknown tag for a stale re-creation)");
   assert.equal(panel._tagEditorFor, added.id, "…and opens the rename input on it");
   // a New tag when the capability is present posts the targeted create (the same panel, the cap arriving)
   panel.setCaps({ type: "caps", caps: ["tagEdit"] });
@@ -601,6 +602,24 @@ test("executed: the join menu's new-tag input takes ONE Enter per create — dis
   panel._closeLaneMenu();
 });
 
+test("executed: LEGACY (no cap): a create from the join menu ships a client-minted g… id, never the pending- placeholder, and names it as edited", () => {
+  const L0 = copy(S0); delete L0.seq;
+  const panel = drawnPanel(L0, []);
+  const box = makeNode("div");
+  panel._tagJoinMenu(box, [SID1, SID2], () => {});
+  const ni = walk(box).find((n) => n.tag === "input");
+  ni.value = "qa"; ni._listeners.keydown({ key: "Enter" });
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].kind, "views", "the whole blob — the store write itself on this path");
+  const row = posted[0].v.tags.find((t: any) => t.name === "qa");
+  assert.ok(row, "the new row is in the blob");
+  assert.match(row.id, /^g[0-9a-z]+$/, "a proper id (the dialog's pre-2026-09-05 scheme) — nothing pending- is ever persisted");
+  assert.deepEqual(row.members, [SID1, SID2]);
+  assert.deepEqual(posted[0].edited, [row.id], "…and the write names it: a kernel that reads `edited` would otherwise keep an unknown tag out as a stale re-creation");
+  assert.equal(panel._curViews().tags.find((t: any) => t.name === "qa").id, row.id, "the optimistic copy shows the same id");
+  assert.equal(JSON.stringify(posted).indexOf("pending-"), -1, "no placeholder anywhere on the wire");
+});
+
 test("executed: a refusal reverts ONLY its own write — a later write still in flight keeps its optimistic change, and its own ack settles it", () => {
   const panel = drawnPanel();
   const u = viewTagUnion(panel._curViews()).find((x: any) => x.name === "web");
@@ -637,8 +656,8 @@ test("pins: no frame count settles a stamped kernel's write; the legacy exact ec
   assert.match(rec, /viewsSeq\(this\._views\) === null\s*\n\s*&& \(this\._viewsKey\(this\._views\) === this\._viewsKey\(this\._pendingViews\)\s*\n\s*\|\| \(this\._legacyViewsAge = \(this\._legacyViewsAge \|\| 0\) \+ 1\) >= 3\)\)/,
     "both legacy clears sit under the seq-less condition — a blob with a seq comes from a kernel that acks, and only the ack settles");
   assert.equal((rec.match(/>= 3/g) || []).length, 1, "one legacy yield, nowhere else");
-  assert.match(SRC, /_postTagEdit\(nv, edit, meta\) \{\s*\n\s*if \(!this\._tagEditsTargeted\(\)\) \{ if \(nv\) this\._setViews\(nv, edit\.tid \? \[edit\.tid\] : \[\]\); return; \}/,
-    "a targeted op needs the capability AND a bridge; otherwise the whole-blob write, naming the tag it changed");
+  assert.match(SRC, /_postTagEdit\(nv, edit, meta\) \{\s*\n\s*if \(!this\._tagEditsTargeted\(\)\) \{\s*\n\s*if \(!nv\) return;[\s\S]{0,1200}?const edited = \[edit\.tid, edit\.tid_from, edit\.tid_to\]\.filter\(Boolean\);[\s\S]{0,400}?this\._setViews\(nv, edited\);\s*\n\s*return;\s*\n\s*\}/,
+    "a targeted op needs the capability AND a bridge; otherwise the whole-blob write, naming the tags it changed (a create's row included)");
   assert.match(SRC, /window\.__rompTimelineSetViews\(v, writeId, Array\.isArray\(edited\) \? edited : \[\]\);/, "the whole-blob hook carries the writeId and the edited tag ids");
   assert.match(SRC, /window\.__rompTimelineTagEdit\(writeId, edit\);/, "the targeted hook carries the writeId beside the NESTED op");
   assert.doesNotMatch(SRC, /op: '(?:rename|recolor|addMember|removeMember|delete)', name:/, "no op but create carries a name — every one addresses by tid");
