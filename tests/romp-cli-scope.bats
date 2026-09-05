@@ -27,12 +27,15 @@ while [ "$#" -gt 0 ]; do a="$1"; shift; [ "$a" = "--" ] && break; done
 exec "$@"
 SH
     chmod +x "$BIN/systemd-run"
-    # the fake "real CLI": its pid, its parent's pid, and its argv one element per line
+    # the fake "real CLI": its pid, its parent's pid, and its argv one element per line on stdout;
+    # its own pid to REAL_PIDFILE too, for the exec-in-place checks on a background launch
     REAL="$TEST_DIR/claude"
+    export REAL_PIDFILE="$TEST_DIR/real.pid"
     cat > "$REAL" <<'SH'
 #!/bin/sh
 echo "REAL pid=$$ ppid=$PPID"
 printf 'ARG:%s\n' "$@"
+echo "$$" > "$REAL_PIDFILE"
 SH
     chmod +x "$REAL"
     export PATH="$BIN:$PATH"
@@ -242,6 +245,63 @@ SH
     [ -n "$sh_pid" ] && [ -n "$real_pid" ]
     [ "$real_pid" = "$sh_pid" ]
     [ "$real_ppid" = "$sh_ppid" ]
+}
+
+# Exec-in-place and a clean stdout on the DIRECT paths (2026-09-05). The scoped path's pid test above
+# says nothing about the four direct paths, and a wrapper that forked the CLI (or printed anything of
+# its own) passed every test here. Both matter: the kernel finds the CLI by the pid the SDK spawned,
+# and one stray byte on stdout corrupts the SDK's stream-json protocol. So: launch the wrapper as a
+# background job (its pid is known before it runs), wait, and check that the fake CLI's own $$ IS that
+# pid, its parent is this shell, and stdout is EXACTLY the fake CLI's output.
+# $1..: `VAR=value` settings for the launch (none is fine), then `--`, then the wrapper's arguments.
+assert_direct_exec_in_place() {
+    local envs=()
+    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+    shift
+    OUT="$TEST_DIR/stdout"; ERR="$TEST_DIR/stderr"; EXP="$TEST_DIR/expected"
+    env "${envs[@]}" "$WRAPPER" "$@" >"$OUT" 2>"$ERR" 3>&- &
+    local wpid=$!
+    wait "$wpid"
+    [ -s "$REAL_PIDFILE" ]
+    [ "$(cat "$REAL_PIDFILE")" = "$wpid" ]
+    printf 'REAL pid=%s ppid=%s\n' "$wpid" "$BASHPID" > "$EXP"
+    printf 'ARG:%s\n' "$@" >> "$EXP"
+    cmp -s "$OUT" "$EXP"
+    [ ! -e "$FAKE_LOG" ]   # never a scoped launch on a direct path
+}
+
+@test "direct path, ROMP_CLI_SCOPE=0: exec in place, stdout exactly the CLI's, stderr empty" {
+    assert_direct_exec_in_place ROMP_CLI_SCOPE=0 -- --input-format stream-json "two words" ""
+    [ ! -s "$ERR" ]
+    [ ! -e "$FAKE_CALLS" ]
+}
+
+@test "direct path, no systemd-run on PATH: exec in place, stdout exactly the CLI's, stderr empty" {
+    mkdir -p "$TEST_DIR/tools"   # a PATH with nothing on it the wrapper could mistake for systemd-run
+    assert_direct_exec_in_place "PATH=$TEST_DIR/tools" -- --input-format stream-json
+    [ ! -s "$ERR" ]
+    [ ! -e "$FAKE_CALLS" ]
+}
+
+@test "direct path, empty ROMP_SID (a probe): exec in place, stdout exactly the CLI's, stderr empty" {
+    assert_direct_exec_in_place ROMP_SID= -- -v
+    [ ! -s "$ERR" ]
+    [ ! -e "$FAKE_CALLS" ]
+}
+
+@test "direct path, a failed pre-flight: exec in place, stdout exactly the CLI's, ONE stderr line" {
+    cat > "$BIN/systemd-run" <<'SH'
+#!/bin/sh
+echo "$*" >> "$FAKE_CALLS"
+echo "Failed to connect to bus: No such file or directory" >&2
+exit 1
+SH
+    chmod +x "$BIN/systemd-run"
+    assert_direct_exec_in_place -- --input-format stream-json "two words"
+    # the notice went to stderr, never stdout
+    [ "$(wc -l < "$ERR")" -eq 1 ]
+    grep -q '^romp-cli-scope: ' "$ERR"
+    [ "$(wc -l < "$FAKE_CALLS")" -eq 1 ]
 }
 
 @test "ROMP_CLI_SCOPE=0 runs the real CLI directly — systemd-run is not invoked" {
