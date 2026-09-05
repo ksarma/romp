@@ -205,10 +205,11 @@ class NamedSwapRefused(_Env):
         self.assertIn("helper-billed one reconnects again on every run that names it", out)
         self.assertNotIn("re-run the same --cycle", out)
         self.assertNotIn("sessions already moved read", out)
-        # no working row → no hint at all
+        # no working row → no re-run hint at all (the helper row's own text still says it re-runs the helper)
         rows[:] = [{"session": "api", "status": "helper"}]
         rc, out, _err = self.run_cli("--cycle-all")
-        self.assertNotIn("re-run", out)
+        self.assertNotIn("re-run --cycle", out)
+        self.assertNotIn("Name only those", out)
 
     def test_a_second_positional_is_counted_never_echoed(self):
         # a key value typed where a name was expected must not reach stderr
