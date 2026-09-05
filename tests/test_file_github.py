@@ -31,7 +31,8 @@ km = SourceFileLoader("romp_kernel_github", os.path.join(BIN, "romp-kernel")).lo
 # The fixture repos ignore the developer's global and system git config: a global core.hooksPath or
 # LFS filter would otherwise run THEIR hooks on the fixture push below (on one dev box, git-lfs asked
 # the stand-in ssh for git-lfs-authenticate and failed the push). What the kernel itself runs is the
-# process environment's git, as in production.
+# process environment's git, as in production — and the tests whose kernel call reaches origin pin
+# THAT environment the same way (_WithOrigin below). GIT_CONFIG_GLOBAL is honoured by git >= 2.32.
 _GIT_ENV = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
 
 
@@ -69,6 +70,25 @@ def _script(root, name, body):
     return p
 
 
+def _restore_env_after(tc, *names):
+    """Register a cleanup that puts `names` back to their values NOW — addCleanup, not tearDown, so a
+    setUp that fails after changing one of them still restores it (a tearDown never runs then)."""
+    saved = {n: os.environ.get(n) for n in names}
+
+    def restore():
+        for n, v in saved.items():
+            if v is None:
+                os.environ.pop(n, None)
+            else:
+                os.environ[n] = v
+    tc.addCleanup(restore)
+
+
+def _git_version():
+    out = subprocess.run(["git", "--version"], capture_output=True, text=True).stdout
+    return tuple(int(x) for x in out.split()[2].split(".")[:2])
+
+
 class _Repo(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -84,6 +104,26 @@ class _Repo(unittest.TestCase):
             f.write("untracked\n")
         _git("add", "src", cwd=self.tmp)
         _git("commit", "-q", "-m", "init", cwd=self.tmp)
+
+
+class _WithOrigin(_Repo):
+    """A repo whose origin is _local_origin's stand-in. The KERNEL's git runs with the PROCESS
+    environment (as in production), so for these tests that environment is pinned hermetic too:
+    GIT_CONFIG_GLOBAL=/dev/null (honoured by git >= 2.32) and GIT_CONFIG_NOSYSTEM=1. Without the pin
+    a developer's global `url."https://github.com/".insteadOf = git@github.com:` rewrote the fixture
+    origin under the kernel's ls-remote and the tests reached real github.com (reproduced 2026-09-05;
+    three went red)."""
+
+    URL = "https://github.com/TESTORG/notes-api/blob/%s/src/app.py"
+
+    def setUp(self):
+        _restore_env_after(self, "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_SSH_COMMAND")
+        os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+        os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+        super().setUp()
+        _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
+        self.root = _local_origin(self.tmp)          # origin has main; the push also wrote the tracking ref
+        self.ssh = os.path.join(self.root, "stand-in-ssh")
 
 
 class GitHubUrl(_Repo):
@@ -194,24 +234,30 @@ class GitHubUrl(_Repo):
             km._cwd_of = real
 
 
-class BranchOnOrigin(_Repo):
+class BranchOnOrigin(_WithOrigin):
     """The branch note (the user 2026-09-05): a worktree branch never pushed 404s on GitHub, so the
     url comes back WITH a reason. The local tracking ref answers first and free; only its absence
     pays one ls-remote, served here by _local_origin's stand-in ssh — never the network."""
 
-    URL = "https://github.com/TESTORG/notes-api/blob/%s/src/app.py"
-
-    def setUp(self):
-        super().setUp()
-        _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
-        self.old_ssh = os.environ.get("GIT_SSH_COMMAND")
-        self.root = _local_origin(self.tmp)          # origin has main; the push also wrote the tracking ref
-
-    def tearDown(self):
-        if self.old_ssh is None:
-            os.environ.pop("GIT_SSH_COMMAND", None)
-        else:
-            os.environ["GIT_SSH_COMMAND"] = self.old_ssh
+    def test_the_kernels_git_reads_no_global_config_here(self):
+        # The fixture's pin, shown load-bearing (reproduced 2026-09-05 with a global insteadOf rewrite
+        # that sent the kernel's ls-remote to real github.com). Offline twin: a rewrite to another
+        # owner, which the stand-in has no repo for. With a developer's global config in force the
+        # kernel would build the wrong URL and fail the check; under the fixture's pin it never reads it.
+        if _git_version() < (2, 32):
+            self.skipTest("GIT_CONFIG_GLOBAL needs git >= 2.32")
+        cfg = os.path.join(self.root, "developer-gitconfig")
+        with open(cfg, "w") as f:
+            f.write('[url "git@github.com:OTHERORG/"]\n\tinsteadOf = git@github.com:TESTORG/\n')
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        os.environ["GIT_CONFIG_GLOBAL"] = cfg
+        self.assertEqual(km._file_github_link(self.fp, None),
+                         ("https://github.com/OTHERORG/notes-api/blob/wip/src/app.py",
+                          "could not check whether branch wip is on origin"),
+                         "the leak, live: the kernel's git honours whatever global config the environment names")
+        os.environ["GIT_CONFIG_GLOBAL"] = os.devnull    # the fixture's pin
+        self.assertEqual(km._file_github_link(self.fp, None),
+                         (self.URL % "wip", "branch wip is not on origin"))
 
     def test_a_pushed_branch_carries_no_note_and_asks_origin_nothing(self):
         os.environ["GIT_SSH_COMMAND"] = "false"       # any network query would come back "unchecked"
@@ -268,15 +314,12 @@ class BranchOnOrigin(_Repo):
         self.assertFalse(os.path.exists(marker), "_file_github_url pays no network query")
 
 
-class GitLinkWire(_Repo):
+class GitLinkWire(_WithOrigin):
     """The WS op through the real dispatcher. The op answers on a THREAD (three git subprocesses must
     not block the recv loop), so the harness waits for the reply instead of reading it synchronously."""
 
     def setUp(self):
         super().setUp()
-        _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
-        self.old_ssh = os.environ.get("GIT_SSH_COMMAND")
-        self.root = _local_origin(self.tmp)
         self.sent = []
         self.client = {"app": "feed", "alive": True,
                        "send": lambda s: self.sent.append(json.loads(s))}
@@ -296,12 +339,6 @@ class GitLinkWire(_Repo):
         self.assertEqual(r["reqId"], 6, "echoed so a reply landing after a newer open is dropped")
         self.assertEqual(r["url"], "https://github.com/TESTORG/notes-api/blob/main/src/app.py")
         self.assertEqual(r["reason"], "", "a pushed branch has nothing to add")
-
-    def tearDown(self):
-        if self.old_ssh is None:
-            os.environ.pop("GIT_SSH_COMMAND", None)
-        else:
-            os.environ["GIT_SSH_COMMAND"] = self.old_ssh
 
     def test_the_no_link_verdict_still_replies_and_says_why(self):
         r = self.send_and_wait({"type": "fileGitLink", "path": os.path.join(self.tmp, "loose.txt"),
