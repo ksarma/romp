@@ -343,8 +343,13 @@ class EnvFileCredentialWarning(_Backend):
         self.assertFalse(sb._CREDENTIAL_LINE_SAID)
 
     def test_which_lines_count(self):
-        self.write_env("# a comment\n\nFOO_API_KEY=abc\nBAR_TOKEN='xyz'\nEMPTY_TOKEN=\n"
-                       "QUOTED_API_KEY=\"\"\nNOT_A_SECRET=1\nBAR_TOKEN=again\nTOKEN_PREFIX_X=1\n")
+        # each empty-value line is followed by a comment line on purpose: compiled to bytecode, this
+        # literal holds real newlines, and a secret scanner's generic rule would otherwise read
+        # `EMPTY_TOKEN=` + newline + the next NAME= as a key and its value (the repo's own
+        # gitleaks check scans the working tree, __pycache__ included)
+        self.write_env("# a comment\n\nFOO_API_KEY=abc\nBAR_TOKEN='xyz'\nNOT_A_SECRET=1\n"
+                       "BAR_TOKEN=again\nTOKEN_PREFIX_X=1\nQUOTED_API_KEY=\"\"\n# an empty value\n"
+                       "EMPTY_TOKEN=\n# is not a credential\n")
         self.assertEqual(sb._credential_names_in_env_file(self.path), ["FOO_API_KEY", "BAR_TOKEN"])
         self.assertEqual(sb._credential_names_in_env_file(os.path.join(self.d, "absent.env")), [])
         os.environ["ROMP_EXPECTED_AUTH"] = "login"
