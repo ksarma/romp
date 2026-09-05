@@ -410,6 +410,46 @@ class WholeBlobAcks(_Wire):
         self.assertIn('"api"', self.notices[0][0])
         self.assertNotIn('"web"', self.notices[0][0], "the untouched tag is not the user's problem")
 
+    def test_a_stale_copy_cannot_resurrect_a_tag_deleted_elsewhere_but_a_named_create_lands(self):
+        """Round 3 of the 2026-09-05 review, a pre-existing hole: the guard refused a stale DELETION
+        (a tag absent from the copy) but not a stale RESURRECTION (a tag absent from the store) — an
+        incoming unknown tag was always kept as new. With `edited`, the two creates a whole-blob write
+        can carry are distinguishable: a tag the client did not name as edited is something another
+        dashboard deleted after the copy was taken, and is kept out; a tag it did name is a genuine
+        create (the legacy path's client-minted id); a write without `edited` keeps the old reading."""
+        import contextlib
+        import io
+        self.seed()
+        c = self.post({"type": "tagEdit", "writeId": "w1", "edit": {"op": "create", "name": "api", "color": "#54B204", "sids": [SID2]}})
+        api_tid = c["tid"]
+        stale = json.loads(json.dumps(c["views"]))                  # this dashboard's copy: web and api
+        self.assertIsNone(km._edit_tag(tid=api_tid, delete=True)[1])   # another dashboard deletes api
+        self.assertIsNone(store_tag("api"))
+        # a lens change from the stale copy names no edited tag: api is kept OUT, the write is ok
+        stale["actives"] = {"timeline": {"tags": ["web"]}, "chat": {"all": True}, "outline": {"all": True}}
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            a = self.post({"type": "setTimelineViews", "writeId": "w2", "views": stale, "edited": []})
+        self.assertTrue(a["ok"], "nothing the user did was refused")
+        self.assertEqual([(r["tid"], r["name"]) for r in a["refused"]], [(api_tid, "api")])
+        self.assertEqual(a["refused"][0]["reason"], "it was deleted after your copy was taken, so it was not re-created")
+        self.assertNotIn("error", a)
+        self.assertIsNone(store_tag("api"), "the deleted tag stays deleted")
+        self.assertEqual([t["name"] for t in a["views"]["tags"]], ["web"], "…and the ack's blob, which the client adopts, has no api")
+        self.assertEqual(a["views"]["actives"]["timeline"], {"tags": ["web"]}, "the lens landed")
+        self.assertEqual(self.notices, [], "a stale copy of a deleted tag is not the user's problem")
+        self.assertEqual(len([ln for ln in err.getvalue().splitlines() if ln.strip()]), 1, "one quiet line")
+        # the same blob naming api as EDITED is a create (the legacy path's client-minted id): it lands
+        b = self.post({"type": "setTimelineViews", "writeId": "w3", "views": stale, "edited": [api_tid]})
+        self.assertEqual((b["ok"], b["refused"]), (True, []))
+        self.assertEqual(store_tag("api")["id"], api_tid)
+        self.assertTrue(store_tag("api").get("mtime"), "a created tag is stamped like any edit")
+        # no `edited` at all (an older client): every unknown tag is new, as before
+        self.assertIsNone(km._edit_tag(tid=api_tid, delete=True)[1])
+        d = self.post({"type": "setTimelineViews", "writeId": "w4", "views": stale})
+        self.assertEqual((d["ok"], d["refused"]), (True, []))
+        self.assertEqual(store_tag("api")["id"], api_tid, "the old reading stands for a client that cannot say")
+
     def test_the_refusal_names_the_tag_once_and_says_what_was_kept(self):
         """Finding 15: the reason carried the name and the client prefixed it again."""
         served = self.seed()

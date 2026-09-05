@@ -2739,6 +2739,18 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None):
     # reached stderr and the sync notices but never the client that needed to revert).
     for t in v["tags"]:
         pt = prev.get(t["id"])
+        if pt is None and ed is not None and t["id"] not in ed:
+            # A tag the store does not have, from a client that says it did not create it: the
+            # client's copy predates a DELETION made elsewhere, and posting the whole blob would
+            # re-create the deleted tag (round 3 of the 2026-09-05 review — the guard refused a
+            # stale deletion but not a stale resurrection; only with `edited` can the two creates
+            # be told apart: a legacy-path create names its new id there). Kept OUT, with a reason
+            # the ack carries; a write without `edited` keeps the old reading (every unknown tag
+            # is new), since an older client cannot say which it meant.
+            refused.append(('"%s" (re-creation)' % t.get("name"), t["id"]))
+            rows.append({"tid": t["id"], "name": t.get("name"),
+                         "reason": "it was deleted after your copy was taken, so it was not re-created"})
+            continue
         if pt and pt.get("mtime") and int(pt["mtime"]) > ev and \
                 (pt.get("name"), pt.get("color"), pt.get("members")) != \
                 (t.get("name"), t.get("color"), t.get("members")):
