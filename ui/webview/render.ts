@@ -16,7 +16,7 @@ import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./ta
 import { ctxFallbackColor, pickTone, readableRgb } from "./ctx-color";
 import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
-import { mintWriteId, ackOutcome, adoptViews, seqOf, type TagEditOp, type ViewsAck } from "./views-writes";
+import { mintWriteId, ackOutcome, adoptViews, seqOf, createInFlight, rederivePending, type InflightWrite, type TagEditOp, type ViewsAck } from "./views-writes";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
 import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, PendingTabMeta } from "./tab-meta";
@@ -504,7 +504,7 @@ const pendingTabMeta = new Map<string, PendingTabMeta>();
 // machinery the timeline's copy runs (views-writes.ts is the shared decision).
 let sessionViews: SessionViews | null = null;
 let pendingSessionViews: SessionViews | null = null;
-let viewsWrites: string[] = [];   // this page's views writes in flight (writeIds), oldest first
+let viewsWrites: InflightWrite[] = [];   // this page's views writes in flight, oldest first: {id, edit?|blob?, newId?} — what each did, so a refusal reverts only its own change
 let viewsWriteSeq = 0;
 let legacyViewsAge = 0;           // LEGACY kernels only (no `seq`, no acks): frames since the write — the old three-frame yield (captureViews)
 let kernelCaps = new Set<string>();   // what the LOCAL kernel announced at `ready` ({type:"caps"}); "tagEdit" = targeted ops, acks, seq
@@ -549,18 +549,19 @@ function captureViews(v: SessionViews | null) {
 }
 // (holdViews below runs the same re-derivation for the LOCAL optimistic edit — both views-arrival
 // paths keep the active session's peek state current.) The shared half of postViews / postTagEdit:
-// show the optimistic copy, mint and track the write's id.
-function holdViews(v: SessionViews): string {
+// show the optimistic copy, mint and track the write — with what it did (`rec`: the op, or the
+// blob), so a refusal of some OTHER write can rebuild the copy without it.
+function holdViews(v: SessionViews, rec: Omit<InflightWrite, "id">): string {
   pendingSessionViews = v; legacyViewsAge = 0;
   if (activeId) assertPeekFor(activeId);   // the optimistic edit re-derives the active session's peek too
   const writeId = mintWriteId(++viewsWriteSeq);
-  viewsWrites.push(writeId);
+  viewsWrites.push({ id: writeId, ...rec });
   return writeId;
 }
 // a WHOLE-BLOB write — the lens and order edits, which have no targeted op; the kernel's viewsAck
 // reports the stale-writer guard's refusals, if any
 function postViews(v: SessionViews, edited: string[] = []) {
-  const writeId = holdViews(v);
+  const writeId = holdViews(v, { blob: v });
   // `edited`: the tag ids this write CHANGED — none for a lens or order edit — so the kernel acks a
   // refusal on a tag this page never touched (a stale copy of it) as ok, with the refusal listed, and
   // no toast follows: nothing the user did was refused, and the ack's blob carries the newer tag
@@ -576,9 +577,19 @@ function postViews(v: SessionViews, edited: string[] = []) {
 function postTagEdit(nv: SessionViews, edit: TagEditOp) {
   // no `tagEdit` capability announced (a kernel from before it): the PRE-2026-09-05 path — the whole
   // blob, reconciled by the legacy exact-echo clear and three-frame yield in captureViews, since no
-  // ack will come. The copy already carries the gesture, so nothing else changes.
-  if (!kernelCaps.has("tagEdit")) { postViews(nv, [edit.tid, edit.tid_from, edit.tid_to].filter((t): t is string => !!t)); return; }
-  const writeId = holdViews(nv);
+  // ack will come. The copy already carries the gesture, so nothing else changes — except a create's
+  // row: the whole blob IS the store write on this path, so the placeholder id would be persisted
+  // as-is (round 3 of the 2026-09-05 review); the row takes a client-minted `g…` id, the scheme the
+  // dialog's own pre-2026-09-05 create used, and the write names it as edited, which a kernel that
+  // reads `edited` needs in order to tell a create from a stale copy re-creating a deleted tag.
+  if (!kernelCaps.has("tagEdit")) {
+    const edited = [edit.tid, edit.tid_from, edit.tid_to].filter((t): t is string => !!t);
+    const row = newId ? viewTags(nv).find((t) => t.id === newId) : undefined;
+    if (row) { if (/^pending-/.test(row.id)) row.id = "g" + Date.now().toString(36); edited.push(row.id); }
+    postViews(nv, edited);
+    return;
+  }
+  const writeId = holdViews(nv, { edit, newId });
   if (vscodeApi) vscodeApi.postMessage({ type: "tagEdit", writeId, edit });
   renderTabs();
 }
@@ -600,18 +611,21 @@ function onKernelCaps(m: { caps?: unknown }) {
 // gesture takes the path that kernel does know
 function onUnknownOp(m: { op?: unknown; writeId?: unknown }) {
   if (typeof m.op === "string") kernelCaps.delete(m.op);
-  if (typeof m.writeId === "string" && viewsWrites.includes(m.writeId))
+  if (typeof m.writeId === "string" && viewsWrites.some((w) => w.id === m.writeId))
     onViewsAck({ type: "unknownOp", writeId: m.writeId, ok: false,
                  error: "the kernel does not know the " + String(m.op) + " operation, so the edit was not applied — try again; this dashboard now uses the older path" });
 }
 // the kernel's answer to one of this page's writes: the returned blob is the base whatever the
-// verdict; the pending copy settles once nothing is in flight; a refusal reverts it at once and
-// says why — the warn toast, since the flyout has no error surface of its own
+// verdict; the pending copy settles once nothing is in flight; a refusal reverts ITS change at once
+// — the copy is rebuilt from the base plus the writes still in flight, so a later gesture never
+// flaps off and back on — and says why: the warn toast, since the flyout has no error surface of
+// its own
 function onViewsAck(m: ViewsAck) {
   const out = ackOutcome(viewsWrites, m);
   viewsWrites = out.inflight;
   takeViews(m.views);   // the ack's blob is the base unless a newer frame already overtook it (the seq decides)
   if (out.clearPending) pendingSessionViews = null;
+  else if (out.rederive) pendingSessionViews = rederivePending(sessionViews, viewsWrites);
   // the reason already names the tag once and says what was kept (the kernel composes it); no second prefix naming it
   if (out.refusal) warnToast("Tag edit not applied — " + out.refusal);
   if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek
@@ -5621,7 +5635,7 @@ function showTabMenu(e: MouseEvent, id: string) {
           const color = paletteColors.find((c) => !used.has(c)) || paletteColors[0] || "#1EA1EB";
           // the optimistic row wears a PLACEHOLDER id: the kernel mints the tag's id and the ack's
           // blob (which carries it) replaces this copy — no client-minted id can collide with a
-          // store it has not read
+          // store it has not read (the legacy path re-ids it: postTagEdit)
           const tg = { id: "pending-" + Date.now().toString(36), name, color, members: [id] };
           nv.tags = viewTags(nv).concat([tg]);
           delete nv.groups;

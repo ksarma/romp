@@ -541,6 +541,36 @@ test("executed: a lost ack — the caps frame the kernel sends at every ready (a
   assert.equal(panel._tagEditErr, before);
 });
 
+test("executed: a refusal reverts ONLY its own write — a later write still in flight keeps its optimistic change, and its own ack settles it", () => {
+  const panel = drawnPanel();
+  const u = viewTagUnion(panel._curViews()).find((x: any) => x.name === "web");
+  panel._editTagUnion(u, { color: "#DD42FF" });                                           // A: recolor
+  panel._editTagUnion(viewTagUnion(panel._curViews()).find((x: any) => x.name === "web"), { add: [SID2] });   // B: add, from the copy showing A
+  const [wA, wB] = panel._viewsWrites.map((w: any) => w.id);
+  assert.deepEqual([panel._curViews().tags[0].color, panel._curViews().tags[0].members], ["#DD42FF", [SID1, SID2]], "both show");
+  // A is refused (say, the tag was recoloured elsewhere first — a targeted op the kernel refused)
+  panel.viewsAck({ type: "tagEditAck", writeId: wA, ok: false, tid: "gA", seq: 1000, error: "that tag no longer exists — it may have been deleted from another dashboard", views: copy(S0) });
+  assert.deepEqual(panel._viewsWrites.map((w: any) => w.id), [wB], "only A is dropped; B is still in flight");
+  assert.ok(panel._pendingViews, "B's copy still shows");
+  assert.equal(panel._curViews().tags[0].color, "#3b82f6", "A's recolor reverted");
+  assert.deepEqual(panel._curViews().tags[0].members, [SID1, SID2], "B's add did NOT flap off");
+  assert.match(panel._tagEditErr.error, /no longer exists/, "the refusal is still shown");
+  // B's ack settles it
+  const S1 = copy(S0); S1.seq = 1001; S1.tags[0].members = [SID1, SID2];
+  panel.viewsAck({ type: "tagEditAck", writeId: wB, ok: true, seq: 1001, tid: "gA", views: S1 });
+  assert.equal(panel._pendingViews, null);
+  assert.deepEqual(panel._curViews().tags[0].members, [SID1, SID2]);
+  // a whole-blob write in flight after a refused targeted one: the copy IS that write's blob
+  panel._editTagUnion(viewTagUnion(panel._curViews()).find((x: any) => x.name === "web"), { rename: "site" });   // C
+  const nv = copy(panel._curViews()); nv.actives = Object.assign({}, nv.actives, { timeline: { tags: ["site"] } });
+  panel._setViews(nv);                                                                   // D: a lens write built from the copy showing C
+  const wC = panel._viewsWrites[0].id;
+  panel.viewsAck({ type: "tagEditAck", writeId: wC, ok: false, tid: "gA", seq: 1001, error: 'a tag named "site" already exists', views: copy(S1) });
+  assert.equal(panel._viewsWrites.length, 1, "D is still in flight");
+  assert.deepEqual(panel._curViews().actives.timeline, { tags: ["site"] }, "D's lens still shows");
+  assert.equal(panel._curViews().tags[0].name, "site", "D posted the whole blob with C's rename in it — what the kernel will judge D by, so that is what shows");
+});
+
 test("pins: no frame count settles a stamped kernel's write; the legacy exact echo and three-frame yield live in the seq-less branch only", () => {
   assert.doesNotMatch(SRC, /_pendingViewsAge/, "the old counter is gone");
   const rec = SRC.slice(SRC.indexOf("  _reconcileViews() {"), SRC.indexOf("  // The LOCAL kernel's capabilities"));

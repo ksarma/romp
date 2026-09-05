@@ -11,45 +11,79 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ackOutcome, adoptViews, mintWriteId, seqOf } from "./views-writes";
+import { ackOutcome, adoptViews, applyTagEdit, createInFlight, mintWriteId, rederivePending, seqOf, type InflightWrite } from "./views-writes";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const S1 = { active: "all", at: 113, tags: [{ id: "g1", name: "qa", color: "#DD42FF", members: ["tests"], mtime: 113 }] };
 
+const W1: InflightWrite = { id: "w1", edit: { op: "create", name: "qa", color: "#DD42FF", sids: ["tests"] }, newId: "pending-1" };
+const W2: InflightWrite = { id: "w2", edit: { op: "rename", tid: "g1", newName: "quality" } };
+
 test("executed: an ok ack settles ITS write; the copy clears only when nothing else is in flight", () => {
   // the burst: a create (w1) and the rename typed before its echo (w2), both in flight
-  const a = ackOutcome(["w1", "w2"], { type: "tagEditAck", writeId: "w1", ok: true, views: S1 });
-  assert.deepEqual(a, { inflight: ["w2"], clearPending: false, refusal: null },
+  const a = ackOutcome([W1, W2], { type: "tagEditAck", writeId: "w1", ok: true, views: S1 });
+  assert.deepEqual(a, { inflight: [W2], clearPending: false, rederive: false, refusal: null },
     "the create's ack leaves the rename's optimistic copy showing — the user's typed name never blinks to 'tag N'");
   const b = ackOutcome(a.inflight, { type: "tagEditAck", writeId: "w2", ok: true, views: S1 });
-  assert.deepEqual(b, { inflight: [], clearPending: true, refusal: null }, "the last ack settles the copy");
+  assert.deepEqual(b, { inflight: [], clearPending: true, rederive: false, refusal: null }, "the last ack settles the copy");
 });
 
-test("executed: a refusal drops everything at once and names the tag and the reason", () => {
+test("executed: a refusal drops ITS write only and names the tag and the reason; a later in-flight write keeps its copy", () => {
   const why = 'a tag named "web" already exists';
-  const r = ackOutcome(["w1", "w2"], { type: "tagEditAck", writeId: "w1", ok: false, error: why, views: S1 });
-  assert.deepEqual(r, { inflight: [], clearPending: true, refusal: why }, "revert now: the store's blob (in the ack) is what stands");
+  const r = ackOutcome([W1, W2], { type: "tagEditAck", writeId: "w1", ok: false, error: why, views: S1 });
+  assert.deepEqual(r, { inflight: [W2], clearPending: false, rederive: true, refusal: why },
+    "the refused write is dropped; the rename still in flight is not — the copy is re-derived without the refused change (round 3 of the 2026-09-05 review: a refusal cleared the whole list, and a later write flapped off and back on)");
+  assert.deepEqual(ackOutcome([W1], { type: "tagEditAck", writeId: "w1", ok: false, error: why, views: S1 }),
+    { inflight: [], clearPending: true, rederive: false, refusal: why }, "with nothing else in flight the store's blob (in the ack) is what stands");
   // the whole-blob path's refusal lists the tags the guard kept, each with a NAME-FREE reason; the
   // kernel's one-line `error` names each tag once — and the page never prefixes the name a second time
   const reason = "your copy predates a newer edit to it, so your change was not applied and the newer state was kept";
-  const w = ackOutcome(["w3"], { type: "viewsAck", writeId: "w3", ok: false, refused: [{ tid: "gA", name: "web", reason }], error: '"web": ' + reason, views: S1 });
+  const w = ackOutcome([{ id: "w3", blob: S1 }], { type: "viewsAck", writeId: "w3", ok: false, refused: [{ tid: "gA", name: "web", reason }], error: '"web": ' + reason, views: S1 });
   assert.equal(w.refusal, '"web": ' + reason, "the kernel's line as-is: the name once, then what was refused and what was kept");
   assert.equal(w.clearPending, true);
   // no error text at all → still a plain word, never an empty toast
-  assert.equal(ackOutcome(["w4"], { writeId: "w4", ok: false }).refusal, "refused");
-  assert.equal(ackOutcome(["w5"], { writeId: "w5", ok: false, refused: [{ name: "qa", reason: "kept" }] }).refusal, '"qa": kept',
+  assert.equal(ackOutcome([{ id: "w4" }], { writeId: "w4", ok: false }).refusal, "refused");
+  assert.equal(ackOutcome([{ id: "w5" }], { writeId: "w5", ok: false, refused: [{ name: "qa", reason: "kept" }] }).refusal, '"qa": kept',
     "with only the rows, the same shape is composed here");
   // ok WITH refusals listed (the guard kept the store's copy of tags this write did not edit — a lens
   // write from a stale copy): the write is settled, nothing is toasted, the ack's blob is the base
-  assert.deepEqual(ackOutcome(["w6"], { type: "viewsAck", writeId: "w6", ok: true, refused: [{ tid: "gA", name: "web", reason }], views: S1 }),
-    { inflight: [], clearPending: true, refusal: null }, "nothing the user did was refused");
+  assert.deepEqual(ackOutcome([{ id: "w6", blob: S1 }], { type: "viewsAck", writeId: "w6", ok: true, refused: [{ tid: "gA", name: "web", reason }], views: S1 }),
+    { inflight: [], clearPending: true, rederive: false, refusal: null }, "nothing the user did was refused");
+});
+
+test("executed: the pending copy re-derives from the store's blob plus the writes still in flight — only the refused change reverts", () => {
+  const base = { active: "all", seq: 5, tags: [{ id: "gA", name: "web", color: "#3b82f6", members: ["s1"] }] };
+  // A (recolor) refused, B (addMember, posted after A from the copy that showed the recolor) still in flight
+  const B: InflightWrite = { id: "wB", edit: { op: "addMember", tid: "gA", sids: ["s2"] } };
+  const p = rederivePending(base, [B])!;
+  assert.deepEqual(p.tags, [{ id: "gA", name: "web", color: "#3b82f6", members: ["s1", "s2"] }], "the add shows, the refused recolor does not");
+  assert.deepEqual(base.tags[0].members, ["s1"], "the base is never mutated");
+  assert.equal(rederivePending(base, []), null, "nothing in flight → the base itself shows");
+  // a whole-blob write in flight IS the state it posted; a targeted op after it applies on top
+  const blob = { active: "all", tags: [{ id: "gA", name: "web", color: "#000000", members: [] }], actives: { chat: { tags: ["web"] } } };
+  const q = rederivePending(base, [{ id: "wL", blob }, { id: "wC", edit: { op: "create", name: "qa", color: "#DD42FF", sids: ["s3"] }, newId: "pending-x" }])!;
+  assert.deepEqual(q.actives, { chat: { tags: ["web"] } });
+  assert.deepEqual(q.tags, [{ id: "gA", name: "web", color: "#000000", members: [] }, { id: "pending-x", name: "qa", color: "#DD42FF", members: ["s3"] }],
+    "the create's row wears the placeholder id its gesture drew");
+  // every op, applied the way the gesture applied it; an unknown tid is a no-op
+  const t2 = { active: "gA", tags: [{ id: "gA", name: "web", members: ["s1", "s2"] }, { id: "gB", name: "api", members: ["s3"] }] };
+  assert.equal(applyTagEdit(t2, { op: "rename", tid: "gA", newName: "site" }).tags![0].name, "site");
+  assert.equal(applyTagEdit(t2, { op: "recolor", tid: "gB", color: "#54B204" }).tags![1].color, "#54B204");
+  const del = applyTagEdit(t2, { op: "delete", tid: "gA" });
+  assert.deepEqual([del.tags!.map((t) => t.id), del.active], [["gB"], "all"], "a deleted active tag falls back to All, as the gesture did");
+  assert.deepEqual(applyTagEdit(t2, { op: "removeMember", tid: "gA", sids: ["s1"] }).tags![0].members, ["s2"]);
+  const mv = applyTagEdit(t2, { op: "move", tid_from: "gA", tid_to: "gB", sid: "s2" });
+  assert.deepEqual([mv.tags![0].members, mv.tags![1].members], [["s1"], ["s3", "s2"]]);
+  assert.deepEqual(applyTagEdit(t2, { op: "rename", tid: "gZ", newName: "x" }).tags, t2.tags, "an unknown tid changes nothing — the kernel refuses it");
+  assert.equal(createInFlight([B]), false);
+  assert.equal(createInFlight([B, W1]), true, "a create in flight gates the next New tag…");
 });
 
 test("executed: an ack for a write this page never made counts as information — nothing stays pinned", () => {
   assert.deepEqual(ackOutcome([], { type: "viewsAck", writeId: "w-from-a-previous-load", ok: true, views: S1 }),
-    { inflight: [], clearPending: true, refusal: null });
-  assert.deepEqual(ackOutcome(["w9"], { type: "viewsAck", writeId: "w-other", ok: true, views: S1 }),
-    { inflight: ["w9"], clearPending: false, refusal: null }, "…but our own in-flight write still holds its copy");
+    { inflight: [], clearPending: true, rederive: false, refusal: null });
+  assert.deepEqual(ackOutcome([{ id: "w9" }], { type: "viewsAck", writeId: "w-other", ok: true, views: S1 }),
+    { inflight: [{ id: "w9" }], clearPending: false, rederive: false, refusal: null }, "…but our own in-flight write still holds its copy");
 });
 
 test("executed: a blob is adopted by write SEQUENCE, never by arrival order — older is ignored, equal or newer lands, no seq adopts", () => {
@@ -74,7 +108,7 @@ test("executed: write ids are unique per page across same-ms gestures", () => {
 
 test("pins: render.ts posts a writeId on every views write and routes both acks to onViewsAck", () => {
   const pv = RENDER.slice(RENDER.indexOf("function postViews(v: SessionViews, edited: string[] = [])"), RENDER.indexOf("\n}\n", RENDER.indexOf("function postViews(")));
-  assert.match(pv, /const writeId = holdViews\(v\);/);
+  assert.match(pv, /const writeId = holdViews\(v, \{ blob: v \}\);/, "the record keeps the blob it posted: a refusal elsewhere re-derives from it");
   assert.match(pv, /vscodeApi\.postMessage\(\{ type: "setTimelineViews", views: v, writeId, edited \}\);/,
     "a lens/order edit is still the whole blob (the kernel owns no lens op), with its writeId and the tag ids it changed (none) — a refusal on an untouched tag is acked ok, no toast");
   assert.match(RENDER, /warnToast\("Tag edit not applied — " \+ out\.refusal\);/, "the toast adds no second name: the reason names the tag once and says what was kept");
@@ -92,10 +126,12 @@ test("pins: render.ts posts a writeId on every views write and routes both acks 
     "a caps frame with writes in flight is a re-established socket: their acks may never come, so they are dropped and the user is told");
   const unk = RENDER.slice(RENDER.indexOf("function onUnknownOp("), RENDER.indexOf("\n}\n", RENDER.indexOf("function onUnknownOp(")));
   assert.match(unk, /if \(typeof m\.op === "string"\) kernelCaps\.delete\(m\.op\);/, "the capability is withdrawn");
-  assert.match(unk, /viewsWrites\.includes\(m\.writeId\)\)\s*\n\s*onViewsAck\(\{ type: "unknownOp", writeId: m\.writeId, ok: false,/, "…and the write is refused, through the one ack door");
+  assert.match(unk, /viewsWrites\.some\(\(w\) => w\.id === m\.writeId\)\)\s*\n\s*onViewsAck\(\{ type: "unknownOp", writeId: m\.writeId, ok: false,/, "…and the write is refused, through the one ack door");
   const ack = RENDER.slice(RENDER.indexOf("function onViewsAck("), RENDER.indexOf("\n}\n", RENDER.indexOf("function onViewsAck(")));
   assert.match(ack, /const out = ackOutcome\(viewsWrites, m\);/, "the pure module decides; render.ts applies");
   assert.match(ack, /takeViews\(m\.views\);/, "the ack's blob is the new base unless a newer frame already overtook it (the seq decides), verdict regardless");
+  assert.match(ack, /if \(out\.clearPending\) pendingSessionViews = null;\s*\n\s*else if \(out\.rederive\) pendingSessionViews = rederivePending\(sessionViews, viewsWrites\);/,
+    "a refusal with other writes in flight re-derives the copy from the base plus them — only the refused change reverts");
   assert.match(ack, /if \(out\.refusal\) warnToast\(/, "a refusal is LOUD — the flyout has no error surface of its own");
 });
 

@@ -7,7 +7,7 @@
 // predate the write, or the kernel may have refused it), and the three-frame yield this replaces
 // dropped good edits and kept refused ones alike. Pure, shared by render.ts (the tab strip) and
 // mirrored by hand in ui/romp-timeline-view.js (which cannot import TS).
-import type { SessionViews } from "./session-views";
+import type { SessionTag, SessionViews } from "./session-views";
 
 /** one targeted tag edit — the kernel applies it through its /tag merge, which reads the store first
  *  and so is never judged stale against this page's own earlier writes. Every op but create addresses
@@ -61,11 +61,25 @@ export function adoptViews(held: SessionViews | null | undefined, incoming: Sess
   return h === null || i === null || i >= h;
 }
 
+/** one write in flight: its id, and what it did — the targeted op (with the placeholder id its
+ *  optimistic row wears, for a create) or the whole blob it posted — so the pending copy can be
+ *  re-derived without it when another write is refused (round 3 of the 2026-09-05 review) */
+export interface InflightWrite {
+  id: string;
+  edit?: TagEditOp;
+  blob?: SessionViews;
+  /** a create's optimistic row id (the `pending-…` placeholder the ack's blob replaces) */
+  newId?: string;
+}
+
 export interface AckOutcome {
   /** the writes still in flight after this ack */
-  inflight: string[];
-  /** drop the optimistic copy now: every write is settled (ok), or this one was refused (revert) */
+  inflight: InflightWrite[];
+  /** drop the optimistic copy now: nothing is in flight any more (settled, or the last one refused) */
   clearPending: boolean;
+  /** this write was refused while others are still in flight: rebuild the copy from the store's
+   *  blob plus those writes (rederivePending), so only the refused change reverts */
+  rederive: boolean;
   /** a refusal's one-line reason for the user, else null */
   refusal: string | null;
 }
@@ -76,20 +90,78 @@ export function mintWriteId(seq: number): string {
 }
 
 /** What one ack means for the page. ok → this write is settled; the copy clears once NOTHING is in
- *  flight (a later gesture may still be pending). Refused → everything is dropped at once: the
- *  store's blob (the ack carries it) is what stands, and the reason surfaces. An ack for a write
- *  this page never made (a previous load's) still counts as information: with nothing of ours in
- *  flight, the returned blob is the base and no copy stays pinned. */
-export function ackOutcome(inflight: readonly string[], m: ViewsAck): AckOutcome {
-  const rest = inflight.filter((id) => id !== m.writeId);
+ *  flight (a later gesture may still be pending). Refused → THIS write is dropped and its change
+ *  reverts: with nothing else in flight the store's blob (the ack carries it) is what stands; with
+ *  other writes still pending the copy is re-derived from that blob plus those writes, so a later
+ *  in-flight gesture never flaps off and back on (round 3 of the 2026-09-05 review: a refusal
+ *  cleared the whole list). The reason surfaces either way. An ack for a write this page never made
+ *  (a previous load's) still counts as information: with nothing of ours in flight, the returned
+ *  blob is the base and no copy stays pinned. */
+export function ackOutcome(inflight: readonly InflightWrite[], m: ViewsAck): AckOutcome {
+  const rest = inflight.filter((w) => w.id !== m.writeId);
   if (m.ok === false) {
     // the kernel's one-line `error` already names each refused tag ONCE before its reason; with only
     // the rows, compose the same shape here — never a name prefix on top of a reason that carries it
     const rows = (m.refused || []).filter((r) => r && (r.reason || r.name))
       .map((r) => (r.name ? '"' + r.name + '": ' : "") + (r.reason || "refused"));
-    return { inflight: [], clearPending: true, refusal: m.error || rows.join("; ") || "refused" };
+    return { inflight: rest, clearPending: rest.length === 0, rederive: rest.length > 0,
+             refusal: m.error || rows.join("; ") || "refused" };
   }
   // ok with refusals listed: the guard kept the store's copy of tags this write did not edit (a stale
   // copy, not a lost edit) — the ack's blob carries them, and there is nothing to tell the user
-  return { inflight: rest, clearPending: rest.length === 0, refusal: null };
+  return { inflight: rest, clearPending: rest.length === 0, rederive: false, refusal: null };
+}
+
+/** whether a create is in flight — the gate on a second [+ New tag] / New tag… before the first is
+ *  answered (round 3 of the 2026-09-05 review: two clicks before the ack made two tags) */
+export function createInFlight(inflight: readonly InflightWrite[]): boolean {
+  return inflight.some((w) => !!w.edit && w.edit.op === "create");
+}
+
+/** One targeted op applied to a client blob's LOCAL tags, the way the gesture applied it
+ *  optimistically — a copy, never the input. Unknown tids are no-ops (the kernel will refuse them);
+ *  a create's row wears `newId` (the placeholder its ack replaces) so a re-derived copy shows the
+ *  same row the gesture drew. Members are the viewer-relative id strings every client holds. */
+export function applyTagEdit(v: SessionViews, edit: TagEditOp, newId?: string): SessionViews {
+  const nv = JSON.parse(JSON.stringify(v || {})) as SessionViews;
+  const tags: SessionTag[] = (Array.isArray(nv.tags) ? nv.tags : (Array.isArray(nv.groups) ? nv.groups : [])).slice();
+  delete nv.groups;
+  const byId = (tid?: string) => tags.find((t) => t.id === tid);
+  const sids = (edit.sids || []).concat(edit.sid ? [edit.sid] : []);
+  switch (edit.op) {
+    case "create":
+      tags.push({ id: newId || "pending-" + Date.now().toString(36), name: edit.name || "", color: edit.color || "", members: sids.slice() });
+      break;
+    case "rename": { const t = byId(edit.tid); if (t && edit.newName) t.name = edit.newName; break; }
+    case "recolor": { const t = byId(edit.tid); if (t && edit.color) t.color = edit.color; break; }
+    case "delete": {
+      const i = tags.findIndex((t) => t.id === edit.tid);
+      if (i >= 0) tags.splice(i, 1);
+      if (nv.active === edit.tid) nv.active = "all";
+      break;
+    }
+    case "addMember": { const t = byId(edit.tid); if (t) t.members = Array.from(new Set((t.members || []).concat(sids))); break; }
+    case "removeMember": { const t = byId(edit.tid); if (t) t.members = (t.members || []).filter((m) => !sids.includes(m)); break; }
+    case "move": {
+      const from = byId(edit.tid_from), to = byId(edit.tid_to);
+      if (from) from.members = (from.members || []).filter((m) => !sids.includes(m));
+      if (to) to.members = Array.from(new Set((to.members || []).concat(sids)));
+      break;
+    }
+  }
+  nv.tags = tags;
+  return nv;
+}
+
+/** The optimistic copy the page should show for the writes still in flight, rebuilt from `base`
+ *  (the store's blob) oldest write first: a whole-blob write IS the state it posted; a targeted op
+ *  applies on top. Null when nothing is in flight — the base itself is what shows. */
+export function rederivePending(base: SessionViews | null | undefined, inflight: readonly InflightWrite[]): SessionViews | null {
+  if (!inflight.length) return null;
+  let p: SessionViews = JSON.parse(JSON.stringify(base || { active: "all", tags: [] }));
+  for (const w of inflight) {
+    if (w.blob) p = JSON.parse(JSON.stringify(w.blob));
+    else if (w.edit) p = applyTagEdit(p, w.edit, w.newId);
+  }
+  return p;
 }

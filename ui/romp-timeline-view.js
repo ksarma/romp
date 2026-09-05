@@ -53,6 +53,44 @@ function viewsAdopts(held, incoming) {
   const h = viewsSeq(held), i = viewsSeq(incoming);
   return h === null || i === null || i >= h;
 }
+// The hand-mirror of views-writes.ts applyTagEdit / rederiveViews (round 3 of the 2026-09-05
+// review): one targeted op applied to a blob's LOCAL tags the way the gesture applied it (a copy;
+// an unknown tid is a no-op — the kernel refuses it), and the optimistic copy rebuilt from the base
+// plus the writes still in flight, oldest first — a whole-blob write IS the state it posted, a
+// targeted op applies on top — so a refusal of ONE write reverts only that write's change. Null
+// when nothing is in flight: the base itself is what shows.
+function applyTagEditOp(v, edit, newId) {
+  const nv = JSON.parse(JSON.stringify(v || {}));
+  const tags = viewTags(nv).slice(); delete nv.groups;
+  const byId = (tid) => tags.find((t) => t.id === tid);
+  const sids = (edit.sids || []).concat(edit.sid ? [edit.sid] : []);
+  let t;
+  switch (edit.op) {
+    case 'create': tags.push({ id: newId || 'pending-' + Date.now().toString(36), name: edit.name || '', color: edit.color || '', members: sids.slice() }); break;
+    case 'rename': t = byId(edit.tid); if (t && edit.newName) t.name = edit.newName; break;
+    case 'recolor': t = byId(edit.tid); if (t && edit.color) t.color = edit.color; break;
+    case 'delete': { const i = tags.findIndex((x) => x.id === edit.tid); if (i >= 0) tags.splice(i, 1); if (nv.active === edit.tid) nv.active = 'all'; break; }
+    case 'addMember': t = byId(edit.tid); if (t) t.members = Array.from(new Set((t.members || []).concat(sids))); break;
+    case 'removeMember': t = byId(edit.tid); if (t) t.members = (t.members || []).filter((m) => sids.indexOf(m) < 0); break;
+    case 'move': {
+      const from = byId(edit.tid_from), to = byId(edit.tid_to);
+      if (from) from.members = (from.members || []).filter((m) => sids.indexOf(m) < 0);
+      if (to) to.members = Array.from(new Set((to.members || []).concat(sids)));
+      break;
+    }
+  }
+  nv.tags = tags;
+  return nv;
+}
+function rederiveViews(base, writes) {
+  if (!writes || !writes.length) return null;
+  let p = JSON.parse(JSON.stringify(base || { active: 'all', tags: [] }));
+  for (const w of writes) {
+    if (w.blob) p = JSON.parse(JSON.stringify(w.blob));
+    else if (w.edit) p = applyTagEditOp(p, w.edit, w.newId);
+  }
+  return p;
+}
 // A tag IS its NAME, everywhere (user ruling 2026-08-24: "if the UX requires understanding that
 // tags exist across different kernels, it is not good"): one name = one identity, membership the
 // UNION across every kernel defining that name, the LOCAL store's color winning the render. The
@@ -2974,7 +3012,7 @@ class TimelinePanel {
       const color = (this._palette || []).find((c) => !used.has(c)) || (this._palette || [])[0] || '#1EA1EB';
       // the optimistic row wears a PLACEHOLDER id: the kernel mints the tag's id, and the ack's blob
       // (which carries it) replaces this copy — no client-minted id can collide with a store it has
-      // not read
+      // not read (the legacy path re-ids it: _postTagEdit)
       const tg = { id: 'pending-' + Date.now().toString(36), name: ni.value.trim().slice(0, 40), color, members: rowIds.slice() };
       nv.tags = viewTags(nv).concat([tg]);
       delete nv.groups;
@@ -2984,6 +3022,9 @@ class TimelinePanel {
     });
     box.appendChild(ni);
     ni.focus();
+    if (draft && typeof draft.selStart === 'number' && typeof draft.selEnd === 'number') {
+      try { ni.setSelectionRange(draft.selStart, draft.selEnd); } catch (e) {}
+    }
   }
 
   // An arriving views blob (a frame's or an ack's) becomes the base only if its write sequence is at
@@ -3063,15 +3104,17 @@ class TimelinePanel {
   // newName?, color?, sids?} — which the kernel applies by the tag's stored id through its /tag
   // merge, so it is never judged stale against this dialog's own earlier writes (the 2026-09-05
   // loss); `meta` rides on the in-flight record: {name, tid} for the refusal notice, `openRename`
-  // to open the rename input on the tid the create's ack returns. Answered on this socket by
-  // tagEditAck → viewsAck below. No `tagEdit` capability or no targeted bridge (an older kernel; an
-  // Obsidian panel writing the file; a headless run) → the PRE-2026-09-05 whole-blob write, reconciled
-  // by _reconcileViews's legacy branch (_tagEditsTargeted).
+  // to open the rename input on the tid the create's ack returns, `newId` a create's optimistic row
+  // id (the `pending-…` placeholder the ack's blob replaces). The record keeps the op itself, so a
+  // refusal of some OTHER write can rebuild the copy without it (rederiveViews). Answered on this
+  // socket by tagEditAck → viewsAck below. No `tagEdit` capability or no targeted bridge (an older
+  // kernel; an Obsidian panel writing the file; a headless run) → the PRE-2026-09-05 whole-blob
+  // write, reconciled by _reconcileViews's legacy branch (_tagEditsTargeted).
   _postTagEdit(nv, edit, meta) {
     if (!this._tagEditsTargeted()) { if (nv) this._setViews(nv, edit.tid ? [edit.tid] : []); return; }
     if (nv) this._pendingViews = nv;
     const writeId = this._mintWriteId();
-    this._viewsWrites.push(Object.assign({ id: writeId, name: '', op: edit.op }, meta || {}));
+    this._viewsWrites.push(Object.assign({ id: writeId, name: '', op: edit.op, edit }, meta || {}));
     try { window.__rompTimelineTagEdit(writeId, edit); } catch (e) { /* the host hook threw — the ack never comes; the reconnect's caps frame clears what is left in flight */ }
     this.draw();
   }
@@ -3086,16 +3129,19 @@ class TimelinePanel {
   // client blob: adopted as the base whatever the verdict, unless a newer frame already overtook it
   // (the seq decides). ok → this write is settled; the optimistic copy clears once NOTHING is in
   // flight (a later gesture may still be pending); a create's ack names the kernel-minted tag, and
-  // a [+ New tag] create opens the rename input on that id. Refused → the copy reverts AT ONCE — the
-  // store's blob is what stands — and the reason shows in the dialog, rebuilt in place if open (the
-  // tagEditFailed door's rendering).
+  // a [+ New tag] create opens the rename input on that id — unless the user is already renaming
+  // some other row, whose editor is left alone. Refused → THIS write's change reverts AT ONCE: with
+  // nothing else in flight the store's blob is what stands; with other writes still pending the copy
+  // is rebuilt from that blob plus them (rederiveViews), so a later gesture never flaps off and back
+  // on (round 3 of the 2026-09-05 review: a refusal cleared the whole list). The reason shows in the
+  // dialog, rebuilt in place if open (the tagEditFailed door's rendering).
   viewsAck(m) {
     if (!m) return;
     const i = this._viewsWrites.findIndex((w) => w.id === m.writeId);
     const mine = i >= 0 ? this._viewsWrites.splice(i, 1)[0] : null;
     this._takeViews(m.views);
     if (m.ok === false) {
-      this._pendingViews = null; this._viewsWrites = [];
+      this._pendingViews = this._viewsWrites.length ? rederiveViews(this._views, this._viewsWrites) : null;
       const names = (m.refused || []).map((r) => r && r.name).filter(Boolean);
       this._tagEditErr = { host: '', name: names.join(', ') || (mine && mine.name) || '',
                            error: m.error || (m.refused || []).map((r) => r.reason).filter(Boolean).join('; ') || 'refused' };
@@ -3120,7 +3166,7 @@ class TimelinePanel {
     try {
       if (typeof window !== 'undefined' && typeof window.__rompTimelineSetViews === 'function') {
         const writeId = this._mintWriteId();
-        this._viewsWrites.push({ id: writeId, name: '' });
+        this._viewsWrites.push({ id: writeId, name: '', blob: v });   // the blob IS this write's state (rederiveViews)
         // `edited`: the tag ids this write CHANGED — none for a lens or order edit — so the kernel acks a
         // refusal on a tag this dialog never touched (a stale copy of it) as ok, with the refusal listed:
         // the newer blob is adopted and no notice shows, since nothing the user did was refused
@@ -3641,7 +3687,9 @@ class TimelinePanel {
           if (this._tagEditsTargeted()) { this._postTagEdit(null, { op: 'create', color }, { openRename: true }); return; }
           // LEGACY (no `tagEdit` capability, or no bridge — an older kernel, an Obsidian panel): the
           // pre-2026-09-05 whole-blob create, named and id'd here, the row opened for renaming. The
-          // name skips the ones in use rather than counting rows.
+          // name skips the ones in use rather than counting rows. The write names the new id as
+          // edited: a kernel that reads `edited` takes an unnamed unknown tag for a stale copy
+          // re-creating a deleted one.
           const nv = JSON.parse(JSON.stringify(v));
           const names = new Set(viewTags(nv).map((t) => t.name));
           let n = 1; while (names.has('tag ' + n)) n++;
@@ -3651,6 +3699,7 @@ class TimelinePanel {
           this._setViews(nv);
           build();
         });
+        }
       }
       // ── PANE FILTERS — five rows (the user 2026-08-25 redesign, superseding the one-line
       // strip): All surfaces, then Chat / Sessions / Outline / Feed — the pane names. Each row is
