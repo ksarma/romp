@@ -3189,8 +3189,8 @@ class TimelinePanel {
     } else {
       if (!this._viewsWrites.length) this._pendingViews = null;
       if (mine && mine.op === 'create' && typeof m.tid === 'string') {
-        if (mine.openRename) this._tagEditorFor = m.tid;   // the new row opens straight into its rename input
-        if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();   // the row exists now
+        if (mine.openRename && !this._tagEditorFor) this._tagEditorFor = m.tid;   // the new row opens straight into its rename input
+        this._repaintTagSurfaces();   // the row exists now; a [+ New tag] or join input gated on the create re-arms
       }
     }
     this.draw();
@@ -3733,7 +3733,7 @@ class TimelinePanel {
           // count collided with a leftover default-named tag (the 2026-09-05 review). The name
           // typed next is a rename by tid — never a whole-blob post the kernel could judge stale
           // against this very create (the 2026-09-05 loss).
-          if (this._tagEditsTargeted()) { this._postTagEdit(null, { op: 'create', color }, { openRename: true }); return; }
+          if (this._tagEditsTargeted()) { this._postTagEdit(null, { op: 'create', color }, { openRename: true }); build(); return; }
           // LEGACY (no `tagEdit` capability, or no bridge — an older kernel, an Obsidian panel): the
           // pre-2026-09-05 whole-blob create, named and id'd here, the row opened for renaming. The
           // name skips the ones in use rather than counting rows. The write names the new id as

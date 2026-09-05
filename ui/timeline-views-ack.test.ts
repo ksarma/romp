@@ -663,6 +663,30 @@ test("executed: LEGACY (no cap): a create from the join menu ships a client-mint
   assert.equal(JSON.stringify(posted).indexOf("pending-"), -1, "no placeholder anywhere on the wire");
 });
 
+test("executed: a create's ack opens the rename input on the new tid ONLY when no editor is open — the user's rename elsewhere is left alone", () => {
+  const panel = drawnPanel();
+  panel._openViewsDialog(null);
+  // the user is renaming "web"…
+  walk(panel._viewsDialog).find((n) => n.textContent === "rename")._listeners.click();
+  assert.equal(panel._tagEditorFor, "gA");
+  const inp = nameInput(panel); inp.value = "site"; inp._listeners.input();
+  // …and clicks [+ New tag] meanwhile (its ack arrives while the editor is still open)
+  clickNewTag(panel);
+  ackCreate(panel);
+  assert.equal(panel._tagEditorFor, "gA", "the editor stays on the row the user is renaming");
+  const inp2 = nameInput(panel);
+  assert.equal(inp2.value, "site", "…with the typed text (the rebuild kept the draft)");
+  assert.ok(walk(panel._viewsDialog).some((n) => n.textContent === "tag 1"), "the new row shows under its default name, unopened");
+  inp2._listeners.change();
+  assert.deepEqual([tagOps()[1].op, tagOps()[1].tid, tagOps()[1].newName], ["rename", "gA", "site"]);
+  assert.equal(panel._tagEditorFor, null);
+  // with no editor open, a create's ack opens the new row's — as before
+  clickNewTag(panel);
+  const S2 = copy(panel._views); S2.seq = 1002; S2.tags.push({ id: "g9", name: "tag 2", color: "#54B204", members: [], mtime: 114 });
+  panel.viewsAck({ type: "tagEditAck", writeId: tagOps()[2].writeId, ok: true, seq: 1002, tid: "g9", name: "tag 2", views: S2 });
+  assert.equal(panel._tagEditorFor, "g9");
+});
+
 test("executed: a refusal reverts ONLY its own write — a later write still in flight keeps its optimistic change, and its own ack settles it", () => {
   const panel = drawnPanel();
   const u = viewTagUnion(panel._curViews()).find((x: any) => x.name === "web");
