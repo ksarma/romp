@@ -113,6 +113,15 @@ repos are in play and only ONE of them is ours to write to:
   a branch, a tag or a commit to it, and never open a PR against it. Offering
   work back upstream is a deliberate decision the user makes per change; until
   they say those words, upstream is something we read.
+- **The user's write access to upstream changes nothing for sessions** (user
+  rule, 2026-09-05). The user was made an upstream maintainer, so `gh` under
+  their token CAN now merge an upstream PR or push an upstream branch — and the
+  remote guard below does not cover `gh`. No session does either without a
+  per-PR instruction from the user naming the PR ("merge #N"): an offer's own
+  adversarial review is not a licence to land it, and the standing word the
+  upstream maintainer extended to the user's PRs was earned by that pipeline's
+  rigor, not a reason to relax it. Offering stays as before (a PR opened from a
+  fork branch); who merges it is the user's call, PR by PR.
 - **`UPSTREAM.md` is the queue for those decisions** (user ask, 2026-08-07).
   When you land something upstream-worthy — a fix in code upstream ships too,
   not fork-only infrastructure — add a row there; the user prunes or promotes.
