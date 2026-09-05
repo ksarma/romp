@@ -530,7 +530,7 @@ class ReadyHandshake(unittest.TestCase):
         self.assertNotIn("_send_feed_now(", accept, "the first frame waits for `ready`")
         self.assertIn("Nothing is pushed at accept", accept)
         self.assertIn('caps = (q.get("caps") or [""])[0]', accept)
-        self.assertIn('"caps": set(x for x in caps.split(",") if x)}', accept)
+        self.assertIn('client["caps"] = set(x for x in caps.split(",") if x)', accept)
         self.assertIn('client["ready"] = READY_GATE_CAP not in client["caps"]', accept, "the hold is decided at accept")
         self.assertIn('if msg and msg.get("type") == "needFullFeed":', KSRC)
         i = KSRC.index('if msg and msg.get("type") == "ready":')

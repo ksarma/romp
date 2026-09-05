@@ -212,6 +212,6 @@ def test_ready_branch_is_wired_to_the_reset():
     src = inspect.getsource(km)
     i = src.find('msg.get("type") == "ready"')
     assert i > 0
-    body = src[i:i + 1600]
+    body = src[i:src.index("_consume_pending_reveal(client)", i)]   # the whole branch, not a fixed window
     assert "_client_reset_chat_base(client)" in body, "ready must reset BEFORE its push"
     assert body.find("_client_reset_chat_base(client)") < body.find("_push_one(client)")

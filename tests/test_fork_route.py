@@ -120,7 +120,7 @@ class ForkRoute(unittest.TestCase):
         # _fork_session, which copies the parent's tag memberships onto the fork BEFORE connect — so
         # the headless fork gets exactly the dashboard's behavior (test_kernel_fork.py executes it)
         import inspect
-        src = inspect.getsource(self._saved[2])           # the real _fork_session, saved by setUp
+        src = inspect.getsource(km._fork_session_inner)   # _fork_session is a wrapper over it; setUp swaps only the wrapper
         self.assertIn("_inherit_tag_membership(parent_sid, sid)", src)
         self.assertLess(src.index("_inherit_tag_membership(parent_sid, sid)"), src.index("be.connect(sid)"),
                         "membership lands before the connect that precedes the direct push")

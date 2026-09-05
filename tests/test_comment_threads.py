@@ -910,7 +910,7 @@ class ThreadProjection(CommentBase):
         # construction only if the echo's stamp is taken BEFORE enqueue hands the text to the CLI
         import inspect
         src = inspect.getsource(sb.SdkBackend.send)
-        self.assertLess(src.index("int(time.time())"), src.index("s.enqueue(text)"),
+        self.assertLess(src.index("int(time.time())"), src.index("s.enqueue(text,"),
                         "the echo's time is minted before the enqueue, so the CLI's record can never predate it")
 
     def test_a_slash_command_after_a_landed_reply_owes_nothing(self):
