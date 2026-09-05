@@ -8,7 +8,9 @@ and killing every subagent. Now:
   * `kernel/keysource.py` reads the `ANTHROPIC_API_KEY=` line of the manager's env file LIVE, and
     `sdk_backend.work_api_key` prefers it, falling back to the startup claim;
   * `_options` therefore injects the CURRENT key into every session it launches or revives;
-  * `romp keyswap <name>` rewrites only that one line, atomically, from a sibling file;
+  * `romp keyswap <name>` — upstream's rewrite of that one line from a sibling file — is REFUSED on
+    this fork (the user 2026-09-05: keys never live in files here; see tests/test_keyswap_refusal.py).
+    The file layer below is upstream's module, carried unchanged and no longer called by the CLI;
   * `--cycle`/`--cycle-all` reconnect running sessions through `SdkBackend.cycle_key` so they
     re-present the new key with their conversations intact.
 
@@ -529,7 +531,11 @@ class CycleReconnects(_Backend):
 
 class KeyswapCli(_EnvFile):
     """`romp keyswap` — the operator surface. The kernel is stubbed: these tests must never dial a
-    real one (a developer box runs a live romp on the same loopback ports)."""
+    real one (a developer box runs a live romp on the same loopback ports).
+
+    Fork shape (the user 2026-09-05): the named form is refused, so upstream's swap-then-cycle cases
+    run the bare cycle against a file that stays on OLD_KEY — the fake kernel reports OLD_KEY's
+    fingerprint where upstream's reported NEW_KEY's, and the swap assertions became "untouched"."""
 
     def setUp(self):
         super().setUp()
@@ -550,13 +556,21 @@ class KeyswapCli(_EnvFile):
         rc = cli.main(list(argv), out=self.out.append)
         return rc, "\n".join(self.out)
 
-    def test_a_named_source_rewrites_the_line_and_reports_both_fingerprints(self):
-        rc, said = self.run_cli("lowprio")
-        self.assertEqual(rc, 0)
-        self.assertEqual(ks.read_key(self.path), NEW_KEY)
-        self.assertIn("sha256:" + ks.fingerprint(OLD_KEY), said)
-        self.assertIn("sha256:" + ks.fingerprint(NEW_KEY), said)
-        self.assertIn("no manager restart needed", said)
+    def test_a_named_source_is_refused_and_touches_nothing(self):
+        # the fork's contract; the wording and the no-read/no-write guarantees are pinned in
+        # tests/test_keyswap_refusal.py — this keeps upstream's fixture honest about the outcome
+        import io
+        import sys
+        buf, was = io.StringIO(), sys.stderr
+        sys.stderr = buf
+        try:
+            rc, said = self.run_cli("lowprio")
+        finally:
+            sys.stderr = was
+        self.assertEqual(rc, 2)
+        self.assertEqual(ks.read_key(self.path), OLD_KEY, "the file is untouched")
+        self.assertIn("keeps API keys out of files", buf.getvalue())
+        self.assertEqual(said, "", "the refusal is the whole answer; nothing is reported on stdout")
 
     def test_the_bare_command_reports_and_changes_nothing(self):
         rc, said = self.run_cli()
@@ -576,46 +590,45 @@ class KeyswapCli(_EnvFile):
         self.assertEqual(rc, 2)
         self.assertEqual(ks.read_key(self.path), OLD_KEY)
 
-    def test_swapping_to_the_key_already_live_rewrites_nothing(self):
+    def test_even_the_key_already_live_is_refused_by_name(self):
         self.sibling("same", "%s=%s\n" % (ks.KEY_VAR, OLD_KEY))
         mtime = os.stat(self.path).st_mtime_ns
-        rc, said = self.run_cli("same")
-        self.assertEqual(rc, 0)
-        self.assertIn("already this key", said)
+        rc, _ = self.run_cli("same")
+        self.assertEqual(rc, 2, "the refusal does not depend on what the named file holds")
         self.assertEqual(os.stat(self.path).st_mtime_ns, mtime)
 
     def test_cycle_asks_the_kernel_for_exactly_the_named_sessions(self):
         cli._kernel = lambda: "http://127.0.0.1:29855"
         cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
-            "ok": True, "keyFp": ks.fingerprint(NEW_KEY),
+            "ok": True, "keyFp": ks.fingerprint(OLD_KEY),
             "rows": [{"session": "web", "status": "cycling"}, {"session": "api", "status": "dormant"}]}
-        rc, said = self.run_cli("lowprio", "--cycle", "web,api")
+        rc, said = self.run_cli("--cycle", "web,api")
         self.assertEqual(rc, 0)
         self.assertEqual(self.posted[0][1:], ("/keycycle", {"sessions": []}), "the read comes first")
         self.assertEqual(self.posted[-1][1], "/keycycle")
         self.assertEqual(self.posted[-1][2], {"sessions": ["web", "api"]})
         self.assertIn("history kept", said)
-        self.assertIn("sha256:" + ks.fingerprint(NEW_KEY), said,
-                      "the kernel's own fingerprint is how the operator confirms it re-read the file")
+        self.assertIn("sha256:" + ks.fingerprint(OLD_KEY), said,
+                      "the kernel's own fingerprint is how the operator confirms which key it holds")
 
     def test_cycle_all_asks_for_all_and_never_names_a_session_itself(self):
         cli._kernel = lambda: "http://127.0.0.1:29855"
         cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
-            "ok": True, "keyFp": ks.fingerprint(NEW_KEY), "rows": []}
-        rc, _ = self.run_cli("lowprio", "--cycle-all")
+            "ok": True, "keyFp": ks.fingerprint(OLD_KEY), "rows": []}
+        rc, _ = self.run_cli("--cycle-all")
         self.assertEqual([b for _u, _p, b in self.posted], [{"sessions": []}, {"all": True}],
                          "the read, then the cycle — and never a session named by the CLI itself")
 
-    def test_the_swap_still_lands_when_no_kernel_is_reachable(self):
-        rc, said = self.run_cli("lowprio", "--cycle-all")
+    def test_a_cycle_with_no_kernel_reachable_fails_loudly(self):
+        rc, said = self.run_cli("--cycle-all")
         self.assertEqual(rc, 1, "the cycle failed and must exit non-zero")
-        self.assertEqual(ks.read_key(self.path), NEW_KEY, "…but the file swap already happened")
+        self.assertEqual(ks.read_key(self.path), OLD_KEY, "nothing is ever written here")
         self.assertIn("no running kernel", said)
 
     def test_a_kernel_predating_the_patch_names_the_one_restart_this_needs(self):
         cli._kernel = lambda: "http://127.0.0.1:29855"
         cli._post = lambda u, p, b: {"ok": False, "error": "HTTP 404"}
-        rc, said = self.run_cli("lowprio", "--cycle-all")
+        rc, said = self.run_cli("--cycle-all")
         self.assertEqual(rc, 1)
         self.assertIn("romp refresh", said)
 
@@ -637,13 +650,6 @@ class KeyswapCli(_EnvFile):
         self.assertEqual(rc, 0)
         self.assertNotIn("MISMATCH", said)
         self.assertIn("kernel      reads sha256:" + ks.fingerprint(ks.read_key(self.path)), said)
-        # after a swap the same check runs against the NEW key
-        cli._post = lambda u, p, b: {"ok": True, "keyFp": ks.fingerprint(NEW_KEY), "rows": []}
-        rc, said = self.run_cli("lowprio")
-        self.assertEqual(rc, 0); self.assertNotIn("MISMATCH", said)
-        cli._post = lambda u, p, b: {"ok": True, "keyFp": ks.fingerprint(OLD_KEY), "rows": []}
-        rc, said = self.run_cli("lowprio")                             # already swapped; the kernel still on the old
-        self.assertEqual(rc, 1); self.assertIn("MISMATCH", said)
 
     def test_cycle_reads_and_compares_first_and_refuses_to_cycle_on_a_mismatch(self):
         # cycling while the kernel reads another file would re-present the kernel's unchanged key to every
@@ -651,16 +657,16 @@ class KeyswapCli(_EnvFile):
         cli._kernel = lambda: "http://127.0.0.1:29855"
         cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {"ok": True, "keyFp": "deadbeefcafe",
                                                                       "rows": [{"session": "web", "status": "cycling"}]}
-        rc, said = self.run_cli("lowprio", "--cycle", "web")
+        rc, said = self.run_cli("--cycle", "web")
         self.assertEqual(rc, 1)
         self.assertIn("MISMATCH", said)
         self.assertIn("NOT DONE", said)
         self.assertEqual([b for _u, _p, b in self.posted], [{"sessions": []}], "the read only — nothing was cycled")
         self.posted.clear()
         cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
-            "ok": True, "keyFp": ks.fingerprint(NEW_KEY),
+            "ok": True, "keyFp": ks.fingerprint(OLD_KEY),
             "rows": [{"session": "web", "status": "working"}, {"session": "api", "status": "current"}]}
-        rc, said = self.run_cli("lowprio", "--cycle", "web,api")
+        rc, said = self.run_cli("--cycle", "web,api")
         self.assertEqual(rc, 0)
         self.assertEqual([b for _u, _p, b in self.posted], [{"sessions": []}, {"sessions": ["web", "api"]}])
         self.assertIn("skipped: a turn, subagents or background tasks are in flight", said)
@@ -690,11 +696,9 @@ class KeyswapCli(_EnvFile):
             # …and every surface says so with a non-zero exit, instead of "kernel not running" and rc 0
             rc, said = self.run_cli()
             self.assertEqual(rc, 1); self.assertIn("NOT ASKED", said); self.assertIn("not a port", said)
-            rc, said = self.run_cli("lowprio")
-            self.assertEqual(rc, 1); self.assertIn("NOT ASKED", said)
-            self.assertEqual(ks.read_key(self.path), NEW_KEY, "the file swap itself still landed")
-            rc, said = self.run_cli("lowprio", "--cycle-all")
+            rc, said = self.run_cli("--cycle-all")
             self.assertEqual(rc, 1); self.assertIn("NOT DONE", said)
+            self.assertEqual(ks.read_key(self.path), OLD_KEY, "nothing is ever written here")
         self.assertEqual(self.posted, [], "nothing was posted anywhere")
 
     def test_the_kernel_port_override_is_the_only_port_probed(self):

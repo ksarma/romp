@@ -1,28 +1,34 @@
 #!/usr/bin/env python3
-"""romp-keyswap — point every romp session at another API key, without restarting anything.
+"""romp-keyswap — report which API key the sessions bill, and reconnect them after a rotation.
 
-`romp keyswap` rewrites ONE line of the manager's env file (`~/.config/romp/service.env`): the
-`ANTHROPIC_API_KEY=` line, taken from a sibling file you keep beside it (`service.env.highprio`,
-`service.env.lowprio`, …). The kernel reads that line live, per session launch, so:
+Upstream's `romp keyswap <name>` rewrites the `ANTHROPIC_API_KEY=` line of the manager's env file
+(`~/.config/romp/service.env`) from a sibling file (`service.env.<name>`). THIS FORK REFUSES THAT
+(the user 2026-09-05): the installation keeps API keys out of files. The sessions' key reaches Claude
+Code through its apiKeyHelper, the manager's own key reaches the manager through its environment,
+and `service.env` carries no key line — so there is nothing for a swap to rewrite, and a tool that
+wrote one would be the file the rule forbids. `romp keyswap <name>` exits 2, touches nothing, and
+has no flag that lets it through.
 
-  * a session started or revived from then on bills the new key with no further action;
-  * a session already running keeps the key its CLI process started with, because the key rides
-    the launch environment — `--cycle <names>` or `--cycle-all` reconnects those sessions so they
-    re-present the new one, each resuming its own conversation with its history intact;
-  * the manager itself never restarts, so no session loses an open turn; a session with subagents or
-    background tasks in flight is skipped by --cycle (a reconnect would kill them) and named, so you
-    cycle it again once they are done.
+What remains is upstream's rotation tool, unchanged in mechanism:
+
+  * the bare command reports the key the kernel holds, by fingerprint, and whether that matches
+    the file the kernel reads (a `/keycycle` read that names no session);
+  * `--cycle <names>` / `--cycle-all` reconnect quiet running sessions so each resumes its own
+    conversation, history intact, in a NEW CLI process — which is how a rotated key reaches a
+    session: a process keeps the credential it started with, and the new one re-runs the
+    apiKeyHelper (or re-reads the kernel's live key, where an installation keeps one in the file);
+  * the manager itself never restarts, so no session loses an open turn; a session with a turn,
+    subagents or background tasks in flight is skipped and named, so you cycle it again once they
+    are done.
 
 No key value is ever printed, logged or passed over the wire. The only rendered form is the first
-12 hex of its sha256 ("sha256:1a2b3c…"), which is enough to see that the swap landed and that the
-kernel reads the same value this command wrote.
+12 hex of its sha256 ("sha256:1a2b3c…").
 
 Usage:
-    romp keyswap                            # what is live now, and which candidates exist
-    romp keyswap lowprio                    # rewrite the key line from service.env.lowprio
-    romp keyswap lowprio --cycle web,api    # …and reconnect those two sessions onto it
-    romp keyswap lowprio --cycle-all        # …and reconnect every live key-billed session
-    romp keyswap /path/to/other.env         # an explicit file instead of a sibling name
+    romp keyswap                            # which key the kernel holds, and whether the file agrees
+    romp keyswap --cycle-all                # after a rotation: reconnect every quiet session
+    romp keyswap --cycle web,api            # …or only these
+    romp keyswap <name>                     # refused here — see above
 """
 import json
 import os
@@ -38,6 +44,17 @@ ROOT = Path(__file__).resolve().parent.parent
 ks = SourceFileLoader("romp_keysource", str(ROOT / "kernel" / "keysource.py")).load_module()
 
 KPORTS = ["http://127.0.0.1:29855", "http://127.0.0.1:7878", "http://127.0.0.1:7432"]
+
+# `romp keyswap <name>` is refused on this fork (the user 2026-09-05). The exit code is 2, the class
+# the other usage refusals use; the file is never opened for writing. One string, so a reword is a
+# deliberate edit and the bats/python tests pin the same text the operator reads.
+REFUSAL = (
+    "romp keyswap: refused — this installation keeps API keys out of files.\n"
+    "             The sessions' key reaches Claude Code through its apiKeyHelper, and the manager's\n"
+    "             key reaches the manager through its environment; service.env carries no key line,\n"
+    "             so there is nothing for a swap to rewrite. After rotating a key, run\n"
+    "                 romp keyswap --cycle-all      (or: romp refresh --quiet)\n"
+    "             so the running sessions reconnect and their new processes pick the new key up.\n")
 
 
 def _kernel_urls():
@@ -120,9 +137,9 @@ def _candidates(path, out):
         names = []
     live = ks.read_key(path)
     if not names:
-        out("candidates  none — keep one file per key beside it, e.g. %s.lowprio (chmod 600),"
-            % os.path.basename(path))
-        out("            each a single %s=… line" % ks.KEY_VAR)
+        # this installation keeps API keys out of files, so an empty list is the expected state —
+        # upstream's line here told the operator to create one file per key
+        out("candidates  none (this installation keeps API keys out of files)")
         return
     out("candidates")
     for n in names:
@@ -183,16 +200,16 @@ def _cycle(sessions, all_, out, path=None):
     u = _kernel()
     if not u:
         out("cycle       NOT DONE — no running kernel found (is romp on? `romp status`).")
-        out("            The file is already swapped: every session picks the new key up at its")
-        out("            next launch or revive. Re-run `romp keyswap --cycle…` once romp is up.")
+        out("            Nothing was cycled. A session's next launch or revive runs a new process")
+        out("            anyway; re-run `romp keyswap --cycle…` once romp is up for the running ones.")
         return 1
     body = _post(u, "/keycycle", {"sessions": []})          # the read: which key does the kernel hold?
     if body.get("error") == "HTTP 404":
         # The one restart this feature genuinely needs: a kernel started before this code has no
         # /keycycle route AND no live key read, so it is still on the key it booted with.
         out("cycle       NOT DONE — the running kernel predates `romp keyswap` (no /keycycle route).")
-        out("            Take the patch once with `romp refresh`, and every swap after that is")
-        out("            restart-free. The file is already swapped.")
+        out("            Take the patch once with `romp refresh` — that restart also gives every")
+        out("            session a new process — and every cycle after that is restart-free.")
         return 1
     if not body.get("ok"):
         out("cycle       FAILED — %s" % (body.get("error") or body.get("detail") or "unknown"))
@@ -219,6 +236,9 @@ def _cycle(sessions, all_, out, path=None):
 def _explain(status):
     return {
         "cycling": "reconnecting now — history kept",
+        "helper":  "reconnecting now — the kernel hands it no key; its new process re-runs the apiKeyHelper "
+                   "(or re-reads the setting) that supplies one. History kept. No fingerprint to converge on, "
+                   "so run the cycle once per rotation, not until it reads \"current\"",
         "current": "already on this key — nothing to do",
         "login":   "skipped: bills the machine login, not the key",
         "dormant": "not running — its next launch reads the new key",
@@ -263,62 +283,25 @@ def main(argv, out=None):
     if err:
         sys.stderr.write("romp keyswap: %s\n" % err)
         return 2
-    args = [src_arg] if src_arg else []
+    if src_arg:
+        # The rewrite is refused here, whatever the name resolves to and whether or not the file
+        # exists: the answer does not depend on the filesystem, so nothing is read or written
+        # before it. --cycle riding the same command line is refused with it — the name made this a
+        # swap request, and the message names the bare --cycle-all form that does the reconnect.
+        sys.stderr.write(REFUSAL)
+        return 2
     path = ks.service_env_path()
-    if not args:
-        # Read-only report. Deliberately the no-argument behaviour: a swap is a real change and
-        # should be asked for by name.
-        out("service.env %s" % path)
-        out("live key    %s" % _fp(ks.read_key(path)))
-        _candidates(path, out)
-        if cycle or cycle_all:
-            return _cycle(cycle, cycle_all, out, path)
-        rc = _kernel_check(path, out)
-        out("")
-        out("swap with:  romp keyswap <name> [--cycle <session,…> | --cycle-all]")
-        return rc
-    src = ks.sibling_path(args[0], path)
-    if not os.path.exists(src):
-        sys.stderr.write("romp keyswap: no such key file: %s\n" % src)
-        sys.stderr.write("             keep one per key beside the env file (e.g. %s.lowprio, chmod 600)\n"
-                         % os.path.basename(path))
-        return 2
-    new = ks.read_key(src)
-    if not new:
-        # Refuse rather than write an empty key: the CLI reads an empty ANTHROPIC_API_KEY as
-        # "API-key mode, no key" and every session would then fail to authenticate.
-        sys.stderr.write("romp keyswap: %s has no %s= line — nothing to swap to (file untouched)\n"
-                         % (src, ks.KEY_VAR))
-        return 2
-    cur = ks.read_key(path)
-    if new == cur:
-        out("service.env %s" % path)
-        out("live key    %s — already this key, nothing rewritten" % _fp(cur))
-    else:
-        try:
-            res = ks.write_key(new, path)
-        except OSError as e:
-            sys.stderr.write("romp keyswap: could not rewrite %s: %s\n" % (path, e))
-            return 1
-        # Verify from the FILE, not from what we meant to write: re-read and fingerprint it.
-        landed = ks.read_key(path)
-        if landed != new:
-            sys.stderr.write("romp keyswap: the rewrite did not land (file reads %s, expected %s) — "
-                             "check %s by hand\n" % (_fp(landed), _fp(new), path))
-            return 1
-        out("service.env %s" % res["path"])
-        if res.get("target") and res["target"] != res["path"]:
-            out("            (a link: written through to %s)" % res["target"])
-        out("key line    %s -> %s  (%d lines, mode %o%s)"
-            % (_fp(res["old"]), _fp(new), res["lines"], res["mode"],
-               ", tightened from a group/other-readable mode" if res["tightened"] else ""))
-        out("source      %s" % src)
-    out("effect      new and revived sessions bill this key immediately; no manager restart needed")
+    # Read-only report: the key the kernel holds (fingerprint), the file it reads, and the sibling
+    # files upstream's swap would have used (none expected here).
+    out("service.env %s" % path)
+    out("live key    %s" % _fp(ks.read_key(path)))
+    _candidates(path, out)
     if cycle or cycle_all:
         return _cycle(cycle, cycle_all, out, path)
     rc = _kernel_check(path, out)
-    out("running     sessions keep the key they launched with — reconnect them with")
-    out("            romp keyswap %s --cycle-all   (or --cycle <session,…>)" % args[0])
+    out("")
+    out("rotate:     keys never live in files here — rotate the key at its source, then")
+    out("            romp keyswap --cycle-all   so quiet sessions reconnect and pick it up")
     return rc
 
 

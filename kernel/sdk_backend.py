@@ -2694,6 +2694,74 @@ def _check_key_file_agrees(startup: str, live: str) -> None:
            _keysrc.service_env_path(), _keysrc.KEY_VAR))
 
 
+_CREDENTIAL_LINE_SAID = False   # the env-file credential check (one line, once per process)
+
+
+def _credential_names_in_env_file(path: str | None = None) -> list:
+    """The variable NAMES of the credential-shaped assignments in the manager's env file —
+    `ANTHROPIC_API_KEY`, any `*_API_KEY`, any `*_TOKEN` — that carry a non-empty value. Names only:
+    no value is ever returned, so nothing built from this can print one. Same line rule as the
+    launchers and keysource (blank and `#` lines skipped, `NAME=value`, one layer of quotes counts
+    as part of an empty value). [] for a missing or unreadable file."""
+    p = path or _keysrc.service_env_path()
+    try:
+        with open(p, "r", encoding="utf-8", errors="replace") as fh:
+            body = fh.read()
+    except OSError:
+        return []
+    names: list = []
+    for raw in body.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, sep, value = line.partition("=")
+        name, value = name.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if not sep or not value:
+            continue
+        if (name == "ANTHROPIC_API_KEY" or name.endswith("_API_KEY") or name.endswith("_TOKEN")) \
+                and name not in names:
+            names.append(name)
+    return names
+
+
+def _warn_credential_lines_in_env_file(log, path: str | None = None) -> list:
+    """Say ONCE per process, loudly (a problem-ring line), when the manager's env file carries a
+    credential while ROMP_EXPECTED_AUTH declares an auth that no key in that file serves (the user
+    2026-09-05; this installation keeps API keys out of files, and the declaration is how the box
+    states its design):
+
+      * =login — the sessions bill the machine login. A key line in the file is read live and wins
+        for every session without an explicit pick (effective_auth), so the box would bill the key.
+      * =key — on the box the declaration was written for, the key reaches Claude Code through its
+        apiKeyHelper and never rides the file (see _expected_auth). A key line in the file would be
+        injected at launch instead, and the helper would stop being what bills.
+
+    Either way the file contradicts the declared auth. Undeclared, nothing is said: an installation
+    that keeps its key in service.env and declares nothing is upstream's ordinary shape. The line
+    names the file and the variable NAMES, never a value. Returns the names it warned about ([] when
+    quiet) so the caller and the tests can see what it decided."""
+    global _CREDENTIAL_LINE_SAID
+    exp = _expected_auth()
+    if not exp or _CREDENTIAL_LINE_SAID:
+        return []
+    names = _credential_names_in_env_file(path)
+    if not names:
+        return []
+    _CREDENTIAL_LINE_SAID = True
+    why = ("the sessions bill the machine login, and a key in this file would win for every session "
+           "without an explicit Billing pick" if exp == "login" else
+           "the sessions' key reaches Claude Code through its apiKeyHelper and never rides this file; "
+           "a key here would be injected at launch instead and the helper would stop being what bills")
+    log("auth: %s carries %s — credential line%s — while ROMP_EXPECTED_AUTH=%s declares that %s. "
+        "This installation keeps API keys out of files: remove the line (and rotate the value, "
+        "since it reached a file)."
+        % (path or _keysrc.service_env_path(), ", ".join(names), "s" if len(names) > 1 else "", exp, why),
+        problem=True)
+    return names
+
+
 def _expected_auth() -> str:
     """The box-wide INTENDED auth, declared in the manager's environment (service.env):
     ROMP_EXPECTED_AUTH=key|login; unset or any other value declares nothing. On a machine whose
@@ -5749,6 +5817,9 @@ class SdkBackend:
         self._problems: list[dict] = []
         self._problem_seq = 0
         self._problem_lock = threading.Lock()
+        # A credential in the env file under a declared auth is a contradiction of the box's design;
+        # said once, here, where the problem ring exists to carry it (the user 2026-09-05).
+        _warn_credential_lines_in_env_file(self._log)
         # The /api-health aggregator (one ring, one lock; see ApiHealth). Fed from _on_message on each
         # session's thread, read by the kernel's route; the salt is minted lazily at the first label.
         self.api_health = ApiHealth(self.state_dir, log=self._log)
@@ -5869,7 +5940,17 @@ class SdkBackend:
         "login" (billed to the machine login — the key would not be injected, so a reconnect would cost
         a turn for nothing), "dormant" (no live CLI — its next launch reads the new key anyway),
         "working" (a turn, a queued turn, live subagents or background tasks are in flight — see below),
-        "unknown" (this backend has no such session).
+        "unknown" (this backend has no such session), and — this fork — "helper" (below).
+
+        "helper" (the user 2026-09-05): the kernel handed this session NO key, yet its CLI reported
+        one at init (apiKeySource: an apiKeyHelper, a project setting — auth_live == "key"). The key
+        came from outside the kernel, and a NEW CLI process is the only way a rotation there reaches
+        the session: the process keeps the credential it started with. Upstream reads such a session
+        as "login" and skips it; on an installation whose every session bills through the helper that
+        made --cycle-all a no-op. The same quiet-only and in-flight rules apply. There is no fingerprint
+        to converge on — the kernel never sees the helper's value — so a repeated --cycle reconnects it
+        again; the operator runs the cycle once per rotation. A session whose CLI reported the login
+        is left alone as before.
 
         "working": a reconnect abandons the CLI process, and the subagents and background tasks INSIDE
         it die with it (_drop_live_work) — the very loss the keyswap exists to avoid, and one an idle-
@@ -5884,16 +5965,24 @@ class SdkBackend:
         s = self.sessions.get(sid)
         if s is None:
             return "dormant"
+        helper = False
         if s.effective_auth() != "key":
-            return "login"
-        fp = self.work_key_fp()
-        if fp and getattr(s, "_launched_key_fp", None) == fp:
-            return "current"
+            if getattr(s, "auth_live", "") != "key":
+                return "login"
+            helper = True          # keyed by the CLI's own report, with nothing injected: the helper shape
+        else:
+            fp = self.work_key_fp()
+            if fp and getattr(s, "_launched_key_fp", None) == fp:
+                return "current"
         with s._sub_lock:
             live_work = len(s._subagents) + len(s._bg_tasks)
         if live_work or s.inflight > 0 or s._pending:
             return "working"
         s.request_reconnect(defer=False)
+        if helper:
+            self._log("keyswap (%s): reconnecting so its new CLI process re-runs the credential helper "
+                      "it bills through (the kernel hands it no key)" % s.name)
+            return "helper"
         self._log("keyswap (%s): reconnecting to pick up the current work key (sha256:%s)"
                   % (s.name, _keysrc.fingerprint(self.work_key)))
         return "cycling"
@@ -6580,11 +6669,13 @@ class SdkBackend:
                 what = ("ROMP_EXPECTED_AUTH=%s" % exp) if exp_src == "env" \
                     else ("the remembered Billing pick is %s" % exp)
                 self._log("auth (%s): %s but the CLI reports apiKeySource=%r — this "
-                          "session is billing the %s. Check the helper and service.env."
+                          "session is billing the %s. Check the helper and the manager's environment "
+                          "(or service.env, where your installation allows a key in a file)."
                           % (sess.name, what, source, "API key" if keyed else "login"), problem=True)
             else:
                 self._log("auth (%s): launched for %s but the CLI reports apiKeySource=%r — this session "
-                          "is billing the %s. Check the login (claude /login) and service.env."
+                          "is billing the %s. Check the login (claude /login) and the manager's environment "
+                          "(or service.env, where your installation allows a key in a file)."
                           % (sess.name, "the API key" if sess._launched_keyed else "the login", source,
                              "API key" if keyed else "login"), problem=True)
         sess.auth_live = "key" if keyed else "login"   # the CLI's own report, for the Billing row
@@ -7030,7 +7121,8 @@ class SdkBackend:
             # picked "key", but this manager's env carries none — falling to login silently would bill
             # the wrong account with nothing to see; say so where the Log panel shows it.
             self._log("auth (%s): session is set to the API key but the manager environment carries "
-                      "none (service.env) — launching on the login instead" % sess.name, problem=True)
+                      "none (nor does service.env, where your installation allows a key in a file) — "
+                      "launching on the login instead" % sess.name, problem=True)
         sess._launched_keyed = launch_keyed
         sess._launched_key_fp = _keysrc.fingerprint(work_key) if launch_keyed else ""
         return ClaudeAgentOptions(**kw)

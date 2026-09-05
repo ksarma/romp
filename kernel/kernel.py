@@ -26641,7 +26641,7 @@ def build_feed(now, tmux=None):
                             # refused, so the copy blames the judges, not the session (the user 2026-08-12)
                             else {"state": "judgeAuth", "mode": jerr.get("mode"),
                                   "since": jerr.get("t"), "text": jerr.get("note") or "",
-                                  "what": ("romp can't analyze this session — the API key its judges bill is being refused. Fix the key (service.env) or switch which account this session bills"
+                                  "what": ("romp can't analyze this session — the API key its judges bill is being refused. Fix the key (the manager's environment, or service.env where your installation allows a key in a file) or switch which account this session bills"
                                            if jerr.get("mode") == "key" else
                                            "romp can't analyze this session — the login its judges bill is being refused. Sign in again (claude /login) or switch which account this session bills")} if nid == jauth_top
                             else {"state": perm_state,

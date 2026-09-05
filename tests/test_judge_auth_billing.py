@@ -278,7 +278,7 @@ class KernelWiringAndFloorPins(unittest.TestCase):
         import inspect
         src = inspect.getsource(self.km.build_feed)
         self.assertIn('"state": "judgeAuth"', src)
-        self.assertIn("the API key its judges bill is being refused. Fix the key (service.env)", src)
+        self.assertIn("the API key its judges bill is being refused. Fix the key (the manager's environment", src)
         self.assertIn("the login its judges bill is being refused. Sign in again (claude /login)", src)
 
     def test_the_judge_auth_classifier_mirrors_the_kernels(self):

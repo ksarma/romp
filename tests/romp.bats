@@ -1820,7 +1820,10 @@ PY
     [[ "$output" == *"--env NAME=VALUE"* ]]
 }
 
-# ─── romp keyswap — switch the sessions' API key with no restart ──────
+# ─── romp keyswap — the sessions' API key, by fingerprint; the named swap refused ──────
+# This fork keeps API keys out of files (the user 2026-09-05): `romp keyswap <name>`
+# — upstream's rewrite of service.env from service.env.<name> — is refused with exit 2
+# and touches nothing; the bare report and --cycle still dispatch to romp-keyswap.
 # End-to-end through the dispatcher and the real cli/keyswap.py, against a temp
 # env file (ROMP_SERVICE_ENV_FILE): the mock-PATH shadowing other dispatch tests
 # use cannot shadow romp-keyswap, since bin/romp prepends its own bin dir. Fake
@@ -1851,27 +1854,48 @@ _keyswap_files() {
     grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"   # read-only
 }
 
-@test "keyswap: a named source rewrites only the key line and keeps mode 600" {
+@test "keyswap: a named source is refused (keys never live in files here) and touches nothing" {
     command -v python3 >/dev/null 2>&1 || skip "python3 not available"
     touch "$MOCK_LOG"
     _keyswap_files
+    before="$(stat -c %Y "$ROMP_SERVICE_ENV_FILE" 2>/dev/null || stat -f %m "$ROMP_SERVICE_ENV_FILE")"
     run run_romp keyswap lowprio
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"no manager restart needed"* ]]
-    [[ "$output" != *"sk-ant-TEST"* ]]
-    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-1111' "$ROMP_SERVICE_ENV_FILE"
-    grep -q 'ROMP_PERF=1' "$ROMP_SERVICE_ENV_FILE"                 # every other line survives
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"refused"* ]]
+    [[ "$output" == *"keeps API keys out of files"* ]]
+    [[ "$output" == *"apiKeyHelper"* ]]
+    [[ "$output" == *"romp keyswap --cycle-all"* ]]          # what to run instead, after a rotation
+    [[ "$output" != *"no manager restart needed"* ]]         # upstream's success line never prints
+    [[ "$output" != *"sk-ant-TEST"* ]]                       # never a key value on a surface
+    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"   # the file is untouched…
+    grep -q 'ROMP_PERF=1' "$ROMP_SERVICE_ENV_FILE"
     grep -q 'ROMP_EXPECTED_AUTH=key' "$ROMP_SERVICE_ENV_FILE"
-    [ "$(ls -l "$ROMP_SERVICE_ENV_FILE" | cut -c1-10)" = "-rw-------" ]
+    after="$(stat -c %Y "$ROMP_SERVICE_ENV_FILE" 2>/dev/null || stat -f %m "$ROMP_SERVICE_ENV_FILE")"
+    [ "$before" = "$after" ]                                  # …not even rewritten in place
 }
 
-@test "keyswap: an unknown source is a loud refusal that touches nothing" {
+@test "keyswap: an unknown source gets the same refusal, not upstream's per-file message" {
     command -v python3 >/dev/null 2>&1 || skip "python3 not available"
     touch "$MOCK_LOG"
     _keyswap_files
     run run_romp keyswap nosuch
     [ "$status" -eq 2 ]
-    [[ "$output" == *"no such key file"* ]]
+    [[ "$output" == *"keeps API keys out of files"* ]]
+    [[ "$output" != *"no such key file"* ]]                  # the answer does not depend on the filesystem
+    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"
+}
+
+@test "keyswap: --cycle-all still dispatches to romp-keyswap and reaches the kernel step" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _keyswap_files                                            # ROMP_KERNEL_PORT=1: no kernel answers there
+    run run_romp keyswap --cycle-all
+    [ "$status" -eq 1 ]                                       # the cycle could not run — said so, non-zero
+    [[ "$output" == *"cycle       NOT DONE"* ]]
+    [[ "$output" == *"no running kernel"* ]]
+    [[ "$output" != *"refused"* ]]                            # the bare cycle is not the refused form
+    [[ "$output" != *"already swapped"* ]]                    # nothing is ever swapped here
+    [[ "$output" != *"sk-ant-TEST"* ]]
     grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"
 }
 

@@ -24,7 +24,7 @@ update` starts a session called "update".
 | `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them |
 | `romp up` | Run the kernel manager in the foreground; rare, since the login service runs it |
 | `romp version` | Version report across the moving parts |
-| `romp keyswap [<name>] [--cycle <session,…>\|--cycle-all]` | Switch which API key the sessions bill, with no restart: rewrites only the `ANTHROPIC_API_KEY=` line of `service.env` from `service.env.<name>`, and `--cycle` moves running sessions onto it. Bare, it reports the live key and the candidates. See [Switching which API key the sessions bill](#switching-which-api-key-the-sessions-bill-romp-keyswap) |
+| `romp keyswap [--cycle <session,…>\|--cycle-all]` | Which API key the sessions bill, by fingerprint, and — after a key rotation — a reconnect of the quiet running sessions so their new processes pick the new key up, with no manager restart. `romp keyswap <name>`, upstream's rewrite of `service.env` from `service.env.<name>`, is refused here: this installation keeps API keys out of files. See [Switching which API key the sessions bill](#switching-which-api-key-the-sessions-bill-romp-keyswap) |
 | `romp help` | The same list, from the terminal |
 
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
@@ -358,77 +358,77 @@ agent's launcher by parsing it — line by line, never sourced, so a malformed
 line is skipped rather than executed). Rotate a value by editing the file and
 restarting the manager (`romp-service install`); a missing file is a no-op.
 
-`ANTHROPIC_API_KEY` is the one exception to that last sentence — it needs no
-restart at all. See below.
+`ANTHROPIC_API_KEY` is the one exception to that last sentence: where an
+installation keeps a key in this file, the kernel reads that line fresh at
+every session launch, so a change there needs no restart. This installation
+keeps no key in the file at all — see below.
 
 ### Switching which API key the sessions bill (`romp keyswap`)
 
-The key a session bills rides its launch environment, and romp reads the
-`ANTHROPIC_API_KEY=` line of `service.env` **fresh at every session launch**.
-So changing keys — moving to another organisation's key, rotating a leaked
-one, switching between a high-priority and a batch key — costs no manager
-restart, and no session loses an open turn.
+Upstream's `romp keyswap <name>` rewrites the `ANTHROPIC_API_KEY=` line of
+`service.env` from a sibling file (`service.env.<name>`) so that new sessions
+bill another key, and `--cycle` moves the running ones onto it. **This fork
+refuses the rewrite.** The installation keeps API keys out of files: the
+sessions' key reaches Claude Code through its `apiKeyHelper`, the manager's
+own key reaches the manager through its environment, and `service.env`
+carries no key line — so there is nothing for a swap to rewrite, and a tool
+that wrote one would be the file the rule forbids. `romp keyswap <name>` exits
+2 with that message, reads and writes nothing, and has no flag that lets it
+through. (The kernel still reads a key line from `service.env` live where an
+installation keeps one there; the fork only refuses the command that writes
+one.)
 
-Keep one file per key beside `service.env`, each a single `ANTHROPIC_API_KEY=`
-line, `chmod 600`:
+What remains is the rotation tool:
 
-    ~/.config/romp/service.env.highprio
-    ~/.config/romp/service.env.lowprio
+    romp keyswap                       # which key the kernel holds (fingerprint), and whether the file agrees
+    romp keyswap --cycle-all           # after a rotation: reconnect every quiet session
+    romp keyswap --cycle web,api       # …or only these
 
-Then:
+A running CLI keeps the credential its process started with. So after you
+rotate the key at its source, the sessions need a new process: `--cycle-all`
+(or `--cycle <session,…>`) reconnects each quiet session — the same mechanism
+a reasoning-effort or billing switch uses, so the conversation resumes with
+its history intact — and the new process runs the `apiKeyHelper` again. The
+manager never restarts, so no session loses an open turn. Per session the
+command reports one of:
 
-    romp keyswap                       # which key is live, and what you can swap to
-    romp keyswap lowprio               # rewrite the key line from service.env.lowprio
-    romp keyswap lowprio --cycle-all   # …and move the running sessions onto it too
-    romp keyswap lowprio --cycle web,api
+* `reconnecting now — the kernel hands it no key; its new process re-runs the
+  apiKeyHelper …` — the case on this installation. There is no fingerprint
+  for the kernel to converge on (it never sees the helper's value), so run
+  the cycle once per rotation rather than until every session reads
+  `current`;
+* `reconnecting now — history kept` / `already on this key` — a session the
+  kernel launched on a key it read itself (an installation with a key in
+  `service.env`); repeated runs converge to `current` there;
+* `skipped: bills the machine login, not the key` — its CLI reported the
+  login; a reconnect would cost a turn for nothing;
+* `not running — its next launch reads the new key`;
+* `skipped: a turn, subagents or background tasks are in flight` — a
+  reconnect would kill that work; re-run once it is quiet.
 
-`romp keyswap <name>` rewrites **only** the `ANTHROPIC_API_KEY=` line, in
-place, keeping every other line of the file as it was (line endings come out
-as LF) — a temp file and a rename, so no reader ever sees the file
-half-written, and the mode stays `600` (a looser one is tightened). A
-symlinked `service.env` is written through: the target changes, the link
-stays. It refuses a source file with no key line rather
-than writing an empty key, which the CLI would read as "API-key mode, no key".
-
-After the rewrite:
-
-* **new sessions, and any session you revive, bill the new key immediately** —
-  nothing else to do;
-* **already-running sessions keep the key their process started with**, because
-  the key is handed over at launch. `--cycle-all` (or `--cycle <session,…>`)
-  reconnects them so they re-present the new one. A reconnect resumes the same
-  conversation with its history intact — the same mechanism a reasoning-effort
-  or billing switch uses — and only for a session that is quiet right now. Sessions billing the machine login are
-  skipped, dormant ones are reported as needing nothing, a session already
-  launched on the live key reads `current`, and a session with a turn,
-  subagents or background tasks in flight is skipped and named — a reconnect
-  would kill that work — so you re-run the same `--cycle` once it is quiet,
-  until every session reads `current`;
-* **the judges and the model catalog** pick the new key up on their next call,
-  with no cycling at all.
+`romp refresh --quiet` is the alternative that restarts everything: the manager comes back once
+the sessions are quiet, so every process is new.
 
 No key value is ever printed, logged, or sent over a socket. The only rendered
-form is the first 12 hex of its sha256 — `sha256:1a2b3c4d5e6f` — which appears
-in the command's output, in the Log panel when the key changes, and in the
-kernel's own answer to `--cycle`. Comparing those tells you the swap landed
-without either side showing the key.
+form is the first 12 hex of its sha256 — `sha256:1a2b3c4d5e6f` — in the
+command's output, in the Log panel when the kernel's key changes, and in the
+kernel's own answer to `--cycle`. The bare command compares the kernel's
+fingerprint with the file's and says `MISMATCH` when they differ; on this
+installation both read `(none)`.
 
-**One restart, once:** a kernel that is already running when this feature is
-installed neither reads the file live nor knows the `--cycle` route, so it is
-still on the key it booted with. Take the update a single time with `romp
-refresh` — or `romp refresh --quiet`, which waits for the sessions to finish
-their turns first — and every swap after that is restart-free. `romp keyswap
---cycle-all` says so plainly if it meets an older kernel.
+Remote kernels are cycled from their own machine. `ROMP_SERVICE_ENV_FILE`
+overrides the path of the env file the kernel reads; a kernel started before
+this feature has no `/keycycle` route and says so — take the update once with
+`romp refresh` (or `romp refresh --quiet`).
 
-Remote kernels each have their own `service.env` and their own key: run
-`romp keyswap` on that machine.
-
-`ROMP_SERVICE_ENV_FILE` overrides the path of the file. The installer bakes
-the path it resolved into the unit and, when that is not the default, exports
-it to the service as well, so the kernel's live read and the installer name
-one file; a service installed before that carries only the default. `romp
-keyswap` asks the running kernel which key it reads and says `MISMATCH` when
-that is not the file's — the check to make after a swap.
+A guard for the rule itself: at start the kernel reads the env file, and if it
+carries a credential-shaped line (`ANTHROPIC_API_KEY`, any `*_API_KEY`, any
+`*_TOKEN` with a value) while `ROMP_EXPECTED_AUTH` declares the box's auth
+(`key` — the `apiKeyHelper` design above — or `login`), it logs one problem
+line naming the file and the variable name, never the value: a key in that
+file would be injected at launch and take over billing from the declared
+auth. With no declaration nothing is said, which is upstream's ordinary
+file-key installation.
 
 ## The API-health signal
 
