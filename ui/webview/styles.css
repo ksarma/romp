@@ -3369,6 +3369,13 @@ a.fileview-btn { text-decoration: none; display: inline-flex; align-items: cente
 /* an author `display` beats the UA's [hidden] rule — without this the anchor shows hrefless
    before the kernel ever answers */
 a.fileview-btn[hidden] { display: none; }
+/* no link: the anchor stays, greyed, and its tooltip says why — never hidden (an absent button read as
+   "broken" when the file was simply not committed yet, 2026-09-05); hover stays inert */
+a.fileview-btn[aria-disabled="true"] { opacity: 0.55; cursor: default; }
+a.fileview-btn[aria-disabled="true"]:hover { border-color: var(--card-border); color: var(--fg); background: transparent; }
+a.fileview-btn[aria-disabled="true"]:active { transform: none; }
+/* a link whose branch is not on origin yet: dashed, the tooltip carries the note */
+a.fileview-gh-note { border-style: dashed; }
 .fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* the raw-mode editor: height: 100% (not flex) — .fileview-body above is a plain overflow block,
    not a flex container, so a flex basis on its child is inert and the textarea sat at the UA's

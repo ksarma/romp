@@ -193,10 +193,14 @@ export function registerFileViewAction(a: FileViewAction): void {
 
 // ── the GitHub link (the user 2026-08-15) — the registry's first entry ─────────────────────────────
 // An anchor, not a button: the browser owns opening a new tab. Hidden until the OWNING kernel answers
-// the lazy fileGitLink ask with a real URL — an untracked file, a non-repo path, or a non-GitHub
-// origin all honestly have no link, and it simply never appears. One question per open, reqId-guarded.
+// the lazy fileGitLink ask, and the answer ALWAYS shows it (the user 2026-09-05, who could not tell
+// "not committed yet" from "the link is broken" when the button simply never appeared): a real URL
+// links; no URL renders the anchor disabled — hrefless, greyed — with the kernel's reason as its
+// tooltip (an untracked file, a non-repo path, a non-GitHub origin); a URL whose branch is not on
+// origin stays clickable and carries the note in its tooltip, since GitHub 404s it until the push.
+// One question per open, reqId-guarded.
 let gitSeq = 0;
-let gitHooks: { reqId: number; apply: (url: string) => void } | null = null;
+let gitHooks: { reqId: number; apply: (url: string, reason: string) => void } | null = null;
 registerFileViewAction({
   id: "github-link",
   mount({ path, sid }) {
@@ -206,10 +210,19 @@ registerFileViewAction({
     gh.hidden = true;
     gitHooks = {
       reqId: ++gitSeq,
-      apply: (url) => {
-        if (!url) return;
-        gh.href = url;
-        gh.title = url;                            // the full URL one hover away
+      apply: (url, reason) => {
+        if (url) {
+          gh.href = url;
+          gh.title = reason ? url + "\n" + reason : url;   // the full URL one hover away, and the note with it
+          if (reason) { gh.classList.add("fileview-gh-note"); gh.setAttribute("aria-label", "GitHub: " + reason); }
+        } else {
+          // disabled, not hidden: no href means nothing to follow, and the tooltip says why. An older
+          // kernel answers without a reason — say that, rather than invent one.
+          gh.setAttribute("aria-disabled", "true");
+          gh.tabIndex = 0;                                   // reachable by keyboard, so the reason is too
+          gh.title = "No GitHub link: " + (reason || "no reason was given");
+          gh.setAttribute("aria-label", gh.title);
+        }
         gh.hidden = false;
       },
     };
@@ -1002,7 +1015,7 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
       }
     } else if (m.type === "fileGitLink" && gitHooks && m.reqId === gitHooks.reqId) {
       const h = gitHooks; gitHooks = null;
-      h.apply(String(m.url || ""));
+      h.apply(String(m.url || ""), String(m.reason || ""));
     } else if (m.type === "fileSaved" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
       h.saved(String(m.mtimeNs || ""));
