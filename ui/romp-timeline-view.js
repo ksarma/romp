@@ -2863,7 +2863,7 @@ class TimelinePanel {
     for (const id of Object.keys(this._pendingTagEdits || {}))
       if (id.split(':')[0] === m.host) delete this._pendingTagEdits[id];   // edits are name-addressed per host — revert them all
     this._tagEditErr = { host: m.host || '', name: m.name || '', error: m.error || 'refused' };
-    if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();
+    this._repaintTagSurfaces();
     this.draw();
   }
 
@@ -3028,8 +3028,15 @@ class TimelinePanel {
     if (!this._viewsWrites.length) return;
     this._viewsWrites = []; this._pendingViews = null;
     this._tagEditErr = { host: '', name: '', error: 'the connection was re-established; an edit made just before it may not have landed — check the list' };
-    if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();
+    this._repaintTagSurfaces();
     this.draw();
+  }
+
+  // the two surfaces that show a tag-edit notice, repainted in place when one arrives or clears: the
+  // dialog (its build closure) and the lane gear menu (menu._build) — whichever is open
+  _repaintTagSurfaces() {
+    if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();
+    if (this._laneMenu && typeof this._laneMenu._build === 'function') this._laneMenu._build();
   }
 
   // the kernel does not know an op this page posted (a dashboard newer than its kernel): the write is
@@ -3092,7 +3099,7 @@ class TimelinePanel {
       const names = (m.refused || []).map((r) => r && r.name).filter(Boolean);
       this._tagEditErr = { host: '', name: names.join(', ') || (mine && mine.name) || '',
                            error: m.error || (m.refused || []).map((r) => r.reason).filter(Boolean).join('; ') || 'refused' };
-      if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();
+      this._repaintTagSurfaces();
     } else {
       if (!this._viewsWrites.length) this._pendingViews = null;
       if (mine && mine.op === 'create' && typeof m.tid === 'string') {
@@ -3423,6 +3430,14 @@ class TimelinePanel {
       return [null, s.name || String(s.id || '').slice(0, 8)];
     };
     const build = () => {
+      // the open rename input's text and caret, read from the live element before it is torn down —
+      // the `input` listener keeps the text current, but the caret can move without one (arrow keys)
+      const live = this._tagRenameInput;
+      if (live && this._tagRenameDraft && this._tagRenameDraft.key === this._tagEditorFor) {
+        this._tagRenameDraft.value = live.value;
+        if (typeof live.selectionStart === 'number') { this._tagRenameDraft.selStart = live.selectionStart; this._tagRenameDraft.selEnd = live.selectionEnd; }
+      }
+      this._tagRenameInput = null;
       card.textContent = '';
       const v = this._curViews();
       // NAME-KEYED (user ruling 2026-08-24): whichever store's id opened this, the header is the
@@ -3524,18 +3539,36 @@ class TimelinePanel {
           }
           if (this._tagEditorFor === unionKey(tg) && editable) {
             const nameIn = document.createElement('input');
-            nameIn.value = tg.name; nameIn.maxLength = 40;
+            // an in-progress rename SURVIVES a repaint (the 2026-09-05 review): a refusal or an ack for
+            // some other row rebuilds the whole dialog while the user is typing here, and a fresh input
+            // seeded with the stored name would throw the typed text away. The draft (text and caret)
+            // is kept on the instance per editor key; a rebuild restores it and puts the caret back
+            // rather than selecting all, which the NEXT keystroke would have replaced.
+            const draft = this._tagRenameDraft && this._tagRenameDraft.key === unionKey(tg) ? this._tagRenameDraft : null;
+            nameIn.value = draft ? draft.value : tg.name; nameIn.maxLength = 40;
             nameIn.setAttribute('style', 'width:130px;background:' + INPUT_BG + ';color:' + INPUT_FG + ';'
               + 'border:1px solid ' + HAIRLINE + ';border-radius:5px;padding:2px 6px;font:inherit;');
+            const noteDraft = () => {
+              this._tagRenameDraft = { key: unionKey(tg), value: nameIn.value,
+                                       selStart: nameIn.selectionStart, selEnd: nameIn.selectionEnd };
+            };
+            nameIn.addEventListener('input', noteDraft);
             nameIn.addEventListener('change', () => {
               const nv2 = nameIn.value.slice(0, 40).trim();
-              this._tagEditorFor = null;
+              this._tagEditorFor = null; this._tagRenameDraft = null; this._tagRenameInput = null;
               if (nv2 && nv2 !== tg.name) this._editTagUnion(tg, { rename: nv2 });
               build();
             });
-            nameIn.addEventListener('keydown', (e) => { if (e.key === 'Escape') { this._tagEditorFor = null; build(); } });
+            nameIn.addEventListener('keydown', (e) => { if (e.key === 'Escape') { this._tagEditorFor = null; this._tagRenameDraft = null; this._tagRenameInput = null; build(); } });
             pillCell.appendChild(nameIn);
-            setTimeout(() => { try { nameIn.focus(); nameIn.select(); } catch (e) {} }, 0);
+            this._tagRenameInput = nameIn;   // the live input, read at the next repaint for its caret
+            setTimeout(() => {
+              try {
+                nameIn.focus();
+                if (draft && typeof draft.selStart === 'number' && typeof draft.selEnd === 'number') nameIn.setSelectionRange(draft.selStart, draft.selEnd);
+                else nameIn.select();
+              } catch (e) {}
+            }, 0);
           } else {
             const pill = pillCell.createSpan({ text: tg.name });
             pill.setAttribute('style', 'display:inline-flex;align-items:center;padding:2px 9px;'
@@ -3559,7 +3592,7 @@ class TimelinePanel {
             d.addEventListener('mouseenter', () => { d.style.color = '#F85B5A'; d.style.opacity = '1'; });
             d.addEventListener('mouseleave', () => { d.style.color = MENU_FG; d.style.opacity = '0.7'; });
             d.addEventListener('click', () => {
-              if (this._tagEditorFor === unionKey(tg)) this._tagEditorFor = null;
+              if (this._tagEditorFor === unionKey(tg)) { this._tagEditorFor = null; this._tagRenameDraft = null; }
               this._editTagUnion(tg, { delete: true });
               build();
             });
@@ -3570,7 +3603,7 @@ class TimelinePanel {
             const r = action(ren, 'rename', 'rename this tag (everywhere it is defined)');
             r.addEventListener('mouseenter', () => { r.style.opacity = '1'; });
             r.addEventListener('mouseleave', () => { r.style.opacity = '0.7'; });
-            r.addEventListener('click', () => { this._tagEditorFor = this._tagEditorFor === unionKey(tg) ? null : unionKey(tg); build(); });
+            r.addEventListener('click', () => { this._tagEditorFor = this._tagEditorFor === unionKey(tg) ? null : unionKey(tg); this._tagRenameDraft = null; build(); });
           }
           // the color — the identity-palette swatches inline in the row's last column
           const colCell = tgrid.createDiv();
@@ -3898,8 +3931,21 @@ class TimelinePanel {
         am.setAttribute('style', 'display:flex;gap:5px;flex-wrap:wrap;align-items:center;padding:2px 10px 6px 24px;');
         this._tagJoinMenu(am, [s.id], build);
       }
+      // a refused tag edit made FROM this menu shows here too (the 2026-09-05 review): the dialog's
+      // notice, in the menu's compact idiom — the reason, ✕ to dismiss. viewsAck and setCaps repaint
+      // the open menu (menu._build) the way they repaint the open dialog.
+      if (this._tagEditErr) {
+        const er = menu.createDiv();
+        er.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:2px 8px 4px;padding:3px 8px;'
+          + 'border:1px solid #F85B5A;border-radius:5px;color:#F85B5A;font-size:0.82em;');
+        er.createSpan({ text: '⚠ ' + (this._tagEditErr.host ? this._tagEditErr.host + ': ' : '') + this._tagEditErr.error });
+        const ex = er.createSpan({ text: '✕' });
+        ex.setAttribute('style', 'margin-left:auto;cursor:pointer;opacity:0.7;');
+        ex.addEventListener('click', (e) => { e.stopPropagation(); this._tagEditErr = null; build(); });
+      }
     };
     build();
+    menu._build = build;   // viewsAck / setCaps / tagEditFailed repaint the open menu with a refusal
     const h = this._menuHost(anchorEl.getBoundingClientRect());
     h.doc.body.appendChild(menu);   // a cross-document append ADOPTS the node; its listeners are kept
     const left = Math.min(Math.round(h.rect.left), (h.win.innerWidth || 9999) - 300);   // clamp on-screen

@@ -42,7 +42,12 @@ function makeNode(tag: string): any {
     setPointerCapture() {}, releasePointerCapture() {},
     querySelector() { return null; }, querySelectorAll() { return []; },
     getBoundingClientRect() { return n._rect || { width: 200, height: 20, left: 0, top: 0, right: 200, bottom: 20 }; },
-    closest() { return null; }, focus() {}, select() {}, setSelectionRange() {},
+    closest() { return null; },
+    // focus and caret are OBSERVABLE (the rename-draft assertions read them): focus records the active
+    // element on the fake document; select() and setSelectionRange() record the selection
+    focus() { g.document.activeElement = n; }, select() { n._sel = "all"; n.selectionStart = 0; n.selectionEnd = String(n.value || "").length; },
+    setSelectionRange(a: number, b: number) { n._sel = [a, b]; n.selectionStart = a; n.selectionEnd = b; },
+    selectionStart: 0, selectionEnd: 0,
     createEl(t: string, o: any) { const e = makeNode(t); if (o && o.cls) e.classList.add(o.cls); if (o && o.text) e.textContent = o.text; this.appendChild(e); return e; },
     createDiv(o: any) { return this.createEl("div", o); }, createSpan(o: any) { return this.createEl("span", o); },
   };
@@ -213,6 +218,80 @@ test("executed: a refusal reverts the optimistic copy at once and shows the reas
   const rc = tagOps()[2];
   assert.deepEqual([rc.op, rc.tid, rc.color, rc.name], ["recolor", NEW_TID, "#DD42FF", undefined]);
   assert.equal(panel._curViews().tags.find((t: any) => t.id === "gA").color, "#3b82f6", "\"web\" is untouched in the copy too");
+});
+
+// ── DIALOG BEHAVIOUR (the 2026-09-05 review, findings 10/11)
+test("executed: a refusal's rebuild preserves another row's in-progress rename — text, caret and focus", () => {
+  const S = copy(S0); S.tags.push({ id: "gB", name: "api", color: "#54B204", members: [SID2], mtime: 100 });
+  const panel = drawnPanel(S);
+  panel._openViewsDialog(null);
+  // the user opens the rename input on "api" and types a new name, caret mid-word
+  const renameBtn = walk(panel._viewsDialog).filter((n) => n.textContent === "rename")[1];
+  assert.ok(renameBtn, "the api row's rename action");
+  renameBtn._listeners.click();
+  assert.equal(panel._tagEditorFor, "gB");
+  let inp = nameInput(panel);
+  assert.equal(inp.value, "api");
+  assert.equal(g.document.activeElement, inp, "the input took focus on open");
+  assert.equal(inp._sel, "all", "…with the stored name selected, ready to be typed over");
+  inp.value = "api-v2"; inp._listeners.input(); inp.setSelectionRange(4, 4);
+  // meanwhile a recolor of "web" (another row) posted earlier is REFUSED — the dialog repaints
+  panel._editTagUnion(viewTagUnion(panel._curViews()).find((x: any) => x.name === "web"), { color: "#DD42FF" });
+  panel.viewsAck({ type: "tagEditAck", writeId: tagOps()[0].writeId, ok: false, tid: "gA", seq: 1000, error: "that tag no longer exists — it may have been deleted from another dashboard", views: copy(S) });
+  const inp2 = nameInput(panel);
+  assert.notEqual(inp2, inp, "the dialog WAS rebuilt (a fresh input)");
+  assert.equal(inp2.value, "api-v2", "the typed text survives the rebuild");
+  assert.equal(g.document.activeElement, inp2, "focus is back in the input");
+  assert.deepEqual(inp2._sel, [4, 4], "the caret is where it was — not select-all, which the next keystroke would replace");
+  assert.equal(panel._tagEditorFor, "gB", "the editor stays on the same row");
+  // finishing the rename posts it by tid and clears the draft; the next open starts from the stored name
+  inp2._listeners.change();
+  const ren = tagOps()[1];
+  assert.deepEqual([ren.op, ren.tid, ren.newName], ["rename", "gB", "api-v2"]);
+  assert.equal(panel._tagRenameDraft, null);
+  // Escape drops a draft too
+  walk(panel._viewsDialog).filter((n) => n.textContent === "rename")[1]._listeners.click();
+  inp = nameInput(panel); inp.value = "zzz"; inp._listeners.input();
+  inp._listeners.keydown({ key: "Escape" });
+  assert.equal(panel._tagRenameDraft, null);
+  assert.equal(findNameInput(panel), undefined, "the editor closed");
+});
+
+test("executed: the lane gear menu shows a refusal inline, repaints on it, and ✕ dismisses it", () => {
+  const panel = drawnPanel();
+  const s = panel.data.sessions.find((x: any) => x.id === SID2);
+  const anchor = makeNode("g"); anchor._rect = { left: 40, top: 60, right: 60, bottom: 76, width: 20, height: 16 };
+  panel._openLaneMenu(s, anchor);
+  assert.ok(panel._laneMenu, "the gear menu is open");
+  assert.equal(typeof panel._laneMenu._build, "function", "…and exposes its repaint");
+  const notices = () => walk(panel._laneMenu).map((n) => n.textContent as string).filter((t) => t.startsWith("⚠ "));   // the notice spans themselves
+  assert.deepEqual(notices(), [], "no notice at rest");
+  // a tag gesture made FROM the menu (the [+] join option) is refused by the kernel
+  const plus = walk(panel._laneMenu).find((n) => n.textContent === "+" && n._attrs.title === "add a tag");
+  assert.ok(plus, "the menu's [+]");
+  plus._listeners.click({ stopPropagation() {} });
+  const opt = walk(panel._laneMenu).find((n) => n.textContent === "web");
+  assert.ok(opt, "the join option for the tag this session lacks");
+  opt._listeners.click();
+  const w = tagOps()[0];
+  assert.deepEqual([w.op, w.tid, w.sids], ["addMember", "gA", [SID2]]);
+  const why = "that tag no longer exists — it may have been deleted from another dashboard";
+  panel.viewsAck({ type: "tagEditAck", writeId: w.writeId, ok: false, tid: "gA", seq: 1000, error: why, views: copy(S0) });
+  const shown = notices();
+  assert.equal(shown.length, 1, "the refusal shows in the open menu — the dialog is not the only surface that edits tags");
+  assert.ok(shown[0].startsWith("⚠ " + why), shown[0]);
+  assert.deepEqual(panel._curViews().tags[0].members, [SID1], "the optimistic add reverted");
+  // ✕ dismisses it and repaints the menu without it
+  const x = walk(panel._laneMenu).find((n) => n.textContent === "✕" && n.parentNode && textOf(n.parentNode).startsWith("⚠ "));
+  assert.ok(x, "the notice has its dismiss");
+  x._listeners.click({ stopPropagation() {} });
+  assert.equal(panel._tagEditErr, null);
+  assert.deepEqual(notices(), [], "gone");
+  // a remote refusal (tagEditFailed) lands there too
+  panel.tagEditFailed({ type: "tagEditFailed", host: "TESTHOST", name: "web", error: "refused" });
+  assert.deepEqual(notices(), ["⚠ TESTHOST: refused"]);
+  panel._closeLaneMenu();
+  assert.equal(panel._laneMenu, null);
 });
 
 test("executed: membership edits are targeted too — the join menu's option adds by tid; its new-tag input is ONE create with members, no client id", () => {
