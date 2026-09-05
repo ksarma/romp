@@ -114,6 +114,27 @@ def _no_cli_scope():
     yield
 
 
+# No test may run the REAL credential command (2026-09-05): kernel/envsource.py runs
+# ROMP_CREDENTIAL_COMMAND — an installation's vault command — at backend construction and on every
+# stale read, and a self-hosted romp's tool shells inherit the manager's environment, variable
+# included. Popped, so every test starts in file mode with no command, no selector file, no names
+# and the default timeout; a test that exercises the command source writes its own fake script and
+# sets the variables in setUp (which runs after this fixture). Import-time for collection, per-test
+# re-assert below, on the same reasoning as the manager-port floor. The env-file floor above already
+# keeps the same four lines from being read out of the real service.env.
+_CREDENTIAL_VARS = ("ROMP_CREDENTIAL_COMMAND", "ROMP_CREDENTIAL_SELECTOR_FILE",
+                    "ROMP_CREDENTIAL_NAMES", "ROMP_CREDENTIAL_TIMEOUT_S")
+for _v in _CREDENTIAL_VARS:
+    os.environ.pop(_v, None)
+
+
+@pytest.fixture(autouse=True)
+def _no_credential_command():
+    for var in _CREDENTIAL_VARS:
+        os.environ.pop(var, None)
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _stub_place_llm(monkeypatch):
     """Card-first placer floor (2026-07-08): every loaded romp-judge instance gets a no-op place_llm so
