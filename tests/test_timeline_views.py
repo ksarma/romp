@@ -214,7 +214,7 @@ class TimelineViews(unittest.TestCase):
         self.assertEqual(v["active"], "all")
         src = open(os.path.join(BIN, "romp-kernel")).read()
         self.assertIn('msg.get("type") == "setTimelineViews"', src)
-        self.assertIn('_set_timeline_views(msg["views"])', src)
+        self.assertIn('_set_timeline_views(msg["views"], edited=edited)', src, "the door passes the edited ids down: the setter files its notice by the ack's rule")
 
     def test_payloads_echo_the_views_blob(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()

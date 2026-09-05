@@ -361,6 +361,55 @@ class WholeBlobAcks(_Wire):
         c = self.post({"type": "setTimelineViews", "writeId": "w3", "views": stale})
         self.assertFalse(c["ok"])
 
+    def test_the_notice_is_filed_only_when_the_poster_edited_the_kept_tag(self):
+        """Round 3 of the 2026-09-05 review: the benign case — a kept tag outside `edited`, acked ok —
+        still filed a red "reload that dashboard to resync" notice plus stderr for every kept tag.
+        Now the notice follows the ack's verdict: a lost edit is loud; a stale copy of an untouched tag
+        is one quiet stderr line and nothing on the dashboard."""
+        import contextlib
+        import io
+        served = self.seed()
+        stale = json.loads(json.dumps(served))
+        time.sleep(1.1)
+        km._edit_tag("web", add=[SID2])
+        stale["actives"] = {"timeline": {"tags": ["web"]}}
+        stale["tags"][0]["members"] = []
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale, "edited": []})
+        self.assertEqual((a["ok"], [r["tid"] for r in a["refused"]]), (True, ["gA"]))
+        self.assertEqual(self.notices, [], "nothing the user did was refused, so no notice")
+        lines = [ln for ln in err.getvalue().splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 1, "one quiet stderr line is the whole record")
+        self.assertIn('"web"', lines[0])
+        self.assertNotIn("reload that dashboard", lines[0])
+        # the same write naming web as edited: the lost-edit notice, as before
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            b = self.post({"type": "setTimelineViews", "writeId": "w2", "views": stale, "edited": ["gA"]})
+        self.assertFalse(b["ok"])
+        self.assertEqual(len(self.notices), 1)
+        self.assertFalse(self.notices[0][1])
+        self.assertIn('"web"', self.notices[0][0])
+        self.assertIn("reload that dashboard", self.notices[0][0])
+        # a mixed write — one kept tag edited, one not — names only the edited one on the dashboard
+        self.notices.clear()
+        self.assertTrue(self.post({"type": "tagEdit", "writeId": "w3", "edit": {"op": "create", "name": "api", "color": "#54B204", "sids": [SID3]}})["ok"])
+        stale2 = json.loads(json.dumps(km._views_client()))
+        time.sleep(1.1)
+        km._edit_tag("web", color="#DD42FF")
+        km._edit_tag("api", color="#DD42FF")
+        for t in stale2["tags"]:
+            t["color"] = "#000000"
+        api_tid = next(t["id"] for t in stale2["tags"] if t["name"] == "api")
+        with contextlib.redirect_stderr(io.StringIO()):
+            c = self.post({"type": "setTimelineViews", "writeId": "w4", "views": stale2, "edited": [api_tid]})
+        self.assertFalse(c["ok"])
+        self.assertEqual(sorted(r["name"] for r in c["refused"]), ["api", "web"], "both kept; the ack lists both")
+        self.assertEqual(len(self.notices), 1)
+        self.assertIn('"api"', self.notices[0][0])
+        self.assertNotIn('"web"', self.notices[0][0], "the untouched tag is not the user's problem")
+
     def test_the_refusal_names_the_tag_once_and_says_what_was_kept(self):
         """Finding 15: the reason carried the name and the client prefixed it again."""
         served = self.seed()
@@ -383,7 +432,7 @@ class WholeBlobAcks(_Wire):
         self.seed()
         real = km._set_timeline_views
 
-        def boom(blob):
+        def boom(blob, **kw):
             raise RuntimeError("disk on fire")
         km._set_timeline_views = boom
         try:

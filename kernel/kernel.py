@@ -2684,7 +2684,7 @@ def _views_restamp(d, hit):
     return None
 
 
-def _set_timeline_views(blob, base=None, seq_floor=0):
+def _set_timeline_views(blob, base=None, seq_floor=0, edited=None):
     # Per-tag mtime, stamped at the store's ONE write door by diffing against the previous blob
     # (tag federation v2, the user 2026-08-29): a pending edit queued for an unreachable host must
     # be able to tell, at late-apply time, whether the host's copy changed AFTER the user's ruling —
@@ -2696,7 +2696,14 @@ def _set_timeline_views(blob, base=None, seq_floor=0):
     # re-stamp path (_timeline_views) passes the file's own content, since reading it here would
     # find the same un-stamped file and re-enter the reader; `seq_floor` is the last seq that path
     # served, so the re-stamped file orders after it. Every other caller leaves both alone.
+    # `edited` — the WS door's whole-blob path passes the tag ids the posting client CHANGED (a
+    # lens or order write names none); None from every other caller and from an older client. It
+    # classifies a refusal: a kept tag the poster edited is a LOST EDIT (the notice below fires, the
+    # ack is not ok); a kept tag outside it is a stale copy of something the poster never touched —
+    # the store's copy stands, the ack lists it, nothing is said to the user (round 3 of the
+    # 2026-09-05 review: the benign case still filed a red "reload that dashboard" notice).
     v = _norm_timeline_views(blob)
+    ed = set(x for x in edited if isinstance(x, str)) if isinstance(edited, list) else None
     if base is None:
         try:
             base = _timeline_views()
@@ -2735,7 +2742,7 @@ def _set_timeline_views(blob, base=None, seq_floor=0):
         if pt and pt.get("mtime") and int(pt["mtime"]) > ev and \
                 (pt.get("name"), pt.get("color"), pt.get("members")) != \
                 (t.get("name"), t.get("color"), t.get("members")):
-            refused.append('"%s"' % pt.get("name"))
+            refused.append(('"%s"' % pt.get("name"), t["id"]))
             # the reason names no tag: the ack composes '"<name>": <reason>' once (_ack_views_write),
             # so a toast or notice never says the name twice (the 2026-09-05 review)
             rows.append({"tid": t["id"], "name": pt.get("name"),
@@ -2746,20 +2753,31 @@ def _set_timeline_views(blob, base=None, seq_floor=0):
             kept.append(t)
     for tid, pt in prev.items():
         if tid not in incoming and pt.get("mtime") and int(pt["mtime"]) > ev:
-            refused.append('"%s" (deletion)' % pt.get("name"))
+            refused.append(('"%s" (deletion)' % pt.get("name"), tid))
             rows.append({"tid": tid, "name": pt.get("name"),
                          "reason": "it was edited after your copy was taken, so it was not deleted"})
             kept.append(json.loads(json.dumps(pt)))       # a stale writer cannot delete newer state
     v["tags"] = kept[:_VIEWS_MAX_TAGS]
-    if refused:
+    # The refusal's two audiences: a kept tag the poster EDITED is a lost edit — stderr plus a red
+    # dashboard notice (the user 2026-08-31's silent loss, never again silent). A kept tag the
+    # poster did not edit (`edited` names the ones it did) is a stale copy of an untouched tag,
+    # acked ok with the refusal listed and adopted from the ack: nothing the user did was refused,
+    # so no notice — one stderr line is the whole record. Without `edited` (an older client, the
+    # RMW callers, the reader's re-stamp) every refusal reads as loud, as before.
+    loud = sorted(set(lb for lb, tid in refused if ed is None or tid in ed))
+    quiet = sorted(set(lb for lb, tid in refused if ed is not None and tid not in ed))
+    if loud:
         why = ("a stale dashboard write was partially refused: its copy of %s predates newer "
                "edits (the newer state was kept — reload that dashboard to resync)"
-               % ", ".join(sorted(set(refused))))
+               % ", ".join(loud))
         sys.stderr.write("romp-kernel: %s\n" % why)
         try:
             _sync_notice(why, ok=False)
         except Exception:
             pass
+    if quiet:
+        sys.stderr.write("romp-kernel: kept the store's copy of %s over a dashboard's stale copy of it "
+                         "(a tag that dashboard did not edit; the ack carries the newer state)\n" % ", ".join(quiet))
     for t in v["tags"]:
         pt = prev.get(t["id"])
         if pt is None or (pt.get("name"), pt.get("color"), pt.get("members")) != \
@@ -39174,10 +39192,11 @@ class Handler(BaseHTTPRequestHandler):
             # through another's tag edit toasted a refusal for a tag the user never edited). A write
             # without `edited` (an older client) keeps the strict reading: any refusal, ok false.
             try:
-                with _views_lock:
-                    refused = _set_timeline_views(msg["views"])
                 edited = msg.get("edited")
-                if isinstance(edited, list):
+                edited = [x for x in edited if isinstance(x, str)] if isinstance(edited, list) else None
+                with _views_lock:
+                    refused = _set_timeline_views(msg["views"], edited=edited)   # the setter files the notice by the same rule
+                if edited is not None:
                     ok = not any(r.get("tid") in edited for r in refused)
                 else:
                     ok = not refused
