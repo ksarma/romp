@@ -87,8 +87,11 @@ test("one-click MOVE between groups (tab groups, 2026-09-04): 'Move to <name>' a
   assert.match(fly, /plus\.title = "add this tag too — the session stays in its current group";/, "…and multi-tag stays one click away");
   assert.match(fly, /lb\.textContent = "\+ " \+ g\.name; bodyE\.appendChild\(lb\);/, "with no home tag, + <name> is the move");
   const mv = RENDER.slice(RENDER.indexOf("const moveUnion = (from: TagUnion, to: TagUnion)"), RENDER.indexOf("// HOVER-INTENT open"));
-  assert.match(mv, /const a = applyUnionEdit\(nv, to, \{ add: \[id\] \}\);\s*\n\s*const r = applyUnionEdit\(nv, from, \{ remove: \[id\] \}\);\s*\n\s*postUnionEdits\(nv, a, r\);/,
-    "two edits, ONE blob shown, two targeted ops — the strip never shows the half-moved state");
+  assert.match(mv, /const a = applyUnionEdit\(nv, to, \{ add: \[id\] \}\);\s*\n\s*const r = applyUnionEdit\(nv, from, \{ remove: \[id\] \}\);/,
+    "two edits on ONE blob shown — the strip never shows the half-moved state");
+  assert.match(mv, /postUnionEdits\(nv, \{ ops: \[\{ op: "move", tid_from: rem\.tid, tid_to: add\.tid, sid: id \}\], mirrored: a\.mirrored \|\| r\.mirrored \}\);/,
+    "…and with both tags local, ONE `move` op the kernel applies under its lock: both halves or neither (2026-09-05)");
+  assert.match(mv, /else postUnionEdits\(nv, a, r\);/, "a half with no local home rides its own wire as before");
   assert.match(RENDER, /const applyUnionEdit = \(nv: SessionViews, g: TagUnion, edit: \{ add\?: string\[\]; remove\?: string\[\] \}\): UnionEdit =>/,
     "editUnion and moveUnion share the one edit — never a forked implementation");
 });

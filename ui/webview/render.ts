@@ -5496,12 +5496,18 @@ function showTabMenu(e: MouseEvent, id: string) {
       else if (edits.some((e) => e.mirrored)) { pendingSessionViews = nv; renderTabs(); }
     };
     // a MOVE between groups (tab groups, the user 2026-09-04): add the target tag, drop the HOME
-    // tag, leave every other tag alone — one blob, so the strip never shows the half-moved state
+    // tag, leave every other tag alone — one blob, so the strip never shows the half-moved state.
+    // With both tags local it is ONE `move` op the kernel applies under its lock, both halves or
+    // neither (the 2026-09-05 review: as two ops, a refused second half left the session in no
+    // group). A half with no local home rides its own wire (editTag) as before.
     const moveUnion = (from: TagUnion, to: TagUnion) => {
       const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
       const a = applyUnionEdit(nv, to, { add: [id] });
       const r = applyUnionEdit(nv, from, { remove: [id] });
-      postUnionEdits(nv, a, r);
+      const add = a.ops.find((o) => o.op === "addMember"), rem = r.ops.find((o) => o.op === "removeMember");
+      if (add && rem && a.ops.length === 1 && r.ops.length === 1)
+        postUnionEdits(nv, { ops: [{ op: "move", tid_from: rem.tid, tid_to: add.tid, sid: id }], mirrored: a.mirrored || r.mirrored });
+      else postUnionEdits(nv, a, r);
     };
     // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
     // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a

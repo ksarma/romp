@@ -15,9 +15,12 @@ import type { SessionViews } from "./session-views";
  *  follow-up addressed by name could land on whichever OTHER tag already had it. The message nests
  *  this under `edit`, so no top-level `name` can read as a session address to the federation router. */
 export interface TagEditOp {
-  op: "create" | "rename" | "recolor" | "addMember" | "removeMember" | "delete";
-  /** the tag's stored id — every op but create */
+  op: "create" | "rename" | "recolor" | "addMember" | "removeMember" | "delete" | "move";
+  /** the tag's stored id — every op but create and move */
   tid?: string;
+  /** move only: off `tid_from`, onto `tid_to`, as ONE write on the kernel — both halves or neither */
+  tid_from?: string;
+  tid_to?: string;
   /** create only: the typed name, or none for the kernel's default ("tag N", minted unique there) */
   name?: string;
   newName?: string;

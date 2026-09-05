@@ -101,8 +101,10 @@ test("pins: the Tags flyout's local edits are targeted ops on ONE optimistic blo
   assert.doesNotMatch(body, /op: "(?:addMember|removeMember|rename|recolor|delete)", name:/, "no op but create carries a tag name");
   assert.match(body, /const postUnionEdits = \(nv: SessionViews, \.\.\.edits: UnionEdit\[\]\) =>/);
   assert.match(body, /for \(const op of ops\) postTagEdit\(nv, op\);/, "N ops, the one copy shown for all of them");
-  assert.match(RENDER, /const a = applyUnionEdit\(nv, to, \{ add: \[id\] \}\);\s*\n\s*const r = applyUnionEdit\(nv, from, \{ remove: \[id\] \}\);\s*\n\s*postUnionEdits\(nv, a, r\);/,
-    "the move: two ops on one blob — the strip never shows the half-moved state");
+  assert.match(RENDER, /const a = applyUnionEdit\(nv, to, \{ add: \[id\] \}\);\s*\n\s*const r = applyUnionEdit\(nv, from, \{ remove: \[id\] \}\);/,
+    "the move: two edits on one blob — the strip never shows the half-moved state");
+  assert.match(RENDER, /\{ op: "move", tid_from: rem\.tid, tid_to: add\.tid, sid: id \}/,
+    "…posted as ONE atomic op when both tags are local (both halves land or neither)");
   assert.match(RENDER, /postTagEdit\(nv, \{ op: "create", name, color, sids: \[id\] \}\);/,
     "New tag… is ONE create carrying the session — the tag and its first member land together; the kernel mints the id");
   const fly = RENDER.slice(at, RENDER.indexOf("// HOVER-INTENT open", at));

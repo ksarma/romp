@@ -3166,7 +3166,34 @@ def _edit_tag(name=None, add=(), remove=(), color=None, delete=False, rename=Non
         return out, None
 
 
-_TAG_EDIT_OPS = ("create", "rename", "recolor", "addMember", "removeMember", "delete")
+def _move_tag_member(tid_from, tid_to, sids):
+    """A session's MOVE between two local tags — off `tid_from`, onto `tid_to` — as ONE write under
+    _views_lock: both halves land or neither does (the 2026-09-05 review: as two targeted ops, a
+    refused second half left the session in no group, and the tab strip showed the half-moved state
+    until the user noticed). The strip's "Move to <tag>" posts this. Members arrive as the
+    viewer-relative id strings every client posts (_member_pair canonicalizes). Returns
+    (tag-or-None, error-or-None) like _edit_tag; the tag is the destination's post-write row."""
+    with _views_lock:
+        v = json.loads(json.dumps(_timeline_views()))     # deep copy: never mutate the cached blob
+        by_id = {t["id"]: t for t in v["tags"]}
+        src, dst = by_id.get(tid_from), by_id.get(tid_to)
+        if src is None:
+            return None, "the tag to move out of no longer exists — it may have been deleted from another dashboard"
+        if dst is None:
+            return None, "the tag to move into no longer exists — it may have been deleted from another dashboard"
+        pairs = [m for m in (_member_pair(x) for x in sids) if m]
+        keys = {(m["host"], m["sid"]) for m in pairs}
+        src["members"] = [m for m in src["members"] if (m["host"], m["sid"]) not in keys]
+        have = {(m["host"], m["sid"]) for m in dst["members"]}
+        dst["members"] = list(dst["members"]) + [m for m in pairs if (m["host"], m["sid"]) not in have]
+        v = _norm_timeline_views(v)
+        _set_timeline_views(v)
+        out = json.loads(json.dumps(next(t for t in v["tags"] if t["id"] == tid_to)))
+        out["members"] = [_member_str(m) for m in out["members"]]
+        return out, None
+
+
+_TAG_EDIT_OPS = ("create", "rename", "recolor", "addMember", "removeMember", "delete", "move")
 
 
 def _apply_tag_edit(e):
@@ -3195,6 +3222,15 @@ def _apply_tag_edit(e):
     if op == "create":
         name = str(e.get("name") or "").strip() or None
         t, err = _edit_tag(name, add=sids, color=color or "", exists=False)
+    elif op == "move":
+        # {tid_from, tid_to, sid|sids}: off one tag, onto another, as ONE write — both or neither
+        tf, tt = e.get("tid_from"), e.get("tid_to")
+        if not (isinstance(tf, str) and tf and isinstance(tt, str) and tt):
+            return False, "the edit named no tag", None
+        if not sids:
+            return False, "the edit named no session", None
+        t, err = _move_tag_member(tf, tt, sids)
+        return err is None, err, ({"tid": t["id"], "name": t["name"]} if t else {"tid": tt})
     elif tid is None:
         return False, "the edit named no tag", None
     elif op == "rename":

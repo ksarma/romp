@@ -258,6 +258,42 @@ class TargetedTagEdits(_Wire):
         self.assertEqual((a["ok"], a["writeId"]), (True, None))
         self.assertTrue(store_tag("api")["id"].startswith("g"), "the kernel mints the id, /tag's shape")
 
+    def test_a_move_is_one_write_both_halves_or_neither(self):
+        """The tab strip's "Move to <tag>" (the 2026-09-05 review, finding 14): off the home tag,
+        onto the target, as ONE write under the lock — a refused destination leaves the source's
+        membership exactly as it was, and the store moves its write sequence once per move."""
+        self.seed()                                                        # web = gA holding SID1
+        api = self.edit("w1", {"op": "create", "name": "api", "color": "#54B204"})["tid"]
+        writes, real = [], km._set_timeline_views
+        km._set_timeline_views = lambda blob: (writes.append(1), real(blob))[1]
+        try:
+            a = self.edit("w2", {"op": "move", "tid_from": "gA", "tid_to": api, "sid": SID1})
+        finally:
+            km._set_timeline_views = real
+        self.assertEqual((a["ok"], a["tid"], a["name"]), (True, api, "api"))
+        self.assertEqual(store_tag("web")["members"], [], "off the home tag…")
+        self.assertEqual([m["sid"] for m in store_tag("api")["members"]], [SID1], "…onto the target")
+        self.assertEqual(len(writes), 1, "ONE store write for the move, not one per half")
+        # a refused DESTINATION: nothing moves — the source keeps the session
+        before = json.dumps(km._timeline_views(), sort_keys=True)
+        r = self.edit("w3", {"op": "move", "tid_from": api, "tid_to": "gghost", "sid": SID1})
+        self.assertFalse(r["ok"])
+        self.assertIn("move into", r["error"])
+        self.assertEqual([m["sid"] for m in store_tag("api")["members"]], [SID1], "the source membership is intact")
+        self.assertEqual(json.dumps(km._timeline_views(), sort_keys=True), before, "nothing was written")
+        # a refused SOURCE, and the two malformed shapes
+        r = self.edit("w4", {"op": "move", "tid_from": "gghost", "tid_to": "gA", "sid": SID1})
+        self.assertEqual((r["ok"], "move out of" in r["error"]), (False, True))
+        self.assertEqual(store_tag("web")["members"], [], "the destination is untouched")
+        self.assertEqual(self.edit("w5", {"op": "move", "tid_from": api, "tid_to": "gA"})["error"], "the edit named no session")
+        self.assertEqual(self.edit("w6", {"op": "move", "tid_to": "gA", "sid": SID1})["error"], "the edit named no tag")
+        self.assertEqual(json.dumps(km._timeline_views(), sort_keys=True), before)
+        # a move onto a tag already holding the session, off one that does not: still one clean write
+        m = self.edit("w7", {"op": "move", "tid_from": "gA", "tid_to": api, "sids": [SID1]})
+        self.assertTrue(m["ok"])
+        self.assertEqual([x["sid"] for x in store_tag("api")["members"]], [SID1], "no duplicate member")
+        self.assertEqual(self.notices, [], "a move is built from the store — never judged stale")
+
     def test_the_tag_route_still_addresses_by_name_and_creates_on_first_use(self):
         """_edit_tag's name path is unchanged for `romp tag`: a missing name is created on any
         edit, an existing one is edited, a duplicate name refuses rather than guesses."""
