@@ -406,9 +406,10 @@ one the store lacks is not created ("a write is read to 64 tags and it was past
 that bound, so it was not created"), one the store holds keeps the store's copy
 ("a write is read to 64 tags and its copy was past that bound, so the store's
 copy was kept"). Past those 64, the rest are counted in one summary row with no
-`tid` or `name`, `{reason, more, moreEdited}`, whose reason reads "and N more
-entries past that bound were not read", with " (M of them this write edited)"
-appended when `edited` names any of them. The bound exists because the rows,
+`tid` or `name`, `{reason, more, moreEdited}`, whose reason reads "N more
+entries past the 64-tag read bound were not read", with " (M of them this write
+edited)" appended when `edited` names any of them; the reason stands on its own
+because it can lead the ack's one-line `error`. The bound exists because the rows,
 the loud notice and the ack's `error` all grew with the posted array: a
 100k-entry post drew an ack of about 22 MB, which overran the socket's queue
 and dropped the poster's own socket. Every unread store tag is kept, wherever
@@ -422,9 +423,10 @@ characters, then "and N more"; without `edited` the rows appear in the judge's
 order. The rows carry every reason in full and are never reordered; a client
 composes the same shape from them, in their order, when the line is absent.
 Until round 9 of the 2026-09-05 review the line followed the judge's order,
-which lists the quiet rows (kept copies of tags the poster did not edit)
-first, so when those filled the line the bound cut the one row that made `ok`
-false and the line named only tags the poster never edited. The loud notice gives the
+which files rows in the posted array's order, quiet (kept copies of tags the
+poster did not edit) and loud interleaved, with the cap pass last, so with
+enough quiet rows ahead of it the bound cut the one row that made `ok` false
+and the line named only tags the poster never edited. The loud notice gives the
 count of refused tags and lists each with its cause. A remote tag's rendered name is on the
 same stored basis (clamped, then stripped; "tag" when empty) as the lens and
 order entries, so a padded name a remote kernel serves raw reads as the name a

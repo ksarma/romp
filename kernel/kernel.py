@@ -3433,8 +3433,11 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
                          "reason": "a write is read to %d tags and it was past that bound, "
                                    "so it was not created" % bound})
     if more:
-        rows.append({"reason": "and %d more entries past that bound were not read%s"
-                               % (more, (" (%d of them this write edited)" % more_ed) if more_ed else ""),
+        # the reason is self-contained (round 10 of the 2026-09-05 review): since round 9 this row can
+        # LEAD the ack's error line, where a continuation clause ("and N more ... past that bound")
+        # continued nothing and named a bound the reader had not been told
+        rows.append({"reason": "%d more entries past the %d-tag read bound were not read%s"
+                               % (more, bound, (" (%d of them this write edited)" % more_ed) if more_ed else ""),
                      "more": more, "moreEdited": more_ed})
     for tid, pt in prev.items():
         if tid in incoming:

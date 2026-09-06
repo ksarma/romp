@@ -384,7 +384,7 @@ test("executed: lens and order edits keep the whole-blob post, now with a writeI
 test("executed: a refusal's nameless summary row renders in the dialog as its reason alone — with the kernel's error line, without it, and as the only row", () => {
   const panel = drawnPanel();
   const bound = 'a write is read to 64 tags; "qa" lay past that bound and was not read, so the stored copy was kept';
-  const more = "and 3 more entries past that bound were not read (1 of them this write edited)";
+  const more = "3 more entries past the 64-tag read bound were not read (1 of them this write edited)";
   const summary = { reason: more, more: 3, moreEdited: 1 };
   panel._viewsDialog = makeNode("div"); let rebuilt = 0; panel._viewsDialogBuild = () => rebuilt++;
   // the kernel's shape: the bounded `error` names each refused tag once; the rows carry the summary

@@ -2207,8 +2207,8 @@ class RefusalRowsAreBounded(_Wire):
         summary = [r for r in ack["refused"] if not r.get("tid")]
         self.assertEqual([r["tid"] for r in named if "read to" in r["reason"]], ["g%d" % i for i in range(bound, 2 * bound)],
                          "the first 64 unread entries, in array order, get rows of their own")
-        self.assertEqual(summary, [{"reason": "and 9872 more entries past that bound were not read "
-                                              "(9872 of them this write edited)",
+        self.assertEqual(summary, [{"reason": "9872 more entries past the %d-tag read bound were not read "
+                                              "(9872 of them this write edited)" % bound,
                                     "more": 9872, "moreEdited": 9872}])
         self.assertLessEqual(len(ack["error"]), km._ACK_ERROR_CAP)
         self.assertRegex(ack["error"], r" and \d+ more$", "the one-line form is bounded the same way")
@@ -2333,7 +2333,7 @@ class AckErrorNamesThePostersRefusalFirst(_Wire):
         names none of them; the rows in the ack are never reordered."""
         quiet = [{"tid": "g%d" % i, "name": "tag-name-%02d" % i, "reason": self.QUIET} for i in range(10)]
         mine = {"tid": "mine", "name": "mine", "reason": self.CAP}
-        summary = {"reason": "and 5 more entries past that bound were not read (1 of them this write edited)",
+        summary = {"reason": "5 more entries past the 64-tag read bound were not read (1 of them this write edited)",
                    "more": 5, "moreEdited": 1}
 
         def ack(refused, edited):
