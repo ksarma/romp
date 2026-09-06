@@ -945,6 +945,28 @@ class ViewBuilder(unittest.TestCase):
             km._set_session_flag(SID, "hideFromFeed", False); km._flags_cache.clear()
             km._built_feed[:], km._feed_needs_input[0], km._views_dirty[0], km._sdk = saved
 
+    def test_the_first_feed_build_does_not_bust_every_chat_build(self):
+        """_chat_build_sig folds the feed's needs-you as a BOOL (review r2 2026-09-06). The set behind it is
+        None until the first feed build since start, and a push builds the chat sessions BEFORE the feed, so
+        a raw fold gave every tab a None sig on the first push and a False one on the next, a whole-strip
+        rebuild for a value the row reads the same (needsInput === true). None and False share a signature;
+        True (a card of THIS session under needs-you) differs from both, so a real verdict still busts."""
+        sess = {"path": str(self.tpath), "sid": SID, "anchor": ""}
+        saved = (km._feed_needs_input[0], km._sdk)
+        km._sdk = lambda: None
+        try:
+            km._feed_needs_input[0] = None
+            before_feed = km._chat_build_sig(sess)
+            km._feed_needs_input[0] = frozenset()
+            self.assertEqual(km._chat_build_sig(sess), before_feed,
+                             "the first feed build, no card of this session under needs-you: nothing the row shows changed, no rebuild")
+            km._feed_needs_input[0] = frozenset(["99999999-8888-7777-6666-555555555555"])
+            self.assertEqual(km._chat_build_sig(sess), before_feed, "another session's card: still nothing of this row")
+            km._feed_needs_input[0] = frozenset([SID])
+            self.assertNotEqual(km._chat_build_sig(sess), before_feed, "a card of this session under needs-you is the verdict that busts")
+        finally:
+            km._feed_needs_input[0], km._sdk = saved
+
     def test_ledgers_attach_carries_the_working_note_and_the_feed_verdict(self):
         """The Outline's per-session `ledgers` (feed["ledgers"], built in _push from the chat sessions) carry
         the whole ledger dict, so the Outline gets workingNote and needsInput with no new frame. Executed

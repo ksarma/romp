@@ -22598,7 +22598,11 @@ def _chat_build_sig(sess):
     # the verdict as its bit. Both now reach a background row at the next push, like every other
     # ledger field.
     sig.append(Sessions.working_note(sess.get("sid") or ""))
-    sig.append(_feed_needs_input_of(sess.get("sid") or ""))
+    # The bit as a bool, not the raw tri-state (review r2 2026-09-06): _feed_needs_input is None until the
+    # first feed build since start, and a push builds the chat sessions BEFORE the feed, so a raw fold gave
+    # every tab a None sig on the first push and a False one on the next (0.5 s later) and rebuilt the
+    # whole strip once for a value the row reads the same (needsInput === true). Only True is a verdict.
+    sig.append(_feed_needs_input_of(sess.get("sid") or "") is True)
     return tuple(sig)
 
 

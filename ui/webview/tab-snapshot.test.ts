@@ -290,7 +290,8 @@ test("pinned: the kernel puts the working note AND the feed's needs-you verdict 
   // the chat-build cache: both fields ride the sig, so a background tab's row follows them at the next push
   const SIG = KERNEL.slice(KERNEL.indexOf("def _chat_build_sig(sess):"), KERNEL.indexOf("def _parse(path, sid, now):"));
   assert.match(SIG, /sig\.append\(Sessions\.working_note\(sess\.get\("sid"\) or ""\)\)/);
-  assert.match(SIG, /sig\.append\(_feed_needs_input_of\(sess\.get\("sid"\) or ""\)\)/);
+  assert.match(SIG, /sig\.append\(_feed_needs_input_of\(sess\.get\("sid"\) or ""\) is True\)/,
+    "as a BOOL: None (no feed build yet) and False share a signature, so the first feed build after a start does not rebuild every tab (review r2)");
 });
 
 test("the guide describes the view and the new fold rule", () => {
