@@ -37610,7 +37610,7 @@ else{var b=document.getElementById("romp-stale-self");if(b&&b.dataset.kind==="co
 // checked at RAISE time (there is no event for a CSS display flip). The hidden pane still reconnects in
 // the background; if it is shown again while genuinely stale, its watchdog re-raises within one tick,
 // now visible, and the resync retires it exactly as before.
-function paneHidden(){try{return window.parent!==window&&(window.innerWidth===0||window.innerHeight===0);}catch(e){return false;}}
+function paneHidden(){try{if(typeof window.__rompPaneHidden==="function")return !!window.__rompPaneHidden();return window.parent!==window&&(window.innerWidth===0||window.innerHeight===0);}catch(e){return false;}}   // federation's hidden-pane hold publishes the shell's own word; the zero-viewport probe is the fallback (it misses a pane hidden after a first show)
 // every raise (and every hidden-pane suppression) leaves a clientDiag breadcrumb naming the pane, the
 // PATH that raised (reconnect/foreground), the socket state and the quiet gap — so the next "the banner
 // keeps flapping" report is diagnosable from client-diag.jsonl instead of re-hypothesized (the user
