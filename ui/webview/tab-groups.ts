@@ -187,6 +187,32 @@ export function prunePinned(st: TabGroupsState, unions: readonly TagUnion[], kno
   return pinned.length === st.pinned.length ? st : { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned };
 }
 
+/** The words a section header wears — its count, its tooltip and its accessible name — pure so the copy
+ *  executes in tests (render.ts paints them). Folded, the count is the HIDDEN members, what the header
+ *  stands in for; a pinned member's own tab is on screen and is not counted. When EVERY member is pinned
+ *  the fold hides nothing, and a "0" beside two visible tabs read as a broken number (the 2026-09-06
+ *  review): the count is then the total, and the title says why nothing is hidden. The chevron stays
+ *  truthful either way — the section IS folded, and the click opens it. */
+export interface HeadWords { count: string; title: string; label: string }
+
+export function headWords(name: string, total: number, hidden: number, folded: boolean, holdsActive: boolean): HeadWords {
+  const n = (k: number) => `${k} session${k === 1 ? "" : "s"}`;
+  if (holdsActive) {
+    return { count: String(total), label: `${name}, ${n(total)}`,
+             title: `${name} — ${n(total)}; holds the active tab, so it stays open; drag to reorder the groups` };
+  }
+  if (!folded) {
+    return { count: String(total), label: `${name}, ${n(total)}`,
+             title: `${name} — ${n(total)}; click to fold this group; drag to reorder the groups` };
+  }
+  if (hidden === 0) {
+    const all = total === 1 ? "its one session is" : `all ${total} sessions are`;
+    return { count: String(total), label: `${name}, ${n(total)}, folded, all shown`,
+             title: `${name} — folded, but ${all} set to show when folded, so none is hidden; click to open` };
+  }
+  return { count: String(hidden), label: `${name}, ${n(hidden)} folded`, title: `${name} — ${n(hidden)} folded; click to open` };
+}
+
 /** One strip item: a section header (folded or open; `active` = it holds the active tab; `hidden` =
  *  the member ids a folded header stands in for — its members less the pinned ones, [] when open) or
  *  a tab. */

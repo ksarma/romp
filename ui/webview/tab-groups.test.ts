@@ -11,7 +11,7 @@ import * as path from "node:path";
 import { viewTagUnion } from "./session-views";
 import { sectionTabs, anySectioned, homeTag, parseTabGroups, readTabGroups, writeTabGroups, isSectionCollapsed,
          toggleSectionCollapsed, setSectionCollapsed, planStrip, reorderTagOrder, applyTagOrder, TABGROUPS_KEY,
-         DEFAULT_COLLAPSED, sectionKey, sectionRef, isPinned, setPinned, togglePinned, prunePinned,
+         DEFAULT_COLLAPSED, sectionKey, sectionRef, isPinned, setPinned, togglePinned, prunePinned, headWords,
          type TabSection, type SectionRef } from "./tab-groups";
 import { sectionTodoFlag } from "./tab-state";
 
@@ -21,6 +21,7 @@ const CSS = ui("webview", "styles.css");
 const MENU = ui("webview", "tag-menu.ts");
 const VIEWS = ui("webview", "session-views.ts");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
 
 // the notes-api demo world: web + api in "infra", tests in "qa", a loose one; api ALSO in qa
 const V = {
@@ -191,7 +192,8 @@ test("executed + pinned: the section holding the ACTIVE tab is unfoldable while 
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
   assert.match(head, /function makeGroupHead\(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string\[\]\): HTMLElement \{/);
   assert.match(head, /head\.dataset\.act = holdsActive \? "group-active" : "toggle-group";/);
-  assert.match(head, /\? `\$\{name\} — \$\{total\} session\$\{total === 1 \? "" : "s"\}; holds the active tab, so it stays open; drag to reorder the groups`/);
+  assert.equal(headWords("infra", 1, 0, false, true).title, "infra — 1 session; holds the active tab, so it stays open; drag to reorder the groups");
+  assert.match(head, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive\);\s*\n\s*head\.title = words\.title;/, "the words are the pure module's");
   assert.match(head, /\+ \(holdsActive \? " holds-active" : ""\)\);/);
   assert.match(head, /head\.draggable = true;/, "it still drags to reorder the groups");
   const del = RENDER.slice(RENDER.indexOf('"group-active": () => {'), RENDER.indexOf('"group-active": () => {') + 120);
@@ -244,7 +246,7 @@ test("a folded section renders its header alone with the folded-away count and o
   assert.match(RENDER, /function visibleOrder\(\): string\[\] \{ return order\.filter\(\(id\) => tabInView\(id\) && !collapsedTabIds\.has\(id\)\); \}/,
     "every cycling path walks visibleOrder (session-views.test pins the three callers)");
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
-  assert.match(head, /n\.textContent = String\(collapsed \? hidden\.length : total\);/, "the count: every member when open, the folded-away members when folded");
+  assert.match(head, /n\.textContent = words\.count;/, "the count: every member when open, the hidden members when folded (headWords, executed below)");
   // the pip is the MEMBERS' (a hidden one blocked/waiting/working/retrying), never the header's own status
   // (the user 2026-09-06: no session-tab affordances on a header — but a fold must still say a hidden
   // member needs you, the reason the user-todo flag exists); over the hidden members, after the count
@@ -574,4 +576,34 @@ test("the toggle is a row in the tab menu's Tags flyout beside the Move-to rows:
   // the phone layout's flat strip has no fold to show through: the plan ignores pins there (no-op by construction)
   const p = planStrip(["web", "old1", "old2"], viewTagUnion(VP), setPinned(parseTabGroups(null), ARCH, "old2", true), "web", true);
   assert.deepEqual(p.items, [{ id: "web" }, { id: "old1" }, { id: "old2" }]);
+});
+
+test("executed: a folded section whose EVERY member is pinned stays folded — the chevron tells the truth — and its header says so: the total, not 0, and why nothing is hidden", () => {
+  // pin both of infra's members, fold infra: the header read "▸ infra 0" over two visible tabs, and the
+  // click flipped it to "▾ infra 2" with nothing else changing
+  const unions = viewTagUnion({ ...V, tagOrder: ["infra", "qa"] });   // infra first, so api homes there: infra = web, api
+  const infra: SectionRef = { key: "g2", name: "infra" };
+  let st = setSectionCollapsed(parseTabGroups(null), "infra", true);
+  st = setPinned(setPinned(st, infra, "web", true), infra, "api", true);
+  const p = planStrip(["web", "api", "tests"], unions, st, "tests", false);
+  const h = headsOf(p).find((x) => x.head.name === "infra")!;
+  assert.deepEqual([h.folded, h.hidden], [true, []], "folded — the stored state the click acts on, so the header still opens it — with nothing hidden");
+  assert.deepEqual(p.items.map((i) => ("head" in i ? `#${i.head.name}${i.folded ? "(folded)" : ""}` : i.id)), ["#infra(folded)", "web", "api", "#qa", "tests"]);
+  assert.deepEqual([...p.folded], [], "every tab reachable");
+  // the words render.ts paints for that header
+  assert.deepEqual(headWords("infra", 2, 0, true, false), {
+    count: "2", label: "infra, 2 sessions, folded, all shown",
+    title: "infra — folded, but all 2 sessions are set to show when folded, so none is hidden; click to open",
+  }, "the total, never a 0 beside two visible tabs; the title names the menu row that did it");
+  assert.equal(headWords("infra", 1, 0, true, false).title, "infra — folded, but its one session is set to show when folded, so none is hidden; click to open");
+  // …and for the ordinary folded, part-pinned, open and active headers
+  assert.deepEqual(headWords("infra", 2, 2, true, false), { count: "2", label: "infra, 2 sessions folded", title: "infra — 2 sessions folded; click to open" });
+  assert.deepEqual(headWords("infra", 2, 1, true, false), { count: "1", label: "infra, 1 session folded", title: "infra — 1 session folded; click to open" },
+    "one pinned: the hidden count, the pinned tab shows itself");
+  assert.deepEqual(headWords("infra", 2, 0, false, false), { count: "2", label: "infra, 2 sessions", title: "infra — 2 sessions; click to fold this group; drag to reorder the groups" });
+  assert.deepEqual(headWords("infra", 3, 0, false, true), { count: "3", label: "infra, 3 sessions", title: "infra — 3 sessions; holds the active tab, so it stays open; drag to reorder the groups" });
+  assert.match(MAKE_HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive\);\s*\n\s*head\.title = words\.title;/);
+  assert.match(MAKE_HEAD, /n\.textContent = words\.count;/);
+  assert.ok(!MAKE_HEAD.includes("hidden.length : total"), "no second count rule beside the pure one");
+  assert.match(GUIDE, /when every tab in a section is set to\s+show, the folded header shows the full count and its tooltip says nothing is hidden\./);
 });

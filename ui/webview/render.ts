@@ -31,7 +31,7 @@ import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from 
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
-import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned,
+import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned, headWords,
          reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
 import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
@@ -4734,7 +4734,7 @@ function releaseTabStrip(): void {
 // untagged trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the
 // loose ones never read as one run. `hidden` is what a folded header stands in for — its members less
 // the ones pinned to show through the fold (planStrip) — so its count and its flag read those, never a
-// member whose own tab is on screen.
+// member whose own tab is on screen; its words (count, title, spoken label) are headWords, pure.
 function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string[]): HTMLElement {
   if (sec.name === null) {
     const sep = el("div", "tab-group-sep");
@@ -4754,11 +4754,8 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   head.dataset.act = holdsActive ? "group-active" : "toggle-group";
   head.dataset.folded = collapsed ? "1" : "0";
   const total = sec.ids.length;
-  head.title = holdsActive
-    ? `${name} — ${total} session${total === 1 ? "" : "s"}; holds the active tab, so it stays open; drag to reorder the groups`
-    : collapsed
-      ? `${name} — ${hidden.length} session${hidden.length === 1 ? "" : "s"} folded; click to open`
-      : `${name} — ${total} session${total === 1 ? "" : "s"}; click to fold this group; drag to reorder the groups`;
+  const words = headWords(name, total, hidden.length, collapsed, holdsActive);
+  head.title = words.title;
   // a label the keyboard can fold: Enter or Space go through the same click → delegate path as the
   // pointer. The active tab's header has no fold action, so it is not a tab stop — a stop that does
   // nothing is noise in the tab order.
@@ -4778,7 +4775,7 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   label.textContent = name;
   head.appendChild(label);
   const n = el("span", "tab-group-count");
-  n.textContent = String(collapsed ? hidden.length : total);   // folded: the folded-away members — a pinned one shows itself
+  n.textContent = words.count;   // folded: the hidden members — a pinned one shows itself; all pinned: the total (headWords)
   head.appendChild(n);
   if (collapsed) {
     // the folded gist, MEMBER-derived: one pip by the TAB's own state rule (tab-state.ts) — red for a

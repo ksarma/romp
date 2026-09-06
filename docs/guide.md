@@ -50,8 +50,9 @@ one of them is working or waiting on you (hover it for their names). A folded he
 of any session in it that has asked you for something; when several have, the flag shows how
 many, and hovering it names them. Click the flag to open the section. To keep one tab visible
 while its section is folded, right-click the tab and pick **Show when folded** under **Tags**;
-the header's count and flag then leave that tab out. Pick it again to fold the tab with the
-rest. The section of the tab you are reading never
+the header's count and flag then leave that tab out; when every tab in a section is set to
+show, the folded header shows the full count and its tooltip says nothing is hidden. Pick it
+again to fold the tab with the rest. The section of the tab you are reading never
 folds (its header says so, and a click there changes nothing), and the `archived` section
 starts folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
