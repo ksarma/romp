@@ -31375,13 +31375,13 @@ def _save_trace(path, sid, n):
     """After the editor's Save lands through the `save` verb, TELL the session whose worktree holds the
     file: _edit_trace when the save rejected none of its changes (the file changed exactly as a direct
     edit changes it), _save_trace_body naming `n` when it rejected some. The count is the request's own
-    `rejected` ledger, and for THIS verb the request is the record: a reject's ids are a request the
-    host may narrow (land, coalesce, refuse one by one — so _reject_trace counts the reply), but the
-    editor's ledger is the decisions already taken there, which the host checks entry by entry and
-    refuses WHOLE on any fault (its requireDecisions: a BadRequest, exit 2, the kernel's host-error)
-    before it writes anything, and logs verbatim as its `reject` entry — an ok reply means exactly
-    these landed. Same owner lookup, same direct backend send, best-effort and loud on failure, as its
-    two siblings; the save itself already succeeded and was acked before this runs."""
+    `rejected` list, and for THIS verb the request is the record: a reject's ids are a request the
+    host may narrow (land, coalesce, refuse one by one — so _reject_trace counts the reply), but a
+    save's `rejected` names decisions already taken in the editor, which the host checks entry by
+    entry and refuses WHOLE on any fault (its requireDecisions: a BadRequest, exit 2, the kernel's
+    host-error) before it writes anything, and logs verbatim as its `reject` entry — an ok reply means
+    exactly these landed. Same owner lookup, same direct backend send, best-effort and loud on failure,
+    as its two siblings; the save itself already succeeded and was acked before this runs."""
     if int(n or 0) <= 0:
         _edit_trace(path, sid)
         return
@@ -31563,19 +31563,20 @@ def _file_comments_call(path, verb, args=None, fence=None):
     way. The serialized REQUEST, any verb, is refused `too-large` past _FILE_COMMENTS_REPLY_MAX before
     node is spawned or a byte piped: the content bound covers the one argument that is text by design,
     but a save's `suggestions`, `accepted` and `rejected` — and a comment's note, a reply's turn — had
-    no bound short of the frame reader's, so a save carrying a million fake ledger entries (43 MB) was
+    no bound short of the frame reader's, so a save carrying a million fake decisions (43 MB) was
     serialized and piped whole, and node parsed and walked every entry at half a gigabyte before the
     host's own reply estimate refused it (the review, 2026-09-06, round 2). The reply cap is the right
     number because everything a request puts on disk comes back in the reply — the sidecar as `store`
-    and again as `hunks`, the ledger in the log's newest rows — so a request past it asks for an answer
-    the host refuses (checkReplyFits) after all the work; the kernel's refusal is that verdict, taken
-    first. Measured on the serialization itself (json.dumps with ensure_ascii, so the string's length is
-    the byte count _run_bounded would pipe): the C encoder is the cheapest exact measure this runtime
-    has, and it is the one cost the check keeps — the pipe, the spawn and node's parse are what it saves.
-    Nothing legitimate is lost: the editor's records and ledger describe text the viewer showed, a file
-    under the 2 MB cap, and come nowhere near it. And the host's stdout is read through _run_bounded,
-    which kills the child past _FILE_COMMENTS_REPLY_MAX instead of buffering — a backstop for any verb,
-    present or future, whose answer outgrows what one socket frame may carry."""
+    and again as `hunks`, the decisions in the comments log's newest rows (`log`) — so a request past
+    it asks for an answer the host refuses (checkReplyFits) after all the work; the kernel's refusal is
+    that verdict, taken first. Measured on the serialization itself (json.dumps with ensure_ascii, so
+    the string's length is the byte count _run_bounded would pipe): the C encoder is the cheapest exact
+    measure this runtime has, and it is the one cost the check keeps — the pipe, the spawn and node's
+    parse are what it saves. Nothing legitimate is lost: the editor's records and decisions describe
+    text the viewer showed, a file under the 2 MB cap, and come nowhere near it. And the host's stdout
+    is read through _run_bounded, which kills the child past _FILE_COMMENTS_REPLY_MAX instead of
+    buffering — a backstop for any verb, present or future, whose answer outgrows what one socket frame
+    may carry."""
     node = _file_comments_node()
     if not node:
         return None, ("no-node", "cannot open the comments for %s: node is not installed on this machine, "
@@ -31948,21 +31949,21 @@ def _file_comments_after(msg, rep):
     successful `save` (Slice 5: the editor's Save over a tracked file, which the host writes together
     with the remapped sidecar) it is told once through _save_trace: the SAME trace a saveFile sends
     when the editor rejected none of its changes (the file changed under the session exactly as a
-    direct edit changes it), and a body naming how many it rejected otherwise — the request's ledger,
-    which the host applied whole or refused (see _save_trace). Nothing else follows a save: the host
-    appended the log's `edit`, `accept` and `reject` entries itself, so the kernel never calls log-edit
-    here (The comments log: the log has one writer per entry, and for this verb the host is the one
-    process that holds the old text, the decisions and the mtime after the write). Nothing follows any
-    other verb, a refusal, or a reject that resolved nothing (an empty list: the file did not change).
-    A REJECT's count comes from the host's reply, never from the client's request (the ids a client
-    ASKED to reject may have landed, coalesced or been refused by id; a save's ledger is the record
-    itself, see _save_trace), so a successful reject whose reply lacks the list is a contract break between the host and
-    the kernel: it is written to stderr and no trace goes, because a count the kernel would have to
-    guess is not one to tell the session. The path is resolved as the op resolved it
-    (_file_comments_path: the real file), so the owner lookup and the body name the same file the
-    sidecar keys on — for a save too, where saveFile names the client's own spelling; the two agree
-    whenever that spelling is not a symlink, and the owner is the same either way (_edit_trace_sid
-    resolves the real path)."""
+    direct edit changes it), and a body naming how many it rejected otherwise — the request's
+    `rejected` decisions, which the host applied whole or refused (see _save_trace). Nothing else
+    follows a save: the host appended the log's `edit`, `accept` and `reject` entries itself, so the
+    kernel never calls log-edit here (The comments log: the log has one writer per entry, and for this
+    verb the host is the one process that holds the old text, the decisions and the mtime after the
+    write). Nothing follows any other verb, a refusal, or a reject that resolved nothing (an empty list:
+    the file did not change). A REJECT's count comes from the host's reply, never from the client's
+    request (the ids a client ASKED to reject may have landed, coalesced or been refused by id; a save's
+    `rejected` decisions are the record itself, see _save_trace), so a successful reject whose reply
+    lacks the list is a contract break between the host and the kernel: it is written to stderr and no
+    trace goes, because a count the kernel would have to guess is not one to tell the session. The path
+    is resolved as the op resolved it (_file_comments_path: the real file), so the owner lookup and the
+    body name the same file the sidecar keys on — for a save too, where saveFile names the client's own
+    spelling; the two agree whenever that spelling is not a symlink, and the owner is the same either
+    way (_edit_trace_sid resolves the real path)."""
     verb = str(msg.get("verb") or "")
     if rep.get("type") != "fileCommentsResult" or verb not in _FILE_COMMENTS_TRACED_VERBS:
         return
@@ -31970,8 +31971,8 @@ def _file_comments_after(msg, rep):
     path = _file_comments_path(msg.get("path"), sid) or str(msg.get("path") or "")
     if verb == "save":
         args = msg.get("args") if isinstance(msg.get("args"), dict) else {}
-        ledger = args.get("rejected")
-        _save_trace(path, sid, len(ledger) if isinstance(ledger, list) else 0)
+        decisions = args.get("rejected")   # the request IS the record for this verb (see _save_trace)
+        _save_trace(path, sid, len(decisions) if isinstance(decisions, list) else 0)
         return
     rejected = rep.get("rejected")
     if not isinstance(rejected, list):

@@ -252,7 +252,9 @@ export interface FileViewActionCtx {
    *  Edit and Save, never cached — the panel's status is the truth about what is pending and where Save must go */
   setTrackedEdit(t: TrackedEdit | null): void;
 }
-/** One decision taken inside the editor, as the chunk's ledger reports it. */
+/** One decision taken inside the editor (an accept or a reject of a pending change), as the chunk's decisions report
+ *  it. "Decisions" is the plan's word for the save verb's two lists and the chunk's canonical name (editor-chunk.ts,
+ *  TrackDecisions); the comments log is the OTHER record of these same decisions, on disk, in the host's hands. */
 export type EditDecision = { id: string; oldText: string; newText: string };
 export type EditDecisions = { accepted: EditDecision[]; rejected: EditDecision[] };
 /** What the comments panel hands the viewer for editing over a tracked file (plans/file-review.md Slice 5; the Slice 5
@@ -269,7 +271,12 @@ export interface TrackedEdit {
   routesSave(): boolean;
   /** The save through the host (the `save` verb: the text, the records as the editor holds them, the decisions taken in
    *  it, fenced on sidecar, config and file): resolves the reply's saved fields, rejects with the host's refusal
-   *  {code, error}. The panel applies the reply as its status. */
+   *  {code, error}. The panel applies the reply as its status. The resolved value ALSO carries the host's `logWarning`
+   *  when a comments-log append failed (or the log could not be read back) on a save that LANDED (file-comments.ts,
+   *  saveThroughComments): the viewer puts it in its note bar, as it does the fileSaved reply's — the panel says it in its
+   *  head too, but the head is painted only while the aside is open, and a tracked file is edited with the aside closed
+   *  by default (the review's dropped-warning finding). The field is read off the value where the ack runs, not named in
+   *  this type: file-comments.test.ts pins the member's text below, so the type widens when that pin moves with it. */
   save(content: string, records: unknown[], decided: EditDecisions): Promise<{ mtimeNs: string; logged: boolean }>;
 }
 export interface FileViewAction { id: string; mount: (ctx: FileViewActionCtx) => HTMLElement | null; }
@@ -561,8 +568,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let eolCRLF = false;                        // the file's dominant line ending — textareas normalize
   //   CRLF→LF on assignment, so an untouched CRLF file would otherwise save with every ending rewritten
   let ta: HTMLTextAreaElement | null = null;   // the FALLBACK surface (and the buffer pre-CodeMirror)
-  // the CodeMirror handle when mounted; `track` is on it only when the chunk carried the mount's track option (Slice 5)
-  let cm: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; ledger(): EditDecisions } } | null = null;
+  // the CodeMirror handle when mounted; `track` is on it only when the chunk carried the mount's track option (Slice 5).
+  // The handle's decisions reader and the mount's callback below are read and passed by the chunk's old spelling
+  // (`ledger`, `onLedger`: editor-chunk.ts keeps both as aliases of `decisions`/`onDecisions`, each marked "old spelling"),
+  // because the viewer's test harnesses stub the handle by those names and file-view-seam.test.ts pins the mount line's
+  // text; the two identifiers move with those tests, and file-view-decisions.test.ts confines the old word to them.
+  let cm: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; ledger(): EditDecisions } } | null = null;   // old spelling: ledger() reads the chunk's decisions
   const bufValue = (): string | null => (cm ? cm.value() : ta ? ta.value : null);   // whichever surface owns the buffer
   // ── editing over pending changes (plans/file-review.md Slice 5) ── the comments panel registers its half through the
   // seam (setTrackedEdit); the viewer reads it at Edit and at Save and caches nothing. `chunkTracks` remembers what the
@@ -570,20 +581,20 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // bundle) — then Edit refuses in the panel's words while anything is pending, without loading the chunk again.
   let trackedEdit: TrackedEdit | null = null;
   let chunkTracks: boolean | null = null;
-  // The chunk's ledger is a fold over every decision since the MOUNT, with no reset (its handle reads only), and a save
-  // whose ack lands over in-flight typing keeps the editor — and with it the ledger — alive (hooks.saved). The host has
-  // applied and logged what that save carried, so `applied` remembers it and `unsent()` is what the next Save may send:
-  // the ledger beyond it. Before this the second Save re-sent the same accept, the host logged it twice, and the Send
-  // confirm counted two accepted changes for one (the review's duplicate-decision finding). An id is matched within its
-  // side: an accept undone and redone after the save sends nothing; an accept undone and turned into a reject sends the
-  // reject, and the log then reads accept, reject — what happened. A landed save moves each id it carried to that side
-  // (mergeApplied), so a third flip is sent again. Reset with the editor (exitEdit): a fresh mount is a fresh ledger.
-  // An undo that reaches back past a landed save and stops there is the one thing the fold cannot express: see
-  // undoneLanded below.
+  // The chunk's decisions are a fold over every accept and reject since the MOUNT, with no reset (its handle reads
+  // only), and a save whose ack lands over in-flight typing keeps the editor — and with it the decisions — alive
+  // (hooks.saved). The host has applied what that save carried and written it to the comments log, so `applied`
+  // remembers it and `unsent()` is what the next Save may send: the decisions beyond it. Before this the second Save
+  // re-sent the same accept, the host logged it twice, and the Send confirm counted two accepted changes for one (the
+  // review's duplicate-decision finding). An id is matched within its side: an accept undone and redone after the save
+  // sends nothing; an accept undone and turned into a reject sends the reject, and the log then reads accept, reject —
+  // what happened. A landed save moves each id it carried to that side (mergeApplied), so a third flip is sent again.
+  // Reset with the editor (exitEdit): a fresh mount starts its decisions afresh. An undo that reaches back past a landed
+  // save and stops there is the one thing the fold cannot express: see undoneLanded below.
   let applied: EditDecisions = { accepted: [], rejected: [] };
   const beyond = (all: EditDecision[], done: EditDecision[]): EditDecision[] => all.filter((e) => !done.some((d) => d.id === e.id));
   const unsent = (): EditDecisions => {
-    const l = cm && cm.track ? cm.track.ledger() : null;
+    const l = cm && cm.track ? cm.track.ledger() : null;   // old spelling of decisions(): the chunk's alias, see `cm` above
     return l ? { accepted: beyond(l.accepted, applied.accepted), rejected: beyond(l.rejected, applied.rejected) } : { accepted: [], rejected: [] };
   };
   const mergeApplied = (sent: EditDecisions): void => {
@@ -593,7 +604,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   };
   // The records the editor holds that a landed save from this editor ALREADY decided: an undo reached back past that
   // save (the chunk's history has no boundary at a save; undoing a decision puts the record back in the field and takes
-  // the ledger entry with it, editor-chunk.ts). The disk does not follow — the host applied and logged the decision and
+  // its entry out of the decisions, editor-chunk.ts). The disk does not follow — the host applied and logged the decision and
   // has no verb that takes one back — so such a record is neither pending nor sendable: among a save's suggestions the
   // host would write it back as pending over a log that says accepted (and count a later accept of it twice), or refuse
   // outright when that save pruned the sidecar (the review's undo-past-a-landed-save finding). So `dirty` counts it (no
@@ -667,22 +678,29 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // (setEditBlocked, set by the panel from the kernel's hunks; Slice 5 lifts it). The button stays a
   // real button rather than a disabled one so the reason reaches touch and keyboard users too.
   let editBlocked: string | null = null;
+  // Pending changes enter the editor as marks (Slice 5) — unless the loaded bundle already proved it cannot carry them
+  // (chunkTracks false), or the file's CRLF endings would: the editor normalizes them to LF (norm), which moves every
+  // offset the records hold, so a save could not fit them back. Both refuse in words, in place, like editBlocked. The
+  // CRLF refusal states its consequence literally: it is copy the person acts on (docs/guide.md says the same). The
+  // words for what `begin()` returned, or null when the editor may carry it — asked at the CLICK (so a refusal needs no
+  // consent popup first) and again at the MOUNT over the begin() whose records the editor takes (enterEdit): the consent
+  // read between the two is a kernel round-trip, and a status landing inside it (the poll's tick, the panel's mount-time
+  // ask answered, a session's write) turns a click-time "nothing pending" into records. Guarded at the click alone,
+  // those records mounted over the LF buffer with their CRLF-disk offsets: marks on the wrong text, a reject rewriting
+  // the wrong span, and a save that fit a deletion at a shifted offset (the review's CRLF-at-mount finding).
+  const CRLF_REFUSAL = "The editor rewrites this file's CRLF line endings as it loads the text, and that would move the pending changes. ";
+  const trackedRefusal = (pending: { refusal: string } | null): string | null => {
+    if (!pending) return null;
+    if (chunkTracks === false) return pending.refusal;
+    if (text !== null && /\r\n/.test(text)) return CRLF_REFUSAL + pending.refusal;
+    return null;
+  };
   editBtn.addEventListener("click", () => {
     if (editBlocked) { noteBar(editBlocked); return; }
-    // pending changes enter the editor as marks (Slice 5) — unless the loaded bundle already proved it cannot carry
-    // them (chunkTracks false), or the file's CRLF endings would: the editor normalizes them to LF (norm), which moves
-    // every offset the records hold, so a save could not fit them back. Both refuse in words, in place, like editBlocked.
-    // The CRLF refusal states its consequence literally: it is copy the person acts on (docs/guide.md says the same).
-    const pending = trackedEdit ? trackedEdit.begin() : null;
-    if (pending && chunkTracks === false) { noteBar(pending.refusal); return; }
-    if (pending && text !== null && /\r\n/.test(text)) {
-      noteBar("The editor rewrites this file's CRLF line endings as it loads the text, and that would move the pending changes. "
-        + pending.refusal);
-      return;
-    }
+    const refused = trackedRefusal(trackedEdit ? trackedEdit.begin() : null);
+    if (refused) { noteBar(refused); return; }
     void ensureEditingAllowed(sid).then((ok) => {
       if (!ok) return;
-      if (isMd && fmt.md === "rendered") { fmt.md = "raw"; saveFmt(fmt); }
       enterEdit();
     });
   });
@@ -1030,6 +1048,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let editSeq = 0;                              // stale chunk resolutions (edit left before load) no-op
   const enterEdit = () => {
     if (text === null || editing) return;
+    // The pending changes ride in as the mount's `track` option (Slice 5; decision 14): the panel's records and colour
+    // map, and a decisions callback so an in-editor accept — which changes no text — still marks the buffer dirty. Asked
+    // of the panel HERE, after the consent round-trip, not carried over from the click: the panel's status is the truth
+    // about what is pending, and the panel fences the save on the sidecar as it stands at this call. So the click's
+    // guards run over THIS result too (trackedRefusal): what they let through at the click may have become records since.
+    // Refused before edit mode is entered — the read view stays, and the words go where the click's would have.
+    const pending = trackedEdit ? trackedEdit.begin() : null;
+    const refused = trackedRefusal(pending);
+    if (refused) { noteBar(refused); return; }
+    // markdown edits from its Raw view (what you edit is what raw shows): switched here, past the guard, so a refused
+    // Edit leaves the Rendered view it was clicked from standing under the refusal, not a Raw choice saved and unpainted
+    if (isMd && fmt.md === "rendered") { fmt.md = "raw"; saveFmt(fmt); }
     editing = true; dirty = false;
     eolCRLF = /\r\n/.test(text);
     renderBody();
@@ -1039,9 +1069,6 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
     body.replaceChildren(wait);
     const my = ++editSeq;
-    // the pending changes ride in as the mount's `track` option (Slice 5; decision 14): the panel's records and colour map,
-    // and a ledger callback so an in-editor accept — which changes no text — still marks the buffer dirty
-    const pending = trackedEdit ? trackedEdit.begin() : null;
     editorChunk().then((ed) => {
       if (!editing || my !== editSeq) return;   // edit mode left (or re-entered) while the chunk loaded
       const host = el("div", "fileview-cm");
@@ -1050,7 +1077,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         text: norm(text!), ext: path.slice(path.lastIndexOf(".") + 1),
         onChange: () => { dirty = cm!.value() !== norm(text!); if (!dirty) dirty = decided(); },
         onSave: () => doSave(),
-        ...(pending ? { track: { suggestions: pending.records, authorColor: pending.authorColor, onLedger: () => { dirty = cm!.value() !== norm(text!) || decided(); } } } : {}),
+        ...(pending ? { track: { suggestions: pending.records, authorColor: pending.authorColor, onLedger: () => { dirty = cm!.value() !== norm(text!) || decided(); } } } : {}),   // old spelling of onDecisions: the chunk's alias, see `cm` above
       });
       if (pending && !cm.track) {
         // an older editor bundle ignored the option: the buffer shows the text with no marks, and a save from it would
@@ -1083,7 +1110,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const exitEdit = () => {
     editing = false; dirty = false; ta = null;
     cm?.destroy(); cm = null;
-    applied = { accepted: [], rejected: [] };   // the ledger went with the editor; the next mount starts one afresh
+    applied = { accepted: [], rejected: [] };   // the decisions went with the editor; the next mount starts its own afresh
     editHooks = null;                           // a cancelled save's late ack must not touch a NEW session
     saveBtn.disabled = false; saveBtn.textContent = "Save";
     renderBody();
@@ -1165,7 +1192,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
           return;
         }
         // A decision clicked during the round-trip is the same stay with no text moved (an accept changes
-        // none): it is in the ledger beyond what this save carried, and leaving would destroy it with the editor.
+        // none): it is in the decisions beyond what this save carried, and leaving would destroy it with the editor.
         if (decided()) { dirty = true; saveBtn.disabled = false; saveBtn.textContent = "Save"; return; }
         exitEdit();                             // re-renders the highlighted view from the saved bytes
         noteLog();
@@ -1213,7 +1240,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
             if (editing) refetchAfterEdit = true; else fetchFile();
             return;
           }
-          editHooks = null; hooks.saved(r.mtimeNs, r.logged);
+          editHooks = null;
+          // The host's account of a comments-log append that failed on a save that landed, read off the resolved value
+          // before the ack runs, as the fileSaved branch reads the kernel's (the same field, the same note bar). The panel
+          // says it in its head too, but that is painted only while the aside is open, and a tracked file is edited with
+          // the aside closed by default — so without this the Log the person opens later lacked the edit's entry and
+          // nothing had said so (the review's dropped-warning finding; CLAUDE.md, never degrade silently). Read off the
+          // value as the fileSaved branch reads its reply: the seam's type does not name the field (see TrackedEdit.save).
+          const w = (r as { logWarning?: unknown }).logWarning;
+          hooks.logWarning = typeof w === "string" && w ? w : null;
+          hooks.saved(r.mtimeNs, r.logged);
         },
         (e: { code?: unknown; error?: unknown }) => {
           if (editHooks !== hooks) return; editHooks = null;

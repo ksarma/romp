@@ -954,14 +954,18 @@ separate comments chunk, and the oracle tests run under `node:test` as
 registers its half through one seam member (`setTrackedEdit`: what rides into the editor at
 Edit, whether Save goes through the host, and the save itself), and the viewer answers
 `text()` from the buffer and says `editing()` while the editor is up, so the panel's paint
-pass and the poll's file reload stand down. The save is fenced on the sidecar the records came
-from (the status at Edit, not the poll's latest), the config, and the file the editor loaded;
-a moved sidecar or config is retried once when the sidecar's records are still the ones the
-editor carries (a reply a session wrote mid-edit), a moved file never. An older editor bundle
-that ignores the option is detected by the handle it returns, and Edit then refuses with the
-Slice 2 wording; a bundle that fails to load over pending changes refuses the same way rather
-than falling back to the plain editor. A CRLF file with pending changes refuses Edit: the
-editor normalizes line endings, which moves every offset the records hold.
+pass and the poll's file reload stand down. The save is fenced on the two things it writes: the
+sidecar the records came from (the status at Edit, not the poll's latest) and the file the
+editor loaded. It does not fence on `config.json`, which it only reads, as the disk stands at
+the save, to decide whether the edit is logged; a `configMtimeNs` a client sends is not read
+(`tools/file-comments-host-save-guards.test.mjs` pins this), and `set-tracked`, the verb that
+writes the config, is the one that fences on it, as the wire section says. A moved sidecar is
+retried once when the sidecar's records are still the ones the editor carries (a reply a session
+wrote mid-edit), a moved file never; there is no `config-moved` refusal for a save to retry. An
+older editor bundle that ignores the option is detected by the handle it returns, and Edit then
+refuses with the Slice 2 wording; a bundle that fails to load over pending changes refuses the
+same way rather than falling back to the plain editor. A CRLF file with pending changes refuses
+Edit: the editor normalizes line endings, which moves every offset the records hold.
 
 ### Optional: per-comment fork dispatch
 

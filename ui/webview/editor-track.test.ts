@@ -1,5 +1,5 @@
 // The editor chunk's `track` option (plans/file-review.md, Slice 5; decision 14): romp's OWN half of the
-// tracked-changes editor — the decision ledger kept net of undo, the click policy, the marks built from the
+// tracked-changes editor — the decisions kept net of undo, the click policy, the marks built from the
 // vendored field, and the transactions an in-editor accept or reject dispatches. The vendored field itself is
 // covered by the ported upstream oracle (track-cm-oracle.test.ts); this file tests what romp adds on top.
 // Executed where CodeMirror needs no DOM (EditorState + history + the decoration facet, and the update-listener
@@ -12,7 +12,7 @@ import * as path from "node:path";
 import { EditorState, Transaction, type TransactionSpec } from "@codemirror/state";
 import { EditorView, type DecorationSet, type Decoration, type ViewUpdate } from "@codemirror/view";
 import { undo, redo, isolateHistory } from "@codemirror/commands";
-import { extensionsFor, trackSetup, applyDecision, EMPTY_LEDGER, type TrackLedger, type TrackSetup } from "./editor-chunk";
+import { extensionsFor, trackSetup, applyDecision, EMPTY_DECISIONS, type TrackDecisions, type TrackSetup } from "./editor-chunk";
 import { trackClickAction, idsAtPosition, displayItems, CLS, CHANGE_SEL, type TrackRecord } from "./track-decorations";
 
 const W = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
@@ -32,12 +32,12 @@ const sub = (id: string, from: number, newText: string, oldText: string, author 
  *  update-listener facet the way EditorView.update does (view/dist/index.js: `for (let listener of
  *  this.state.facet(updateListener)) listener(update)`, over the NEW state), with an update that carries what a
  *  ViewUpdate carries minus the view. So the listeners the chunk's extension set actually holds execute — onChange
- *  keyed on docChanged, onLedger keyed on the ledger field's identity, the decorations' onOpsChanged relay — and a
+ *  keyed on docChanged, onDecisions keyed on the decisions field's identity, the decorations' onOpsChanged relay — and a
  *  listener dropped from that set is absent from the facet and never fires here either. The seed itself runs no
  *  listener, as in mount(), where it lands before the view exists. Unlike EditorView.update (which logs a
  *  listener's exception and goes on), this lets it throw: a listener that needs the view fails the test. */
-function editor(doc: string, records: TrackRecord[], onLedger?: (l: TrackLedger) => void) {
-  const t = trackSetup({ suggestions: records, onLedger, authorColor: (a) => (a === "web" ? "#abcdef" : null) });
+function editor(doc: string, records: TrackRecord[], onDecisions?: (d: TrackDecisions) => void) {
+  const t = trackSetup({ suggestions: records, onDecisions, authorColor: (a) => (a === "web" ? "#abcdef" : null) });
   let changed = 0;
   const fire = (tr: Transaction) => {
     const u = { view: undefined, state: tr.state, startState: tr.startState, transactions: [tr], changes: tr.changes, docChanged: tr.docChanged } as unknown as ViewUpdate;
@@ -54,8 +54,7 @@ function editor(doc: string, records: TrackRecord[], onLedger?: (l: TrackLedger)
     changes: () => changed,
     doc: () => target.state.doc.toString(),
     ops: () => t.suggestions(target.state),
-    ledger: () => t.ledger(target.state),
-    ids: () => t.ledger(target.state),
+    decisions: () => t.decisions(target.state),
     type: (spec: TransactionSpec) => put({ ...spec, annotations: [isolateHistory.of("full")] }),
     resolve: (from: number, reject: boolean) => { const s = t.resolve(target.state, from, reject); if (s) put(s); return s; },
     undo: () => undo(target),
@@ -107,12 +106,12 @@ test("idsAtPosition maps a mark's data-hk-from to the record ids it stands for, 
   assert.deepEqual(idsAtPosition(many, para, items[0].curFrom), ["p1", "p2", "p3", "p4", "p5", "p6"]);
 });
 
-// ── the ledger reducer ───────────────────────────────────────────────────────────────────────────
+// ── the decisions reducer ────────────────────────────────────────────────────────────────────────
 
 test("applyDecision adds and removes entries by id, keeps one side per id, and returns the same object when nothing changes", () => {
   const e1 = { id: "a1", oldText: "", newText: "big " };
   const e2 = { id: "s1", oldText: "lay", newText: "sat" };
-  const l1 = applyDecision(EMPTY_LEDGER, { side: "accepted", entries: [e1] }, true);
+  const l1 = applyDecision(EMPTY_DECISIONS, { side: "accepted", entries: [e1] }, true);
   assert.deepEqual(l1, { accepted: [e1], rejected: [] });
   const l2 = applyDecision(l1, { side: "rejected", entries: [e2] }, true);
   assert.deepEqual(l2, { accepted: [e1], rejected: [e2] });
@@ -125,11 +124,11 @@ test("applyDecision adds and removes entries by id, keeps one side per id, and r
   // identity: removing what is not there, or re-adding the very same entry object, changes nothing
   assert.equal(applyDecision(l4, { side: "rejected", entries: [e1] }, false), l4);
   assert.equal(applyDecision(l4, { side: "accepted", entries: [e2] }, true), l4);
-  assert.equal(applyDecision(EMPTY_LEDGER, { side: "accepted", entries: [] }, true), EMPTY_LEDGER);
-  assert.deepEqual(EMPTY_LEDGER, { accepted: [], rejected: [] }, "the reducer never mutates its input");
+  assert.equal(applyDecision(EMPTY_DECISIONS, { side: "accepted", entries: [] }, true), EMPTY_DECISIONS);
+  assert.deepEqual(EMPTY_DECISIONS, { accepted: [], rejected: [] }, "the reducer never mutates its input");
 });
 
-// ── executed: accept and reject inside the editor, undo and redo, the ledger net of undo ─────────
+// ── executed: accept and reject inside the editor, undo and redo, the decisions net of undo ──────
 
 test("the seed puts the records in the initial state outside history: nothing to undo, marks from the first state", () => {
   const h = editor("The big cat.", [ins("a1", 4, "big ")]);
@@ -138,46 +137,48 @@ test("the seed puts the records in the initial state outside history: nothing to
   assert.equal(h.decos().length, 1, "the insertion's mark is already in the decoration facet");
 });
 
-test("accept: the record leaves the field, the text stays, the ledger gains the entry; undo reverses all three; redo redoes", () => {
-  const seen: TrackLedger[] = [];
+test("accept: the record leaves the field, the text stays, the decisions gain the entry; undo reverses all three; redo redoes", () => {
+  const seen: TrackDecisions[] = [];
   const h = editor("The big cat.", [ins("a1", 4, "big ")], (l) => seen.push(l));
   const spec = h.resolve(4, false);
   assert.ok(spec && !("changes" in spec), "an accept changes no text");
   assert.equal(h.doc(), "The big cat.");
   assert.deepEqual(h.ops(), []);
-  assert.deepEqual(h.ledger(), { accepted: [{ id: "a1", oldText: "", newText: "big " }], rejected: [] });
+  assert.deepEqual(h.decisions(), { accepted: [{ id: "a1", oldText: "", newText: "big " }], rejected: [] });
   assert.equal(seen.length, 1, "the chunk's listener reported the decision once");
-  assert.equal(seen[0], h.ledger(), "…with the very object the field holds (the reducer's identity contract)");
+  assert.equal(seen[0], h.decisions(), "…with the very object the field holds (the reducer's identity contract)");
   assert.equal(h.undo(), true);
   assert.equal(h.doc(), "The big cat.");
   assert.deepEqual(h.ops().map((o) => o.id), ["a1"]);
-  assert.deepEqual(h.ledger(), { accepted: [], rejected: [] }, "undo removes the entry: the ledger is net of undo");
+  assert.deepEqual(h.decisions(), { accepted: [], rejected: [] }, "undo removes the entry: the decisions are net of undo");
   assert.equal(seen.length, 2);
-  assert.deepEqual(seen[1], EMPTY_LEDGER, "the undo is reported too: a listener keeping its own copy sees the entry leave");
+  assert.deepEqual(seen[1], EMPTY_DECISIONS, "the undo is reported too: a listener keeping its own copy sees the entry leave");
   assert.equal(h.redo(), true);
   assert.deepEqual(h.ops(), []);
-  assert.deepEqual(h.ledger().accepted.map((e) => e.id), ["a1"]);
+  assert.deepEqual(h.decisions().accepted.map((e) => e.id), ["a1"]);
   assert.equal(seen.length, 3);
   assert.deepEqual(seen[2].accepted.map((e) => e.id), ["a1"]);
   assert.equal(h.changes(), 0, "none of these transactions changed the document, so onChange never ran");
 });
 
-// file-view.ts derives `dirty` from the text in onChange and marks an accept dirty ONLY through onLedger, since an
-// accept changes no text (an accept-then-Save with no onLedger takes doSave's nothing-changed branch and drops the
-// acceptance silently). This runs the listener facet the chunk's state actually carries — the regex pin below reads
-// the listener's body, not its membership in the extension set — so that wiring is executed, not just pinned.
-test("the onLedger listener rides in the chunk's extension set: an accept alone reaches it and not onChange; typing reaches onChange and not onLedger; a reject reaches both", () => {
-  const seen: TrackLedger[] = [];
+// file-view.ts derives `dirty` from the text in onChange and marks an accept dirty ONLY through the decisions
+// callback, since an accept changes no text (an accept-then-Save with no decisions callback takes doSave's
+// nothing-changed branch and drops the acceptance silently). file-view.ts still passes that callback by its old
+// spelling, onLedger; editor-chunk-decisions.test.ts proves the alias reaches this same listener. This runs the
+// listener facet the chunk's state actually carries — the regex pin below reads the listener's body, not its
+// membership in the extension set — so that wiring is executed, not just pinned.
+test("the onDecisions listener rides in the chunk's extension set: an accept alone reaches it and not onChange; typing reaches onChange and not onDecisions; a reject reaches both", () => {
+  const seen: TrackDecisions[] = [];
   const h = editor("I like cats a lot.", [sub("s1", 2, "like", "love"), ins("a1", 11, " a lot")], (l) => seen.push(l));
   assert.equal(seen.length, 0, "the seed is no decision");
   assert.equal(h.changes(), 0, "…and no keystroke");
-  // the save path's case: click to accept, no keystroke, Save — onLedger is the only signal the buffer is worth saving
+  // the save path's case: click to accept, no keystroke, Save — onDecisions is the only signal the buffer is worth saving
   assert.ok(h.resolve(11, false), "the insertion starts at 11");
   assert.equal(h.doc(), "I like cats a lot.");
   assert.equal(h.changes(), 0, "an accept changes no text: onChange did not run");
-  assert.equal(seen.length, 1, "…so onLedger is the one report of it");
+  assert.equal(seen.length, 1, "…so onDecisions is the one report of it");
   assert.deepEqual(seen[0], { accepted: [{ id: "a1", oldText: "", newText: " a lot" }], rejected: [] });
-  // typing: the field remaps, onChange runs, the ledger is untouched and unreported
+  // typing: the field remaps, onChange runs, the decisions are untouched and unreported
   h.type({ changes: { from: 0, to: 0, insert: ">> " } });
   assert.equal(h.changes(), 1);
   assert.equal(seen.length, 1, "typing is no decision");
@@ -188,7 +189,7 @@ test("the onLedger listener rides in the chunk's extension set: an accept alone 
   assert.equal(h.changes(), 2);
   assert.equal(seen.length, 2);
   assert.deepEqual(seen[1], { accepted: [{ id: "a1", oldText: "", newText: " a lot" }], rejected: [{ id: "s1", oldText: "love", newText: "like" }] });
-  // undo of the reject: the text comes back (onChange) and the report says the decision is gone (onLedger)
+  // undo of the reject: the text comes back (onChange) and the report says the decision is gone (onDecisions)
   assert.equal(h.undo(), true);
   assert.equal(h.doc(), ">> I like cats a lot.");
   assert.equal(h.changes(), 3);
@@ -196,20 +197,20 @@ test("the onLedger listener rides in the chunk's extension set: an accept alone 
   assert.deepEqual(seen[2], { accepted: [{ id: "a1", oldText: "", newText: " a lot" }], rejected: [] });
 });
 
-test("reject: the text reverts and the record leaves in ONE transaction; undo restores text, record and ledger together", () => {
+test("reject: the text reverts and the record leaves in ONE transaction; undo restores text, record and decisions together", () => {
   const h = editor("I like cats.", [sub("s1", 2, "like", "love")]);
   const spec = h.resolve(2, true);
   assert.ok(spec && "changes" in spec, "a reject carries the buffer edit");
   assert.equal(h.doc(), "I love cats.");
   assert.deepEqual(h.ops(), []);
-  assert.deepEqual(h.ledger(), { accepted: [], rejected: [{ id: "s1", oldText: "love", newText: "like" }] });
+  assert.deepEqual(h.decisions(), { accepted: [], rejected: [{ id: "s1", oldText: "love", newText: "like" }] });
   h.undo();
   assert.equal(h.doc(), "I like cats.");
   assert.deepEqual(h.ops().map((o) => o.id), ["s1"]);
-  assert.deepEqual(h.ledger(), { accepted: [], rejected: [] });
+  assert.deepEqual(h.decisions(), { accepted: [], rejected: [] });
   h.redo();
   assert.equal(h.doc(), "I love cats.");
-  assert.deepEqual(h.ledger().rejected.map((e) => e.id), ["s1"]);
+  assert.deepEqual(h.decisions().rejected.map((e) => e.id), ["s1"]);
 });
 
 test("a decision records the texts as the field held them THEN: after typing inside a change, the remapped pieces", () => {
@@ -218,32 +219,32 @@ test("a decision records the texts as the field held them THEN: after typing ins
   assert.equal(h.ops().length, 2);
   const [first, second] = h.ops();
   h.resolve(first.from, false);                                  // accept the first piece only
-  assert.deepEqual(h.ledger().accepted, [{ id: String(first.id), oldText: "", newText: first.newText }]);
+  assert.deepEqual(h.decisions().accepted, [{ id: String(first.id), oldText: "", newText: first.newText }]);
   assert.deepEqual(h.ops().map((o) => o.id), [second.id]);
   h.undo();                                                      // the accept, not the typing
   assert.equal(h.doc(), "The bXig cat.");
   assert.equal(h.ops().length, 2);
-  assert.deepEqual(h.ledger(), EMPTY_LEDGER);
+  assert.deepEqual(h.decisions(), EMPTY_DECISIONS);
   h.undo();                                                      // now the typing
   assert.equal(h.doc(), "The big cat.");
   assert.equal(h.ops().length, 1);
 });
 
-test("type then accept then undo twice: the ledger empties on the FIRST undo, the typing on the second", () => {
+test("type then accept then undo twice: the decisions empty on the FIRST undo, the typing on the second", () => {
   const h = editor("The big cat.", [ins("a1", 4, "big ")]);
   h.type({ changes: { from: 11, to: 11, insert: " fast" } });
   h.resolve(4, false);
-  assert.equal(h.ledger().accepted.length, 1);
+  assert.equal(h.decisions().accepted.length, 1);
   h.undo();
   assert.equal(h.doc(), "The big cat fast.");
-  assert.deepEqual(h.ledger(), EMPTY_LEDGER);
+  assert.deepEqual(h.decisions(), EMPTY_DECISIONS);
   h.undo();
   assert.equal(h.doc(), "The big cat.");
-  assert.deepEqual(h.ledger(), EMPTY_LEDGER);
+  assert.deepEqual(h.decisions(), EMPTY_DECISIONS);
   assert.deepEqual(h.ops().map((o) => o.id), ["a1"]);
 });
 
-test("a paragraph item accepts every record it stands for, one ledger entry per record", () => {
+test("a paragraph item accepts every record it stands for, one decision per record", () => {
   const para = "aa bb cc dd ee ff gg hh";
   const many = [sub("p1", 0, "aa", "AA"), sub("p2", 3, "bb", "BB"), sub("p3", 6, "cc", "CC"), sub("p4", 9, "dd", "DD"), sub("p5", 12, "ee", "EE"), sub("p6", 15, "ff", "FF")];
   const h = editor(para, many);
@@ -251,11 +252,11 @@ test("a paragraph item accepts every record it stands for, one ledger entry per 
   h.resolve(item.curFrom, true);
   assert.equal(h.doc(), "AA BB CC DD EE FF gg hh");
   assert.deepEqual(h.ops(), []);
-  assert.deepEqual(h.ledger().rejected.map((e) => e.id), ["p1", "p2", "p3", "p4", "p5", "p6"]);
+  assert.deepEqual(h.decisions().rejected.map((e) => e.id), ["p1", "p2", "p3", "p4", "p5", "p6"]);
   h.undo();
   assert.equal(h.doc(), para);
   assert.equal(h.ops().length, 6);
-  assert.deepEqual(h.ledger(), EMPTY_LEDGER);
+  assert.deepEqual(h.decisions(), EMPTY_DECISIONS);
 });
 
 test("resolve() is null where no change starts, and the handle's suggestions() is the live, remapped field", () => {
@@ -264,7 +265,7 @@ test("resolve() is null where no change starts, and the handle's suggestions() i
   assert.equal(h.resolve(5, true), null);
   h.type({ changes: { from: 0, to: 0, insert: ">> " } });
   assert.equal(h.ops()[0].from, 7, "typing above the change moved it: a save gets THESE records");
-  assert.deepEqual(h.ledger(), EMPTY_LEDGER, "typing is no decision");
+  assert.deepEqual(h.decisions(), EMPTY_DECISIONS, "typing is no decision");
 });
 
 // ── executed: the marks the decoration facet holds ───────────────────────────────────────────────
@@ -350,10 +351,13 @@ test("track-decorations.ts names its source, the pin, and the fixes; no Obsidian
   assert.match(DECO, /if \(!host\.hasResolvableAt\(view, from\)\) return false;\n\s*event\.preventDefault\(\);\n\s*host\.resolveInline\(from, action === "reject", view\);/);
 });
 
-test("the chunk's ledger is a fold over decide/undecide effects with history inverses, and onLedger keys on identity", () => {
+test("the chunk's decisions are a fold over decide/undecide effects with history inverses, and the listener keys on the field's identity", () => {
   assert.match(CHUNK, /const decide = StateEffect\.define<Decision>\(\);\nconst undecide = StateEffect\.define<Decision>\(\);/);
   assert.match(CHUNK, /if \(e\.is\(decide\)\) out\.push\(undecide\.of\(e\.value\)\);\n\s*else if \(e\.is\(undecide\)\) out\.push\(decide\.of\(e\.value\)\);/);
-  assert.match(CHUNK, /if \(opts\.onLedger && u\.startState\.field\(ledgerField\) !== u\.state\.field\(ledgerField\)\) opts\.onLedger\(u\.state\.field\(ledgerField\)\);/);
+  // the listener reads the decisions field once, returns on the reducer's same-object identity, and reports the
+  // canonical callback first (the old-spelling alias line after it belongs to editor-chunk-decisions.test.ts)
+  assert.match(CHUNK, /EditorView\.updateListener\.of\(\(u\) => \{\n\s*const next = u\.state\.field\(decisionsField\);\n\s*if \(u\.startState\.field\(decisionsField\) === next\) return;\n\s*if \(opts\.onDecisions\) opts\.onDecisions\(next\);/);
+  assert.doesNotMatch(codeOnly(CHUNK), /ledgerField/, "the field is spelled decisionsField; no listener reads a field by the old name");
   // one transaction per decision, isolated in history, so one undo reverses the whole decision
   assert.match(CHUNK, /annotations: isolateHistory\.of\("full"\),/);
   // the seed is outside history and marked as a sync, as upstream's loads are

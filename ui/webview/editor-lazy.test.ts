@@ -107,17 +107,34 @@ test("track-decorations.ts is imported by editor-chunk.ts and by no other bundle
 });
 
 test("the chunk exports the track mount option and handle (decision 14), typed, consumed through mount() only", () => {
-  // the option and the handle, as file-view.ts will pass and read them
+  // the option and the handle, as file-view.ts passes and reads them. The contract's word is `decisions` (the
+  // 2026-09-06 review: the plan's word for the save verb's two lists; the slice's first word, ledger, is one
+  // CONTEXT.md avoids for the comments log) — the old spelling survives only as aliases beside their last caller,
+  // and editor-chunk-decisions.test.ts confines it to those lines
   assert.match(CHUNK, /export interface TrackOpts \{\n\s*\/\*\*[^\n]*\*\/\n\s*suggestions: unknown\[\];/);
   assert.match(CHUNK, /authorColor\?: \(author: string\) => string \| null;/);
-  assert.match(CHUNK, /onLedger\?: \(ledger: TrackLedger\) => void;/);
-  assert.match(CHUNK, /export interface TrackLedgerEntry \{ id: string; oldText: string; newText: string \}/);
-  assert.match(CHUNK, /export interface TrackLedger \{ accepted: TrackLedgerEntry\[\]; rejected: TrackLedgerEntry\[\] \}/);
-  assert.match(CHUNK, /export interface TrackHandle \{ suggestions\(\): unknown\[\]; ledger\(\): TrackLedger \}/);
+  assert.match(CHUNK, /onDecisions\?: \(decisions: TrackDecisions\) => void;/);
+  assert.match(CHUNK, /export interface TrackDecision \{ id: string; oldText: string; newText: string \}/);
+  assert.match(CHUNK, /export interface TrackDecisions \{ accepted: TrackDecision\[\]; rejected: TrackDecision\[\] \}/);
+  assert.match(CHUNK, /export interface TrackHandle \{\n\s*suggestions\(\): unknown\[\];\n\s*decisions\(\): TrackDecisions;\n(?:\s*ledger: TrackHandle\["decisions"\];[^\n]*\n)?\}/,
+    "the handle: the records and the decisions, plus at most the old-spelling alias");
   assert.match(CHUNK, /export interface EditorHandle \{\n\s*value\(\): string;\n\s*focus\(\): void;\n\s*destroy\(\): void;\n\s*track\?: TrackHandle;\n\}/);
   assert.match(CHUNK, /track\?: TrackOpts;/);
   // the handle reads the LIVE state, so a save gets the records as remapped by every keystroke since the mount
-  assert.match(CHUNK, /handle\.track = \{ suggestions: \(\) => track\.suggestions\(view\.state\), ledger: \(\) => track\.ledger\(view\.state\) \};/);
+  assert.match(CHUNK, /if \(track\) handle\.track = \{\n\s*suggestions: \(\) => track\.suggestions\(view\.state\),\n\s*decisions: \(\) => track\.decisions\(view\.state\),/);
+  // the caller's spelling, whichever it is today, is one the chunk declares — a rename on one side alone (round 2
+  // renamed the chunk and left this file's pins behind) fails HERE, by name, not on a stale literal. file-view.ts
+  // imports nothing from the chunk (lazy discipline), so the two files agree only by this check.
+  const passed = VIEW.match(/\btrack: \{[^\n]*\b(onLedger|onDecisions): /);
+  assert.ok(passed, "file-view.ts passes the decisions callback inside the track option");
+  assert.match(CHUNK, new RegExp(`^\\s*${passed![1]}\\?: (?:\\(decisions: TrackDecisions\\) => void|TrackOpts\\["onDecisions"\\]);`, "m"),
+    `TrackOpts declares ${passed![1]}, the spelling file-view.ts passes`);
+  const read = VIEW.match(/cm\.track \? cm\.track\.(ledger|decisions)\(\)/);
+  assert.ok(read, "file-view.ts reads the handle's decisions for the save");
+  assert.match(CHUNK, new RegExp(`^\\s*${read![1]}(?:\\(\\): TrackDecisions|: TrackHandle\\["decisions"\\]);`, "m"),
+    `TrackHandle declares ${read![1]}, the spelling file-view.ts reads`);
+  assert.match(CHUNK, new RegExp(`^\\s*${read![1]}: \\(\\) => track\\.decisions\\(view\\.state\\),`, "m"),
+    `mount() serves ${read![1]} from the live decisions field`);
   // the window global is unchanged: the option rides the mount call, not a new global
   assert.match(CHUNK, /__rompEditor = \{ mount, langNameFor \};/);
   // the vendored field, unchanged, and the derived marks — bundled by relative path, no alias in the source
@@ -131,7 +148,7 @@ test("the chunk exports the track mount option and handle (decision 14), typed, 
   const t = trackSetup({ suggestions: [{ id: "c1", author: "web", ts: 1, kind: "ins", from: 4, newText: "big ", oldText: "" }] });
   const tracked = EditorState.create({ doc: "The big cat.", extensions: extensionsFor("md", { onChange: noop, onSave: noop }, t) }).update(t.seed).state;
   assert.deepEqual(t.suggestions(tracked).map((s) => s.id), ["c1"]);
-  assert.deepEqual(t.ledger(tracked), { accepted: [], rejected: [] });
+  assert.deepEqual(t.decisions(tracked), { accepted: [], rejected: [] });
   const plain = EditorState.create({ doc: "The big cat.", extensions: extensionsFor("md", { onChange: noop, onSave: noop }) });
   assert.equal(plain.doc.toString(), tracked.doc.toString(), "the option adds no text: the buffer is the file");
 });
