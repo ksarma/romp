@@ -229,7 +229,10 @@ class _PerfStats:
                                    decode), evict (entries dropped for files gone from the
                                    directory), punch (snapshot entries copied for a user gesture),
                                    and the gauges entries / bytes (memoized paths and their summed
-                                   file size)
+                                   file size); lift_gate (the awaiting-lift job's per-session
+                                   identity gate, see _LIFT_GATE) -> skip / load (session-cycles
+                                   that took no store load vs the ones that did) and the gauge
+                                   entries (sids remembered)
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -374,10 +377,12 @@ class _PerfStats:
             goals = jd.goal_io_stats()
         except Exception:
             goals = {}
-        try:
-            memos = {"goals_snap": _goals_memo_report()}
-        except Exception:
-            memos = {}
+        memos = {}
+        for name, report in (("goals_snap", _goals_memo_report), ("lift_gate", _lift_gate_report)):
+            try:
+                memos[name] = report()
+            except Exception:
+                pass
         now = time.time()
         return {"now": now, "since": since, "uptime_s": now - _STARTED, "log": _PERF,
                 "process": _process_stats(), "pusher": pusher, "stages_ms": stages,
@@ -8650,6 +8655,53 @@ def _stamp_written_at(nd):
     return max(best, nd.get("awaitingAt") or 0)
 
 
+# ── the awaiting-lift gate ──
+# _lift_spent_awaiting decides whether a session has anything to lift from the loaded store alone:
+# `stamped` and `rolled` below are functions of the nodes load_goals returns, and load_goals reads exactly
+# three files — the store, the override journal (replayed on every load) and, for a journal `restore`
+# row, the goals-archive (a restore re-inserts a node only when neither the store nor the archive holds
+# it, so the archive's contents decide whether a stamped payload comes back). With about 30 alive
+# sessions and a handful of them stamped, the job parsed every store every pusher cycle to find nothing:
+# the load alone was 3.1% of the pusher thread and the job 5.4% (pusher profile, 2026-09-06). The gate
+# remembers, per sid, the identity of those three files at the last load and whether that load found a
+# candidate; an unchanged identity whose last load found none is skipped BEFORE the parse, so an idle
+# session costs three stats per cycle instead of a parse. Every writer moves the identity: save_goals and
+# save_goal_archive publish by rename (a new inode and mtime), the journal appenders extend the file
+# (size). The key is taken BEFORE the read, so a writer racing the load leaves a key that mismatches next
+# cycle — one redundant load, never a wrong skip. A session whose last load found candidates is never
+# gated: the clock-dependent part of the job (em._bg_expired), the registry snapshot and the transcript
+# reads all sit behind `stamped or rolled` being non-empty, and they run every cycle exactly as before.
+# The postal read (_peer_answered, cached) is also skipped on a gated cycle; its answer is consulted only
+# for nodes in `stamped`, which that cycle's load would have found empty. A load that raises records nothing (the next cycle retries; an error is never cached as a
+# skip), and entries for sids that left the alive set are dropped at the end of each tick. The key
+# shares the coarse-mtime blind spot of every stat-keyed memo here (two equal-size publishes inside one
+# clock tick on a filesystem without fine-grained timestamps); plan C1's byte compare closes it.
+_LIFT_GATE = {}                              # sid -> (identity key, bool(that load found a lift candidate))
+_lift_gate_stats = {"skip": 0, "load": 0}    # /perf memos.lift_gate: session-cycles skipped vs loaded
+
+
+def _lift_gate_key(sid):
+    """The identity of every file load_goals reads for `sid` — (store, override journal, goals-archive),
+    each (st_ino, st_mtime_ns, st_size), None when the file is absent. See _LIFT_GATE."""
+    def _ident(p):
+        try:
+            st = p.stat()
+        except OSError:
+            return None
+        return (st.st_ino, st.st_mtime_ns, st.st_size)
+    return (_ident(jd.GOALDIR / (sid + ".json")),
+            _ident(jd._overrides_dir() / (sid + ".jsonl")),
+            _ident(jd.GOALARCHDIR / (sid + ".json")))
+
+
+def _lift_gate_report():
+    """The gate's counters plus its occupancy, for /perf: `skip` session-cycles that took no load, `load`
+    the ones that did, `entries` sids remembered."""
+    out = dict(_lift_gate_stats)
+    out["entries"] = len(_LIFT_GATE)
+    return out
+
+
 def _lift_spent_awaiting(now, tmux):
     """Retire a goal's ⏳ awaiting stamp once the dispatches it was waiting on have RETURNED (the user
     2026-07-22). The closer's lift is bounded to the goals a turn actually WORKED ON (`touched`), which is
@@ -8673,12 +8725,24 @@ def _lift_spent_awaiting(now, tmux):
     the stamp while the slurm job ran on (the user 2026-08-15; the wake stays the backstop).
 
     Dormant sessions are skipped: their tasks died with their CLI, so the death notice is the truth there,
-    not a lift (same rule as _session_awaiting's source 0.75)."""
+    not a lift (same rule as _session_awaiting's source 0.75).
+
+    An alive session whose store, override journal and goals-archive are all unchanged since a load that
+    found nothing stamped is skipped before the load (_LIFT_GATE above): the same decision, from three
+    stats instead of a parse."""
+    seen = set()
     for s in _alive_sessions(now, tmux):
         sid = s["sid"]
+        seen.add(sid)
         try:
             if tmux.get(sid) is None:                 # dormant → its tasks died with the CLI, don't rule
                 continue
+            key = _lift_gate_key(sid)                 # BEFORE the read: a racing writer costs one reload
+            gate = _LIFT_GATE.get(sid)
+            if gate is not None and gate[0] == key and not gate[1]:
+                _lift_gate_stats["skip"] += 1
+                continue                              # the same files held nothing to lift last time
+            _lift_gate_stats["load"] += 1
             store = jd.load_goals(sid)
             nodes = store.get("nodes") or {}
             stamped = [nd for nd in nodes.values()
@@ -8690,6 +8754,9 @@ def _lift_spent_awaiting(now, tmux):
             rolled = [nd for nd in nodes.values()
                       if nd.get("awaitingWhy") and nd.get("rolledUp")
                       and not _last_awaiting_is_lift(nd)]
+            # recorded here, from the comprehensions alone: the peer-supersede arm below shrinks
+            # `stamped`, and a save moves the key anyway, so the entry says what THIS load found
+            _LIFT_GATE[sid] = (key, bool(stamped or rolled))
             changed = False
             for nd in rolled:
                 if jd.record_verdict(store, nd, "romp", "awaiting", _lift_ev_t(nd, now), lift=True):
@@ -8866,6 +8933,8 @@ def _lift_spent_awaiting(now, tmux):
                 _mark_views_dirty()
         except Exception:
             sys.stderr.write("awaiting-lift (session %s): %s\n" % (sid or "?", traceback.format_exc()))
+    for sid in [k for k in _LIFT_GATE if k not in seen]:
+        del _LIFT_GATE[sid]                           # the sid left the alive set: nothing to gate
 
 
 _PREV_ALIVE = None                       # last tick's alive sids — a sid LEAVING is the death event

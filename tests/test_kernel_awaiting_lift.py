@@ -80,6 +80,7 @@ class AwaitingLift(unittest.TestCase):
         km._alive_sessions = lambda now, tmux: [{"sid": SID, "path": self.path}]
         km._mark_views_dirty = lambda *a, **k: None
         km._SESSION_STAMP_CACHE.clear()
+        km._LIFT_GATE.clear()          # stores are re-seeded in place under recycled tempdir inodes
         km._bgall_cache.clear()
         km._bgtasks_cache.clear()
         self.gid = SID + ":g1"
@@ -88,7 +89,7 @@ class AwaitingLift(unittest.TestCase):
         for k, v in self.saved.items():
             setattr(km, k, v)
         km.jd.STATE, km.jd.GOALDIR = self.saved_jd
-        km._SESSION_STAMP_CACHE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
+        km._SESSION_STAMP_CACHE.clear(); km._LIFT_GATE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
         self.td.cleanup()
 
     def _transcript(self, recs):
@@ -445,14 +446,14 @@ class RestartReconcile(unittest.TestCase):
         km._mark_views_dirty = lambda *a, **k: None
         km._sdk_spawned_at = lambda sid: self.spawn      # the CLI epoch — the restart moment
         self.spawn = BACK                                # default: the backend respawned after the stamp
-        km._SESSION_STAMP_CACHE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
+        km._SESSION_STAMP_CACHE.clear(); km._LIFT_GATE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
         self.gid = SID + ":g1"
 
     def tearDown(self):
         for k, v in self.saved.items():
             setattr(km, k, v)
         km.jd.STATE, km.jd.GOALDIR = self.saved_jd
-        km._SESSION_STAMP_CACHE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
+        km._SESSION_STAMP_CACHE.clear(); km._LIFT_GATE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
         self.td.cleanup()
 
     def _transcript(self, recs):
@@ -589,6 +590,209 @@ class LiftStandsDown(unittest.TestCase):
         self._seed(written=BACK + 60)                    # written after the return, but never lifted before
         self._tick(now=BACK + 120)
         self.assertIsNone(self._stamp(), "first-stamp audit-lag lift preserved")
+
+
+class LiftGate(unittest.TestCase):
+    """The identity gate in front of the lift's store load (perf plan 2, P6a). `stamped`/`rolled` are
+    functions of the loaded store alone, and load_goals reads exactly three files — the store, the
+    override journal and (for a `restore` row) the goals-archive — so a session whose three identities
+    are unchanged since a load that found no candidate is skipped before the parse. Every writer moves
+    an identity (rename publishes, journal appends), so a lift happens on exactly the events it did
+    before; the gate skips only loads that would have found nothing. Loads are counted through a
+    wrapper on jd.load_goals (the candidates path loads once more inside _bg_placed_tops, so a tick
+    that re-evaluates is asserted as at least one load; a gated tick is exactly zero); in-place
+    rewrites after a tick go through save_goals, a journal append, an archive publish, or os.utime
+    (coarse-mtime filesystems in CI)."""
+
+    def setUp(self):
+        AwaitingLift.setUp(self)
+        self.saved_arch = km.jd.GOALARCHDIR
+        km.jd.GOALARCHDIR = Path(self.td.name) / "goals-archive"
+        self.calls = []
+        real = km.jd.load_goals
+        def counted(fsid):
+            self.calls.append(fsid)
+            return real(fsid)
+        km.jd.load_goals = counted
+        self.addCleanup(setattr, km.jd, "load_goals", real)
+
+    def tearDown(self):
+        km.jd.GOALARCHDIR = self.saved_arch
+        AwaitingLift.tearDown(self)
+
+    _transcript = AwaitingLift._transcript
+    _seed = AwaitingLift._seed
+    _stamp = AwaitingLift._stamp
+
+    def _tick(self, now=BACK + 100, snap=None):
+        """One lift tick; returns how many store loads it took."""
+        before = len(self.calls)
+        km._lift_spent_awaiting(now, {SID: ({"state": ""} if snap is None else snap)})
+        return len(self.calls) - before
+
+    def _seed_unstamped(self):
+        nd = {"id": self.gid, "text": "a goal", "parentId": None, "nodeComplete": False,
+              "blocked": False, "cleared": False, "trail": [], "t": BORN, "mt": BORN, "log": []}
+        (km.jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
+            {"rompUuid": SID, "seq": 1, "placements": {}, "status": {}, "nodes": {self.gid: nd}}))
+
+    def _stamped_node(self, why="waiting on a dispatched investigation"):
+        return {"id": self.gid, "text": "a goal", "parentId": None, "nodeComplete": False,
+                "blocked": False, "cleared": False, "trail": [], "t": BORN, "mt": BORN,
+                "awaitingWhy": why, "awaitingAt": STAMP,
+                "log": [{"ev_t": STAMP, "src": "closer", "kind": "awaiting", "why": why, "at": STAMP}]}
+
+    def _returned_dispatch(self):
+        self._transcript([_launch("t1", LAUNCH), _notification("t1", BACK)])
+
+    # ---- the saving: an unchanged, unstamped session costs stats, not a parse ----
+    def test_an_unchanged_unstamped_store_loads_once(self):
+        self._returned_dispatch()
+        self._seed_unstamped()
+        skips = km._lift_gate_stats["skip"]
+        self.assertEqual(self._tick(), 1, "the first tick has to look")
+        self.assertEqual(self._tick(), 0, "same three identities, nothing stamped last time: no load")
+        self.assertEqual(self._tick(), 0)
+        self.assertEqual(km._lift_gate_stats["skip"] - skips, 2, "the /perf counter saw both skips")
+        self.assertEqual(km._LIFT_GATE[SID][1], False, "the entry remembers: no candidate")
+
+    def test_a_missing_store_is_gated_until_it_appears(self):
+        self._returned_dispatch()
+        self.assertEqual(self._tick(), 1)               # load_goals answers a fresh empty store
+        self.assertEqual(self._tick(), 0, "still no file: the absent identity is a stable key")
+        self._seed()                                     # the store is born stamped (a rename in production)
+        self.assertGreaterEqual(self._tick(), 1, "the store appeared: re-evaluated")
+        self.assertIsNone(self._stamp(), "…and the lift proceeded exactly as without the gate")
+
+    # ---- every writer moves the key ----
+    def test_a_save_goals_publish_reloads(self):
+        self._returned_dispatch()
+        self._seed_unstamped()
+        self.assertEqual(self._tick(), 1)
+        self.assertEqual(self._tick(), 0)
+        store = json.loads((km.jd.GOALDIR / (SID + ".json")).read_text())
+        store["nodes"][self.gid] = self._stamped_node()
+        km.jd.save_goals(SID, store)                     # the closer's publish: a rename, new identity
+        self.assertGreaterEqual(self._tick(), 1, "the publish moved the store's identity: reloaded")
+        self.assertIsNone(self._stamp(), "the returned dispatch lifts the fresh stamp")
+
+    def test_a_journal_restore_row_reloads_and_lifts(self):
+        self._returned_dispatch()
+        (km.jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
+            {"rompUuid": SID, "seq": 1, "placements": {}, "status": {}, "nodes": {}}))
+        self.assertEqual(self._tick(), 1)
+        self.assertEqual(self._tick(), 0)
+        # an undo-clear restore rides the journal with its node payload — a stamped node can come back
+        # through the replay alone, with the store file untouched
+        km.jd.append_restore(SID, {self.gid: self._stamped_node()}, {}, BACK + 50)
+        self.assertGreaterEqual(self._tick(), 1, "the journal grew: reloaded")
+        nodes = json.loads((km.jd.GOALDIR / (SID + ".json")).read_text())["nodes"]
+        self.assertIn(self.gid, nodes, "the restored node was saved back")
+        self.assertIsNone(nodes[self.gid].get("awaitingWhy") or None, "…and its stamp lifted on the return")
+
+    def test_a_journal_block_row_reloads(self):
+        self._returned_dispatch()
+        self._seed_unstamped()
+        self.assertEqual(self._tick(), 1)
+        self.assertEqual(self._tick(), 0)
+        km.jd.append_block(SID, self.gid, "nudge", "a status ask went unanswered", BACK + 50)
+        self.assertEqual(self._tick(), 1, "a block row is a journal append: the key moved, reloaded")
+        self.assertEqual(self._tick(), 0, "nothing stamped after the replay either: gated again")
+
+    def test_a_journal_override_row_reloads(self):
+        self._returned_dispatch()
+        self._seed_unstamped()
+        self.assertEqual(self._tick(), 1)
+        self.assertEqual(self._tick(), 0)
+        km.jd.append_override(SID, self.gid, "resolve", BACK + 50)   # a user click's journal row
+        self.assertEqual(self._tick(), 1, "a user override is a journal append: the key moved, reloaded")
+        self.assertEqual(self._tick(), 0, "the replayed resolve stamps nothing: gated again")
+
+    def test_an_archive_change_with_a_restore_row_reloads(self):
+        self._returned_dispatch()
+        (km.jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
+            {"rompUuid": SID, "seq": 1, "placements": {}, "status": {}, "nodes": {}}))
+        # the node sits in the archive, so the journal's restore row does NOT re-insert it (replay
+        # defers to a later re-clear) — the archive's contents decide the replay's outcome
+        km.jd.save_goal_archive(SID, {"rompUuid": SID, "nodes": {self.gid: self._stamped_node()}, "status": {}})
+        km.jd.append_restore(SID, {self.gid: self._stamped_node()}, {}, BACK + 50)
+        self.assertEqual(self._tick(), 1)
+        self.assertIsNotNone(km._LIFT_GATE[SID][0][2], "the archive's identity is in the key")
+        self.assertEqual(self._tick(), 0, "archive, journal, store unchanged: gated")
+        km.jd.save_goal_archive(SID, {"rompUuid": SID, "nodes": {}, "status": {}})
+        self.assertGreaterEqual(self._tick(), 1, "the archive changed: reloaded")
+        nodes = json.loads((km.jd.GOALDIR / (SID + ".json")).read_text())["nodes"]
+        self.assertIn(self.gid, nodes, "the restore now re-inserted the node")
+        self.assertIsNone(nodes[self.gid].get("awaitingWhy") or None, "…and the lift proceeded")
+
+    def test_an_in_place_rewrite_reloads(self):
+        self._returned_dispatch()
+        self._seed_unstamped()
+        self.assertEqual(self._tick(), 1)
+        self.assertEqual(self._tick(), 0)
+        self._seed()                                     # same path, new bytes
+        gp = km.jd.GOALDIR / (SID + ".json")
+        st = gp.stat()
+        os.utime(gp, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))   # a coarse-mtime CI still moves
+        self.assertGreaterEqual(self._tick(), 1, "the identity moved: reloaded")
+        self.assertIsNone(self._stamp())
+
+    # ---- what the gate never touches ----
+    def test_a_stamped_store_loads_every_tick(self):
+        self._transcript([_launch("t1", LAUNCH)])       # still out: the stamp stands, every tick decides
+        self._seed()
+        loads = km._lift_gate_stats["load"]
+        for _ in range(3):
+            self.assertGreaterEqual(self._tick(), 1, "a candidate exists: the full path runs")
+            self.assertIsNotNone(self._stamp())
+        self.assertEqual(km._LIFT_GATE[SID][1], True)
+        self.assertEqual(km._lift_gate_stats["load"] - loads, 3)
+
+    def test_a_dormant_session_is_not_gated_or_recorded(self):
+        self._seed_unstamped()
+        before = len(self.calls)
+        km._lift_spent_awaiting(BACK + 100, {SID: None})     # dormant: no tmux/SDK row for the sid
+        self.assertEqual(len(self.calls) - before, 0)
+        self.assertNotIn(SID, km._LIFT_GATE, "dormant: skipped before the gate, nothing remembered")
+
+    def test_a_failed_load_records_no_skip(self):
+        import contextlib, io
+        self._returned_dispatch()
+        self._seed_unstamped()
+        counted = km.jd.load_goals
+        def boom(fsid):
+            self.calls.append(fsid)
+            raise RuntimeError("synthetic read failure")
+        km.jd.load_goals = boom
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(self._tick(), 1)
+        self.assertIn("awaiting-lift", err.getvalue(), "the failure is reported, as before")
+        self.assertNotIn(SID, km._LIFT_GATE, "an error is never cached as a skip")
+        km.jd.load_goals = counted
+        self.assertEqual(self._tick(), 1, "the next tick retries the load")
+
+    def test_entries_for_sids_that_left_the_alive_set_are_dropped(self):
+        self._seed_unstamped()
+        self._tick()
+        self.assertIn(SID, km._LIFT_GATE)
+        km._alive_sessions = lambda now, tmux: []
+        self._tick()
+        self.assertNotIn(SID, km._LIFT_GATE, "the sid left the alive set: its entry went with it")
+
+    def test_the_key_is_taken_before_the_read(self):
+        import inspect
+        src = inspect.getsource(km._lift_spent_awaiting)
+        self.assertLess(src.index("_lift_gate_key(sid)"), src.index("jd.load_goals(sid)"),
+                        "stat before read: a writer racing the load costs a reload, never a wrong skip")
+
+    def test_perf_reports_the_gate(self):
+        self._seed_unstamped()
+        self._tick(); self._tick()
+        lg = km._PERF_STATS.snapshot()["memos"]["lift_gate"]
+        self.assertEqual(lg["skip"], km._lift_gate_stats["skip"])
+        self.assertEqual(lg["load"], km._lift_gate_stats["load"])
+        self.assertEqual(lg["entries"], len(km._LIFT_GATE))
+        self.assertGreaterEqual(lg["skip"], 1)
 
 
 class LiftKeepsLiveLedgerRecords(unittest.TestCase):
