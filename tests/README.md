@@ -30,6 +30,17 @@ Every bug fix or feature change lands with a test (repo rule). Four suites:
   was down, the real manager it starts ran `tmux start-server` on the
   default socket, and for the rest of the day the machine's tmux server was
   the test's, carrying the run's environment inside the service's cgroup.
+  The same helper call floors `ROMP_CLI_SCOPE=0`: under `ROMP_SUPERVISED`
+  (set by the service's unit, and inherited by a tool shell under a
+  self-hosted install) `bin/romp-manager` starts that server through
+  `systemd-run --scope` and the kernel spawns session CLIs the same way, so
+  a suite that starts the real manager would otherwise leave a transient
+  scope on the developer's user manager. Every suite that isolates tmux
+  inherits the floor; `romp-manager-tmux-scope.bats` turns the switch back
+  on only behind a fake `systemd-run` first on PATH. pytest's floor is
+  `conftest.py`; `test_cli_scope_floor.py` pins both halves of it on the
+  source, since a test that reads the value cannot tell the floor from
+  `test_cli_scope.py`'s own import-time set.
   Any test whose subject binds a loopback port picks it with `load
   free-port` + `free_port VAR...`, never a literal: a literal shared by two
   files collided within one run (`romp-manager-ensure.bats` once used

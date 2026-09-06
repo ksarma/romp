@@ -20,11 +20,7 @@ setup() {
     printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/tmux"
     chmod +x "$BIN/tmux"
     export PATH="$BIN:$PATH"
-    tmux_private_socket_dir "$TEST_DIR"
-    # bin/romp-manager starts its tmux server in a transient systemd scope under ROMP_SUPERVISED (which a
-    # romp session's tool shell inherits from the live service) — a test must never start a real scope
-    # on the live user manager, so the switch is floored off (the kernel and manager both honour it).
-    export ROMP_CLI_SCOPE=0
+    tmux_private_socket_dir "$TEST_DIR"   # also floors ROMP_CLI_SCOPE=0: no real scope on the user manager
     # Fake kernel launcher: stays alive without binding a real port.
     FAKE="$TEST_DIR/fake-serve"
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$FAKE"
