@@ -719,6 +719,11 @@ function el(tag: string, cls?: string): HTMLElement {
   if (cls) e.className = cls;
   return e;
 }
+// A text write that compares first (2026-09-06). In a document that has created a MutationObserver — gear.js
+// does at boot — Blink treats an identical textContent write as a real Text-node replacement and dirties
+// layout (feed-age.ts has the mechanism). The grouped-mode session headers repaint on every render (they are
+// not behind the per-card update gate), so their labels write through here.
+function setText(e: HTMLElement, s: string): void { if (e.textContent !== s) e.textContent = s; }
 
 // A lightweight yes/no overlay for the feed. Separate from the ask #feed-modal
 // (a different state machine); Esc or a backdrop click cancels.
@@ -2222,6 +2227,10 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
       : it.blocked.status ? `⚠ API error · ${it.blocked.status}` : "⚠ API error";
     // a refusal's raw CLI text buries the remedy — the kernel's `what` states it plainly, so tip with that
     setTip(a._apiBadge as HTMLElement, (spendLimit || refusal) ? it.blocked.what : (it.blocked.text || it.blocked.what));
+    // Under the per-card update gate (2026-09-06) a latched "Retrying…" holds until THIS card's object
+    // changes, where before it re-armed on the next push of any card: the session resuming moves the
+    // working set (the key) and hides the whole unit; a retry that fails again arrives as a new block
+    // record. Revive below latches the same way.
     a._apiRetry.disabled = false; a._apiRetry.textContent = "Retry";
     a._apiRetry.onclick = (ev: Event) => {
       ev.stopPropagation();
@@ -3446,9 +3455,12 @@ function makeSessHead(): HTMLElement {
   return h;
 }
 function updateSessHead(h: HTMLElement, e: Entry & { kind: "sess" }): void {
-  h.setAttribute("data-fsid", e.sid);   // the hover-freeze badge painter finds headers by sid
+  if (h.getAttribute("data-fsid") !== e.sid) h.setAttribute("data-fsid", e.sid);   // the hover-freeze badge painter finds headers by sid
   const nm = (h as any)._name as HTMLElement;
-  nm.replaceChildren(...hostNameNodes(e.name, e.sid));
+  // the name nodes are minted only when what they show changes (headers repaint every render; ~90 on the
+  // recorded board, each a Text-node replacement otherwise — the same reason cards are gated)
+  const nmSig = e.name + "\u0000" + e.sid + "\u0000" + (hostIsDown(e.sid) ? "d" : "");
+  if ((h as any)._nmSig !== nmSig) { (h as any)._nmSig = nmSig; nm.replaceChildren(...hostNameNodes(e.name, e.sid)); }
   if (e.color) nm.style.color = e.color.bg;
   nm.classList.toggle("dead", !e.live);
   nm.onclick = (ev) => { ev.stopPropagation(); openOrReviveSession(e.sid, e.live, e.name); };
@@ -3457,13 +3469,13 @@ function updateSessHead(h: HTMLElement, e: Entry & { kind: "sess" }): void {
   const fold = (h as any)._fold as HTMLElement, foldn = (h as any)._foldn as HTMLElement;
   const shut = collapsedThreads.has(e.sid);
   h.classList.toggle("folded", shut);
-  fold.textContent = shut ? "▸" : "▾";           // ▸ folded / ▾ open
+  setText(fold, shut ? "▸" : "▾");               // ▸ folded / ▾ open
   fold.title = shut ? "show this session's cards" : "collapse this session to its name — new cards stay folded too";
   fold.setAttribute("aria-expanded", shut ? "false" : "true");
   fold.setAttribute("aria-label", (shut ? "expand " : "collapse ") + e.name);
   foldn.style.display = shut && e.folded ? "" : "none";
   // just the number (the user 2026-08-26) — the section chips' own vocabulary; the words live on hover
-  foldn.textContent = String(e.folded);
+  setText(foldn, String(e.folded));
   foldn.title = e.folded === 1 ? "1 card folded under this session" : e.folded + " cards folded under this session";
   fold.onclick = (ev) => {
     ev.stopPropagation();   // the fold IS the acknowledgement: local state + an immediate re-render
@@ -3474,7 +3486,7 @@ function updateSessHead(h: HTMLElement, e: Entry & { kind: "sess" }): void {
   const procs = e.live ? bgServicesMap[e.name] || [] : [];
   const open = procs.length > 0 && openBgSvc.has(e.sid);
   svc.style.display = procs.length ? "" : "none";
-  svc.textContent = procs.length === 1 ? "background process" : procs.length + " background processes";
+  setText(svc, procs.length === 1 ? "background process" : procs.length + " background processes");
   svc.title = open ? "hide the processes" : "processes this session keeps running — click to list";
   svc.classList.toggle("on", open);
   svc.setAttribute("aria-pressed", open ? "true" : "false");
