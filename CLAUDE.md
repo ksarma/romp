@@ -166,11 +166,10 @@ broad `git add` will sweep up your work). Conventions:
   1. `git push -u origin <branch>`. `origin` is the fork; `remote.pushDefault` points
      there too, so a bare `git push` does the same. Never `git push upstream` — see
      the fork section above, and `scripts/fork-remotes.sh` makes it fail if tried.
-  2. Land it on the fork's `main` the way the user prefers for that change — a PR
-     within the fork when it wants a read-through, a merge when it does not. Opening
-     a PR against the upstream project is a separate decision only the user makes.
-     PRs land through a batch (`scripts/batch.py`); do not click merge; see
-     `docs/batching.md`.
+  2. Open a PR within the fork against `main`. PRs land through a batch
+     (`scripts/batch.py`; see `docs/batching.md`): do not click merge. A change that
+     must land alone is merged on the user's word. Opening a PR against the upstream
+     project is a separate decision only the user makes.
 - **Clean up when finished.** After publishing, remove the worktree
   (`git worktree remove ../romp-<session>`) and delete its branch — don't leave stale
   worktrees lying around.
