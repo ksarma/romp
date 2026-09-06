@@ -36,6 +36,16 @@ test("the strip renders the emoji BEFORE the name on real and placeholder tabs, 
   // a placeholder tab (tabs-first): the same, from the pushed meta alone
   assert.match(SRC, /const phEmoji = tabEmojiNode\(meta\?\.emoji\);\n\s*if \(phEmoji\) tab\.appendChild\(phEmoji\);\n\s*const label = el\("span", "tab-label"\);/);
   assert.match(CSS, /\.tab-emoji \{ flex: 0 0 auto; line-height: 1; \}/);
+  // the sheet's comment above that rule states the SAME design: after round 1 exposed the glyph it still said
+  // "aria-hidden in the markup", and a maintainer reading the sheet as the design would have hidden it again
+  // (review round 3, 2026-09-06)
+  const cssFrom = CSS.indexOf("/* The tab's emoji label (the user 2026-09-06)");
+  const cssTo = CSS.indexOf(".tab-emoji { flex: 0 0 auto;");
+  assert.ok(cssFrom > 0 && cssTo > cssFrom && cssTo - cssFrom < 900, "the comment sits directly above the rule");
+  const cssWhy = CSS.slice(cssFrom, cssTo);
+  assert.match(cssWhy, /EXPOSED to assistive technology — not aria-hidden/);
+  assert.doesNotMatch(cssWhy, /aria-hidden in the markup/);
+  assert.match(cssWhy, /tab MENU's copy of the glyph is the\s+hidden one/);
 });
 
 test("the session and the tab meta carry the field; a frame without it (an older kernel) keeps the last value", () => {
@@ -58,7 +68,17 @@ test("the tab menu's Emoji… row sits with Rename, wears the current emoji as i
   const move = SRC.indexOf('l.textContent = "Move to folder…"');
   const colors = SRC.indexOf('const row = el("div", "ctx-colors");');
   assert.ok(move > 0 && colors > 0 && move < i && i < colors);
-  assert.match(CSS, /\.ctx-item-toggle \.ctx-icon\.glyph \{ width: 14px; line-height: 14px; justify-content: center; \}/);
+  // the glyph box sizes to its glyph up to the sibling SVG icons' 16px and CLIPS the rest horizontally: a
+  // well-formed ZWJ chain the font does not join, or an RGI sequence the font predates, draws as three or four
+  // glyphs, which over the fixed 14px box this was spilled into the row text on the right and the padding on
+  // the left (review round 3, 2026-09-06). clip-path with vertical slack, not overflow: a glyph's ink can
+  // stand taller than the 14px line and keeps its top and bottom.
+  assert.match(CSS, /\.ctx-item-toggle \.ctx-icon\.glyph \{ min-width: 14px; max-width: 16px; line-height: 14px; clip-path: inset\(-50% 0\); \}/);
+  const gi = CSS.indexOf(".ctx-item-toggle .ctx-icon.glyph {");
+  const glyphRule = CSS.slice(gi, CSS.indexOf("}", gi));
+  assert.doesNotMatch(glyphRule, /[^-]width: 14px/, "no fixed width: the box follows its glyph");
+  assert.doesNotMatch(glyphRule, /overflow/, "overflow: hidden would clip a tall glyph's ink top and bottom");
+  assert.doesNotMatch(glyphRule, /justify-content: center/, "centered, an overflowing run showed its middle glyph; from the start it shows the first");
 });
 
 test("the dialog: Set posts the typed value, Clear posts \"\", an empty Set is refused locally, and the pressed button acknowledges BEFORE the post", () => {
@@ -74,7 +94,7 @@ test("the dialog: Set posts the typed value, Clear posts \"\", an empty Set is r
   assert.ok(ack > 0 && post > ack, "the button changes its label BEFORE the op is posted");
   assert.doesNotMatch(body.slice(body.indexOf("const submit ="), post), /closeEmojiPrompt\(\)/, "the submit no longer closes the dialog");
   assert.match(body, /if \(!p \|\| p\.pending\) return;/);   // one answer per press
-  assert.match(body, /p\.pending = true;/);
+  assert.match(body, /p\.pending = true; p\.asked = value;/);   // and the dialog remembers what it asked (the late-confirm close)
   assert.match(body, /30000\)/);                            // the backstop: a wait never traps
   // the dialog lives on document.body, outside #tabs — renderTabs (every kernel push) never rebuilds its
   // buttons mid-click, so per-node listeners here are click-safe (the move and fork dialogs' arrangement)
@@ -98,12 +118,20 @@ test("the disabled Clear (nothing to clear) is dressed as disabled and says why;
 test("the kernel's answer drives the dialog: emojiSet for its session closes it, a warn while pending puts the reason under the input", () => {
   // the confirm handler applies the emoji to the strip, THEN closes the dialog that asked
   const handler = slice('m.type === "emojiSet" && m.id && typeof m.emoji === "string"', 'm.type === "droppedPath"');
-  assert.match(handler, /else if \(!s\) renderTabs\(\);[^\n]*\n\s*emojiLanded\(String\(m\.id\)\);/);
-  const landed = slice("function emojiLanded(sid: string): void {", "\nfunction emojiRefusedLocal(");
-  assert.match(landed, /if \(emojiPrompt && emojiPrompt\.pending && emojiPrompt\.sid === sid\) closeEmojiPrompt\(\);/);
+  assert.match(handler, /else if \(!s\) renderTabs\(\);[^\n]*\n\s*emojiLanded\(String\(m\.id\), m\.emoji\);/);
+  // the close decision is the pure emojiConfirmClosesDialog (tab-meta.ts; tab-meta.test.ts runs it): pending →
+  // its own answer, whatever the validator trimmed; not pending but the value it asked for → the same answer
+  // arriving late, after the 30 s backstop had painted "still waiting" — it used to stay open with a red hint
+  // under a value the tab already wore (review round 3, 2026-09-06)
+  const landed = slice("function emojiLanded(sid: string, emoji: string): void {", "\nfunction emojiRefusedLocal(");
+  assert.match(landed, /^function emojiLanded\(sid: string, emoji: string\): void \{\n  if \(emojiConfirmClosesDialog\(emojiPrompt, sid, emoji\)\) closeEmojiPrompt\(\);\n\}/);
+  assert.match(SRC, /import \{[^}]*\bemojiConfirmClosesDialog\b[^}]*\} from "\.\/tab-meta";/);
+  assert.match(SRC, /backstop\?: number; asked\?: string \} \| null = null;/);
   // the refusal: buttons back, input unlocked with the value in place, the reason where the move dialog puts its
   const refused = slice("function emojiRefusedLocal(text: string): void {", "\n// THE FORK MODAL");
-  assert.match(refused, /if \(!p \|\| !p\.pending\) return;/);
+  // a warn while NOT pending is not this dialog's: it returns before touching the hint, the buttons or the
+  // input (the router then hands the warn to the create branch or a toast — pinned below)
+  assert.match(refused, /^function emojiRefusedLocal\(text: string\): void \{\n  const p = emojiPrompt;\n  if \(!p \|\| !p\.pending\) return;/);
   assert.match(refused, /p\.pending = false;/);
   assert.match(refused, /p\.go\.disabled = false; p\.go\.textContent = "Set";/);
   assert.match(refused, /p\.clear\.disabled = !\(sessions\.get\(p\.sid\)\?\.emoji \|\| tabMeta\.get\(p\.sid\)\?\.emoji\); p\.clear\.textContent = "Clear";/);

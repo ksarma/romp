@@ -9,8 +9,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, PENDING_META_MAX_AGE,
-         TabSessionMeta, PendingTabMeta } from "./tab-meta";
+import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, emojiConfirmClosesDialog,
+         PENDING_META_MAX_AGE, TabSessionMeta, PendingTabMeta } from "./tab-meta";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 
@@ -155,6 +155,29 @@ test("the emojiSet confirm's pending guard holds a stale push, the echo clears i
   s.emoji = "";
   syncSessionsFromTabMeta([{ id: "S1", name: "api", emoji: "\u{1F319}" }], (id) => store.get(id), pending);
   assert.equal(s.emoji, "", "a pending clear stands until the push agrees");
+});
+
+test("the emojiSet confirm closes the dialog that asked: while pending whatever the kernel stored, after the backstop when the value is the one it asked for", () => {
+  const moon = "\u{1F319}", rocket = "\u{1F680}";
+  // pending: the kernel answers only the client that asked, so this IS the answer — the validator may have
+  // trimmed the value, so the value is not compared
+  assert.equal(emojiConfirmClosesDialog({ sid: "S1", pending: true, asked: " " + moon + " " }, "S1", moon), true);
+  assert.equal(emojiConfirmClosesDialog({ sid: "S1", pending: true, asked: "" }, "S1", ""), true, "a Clear's confirm");
+  // not pending: the 30 s backstop (or an unrelated warn taken for the refusal) had already un-pended the
+  // dialog when the real answer arrived; the tab wears the value, so a red "still waiting" under it would be a
+  // lie — it used to stay open until Cancel (review round 3, 2026-09-06)
+  assert.equal(emojiConfirmClosesDialog({ sid: "S1", pending: false, asked: moon }, "S1", moon), true);
+  assert.equal(emojiConfirmClosesDialog({ sid: "S1", pending: false, asked: "" }, "S1", ""), true, "a late Clear confirm");
+  // what leaves an open dialog alone
+  assert.equal(emojiConfirmClosesDialog({ sid: "S1", pending: false, asked: moon }, "S1", rocket), false,
+               "some other value for this session — not what it asked");
+  assert.equal(emojiConfirmClosesDialog({ sid: "S1", pending: false }, "S1", ""), false,
+               "a dialog that has asked nothing yet: an undefined ask is not a Clear");
+  assert.equal(emojiConfirmClosesDialog({ sid: "S1", pending: false }, "S1", moon), false);
+  assert.equal(emojiConfirmClosesDialog({ sid: "S1", pending: true, asked: moon }, "S2", moon), false,
+               "another session's confirm, even while pending");
+  assert.equal(emojiConfirmClosesDialog(null, "S1", moon), false, "no dialog open");
+  assert.equal(emojiConfirmClosesDialog(undefined, "S1", moon), false);
 });
 
 test("render.ts wires the emoji like name and color: tabMeta stores it, the confirm notes it, the strip reads it", () => {

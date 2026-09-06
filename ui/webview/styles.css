@@ -423,7 +423,10 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab.tab-awaiting, .tab.tab-blocked, .tab.tab-retrying { outline: 2px dashed var(--state); outline-offset: -2px; }
 /* WORKING: a small yellow dot left of the name (replaces the old yellow outline). */
 /* The tab's emoji label (the user 2026-09-06): one glyph before the name, its own element so the identity
-   color and the fade stay on the name alone; aria-hidden in the markup (the name is the label). */
+   color and the fade stay on the name alone. EXPOSED to assistive technology — not aria-hidden (review,
+   2026-09-06): two same-named tabs may differ only by it, so a reader speaks the glyph's own name ahead of
+   the session name; render.ts tabEmojiNode has the reasoning. The tab MENU's copy of the glyph is the
+   hidden one — there the row's text "Emoji…" is the label and the icon only repeats it. */
 .tab-emoji { flex: 0 0 auto; line-height: 1; }
 .tab-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--st-working-bg); }   /* solid — dot oscillation was distracting (the user 2026-06-16) */
 .tab-dot.await { background: var(--st-awaitbg-bg); }   /* awaiting-bg: the dot matches the await-green chip (the user 2026-07-13) */
@@ -606,7 +609,12 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    gray + slashed. So the same blue marks "enabled" in both the menu and the timeline. */
 .ctx-item-toggle .ctx-icon { flex: 0 0 auto; margin-top: 1px; color: var(--accent); display: flex; }
 .ctx-item-toggle .ctx-icon.off { color: var(--dim); }
-.ctx-item-toggle .ctx-icon.glyph { width: 14px; line-height: 14px; justify-content: center; }   /* the Emoji… row wears the current emoji as its icon */
+/* the Emoji… row wears the current emoji as its icon. The box sizes to its glyph up to the sibling SVG
+   icons' 16px and CLIPS the rest horizontally — clip-path, not overflow: a glyph's ink can stand taller than
+   the 14px line and must keep its top and bottom. A well-formed ZWJ chain the font does not join, or an RGI
+   sequence the font predates, draws as three or four glyphs; over the fixed 14px box this was, they spilled
+   into the row text on the right and the menu padding on the left (review round 3, 2026-09-06). */
+.ctx-item-toggle .ctx-icon.glyph { min-width: 14px; max-width: 16px; line-height: 14px; clip-path: inset(-50% 0); }
 /* the tab menu's Tags flyout (the user 2026-08-24): identity dot per union tag, ✕ = remove-
    everywhere, an inline New tag… input — all in the menu vocabulary, no new font sizes */
 .ctx-tag-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; }

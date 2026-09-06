@@ -23,6 +23,22 @@ export interface PendingTabMeta { name?: string; colorBg?: string; emoji?: strin
 
 export const PENDING_META_MAX_AGE = 3;
 
+/** The kernel's {emojiSet id emoji} confirm against the open Emoji… dialog (render.ts showEmojiPrompt):
+ *  does the confirm close it? The kernel sends emojiSet to the client that asked, and to it only, so:
+ *  - PENDING (a Set/Clear awaiting its answer) for that session: yes, whatever the validator trimmed the
+ *    value to — this is the answer.
+ *  - not pending, but the value is exactly what the dialog last asked for: yes — the same answer arriving
+ *    LATE, after the 30 s backstop painted "still waiting" (or an unrelated warn was taken for the
+ *    refusal). The tab now wears the value; a red hint under it would be a lie (review round 3,
+ *    2026-09-06; the dialog used to stay open until Cancel).
+ *  - a dialog for another session, or one that has asked nothing yet (asked undefined — "" is a Clear,
+ *    a real ask): no, the confirm is not this dialog's. */
+export function emojiConfirmClosesDialog(d: { sid: string; pending: boolean; asked?: string } | null | undefined,
+                                         sid: string, emoji: string): boolean {
+  if (!d || d.sid !== sid) return false;
+  return d.pending || (d.asked !== undefined && d.asked === emoji);
+}
+
 /** Record a local optimistic edit so pushes built before it cannot revert the strip. */
 export function notePendingMeta(pending: Map<string, PendingTabMeta>, id: string,
                                 edit: { name?: string; colorBg?: string; emoji?: string }): void {

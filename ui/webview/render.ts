@@ -18,7 +18,7 @@ import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
-import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, PendingTabMeta } from "./tab-meta";
+import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, emojiConfirmClosesDialog, PendingTabMeta } from "./tab-meta";
 import { markerLabel, dayContext } from "./time-marker";
 import { compactDisplay, toolCounts, type DisplayItem } from "./compact";
 import { senderKind } from "./sender-identity";
@@ -6999,7 +6999,7 @@ function onMoveDirCompletions(m: any): void {
 // wait never traps); Cancel and Escape work throughout.
 let emojiPrompt: { sid: string; overlay: HTMLElement; input: HTMLInputElement; hint: HTMLElement;
                    go: HTMLButtonElement; clear: HTMLButtonElement; pending: boolean; close: () => void;
-                   backstop?: number } | null = null;
+                   backstop?: number; asked?: string } | null = null;   // asked: the value the last Set/Clear posted
 function closeEmojiPrompt(): void {
   if (!emojiPrompt) return;
   if (emojiPrompt.backstop !== undefined) clearTimeout(emojiPrompt.backstop);
@@ -7038,7 +7038,7 @@ function showEmojiPrompt(sid: string): void {
     if (!p || p.pending) return;   // one answer per press
     // acknowledge the click before the round trip (the repo's button rule); the kernel's answer — its
     // emojiSet for this session, or a warn with the reason — is what changes this dialog next
-    p.pending = true;
+    p.pending = true; p.asked = value;
     btn.textContent = busy; go.disabled = true; clear.disabled = true; input.disabled = true;
     hint.textContent = ""; hint.title = ""; hint.className = "emoji-hint";
     setSessionEmoji(sid, value);
@@ -7065,11 +7065,17 @@ function showEmojiPrompt(sid: string): void {
 }
 
 // the kernel's answer to the dialog's Set/Clear. `emojiLanded`: its {emojiSet} for this session — the
-// handler has already put it on the strip — closes the dialog; a confirm for another session (that
-// session's own set_emoji) leaves an open dialog alone. `emojiRefusedLocal`: a warn while a Set is pending
-// is the refusal — the reason goes under the input, the buttons come back, the typed value stays to fix.
-function emojiLanded(sid: string): void {
-  if (emojiPrompt && emojiPrompt.pending && emojiPrompt.sid === sid) closeEmojiPrompt();
+// handler has already put it on the strip — closes the dialog, while it is pending OR when the value is
+// the one this dialog asked for: the kernel answers only the client that asked, so a confirm for that sid
+// after the 30 s backstop (or an unrelated warn) has already un-pended the dialog is this dialog's own
+// answer arriving late, and leaving it open put a red "still waiting" under a value the tab already wore
+// (review round 3, 2026-09-06). The decision is emojiConfirmClosesDialog (tab-meta.ts, tested there): a
+// confirm for another session, or one landing on a dialog that has asked nothing yet, leaves it alone.
+// `emojiRefusedLocal`: a warn while a Set is pending is the refusal — the reason goes under the input, the
+// buttons come back, the typed value stays to fix. A warn while NOT pending is not this dialog's business
+// (it returns before touching anything; the router sends it on to the create branch or a toast).
+function emojiLanded(sid: string, emoji: string): void {
+  if (emojiConfirmClosesDialog(emojiPrompt, sid, emoji)) closeEmojiPrompt();
 }
 
 function emojiRefusedLocal(text: string): void {
@@ -13421,7 +13427,7 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
     const s = sessions.get(m.id);
     if (s && (s.emoji || "") !== m.emoji) { s.emoji = m.emoji; renderTabs(); }
     else if (!s) renderTabs();   // a placeholder tab reads the meta directly
-    emojiLanded(String(m.id));   // the dialog that asked, if it is still open, closes on the confirm
+    emojiLanded(String(m.id), m.emoji);   // the dialog that asked, if it is still open, closes on the confirm
   }
   else if (m.type === "droppedPath" && typeof m.path === "string") {   // host-saved drop/paste/pick → a thumbnail, not path text (the user 2026-08-04)
     const ackShip = typeof m.shipId === "string" && m.shipId ? m.shipId : undefined;
