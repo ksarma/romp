@@ -140,7 +140,7 @@ function dropMediaUrl(): void {
 // reshape freely. Anything acting on the OPEN file declares itself here instead of hand-wiring into
 // openFileView's action row, where every file-viewer change used to collide. mount() runs once per
 // open and returns the action's element for the row (or null to sit this file out); an action that
-// answers asynchronously (the GitHub link's kernel ask) mounts hidden and reveals itself when its
+// answers asynchronously (the GitHub link's kernel ask) mounts a placeholder and fills it in when its
 // reply lands. Ordering is registration order, after the built-ins.
 export interface FileViewActionCtx { path: string; sid: string | null; }
 export interface FileViewAction { id: string; mount: (ctx: FileViewActionCtx) => HTMLElement | null; }
@@ -150,31 +150,77 @@ export function registerFileViewAction(a: FileViewAction): void {
 }
 
 // ── the GitHub link (the user 2026-08-15) — the registry's first entry ─────────────────────────────
-// An anchor, not a button: the browser owns opening a new tab. Hidden until the OWNING kernel answers
-// the lazy fileGitLink ask with a real URL — an untracked file, a non-repo path, or a non-GitHub
-// origin all honestly have no link, and it simply never appears. One question per open, reqId-guarded.
+// One unit in the action row: the control and, when the kernel gave one, its reason as a caption
+// beside it. The OWNING kernel answers the lazy fileGitLink ask, and until it does the unit holds a
+// PLACEHOLDER — a dimmed disabled button and the loader's pulsing dots where the caption will go —
+// because the check takes up to 3 s when the kernel must ask origin, and an empty slot for that long
+// read as the old no-button state (found in review; the loading-state rule). The answer ALWAYS fills
+// the slot (the user 2026-09-05, who could not tell an uncommitted file from a broken link when the
+// button simply never appeared). A real URL is an anchor — the browser owns the new tab. No URL is
+// a real disabled <button>: assistive tech reads the state and the label, and there is no href to
+// follow or to go stale. The reason rides in the tooltip AND as the caption, because a tooltip alone
+// needs a mouse — touch has no hover, and a disabled button takes no focus — so the caption is what
+// makes the reason glanceable, and it is shown whole: the sheet wraps it inside a bounded width, since
+// nothing in the unit takes a tap, click or focus that could finish a truncated sentence. A URL
+// whose branch is not on origin stays an anchor, dashed, with the note as its caption, since GitHub
+// 404s it until the push. One question per open, reqId-guarded; a socket drop while it is out is
+// the one thing that loses the reply, and the shim's reconnect event re-asks (initFileView), so the
+// placeholder never outlives its wait. Exported for the DOM-shape test.
+const GH_REASONLESS = "this kernel predates link reasons; restart it after updating";
 let gitSeq = 0;
-let gitHooks: { reqId: number; apply: (url: string) => void } | null = null;
-registerFileViewAction({
+let gitHooks: { reqId: number; apply: (url: string, reason: string) => void; ask: () => void } | null = null;
+export const githubLinkAction: FileViewAction = {
   id: "github-link",
   mount({ path, sid }) {
-    const gh = el("a", "fileview-btn fileview-gh") as HTMLAnchorElement;
-    gh.textContent = "GitHub ↗";
-    gh.target = "_blank"; gh.rel = "noopener";
-    gh.hidden = true;
+    const unit = el("span", "fileview-gh");
+    // pending: a real disabled button (never an hrefless anchor, which has no role to read) and the
+    // loader's three dots in the caption's place; aria-busy names the wait for assistive tech
+    const wait = el("button", "fileview-btn") as HTMLButtonElement;
+    wait.type = "button"; wait.disabled = true; wait.textContent = "GitHub ↗";
+    wait.title = "Checking GitHub…"; wait.setAttribute("aria-label", wait.title);
+    const dots = el("span", "fileview-gh-dots");
+    for (let i = 0; i < 3; i++) dots.appendChild(el("i", "fileview-dot"));
+    unit.setAttribute("aria-busy", "true");
+    unit.appendChild(dots); unit.appendChild(wait);
+    const reqId = ++gitSeq;
+    const ask = () => post({ type: "fileGitLink", path, sid: sid || undefined, reqId });
     gitHooks = {
-      reqId: ++gitSeq,
-      apply: (url) => {
-        if (!url) return;
-        gh.href = url;
-        gh.title = url;                            // the full URL one hover away
-        gh.hidden = false;
+      reqId,
+      ask,
+      apply: (url, reason) => {
+        let ctl: HTMLElement;
+        if (url) {
+          const a = el("a", "fileview-btn") as HTMLAnchorElement;
+          a.href = url; a.target = "_blank"; a.rel = "noopener";
+          a.title = reason ? url + "\n" + reason : url;      // the full URL one hover away, and the note with it
+          if (reason) { a.classList.add("fileview-gh-note"); a.setAttribute("aria-label", "GitHub: " + reason); }
+          ctl = a;
+        } else {
+          // an older kernel answers without a reason — say what that means, rather than invent one
+          const b = el("button", "fileview-btn") as HTMLButtonElement;
+          b.type = "button"; b.disabled = true;
+          b.title = "No GitHub link: " + (reason || GH_REASONLESS);
+          b.setAttribute("aria-label", b.title);
+          ctl = b;
+        }
+        ctl.textContent = "GitHub ↗";
+        const why = reason || (url ? "" : GH_REASONLESS);
+        const parts: HTMLElement[] = [];
+        if (why) {
+          const cap = el("span", "fileview-gh-why");
+          cap.textContent = why;                             // whole, wrapped by the sheet — no tooltip to reach for
+          parts.push(cap);                                   // before the control: it annotates what follows
+        }
+        parts.push(ctl);
+        unit.replaceChildren(...parts);                      // the placeholder leaves with the wait
+        unit.removeAttribute("aria-busy");
       },
     };
-    post({ type: "fileGitLink", path, sid: sid || undefined, reqId: gitSeq });
-    return gh;
+    ask();
+    return unit;
   },
-});
+};
+registerFileViewAction(githubLinkAction);
 
 // ── quote a passage into the composer (the user 2026-08-23, the three-verbs consolidation) ────────
 // Selecting text in the viewer seeds the SAME labeled quote chip a VS Code editor highlight does:
@@ -862,7 +908,7 @@ export function initFileView(poster: (m: Record<string, unknown>) => void): void
       openFileView(m.path, typeof m.sid === "string" ? m.sid : null);
     } else if (m.type === "fileGitLink" && gitHooks && m.reqId === gitHooks.reqId) {
       const h = gitHooks; gitHooks = null;
-      h.apply(String(m.url || ""));
+      h.apply(String(m.url || ""), String(m.reason || ""));
     } else if (m.type === "fileSaved" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
       h.saved(String(m.mtimeNs || ""));
@@ -887,4 +933,9 @@ export function initFileView(poster: (m: Record<string, unknown>) => void): void
     h.failed("the connection dropped mid-save — it may or may not have landed; "
       + "Save again once the connection returns (a save that DID land will refuse as changed-on-disk)");
   });
+  // A drop while the GitHub ask is out loses its reply (the frame went; nothing re-sends it), and the
+  // placeholder would pulse for the rest of the open. The socket's RETURN is the event that re-asks —
+  // same reqId, so a first reply that was merely late and the second are one answer (the browse
+  // overlay's re-ask on romp:wsup is the precedent). A read-only query: asking twice costs nothing.
+  window.addEventListener("romp:wsup", () => { if (gitHooks) gitHooks.ask(); });
 }
