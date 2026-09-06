@@ -188,9 +188,11 @@ class _PerfStats:
       pusher                       cycles (one per _pusher_cycle), wakes (every _pusher_wake.set()
                                    call; a burst coalesces into one cycle), wakes_event /
                                    wakes_backstop (how the loop's wait ended: flag set, or the 0.5 s
-                                   timeout), cycle_ms_sum / cycle_ms_max / cycle_ms_last, and
-                                   cycle_ms_p50 / cycle_ms_p90 / ring_n from a ring of the last RING
-                                   cycle durations
+                                   timeout), cycle_ms_sum / cycle_ms_max (since start) /
+                                   cycle_ms_last, cycle_cpu_ms_sum (the pusher thread's own CPU,
+                                   time.thread_time, so a forked tmux read is excluded), and
+                                   cycle_ms_p50 / cycle_ms_p90 / cycle_ms_ring_max / ring_n from a
+                                   ring of the last RING cycle durations
       stages_ms                    jobs: the cycle's tick jobs outside _push_all; push: _push_all as
                                    the cycle calls it; push.chat (the tab strip, the build_session
                                    loop and the chat sends), push.feed (the view signature,
@@ -207,12 +209,19 @@ class _PerfStats:
       goals                        loads, saves, writes: judge.load_goals calls, save_goals calls,
                                    and the saves that reached the disk (a byte-identical republish
                                    is a save without a write)
-      judge                        passes (one per _producer pass), ms_sum, ms_last, ms_mean
-      http                         path -> {count, ms}, the query string stripped, at most HTTP_PATHS
-                                   paths with the rest folded into "other" (so a scanner cannot grow
-                                   it). A WebSocket upgrade counts but adds no ms: its handler
-                                   returns when the socket closes, which is a connection's lifetime,
-                                   not a request's."""
+      judge                        passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
+                                   a pass is a join over the tier threads, so this is mostly model
+                                   latency), cpu_ms_sum (CPU: the two tier threads' own time, from
+                                   _run_tier, plus every per-session worker the tiers run in
+                                   judge.py's thread pools; the split rides as cpu_ms_workers)
+      http                         "METHOD /path" -> {count, ms}, the query string stripped and the
+                                   path normalized by _perf_http_key (/dist/*, /media/*,
+                                   /remote/*/…), at most HTTP_PATHS keys with the rest folded into
+                                   "other" (so a scanner cannot grow it, and a static file or a host
+                                   name never takes a slot or appears in the output). A WebSocket
+                                   upgrade (a path ending in /ws) is counted when it ARRIVES and adds
+                                   no ms: its handler returns when the socket closes, which is a
+                                   connection's lifetime, not a request's."""
     RING = 256
     HTTP_PATHS = 64
     SLOTS = 32
@@ -228,12 +237,13 @@ class _PerfStats:
         with self.lock:
             self.since = time.time()
             self.pusher = {"cycles": 0, "wakes": 0, "wakes_event": 0, "wakes_backstop": 0,
-                           "cycle_ms_sum": 0.0, "cycle_ms_max": 0.0, "cycle_ms_last": 0.0}
+                           "cycle_ms_sum": 0.0, "cycle_ms_max": 0.0, "cycle_ms_last": 0.0,
+                           "cycle_cpu_ms_sum": 0.0}
             self.ring = collections.deque(maxlen=self.RING)
             self.stages = {k: 0.0 for k in self.STAGES}
             self.builds = {k: {"cached": 0, "built": 0, "ms": 0.0} for k in self.BUILDS}
             self.sends = {k: {} for k in self.SEND_KINDS}
-            self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0}
+            self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0}
             self.http = {}
 
     # ── writers (hot paths) ──
@@ -245,13 +255,15 @@ class _PerfStats:
         with self.lock:
             self.pusher["wakes_event" if by_event else "wakes_backstop"] += 1
 
-    def cycle(self, dt):
+    def cycle(self, dt, cpu_dt=0.0):
+        """dt: the cycle's wall seconds; cpu_dt: the pusher thread's own CPU seconds over it."""
         ms = dt * 1000.0
         with self.lock:
             p = self.pusher
             p["cycles"] += 1
             p["cycle_ms_sum"] += ms
             p["cycle_ms_last"] = ms
+            p["cycle_cpu_ms_sum"] += cpu_dt * 1000.0
             if ms > p["cycle_ms_max"]:
                 p["cycle_ms_max"] = ms
             self.ring.append(ms)
@@ -291,6 +303,11 @@ class _PerfStats:
             j["ms_sum"] += ms
             j["ms_last"] = ms
 
+    def judge_cpu(self, cpu_dt):
+        """A judge tier thread's own CPU seconds for one tier run (_run_tier)."""
+        with self.lock:
+            self.judge["cpu_ms_sum"] += cpu_dt * 1000.0
+
     def http_request(self, path, dt):
         """dt None: count the request, add no time (the WebSocket upgrade case)."""
         with self.lock:
@@ -325,7 +342,14 @@ class _PerfStats:
         pusher["ring_n"] = len(ring)
         pusher["cycle_ms_p50"] = self._pct(ring, 0.5)
         pusher["cycle_ms_p90"] = self._pct(ring, 0.9)
+        pusher["cycle_ms_ring_max"] = ring[-1] if ring else 0.0
         judge["ms_mean"] = (judge["ms_sum"] / judge["passes"]) if judge["passes"] else 0.0
+        try:
+            workers = float(jd.judge_worker_cpu_ms())
+        except Exception:
+            workers = 0.0
+        judge["cpu_ms_workers"] = workers
+        judge["cpu_ms_sum"] += workers                     # tier threads + their pool workers
         try:
             goals = jd.goal_io_stats()
         except Exception:
@@ -350,22 +374,46 @@ class _CountedEvent(threading.Event):
         super().set()
 
 
+def _perf_http_key(method, path):
+    """The `http` counter key for one request: "METHOD /path" with the query string gone and the
+    high-cardinality families collapsed — /dist/* and /media/* (the bundles, fonts, icons and source
+    maps a dashboard loads: dozens of names that would otherwise fill the HTTP_PATHS slots before a
+    script's first /sessions call) and /remote/<host>/… (a host name per attached kernel; a tailnet
+    host name is not something `romp perf` should print). The route table's fixed paths stay as they
+    are, so GET /perf and POST /perf are separate rows."""
+    if path.startswith("/dist/"):
+        path = "/dist/*"
+    elif path.startswith("/media/"):
+        path = "/media/*"
+    elif path.startswith("/remote/"):
+        rest = path[len("/remote/"):]
+        i = rest.find("/")
+        path = "/remote/*" + (rest[i:] if i >= 0 else "")
+    return (method + " " + path) if method else path
+
+
 def _perf_http_timed(fn):
-    """Wrap a Handler.do_* method: count the request and its wall ms in _PERF_STATS under its path, the
-    query string stripped. A WebSocket upgrade (a path ending in /ws) is counted and not timed: its
-    do_GET returns when the socket closes. functools.wraps keeps inspect.getsource on the real route
-    table, which the auth tests read."""
+    """Wrap a Handler.do_* method: count the request and its wall ms in _PERF_STATS under
+    _perf_http_key(method, path). A WebSocket upgrade (a path ending in /ws) is counted when it arrives
+    and not timed: its do_GET returns when the socket closes, so a count taken then would lag by the
+    connection's lifetime and its duration would not be a request's. functools.wraps keeps
+    inspect.getsource on the real route table, which the auth tests read."""
     @functools.wraps(fn)
     def timed(self):
+        try:
+            path = str(getattr(self, "path", "") or "").split("?", 1)[0]
+            key = _perf_http_key(str(getattr(self, "command", "") or ""), path)
+            is_ws = path.endswith("/ws")
+        except Exception:
+            key, is_ws = "other", False
+        if is_ws:
+            _PERF_STATS.http_request(key, None)
+            return fn(self)
         t0 = time.monotonic()
         try:
             return fn(self)
         finally:
-            try:
-                path = str(getattr(self, "path", "") or "").split("?", 1)[0]
-                _PERF_STATS.http_request(path, None if path.endswith("/ws") else time.monotonic() - t0)
-            except Exception:
-                pass
+            _PERF_STATS.http_request(key, time.monotonic() - t0)
     return timed
 
 
@@ -30107,7 +30155,8 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
             frame["coll"][name] = entry; changed = True
     if not changed:
         if now - st.get("at", 0) < _DEDUP_REPOST_S:    # unchanged: nothing to send (the repost keeps the fade alive)
-            return
+            _PERF_STATS.send(key, "deduped", len(pre))   # built and compared, not sent — the same fact
+            return                                         # _send_client's dedup records for a whole-frame client
     s = json.dumps(frame, default=str)
     if len(s) >= _DELTA_MAX_FRACTION * len(pre):       # not worth a delta → the full frame, rebased
         states.pop(ftype, None)
@@ -30128,7 +30177,7 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
     c.setdefault("sent", {})[key] = (sig, now)          # the dedup slot follows, so a later full send dedups honestly
 
 
-def _send_client(c, key, msg, pre=None, sig=None):
+def _send_client(c, key, msg, pre=None, sig=None, kind="full"):
     """Send a payload to ONE client only if it differs from what that client last received (per-client
     dedup, key = the slot e.g. ("chat", sid)) — so the periodic push re-sends nothing when unchanged.
     `pre` is the already-serialized msg (json.dumps(msg)) when the caller has it cached — passing it lets
@@ -30146,6 +30195,9 @@ def _send_client(c, key, msg, pre=None, sig=None):
     and the only visible symptom is this dedup never hitting. Finding the last one took a hand-written
     WebSocket client; the log makes the next one obvious.
 
+    `kind` is the /perf sends class the frame is counted under when it goes: "full" (the default: a
+    whole frame) or "delta" for a caller whose frame is a suffix or a diff (_send_chat's chatTail).
+
     Returns whether a frame went out (False: deduped, or the client is dead)."""
     s = pre if pre is not None else json.dumps(msg)
     sig = sig if sig is not None else _dedup_sig(msg, s)
@@ -30158,7 +30210,7 @@ def _send_client(c, key, msg, pre=None, sig=None):
             return False
         c["sent"][key] = (sig, now)
         _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0)
-        _PERF_STATS.send(key, "full", len(s))
+        _PERF_STATS.send(key, kind, len(s))
         return _client_send(c, s, key)                # enqueue only (never blocks): the lock is held for microseconds
 
 
@@ -30209,7 +30261,7 @@ def _send_chat_locked(c, m, ms, change_from, led_changed):
                 "userTodos": m.get("userTodos") or []}
         if led_changed:                               # the TOC only changed on a judge pass → usually omitted
             tail["ledger"] = m.get("ledger")
-        _send_client(c, ("chat", sid), tail)
+        _send_client(c, ("chat", sid), tail, kind="delta")   # the chat's delta form, for /perf's sends split
         st[sid] = (pc[0], pc[1])                       # same tail base, now caught up through `total`
         return ms
     head_from = max(0, total - WIRE_TAIL)
@@ -32931,11 +32983,16 @@ def _cached_timeline(now, tmux, sig, connect=False):
 
 def _run_tier(fn):
     """Run one judge tier (run_index / run_triage) in its own thread, logging a crash instead of letting
-    the thread die silently (the per-session futures inside already swallow + log their own errors)."""
+    the thread die silently (the per-session futures inside already swallow + log their own errors).
+    The thread's own CPU over the run goes to /perf's judge.cpu_ms_sum; the per-session workers the
+    tier runs in judge.py's pools account for theirs there (judge_worker_cpu_ms)."""
+    _c0 = time.thread_time()
     try:
         fn()
     except Exception:
         sys.stderr.write("producer tier: %s\n" % traceback.format_exc())
+    finally:
+        _PERF_STATS.judge_cpu(time.thread_time() - _c0)
 
 
 def _producer():
@@ -33033,6 +33090,7 @@ def _pusher_cycle():
     few-hundred-ms staleness by construction — they always saw a snapshot aged by however many jobs
     ran before them."""
     _t_cycle = time.monotonic()
+    _c_cycle = time.thread_time()           # this thread's CPU: the wall above includes the tmux fork and lock waits
     with _clients_lock:
         any_client = bool(_clients)
     now = int(time.time())
@@ -33053,7 +33111,7 @@ def _pusher_cycle():
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
-        _PERF_STATS.cycle(time.monotonic() - _t_cycle)
+        _PERF_STATS.cycle(time.monotonic() - _t_cycle, time.thread_time() - _c_cycle)
 
 
 def _pusher_cycle_jobs(now, tmux, any_client):
@@ -37237,6 +37295,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
                 remaining -= len(chunk)
 
+    @_perf_http_timed
     def do_OPTIONS(self):
         """CORS preflight. The strip's tunnel actions POST JSON (Content-Type:
         application/json is not a 'simple' request, so the webview's browser asks
@@ -37256,6 +37315,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Max-Age", "86400")
         self.end_headers()
 
+    @_perf_http_timed
     def do_HEAD(self):
         # HEAD exists for ONE route: /file (the preview existence probe). Without this the base handler
         # 501s every HEAD, which the client would read as "gone" and hide a live chip.

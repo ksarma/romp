@@ -18,6 +18,44 @@ from pathlib import Path
 from importlib.machinery import SourceFileLoader
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+
+# ── the judge workers' CPU, for the kernel's GET /perf ─────────────────────────────────────────────
+# Every tier fans its per-session work (parses, store loads, the model call's framing) out through a
+# ThreadPoolExecutor, so the tier thread's own CPU says little about what the judges cost; the
+# workers' does. _TimedPool wraps each submitted callable with a time.thread_time() delta into one
+# counter, and the name below rebinds so every `ThreadPoolExecutor(...)` in this module builds the
+# timed pool without touching the dozen pool sites. A worker blocked on a model call adds nothing:
+# thread_time is CPU, not wall.
+_JUDGE_CPU = {"worker_ms": 0.0}
+_JUDGE_CPU_LOCK = threading.Lock()
+
+
+def _judge_cpu_add(cpu_s):
+    with _JUDGE_CPU_LOCK:
+        _JUDGE_CPU["worker_ms"] += cpu_s * 1000.0
+
+
+def judge_worker_cpu_ms():
+    """CPU milliseconds spent so far in this module's pool workers (every future any tier submitted)."""
+    with _JUDGE_CPU_LOCK:
+        return _JUDGE_CPU["worker_ms"]
+
+
+class _TimedPool(ThreadPoolExecutor):
+    """ThreadPoolExecutor whose submitted callables account their CPU to _JUDGE_CPU."""
+
+    def submit(self, fn, /, *args, **kwargs):
+        def run():
+            c0 = time.thread_time()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                _judge_cpu_add(time.thread_time() - c0)
+        return super().submit(run)
+
+
+ThreadPoolExecutor = _TimedPool      # every pool below is a timed one (see above)
+
 HERE = Path(__file__).resolve().parent
 em = SourceFileLoader("romp_event_model", str(HERE / "event_model.py")).load_module()
 

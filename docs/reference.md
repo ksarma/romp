@@ -743,10 +743,14 @@ dictionary increments per event, so they stay on; nothing is formatted or
 serialized until a request reads them. `romp perf` takes two snapshots
 `--interval` seconds apart (default 10) and prints the difference as rates on
 one screen: pusher cycles and wakes per second, cycle time percentiles, the
-share of cycle time in each stage, builds served from cache against rebuilds,
-bytes sent per slot as full frames, deltas and deduplicated frames, goal-store
-loads and writes per second, judge passes and their durations, memory, thread
-count and CPU. `romp perf --json` prints one raw snapshot.
+share of cycle time in each stage, CPU split between the pusher thread, the
+judge threads and the rest of the process, builds served from cache against
+rebuilds, bytes sent per slot as full frames, deltas and deduplicated frames,
+goal-store loads and writes per second, judge passes and their durations,
+memory and thread count. `romp perf --json` prints one raw snapshot. If the
+kernel restarted between the two snapshots the counters have started over, so
+the command says so and exits non-zero instead of printing negative rates; a
+refused token is reported as such, not as a dead kernel.
 
 The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 
@@ -755,8 +759,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 - `process`: `rss_kb`, `threads`, `cpu_s`, `pid`.
 - `pusher`: `cycles`, `wakes` (every wake call; a burst of wakes runs one
   cycle), `wakes_event` and `wakes_backstop` (how the loop's wait ended),
-  `cycle_ms_sum`, `cycle_ms_max`, `cycle_ms_last`, and `cycle_ms_p50`,
-  `cycle_ms_p90`, `ring_n` from the last 256 cycles.
+  `cycle_ms_sum`, `cycle_ms_max` (since start), `cycle_ms_last`,
+  `cycle_cpu_ms_sum` (the pusher thread's own CPU time), and `cycle_ms_p50`,
+  `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n` from the last 256 cycles.
 - `stages_ms`: `jobs` (the cycle's tick jobs outside the push), `push`, and
   inside it `push.chat`, `push.feed`, `push.timeline`, `push.send`. The
   `push.*` stages count every push, including the one a connecting page gets,
@@ -767,16 +772,22 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   was built and compared, then not sent.
 - `goals`: `loads`, `saves`, `writes` on the goal stores. A save that would
   rewrite identical bytes is a save without a write.
-- `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean`.
-- `http`: request `count` and `ms` per path, the query string removed, for at
-  most 64 paths; further paths fold into `other`. A WebSocket upgrade is
-  counted and not timed, since its handler runs for the life of the socket.
+- `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
+  on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
+  per-session worker they run; the workers' share is `cpu_ms_workers`).
+- `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
+  OPTIONS, the query string removed and `/dist/*`, `/media/*` and
+  `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
+  fold into `other`. A WebSocket upgrade is counted when it arrives and not
+  timed, since its handler runs for the life of the socket.
 
 `POST /perf` with the body `{"log": true}` or `{"log": false}` turns the
 `romp-perf` stderr log on or off in the running kernel (`romp perf log on|off`).
-The log prints one line per chat build and per frame sent or deduplicated; read
-it with `journalctl --user -u romp-manager -f | grep romp-perf`. Setting
-`ROMP_PERF=1` in the kernel's environment still turns it on at start.
+The log prints one line per chat build and per frame sent or deduplicated. It
+goes where the manager's stderr goes: under systemd, `journalctl --user -u
+romp-manager -f | grep romp-perf`; under launchd (macOS), `tail -f
+~/.local/state/romp/manager.log | grep romp-perf`. Setting `ROMP_PERF=1` in the
+kernel's environment still turns it on at start.
 
 ## Where things live
 

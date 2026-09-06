@@ -839,17 +839,33 @@ fi
 
 # `romp perf [--interval <s>] [--json]` / `romp perf log on|off` — the kernel's performance counters
 # (GET /perf), read as RATES from two snapshots taken <s> seconds apart (default 10): pusher cycles and
-# wakes per second, cycle time percentiles, the share of cycle time per stage, build cache hits vs
-# rebuilds, bytes sent per slot kind, goal-store loads per second, judge passes, rss and cpu. It exists
-# so an optimization can be checked against the LIVE kernel after each restart without attaching a
-# profiler. --json prints one raw snapshot (the shape is documented on the kernel's _PerfStats).
-# `log on|off` flips the romp-perf stderr log (POST /perf): before this the log needed ROMP_PERF in the
-# kernel's environment at start, so turning it on meant a restart. Same contract as `sessions`: the
-# token on stdin, a dead kernel fails loudly, an unknown flag is refused.
+# wakes per second, cycle time percentiles, the share of cycle time per stage, CPU split between the
+# pusher thread, the judge threads and the rest of the process, build cache hits vs rebuilds, bytes
+# sent per slot kind, goal-store loads per second, judge passes, rss. It exists so an optimization can
+# be checked against the LIVE kernel after each restart without attaching a profiler. --json prints one
+# raw snapshot (the shape is documented on the kernel's _PerfStats). `log on|off` flips the romp-perf
+# stderr log (POST /perf): before this the log needed ROMP_PERF in the kernel's environment at start,
+# so turning it on meant a restart. Same contract as `sessions`: the token on stdin, a dead kernel
+# fails loudly, an unknown flag is refused. Two snapshots from different kernel processes (a restart
+# inside the window resets the counters) are refused rather than subtracted into negative rates.
 if [[ "${1:-}" == "perf" ]]; then
     shift
     _kport="${ROMP_KERNEL_PORT:-29855}"
     _usage="usage: romp perf [--interval <s>] [--json] | romp perf log on|off"
+    # One kernel round trip: the body on stdout and 0 when the kernel answered 2xx. curl's -f folds a
+    # refused token (403) into the same exit as a dead kernel, and on a diagnostic verb that sends the
+    # user off to restart a kernel that is up and answering — so the status rides -w and is read here.
+    _perf_curl() {
+        local _out _code
+        _out="$(_romp_token_cfg | curl -s -m 10 --config - -w '\n%{http_code}' "$@")" \
+            || { echo "romp perf: kernel not reachable on :$_kport (is romp running?)" >&2; return 1; }
+        _code="${_out##*$'\n'}"
+        case "$_code" in
+            2??)     printf '%s' "${_out%$'\n'*}"; return 0 ;;
+            401|403) echo "romp perf: the kernel on :$_kport refused the serve token (HTTP $_code); is ROMP_KERNEL_PORT pointing at another kernel?" >&2; return 1 ;;
+            *)       echo "romp perf: the kernel on :$_kport answered HTTP $_code: ${_out%$'\n'*}" >&2; return 1 ;;
+        esac
+    }
     if [[ "${1:-}" == "log" ]]; then
         case "${2:-}" in
             on)  _v=true ;;
@@ -857,11 +873,16 @@ if [[ "${1:-}" == "perf" ]]; then
             *)   echo "$_usage" >&2; exit 2 ;;
         esac
         if [[ $# -gt 2 ]]; then echo "$_usage" >&2; exit 2; fi
-        _resp="$(_romp_token_cfg | curl -sf -m 10 --config - -X POST "http://127.0.0.1:$_kport/perf" \
-                      -H 'Content-Type: application/json' -d "{\"log\": $_v}")" \
-            || { echo "romp perf: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+        _resp="$(_perf_curl -X POST "http://127.0.0.1:$_kport/perf" -H 'Content-Type: application/json' -d "{\"log\": $_v}")" || exit 1
         if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
-            echo "romp perf: log $2 (read it with: journalctl --user -u romp-manager -f | grep romp-perf)"
+            # where the lines land: the manager's stderr goes to the journal under systemd and to
+            # $STATE/manager.log under launchd (bin/romp-service writes StandardErrorPath there)
+            if [[ "$(uname -s)" == "Darwin" ]]; then
+                _hint="tail -f ${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/manager.log | grep romp-perf"
+            else
+                _hint="journalctl --user -u romp-manager -f | grep romp-perf"
+            fi
+            echo "romp perf: log $2 (read it with: $_hint)"
             exit 0
         fi
         echo "romp perf: refused — $_resp" >&2
@@ -881,15 +902,13 @@ if [[ "${1:-}" == "perf" ]]; then
             *) echo "$_usage" >&2; exit 2 ;;
         esac
     done
-    _a="$(_romp_token_cfg | curl -sf -m 10 --config - "http://127.0.0.1:$_kport/perf")" \
-        || { echo "romp perf: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+    _a="$(_perf_curl "http://127.0.0.1:$_kport/perf")" || exit 1
     if $_json; then
         printf '%s\n' "$_a"
         exit 0
     fi
     sleep "$_ival"
-    _b="$(_romp_token_cfg | curl -sf -m 10 --config - "http://127.0.0.1:$_kport/perf")" \
-        || { echo "romp perf: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+    _b="$(_perf_curl "http://127.0.0.1:$_kport/perf")" || exit 1
     python3 - "$_a" "$_b" <<'PY'
 import json, sys
 a, b = json.loads(sys.argv[1]), json.loads(sys.argv[2])
@@ -905,12 +924,22 @@ def dl(*ks):                      # delta of a counter between the two snapshots
     return g(b, *ks) - g(a, *ks)
 
 
+if a.get("since") != b.get("since") or g(a, "process", "pid") != g(b, "process", "pid"):
+    # the counters live in the kernel process and start over with it: a subtraction across a
+    # restart is a page of negative rates that look like measurements
+    sys.stderr.write("romp perf: the kernel restarted during the window (pid %d -> %d), so the counters "
+                     "reset and there are no rates to print; run it again\n"
+                     % (g(a, "process", "pid"), g(b, "process", "pid")))
+    sys.exit(1)
+
 dt = max(g(b, "now") - g(a, "now"), 1e-9)
 cyc = dl("pusher", "cycles")
 cyc_ms = dl("pusher", "cycle_ms_sum")
 wakes = dl("pusher", "wakes")
 ev, bs = dl("pusher", "wakes_event"), dl("pusher", "wakes_backstop")
-cpu_pct = 100.0 * dl("process", "cpu_s") / dt
+cpu_proc = 100.0 * dl("process", "cpu_s") / dt
+cpu_pusher = 100.0 * dl("pusher", "cycle_cpu_ms_sum") / (dt * 1000.0)
+cpu_judge = 100.0 * dl("judge", "cpu_ms_sum") / (dt * 1000.0)
 up = int(g(b, "uptime_s"))
 
 
@@ -919,7 +948,7 @@ def hms(sec):
     return "%dh%02dm" % (h, m) if h else "%dm%02ds" % (m, sec % 60)
 
 
-def kb(n):
+def kb(n):                        # bytes over the window as a rate
     return "%.0f KB/s" % (n / 1024.0 / dt) if n < 1024 * 1024 * dt else "%.1f MB/s" % (n / 1048576.0 / dt)
 
 
@@ -929,13 +958,14 @@ def share(ms):                    # a stage's share of the window's cycle time
 
 print("romp perf: %.1f s window, kernel up %s, pid %d, romp-perf log %s"
       % (dt, hms(up), g(b, "process", "pid"), "on" if b.get("log") else "off"))
-print("process   rss %d MB   threads %d   cpu %.1f%% of one core"
-      % (g(b, "process", "rss_kb") // 1024, g(b, "process", "threads"), cpu_pct))
+print("process   rss %d MB   threads %d   cpu %.1f%% of one core (pusher %.1f%%, judge %.1f%%, other %.1f%%)"
+      % (g(b, "process", "rss_kb") // 1024, g(b, "process", "threads"), cpu_proc, cpu_pusher, cpu_judge,
+         cpu_proc - cpu_pusher - cpu_judge))
 print("pusher    %.2f cycles/s   %.2f wakes/s (event %d, backstop %d)   busy %.0f%% of wall"
       % (cyc / dt, wakes / dt, ev, bs, 100.0 * cyc_ms / (dt * 1000.0)))
-print("cycle ms  p50 %.0f   p90 %.0f   max %.0f   last %.0f  (over the last %d cycles)"
-      % (g(b, "pusher", "cycle_ms_p50"), g(b, "pusher", "cycle_ms_p90"), g(b, "pusher", "cycle_ms_max"),
-         g(b, "pusher", "cycle_ms_last"), g(b, "pusher", "ring_n")))
+print("cycle ms  p50 %.0f   p90 %.0f   max %.0f (over the last %d cycles)   last %.0f"
+      % (g(b, "pusher", "cycle_ms_p50"), g(b, "pusher", "cycle_ms_p90"), g(b, "pusher", "cycle_ms_ring_max"),
+         g(b, "pusher", "ring_n"), g(b, "pusher", "cycle_ms_last")))
 st = {k: dl("stages_ms", k) for k in ("jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send")}
 print("stages    jobs %s   push %s  (chat %s  feed %s  timeline %s  send %s)"
       % tuple(share(st[k]) for k in ("jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send")))
@@ -949,18 +979,20 @@ for kind in ("full", "delta", "deduped"):
     slots = set((b.get("sends") or {}).get(kind, {})) | set((a.get("sends") or {}).get(kind, {}))
     tot = sum(dl("sends", kind, sl, "bytes") for sl in slots)
     top = sorted(slots, key=lambda sl: -dl("sends", kind, sl, "bytes"))[:3]
-    detail = ", ".join("%s %d" % (sl, dl("sends", kind, sl, "count")) for sl in top if dl("sends", kind, sl, "count"))
+    detail = "; ".join("%s %d frames %s" % (sl, dl("sends", kind, sl, "count"), kb(dl("sends", kind, sl, "bytes")))
+                       for sl in top if dl("sends", kind, sl, "count"))
     parts.append("%s %s%s" % (kind, kb(tot), (" (%s)" % detail) if detail else ""))
 print("sends     " + "   ".join(parts))
 print("goals     %.1f loads/s   %.1f saves/s   %.1f writes/s"
       % (dl("goals", "loads") / dt, dl("goals", "saves") / dt, dl("goals", "writes") / dt))
 jp = dl("judge", "passes")
-print("judge     %d passes (%.2f/s)   last %.0f ms   mean %.0f ms"
-      % (jp, jp / dt, g(b, "judge", "ms_last"), g(b, "judge", "ms_mean")))
+print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms"
+      % (jp, jp / dt, g(b, "judge", "ms_last"), ("%.0f" % (dl("judge", "ms_sum") / jp)) if jp else "-"))
 paths = set(b.get("http") or {}) | set(a.get("http") or {})
 rows = sorted(((dl("http", pth, "count"), dl("http", pth, "ms"), pth) for pth in paths), reverse=True)
 rows = [r for r in rows if r[0]][:6]
-print("http      " + ("   ".join("%s %d (%.1f ms avg)" % (pth, n, ms / n) for n, ms, pth in rows) or "no requests in the window"))
+print("http      " + ("   ".join(("%s %d" % (pth, n)) if pth.endswith("/ws") else ("%s %d (%.1f ms avg)" % (pth, n, ms / n))
+                                 for n, ms, pth in rows) or "no requests in the window"))
 PY
     exit $?
 fi

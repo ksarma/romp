@@ -64,9 +64,12 @@ class ColorRoute(unittest.TestCase):
 
     def _post(self, body):
         # km.TOKEN, not os.environ: pytest imports every collected module before any test runs, and
-        # test_kernel.py's import-time ROMP_SERVE_TOKEN write lands AFTER this module's kernel captured
-        # its token, so a request carrying the env value was refused with a 403 whenever the two files
-        # shared a run (found 2026-09-06). The kernel's own token is the one it checks.
+        # test_kernel.py assigns ROMP_SERVE_TOKEN at import. When this module was the FIRST collected
+        # module to set the variable (a two-file or small-subset run), its kernel captured the default
+        # here and test_kernel.py's later write changed what the env held at request time, so the
+        # request was refused with a 403 (found 2026-09-06). In the full suite some forty earlier
+        # modules setdefault the same value test_kernel.py writes, which is why it passed there. The
+        # kernel's own token is the one the handler checks.
         req = urllib.request.Request(
             "http://127.0.0.1:%d/color" % self.port, data=json.dumps(body).encode(),
             headers={"Content-Type": "application/json",
