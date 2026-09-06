@@ -20,7 +20,8 @@ also runs on every push to main).
    branch. Do not merge a PR into another PR's branch. If a PR's base branch belongs to a PR that
    has already merged, retarget it before anything else: `gh pr edit N --base main`.
    `scripts/land.sh` refuses any base but main (a merged PR's branch, an open PR's branch, a branch
-   with no PR).
+   with no PR), unless the base is the branch of the other PR in the same call, which then merges
+   first.
 2. Give it one tier label: `fix`, `tests-only`, `feature`, or `major-feature`
    (`gh pr edit N --add-label fix`). A `major-feature` PR is discussed before it joins a batch; a
    `hold` label keeps a PR out of the next batch.
@@ -46,10 +47,16 @@ off, admin bypass) is optional and comes after the first batch has shown the che
 
 Auto-merge (`gh pr merge --auto`) needs two things: the repository's "Allow auto-merge" setting
 (`gh api repos/{owner}/{repo} --jq .allow_auto_merge`; off on this fork today, and turning it on is
-your call: `gh repo edit --enable-auto-merge`) and required rules on main, a ruleset rule or branch
-protection. Without the setting GitHub rejects it; without the rules it merges at once and protects
-nothing. `scripts/land.sh --auto` and `scripts/batch.py land --auto` read both and refuse, naming
-the one that is missing; neither adds `--auto` on its own.
+your call: `gh repo edit --enable-auto-merge`) and a rule on main that gates a merge: a ruleset rule
+of type `required_status_checks` or `pull_request` (`required_deployments`, `merge_queue` and
+`code_scanning` count too), or classic branch protection with required status checks or required
+reviews. A ruleset that only blocks force pushes or deletion does not count. Without the setting
+GitHub rejects it; without such a rule it merges at once and protects nothing. `scripts/land.sh
+--auto` reads both and refuses, naming the missing one or the rules it found instead. A rules read
+that fails, or a protection read that fails with anything but a 404 (GitHub's answer for no
+protection), is refused with gh's error, not reported as none. `scripts/batch.py land --auto` reads
+the setting and the rules on main and refuses, naming the one that is missing. Neither adds `--auto`
+on its own.
 
 Per batch, in order:
 
@@ -70,16 +77,27 @@ Per batch, in order:
    button yourself, tell the batcher to run `finish`.
 7. Nothing else. To revert a member later, `git revert -m 1 <its merge commit>` on a branch, as a PR.
 
-For one or two PRs that cannot wait: `scripts/land.sh N [M]`. It checks both PRs before merging
-either, merges each with a merge commit, and runs the orphan check afterward. It refuses squash and
-rebase, a PR that is not open or is a draft, and any base but main: a merged PR's branch, a branch
-with no PR, or an open PR's branch. For an open PR's branch, `--into-open-pr` overrides the refusal,
-for a chain you want merged by hand from the bottom up; the content then sits on that branch until
-the lower PR merges, and the orphan check reports it until then. It never passes `--delete-branch`:
-gh's flag also deletes the local branch, which is checked out in a session's worktree here; the
-remote branch is deleted by the repository setting, or through the API when that setting is off. The
-web button is equally safe now that branches delete on merge. If an urgent fix lands while a batch
-is open, the batcher merges main into the batch and re-verifies (batcher step 7).
+For one or two PRs that cannot wait: `scripts/land.sh N [M]` (`--help` prints the refusal table).
+It reads both PRs before merging either, merges each with a merge commit, and runs the orphan check
+afterward. It refuses: squash and rebase; a PR that is not open, or a draft; a conflicting PR, or
+one whose mergeability GitHub has not computed yet; failing checks (with or without `--auto`);
+pending checks or a PR blocked by a rule on main (without `--auto`); a PR behind main; and any base
+but main (a merged PR's branch, a branch with no PR, an open PR's branch). A PR with no checks at
+all is noted, not refused.
+
+A chain of two PRs lands in one call with no flag: the lower PR merges first whichever order you
+typed, its branch is deleted, GitHub retargets the upper PR to main, and it merges there. Each PR is
+read again right before its own merge. A head that moved since the check stops the run (exit 2):
+nothing more is merged, and the orphan check still runs. A PR the first merge already marked merged
+is skipped. To merge only the upper PR, into the lower PR's open branch, `--into-open-pr` overrides
+the open-PR's-branch refusal; the content then sits on that branch until the lower PR merges, and
+the orphan check reports it until then.
+
+It never passes `--delete-branch`: gh's flag also deletes the local branch, which is checked out in
+a session's worktree here; the remote branch is deleted by the repository setting, or through the
+API when that setting is off. The web button is equally safe now that branches delete on merge. If
+an urgent fix lands while a batch is open, the batcher merges main into the batch and re-verifies
+(batcher step 7).
 
 ## If you are the batcher
 

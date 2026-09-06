@@ -74,8 +74,9 @@ merge; the second PR of a pair is checked before the first one lands.
                                  - the head of an OPEN PR: merging there puts the content on that
                                    branch only, where it reaches $MAIN if and when that PR merges,
                                    and pr-orphans.sh reports it until then. --into-open-pr overrides
-                                   this one case, for a chain merged by hand from the bottom up.
-                                   When that PR is the other member of the pair no flag is needed:
+                                   this one case, to merge the upper PR into the lower one's branch
+                                   on purpose. When that PR is the other member of the pair no flag
+                                   is needed:
                                    the lower PR merges first and the upper one lands on $MAIN once
                                    GitHub retargets it.
                                  - the head of a MERGED PR: the branch is gone or stale and the
