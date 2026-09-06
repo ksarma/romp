@@ -53,7 +53,7 @@ LAUNCHCTL="${ROMP_LAUNCHCTL:-launchctl}"
 SYSTEMCTL="${ROMP_SYSTEMCTL:-systemctl}"
 # `romp down` leaves this marker (time + command) so a stopped kernel reads as stopped on purpose,
 # not crashed: `romp status` and the status verb below say so, and `romp-manager ensure` (the
-# SessionStart auto-start) refuses to bring the manager back while it exists. A deliberate start
+# supervised start a remote update runs on a far host) refuses to bring the manager back while it exists. A deliberate start
 # (`romp up`, `romp-manager up`, the login service) clears it.
 DOWN_MARKER="$STATE/down-by-romp"
 PLIST="$LAUNCHD_DIR/$LABEL.plist"
@@ -447,7 +447,7 @@ PYRENDER
 # instead (a foreground `romp up` has no agent). A stop through the supervisor is what keeps the
 # kernel down: the manager exiting on its own is a crash to it (Restart=always / KeepAlive) and
 # it would respawn within seconds. On macOS the job is booted out (it comes back at the next login
-# or `start`); on Linux the unit is stopped (still enabled, so it comes back at the next login too).
+# or `start`); on Linux the unit is stopped (still enabled, so with linger it comes back at the next boot).
 # A unit that is installed but NOT running is exit 4, never a "stopped": `systemctl --user stop` on
 # an inactive unit exits 0 and a bootout is skipped when the job is not loaded, and either read as a
 # stop while a manager started outside the service (`romp up --foreground`, a hand `romp-manager up`,
@@ -488,7 +488,7 @@ _service_stop() {
                 return 1
             fi
         fi
-        echo "  Stopped the login service; it stays stopped until \`romp up\` or the next login." ;;
+        echo "  Stopped the login service; it stays stopped until \`romp up\` or the next boot." ;;
       *) echo "romp-service: unsupported OS '$os'" >&2; return 1 ;;
     esac
 }

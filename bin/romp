@@ -2331,8 +2331,8 @@ fi
 # --wait seconds (default 5) to reach a turn boundary; what is still mid-turn is cut, exactly as under
 # `romp refresh`, and the next start resumes it with its history (the boot reconcile). `--now` skips
 # the wait. The marker (STATE/down-by-romp) is what makes the stop deliberate to everything else: `romp
-# status` reports down-on-purpose instead of a crash, and `romp-manager ensure` (the SessionStart
-# auto-start) will not bring the kernel back while it exists.
+# status` reports down-on-purpose instead of a crash, and `romp-manager ensure` (the supervised start
+# that `romp update <host>` and the remote restart run on a far host) will not bring the kernel back while it exists.
 # ROMP_MANAGER_BIN / ROMP_SERVICE_BIN are the test seams (same pattern as ROMP_DASHBOARD_BIN / ROMP_POSTAL_BIN).
 case "${1:-}" in
     up)

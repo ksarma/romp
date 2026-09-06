@@ -630,7 +630,7 @@ EOF
     [ "$status" -eq 0 ]
     grep -qx -- '--user stop romp-manager.service' "$TEST_DIR/systemctl-calls"
     [[ "$output" == *"stays stopped until"* ]]
-    # never a disable: the unit stays enabled so the next login brings it back
+    # never a disable: the unit stays enabled so the next boot (linger) brings it back
     run grep -q 'disable' "$TEST_DIR/systemctl-calls"
     [ "$status" -ne 0 ]
 }

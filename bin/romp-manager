@@ -46,9 +46,9 @@ const STATE_ROOT = process.env.ROMP_STATE_DIR ||
   path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state'), 'romp');
 const KERNELS_FILE = path.join(STATE_ROOT, 'kernels.json');
 // `romp down` leaves this marker (bin/romp writes {t, cmd}) so a stopped kernel reads as stopped on
-// purpose. Two consumers here: `ensure` (the SessionStart auto-start) refuses to bring the manager
-// back while it exists — a claude session starting up must not silently undo a deliberate stop —
-// and `up` (a deliberate start: `romp up`, the login service, a hand `systemctl start`) clears it.
+// purpose. Two consumers here: `ensure` (the supervised start that `romp update <host>` and the remote
+// restart run on a far host) refuses to bring the manager back while it exists, since a remote update
+// must not silently undo a deliberate stop, and `up` (a deliberate start: `romp up`, the login service, a hand `systemctl start`) clears it.
 const DOWN_MARKER = path.join(STATE_ROOT, 'down-by-romp');
 function downMarkerHeld(file = DOWN_MARKER) { try { return fs.existsSync(file); } catch (e) { return false; } }
 function clearDownMarker(file = DOWN_MARKER) {
@@ -65,8 +65,8 @@ delete process.env.TMUX;
 delete process.env.TMUX_PANE;
 
 // log(msg, cb): cb runs once the line is written. A caller about to process.exit() passes its exit as
-// the callback, or the line can be lost: stderr on a pipe is asynchronous on macOS (the SessionStart
-// hook reads ensure's output through one), and exit() does not wait for pending writes.
+// the callback, or the line can be lost: stderr on a pipe is asynchronous on macOS (the far-host
+// update script reads ensure's output through one), and exit() does not wait for pending writes.
 function log(msg, cb) { process.stderr.write('[romp-manager] ' + msg + '\n', cb); }
 
 // romp-serve is the kernel launcher (rebuilds dist if stale, then execs node on it). Resolve it the
@@ -718,12 +718,13 @@ function control(method, pathname, kernel, params) {
 }
 
 // `romp-manager ensure` — idempotent, non-blocking auto-start: if a manager is already
-// up, do nothing; otherwise spawn `up` DETACHED and return immediately. The SessionStart
-// hook calls this so romp usage auto-starts the supervisor (and the kernel) — no `romp up`.
+// up, do nothing; otherwise spawn `up` DETACHED and return immediately. `romp update <host>` and
+// the dashboard's remote restart run this on the far host so the supervisor (and the kernel) come
+// up there without a `romp up`.
 // Race-safe: the detached `up` re-probes and exits cleanly if another session won.
 // A `romp down` marker HOLDS it: auto-start is the one door that would bring a deliberately
-// stopped kernel back without anyone asking (a claude session's SessionStart hook), so it
-// refuses, says why, and exits 0 — the hook is not failing, the kernel is down on purpose.
+// stopped kernel back without anyone asking (a remote update), so it refuses, says why, and
+// exits 0: the caller is not failing, the kernel is down on purpose.
 // The pure decision is exported for the unit tests; the I/O stays here.
 function ensureDecision({ alive, held }) {
   if (alive) return 'noop';
