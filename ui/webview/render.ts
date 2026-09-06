@@ -37,7 +37,7 @@ import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindi
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
 import { StagedStack } from "./staged-messages";
-import { type PendingSend, type TailEvent, OPT_PREFIX, isOptimisticUuid, newPending, reconcilePending, cueAnchor } from "./send-pending";
+import { type PendingSend, type TailEvent, OPT_PREFIX, isOptimisticUuid, newPending, reconcilePending, cueAnchor, bareGroupLabel } from "./send-pending";
 import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional, focusResolvesProvisional } from "./provisional";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { numberDiff, type DiffRow } from "./diff-lines";
@@ -297,13 +297,14 @@ const order: string[] = [];           // positional tab order (for cycling)
 // the audited case had the kernel's echo pruned early and nothing showing the message for 30 s. An entry
 // now ends on events only: a landing, the kernel's never-delivered verdict, or the user's ✕. The decisions
 // live in send-pending.ts (pure, executed by its test); this file owns the DOM and the per-session maps.
-const OPT_TAIL_SCAN = 30;     // the kernel's version (user atom / queued bubble) always lands at the tail
-// sid → in-flight pending sends. `base` is how many LANDED user atoms carrying this text the tail
-// already held at send time (stamped on the first reconcile, -1 until then): only a count BEYOND base
-// means THIS send landed. The old retire test was a bare substring scan with no notion of which event
-// carried the text, so a resend — or any short message that substrings an older bubble ("continue",
-// "test") — retired its own entry in the very call that created it, and the send showed nothing at
-// all (the user 2026-08-09, who watched sends vanish for a beat before appearing).
+// sid → in-flight pending sends. Each entry is ANCHORED (`at`, stamped on the first reconcile after the
+// press) to the last stable kernel event at the time of the send, plus the uuids of the user events
+// that already carried its text: only an exact-text landing AFTER that anchor, beyond that set, is
+// THIS send's. The old retire test was a bare substring scan with no notion of which event carried the
+// text, so a resend — or any short message that substrings an older bubble ("continue", "test") —
+// retired its own entry in the very call that created it, and the send showed nothing at all (the user
+// 2026-08-09, who watched sends vanish for a beat before appearing); and its successor read only the
+// last 30 events, so an absorbed landing placed above them never ended the bubble (2026-09-06 review).
 const pendingSent = new Map<string, PendingSend[]>();
 const isOptimistic = (e: ChatEvent): boolean => isOptimisticUuid(e.uuid);
 // sid → MID-TURN CUES: where a pending bubble sat when its message landed ABOVE the tail. A send fed
@@ -354,14 +355,15 @@ function reconcileOptimistic(s: Session): void {
   const list = pendingSent.get(s.id);
   if (!list || !list.length) { settle([]); return; }
   // The decision reads KERNEL truth only (our injections are stripped above) — send-pending.ts: a
-  // LANDED user atom beyond `base` retires the entry (never the kernel's own echo, whose uuid keeps the
-  // backend's "echo:" prefix into the payload — retiring on it was the 2026-08-09 flash-out: the echo
-  // deleted our entry, then blinked in its own echo→landed handoff with nothing left to cover the gap);
-  // the kernel's NEVER-DELIVERED verdict retires it (that bubble now carries the text and the resend);
-  // its PROVISIONAL — echo atom or queued bubble — suppresses ours for this push and nothing more, so if
-  // it blinks, ours steps straight back in. A landing that retired an ABSORBED atom's bubble may owe a
-  // mid-turn cue (noteAbsorbedLanding).
-  const r = reconcilePending(s.events as TailEvent[], list, OPT_TAIL_SCAN);
+  // LANDED user atom after the send's anchor retires the entry (never the kernel's own echo, whose uuid
+  // keeps the backend's "echo:" prefix into the payload — retiring on it was the 2026-08-09 flash-out:
+  // the echo deleted our entry, then blinked in its own echo→landed handoff with nothing left to cover
+  // the gap); the kernel's NEVER-DELIVERED verdict after the anchor retires it (that bubble now carries
+  // the text and the resend); its PROVISIONAL — echo atom or queued bubble — suppresses ours for this
+  // push and nothing more, so if it blinks, ours steps straight back in, and proves the kernel has the
+  // send (a "not confirmed" label is cleared). A landing that retired an ABSORBED atom's bubble may owe
+  // a mid-turn cue (noteAbsorbedLanding).
+  const r = reconcilePending(s.events as TailEvent[], list);
   if (r.keep.length) pendingSent.set(s.id, r.keep); else pendingSent.delete(s.id);
   for (const { idx } of r.landed) noteAbsorbedLanding(s, idx);
   const inject = r.inject;
@@ -386,7 +388,7 @@ function reconcileOptimistic(s: Session): void {
 // Record a composer send as in-flight and show its optimistic bubble NOW (before any kernel push).
 function registerOptimistic(id: string, text: string, imgPaths?: string[]): void {
   const arr = pendingSent.get(id) || [];
-  arr.push(newPending(text, imgPaths));   // base is stamped by the reconcile just below
+  arr.push(newPending(text, imgPaths));   // the anchor (`at`) is stamped by the reconcile just below
   pendingSent.set(id, arr);
   const s = sessions.get(id);
   if (!s) return;
@@ -417,11 +419,14 @@ function registerOptimistic(id: string, text: string, imgPaths?: string[]): void
 // mid-turn splice, placed at its send time) and it landed ABOVE the tail, the bubble the user was
 // watching at the bottom is gone and the message is somewhere higher up — leave a cue under the event
 // the bubble sat under (cueAnchor). It landed AT the tail → the swap was in place, no cue owed. Keyed
-// on the landing itself; dismissed by the user's jump or ✕, never by a timer.
+// on the landing itself; dismissed by the user's jump or ✕, never by a timer. The anchor is an event
+// the chat DRAWS in its current mode: compact mode (the default) hides thinking, and a cue hung on a
+// hidden event never rendered and could never be dismissed (2026-09-06 review).
+const cueRendered = (e: TailEvent): boolean => !(settings.compact && e.kind === "thinking");
 function noteAbsorbedLanding(s: Session, idx: number): void {
   const ev = s.events[idx] as (ChatEvent & { absorbed?: boolean; landedAt?: number }) | undefined;
   if (!ev || !ev.absorbed || !ev.uuid) return;
-  const after = cueAnchor(s.events as TailEvent[], idx);
+  const after = cueAnchor(s.events as TailEvent[], idx, cueRendered);
   if (!after) return;
   const cues = absorbedCues.get(s.id) || [];
   if (cues.some((c) => c.target === ev.uuid)) return;
@@ -438,18 +443,27 @@ function dismissAbsorbedCue(sid: string, target: string): void {
 
 // The socket (or the VS Code pipe) went DOWN: every send still unconfirmed may never have reached the
 // kernel. The bubble says "not confirmed" — with the ✕ as the way back to the composer — instead of
-// "sending…" for as long as the entry lives. Keyed on the down edge, an event; a confirmation after
-// the reconnect (the kernel's echo, the landing) retires the entry exactly as before.
+// "sending…" for as long as the entry lives. Keyed on the down edge, an event; the kernel's own copy of
+// the send seen afterwards (its echo, its queued bubble) clears the label (send-pending.ts `received`),
+// and the landing retires the entry exactly as before. A send the kernel has already shown it holds is
+// never marked: the drop cannot have lost it.
+// Only a CHANGED entry repaints. The browser shim fires romp:wsdown on every redial while the kernel is
+// down (one per ~1.5 s), and the VS Code pipe posts a down frame per attempt; rebuilding the active chat
+// on each destroyed the reader's selection hundreds of times for a label that changed once
+// (2026-09-06 review).
 function markPendingLost(why: string): void {
+  let activeChanged = false;
   for (const [sid, list] of pendingSent) {
-    if (!list.length) continue;
-    for (const p of list) if (!p.lost) p.lost = why;
+    let changed = false;
+    for (const p of list) if (!p.lost && !p.received) { p.lost = why; changed = true; }
+    if (!changed) continue;
     const s = sessions.get(sid);
     if (s) reconcileOptimistic(s);        // re-inject the bubbles with the new label
     const v = views.get(sid);
     if (v) v.stale = true;                 // same texts, new label: the sig alone would not repaint
+    if (sid === activeId) activeChanged = true;
   }
-  if (activeId && pendingSent.has(activeId)) appendActive();
+  if (activeChanged) appendActive();
 }
 
 // ── conversation rewind (edit a past message, SDK sessions) ──────────────────────────────────────
@@ -3621,12 +3635,29 @@ function reflowQueuedGroup(turn: HTMLElement): void {
   const label = turn.querySelector(".queued-count") as HTMLElement | null;
   if (!label) return;
   if (label.dataset.bare === "1") {                       // the pre-confirmation group recounts in its own words
-    if (label.classList.contains("lost")) { label.textContent = bubbles.length === 1 ? "not confirmed" : `${bubbles.length} not confirmed`; return; }
-    label.textContent = bubbles.length === 1 ? "sending…" : `sending ${bubbles.length}…`;
+    // …from the SURVIVING bubbles' own states (data-lost), so a ✕ on the lost bubble leaves the rest
+    // reading "sending…" — the label used to keep "not confirmed" for whoever remained
+    const nLost = bubbles.filter((b) => (b as HTMLElement).dataset.lost === "1").length;
+    fillBareLabel(label, nLost, bubbles.length - nLost);
     return;
   }
   const nCmd = bubbles.filter((b) => b.querySelector(".slash-cmd-chip")).length;
   label.textContent = queuedCountText(bubbles.length, nCmd) + (label.dataset.why || "");
+}
+
+// The bare group's label from its bubbles' states (send-pending.ts bareGroupLabel): the lost part wears
+// the warn color, the sending part stays dim. Shared by the render and the ✕'s recount so the two can
+// never disagree.
+function fillBareLabel(label: HTMLElement, nLost: number, nSending: number): void {
+  const { parts, title } = bareGroupLabel(nLost, nSending);
+  label.replaceChildren();
+  parts.forEach((part, i) => {
+    if (i) label.appendChild(document.createTextNode(" · "));
+    const span = el("span", part.lost ? "lost" : "");
+    span.textContent = part.text;
+    label.appendChild(span);
+  });
+  label.title = title;
 }
 
 function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
@@ -3642,17 +3673,12 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
     head.appendChild(hourglassIcon());
     const label = el("span", "queued-count");
     label.dataset.bare = "1";     // reflow rewrites this label in its own vocabulary, never "N queued"
-    if (ev.texts.some((t) => t.lost)) {
-      // the connection dropped after the press and nothing has confirmed the send since (send-pending.ts
-      // `lost`): "sending…" would claim a progress romp cannot see. One line, warn-colored; the ✕ is the
-      // way back to the composer.
-      label.classList.add("lost");
-      label.textContent = ev.texts.length === 1 ? "not confirmed" : `${ev.texts.length} not confirmed`;
-      label.title = "The connection dropped after this was sent, and romp has not confirmed the session has it. ✕ moves it back to the composer to send again.";
-    } else {
-      label.textContent = ev.texts.length === 1 ? "sending…" : `sending ${ev.texts.length}…`;
-      label.title = "on its way to the session — cancellable until the session takes it";
-    }
+    // Per BUBBLE state (send-pending.ts `lost`): a send whose connection dropped after the press, with
+    // nothing confirming it since, reads "not confirmed" in warn amber — "sending…" would claim a
+    // progress romp cannot see — and the ✕ is its way back to the composer; the others in the same
+    // group still read "sending…". One label, both counts when both states are present.
+    const nLost = ev.texts.filter((t) => t.lost).length;
+    fillBareLabel(label, nLost, ev.texts.length - nLost);
     head.appendChild(label);
     turn.appendChild(head);
   }
@@ -3687,6 +3713,7 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
   for (const t of ev.texts) {
     if (t.followUp) turn.appendChild(followUpHeader(t.goal, t.fuCtx, t.idx !== undefined ? "q:" + t.idx : undefined));
     const bubble = el("div", "queued-bubble md" + (t.cancelable ? " cancelable" : ""));
+    if (t.optimistic && t.lost) bubble.dataset.lost = "1";   // the bare label recounts from this after a ✕
     // one phrase separating OUR unconfirmed echo from a real queued message, which the session has accepted
     // and is holding (the user 2026-07-16)
     if (t.optimistic && t.lost) bubble.title = "not confirmed — the connection dropped after this was sent; ✕ moves it back to the composer to send again";

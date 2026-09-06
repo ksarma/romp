@@ -10,17 +10,19 @@
 // bubble — retired its own entry in the very call that created it and showed nothing, and (B) the kernel's
 // own PROVISIONAL copy (queued bubble / "echo:" atom) counted as landed and deleted the entry one-way, so
 // when that provisional blinked in the echo→landed handoff nothing was left to cover the gap. Now: a
-// per-send `base` count makes only NEW landed user atoms retire it, kernel provisionals merely SUPPRESS
+// per-send anchor makes only NEW landed user atoms retire it, kernel provisionals merely SUPPRESS
 // injection for the push they're visible on.
 // Reshaped again 2026-09-06 (the send-durability audits): the 20 s TTL backstop is GONE — an entry ends
 // on events only (a landing, the kernel's never-delivered verdict, the user's ✕) — and the decision
-// moved to send-pending.ts, a pure module this file executes directly (see also send-pending.test.ts).
+// moved to send-pending.ts, a pure module this file executes directly (see also send-pending.test.ts,
+// which also covers the review's fixes: the anchor replaces the 30-event tail scan, exact text and
+// one landing per send, the lost verdict's anchor, the receipt proof that clears "not confirmed").
 // render.ts has import-time DOM side effects → source pins for the DOM half.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { newPending, reconcilePending, type TailEvent } from "./send-pending";
+import { newPending, reconcilePending, bareGroupLabel, type TailEvent } from "./send-pending";
 
 const RENDER = fs.readFileSync(
   path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -73,12 +75,14 @@ test("every push entry point re-asserts (or retires) the optimistic tail", () =>
   assert.ok(calls.length >= 4, "reconcile wired into send + all three push paths, got " + calls.length);
 });
 
-test("retire needs a NEW landed atom (base count); kernel provisionals only suppress", () => {
-  // the entry is minted by the module (base -1 until the first reconcile stamps the background count)
+test("retire needs a NEW landed atom (after the send's anchor); kernel provisionals only suppress", () => {
+  // the entry is minted by the module (unanchored until the first reconcile stamps where the send sits)
   assert.match(RENDER, /arr\.push\(newPending\(text, imgPaths\)\);/);
-  assert.equal(newPending("x", undefined, 5).base, -1);
-  // the decision is the module's, read off KERNEL truth after our injections are stripped
-  assert.match(RENDER, /const r = reconcilePending\(s\.events as TailEvent\[\], list, OPT_TAIL_SCAN\);/);
+  assert.equal(newPending("x", undefined, 5).at, undefined);
+  // the decision is the module's, read off KERNEL truth after our injections are stripped — the whole
+  // resident array from the anchor on, never a tail count (2026-09-06 review)
+  assert.match(RENDER, /const r = reconcilePending\(s\.events as TailEvent\[\], list\);/);
+  assert.doesNotMatch(RENDER, /OPT_TAIL_SCAN/);
   assert.match(RENDER, /if \(r\.keep\.length\) pendingSent\.set\(s\.id, r\.keep\); else pendingSent\.delete\(s\.id\);/);
   assert.match(RENDER, /const inject = r\.inject;/);
   // and no clock anywhere in the file's decision: the TTL is gone for good
@@ -116,7 +120,11 @@ test("nothing known-queued → a bare group wearing the honest 'sending…' head
   // bug (a mid-compaction send sat unlabeled and uncuttable): the bare group now states exactly what
   // is known, and the reflow recounts it in the same vocabulary after a ✕
   assert.match(RENDER, /label\.dataset\.bare = "1";/);
-  assert.match(RENDER, /ev\.texts\.length === 1 \? "sending…" : `sending \$\{ev\.texts\.length\}…`/);
+  // the wording is the pure helper's (send-pending.ts bareGroupLabel, per-bubble since 2026-09-06), and
+  // the render feeds it the bubbles' own states
+  assert.match(RENDER, /fillBareLabel\(label, nLost, ev\.texts\.length - nLost\);/);
+  assert.deepEqual(bareGroupLabel(0, 1).parts.map((p) => p.text), ["sending…"]);
+  assert.deepEqual(bareGroupLabel(0, 2).parts.map((p) => p.text), ["sending 2…"]);
   assert.match(RENDER, /if \(label\.dataset\.bare === "1"\) \{/, "reflow keeps the bare vocabulary");
   assert.match(RENDER, /if \(!ev\.bare\) \{/, "the standard 'N queued' header still needs confirmation");
 });

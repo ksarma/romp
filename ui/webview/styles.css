@@ -1842,8 +1842,9 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    accent: a note, not a link. */
 .absorbed-tag { max-width: 72%; margin-bottom: 1px; font-size: 0.82em; color: var(--dim); }
 /* a pending bubble whose confirmation is in doubt — the connection dropped after the press (send-pending.ts
-   `lost`): the bare group's label turns warn amber and reads "not confirmed" */
-.queued-head .queued-count.lost { color: var(--warn); }
+   `lost`): the bare group's label counts it in a warn-amber "not confirmed" part; the group's other bubbles
+   keep their dim "sending…" part beside it (one label, per-bubble state) */
+.queued-head .queued-count .lost { color: var(--warn); }
 /* compact "↩ Follow-up · <goal>" header above a message that resumed a goal — landed user turns AND pending
    queued messages, so the two render the same (the user 2026-06-27). Right-aligned with the outgoing bubble. */
 /* ONE font size across the whole header + its context box (the user 2026-07-02: the header was a soup of
