@@ -16,7 +16,7 @@ import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./ta
 import { ctxFallbackColor, pickTone, readableRgb } from "./ctx-color";
 import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
-import { mintWriteId, ackOutcome, adoptViews, seqOf, capsAdopts, announcedSeq, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
+import { mintWriteId, ackOutcome, adoptViews, seqOf, capsAdopts, announcedSeq, announcedAfter, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
 import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, PendingTabMeta } from "./tab-meta";
@@ -511,7 +511,7 @@ let kernelCaps = new Set<string>();   // what the LOCAL kernel announced at `rea
 let allHiddenBlanked = false;   // the active transcript was blanked because EVERY session is view-hidden
 let staleViewsDiagSent = false; // one breadcrumb per page load for an out-of-order views blob (below)
 let rejectedViews: SessionViews | null = null;   // the last blob the gate turned away since it last adopted one — what the caps frame adopts (onKernelCaps)
-let announcedViewsSeq: number | null = null;   // the seq the last caps frame announced as the kernel's current store when it adopted no kept blob — a LATER blob at exactly that seq is adopted below the held one (takeViews); cleared on the next adoption
+let announcedViewsSeq: number | null = null;   // the seq the last caps frame announced as the kernel's current store when it adopted no kept blob — a LATER blob at exactly that seq is adopted below the held one (takeViews); cleared by the next adoption that changes the held blob (announcedAfter) — a re-arrival of the blob already held leaves it
 function effViews(): SessionViews | null { return pendingSessionViews ?? sessionViews; }
 // an arriving views blob (a frame's or an ack's) becomes the base only if its write sequence is at
 // least the held one — a frame the pusher built from its warmed cache before a write, delivered
@@ -523,11 +523,15 @@ function effViews(): SessionViews | null { return pendingSessionViews ?? session
 // that push's seq, is the event that adopts it (rounds 6 and 7 of the 2026-09-05 review; capsAdopts).
 // When that push carried no blob to keep (a sentinel cycle sends no tabOrder), the caps frame's
 // viewsSeq is instead REMEMBERED as the kernel's announced store (announcedViewsSeq), and the later
-// blob carrying exactly that seq — the pusher's next frame — is adopted below the held one; the slot
-// clears on any adoption (round 8 of the review; announcedSeq).
+// blob carrying exactly that seq — the pusher's next frame — is adopted below the held one (round 8 of
+// the review; announcedSeq). The slot clears when an adoption CHANGES the held blob, never on a
+// re-arrival of the blob already held: in the browser this pane sees the local blob only through the
+// federation router, which replays its stored blob on every merged re-emit (a remote host's push, a
+// `closed` frame, a view-order storage event, a host drop), and a slot spent on one of those missed
+// the restored store the router adopted and re-emitted next (round 9; announcedAfter).
 function takeViews(v: SessionViews | null | undefined): boolean {
   if (!v) return false;
-  if (adoptViews(sessionViews, v, announcedViewsSeq)) { sessionViews = v; rejectedViews = null; announcedViewsSeq = null; return true; }
+  if (adoptViews(sessionViews, v, announcedViewsSeq)) { announcedViewsSeq = announcedAfter(sessionViews, v, announcedViewsSeq); sessionViews = v; rejectedViews = null; return true; }
   rejectedViews = v;
   if (!staleViewsDiagSent) {
     staleViewsDiagSent = true;
@@ -633,7 +637,8 @@ function postTagEdit(nv: SessionViews, edit: TagEditOp, newId?: string) {
 // served blob's seq, or the store's current seq when the push carried no views frame — a sentinel
 // cycle) is remembered as the kernel's announced store, and takeViews adopts the later blob that
 // carries it even below the held seq (round 8 of the review; announcedSeq) — the slot is one per
-// store, overwritten by each caps frame, cleared on the next adoption; null (no store at all) and a
+// store, overwritten by each caps frame, cleared by the next adoption that changes the held blob
+// (announcedAfter); null (no store at all) and a
 // missing field announce nothing. A write in flight is dropped whatever the base became: its ack
 // cannot reach this socket, and one that somehow did would be an ack for a write this page no longer
 // tracks — its blob meets the gate like any other arrival, and nothing is re-pinned (onViewsAck).

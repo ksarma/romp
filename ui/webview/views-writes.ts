@@ -55,9 +55,9 @@ export function seqOf(v: SessionViews | null | undefined): number | null {
 /** Whether an incoming blob may replace the held one: yes when its seq is at least the held seq, or
  *  when either side carries no seq (a kernel from before the stamp, or nothing held yet), or when its
  *  seq is the one the kernel ANNOUNCED as its current store at connect (`announced`: the slot the
- *  caller fills from the caps frame through announcedSeq, one per store, cleared on the next
- *  adoption) — a blob carrying that seq IS the announced store, not a stale frame, however far below
- *  the held seq it sits (round 8 of the 2026-09-05 review). The order the socket delivered them in
+ *  caller fills from the caps frame through announcedSeq, one per store, cleared by the next
+ *  adoption that CHANGES the held blob — announcedAfter) — a blob carrying that seq IS the announced
+ *  store, not a stale frame, however far below the held seq it sits (round 8 of the 2026-09-05 review). The order the socket delivered them in
  *  decides nothing — the pusher builds frames from a warmed cache that can predate a write whose ack
  *  already arrived, and federation re-emits stored blobs; the seq is the store's own order, so an
  *  older blob is ignored wherever it turns up. */
@@ -94,16 +94,37 @@ export function capsAdopts(rejected: SessionViews | null | undefined, served: un
  *  is a number — the seq of the views blob the connect push served, or the store's current seq when
  *  the push carried no views frame (a chat page's sentinel cycle sends no tabOrder) — and null when
  *  it is null (the kernel has no store at all) or the frame has no such field (a kernel from before
- *  it). The caller keeps it in ONE slot per store, overwritten by each caps frame and cleared on the
- *  next adoption of any blob, and hands it to adoptViews as `announced`, so a LATER blob carrying
+ *  it). The caller keeps it in ONE slot per store, overwritten by each caps frame and cleared by the
+ *  next adoption that CHANGES the held blob (announcedAfter), and hands it to adoptViews as
+ *  `announced`, so a LATER blob carrying
  *  exactly that seq is adopted even below the held one. Without it, a restart over a store restored
  *  from an older copy met by a sentinel-cycle reconnect left nothing kept for capsAdopts to match:
  *  the pusher's next frame (the restored store, under its old seq) was turned away, and no second
- *  caps frame comes. The clear on adoption is what keeps the slot honest: a write that lands first
- *  stamps the store past what was announced, and a frame at the announced seq is then the stale
- *  frame it looks like. */
+ *  caps frame comes. The clear on a changing adoption is what keeps the slot honest: a write that
+ *  lands first stamps the store past what was announced, and a frame at the announced seq is then
+ *  the stale frame it looks like. */
 export function announcedSeq(served: unknown): number | null {
   return typeof served === "number" && Number.isFinite(served) ? served : null;
+}
+
+/** The announced slot AFTER the gate adopts `incoming` over `held` (round 9 of the 2026-09-05 review).
+ *  The slot is cleared only by an adoption that CHANGES the held blob: a seq other than the held one
+ *  (a newer write by the ordinary rule, or the announced seq itself below the held one), a seq-less
+ *  side, or the announced seq arriving at the held seq (the announced store has arrived; the
+ *  announcement is spent). A re-arrival of the blob already held — the same seq on both sides — is no
+ *  new information and leaves the slot standing. That case is not rare: in the browser a pane sees the
+ *  local blob only through the federation router, which replays its stored blob on every merged
+ *  re-emit (a remote host's push, a `closed` frame, a view-order storage event, a host drop). Round 8
+ *  cleared the slot on ANY adoption, so a re-emit landing between the caps frame and the pusher's next
+ *  frame spent the pane's slot, and when the router adopted the pusher's frame at the announced seq
+ *  and re-emitted it, the pane turned it away: the router carried the restored store and the pane the
+ *  pre-restore one, silently, until the next write. The honesty argument stands as it was: a write
+ *  that lands first stamps the store strictly past the held seq and clears the slot; only an arrival
+ *  that changes nothing leaves it. Null in is null out. */
+export function announcedAfter(held: SessionViews | null | undefined, incoming: SessionViews | null | undefined, announced: number | null): number | null {
+  if (typeof announced !== "number") return null;
+  const h = seqOf(held), i = seqOf(incoming);
+  return i !== null && i === h && i !== announced ? announced : null;
 }
 
 /** the fields a lens or order write sets — the whole-blob write's only content of its own: the

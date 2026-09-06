@@ -73,11 +73,25 @@ function viewsCapsAdopts(rejected, served) {
 // blob — the hand-mirror of views-writes.ts announcedSeq (round 8 of the 2026-09-05 review): its viewsSeq
 // when a number (the served blob's seq, or the store's current seq when the push carried no views frame),
 // null when null (no store at all) or absent (a kernel from before the field). Kept in one slot per store
-// (_announcedViewsSeq), overwritten by each caps frame and cleared on the next adoption; a LATER blob at
-// exactly that seq is adopted below the held one (_takeViews). Without it, a restart over a store restored
+// (_announcedViewsSeq), overwritten by each caps frame and cleared by the next adoption that changes the
+// held blob (viewsAnnouncedAfter); a LATER blob at exactly that seq is adopted below the held one (_takeViews). Without it, a restart over a store restored
 // from an older copy, met by a reconnect whose push carried no blob, left nothing kept for the caps frame
 // to match: the pusher's next frame was turned away and no second caps frame comes.
 function viewsAnnouncedSeq(served) { return (typeof served === 'number' && isFinite(served)) ? served : null; }
+// the slot AFTER an adoption — the hand-mirror of views-writes.ts announcedAfter (round 9 of the review):
+// cleared only by an adoption that CHANGES the held blob (a seq other than the held one — a newer write, or
+// the announced seq itself below it — a seq-less side, or the announced seq arriving at the held seq), and
+// left standing through a re-arrival of the blob already held, which is no new information. The federation
+// router replays its stored blob into the merged lanes payload on every re-emit (a remote host's lanes, a
+// view-order storage event, a host drop); round 8's clear on ANY adoption let such a re-emit, landing between
+// the caps frame and the pusher's next frame, spend the slot, and the restored store the router then adopted
+// and re-emitted at the announced seq was turned away here: router and pane silently diverged until the next
+// write.
+function viewsAnnouncedAfter(held, incoming, announced) {
+  if (typeof announced !== 'number') return null;
+  const h = viewsSeq(held), i = viewsSeq(incoming);
+  return (i !== null && i === h && i !== announced) ? announced : null;
+}
 // The hand-mirror of views-writes.ts applyTagEdit / rederiveViews (round 3 of the 2026-09-05
 // review): one targeted op applied to a blob's LOCAL tags the way the gesture applied it (a copy;
 // an unknown tid is a no-op — the kernel refuses it), and the optimistic copy rebuilt from the base
@@ -976,7 +990,7 @@ class TimelinePanel {
     this._dismissed = new Set(); // sids cleared via the dead-lane Clear pill, held STICKY the same way (see _reconcileDismissed)
     this._views = null;          // the kernel-echoed views blob (data.views); null until the first push
     this._rejectedViews = null;  // the last blob the seq gate turned away since it last adopted one — what the caps frame adopts (setCaps)
-    this._announcedViewsSeq = null; // the seq the last caps frame announced as the kernel's current store when it adopted no kept blob — a LATER blob at exactly that seq is adopted below the held one (_takeViews); cleared on the next adoption
+    this._announcedViewsSeq = null; // the seq the last caps frame announced as the kernel's current store when it adopted no kept blob — a LATER blob at exactly that seq is adopted below the held one (_takeViews); cleared by the next adoption that changes the held blob (viewsAnnouncedAfter)
     this._pendingViews = null;   // an optimistic edit held until the kernel ACKS the write (viewsAck) or echoes it exactly (_reconcileViews)
     this._viewsWrites = [];      // the writes in flight, oldest first: {id, name, tid, op, openRename} — the pending copy clears when the LAST one is acked
     this._viewsWriteSeq = 0;     // writeId mint — a per-page counter beside the ms stamp, so two same-ms gestures never share one
@@ -3143,11 +3157,13 @@ class TimelinePanel {
   // copy serves it under the old seq, so its connect push is turned away here — and the caps frame
   // that follows it adopts it (setCaps; round 6 of the 2026-09-05 review). When that push carried no
   // blob to keep, the caps frame's viewsSeq is remembered instead (_announcedViewsSeq) and the later
-  // blob carrying exactly that seq is adopted below the held one; the slot clears on any adoption
-  // (round 8; viewsAnnouncedSeq).
+  // blob carrying exactly that seq is adopted below the held one (round 8; viewsAnnouncedSeq). The slot
+  // clears when an adoption CHANGES the held blob, never on a re-arrival of the blob already held — the
+  // federation router replays its stored blob into the merged lanes payload on every re-emit, and a slot
+  // spent on one of those missed the restored store the router adopted next (round 9; viewsAnnouncedAfter).
   _takeViews(v) {
     if (!v) return false;
-    if (viewsAdopts(this._views, v, this._announcedViewsSeq)) { this._views = v; this._rejectedViews = null; this._announcedViewsSeq = null; return true; }
+    if (viewsAdopts(this._views, v, this._announcedViewsSeq)) { this._announcedViewsSeq = viewsAnnouncedAfter(this._views, v, this._announcedViewsSeq); this._views = v; this._rejectedViews = null; return true; }
     this._rejectedViews = v;
     if (!this._staleViewsLogged) {
       this._staleViewsLogged = true;
@@ -3186,8 +3202,8 @@ class TimelinePanel {
   // does not name and is discarded. When nothing kept matches, viewsSeq (a number: the served blob's
   // seq, or the store's current seq when the push carried no views frame) is remembered as the
   // kernel's announced store and _takeViews adopts the later blob that carries it even below the held
-  // seq (round 8; viewsAnnouncedSeq): one slot, overwritten by each caps frame, cleared on the next
-  // adoption; null (no store at all) and a missing field announce nothing. A write in flight is
+  // seq (round 8; viewsAnnouncedSeq): one slot, overwritten by each caps frame, cleared by the next
+  // adoption that changes the held blob; null (no store at all) and a missing field announce nothing. A write in flight is
   // dropped whatever the base became: its ack cannot reach this socket, and one that somehow did is
   // an ack for a write this page no longer tracks — its blob meets the gate like any other arrival,
   // and nothing is re-pinned (viewsAck).
