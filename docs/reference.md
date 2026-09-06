@@ -339,9 +339,12 @@ whole environment sees them rather than for one command.
 Run `romp-service install` again after changing one, and on Linux restart the
 manager after it (`systemctl --user restart romp-manager`): the install
 rewrites the unit and reloads systemd but leaves a running manager as it is,
-while on macOS it reloads the job, which restarts it. The service unit bakes in
-whatever is set at install time, so a renumbered port that only lives in your
-shell leaves the supervised manager on the old one, and the two collide.
+while on macOS it reloads the job, which restarts it. Either rewrite drops a
+line you added to the unit or the plist by hand; a drop-in survives it (see
+[Two things still need a restart](#two-things-still-need-a-restart)). The
+service unit bakes in whatever is set at install time, so a renumbered port
+that only lives in your shell leaves the supervised manager on the old one, and
+the two collide.
 
 ### API keys on disk: the file mode
 
@@ -398,8 +401,10 @@ bill](#switching-which-api-key-the-sessions-bill-romp-keyswap)).
 
 For installations that forbid a credential in any file, the kernel has a
 second key source, **command mode**: a command it runs, whose output it hands
-to each process it starts. One line in `service.env` (or an `Environment=` line
-in the unit) selects it; with the line absent nothing about file mode changes.
+to each process it starts. One line in `service.env` selects it (a systemd
+drop-in works too; a line added to the unit or the plist by hand does not
+survive `romp-service install`, which rewrites both); with the line absent
+nothing about file mode changes.
 
     ROMP_CREDENTIAL_COMMAND=my-credentials "$1"
     ROMP_CREDENTIAL_NAMES=hp,lp
@@ -525,7 +530,9 @@ gui/$(id -u)/com.romp.manager`, repeated until it fails; then `launchctl
 bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.romp.manager.plist`,
 repeated if it is refused. On Linux `romp-service install` rewrites the unit
 and reloads systemd but leaves a running manager as it is, so the restart
-still follows. The other `ROMP_CREDENTIAL_*`
+still follows. The rewrite drops a line added to the unit by hand, as the
+plist rewrite does; a drop-in survives it, so a line of your own belongs in
+`service.env` or a drop-in. The other `ROMP_CREDENTIAL_*`
 values are read live, the environment first, with the same consequence: a
 line the manager's environment already carries is shadowed by that copy until
 the manager restarts, while a line the environment does not carry (one added
@@ -539,13 +546,16 @@ this shell reads, or leaves it unset where this shell sets it (the installer
 writes the line into the unit or the plist when the installing shell's path is
 not the default; a drop-in, a sourced profile or the shell that ran `romp up`
 can set it too; look for it there, then run `romp keyswap` with the same
-variable, or change it where it is and restart the manager: `romp-service
-install` from a shell with the wanted path rewrites the unit's or the plist's
-line, and a drop-in edit takes the `daemon-reload` above); a `service.env`
-line removed since the kernel started; and the shell that ran `romp up`. The
-same other-file cause is named
-under a kernel in file mode when the file this shell reads carries the line,
-since `romp refresh` reaches only the file the kernel reads.
+variable, or change it where it is and restart the manager; when it is
+nowhere, the kernel reads the default path, so unset the variable in your
+shell or install from that shell); a `service.env` line removed since the kernel
+started; and the shell that ran `romp up`. The restart per platform, the
+reload a unit, drop-in or plist line takes first and what the install does
+(it rewrites the unit or the plist, so a line added to either by hand is gone
+and a drop-in stays) close the report once, after the places. The same
+other-file cause is named under a kernel in file mode when the file this
+shell reads carries the line, since `romp refresh` reaches only the file the
+kernel reads.
 
 The kernel checks the configuration once at boot and logs one line per
 finding, names and fingerprints only. When the first run succeeds the line is
@@ -711,15 +721,21 @@ so the report lists the places, each with its remedy:
   restart](#two-things-still-need-a-restart))
 - another `service.env`, when the kernel's environment names a different file
   through `ROMP_SERVICE_ENV_FILE` (the installer's line in the unit or the
-  plist, a drop-in, a profile, or the shell that ran `romp up`): run `romp
-  keyswap` with the same variable, or change it where the kernel gets it and
-  restart the manager (`romp-service install` from a shell with the wanted
-  path rewrites the unit's or the plist's line; a drop-in edit takes the
-  reload under [Two things still need a
-  restart](#two-things-still-need-a-restart))
+  plist, a drop-in, a profile, or the shell that ran `romp up`), or names none
+  where your shell does: run `romp keyswap` with the same variable (unset,
+  when the kernel has none), or change it where the kernel gets it and restart
+  the manager (`romp-service install` from a shell with the wanted path
+  rewrites the unit's or the plist's line and drops a line added to either by
+  hand; a drop-in survives it and takes the reload under [Two things still
+  need a restart](#two-things-still-need-a-restart))
 - `service.env`, edited since the kernel read it at its start: `romp refresh`
 - the shell that ran `romp up`, which exported the line: start it again from a
   shell without the line
+
+The report closes with the restart per platform and the reload a unit,
+drop-in or plist line takes first, once, so the second and third places share
+one copy (the commands under [Two things still need a
+restart](#two-things-still-need-a-restart)).
 
 On the fingerprint: the kernel's last run used
 another selector (`--refresh` re-runs it), or the two environments differ (the
@@ -738,7 +754,8 @@ the key the kernel holds (as a fingerprint), the file it reads, and `MISMATCH`
 when the kernel is not reading this file's key, with the usual causes: the
 file is unreadable to the kernel, it has no key line and the kernel holds its
 startup key, or the kernel reads another `service.env` (the same other-file
-cause as above, with the places to look and the remedy per place); a cycle
+cause as above, with the places to look, the remedy per place and the restart
+and reload commands); a cycle
 reads and compares the same way first and stops on a mismatch. Rotate the key
 at its source, then run `--cycle-all` for the key-billed sessions. In file
 mode the kernel hands a
