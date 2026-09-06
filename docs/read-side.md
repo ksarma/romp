@@ -55,22 +55,29 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   consistent by construction. Keeping the WS protocol stable is the compatibility
   contract.
 - **Liveness is a keepalive, and staleness is event-keyed.** The kernel sends a
-  `ka` frame to every socket every 10 s; the pane shim force-closes a socket that
-  has gone 30 s without any frame. After a reconnect the shim raises the "what you
-  see may be stale" prompt only on the SECOND `ka` arriving before the resync
-  frame — one full heartbeat period, bracketed by two kernel heartbeats on that
-  socket with no resync between them (a single `ka` can be a beat that was already
-  queued when the socket was accepted) — or on the reconnected socket closing
-  again before its resync; the first non-keepalive frame retires the prompt, never
-  a timer. A client that falls 16 MB behind is dropped by the kernel, loudly: one
-  `ws: dropping` line in the kernel log, written where the drop is decided so every
-  send path is covered, naming the pane, the dashboard, the backlog and the push
-  slot whose frame tipped the budget when a push did; and a row in the dashboard's
-  bell (at most five drop rows, none older than an hour, so they never crowd out a
-  backend problem). Every close of a socket that opened leaves a `wsclose`
-  breadcrumb (code, reason, socket age) in `client-diag.jsonl`; the redials an
-  outage refuses are counted and reported as one `wsconnfail` row on the next
-  open, and at most 20 breadcrumbs wait in the shim's queue for it.
+  `ka` frame to every socket every 10 s; the pane shim abandons a socket that has
+  gone 30 s without any frame and redials at once. After a reconnect the shim
+  raises the "what you see may be stale" prompt only on the SECOND `ka` arriving
+  before the resync frame — one full heartbeat period, bracketed by two kernel
+  heartbeats on that socket with no resync between them (a single `ka` can be a
+  beat that was already queued when the socket was accepted) — on the reconnected
+  socket closing again before its resync, or on the shim abandoning it as quiet
+  before its resync (a kernel that accepts the reconnect and never speaks on it
+  sends nothing to count and nothing to close); the first non-keepalive frame
+  retires the prompt, never a timer. A client that falls 16 MB behind is dropped
+  by the kernel, loudly: one `ws: dropping` line in the kernel log, written where
+  the drop is decided so every send path is covered, naming the pane, the
+  dashboard, the backlog and the push slot whose frame tipped the budget when a
+  push did; and a row in the dashboard's bell (at most five drop rows, none older
+  than an hour, so they never crowd out a backend problem). Every close the
+  browser reports for a socket that opened leaves a `wsclose` breadcrumb (code,
+  reason, socket age) in `client-diag.jsonl`; a socket the shim abandons leaves
+  none — the watchdog's own `watchdog-close` row went down the quiet socket
+  before the abandon (the foreground path's abandon sends none), so an armed
+  socket's raise, `reconnect-quiet` or `foreground-quiet`, queued for the redial,
+  is the record that survives; the redials an outage refuses are counted and
+  reported as one `wsconnfail` row on the next open, and at most 20 breadcrumbs
+  wait in the shim's queue for it.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire

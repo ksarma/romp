@@ -88,7 +88,7 @@ class DroppedClientsAreLoud(unittest.TestCase):
             sys.stderr = old
         self.assertEqual(len(km._WS_DROPS), n0 + 1)
         row = km._WS_DROPS[-1]
-        self.assertIn("feed pane", row["text"]); self.assertIn("17.0 MB", row["text"])
+        self.assertIn("The Feed pane's live connection was dropped", row["text"]); self.assertIn("17.0 MB", row["text"])
         self.assertTrue(any(r["text"] == row["text"] and r["sig"].startswith("sdk|") and "|ws|" in r["sig"]
                             for r in km._sdk_problem_rows()), "rides the feed's sdkNotices → the bell")
 
@@ -115,7 +115,7 @@ class DroppedClientsAreLoud(unittest.TestCase):
         self.assertIn("dropping chat client", lines[0]); self.assertIn("wid=w3", lines[0]); self.assertIn("bytes behind", lines[0])
         self.assertFalse(client["alive"])
         self.assertEqual(len(km._WS_DROPS), n0 + 1)
-        self.assertIn("chat pane", km._WS_DROPS[-1]["text"])
+        self.assertIn("The Chat pane's", km._WS_DROPS[-1]["text"])
 
     def test_a_push_path_drop_names_the_slot_whose_frame_tipped_the_budget(self):
         # the raise site has no key of its own; _client_send leaves the slot in flight on the client for
@@ -174,7 +174,29 @@ class DroppedClientsAreLoud(unittest.TestCase):
         self.assertIn("dropping feed client", lines[0]); self.assertIn("slot=feed ", lines[0])
         self.assertNotIn("view-delta feed:", err.getvalue(), "the drop is a drop, not an encoder failure")
         self.assertFalse(client["alive"])
-        self.assertIn("feed pane", km._WS_DROPS[-1]["text"])
+        self.assertIn("The Feed pane's", km._WS_DROPS[-1]["text"])
+
+    def test_the_bell_row_names_the_pane_as_the_rail_does(self):
+        # the row is read by the person at the dashboard, who knows the panes by the rail's labels; the
+        # Outline pane's internal app id (the key probed below) is not one of them, and the row used to name
+        # it by that id. The stderr line keeps the id — it is the log's word for the pane, and the line
+        # beside it (_drop_dead_ws_client) uses it.
+        old = sys.stderr; sys.stderr = io.StringIO()
+        try:
+            texts = {}
+            for app, label in km._PANE_ORDER:
+                c = self._dropping(); c["app"] = app
+                km._send_client(c, ("feed",), {"type": "feed"})
+                texts[app] = km._WS_DROPS[-1]["text"]
+                self.assertIn("The %s pane's live connection was dropped" % label, texts[app], app)
+            self.assertNotIn("fleet", texts["fleet"], "the internal id never reaches the row")
+            self.assertIn("The Outline pane's", texts["fleet"])
+            self.assertIn("dropping fleet client", sys.stderr.getvalue(), "…while the log line keeps it")
+            c = self._dropping(); c["app"] = "shell"   # a client with no rail label: the id itself, never a blank
+            km._send_client(c, ("feed",), {"type": "feed"})
+            self.assertIn("The shell pane's", km._WS_DROPS[-1]["text"])
+        finally:
+            sys.stderr = old
 
     def test_drop_rows_never_crowd_a_backend_problem_out_of_the_bell(self):
         class _Be:

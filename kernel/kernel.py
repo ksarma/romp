@@ -27542,10 +27542,14 @@ def _note_ws_drop(c, why, frame_len, key=None):
                             int(c.get("qbytes") or 0), int(frame_len)))
         if "bytes behind" in str(why):
             _WS_DROP_SEQ[0] += 1
+            # the row names the pane as the rail does — _PANE_ORDER's label, so the Outline pane is not its
+            # internal app id to the person reading it; an app with no rail label keeps its id. The stderr
+            # line above keeps the id: it is the log's word for the pane, shared with _drop_dead_ws_client.
+            app = c.get("app") or "?"
             _WS_DROPS.append({"seq": _WS_DROP_SEQ[0], "t": time.time(),
                               "text": "The %s pane's live connection was dropped: it had %.1f MB of "
                                       "updates waiting and had stopped reading them. It reconnects on "
-                                      "its own." % (c.get("app") or "?", int(c.get("qbytes") or 0) / 1e6)})
+                                      "its own." % (dict(_PANE_ORDER).get(app, app), int(c.get("qbytes") or 0) / 1e6)})
             del _WS_DROPS[:-20]
     except Exception:
         pass
@@ -30426,7 +30430,11 @@ if(window.parent!==window){try{window.parent.postMessage({romp:"wsStale"},"*");}
 // while the resync is still pending — one full heartbeat period, bracketed by two kernel heartbeats on
 // this very socket with no resync between them: the kernel is alive and talking to it and has not
 // resynced it, exactly the state the prompt warns about — and the reconnected socket CLOSING again before
-// its resync — no frame is coming on it. Both fire in onmessage/onclose below. ONE keepalive is not the
+// its resync — no frame is coming on it. Both fire in onmessage/onclose below; abandon() runs the close
+// rule itself for a socket the shim gives up on as quiet (the watchdog's tick or the foreground path), since
+// it disowns that socket's onclose — a kernel that accepts the reconnect and then never speaks on it
+// sends no keepalive to count and no close to rule on, and without this the next open re-armed from zero
+// on every 30 s cycle: the loader flapped and the prompt never came. ONE keepalive is not the
 // event: the heartbeat thread can enqueue a beat the instant a socket is accepted, ahead of the connect
 // push, and raising on it flashed the banner exactly as the timer did. The timer was approximating all
 // this, and on a board of several hundred cards the connect push is a multi-megabyte frame that takes
@@ -30484,13 +30492,16 @@ else if(msg&&DELTA_KINDS[msg.type]){var keys=msg._keys;delete msg._keys;LAST[msg
 if(window.__rompFed){window.__rompFed.inbound("",msg);}else{window.dispatchEvent(new MessageEvent("message",{data:msg}));}};
 // onclose: flag the shell, RE-SHOW this pane's romp loader (the user 2026-06-29, who wanted the swirling loader on
 // kernel restart), + RETRY (don't blind-reload — on a real outage the reload just fails into a dead page).
-// Every close of a socket that OPENED leaves a breadcrumb with the CLOSE CODE and reason: a kernel-side drop
-// (the client fell WS_QUEUE_BYTES behind — shutdown, no close frame → 1006), a clean kernel restart, a proxy
-// timeout and the watchdog's own close all looked identical from here, and a day of drops read as a flaky
-// network. send() queues while the socket is down, so the row rides the reconnect. A handshake that never
-// opened fires onclose too (every 1.5 s redial of an outage — an 8 h outage is ~19k of them, and their timings
-// would be the PREVIOUS socket's): those are counted and reported as one wsconnfail row on the next open,
-// never queued one by one.
+// Every close the BROWSER reports for a socket that OPENED leaves a breadcrumb with the CLOSE CODE and
+// reason: a kernel-side drop (the client fell WS_QUEUE_BYTES behind — shutdown, no close frame → 1006), a
+// clean kernel restart and a proxy timeout all looked identical from here, and a day of drops read as a
+// flaky network. A socket the shim ABANDONS leaves no wsclose row (abandon() disowns its onclose). Its
+// watchdog-close row, when there is one, went down the quiet socket before the abandon (the foreground
+// path sends none), so it lands only if that socket still carried writes; for an armed socket the "-quiet"
+// raise abandon() queues for the redial is the record that survives. send() queues while the socket is
+// down, so the row rides the reconnect. A handshake that never opened fires onclose too (every 1.5 s redial
+// of an outage — an 8 h outage is ~19k of them, and their timings would be the PREVIOUS socket's): those
+// are counted and reported as one wsconnfail row on the next open, never queued one by one.
 ws.onclose=function(ev){netState("down");
 if(openSock===this){try{send({type:"clientDiag",surface:"pane-shim",what:"wsclose",data:{app:APP,code:ev?ev.code:-1,reason:(ev&&ev.reason)||"",wasClean:!!(ev&&ev.wasClean),sinceOpenMs:openT?Date.now()-openT:-1,quietMs:lastRecv?Date.now()-lastRecv:-1,everConnected:everConnected}});}catch(e){}}
 else{if(!failedConnects)firstFailT=Date.now();failedConnects++;}
@@ -30537,8 +30548,12 @@ setState:function(s){try{localStorage.setItem(SK,JSON.stringify(s));}catch(e){}}
 // the audited phone panes came back 64s after their own watchdog-close for exactly this reason (a pane's
 // quiet socket → close() → nothing → the reconnect only when the browser gave up). Detach its handlers
 // (its eventual onclose is nobody's event — it must not fire wsdown or a second redial), close it for
-// hygiene, do what onclose did (flag the shell, re-show the loader), and let the caller dial NOW.
+// hygiene, do what onclose did (flag the shell, run the close rule, re-show the loader), and let the caller
+// dial NOW. The close rule runs AFTER ws is nulled so its breadcrumb queues and rides the reconnect. (The
+// watchdog's own watchdog-close row goes down the quiet socket before this call and lands only if that
+// socket still carries writes; the raise's row does not depend on that.)
 function abandon(){var d=ws;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;
+if(stalePending&&openSock===d){var qw=stalePending;stalePending="";raiseStale(qw+"-quiet");}   // the reconnected socket armed and then said nothing before its resync: nothing is coming on it, and the view IS stale — the disowned onclose cannot rule on it, and the redial's open would otherwise re-arm from zero
 netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}
 // progress watchdog (state-keyed, one per socket state): OPEN but silent past STALE_MS = half-open, no
 // onclose will ever fire — force-close (the user 2026-06-29). CONNECTING past its deadline = the browser is
