@@ -28191,15 +28191,21 @@ def _subagent_transcripts(path):
     `workflows/wf_<id>/agent-<id>.jsonl` — its path parser takes any extra segments — so the walk is
     RECURSIVE (2026-09-06: the flat listing missed every nested file; on the box that found it those
     held a quarter of the sessions' tokens and 62% of their output tokens). Bounded to the session's own
-    subagents tree: symlinks are not followed. Cost: one directory read per directory under it."""
+    subagents tree: no symlink is followed — not a directory (os.walk's followlinks=False), not a FILE
+    (os.walk lists a symlinked file like any other and the reader would open it wherever it points; the
+    CLI writes none, so one is a user's, and it is skipped), and not the subagents directory itself.
+    Cost: one directory read per directory under it plus one lstat per file."""
     base, ext = os.path.splitext(str(path))
     if ext != ".jsonl":
         return []
     d = os.path.join(base, "subagents")
+    if os.path.islink(d):
+        return []
     out = []
     for root, dirs, files in os.walk(d):            # followlinks=False — never leaves the session's own tree
         dirs.sort()
-        out.extend(os.path.join(root, n) for n in files if n.endswith(".jsonl"))
+        out.extend(p for p in (os.path.join(root, n) for n in files if n.endswith(".jsonl"))
+                   if not os.path.islink(p))
     return sorted(out)
 
 

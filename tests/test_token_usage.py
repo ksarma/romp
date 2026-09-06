@@ -125,6 +125,9 @@ class SessionTokens(unittest.TestCase):
             other.mkdir()
             (other / "agent-zz.jsonl").write_text(_asst({"input_tokens": 7777, "output_tokens": 7777}, iso(NOW - 70), mid="m6") + "\n")
             os.symlink(other, sub / "linked")
+            # …nor is a symlinked FILE: os.walk lists one like any other file (only DIRECTORY links go
+            # unfollowed), so before 2026-09-06 the reader opened it wherever it pointed — outside the tree
+            os.symlink(other / "agent-zz.jsonl", sub / "agent-link.jsonl")
             self.assertEqual(km._session_tokens(p, NOW - 3600), {"in": 1110, "out": 555, "cache_w": 0, "cache_r": 1000})
             # a second subagent lands; the main transcript's mtime has not moved
             mt = os.path.getmtime(p)
@@ -138,9 +141,25 @@ class SessionTokens(unittest.TestCase):
             self.assertEqual(km._session_tokens(p, NOW - 3600)["in"], 1112, "a nested file's growth refreshes the rows")
             self.assertEqual(km._subagent_transcripts(p),
                              [str(sub / "agent-a1.jsonl"), str(sub / "agent-b2.jsonl"), str(wf / "agent-c3.jsonl")],
-                             "sorted, nested files included, the symlinked directory not walked")
+                             "sorted, nested files included, the symlinked directory not walked, the symlinked file skipped")
             self.assertEqual(km._subagent_transcripts(os.path.join(d, "no-such.jsonl")), [])
             self.assertEqual(km._subagent_transcripts(os.path.join(d, "x.txt")), [])
+
+    def test_a_symlinked_subagents_directory_is_not_walked_either(self):
+        """os.walk follows its TOP argument even when it is a symlink (followlinks governs the descent, not
+        the root), so `<sid>/subagents` itself pointing elsewhere would read another tree wholesale."""
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "11111111-2222-3333-4444-555555555555.jsonl")
+            with open(p, "w") as f:
+                f.write(_asst({"input_tokens": 10, "output_tokens": 5}, iso(NOW - 100), mid="m1") + "\n")
+            other = pathlib.Path(d) / "elsewhere"
+            other.mkdir()
+            (other / "agent-zz.jsonl").write_text(_asst({"input_tokens": 7777, "output_tokens": 7777}, iso(NOW - 70), mid="m6") + "\n")
+            sid_dir = pathlib.Path(d) / "11111111-2222-3333-4444-555555555555"
+            sid_dir.mkdir()
+            os.symlink(other, sid_dir / "subagents")
+            self.assertEqual(km._subagent_transcripts(p), [])
+            self.assertEqual(km._session_tokens(p, NOW - 3600), {"in": 10, "out": 5, "cache_w": 0, "cache_r": 0})
 
 
 class JudgeUsageIncrementalCache(unittest.TestCase):
