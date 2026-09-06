@@ -13,14 +13,17 @@ for the assertion nobody wrote that way. Pinned here:
     update, setdefault, os.putenv, os.environb, mock.patch.dict), so a value present only between the
     per-test samples is redacted too.
   CredentialPattern: the second net, independent of provenance: credential-shaped tokens by pattern
-    (tests/credential_patterns.py) in any report.
+    (tests/credential_patterns.py) in any report, pytest's own renderings of a failed comparison
+    included (the diff's `- <a>` and `+ <a>` lines under the E marker, the quoted operands of an
+    `assert '<a>' == '<b>'`, a --showlocals line `name = '<a>'`).
   ReportShapes: the hook's work on a report object of each outcome (a failure's longrepr, a skip's
     tuple, a passed test's sections).
   HookEndToEnd: subprocess pytest runs against a copy of the conftest. A test that fails with a probe
     value in its message and on its stdout prints the marker, never the value; the same for a value
     set inside mock.patch.dict and gone before the assertion, a header-shaped value split by
     assertDictEqual, a pattern-shaped token with no provenance, a passed test's captured output
-    under -rA, and a collection error.
+    under -rA, a collection error, and a failed comparison of two unknown-format tokens under
+    --showlocals (pytest's diff lines, its assert line and the locals all show the marker).
 
 Every probe value is synthetic and assembled at run time ("romp-test-fixture-" + a uuid; a
 pattern-shaped probe is a public key prefix joined to uuids), so no literal in this file is a
@@ -267,6 +270,31 @@ class CredentialPattern(_WithConftest):
         other = "A1" * 20
         self.assertEqual(red("commit=%s" % other), "commit=" + self.cf.CREDENTIAL_REDACTED)
 
+    def test_pytests_own_renderings_of_a_failed_comparison_are_value_positions(self):
+        # a compared token slipped the net: pytest's diff lines, its assert line and a --showlocals line
+        # put the value after nothing the value positions knew (`E         - `, `assert '`, `== '`, `= '`)
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        a, b = uuid.uuid4().hex, uuid.uuid4().hex                  # 32 characters each, no known prefix
+        self.assertEqual(red("E         - %s" % b), "E         - " + R, "the marker and the sign stay")
+        self.assertEqual(red("E         + %s" % a), "E         + " + R)
+        self.assertEqual(red("E       - %s\nE       + %s\nE       ?  ^^\n" % (a, b)),
+                         "E       - %s\nE       + %s\nE       ?  ^^\n" % (R, R), "unittest's diff, as pytest renders it")
+        self.assertEqual(red("E       AssertionError: assert '%s' == '%s'" % (a, b)),
+                         "E       AssertionError: assert '%s' == '%s'" % (R, R), "both operands")
+        self.assertEqual(red('assert "%s" == "%s"' % (a, b)), 'assert "%s" == "%s"' % (R, R))
+        self.assertEqual(red("E       AssertionError: '%s' != '%s'" % (a, b)),
+                         "E       AssertionError: '%s' != '%s'" % (R, R), "unittest's assertEqual line")
+        self.assertEqual(red("a          = '%s'" % a), "a          = '%s'" % R, "a --showlocals line")
+        self.assertEqual(red('name = "%s"' % a), 'name = "%s"' % R)
+        # what stays: a diff line that is more than the token, one under the floor, and a `- <token>` line
+        # without the E marker (a bullet in captured output, not pytest's diff)
+        for text in ("E         - the word %s here" % a, "E         - %s" % uuid.uuid4().hex[:23], "- %s" % a,
+                     "E         - %s and more" % a, "E         -%s" % a):
+            self.assertEqual(red(text), text, text[:16])
+        # a 40-hex sha on a diff line is a value, as on a bare line: nothing there names it a commit
+        sha = hashlib.sha1(b"romp-test-fixture-diff").hexdigest()
+        self.assertEqual(red("E         - %s" % sha), "E         - " + R)
+
     def test_the_two_nets_are_applied_in_order_and_share_one_pattern_list(self):
         v = probe_value("env")
         tok = patterned_probe()
@@ -388,6 +416,36 @@ class HookEndToEnd(unittest.TestCase):
                 self.assertFalse(v in out, "%s reached the report" % name)
             self.assertGreaterEqual(out.count("[REDACTED-ENV-VALUE]"), 2, "the patch.dict message and the header chunk")
             self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 1, "the patterned token, with no provenance")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_a_failing_comparison_of_two_tokens_prints_the_marker_on_every_rendering(self):
+        # a plain `assert a == b` on two tokens of unknown format, under --showlocals: pytest renders the
+        # pair on its assert line (abbreviated at -q), one per diff line, and once more per local. The
+        # unittest form renders `'<a>' != '<b>'` and the same diff lines. No line shows either token.
+        d = tempfile.mkdtemp()
+        try:
+            _copy_hook(d)
+            probes = {"a": uuid.uuid4().hex, "b": uuid.uuid4().hex}
+            with open(os.path.join(d, "probes.json"), "w") as fh:
+                json.dump(probes, fh)
+            with open(os.path.join(d, "test_probe_compare.py"), "w") as fh:
+                fh.write("import json, os, unittest\n"
+                         "P = json.load(open(os.path.join(os.path.dirname(__file__), 'probes.json')))\n\n"
+                         "def test_plain():\n"
+                         "    a = P['a']\n"
+                         "    b = P['b']\n"
+                         "    assert a == b\n\n"
+                         "class Cmp(unittest.TestCase):\n"
+                         "    def test_unittest(self):\n"
+                         "        self.assertEqual(P['a'], P['b'])\n")
+            rc, out = self._run(d, "--showlocals", "test_probe_compare.py")
+            self.assertNotEqual(rc, 0)
+            self.assertTrue("2 failed" in out, out[-600:])
+            for name, v in probes.items():
+                self.assertFalse(v in out, "%s reached the report" % name)
+            # the plain assert: two diff lines and two locals; the unittest one: its message and two diff lines
+            self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 8, out[-1200:])
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
