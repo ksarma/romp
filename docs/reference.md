@@ -59,6 +59,7 @@ These are for scripting and for agents rather than daily use:
 | `romp url` | Print only the tokened dashboard URL, for piping |
 | `romp sessions [--json]` | The fleet with each session's state, identity colours, directory and backend |
 | `romp perf [--interval <s>] [--json]`, `romp perf log on\|off` | The kernel's performance counters as rates over two snapshots (below); `--json` prints one raw snapshot; `log on\|off` turns the `romp-perf` stderr log on or off without a restart |
+| `romp perf client [--minutes <n>] [--json]` | What the open dashboards' browsers spent on the frames they received (below): frames per minute by type with handler p90/max, main-thread-free p90, long animation frames and their attributed functions, heap and DOM, slow frames — per dashboard and pane over the last `<n>` minutes (default 10) |
 | `romp mail …` | The postal service from the shell (below) |
 | `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}` — a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text |
 | `romp new --model <id> <name>` | Model for the SDK session: a family alias such as `fable` (follows the family's newest release) or a full id such as `claude-fable-5` (a pin); re-asserted if `<name>` already runs |
@@ -792,6 +793,69 @@ goes where the manager's stderr goes: under systemd, `journalctl --user -u
 romp-manager -f | grep romp-perf`; under launchd (macOS), `tail -f
 ~/.local/state/romp/manager.log | grep romp-perf`. Setting `ROMP_PERF=1` in the
 kernel's environment still turns it on at start.
+
+## Browser-side performance telemetry
+
+The counters above say what the kernel spent. What the browser spent on the
+frames it received is measured in the panes themselves: every pane bundle
+(feed, Outline, Waiting on you, chat, timeline) installs `ui/webview/perf-telemetry.ts`
+and wraps its window `message` handler, so each frame's synchronous handling
+time is recorded by frame type (`feed`, `chatTail`, `session`, `tabOrder`,
+`bars`, `data`, a shell message as `shell`, a raw delta as `delta:<slot>`,
+anything else as `other`; frames the handler ignores count too). Two
+`requestAnimationFrame` callbacks after a handler it records how long the main
+thread stayed busy with the work the handler queued (a deferred render, layout,
+paint); a `PerformanceObserver` on `long-animation-frame` entries (Chrome 123+;
+`longtask` where that is missing, with no attribution) records each frame over
+50 ms with its blocking time and the scripts the browser attributes it to, by
+script file basename and function name. Once a minute the pane posts ONE
+`clientDiag` row on the socket it already uses for breadcrumbs, and only when
+something happened that minute (a frame arrived or a long frame was observed);
+the kernel appends it to `client-diag.jsonl` under the state directory with
+the dashboard id (`wid`) and its own clock. A handler that runs 100 ms or more
+also posts a `slowframe` row at once, carrying the long-frame attribution when
+the browser reports one for that frame. Rows carry numbers and code identifiers
+only, never card text, session names or transcript content; an element id inside
+an invoker name is stripped.
+
+The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
+
+- `{"t", "wid", "surface": "perf", "what": "minute", "data": {app, since,
+  span_ms, frames: {<type>: {n, ms_sum, ms_max, p90}}, free: {n, p50, p90,
+  max} | null, loaf: {n, blocking_ms, worst_ms, top: [{k, ms, n, inv}], src},
+  heap_mb?, dom, visible, hidden_pane, ua}}`. `app` is the pane (`chat`,
+  `feed`, `fleet`, `waiting`, `timeline`); `since` is the minute's start on the
+  browser's clock (epoch ms) and `span_ms` its length; `p90` is over the newest
+  64 handler durations of that type in the minute; `free` is null when no
+  sample was taken (a hidden pane takes none); `loaf.top` is the five largest
+  `<file>:<function>` keys by summed duration, `inv` the last invoker seen for
+  each, `src` is `loaf`, `longtask` or `none`; `heap_mb` is
+  `performance.memory.usedJSHeapSize` and is absent outside Chrome; `dom` is
+  the element count; `visible` is the document's visibility, `hidden_pane`
+  the zero-viewport test the pane shim uses for a pane the shell has
+  `display:none`; `ua` is `chrome-desktop`, `safari-ios` or `other`.
+- `{"t", "wid", "surface": "perf", "what": "slowframe", "data": {app, type, ms,
+  dom, loaf?: {ms, blocking_ms, top: [{k, ms, inv}]}}}`.
+
+`romp perf client [--minutes <n>] [--json]` reads the file (no kernel round
+trip, so it works with the kernel down) and folds the last `<n>` minutes
+(default 10) per dashboard id and pane into one screen: frames per minute by
+type with the worst minute's handler p90 and max, the main-thread-free p90,
+long frames and blocking milliseconds per minute with the worst entry, the
+top attributed functions, heap and DOM at the last sample, and every slow
+frame in the window with its attribution. An absent file or one without perf
+rows is reported as no browser telemetry yet: the bundles predate it or no
+dashboard has loaded them, so rebuild the bundles and reload the dashboard.
+Perf rows all older than the window are reported with their age. `--json`
+prints the folded panes.
+
+In DevTools, `window.__rompPerf.snapshot()` in a pane's frame is the minute
+in progress in the same shape, plus `active` (whether it will be sent),
+`observer` (`loaf`, `longtask`, `none`), `pending_slow` (slow frames waiting
+for their long-frame report) and `free_pending` (a main-thread sample armed).
+A page without `performance.now` (the node test stand-ins) gets no telemetry
+and an unwrapped handler; every other browser API is behind a feature check,
+and nothing in the module throws into the pane.
 
 ## Where things live
 
