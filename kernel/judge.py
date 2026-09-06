@@ -13649,8 +13649,8 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
     if now is None:
         now = int(time.time())
     n = 0
-    fleet = discover(now)[:sessions_cap]
-    seen = {f for f, _p, _a, _n in fleet}
+    sessions = discover(now)[:sessions_cap]
+    seen = {f for f, _p, _a, _n in sessions}
     loaded, idents, archives = {}, {}, {}   # sid -> store / its pre-read identity (absent sids only) / archive
 
     def _get(sid):
@@ -13678,7 +13678,7 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
 
     closed = {}                                         # sender sid -> _presumed_closed, once per pass
     dirty = {}                                          # sender sids with verdicts to publish, in order
-    for fsid, path, anchor, name in fleet:
+    for fsid, path, anchor, name in sessions:
         # live + ARCHIVE merged for the RECIPIENT-side scan (2026-08-26, the working-column audit):
         # a recipient goal that completed and was then ARCHIVED (the user cleared the done card)
         # vanished from the live-only scan, so the sender's tracker never checked off — a live
@@ -13768,7 +13768,7 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
     # closed tracker leaves the predicate). The predicate is answered by _absent_store_flags: an
     # unchanged absent store costs three stats, not a parse, and a store it does read stays in
     # `loaded` for the loop below.
-    _sw_senders = [f for f, _p, _a, _n in fleet]
+    _sw_senders = [f for f, _p, _a, _n in sessions]
     _sw_files = sorted(GOALDIR.glob("*.json"))
     _absent_flags_evict({str(f) for f in _sw_files})
     for _f in _sw_files:
