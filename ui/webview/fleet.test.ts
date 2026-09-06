@@ -15,6 +15,14 @@ test("fleet rides the FEED payload, reading its per-session `ledgers`", () => {
   assert.match(SRC, /sessions = m\.ledgers as FleetSession\[\]/);
 });
 
+test("fleet.ts applies no delta itself: the shim reassembles every {type:\"delta\"} frame before the bundle sees it — and one that arrives raw is loud, never dropped", () => {
+  // a host that hands the pane a kernel frame unreassembled would otherwise have every update fall through
+  // the `m.type !== "feed"` return in silence; the guard says so and asks for the whole slot with the
+  // message the shim itself uses (needSlot). Run for real in fleet-live-clock.test.ts.
+  assert.match(SRC, /if \(m\.type === "delta"\) \{[\s\S]*?"delta-unapplied"[\s\S]*?\{ type: "needSlot", slot: m\.slot \}[\s\S]*?return;\n\s*\}\n\s*if \(m\.type !== "feed"\) return;/);
+  assert.doesNotMatch(SRC, /applyDelta|from "\.\/feed-delta"/);
+});
+
 test("each session renders the real LEDGER TREE — .ledger-* nodes, marks, collapse, recency time", () => {
   assert.match(SRC, /el\("div", "ledger-tree"\)/);
   assert.match(SRC, /"ledger-tnode"/);

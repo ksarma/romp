@@ -82,8 +82,19 @@ class ShimWatchdogSourcePins(unittest.TestCase):
         self.assertNotIn("new WebSocket", km._TIMELINE_BOOT, "the timeline boot owns no socket of its own")
 
     def test_shim_ignores_the_keepalive_frame(self):
-        # the ka frame never reaches the bundles: the shim consumes it (build-drift check, then return)
-        self.assertIn('if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild();return;}', KSRC)
+        # the ka frame never reaches the bundles: the shim consumes it (build-drift check, the stale rule,
+        # then RETURN). Pinned as the exact branch text INCLUDING its return: a slice-to-the-next-`return;}`
+        # pin would stay green with the return deleted (the slice runs on to the next branch's return) while
+        # keepalives fell through to the resync retire and to the bundle. pane-shim-stale.test.ts RUNS the
+        # same rule and asserts no ka reaches the bundle.
+        head = ('if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild();\n'
+                'if(stalePending&&++staleKa>=2){var sw=stalePending;stalePending="";raiseStale(sw);}')
+        i = KSRC.index(head)
+        rest = KSRC[i + len(head):]
+        nl = rest.index("\n")                              # the rule line's trailing comment
+        third = rest[nl + 1:rest.index("\n", nl + 1)]
+        self.assertTrue(third.startswith("return;}"), "the ka branch RETURNS: %r" % third)
+        self.assertNotIn("dispatchEvent", head + rest[:nl + 1 + len(third)])
 
 
 class BuildDriftBanner(unittest.TestCase):

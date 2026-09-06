@@ -14,6 +14,7 @@ import { fleetVisibleRoots } from "./fleet-roots";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { hostPrefix } from "./host-prefix";
 import { ageColorReadable } from "./age-color";
+import { liveNow } from "./feed-age";
 import { TIP_GRACE_MS } from "./tip";
 
 type Color = { bg: string; fg: string } | null;
@@ -59,6 +60,15 @@ let provCards: ProvCard[] = [];
 // Full feed-card lookup by goal id (the SAME asks slice provCards reads): the hover card joins a top goal's
 // row to its feed card for the distiller BACKGROUND (cards carry it; ledger nodes don't — the user 2026-07-13).
 let asksById = new Map<string, { background?: string | null; summary?: string | null; blockSummary?: string | null }>();
+// The kernel's clock: `now` on the last frame, and WHEN that frame arrived (local ms). Every age on this pane
+// reads nowSec(), which adds the local time elapsed since (feed-age.ts liveNow), so the browser's own clock
+// never enters — read against Date.now(), every "(Xm ago)", the current goal's elapsed time and the recency
+// cutoff were off by whatever skew sat between the two clocks, and moved only when a frame arrived (a quiet
+// board on the delta path sends one every 60 s). `nowAt` is the WIRE arrival federation stamps on the merged
+// frame it re-emits (a re-emit after a quiet hour must not move an age); a frame without one (the VS Code
+// pipe hands frames straight to this pane) is arriving now.
+let hostNow = Math.floor(Date.now() / 1000), hostNowAt = Date.now();
+function nowSec(): number { return liveNow(hostNow, hostNowAt, Date.now()); }
 const DONE_KEY = "romp:fleetShowDone";
 function showDone(): boolean { try { return localStorage.getItem(DONE_KEY) === "1"; } catch { return false; } }
 function setShowDone(on: boolean) { try { localStorage.setItem(DONE_KEY, on ? "1" : "0"); } catch { /* ignore */ } }
@@ -392,7 +402,7 @@ function render() {
   const grouped = isGrouped();
   curFoldMode = foldMode();   // snapshot the sticky Collapse/Expand mode once for this render
   paintFoldButtons();
-  const now = Math.floor(Date.now() / 1000);
+  const now = nowSec();   // the kernel's clock, moving between frames (see hostNow)
   let any = false;
 
   // Adaptive cutoff range: the slider's right end tracks the OLDEST currently-eligible TOP goal (the user
@@ -664,7 +674,19 @@ function mountControls() {
 
 window.addEventListener("message", (e: MessageEvent) => {
   const m = e.data;
-  if (!m || m.type !== "feed") return;               // Fleet rides the FEED payload (proven channel); reads its `ledgers`
+  if (!m) return;
+  if (m.type === "delta") {
+    // The shim reassembles every {type:"delta"} frame into the whole message before a bundle sees it, and
+    // federation's remote sockets never dial for deltas — so one reaching this handler means a host handed
+    // the pane a kernel frame unreassembled. Say so and ask for the whole slot (needSlot: what the shim
+    // itself sends for a delta it cannot apply) rather than sit on the last frame while every update is
+    // dropped on the floor (fail loudly, never degrade). Run for real in fleet-live-clock.test.ts.
+    console.error("outline: a delta frame reached the pane unreassembled — asking the kernel for the whole slot");
+    vscodeApi?.postMessage({ type: "clientDiag", surface: "outline", what: "delta-unapplied", data: { slot: m.slot, rev: m.rev } });
+    vscodeApi?.postMessage({ type: "needSlot", slot: m.slot });
+    return;
+  }
+  if (m.type !== "feed") return;                     // the Outline rides the FEED payload (proven channel); reads its `ledgers`
   // "loaded" means the kernel actually BUILT the fleet's ledgers (the key is present, even if []) — NOT merely
   // that some feed message arrived. A feed push can reach us before the (cold) ledger build finishes; treating
   // that as loaded would drop the loader onto an empty pane (the user 2026-06-29). Until ledgers land, keep the
@@ -673,6 +695,10 @@ window.addEventListener("message", (e: MessageEvent) => {
   // the attached-but-not-yet-merged hosts, from the merge itself (the ONLY writer; absent = none pending)
   pendingHosts = Array.isArray(m.pendingHosts) ? m.pendingHosts.filter((h: any) => typeof h === "string") : [];
   pendingDead = Array.isArray(m.pendingDead) ? m.pendingDead.filter((h: any) => typeof h === "string") : [];
+  if (typeof m.now === "number") {
+    hostNow = m.now;
+    hostNowAt = typeof m.nowAt === "number" ? m.nowAt : Date.now();   // the pair travels together: the frame's clock, and when THAT frame arrived
+  }
   if (!Array.isArray(m.ledgers)) return;
   loaded = true;
   sessions = m.ledgers as FleetSession[];
@@ -824,7 +850,7 @@ function showHoverCard(row: HTMLElement, sid: string, nid: string): void {
   if (!s || !n) return;
   const byId = new Map([...(s.ledger?.tree || []), ...(s.ledger?.archivedTops || [])].map((x) => [x.id, x] as const));
   if (hoverCardEl) hoverCardEl.remove();
-  const card = buildHoverCard(s, n, byId, Math.floor(Date.now() / 1000));
+  const card = buildHoverCard(s, n, byId, nowSec());
   card.addEventListener("mouseenter", () => { if (hoverHideT) { clearTimeout(hoverHideT); hoverHideT = undefined; } });
   card.addEventListener("mouseleave", scheduleHideHover);
   document.body.appendChild(card);
@@ -910,6 +936,28 @@ function showHoverCard(row: HTMLElement, sid: string, nid: string): void {
 mountControls();
 render();
 vscodeApi?.postMessage({ type: "ready" });   // ask the kernel to push the initial fleet state (like feed/timeline)
+
+// Keep every "(Xm ago)", the current goal's elapsed time, the recency cutoff and the slider's range honest
+// between frames: the clock-derived parts move on the local clock's deltas (nowSec) every 15 s, whatever the
+// wire is doing. A whole render(), not a per-element repaint: it is what every frame already runs, the ledgers
+// are small, and the cutoff filter has to be able to DROP a row as it ages out of the window — which no
+// repaint of the row's own text could do. Not for a pane nobody can see: a hidden tab (document.hidden) or a
+// pane the shell has hidden (display:none gives the iframe a ZERO viewport — the shim's paneHidden test;
+// document.hidden stays false for it) skips the tick, and the first visible moment catches up once
+// (visibilitychange, or the resize the iframe gets when it is shown again) — not on every flip, only after a
+// tick was skipped. Frames still render as they arrive.
+const paneHidden = () => document.hidden || window.innerWidth === 0 || window.innerHeight === 0;
+let tickSkipped = false;   // a refresh fell while hidden: the pane owes one catch-up render
+const refreshIfVisible = () => {
+  if (!loaded) return;
+  if (paneHidden()) { tickSkipped = true; return; }
+  tickSkipped = false;
+  render();
+};
+setInterval(refreshIfVisible, 15000);
+const catchUp = () => { if (tickSkipped) refreshIfVisible(); };
+document.addEventListener("visibilitychange", catchUp);
+window.addEventListener("resize", catchUp);
 
 // Hold the romp loader up until the ledgers actually land (the user 2026-06-29, who wanted the loading thing shown until
 // the tasks are ready to render). The shared _pane_spin loader has an 8s backstop that would otherwise hide
