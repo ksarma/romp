@@ -16,8 +16,10 @@ unlike a command, a system segment IS placed when it ends (plan_units' housekeep
 on a skip → the placeholder drops). Synthetic transcript only — placeholder UUIDs, hostname TESTHOST, no real
 data.
 """
+import atexit
 import json
 import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -29,6 +31,7 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 # Hermetic state BEFORE the loads — they resolve their state root at import time, and only
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, os.environ["XDG_STATE_HOME"], ignore_errors=True)  # gone at exit, with or without conftest
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = SourceFileLoader("romp_kernel_provcmd", os.path.join(BIN, "romp-kernel")).load_module()
 
@@ -43,6 +46,7 @@ def _iso(ep):
 class ProvisionalCommand(unittest.TestCase):
     def _session(self, recs):
         td = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, td, ignore_errors=True)
         p = os.path.join(td, SID + ".jsonl")
         open(p, "w").write("\n".join(json.dumps(r) for r in recs) + "\n")
         return {"path": p, "sid": SID, "name": "JLD"}

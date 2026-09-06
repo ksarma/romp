@@ -16,8 +16,10 @@ Two audit findings, both pinned here:
 Synthetic transcripts only (invented text, placeholder UUIDs); the git fixtures are throwaway tmp
 repos with fixture identities.
 """
+import atexit
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -26,6 +28,7 @@ from importlib.machinery import SourceFileLoader
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, os.environ["XDG_STATE_HOME"], ignore_errors=True)  # gone at exit, with or without conftest
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
@@ -92,6 +95,10 @@ class TreeOf(unittest.TestCase):
         _git("worktree", "add", "-q", "-b", "feature", cls.wt, "HEAD", cwd=cls.main)
         os.makedirs(os.path.join(cls.wt, "sub"))
 
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.root, ignore_errors=True)
+
     def test_a_worktree_path_resolves_to_its_own_tree_and_branch(self):
         top, br = km._tree_of(os.path.join(self.wt, "sub"))
         self.assertEqual(os.path.realpath(top), os.path.realpath(self.wt))
@@ -103,7 +110,8 @@ class TreeOf(unittest.TestCase):
         self.assertEqual(br, "main")
 
     def test_a_non_repo_dir_is_no_tree(self):
-        self.assertEqual(km._tree_of(tempfile.mkdtemp()), ("", ""))
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(km._tree_of(d), ("", ""))
         self.assertEqual(km._tree_of(""), ("", ""))
 
 
