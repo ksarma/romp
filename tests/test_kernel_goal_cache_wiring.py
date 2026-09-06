@@ -101,7 +101,7 @@ class SharedViewInBuilds(unittest.TestCase):
     def test_two_timeline_builds_parse_each_store_once(self):
         fills = []
         o_freeze = jd._freeze_store
-        jd._freeze_store = lambda store: (fills.append(1), o_freeze(store))[1]
+        jd._freeze_store = lambda store, fsid=None: (fills.append(1), o_freeze(store, fsid))[1]
         try:
             tl1 = km.build_timeline(NOW, {}, with_bars=True)
             tl2 = km.build_timeline(NOW, {}, with_bars=True)

@@ -12,6 +12,7 @@ import io
 import json
 import os
 import pickle
+import re
 import tempfile
 import threading
 import unittest
@@ -81,7 +82,7 @@ class SharedStoreCache(unittest.TestCase):
         self._seed()
         fills = []
         o_freeze = jd._freeze_store
-        jd._freeze_store = lambda store: (fills.append(1), o_freeze(store))[1]
+        jd._freeze_store = lambda store, fsid=None: (fills.append(1), o_freeze(store, fsid))[1]
         try:
             a = jd.load_goals_shared(SID)
             b = jd.load_goals_shared(SID)
@@ -413,6 +414,46 @@ class SharedStoreCache(unittest.TestCase):
         self.assertEqual(_norm(f), _norm(s), "and reads the same view")
         jd._shared_clear()
         self.assertIsInstance(jd.load_goals_shared(SID), jd.FrozenStore, "a clear lifts the switch")
+
+    def test_the_write_guard_row_names_the_site_chain_and_the_sid(self):
+        # The row is the only pointer to the misuse, so it must name the site to fix. A kernel-side reader
+        # that hands the shared view to a judge helper which writes (rollup_status here) gets a two-frame
+        # chain, outermost first: the frame outside the judge module, then the judge frame that wrote. The
+        # sid comes from the FrozenStore (_fsid, set by _freeze_store) or a node's id; a nested map or list
+        # carries no way back to its store and reports "".
+        self._seed()
+        nid = self._nid(1)
+        here, judge = os.path.basename(__file__), os.path.basename(jd.__file__)
+
+        def _kernel_side_reader(store):                    # stands in for a wired kernel site
+            return jd.rollup_status(store, session_closed=False)
+        with self.assertRaises(jd.FrozenStoreError):
+            _kernel_side_reader(jd.load_goals_shared(SID))
+        rows = [r for r in self._errors() if r["err"] == "frozen-store-write"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["fsid"], SID, "the row names the store")
+        m = re.search(r" at (\S+):(\d+) (\w+)\(\) -> (\S+):(\d+) (\w+)\(\) ", rows[0]["note"])
+        self.assertIsNotNone(m, rows[0]["note"])
+        self.assertEqual((m.group(1), m.group(3)), (here, "_kernel_side_reader"), "first the site to fix")
+        self.assertEqual(m.group(4), judge, "then the judge helper that wrote")
+        self.assertNotIn(m.group(6), jd._FROZEN_INTERNAL, "a real helper, not a frozen class's own method")
+        # a node write from outside the judge module: one frame, and the sid read off the node's id
+        jd._shared_clear()
+        with self.assertRaises(jd.FrozenStoreError):
+            jd.load_goals_shared(SID)["nodes"][nid]["text"] = "y"
+        rows = [r for r in self._errors() if r["err"] == "frozen-store-write"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1]["fsid"], SID)
+        self.assertNotIn(" -> ", rows[1]["note"], "the writer is outside the judge module: one frame is the site")
+        self.assertRegex(rows[1]["note"], r" at %s:\d+ %s\(\) " % (re.escape(here), self._testMethodName))
+        # a nested map: the site, no sid
+        jd._shared_clear()
+        with self.assertRaises(jd.FrozenStoreError):
+            jd.load_goals_shared(SID)["status"][nid] = "completed"
+        rows = [r for r in self._errors() if r["err"] == "frozen-store-write"]
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[2]["fsid"], "")
+        self.assertIn(" at %s:" % here, rows[2]["note"])
 
     def test_copies_of_the_shared_view_are_plain_and_writable(self):
         self._seed()

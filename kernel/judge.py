@@ -3735,36 +3735,56 @@ def _shared_bump(key, n=1):
         _SHARED_STATS[key] += n
 
 
-_FROZEN_INTERNAL = frozenset(("_frozen_write", "_shared_poison", "_write_site", "__setitem__", "__delitem__",
+_FROZEN_INTERNAL = frozenset(("_frozen_write", "_shared_poison", "_write_site", "_frozen_sid", "__setitem__", "__delitem__",
                               "pop", "popitem", "setdefault", "update", "clear", "__ior__", "__iadd__",
                               "__imul__", "append", "extend", "insert", "remove", "sort", "reverse"))
 
 
 def _write_site():
-    """file:line function() of the frame that wrote to a frozen container — the first frame above the
-    frozen classes' own methods."""
-    for fr in reversed(traceback.extract_stack(limit=24)):
-        if fr.filename == __file__ and fr.name in _FROZEN_INTERNAL:
-            continue
-        return "%s:%d %s()" % (os.path.basename(fr.filename), fr.lineno, fr.name)
-    return "?"
+    """The frames that wrote to a frozen container, outermost first, as `file:line function()` joined by
+    ` -> `: the innermost frame above the frozen classes' own methods, and, when that frame is in this
+    module (a judge helper such as rollup_status handed a shared store by a kernel site), the nearest frame
+    outside this module — the site to fix, not only the helper that wrote:
+    `kernel.py:8037 _open_top_goal() -> judge.py:5432 rollup_status()`."""
+    frames = [fr for fr in reversed(traceback.extract_stack())
+              if not (fr.filename == __file__ and fr.name in _FROZEN_INTERNAL)]
+    if not frames:
+        return "?"
+    chain = [frames[0]]
+    if frames[0].filename == __file__:
+        outer = next((fr for fr in frames[1:] if fr.filename != __file__), None)
+        if outer is not None:
+            chain.insert(0, outer)
+    return " -> ".join("%s:%d %s()" % (os.path.basename(fr.filename), fr.lineno, fr.name) for fr in chain)
 
 
-def _shared_poison(what):
-    """A reader tried to write a shared object. File the row that names the site (once), switch the cache
-    off for the process and count the attempt; the raise follows in the caller and the object is untouched."""
+def _frozen_sid(container):
+    """The session whose shared store a written container belongs to: the store's own `_fsid` when the
+    container IS the store, a node's id prefix (`<sid>:gN`) when it is a node, else "" — a nested map or
+    list (a status map, a log) carries no way back to its store."""
+    if isinstance(container, FrozenStore):
+        return getattr(container, "_fsid", None) or ""
+    if isinstance(container, FrozenGuardedNode):
+        return str(container.get("id") or "").rsplit(":", 1)[0]
+    return ""
+
+
+def _shared_poison(what, container=None):
+    """A reader tried to write a shared object. File the row that names the site chain and, when the
+    container can say, the sid (once), switch the cache off for the process and count the attempt; the raise
+    follows in the caller and the object is untouched."""
     with _SHARED_LOCK:
         first = not _SHARED_OFF[0]
         _SHARED_OFF[0] = True
         _SHARED_STATS["poisoned"] += 1
     if first:
-        _log_judge_error("romp", "", "frozen-store-write",
+        _log_judge_error("romp", _frozen_sid(container), "frozen-store-write",
                          note="%s at %s — a reader wrote to the shared read-only goal store; the shared cache is "
                               "off until the kernel restarts (every reader takes its own load)" % (what, _write_site()))
 
 
-def _frozen_write(what):
-    _shared_poison(what)
+def _frozen_write(container, what):
+    _shared_poison(what, container)
     raise FrozenStoreError("%s on a shared read-only goal store (load_goals_shared); a writer loads its own "
                            "copy with load_goals" % what)
 
@@ -3776,28 +3796,28 @@ class FrozenDict(dict):
     __slots__ = ()
 
     def __setitem__(self, k, v):
-        _frozen_write("assignment of %r" % (k,))
+        _frozen_write(self, "assignment of %r" % (k,))
 
     def __delitem__(self, k):
-        _frozen_write("deletion of %r" % (k,))
+        _frozen_write(self, "deletion of %r" % (k,))
 
     def pop(self, *a):
-        _frozen_write("pop of %r" % (a[0] if a else None,))
+        _frozen_write(self, "pop of %r" % (a[0] if a else None,))
 
     def popitem(self):
-        _frozen_write("popitem")
+        _frozen_write(self, "popitem")
 
     def setdefault(self, k, default=None):
-        _frozen_write("setdefault of %r" % (k,))
+        _frozen_write(self, "setdefault of %r" % (k,))
 
     def update(self, *a, **kw):
-        _frozen_write("update")
+        _frozen_write(self, "update")
 
     def clear(self):
-        _frozen_write("clear")
+        _frozen_write(self, "clear")
 
     def __ior__(self, other):
-        _frozen_write("|= update")
+        _frozen_write(self, "|= update")
 
     def __copy__(self):
         return dict(self)
@@ -3815,40 +3835,40 @@ class FrozenList(list):
     __slots__ = ()
 
     def __setitem__(self, i, v):
-        _frozen_write("list assignment")
+        _frozen_write(self, "list assignment")
 
     def __delitem__(self, i):
-        _frozen_write("list deletion")
+        _frozen_write(self, "list deletion")
 
     def __iadd__(self, other):
-        _frozen_write("list +=")
+        _frozen_write(self, "list +=")
 
     def __imul__(self, n):
-        _frozen_write("list *=")
+        _frozen_write(self, "list *=")
 
     def append(self, v):
-        _frozen_write("list append")
+        _frozen_write(self, "list append")
 
     def extend(self, it):
-        _frozen_write("list extend")
+        _frozen_write(self, "list extend")
 
     def insert(self, i, v):
-        _frozen_write("list insert")
+        _frozen_write(self, "list insert")
 
     def pop(self, *a):
-        _frozen_write("list pop")
+        _frozen_write(self, "list pop")
 
     def remove(self, v):
-        _frozen_write("list remove")
+        _frozen_write(self, "list remove")
 
     def clear(self):
-        _frozen_write("list clear")
+        _frozen_write(self, "list clear")
 
     def sort(self, *a, **kw):
-        _frozen_write("list sort")
+        _frozen_write(self, "list sort")
 
     def reverse(self):
-        _frozen_write("list reverse")
+        _frozen_write(self, "list reverse")
 
     def __copy__(self):
         return list(self)
@@ -3869,8 +3889,9 @@ class FrozenGuardedNode(FrozenDict, GuardedNode):
 
 class FrozenStore(FrozenDict):
     """The top-level object load_goals_shared returns: a FrozenDict by behavior, its own class so save_goals
-    can name the misuse."""
-    __slots__ = ()
+    can name the misuse. `_fsid`: the session's id, set by _freeze_store, so the write-guard's row can name
+    the store a top-level write reached."""
+    __slots__ = ("_fsid",)
 
 
 def _freeze(o):
@@ -3893,12 +3914,14 @@ def _freeze(o):
     return o
 
 
-def _freeze_store(store):
+def _freeze_store(store, fsid=None):
     for k, v in store.items():
         tv = type(v)
         if tv is dict or tv is list or tv is GuardedNode:
             store[k] = _freeze(v)
-    return FrozenStore(store)
+    fs = FrozenStore(store)
+    fs._fsid = fsid if fsid is not None else store.get("rompUuid")
+    return fs
 
 
 def _file_key(path_s):
@@ -4056,7 +4079,7 @@ def load_goals_shared(fsid):
         _shared_bump("unreadable_journal")
         _shared_forget(path_s)
         return store
-    frozen = _freeze_store(store)
+    frozen = _freeze_store(store, fsid)
     akey1 = _archive_key(fsid)
     keys = (skey, jkey, akey1)
     with _SHARED_LOCK:
