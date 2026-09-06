@@ -111,7 +111,13 @@ iso() { mkdir -p "$XDG_STATE_HOME/romp"; printf '{"%s":{"postalServiceOff":true}
     # roulette on a loaded runner) killed the bind, the bus died, and the whole test failed in
     # setup with a shifting identity. postal_spawn_bus must step past the squatter — and say so.
     kill "$BUS_PID" 2>/dev/null; wait "$BUS_PID" 2>/dev/null || true   # this test drives its own spawn
-    local squat=$((ROMP_POSTAL_PORT + 7000))
+    # +2000 puts the squat at 29200+N (N this test's number): it and both retry candidates (+500, +1000)
+    # stay below the 32768 ephemeral floor the header warns about, and clear of the per-test band
+    # (27200-28300) and the kernel's default 29855. The old +7000 sat at 34200+N, inside the range, and
+    # on 2026-09-03 a CI run's squatter ITSELF failed to bind (Address already in use) when a transient
+    # source port held it: the flake this file exists to prevent.
+    local squat=$((ROMP_POSTAL_PORT + 2000))
+    [ $((squat + 1000)) -lt 32768 ]   # squat and every retry candidate stay below the ephemeral floor
     python3 -c "import socket,sys,time
 s=socket.socket(); s.bind(('127.0.0.1',$squat)); s.listen(1)
 print('bound', flush=True); time.sleep(30)" > "$TEST_DIR/squat.log" &
