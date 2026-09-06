@@ -60,9 +60,10 @@ class SessionTokens(unittest.TestCase):
                          {"in": 0, "out": 0, "cache_w": 0, "cache_r": 0})
 
     def test_records_sharing_a_message_id_count_once(self):
-        """The CLI writes a multi-block response as several assistant records with one message.id and
-        the SAME usage block (verified on live transcripts 2026-09-05: 2,515 groups, none differing);
-        summing records counted each response 2.3-3.0x. One row per id; an id-less record stands alone."""
+        """The CLI writes a multi-block response as several assistant records sharing one message.id;
+        summing records counted each response 2.3-3.0x. In a MAIN transcript the records repeat one usage
+        block (2026-09-05: 2,515 groups, none differing); subagent transcripts differ — see the next
+        test. One row per id, the largest output count kept; an id-less record stands alone."""
         u = {"input_tokens": 10, "output_tokens": 5, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 200}
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "s.jsonl")
@@ -78,6 +79,24 @@ class SessionTokens(unittest.TestCase):
                 f.write(_asst({"input_tokens": 4, "output_tokens": 9}, iso(NOW - 59), mid="msg_cccc") + "\n")
             self.assertEqual(km._session_tokens(p, NOW - 3600),
                              {"in": 10 + 2 + 7 + 4, "out": 5 + 2 + 2 + 9, "cache_w": 100, "cache_r": 200})
+
+    def test_subagent_same_id_records_keep_the_final_tally_whatever_their_order(self):
+        """A SUBAGENT transcript's same-id records DIFFER: every record but the last carries the
+        stream-start snapshot (a few output tokens) and the last the final tally — measured 2026-09-06
+        over 30 days of subagent files, 94% of multi-record groups, the last record the maximum in every
+        one. The fold keeps the LARGEST output count, in either order, so a first-record fold (about a
+        tenth of the subagents' output) or a last-record fold cannot quietly replace it."""
+        first = {"input_tokens": 4000, "output_tokens": 3, "cache_read_input_tokens": 50000}    # stream start
+        last = {"input_tokens": 4000, "output_tokens": 1950, "cache_read_input_tokens": 50000}  # final tally
+        with tempfile.TemporaryDirectory() as d:
+            for name, order in (("a.jsonl", (first, first, last)), ("b.jsonl", (last, first, first))):
+                pth = os.path.join(d, name)
+                with open(pth, "w") as f:
+                    for k, u in enumerate(order):
+                        f.write(_asst(u, iso(NOW - 100 + k), mid="msg_sub") + "\n")
+                self.assertEqual(km._session_tokens(pth, NOW - 3600),
+                                 {"in": 4000, "out": 1950, "cache_w": 0, "cache_r": 50000},
+                                 name + ": one row, the final tally's output count")
 
     def test_subagent_transcripts_beside_the_main_one_count_and_refresh_the_cache(self):
         """`<sid>/subagents/agent-<id>.jsonl` holds each spawned agent's conversation; its tokens are the
@@ -96,13 +115,30 @@ class SessionTokens(unittest.TestCase):
                         iso(NOW - 89), mid="m2") + "\n"                       # a split block, deduped too
                 + _asst({"input_tokens": 999, "output_tokens": 999}, iso(NOW - 99999), mid="m3") + "\n")  # out of window
             (sub / "notes.txt").write_text("not a transcript\n")
-            self.assertEqual(km._session_tokens(p, NOW - 3600), {"in": 110, "out": 55, "cache_w": 0, "cache_r": 1000})
+            # a Workflow agent's transcript one level down (Claude Code 2.1.261 writes
+            # subagents/workflows/wf_<id>/agent-<id>.jsonl): the walk is recursive, so it counts too
+            wf = sub / "workflows" / "wf_1111-2222"
+            wf.mkdir(parents=True)
+            (wf / "agent-c3.jsonl").write_text(_asst({"input_tokens": 1000, "output_tokens": 500}, iso(NOW - 80), mid="m5") + "\n")
+            # …but the walk never leaves the session's own tree: a symlinked directory is not followed
+            other = pathlib.Path(d) / "elsewhere"
+            other.mkdir()
+            (other / "agent-zz.jsonl").write_text(_asst({"input_tokens": 7777, "output_tokens": 7777}, iso(NOW - 70), mid="m6") + "\n")
+            os.symlink(other, sub / "linked")
+            self.assertEqual(km._session_tokens(p, NOW - 3600), {"in": 1110, "out": 555, "cache_w": 0, "cache_r": 1000})
             # a second subagent lands; the main transcript's mtime has not moved
             mt = os.path.getmtime(p)
             (sub / "agent-b2.jsonl").write_text(_asst({"input_tokens": 1, "output_tokens": 1}, iso(NOW - 10), mid="m4") + "\n")
             os.utime(p, (mt, mt))
-            self.assertEqual(km._session_tokens(p, NOW - 3600)["in"], 111, "the new subagent file refreshes the rows")
-            self.assertEqual(km._subagent_transcripts(p), [str(sub / "agent-a1.jsonl"), str(sub / "agent-b2.jsonl")])
+            self.assertEqual(km._session_tokens(p, NOW - 3600)["in"], 1111, "the new subagent file refreshes the rows")
+            # a NESTED file growing refreshes them too (its mtime is in the fingerprint like any other)
+            with (wf / "agent-c3.jsonl").open("a") as f:
+                f.write(_asst({"input_tokens": 1, "output_tokens": 1}, iso(NOW - 5), mid="m7") + "\n")
+            os.utime(p, (mt, mt))
+            self.assertEqual(km._session_tokens(p, NOW - 3600)["in"], 1112, "a nested file's growth refreshes the rows")
+            self.assertEqual(km._subagent_transcripts(p),
+                             [str(sub / "agent-a1.jsonl"), str(sub / "agent-b2.jsonl"), str(wf / "agent-c3.jsonl")],
+                             "sorted, nested files included, the symlinked directory not walked")
             self.assertEqual(km._subagent_transcripts(os.path.join(d, "no-such.jsonl")), [])
             self.assertEqual(km._subagent_transcripts(os.path.join(d, "x.txt")), [])
 

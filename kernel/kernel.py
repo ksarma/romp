@@ -28180,21 +28180,27 @@ def _derive_judging(sid, caps, goals, t0, out, seg_ends=None):
 
 
 _session_tok_cache = {}   # path -> (fingerprint, [(t, in, out, cache_w, cache_r, model), ...]): one token row
-#                           per API RESPONSE (message.id) across the main transcript and its subagent
-#                           transcripts; the fingerprint is every contributing file's path + mtime
+#                           per API RESPONSE (message.id) across the main transcript and every subagent
+#                           transcript under it; the fingerprint is every contributing file's path + mtime
 
 
 def _subagent_transcripts(path):
-    """The subagent transcripts beside a session's main one: the CLI writes each spawned agent's
-    conversation to `<sid>/subagents/agent-<id>.jsonl` next to `<sid>.jsonl`. Sorted; [] when none."""
+    """The subagent transcripts beside a session's main one, sorted; [] when none. The CLI writes each
+    spawned agent's conversation under `<sid>/subagents/` next to `<sid>.jsonl`: Task agents as
+    `agent-<id>.jsonl` at the top, and (Claude Code 2.1.261) Workflow agents one level down at
+    `workflows/wf_<id>/agent-<id>.jsonl` — its path parser takes any extra segments — so the walk is
+    RECURSIVE (2026-09-06: the flat listing missed every nested file; on the box that found it those
+    held a quarter of the sessions' tokens and 62% of their output tokens). Bounded to the session's own
+    subagents tree: symlinks are not followed. Cost: one directory read per directory under it."""
     base, ext = os.path.splitext(str(path))
     if ext != ".jsonl":
         return []
     d = os.path.join(base, "subagents")
-    try:
-        return sorted(os.path.join(d, n) for n in os.listdir(d) if n.endswith(".jsonl"))
-    except OSError:
-        return []
+    out = []
+    for root, dirs, files in os.walk(d):            # followlinks=False — never leaves the session's own tree
+        dirs.sort()
+        out.extend(os.path.join(root, n) for n in files if n.endswith(".jsonl"))
+    return sorted(out)
 
 
 def _msg_epoch(o):
@@ -28208,67 +28214,104 @@ def _msg_epoch(o):
         return None
 
 
-def _session_tokens(path, t0):
-    """Sum a session's token usage over assistant messages timestamped >= t0 — the SESSIONS half of the
-    token split, windowed to match the PIPELINE half (_judge_usage) so the footer compares like-for-like.
-    Each assistant record carries a `usage` block. The per-message rows are mtime-cached (now-independent);
-    the windowed sum is computed per call. Undated rows are counted (defensive). Zeros on error.
+def _session_tok_rows(path):
+    """Refresh and return a session's per-response token rows (_session_tok_cache) — one row per API
+    response over the main transcript and every subagent transcript under it — or None when the main
+    transcript is unreadable. The fingerprint is every contributing file's path + mtime, so a subagent
+    that lands or grows refreshes the rows while the main file rests; a subagent file gone between the
+    listing and the read drops out and the rest still count. Cost per call: the subagents walk (one
+    directory read per directory) plus one stat per file; the parse runs only on a changed fingerprint.
+    The analytics build calls this ONCE per session (_session_usage).
 
     ONE row per API response, not per transcript record (2026-09-05): the CLI writes a response with
-    several content blocks as several assistant records that share one `message.id` and repeat its
-    usage block, so summing records counted each response 2.3-3.0x (measured over a day; the analytics
-    read 1.55x the ledger). Records sharing an id fold to one row — the one with the largest output
-    count, the stream's final tally if they differ at all; a record with no id counts on its own.
-    The session's SUBAGENT transcripts (`<sid>/subagents/*.jsonl`, see _subagent_transcripts) are read
-    beside the main one: their tokens are the session's spend too, and the rail's ledger already counts
-    them (modelUsage), so the two surfaces cover the same work. The cache fingerprint is every file's
-    path + mtime, so a subagent that lands or grows refreshes the rows even while the main file rests."""
-    z = {"in": 0, "out": 0, "cache_w": 0, "cache_r": 0}
+    several content blocks as several assistant records that share one `message.id`, so summing records
+    counted each response 2.3-3.0x (the analytics read 1.55x the ledger over a day). The row kept is the
+    one with the LARGEST output count, and that rule is load-bearing, not defensive: a MAIN transcript's
+    same-id records repeat one usage block, but a SUBAGENT transcript's carry the stream-start snapshot
+    (a few output tokens) on every record but the last, which holds the final tally — measured
+    2026-09-06 over 30 days of subagent files, 94% of multi-record groups differ and the last record
+    holds the maximum in every one; a first-record fold would keep about a tenth of the subagents'
+    output tokens. A record with no id counts on its own."""
     files = [str(path)] + _subagent_transcripts(path)
-    try:
-        fp = tuple((p, os.path.getmtime(p)) for p in files)
-    except OSError:
-        return dict(z)
+    fp = []
+    for p in files:
+        try:
+            fp.append((p, os.path.getmtime(p)))
+        except OSError:
+            if p == files[0]:
+                return None
+            continue                                  # a subagent file gone since the listing
+    fp = tuple(fp)
     hit = _session_tok_cache.get(path)
-    if not hit or hit[0] != fp:
-        rows, by_id = [], {}
-        for p in files:
-            try:
-                with open(p, errors="replace") as f:
-                    for line in f:
-                        try:
-                            o = json.loads(line)
-                        except Exception:
+    if hit and hit[0] == fp:
+        return hit[1]
+    rows, by_id = [], {}
+    for p, _mt in fp:
+        try:
+            with open(p, errors="replace") as f:
+                for line in f:
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(o, dict) or o.get("type") != "assistant":
+                        continue
+                    m = o.get("message") or {}
+                    u = m.get("usage") or {}
+                    row = (_msg_epoch(o),
+                           int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
+                           int(u.get("cache_creation_input_tokens") or 0),
+                           int(u.get("cache_read_input_tokens") or 0),
+                           m.get("model") or "")   # for cost weighting (price is per-model)
+                    mid = m.get("id")
+                    if mid:
+                        j = by_id.get(mid)
+                        if j is not None:            # the same response again (another content block)
+                            if row[2] > rows[j][2]:
+                                rows[j] = (rows[j][0],) + row[1:]
                             continue
-                        if not isinstance(o, dict) or o.get("type") != "assistant":
-                            continue
-                        m = o.get("message") or {}
-                        u = m.get("usage") or {}
-                        row = (_msg_epoch(o),
-                               int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
-                               int(u.get("cache_creation_input_tokens") or 0),
-                               int(u.get("cache_read_input_tokens") or 0),
-                               m.get("model") or "")   # for cost weighting (price is per-model)
-                        mid = m.get("id")
-                        if mid:
-                            j = by_id.get(mid)
-                            if j is not None:            # the same response again (another content block)
-                                if row[2] > rows[j][2]:
-                                    rows[j] = (rows[j][0],) + row[1:]
-                                continue
-                            by_id[mid] = len(rows)
-                        rows.append(row)
-            except OSError:
-                if p == files[0]:
-                    return dict(z)
-                continue   # a subagent file gone between the listing and the read — the rest still count
-        _session_tok_cache[path] = (fp, rows)
-        hit = _session_tok_cache[path]
-    acc = dict(z)
-    for (t, i, o, cw, cr, _m) in hit[1]:
-        if t is None or t >= t0:
-            acc["in"] += i; acc["out"] += o; acc["cache_w"] += cw; acc["cache_r"] += cr
-    return acc
+                        by_id[mid] = len(rows)
+                    rows.append(row)
+        except OSError:
+            if p == files[0]:
+                return None
+            continue   # a subagent file gone between the listing and the read — the rest still count
+    _session_tok_cache[path] = (fp, rows)
+    return rows
+
+
+def _session_usage(path, t0, prices, split=None):
+    """The analytics build's ONE pass over a session's rows: token totals over responses timestamped
+    >= t0 (the SESSIONS half of the split, cut at the same t0 as the PIPELINE half, _judge_usage, so
+    the modal compares like-for-like), the token-price estimate over the same span (`cost`: each
+    response's tokens x its model's _model_prices row — an ESTIMATE; sessions log no cost of their own,
+    unlike judges — with cache reads priced too, cheap per token but huge in volume), and, when `split`
+    is given, that estimate over [t0, split) alone (`costBefore`: the part of the window before the
+    ledger's first bucket, which the modal adds to the ledger's dollars — see _token_analytics).
+    Undated rows count in the totals and the whole-window estimate (defensive) and never in
+    `costBefore` (they cannot be placed against a bound). Zeros when the transcript is unreadable."""
+    out = {"in": 0, "out": 0, "cache_w": 0, "cache_r": 0, "cost": 0.0, "costBefore": 0.0}
+    rows = _session_tok_rows(path)
+    if rows is None:
+        return out
+    for (t, i, o, cw, cr, model) in rows:
+        if t is not None and t < t0:
+            continue
+        out["in"] += i; out["out"] += o; out["cache_w"] += cw; out["cache_r"] += cr
+        pr = _price_for(model, prices) if prices else None
+        if not pr:
+            continue
+        c = i * pr["in"] + o * pr["out"] + cw * pr["cache_w"] + cr * pr["cache_r"]
+        out["cost"] += c
+        if split is not None and t is not None and t < split:
+            out["costBefore"] += c
+    return out
+
+
+def _session_tokens(path, t0):
+    """A session's token totals over responses timestamped >= t0 — _session_usage's token half."""
+    u = _session_usage(path, t0, None)
+    return {k: u[k] for k in ("in", "out", "cache_w", "cache_r")}
 
 
 # judge-usage.jsonl is append-only, time-ordered, and never rotated (38.7 MB / 148k lines measured
@@ -28483,21 +28526,9 @@ def _price_for(model, prices):
 
 
 def _session_cost(path, t0, prices):
-    """$ cost of a session's token usage over [t0, now], priced per-message by its model — sessions carry
-    no logged cost (unlike judges). Reuses _session_tokens' per-message row cache (which now carries the
-    model). Cache reads are cheap per token but huge in volume, so all four token classes are priced."""
-    _session_tokens(path, t0)                        # populate/refresh the row cache
-    hit = _session_tok_cache.get(path)
-    if not hit:
-        return 0.0
-    c = 0.0
-    for (t, i, o, cw, cr, model) in hit[1]:
-        if t is not None and t < t0:
-            continue
-        pr = _price_for(model, prices)
-        if pr:
-            c += i * pr["in"] + o * pr["out"] + cw * pr["cache_w"] + cr * pr["cache_r"]
-    return c
+    """The token-price ESTIMATE of a session's usage over responses timestamped >= t0 — _session_usage's
+    cost half (priced per response by its model; sessions carry no logged cost, unlike judges)."""
+    return _session_usage(path, t0, prices)["cost"]
 
 
 _ANALYTICS_MEMO = {}   # window -> {"t": epoch, "jkey": judge-usage cache size, "resp": the payload}
