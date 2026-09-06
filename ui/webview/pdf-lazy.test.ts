@@ -3,15 +3,40 @@
 // constraints: the main bundles stay byte-stable (no main-bundle source imports the chunk or pdfjs-dist —
 // lazy discipline), the worker rides the chunk's own URL (same directory, same ?v= token), the size cap
 // refuses BY NAME before pdf.js sees a byte, and each page's shell is a positioned, numbered element a
-// later overlay can attach to. Pure units run the real helpers and render()'s two refusals; what needs a
-// browser (the observer, the canvas) stays pinned at source.
+// later overlay can attach to. Pure units run the real helpers and render()'s two refusals; the shells and the
+// draws are pinned at source here and EXECUTED in pdf-lazy-render.test.ts (makeRender over pdf.js's legacy build
+// under Node, the built chunk in a browser). pdf.js loads lazily below, so a Node under its floor fails one named
+// test here instead of killing the file at import.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { GlobalWorkerOptions } from "pdfjs-dist";
-import { render, workerUrlFor, capMessage, fmtBytes, backingScale, DEFAULT_MAX_BYTES, MAX_CANVAS_PIXELS } from "./pdf-chunk";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // pure; file-view.ts imports the same two (pinned below)
+
+// pdf.js, and the chunk whose module imports it, load on first use rather than at import: pdfjs-dist 6 reads
+// `Iterator.prototype` while its module initialises and calls Promise.withResolvers, so a top-level import on a
+// Node below its floor killed this whole file with a ReferenceError before any test ran (the 2026-09-06 review).
+// Now the pins run on any Node, the floor test names the floor, and the tests that execute pdf.js skip by name.
+const chunk = () => require("./pdf-chunk") as typeof import("./pdf-chunk");
+const pdfjs = () => require("pdfjs-dist") as typeof import("pdfjs-dist");
+const PDFJS_PKG = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "node_modules", "pdfjs-dist", "package.json"), "utf8"));
+/** Whether `version` satisfies an engines.node range of `>=a.b.c` bounds joined by `||` (pdfjs-dist's shape; any other is loud). */
+function meetsFloor(version: string, range: string): boolean {
+  const v = version.split(".").map(Number);
+  return range.split("||").some((clause) => {
+    const m = /^\s*>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?\s*$/.exec(clause);
+    if (!m) throw new Error(`engines.node clause ${JSON.stringify(clause.trim())} is not a >= bound — extend meetsFloor`);
+    const floor = [Number(m[1]), Number(m[2] || 0), Number(m[3] || 0)];
+    for (let i = 0; i < 3; i++) if (v[i] !== floor[i]) return v[i] > floor[i];
+    return true;
+  });
+}
+const FLOOR = String(PDFJS_PKG.engines?.node || "");
+const FLOOR_OK = !!FLOOR && meetsFloor(process.versions.node, FLOOR);
+/** A test that executes pdf.js (directly, or through the chunk's module): below the floor it skips by name, so the
+ *  floor test is the one failure to read. */
+const pdfjsTest = (name: string, fn: () => void | Promise<void>) =>
+  test(name, FLOOR_OK ? {} : { skip: `pdf.js cannot load on Node ${process.versions.node} (pdfjs-dist needs ${FLOOR}) — see the floor test` }, fn);
 
 const ROOT = path.resolve(process.cwd(), "..");
 const W = (f: string) => fs.readFileSync(path.join(ROOT, "ui", "webview", f), "utf8");
@@ -28,6 +53,23 @@ const code = (s: string) => s.split("\n").filter((l) => !l.trim().startsWith("//
 const untouchable = () => new Proxy({}, {
   get(_t, k) { throw new Error("render() touched the container (" + String(k) + ") for bytes it should have refused"); },
 }) as unknown as HTMLElement;
+
+// ── the Node floor: pdf.js's, and with the chunk in the suite, the extension tests' ─────────────────
+
+test("this Node meets pdfjs-dist's declared floor — the extension suite's floor since the PDF chunk (CI pins Node 22)", () => {
+  assert.ok(FLOOR, "pdfjs-dist declares engines.node");
+  assert.ok(FLOOR_OK,
+    `Node ${process.versions.node} is below pdfjs-dist ${PDFJS_PKG.version}'s floor (engines.node ${JSON.stringify(FLOOR)}): pdf.js 6 reads ` +
+    "Iterator.prototype at import and calls Promise.withResolvers, so its tests here, pdf-lazy-render.test.ts's node leg and " +
+    "tools/pdf-smoke.test.mjs cannot run on it. CI runs Node 22 (.github/workflows/ci.yml).");
+  // the check itself, against the range's shape: at the bound, under it, on the next major, on the second clause
+  assert.equal(meetsFloor("22.13.0", ">=22.13.0 || >=24"), true);
+  assert.equal(meetsFloor("22.12.9", ">=22.13.0 || >=24"), false);
+  assert.equal(meetsFloor("23.0.0", ">=22.13.0 || >=24"), true);
+  assert.equal(meetsFloor("24.0.0", ">=22.13.0 || >=24"), true);
+  assert.equal(meetsFloor("20.19.0", ">=22.13.0 || >=24"), false);
+  assert.throws(() => meetsFloor("22.0.0", "^22"), /not a >= bound/, "a range shape the check does not read is loud, not a pass");
+});
 
 // ── lazy discipline: two entries of their own, reached only through the window global ────────────
 
@@ -60,7 +102,8 @@ test("no main-bundle source imports pdfjs-dist or the chunk — the contract is 
 
 // ── the worker's URL: the chunk's own, with the worker's name — same dir, same ?v= ────────────────
 
-test("the worker's URL is the chunk's own script src with pdf-worker.js for pdf-chunk.js, token and all", () => {
+pdfjsTest("the worker's URL is the chunk's own script src with pdf-worker.js for pdf-chunk.js, token and all", () => {
+  const { workerUrlFor } = chunk();
   const K = "http://TESTHOST:29855/dist/", V = "?v=1725300000";
   assert.equal(workerUrlFor(K + "pdf-chunk.js" + V), K + "pdf-worker.js" + V);
   const R = "https://file+.vscode-resource.vscode-cdn.net/ext/dist/";
@@ -74,7 +117,9 @@ test("the worker's URL is the chunk's own script src with pdf-worker.js for pdf-
   assert.match(CHUNK, /if \(url\) pdfjsLib\.GlobalWorkerOptions\.workerSrc = url;/);
 });
 
-test("no worker URL is a named refusal of render(), not pdf.js's later error", async () => {
+pdfjsTest("no worker URL is a named refusal of render(), not pdf.js's later error", async () => {
+  const { GlobalWorkerOptions } = pdfjs();
+  const { render } = chunk();
   const before = GlobalWorkerOptions.workerSrc;      // under node pdf.js points it at its own worker file
   GlobalWorkerOptions.workerSrc = "";
   try {
@@ -86,7 +131,8 @@ test("no worker URL is a named refusal of render(), not pdf.js's later error", a
 
 // ── the loader the wiring copies: executed against each hosting page's script tags ───────────────
 
-test("the loader in the API doc derives the chunk URL from every hosting page's bundle, with the editor loader's own literal", () => {
+pdfjsTest("the loader in the API doc derives the chunk URL from every hosting page's bundle, with the editor loader's own literal", () => {
+  const { workerUrlFor } = chunk();
   const find = CHUNK.match(/^\/\/\s+\.map\(\(n\) => \(n as HTMLScriptElement\)\.src\)\.find\(\(u\) => (\/[^\n]+?\/)\.test\(u\)\);$/m);
   const repl = CHUNK.match(/^\/\/\s+sc\.src = self\.replace\((\/[^\n]+?\/), "\/pdf-chunk\.js"\);$/m);
   assert.ok(find && repl, "the doc's loader carries the find and replace literals");
@@ -144,7 +190,8 @@ test("file-view loads the PDF chunk exactly as it loads the editor chunk: the sa
   assert.match(live, /fall\.appendChild\(pdfBlock\(url, path\)\);/);
 });
 
-test("file-view's cap is the chunk's default, and its refusal is the chunk's capMessage word for word", () => {
+pdfjsTest("file-view's cap is the chunk's default, and its refusal is the chunk's capMessage word for word", () => {
+  const { DEFAULT_MAX_BYTES, capMessage } = chunk();
   assert.match(VIEW, /import \{ PDF_MAX_BYTES, pdfCapMessage \} from "\.\/pdf-cap";/, "file-view reads the cap from the pure module, not from the chunk");
   assert.equal(PDF_MAX_BYTES, DEFAULT_MAX_BYTES);
   assert.equal(pdfCapMessage(26 * 1024 * 1024, PDF_MAX_BYTES), capMessage(26 * 1024 * 1024, DEFAULT_MAX_BYTES));
@@ -153,7 +200,8 @@ test("file-view's cap is the chunk's default, and its refusal is the chunk's cap
 
 // ── the cap: refused by name, before pdf.js or the container sees anything ───────────────────────
 
-test("bytes over the cap are refused with the size AND the cap in the message, before anything is touched", async () => {
+pdfjsTest("bytes over the cap are refused with the size AND the cap in the message, before anything is touched", async () => {
+  const { render, capMessage, fmtBytes, DEFAULT_MAX_BYTES } = chunk();
   assert.equal(DEFAULT_MAX_BYTES, 25 * 1024 * 1024);
   await assert.rejects(render(new ArrayBuffer(101), untouchable(), { maxBytes: 100 }),
     (e: unknown) => e instanceof Error && /101 bytes/.test(e.message) && /100 bytes/.test(e.message));
@@ -169,7 +217,8 @@ test("bytes over the cap are refused with the size AND the cap in the message, b
     "a copy goes to pdf.js — it transfers the buffer to the worker, which would detach the caller's");
 });
 
-test("the backing store follows the display's pixel ratio until a page would exceed the canvas budget", () => {
+pdfjsTest("the backing store follows the display's pixel ratio until a page would exceed the canvas budget", () => {
+  const { backingScale, MAX_CANVAS_PIXELS } = chunk();
   assert.equal(backingScale(800, 1000, 2), 2);
   assert.equal(backingScale(800, 1000, 1), 1);
   assert.equal(backingScale(800, 1000, 0), 1, "a missing ratio is 1");
@@ -207,7 +256,7 @@ test("pages draw lazily through an IntersectionObserver, eagerly without one, an
   // one draw at a time, and a cancelled draw is not an error
   assert.match(CHUNK, /const p = queue\.shift\(\)!;/);
   assert.match(CHUNK, /e instanceof pdfjsLib\.RenderingCancelledException/);
-  // the first page is drawn before the promise resolves, so the caller's loader gives way to pixels — and a
+  // the first page is drawn before the promise resolves, so the caller removes its loader over a drawn page — and a
   // first page pdf.js cannot draw rejects with nothing left in the container and no live worker
   assert.match(CHUNK, /pages\[0\]\.visible = true;\n\s*try \{ await paint\(pages\[0\]\); \} catch \(e\) \{ io\?\.disconnect\(\); ro\?\.disconnect\(\); void task\.destroy\(\); root\.remove\(\); throw e; \}/);
   assert.match(CHUNK, /\} catch \(e\) \{ void task\.destroy\(\); throw e; \}/, "a document whose first page cannot be read releases the worker too");
@@ -219,7 +268,7 @@ test("pages draw lazily through an IntersectionObserver, eagerly without one, an
     "the loading task's destroy releases the document and its worker (pdf.js 6 has none on the document proxy)");
 });
 
-// ── the dependency's paper trail: its license named, and its smoke test run where it is installed ─
+// ── the dependency's license and smoke test: named in the install doc, run where it is installed ─
 
 test("the license is named beside romp's own, and CI runs the smoke test in the job that installs the dependency", () => {
   assert.match(INSTALL, /pdf\.js[^\n]*\n?[^\n]*Apache-2\.0/, "docs/install.md names pdf.js and its Apache-2.0 license");

@@ -525,6 +525,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let pdfHandle: { pages: number; dispose(): void } | null = null;
   let pdfSeq = 0;
   const dropPdf = () => { pdfSeq++; if (pdfHandle) { pdfHandle.dispose(); pdfHandle = null; } };
+  // The reader's page, 1-based: the last page the PAGES showed, read off the shells each time they leave the body (the
+  // panel closing, a reload) — so the frame the close builds opens on it (#page=N) and the pages a reopen draws scroll
+  // to it, instead of both starting the document over at page 1. The browser's frame reports nothing back, so a
+  // position taken up inside it is not known here; this is the last one the viewer itself showed.
+  let pdfPage = 1;
   // The text the CURRENT view shows: the SVG Source view reads the decoded blob, every other text
   // view reads the fetch pipeline's text. The quote seed's failed-re-read fallback anchors against
   // THIS (a selection in the Source view must find its line in that XML; falling back to `text` —
@@ -767,10 +772,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         return;
       }
       if (isPdf && asideOpen) { showPdfPages(); return; }   // the Comments panel is open: the chunk's pages, not the frame (Slice 4)
+      if (keepShownFrame()) return;           // the panel closing over the frame-with-notice fallback: the frame stays, the notice goes
+      notePdfPage();                          // the reader's page, off the shells, before dropPdf removes them
       dropPdf();                              // the frame (or a picture) replaces any pages a closed panel leaves behind
       const shown = isPdf ? pdfBlock(objUrl, path) : imgBlock(objUrl, path, imgFailed);
       body.replaceChildren(shown);
       whenShown(shown, fireRendered);         // the seam's onRendered for a media body: once the picture shows (Slice 3)
+      aimFrame(shown);                        // …and the frame opens on the reader's page, not page 1
       return;
     }
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
@@ -865,18 +873,67 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const self = Array.from(document.querySelectorAll("script[src]"))
       .map((n) => (n as HTMLScriptElement).src).find((u) => /\/(render|feed|files)\.js/.test(u));
     if (!self) return rej(new Error("no bundle script tag to derive the PDF chunk URL from"));
+    // pdf.js 6's default build polyfills nothing, and two of the APIs it relies on are new enough that engines still in
+    // use lack them: the `Iterator` global, dereferenced as the chunk's module body runs — on an engine without it the
+    // script tag fires `load` with nothing registered, a megabyte fetched for a notice that blames the chunk — and
+    // Promise.try, which its message handler calls for every document (Chrome 128, Firefox 134 and Safari 18.4 have
+    // both). So the engine is checked HERE, before the fetch, and the notice names the browser, which is the reason.
+    // (Rarer gaps pdf.js catches itself: a font rebuild's Math.sumPrecise falls back to a system font.)
+    if (typeof (globalThis as any).Iterator !== "function" || typeof (Promise as any).try !== "function") {
+      return rej(new Error("this browser is too old for the page renderer"));
+    }
     const sc = document.createElement("script");
     sc.src = self.replace(/\/(render|feed|files)\.js/, "/pdf-chunk.js");
     sc.onload = () => { const p = (window as any).__rompPdf; p ? res(p) : rej(new Error("PDF chunk loaded but did not register")); };
     sc.onerror = () => { pdfChunk = null; rej(new Error("the PDF renderer failed to load")); };
     document.head.appendChild(sc);
   }));
+  // ── the reader's page across the flip (pdfPage above) ── Read when the shells leave: the page under the MIDDLE of
+  // the scroller, the one the reader is looking at (a page whose last lines show at the top is not it); a document
+  // shorter than the scroller is at page 1. Zero rects (a stand-in with no layout) read as page 1 too.
+  const notePdfPage = () => {
+    const shells = body.querySelectorAll(".fileview-pdf .fileview-pdf-page");
+    if (!shells.length) return;
+    const r = body.getBoundingClientRect();
+    const mid = r.top + r.height / 2;
+    let at = 0;
+    for (let i = 0; i < shells.length; i++) { if (shells[i].getBoundingClientRect().bottom >= mid) { at = i; break; } }
+    pdfPage = Number((shells[at] as HTMLElement).dataset.page) || at + 1;
+  };
+  // Written back two ways. The FRAME takes the #page=N open parameter (Firefox's pdf.js viewer does on an object URL,
+  // checked; Chromium's documents the same parameters; a viewer that ignores it opens at the top, as before), set as the
+  // frame's src after pdfBlock's
+  // plain treatment — a frame not yet in the document just takes it; one already showing navigates again and the bare
+  // URL's load is abandoned, the browser's viewer offering no other way to scroll it. Page 1 adds nothing and gets no
+  // fragment, so the src is the bare object URL exactly as before. The PAGES scroll their shell into view once the
+  // shells exist (they do when render() resolves), and the chunk draws that page as it scrolls in.
+  const aimFrame = (frame: Element | null) => {
+    if (!frame || objUrl === null || pdfPage <= 1 || !frame.matches("iframe.fileview-frame")) return;
+    (frame as HTMLIFrameElement).src = objUrl + "#page=" + pdfPage;
+  };
+  const scrollToPdfPage = () => {
+    if (pdfPage > 1) body.querySelector('.fileview-pdf-page[data-page="' + pdfPage + '"]')?.scrollIntoView({ block: "start" });
+  };
+  // A frame already showing THESE bytes stays: the panel closing over showPdfPages's fallback (the frame under a notice)
+  // takes the notice away and rebuilds nothing, because a rebuilt frame reloads the document and the place the reader
+  // had reached inside it — which the frame never reports — would be lost. A reload's frame shows other bytes (a fresh
+  // object URL) and is rebuilt like every other body. True when the frame was kept, and the paint has fired.
+  const keepShownFrame = (): boolean => {
+    if (!isPdf || objUrl === null) return false;
+    const kept = body.querySelector("iframe.fileview-frame") as HTMLIFrameElement | null;
+    if (!kept || kept.src.replace(/#.*$/, "") !== objUrl) return false;
+    body.querySelector(".fileview-pdffall .fileview-err")?.remove();
+    whenShown(kept, fireRendered);
+    return true;
+  };
   // The pages body: the romp loader first (the loading-state rule), the chunk's pages once page 1 is drawn, and the
   // seam's onRendered then and after every page the chunk draws (the overlays attach per page). Every refusal is LOUD
   // and the same shape: the browser's frame, with a one-line notice above it saying why and that a comment on the
   // whole file still works — bytes over the cap (refused HERE, before a megabyte of renderer is fetched for nothing),
-  // a chunk or worker that will not load, a document pdf.js will not open. Never a blank pane, never a silent frame.
+  // an engine too old for the renderer (also before the fetch), a chunk or worker that will not load, a document
+  // pdf.js will not open, a document it opens with no pages in it. Never a blank pane, never a silent frame.
   const showPdfPages = () => {
+    notePdfPage();                             // a reload with the panel open: the pages come back where they were
     dropPdf();
     const blob = mediaBlob; const url = objUrl;
     if (!blob || url === null) return;
@@ -888,6 +945,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       note.textContent = why + " — showing the browser's PDF viewer instead; comments on the whole file still work.";
       fall.appendChild(note);
       fall.appendChild(pdfBlock(url, path));
+      aimFrame(fall.querySelector("iframe.fileview-frame"));   // the reader's page, here too, set before the frame is in the document
       body.replaceChildren(fall);
       whenShown(fall, fireRendered);
     };
@@ -905,8 +963,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         onPage: () => { if (my === pdfSeq && pdfHandle) fireRendered(); },
       }).then((h) => {
         if (my !== pdfSeq || !wrap.isConnected) { h.dispose(); return; }   // a stale resolution mounts nothing
+        // pdf.js opens a page-less document (an empty page tree) and resolves with nothing drawn: an empty root would be
+        // the blank pane this function exists to prevent, so the frame, told why, and the document released
+        if (h.pages === 0) { h.dispose(); fallback("this PDF has no pages"); return; }
         pdfHandle = h;
         wait.remove();                         // page 1 is drawn: the loader gives way to pixels
+        scrollToPdfPage();                     // …at the reader's page, when the pages had shown one before
         fireRendered();
       });
     }).catch((err) => fallback(String(err && (err as Error).message || err)));

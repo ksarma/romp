@@ -1187,6 +1187,18 @@ class Panel {
     }
     return null;
   }
+  /** Whether a PDF region's page is no longer in the document shown: the pages are mounted (the chunk builds a shell
+   *  for every page of the CURRENT document, drawn or not), and none of them is the comment's. A regenerated PDF with
+   *  fewer pages leaves such a comment with no rectangle to paint and no page to crop — but not without a remedy: a
+   *  PDF re-place may land on any page (onRegionDrawn), so the card still offers Re-place, and says which page went.
+   *  False while no page is mounted (the frame fallback, the loader): nothing can be told about the pages then. */
+  private pageGone(c: Card): boolean {
+    if (!c.target || c.target.kind !== "pdf" || this.ctx.mode() !== "media") return false;
+    const imgs = this.regionImages();
+    if (!imgs.length || !isCanvas(imgs[0])) return false;
+    const page = c.target.page;
+    return !imgs.some((i) => pageOf(i) === page);
+  }
   /** The author chip a rectangle wears: the label, and the session's colours as `--fc-author` / `--fc-author-fg`
    *  when the colour map knows the author (the sheet's fallback otherwise, and for `you`). */
   private chipFor(author: string, authorId: string | null): { label: string; style?: Record<string, string> } {
@@ -1202,8 +1214,13 @@ class Panel {
    *  is open and the pointer is fine (E5: a coarse pointer reads, and the whole-file comment stands in); the
    *  rectangles show whenever the highlights do. A painted rectangle is the comment's mark (located, painted): the
    *  card's reference links to it and offers no Reveal. A pending region whose picture was repainted is re-found
-   *  (the media body's one picture; a figure by its embed's src). */
+   *  (the media body's one picture; a PDF page by its number, since a reload hands back new canvases; a figure by its
+   *  embed's src). A rectangle holding keyboard focus is refocused once the layers have rebuilt it: every pass removes
+   *  and recreates the rectangles, a removed element loses its focus to the body, and with a PDF this pass runs on
+   *  every page draw, redraw and width change (the chunk's onPage) — without the mend, scrolling page 2 into view
+   *  dropped the keyboard off a rectangle on page 1, and Enter then did nothing. */
   private paintRegions(): void {
+    const keep = this.focusedRegion();                 // before any layer is dropped or repainted: the focused node is about to go
     const imgs = this.regionImages();
     for (const [img, layer] of this.regionLayers) if (!imgs.includes(img)) { layer.dispose(); this.regionLayers.delete(img); }
     if (!imgs.length) return;
@@ -1240,6 +1257,23 @@ class Panel {
       const replacing = !!c && c.kind === "replace" && this.replaceTarget(c.commentId) === img;
       for (const r of layer.paint(per.get(img) || [], pending, replacing)) this.marks.add(r);
     }
+    if (keep) this.refocusRegion(keep);
+  }
+  /** The region rectangle holding keyboard focus, by the comment it opens — a mark of the panel's own (owns) that sits
+   *  among the file's pictures, outside the aside, so render()'s focusKey never sees it. Null for anything else. */
+  private focusedRegion(): string | null {
+    const a = document.activeElement as HTMLElement | null;
+    if (!a || !a.dataset || a.dataset.act !== "fcopen" || !a.dataset.id || !this.marks.has(a)) return null;
+    return a.classList && typeof a.classList.contains === "function" && a.classList.contains("fc-region") ? a.dataset.id : null;
+  }
+  /** Put the keyboard back on the comment's rebuilt rectangle, re-found by what it is (the way refocus re-finds the
+   *  aside's controls), unless something else holds focus by now. No scroll: a page drawing in as it scrolls near must
+   *  not yank the view back to the rectangle. */
+  private refocusRegion(id: string): void {
+    const a = document.activeElement;
+    if (a && a !== document.body) return;              // the focus did not fall to the body: nothing to mend
+    const r = this.ctx.body().querySelector('.fc-region[data-id="' + id + '"]') as HTMLElement | null;
+    if (r) r.focus({ preventScroll: true });
   }
   /** Whether any overlay in view takes a drag (the panel open, a fine pointer): the empty state names the gesture
    *  and the cards offer Re-place only then. */
@@ -1536,7 +1570,12 @@ class Panel {
     this.input.hidden = c.kind === "replace";          // a re-place takes a drag on the picture, not words
     if (c.kind === "reply") ref.appendChild(el("span", "fc-note", "Reply on " + c.ref));
     else if (c.kind === "change") ref.appendChild(el("span", "fc-note", "Reply on the change " + c.ref));
-    else if (c.kind === "replace") ref.appendChild(el("span", "fc-note", "Drag the comment's new place on " + (c.page ? "a page" : "the image") + " (now " + c.ref + "). Cancel keeps it where it is."));
+    else if (c.kind === "replace") {
+      // a PDF region whose page the document no longer has (pageGone): no page wears the re-place cue, so the note says so
+      const card = c.page ? this.cards().find((x) => x.id === c.commentId) : undefined;
+      const gone = !!card && this.pageGone(card);
+      ref.appendChild(el("span", "fc-note", "Drag the comment's new place on " + (c.page ? "a page" : "the image") + " (now " + c.ref + (gone ? ", a page the PDF no longer has" : "") + "). Cancel keeps it where it is."));
+    }
     else if (c.kind === "region") {
       if (c.refusal) ref.appendChild(el("span", "fc-note fc-refused", c.refusal[0].toUpperCase() + c.refusal.slice(1) + ". Cancel, and comment on its passage from the Raw view."));
       else {
@@ -1645,10 +1684,17 @@ class Panel {
       ref.tabIndex = 0; ref.setAttribute("role", "button");
     }
     head.appendChild(ref);
-    // a region (Slice 3): whether the image still has the bytes it was drawn on (E2) — dashed on the picture, a tag here
+    // a region (Slice 3): whether the image still has the bytes it was drawn on (E2) — dashed on the picture, a tag here.
+    // A PDF region whose page the document no longer has (Slice 4; pageGone) is stale whatever the hashes say: the
+    // page it was drawn on is not there to be current on
+    const gone = this.pageGone(c);
     const regionSt = c.target ? regionState(c.target, this.status) : "current";
-    if (regionSt === "stale") { const t = el("span", "fc-tag fc-tag-stale", "stale"); t.title = "The " + this.mediaNoun() + " changed after this region was drawn; Re-place it, or resolve it"; head.appendChild(t); }
-    if (regionSt === "unknown") { const t = el("span", "fc-tag", "unknown"); t.title = "Whether the " + this.mediaNoun() + " changed since this region was drawn could not be checked"; head.appendChild(t); }
+    if (gone || regionSt === "stale") {
+      const t = el("span", "fc-tag fc-tag-stale", "stale");
+      t.title = gone ? "The PDF changed after this region was drawn and no longer has page " + c.target!.page + "; Re-place it on a page it has, or resolve it"
+        : "The " + this.mediaNoun() + " changed after this region was drawn; Re-place it, or resolve it";
+      head.appendChild(t);
+    } else if (regionSt === "unknown") { const t = el("span", "fc-tag", "unknown"); t.title = "Whether the " + this.mediaNoun() + " changed since this region was drawn could not be checked"; head.appendChild(t); }
     if (loc && loc.state === "context") head.appendChild(el("span", "fc-tag", "text changed"));
     if (loc && loc.state === "detached") head.appendChild(el("span", "fc-tag", "detached"));
     if (c.decision) { const d = el("span", "fc-tag", c.decision); d.title = "You " + c.decision + " the change this comment is on"; head.appendChild(d); }
@@ -1664,9 +1710,13 @@ class Panel {
     const acts = el("div", "fc-actions");
     const reply = btn("Reply", "fcreply"); reply.dataset.id = c.id; acts.appendChild(reply);
     const res = btn(c.resolved ? "Reopen" : "Resolve", "fcresolve"); res.dataset.id = c.id; res.dataset.on = c.resolved ? "0" : "1"; acts.appendChild(res);
-    if (picture && !c.resolved && this.drawsRegions()) {   // Re-place needs the picture in view and a pointer that can draw
+    // Re-place needs a pointer that can draw and a picture in view — the comment's own, or for a PDF region whose page
+    // the document no longer has (pageGone) ANY page: a PDF re-place may land on another page, and the stale tag names
+    // Re-place as the remedy, so the card must offer it there too rather than leave Resolve as the only way out
+    if ((picture || gone) && !c.resolved && this.drawsRegions()) {
       const rp = btn("Re-place", "fcreplace"); rp.dataset.id = c.id;
-      rp.title = regionSt === "stale" ? "The " + this.mediaNoun() + " changed: draw the region again where it belongs now" : "Draw the region again; the comment keeps its words";
+      rp.title = gone ? "The PDF no longer has this page: draw the region again on a page it has"
+        : regionSt === "stale" ? "The " + this.mediaNoun() + " changed: draw the region again where it belongs now" : "Draw the region again; the comment keeps its words";
       acts.appendChild(rp);
     }
     const src = this.ctx.text();
