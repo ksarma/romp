@@ -23,6 +23,7 @@ import { hostNameNodes } from "./host-prefix";
 import { liveNow, stampAge, refreshAges } from "./feed-age";
 import { ageColorReadable } from "./age-color";
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
+import { perfFrameHandler } from "./perf-telemetry";
 
 type Color = { bg: string; fg: string } | null;
 interface UserTodo { id: string; text: string; createdT: number; detail?: string }
@@ -281,7 +282,9 @@ function applyFrame(m: any): void {
   render();
 }
 
-window.addEventListener("message", (e: MessageEvent) => {
+// every frame's synchronous handling time is measured (perf-telemetry.ts: one clientDiag row a
+// minute, read by `romp perf client`); the handler itself is unchanged
+window.addEventListener("message", perfFrameHandler("waiting", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
   const m = e.data;
   if (!m) return;
   if (m.type === "feed") { applyFrame(m); return; }   // this pane rides the FEED payload (reads userTodoRows / userTodosOn)
@@ -308,7 +311,7 @@ window.addEventListener("message", (e: MessageEvent) => {
     warnToast(m.text);
     notifyShell("undelivered", m.text, typeof m.sid === "string" ? m.sid : "");
   }
-});
+}));
 window.addEventListener("romp-hosts", () => render());   // a host's link changed → the chips' down-marks repaint
 window.addEventListener("storage", (e: StorageEvent) => { if (e.key === "romp:settings") { applyTheme(document, loadSettings()); render(); } });
 applyTheme(document, loadSettings());
