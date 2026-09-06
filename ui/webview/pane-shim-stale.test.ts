@@ -4,11 +4,16 @@
 // rule under test: after a reconnect, the "what you see may be stale" prompt is raised by the SECOND
 // KEEPALIVE arriving before the resync frame (one full heartbeat period, bracketed by two kernel heartbeats
 // on this socket with no resync between them — a single keepalive can be a beat that was already queued
-// when the socket was accepted), or by the reconnected socket CLOSING before it, and by nothing else — no
+// when the socket was accepted), by the reconnected socket CLOSING before it, or by the shim ABANDONING it
+// as quiet before it (the watchdog's tick or the foreground path: a socket the kernel accepted and never
+// spoke on — abandon() disowns its onclose, so it runs the close rule itself), and by nothing else — no
 // timer (every scenario runs the pending timers afterwards and asserts nothing fired, and asserts no timer
-// is armed on open); the first non-keepalive frame retires it; a keepalive never reaches the bundle. Also
-// run here: the close breadcrumbs (one `wsclose` per socket that OPENED; the redials an outage refused
-// coalesced into one `wsconnfail` row on the next open) and the cap on queued breadcrumbs.
+// is armed on open; the watchdog's interval is captured and ticked by hand); the first non-keepalive frame
+// retires it; a keepalive never reaches the bundle. Also run here: the close breadcrumbs (one `wsclose` per
+// socket that OPENED and was closed by the browser — an abandoned socket leaves none: the watchdog's own
+// `watchdog-close` row went down the quiet socket before the abandon, and an armed socket's `-quiet` raise
+// rides the redial; the redials an outage refused coalesced into one `wsconnfail` row on the next open)
+// and the cap on queued breadcrumbs.
 // Synthetic only (TESTHOST, no session data).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -35,6 +40,7 @@ class Harness {
   toBundle: any[] = [];        // frames the shim handed to the bundle
   sockets: any[] = [];
   timers: Array<() => void> = [];
+  interval: (() => void) | null = null;   // the progress watchdog's 5 s tick, run by hand (tick)
   visibility: Array<() => void> = [];
   now = 1_000_000;
   win: any;                    // the sandbox window (the shim hangs __rompLocalSend on it)
@@ -68,7 +74,7 @@ class Harness {
       Event: class { type: string; constructor(t: string) { this.type = t; } },
       MessageEvent: class { type: string; data: any; constructor(t: string, o: any) { this.type = t; this.data = o.data; } },
       setTimeout: (f: () => void) => { h.timers.push(f); return h.timers.length; },
-      clearTimeout: () => {}, setInterval: () => 0,
+      clearTimeout: () => {}, setInterval: (f: () => void) => { h.interval = f; return 1; },
     };
     sandbox.window.window = sandbox.window;
     this.win = sandbox.window;
@@ -76,6 +82,8 @@ class Harness {
   }
   get ws() { return this.sockets[this.sockets.length - 1]; }
   runTimers() { const t = this.timers.splice(0); for (const f of t) f(); }
+  /** one tick of the progress watchdog (the shim's setInterval body) */
+  tick() { assert.ok(this.interval, "the watchdog is armed"); this.interval!(); }
   stale() { return this.posted.filter((m) => m.romp === "wsStale" && !m.build).length; }
   fresh() { return this.posted.filter((m) => m.romp === "wsFresh").length; }
   diags(what: string) { return this.sent.filter((m) => m.type === "clientDiag" && m.what === what); }
@@ -210,7 +218,67 @@ test("an announced restart's reconnect skips the arm once (T217); a second recon
   h.settles(1);
 });
 
-test("every close of a socket that OPENED leaves a wsclose breadcrumb with the code, the socket's age and the quiet gap", () => {
+test("a reconnected socket that stays SILENT — no keepalive, no resync — raises when the watchdog abandons it; the redial resyncs as usual", () => {
+  // the kernel accepted the reconnect and never spoke on it (a wedged kernel; a proxy that accepted and
+  // forwards nothing): no keepalive arrives to count, and abandon() disowns the socket's onclose, so the
+  // close rule never sees it either. Until abandon() ran that rule itself, every silent cycle re-armed from
+  // zero — the loader flapped every 30 s and the prompt never came, where the old timer raised on the first.
+  const h = FEED();
+  const ws = h.reconnected();
+  h.now += 31_000;
+  h.tick();
+  assert.equal(h.stale(), 1, "abandoning an armed socket is the event: nothing is coming on it");
+  assert.equal(h.sockets.length, 3, "…and the same tick redialed");
+  assert.equal(ws.onclose, null, "the abandoned socket is disowned: its eventual close is nobody's event");
+  assert.equal(h.sent.filter((m) => m.type === "clientDiag" && m.what === "stale-raise").length, 0,
+    "the breadcrumb queued rather than going down the quiet socket, which would have swallowed it");
+  h.ws.open();
+  assert.equal(h.timers.length, 0, "no timer is armed on open");
+  const raised = h.diags("stale-raise");
+  assert.equal(raised.length, 1, "…and it rode the reconnect");
+  assert.equal(raised[0].data.why, "reconnect-quiet");
+  assert.equal(h.diags("wsclose").length, 1, "the abandoned socket leaves no wsclose row: only the browser-reported drop did");
+  assert.equal(h.diags("watchdog-close").length, 1, "the watchdog's own row, sent down the quiet socket before the abandon");
+  h.ws.msg({ type: "feed", asks: [] });
+  assert.equal(h.fresh(), 1, "the redial's resync retires the prompt as always");
+  h.ws.msg({ type: "ka", dv: 0 }); h.ws.msg({ type: "ka", dv: 0 });
+  assert.equal(h.stale(), 1, "…after which its keepalives are just keepalives");
+  h.settles(1);
+});
+
+test("three silent cycles: one raise per cycle, one watchdog row each, and no wsclose for any abandoned socket", () => {
+  const h = FEED();
+  h.reconnected();
+  for (let i = 1; i <= 3; i++) {
+    h.now += 31_000;
+    h.tick();
+    assert.equal(h.stale(), i, "cycle " + i + " raised: the watchdog never eats an armed cycle");
+    h.ws.open();
+    assert.equal(h.timers.length, 0, "no timer is armed on open");
+  }
+  assert.equal(h.sockets.length, 5);
+  assert.deepEqual(h.diags("stale-raise").map((m) => m.data.why), ["reconnect-quiet", "reconnect-quiet", "reconnect-quiet"]);
+  assert.equal(h.diags("watchdog-close").length, 3);
+  assert.equal(h.diags("wsclose").length, 1, "the first, browser-reported drop — and nothing for the three abandonments");
+  h.settles(3);
+});
+
+test("the foreground path abandoning an ARMED quiet socket raises too; its redial arms as foreground", () => {
+  const h = FEED();
+  h.reconnected();                          // armed on the reconnect; the tab then slept on a socket that said nothing
+  h.now += 31_000;
+  for (const f of h.visibility) f();
+  assert.equal(h.stale(), 1, "the tab came back to a socket that armed and then heard nothing");
+  assert.equal(h.sockets.length, 3, "abandoned and redialed at once");
+  h.ws.open();
+  assert.equal(h.diags("stale-raise")[0].data.why, "reconnect-quiet", "named for the path that armed, not the one that abandoned");
+  h.ws.msg({ type: "ka", dv: 0 }); h.ws.msg({ type: "ka", dv: 0 });
+  assert.equal(h.stale(), 2, "the foreground redial armed on its own account, and its two beats raise as usual");
+  assert.equal(h.diags("stale-raise")[1].data.why, "foreground");
+  h.settles(2);
+});
+
+test("every close the browser reports for a socket that OPENED leaves a wsclose breadcrumb with the code, the socket's age and the quiet gap", () => {
   const h = FEED();
   h.ws.open(); h.now += 4_000; h.ws.msg({ type: "feed", asks: [] }); h.now += 2_500;
   h.ws.close();

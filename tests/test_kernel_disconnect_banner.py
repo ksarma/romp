@@ -87,8 +87,11 @@ class DisconnectBanner(unittest.TestCase):
         self.assertIn('staleDiag("watchdog-close","quiet");', js)
         self.assertIn('armStale(pendingWhy||"reconnect");', js)
         self.assertIn('pendingWhy="foreground";', js)
-        # …and every CLOSE leaves one too, with the close code/reason and the socket's age: a kernel-side
-        # drop (1006, no reason), a clean restart and a proxy timeout were indistinguishable
+        # …and every close the BROWSER reports leaves one too, with the close code/reason and the socket's
+        # age: a kernel-side drop (1006, no reason), a clean restart and a proxy timeout were
+        # indistinguishable. (A socket the shim ABANDONS leaves none — abandon() disowns its onclose; the
+        # watchdog-close row above went down the quiet socket before the abandon, and an armed socket's
+        # "-quiet" raise rides the redial.)
         self.assertIn('if(openSock===this){try{send({type:"clientDiag",surface:"pane-shim",what:"wsclose",data:{app:APP,code:ev?ev.code:-1,'
                       'reason:(ev&&ev.reason)||"",wasClean:!!(ev&&ev.wasClean),'
                       'sinceOpenMs:openT?Date.now()-openT:-1,quietMs:lastRecv?Date.now()-lastRecv:-1,everConnected:everConnected}', js)
@@ -115,7 +118,7 @@ class DisconnectBanner(unittest.TestCase):
         self.assertIn('if(ws.readyState===1){if(everConnected&&Date.now()-lastRecv>STALE_MS){staleDiag("watchdog-close","quiet");abandon();connect();}return;}', js)
         self.assertIn("function abandon(){var d=ws;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;", js)
         self.assertIn('netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}', js,
-                      "the abandoned socket's onclose is disowned, so abandon() itself does what onclose did (banner + loader)")
+                      "the abandoned socket's onclose is disowned, so abandon() itself does what onclose did (banner + close rule + loader)")
         self.assertIn("if(ws.readyState===0&&Date.now()-connT>15000){try{ws.close();}catch(e){}return;}", js)
         self.assertIn("if(ws.readyState===3&&Date.now()-connT>8000){connect();}", js)
         # the foregrounding fast-path abandons an OPEN-but-quiet socket and redials it NOW (same 60s
@@ -163,8 +166,11 @@ class DisconnectBanner(unittest.TestCase):
         # reconnect once frames grew): it raises on the SECOND KEEPALIVE arriving while the resync is still
         # pending — one full heartbeat period on this socket with the kernel alive, talking to it, and not
         # resyncing it; a single keepalive can be a beat queued at accept, ahead of the resync frame — or on
-        # the reconnected socket CLOSING again before its resync. Nothing else. pane-shim-stale.test.ts RUNS
-        # the rule; these pins hold its text.
+        # the reconnected socket CLOSING again before its resync — or being ABANDONED by the shim before it (the
+        # watchdog's tick or the foreground path, on a socket the kernel accepted and never spoke on: abandon()
+        # disowns the socket's onclose, so it runs the close rule itself; without that, every silent cycle
+        # re-armed from zero and the prompt never came). Nothing else. pane-shim-stale.test.ts RUNS the rule;
+        # these pins hold its text.
         self.assertIn("function armStale(why){stalePending=why;staleKa=0;}", js, "arming records the path, shows nothing")
         self.assertNotIn("setTimeout(function(){staleTimer=0;raiseStale(why);},1000)", js, "the timer is gone")
         self.assertNotIn("staleTimer", js)
@@ -172,6 +178,8 @@ class DisconnectBanner(unittest.TestCase):
                       "the second keepalive on the reconnected socket, resync still pending → raise")
         self.assertIn('if(stalePending&&openSock===this){var cw=stalePending;stalePending="";raiseStale(cw+"-closed");}', js,
                       "the reconnected socket closing before its resync → raise")
+        self.assertIn('if(stalePending&&openSock===d){var qw=stalePending;stalePending="";raiseStale(qw+"-quiet");}', js,
+                      "the reconnected socket abandoned as quiet before its resync → raise (the disowned onclose cannot)")
         self.assertIn('if(!ann)armStale(pendingWhy||"reconnect");', js,
                       "the reconnect ARMS it — except the one an ANNOUNCED restart already explained (T217)")
         self.assertNotIn("if(wasReconn){raiseStale();", js, "…and never raises it outright")
