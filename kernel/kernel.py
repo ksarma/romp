@@ -28278,10 +28278,18 @@ WIN_WEEK = 7 * 86400                           # The footer shows tokens per win
 
 def _state_intervals(sid, want, now):
     """Every [start,end] the session sat in `want` ('permission'/'picker' → awaiting candy-stripes,
-    'compacting' → cross-hatch), from states/<sid>.jsonl: an entry runs until the next transition
-    (or `now` if still in it). `want` is a single state or any collection of them (the awaiting band
-    passes both needs-input states). Forward-only — periods predating the log don't appear. File-based
-    port of the obsidian timeline's stateIntervals (the kernel reads states/, never tmux).
+    'compacting' → cross-hatch), from states/<sid>.jsonl: an entry runs until the next transition, or to
+    `now` (the build's clock) if the session is still in it. That open end IS the wire contract the
+    renderer reads (romp-timeline-view.js, 2026-09-06): an end within 2 s of the payload's `now` means
+    open, and an open span is drawn to the pane's live edge the way barEndT draws an open work bar, so
+    the stripe glides with the edge instead of sitting at the build clock until the next rebuild. The end
+    stays numeric on purpose: a null end was a wire break — every already-loaded renderer (an open
+    dashboard, an installed extension) took Math.min(null, t1) = 0 and dropped the stripe for a lane
+    blocked or compacting right now. The clock-stamped end costs nothing on the wire since the lanes frame
+    is deduped per rebuild (_skeleton_sig keeps the build clock). `want` is a single state or any
+    collection of them (the awaiting band passes both needs-input states). Forward-only — periods
+    predating the log don't appear. File-based port of the obsidian timeline's stateIntervals (the kernel
+    reads states/, never tmux).
     Folds the states log append-incrementally since 2026-09-03 (_fold_records): every timeline
     rebuild used to re-read and re-parse the whole file, twice per session (once per `want`); the
     intervals themselves are cheap."""
@@ -28291,7 +28299,7 @@ def _state_intervals(sid, want, now):
     for i, (t, st) in enumerate(ev):
         if st not in want:
             continue
-        end = ev[i + 1][0] if i + 1 < len(ev) else now
+        end = ev[i + 1][0] if i + 1 < len(ev) else now     # still in it: the build clock, which the renderer reads as open
         if end < cutoff:
             continue
         out.append([max(t, cutoff), end])
@@ -30018,11 +30026,13 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
     Message connectors (need the courier) and cross-pane focus/hover are later increments — emitted
     empty/null so the render's conditional paths hide them.
 
-    with_bars=False builds only the LANES SKELETON (sessions + tokens + status) — the heavy per-segment
-    bars, the judging band, the message connectors and the nudge marks are left empty. The push sends this
-    skeleton FIRST so the lanes paint instantly, then ships the bars as a separate {type:"bars"} message
-    (the user 2026-06-25, who wanted everything else loaded and the bars loaded after). build_timeline is ~95%
-    bars+judging by payload and the dominant startup cost, so the skeleton is cheap and lands immediately."""
+    with_bars=False builds only the LANES SKELETON (sessions + status) — the heavy per-segment bars, the
+    judging band and the message connectors are left empty. The push ships the lanes as a {type:"data"}
+    frame FIRST and the bars as a separate {type:"bars"} message (the user 2026-06-25, who wanted everything
+    else loaded and the bars loaded after); build_timeline is ~95% bars+judging by payload. Since 2026-09-06
+    the skeleton BUILD runs only on the cold live-first connect (no cached full build yet): every warm push
+    projects the lanes frame from the cached full build instead (_timeline_skeleton; the WARM note in _push
+    has the contract and its lag), so the with_bars=False branches below are the cold-connect path."""
     if tmux is None:
         tmux = _tmux_sessions()
     alive = _timeline_sessions(now, tmux, live_only=live_only)   # living + window-dead (≤12h) lanes; per-session `live` below marks the dead ones (struck). live_only → live sessions only (cold-start first paint)
@@ -30052,7 +30062,10 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         tm = tmux.get(sid)
         live = tm is not None
         hexcol = (tm and tm["color"]) or (_name_color(sid) or {}).get("bg", "#888888")
-        goals = jd.load_goals(sid)
+        # The SKELETON reads the goal store for a DEAD lane only (its blocked badge, in the dead branch
+        # below): its segment loop runs over no turns and it derives no judging marks, so a live lane's
+        # load — the largest per-lane cost of the skeleton build — was never read (2026-09-06).
+        goals = jd.load_goals(sid) if with_bars else None
         if with_bars:
             try:
                 session = _parse(s["path"], sid, now)
@@ -30086,16 +30099,14 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             # ONE derivation with the chat chip (the user 2026-07-03: after an API error the chat read
             # API ERROR → READY while the lane sat on raw-snapshot 'working'): the lane state IS
             # _session_chip — same event-model working, api-error gate, compacting corroboration,
-            # interrupt stamp. The SKELETON build has no fresh parse, so it uses the CACHED one (no cold
-            # cost; the {type:"bars"} build refines a beat later); a COLD cache falls back to the raw
-            # snapshot state — the only moment the two surfaces may briefly differ, self-healing on the
-            # next build (the 2026-06-26 fast-first-paint contract).
-            # Same INPUT, not just the same formula (the user 2026-07-03): the chat chip computes over the
-            # LIVE-MERGED session, and the lane badge rides the SKELETON build (the {type:"bars"} message
-            # carries no states) — so the skeleton must merge the live tail onto the cached parse too, or
-            # a live atom that changes the answer splits the two surfaces on EVERY push (chat WORKING /
-            # lane READY, the phantom-working divergence). The merge is dict work on in-memory atoms — no
-            # parse, so the fast-first-paint contract holds.
+            # interrupt stamp. Same INPUT, not just the same formula (the user 2026-07-03): the chip
+            # computes over the LIVE-MERGED session, so the full build's lane does too (`session` above is
+            # merged). The SKELETON build — the cold live-first connect only, since 2026-09-06 — has no
+            # fresh parse: it uses the CACHED one with the live tail merged the same way, and a COLD cache
+            # falls back to the raw snapshot state, the one moment the two surfaces may briefly differ,
+            # self-healing on the next build (the 2026-06-26 fast-first-paint contract). Warm pushes
+            # project the lanes from the cached full build, so the lane's state trails the chat chip by at
+            # most REBUILD_MIN_S or the 5 s bucket (the WARM note in _push).
             comp_sess = session if with_bars else _parse_cached(s["path"])
             if not with_bars and comp_sess is not None:
                 try:
@@ -30119,6 +30130,8 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         else:                             # dead lane: NEVER "working" — a turn left open at death (e.g. a stalled API
                                           # turn that never returned a ResultMessage, then ended) must not read as
                                           # active (the user 2026-06-23); badgeFor dims a dead lane anyway.
+            if goals is None:
+                goals = jd.load_goals(sid)                  # the skeleton's one store read: a dead lane's badge
             blocked = "blocked" in goals.get("status", {}).values() and not _session_flag(sid, "hideFromFeed")
             state = "needsInput" if blocked else "idle"   # muted → no awaiting/background-task badge on the lane
             aw_open = open_now                          # unused (awaitingBg is None for a dead lane) — kept defined
@@ -33258,10 +33271,38 @@ def _push(targets, connect=False, tmux=None):
         # TIMELINE in two messages (the user 2026-06-25): the LANES SKELETON ({type:"data"}) flushes FIRST —
         # cheap, so the lanes/status paint instantly — THEN the heavy bars+judging ride a {type:"bars"} message
         # (the ~95% of the payload). On a COLD connect the skeleton is on the wire before the expensive
-        # _cached_timeline build even runs, so the user sees the fleet at once instead of a blank wait.
+        # _cached_timeline build even runs, so the user sees their sessions at once instead of a blank wait.
         # LIVE-FIRST (the user 2026-06-26): the very first paint after a kernel start reads NO dead session — it
         # builds live sessions only (lanes + bars) so the main UI is up at once; the producer warms the full
         # build (live + dead-within-12h) and the next pusher push folds the dead lanes in, in the background.
+        # WARM (2026-09-06): once a full build is cached, the skeleton is PROJECTED from it (_timeline_skeleton)
+        # instead of built again. Every cycle used to run build_timeline(with_bars=False) — no transcript
+        # parse, but the same per-lane derivation the full build had just done (store loads, the chip over
+        # the cached parse plus the live merge, the awaiting overlay), re-deriving lanes the cached build
+        # already held: 5.3% of the kernel's GIL samples and 7.4% of the pusher thread on the saturated
+        # 2026-09-06 profile (kernel3-gil-120s; 4.0% and 12% on the earlier live-now profile). A cache hit
+        # now serves lanes identical to the last rebuild, so no lane moves without a rebuild, and rebuilds
+        # still come on every view-sig change, on _views_dirty and at the 5 s bucket: the lanes lag a rebuild
+        # by at most REBUILD_MIN_S, the lag the bars always had. Two visible differences from the built
+        # skeleton: the lanes' `compactions` come from the full build's parse (the built skeleton parsed
+        # nothing and always shipped []), and a dead lane's `since` is its last work end rather than the
+        # transcript mtime. Accepted too: the first regular cycle after boot serves the full build before
+        # the lanes frame (the connect push took the cold path and cached nothing), so the DEAD lanes reach
+        # the client one build later than the per-cycle skeleton showed them; the live lanes painted on the
+        # connect.
+        # The frame is serialized once per BUILD (_skel_wire, keyed on the cached object's identity like
+        # _bars_wire) and deduped PER REBUILD, not per cycle: the skeleton carries the cached build's clock
+        # and _skeleton_sig keeps it, so a new build — a view-sig change, _views_dirty, or the 5 s bucket —
+        # sends one frame and the cycles between builds send nothing. The clock sits inside `data`, out of
+        # reach of _dedup_sig's top-level strip, so before this every cycle's frame compared as new and
+        # 27 KB went to every timeline client every 0.5 s cycle. The frame stays the pane's clock source
+        # (review 2026-09-06): the bars frame dedups with its `now` stripped, so an unchanged rebuild sends
+        # no bars, and the view's live edge glides at most 30 s past its last `data.now` sample before it
+        # waits — deduping the lanes frame on content alone starved a quiet timeline until the 60 s repost.
+        # One frame per bucket keeps a sample flowing at least every 5 s. A CONNECT push is the exception:
+        # it stamps the cached lanes with the cycle's clock (below), since the pane anchors on its first
+        # sample and the cache can be hours old when no timeline client kept it warm.
+        global _skel_wire
         _PERF_STATS.stage("push.feed", time.monotonic() - _t_stage)
         _t_stage = time.monotonic()
         timeline = None
@@ -33269,16 +33310,36 @@ def _push(targets, connect=False, tmux=None):
         if want_tl:
             tl_clients = [c for c in targets if c["app"] == "timeline"]
             live_first = connect and _built_timeline[1] is None     # cold start, nothing warmed yet → live only
-            skel = build_timeline(now, tmux, with_bars=False, live_only=live_first)
-            for c in tl_clients:
-                _send_client(c, ("timeline",), {"type": "data", "data": skel})
             if live_first:
+                skel = build_timeline(now, tmux, with_bars=False, live_only=True)
+                for c in tl_clients:
+                    _send_client(c, ("timeline",), {"type": "data", "data": skel})
                 timeline = build_timeline(now, tmux, with_bars=True, live_only=True)   # live bars now (no dead reads)
                 tl_warming = True                                   # this is the PARTIAL cold build — the client keeps its loader up
                 _producer_wake.set()                                # ...if it lands empty (SDK/federation not yet merged), rather than flashing
                 #                                                     "no activity"; a later warmed push (tl_warming False) settles it (the user 2026-07-03)
             else:
                 timeline = _cached_timeline(now, tmux, fsig, connect)
+                if connect:
+                    # A CONNECT serves the cached lanes under the CYCLE's clock (review 2026-09-06): the pane
+                    # anchors its live edge and its window fit on the first data.now it sees, and the cache is
+                    # as old as the last cycle that had a timeline client — a bucket on a reload, hours after
+                    # the pane was closed — so the build clock made the axis hop forward on the next cycle's
+                    # frame. One serialization per connect; the new client's dedup slot is empty, so the frame
+                    # always goes. Its sig differs from _skel_wire's, so the next identity-hit cycle re-sends
+                    # that client the build-clock frame once (the pane ignores the older clock: isFreshNowSample).
+                    frame = {"type": "data", "data": {**_timeline_skeleton(timeline), "now": now}}
+                    skel_pre, skel_sig = json.dumps(frame), None
+                else:
+                    w = _skel_wire                                  # tuple snapshot — rebound whole, never mutated
+                    if w is not None and w[0] is timeline:
+                        frame, skel_pre, skel_sig = w[1], w[2], w[3]
+                    else:
+                        frame = {"type": "data", "data": _timeline_skeleton(timeline)}
+                        skel_pre, skel_sig = json.dumps(frame), _skeleton_sig(frame["data"])
+                        _skel_wire = (timeline, frame, skel_pre, skel_sig)
+                for c in tl_clients:
+                    _send_client(c, ("timeline",), frame, pre=skel_pre, sig=skel_sig)
         _PERF_STATS.stage("push.timeline", time.monotonic() - _t_stage)
     except Exception:
         sys.stderr.write("push build: %s\n" % traceback.format_exc())
@@ -33596,6 +33657,7 @@ _built_timeline = [None, None, 0.0, 0.0]          # [fleet_sig, payload, built_a
 # torn entry; the identity keys stay alive because these tuples (and the build caches above) hold them.
 _feed_wire = None   # (feed_src, ledgers, wire_feed, body, sig, parts) — body = _feed_body(wire_feed): the frame's serialization MINUS its top-level `now`; _feed_ms splices the clock in at send time (a raw send of it ships a frame with no `now`, which the pane anchors every age on); parts = _feed_parts(wire_feed)
 _bars_wire = None   # (timeline, warming, bars, ms, sig)
+_skel_wire = None   # (timeline, frame, pre, sig) — the lanes {type:"data"} frame projected from the same cached build (2026-09-06)
 # Each build is intrinsically ~1-1.6s (re-segments every session); the IDEAL is a per-session lane/card cache
 # (only the changed session rebuilds), but that's a big refactor of build_feed/build_timeline. Interim cap: a
 # minimum rebuild interval. With an ACTIVE fleet the fleet_sig busts on every push (the watched session keeps
@@ -33640,15 +33702,53 @@ def _fleet_view_sig(now, tmux):
                  # bust the FEED cache the way it already busts the owning session's chat cache
                  (jd.STATE / "user-todos.json", "__utodos__"),
                  # …and the feature switch (2026-09-03): a flip changes every one of those reads
-                 (jd.STATE / USER_TODOS_SWITCH_FILE, "__utswitch__")):
+                 (jd.STATE / USER_TODOS_SWITCH_FILE, "__utswitch__"),
+                 # the timeline's own file inputs (2026-09-06): the lanes frame is projected from the
+                 # cached build, so what the lanes read must bust the cache — the usage bars
+                 # (usage.json, via _usage_for_client) and the views blob (timeline-views.json, via
+                 # _views_client). Before the projection the per-cycle skeleton carried both fresh every
+                 # cycle; with the frame projected from the cache, these mtimes bring a change forward
+                 # from the bucket, and the helpers' non-file inputs (remote tags from the supervisor's
+                 # /views poll, judge failures) still wait for it.
+                 (jd.STATE / "usage.json", "__usage__"),
+                 (_views_path(), "__views__"),
+                 # …the lanes' comment squares (STATE/comments/<sid>.json, _comment_markers: every write is
+                 # an _atomic_write into this directory, so its mtime moves on a create AND a rewrite) and
+                 # the kernel watches (WATCH_FILE, read by _watch_awaiting for the awaiting badge): a
+                 # resolve on a dormant thread or a watch firing changes only the store, and used to reach
+                 # the lane at the bucket (review 2026-09-06)
+                 (jd.STATE / "comments", "__comments__"),
+                 (WATCH_FILE, "__watches__")):
         try:
             sig[k] = os.stat(p).st_mtime
         except OSError:
             pass
     for s in sorted(tmux):
         t = tmux[s]
-        sig["t:" + s] = (t.get("state"), t.get("model"), t.get("ctx"), t.get("effort"), t.get("mode"), t.get("fast"), t.get("since"))
+        # Every row field the lanes and the chat chip derive from (2026-09-06). `context` is the row's
+        # key (the tmux vars and the SDK merge both write it); the sig read `ctx`, which no row carries,
+        # so a context-% change never busted the cache and the lane's battery waited on the bucket.
+        # The rest were never keyed: the fast-mode refusal reason (the lane's `fast` blanks on it), the
+        # model-switch bit (the chip's switching dots), the subagent pill, and the background-task ids
+        # behind the awaiting badge. Not keyed on purpose: `snapT` (the snapshot's clock, not a fact
+        # about the session) and `interrupting` (the merged row never carries it — the SDK merge copies
+        # an explicit key list — and the stop click marks the views dirty itself).
+        sig["t:" + s] = (t.get("state"), t.get("model"), t.get("context"), t.get("effort"), t.get("mode"),
+                         t.get("fast"), t.get("since"), t.get("fastReason"), bool(t.get("modelPending")),
+                         _row_items_sig(t.get("subagents")), _row_ids_sig(t.get("bgTasks")))
     return tuple(sorted(sig.items()))
+
+
+def _row_items_sig(rows):
+    """A liveness row's list of dicts (the live subagents) as an immutable, comparable value for the view
+    signature: each dict's sorted items. The lane ships the whole list, so any field change counts."""
+    return tuple(tuple(sorted(r.items())) if isinstance(r, dict) else r for r in (rows or ()))
+
+
+def _row_ids_sig(tasks):
+    """The background-task ids off a liveness row, for the view signature: the awaiting badge and its task
+    list key on which tasks exist (toolUseId), not on a task's progress fields."""
+    return tuple(str(t.get("toolUseId") or "") for t in (tasks or ()) if isinstance(t, dict))
 
 
 def _cached_feed(now, tmux, sig, connect=False):
@@ -34210,6 +34310,26 @@ def _cached_timeline(now, tmux, sig, connect=False):
     _PERF_STATS.build("timeline", False, time.monotonic() - _t0)
     _built_timeline[:] = [sig, tl, time.time(), started]
     return tl
+
+
+def _timeline_skeleton(tl):
+    """The {type:"data"} lanes frame's body, PROJECTED from a full timeline build (2026-09-06): the same
+    dict minus the heavy time-plotted detail — turns, judging, messages, which ride the {type:"bars"}
+    message. It keeps the BUILD's clock (`now`), not the cycle's: the frame is deduped per rebuild
+    (_skeleton_sig) and is the pane's clock sample; the bars frame carries the same clock. A shallow copy,
+    never a mutation: `tl` is the cached build (_built_timeline[1]), shared with every later cycle and the
+    identity key of the bars and lanes wire caches."""
+    return {**tl, "turns": {}, "judging": [], "messages": []}
+
+
+def _skeleton_sig(skel):
+    """The lanes frame's dedup signature: the whole skeleton, build clock included. The frame nests the
+    skeleton under `data`, so _dedup_sig's TOP-LEVEL strip never reached its `now` — and here it must not:
+    a new build stamps a new clock, and that is the event the frame goes on (once per rebuild, so at most
+    once per 5 s bucket on a quiet timeline, never on an unchanged cycle). The first cut stripped the clock
+    the way tests/test_payload_dedup_invariant.py has the top level do, and left a quiet timeline with no
+    clock sample until the 60 s repost (review 2026-09-06; the WARM note in _push)."""
+    return json.dumps(skel, sort_keys=True, default=str)
 
 
 def _run_tier(fn):
