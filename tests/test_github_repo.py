@@ -10,15 +10,19 @@ Throwaway temp repos with fabricated origins (example-org/notes-api — the demo
 reaches a network (no fetch, no ls-remote — `remote get-url` reads config). The registry-keyed check
 uses a PRIVATE synthetic sid (the goal-store fixture rule, applied to the names registry too).
 
-Also here: _tree_of's re-validated "not a repo" verdict (a directory that becomes a repo after its
-first build is found without a kernel restart), _git_config_file's hand-built layouts (a relative
-gitdir, a gitdir with no commondir), and _session_cwd — the one derivation of a session's directory
-the chat frame and the feed's session rows share, so a never-registered session links the same repo
-on both.
+Also here: _tree_of's evidence-keyed verdict (a directory that becomes a repo after its first build is
+found without a kernel restart; a `.git` git rejects is asked about once, then costs stats), the
+pointer memos of a tree that dies or changes shape under a live session (_pointer_mtime), the
+inbound postal card's `peerHost` (the chat resolves a sender's repo by host and name),
+_git_config_file's hand-built layouts (a relative gitdir, a gitdir with no commondir), and
+_session_cwd — the one derivation of a session's directory the chat frame and the feed's session
+rows share, so a never-registered session links the same repo on both.
 """
 import inspect
+import io
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -226,7 +230,7 @@ class LateRepo(unittest.TestCase):
     def test_a_directory_that_becomes_a_repo_is_found_without_a_restart(self):
         self.assertIsNone(km._github_repo_of(self.proj))
         self.assertEqual(km._tree_of(self.proj), ("", ""))
-        self.assertEqual(km._tree_cache.get(self.proj), "", "the non-repo verdict is cached")
+        self.assertEqual(km._tree_cache.get(self.proj), ("", None), "the non-repo verdict is cached, with its evidence: no .git on the chain")
         self._init_with_origin(self.proj)
         self.assertEqual(km._github_repo_of(self.proj), REPO, "the next call sees the new tree")
         top, br = km._tree_of(self.proj)
@@ -262,11 +266,255 @@ class LateRepo(unittest.TestCase):
             km.subprocess.run = real_run
 
     def test_the_chain_check_is_a_stat_walk_up_to_the_root(self):
-        self.assertFalse(km._dotgit_on_chain(self.sub))
-        os.mkdir(os.path.join(self.proj, ".git"))          # any .git on the chain, a directory here
-        self.assertTrue(km._dotgit_on_chain(self.sub))
-        self.assertTrue(km._dotgit_on_chain(self.proj))
-        self.assertFalse(km._dotgit_on_chain(self.root), "an ancestor of the .git is not on its chain")
+        self.assertIsNone(km._dotgit_on_chain(self.sub))
+        dotgit = os.path.join(self.proj, ".git")
+        os.mkdir(dotgit)                                   # any .git on the chain, a directory here
+        ev = km._dotgit_on_chain(self.sub)
+        self.assertEqual((ev[0], ev[2]), (dotgit, False), "the evidence: the entry's path, and that it is a directory")
+        self.assertEqual(ev[1], os.stat(dotgit).st_mtime)
+        self.assertEqual(km._dotgit_on_chain(self.proj), ev)
+        self.assertIsNone(km._dotgit_on_chain(self.root), "an ancestor of the .git is not on its chain")
+
+
+def _count_git(store):
+    """Patch km.subprocess.run to tally git queries by their distinguishing word; returns the restore."""
+    real_run = km.subprocess.run
+
+    def counting(*a, **k):
+        argv = a[0] if a else k.get("args")
+        if isinstance(argv, (list, tuple)):
+            for key in ("--show-toplevel", "--abbrev-ref", "get-url"):
+                if key in argv:
+                    store[key] = store.get(key, 0) + 1
+        return real_run(*a, **k)
+    km.subprocess.run = counting
+    return lambda: setattr(km.subprocess, "run", real_run)
+
+
+class RejectedDotGit(unittest.TestCase):
+    """A `.git` on the chain that git REJECTS — an empty directory; a worktree pointer whose main clone is
+    gone (this repo's own worktree convention produces it whenever the clone is removed or re-cloned) —
+    is asked about ONCE. The stat walk is a superset of git's discovery, so re-validating a not-a-repo
+    verdict by the entry's mere presence forked `git rev-parse` on every _tree_of call for the life of
+    the kernel, three per chat build and one per session per feed build (review find, 2026-09-06). The
+    verdict is filed on the evidence itself — the entry's path and mtime, and for a pointer whether its
+    gitdir exists — so only a change to that evidence re-asks git."""
+
+    def setUp(self):
+        self._saved_env = {k: os.environ.get(k) for k in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")}
+        os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+        os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+        self.root = tempfile.mkdtemp()
+        if km._dotgit_on_chain(self.root):
+            self.skipTest("the temp root sits inside a repository; these need a directory outside every tree")
+        self.forks = {}
+        self.addCleanup(_count_git(self.forks))
+
+    def tearDown(self):
+        for k, v in self._saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _build(self, d, n=3):
+        """What the builds cost: n rounds of the two scwd calls build_session makes plus the feed's one."""
+        out = []
+        for _ in range(n):
+            out.append((km._tree_of(d), km._github_repo_of(d), km._github_repo_of(d)))
+        return out
+
+    def test_an_empty_dot_git_directory_is_asked_once_then_costs_stats_until_git_init_fills_it(self):
+        proj = os.path.join(self.root, "proj")
+        sub = os.path.join(proj, "src")
+        os.makedirs(sub)
+        dotgit = os.path.join(proj, ".git")
+        os.mkdir(dotgit)
+        os.utime(dotgit, (1_600_000_000, 1_600_000_000))   # an old mtime: the init below is a definite change
+        self.assertEqual(self._build(sub), [(("", ""), None, None)] * 3)
+        self.assertEqual(self.forks, {"--show-toplevel": 1}, "git rejects the empty .git once; no build after it forks")
+        # `git init` populates the directory (its mtime moves): the next call asks git again and finds the tree
+        _git("init", "-q", "-b", "main", cwd=proj)
+        _git("remote", "add", "origin", HTTPS_ORIGIN, cwd=proj)
+        self.assertEqual(km._github_repo_of(sub), REPO)
+        self.assertEqual(self.forks["--show-toplevel"], 2)
+
+    def test_a_worktree_whose_main_clone_was_removed_is_asked_once_and_found_again_when_the_clone_is_back(self):
+        main = _repo(self.root, "main", HTTPS_ORIGIN)
+        wt = os.path.join(self.root, "main-x")
+        _git("worktree", "add", "-q", "-b", "x", wt, "HEAD", cwd=main)
+        self.assertEqual(km._github_repo_of(wt), REPO, "a live worktree names the clone's repo")
+        backup = os.path.join(self.root, "backup")
+        shutil.copytree(main, backup, symlinks=True)
+        shutil.rmtree(main)                              # the pointer file in wt/.git now names a gitdir that is gone
+        self.forks.clear()
+        self.assertEqual(self._build(wt), [(("", ""), None, None)] * 3,
+                         "a dangling pointer is no tree — the found verdict does not outlive the clone it names")
+        self.assertEqual(self.forks, {"--show-toplevel": 1}, "asked once: the pointer has not changed since git rejected it")
+        # the clone restored from a backup at the same path — the pointer file untouched — makes its gitdir exist
+        # again, which is part of the evidence: the next call asks git again
+        shutil.move(backup, main)
+        self.assertEqual(km._github_repo_of(wt), REPO)
+        self.assertEqual(self.forks["--show-toplevel"], 2)
+        self.assertEqual(km._github_repo_of(wt), REPO)
+        self.assertEqual(self.forks["--show-toplevel"], 2, "and the found verdict holds")
+
+    def test_a_rewritten_pointer_re_asks_git(self):
+        # `git worktree repair` rewrites the worktree's .git file in place; the mtime is the evidence that moved
+        main = _repo(self.root, "main", HTTPS_ORIGIN)
+        wt = os.path.join(self.root, "main-y")
+        _git("worktree", "add", "-q", "-b", "y", wt, "HEAD", cwd=main)
+        pointer = os.path.join(wt, ".git")
+        good = open(pointer).read()
+        with open(pointer, "w") as f:
+            f.write("gitdir: %s\n" % os.path.join(self.root, "nowhere", ".git", "worktrees", "y"))
+        os.utime(pointer, (1_600_000_000, 1_600_000_000))
+        self.assertEqual(self._build(wt), [(("", ""), None, None)] * 3)
+        self.assertEqual(self.forks, {"--show-toplevel": 1})
+        with open(pointer, "w") as f:
+            f.write(good)
+        self.assertEqual(km._github_repo_of(wt), REPO, "the repaired pointer is new evidence")
+        self.assertEqual(self.forks["--show-toplevel"], 2)
+
+    def test_a_git_failure_that_is_no_verdict_is_not_cached(self):
+        # a timeout (or no git binary) is not git's answer: the next call asks again instead of serving ""
+        proj = _repo(self.root, "proj", HTTPS_ORIGIN)
+        real_run = km.subprocess.run
+        state = {"fail": True}
+
+        def flaky(*a, **k):
+            argv = a[0] if a else k.get("args")
+            if state["fail"] and isinstance(argv, (list, tuple)) and "--show-toplevel" in argv:
+                state["fail"] = False
+                raise subprocess.TimeoutExpired(argv, 2)
+            return real_run(*a, **k)
+        km.subprocess.run = flaky
+        try:
+            self.assertEqual(km._tree_of(proj), ("", ""), "this build shows nothing")
+            self.assertNotIn(proj, km._tree_cache, "and nothing is cached")
+            top, br = km._tree_of(proj)
+            self.assertEqual((os.path.realpath(top), br), (os.path.realpath(proj), "main"), "the next build asks again")
+        finally:
+            km.subprocess.run = real_run
+
+
+class DeadOrReshapedTree(unittest.TestCase):
+    """The pointer memos (_head_path_cache, _config_path_cache) name files inside a tree that can die or
+    change shape under a live session — the checkout deleted, a plain repo replaced by a worktree at the
+    same path. Memoized forever, the dead path made every build fork `rev-parse --abbrev-ref` and
+    `remote get-url` (review find, 2026-09-06). Now the reader evicts a path that stops resolving and
+    resolves once more; a tree with no `.git` left is not a tree (_tree_of's evidence sees the entry go)."""
+
+    def setUp(self):
+        self._saved_env = {k: os.environ.get(k) for k in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")}
+        os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+        os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+        self.root = tempfile.mkdtemp()
+        if km._dotgit_on_chain(self.root):
+            self.skipTest("the temp root sits inside a repository; these need a directory outside every tree")
+        self.forks = {}
+        self.addCleanup(_count_git(self.forks))
+
+    def tearDown(self):
+        for k, v in self._saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _builds(self, d, n=3):
+        return [(km._tree_of(d)[1], km._github_repo_of(d)) for _ in range(n)]
+
+    def test_a_checkout_deleted_under_a_live_session_costs_one_re_ask_then_stats(self):
+        d = _repo(self.root, "web", HTTPS_ORIGIN)
+        self.assertEqual(self._builds(d), [("main", REPO)] * 3)
+        self.forks.clear()
+        shutil.rmtree(d)
+        self.assertEqual(self._builds(d), [("", None)] * 3, "a deleted tree shows nothing — never a stale branch or repo")
+        self.assertEqual(self.forks, {"--show-toplevel": 1},
+                         "the .git entry is gone: one re-ask of the toplevel, then no fork of any kind")
+        # the dead tree's pointer memos are never consulted again (the toplevel verdict is "" now); a tree
+        # re-created at that path re-asks the toplevel first, and a memo path that no longer resolves is
+        # evicted by its reader then (the reshape test below) — nothing here needs a cache sweep
+
+    def test_a_plain_repo_replaced_by_a_worktree_at_the_same_path_re_resolves_its_pointers_once(self):
+        solo = _repo(self.root, "solo", HTTPS_ORIGIN)
+        self.assertEqual(self._builds(solo), [("main", REPO)] * 3)
+        other = _repo(self.root, "other", "https://github.com/other-org/other-repo.git")
+        shutil.rmtree(solo)
+        _git("worktree", "add", "-q", "-b", "reshaped", solo, "HEAD", cwd=other)   # .git is a FILE now
+        self.forks.clear()
+        self.assertEqual(self._builds(solo), [("reshaped", "other-org/other-repo")] * 3,
+                         "the new shape's branch and repo, from its pointer file")
+        self.assertEqual(self.forks, {"--show-toplevel": 1, "--abbrev-ref": 1, "get-url": 1},
+                         "the .git entry changed kind (new evidence: one re-ask of the toplevel) and each pointer "
+                         "re-resolved once, then everything is memoized")
+        top = os.path.realpath(solo)
+        self.assertEqual(os.path.realpath(km._config_path_cache[top]), os.path.realpath(os.path.join(other, ".git", "config")))
+
+    def test_a_removed_sibling_worktree_costs_no_fork_after_its_re_ask(self):
+        # the repo convention: registered on the clone, working on a sibling worktree named by lastEditPath;
+        # `git worktree remove` when finished deletes the worktree dir and its private gitdir
+        main = _repo(self.root, "main", HTTPS_ORIGIN)
+        wt = os.path.join(self.root, "main-web")
+        _git("worktree", "add", "-q", "-b", "web", wt, "HEAD", cwd=main)
+        self.assertEqual(self._builds(wt), [("web", REPO)] * 3)
+        self.assertEqual(self._builds(main), [("main", REPO)] * 3)
+        self.forks.clear()
+        _git("worktree", "remove", "--force", wt, cwd=main)
+        self.assertEqual(self._builds(wt), [("", None)] * 3)
+        self.assertEqual(self.forks, {"--show-toplevel": 1})
+        self.assertEqual(self._builds(main), [("main", REPO)] * 3, "the clone is untouched")
+        self.assertEqual(self.forks, {"--show-toplevel": 1}, "…and still served from its memos")
+
+    def test_a_subdirectory_cwd_is_memoized_like_the_toplevel(self):
+        # _git_branch(scwd) for a session whose cwd is a subdirectory of its tree forked per build before:
+        # no .git of its own to key on. Through _tree_of it rides the toplevel's HEAD memo.
+        d = _repo(self.root, "deep", HTTPS_ORIGIN)
+        sub = os.path.join(d, "src", "pkg")
+        os.makedirs(sub)
+        self.assertEqual([km._git_branch(sub) for _ in range(3)], ["main"] * 3)
+        self.assertEqual(self.forks, {"--show-toplevel": 1, "--abbrev-ref": 1})
+        _git("checkout", "-q", "-b", "topic", cwd=d)
+        self.assertEqual(km._git_branch(sub), "topic", "a HEAD move is still the refresh event")
+
+
+class PostalCardSenderHost(unittest.TestCase):
+    """The inbound postal card carries the sender's HOST (`peerHost`, the message log's from_host: "" for
+    this kernel's own sessions, a peer's name otherwise) beside the sender's name, so the chat links the
+    body's `#123` against exactly the sender's session — the name alone let a remote homonym borrow a
+    local session's repo when its host was not attached to the dashboard (review find, 2026-09-06).
+    Synthetic records only (invented sessions, placeholder ids, TESTHOST)."""
+    ME = "11111111-2222-3333-4444-555555555555"
+    SENDER = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    MID = "1700000000.11111_22222.TESTHOST"
+
+    def _card(self, **rec):
+        row = {"id": self.MID, "from": "api", "fromId": self.SENDER, "fromHost": "", "toId": self.ME,
+               "body": "see #12", "kind": "coordinate", "t": 1700000000, "park": False}
+        row.update(rec)
+        ev = {"kind": "user", "md": "<!-- romp-msg-id: %s -->" % self.MID, "uuid": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+              "ts": "x", "human": False}
+        saved_sum, saved_err = km._msg_summaries, km.sys.stderr
+        km._msg_summaries, km.sys.stderr = (lambda: {}), io.StringIO()
+        try:
+            out = km._hydrate_postal([ev], {self.MID: row}, self.ME)
+        finally:
+            km._msg_summaries, km.sys.stderr = saved_sum, saved_err
+        self.assertEqual([e["kind"] for e in out], ["postal-service"])
+        return out[0]
+
+    def test_a_local_senders_card_names_this_kernels_own_host_as_the_empty_string(self):
+        card = self._card()
+        self.assertEqual((card["direction"], card["peer"], card["peerHost"]), ("in", "api", ""))
+
+    def test_a_remote_senders_card_names_the_host_the_log_stamped(self):
+        card = self._card(fromHost="TESTHOST")
+        self.assertEqual((card["peer"], card["peerHost"]), ("api", "TESTHOST"))
+
+    def test_a_nameless_remote_sender_keeps_its_host_stub_name_and_the_host_field(self):
+        card = self._card(**{"from": "?", "fromHost": "TESTHOST", "fromId": "77777777-8888-9999-aaaa-bbbbbbbbbbbb"})
+        self.assertEqual((card["peer"], card["peerHost"]), ("TESTHOST:77777777", "TESTHOST"))
 
 
 class ConfigFile(unittest.TestCase):

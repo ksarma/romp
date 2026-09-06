@@ -20550,6 +20550,11 @@ def _hydrate_postal(events, index, sid=None):
                             (rec.get("fromHost", "") + ":" if rec.get("fromHost") else "")
                             + (rec["fromId"][:8] if rec["fromId"] else "?"))
                     cards.append({"kind": "postal-service", "direction": "in", "peer": frm,
+                                  # the sender's HOST as the log stamped it ("" = this kernel's own): the chat
+                                  # resolves the sender's repository for the body's PR links by host AND name,
+                                  # so a remote homonym never borrows a local session's repo (review find,
+                                  # 2026-09-06); the name alone was the rule before this field existed
+                                  "peerHost": rec.get("fromHost", ""),
                                   "color": _name_color(rec["fromId"]) if rec["fromId"] else None,
                                   "body": rec["body"], "summary": caption_for(rec["id"]),   # incoming caption (full body on expand)
                                   "intent": _postal_intent(rec.get("kind"), rec.get("body")),
@@ -23057,55 +23062,112 @@ def _norm_branch(br):
     return "" if br == "HEAD" else br
 
 
-_tree_cache = {}   # dir -> git toplevel ("" = not a repo) — where a path's tree ROOT is; branch stays live
+_tree_cache = {}   # dir -> (git toplevel or "", the evidence the verdict was filed on) — see _tree_of
+
+
+def _gitdir_of(top):
+    """The git directory behind `top/.git`: the entry itself when it is a directory; for a WORKTREE (or a
+    submodule), whose .git is a one-line FILE ('gitdir: <private-dir>'), the directory that line names,
+    resolved against `top` when relative. '' when there is neither. The one reader of the pointer for
+    the HEAD file, the config file and _tree_of's evidence, which each parsed it on their own before."""
+    dotgit = os.path.join(top, ".git")
+    try:
+        if os.path.isdir(dotgit):
+            return dotgit
+        if os.path.isfile(dotgit):
+            with open(dotgit) as f:
+                line = f.readline().strip()
+            if line.startswith("gitdir:"):
+                gd = line[len("gitdir:"):].strip()
+                if gd:
+                    return gd if os.path.isabs(gd) else os.path.normpath(os.path.join(top, gd))
+    except OSError:
+        pass
+    return ""
 
 
 def _dotgit_on_chain(d):
-    """True when a `.git` (directory, or a worktree's pointer file) exists at `d` or any ancestor — the
-    chain `git rev-parse --show-toplevel` walks to find a tree. One stat per path component, no fork."""
+    """The first `.git` entry (a directory, or a worktree's pointer file) at `d` or an ancestor, as
+    evidence — (path, mtime, is_pointer_file) — or None when the chain carries none. One stat per path
+    component up to the hit, no fork. This is NOT git's discovery, only a reason to run it: the walk is
+    lexical (abspath; git walks the physical path), stops at neither GIT_CEILING_DIRECTORIES nor a
+    filesystem boundary, and validates nothing — an empty `.git` directory, or a pointer whose gitdir is
+    gone (a worktree whose main clone was removed), is an entry here and a rejection from git. _tree_of
+    keys its verdict on this evidence, so a `.git` git rejects costs one fork, not one per call."""
     p = os.path.abspath(d)
     while True:
-        if os.path.exists(os.path.join(p, ".git")):
-            return True
+        dg = os.path.join(p, ".git")
+        try:
+            st = os.stat(dg)
+        except OSError:
+            st = None
+        if st is not None:
+            return dg, st.st_mtime, stat.S_ISREG(st.st_mode)
         parent = os.path.dirname(p)
         if parent == p:
-            return False
+            return None
         p = parent
 
 
+def _verdict_key(ev, found):
+    """The part of the chain evidence (_dotgit_on_chain) a verdict is filed on, and holds while it is equal.
+    A pointer FILE is keyed on its path, its mtime and whether the gitdir it names exists, found or not:
+    git never rewrites the pointer in normal use (`git worktree repair` does, and that moves the mtime),
+    and its target vanishing (the main clone removed) or reappearing (restored from a backup, the pointer
+    untouched) is exactly what flips git's answer. A `.git` DIRECTORY git accepted is keyed on its path
+    alone — its mtime churns with every index write; one git rejected adds the mtime, which `git init`
+    filling it moves. None when the chain carries no `.git` at all."""
+    if ev is None:
+        return None
+    path, mt, is_file = ev
+    if is_file:
+        return path, mt, os.path.isdir(_gitdir_of(os.path.dirname(path)))
+    return (path,) if found else (path, mt)
+
+
 def _tree_of(d):
-    """(toplevel, branch) of the git tree containing directory `d`, ("", "") when not in one. The toplevel
-    mapping is cached per directory. A FOUND toplevel changes only if the tree is moved/deleted — then the
-    branch read below comes back empty and every consumer hides the row. A "not a repo" verdict is NOT
-    final: the directory becomes a tree the moment the session runs `git init` (then `gh repo create`),
-    and a cached "" kept its GitHub repo (and every tree-derived row) hidden until a kernel restart while
-    gitBranch, re-derived per build, showed normally — silent degradation (review find, 2026-09-06). So a
-    cached "" is trusted only while no `.git` exists on the chain git's own discovery walks (`d` and its
-    ancestors, _dotgit_on_chain): a non-repo cwd costs one stat per path component per build, no fork,
-    and a `.git` appearing anywhere on that chain sends the next call back to git. The branch rides
-    _git_branch's own HEAD-mtime cache so it stays current without a second discipline."""
+    """(toplevel, branch) of the git tree containing directory `d`, ("", "") when not in one. The verdict is
+    cached per directory WITH THE EVIDENCE it was reached under — the first `.git` on the chain from `d`
+    upward (_dotgit_on_chain), reduced to the part that decides git's answer (_verdict_key) — and trusted
+    while that evidence holds, so a build costs stats and never a fork until something on the chain
+    changes:
+      * a FOUND toplevel re-asks git when its `.git` entry goes (the tree deleted or moved: the walk reaches
+        another entry or none), changes kind (a plain repo replaced by a worktree at the same path), or —
+        for a worktree — when its pointer is rewritten or the clone it names disappears; a nested repo
+        appearing below the toplevel re-asks too. Before, a found toplevel was trusted for the life of the
+        kernel and a dead one served a stale branch and repo, or forked per build (review find, 2026-09-06);
+      * a NOT-A-REPO verdict re-asks when a `.git` appears on the chain, or the one git rejected changes
+        (its mtime, or a pointer's target coming back). So a directory becoming a tree the moment the
+        session runs `git init` (then `gh repo create`) is found on the next call — a cached "" once kept
+        its GitHub repo (and every tree-derived row) hidden until a kernel restart while gitBranch,
+        re-derived per build, showed normally (review find, 2026-09-06) — while a `.git` that git REJECTS
+        (an empty directory; a worktree pointer whose main clone was removed, which this repo's own
+        worktree convention produces) is asked about once and then costs stats only: re-validating it by
+        the entry's mere presence forked `git rev-parse` on every call, forever (review find, 2026-09-06).
+    A git failure that is not a verdict — a timeout, no git binary — caches nothing: the next call asks
+    again rather than serving an answer git never gave. The branch rides _tree_branch's own HEAD-mtime
+    memo so it stays current without a second discipline."""
     if not d:
         return "", ""
-    top = _tree_cache.get(d)
-    if top == "" and _dotgit_on_chain(d):       # the non-repo verdict is stale once a .git appears (see above)
-        top = None
-    if top is None:
-        top = ""
+    ev = _dotgit_on_chain(d)
+    hit = _tree_cache.get(d)
+    if hit is not None and hit[1] == _verdict_key(ev, bool(hit[0])):
+        top = hit[0]
+    else:
         try:
             r = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"],
                                capture_output=True, text=True, timeout=2)
-            if r.returncode == 0:
-                top = r.stdout.strip()
         except Exception:
-            top = ""
+            return "", ""                              # not git's answer: nothing to cache
+        top = r.stdout.strip() if r.returncode == 0 else ""
         if len(_tree_cache) > 512:                     # bounded: distinct edit dirs, not unbounded growth
             _tree_cache.clear()
-        _tree_cache[d] = top
-    return top, (_git_branch(top) if top else "")
+        _tree_cache[d] = (top, _verdict_key(ev, bool(top)))
+    return top, (_tree_branch(top) if top else "")
 
 
-_branch_cache = {}   # cwd -> (branch, head_mtime) — git branch derived straight from the FOLDER
-_head_path_cache = {}   # cwd -> the resolved HEAD file path (worktrees indirect through a .git FILE)
+_branch_cache = {}   # toplevel -> (branch, head_mtime) — git branch derived straight from the FOLDER
+_head_path_cache = {}   # toplevel -> the resolved HEAD file path (worktrees indirect through a .git FILE)
 
 
 def _git_head_file(cwd):
@@ -23114,67 +23176,79 @@ def _git_head_file(cwd):
     that private dir. Resolved once per cwd (the pointer never moves for a live worktree) — treating the
     worktree shape as uncacheable made _git_branch fork 2-3 `git rev-parse` per session per rebuild
     forever, ~10-40 forks/s on a busy kernel whose convention is one worktree per session (the Mac 66%
-    CPU burn, 2026-08-16, sampled as __fork at 68/2s). '' when there is no resolvable HEAD."""
+    CPU burn, 2026-08-16, sampled as __fork at 68/2s). '' when there is no resolvable HEAD — and that
+    answer is NOT memoized: a directory with no `.git` today may carry one on the next call, and the
+    re-resolution is two stats. A memoized path that stops resolving is evicted by its reader
+    (_pointer_mtime)."""
     hp = _head_path_cache.get(cwd)
-    if hp is not None:
+    if hp:
         return hp
-    hp = ""
-    dotgit = os.path.join(cwd, ".git")
-    try:
-        if os.path.isdir(dotgit):
-            hp = os.path.join(dotgit, "HEAD")
-        elif os.path.isfile(dotgit):
-            with open(dotgit) as f:
-                line = f.readline().strip()
-            if line.startswith("gitdir:"):
-                gd = line[len("gitdir:"):].strip()
-                if not os.path.isabs(gd):
-                    gd = os.path.normpath(os.path.join(cwd, gd))
-                hp = os.path.join(gd, "HEAD")
-    except OSError:
-        hp = ""
-    if len(_head_path_cache) > 512:                  # bounded, like _tree_cache
-        _head_path_cache.clear()
-    _head_path_cache[cwd] = hp
+    gd = _gitdir_of(cwd)
+    hp = os.path.join(gd, "HEAD") if gd else ""
+    if hp:
+        if len(_head_path_cache) > 512:                  # bounded, like _tree_cache
+            _head_path_cache.clear()
+        _head_path_cache[cwd] = hp
     return hp
 
 
-def _git_branch(cwd):
-    """The git branch for a directory, derived DIRECTLY from the folder — so it shows the instant a session
-    is opened, before any turn writes gitBranch into the transcript (the user 2026-06-24: branch should be a
-    property of the dir, known in advance). Cached per cwd, refreshed when the resolved HEAD file changes
-    (worktrees included — see _git_head_file). '' when not a repo / detached / unavailable. Applies to BOTH
-    backends (a never-run tmux session shows it now too)."""
-    if not cwd:
+def _pointer_mtime(resolve, cache, top):
+    """The mtime of the file `resolve(top)` names — the memo key for what that file holds — or None when
+    there is no such file. A memoized path that no longer resolves is EVICTED from `cache` and resolved
+    once more before giving up: the tree died under a live session, or changed shape (a plain repo's
+    .git directory replaced by a worktree's pointer file at the same path). Left in place, the dead
+    path made every build fork the query its memo should have answered (`rev-parse --abbrev-ref` and
+    `remote get-url`, review find, 2026-09-06). None is git's own "not a repository" for that read."""
+    for _attempt in (0, 1):
+        p = resolve(top)
+        if not p:
+            return None
+        try:
+            return os.path.getmtime(p)
+        except OSError:
+            cache.pop(top, None)
+    return None
+
+
+def _tree_branch(top):
+    """The branch checked out at a tree's toplevel, derived DIRECTLY from the folder — so it shows the
+    instant a session is opened, before any turn writes gitBranch into the transcript (the user
+    2026-06-24: branch should be a property of the dir, known in advance). Memoized on the resolved HEAD
+    file's mtime (worktrees included — see _git_head_file). '' when detached or unavailable; a HEAD file
+    that cannot be found is git's own "not a repository" and is '' without a fork."""
+    mt = _pointer_mtime(_git_head_file, _head_path_cache, top)
+    if mt is None:
         return ""
-    cwd = os.path.expanduser(cwd)
-    mt = None
-    try:
-        hp = _git_head_file(cwd)
-        if hp:
-            mt = os.path.getmtime(hp)
-    except OSError:
-        pass
-    hit = _branch_cache.get(cwd)
-    if hit is not None and mt is not None and hit[1] == mt:
+    hit = _branch_cache.get(top)
+    if hit is not None and hit[1] == mt:
         return hit[0]
     br = ""
     try:
-        r = subprocess.run(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"],
+        r = subprocess.run(["git", "-C", top, "rev-parse", "--abbrev-ref", "HEAD"],
                            capture_output=True, text=True, timeout=2)
-        if r.returncode == 0:
-            br = r.stdout.strip()
-            if br == "HEAD":          # detached HEAD → no branch name
-                br = ""
     except Exception:
-        br = ""
-    if mt is not None:
-        _branch_cache[cwd] = (br, mt)
+        return ""                                        # not git's answer: nothing to memoize
+    if r.returncode == 0:
+        br = r.stdout.strip()
+        if br == "HEAD":          # detached HEAD → no branch name
+            br = ""
+    _branch_cache[top] = (br, mt)
     return br
 
 
+def _git_branch(cwd):
+    """The git branch for a directory: the branch of the tree containing it (_tree_of, then
+    _tree_branch), '' when not in one / detached / unavailable. Applies to BOTH backends (a never-run
+    tmux session shows it too). Going through _tree_of means a session cwd that is a SUBDIRECTORY of its
+    tree is memoized like the toplevel — with no `.git` of its own to key on it forked `git rev-parse`
+    on every build — and a directory outside every tree costs the evidence walk, never a fork."""
+    if not cwd:
+        return ""
+    return _tree_of(os.path.expanduser(cwd))[1]
+
+
 _repo_cache = {}          # tree toplevel -> (owner/repo or None, config mtime): the GitHub repo its origin names
-_config_path_cache = {}   # tree toplevel -> the git config file holding its remotes ("" = unresolvable)
+_config_path_cache = {}   # tree toplevel -> the git config file holding its remotes
 
 
 def _git_config_file(top):
@@ -23182,36 +23256,28 @@ def _git_config_file(top):
     mtime is the event a remote change produces. .git/config for a plain repo; a WORKTREE's .git is a
     one-line FILE naming its private gitdir, whose `commondir` file names the shared dir (relative to
     that gitdir, usually `..`) carrying the one config every worktree reads. Resolved once per tree, as
-    _git_head_file resolves HEAD: the pointers never move for a live tree. '' when there is none."""
+    _git_head_file resolves HEAD: the pointers never move for a live tree. '' when there is none — not
+    memoized, like _git_head_file's ''; a memoized path that stops resolving is evicted by its reader
+    (_pointer_mtime)."""
     cp = _config_path_cache.get(top)
-    if cp is not None:
+    if cp:
         return cp
     cp = ""
-    dotgit = os.path.join(top, ".git")
-    try:
-        if os.path.isdir(dotgit):
-            cp = os.path.join(dotgit, "config")
-        elif os.path.isfile(dotgit):
-            with open(dotgit) as f:
-                line = f.readline().strip()
-            if line.startswith("gitdir:"):
-                gd = line[len("gitdir:"):].strip()
-                if not os.path.isabs(gd):
-                    gd = os.path.normpath(os.path.join(top, gd))
-                common = gd
-                try:
-                    with open(os.path.join(gd, "commondir")) as f:
-                        rel = f.readline().strip()
-                    if rel:
-                        common = rel if os.path.isabs(rel) else os.path.normpath(os.path.join(gd, rel))
-                except OSError:
-                    pass
-                cp = os.path.join(common, "config")
-    except OSError:
-        cp = ""
-    if len(_config_path_cache) > 512:                # bounded, like _tree_cache
-        _config_path_cache.clear()
-    _config_path_cache[top] = cp
+    gd = _gitdir_of(top)
+    if gd:
+        common = gd
+        try:
+            with open(os.path.join(gd, "commondir")) as f:
+                rel = f.readline().strip()
+            if rel:
+                common = rel if os.path.isabs(rel) else os.path.normpath(os.path.join(gd, rel))
+        except OSError:
+            pass
+        cp = os.path.join(common, "config")
+    if cp:
+        if len(_config_path_cache) > 512:                # bounded, like _tree_cache
+            _config_path_cache.clear()
+        _config_path_cache[top] = cp
     return cp
 
 
@@ -23225,29 +23291,25 @@ def _github_repo_of(cwd):
     names no GitHub repository, and the clients then link nothing rather than guess one. Memoized per
     tree on the config file's mtime — `git remote set-url` writes that file, which is the event a
     remote change produces — so the pusher's per-build call costs a stat, not a fork (the _git_branch
-    discipline; the toplevel itself rides _tree_of's per-directory cache)."""
+    discipline; the toplevel itself rides _tree_of's per-directory cache). A tree whose config file
+    cannot be found has no remote for git to read either: None, without a fork."""
     if not cwd:
         return None
     top, _ = _tree_of(os.path.expanduser(cwd))
     if not top:
         return None
-    mt = None
-    try:
-        cp = _git_config_file(top)
-        if cp:
-            mt = os.path.getmtime(cp)
-    except OSError:
-        pass
+    mt = _pointer_mtime(_git_config_file, _config_path_cache, top)
+    if mt is None:
+        return None
     hit = _repo_cache.get(top)
-    if hit is not None and mt is not None and hit[1] == mt:
+    if hit is not None and hit[1] == mt:
         return hit[0]
     remote = _git_out(["remote", "get-url", "origin"], top)
     m = _GITHUB_REMOTE.match(remote) if remote else None
     repo = "%s/%s" % (m.group(1), m.group(2)) if m else None
-    if mt is not None:
-        if len(_repo_cache) > 512:
-            _repo_cache.clear()
-        _repo_cache[top] = (repo, mt)
+    if len(_repo_cache) > 512:
+        _repo_cache.clear()
+    _repo_cache[top] = (repo, mt)
     return repo
 
 
