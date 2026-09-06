@@ -198,9 +198,43 @@ class Relay(unittest.TestCase):
         branch = "\n".join(l for l in branch.splitlines() if not l.lstrip().startswith("//"))
         self.assertIn("window.__rompPaneToggle&&window.__rompPaneToggle('files',true)", branch)
         self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('files')", branch)
-        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null},'*')", branch)
+        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null},'*')", branch)
         for tok in ("__rompFeedWasOff", "viewFileOpened", "viewFileClosed", "'f-feed'"):
             self.assertNotIn(tok, branch, tok + " belongs to the feed route")
+
+    def test_the_pane_branch_forwards_the_todo_id_and_the_feed_route_does_not(self):
+        """The Waiting-on-you pane's detail link (plans/file-review.md, Slice 0) posts the same viewFile with
+        `todoId` — the user todo the path came from; the shell forwards it as-is (null for a chat click, which
+        carries none) so the viewer can tie its work back to the todo. The feed route, which no todo link
+        uses, forwards path + sid only, as before."""
+        js = km._LANDING_SETTINGS_JS
+        head = "if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');"
+        pane = js.split(head)[1].split("else if(m.romp==='viewFile')")[0]
+        code = "\n".join(l for l in pane.splitlines() if not l.lstrip().startswith("//"))
+        self.assertIn("todoId:m.todoId||null", code)
+        self.assertEqual(code.count("postMessage("), 1, "one forward, carrying the whole message")
+        feed = js.split("else if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');")[1].split("if(m.romp==='viewFileOpened')")[0]
+        self.assertNotIn("todoId", feed)
+        # the receiving end reads it as a string or nothing, and hands it to the viewer's open
+        files = (UI / "files.ts").read_text()
+        self.assertIn('typeof m.todoId === "string" ? m.todoId : null', files)
+        self.assertIn("openFileView(path, sid, { todoId })", files)
+
+    def test_the_relay_comment_names_the_todo_id_referent_a_user_todo_never_an_ask(self):
+        """CONTEXT.md (User todo, Avoid) lists "ask" because the feed payload's `asks` field already means the
+        card list. The relay comment above the pane branch is where the shell defines `todoId`, and it must
+        say "the todo", not "the ask" (ui/webview/file-view-vocab.test.ts pins the viewer's twin definition),
+        so the two definitions a reader sees side by side cannot drift apart."""
+        js = km._LANDING_SETTINGS_JS
+        head = "if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');"
+        lines = js.split(head)[0].rstrip("\n").split("\n")
+        start = len(lines)
+        while start > 0 and lines[start - 1].lstrip().startswith("//"):
+            start -= 1
+        comment = "\n".join(lines[start:])
+        self.assertIn("todoId", comment, "the comment directly above the pane branch defines todoId")
+        self.assertRegex(comment, r"\buser todo\b", "todoId is the user todo the path came from")
+        self.assertNotRegex(comment, r"(?i)\bask\b", "CONTEXT.md (User todo, Avoid): `asks` already means the feed's card list")
 
     def test_the_feed_route_is_the_else_branch_and_unchanged(self):
         js = km._LANDING_SETTINGS_JS

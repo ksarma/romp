@@ -5,7 +5,9 @@
 # Cross-platform: a launchd user agent on macOS, a systemd --user service on Linux.
 #   romp-service install     write + load the agent (auto-start at login)
 #   romp-service uninstall    unload + remove it
-#   romp-service status       installed? running?
+#   romp-service status       installed? running? which key source (file, or the credential
+#                             command with its selector), whether ExecStart runs the manager
+#                             through a shell, credential-shaped NAMES a unit or service.env carries
 # Safe + idle-free: the kernel is hardened (Origin gate + token) and the producer is
 # presence-gated (zero model calls when no browser is connected). Runs as a USER-level
 # agent (no root). PATH + ROMP_DIR are baked into the unit so the service finds
@@ -53,11 +55,19 @@ UNIT="$SYSTEMD_DIR/romp-manager.service"
 # (ROMP_EXPECTED_AUTH, say). API keys never go here: a key in a file is a copy of
 # the credential that outlives its rotation. Keys reach the manager through the
 # environment of whatever starts it (a shell startup file that loads them from a
-# secrets manager; see docs/reference.md, Service environment), and the sessions'
-# own key through Claude Code's apiKeyHelper. Values are read fresh on every
-# manager (re)start, so changing one never needs a reinstall.
-# ROMP_SERVICE_ENV_FILE overrides the path (tests).
-SERVICE_ENV_FILE="${ROMP_SERVICE_ENV_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/service.env}"
+# secrets manager; see docs/reference.md, "API keys on disk: the file mode"), and
+# the sessions' own key through Claude Code's apiKeyHelper — or, with
+# ROMP_CREDENTIAL_COMMAND set HERE (a non-secret command line), through that
+# command, which the kernel runs per launch and whose output it injects
+# (kernel/envsource.py; docs/reference.md, "Installing without keys on disk").
+# Values are read fresh on every manager (re)start, so changing one never needs
+# a reinstall. ROMP_SERVICE_ENV_FILE overrides the path (tests); ROMP_SERVICE_ENV is
+# the alias kernel/keysource.py accepts after it, resolved the same way here so an
+# install from a shell that set only the alias carries the path across
+# (_service_env_override writes the primary name, which the launcher and the kernel
+# read). Reading the primary alone made `romp keyswap`'s "install from this shell"
+# remedy write no override line from such a shell (review find, 2026-09-06).
+SERVICE_ENV_FILE="${ROMP_SERVICE_ENV_FILE:-${ROMP_SERVICE_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/service.env}}"
 
 # The instance-scoping env: the variables that say WHICH romp this service supervises.
 # A second OS user on one machine (a kernel handed to another person) shares the machine's
@@ -94,7 +104,8 @@ _instance_env_block() {
 }
 
 # The kernel resolves the env file's path from ITS OWN environment (kernel/keysource.py reads
-# ROMP_SERVICE_ENV_FILE, else ${XDG_CONFIG_HOME:-~/.config}/romp/service.env) — and the service gets
+# ROMP_SERVICE_ENV_FILE, else the alias ROMP_SERVICE_ENV, else ${XDG_CONFIG_HOME:-~/.config}/romp/service.env)
+# — and the service gets
 # neither variable from the installing shell. So a non-default path baked into EnvironmentFile= below
 # would be read by systemd/launchd and NOT by the kernel's live key read: `romp keyswap` would rewrite
 # a file the kernel never looks at (review find, 2026-09-04). Carry the resolved path across whenever
@@ -214,6 +225,189 @@ audit_install() {
     } 2>/dev/null || true
 }
 
+# ---- `status`: the key source and the unit's shape (2026-09-05) ----
+# Non-secret configuration only, read the way the kernel reads it (kernel/envsource.py): this
+# environment first, then the LAST assignment of the same name in service.env, one layer of matching
+# quotes stripped. Nothing here prints a value: `status` says WHICH source is in force and names the
+# selector, and lists credential-shaped NAMES (ANTHROPIC_API_KEY, *_API_KEY, *_TOKEN — the kernel's
+# rule) that a unit, a drop-in, the plist or service.env sets — never what they are set to.
+_svc_cfg() {   # <NAME> → its value, "" when set nowhere
+    local name="$1" line v
+    v="${!name:-}"                                 # a second statement: ${!name} must see name assigned
+    if [[ -z "$v" && -f "$SERVICE_ENV_FILE" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            [[ "$line" =~ ^${name}[[:space:]]*= ]] || continue
+            v="${line#*=}"
+            v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+        done < "$SERVICE_ENV_FILE"
+        if [[ ${#v} -ge 2 ]]; then
+            case "$v" in \"*\"|\'*\') v="${v:1:${#v}-2}" ;; esac
+        fi
+    fi
+    printf '%s' "$v"
+}
+
+_is_credential_name() {   # sdk_backend._is_credential_name's rule
+    case "$1" in ANTHROPIC_API_KEY|*_API_KEY|*_TOKEN) return 0 ;; *) return 1 ;; esac
+}
+
+_selector_word() {   # "(selector <name>)" | "(selector undeclared, N chars)" | "(no selector)" | "(selector file holds something that is not a name)"
+    # the token is printed by NAME only when ROMP_CREDENTIAL_NAMES declares it — an undeclared token
+    # could be anything, a pasted secret included, so it is described by its length alone
+    local f tok names n
+    f="$(_svc_cfg ROMP_CREDENTIAL_SELECTOR_FILE)"
+    [[ -n "$f" ]] || f="${XDG_CONFIG_HOME:-$HOME/.config}/romp/credential-selector"
+    [[ "$f" == "~/"* ]] && f="$HOME/${f#\~/}"
+    if [[ ! -f "$f" ]]; then printf '(no selector)'; return 0; fi
+    tok="$(head -c 4096 "$f" 2>/dev/null | tr -d '\r')"
+    tok="${tok#"${tok%%[![:space:]]*}"}"; tok="${tok%"${tok##*[![:space:]]}"}"
+    if [[ -z "$tok" ]]; then printf '(no selector)'; return 0; fi
+    if [[ ! "$tok" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then printf '(selector file holds something that is not a name)'; return 0; fi
+    names=",$(_svc_cfg ROMP_CREDENTIAL_NAMES),"; names="${names// /}"
+    if [[ "$names" == *",$tok,"* ]]; then printf '(selector %s)' "$tok"
+    else printf '(selector undeclared, %d chars)' "${#tok}"; fi
+}
+
+_join_names() {   # " a b c " → "a, b, c"
+    local names="$1"
+    names="${names# }"; names="${names% }"
+    printf '%s' "${names// /, }"
+}
+
+_split_env_words() {   # <Environment= body> → one word per line, systemd's rule (systemd.syntax(7), Quoting):
+    # whitespace-separated; a quoted stretch ("…" or '…') is part of ONE word with its quotes removed, so
+    # "A_TOKEN=x y" is one assignment and B_TOKEN=b inside "NOT=a B_TOKEN=b" is a value, not a name; a
+    # backslash escapes the next character, inside and outside quotes (\" does not close a quote, "\ "
+    # does not split a word); an unterminated quote ends the parse where systemd's ends: the words
+    # completed before it are printed (systemd had taken them into the environment by the time it logged
+    # "Invalid syntax, ignoring" for the rest), the word the quote opened is dropped with the rest of the
+    # body, and the status is 1. Approximate on purpose, since the output is NAMES: systemd's
+    # C-style escapes (\n, \xNN) become the character after the backslash, which can change a value but
+    # never which name an assignment sets. The assignments happen on separate lines: `local a=1 b=${#a}`
+    # expands ${#a} before `local` assigns a, so a one-line form read the CALLER's variable of that name.
+    local body word q c i n have out
+    body="$1"; word=""; q=""; have=0; out=""
+    n=${#body}
+    for (( i=0; i<n; i++ )); do
+        c="${body:i:1}"
+        if [[ "$c" == '\' ]]; then
+            (( i++ ))
+            (( i < n )) && word+="${body:i:1}"       # a trailing backslash escapes nothing
+            have=1
+        elif [[ -n "$q" ]]; then
+            if [[ "$c" == "$q" ]]; then q=""; else word+="$c"; fi
+        elif [[ "$c" == '"' || "$c" == "'" ]]; then
+            q="$c"; have=1
+        elif [[ "$c" == " " || "$c" == $'\t' ]]; then
+            [[ $have -eq 1 ]] && out+="$word"$'\n'
+            word=""; have=0
+        else
+            word+="$c"; have=1
+        fi
+    done
+    if [[ -n "$q" ]]; then                            # unterminated: the words before the quote stand, the rest is refused
+        printf '%s' "$out"
+        return 1
+    fi
+    [[ $have -eq 1 ]] && out+="$word"$'\n'
+    printf '%s' "$out"
+    return 0
+}
+
+_unit_credential_names() {   # <unit|drop-in|plist>... → credential-shaped NAMES set with a value, in order, deduped
+    (
+        set -f                                     # no globbing while word-splitting Environment= bodies
+        local f line body tok name val names=" "
+        for f in "$@"; do
+            [[ -f "$f" ]] || continue
+            if [[ "$f" == *.plist ]]; then
+                while IFS= read -r name; do
+                    [[ -n "$name" ]] || continue
+                    if _is_credential_name "$name" && [[ "$names" != *" $name "* ]]; then names+="$name "; fi
+                done < <(tr -d '\n' < "$f" | grep -o '<key>[A-Za-z_][A-Za-z0-9_]*</key>[[:space:]]*<string>[^<][^<]*</string>' \
+                         | sed 's/<key>\([^<]*\)<\/key>.*/\1/')
+                continue
+            fi
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                line="${line#"${line%%[![:space:]]*}"}"
+                [[ "$line" == Environment=* ]] || continue
+                body="${line#Environment=}"
+                while IFS= read -r tok; do
+                    [[ "$tok" == *=* ]] || continue
+                    name="${tok%%=*}"; val="${tok#*=}"
+                    [[ -n "$val" ]] || continue
+                    if _is_credential_name "$name" && [[ "$names" != *" $name "* ]]; then names+="$name "; fi
+                done < <(_split_env_words "$body")
+            done < "$f"
+        done
+        _join_names "$names"
+    )
+}
+
+_env_file_credential_names() {   # <service.env> → credential-shaped NAMES with a non-empty value (keysource's line rule)
+    local line name val names=" "
+    [[ -f "$1" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        if [[ -z "$line" || "$line" == \#* || "$line" != *=* ]]; then continue; fi
+        name="${line%%=*}"; name="${name%"${name##*[![:space:]]}"}"
+        val="${line#*=}"; val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
+        if [[ ${#val} -ge 2 ]]; then case "$val" in \"*\"|\'*\') val="${val:1:${#val}-2}" ;; esac; fi
+        [[ -n "$val" ]] || continue
+        if _is_credential_name "$name" && [[ "$names" != *" $name "* ]]; then names+="$name "; fi
+    done < "$1"
+    _join_names "$names"
+}
+
+_exec_start_shape() {   # <unit|drop-in|plist>... → "direct" | "shell" | "" (nothing found); the LAST ExecStart wins, an empty one resets
+    local f line last="" pa
+    for f in "$@"; do
+        [[ -f "$f" ]] || continue
+        if [[ "$f" == *.plist ]]; then
+            pa="$(tr -d '\n' < "$f" | sed -n 's/.*<key>ProgramArguments<\/key>[[:space:]]*<array>[[:space:]]*<string>\([^<]*\)<\/string>.*/\1/p')"
+            [[ -n "$pa" ]] && last="$pa"
+            continue
+        fi
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            [[ "$line" == ExecStart=* ]] && last="${line#ExecStart=}"
+        done < "$f"
+    done
+    last="$(printf '%s' "$last" | sed 's/^[[:space:]]*[-@:+!]*//')"
+    [[ -n "$last" ]] || return 0
+    (
+        set -f
+        set -- $last
+        [[ -n "${1:-}" ]] || exit 0
+        local argv0; argv0="$(basename "$1")"; argv0="${argv0//\"/}"; argv0="${argv0//\'/}"
+        if [[ "$argv0" == env ]]; then
+            shift; while [[ $# -gt 0 && "$1" == *=* ]]; do shift; done
+            [[ -n "${1:-}" ]] || exit 0
+            argv0="$(basename "$1")"
+        fi
+        case "$argv0" in sh|bash|zsh|dash|ksh|fish) printf 'shell' ;; *) printf 'direct' ;; esac
+    )
+}
+
+_status_key_source() {   # <unit|plist> [drop-in...] — the lines `status` adds after installed/running
+    local shape names
+    if [[ -n "$(_svc_cfg ROMP_CREDENTIAL_COMMAND)" ]]; then
+        echo "key source: command $(_selector_word)"
+    else
+        echo "key source: file"
+    fi
+    shape="$(_exec_start_shape "$@")"
+    case "$shape" in
+      direct) echo "ExecStart: runs the manager directly" ;;
+      shell)  echo "ExecStart: runs the manager through a shell (its variables freeze until a manager restart)" ;;
+    esac
+    names="$(_unit_credential_names "$@")"
+    [[ -z "$names" ]] || echo "unit carries credential-shaped lines: $names"
+    names="$(_env_file_credential_names "$SERVICE_ENV_FILE")"
+    [[ -z "$names" ]] || echo "service.env carries credential-shaped lines: $names"
+}
+
 case "${1:-status}" in
   install)
     audit_install install
@@ -266,8 +460,9 @@ case "${1:-status}" in
         echo "  Installed launchd agent: $PLIST"
         echo "  romp-manager now auto-starts at login — just open the browser."
         echo "  Extra service env (non-secret settings, e.g. ROMP_EXPECTED_AUTH): $SERVICE_ENV_FILE"
-        echo "      KEY=VALUE lines, picked up at manager (re)start. API keys never go in it;"
-        echo "      they reach the manager through the environment of whatever starts it."
+        echo "      KEY=VALUE lines, picked up at manager (re)start. API keys never go in it: set"
+        echo "      ROMP_CREDENTIAL_COMMAND there instead (docs/reference.md, Installing without keys on"
+        echo "      disk), or let the environment of whatever starts the manager carry them."
         if [[ -x "$ROMP_NODE" ]]; then
             echo
             echo "  Full Disk Access: grant it to romp's OWN node copy (not plain 'node'):"
@@ -285,8 +480,9 @@ case "${1:-status}" in
         echo "  Installed systemd --user service: $UNIT"
         echo "  romp-manager now auto-starts at login — just open the browser."
         echo "  Extra service env (non-secret settings, e.g. ROMP_EXPECTED_AUTH): $SERVICE_ENV_FILE"
-        echo "      KEY=VALUE lines, picked up at manager (re)start. API keys never go in it;"
-        echo "      they reach the manager through the environment of whatever starts it." ;;
+        echo "      KEY=VALUE lines, picked up at manager (re)start. API keys never go in it: set"
+        echo "      ROMP_CREDENTIAL_COMMAND there instead (docs/reference.md, Installing without keys on"
+        echo "      disk), or let the environment of whatever starts the manager carry them." ;;
       *) echo "romp-service: unsupported OS '$os'" >&2; exit 1 ;;
     esac ;;
   uninstall)
@@ -310,10 +506,12 @@ case "${1:-status}" in
     case "$os" in
       Darwin)
         if [[ -f "$PLIST" ]]; then echo "installed: $PLIST"; else echo "not installed"; fi
-        if [[ -z "$NO_LOAD" ]] && "$LAUNCHCTL" print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then echo "running"; fi ;;
+        if [[ -z "$NO_LOAD" ]] && "$LAUNCHCTL" print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then echo "running"; fi
+        _status_key_source "$PLIST" ;;
       Linux)
         if [[ -f "$UNIT" ]]; then echo "installed: $UNIT"; else echo "not installed"; fi
-        if [[ -z "$NO_LOAD" ]] && [[ "$(systemctl --user is-active romp-manager.service 2>/dev/null || true)" == "active" ]]; then echo "running"; fi ;;
+        if [[ -z "$NO_LOAD" ]] && [[ "$(systemctl --user is-active romp-manager.service 2>/dev/null || true)" == "active" ]]; then echo "running"; fi
+        _status_key_source "$UNIT" "$UNIT.d"/*.conf ;;
       *) echo "romp-service: unsupported OS '$os'" >&2; exit 1 ;;
     esac ;;
   *) echo "usage: romp-service [install|uninstall|status]" >&2; exit 2 ;;

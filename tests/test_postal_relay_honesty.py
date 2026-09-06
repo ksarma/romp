@@ -305,6 +305,8 @@ class PresenceBlinkHonesty(_RelayBase):
         # self-update path) boots with an empty in-memory cache and would gossip the blink as
         # authoritative emptiness — the disk twin primes it
         _set_live([{"id": ALPHA, "name": "web"}])
+        # serve() makes STATE; alone in a fresh worker nothing had, and the twin's swallowed write read as "no twin"
+        pm.STATE.mkdir(parents=True, exist_ok=True)
         pm._local_presence()                                     # answered → disk twin written
         pm._LOCAL_PRESENCE_GOOD[0], pm._LOCAL_PRESENCE_GOOD[1] = [], False   # a fresh bus process
         os.environ.pop("ROMP_SESSIONS_FILE", None)
@@ -368,13 +370,12 @@ class SetWorkingMissingParamRefuses(unittest.TestCase):
     """Fold-in: a missing param is never a clear command."""
 
     def setUp(self):
-        self.saved = (pm.my_name, pm.my_id, pm._publish_working)
+        self.saved = (pm._self_identity, pm._publish_working)
         self.calls = []
-        pm.my_name, pm.my_id = (lambda: "web"), (lambda: ALPHA)
+        pm._self_identity = lambda: (ALPHA, "web")     # the one resolver every tool call reads (2026-09-06)
         pm._publish_working = lambda mid, text: self.calls.append((mid, text))
-        self.addCleanup(lambda: (setattr(pm, "my_name", self.saved[0]),
-                                 setattr(pm, "my_id", self.saved[1]),
-                                 setattr(pm, "_publish_working", self.saved[2])))
+        self.addCleanup(lambda: (setattr(pm, "_self_identity", self.saved[0]),
+                                 setattr(pm, "_publish_working", self.saved[1])))
 
     def test_missing_text_refuses_and_changes_nothing(self):
         msg, is_err = pm._mcp_call("set_working", {})

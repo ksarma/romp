@@ -46,11 +46,15 @@ test("linkifyFileUris whole-links a verified span's entire inline-code content",
 });
 
 test("the whole-span pass runs BEFORE the token walk, so the new link is skipped by it", () => {
+  // the walk is path-links.ts's linkifyPathTokens (plans/file-review.md Slice 0); its text-node guard
+  // skips anything already inside a .file-uri-link, so the spaced pass must have made its spans first
   const fn = RENDER.slice(RENDER.indexOf("function linkifyFileUris("), RENDER.indexOf("function renderEvent("));
   const spanPass = fn.indexOf('root.querySelectorAll("code")');
-  const walk = fn.indexOf("createTreeWalker");
+  const walk = fn.indexOf("linkifyPathTokens(root, sid, pathLinks)");
   assert.ok(spanPass >= 0 && walk >= 0 && spanPass < walk,
-    "code-span links land first; the token walker's closest('a') guard then leaves them alone");
+    "code-span links land first; the token walk's closest('.file-uri-link') guard then leaves them alone");
+  const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");
+  assert.match(LINKS, /if \(tn\.parentElement\?\.closest\("a, \.file-uri-link, pre"\)\) continue;/);
 });
 
 test("every message render threads its event's spacePaths through", () => {

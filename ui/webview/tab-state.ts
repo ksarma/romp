@@ -1,9 +1,11 @@
 // THE TAB STRIP'S STATE → CLASS RULE, in one place. The tab itself wears it (render.ts renderTabs),
-// and a folded section header's summary pip (tab groups, 2026-09-04) reads the SAME rule — the
-// header once classed any "blocked" member red, while the strip distinguishes an on-you block from a
-// transient API error that auto-retries (amber, needs no attention), so a folded group showed a red
-// "waiting on you" pip over a tab that, unfolded, was amber. Pure and DOM-free so it runs in node
-// tests; the Status interface in render.ts is a superset of the shape read here.
+// and a folded section header's member-derived summary pip (tab groups, 2026-09-04) reads the SAME rule
+// — the header once classed any "blocked" member red, while the strip distinguishes an on-you block
+// from a transient API error that auto-retries (amber, needs no attention), so a folded group showed a
+// red "waiting on you" pip over a tab that, unfolded, was amber. The header is a LABEL (the user
+// 2026-09-06): it wears no state class of its own; the pip and the user-todo flag below are the two
+// member-derived marks a fold must not hide. Pure and DOM-free so it runs in node tests; the Status
+// interface in render.ts is a superset of the shape read here.
 export interface TabStateLike {
   state?: string;
   apiTooLong?: boolean;
@@ -44,8 +46,66 @@ export function sectionPip(states: ReadonlyArray<TabStateLike | null | undefined
   return null;
 }
 
+/** The pip's phrase for ONE session (and the bare phrase when no name is known). */
 export const SECTION_PIP_TITLE: Record<SectionPip, string> = {
   blocked: "a session in this group is blocked or waiting on you",
   working: "a session in this group is working",
   retrying: "a session in this group hit an API error and is retrying on its own",
 };
+
+/** The same three for SEVERAL sessions, counted — the flag's tooltip already counts this way
+ *  (sectionTodoTitle); a singular phrase before a list of names read as one session, then two. */
+export const SECTION_PIP_TITLE_MANY: Record<SectionPip, (n: number) => string> = {
+  blocked: (n) => `${n} sessions in this group are blocked or waiting on you`,
+  working: (n) => `${n} sessions in this group are working`,
+  retrying: (n) => `${n} sessions in this group hit an API error and are retrying on their own`,
+};
+
+const PIP_CLASSES: Record<SectionPip, readonly string[]> = {
+  blocked: ["tab-blocked", "tab-awaiting"], working: ["tab-working"], retrying: ["tab-retrying"],
+};
+
+export interface TabMemberLike { name?: string; status?: TabStateLike | null }
+
+/** The members whose own tab wears the pip's color — the sessions its tooltip names, in strip order. */
+export function sectionPipMembers(kind: SectionPip, members: ReadonlyArray<TabMemberLike | null | undefined>): string[] {
+  const names: string[] = [];
+  for (const m of members) if (m && PIP_CLASSES[kind].includes(tabStateClass(m.status))) names.push(String(m.name || "").trim() || "(unnamed)");
+  return names;
+}
+
+/** The pip's hover text: the rule's phrase — singular for one session, counted for several — then the
+ *  sessions by name. */
+export function sectionPipTitle(kind: SectionPip, names: readonly string[]): string {
+  if (!names.length) return SECTION_PIP_TITLE[kind];
+  const phrase = names.length === 1 ? SECTION_PIP_TITLE[kind] : SECTION_PIP_TITLE_MANY[kind](names.length);
+  return `${phrase}: ${names.join(", ")}`;
+}
+
+// A FOLDED HEADER'S USER-TODO FLAG (the user 2026-09-06): a session tab with an open user todo wears
+// a ⚑ — "this session flagged something it needs from you" — and a fold hid it. The header derives
+// its flag from the SAME field the tab reads, the session payload's userTodos (the kernel's
+// build_session blanks it for an ended session and every chat delta carries it), so the two agree on
+// every frame and the resolve that clears the tab's glyph clears the header's flag in the same render.
+export interface TabTodoLike { name?: string; userTodos?: ReadonlyArray<unknown> | null }
+
+/** The members holding an open user todo, in strip order. The COUNT is sessions, not todos: the
+ *  folded header's other number is a session count too, and the tooltip names exactly those sessions. */
+export interface SectionTodoFlag { count: number; names: string[] }
+
+export function sectionTodoFlag(members: ReadonlyArray<TabTodoLike | null | undefined>): SectionTodoFlag | null {
+  const names: string[] = [];
+  for (const m of members) {
+    if (!m || !Array.isArray(m.userTodos) || !m.userTodos.length) continue;   // no session yet, or nothing open
+    names.push(String(m.name || "").trim() || "(unnamed)");
+  }
+  return names.length ? { count: names.length, names } : null;
+}
+
+/** The flag's hover text: the sessions by name, and what the click does. */
+export function sectionTodoTitle(flag: SectionTodoFlag): string {
+  const who = flag.count === 1
+    ? `${flag.names[0]} flagged something it needs from you`
+    : `${flag.count} sessions flagged something they need from you: ${flag.names.join(", ")}`;
+  return `waiting on you — ${who}; click to open this group`;
+}

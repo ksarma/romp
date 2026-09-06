@@ -31,6 +31,7 @@ import threading
 import time
 import traceback
 import uuid
+import weakref
 from collections import deque
 from pathlib import Path
 
@@ -49,6 +50,11 @@ _pal = _SFL("romp_palette", str(Path(__file__).resolve().parent / "palette.py"))
 # module works from bin/ symlinks too). `romp keyswap` loads the identical file, so the writer and
 # the reader can never disagree about which path holds the key or how its line is parsed.
 _keysrc = _SFL("romp_keysource", str(Path(__file__).resolve().parent / "keysource.py")).load_module()
+# The COMMAND source (envsource.py — stdlib only): a configured command prints a set of NAME=VALUE
+# lines that is merged into each child's environment at launch. Setting ROMP_CREDENTIAL_COMMAND
+# selects it; unset, every call here returns an empty set and the file source above is the whole
+# story. Values leave that module through one accessor (injection), never through a log or a wire.
+_envsrc = _SFL("romp_envsource", str(Path(__file__).resolve().parent / "envsource.py")).load_module()
 
 
 def _bin_on_path_env(environ) -> dict:
@@ -2460,6 +2466,18 @@ def _without_scope_fallback_notices(text: str) -> str:
                      if not ln.startswith((CLI_SCOPE_FALLBACK_PREFIX, CLI_SCOPE_IGNORED_PREFIX)))
 
 
+def is_auth_failure_text(text) -> bool:
+    """A credential-class failure in a CLI's own words — the kernel's _is_auth_error rule (kept in
+    step by tests/test_session_auth.py, since this module loads standalone): no retry can fix it."""
+    low = str(text or "").lower()
+    return ("not logged in" in low
+            or "api key is invalid" in low
+            or "invalid x-api-key" in low
+            or "failed to authenticate" in low
+            or ("oauth token" in low and ("expired" in low or "revoked" in low))
+            or "authentication_error" in low)
+
+
 def launch_failure_text(exc: BaseException, tail: str = "") -> str:
     """The most SPECIFIC human text a failed CLI launch carries. The SDK's ProcessError keeps the CLI's
     own stderr on the exception (the class that actually names the cause); `tail` is what romp captured
@@ -3164,11 +3182,115 @@ def work_api_key() -> str:
     The read is cheap and event-keyed: keysource caches on the file's own (inode, mtime_ns, size),
     so a repeated call is a stat and a rewrite invalidates by construction. The value is never
     written back into os.environ — the one-claimer property above is what keeps an ambient key from
-    billing every session, and a live source must not undo it."""
+    billing every session, and a live source must not undo it.
+
+    COMMAND mode (ROMP_CREDENTIAL_COMMAND set, 2026-09-05): the key is the `ANTHROPIC_API_KEY` line
+    of the set the configured command prints — "" when it prints none, which on an installation
+    whose sessions bill through Claude Code's apiKeyHelper is the intended state. The mode wins
+    outright: a key line in the env file and the startup claim are IGNORED there (the boot verdict
+    says so once, naming the file or the variable), because a stray copy silently becoming the
+    injected key is the wrong-account failure the mode exists to prevent. The startup pop still
+    happens first, for the same one-claimer reason. The read is _noted_take's: a run that fails here
+    (a judge's key-billed call reads the key this way) is said once, like one on a connect."""
     startup = startup_api_key()      # ALWAYS first: the pop must happen even when the file answers
+    if _envsrc.configured():
+        return _noted_take()[1].get(_envsrc.KEY_VAR, "")
     live = _keysrc.read_key()
     _check_key_file_agrees(startup, live)
     return live or startup
+
+
+def key_source_mode() -> str:
+    """'command' when ROMP_CREDENTIAL_COMMAND is set (the process environment or the env file), else
+    'file' — the one mode switch, read live so a report never disagrees with what a launch does."""
+    return "command" if _envsrc.configured() else "file"
+
+
+_CREDENTIAL_NOTER = None   # a WEAK reference to the last constructed backend's _note_credential_set: where
+                           # the module-level readers (no backend in hand) say a credential-command run.
+                           # The kernel builds ONE backend per process and never rebuilds it, so "last
+                           # constructed" is the live one there; a test process constructs several, and
+                           # each backend's own readers (_cred_take) note on that backend, not on this.
+                           # Weak, so a backend that is dropped is released — a strong reference kept a
+                           # test's earlier backend alive until the next construction — and a dropped
+                           # backend receives nothing.
+
+
+def _register_credential_noter(fn) -> None:
+    """Register `fn` (a backend's bound _note_credential_set) as the module-level readers' noter,
+    replacing whatever was registered: last constructed wins (see _CREDENTIAL_NOTER)."""
+    global _CREDENTIAL_NOTER
+    try:
+        _CREDENTIAL_NOTER = weakref.WeakMethod(fn)
+    except TypeError:                      # a plain function (a test's stand-in): held as it is
+        _CREDENTIAL_NOTER = lambda: fn
+
+
+def _credential_noter():
+    """The registered noter, or None when none was registered or its backend has been dropped."""
+    ref = _CREDENTIAL_NOTER
+    return ref() if ref is not None else None
+
+
+def _noted_take() -> tuple:
+    """(record, values) from ONE read of the command source (envsource.take), the record routed through
+    the registered backend's noter (SdkBackend._note_credential_set), so a run that FAILED here is a
+    problem line, once per failure episode, exactly as one on a connect is. The module-level readers go
+    through this — work_api_key for a judge's key-billed call, credential_set for the judges' environment
+    and the catalog fetch. Before it they read envsource.injection(), the values alone, and a credential
+    command that broke between two connects (the secret store gone away, then a refusal that
+    invalidated the set) failed silently on every judge call and every catalog fetch until the next
+    session connect, visible only as api-health's keySource.lastRun (2026-09-06). With no backend
+    constructed yet (a standalone import) or the registered one dropped, the read is plain, and the
+    boot verdict says the first run's outcome when a backend is built. A read DURING construction is
+    the same read: the catalog's boot fetch starts just before the kernel constructs the backend and
+    coalesces with the boot verdict on the command's one run, and the backend registers its noter only
+    after the verdict has logged that run and primed the guards from it — so this reader finds no noter
+    yet, or one that has nothing to add; registered before the verdict, the noter said the run here
+    first and the verdict said it again. The record reaches the noter after envsource's lock is
+    released, so it can be older than one another thread noted meanwhile; the noter orders records
+    (its `attempt` watermark) rather than this reader holding the lock across a log write. The
+    `values` half is under injection()'s rule: nothing may log, store or send it."""
+    snap, vals = _envsrc.take()
+    noter = _credential_noter()
+    if noter is not None:
+        noter(snap)
+    return snap, vals
+
+
+def credential_set() -> dict:
+    """The command source's current set — THE value-bearing seam for the callers outside this module
+    that merge it into a CHILD's environment: the judges' subprocess env (kernel/judge.py, wired as
+    jd._ENV_SET_FN) and the catalog fetch's header (kernel _models_api_credential). {} in file mode.
+    Nothing calling this may log, store or send what it gets. The read is _noted_take's: a failed run
+    here is said once, like one on a connect."""
+    if not _envsrc.configured():
+        return {}
+    return _noted_take()[1]
+
+
+def credential_invalidate(reason: str = "") -> bool:
+    """An authentication failure somewhere a credential from the set was used (a judge call, a
+    session's turn or launch): the cached set is stale, the next reader re-runs the command. The
+    exact event, never a timer — and once per credential (envsource.invalidate_for_auth_failure):
+    a second refusal of the same set is not new information, so a revoked credential does not turn
+    every judge call into a command run. Returns whether it fired. A no-op in file mode."""
+    if _envsrc.configured():
+        return _envsrc.invalidate_for_auth_failure(reason)
+    return False
+
+
+def credential_auth_ok(fp: str = "") -> bool:
+    """A credential from the set (or the helper envsource fingerprints) was ACCEPTED somewhere a
+    refusal would have fired credential_invalidate: a judge call served (kernel/judge.py, wired as
+    jd._ENV_OK_FN), the catalog fetch on the set's direct-call key, a session's completed turn. The
+    event that re-arms the once-per-credential path (envsource.credential_auth_ok): 401, run, same
+    set, later success, later 401 re-runs the command, where before the second 401 was suppressed for
+    as long as the set stayed the same. `fp` is the credential's fingerprint when the caller knows
+    it, "" for the current set as a whole. Returns whether it re-armed. A no-op in file mode."""
+    if _envsrc.configured():
+        return _envsrc.credential_auth_ok(fp)
+    return False
 
 
 def _check_key_file_agrees(startup: str, live: str) -> None:
@@ -3213,8 +3335,19 @@ def _credential_names_in_env_file(path: str | None = None) -> list:
             body = fh.read()
     except OSError:
         return []
+    return _credential_names_in_env_text(body)
+
+
+def _is_credential_name(name: str) -> bool:
+    """The credential-shaped variable names every scan here looks for."""
+    return name == "ANTHROPIC_API_KEY" or name.endswith("_API_KEY") or name.endswith("_TOKEN")
+
+
+def _credential_names_in_env_text(body: str) -> list:
+    """_credential_names_in_env_file's rule over a body already read (the verdict scans texts it is
+    handed, so it stays pure)."""
     names: list = []
-    for raw in body.splitlines():
+    for raw in str(body or "").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -3224,8 +3357,7 @@ def _credential_names_in_env_file(path: str | None = None) -> list:
             value = value[1:-1]
         if not sep or not value:
             continue
-        if (name == "ANTHROPIC_API_KEY" or name.endswith("_API_KEY") or name.endswith("_TOKEN")) \
-                and name not in names:
+        if _is_credential_name(name) and name not in names:
             names.append(name)
     return names
 
@@ -3313,6 +3445,247 @@ def _declared_auth(state_dir) -> tuple:
         return a, "pick"
     v = _expected_auth()
     return v, ("env" if v else "")
+
+
+# ---------------------------------------------------------------------------
+# The key-source verdict — one pure check at backend construction (the cli_scope_supported pattern).
+# ---------------------------------------------------------------------------
+
+_SHELLS = ("sh", "bash", "zsh", "dash", "ksh", "fish")
+LAUNCHD_LABEL = "com.romp.manager"          # bin/romp-service's LABEL
+
+
+def _last_run_of(snap) -> dict:
+    """The command source's last run as the verdict and /api-health report it: ok, at, reason,
+    exitCode, durationS, stale (a failed run standing on the previous set), failures (consecutive),
+    lastOkAt. Value-free by construction (the record is)."""
+    snap = snap or {}
+    return {"ok": snap.get("ok"), "at": int(snap["at"]) if snap.get("at") else None,
+            "reason": snap.get("reason") or "", "exitCode": snap.get("exitCode"),
+            "durationS": snap.get("durationS"), "stale": bool(snap.get("stale")),
+            "failures": int(snap.get("failures") or 0),
+            "lastOkAt": int(snap["lastOkAt"]) if snap.get("lastOkAt") else None}
+
+
+def _expected_auth_of(env) -> str:
+    """_expected_auth's rule over a given environ (the verdict takes its inputs, never the process)."""
+    v = (env.get("ROMP_EXPECTED_AUTH") or "").strip().lower()
+    return v if v in ("key", "login") else ""
+
+
+def _unit_credential_names(text: str) -> list:
+    """Credential-shaped NAMES a service definition sets: a systemd unit's or drop-in's `Environment=`
+    lines (whitespace-separated NAME=value tokens, optionally quoted) and a launchd plist's
+    EnvironmentVariables pairs (`<key>NAME</key><string>value</string>`). Names with a non-empty value
+    only; never a value."""
+    import shlex
+    names: list = []
+    for raw in str(text or "").splitlines():
+        line = raw.strip()
+        if not line.startswith("Environment="):
+            continue
+        body = line[len("Environment="):]
+        try:
+            toks = shlex.split(body)
+        except ValueError:
+            toks = body.split()
+        for tok in toks:
+            name, sep, value = tok.partition("=")
+            name = name.strip().strip("\"'")      # the plain-split fallback leaves an unbalanced quote on
+            if sep and value and _is_credential_name(name) and name not in names:
+                names.append(name)
+    for m in re.finditer(r"<key>([A-Za-z_][A-Za-z0-9_]*)</key>\s*<string>([^<]*)</string>", str(text or "")):
+        if m.group(2).strip() and _is_credential_name(m.group(1)) and m.group(1) not in names:
+            names.append(m.group(1))
+    return names
+
+
+def _exec_start_shell(texts) -> bool | None:
+    """Whether the service starts the manager THROUGH A SHELL — `ExecStart=/bin/zsh -lc '…'`, or a
+    plist whose ProgramArguments begin with one. The LAST ExecStart across the texts in order wins
+    (a drop-in overrides the unit; an empty `ExecStart=` resets). None when no ExecStart / program
+    is found at all (no unit installed, or an unparseable one)."""
+    last = None
+    for text in texts or ():
+        for raw in str(text or "").splitlines():
+            line = raw.strip()
+            if line.startswith("ExecStart="):
+                last = line[len("ExecStart="):].strip()
+        m = re.search(r"<key>ProgramArguments</key>\s*<array>\s*<string>([^<]*)</string>", str(text or ""))
+        if m:
+            last = m.group(1).strip()
+    if not last:
+        return None
+    toks = last.lstrip("-@:+!").split()
+    if not toks:
+        return None
+    argv0 = os.path.basename(toks[0].strip("\"'"))
+    if argv0 == "env" and len(toks) > 1:       # `/usr/bin/env bash -lc …`
+        rest = [t for t in toks[1:] if "=" not in t]
+        argv0 = os.path.basename(rest[0].strip("\"'")) if rest else ""
+    return argv0 in _SHELLS
+
+
+def _unit_texts(environ=None) -> list:
+    """(label, text) for every service definition the box may carry, by the same paths and variables
+    bin/romp-service uses: the systemd user unit, its drop-ins (sorted, so the later one overrides),
+    and the launchd plist. Missing files are simply absent; never raises."""
+    env = os.environ if environ is None else environ
+    home = os.path.expanduser("~")
+    cfg = (env.get("XDG_CONFIG_HOME") or "").strip() or os.path.join(home, ".config")
+    sysd = (env.get("ROMP_SYSTEMD_DIR") or "").strip() or os.path.join(cfg, "systemd", "user")
+    lagents = (env.get("ROMP_LAUNCHD_DIR") or "").strip() or os.path.join(home, "Library", "LaunchAgents")
+    paths = [os.path.join(sysd, "romp-manager.service")]
+    dropins = os.path.join(sysd, "romp-manager.service.d")
+    try:
+        paths += [os.path.join(dropins, n) for n in sorted(os.listdir(dropins)) if n.endswith(".conf")]
+    except OSError:
+        pass
+    paths.append(os.path.join(lagents, LAUNCHD_LABEL + ".plist"))
+    out: list = []
+    for path in paths:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                out.append((path, fh.read()))
+        except OSError:
+            continue
+    return out
+
+
+def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(), helper_command: str = "",
+                       snapshot=None, work_key_present: bool = False, startup_key_present: bool = False) -> dict:
+    """What the box's key source is and whether its configuration is consistent — decided ONCE per
+    backend, at construction, from inputs the caller hands in (the process environment, the env
+    file's text, the unit/drop-in/plist texts, the apiKeyHelper command from settings.json, the
+    command source's value-free first-run record, two booleans). Pure on those inputs, so the truth
+    table is testable on any OS without a unit, a command or a key — the mode included: for the process's
+    own environment (None) it is the pinned verdict (envsource.configured), which read the env file at
+    boot; for an EXPLICIT environ it is that environ's ROMP_CREDENTIAL_COMMAND, else the line in the
+    `service_env_text` handed in — the same rule, on the inputs alone. Before this a hypothetical environ
+    went through envsource.configured, whose env-file fallback is the file THIS PROCESS is configured
+    from (keysource.service_env_path, off os.environ), so a check meant to be pure could take its mode
+    from a file the caller never passed (2026-09-06).
+
+    Returns {"mode": "file"|"command", "selector", "sessionKeyPath": "injected"|"helper"|"login",
+    "expectedAuth", "helperConfigured", "execStartShell", "credentialNamesFound": {"serviceEnv",
+    "unit", "environment"}, "lastRun" (command mode: {"ok","at","reason","exitCode","durationS"}; else
+    None), "lines": [{"text", "problem"}]} — the lines the caller logs. Every line carries NAMES and
+    fingerprints only; no value, no stderr text.
+
+    Command mode rings on: the command failing on its first run (before the boot reconcile resumes a
+    session on the previous set or on nothing); credential-shaped lines in the env file, the unit,
+    its drop-ins or the plist (copies on disk the mode exists to remove — ignored, and to be rotated);
+    a startup ANTHROPIC_API_KEY (ignored: the command supplies the key); ExecStart routed through a
+    shell (the variables it loads freeze until a manager restart, which the mode makes needless);
+    ROMP_EXPECTED_AUTH=login while the command prints a key; ROMP_* names the command printed
+    (dropped). Other credential-shaped names in the kernel's own environment are informational.
+    File mode says nothing the existing checks (_warn_credential_lines_in_env_file, _check_key_file_agrees)
+    do not already say — an unset command leaves upstream's log byte for byte — except a unit
+    credential under a declared auth. Command mode only: ROMP_EXPECTED_AUTH=key with nothing to
+    inject and no apiKeyHelper configured means the sessions will land on the login (in file mode
+    every session init already reports the declared-vs-live mismatch, and the boot log stays
+    upstream's)."""
+    env = os.environ if environ is None else environ
+    if environ is None or environ is os.environ:
+        mode = "command" if _envsrc.configured(env) else "file"
+    else:
+        # a hypothetical environ: its own line, else the line in the env-file text the caller handed in —
+        # never the file this process names (envsource's fallback reads that one, for the process)
+        cmd = ((env.get(_envsrc.COMMAND_VAR) or "").strip()
+               or (_envsrc.parse_lines(service_env_text)[0].get(_envsrc.COMMAND_VAR) or "").strip())
+        mode = "command" if cmd else "file"
+    exp = _expected_auth_of(env)
+    snap = dict(snapshot or {})
+    lines: list = []
+
+    def say(text, problem=True):
+        lines.append({"text": text, "problem": bool(problem)})
+
+    file_names = _credential_names_in_env_text(service_env_text)
+    unit_names: list = []
+    unit_hits: list = []
+    for label, text in unit_texts or ():
+        found = _unit_credential_names(text)
+        if found:
+            unit_hits.append("%s (%s)" % (label, ", ".join(found)))
+            unit_names += [n for n in found if n not in unit_names]
+    exec_shell = _exec_start_shell([t for _l, t in (unit_texts or ())])
+    env_names = sorted(n for n in env if _is_credential_name(n) and (env.get(n) or "").strip()
+                       and n != "ROMP_SERVE_TOKEN")
+    if startup_key_present and "ANTHROPIC_API_KEY" not in env_names:
+        env_names.insert(0, "ANTHROPIC_API_KEY")
+    found = {"serviceEnv": file_names, "unit": unit_names, "environment": env_names}
+    env_file = _keysrc.service_env_path()
+    if mode == "command":
+        sel = _envsrc.selector_label(snap)
+        if snap.get("ok") is False:
+            say("key source: the credential command failed — %s. %s" % (
+                snap.get("reason") or "no reason recorded",
+                "Sessions launch on the set from its last successful run (sha256:%s)." % (snap.get("setFp") or "")
+                if snap.get("stale") else
+                "Sessions launch with nothing injected — the apiKeyHelper or the login bills — until a run "
+                "succeeds; `romp keyswap --refresh` re-runs it now."))
+        elif snap.get("ok"):
+            names = snap.get("names") or []
+            say("key source: command%s — the set is sha256:%s (%d name%s: %s); %s" % (
+                (" (selector %s)" % sel.strip("()")) if sel else "", snap.get("setFp") or "", len(names),
+                "" if len(names) == 1 else "s", ", ".join(names),
+                ("the sessions' key is sha256:%s" % snap.get("keyFp")) if snap.get("hasKey") else
+                "no ANTHROPIC_API_KEY in it, so the apiKeyHelper or the login bills the sessions"), problem=False)
+        if snap.get("dropped"):
+            d = list(snap.get("dropped") or [])
+            say("key source: the credential command printed %d ROMP_* variable%s (%s) — romp owns those names; "
+                "dropped from the set" % (len(d), "" if len(d) == 1 else "s", ", ".join(d)))
+        if snap.get("droppedAuth"):
+            d = list(snap.get("droppedAuth") or [])
+            say("key source: the credential command printed %s — %s the CLI reads as its own authentication or "
+                "endpoint, which would re-route or re-bill every session; dropped from the set (the key rides "
+                "ANTHROPIC_API_KEY alone)" % (", ".join(d), "a name" if len(d) == 1 else "names"))
+        if snap.get("timeoutProblem"):
+            say("key source: %s" % snap["timeoutProblem"])
+        if file_names:
+            many = len(file_names) > 1
+            say("key source: %s carries %s — credential line%s — while ROMP_CREDENTIAL_COMMAND supplies the "
+                "credentials. The line%s %s ignored (the command wins); remove %s and rotate the value%s, since "
+                "%s reached a file." % (env_file, ", ".join(file_names), "s" if many else "", "s" if many else "",
+                                          "are" if many else "is", "them" if many else "it", "s" if many else "",
+                                          "they" if many else "it"))
+        if startup_key_present:
+            say("key source: ANTHROPIC_API_KEY in the manager's own environment is ignored — the credential "
+                "command supplies the key. Remove it from the unit or service environment and rotate it, since "
+                "it sits in a process environment the command mode exists to keep clean.")
+        others = [n for n in env_names if n != "ANTHROPIC_API_KEY"]
+        if others:
+            say("key source: credential-shaped names in the kernel's own environment: %s — frozen copies the "
+                "sessions do not receive; the command's set is what a launch carries." % ", ".join(others),
+                problem=False)
+        if unit_hits:
+            say("key source: the service definition carries credential-shaped lines — %s — copies on disk "
+                "the command mode exists to remove. Remove them and rotate the values." % "; ".join(unit_hits))
+        if exec_shell:
+            say("key source: ExecStart runs the manager through a shell — the variables that shell loads "
+                "freeze until a manager restart. The command mode needs none of them: the generated unit "
+                "runs the manager directly (`romp-service install` rewrites it).")
+        if exp == "login" and snap.get("hasKey"):
+            say("key source: ROMP_EXPECTED_AUTH=login while the credential command prints ANTHROPIC_API_KEY "
+                "(sha256:%s) — every session without an explicit Billing pick will bill the key."
+                % (snap.get("keyFp") or ""))
+        last_run = _last_run_of(snap)
+    else:
+        sel = ""
+        last_run = None
+        if exp and unit_hits:
+            say("auth: the service definition carries credential-shaped lines — %s — while ROMP_EXPECTED_AUTH=%s. "
+                "A credential in a unit contradicts the declared auth model; remove the lines and rotate the "
+                "values." % ("; ".join(unit_hits), exp))
+    if mode == "command" and exp == "key" and not work_key_present and not helper_command:
+        say("auth: ROMP_EXPECTED_AUTH=key, but there is no key to inject (the credential command prints no "
+            "ANTHROPIC_API_KEY) and settings.json names no apiKeyHelper — sessions will land on the login, and "
+            "every init will say so.")
+    path = "injected" if work_key_present else ("helper" if helper_command else "login")
+    return {"mode": mode, "selector": sel, "sessionKeyPath": path, "expectedAuth": exp,
+            "helperConfigured": bool(helper_command), "execStartShell": exec_shell,
+            "credentialNamesFound": found, "lastRun": last_run, "lines": lines}
 
 
 # ---------------------------------------------------------------------------
@@ -3468,6 +3841,12 @@ class SdkSession:
     # …and one line per SystemMessage subtype the handler has no branch for (per kernel life), so a
     # CLI that starts forwarding a new frame kind is noticed in the log instead of silently dropped.
     _sys_subtypes_seen: set = set()
+    # …and per-message handler failures (_handle_stream_message): (sid, exception type, innermost frame
+    # as (file, line, function)) → count, per kernel life. The first of a signature logs its frame chain;
+    # a repeat logs one short counted line while the ring still holds the signature's entry, and the
+    # full line again once the ring has evicted it — so a handler failing on each message stays visible.
+    _stream_fail_seen: dict = {}
+    _stream_fail_lock = threading.Lock()
 
     def __init__(self, backend: "SdkBackend", reg: dict):
         self.backend = backend
@@ -3572,9 +3951,13 @@ class SdkSession:
         self._ah_gaveup = None
         self._interrupted = False                    # user interrupted the in-flight turn → snapshot reads 'waiting' (display only; inflight stays event-driven)
         self._intr_level = 0                         # interrupt escalation rung this episode (interrupt_action); reset on settle / fresh turn
-        self._launched_key_fp = None                 # fingerprint of the work key this session's CURRENT client launched on
-        #   ("" = launched on the login); set per connect in _options, read by cycle_key so `romp keyswap --cycle`
-        #   is idempotent — a session already on the live key is "current", never reconnected again
+        self._launched_key_fp = None                 # fingerprint of the CREDENTIAL this session's CURRENT client launched on:
+        #   the injected work key's, else (command mode, nothing injected) the apiKeyHelper's output's, else ""
+        #   (launched on the login). Set per connect in _options, read by cycle_key so `romp keyswap --cycle`
+        #   is idempotent — a session already on the current credential is "current", never reconnected again
+        self._launched_set_fp = None                 # fingerprint of the ROLE VARIABLES injected at that connect (the
+        #   command source's set minus ANTHROPIC_API_KEY; "" when none) — a rotation there is the other reason a
+        #   cycle reconnects: the CLI's tool shells hold the set their connect injected
         self._subagents: dict[str, dict] = {}        # LIVE subagents (Task/Agent AND Workflow-run agents): agent_id ->
         #   {"type","since"}. Fed by the SubagentStart hook — the exact, event-based "what's running right now"
         #   signal the tmux backend never had; drained by SubagentStop, a Workflow run's per-agent progress list,
@@ -3698,6 +4081,8 @@ class SdkSession:
         self._wake: asyncio.Event | None = None
         self._reconnect = False                 # the current break is a reconnect (not a shutdown)
         self._reconnect_when_idle = False        # a reconnect was requested mid-turn → apply at turn end
+        self._settled_msg = None                 # the ResultMessage whose settle ran last (its finally records
+        #   it) — what _note_message_failure reads to say whether a failed result's turn still settled
         # The handshake as a cross-thread EVENT: set the moment a ClaudeSDKClient is up, cleared when
         # it goes down — what a kernel-thread caller that needs the control channel (SdkBackend.move on
         # a just-revived session) waits on, instead of polling for self.client.
@@ -3981,9 +4366,11 @@ class SdkSession:
         legitimately be in flight (the user 2026-07-01, who switched the model on a new session and it
         said working indefinitely). A reconnect abandons the previous client; a turn it left in flight
         can NEVER get its ResultMessage on the new connection — so inflight, and the "working" signal it
-        drives, would be stranded elevated FOREVER. request_reconnect defers while inflight>0, but a race
-        (it fired at inflight==0, then the input generator fed a turn before the teardown ran) can still
-        strand a turn here: settle the counters to idle. A not-yet-STARTED _pending turn survives as
+        drives, would be stranded elevated FOREVER. request_reconnect defers while inflight>0, and
+        inputs() holds the queue once a reconnect is armed (2026-09-06: that closed, at the feed, the
+        race this guarded — the arm at inflight==0, then the feeder fed a turn before the teardown
+        ran); this stays as the backstop for anything that still strands a turn here: settle the
+        counters to idle. A not-yet-STARTED _pending turn survives as
         before (never fed to the dead client; the new inputs() re-feeds it). No-op on the first connect
         and on a clean reconnect. Event-based on the reconnect itself, not a time/age heuristic.
 
@@ -4486,6 +4873,16 @@ class SdkSession:
                     # would land it on the un-rewound branch (the exact wrong-branch delivery this guards)
                     blocked = blocked or bool(self._rewind_to and not self._rewind_armed)
                     blocked = blocked or self._ping_feeding   # the ping's record must not share its window
+                    # a reconnect is ARMED (_reconnect: the waker is about to tear this client down) →
+                    # hold the head for the NEXT client. The settle wakes this feeder and arms a deferred
+                    # reconnect in the same finally, both wakeups queued FIFO on the loop, so without
+                    # this hold the feeder ran first and fed a message gate-held behind an interrupted
+                    # turn to the dying client; the teardown stranded it in flight and
+                    # _reconcile_stranded, on a resumable conversation, flagged it 'never delivered'
+                    # (round-3 review, 2026-09-06). The same hold covers the idle arm in
+                    # _do_request_reconnect racing a send that lands before the waker runs. The loop's
+                    # top clears _reconnect before the new client's inputs() is created.
+                    blocked = blocked or self._reconnect
                     # a parked deploy restart is DRAINING (T121): hold NEW turn starts — the queued
                     # prompt persists (the checkpoint) and /busy falls to 0 on this box's own
                     # turn-end events. Mid-turn forwards keep flowing (inflight > 0), so the
@@ -4514,15 +4911,10 @@ class SdkSession:
                 yield {"type": "user",
                        "message": {"role": "user", "content": [{"type": "text", "text": item}]}}
 
-        async def drain(client):
-            # Feed turns and receive messages CONCURRENTLY: query() with a streaming input iterable BLOCKS
-            # until the iterable ends (it writes each turn to stdin), and our input generator never ends —
-            # so awaiting it before receiving would starve the receive loop. The control channel
-            # (can_use_tool) has its own reader; the message stream does not, so it's drained here.
-            async for msg in client.receive_messages():
-                if self.ended:
-                    break
-                self._on_message(msg, AssistantMessage, ResultMessage, SystemMessage)
+        # Feed turns and receive messages CONCURRENTLY: query() with a streaming input iterable BLOCKS
+        # until the iterable ends (it writes each turn to stdin), and our input generator never ends —
+        # so awaiting it before receiving would starve the receive loop. The control channel
+        # (can_use_tool) has its own reader; the message stream does not, so _drain drains it.
 
         # Reconnect loop: one persistent client per iteration. A connect-time option change (effort, a CLI
         # flag with no runtime control) reconnects with fresh options — resume_sid continues the conversation
@@ -4607,20 +4999,25 @@ class SdkSession:
                     # this, nothing showed after a kernel restart until each session's next turn.
                     asyncio.ensure_future(self._do_adopt_server_info())
                     feeder = asyncio.ensure_future(client.query(inputs()))
-                    recv = asyncio.ensure_future(drain(client))
+                    recv = asyncio.ensure_future(self._drain(client, AssistantMessage, ResultMessage, SystemMessage))
                     waker = asyncio.ensure_future(self._wake.wait())
                     try:
                         await asyncio.wait({recv, waker}, return_when=asyncio.FIRST_COMPLETED)
                     finally:
                         for tk in (feeder, recv, waker):
                             tk.cancel()
-                        for tk in (feeder, recv, waker):
+                        for tk, role in ((feeder, "input feeder"), (recv, "message receiver"), (waker, "waker")):
                             try:
                                 await tk
                             except asyncio.CancelledError:
                                 pass
                             except Exception as e:                 # a genuine stream/transport error — surface it
-                                self.backend._log(f"sdk session {self.name}: {type(e).__name__}: {e}")
+                                # Per-message failures stop inside _handle_stream_message, so what reaches
+                                # here is the stream itself failing (the CLI exiting on an error, a
+                                # transport fault) or the feeder. Named with its task and frame chain: the
+                                # old bare `type: text` line left a session death with nothing to fix by.
+                                self.backend._log("sdk session %s: the %s ended on %s: %s, at %s"
+                                                  % (self.name, role, type(e).__name__, _mask_ids(e), _compact_tb(e)))
                         self.client = None
                         self._connected.clear()
             except Exception as e:
@@ -4876,12 +5273,28 @@ class SdkSession:
         self._ah_gaveup = None
         turn = getattr(self, "_ah_turn", 0)
         self._ah_turn = turn + 1
-        ah = getattr(self.backend, "api_health", None)
-        if ah is None or getattr(msg, "parent_tool_use_id", None):
-            return
+        sidechain = bool(getattr(msg, "parent_tool_use_id", None))
         is_error = bool(getattr(msg, "is_error", False))
         status = getattr(msg, "api_error_status", None) if is_error else None
         status = status if isinstance(status, int) and not isinstance(status, bool) else None
+        if not sidechain:
+            # The command source's two events, on the parent stream only. A 401: the credential this
+            # turn used was refused, the exact event that makes the cached set stale (a rotation landed
+            # behind the command); the set is re-read at the next launch, and nothing here retries the
+            # turn (that is the user's call, as before). A completed turn: the credential this CLI
+            # launched on was accepted, the event that re-arms the once-per-credential refusal path.
+            try:
+                if status == 401:
+                    self.backend._credential_auth_failed(self, "HTTP 401 on a turn")
+                elif not is_error:
+                    self.backend._credential_auth_ok(self)
+            except Exception as e:
+                _lg = getattr(self.backend, "_log", None)
+                if _lg:
+                    _lg("credential command: the turn's credential event failed (%s): %s" % (self.name, e))
+        ah = getattr(self.backend, "api_health", None)
+        if ah is None or sidechain:
+            return
         if pend is None and status is None:
             return
         try:
@@ -4892,6 +5305,85 @@ class SdkSession:
             _lg = getattr(self.backend, "_log", None)
             if _lg:
                 _lg("api-health: give-up ingest failed: %s" % e)
+
+    async def _drain(self, client, AssistantMessage, ResultMessage, SystemMessage):
+        """The receive loop. Every streamed message goes through _handle_stream_message, which keeps
+        a handler's failure to that one message; what ends this loop is the STREAM ending — the CLI
+        exiting, a transport fault the SDK re-raises, our own `ended` — never a message the kernel
+        mishandled. (_amain drains this concurrently with the input feeder: query() with a streaming
+        input blocks until the iterable ends, and ours never does.)"""
+        async for msg in client.receive_messages():
+            if self.ended:
+                break
+            self._handle_stream_message(msg, AssistantMessage, ResultMessage, SystemMessage)
+
+    def _handle_stream_message(self, msg, AssistantMessage, ResultMessage, SystemMessage) -> bool:
+        """_on_message, with its failures contained to the message that caused them. Until 2026-09-06
+        any exception in a handler propagated out of the receive loop, and the client teardown that
+        followed treated it as the stream ending: the CLI process was closed — killing its in-flight
+        turn, every subagent and every background task — and the session came back as a crash resume,
+        all over ONE message the kernel could not file (a `KeyError` on a message uuid, from a
+        live-tail sweep racing the kernel thread; see SdkBackend._note_live_tail_race). A malformed or
+        unexpected message now costs its own handling and nothing else: the CLI keeps running (what
+        the kernel lost of that one message depends on its class — see _failure_consequence).
+        Returns whether the handler ran clean.
+
+        The REPORT is guarded too: an exception's `__str__` can raise (a third-party error type
+        wrapping partial data), and the kernel's log callback can (stderr closed under a service
+        restart). Unguarded, either ended the drain from inside the except — the outcome this method
+        exists to prevent. A reporter failure logs one plain line built from names only, and if even
+        that cannot be written the failure is swallowed: the stream comes first."""
+        try:
+            self._on_message(msg, AssistantMessage, ResultMessage, SystemMessage)
+            return True
+        except Exception as e:
+            try:
+                self._note_message_failure(msg, e)
+            except Exception as e2:
+                try:
+                    self.backend._log("sdk session %s: a %s in a handler on a %s message, and reporting it "
+                                      "failed too (%s); handling stopped, stream continues"
+                                      % (self.name, type(e).__name__, type(msg).__name__, type(e2).__name__),
+                                      problem=True,
+                                      key=("stream-fail-report", self.sid, type(e).__name__, type(e2).__name__))
+                except Exception:
+                    pass
+            return False
+
+    def _note_message_failure(self, msg, e) -> None:
+        """One problem line per failure, with enough to fix by: the exception type, the message's type
+        and subtype (never its content), the exception's own text (uuid-shaped ids shortened, clipped —
+        _mask_ids), what that message losing its handling cost (_failure_consequence — for a
+        ResultMessage read from whether the settle's finally ran for it, never assumed), and the frame
+        chain (file:line function, no locals, bounded; _compact_tb). A bare `KeyError: '<uuid>'` with
+        none of this is what the last such failure left to diagnose from.
+
+        Repeats: a signature is (session, exception type, the failing frame as file/line/function —
+        _failing_frame, read from the traceback itself, so the chain's length cap cannot change it).
+        The error-center RING keeps one entry per signature and counts the repeats on it (_log's
+        `key`), so a handler failing on every message neither evicts every other problem from the ring
+        nor busts the feed cache per message (2026-09-06); while that entry is in the ring the kernel
+        log gets one short counted line per repeat. Once the ring has evicted the entry, the next
+        repeat re-enters it with the FULL line — chain, consequence and the count — because the short
+        form's "logged with the first" points at a kernel log that may have rotated, and a ring row
+        built from it named no site to fix by (round-2 review, 2026-09-06)."""
+        kind = _describe_msg(msg)
+        sig = (self.sid, type(e).__name__, _failing_frame(e))
+        with SdkSession._stream_fail_lock:
+            n = SdkSession._stream_fail_seen.get(sig, 0) + 1
+            SdkSession._stream_fail_seen[sig] = n
+        key = ("stream-fail",) + sig
+        if n > 1 and self.backend.problem_keyed(key):
+            self.backend._log("sdk session %s: %s while handling a %s message (repeat %d this kernel life; "
+                              "the frame chain was logged with the first); handling stopped, stream continues"
+                              % (self.name, type(e).__name__, kind, n), problem=True, key=key)
+            return
+        settled = getattr(self, "_settled_msg", None) is msg   # getattr: __new__-built test doubles
+        again = "" if n == 1 else " (repeat %d this kernel life; its earlier error-center entry was evicted)" % n
+        self.backend._log("sdk session %s: %s while handling a %s message%s; that message's handling "
+                          "stopped there (%s) and the stream continues. %s: %s, at %s"
+                          % (self.name, type(e).__name__, kind, again, _failure_consequence(msg, settled=settled),
+                             type(e).__name__, _mask_ids(e), _compact_tb(e)), problem=True, key=key)
 
     def _on_message(self, msg, AssistantMessage, ResultMessage, SystemMessage):
         if getattr(self, "_ping_feeding", False):   # getattr: __new__-built test doubles skip __init__
@@ -5130,99 +5622,144 @@ class SdkSession:
         elif isinstance(msg, ResultMessage) and self._consume_move_settle(msg):
             pass   # the accepted move's turn-less result — nothing ended, so nothing settles (see the def)
         elif isinstance(msg, ResultMessage):
-            # /api-health: the settle names a give-up's status (api_error_status) and ends the turn
-            self._ah_note_result(msg)
-            # total_cost_usd is CUMULATIVE per CLI process (the result event's totalCostUSD counter, beside
-            # total_duration/lines) — fold only THIS turn's delta, or every result re-adds the whole
-            # session-so-far cost and the spend readout compounds into fiction (the user 2026-08-08). A
-            # total below the last seen means a counter we didn't watch reset — fold it whole, never negative.
-            total = getattr(msg, "total_cost_usd", None)
-            if isinstance(total, (int, float)) and total > 0:
-                delta = total - self._last_cost_total if total >= self._last_cost_total else total
-                self._last_cost_total = float(total)
-                # the usage dict is the SAME kind of counter (`usage: this.totalUsage` in the bundle):
-                # per-field deltas, a shrunken field folding whole — see _last_usage_totals in __init__
-                u = getattr(msg, "usage", None)
-                u = u if isinstance(u, dict) else {}
-                turn_u = {}
-                for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
-                    v = u.get(k)
-                    v = int(v) if isinstance(v, (int, float)) else 0
-                    last = self._last_usage_totals.get(k, 0)
-                    turn_u[k] = v - last if v >= last else v
-                    self._last_usage_totals[k] = v
-                self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,
-                                           sid=self.thread_of or self.sid)   # the rail's spend —
-                #   a comment THREAD bills its owning session (T144: whole-session truth for the
-                #   rail and the optimizer; a deliberate fork has no threadOf and bills itself)
-                #   + token readout; keyed = THIS session's init-reported auth, so the API sum stays
-                #   honest on a mixed host (see _record_spend)
-            self.retrying = False
-            self.retry_count = 0                    # turn over → clear the storm count (a turn that errored out without recovering leaves no "recovered" note)
-            self.retry_info = None
-            self._interrupted = False              # this turn's result settled it (whether it finished or was interrupted)
-            self._intr_level = 0                   # settle ends the escalation episode — the next stop starts polite
-            # A ResultMessage is the AUTHORITATIVE turn-end: the CLI has processed everything we handed it
-            # — one message or a stream of mid-turn forwards that folded into this turn — and is now idle.
-            # So settle to idle in ONE step and UNCONDITIONALLY, never gated on a feed-vs-result count.
-            # (The old `inflight -= 1; if inflight == 0:` guard stranded the session 'working' forever
-            # whenever the two diverged: each mid-turn forward did inflight += 1 but the CLI emits ONE
-            # Result for the merged turn, so inflight never returned to 0 and the settle never ran — the
-            # phantom-working bug, the user 2026-07-09.) If a genuinely separate turn is still queued in
-            # the CLI, its next streamed atom re-asserts 'working' via _forward — the stream is the truth.
-            self.inflight = 0
-            self._inflight_texts.clear()           # the CLI processed everything fed — same settle semantics
-            # A /compact that found NOTHING to compact emits no boundary — the turn just settles here. Clear
-            # the authoritative flag so parked ops proceed immediately, instead of waiting out a 180s cap.
-            self._compacting = False
-            self._clearing = False   # /clear backstop: the turn settled, whatever the init did or didn't flip
-            if self._rewind_to and getattr(self, "_rewind_wait", False):
-                # delete-while-busy: THIS settle is the interrupted turn ending — the flag is being
-                # ARMED here, not consumed. Second observer of the turn-end fact (the Stop hook is
-                # the first; _complete_rewind_wait is idempotent, first one wins) — it exists for
-                # the turn shapes where Stop never fires (an interrupt that dies straight to the
-                # ResultMessage).
+            try:
+                # /api-health: the settle names a give-up's status (api_error_status) and ends the turn
+                self._ah_note_result(msg)
+                # (This try is the whole branch: its body is the result's BOOKKEEPING, its finally is
+                # THE SETTLE — the finally's comment has the rule.)
+                # total_cost_usd is CUMULATIVE per CLI process (the result event's totalCostUSD counter, beside
+                # total_duration/lines) — fold only THIS turn's delta, or every result re-adds the whole
+                # session-so-far cost and the spend readout compounds into fiction (the user 2026-08-08). A
+                # total below the last seen means a counter we didn't watch reset — fold it whole, never negative.
+                total = getattr(msg, "total_cost_usd", None)
+                if isinstance(total, (int, float)) and total > 0:
+                    delta = total - self._last_cost_total if total >= self._last_cost_total else total
+                    self._last_cost_total = float(total)
+                    # the usage dict is the SAME kind of counter (`usage: this.totalUsage` in the bundle):
+                    # per-field deltas, a shrunken field folding whole — see _last_usage_totals in __init__
+                    u = getattr(msg, "usage", None)
+                    u = u if isinstance(u, dict) else {}
+                    turn_u = {}
+                    for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
+                        v = u.get(k)
+                        v = int(v) if isinstance(v, (int, float)) else 0
+                        last = self._last_usage_totals.get(k, 0)
+                        turn_u[k] = v - last if v >= last else v
+                        self._last_usage_totals[k] = v
+                    self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,
+                                               sid=self.thread_of or self.sid)   # the rail's spend —
+                    #   a comment THREAD bills its owning session (T144: whole-session truth for the
+                    #   rail and the optimizer; a deliberate fork has no threadOf and bills itself)
+                    #   + token readout; keyed = THIS session's init-reported auth, so the API sum stays
+                    #   honest on a mixed host (see _record_spend)
+                if self._rewind_to and getattr(self, "_rewind_wait", False):
+                    # delete-while-busy: THIS settle is the interrupted turn ending — the flag is being
+                    # ARMED here, not consumed. Second observer of the turn-end fact (the Stop hook is
+                    # the first; _complete_rewind_wait is idempotent, first one wins) — it exists for
+                    # the turn shapes where Stop never fires (an interrupt that dies straight to the
+                    # ResultMessage).
+                    try:
+                        self.backend._complete_rewind_wait(self)
+                    except Exception as e:
+                        self.backend._log("rewind (%s): delete-while-busy completion failed at the "
+                                          "settle: %s" % (self.name, e))
+                elif self._rewind_to and self._rewind_armed:
+                    # the rewind turn settled — the flag is CONSUMED (the leaf moved past the recorded one, so
+                    # rewind_disposition would drop it on the next connect anyway; this just tidies the reg now).
+                    # A bare rollback consumes here too: the settled turn IS the branch's first (leaf moved).
+                    # ARMED is part of the guard (delete-while-busy): the interrupted turn's own settle
+                    # lands moments after the Stop hook armed the flag, and an unguarded consume read
+                    # that fresh arm as the branch-take — flags could never accompany an UNARMED
+                    # running turn before, so armed-only is byte-identical for the idle paths.
+                    self._rewind_to = self._rewind_leaf = ""
+                    self._rewind_bare = False
+                    self._rewind_armed = False
+                    self._rewind_wait = False
+                    try:
+                        self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
+                                                 rewindWait=False)
+                    except Exception as e:
+                        self.backend._log("rewind (%s): registry clear failed after the turn landed: %s" % (self.name, e))
+                    # the BRANCH-TAKE event: the settled turn is the new branch's first landed record —
+                    # the kernel's held goal cleanup archives on exactly this (two-phase rewind timing)
+                    self.backend._rewind_resolved(self.sid, "taken")
+                self.backend.retire_live_work(self.sid)   # turn over → a work atom that never landed never will
+                asyncio.ensure_future(self._do_refresh_context())   # refresh ctx % + model from the SDK and
+                #   persist them, so the bar reflects the turn that just landed and survives idle/restart.
+                asyncio.ensure_future(self._do_refresh_usage())     # + the exact /usage snapshot (rail bars)
+            finally:
+                # THE SETTLE — everything that makes the turn over for the kernel — runs whatever the
+                # bookkeeping above did (api-health, the spend fold, the rewind flags, the live-tail
+                # sweep, the refreshes: any step may raise and stop the rest). The rule (round-2 review,
+                # 2026-09-06): a ResultMessage is the CLI saying the turn ended, so a kernel-side failure
+                # while filing it must never leave the session reading 'working' with its queue parked.
+                # The first cut opened the try only ahead of the rewind steps, so a raise in the spend
+                # fold (a NaN usage field — json.loads accepts the token and int() refuses it — or a
+                # failing spend write) was contained by _handle_stream_message with inflight still 1,
+                # the feeder still parked, no poke and no 'waiting', while the failure line claimed the
+                # turn had closed. Ordered so that nothing that can raise comes before the flag writes:
+                # the state resets and the queue wake are plain assignments; the two steps that touch a
+                # file or a lock are guarded and reported LAST, and the report itself is guarded, so a
+                # failing log callback can neither skip the poke, the rename ping or the deferred
+                # reconnect nor replace the bookkeeping's exception. That exception, if any, is the
+                # only one that propagates out of this finally, to the containment's report.
+                self.retrying = False
+                self.retry_count = 0                    # turn over → clear the storm count (a turn that errored out without recovering leaves no "recovered" note)
+                self.retry_info = None
+                self._interrupted = False              # this turn's result settled it (whether it finished or was interrupted)
+                self._intr_level = 0                   # settle ends the escalation episode — the next stop starts polite
+                # A ResultMessage is the AUTHORITATIVE turn-end: the CLI has processed everything we handed it
+                # — one message or a stream of mid-turn forwards that folded into this turn — and is now idle.
+                # So settle to idle in ONE step and UNCONDITIONALLY, never gated on a feed-vs-result count.
+                # (The old `inflight -= 1; if inflight == 0:` guard stranded the session 'working' forever
+                # whenever the two diverged: each mid-turn forward did inflight += 1 but the CLI emits ONE
+                # Result for the merged turn, so inflight never returned to 0 and the settle never ran — the
+                # phantom-working bug, the user 2026-07-09.) If a genuinely separate turn is still queued in
+                # the CLI, its next streamed atom re-asserts 'working' via _forward — the stream is the truth.
+                self.inflight = 0
+                self._inflight_texts.clear()           # the CLI processed everything fed — same settle semantics
+                # A /compact that found NOTHING to compact emits no boundary — the turn just settles here. Clear
+                # the authoritative flag so parked ops proceed immediately, instead of waiting out a 180s cap.
+                self._compacting = False
+                self._clearing = False   # /clear backstop: the turn settled, whatever the init did or didn't flip
+                self._settled_msg = msg  # the exact event the failure report reads: the settle ran for THIS result
+                if self._input_wake is not None:   # turn done → release the next queued turn, if any
+                    self._input_wake.set()
+                failed = []
+                for what, step in (("the turn-end count", lambda: self.backend._turn_completed(self.sid)),
+                                   #   ↑ a landed result re-arms the crash-resume budget + bumps turn_seq
+                                   ("the 'waiting' state write", lambda: self._mark("waiting"))):
+                    try:
+                        step()
+                    except Exception as e:
+                        failed.append((what, e))
+                self.backend._poke()   # (guards its own callback) — the kernel's parked-op drain wakes on this
+                # a pending rename ping delivers HERE, as its own turn (the user answered first; the
+                # empty-queue guard + the feed-hold make its record unfoldable — see _deliver_rename_ping)
                 try:
-                    self.backend._complete_rewind_wait(self)
+                    self.backend._deliver_rename_ping(self)
                 except Exception as e:
-                    self.backend._log("rewind (%s): delete-while-busy completion failed at the "
-                                      "settle: %s" % (self.name, e))
-            elif self._rewind_to and self._rewind_armed:
-                # the rewind turn settled — the flag is CONSUMED (the leaf moved past the recorded one, so
-                # rewind_disposition would drop it on the next connect anyway; this just tidies the reg now).
-                # A bare rollback consumes here too: the settled turn IS the branch's first (leaf moved).
-                # ARMED is part of the guard (delete-while-busy): the interrupted turn's own settle
-                # lands moments after the Stop hook armed the flag, and an unguarded consume read
-                # that fresh arm as the branch-take — flags could never accompany an UNARMED
-                # running turn before, so armed-only is byte-identical for the idle paths.
-                self._rewind_to = self._rewind_leaf = ""
-                self._rewind_bare = False
-                self._rewind_armed = False
-                self._rewind_wait = False
-                try:
-                    self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
-                                             rewindWait=False)
-                except Exception as e:
-                    self.backend._log("rewind (%s): registry clear failed after the turn landed: %s" % (self.name, e))
-                # the BRANCH-TAKE event: the settled turn is the new branch's first landed record —
-                # the kernel's held goal cleanup archives on exactly this (two-phase rewind timing)
-                self.backend._rewind_resolved(self.sid, "taken")
-            self.backend._turn_completed(self.sid)   # a landed result re-arms the crash-resume budget
-            self._mark("waiting")
-            self.backend.retire_live_work(self.sid)   # turn over → a work atom that never landed never will
-            asyncio.ensure_future(self._do_refresh_context())   # refresh ctx % + model from the SDK and
-            #   persist them, so the bar reflects the turn that just landed and survives idle/restart.
-            asyncio.ensure_future(self._do_refresh_usage())     # + the exact /usage snapshot (rail bars)
-            self.backend._poke()
-            if self._input_wake is not None:   # turn done → release the next queued turn, if any
-                self._input_wake.set()
-            # a pending rename ping delivers HERE, as its own turn (the user answered first; the
-            # empty-queue guard + the feed-hold make its record unfoldable — see _deliver_rename_ping)
-            self.backend._deliver_rename_ping(self)
-            if self._reconnect_when_idle and not self.ended:   # an effort change waited for this turn to end
-                self._reconnect_when_idle = False
-                self._reconnect = True
-                self._wake_set()
+                    failed.append(("the rename ping's delivery", e))
+                if self._reconnect_when_idle and not self.ended:   # an effort change waited for this turn to end
+                    self._reconnect_when_idle = False
+                    self._reconnect = True     # inputs() holds the queue from here: the wake above cannot feed
+                    self._wake_set()           #   the head to THIS client — the new one takes it (see inputs)
+                for what, err in failed:
+                    # The report is guarded too (round-3 review): _log runs the kernel's log callback
+                    # bare, and a callback raising here (a closed stderr under a service restart) would
+                    # propagate out of this finally and REPLACE the bookkeeping's exception, so the
+                    # containment reported the callback's fault and the bookkeeping's site never
+                    # reached the ring. One attempt: the line is built in its own try (an err whose
+                    # __str__ raises falls back to the type alone), the ring row lands before the
+                    # callback runs (see _log), and a callback failure costs the kernel log line only.
+                    try:
+                        line = "settle (%s): %s failed: %s: %s" % (self.name, what, type(err).__name__, _mask_ids(err))
+                    except Exception:
+                        line = "settle (%s): %s failed: %s" % (self.name, what, type(err).__name__)
+                    try:
+                        self.backend._log(line, problem=True)
+                    except Exception:
+                        pass
         elif getattr(msg, "rate_limit_info", None) is not None:
             # A RateLimitEvent: the account-wide /usage limits (5h + weekly) the CLI streams when the limit state
             # changes — the SDK's designed source for the rail usage bars. Duck-typed (no SDK-type import needed).
@@ -6269,24 +6806,168 @@ def _path_bearing(text: str) -> bool:
     return bool(_PATHY_RE.search(text or ""))
 
 
-def _evict_live_overflow(d: dict, cap: int = LIVE_TAIL_CAP) -> None:
+_UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def _mask_ids(text, cap: int = 160) -> str:
+    """A log-safe rendering of an exception's text: every uuid-shaped token keeps its first 8
+    characters, and the whole thing is clipped. A KeyError's text IS the key, and a message uuid or
+    session id in the log is more than a diagnosis needs — the site and the key's KIND are what fix
+    it (the failure this was written for left a bare `KeyError: '<full uuid>'` and nothing else)."""
+    s = _UUID_RE.sub(lambda m: m.group(0)[:8] + "…", str(text))
+    return s if len(s) <= cap else s[:cap] + "…"
+
+
+COMPACT_TB_FRAMES = 8     # the innermost frames a compact chain keeps (the failing site is at that end)
+COMPACT_TB_CHARS = 600    # and its hard length cap
+
+
+def _frame_step(f) -> str:
+    """One traceback frame as the chain renders it: `file:line function` — basename only, no locals,
+    no source line."""
+    return "%s:%d %s" % (os.path.basename(f.filename), f.lineno or 0, f.name)
+
+
+def _failing_frame(exc):
+    """The exception's innermost frame — where it was raised — as (file basename, line, function),
+    read from the traceback itself. This is the recurring-failure dedupe key (_note_message_failure):
+    taken from the frame and not from the rendered chain, so no rendering bound can change it. None
+    when the exception carries no traceback."""
+    frames = traceback.extract_tb(getattr(exc, "__traceback__", None))
+    if not frames:
+        return None
+    f = frames[-1]
+    return (os.path.basename(f.filename), f.lineno or 0, f.name)
+
+
+def _compact_tb(exc, max_frames: int = COMPACT_TB_FRAMES, cap: int = COMPACT_TB_CHARS) -> str:
+    """The exception's frame chain as `file:line function` steps, outermost first — no locals, no
+    source lines: enough to name the site on the next occurrence, small enough for one log line.
+    BOUNDED FROM THE OUTER END: at most the innermost `max_frames` frames, then outer frames dropped
+    one at a time until the chain fits `cap` characters, with a prefix saying how many were dropped
+    in all. The innermost frame — the failing site — is always kept; if it alone overflows the cap,
+    its function name is clipped and its file:line stands. (A RecursionError's chain ran to 18 KB
+    before any bound, into the error-center ring and every feed payload that carries it; the first
+    bound then clipped the chain's TAIL, which is the innermost frame, so a chain through long-named
+    frames lost its failing site, and a dedupe key read off the rendering became the literal '…' —
+    every long-chained failure of one type folded into one ring entry. 2026-09-06.)"""
+    frames = traceback.extract_tb(getattr(exc, "__traceback__", None))
+    if not frames:
+        return "?"
+    total = len(frames)
+
+    def render(kept):
+        dropped = total - len(kept)
+        s = " > ".join(kept)
+        return "…%d outer frame%s dropped… > %s" % (dropped, "" if dropped == 1 else "s", s) if dropped else s
+
+    steps = [_frame_step(f) for f in frames[-max(1, max_frames):]]
+    kept = steps[-1:]                        # the innermost frame, unconditionally
+    for step in reversed(steps[:-1]):        # then outward, one frame at a time, while the whole fits
+        if len(render([step] + kept)) > cap:
+            break
+        kept = [step] + kept
+    s = render(kept)
+    if len(s) > cap:                         # the innermost frame alone overflows: clip its function name
+        site, _, func = kept[0].partition(" ")
+        head = render([site + " "])          # the prefix and the file:line — never clipped
+        room = cap - len(head) - 1
+        s = (head + func[:room] + "…") if room >= 0 else s[:cap - 1] + "…"   # (a site wider than the cap: bound it anyway)
+    return s
+
+
+def _describe_msg(msg) -> str:
+    """`SystemMessage/task_notification`, `AssistantMessage`, … — the message's type and, where the
+    type carries one, its subtype. Never its content."""
+    n = type(msg).__name__
+    st = getattr(msg, "subtype", None)
+    return "%s/%s" % (n, st) if isinstance(st, str) and st else n
+
+
+def _is_command_stdout(msg) -> bool:
+    """A UserMessage carrying a slash command's `<local-command-stdout>` output — the shape msg_to_atom
+    turns into the turn-closing command atom. Reads the text only to match the wrapper tag; nothing
+    of it is kept or returned."""
+    c = getattr(msg, "content", None)
+    if isinstance(c, str):
+        text = c
+    elif isinstance(c, list):
+        parts = []
+        for b in c:
+            t = b.get("text") if isinstance(b, dict) else getattr(b, "text", None)
+            if isinstance(t, str):
+                parts.append(t)
+        text = " ".join(parts)
+    else:
+        return False
+    return bool(_LOCAL_STDOUT_RE.match(text))
+
+
+def _failure_consequence(msg, settled: bool = True) -> str:
+    """What the kernel lost when this message's handler failed, by the message's SHAPE — the problem
+    line's reassurance has to be true for the message it is about, so the class name alone is not
+    enough (round-2 review, 2026-09-06). An assistant message, and a user message that is a real
+    turn, are also transcript records, so the chat rebuilds them from disk — but a user message
+    carrying a command's `<local-command-stdout>` has a record only when the command was TYPED: a
+    control request (client.set_model, a permission-mode set) streams the same line and the CLI
+    persists nothing for it (msg_to_atom), so that confirmation line is lost to the chat. A
+    ResultMessage exists only on the stream; whether its turn still settled is a FACT the caller
+    passes (`settled`: the settle's finally records the result it ran for — see _on_message), not a
+    property of the class: when it did, the settle ran whole (idle, queue released, poked, any
+    deferred reconnect fired) and only this result's own bookkeeping stopped where it failed; when
+    the failure came before the branch was entered, the turn did not settle, and the line says so. A
+    stream event is a partial the full message supersedes. A compact boundary IS a transcript record
+    (the CLI writes it as a `system` row the event model reads from disk). Every other frame (a
+    SystemMessage subtype: task events, status, hooks) exists only on the stream: the kernel's copy
+    of what it carried is gone until the next such frame."""
+    n = type(msg).__name__
+    if n == "ResultMessage":
+        if not settled:
+            return ("the turn did NOT settle (the failure came before the settle ran): the session may read "
+                    "working, with its queue parked, until its next result")
+        return ("the turn still settled — idle, its queue released, the kernel poked, any deferred reconnect "
+                "fired; this result's own bookkeeping (spend, api health, the live-tail sweep) stopped where it failed")
+    if n == "UserMessage" and _is_command_stdout(msg):
+        return ("a command's output line: the transcript keeps it after a typed command, but a control request "
+                "(a model or permission-mode set) leaves no record, and then the confirmation is lost to the chat")
+    if n in ("AssistantMessage", "UserMessage"):
+        return "the transcript keeps the message"
+    if n == "StreamEvent":
+        return "a partial-stream event; the full message follows"
+    if getattr(msg, "subtype", None) == "compact_boundary":
+        return "the transcript keeps the boundary record (the chat rebuilds the compaction from disk)"
+    return "a stream-only frame the transcript never holds: what it carried is lost to the kernel until the next one"
+
+
+def _evict_live_overflow(d: dict, cap: int = LIVE_TAIL_CAP) -> int:
     """Bound a session's in-memory live tail when no client ever drains/prunes it — but never at the
     cost of an INPUT ECHO or a command-feedback line. A stream WORK atom is disposable (the transcript
     supersedes it by uuid within a second), but an echo is the ONLY record of a send the transcript
     hasn't caught up on — evicting it makes an in-flight or dropped message silently invisible (the
     user 2026-07-20: a reply vanished from the chat with no trace). Oldest work atoms go first; only
     in the pathological all-echo case does the cap fall back to evicting oldest-regardless, because a
-    bounded store still beats an unbounded leak."""
+    bounded store still beats an unbounded leak.
+
+    Sweeps a SNAPSHOT of the items and pops with a default: the tail is shared with the kernel thread
+    (see SdkBackend._note_live_tail_race), which may retire a key between the snapshot and the pop.
+    Returns how many keys had vanished that way, for the caller to report."""
     if len(d) <= cap:
-        return
-    for k in list(d.keys()):
+        return 0
+    vanished = 0
+    for k, a in list(d.items()):
         if len(d) <= cap:
-            return
-        a = d[k]
+            return vanished
         if not a.get("_echo_text") and not a.get("command"):
-            del d[k]
+            if d.pop(k, None) is None:
+                vanished += 1
     while len(d) > cap:
-        del d[next(iter(d))]
+        try:
+            k = next(iter(d))
+        except StopIteration:        # emptied under us
+            break
+        if d.pop(k, None) is None:
+            vanished += 1
+    return vanished
 
 
 # ---------------------------------------------------------------------------
@@ -6330,6 +7011,21 @@ class SdkBackend:
         #                                           writes come from kernel AND loop threads)
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
         self._live: dict[str, dict] = {}          # sid -> {key -> atom}: the in-memory LIVE TAIL (ahead of disk)
+        # THE LIVE-TAIL LOCK (2026-09-06). `_live` and every per-sid dict inside it are shared by the
+        # kernel thread (send, recall, dismiss_echo, the pusher's live_atoms/prune_live) and each
+        # session's loop thread (_forward, the settle's retire_live_work, _mark_dropped_echoes at
+        # spawn/reconnect). Lock-free, the sweeps read `d[k]` off stale key lists (KeyError ended a
+        # session's CLI), _persist_echoes and _mark_dropped_echoes walked a dict the other thread was
+        # resizing (RuntimeError: out of the pusher's build; out of the session thread at reconnect),
+        # and `if not d: _live.pop(sid)` was two steps, so an atom stashed between them landed in a
+        # dict nothing could reach. The rule: every write to the tail (a stash, a pop, the sid-level
+        # pop) and every read that iterates it happens under this lock; iteration walks a snapshot
+        # taken under it; the emptiness check and the sid-level pop are one step under it; and the
+        # lock is never held across I/O (a reg write, a transcript read, the orphan-reply append) or
+        # a callback (the pusher wake, a state mark) — copy under the lock, act outside. Re-entrant
+        # so a locked site may call a helper that locks. The class attribute below is the default
+        # for __new__-built test doubles.
+        self._live_lock = threading.RLock()
         self._rl_lock = threading.Lock()          # serializes usage.json read-merge-write (_record_rate_limit)
         self._drain_hold_until = 0.0              # deploy-drain lease (T121): RUNTIME-ONLY — a fresh boot starts clear by construction
         self._drain_hold_since = 0.0
@@ -6353,9 +7049,44 @@ class SdkBackend:
         self._problems: list[dict] = []
         self._problem_seq = 0
         self._problem_lock = threading.Lock()
+        # The MODE is pinned here, once per backend (envsource.pin_mode): an edit that adds or removes
+        # ROMP_CREDENTIAL_COMMAND reaches the NEXT kernel, never a running one, so sessions, judges and
+        # the catalog never straddle two key sources. A line added to service.env is read by the next
+        # kernel (`romp refresh`); a line removed from it under the installed service is still in the
+        # manager's environment, which every kernel inherits, so leaving the mode takes a manager
+        # restart (envsource's module docstring). The other ROMP_CREDENTIAL_* values stay live-readable.
+        command_mode = _envsrc.pin_mode()
         # A credential in the env file under a declared auth is a contradiction of the box's design;
-        # said once, here, where the problem ring exists to carry it (the user 2026-09-05).
-        _warn_credential_lines_in_env_file(self._log)
+        # said once, here, where the problem ring exists to carry it (the user 2026-09-05). In command
+        # mode the key-source verdict below covers the same file (the command wins, the line is
+        # ignored), so this stays quiet there: one line about that file, not two that disagree.
+        if not command_mode:
+            _warn_credential_lines_in_env_file(self._log)
+        # The key-source verdict (key_source_verdict): ONE check per backend, here, before the boot
+        # reconcile below can resume a session — in command mode this is the command's FIRST run, so a
+        # broken credential command is said before any launch stands on nothing. Its lines go through _log
+        # (the problem ring for the flagged ones); the dict feeds api_health_snapshot's keySource.
+        self._cred_fp_said = None                 # last set fingerprint written to the log (change-only)
+        self._cred_err_said = None                # the failure reason last said (one line per episode)
+        self._cred_dropped_said = ()              # the ROMP_* names last said dropped (change-only)
+        self._cred_dropped_auth_said = ()         # the CLI-auth names last said dropped (change-only)
+        self._cred_timeout_said = None            # the ROMP_CREDENTIAL_TIMEOUT_S problem last said (change-only)
+        self._cred_noted_attempt = -1             # the `attempt` of the record last noted: an older record is ignored
+        self._cred_note_lock = threading.Lock()   # the noter runs on session, judge and catalog threads at once
+        self.key_source = self._boot_key_source_verdict()
+        # The module-level readers (work_api_key for a judge's key-billed call, credential_set for the
+        # judges' environment and the catalog fetch) say a failed run through THIS backend's noter: one
+        # episode guard for every path that can run the command (_noted_take). The kernel constructs one
+        # backend per process, so the last one registered is the live one; the reference is weak, so a
+        # backend a test drops is released and notes nothing (_CREDENTIAL_NOTER). Registered AFTER the
+        # verdict, on purpose: the kernel starts the model-catalog thread just before it constructs the
+        # backend, and that thread's first act is a credential_set() whose run coalesces with the verdict's,
+        # so both return when the command exits. Registered first, the reader's record reached the noter
+        # here before the verdict's lines were logged and the boot said one failure twice (2026-09-06).
+        # Now a reader whose take() returns during construction finds no noter (a plain read; the verdict is
+        # the boot's report of that run) or one whose guards the verdict has already primed (nothing said);
+        # a verdict that raised primed nothing, and the reader or the next path says the run once.
+        _register_credential_noter(self._note_credential_set)
         # The /api-health aggregator (one ring, one lock; see ApiHealth). Fed from _on_message on each
         # session's thread, read by the kernel's route; the salt is minted lazily at the first label.
         self.api_health = ApiHealth(self.state_dir, log=self._log)
@@ -6453,25 +7184,91 @@ class SdkBackend:
     def work_key(self, value) -> None:
         self._work_key_pin = str(value or "")
 
-    def _work_key_and_source(self) -> tuple:
-        """(key, source) in ONE read of the file — "file" (the env file's line), "startup" (the claim
-        made at boot, because the file has no usable line), "pin" (a test's explicit value), "" (no
-        key anywhere). _options wants both, and must not read the file twice per connect: a keyswap
-        can land between two reads, and the source named in the log must be the source injected."""
+    def _work_key_and_source(self, cred=None) -> tuple:
+        """(key, source) in ONE read — "command" (the configured command's ANTHROPIC_API_KEY line),
+        "file" (the env file's line), "startup" (the claim made at boot, because the file has no
+        usable line), "pin" (a test's explicit value), "" (no key anywhere). _options wants both,
+        and must not read the source twice per connect: a keyswap can land between two reads, and
+        the source named in the log must be the source injected. In command mode `cred` is the
+        (record, values) pair _options took from envsource.take() — ONE read of the set, so the key
+        decided on here and the role variables merged there come from the same run; the file and
+        the startup claim are not consulted (the mode wins; the boot verdict said so once)."""
         if self._work_key_pin is not None:
             return self._work_key_pin, ("pin" if self._work_key_pin else "")
         startup = startup_api_key()
+        if _envsrc.configured():
+            snap, vals = cred if cred is not None else _envsrc.take()
+            self._note_credential_set(snap)
+            key = vals.get(_envsrc.KEY_VAR, "")
+            return key, ("command" if key else "")
         live = _keysrc.read_key()
         _check_key_file_agrees(startup, live)
         if live:
             return live, "file"
         return startup, ("startup" if startup else "")
 
+    def key_source_mode(self) -> str:
+        return key_source_mode()
+
+    def credential_fingerprint(self, snap=None, values=None) -> tuple:
+        """(fingerprint, kind) of the credential a session launched NOW would bill: in command mode
+        the set's ANTHROPIC_API_KEY ("key"), else the configured apiKeyHelper's output ("helper" —
+        run and hashed inside envsource, the bytes never seen here), else ("", "login") when no
+        helper is configured at all (the machine login bills, and there is nothing to fingerprint —
+        not a failure) or ("", "") when a configured helper could not be fingerprinted; in file mode
+        the file's or the startup key ("key"). The value cycle_key converges sessions on, and what
+        the kernel's /keycycle answer carries as keyFp and keyKind. `snap` is a record the caller
+        already took and `values` the set beside it (_cred_take's pair), so one operation reads the
+        set once and the helper runs in that set's environment rather than reading it again — which
+        on a failing command is another run. With no record the read happens here, noted."""
+        if _envsrc.configured():
+            if snap is None:
+                snap, values = self._cred_take()
+            if snap.get("hasKey"):
+                return snap.get("keyFp") or "", "key"
+            if not _envsrc.helper_command():
+                return "", "login"                # no key in the set, no helper: the machine login bills
+            fp, _reason = self._helper_fingerprint(snap, values)
+            return fp, ("helper" if fp else "")
+        fp = _keysrc.fingerprint(self.work_key)
+        return fp, ("key" if fp else "")
+
+    def _cred_take(self) -> tuple:
+        """(record, values) from ONE read of the command source, the record said through THIS backend's
+        noter: the instance half of _noted_take, for the readers that hold a backend — the status report,
+        the api-health snapshot and the key cycle. Every path that can run the command reads through one
+        of the two, so a failed run is one problem line per episode wherever it is first seen. On the
+        backend itself, not the registered noter: with two backends in one process (tests) the
+        registered one is the last constructed, and this backend's own report belongs in its own ring."""
+        snap, vals = _envsrc.take()
+        self._note_credential_set(snap)
+        return snap, vals
+
+    @staticmethod
+    def _helper_fingerprint(snap, values) -> tuple:
+        """envsource.helper_fingerprint on the set a caller already took (its values, generation and set
+        identity), so the helper runs in that set's environment and no second read of the command
+        source happens; with no values in hand, the module reads the current set itself."""
+        if values is None:
+            return _envsrc.helper_fingerprint()
+        return _envsrc.helper_fingerprint(values=values, generation=(snap or {}).get("generation"),
+                                          set_seq=(snap or {}).get("setSeq"))
+
+    def role_fingerprint(self, values=None) -> str:
+        """The fingerprint of the ROLE VARIABLES a launch would inject now — the command source's set
+        minus ANTHROPIC_API_KEY; "" in file mode or for an empty set. `values` is a set the caller
+        already took (_cred_take's values half); None reads it here, noted."""
+        if not _envsrc.configured():
+            return ""
+        vals = dict(values) if values is not None else self._cred_take()[1]
+        vals.pop(_envsrc.KEY_VAR, None)
+        return _envsrc.set_fingerprint(vals)
+
     def work_key_fp(self) -> str:
-        """The renderable form of the key sessions launch on: the sha256 head, "" for none. The
-        kernel's /keycycle answer carries this so an operator can confirm the kernel re-read the
-        file they just wrote — the value itself never leaves this process."""
-        return _keysrc.fingerprint(self.work_key)
+        """The renderable form of the credential sessions launch on: the sha256 head, "" for none.
+        The kernel's /keycycle answer carries this so an operator can confirm the kernel reads what
+        their shell reads — the value itself never leaves this process."""
+        return self.credential_fingerprint()[0]
 
     def _note_work_key(self, key: str, source: str = "file") -> None:
         """Log WHICH key a launch is billing, as a fingerprint, and only when it changes. That makes
@@ -6484,39 +7281,247 @@ class SdkBackend:
             if source == "startup":  # the fallback: say so, rather than name a file that does not hold the key
                 src = ("the environment this manager started with; %s has no %s line the kernel can use"
                        % (_keysrc.service_env_path(), _keysrc.KEY_VAR))
+            elif source == "command":
+                src = "the ANTHROPIC_API_KEY line the credential command printed"
             else:
                 src = "read from %s" % _keysrc.service_env_path()
             self._log("work key: sessions now launch on the key sha256:%s (%s)" % (fp, src))
 
+    def _note_credential_set(self, snap: dict, *, reported: bool = False) -> None:
+        """Log what the command source is handing launches, change-only, from its value-free record:
+        the set's fingerprint and names when they change; ONE problem line per failure episode (a
+        new KIND of failure is new information; the same kind again is not), and the recovery; the
+        ROMP_* names it dropped, once per distinct list. Never a value. The episode is keyed on the
+        record's `reasonKey`, the failure's kind (the exit code, a timeout, what the output lacked):
+        the full `reason` carries the run's duration and stderr byte count, which differ at every run
+        of the same failure, so a guard on it said the same failure again per run. That per-run
+        detail stays in the record, which api-health's lastRun reports.
+
+        Every path that can run the command reports through here — the connect (_work_key_and_source),
+        the operator's refresh, the status report, the api-health snapshot and the key cycle
+        (_cred_take), and through _noted_take the judges' environment and the catalog fetch
+        (credential_set) and a judge's key-billed call (work_api_key). One guard, so a failure first
+        seen on any of them is one line, and the same failure seen next on another path is none; a run
+        that succeeds ends the episode wherever it happens. The boot verdict is the one path that
+        reports the record ITSELF (its lines carry the per-run detail — duration, stderr bytes — the
+        lines here leave out) and then hands it here with `reported`: the guards are set from the
+        record and nothing is said, so the boot is one line per fact and the next path that meets the
+        same facts is silent, as after any note. Serialised: the paths run on session, judge and
+        catalog threads at once, and two threads seeing one new failure must not both say it.
+
+        Ordered: a record is noted only when it is at least as new as the last one noted, by its
+        `attempt` (envsource's ordinal of the run or refusal that produced it; callers that coalesced
+        on one run share it, so an equal ordinal is noted and only an older one is ignored). envsource
+        releases its lock when take() returns, before the record reaches here, so a thread can be held
+        between the two while another thread's run succeeds and is noted first; without the order the
+        held thread said a stale failure after the recovery, and that failure's kind then held the
+        guard against the next real failure of the same kind — a writer whose evidence predates the
+        diary stands down. A record without the field (a hand-built one) is noted unordered."""
+        with self._cred_note_lock:
+            self._note_credential_set_locked(snap, reported)
+
+    def _note_credential_set_locked(self, snap: dict, reported: bool = False) -> None:
+        attempt = snap.get("attempt")
+        if attempt is not None:
+            if attempt < self._cred_noted_attempt:
+                return                        # an older run's record: the log already holds a newer one
+            self._cred_noted_attempt = attempt
+        say = (lambda *a, **k: None) if reported else self._log
+        if snap.get("ok") is False:
+            reason = snap.get("reasonKey") or snap.get("reason") or "no reason recorded"
+            if reason != self._cred_err_said:
+                self._cred_err_said = reason
+                say("credential command: failed — %s. %s" % (
+                    reason,
+                    "Sessions launch on the set from its last successful run (sha256:%s) until a run succeeds."
+                    % (snap.get("setFp") or "") if snap.get("stale") else
+                    "Sessions launch with nothing injected — the apiKeyHelper or the login bills — until a run "
+                    "succeeds; `romp keyswap --refresh` re-runs it now."), problem=True)
+            return
+        if snap.get("ok") is None:
+            return
+        if self._cred_err_said is not None:
+            self._cred_err_said = None
+            say("credential command: succeeded again — the set is sha256:%s" % (snap.get("setFp") or ""))
+        fp = snap.get("setFp") or ""
+        if fp != self._cred_fp_said:
+            self._cred_fp_said = fp
+            names = list(snap.get("names") or [])
+            say("credential command: sessions now launch with the set sha256:%s (%d name%s: %s); %s"
+                % (fp, len(names), "" if len(names) == 1 else "s", ", ".join(names),
+                   ("key sha256:%s" % snap.get("keyFp")) if snap.get("hasKey")
+                   else "no ANTHROPIC_API_KEY in it — the apiKeyHelper or the login bills"))
+        dropped = tuple(snap.get("dropped") or ())
+        if dropped and dropped != self._cred_dropped_said:
+            self._cred_dropped_said = dropped
+            say("credential command: dropped %d ROMP_* variable%s it printed (%s) — romp owns those names"
+                % (len(dropped), "" if len(dropped) == 1 else "s", ", ".join(dropped)), problem=True)
+        dropped_auth = tuple(snap.get("droppedAuth") or ())
+        if dropped_auth and dropped_auth != self._cred_dropped_auth_said:
+            self._cred_dropped_auth_said = dropped_auth
+            say("credential command: dropped %s it printed — %s the CLI reads as its own authentication or "
+                "endpoint; the key rides ANTHROPIC_API_KEY alone"
+                % (", ".join(dropped_auth), "a name" if len(dropped_auth) == 1 else "names"), problem=True)
+        tmo = snap.get("timeoutProblem") or ""
+        if tmo and tmo != self._cred_timeout_said:
+            self._cred_timeout_said = tmo
+            say("credential command: " + tmo, problem=True)
+
+    def _boot_key_source_verdict(self) -> dict:
+        """key_source_verdict on the real inputs, its lines logged. Never raises: a verdict that cannot
+        be taken is a logged problem, and the backend still constructs. In command mode the record it
+        describes is the command's FIRST run, and its lines are the boot's ONE report of that record:
+        the noter takes the record as `reported` (guards set, nothing said) once the lines are logged,
+        so the next path that meets the same facts is silent, and a verdict that could not be taken
+        leaves the record unsaid for the next path to say. This runs BEFORE the constructor registers
+        the noter for the module-level readers: a reader whose run coalesced with this one (the
+        catalog's boot fetch) then reads plain, or meets guards already primed. Before this the noter
+        spoke first and the verdict again, two problem lines about one failure at boot (2026-09-06).
+        Whether a key is injected is the record's own `hasKey`, so the boot describes one record from
+        one read — the live work_key read is a second read, which on a failing command was a second
+        run."""
+        snap = None
+        try:
+            env_text = ""
+            try:
+                with open(_keysrc.service_env_path(), "r", encoding="utf-8", errors="replace") as fh:
+                    env_text = fh.read()
+            except OSError:
+                pass
+            snap = _envsrc.status() if _envsrc.configured() else None
+            if snap is not None and self._work_key_pin is None:
+                work_key_present = bool(snap.get("hasKey"))
+            else:
+                work_key_present = bool(self.work_key)
+            v = key_source_verdict(service_env_text=env_text, unit_texts=_unit_texts(),
+                                   helper_command=_envsrc.helper_command(), snapshot=snap,
+                                   work_key_present=work_key_present,
+                                   startup_key_present=bool(startup_api_key()))
+        except Exception as e:
+            self._log("key source: the boot verdict failed — %s" % e, problem=True)
+            return {"mode": key_source_mode(), "lines": []}
+        for ln in v.get("lines") or []:
+            self._log(ln["text"], problem=ln["problem"])
+        if snap is not None:
+            self._note_credential_set(snap, reported=True)
+        return v
+
+    def _launched_histogram(self) -> dict:
+        """{credential fingerprint: live session count} — what each running CLI launched on, for the
+        /keycycle answer and api-health ("" counts the sessions launched with no credential the kernel
+        fingerprinted: the login)."""
+        with self._lock:
+            sess = list(self.sessions.values())
+        out: dict = {}
+        for s in sess:
+            if getattr(s, "ended", False):
+                continue
+            fp = getattr(s, "_launched_key_fp", None) or ""
+            out[fp] = out.get(fp, 0) + 1
+        return out
+
+    def key_source_status(self) -> dict:
+        """The value-free key-source facts the /keycycle route reports beside its rows: source
+        ("file"|"command"), fp (the current credential fingerprint, keyFp on the wire), fpKind
+        ("key"|"helper"|"login"|""; keyKind on the wire — "login" is a set with no key and no helper
+        configured: the machine login bills, nothing to fingerprint, no error), err (why there is
+        no fingerprint or the last run failed; "" when fine), setFp and selector (command mode),
+        launched (the histogram)."""
+        snap, vals = self._cred_take() if _envsrc.configured() else (None, None)
+        fp, kind = self.credential_fingerprint(snap, vals)
+        out = {"source": key_source_mode(), "fp": fp, "fpKind": kind, "err": "", "setFp": "",
+               "selector": "", "launched": self._launched_histogram()}
+        if snap is not None:
+            out["setFp"] = snap.get("setFp") or ""
+            out["selector"] = _envsrc.selector_label(snap)
+            if snap.get("ok") is False:
+                out["err"] = snap.get("reason") or "the credential command failed"
+            elif not snap.get("hasKey") and not fp and kind != "login":
+                out["err"] = self._helper_fingerprint(snap, vals)[1]   # a configured helper that gave no fingerprint
+        return out
+
+    def refresh_key_source(self) -> dict:
+        """`romp keyswap --refresh` (and the first step of a --cycle): re-run the command NOW rather
+        than at the next launch, and say what moved. {"from": fp, "to": fp, "err": reason} — in file
+        mode the read is already live (the file's own stat identity), so this is a plain re-read."""
+        before, _k = self.credential_fingerprint()
+        if _envsrc.configured():
+            _envsrc.invalidate("refresh")
+            self._note_credential_set(_envsrc.current())
+        after, _k = self.credential_fingerprint()
+        st = self.key_source_status()
+        if before != after:
+            self._log("key source: refreshed — the credential fingerprint moved sha256:%s -> sha256:%s"
+                      % (before or "(none)", after or "(none)"))
+        return {"from": before, "to": after, "err": st.get("err", "")}
+
+    def _credential_auth_failed(self, sess, what: str) -> None:
+        """A credential the command source supplied (or the helper it fingerprints) was refused on
+        `sess` — a 401 give-up, a launch refused as unauthenticated. The exact event the cached set
+        goes stale on: invalidate, so the next launch re-runs the command — ONCE per credential
+        (envsource.invalidate_for_auth_failure): a second refusal of the same set is not new
+        information, and a revoked credential must not turn every refusal into a command run.
+        Keyed on the session's launch stamp, like _credential_auth_ok below: a refusal on a session
+        still running on the credential from before a rotation is not a refusal of the current set,
+        so it invalidates nothing. Before this every 401 was forwarded without the stamp, and an
+        uncycled session on the old credential cost one command run, one helper run and two log
+        lines per turn (its refusal invalidated the current set; the next current-credential turn
+        re-armed the path). A session with no stamp (nothing to fingerprint at its launch) forwards
+        "" and is keyed on the set alone. A launch refused as unauthenticated carries the stamp of
+        the set that connect just took. Logged when it fires; a no-op in file mode (nothing cached
+        to refresh)."""
+        if not _envsrc.configured():
+            return
+        fp = getattr(sess, "_launched_key_fp", None) or ""
+        if _envsrc.invalidate_for_auth_failure("auth failure: " + what, fp):
+            self._log("credential command: %s reported an authentication failure (%s) — the set is re-read at the "
+                      "next launch" % (getattr(sess, "name", "?"), what))
+
+    def _credential_auth_ok(self, sess) -> None:
+        """A turn on `sess` completed (a ResultMessage that is not an error): the credential its CLI
+        launched on was accepted. The event that re-arms the once-per-credential path
+        (envsource.credential_auth_ok), keyed on the session's launch stamp: a session still running
+        on the credential from before a rotation re-arms nothing, since its success says nothing
+        about the set a refusal was reported for. A session with no fingerprinted credential (the
+        login) has nothing to report. Logged when it re-arms; a no-op in file mode."""
+        if not _envsrc.configured():
+            return
+        fp = getattr(sess, "_launched_key_fp", None) or ""
+        if fp and _envsrc.credential_auth_ok(fp):
+            self._log("credential command: %s completed a turn on the credential last refused (sha256:%s); a later "
+                      "refusal re-runs the command again" % (getattr(sess, "name", "?"), fp))
+
     def cycle_key(self, sid: str) -> str:
-        """Re-present the CURRENT work key to one LIVE session by reconnecting it — the apply half of
-        `romp keyswap --cycle` (the user 2026-09-04).
+        """Re-present the CURRENT credential set to one LIVE session by reconnecting it — the apply half
+        of `romp keyswap --cycle` (the user 2026-09-04).
 
-        The key rides the launch environment, so it is connect-time exactly like --effort and the
-        auth pick: a running CLI keeps the key it started with until it is replaced. request_reconnect
-        is the same mechanism set_effort/set_auth/set_env use — resume continues the same conversation
-        with its history intact — called here in its immediate-only form (defer=False): a session that
-        is not quiet is skipped, never handed the end-of-turn reconnect. Nothing is persisted, because
-        nothing about the SESSION changed: which key the box uses is not a per-session setting.
+        The key and the role variables ride the launch environment, so they are connect-time exactly
+        like --effort and the auth pick: a running CLI keeps what it started with until it is replaced.
+        request_reconnect is the same mechanism set_effort/set_auth/set_env use — resume continues the
+        same conversation with its history intact — called here in its immediate-only form
+        (defer=False): a session that is not quiet is skipped, never handed the end-of-turn reconnect.
+        Nothing is persisted, because nothing about the SESSION changed: which credentials the box
+        uses is not a per-session setting.
 
-        Returns what happened, for the CLI to print per session: "cycling" (a quiet, live, key-billed
-        session is reconnecting NOW), "current" (its client already launched on the live key — nothing
-        to re-present, so a repeated --cycle-all leaves a keyed session that already moved alone; a
-        helper session never reads this, see below),
-        "login" (billed to the machine login — the key would not be injected, so a reconnect would cost
-        a turn for nothing), "dormant" (no live CLI — its next launch reads the new key anyway),
-        "working" (a turn, a queued turn, live subagents or background tasks are in flight — see below),
-        "unknown" (this backend has no such session), and — this fork — "helper" (below).
+        Returns what happened, for the CLI to print per session: "cycling" (a quiet, live session whose
+        launch stamps differ from the current fingerprints is reconnecting NOW), "current" (its client
+        already launched on the current credential AND the current role variables — nothing to
+        re-present, so a repeated --cycle-all leaves it alone), "login" (billed to the machine login with
+        no role variables in play — a reconnect would cost a turn for nothing), "dormant" (no live CLI —
+        its next launch reads the new set anyway), "working" (a turn, a queued turn, live subagents or
+        background tasks are in flight — see below), "unknown" (this backend has no such session).
 
-        "helper" (the user 2026-09-05): the kernel handed this session NO key, yet its CLI reported
-        one at init (apiKeySource: an apiKeyHelper, a project setting — auth_live == "key"). The key
-        came from outside the kernel, and a NEW CLI process is the only way a rotation there reaches
-        the session: the process keeps the credential it started with. Upstream reads such a session
-        as "login" and skips it; on an installation whose every session bills through the helper that
-        made --cycle-all a no-op. The same quiet-only and in-flight rules apply. There is no fingerprint
-        to converge on — the kernel never sees the helper's value — so a repeated --cycle reconnects it
-        again; the operator runs the cycle once per rotation. A session whose CLI reported the login
-        is left alone as before.
+        Convergence (2026-09-05, replacing the fork's always-reconnect "helper" outcome): each connect
+        stamps the session with the fingerprint of the credential it launched on — the injected key's,
+        or in command mode the apiKeyHelper output's when the kernel injected none (envsource runs the
+        helper and hashes inside; the kernel never sees the value) — and with the fingerprint of the role
+        variables it injected. cycle_key compares both stamps with the fingerprints a launch would get
+        now: equal reads "current", a difference reconnects. A rotation behind the same selector is a
+        new fingerprint, so no extra flag is needed; a helper-billed session whose helper cannot be
+        fingerprinted (none configured, or it fails) has nothing to converge on and reconnects on every
+        run, with the reason in the log. Known skew: the CLI refreshes its helper on its own 300 s TTL
+        and on a 401, so one needless reconnect per rotation is possible. In file mode the compare is
+        upstream's: the file key's fingerprint against the stamp; a non-keyed session reads "login".
 
         "working": a reconnect abandons the CLI process, and the subagents and background tasks INSIDE
         it die with it (_drop_live_work) — the very loss the keyswap exists to avoid, and one an idle-
@@ -6525,34 +7530,60 @@ class SdkBackend:
         settings switches use: that reconnect fires unconditionally when the turn ends, so work the turn
         launches after this check would die with it (second review pass, 2026-09-04). So "cycling" means
         exactly one thing — an immediate reconnect of a session with nothing in flight — and the operator
-        re-runs --cycle on the sessions the report named as skipped for in-flight work once they are quiet
-        (review find, 2026-09-04). A repeated --cycle-all is not that re-run: a helper session has no
-        fingerprint to converge on and reconnects again on every run that names it."""
+        re-runs --cycle on the sessions the report named as skipped for in-flight work once they are
+        quiet; sessions already moved read "current" on that re-run."""
         if not self.owns(sid):
             return "unknown"
         s = self.sessions.get(sid)
         if s is None:
             return "dormant"
-        helper = False
-        if s.effective_auth() != "key":
-            if getattr(s, "auth_live", "") != "key":
+        keyed = s.effective_auth() == "key"
+        stamped_key = getattr(s, "_launched_key_fp", None) or ""
+        if not _envsrc.configured():
+            if not keyed:
                 return "login"
-            helper = True          # keyed by the CLI's own report, with nothing injected: the helper shape
-        else:
             fp = self.work_key_fp()
-            if fp and getattr(s, "_launched_key_fp", None) == fp:
+            if fp and stamped_key == fp:
                 return "current"
+            why = "to pick up the current work key (sha256:%s)" % fp
+        else:
+            snap, vals = self._cred_take()            # ONE read of the set for the whole compare, noted
+            cur_fp, kind = self.credential_fingerprint(snap, vals)
+            cur_role = self.role_fingerprint(vals)
+            stamped_role = getattr(s, "_launched_set_fp", None) or ""
+            helper_billed = (not keyed) and getattr(s, "auth_live", "") == "key"
+            if not keyed and not helper_billed and not cur_role and not stamped_role:
+                return "login"
+            reasons = []
+            if keyed:
+                if not (cur_fp and stamped_key == cur_fp):
+                    reasons.append("the work key is now sha256:%s (launched on sha256:%s)"
+                                   % (cur_fp or "(none)", stamped_key or "(none)"))
+            elif helper_billed:
+                # the helper's own fingerprint, whatever the set carries: this session was launched
+                # without the set's key (a login pick, or no key in the set) and its CLI found one
+                # through the helper — _options stamped the helper's output, so that is the compare
+                hfp, hreason = self._helper_fingerprint(snap, vals)
+                if hfp:
+                    if stamped_key != hfp:
+                        reasons.append("the apiKeyHelper now prints sha256:%s (launched on sha256:%s)"
+                                       % (hfp, stamped_key or "(none)"))
+                else:
+                    reasons.append("its CLI bills through a helper the kernel could not fingerprint (%s), so "
+                                   "there is nothing to converge on — its new process re-runs the helper"
+                                   % (hreason or "no fingerprint"))
+            if stamped_role != cur_role:
+                reasons.append("the role variables are now sha256:%s (launched with sha256:%s)"
+                               % (cur_role or "(none)", stamped_role or "(none)"))
+            if not reasons:
+                return "current"
+            why = "; ".join(reasons)
         with s._sub_lock:
             live_work = len(s._subagents) + len(s._bg_tasks)
         if live_work or s.inflight > 0 or s._pending:
             return "working"
         s.request_reconnect(defer=False)
-        if helper:
-            self._log("keyswap (%s): reconnecting so its new CLI process re-runs the credential helper "
-                      "it bills through (the kernel hands it no key)" % s.name)
-            return "helper"
-        self._log("keyswap (%s): reconnecting to pick up the current work key (sha256:%s)"
-                  % (s.name, _keysrc.fingerprint(self.work_key)))
+        self._log("keyswap (%s): reconnecting — %s" % (s.name, why))
         return "cycling"
 
     def _heal_stale_awaiting(self, sid: str) -> None:
@@ -7452,7 +8483,7 @@ class SdkBackend:
     # ---- logging / wakeups ----
     PROBLEM_RING = 100        # how many backend problems are kept for the dashboard (oldest dropped)
 
-    def _log(self, m, problem=None):
+    def _log(self, m, problem=None, key=None):
         """Every backend line goes to the kernel log; the ones that report a FAILURE also land in a ring
         the dashboard's error center reads, so an SDK problem shows up where the user is looking instead
         of only in a file nobody tails (the user 2026-07-28, who could tell exceptions were happening and
@@ -7461,15 +8492,38 @@ class SdkBackend:
         What counts as a problem is the exact event, not a keyword sniff on the message: a line logged
         while an exception is being handled IS that exception's report. sys.exc_info() is live for the
         whole dynamic extent of an `except` block — helpers called from inside one included — so the
-        classification follows the code path that produced the line. `problem=` overrides either way."""
+        classification follows the code path that produced the line. `problem=` overrides either way.
+
+        `key` (hashable) dedupes a RECURRING problem in the ring: a repeat of a key already in the ring
+        counts on that entry (its text gains the count) instead of appending — the kernel log still
+        gets every line, but the ring is 100 entries and its sequence number is the feed's cache key,
+        so a handler failing on every streamed message used to evict every other problem within a
+        minute and force a feed rebuild per message (2026-09-06). One cache bust per NEW problem; a
+        key whose entry the ring has since dropped enters again as new."""
         if problem is None:
             problem = sys.exc_info()[0] is not None
         if problem:
             with self._problem_lock:
-                self._problem_seq += 1
-                self._problems.append({"seq": self._problem_seq, "t": time.time(), "text": str(m)})
-                if len(self._problems) > self.PROBLEM_RING:
-                    del self._problems[:-self.PROBLEM_RING]
+                hit = None
+                if key is not None:
+                    for row in reversed(self._problems):
+                        if row.get("key") == key:
+                            hit = row
+                            break
+                if hit is not None:
+                    hit["count"] = int(hit.get("count") or 1) + 1
+                    hit["last"] = time.time()
+                    reps = hit["count"] - 1
+                    hit["text"] = "%s (%d repeat%s this kernel life; each is a kernel log line)" % (
+                        hit.get("first", hit["text"]), reps, "" if reps == 1 else "s")
+                else:
+                    self._problem_seq += 1
+                    row = {"seq": self._problem_seq, "t": time.time(), "text": str(m)}
+                    if key is not None:
+                        row.update(key=key, first=str(m), count=1)
+                    self._problems.append(row)
+                    if len(self._problems) > self.PROBLEM_RING:
+                        del self._problems[:-self.PROBLEM_RING]
         if self._log_cb:
             self._log_cb(m)
 
@@ -7484,6 +8538,15 @@ class SdkBackend:
         with self._problem_lock:
             rows = list(self._problems)
         return rows[-limit:] if limit else rows
+
+    def problem_keyed(self, key) -> bool:
+        """Whether a keyed problem's entry is in the ring NOW. The reporter of a recurring failure asks
+        before choosing its short repeat form: a repeat whose entry the ring has since evicted must
+        re-enter with the full report (SdkSession._note_message_failure), because the ring row is
+        built from whatever line creates it. A key added by another thread between this answer and
+        the caller's `_log` merely counts the full line on that row — harmless."""
+        with self._problem_lock:
+            return any(row.get("key") == key for row in self._problems)
 
     def _note_cli_scope_fallback(self, sess, text: str) -> None:
         """The scope wrapper wrote its fallback notice on `sess`'s stderr (SdkSession._on_cli_stderr,
@@ -7545,6 +8608,28 @@ class SdkBackend:
         for _var, key, _ok, _rule, typ in CLI_SCOPE_LIMITS:
             v = self.cli_scope_limits.get(key) if self.cli_scope else None
             out["cliScope"][key] = typ(v) if v is not None else None
+        # The key source (key_source_verdict at boot, plus what is live now): mode, selector, the path
+        # a session's key takes, the declaration, whether a helper is configured, the ExecStart shape,
+        # credential-shaped names found (names only), the command's last run, the current credential
+        # fingerprint and which live sessions launched on which. Never a value.
+        ksrc = {k: v for k, v in (self.key_source or {}).items() if k != "lines"}
+        try:
+            snap, vals = self._cred_take() if _envsrc.configured() else (None, None)
+            fp, kind = self.credential_fingerprint(snap, vals)
+        except Exception:
+            snap, fp, kind = None, "", ""
+        ksrc["fingerprint"], ksrc["fingerprintKind"] = fp, kind
+        ksrc["setFingerprint"], ksrc["names"] = "", []
+        if snap is not None:
+            ksrc["mode"] = "command"
+            ksrc["selector"] = _envsrc.selector_label(snap)
+            ksrc["setFingerprint"] = snap.get("setFp") or ""
+            ksrc["names"] = list(snap.get("names") or [])
+            ksrc["lastRun"] = _last_run_of(snap)
+            ksrc["sessionKeyPath"] = "injected" if snap.get("hasKey") else (
+                "helper" if ksrc.get("helperConfigured") else "login")
+        ksrc["sessionsByFingerprint"] = self._launched_histogram()
+        out["keySource"] = ksrc
         return out
 
     def _poke(self):
@@ -7751,20 +8836,54 @@ class SdkBackend:
         # The key is read ONCE here, per connect, and the value the auth decision was made on is the
         # value injected: the source is live now (a keyswap can land between two reads). An empty read
         # decides login — blanking the var would leave the CLI in key-mode-without-a-key.
-        work_key, key_src = self._work_key_and_source()
+        # In command mode the set is read ONCE per connect (envsource.take: the record and the values
+        # under one lock) and shared with the key decision, so the key injected and the role variables
+        # merged come from the same run — read twice, a re-run could land between them.
+        cred = _envsrc.take() if _envsrc.configured() else None
+        work_key, key_src = self._work_key_and_source(cred)
         launch_keyed = sess.effective_auth(work_key) == "key"
+        # The command source's ROLE VARIABLES (its set minus ANTHROPIC_API_KEY — the key reaches a
+        # child only through the decision below) ride UNDER romp's own entries: the CLI and every
+        # tool shell it runs see them, and a reconnect re-presents the current set. {} in file mode.
+        role_vars = dict(cred[1]) if cred is not None else {}
+        role_vars.pop(_envsrc.KEY_VAR, None)
+        if role_vars:
+            kw["env"] = {**role_vars, **kw["env"]}
         if launch_keyed:
             self._note_work_key(work_key, key_src)
             kw["env"] = dict(kw["env"], ANTHROPIC_API_KEY=work_key,
                              **key_fast_org_env(work_key, self._log))
         elif sess.auth == "key":
-            # picked "key", but this manager's env carries none — falling to login silently would bill
-            # the wrong account with nothing to see; say so where the Log panel shows it.
-            self._log("auth (%s): session is set to the API key but the manager environment carries "
-                      "none (nor does service.env, where your installation allows a key in a file) — "
-                      "launching on the login instead" % sess.name, problem=True)
+            # picked "key", but there is none to inject — falling to login silently would bill the
+            # wrong account with nothing to see; say so where the Log panel shows it.
+            if _envsrc.configured():
+                self._log("auth (%s): session is set to the API key but the credential command printed no "
+                          "ANTHROPIC_API_KEY — launching without one (the apiKeyHelper or the login bills)"
+                          % sess.name, problem=True)
+            else:
+                self._log("auth (%s): session is set to the API key but the manager environment carries "
+                          "none (nor does service.env, where your installation allows a key in a file) — "
+                          "launching on the login instead" % sess.name, problem=True)
         sess._launched_keyed = launch_keyed
-        sess._launched_key_fp = _keysrc.fingerprint(work_key) if launch_keyed else ""
+        # The stamps cycle_key converges on: the credential (the injected key's fingerprint; in
+        # command mode with nothing injected, the apiKeyHelper output's — envsource runs it and hashes
+        # inside, cached until an invalidation) and the role variables injected.
+        if launch_keyed:
+            sess._launched_key_fp = _keysrc.fingerprint(work_key)
+        elif _envsrc.configured():
+            # the set this connect already took rides along: the helper's environment is built from it
+            # rather than from a second read, which on a failing command would be a second run; its
+            # generation and set identity (setSeq) ride with it, so an invalidate that landed since
+            # the take leaves the fingerprint stored stale rather than served as current, and a set
+            # that changed under one generation (a recovery after a failed run, a selector-file edit)
+            # gets its own fingerprint rather than the previous set's cached one
+            sess._launched_key_fp = _envsrc.helper_fingerprint(
+                values=cred[1] if cred is not None else None,
+                generation=cred[0].get("generation") if cred is not None else None,
+                set_seq=cred[0].get("setSeq") if cred is not None else None)[0]
+        else:
+            sess._launched_key_fp = ""
+        sess._launched_set_fp = _envsrc.set_fingerprint(role_vars)
         return ClaudeAgentOptions(**kw)
 
     # ---- lifecycle (kernel-thread API) ----
@@ -8104,11 +9223,14 @@ class SdkBackend:
             return None
         text = s.unqueue(idx, expect)
         if text is not None:
-            live = self._live.get(sid) or {}
-            for k, a in list(live.items()):                # snapshot: the live-tail thread may mutate concurrently
-                if a.get("_echo_text") == text:
-                    live.pop(k, None)                      # one echo per canceled message
-                    break
+            with self._live_lock:                          # find + pop + the sid-level pop, one step
+                live = self._live.get(sid) or {}
+                for k, a in list(live.items()):
+                    if a.get("_echo_text") == text:
+                        live.pop(k, None)                  # one echo per canceled message
+                        break
+                if not live and self._live.get(sid) is live:
+                    self._live.pop(sid, None)
             self._persist_echoes(sid)                      # the canceled echo leaves the restart mirror too
             self._wake_push()                              # repaint without the echo so it stops reading as sent
         return text
@@ -8172,7 +9294,7 @@ class SdkBackend:
             echo["rompAuto"] = True                          # auto-nudge → romp-logo on the chat/timeline
         if user_todo:
             echo["_todo"] = str(user_todo)                   # the answer's ask, for the loss-reopen seam
-        self._live.setdefault(sid, {})[key] = echo
+        self._stash_live(sid, key, echo)
         self._persist_echoes(sid)                            # unlanded echoes survive a kernel restart (reg mirror)
         self._wake_push()
         return True
@@ -8185,17 +9307,23 @@ class SdkBackend:
         echo died with the kernel, and the message vanished with NO trace anywhere. With the mirror, the
         reseeded echo persists unanswered in the chat, so the LOSS is visible and the user can resend.
         Command-feedback lines (/model etc.) are deliberately not mirrored — replaying a stale confirmation
-        after a restart would assert something that may no longer be true."""
-        d = self._live.get(sid) or {}
+        after a restart would assert something that may no longer be true.
+
+        The walk is under the live-tail lock (the reg write is not): reached from prune_live on the
+        kernel thread while the session thread stashes and retires atoms, an unlocked walk raised
+        `RuntimeError: dictionary changed size during iteration` out of the pusher's chat build —
+        every client missed that cycle and nothing reached the error center (2026-09-06)."""
         snap = []
-        for a in d.values():
-            if not a.get("_echo_text") or a.get("command"):
-                continue
-            e = {"t": a.get("t", 0), "text": a["_echo_text"], "author": a.get("author") or "human",
-                 "rompAuto": bool(a.get("rompAuto")), "dropped": bool(a.get("dropped"))}
-            if a.get("_todo"):
-                e["todo"] = str(a["_todo"])   # a user-todo ANSWER's echo keeps its ask's id across restarts
-            snap.append(e)
+        with self._live_lock:
+            d = self._live.get(sid) or {}
+            for a in list(d.values()):
+                if not a.get("_echo_text") or a.get("command"):
+                    continue
+                e = {"t": a.get("t", 0), "text": a["_echo_text"], "author": a.get("author") or "human",
+                     "rompAuto": bool(a.get("rompAuto")), "dropped": bool(a.get("dropped"))}
+                if a.get("_todo"):
+                    e["todo"] = str(a["_todo"])   # a user-todo ANSWER's echo keeps its ask's id across restarts
+                snap.append(e)
         try:
             self._update_reg(sid, echoes=snap)
         except Exception as e:
@@ -8226,7 +9354,7 @@ class SdkBackend:
                     atom["dropped"] = True
                 if e.get("todo"):
                     atom["_todo"] = str(e["todo"])   # the loss-reopen seam survives the restart too
-                self._live.setdefault(reg["sid"], {})[key] = atom
+                self._stash_live(reg["sid"], key, atom)
             if self._live.get(reg["sid"]):
                 self._mark_dropped_echoes(reg["sid"], _queue_texts(reg.get("queue")))
 
@@ -8248,13 +9376,19 @@ class SdkBackend:
         kept the first, exactly the duplicate that branch refuses by design. The loss still surfaces in
         full (the dropped flag, the todo-reopen seam); only the queue re-add is withheld. Boot and
         dead-spawn callers keep the default: no client survived there to have landed anything."""
-        d = self._live.get(sid)
-        if not d:
-            return
         qs = {q for q in queued_texts if isinstance(q, str)}
-        newly = [a for a in d.values()
-                 if a.get("_echo_text") and not a.get("command") and not a.get("dropped")
-                 and a["_echo_text"] not in qs]
+        # The selection is under the live-tail lock; everything after it (the transcript scan, the
+        # queue re-add, the reg write) is not. This runs on the SESSION thread at spawn and at every
+        # reconnect, outside the connect's try — while the kernel thread's send() stashes an echo into
+        # the same dict. Unlocked, the comprehension raised RuntimeError there and the session thread
+        # died with no reconnect (2026-09-06).
+        with self._live_lock:
+            d = self._live.get(sid)
+            if not d:
+                return
+            newly = [a for a in list(d.values())
+                     if a.get("_echo_text") and not a.get("command") and not a.get("dropped")
+                     and a["_echo_text"] not in qs]
         if not newly:
             return
         # RE-DELIVER, don't just flag (the user 2026-08-23, their strongest point in the restart
@@ -8377,18 +9511,23 @@ class SdkBackend:
         only: a live (pending) echo is the sole visible record of an in-flight send and must stay until
         it lands or its loss is proven. Returns the retired text, or None on a miss (already gone —
         idempotent; the next push simply paints without it)."""
-        live = self._live.get(sid) or {}
-        for k, a in list(live.items()):                    # snapshot: the live-tail thread may mutate concurrently
-            if not (a.get("_echo_text") and a.get("dropped")):
-                continue
-            if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
-                live.pop(k, None)
-                if not live:
-                    self._live.pop(sid, None)
-                self._persist_echoes(sid)
-                self._wake_push()
-                return a.get("_echo_text")
-        return None
+        hit = None
+        with self._live_lock:                              # find + pop + the sid-level pop, one step
+            live = self._live.get(sid) or {}
+            for k, a in list(live.items()):
+                if not (a.get("_echo_text") and a.get("dropped")):
+                    continue
+                if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
+                    live.pop(k, None)
+                    if not live and self._live.get(sid) is live:
+                        self._live.pop(sid, None)
+                    hit = a
+                    break
+        if hit is None:
+            return None
+        self._persist_echoes(sid)                          # the reg write and the wake, outside the lock
+        self._wake_push()
+        return hit.get("_echo_text")
 
     def rewind(self, sid: str, target_uuid: str, text: str) -> "tuple[bool, str]":
         """Rewind the conversation to `target_uuid` (a transcript record uuid the KERNEL has validated:
@@ -9246,10 +10385,10 @@ class SdkBackend:
         a dormant session."""
         t = int(time.time())
         uid = "cmd:%d:%s" % (t, command.lstrip("/"))
-        self._live.setdefault(sid, {})[uid] = {
+        self._stash_live(sid, uid, {
             "type": "user", "uuid": uid, "session_id": sid, "fsid": fsid, "parentUuid": None,
             "t": t, "author": "human", "command": command, "_echo_text": disp,
-            "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
+            "message": {"role": "user", "content": [{"type": "text", "text": disp}]}})
         append_cmd_gesture(self.state_dir, sid, disp, t=t)
         self._wake_push()
 
@@ -9710,6 +10849,43 @@ class SdkBackend:
         replays durably to chat clients — and so the poll never clobbers it with an askLiveClear."""
         return self._pending_ask.get(sid)
 
+    _live_tail_race_seen: set = set()          # sweep sites that saw a key vanish mid-sweep, per kernel life
+    _live_tail_race_lock = threading.Lock()
+    _live_lock = threading.RLock()             # the default for __new__-built test doubles; __init__ gives
+    #                                            each backend its own (the rule is documented there)
+
+    def _note_live_tail_race(self, site: str) -> None:
+        """A live-tail sweep, holding the live-tail lock, found a key gone between its snapshot and its
+        pop. Before the lock (2026-09-06) the tail (`self._live[sid]`) was a plain dict shared by two
+        threads: the session's loop thread added atoms (_forward) and retired them at the settle
+        (retire_live_work), the kernel thread pruned landed ones during a chat build (prune_live), and
+        each sweep walked a stale key list and read `d[k]` — so when the kernel thread pruned a
+        just-landed reply while the settle sweep still held its uuid, `KeyError: '<message uuid>'`
+        escaped _on_message and ended the receive loop, which tore the CLI down mid-work (a peer
+        session lost its turn, a Workflow run and a background agent to it). The lock (`_live_lock`,
+        see __init__) is the fix; the sweeps still walk a snapshot and pop with a default, so a key
+        that vanishes anyway costs nothing — and it is reported, ONCE per site per kernel life, because
+        under the lock it can only mean a mutator changed the tail without taking it: a fix that made
+        that invisible would hide the next thing that shares this dict. (retire_live_work does not
+        report: it releases the lock for the orphan salvage's transcript read, and a key gone at its
+        pop is a landing prune_live filed in that window — expected, not a fault.)"""
+        with SdkBackend._live_tail_race_lock:
+            if site in SdkBackend._live_tail_race_seen:
+                return
+            SdkBackend._live_tail_race_seen.add(site)
+        self._log("live tail (%s): a message-uuid key vanished between the sweep's snapshot and its pop "
+                  "with the live-tail lock held — something changed the tail without taking _live_lock. "
+                  "Harmless here: the sweep continued (before 2026-09-06 this KeyError ended the "
+                  "session's receive loop and its CLI). Reported once per site per kernel life." % site,
+                  problem=True)
+
+    def _stash_live(self, sid: str, key: str, atom: dict) -> None:
+        """Add one atom to the sid's live tail — the ONE way a key enters it from outside _forward
+        (send's echo, the boot reseed, the /model chip). Under the live-tail lock, so the stash can
+        never land in a dict a sweep is popping from `_live` in the same instant."""
+        with self._live_lock:
+            self._live.setdefault(sid, {})[key] = atom
+
     def _forward(self, sess: SdkSession, msg):
         # LIVE TAIL: translate the streamed message to an atom and stash it in memory, AHEAD of the
         # transcript on disk (the SDK stream leads the disk write), then wake the kernel's pusher for an
@@ -9719,9 +10895,12 @@ class SdkBackend:
         if not (atom and atom.get("uuid")):
             return
         _note_skill_tool_ids(atom, sess._skill_tool_ids)   # a Skill tool_use arms its payload's classification
-        d = self._live.setdefault(sess.sid, {})
-        d[atom["uuid"]] = atom
-        _evict_live_overflow(d)                  # safety cap if no client ever drains/prunes — never an echo
+        with self._live_lock:
+            d = self._live.setdefault(sess.sid, {})
+            d[atom["uuid"]] = atom
+            vanished = _evict_live_overflow(d)   # safety cap if no client ever drains/prunes — never an echo
+        if vanished:
+            self._note_live_tail_race("_evict_live_overflow")
         # The stream is the AUTHORITATIVE busy signal: a genuine WORK atom (streamed assistant/tool
         # output — not an input echo, not a /model-style command line) means the CLI is producing RIGHT
         # NOW, so re-assert 'working' if a prior state write settled ahead of it (e.g. a separate turn
@@ -9757,8 +10936,10 @@ class SdkBackend:
 
     def live_atoms(self, sid: str) -> list:
         """The session's in-memory live-tail atoms (newest last), for build_session to merge ahead of disk."""
-        d = self._live.get(sid)
-        return sorted(d.values(), key=lambda a: a.get("t", 0)) if d else []
+        with self._live_lock:                      # the pusher's read: copy under the lock, sort outside
+            d = self._live.get(sid)
+            vals = list(d.values()) if d else []
+        return sorted(vals, key=lambda a: a.get("t", 0))
 
     def prune_live(self, sid: str, tx_uuids, tx_user_texts=(), human_floor: int = 0) -> None:
         """Drop live atoms the transcript has now caught up on — by uuid (assistant/tool/user from the
@@ -9773,10 +10954,11 @@ class SdkBackend:
         can be neither queued nor landed, and the blanket floor hid exactly that in-flight message the
         moment any other human record landed. A plain-text echo now prunes ONLY by its own text landing —
         and a genuinely dropped send's echo PERSISTS, so the loss shows (the tmux echo's semantics).
-        (Echo-only: real stream atoms have no _echo_text and prune by uuid as before.)"""
-        d = self._live.get(sid)
-        if not d:
-            return
+        (Echo-only: real stream atoms have no _echo_text and prune by uuid as before.)
+
+        Pure dict work, so the whole sweep runs under the live-tail lock (the emptiness check and the
+        sid-level pop included — one step, so a stash can never land in a dict this pops); the echo
+        mirror's reg write follows outside it."""
         # `tx_user_texts` may be a MAPPING text → the newest record time carrying it (the kernel's
         # _merge_live_atoms ships that since T237b): an echo then lands by text only through a record
         # written AT OR AFTER its own send — a fork copies the parent's history, and "ok" / "go ahead" /
@@ -9790,22 +10972,29 @@ class SdkBackend:
                 return et in tx_user_texts
             return et in text_t and float(text_t[et] or 0) >= float(a.get("t") or 0)
         echo_removed = False
-        for k in list(d.keys()):
-            a = d[k]
-            et = a.get("_echo_text")
-            landed = a.get("uuid") in tx_uuids or _by_text(a, et)
-            stale_echo = (bool(et) and human_floor and a.get("t", 0) <= human_floor
-                          and not a.get("command") and _path_bearing(et))
-            # A COMMAND atom (the CLI's streamed /model, /compact feedback) from a TURN-LESS control
-            # request may never get a transcript record to land against — retire it once a genuine human
-            # turn postdates it, so the stale confirmation line doesn't ride pinned inside every later
-            # turn forever (the user 2026-07-02, with the live_work command exemption).
-            stale_cmd = bool(a.get("command")) and human_floor and a.get("t", 0) <= human_floor
-            if landed or stale_echo or stale_cmd:
-                echo_removed = echo_removed or bool(et and not a.get("command"))
-                del d[k]
-        if not d:
-            self._live.pop(sid, None)
+        vanished = 0
+        with self._live_lock:
+            d = self._live.get(sid)
+            if not d:
+                return
+            for k, a in list(d.items()):   # a SNAPSHOT (belt-and-braces under the lock — _note_live_tail_race)
+                et = a.get("_echo_text")
+                landed = a.get("uuid") in tx_uuids or _by_text(a, et)
+                stale_echo = (bool(et) and human_floor and a.get("t", 0) <= human_floor
+                              and not a.get("command") and _path_bearing(et))
+                # A COMMAND atom (the CLI's streamed /model, /compact feedback) from a TURN-LESS control
+                # request may never get a transcript record to land against — retire it once a genuine human
+                # turn postdates it, so the stale confirmation line doesn't ride pinned inside every later
+                # turn forever (the user 2026-07-02, with the live_work command exemption).
+                stale_cmd = bool(a.get("command")) and human_floor and a.get("t", 0) <= human_floor
+                if landed or stale_echo or stale_cmd:
+                    echo_removed = echo_removed or bool(et and not a.get("command"))
+                    if d.pop(k, None) is None:
+                        vanished += 1
+            if not d and self._live.get(sid) is d:
+                self._live.pop(sid, None)
+        if vanished:
+            self._note_live_tail_race("prune_live")
         if echo_removed:
             self._persist_echoes(sid)   # keep the restart mirror in step (empty once everything landed)
 
@@ -9817,43 +11006,51 @@ class SdkBackend:
         belongs to an attempt that produced NO transcript record (an API-errored/rate-limited try, a
         killed process). Left in place it is merged forever, and its live_work forces the turn open —
         the chat chip read WORKING with a 3h20m timer on a session whose turn died in a usage-limit
-        retry storm, while the timeline lane said READY (the user 2026-07-03)."""
-        d = self._live.get(sid)
-        if not d:
-            return
-        for k in list(d.keys()):
-            a = d[k]
-            if not a.get("_echo_text") and not a.get("command"):
-                # An assistant atom carrying real TEXT that never landed on disk is a reply the user WATCHED
-                # stream but the transcript dropped (an API-errored try — the CLI discards the partial and the
-                # retry writes a fresh record with a new uuid). Persist it durably BEFORE dropping the live
-                # atom, so build_session can interleave it back at its timestamp — dedup'd against the disk so a
-                # retry that DID re-reply never doubles. Without this the reply vanishes at settle and only the
-                # "Recovered after N retries" note remains where it was (the user 2026-07-21).
-                if a.get("type") == "assistant" and not a.get("isApiError"):
-                    txt = _atom_text(a)
-                    # "(no content)" is the CLI's placeholder for contentless command feedback (an SDK
-                    # /clear streams one) — nothing the user watched, nothing to salvage. Persisted, it
-                    # resurfaced as a worked reply on the bare command turn (the user 2026-07-27); the
-                    # parse-side guard in synthesize_orphans covers markers already written.
-                    # VERIFIED AT THE WRITE MOMENT (the user 2026-08-26): a marker claims "this reply
-                    # is on disk nowhere", and the claim's precondition — prune_live retired every
-                    # landed atom — holds only for sessions the chat BUILDS. A comment thread is never
-                    # built (hidden by design), so its landed replies were still live at settle and
-                    # EVERY thread reply minted a spurious marker: states/ litter, and the judge's
-                    # per-push marker scan grows with it. One tail read of the sid's own transcript
-                    # per would-be marker (settles are rare; healthy sessions already pruned) keeps
-                    # the salvage honest for every hidden-session shape, threads and future ones. A
-                    # genuinely-lost reply (the API-error discard) is on disk nowhere and still mints.
-                    if txt.strip() and txt.strip() != "(no content)" \
-                            and not self._reply_on_disk(sid, a.get("uuid") or ""):
-                        try:
-                            append_orphan_reply(self.state_dir, sid, a.get("uuid") or "", txt, t=a.get("t"))
-                        except Exception:
-                            self._log("orphan-reply persist failed: %s" % traceback.format_exc())
-                del d[k]
-        if not d:
-            self._live.pop(sid, None)
+        retry storm, while the timeline lane said READY (the user 2026-07-03).
+
+        Three phases around the live-tail lock: the work atoms are snapshotted under it, the orphan
+        salvage's I/O (a transcript tail read, the marker append) runs outside it, and the pops go
+        back under it — from the SAME dict object the snapshot came from, with the emptiness check
+        and the sid-level pop as one step. A key already gone at its pop is a landing prune_live
+        filed during the I/O window (legitimate, under the lock), so it is not reported as a race."""
+        with self._live_lock:
+            d = self._live.get(sid)
+            if not d:
+                return
+            work = [(k, a) for k, a in list(d.items()) if not a.get("_echo_text") and not a.get("command")]
+        for k, a in work:
+            # An assistant atom carrying real TEXT that never landed on disk is a reply the user WATCHED
+            # stream but the transcript dropped (an API-errored try — the CLI discards the partial and the
+            # retry writes a fresh record with a new uuid). Persist it durably BEFORE dropping the live
+            # atom, so build_session can interleave it back at its timestamp — dedup'd against the disk so a
+            # retry that DID re-reply never doubles. Without this the reply vanishes at settle and only the
+            # "Recovered after N retries" note remains where it was (the user 2026-07-21).
+            if a.get("type") == "assistant" and not a.get("isApiError"):
+                txt = _atom_text(a)
+                # "(no content)" is the CLI's placeholder for contentless command feedback (an SDK
+                # /clear streams one) — nothing the user watched, nothing to salvage. Persisted, it
+                # resurfaced as a worked reply on the bare command turn (the user 2026-07-27); the
+                # parse-side guard in synthesize_orphans covers markers already written.
+                # VERIFIED AT THE WRITE MOMENT (the user 2026-08-26): a marker claims "this reply
+                # is on disk nowhere", and the claim's precondition — prune_live retired every
+                # landed atom — holds only for sessions the chat BUILDS. A comment thread is never
+                # built (hidden by design), so its landed replies were still live at settle and
+                # EVERY thread reply minted a spurious marker: states/ litter, and the judge's
+                # per-push marker scan grows with it. One tail read of the sid's own transcript
+                # per would-be marker (settles are rare; healthy sessions already pruned) keeps
+                # the salvage honest for every hidden-session shape, threads and future ones. A
+                # genuinely-lost reply (the API-error discard) is on disk nowhere and still mints.
+                if txt.strip() and txt.strip() != "(no content)" \
+                        and not self._reply_on_disk(sid, a.get("uuid") or ""):
+                    try:
+                        append_orphan_reply(self.state_dir, sid, a.get("uuid") or "", txt, t=a.get("t"))
+                    except Exception:
+                        self._log("orphan-reply persist failed: %s" % traceback.format_exc())
+        with self._live_lock:
+            for k, _a in work:
+                d.pop(k, None)
+            if not d and self._live.get(sid) is d:
+                self._live.pop(sid, None)
 
     def _reply_on_disk(self, sid: str, uuid: str) -> bool:
         """Does the sid's transcript already hold this uuid? The orphan salvage's own precondition,
@@ -9895,11 +11092,11 @@ class SdkBackend:
         fate at settle (echo, command, apiError, hasText). The kernel's chat-divergence tripwire logs it
         to pin WHICH atom held a chat turn open after the backend settled — the 2026-07-25 stale-"running"
         chat could not be diagnosed because a restart cleared exactly this state before anyone read it."""
-        d = self._live.get(sid)
-        if not d:
-            return []
+        with self._live_lock:
+            d = self._live.get(sid)
+            vals = list(d.values()) if d else []   # copy under the lock; the summary is built outside
         out = []
-        for a in list(d.values()):                 # copy: loop threads mutate the dict mid-iteration
+        for a in vals:
             if not isinstance(a, dict):
                 continue
             out.append({"uuid": a.get("uuid") or "", "type": a.get("type") or "",
@@ -9996,6 +11193,13 @@ class SdkBackend:
             self._update_reg(sess.sid, launchError=rec)
         except Exception:
             self._log("record launch error (%s): %s" % (sess.name, traceback.format_exc()))
+        if is_auth_failure_text(text) or is_auth_failure_text(tail):
+            # the CLI refused to start for want of a credential — the command source's cached set,
+            # if any, is stale evidence: re-read at the next launch (see _credential_auth_failed)
+            try:
+                self._credential_auth_failed(sess, "the CLI refused to start: not authenticated")
+            except Exception:
+                pass
         self._log("session %s: claude CLI failed to start%s — %s"
                   % (sess.name, " (account usage limit)" if rec["limit"] else "", text))
         # The FULL captured stderr to the log, once, at the failure. The card gets one truncated line

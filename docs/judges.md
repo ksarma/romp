@@ -385,6 +385,14 @@ environment: on a host with no login, every call refused "Not logged in" for 13
 hours — ~53k errors — while the board sat frozen in Working with nothing saying
 why.)
 
+With `ROMP_CREDENTIAL_COMMAND` set (see [Installing without keys on
+disk](reference.md#installing-without-keys-on-disk)), a judge child env also
+carries the set that command printed, minus `ANTHROPIC_API_KEY`, which the same
+explicit decision re-adds only for a key-mode call. A credential-class refusal
+on a judge call marks the cached set stale, so the next call re-runs the
+command; the model catalog fetch reads the set's `ANTHROPIC_LP_API_KEY` the
+same way.
+
 A **credential-class** failure (not logged in, an invalid key, an expired OAuth
 token) is one no retry can fix — only the user can. The first such error
 envelope latches judge-auth-down for that session (`STATE/judge-auth.json`), and

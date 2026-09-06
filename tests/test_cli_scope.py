@@ -264,7 +264,7 @@ class ConstructionVerdict(_Backend):
         try:
             be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)   # the test floor: off
             self.assertFalse(be.cli_scope)
-            self.assertNotIn("ROMP_CLI_REAL", os.environ)
+            self.assertFalse("ROMP_CLI_REAL" in os.environ, "ROMP_CLI_REAL present")
         finally:
             if before is not None:
                 os.environ["ROMP_CLI_REAL"] = before
@@ -277,7 +277,7 @@ class OptionsWiring(_Backend):
         self.be.cli_scope = False
         kw = self._kw()
         self.assertEqual(kw["cli_path"], "/bin/true")
-        self.assertNotIn("ROMP_CLI_REAL", kw["env"])
+        self.assertFalse("ROMP_CLI_REAL" in kw["env"], "ROMP_CLI_REAL present")
 
     def test_on_spawns_the_wrapper_with_the_real_cli_in_the_env(self):
         self.be.cli_scope = True
@@ -307,7 +307,7 @@ class OptionsWiring(_Backend):
             sb.cli_scope_wrapper = before
         for kw in (kw1, kw2):
             self.assertEqual(kw["cli_path"], "/bin/true", "the session still starts, on the direct path")
-            self.assertNotIn("ROMP_CLI_REAL", kw["env"])
+            self.assertFalse("ROMP_CLI_REAL" in kw["env"], "ROMP_CLI_REAL present")
         loud = [(m, p) for m, p in problems if "no-such-wrapper" in m]
         self.assertEqual(len(loud), 1, "reported once per backend, as a problem: %r" % (problems,))
         self.assertTrue(loud[0][1])
@@ -645,7 +645,7 @@ class LimitsOnTheBackend(_Backend):
         self.assertEqual(env["ROMP_CLI_SCOPE_MEMORY_HIGH"], "12G")
         self.assertEqual(env["ROMP_CLI_SCOPE_MEMORY_MAX"], "")
         self.assertEqual(env["ROMP_CLI_SCOPE_OOM_SCORE_ADJ"], "")
-        self.assertNotIn("ROMP_CLI_SCOPE_MEMORY_SWAP_MAX", env)
+        self.assertFalse("ROMP_CLI_SCOPE_MEMORY_SWAP_MAX" in env, "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX present")
 
     def test_options_sends_nothing_when_off_or_when_the_wrapper_is_missing(self):
         self.be.cli_scope_limits = {"memoryMax": "16G"}
@@ -767,8 +767,8 @@ class LimitsOnTheBackend(_Backend):
         env = be._options(sess, dict)["env"]
         self.assertEqual(env["ROMP_CLI_SCOPE_MEMORY_MAX"], "16G")
         self.assertEqual(env["ROMP_CLI_SCOPE_OOM_SCORE_ADJ"], "")
-        self.assertNotIn("ROMP_CLI_SCOPE_MEMORY_HIGH", env)
-        self.assertNotIn("ROMP_CLI_SCOPE_MEMORY_SWAP_MAX", env)
+        self.assertFalse("ROMP_CLI_SCOPE_MEMORY_HIGH" in env, "ROMP_CLI_SCOPE_MEMORY_HIGH present")
+        self.assertFalse("ROMP_CLI_SCOPE_MEMORY_SWAP_MAX" in env, "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX present")
 
     def test_a_boot_probe_that_does_not_settle_reaches_api_health_as_a_null_verdict_beside_the_limit(self):
         # end to end for the deciding property probe raising: nothing rejected, the value handed down as
