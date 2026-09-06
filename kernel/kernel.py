@@ -23069,22 +23069,28 @@ def _norm_branch(br):
     return "" if br == "HEAD" else br
 
 
-_tree_cache = {}   # dir -> (git toplevel or "", the evidence the verdict was filed on) — see _tree_of
-_pointer_cache = {}   # a worktree's `.git` pointer FILE -> (its mtime, the gitdir it names) — see _pointer_gitdir
+_tree_cache = {}   # dir -> (git toplevel or "", the evidence the verdict was filed on, whether that is the toplevel's own .git) — see _tree_of
+_pointer_cache = {}   # a worktree's `.git` pointer FILE -> ((its mtime, inode, device), the gitdir it names) — see _pointer_gitdir
 _top_shape = {}   # toplevel -> the verdict key of its OWN `.git` entry, which its per-tree memos stand under — see _vouch_tree
 
 
-def _pointer_gitdir(dotgit, mt):
+def _pointer_gitdir(dotgit, mt, ino, dev):
     """The directory a worktree's (or a submodule's) `.git` pointer FILE names — its one line is
-    'gitdir: <private-dir>', resolved against the tree when relative — read ONCE per (path, mtime): git
-    never rewrites the pointer in normal use (`git worktree repair` does, and that moves the mtime), so
-    the memo holds for the tree's life. Re-read per call, the pointer made a worktree cwd — this repo's
-    own convention, so the shape most builds pay — cost five stats and a file read per _tree_of call
-    against a plain toplevel's two stats (review find, 2026-09-06); it is three stats and no read now.
-    '' for a malformed pointer, memoized (the content is what it is until the mtime moves); '' and NOT
-    memoized when the file cannot be read."""
+    'gitdir: <private-dir>', resolved against the tree when relative — read ONCE per (path, mtime, inode,
+    device): git never rewrites the pointer in normal use (`git worktree repair` does, and that moves the
+    mtime), so the memo holds for the tree's life. The inode and device are in the key because the mtime
+    alone is not the file's identity: one clone's worktree rm -rf'd and another's added at the same path
+    within one mtime tick — a second on HFS+, two on FAT — kept the first clone's target for the kernel's
+    life (review find, 2026-09-06). A re-made pointer is a new file, told apart by the stat the chain walk
+    already made, at no cost; what remains is a filesystem handing the freed inode number straight back
+    within the same tick. Re-read per call, the pointer made a worktree cwd — this repo's own convention,
+    so the shape most builds pay — cost five stats and a file read per _tree_of call against a plain
+    toplevel's two stats (review find, 2026-09-06); it is three stats and no read now. '' for a malformed
+    pointer, memoized (the content is what it is until the file changes); '' and NOT memoized when the
+    file cannot be read."""
+    key = (mt, ino, dev)
     hit = _pointer_cache.get(dotgit)
-    if hit is not None and hit[0] == mt:
+    if hit is not None and hit[0] == key:
         return hit[1]
     try:
         with open(dotgit) as f:
@@ -23098,7 +23104,7 @@ def _pointer_gitdir(dotgit, mt):
             gd = rel if os.path.isabs(rel) else os.path.normpath(os.path.join(os.path.dirname(dotgit), rel))
     if len(_pointer_cache) > 512:                        # bounded, like _tree_cache
         _pointer_cache.clear()
-    _pointer_cache[dotgit] = (mt, gd)
+    _pointer_cache[dotgit] = (key, gd)
     return gd
 
 
@@ -23116,7 +23122,7 @@ def _gitdir_of(top):
     if stat.S_ISDIR(st.st_mode):
         return dotgit
     if stat.S_ISREG(st.st_mode):
-        return _pointer_gitdir(dotgit, st.st_mtime)
+        return _pointer_gitdir(dotgit, st.st_mtime, st.st_ino, st.st_dev)
     return ""
 
 
@@ -23129,8 +23135,9 @@ def _is_bare_gitdir(d):
 
 def _dotgit_on_chain(d):
     """The first `.git` entry (a directory, or a worktree's pointer file) at `d` or an ancestor, as
-    evidence — (path, mtime, is_pointer_file) — or None when the chain carries none. One stat per path
-    component up to the hit, no fork. This is NOT git's discovery, only a reason to run it: the walk is
+    evidence — (path, mtime, is_pointer_file, inode, device), everything the one stat says that a verdict
+    key may need (_verdict_key) — or None when the chain carries none. One stat per path component up to
+    the hit, no fork. This is NOT git's discovery, only a reason to run it: the walk is
     lexical (abspath; git walks the physical path), stops at neither GIT_CEILING_DIRECTORIES nor a
     filesystem boundary, and validates nothing — an empty `.git` directory, or a pointer whose gitdir is
     gone (a worktree whose main clone was removed), is an entry here and a rejection from git. _tree_of
@@ -23143,7 +23150,7 @@ def _dotgit_on_chain(d):
         except OSError:
             st = None
         if st is not None:
-            return dg, st.st_mtime, stat.S_ISREG(st.st_mode)
+            return dg, st.st_mtime, stat.S_ISREG(st.st_mode), st.st_ino, st.st_dev
         parent = os.path.dirname(p)
         if parent == p:
             return None
@@ -23154,8 +23161,9 @@ def _own_dotgit(ev, top):
     """Is the chain's `.git` entry the found toplevel's OWN — `top/.git` — rather than one git's discovery
     walked PAST: an empty or otherwise invalid `.git` directory below the toplevel, which git skips and
     continues upward from? Lexical first (the evidence path is an abspath, git's toplevel a physical path),
-    realpath only when they differ, so a cwd reached through a symlink is still the toplevel's own.
-    Decided once per verdict, on _tree_of's miss path — never per call."""
+    realpath only when they differ, so a cwd reached through a symlink is still the toplevel's own — and
+    the link re-pointed at another repository is caught by the key, not here: the entry's inode is in it
+    (_verdict_key). Decided once per verdict, on _tree_of's miss path — never per call."""
     if not top or ev is None:
         return False
     d = os.path.dirname(ev[0])
@@ -23164,23 +23172,28 @@ def _own_dotgit(ev, top):
 
 def _verdict_key(ev, own):
     """The part of the chain evidence (_dotgit_on_chain) a verdict is filed on, and holds while it is equal.
-    A pointer FILE is keyed on its path, its mtime and whether the gitdir it names exists, found or not:
-    git never rewrites the pointer in normal use (`git worktree repair` does, and that moves the mtime),
-    and its target vanishing (the main clone removed) or reappearing (restored from a backup, the pointer
-    untouched) is exactly what flips git's answer. A `.git` DIRECTORY that is the found toplevel's OWN
-    (`own`, _own_dotgit) is keyed on its path alone — its mtime churns with every index write. Any other
-    directory entry adds the mtime, which `git init` filling it moves: one git rejected with no repo
-    above, and one git walked PAST on its way to a toplevel above (an empty `.git` below a valid repo —
-    git skips an invalid directory and continues upward). Keyed on its path alone like the toplevel's
-    own, the walked-past entry served the parent's toplevel, branch and repo forever once `git init`
-    made it a repository of its own (review find, 2026-09-06). None when the chain carries no `.git`."""
+    A pointer FILE is keyed on its path, its mtime, its inode and device, and whether the gitdir it names
+    exists, found or not: git never rewrites the pointer in normal use (`git worktree repair` does, and
+    that moves the mtime), a pointer re-made at the same path within one mtime tick is a new file (the
+    inode; review find, 2026-09-06), and its target vanishing (the main clone removed) or reappearing
+    (restored from a backup, the pointer untouched) is exactly what flips git's answer. A `.git`
+    DIRECTORY that is the found toplevel's OWN (`own`, _own_dotgit) is keyed on its path and its identity
+    — inode and device — never its mtime, which churns with every index write: a cwd that is a symlink,
+    or under one, re-pointed at another repository stats a different directory under the same lexical
+    path, and keyed on the path alone it served the old toplevel, branch and repo for the kernel's life
+    (review find, 2026-09-06). Any other directory entry is keyed on its path and mtime, which `git init`
+    filling it moves: one git rejected with no repo above, and one git walked PAST on its way to a
+    toplevel above (an empty `.git` below a valid repo — git skips an invalid directory and continues
+    upward). Keyed on its path alone like the toplevel's own, the walked-past entry served the parent's
+    toplevel, branch and repo forever once `git init` made it a repository of its own (review find,
+    2026-09-06). None when the chain carries no `.git`."""
     if ev is None:
         return None
-    path, mt, is_file = ev
+    path, mt, is_file, ino, dev = ev
     if is_file:
-        gd = _pointer_gitdir(path, mt)
-        return path, mt, bool(gd) and os.path.isdir(gd)
-    return (path,) if own else (path, mt)
+        gd = _pointer_gitdir(path, mt, ino, dev)
+        return path, mt, ino, dev, bool(gd) and os.path.isdir(gd)
+    return (path, ino, dev) if own else (path, mt)
 
 
 def _vouch_tree(top):
@@ -23192,10 +23205,16 @@ def _vouch_tree(top):
     clone still lists it under .git/worktrees/<name>, so the memoized HEAD and config paths inside THAT
     clone still resolved and were trusted — the dead worktree's branch and the old clone's repo on every
     build for the kernel's life, and `git worktree prune` leaves the clone's own config where it is;
-    review find, 2026-09-06), or one clone's worktree replaced by another's. Only a changed shape
-    forgets, so a subdirectory asked about for the first time under a memoized tree costs no fork."""
+    review find, 2026-09-06), or one clone's worktree replaced by another's. A shape that differs from
+    the record forgets, and so does NO record: the bound below clears every record with every memo, and
+    _tree_of's hit path then refills a live tree's memos with nothing vouching for them, so a re-ask that
+    finds no record must treat the memos as unvouched — read as "unchanged", a reshape whose re-ask was
+    the tree's first after the bound served the dead worktree's branch and the old clone's repo for the
+    kernel's life, the bug above re-opened for every tree at once (review find, 2026-09-06). A first ask
+    for a brand-new tree pops empty memos, a no-op; a subdirectory asked about for the first time under a
+    memoized tree finds its record equal and costs no fork."""
     shape = _verdict_key(_dotgit_on_chain(top), True)
-    if _top_shape.get(top, shape) != shape:
+    if top not in _top_shape or _top_shape[top] != shape:
         for memo in (_head_path_cache, _config_path_cache, _branch_cache, _repo_cache):
             memo.pop(top, None)
     if len(_top_shape) > 512:                            # bounded; a memo never outlives the shape vouching for it
@@ -23213,13 +23232,15 @@ def _tree_of(d):
     changes:
       * a FOUND toplevel re-asks git when its `.git` entry goes (the tree deleted or moved: the walk reaches
         another entry or none), changes kind (a plain repo replaced by a worktree at the same path, or the
-        reverse), or — for a worktree — when its pointer is rewritten or the clone it names disappears; a
-        nested repo appearing below the toplevel re-asks too, and so does `git init` filling an empty
-        `.git` that git had walked past (that entry keeps its mtime in the key — _verdict_key). A re-ask
-        that names a toplevel whose own `.git` changed shape forgets that tree's HEAD, config, branch and
-        repo memos (_vouch_tree), so a worktree re-made as a plain clone shows the clone's branch and
-        repo, not the dead worktree's. Before, a found toplevel was trusted for the life of the kernel and
-        a dead one served a stale branch and repo, or forked per build (review find, 2026-09-06);
+        reverse) or identity (a symlinked cwd re-pointed at another repository: the entry's inode is in
+        the key), or — for a worktree — when its pointer is rewritten or re-made (its mtime or inode) or
+        the clone it names disappears; a nested repo appearing below the toplevel re-asks too, and so does
+        `git init` filling an empty `.git` that git had walked past (that entry keeps its mtime in the key
+        — _verdict_key). A re-ask that names a toplevel whose own `.git` changed shape forgets that tree's
+        HEAD, config, branch and repo memos (_vouch_tree), so a worktree re-made as a plain clone shows the
+        clone's branch and repo, not the dead worktree's. Before, a found toplevel was trusted for the life
+        of the kernel and a dead one served a stale branch and repo, or forked per build (review find,
+        2026-09-06);
       * a NOT-A-REPO verdict re-asks when a `.git` appears on the chain, or the one git rejected changes
         (its mtime, or a pointer's target coming back). So a directory becoming a tree the moment the
         session runs `git init` (then `gh repo create`) is found on the next call — a cached "" once kept
@@ -23238,10 +23259,10 @@ def _tree_of(d):
         return "", ""
     ev = _dotgit_on_chain(d)
     hit = _tree_cache.get(d)
-    # the stored key's SHAPE says how the entry was keyed — a found toplevel's own `.git` directory
-    # (path,), any other directory entry (path, mtime), a pointer file a triple — so the recomputed key
-    # compares like with like, and an entry that changed kind compares unequal
-    if hit is not None and hit[1] == _verdict_key(ev, hit[1] is not None and len(hit[1]) == 1):
+    # the verdict is stored with whether its `.git` entry was the found toplevel's own (_own_dotgit), so the
+    # recomputed key is built the way the stored one was and compares like with like; an entry that
+    # changed kind compares unequal
+    if hit is not None and hit[1] == _verdict_key(ev, hit[2]):
         top = hit[0]
     else:
         try:
@@ -23254,7 +23275,8 @@ def _tree_of(d):
             _vouch_tree(top)                           # BEFORE the branch below reads the tree's memos
         if len(_tree_cache) > 512:                     # bounded: distinct edit dirs, not unbounded growth
             _tree_cache.clear()
-        _tree_cache[d] = (top, _verdict_key(ev, _own_dotgit(ev, top)))
+        own = _own_dotgit(ev, top)
+        _tree_cache[d] = (top, _verdict_key(ev, own), own)
     return top, (_tree_branch(top) if top else "")
 
 
@@ -32211,6 +32233,19 @@ def _note_chat_divergence(sid, name, chat_state, row_state, now):
         pass
 
 
+def _tab_order_frame(tab_order, tab_meta):
+    """The chat's tab-strip frame, in ONE spelling for its three senders (the pusher's tabs-first send,
+    _push_session_now, _confirm_close_now): the sid order, name+color per tab, the views blob — and
+    `selfHost`, this kernel's own name (_self_host), which the chat reads a postal card's sender host
+    against (its postalSenderHost). The session frame carries the name too, but only a LOCAL session's
+    frame teaches it, so a dashboard whose kernel runs no sessions of its own — every session attached
+    from elsewhere — never learned it until the + picker was opened, and a remote card stamped with this
+    kernel's name stayed plain text (review find, 2026-09-06). Every chat client receives a tabOrder
+    frame, first of all on connect (tabs-first), so the name is known before any card renders."""
+    return {"type": "tabOrder", "order": tab_order, "tabs": tab_meta, "selfHost": _self_host(),
+            "views": _views_client()}
+
+
 def _push(targets, connect=False, tmux=None):
     """Build the payloads once (cached parses) and send each target only the pieces that CHANGED for it.
     Drives both the periodic pusher (all clients) and a fresh connect (one client): a new/reconnecting
@@ -32294,7 +32329,7 @@ def _push(targets, connect=False, tmux=None):
                                                          "reason": _retry_pause_reason()})   # "spend" → the card says 'raise your cap', no countdown
                 if tab_order is not None:                # a sentinel cycle sends NO tabOrder frame at all — an
                     #                                      omitting one is the mass teardown the guard refuses
-                    _send_client(c, ("taborder",), {"type": "tabOrder", "order": tab_order, "tabs": tab_meta, "views": _views_client()})
+                    _send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta))
             active = {c.get("active") for c in chat_clients if c.get("active")}
             # Stable: active tabs first — and TRANSCRIPT-LESS sessions with them. A just-created session
             # has no transcript, so its build is near-free, and its creator is guaranteed to be staring
@@ -32622,7 +32657,7 @@ def _push_session_now(sid):
         ms = None                                    # lazy: the first full send materializes it, the rest reuse
         for c in targets:
             if trusted_order:                        # never a tabOrder from a sentinel cycle's partial list
-                _send_client(c, ("taborder",), {"type": "tabOrder", "order": tab_order, "tabs": tab_meta, "views": _views_client()})
+                _send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta))
             ms = _send_chat(c, m, ms, 0, True)       # change_from 0 → always the full-session form
     except Exception:
         sys.stderr.write("push-session-now (%s): %s\n" % (sid, traceback.format_exc()))
@@ -32670,7 +32705,7 @@ def _confirm_close_now(sid):
         chat_list = _chat_tab_sessions(now, guarded)
         tab_order = [s["sid"] for s in chat_list]
         tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in chat_list]
-        frame = {"type": "tabOrder", "order": tab_order, "tabs": tab_meta, "views": _views_client()}
+        frame = _tab_order_frame(tab_order, tab_meta)
         with _clients_lock:
             # alive and ready, as _push_session_now filters: a chat page that announced READY_GATE_CAP is
             # held until its bundle says `ready` (_client_ready) — every other tabOrder sender filters on

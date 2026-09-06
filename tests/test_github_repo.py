@@ -13,7 +13,9 @@ uses a PRIVATE synthetic sid (the goal-store fixture rule, applied to the names 
 Also here: _tree_of's evidence-keyed verdict (a directory that becomes a repo after its first build is
 found without a kernel restart; a `.git` git rejects — or walks past — is asked about once, then costs
 stats), the pointer memos of a tree that dies or changes shape under a live session (_pointer_mtime,
-and _vouch_tree forgetting a reshaped tree's memos), what a memoized call costs in stats, the branch
+and _vouch_tree forgetting a reshaped tree's memos — or unvouched ones, after its record's own bound; a
+pointer re-made within one mtime tick; a symlinked cwd re-pointed at another repository), what a
+memoized call costs in stats, the branch
 of a BARE repository, the inbound postal card's `peerHost` (the chat resolves a sender's repo by host
 and name; a row from before the log stamped a host carries none), the session frame's `selfHost`,
 _git_config_file's hand-built layouts (a relative gitdir, a gitdir with no commondir), and
@@ -233,7 +235,7 @@ class LateRepo(unittest.TestCase):
     def test_a_directory_that_becomes_a_repo_is_found_without_a_restart(self):
         self.assertIsNone(km._github_repo_of(self.proj))
         self.assertEqual(km._tree_of(self.proj), ("", ""))
-        self.assertEqual(km._tree_cache.get(self.proj), ("", None), "the non-repo verdict is cached, with its evidence: no .git on the chain")
+        self.assertEqual(km._tree_cache.get(self.proj), ("", None, False), "the non-repo verdict is cached, with its evidence: no .git on the chain")
         self._init_with_origin(self.proj)
         self.assertEqual(km._github_repo_of(self.proj), REPO, "the next call sees the new tree")
         top, br = km._tree_of(self.proj)
@@ -274,7 +276,9 @@ class LateRepo(unittest.TestCase):
         os.mkdir(dotgit)                                   # any .git on the chain, a directory here
         ev = km._dotgit_on_chain(self.sub)
         self.assertEqual((ev[0], ev[2]), (dotgit, False), "the evidence: the entry's path, and that it is a directory")
-        self.assertEqual(ev[1], os.stat(dotgit).st_mtime)
+        st = os.stat(dotgit)
+        self.assertEqual(ev[1], st.st_mtime)
+        self.assertEqual((ev[3], ev[4]), (st.st_ino, st.st_dev), "…and its identity, off the same stat: a verdict key may need it")
         self.assertEqual(km._dotgit_on_chain(self.proj), ev)
         self.assertIsNone(km._dotgit_on_chain(self.root), "an ancestor of the .git is not on its chain")
 
@@ -366,17 +370,22 @@ class RejectedDotGit(unittest.TestCase):
         self.assertEqual(self.forks, {"--show-toplevel": 1, "--abbrev-ref": 1, "get-url": 1},
                          "the filled directory's mtime is the evidence that moved: one re-ask, then stats")
 
-    def test_the_toplevels_own_dot_git_directory_is_keyed_on_its_path_alone_through_a_symlink_too(self):
+    def test_the_toplevels_own_dot_git_directory_is_keyed_on_its_path_and_identity_never_its_mtime_through_a_symlink_too(self):
         # the evidence path is lexical (abspath), git's toplevel physical: through a symlinked cwd the two
         # spell the same `.git` differently, and a rule that kept the mtime there would re-fork on every
-        # index write (the refuters' caveat, 2026-09-06); an index write moves the directory's mtime
+        # index write (the refuters' caveat, 2026-09-06); an index write moves the directory's mtime. The
+        # inode and device ARE in the key — they never move for a live repository, and a symlink re-pointed
+        # at another one stats a different directory (the re-point test in DeadOrReshapedTree)
         plain = _repo(self.root, "real", HTTPS_ORIGIN)
         link = os.path.join(self.root, "link")
         os.symlink(plain, link)
         top = os.path.realpath(plain)
+        st = os.stat(os.path.join(plain, ".git"))
         for d in (plain, link):
             self.assertEqual(self._build(d)[0][0], (top, "main"))
-            self.assertEqual(km._tree_cache[d][1], (os.path.join(d, ".git"),), "keyed on the path alone (%s)" % d)
+            self.assertEqual(km._tree_cache[d][1], (os.path.join(d, ".git"), st.st_ino, st.st_dev),
+                             "keyed on the path and the directory's identity, no mtime (%s)" % d)
+            self.assertIs(km._tree_cache[d][2], True, "…as the toplevel's own entry (%s)" % d)
             self.forks.clear()
             _bump_mtime(os.path.join(d, ".git"))
             self.assertEqual(self._build(d)[0][0], (top, "main"))
@@ -529,6 +538,93 @@ class DeadOrReshapedTree(unittest.TestCase):
         self.forks.clear()
         self.assertEqual(self._builds(wt), [("feature", "other-org/fork")] * 3)
         self.assertEqual(self.forks, {"--show-toplevel": 1, "--abbrev-ref": 1, "get-url": 1})
+
+    def test_one_clones_worktree_replaced_by_anothers_within_one_mtime_tick_is_re_asked(self):
+        # the same replacement as above with the pointer's mtime NOT moving — what a filesystem with a
+        # one-second (HFS+) or two-second (FAT) mtime tick reports when the rm -rf and the add land in
+        # the same tick: keyed on (path, mtime) alone the verdict hit, _vouch_tree never ran, and the
+        # first clone's branch and origin were served for the kernel's life (review find, 2026-09-06).
+        # The re-made pointer is a new FILE — its inode is in the key. A hard link keeps the old file
+        # allocated across the rm -rf, so the filesystem cannot hand the new pointer the freed inode
+        # number back and the test does not depend on the allocator's mood.
+        a = _repo(self.root, "a", HTTPS_ORIGIN)
+        b = _repo(self.root, "b", "https://github.com/other-org/fork.git")
+        wt = os.path.join(self.root, "shared-name")
+        _git("worktree", "add", "-q", "-b", "web", wt, "HEAD", cwd=a)
+        self.assertEqual(self._builds(wt), [("web", REPO)] * 3)
+        pointer = os.path.join(wt, ".git")
+        old = os.stat(pointer)
+        os.link(pointer, os.path.join(self.root, "keep-the-old-pointer-allocated"))
+        shutil.rmtree(wt)
+        _git("worktree", "add", "-q", "-b", "feature", wt, "HEAD", cwd=b)
+        os.utime(pointer, ns=(old.st_atime_ns, old.st_mtime_ns))   # the same tick, as a coarse filesystem reports it
+        new = os.stat(pointer)
+        self.assertEqual(new.st_mtime, old.st_mtime, "the mtime says nothing changed")
+        self.assertNotEqual(new.st_ino, old.st_ino, "the inode says a new file (the old one is still allocated)")
+        self.forks.clear()
+        self.assertEqual(self._builds(wt), [("feature", "other-org/fork")] * 3, "the second clone's branch and origin")
+        self.assertEqual(self.forks, {"--show-toplevel": 1, "--abbrev-ref": 1, "get-url": 1},
+                         "new evidence (the inode): one re-ask, the tree's memos forgotten and re-derived once")
+        self.assertEqual(os.path.realpath(km._pointer_cache[os.path.abspath(pointer)][1]),
+                         os.path.realpath(os.path.join(b, ".git", "worktrees", "shared-name")),
+                         "the pointer memo names the second clone's private dir")
+
+    def test_a_symlinked_cwd_re_pointed_at_another_repository_is_re_asked(self):
+        # a session registered at ~/proj/current where current -> release-3; the user re-points the link at
+        # release-4, a different repository. The chain stats the same lexical `current/.git`, so a key on
+        # the path alone hit and served release-3's toplevel, branch and repo for the kernel's life (review
+        # find, 2026-09-06; predates the evidence-keyed verdict — a found toplevel was trusted for life
+        # before it). The directory's inode is in the key: the re-pointed link resolves to another one.
+        ra = _repo(self.root, "release-3", HTTPS_ORIGIN)
+        rb = _repo(self.root, "release-4", "https://github.com/other-org/fresh.git")
+        _git("checkout", "-q", "-b", "bee", cwd=rb)
+        link = os.path.join(self.root, "current")
+        os.symlink(ra, link)
+        self.assertEqual(self._builds(link), [("main", REPO)] * 3)
+        self.assertEqual(os.path.realpath(km._tree_of(link)[0]), os.path.realpath(ra))
+        os.remove(link)
+        os.symlink(rb, link)
+        self.forks.clear()
+        self.assertEqual(self._builds(link), [("bee", "other-org/fresh")] * 3, "the repository the link points at now")
+        self.assertEqual(os.path.realpath(km._tree_of(link)[0]), os.path.realpath(rb))
+        self.assertEqual(self.forks, {"--show-toplevel": 1, "--abbrev-ref": 1, "get-url": 1},
+                         "a different `.git` under the same path: one re-ask; the new toplevel's own memos, derived once")
+        st = os.stat(os.path.join(rb, ".git"))
+        self.assertEqual(km._tree_cache[link][1], (os.path.join(link, ".git"), st.st_ino, st.st_dev),
+                         "keyed on the lexical path and the directory it resolves to")
+
+    def test_the_shape_records_own_bound_leaves_no_tree_with_unvouched_memos(self):
+        # _top_shape is bounded at 512 toplevels and clears the four memos with itself — but a live tree's
+        # memos are then refilled by _tree_of's HIT path with no record vouching for them, and a re-ask
+        # that found no record treated the current shape as the recorded one: a reshape whose re-ask was
+        # the tree's first after the bound served the dead worktree's branch and the old clone's repo for
+        # the kernel's life — the bug _vouch_tree closes, re-opened for every tree at once (review find,
+        # 2026-09-06). The bound is tripped through the kernel's own vouching: phantom toplevels outside
+        # every tree (a real repository per record would cost seconds of git init for nothing more).
+        main = _repo(self.root, "main", HTTPS_ORIGIN)
+        wt = os.path.join(self.root, "main-web")
+        _git("worktree", "add", "-q", "-b", "web", wt, "HEAD", cwd=main)
+        self.assertEqual(self._builds(wt), [("web", REPO)] * 3)
+        top = os.path.realpath(wt)
+        self.assertIn(top, km._top_shape)
+        i = 0
+        while len(km._top_shape) <= 512:
+            km._vouch_tree(os.path.join(self.root, "phantom-%d" % i))
+            i += 1
+        other = _repo(self.root, "other", "https://github.com/other-org/other-repo.git")
+        self.assertEqual(self._builds(other), [("main", "other-org/other-repo")] * 3, "a new tree's first ask trips the bound")
+        self.assertNotIn(top, km._top_shape, "the bound cleared the worktree's record…")
+        self.assertNotIn(top, km._head_path_cache, "…and its memos")
+        self.assertEqual(self._builds(wt), [("web", REPO)] * 3)
+        self.assertIn(top, km._head_path_cache, "the hit path refilled the memos…")
+        self.assertNotIn(top, km._top_shape, "…with no record vouching for them")
+        shutil.rmtree(wt)
+        _repo(self.root, "main-web", "https://github.com/other-org/fresh.git")   # a plain clone where the worktree was
+        self.forks.clear()
+        self.assertEqual(self._builds(wt), [("main", "other-org/fresh")] * 3,
+                         "no record is no vouch: the re-ask forgets the unvouched memos, and the plain repo's own branch and origin show")
+        self.assertEqual(self.forks, {"--show-toplevel": 1, "--abbrev-ref": 1, "get-url": 1})
+        self.assertIn(top, km._top_shape, "the tree is vouched again")
 
     def test_a_subdirectory_asked_about_for_the_first_time_forgets_nothing_of_its_memoized_tree(self):
         # forgetting is keyed on the tree's own .git changing shape, not on the re-ask alone — a first ask
@@ -927,6 +1023,9 @@ class FrameWiring(unittest.TestCase):
         self.assertIn('"selfHost": _self_host(),', src, "top-level on the frame the chat receives for every session")
         feed = inspect.getsource(km.build_feed)
         self.assertIn('"selfHost": _self_host(),', feed, "the same name the feed frame carries")
+        # …and the tabOrder frame, which every chat receives first of all: a dashboard whose kernel runs no
+        # local session has no session frame to learn the name from (tests/test_kernel_tabs_first.py runs it)
+        self.assertEqual(km._tab_order_frame([], [])["selfHost"], km._self_host())
 
     def test_the_feed_session_rows_carry_the_repo(self):
         src = inspect.getsource(km.build_feed)
