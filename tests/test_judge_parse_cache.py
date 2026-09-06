@@ -17,7 +17,7 @@ jd = SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module
 
 
 def test_parsed_session_caches_until_the_transcript_changes():
-    jd._PARSE_CACHE.clear()
+    jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
     calls = []
     orig = jd.em.parse_session
     jd.em.parse_session = lambda *a, **k: calls.append(1) or {"turns": []}   # count real parses
