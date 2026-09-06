@@ -315,11 +315,34 @@ export function mergeHostOrder(perHost: Record<string, readonly string[]>, hostS
  *  remote's snapshot (both pushed ~every 2s) alternate and clobber each other, and the feed visibly flips
  *  back and forth ("repeatedly reloading"). Concatenate the arrays (items/asks/working) in hostSeq order
  *  (local first); keep the scalar chrome fields (now, dismissedCount, flags) from the LOCAL host, since the
- *  dashboard's own controls are local-authoritative. Ids are already prefixed by prefixInbound. */
+ *  dashboard's own controls are local-authoritative. Ids are already prefixed by prefixInbound.
+ *
+ *  A pane's clock anchor is a PAIR that travels with the frame: `now` (the emitting kernel's clock) and
+ *  `nowAt` (the local ms when that frame ARRIVED from the wire, `arrivedAt[host]`). The merge is emitted
+ *  not only on a wire arrival but on a view-order write, on every remote host's frame and on a detach, and
+ *  a pane that runs its ages on the kernel's clock (feed-age.ts liveNow) sets that clock from the frame it
+ *  is handed: anchoring `now` on the EMIT time would move every age back by however long the local board
+ *  had been quiet. The pair comes from the LOCAL host's frame; with no local frame yet, from the newest
+ *  remote arrival that carries a clock — the same host for both halves, so they always describe one frame.
+ *  Absent `arrivedAt` (a caller with no wire), no `nowAt` is set and the pane anchors on its own arrival. */
 export function mergeHostFeeds(perHost: Record<string, any>, hostSeq: readonly string[],
-                               view: readonly string[] = [], deadHosts: readonly string[] = []): any {
+                               view: readonly string[] = [], deadHosts: readonly string[] = [],
+                               arrivedAt: Record<string, number> = {}): any {
   const local = perHost[LOCAL] || {};
   const merged: any = { ...local, type: "feed", items: [], asks: [], working: [], awaiting: [], stateUnknown: [], order: [], sessions: [] };
+  let anchor = typeof local.now === "number" ? LOCAL : null;
+  if (anchor === null) {
+    for (const h of hostSeq) {
+      const f = perHost[h];
+      if (h === LOCAL || !f || typeof f.now !== "number" || typeof arrivedAt[h] !== "number") continue;
+      if (anchor === null || arrivedAt[h] > arrivedAt[anchor]) anchor = h;
+    }
+  }
+  if (anchor !== null) {
+    merged.now = perHost[anchor].now;
+    if (typeof arrivedAt[anchor] === "number") merged.nowAt = arrivedAt[anchor];
+    else delete merged.nowAt;
+  }
   // `ledgers` drives the FLEET pane (it rides the same feed message). Only include it once at least one host
   // has actually BUILT its ledgers — else the fleet's loader-gate (needs an array) would drop onto an empty
   // pane. Kept undefined until then so the loader holds, exactly like the single-kernel path.
@@ -608,6 +631,7 @@ export class FederationManager {
   private localViews: any = null;   // the LOCAL kernel's session-views blob, carried on merged tabOrder re-emits
   private perHostSids: Record<string, Set<string>> = {};
   private perHostFeed: Record<string, any> = {}; // last feed snapshot per host — merged so they don't clobber
+  private perHostFeedAt: Record<string, number> = {}; // host -> local ms its snapshot ARRIVED: the merged frame's clock anchor (mergeHostFeeds `nowAt`), so a re-emit anchors exactly as the arrival did
   private perHostTl: Record<string, any> = {}; //   last timeline lanes payload ({type:"data"}.data) per host
   private perHostTlBars: Record<string, any> = {}; // last timeline {type:"bars"} detail per host
   private hostSeq: string[] = [LOCAL]; // local first, then attach order — fixes the group order in the strip
@@ -732,6 +756,7 @@ export class FederationManager {
     }
     if (m && m.type === "feed") {
       this.perHostFeed[host] = m;
+      this.perHostFeedAt[host] = Date.now();   // the wire arrival: the one moment the frame's `now` was current
       this.ensureHost(host);
       this.emitMergedFeed();
       return;
@@ -777,7 +802,7 @@ export class FederationManager {
     }
     this.publishPending();
     const dead = this.deadHosts();
-    window.dispatchEvent(new MessageEvent("message", { data: mergeHostFeeds(this.perHostFeed, this.hostSeq, this.view(), dead) }));
+    window.dispatchEvent(new MessageEvent("message", { data: mergeHostFeeds(this.perHostFeed, this.hostSeq, this.view(), dead, this.perHostFeedAt) }));
   }
 
   // the hosts whose link is DOWN right now (this manager knows its sockets) — the merges' pendingDead input
@@ -1126,6 +1151,7 @@ export class FederationManager {
     delete this.perHostTabs[host];
     delete this.perHostSids[host];
     delete this.perHostFeed[host];
+    delete this.perHostFeedAt[host];
     const hadTl = host in this.perHostTl || host in this.perHostTlBars;
     delete this.perHostTl[host];
     delete this.perHostTlBars[host];
