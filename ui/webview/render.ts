@@ -10258,6 +10258,13 @@ function snapshotRowNode(r: SnapRow, now: number): HTMLElement {
     when.textContent = agehms(now - r.lastT) + " ago"; when.style.color = ageColorReadable(now - r.lastT);
     btn.appendChild(when);
   }
+  if (r.note) {
+    // the session's own note (the postal working note, its claim to a branch and files; tab-snapshot.ts
+    // noteLine): a quieter second line under the now line, never in its place. Appended last, so the
+    // wrapping row puts it under the first line's parts; spoken by the label (rowWords), like the flag
+    const note = el("span", "snap-note"); note.textContent = r.note; note.setAttribute("aria-hidden", "true");
+    btn.appendChild(note);
+  }
   item.appendChild(btn);
   return item;
 }

@@ -12,9 +12,11 @@ import * as path from "node:path";
 import { viewTagUnion } from "./session-views";
 import { parseTabGroups, planStrip, setSectionCollapsed, homeSectionOf } from "./tab-groups";
 import { hostPrefix } from "./host-prefix";
+import { noteLine } from "./tab-snapshot";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
+const CSS = ui("webview", "styles.css");
 const SNAP = RENDER.slice(RENDER.indexOf("let snapView: string | null = null;"), RENDER.indexOf("function showActive() {"));
 const SHOW = RENDER.slice(RENDER.indexOf("function showActive() {"), RENDER.indexOf("function showActive() {") + 6500);
 const TABS = RENDER.slice(RENDER.indexOf("function renderTabs() {"), RENDER.indexOf("function dismissTabMenu() {"));
@@ -118,4 +120,17 @@ test("the client's Ledger type declares workingNote, the field the snapshot's no
   assert.match(RENDER, /^interface Ledger \{ summary: string; tree\?: LedgerTreeNode\[\]; current\?: \{ t\?: number \} \| null; recent\?: LedgerRecent\[\]; workingNote\?: string; \}/m,
     "optional on the wire: a remote host's older kernel sends none");
   assert.match(RENDER, /snapshotModel\(head\.head, \(id\) => sessions\.get\(id\) \?\? null, \(id\) => ledgers\.get\(id\) \?\? null, snapModel\)/, "the ledger the model reads is the client's Ledger");
+});
+
+test("the row's second line: the session's own working note, quieter, under the now line (tab-snapshot.ts SnapRow.note, the model's request of the renderer)", () => {
+  // the model moved the postal working note out of the now line (it is the session's claim to a branch and
+  // files, written for peers) and onto the row as its own field; the renderer and the sheet paint it
+  assert.match(SNAP, /if \(r\.note\) \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*const note = el\("span", "snap-note"\); note\.textContent = r\.note; note\.setAttribute\("aria-hidden", "true"\);\s*\n\s*btn\.appendChild\(note\);\s*\n\s*\}\s*\n\s*item\.appendChild\(btn\);/,
+    "appended last, so the wrapping row puts it under the first line's parts; spoken by the label (rowWords), like the flag");
+  const block = CSS.slice(CSS.indexOf("#tab-snapshot {"), CSS.indexOf(".snap-when {") + 400);
+  assert.match(block, /\.snap-row \{ display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px;/, "the row wraps: the note takes the second line, a hair below");
+  assert.match(block, /\.snap-note \{ flex: 1 0 100%; min-width: 0; padding-left: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.82em; color: var\(--dim\); opacity: 0\.7; \}/,
+    "the header's 0.82em (the sheet's one sub-line size), the dim token a step quieter, one line, indented past the pip (7px) and its gap (8px)");
+  assert.equal(noteLine({ summary: "", workingNote: "  own branch web; editing the list page  " }), "own branch web; editing the list page", "the model's line is the text painted");
+  assert.equal(noteLine({ summary: "Building the notes-api web pages" }), "", "no note: no second line (the `if (r.note)`)");
 });
