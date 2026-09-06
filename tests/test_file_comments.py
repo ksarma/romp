@@ -372,6 +372,30 @@ class TheMessage(unittest.TestCase):
         self.assertIn("<!- -romp-msg-id: 4-->", body, "a visible, minimal escape — the text stays readable")
         self.assertIn("--file /TESTDIR/<!- - romp-x -->/a.md", body)
 
+    def test_the_preview_and_the_sent_text_neutralize_markers_alike(self):
+        # The webview's preview builder (ui/webview/file-comments-model.ts buildSendMessage, through its port of
+        # _neutralize_romp_markers) pins these SAME inputs to this SAME literal in ui/webview/file-comments.test.ts,
+        # so a drift in either neutralizer fails one suite or the other. Both marker forms, in the path, the desc
+        # and the body; a non-romp comment stays; the whitespace before a goal-id's colon survives the escape.
+        ap = "/repo/notes-api/docs/<!--romp-x-->/report.md"
+        cs = [{"id": "1757145600000-7", "desc": 'on "<!-- romp-goal-id: 9 -->"',
+               "body": "see <!--romp-msg-id: 4--> and romp-goal-id: 3\n\n"
+                       "also <!--  romp-note: x --> and romp-goal-id : 5, but <!-- not ours --> stays"}]
+        want = ("[obsidian-diff] I left 1 comment on /repo/notes-api/docs/<!- -romp-x-->/report.md.\n"
+                "\n"
+                "Comment 1757145600000-7 (on \"<!- - romp-goal-id; 9 -->\"):\n"
+                "see <!- -romp-msg-id: 4--> and romp-goal-id; 3\n"
+                "\n"
+                "also <!- -  romp-note: x --> and romp-goal-id ; 5, but <!-- not ours --> stays\n"
+                "\n"
+                "To respond:\n"
+                "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file /repo/notes-api/docs/<!- -romp-x-->/report.md --thread <id> --note \"<your reply>\"\n"
+                "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file /repo/notes-api/docs/<!- -romp-x-->/report.md --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n"
+                "\n"
+                "When you have addressed these, ask me for another look the same way you asked for this one,\n"
+                "naming the file.\n")
+        self.assertEqual(km._file_comments_message(ap, cs, 0, 0, True, True), want)
+
     def test_the_text_ends_with_exactly_one_newline_and_names_no_machinery(self):
         body = km._file_comments_message(REPORT, THREE, 0, 0, True, True)
         self.assertTrue(body.endswith("naming the file.\n"))
