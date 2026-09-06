@@ -26,9 +26,11 @@ test("the signature is computed before the wipe, and an equal one returns before
 });
 
 test("every input the strip renders is in the signature", () => {
+  // the theme and colormap are inputs too: the context gauge's tone reads the theme (pickTone) and the compacting
+  // sweep's gradient the colormap, and a settings change repaints the strip only through this signature
   for (const needle of [
     "activeId", "peekId", "phoneLayout()", "plan.sectioned", "ids", "visibleIds", "tabInView(activeId)",
-    "settings.tabCtx", 'titleWithKey("Open a session", "session.new")',
+    "settings.tabCtx", "settings.theme", "settings.colormap", 'titleWithKey("Open a session", "session.new")',
     'surfaceLens(effViews(), "chat")', "viewTagUnion(effViews())",
     "it.head.name", "it.head.localId", "it.head.color", "it.head.ids", "it.folded", "it.active", "it.hidden",
     "snapView",   // the section whose snapshot the pane shows: a header's snap-shown mark and its way-back act derive from it (makeGroupHead), and leaveSnapshot changes it with no fold change

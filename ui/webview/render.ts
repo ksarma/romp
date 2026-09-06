@@ -5320,13 +5320,15 @@ function renderTabs() {
   // session (rendered or folded away, since a folded header's pip and flag derive from its members) the
   // name, color, emoji, state and its tab class, faded, context and
   // its tint, todo flag, host-down mark and note, or a placeholder's meta; plus the layout mode, the tag lens
-  // and unions the filter chips render, the context-gauge setting, and the + tab's key hint. Equal string,
+  // and unions the filter chips render, the context-gauge setting, the theme and the colormap (the gauge's tone
+  // and the compacting sweep's gradient read them, so a settings change repaints through this signature), and
+  // the + tab's key hint. Equal string,
   // same DOM: the guards above (a rename in flight, a pressed tab) still stand, the placeholder and the
   // all-hidden blank still reconcile (stripAftermath), and the mobile slot's once-only mount still happens.
   // Anything that mutates the strip's DOM outside this function resets tabStripSig (the tab dragstart).
   const stripSig = JSON.stringify([
     activeId, peekId, phoneLayout(), plan.sectioned, ids, visibleIds, activeId ? tabInView(activeId) : null,
-    settings.tabCtx, titleWithKey("Open a session", "session.new"),
+    settings.tabCtx, settings.theme, settings.colormap, titleWithKey("Open a session", "session.new"),
     surfaceLens(effViews(), "chat"), viewTagUnion(effViews()),
     plan.items.map((it) => ("head" in it ? ["h", it.head.name, it.head.localId, it.head.color, it.head.ids, it.folded, it.active, it.hidden] : it.id)),
     snapView,   // the section whose snapshot the pane shows (makeGroupHead: the header's mark and its way-back act)
