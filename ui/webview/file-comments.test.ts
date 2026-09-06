@@ -664,7 +664,9 @@ test("the send sequence: build from the current status, set-tracked when asked, 
   assert.match(SRC, /warning: \[str\(m\.warning\), str\(m\.logWarning\)\]\.filter\(Boolean\)\.join\(" "\) \|\| undefined/,
     "a send whose comments-log append failed is loud too: the kernel's logWarning rides the same warn row");
   assert.match(SRC, /btn\(this\.sending \? "Sending…" : "Send to session" \+ \(n \? " \(" \+ n \+ "\)" : ""\), "fcsend"\)/, "count = unsent; relabeled while sending");
-  assert.match(SRC, /b\.disabled = !s \|\| !n \|\| this\.sending \|\| !this\.ctx\.sid;/);
+  assert.match(SRC, /const stale = !!this\.statusRefusal;\n\s*b\.disabled = !s \|\| !n \|\| this\.sending \|\| !this\.ctx\.sid \|\| stale;/,
+    "Send stands down while a status refusal stands: the unsent list was derived from a disk the kernel can no longer read");
+  assert.match(send, /if \(!s \|\| this\.statusRefusal \|\| this\.sending \|\| !this\.ctx\.sid\) return;/, "and doSend refuses the same way, a click never sends over a stale status");
   assert.match(SRC, /if \(this\.ctx\.todoId && !this\.todoAnswered\) opts\.appendChild\(this\.opt\("todo", "answer the todo this file was opened from"\)\);/);
   assert.match(SRC, /if \(!s\.trackedBy\) opts\.appendChild\(this\.opt\("track", "turn on tracking so the session's edits come back as changes"\)\);/);
   assert.match(SRC, /sendOpts = \{ todo: true, track: true \};/, "both checked by default (decision 8)");

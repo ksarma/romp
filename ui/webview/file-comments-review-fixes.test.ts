@@ -558,3 +558,30 @@ test("a long path wraps: the folder button and the folder-off note break after e
   assert.deepEqual(pathSegments(""), []);
   assert.equal(pathSegments("/repo/notes-api/docs/reports/quarterly/latency/appendix/").join(""), "/repo/notes-api/docs/reports/quarterly/latency/appendix/", "nothing is lost in the split");
 });
+
+// ── Send stands down while a status refusal stands ─────────────────────────────────────────────────
+
+test("a status refusal over a showing status disables Send until a fresh status lands: the unsent list was derived from a disk the kernel can no longer read", async (t: TestContext) => {
+  // The panel keeps the last status showing after a refusal so the cards stay readable — but a Send built
+  // from it would go out (and be recorded again) against a file deleted or moved since, or a sidecar gone
+  // corrupt: the duplicate-send leg of the review's finding. Send is off, says why, and a click posts nothing.
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w);
+  assert.equal(aside.querySelector('[data-act="fcsend"]')!.disabled, false, "one unsent comment: Send is on");
+  w.hooks.saved[0]({ mtimeNs: F55, logged: true });
+  refuse(w, lastOf(w, "fileComments", "status"), "unreadable", "cannot read ~/notes-api/docs/report.md: ENOENT"); await flush();
+  assert.equal(cards(aside), 2, "the cards stay readable");
+  const send = aside.querySelector('[data-act="fcsend"]')!;
+  assert.equal(send.disabled, true, "Send stands down");
+  assert.equal(send.title, "The comments could not be re-read; Reload above, then send");
+  assert.equal(aside.querySelector(".fc-send .fc-note")!.textContent, "The comments could not be re-read, so nothing can be sent until Reload above succeeds.");
+  const before = countOf(w, "fileCommentsSend");
+  send.click(); await flush();
+  assert.equal(aside.querySelector('[data-act="fcsendgo"]'), null, "no confirm opens");
+  assert.equal(countOf(w, "fileCommentsSend"), before, "nothing was posted");
+  // Reload in the head asks again; a status answers the refusal and Send is back
+  aside.querySelector('.fc-sec-head [data-act="fcreload"]')!.click(); await flush();
+  answer(w, status({ fileMtimeNs: F55 })); await flush();
+  assert.equal(aside.querySelector('[data-act="fcsend"]')!.disabled, false, "a fresh status re-enables Send");
+  assert.equal(aside.querySelector(".fc-send .fc-note"), null);
+});

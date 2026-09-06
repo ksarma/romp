@@ -403,7 +403,7 @@ class Panel {
         fcreply: (x, ev) => { ev.stopPropagation(); this.startReply(x.dataset.id!); },
         fcresolve: (x, ev) => { ev.stopPropagation(); void this.mutate("resolve", { commentId: x.dataset.id!, on: x.dataset.on === "1" }, "card:" + x.dataset.id!); },
         fcresolved: () => { this.resolvedOpen = !this.resolvedOpen; this.render(); },
-        fcsend: () => { this.sendConfirm = true; this.sentNote = null; this.render(); },
+        fcsend: () => { if (this.statusRefusal) return; this.sendConfirm = true; this.sentNote = null; this.render(); },   // renderSend disables the button and says why; the guard holds if a click lands anyway
         fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
         fcsendgo: () => { void this.doSend(); },
         fcpreview: () => { this.previewOpen = !this.previewOpen; this.render(); },
@@ -997,7 +997,7 @@ class Panel {
    *  step aborts before the send. The comments are already on disk, so a refusal loses nothing. */
   async doSend(): Promise<void> {
     const s = this.status;
-    if (!s || this.sending || !this.ctx.sid) return;
+    if (!s || this.statusRefusal || this.sending || !this.ctx.sid) return;   // statusRefusal: renderSend says why
     const parts: SendParts = sendParts(s);
     let tracked = !!s.trackedBy;
     this.sending = true; this.errors.delete("send"); this.render();
@@ -1252,13 +1252,21 @@ class Panel {
     const box = el("div", "fc-send");
     const n = s ? unsentCount(s.unsent) : 0;
     const b = btn(this.sending ? "Sending…" : "Send to session" + (n ? " (" + n + ")" : ""), "fcsend");
-    b.disabled = !s || !n || this.sending || !this.ctx.sid;
+    // a status refusal (refresh, requireStatus) leaves the LAST status showing so the cards stay readable, but
+    // what is unsent was derived from a disk the kernel can no longer read for us: a file deleted or moved
+    // since, a sidecar gone corrupt. A send built from that would go out and be recorded (or re-recorded)
+    // against a state that may no longer hold — the duplicate-send leg of the review's finding — so Send
+    // stands down until a fresh status lands (applyStatus clears the refusal; Reload in the head asks).
+    const stale = !!this.statusRefusal;
+    b.disabled = !s || !n || this.sending || !this.ctx.sid || stale;
     b.title = !this.ctx.sid ? "No session owns this file; open it from a session's link or todo to send"
+      : stale ? "The comments could not be re-read; Reload above, then send"
       : !n ? "Nothing unsent: every comment, reply, and decision has gone" : "Hand everything unsent to the session as one message";
     box.appendChild(b);
     // why Send is off, VISIBLE (the GitHub link's caption idiom): a tooltip never reaches touch, and a
     // disabled button takes no focus. Nothing-unsent is captioned only once there are comments to have sent.
     if (!this.ctx.sid) box.appendChild(el("div", "fc-note", "No session owns this file; open it from a session's link or todo to send."));
+    else if (stale && s && n) box.appendChild(el("div", "fc-note", "The comments could not be re-read, so nothing can be sent until Reload above succeeds."));
     else if (s && !n && !this.sending && this.cards().length) box.appendChild(el("div", "fc-note", "Nothing unsent: every comment, reply, and decision has gone."));
     if (this.sendConfirm && s && n && !this.sending) {
       const parts = sendParts(s);
