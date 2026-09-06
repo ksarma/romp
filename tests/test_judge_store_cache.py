@@ -187,6 +187,8 @@ class SharedStoreCache(unittest.TestCase):
         self.assertIs(jd.load_goals_shared(SID), b, "the new bytes are memoized")
 
     def test_eight_concurrent_loaders_receive_one_object(self):
+        # A smoke test over real threads: whichever of them fills, every reader ends with one object. The
+        # scheduler decides whether a fill loses the race; the dup path itself is forced in the test below.
         self._seed()
         n = 8
         bar = threading.Barrier(n)
@@ -205,12 +207,35 @@ class SharedStoreCache(unittest.TestCase):
             t.join(10)
         self.assertEqual(errs, [])
         self.assertEqual(len(out), n)
-        self.assertEqual(len({id(o) for o in out}), 1, "a racing fill returns the published object (dup), "
-                         "a late one hits: one object for every reader")
+        self.assertEqual(len({id(o) for o in out}), 1, "one object for every reader")
         st = jd.shared_store_stats()
         self.assertEqual(st["miss"] + st["hit"] + st["dup"] - (self.stats0["miss"] + self.stats0["hit"]
                                                                  + self.stats0["dup"]), n)
         self.assertGreaterEqual(self._delta("miss"), 1)
+
+    def test_a_fill_that_loses_the_race_returns_the_published_object(self):
+        # The dup path, forced: inside the first fill's freeze a second loader runs the whole fill and
+        # publishes. The first then finds its own version published under equal keys and bytes, counts a
+        # dup and hands back the published object rather than its private freeze.
+        self._seed()
+        inner = []
+        o_freeze = jd._freeze_store
+
+        def racing_freeze(store, fsid=None):
+            jd._freeze_store = o_freeze                    # the inner fill freezes and publishes normally
+            inner.append(jd.load_goals_shared(SID))
+            return o_freeze(store, fsid)
+        jd._freeze_store = racing_freeze
+        try:
+            outer = jd.load_goals_shared(SID)
+        finally:
+            jd._freeze_store = o_freeze
+        self.assertEqual(len(inner), 1)
+        self.assertIsInstance(inner[0], jd.FrozenStore)
+        self.assertIs(outer, inner[0], "the fill that lost the race returns the winner's object")
+        self.assertEqual((self._delta("miss"), self._delta("dup"), self._delta("hit")), (2, 1, 0))
+        self.assertEqual(jd.shared_store_stats()["entries"], 1, "one entry: the loser published nothing")
+        self.assertIs(jd.load_goals_shared(SID), inner[0], "and the next call hits it")
 
     def test_rebind_state_clears(self):
         self._seed()
