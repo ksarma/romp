@@ -507,14 +507,17 @@ const pendingRewind = new Map<string, { uuid: string; text: string; ts: number; 
 // the CLI only addresses post-boundary records, so older bubbles get no edit affordance (the kernel
 // re-validates regardless). Runs beside reconcileOptimistic on every ingest path; the rewound flags
 // are stripped first because a chatTail delta REUSES prefix event objects across pushes.
-function reconcileRewind(s: Session): void {
+function reconcileRewind(s: Session, bound?: number): void {
   // What the two outputs looked like BEFORE this pass — the editable set, and the overlay (which events dim,
   // the pending edit) — so a change in either marks the view stale below. The tail path re-renders exactly
   // the events the kernel's `from` names (syncViewInner, 2026-09-06), so a prefix bubble whose edit buttons or
   // dim depend on these is repainted by THIS signal: a compaction landing at `from` strips the affordance
   // from every earlier bubble; a failed rewind's TTL expiry lifts a dim no later `from` reaches back to.
-  // (A trailing window re-rendered on every tail used to cover the last 25 of them by accident.)
-  const before = rewindSig(s);
+  // (A trailing window re-rendered on every tail used to cover the last 25 of them by accident.) `bound` is the
+  // tail path's re-render start (chatTail's `from`): events at or past it are re-rendered anyway, so only the
+  // prefix below it counts as a change — unbounded, every human prompt landing (a new editable bubble) marked
+  // the view stale and rebuilt the whole window instead of taking the exact tail.
+  const before = rewindSig(s, bound);
   for (const e of s.events) if ((e as any).rewound) delete (e as any).rewound;
   let lastCompact = -1;
   for (let i = 0; i < s.events.length; i++) if (s.events[i].kind === "compact") lastCompact = i;
@@ -549,16 +552,24 @@ function reconcileRewind(s: Session): void {
     }
   }
   const v = views.get(s.id);
-  if (v && rewindSig(s) !== before) v.stale = true;   // the overlay or the editable set changed: MID-window turns repaint (the tail path never reaches them)
+  if (v && rewindSig(s, bound) !== before) v.stale = true;   // the overlay or the editable set changed: MID-window turns repaint (the tail path never reaches them)
 }
 /** The editable set and the rewind overlay as one string: which bubbles may be edited, which events are
- *  dimmed, and the pending edit (its uuid; its text, or "b" for a delete). "?" before the first pass. */
-function rewindSig(s: Session): string {
+ *  dimmed, and the pending edit (its uuid; its text, or "b" for a delete). "?" before the first pass. The
+ *  editable and dimmed parts read events below `bound` only (the whole transcript by default): the tail path
+ *  re-renders from there anyway. The pending edit stays unbounded — its retirement or TTL expiry lifts a dim
+ *  that no `from` reaches back to. */
+function rewindSig(s: Session, bound: number = s.events.length): string {
   const ed = (s as any)._editable as Set<string> | undefined;
-  const dim: number[] = [];
-  s.events.forEach((e, i) => { if ((e as any).rewound) dim.push(i); });
+  const eds: string[] = [], dim: number[] = [];
+  const n = Math.min(bound, s.events.length);
+  for (let i = 0; i < n; i++) {
+    const e = s.events[i] as any;
+    if (ed && e.uuid && ed.has(e.uuid)) eds.push(e.uuid);
+    if (e.rewound) dim.push(i);
+  }
   const pr = pendingRewind.get(s.id);
-  return (ed ? [...ed].sort().join(",") : "?") + "|" + dim.join(",") + "|" + (pr ? pr.uuid + ":" + (pr.bare ? "b" : pr.text) : "");
+  return (ed ? eds.join(",") : "?") + "|" + dim.join(",") + "|" + (pr ? pr.uuid + ":" + (pr.bare ? "b" : pr.text) : "");
 }
 // Tab name+color from the kernel's tabOrder push (the user 2026-06-26): lets renderTabs paint the WHOLE
 // strip as placeholders BEFORE each session's build_session arrives, so tabs don't pop in one-by-one.
@@ -13700,7 +13711,7 @@ function chatTail(msg: any) {
   const wasLen = s.events.length;
   s.events.length = from;                          // drop the (now superseded) tail...
   for (const e of (msg.events || [])) s.events.push(e);   // ...and append the freshly-changed suffix
-  reconcileRewind(s);                              // pending-rewind overlay + the editable-bubble set
+  reconcileRewind(s, from);                        // pending-rewind overlay + the editable-bubble set, judged below the tail's start (see there)
   reconcileOptimistic(s);                          // re-assert (or retire) any in-flight optimistic sends
   // A delta that SHRINKS the tail (an event retired with nothing replacing it — cancelling the last queued
   // message is the everyday case) lands on `from === new length`, so lowering v.rendered to `from` leaves it

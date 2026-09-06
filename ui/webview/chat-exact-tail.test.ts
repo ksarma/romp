@@ -22,8 +22,8 @@ test("the tail path starts at the exact first changed event; the trailing re-che
 
 test("reconcileRewind marks the view stale when the editable set or the overlay CHANGED — including the early-out paths", () => {
   const fn = RENDER.slice(RENDER.indexOf("function reconcileRewind("), RENDER.indexOf("function rewindSig("));
-  assert.match(fn, /const before = rewindSig\(s\);/);
-  assert.match(fn, /if \(v && rewindSig\(s\) !== before\) v\.stale = true;/);
+  assert.match(fn, /const before = rewindSig\(s, bound\);/);
+  assert.match(fn, /if \(v && rewindSig\(s, bound\) !== before\) v\.stale = true;/);
   assert.doesNotMatch(fn, /\n\s*return;\s*\n/, "no early return skips the comparison: the landed/expired path and the no-pending path both reach it");
   const sigFn = RENDER.slice(RENDER.indexOf("function rewindSig("), RENDER.indexOf("function rewindSig(") + 700);
   for (const part of ["_editable", "rewound", "pendingRewind.get(s.id)", "pr.bare"]) assert.ok(sigFn.includes(part), "the signature covers " + part);
@@ -57,4 +57,17 @@ test("a status-only tail reaches the footer: the view remembers the working stat
   assert.match(fn, /const winEv = items \? \(items\[winStart\] \? itemFirstEvent\(items\[winStart\]\) : s\.events\.length\) : winStart;/, "compact mode: the window start is a unit, the plan wants an event index");
   assert.match(fn, /items\.findIndex\(\(it\) => it\.kind === "event" && it\.index === i\)/, "…and the reply's event index maps back to its unit");
   assert.match(fn, /if \(unit < 0\) \{ v\.stale = true; continue; \}/, "a reply folded into a run: the window path re-renders");
+});
+
+test("a plain human-prompt append does not set stale: the signature reads the prefix below the tail's re-render start", () => {
+  // a landing prompt is a new editable bubble, so an unbounded editable set differed on every prompt and
+  // rebuilt the whole window; the tail renders everything at or past `from` itself
+  assert.match(RENDER, /function reconcileRewind\(s: Session, bound\?: number\): void \{/);
+  assert.match(RENDER, /function rewindSig\(s: Session, bound: number = s\.events\.length\): string \{/);
+  const sigFn = RENDER.slice(RENDER.indexOf("function rewindSig("), RENDER.indexOf("function rewindSig(") + 900);
+  assert.match(sigFn, /const n = Math\.min\(bound, s\.events\.length\);\s*\n\s*for \(let i = 0; i < n; i\+\+\)/, "the editable and dimmed parts read events below the bound only");
+  assert.doesNotMatch(sigFn, /\[\.\.\.ed\]/, "the editable set is not serialized whole");
+  assert.match(sigFn, /\(pr \? pr\.uuid \+ ":" \+ \(pr\.bare \? "b" : pr\.text\) : ""\)/, "the pending edit stays unbounded: its retirement lifts a dim no `from` reaches back to");
+  const tail = RENDER.slice(RENDER.indexOf("function chatTail(msg: any) {"), RENDER.indexOf("function statusOnly(msg: any) {"));
+  assert.match(tail, /reconcileRewind\(s, from\);/, "chatTail passes its from as the bound");
 });
