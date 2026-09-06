@@ -5545,21 +5545,22 @@ def _compact_suggest_tick(sid, tm, now):
     #                                                    armed; a later tick re-checks the same gate
     with _NUDGE_LOCK:                                  # CLAIM BEFORE SEND (the double-send race,
         # 2026-09-01): the check above releases the lock before the fire-time gates, and this tick
-        # has two concurrent entry points (the pusher's periodic pass and the setCompactSuggest
-        # handler's act-now re-tick) — latching only after the send let two entries pass the same
-        # unlatched check and inject the suggestion twice into one session. The latch write IS
-        # the claim: a fresh read under the lock re-derives what is still due (a concurrent entry
-        # may have claimed it in the gap), the winner latches and sends, the loser stands down
-        # right here. Same direction as the nudge machinery's own bookkeeping (_mark_auto_nudged
-        # records only after its send, so a failed send retries), inverted at this seam because
-        # the send must be single-shot — and the failure arm below rolls the claim back under the
-        # lock, so "never latch a fire that never went out" still holds durably: the next tick
-        # retries the same crossing. The claim (and the rollback) is durable against every OTHER
-        # ledger writer too: all of them hold _NUDGE_LOCK across their read-modify-write, and the
-        # ones with IO mid-span re-read fresh under the lock and mutate only their own keys —
-        # before that migration (2026-09-01), a debt reminder's pre-send snapshot written whole
-        # erased a concurrent claim (or resurrected a rolled-back one) and re-opened the double
-        # send through the side door.
+        # has three concurrent entry points (the pusher's periodic pass, setAutoNudge's and
+        # setCompactSuggest's WS re-ticks; single-flight since PR #943 via _AUTO_NUDGE_TICK_LOCK,
+        # but the latch is the SEND's own single-shot guarantee, so it stays) — latching only after
+        # the send let two entries pass the same unlatched check and inject the suggestion twice
+        # into one session. The latch write IS the claim: a fresh read under the lock re-derives
+        # what is still due (a concurrent entry may have claimed it in the gap), the winner latches
+        # and sends, the loser stands down right here. Same direction as the nudge machinery's own
+        # bookkeeping (_mark_auto_nudged records only after its send, so a failed send retries),
+        # inverted at this seam because the send must be single-shot — and the failure arm below
+        # rolls the claim back under the lock, so "never latch a fire that never went out" still
+        # holds durably: the next tick retries the same crossing. The claim (and the rollback) is
+        # durable against every OTHER ledger writer too: all of them hold _NUDGE_LOCK across their
+        # read-modify-write, and the ones with IO mid-span re-read fresh under the lock and mutate
+        # only their own keys — before that migration (2026-09-01), a debt reminder's pre-send
+        # snapshot written whole erased a concurrent claim (or resurrected a rolled-back one) and
+        # re-opened the double send through the side door.
         d = dict(_auto_nudge_data())                   # fresh read — a concurrent writer's blob is
         cs = dict(d.get("compactSuggested") or {})     # not clobbered
         held = [t for t in [int(x) for x in cs.get(sid, [])] if tokens >= t]
@@ -5599,6 +5600,20 @@ def _compact_suggest_tick(sid, tm, now):
     return True
 
 
+# The tick is SINGLE-FLIGHT (PR #943 review): it has two concurrent entry points — the pusher's
+# periodic pass (0.5 s backstop) and the setAutoNudge / setCompactSuggest arms' act-now pass on the
+# WS handler thread — and the nudge send has no claim-before-send (_mark_auto_nudged records AFTER
+# the send so a failed send retries; _compact_suggest_tick's latch covers only its own seam), so two
+# passes that overlapped each derived the same due goal from the same store and injected the same
+# nudge twice into one session — reproduced from two threads at the 0.5 s cadence. A non-blocking
+# try-acquire, never a wait: the loser stands down whole, and loses nothing. The flag write precedes
+# the turn-on's tick, so a pass found in flight already reads the turned-on world (before the write
+# it would have returned at the enabled gate), and a pusher pass that meets the WS pass re-runs on
+# its own cadence — at worst an act-now degrades to the next cycle. A plain Lock, not an RLock: a
+# same-thread re-entry (a WS tick nested in a pass) must stand down the same way.
+_AUTO_NUDGE_TICK_LOCK = threading.Lock()
+
+
 def _auto_nudge_tick(now, tmux, run_dead_wait=True):
     """One Auto-Nudge pass (from the periodic pusher). For each ALIVE, IDLE session (its turn ended) that
     isn't awaiting/compacting/api-error, isn't WAITING ON A LIVE PEER (a wait isn't a stall — the human's
@@ -5607,9 +5622,21 @@ def _auto_nudge_tick(now, tmux, run_dead_wait=True):
     is its considered verdict — a turn that ended by asking YOU a question is never nudged), inject the follow-up. RE-ARMS per stall episode, not once-ever: a goal is nudged again
     once a NEW GENUINE (work/user, not the agent's own nudge-response) ended turn leaves it still working, with
     a count that climbs each fire (surfaced on the timeline; no cap — the warning is the alert). A no-op unless
-    the user turned it on."""
+    the user turned it on, and single-flight (_AUTO_NUDGE_TICK_LOCK): a pass that finds another in
+    flight stands down without sending."""
     if not _auto_nudge_on():
         return
+    if not _AUTO_NUDGE_TICK_LOCK.acquire(blocking=False):
+        return                                            # a pass is in flight: it owns this world's sends
+    try:
+        _auto_nudge_pass(now, tmux, run_dead_wait)
+    finally:
+        _AUTO_NUDGE_TICK_LOCK.release()
+
+
+def _auto_nudge_pass(now, tmux, run_dead_wait):
+    """The body of one pass — the walk, the sweeps, the push. Only _auto_nudge_tick calls it, under
+    the single-flight guard (split out the way _pusher_cycle_jobs is from _pusher_cycle)."""
     nudged = dict(_auto_nudge_data().get("nudged", {}))   # {gid: {count, lastTurnId}}
     alive = list(_alive_sessions(now, tmux))
     alive_ids = {s["sid"] for s in alive}
@@ -35912,12 +35939,23 @@ class Handler(BaseHTTPRequestHandler):
             _push_soon()
         elif msg and msg.get("type") == "setAutoNudge" and msg.get("enabled") is not None:
             # feed gear → server-side Auto Nudge on/off; a stale gesture stamp stands down (no
-            # apply), and the dashboard that made the losing gesture hears it
-            if _set_auto_nudge(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
+            # apply — and no tick: a stood-down toggle is not new information), and the dashboard
+            # that made the losing gesture hears it
+            if _set_auto_nudge(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None:
+                # turn-ON acts at once instead of waiting out the pusher's 0.5 s backstop; turning off
+                # has nothing to act on (the tick is a no-op when off, so this also spares the WS
+                # thread the listing fork). The tick is single-flight against the pusher's pass
+                # (_AUTO_NUDGE_TICK_LOCK) and skips the dead-wait sweep: the death transition has ONE
+                # observer (the pusher's tick; see _auto_nudge_tick), and this WS thread racing its
+                # prev-swap could spend a transition uncorroborated
+                if msg["enabled"]:
+                    _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
+            else:
                 _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setCompactSuggest" and msg.get("enabled") is not None:
             # T208 opt-in — kernel-side like autoNudge, gt-gated like every queued setting. Only a
-            # real apply acts immediately on turn-on (don't wait 4s) — a stood-down toggle is not
+            # real apply acts at once on turn-on (instead of waiting out the pusher's 0.5 s backstop;
+            # single-flight against its pass, _AUTO_NUDGE_TICK_LOCK) — a stood-down toggle is not
             # new information — and the tick skips the dead-wait sweep: the death transition has
             # ONE observer (the pusher's tick; see _auto_nudge_tick), and this WS thread racing
             # its prev-swap could spend a transition uncorroborated

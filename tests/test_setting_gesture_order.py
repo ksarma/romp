@@ -811,9 +811,9 @@ class WiringPins(unittest.TestCase):
         import inspect
         self.src = inspect.getsource(km.Handler._dispatch_ws)
 
-    def test_auto_nudge_branch_passes_the_stamp(self):
-        self.assertIn('_set_auto_nudge(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None', self.src,
-                      "the branch hands the stamp over and gates on the apply")
+    def test_auto_nudge_branch_gates_on_the_stamp_and_skips_the_tick_on_stand_down(self):
+        self.assertIn('_set_auto_nudge(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None', self.src,
+                      "a stood-down toggle must not fire the nudge tick either — no new information")
 
     def test_file_editing_branch_passes_the_stamp(self):
         self.assertIn('_set_file_editing(bool(msg["enabled"]), gt=_gesture_ms(msg))', self.src)
@@ -856,6 +856,125 @@ class WiringPins(unittest.TestCase):
         self.assertNotIn(".write_text(", src, "no raw write_text — a torn write must not tear the store")
         self.assertLess(src.index('fname + ".gt"'), src.index("_atomic_write(jd.STATE / fname,"),
                         "the sidecar publishes FIRST — a crash between the two errs toward stand-down")
+
+
+class AutoNudgeTurnOnActsNow(_Base):
+    """Turning Auto Nudge on acts in the same handler call instead of waiting for the pusher's
+    next pass — and ONLY a real apply does: a stale stamp and the gesture's own echo carry no
+    new information, so neither fires a tick (T208's setCompactSuggest arm has the same shape).
+    #846 inserted that arm between the auto-nudge setter and its act-now tick, which moved the
+    tick onto the new arm without changing the tick line — a source pin alone would not have
+    noticed, so the handler is driven here."""
+
+    def setUp(self):
+        super().setUp()
+        self.ticks = []
+        km._auto_nudge_tick = lambda *a, **k: self.ticks.append((a, k))   # restored by _Base.tearDown
+
+    def test_a_real_turn_on_ticks_once_without_the_dead_wait_sweep(self):
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_NEW})
+        self.assertEqual(len(self.ticks), 1, "a real apply acts now")
+        (now, tmux), kw = self.ticks[0]
+        self.assertIsInstance(now, int)
+        self.assertEqual(kw, {"run_dead_wait": False}, "the WS tick never runs the one-observer sweep")
+        self.assertEqual(tmux, {}, "the tick takes the listing the handler fetched (_tmux_sessions)")
+
+    def test_a_stale_stamp_and_an_echo_fire_no_tick(self):
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_NEW})
+        self.dispatch({"type": "setAutoNudge", "enabled": False, "gt": T_OLD})   # stale: stands down
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_NEW})    # echo: the same pick again
+        self.assertEqual(len(self.ticks), 1, "only the applied gesture ticked")
+
+    def test_an_unstamped_toggle_applies_and_ticks(self):
+        self.dispatch({"type": "setAutoNudge", "enabled": True})                 # older dashboard, no gt
+        self.assertEqual(len(self.ticks), 1)
+
+    def test_a_real_turn_off_applies_and_fires_no_tick(self):
+        # turning OFF is a real apply too, with nothing to act on: the tick is a no-op when off, so
+        # firing it would only fork the session listing on the WS thread for nothing
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_OLD})
+        self.dispatch({"type": "setAutoNudge", "enabled": False, "gt": T_NEW})
+        self.assertFalse(km._auto_nudge_on(), "the turn-off applied")
+        self.assertEqual(len(self.ticks), 1, "only the turn-on ticked")
+
+
+SF_SID = "11111111-2222-4333-8444-555555555555"   # the single-flight tests' one fake alive session
+
+
+class AutoNudgeTickIsSingleFlight(_Base):
+    """_auto_nudge_tick has two concurrent entry points — the pusher's periodic pass (0.5 s
+    backstop) and the setAutoNudge arm's act-now pass on the WS handler thread — and the nudge
+    send has no claim-before-send (_compact_suggest_tick's latch covers only its own seam), so
+    two passes that overlap each derive the same due goal and inject the same nudge twice into
+    one session. The tick is single-flight (_AUTO_NUDGE_TICK_LOCK): a pass that finds another in
+    flight stands down whole, and loses nothing — the flag write precedes the turn-on's tick, so
+    a pass found in flight already reads the turned-on world, and the pusher re-runs on its own
+    cadence. Driven with the REAL tick; the per-session walk (which owns the send) is a recorder
+    that holds the first pass mid-send until the overlapping entry has been and gone, so the
+    interleave is deterministic, not a sleep."""
+
+    def setUp(self):
+        super().setUp()
+        km._auto_nudge_tick = self._saved["_auto_nudge_tick"]      # the real tick is the subject here
+        self._also = {n: getattr(km, n) for n in
+                      ("_alive_sessions", "_wait_for_graph", "_auto_nudge_session", "_compact_suggest_tick",
+                       "_debt_backstop_tick", "_dead_wait_sweep", "_awaiting_wake_outcomes", "_push_soon")}
+        self.sends = []                                            # the `now` of every pass that reached the send
+        self.entered, self.release = _real_threading.Event(), _real_threading.Event()
+        km._alive_sessions = lambda now, tmux: [{"sid": SF_SID, "path": "/nonexistent.jsonl"}]
+        km._wait_for_graph = lambda now, alive_ids: {}
+        km._auto_nudge_session = self._walk
+        km._compact_suggest_tick = lambda sid, tm, now: False
+        km._debt_backstop_tick = lambda now: None
+        km._dead_wait_sweep = lambda alive_ids, nudged, now: None
+        km._awaiting_wake_outcomes = lambda now, alive_ids: False
+        km._push_soon = lambda: None
+
+    def tearDown(self):
+        self.release.set()                                         # never leave a held pass behind
+        for n, v in self._also.items():
+            setattr(km, n, v)
+        super().tearDown()
+
+    def _walk(self, s, now, tmux, nudged, waitfor, alive_ids=None):
+        """The per-session walk standing in for the SEND: the first pass to reach it holds here,
+        mid-send, until the test releases it; every later pass records and returns at once."""
+        self.sends.append(now)
+        if len(self.sends) == 1:
+            self.entered.set()
+            self.release.wait(5)
+        return True
+
+    def _pass_in_flight(self, now, **kw):
+        t = _real_threading.Thread(target=km._auto_nudge_tick, args=(now, {}), kwargs=kw, daemon=True)
+        t.start()
+        self.assertTrue(self.entered.wait(5), "the first pass reached its send")
+        return t
+
+    def test_the_ws_arm_meeting_the_pusher_mid_pass_sends_nothing_more(self):
+        t = self._pass_in_flight(1000)                                          # the pusher's shape
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_NEW})   # a real apply: its act-now tick
+        self.release.set()
+        t.join(5)
+        self.assertEqual(self.sends, [1000], "one nudge, from the pass already in flight")
+
+    def test_the_pusher_meeting_the_ws_pass_mid_pass_stands_down_and_runs_next_cycle(self):
+        t = self._pass_in_flight(1000, run_dead_wait=False)                     # the WS arm's shape
+        km._auto_nudge_tick(1001, {})                                           # the pusher's pass: stands down
+        self.release.set()
+        t.join(5)
+        self.assertEqual(self.sends, [1000], "the overlapping pass sent nothing")
+        km._auto_nudge_tick(1002, {})                                           # its next cycle
+        self.assertEqual(self.sends, [1000, 1002], "a stood-down pass is retried next cycle, never lost")
+
+    def test_a_pass_that_raises_releases_the_guard(self):
+        self.release.set()                                                      # nothing holds in this test
+        km._alive_sessions = lambda now, tmux: 1 / 0
+        with self.assertRaises(ZeroDivisionError):                              # propagates as before (the
+            km._auto_nudge_tick(1000, {})                                       # pusher loop catches it)
+        km._alive_sessions = lambda now, tmux: [{"sid": SF_SID, "path": "/nonexistent.jsonl"}]
+        km._auto_nudge_tick(1001, {})
+        self.assertEqual(self.sends, [1001], "the guard is released on every exit, a raise included")
 
 
 class ThinkingSummariesSetting(_Base):
