@@ -5,42 +5,78 @@ The live kernel's pusher thread spends most of a core rebuilding payloads: build
 build_feed, build_timeline (kernel/kernel.py) and jd.load_goals (kernel/judge.py). This tool imports a
 checkout's kernel IN-PROCESS, points it at a state directory copy, reconstructs the pusher's liveness
 snapshot from that copy's registry files, and times each builder on real-sized data — with no live
-kernel, no restart, no process spawned, no network, no WebSocket. Two checkouts (HEAD and a candidate)
-run against the same copy and `--compare` prints the per-benchmark deltas.
+kernel, no restart, no network, no WebSocket. Two checkouts (HEAD and a candidate) run against the
+same copy and `--compare` prints the per-benchmark deltas.
 
 Usage (every path below is an example; the copy lives OUTSIDE any repo):
 
-    # 1. copy the state directory, leaving out the SDK venv (hundreds of MB, not data)
-    rsync -a --exclude sdkvenv ~/.local/state/romp/ /tmp/romp-state-copy/
+    # 1. copy the state directory, leaving out the SDK venv (hundreds of MB, not data) and the two
+    #    credential files the bench never needs
+    rsync -a --exclude sdkvenv --exclude serve-token --exclude push-vapid.json \\
+        ~/.local/state/romp/ /tmp/romp-state-copy/
+    #    transcripts are read from Claude's own directory; for a strict A/B (an active session's
+    #    transcript grows between runs) copy that too and pass --claude-dir:
+    rsync -a ~/.claude/projects/ /tmp/claude-copy/projects/
 
     # 2. bench this checkout, then a candidate checkout, against the same copy
     tools/perf-bench.py --state /tmp/romp-state-copy --profile --json /tmp/bench-head.json
     tools/perf-bench.py --state /tmp/romp-state-copy --repo ../romp-candidate --json /tmp/bench-cand.json
 
-    # 3. deltas, A -> B
+    # 3. deltas, A -> B (the header flags any difference in the two runs' worlds first)
     tools/perf-bench.py --compare /tmp/bench-head.json /tmp/bench-cand.json
 
 The tool REFUSES the live default state directory ($ROMP_STATE_DIR, $XDG_STATE_HOME/romp, or
 ~/.local/state/romp) unless `--i-know-this-is-live` is passed — and even then it never runs the
-kernel against that directory: it mirrors the directory to a fresh temp copy (sdkvenv excluded) and
-benches the mirror, so the live directory is only ever read.
+kernel against that directory: it mirrors the directory to a fresh temp copy (sdkvenv and the two
+credential files excluded) and benches the mirror, so the live directory is only ever read. The
+mirror is removed afterwards unless `--keep-mirror`.
 
-What is measured (each after one warm-up call, then `--iters` timed calls; ms min/median/max):
+What is measured. Unless noted, each row is one untimed warm-up call followed by `--iters` timed
+calls, reported as ms min/median/max:
   liveness_snapshot      Sessions.live() — the pusher cycle's one liveness read (tmux backend off)
   names_snapshot         _names_snapshot() — the cycle's names-registry read
   discover_cold/warm     jd.discover(now) with and without its fingerprint cache
-  warm_all_parses        one _parse() per live session from an empty parse cache (total, once)
-  build_session_cold:S   build_session for each of the K largest live transcripts, parse + fold
-                         caches cleared before every call (the boot / first-paint shape)
+  build_session_cold:S   build_session for each of the K largest live transcripts with EVERY cache a
+                         freshly started kernel lacks emptied before each call: the event model's
+                         jsonl / assembly / trailing-record caches and the kernel's parse, chat-fold,
+                         path-link and states-fold caches (COLD_KERNEL_CACHES and COLD_EM_CACHES below; a
+                         name this kernel lacks is skipped and the report lists what was emptied). Each
+                         sample is then checked: the event model's assembly counters must show a full
+                         assembly, and the session's own transcript must be present in the assembly
+                         cache the sample started with empty — proof it was assembled inside the
+                         sample. A sample that fails either is an ERROR, not a number, so a cache this
+                         tool does not know about (above or below the parse) is caught instead of
+                         quietly warming the row. A serve or fold counted INSIDE a sample is reported
+                         beside the row, not treated as pre-warmth: with the cache emptied under its
+                         lock beforehand, such a hit can only be on an entry the same build created — a
+                         transcript the build reads twice (a peer's, for postal resolution), folded
+                         when that file grew between the two reads (a live session's).
+  build_session_emwarm:S the same call with only the kernel-side caches emptied — the event model
+                         still serves the assembled transcript. The difference to _cold is the parse.
   build_session_warm:S   the same call again with everything cached (an unchanged tab's push)
+  warm_all_parses        one _parse() per live session from an empty parse cache (single call)
   build_feed             build_feed with every live session's parse cached (the steady state)
   build_feed_noparse     build_feed with the parse cache empty (the cards-first boot shape)
   build_timeline_bars    build_timeline(with_bars=True)
   build_timeline_skel    build_timeline(with_bars=False) — the lanes skeleton the push sends first
   load_goals:S           jd.load_goals for each of the K largest goal stores
-  push_connect           _push over fake clients with empty dedup state (a fresh page's first push)
-  push_steady            _push again, N times (the periodic pusher's steady state)
-The push benchmarks also report bytes handed to each fake client per slot.
+  push_cold_cycle        ONE periodic _push over the fake clients with every cache empty and empty
+                         dedup state: the pusher's first cycle after a restart (single call, no
+                         warm-up). Reports the full frames' bytes per slot.
+  push_connect:APP       _push([fresh client], connect=True) per app after a warming cycle: the path
+                         a page load pays (pusher-warmed feed served, no baseline move). A fresh
+                         client with empty dedup state for every sample.
+  push_steady            the periodic _push over the same clients, repeated; no warm-up of its own
+                         (it follows the rows above). Each sample records whether _cached_feed /
+                         _cached_timeline rebuilt inside it (they do whenever the 5 s view signature
+                         bucket rolls at least REBUILD_MIN_S after the previous build, which depends on
+                         wall-clock alignment, not on the code under test); the row's numbers are the
+                         samples WITHOUT a rebuild, and the samples with one form push_steady_rebuild.
+                         The loop runs until `--iters` no-rebuild samples exist (at most 3x iters).
+                         A loop that runs past _DEDUP_REPOST_S (60 s) also absorbs one re-send of every
+                         unchanged slot; the per-sample bytes in the JSON show it.
+Beside the build_session rows the report prints the git queries the chat build ran per call (see the
+tripwire note below); the push rows report bytes handed to each fake client per slot.
 
 How the liveness snapshot is reconstructed, and what is approximated:
   * The SDK backend object is built WITHOUT its constructor (no boot heal, no reconcile thread, no
@@ -50,17 +86,24 @@ How the liveness snapshot is reconstructed, and what is approximated:
   * The state of each row is the last STATE record of states/<sid>.jsonl, verbatim, and the row is
     marked connected — what a running session would report — instead of the dormant mapping that
     turns an in-flight state into "waiting". `--dormant-rows` keeps the dormant mapping instead.
-    A running session's snapshot also carries live-only fields (subagents, bgTasks, ctxTokens from
-    the last turn); those read empty here. `--all-regs-live` also lists regs with alive=false.
+    A running session's snapshot also carries live-only fields (subagents, bgTasks); those read
+    empty here. ctxTokens and the context percentage come from the reg's persisted values, as for a
+    dormant row. `--all-regs-live` also lists regs with alive=false.
   * The tmux backend is switched off (ROMP_TMUX_AVAILABLE=0, the kernel's own seam) and TMUX_TMPDIR
     points at an empty private directory, so no `tmux` is ever run and tmux-backed sessions are not
     represented. Comment threads (threadOf regs) are skipped, as the real live_sessions skips them.
   * The SDK backend's manager key is pinned empty (dormant rows read auth=login).
+  * The session list is discovery's (jd.discover, a 48 h window keyed to the real clock) restricted to
+    the live rows, plus — as _alive_sessions does for the builders — every live sid outside that
+    window resolved through the long backfill window, so the pick list, the parse warm-up and the
+    builders see ONE world. A live sid with no transcript anywhere is listed in the report; a run
+    where discovery finds nothing for a non-empty live set is an error (a wrong --claude-dir, a
+    registry cwd that does not exist here, or a stale copy).
   * Transcripts are read from Claude Code's own directory ($CLAUDE_CONFIG_DIR or ~/.claude), which
-    the registry references; `--claude-dir` points at a copy or a synthetic one. Discovery windows
-    are keyed to the real clock, so bench a fresh copy: a session idle for two days drops out.
+    the registry references; `--claude-dir` points at a copy or a synthetic one.
 
-Side-effect guards (all reported in the output):
+Side-effect guards (all reported in the output; a guard whose target a kernel revision lacks is an
+error, never a silent skip):
   * The manager control-port variables are removed or poisoned before the import (ROMP_MANAGER_PORT
     is set to a dead port rather than unset — an ABSENT value maps to the default, live, port in
     one consumer; see tests/conftest.py), so nothing this process does can reach the live manager.
@@ -70,15 +113,24 @@ Side-effect guards (all reported in the output):
     a Web Push or a badge push are replaced with recorders (they are not builders; the push path
     reaches them from _cached_feed and the pricing table).
   * `subprocess` in every loaded romp module is replaced with a tripwire that raises on any spawn —
-    except the chat build's own read-only local git queries (`git rev-parse`, `git ls-files`, which
-    place path links and are cached on the repo's mtimes), which run and are counted; `--no-git`
-    answers those as failures instead, for a strict zero-exec run.
+    except the chat build's own read-only local git queries (`git rev-parse`, `git ls-files`), which
+    place path links. Those run and are counted per build. The kernel caches their answers only for
+    a cwd inside a git checkout (on the index and tree mtimes); for any other cwd it re-runs
+    `git ls-files` on EVERY build, so the per-build count beside the build_session rows says how much
+    of a sample is spawn time. `--no-git` answers those queries as failures instead, for a strict
+    zero-exec run.
+  * pwd.getpwnam / pwd.getpwuid are wrapped as counters (nss_lookups in the output): the chat build's
+    path-link pass calls os.path.expanduser on every path-shaped token, and a `~name/...` token makes
+    glibc consult the name service — AF_UNIX connects to nscd and systemd-userdb, local, not network.
   * Every kernel _atomic_write is checked to land under the state copy; the copy's files are
     fingerprinted before and after so the output lists exactly what the run wrote.
 
-Verification: run once under `strace -f -e trace=execve,connect`: with `--no-git` the only execve is
-the interpreter itself; without it the extra execves are the counted git queries; there is never a
-connect.
+Verification: run once under `strace -f -e trace=execve,connect`. Expected: the interpreter's own
+execve, plus (without `--no-git`) one execve of git per counted git query and nothing else; connect()
+calls only to AF_UNIX name-service sockets (/var/run/nscd/socket, /run/systemd/userdb/...), matching
+nss_lookups in the report, and NO AF_INET / AF_INET6 connect:
+    strace -f -e trace=execve,connect -o /tmp/bench.strace tools/perf-bench.py --state ... --no-git
+    grep -E 'execve\\(|AF_INET' /tmp/bench.strace     # one execve line (python), no AF_INET line
 
 Not a test (pytest collects test_*.py); tests/test_perf_bench.py drives it against a synthetic state
 directory."""
@@ -88,6 +140,8 @@ import gc
 import json
 import os
 import pstats
+import pwd
+import re
 import shutil
 import statistics
 import subprocess as _real_subprocess
@@ -98,9 +152,24 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA = 1
+SCHEMA = 2
 DEFAULT_CLIENTS = "chat,feed,timeline"
 PROFILE_TOP = 25
+MIRROR_IGNORE = ("sdkvenv", "serve-token", "push-vapid.json")
+# The kernel-side caches a freshly started kernel lacks and build_session reads (all plain dicts, no
+# lock). Missing names are skipped: older revisions lack some, and the assembly-counter check below
+# is what proves a sample cold, not this list.
+COLD_KERNEL_CACHES = ("_parse_cache", "_built_chat", "_prev_chat_events", "_prev_chat_ledger", "_arch_tops_cache",
+                      "_PATH_LINK_CACHE", "_states_notes_cache", "_state_ev_cache", "_bgtasks_cache", "_bgall_cache",
+                      "_queued_parse_cache", "_wake_tail_cache", "_session_meta_cache", "_session_tok_cache",
+                      "_machine_cut_cache")
+# (cache, its lock) in the event model: the parse layer under _parse. Missing names are skipped here too
+# (the trailing-record cache is newer than the assembly counters this tool requires); cold_caches in the
+# report says which of both lists were emptied, and the test pins that list at HEAD.
+COLD_EM_CACHES = (("_JSONL_CACHE", "_JSONL_CACHE_LOCK"), ("_ASM_CACHE", "_ASM_LOCK"), ("_TRAILING_CACHE", "_TRAILING_LOCK"))
+WORLD_KEYS = (("liveness.live", "live rows"), ("live_transcripts.count", "transcripts"), ("iters", "iters"),
+              ("sessions_requested", "sessions"), ("git_queries.answered_as_failure", "no-git"),
+              ("push_rebuilds", "push_steady rebuild samples"))
 
 
 class BenchError(Exception):
@@ -127,6 +196,7 @@ def parse_args(argv):
     ap.add_argument("--all-regs-live", action="store_true", help="treat regs with alive=false as live too")
     ap.add_argument("--i-know-this-is-live", action="store_true",
                     help="allow --state to name the live default state directory; it is mirrored to a temp copy first")
+    ap.add_argument("--keep-mirror", action="store_true", help="keep the temp mirror of a live directory (default: removed at exit)")
     return ap.parse_args(argv)
 
 
@@ -143,11 +213,19 @@ def live_state_dirs(env):
 
 
 def mirror_state(src):
-    """Copy `src` (sdkvenv excluded) into a fresh temp directory and return the copy's path."""
+    """Copy `src` (sdkvenv and the credential files excluded) into a fresh temp directory; return
+    (root, copy). A file that vanished between the directory listing and its copy — a live kernel's
+    atomic-write temp file — is tolerated; any other copy error is raised."""
     root = tempfile.mkdtemp(prefix="romp-perf-live-mirror-")
     dst = os.path.join(root, "romp")
-    shutil.copytree(src, dst, symlinks=True, ignore=shutil.ignore_patterns("sdkvenv"))
-    return dst
+    try:
+        shutil.copytree(src, dst, symlinks=True, ignore=shutil.ignore_patterns(*MIRROR_IGNORE))
+    except shutil.Error as e:
+        errors = e.args[0] if e.args and isinstance(e.args[0], list) else []
+        if not errors or not all(("[Errno 2]" in str(why)) or ("No such file" in str(why)) for _s, _d, why in errors):
+            raise
+        sys.stderr.write("perf-bench: %d file(s) vanished during the mirror copy (a live writer's temp files); continuing\n" % len(errors))
+    return root, dst
 
 
 # ── environment for the in-process kernel ───────────────────────────────────────────────────────
@@ -191,10 +269,9 @@ def prepare_env(state, claude_dir, private_dir):
 class SubprocessTripwire:
     """Stands in for the `subprocess` module inside the loaded romp modules: constants and helpers pass
     through; every spawn raises, except the kernel's own read-only local git queries (`git rev-parse`,
-    `git ls-files`), which the chat build runs to place path links (cached on the repo's index and tree
-    mtimes, so a cold build pays them once per session cwd). Those are counted and reported. With
-    no_git they are answered as failures (the "no git on this box" shape) instead of run, so a strict
-    zero-exec run is possible without replacing any kernel function."""
+    `git ls-files`), which the chat build runs to place path links. Those are counted. With no_git they
+    are answered as failures (the "no git on this box" shape) instead of run, so a strict zero-exec run
+    is possible without replacing any kernel function."""
     _SPAWN = ("Popen", "run", "call", "check_call", "check_output", "getoutput", "getstatusoutput")
     _GIT_READ_ONLY = ("rev-parse", "ls-files")
 
@@ -231,21 +308,24 @@ class SubprocessTripwire:
 
 
 def install_guards(km, sbmod, no_git=False):
-    """Neutralize the non-builder side effects the push path can reach; return (names, recorder)."""
-    rec = {"spawns": [], "notifications": [], "atomic_writes": [], "tripwires": []}
+    """Neutralize the non-builder side effects the push path can reach; return (names, recorder).
+    A safety target the kernel revision lacks is an error: a renamed notification function would
+    otherwise leave the real one in place (Web Push to every subscription in the copy's store)."""
+    rec = {"spawns": [], "notifications": [], "atomic_writes": [], "tripwires": [], "nss": {}}
     names = []
 
-    def stub(mod, attr, fn):
-        if hasattr(mod, attr):
-            setattr(mod, attr, fn)
-            names.append("%s.%s" % ("km" if mod is km else "jd", attr))
+    def stub(attr, fn):
+        if not hasattr(km, attr):
+            raise BenchError("this kernel has no %s; the harness's guard list needs adjusting for this revision" % attr)
+        setattr(km, attr, fn)
+        names.append("km." + attr)
 
-    stub(km, "_refresh_remote_prices", lambda now=None: None)          # network fetch thread
-    stub(km, "_warm_fleet_bg", lambda now=None: None)                  # background parse thread
-    stub(km, "_system_notify", lambda t, b: rec["notifications"].append(("system", t)))
-    stub(km, "_push_notify", lambda t, b, sid="", badge=None: rec["notifications"].append(("push", t)))
-    stub(km, "_push_forward", lambda evs: rec["notifications"].append(("forward", len(evs))))
-    stub(km, "_badge_push", lambda n: rec["notifications"].append(("badge", n)))
+    stub("_refresh_remote_prices", lambda now=None: None)          # network fetch thread
+    stub("_warm_fleet_bg", lambda now=None: None)                  # background parse thread
+    stub("_system_notify", lambda t, b: rec["notifications"].append(("system", t)))
+    stub("_push_notify", lambda t, b, sid="", badge=None: rec["notifications"].append(("push", t)))
+    stub("_push_forward", lambda evs: rec["notifications"].append(("forward", len(evs))))
+    stub("_badge_push", lambda n: rec["notifications"].append(("badge", n)))
     for mod in (km, getattr(km, "jd", None), getattr(km, "em", None), sbmod):
         if mod is not None and getattr(mod, "subprocess", None) is not None:
             tw = SubprocessTripwire(_real_subprocess, rec["spawns"], no_git=no_git)
@@ -253,17 +333,33 @@ def install_guards(km, sbmod, no_git=False):
             rec["tripwires"].append(tw)
             names.append("%s.subprocess%s" % (getattr(mod, "__name__", "?"), " (git answers as failure)" if no_git else ""))
     state = Path(km.jd.STATE).resolve()
-    real_aw = getattr(km, "_atomic_write", None)
-    if real_aw is not None:
-        def guarded(path, text, mode=None):
-            p = Path(path).resolve()
-            if state not in p.parents and p != state:
-                raise BenchError("perf-bench: _atomic_write outside the state copy: %s" % p)
-            rec["atomic_writes"].append(str(p.relative_to(state)))
-            return real_aw(path, text, mode) if mode is not None else real_aw(path, text)
-        km._atomic_write = guarded
-        names.append("km._atomic_write (checked)")
+    real_aw = km._atomic_write
+
+    def guarded(path, text, mode=None):
+        p = Path(path).resolve()
+        if state not in p.parents and p != state:
+            raise BenchError("perf-bench: _atomic_write outside the state copy: %s" % p)
+        rec["atomic_writes"].append(str(p.relative_to(state)))
+        return real_aw(path, text, mode) if mode is not None else real_aw(path, text)
+    km._atomic_write = guarded
+    names.append("km._atomic_write (checked)")
+    for fn in ("getpwnam", "getpwuid"):            # os.path.expanduser's name-service lookups, counted
+        real = getattr(pwd, fn)
+
+        def counted(*a, _real=real, _fn=fn, **k):
+            rec["nss"][_fn] = rec["nss"].get(_fn, 0) + 1
+            return _real(*a, **k)
+        setattr(pwd, fn, counted)
+        names.append("pwd.%s (counted)" % fn)
     return names, rec
+
+
+def git_calls_total(rec):
+    out = {}
+    for tw in rec["tripwires"]:
+        for sub, n in tw.git_calls.items():
+            out[sub] = out.get(sub, 0) + n
+    return out
 
 
 # ── the constructor-free SDK backend ────────────────────────────────────────────────────────────
@@ -285,7 +381,6 @@ def make_backend(sbmod, state, dormant_rows, all_regs):
                     continue
                 row = self._live_row(reg, sid)                 # the real dormant-row derivation
                 if not self._bench_dormant:
-                    st = ""
                     lsv = getattr(sbmod, "last_state_value", None)
                     if lsv is not None:
                         st = lsv(self.state_dir, sid)
@@ -324,9 +419,12 @@ def load_kernel(repo):
     if sbmod is None:
         sbmod = SourceFileLoader("romp_sdk_backend", os.path.join(repo, "kernel", "sdk_backend.py")).load_module()
     for sym in ("_live_scope", "Sessions", "build_session", "build_feed", "build_timeline", "_push",
-                "_names_snapshot", "_sessions", "_parse", "_parse_cache", "_tmux_sessions"):
+                "_names_snapshot", "_sessions", "_parse", "_parse_cache", "_tmux_sessions", "_atomic_write",
+                "_built_feed", "_built_timeline", "em", "jd"):
         if not hasattr(km, sym):
             raise BenchError("this kernel lacks %s; the harness does not know how to drive it" % sym)
+    if not hasattr(km.em, "_ASM_STATS"):
+        raise BenchError("this kernel's event model has no _ASM_STATS; the cold-build check cannot run")
     return km, sbmod
 
 
@@ -370,12 +468,21 @@ def git_head(repo):
 
 # ── timing ──────────────────────────────────────────────────────────────────────────────────────
 def ms_stats(samples):
+    if not samples:
+        return {"n": 0, "min": None, "median": None, "max": None, "mean": None}
     return {"n": len(samples), "min": round(min(samples), 2), "median": round(statistics.median(samples), 2),
             "max": round(max(samples), 2), "mean": round(statistics.fmean(samples), 2)}
 
 
-def timed(fn, iters, before=None, warmup=1):
-    """Call `before` (untimed) then `fn` (timed), `warmup` times discarded, then `iters` times kept."""
+def single(ms, **extra):
+    d = {"n": 1, "min": None, "median": round(ms, 2), "max": None, "mean": None}
+    d.update(extra)
+    return d
+
+
+def timed(fn, iters, before=None, warmup=1, after=None):
+    """Call `before` (untimed) then `fn` (timed), `warmup` times discarded, then `iters` times kept;
+    `after(sample_ms)` runs untimed after each kept sample."""
     last = None
     for _ in range(warmup):
         if before:
@@ -387,7 +494,10 @@ def timed(fn, iters, before=None, warmup=1):
             before()
         t0 = time.perf_counter()
         last = fn()
-        samples.append((time.perf_counter() - t0) * 1000.0)
+        ms = (time.perf_counter() - t0) * 1000.0
+        samples.append(ms)
+        if after:
+            after(ms)
     return ms_stats(samples), last
 
 
@@ -425,6 +535,12 @@ def profile_rows(pr, key, top, repo):
     return out
 
 
+def profile_entry(fn, before, repo):
+    pr, ms = profile_once(fn, before=before)
+    return {"ms": round(ms, 2), "cumulative": profile_rows(pr, "cumulative", PROFILE_TOP, repo),
+            "tottime": profile_rows(pr, "tottime", PROFILE_TOP, repo)}
+
+
 def fmt_profile(title, rows):
     lines = ["  %s" % title, "  %10s %12s %12s  %s" % ("ncalls", "tottime ms", "cumtime ms", "function")]
     for r in rows:
@@ -457,6 +573,23 @@ def fingerprint_diff(before, after):
 
 
 # ── fake WebSocket clients ──────────────────────────────────────────────────────────────────────
+_FRAME_HEAD_RE = re.compile(r'"(type|slot)": "([^"]*)"')
+
+
+def frame_label(km, c, s):
+    """The per-slot label for one frame handed to a fake client. _client_send leaves the dedup key on
+    the client (`curSlot`) for the length of its call, and that key names the slot. The keyed delta path
+    (_send_slot_delta) calls send() directly, so its frames are labelled from their own head:
+    `{"type": "delta", "slot": "bars", ...}` books as bars-delta, and any other direct frame as its type."""
+    key = c.get("curSlot")
+    if key is not None:
+        return km._perf_slot(key) if hasattr(km, "_perf_slot") else str(key)
+    head = dict(_FRAME_HEAD_RE.findall(s[:160]))
+    if head.get("slot"):
+        return head["slot"] + "-delta"
+    return head.get("type") or "unknown"
+
+
 def fake_client(km, app, active=None):
     c = {"app": app, "wid": "perf-bench-" + app, "alive": True, "ready": True, "sock": None,
          "dlock": threading.RLock(), "qlock": threading.Lock(), "sent": {}, "echat": {},
@@ -468,8 +601,7 @@ def fake_client(km, app, active=None):
         c["active"] = active
 
     def send(s):
-        key = c.get("curSlot")
-        label = km._perf_slot(key) if hasattr(km, "_perf_slot") else str(key)
+        label = frame_label(km, c, s)
         c["bytes"][label] = c["bytes"].get(label, 0) + len(s)
         c["frames"] += 1
     c["send"] = send
@@ -486,9 +618,12 @@ def client_bytes(clients):
     return {c["app"]: {"frames": c["frames"], "slots": dict(sorted(c["bytes"].items()))} for c in clients}
 
 
+def total_bytes(clients):
+    return sum(sum(c["bytes"].values()) for c in clients)
+
+
 # ── the run ─────────────────────────────────────────────────────────────────────────────────────
-def run(args, state, mirror_of, out):
-    private = tempfile.mkdtemp(prefix="romp-perf-private-")
+def run(args, state, mirror_of, out, private):
     repo = os.path.realpath(args.repo) if args.repo else os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
     out["repo"], out["repo_head"], out["state"], out["state_mirror_of"] = repo, git_head(repo), state, mirror_of
     out["env_changes"] = prepare_env(state, args.claude_dir, private)
@@ -496,7 +631,7 @@ def run(args, state, mirror_of, out):
     threads_before = {t.name for t in threading.enumerate()}
 
     km, sbmod = load_kernel(repo)
-    jd = km.jd
+    jd, em = km.jd, km.em
     be = make_backend(sbmod, state, args.dormant_rows, args.all_regs_live)
     km._sdk_backend = be                       # _sdk() returns this without constructing the real one
     if hasattr(km, "_codex_backend"):
@@ -505,6 +640,8 @@ def run(args, state, mirror_of, out):
     bench = out["benchmarks"] = {}
     profiles = out["profiles"] = {}
     iters = max(1, args.iters)
+    out["cold_caches"] = {"kernel": [n for n in COLD_KERNEL_CACHES + ("_chat_fold",) if isinstance(getattr(km, n, None), dict)],
+                          "event_model": [n for n, _lock in COLD_EM_CACHES if isinstance(getattr(em, n, None), dict)]}
 
     def now():
         return int(time.time())
@@ -519,18 +656,71 @@ def run(args, state, mirror_of, out):
         km._live_scope.names = None
         km._live_scope.paths = None
 
-    def clear_chat_caches():
-        km._parse_cache.clear()
-        if hasattr(km, "_chat_fold_lock"):
-            with km._chat_fold_lock:
-                km._chat_fold.clear()
-        elif hasattr(km, "_chat_fold"):
-            km._chat_fold.clear()
-        for name in ("_built_chat", "_prev_chat_events", "_prev_chat_ledger", "_arch_tops_cache"):
+    def clear_kernel_caches():
+        """The kernel-side caches a freshly started kernel lacks (build_session's inputs above the parse)."""
+        for name in COLD_KERNEL_CACHES:
             d = getattr(km, name, None)
             if isinstance(d, dict):
                 d.clear()
+        if hasattr(km, "_chat_fold"):
+            lock = getattr(km, "_chat_fold_lock", None)
+            if lock is not None:
+                with lock:
+                    km._chat_fold.clear()
+            else:
+                km._chat_fold.clear()
+
+    def clear_em_caches():
+        """The event model's parse-layer caches, under their locks; a name this revision lacks is skipped
+        (out["cold_caches"] says which were emptied; the per-sample assembly check is what proves a
+        sample cold)."""
+        for name, lock_name in COLD_EM_CACHES:
+            d = getattr(em, name, None)
+            if not isinstance(d, dict):
+                continue
+            lock = getattr(em, lock_name, None)
+            if lock is not None:
+                with lock:
+                    d.clear()
+            else:
+                d.clear()
+
+    def clear_all_caches():
+        clear_kernel_caches()
+        clear_em_caches()
         gc.collect()
+
+    def asm_delta(before):
+        return {k: em._ASM_STATS.get(k, 0) - before.get(k, 0) for k in set(em._ASM_STATS) | set(before)
+                if em._ASM_STATS.get(k, 0) != before.get(k, 0)}
+
+    class Counters:
+        """Per-row deltas of the git call counter, the assembly counters and the NSS counter, over the
+        KEPT samples only: timed_counted() runs the warm-up first, then resets these, then times."""
+        def __init__(self):
+            self.reset()
+
+        def reset(self):
+            self.git0, self.asm0, self.nss0, self.n = git_calls_total(rec), dict(em._ASM_STATS), dict(rec["nss"]), 0
+
+        def row(self):
+            g1, nss1 = git_calls_total(rec), rec["nss"]
+            git = {k: g1.get(k, 0) - self.git0.get(k, 0) for k in set(g1) | set(self.git0) if g1.get(k, 0) != self.git0.get(k, 0)}
+            nss = {k: nss1.get(k, 0) - self.nss0.get(k, 0) for k in set(nss1) | set(self.nss0) if nss1.get(k, 0) != self.nss0.get(k, 0)}
+            n = max(1, self.n)
+            return {"git_per_build": {k: round(v / n, 2) for k, v in git.items()},
+                    "asm": asm_delta(self.asm0), "nss_per_build": {k: round(v / n, 2) for k, v in nss.items()}}
+
+    def timed_counted(fn, before=None, after=None):
+        """timed() with the per-row counters reset AFTER the warm-up, so a row's git/asm/nss deltas
+        describe exactly its kept samples."""
+        if before:
+            before()
+        fn()
+        ctr.reset()
+        st, last = timed(fn, iters, before=before, warmup=0, after=after)
+        st.update(ctr.row())
+        return st, last
 
     # liveness + names snapshots (the pusher cycle's per-cycle reads)
     bench["liveness_snapshot"], tmux = timed(lambda: km.Sessions.live(), iters)
@@ -559,8 +749,30 @@ def run(args, state, mirror_of, out):
         bench["discover_cold"], _ = timed(lambda: jd.discover(now()), iters, before=cold_discover)
         bench["discover_warm"], _ = timed(lambda: jd.discover(now()), iters)
 
-        # the live sessions discovery knows about, largest transcripts first
+        # ONE world: discovery's live sessions, plus every live sid outside its window resolved the way
+        # _alive_sessions resolves them for the builders
         sessions = [s for s in km._sessions(now()) if s["sid"] in tmux]
+        if tmux and not sessions:
+            raise BenchError("discovery found no transcript for any of the %d live sessions: a wrong --claude-dir, "
+                             "registry cwds that do not exist on this machine, or a copy older than the discovery "
+                             "window" % len(tmux))
+        have = {s["sid"] for s in sessions}
+        missing = [sid for sid in tmux if sid not in have]
+        backfilled = []
+        if missing and hasattr(jd, "DEATH_BACKFILL_WINDOW"):
+            wide = {f[0]: f for f in jd.discover(now(), window=jd.DEATH_BACKFILL_WINDOW)}
+            for sid in missing:
+                ent = wide.get(sid)
+                if ent is None:
+                    continue
+                fsid, path, anchor, name = ent
+                try:
+                    mtime = os.stat(path).st_mtime
+                except OSError:
+                    mtime = 0
+                sessions.append({"sid": fsid, "name": name or fsid[:8], "anchor": anchor, "path": str(path), "mtime": mtime})
+                backfilled.append(sid)
+        no_transcript = [sid for sid in missing if sid not in set(backfilled)]
         for s in sessions:
             try:
                 s["bytes"] = os.path.getsize(s["path"])
@@ -568,39 +780,61 @@ def run(args, state, mirror_of, out):
                 s["bytes"] = 0
         sessions.sort(key=lambda s: s["bytes"], reverse=True)
         picked = sessions[:max(0, args.sessions)]
-        out["live_transcripts"] = {"count": len(sessions), "bytes": sum(s["bytes"] for s in sessions)}
+        out["live_transcripts"] = {"count": len(sessions), "bytes": sum(s["bytes"] for s in sessions),
+                                   "in_window": len(have), "backfilled": len(backfilled),
+                                   "no_transcript": [sid[:8] for sid in no_transcript]}
 
-        # warm every live parse once from empty (the boot-time cost), keep it warm for the feed/timeline
-        km._parse_cache.clear()
-        t0 = time.perf_counter()
-        for s in sessions:
-            km._parse(s["path"], s["sid"], now())
-        bench["warm_all_parses"] = {"n": 1, "min": None, "median": round((time.perf_counter() - t0) * 1000, 2),
-                                    "max": None, "mean": None, "sessions": len(sessions)}
-
-        # build_session, cold then warm, per picked transcript
+        # build_session: cold (every cache), emwarm (kernel caches only), warm — per picked transcript
         out["benched_sessions"] = []
+        ctr = Counters()
         for s in picked:
             sid, tag = s["sid"], s["sid"][:8]
             km._live_scope.paths = {}
-            st_cold, m = timed(lambda: km.build_session(sid, now(), tmux), iters, before=clear_chat_caches)
-            st_warm, m2 = timed(lambda: km.build_session(sid, now(), tmux), iters)
+            asm_before = {}
+
+            def cold_before():
+                clear_all_caches()
+                asm_before.clear()
+                asm_before.update(em._ASM_STATS)
+
+            def cold_after(ms, _tag=tag, _path=os.path.realpath(s["path"])):
+                d = asm_delta(asm_before)
+                if not d.get("full"):
+                    raise BenchError("build_session_cold:%s ran no full assembly (assembly counters moved %r): a cache "
+                                     "this harness does not clear served the parse" % (_tag, d))
+                asm_cache = getattr(em, "_ASM_CACHE", {})
+                with em._ASM_LOCK:
+                    own = any(isinstance(k, tuple) and k and k[0] == _path for k in asm_cache)
+                if not own:
+                    raise BenchError("build_session_cold:%s never assembled its own transcript (%s is absent from the "
+                                     "assembly cache the sample started with empty; counters moved %r): a cache above the "
+                                     "event model served it" % (_tag, os.path.basename(_path), d))
+                ctr.n += 1
+            st_cold, m = timed_counted(lambda: km.build_session(sid, now(), tmux), before=cold_before, after=cold_after)
             bench["build_session_cold:" + tag] = st_cold
+
+            def emwarm_before():
+                clear_kernel_caches()
+                gc.collect()
+
+            def count_after(ms):
+                ctr.n += 1
+            st_em, _ = timed_counted(lambda: km.build_session(sid, now(), tmux), before=emwarm_before, after=count_after)
+            bench["build_session_emwarm:" + tag] = st_em
+            st_warm, _ = timed_counted(lambda: km.build_session(sid, now(), tmux), after=count_after)
             bench["build_session_warm:" + tag] = st_warm
             out["benched_sessions"].append({"sid8": tag, "name": s.get("name", ""), "bytes": s["bytes"],
                                             "events": len((m or {}).get("events") or [])})
             if args.profile:
-                pr, ms = profile_once(lambda: km.build_session(sid, now(), tmux), before=clear_chat_caches)
-                profiles["build_session_cold:" + tag] = {"ms": round(ms, 2),
-                                                         "cumulative": profile_rows(pr, "cumulative", PROFILE_TOP, repo),
-                                                         "tottime": profile_rows(pr, "tottime", PROFILE_TOP, repo)}
-                pr, ms = profile_once(lambda: km.build_session(sid, now(), tmux))
-                profiles["build_session_warm:" + tag] = {"ms": round(ms, 2),
-                                                         "cumulative": profile_rows(pr, "cumulative", PROFILE_TOP, repo),
-                                                         "tottime": profile_rows(pr, "tottime", PROFILE_TOP, repo)}
-        # re-warm every parse (the cold builds emptied the cache) so the feed/timeline see the steady state
+                profiles["build_session_cold:" + tag] = profile_entry(lambda: km.build_session(sid, now(), tmux), clear_all_caches, repo)
+                profiles["build_session_warm:" + tag] = profile_entry(lambda: km.build_session(sid, now(), tmux), None, repo)
+
+        # every live parse once from empty (the boot-time cost); kept warm for the feed/timeline
+        clear_all_caches()
+        t0 = time.perf_counter()
         for s in sessions:
             km._parse(s["path"], s["sid"], now())
+        bench["warm_all_parses"] = single((time.perf_counter() - t0) * 1000, sessions=len(sessions))
 
         # feed + timeline in the steady state
         bench["build_feed"], feed = timed(lambda: km.build_feed(now(), tmux), iters)
@@ -609,11 +843,8 @@ def run(args, state, mirror_of, out):
         bench["build_timeline_bars"]["lanes"] = len((tl or {}).get("sessions") or [])
         bench["build_timeline_skel"], _ = timed(lambda: km.build_timeline(now(), tmux, with_bars=False), iters)
         if args.profile:
-            for label, fn in (("build_feed", lambda: km.build_feed(now(), tmux)),
-                              ("build_timeline_bars", lambda: km.build_timeline(now(), tmux, with_bars=True))):
-                pr, ms = profile_once(fn)
-                profiles[label] = {"ms": round(ms, 2), "cumulative": profile_rows(pr, "cumulative", PROFILE_TOP, repo),
-                                   "tottime": profile_rows(pr, "tottime", PROFILE_TOP, repo)}
+            profiles["build_feed"] = profile_entry(lambda: km.build_feed(now(), tmux), None, repo)
+            profiles["build_timeline_bars"] = profile_entry(lambda: km.build_timeline(now(), tmux, with_bars=True), None, repo)
         # the feed with nothing parsed (cards-first boot)
         bench["build_feed_noparse"], _ = timed(lambda: km.build_feed(now(), tmux), iters, before=km._parse_cache.clear)
         for s in sessions:
@@ -635,20 +866,21 @@ def run(args, state, mirror_of, out):
             bench["load_goals:" + tag], store = timed(lambda: jd.load_goals(fsid), iters)
             out["goal_stores"].append({"fsid8": tag, "bytes": size, "nodes": len((store or {}).get("nodes") or {})})
             if args.profile and not any(k.startswith("load_goals:") for k in profiles):
-                pr, ms = profile_once(lambda: jd.load_goals(fsid))
-                profiles["load_goals:" + tag] = {"ms": round(ms, 2), "cumulative": profile_rows(pr, "cumulative", PROFILE_TOP, repo),
-                                                 "tottime": profile_rows(pr, "tottime", PROFILE_TOP, repo)}
+                profiles["load_goals:" + tag] = profile_entry(lambda: jd.load_goals(fsid), None, repo)
 
         # the push over fake clients
         apps = [a.strip() for a in (args.clients or "").split(",") if a.strip()]
         if apps:
             active = picked[0]["sid"] if picked else None
             clients = [fake_client(km, a, active if a == "chat" else None) for a in apps]
-            clear_chat_caches()
-            for name in ("_built_feed", "_built_timeline"):
-                e = getattr(km, name, None)
-                if isinstance(e, list) and len(e) >= 2:
-                    e[1] = None
+
+            def built_at():
+                return (km._built_feed[2], km._built_timeline[2])
+
+            # the pusher's first cycle after a restart: every cache empty, empty dedup state
+            clear_all_caches()
+            for e in (km._built_feed, km._built_timeline):
+                e[1] = None
             for name in ("_feed_wire", "_bars_wire"):
                 if hasattr(km, name):
                     setattr(km, name, None)
@@ -656,21 +888,62 @@ def run(args, state, mirror_of, out):
             scope(tmux)
             t0 = time.perf_counter()
             km._push(clients, tmux=tmux)
-            bench["push_connect"] = {"n": 1, "min": None, "median": round((time.perf_counter() - t0) * 1000, 2),
-                                     "max": None, "mean": None, "bytes": client_bytes(clients)}
+            bench["push_cold_cycle"] = single((time.perf_counter() - t0) * 1000, bytes=client_bytes(clients), clients=apps)
+            reset_client_bytes(clients)
+            km._live_scope.paths = {}
+            km._push(clients, tmux=tmux)               # a warming cycle: baselines, wire caches, chat cache
             reset_client_bytes(clients)
 
-            def one_push():
+            # a page load: one fresh client with empty dedup state, connect=True
+            for app in apps:
+                holder = {}
+
+                def connect_before(_app=app):
+                    holder["c"] = fake_client(km, _app, active if _app == "chat" else None)
+                    km._live_scope.paths = {}
+
+                def connect_push():
+                    km._push([holder["c"]], connect=True, tmux=tmux)
+                st, _ = timed(connect_push, iters, before=connect_before)
+                st["bytes"] = client_bytes([holder["c"]])[app]
+                bench["push_connect:" + app] = st
+            reset_client_bytes(clients)
+
+            # the periodic push, steady state; rebuild samples separated
+            samples = []
+            quiet, rebuilt = [], []
+            for _ in range(3 * iters):
                 km._live_scope.paths = {}
+                reset_client_bytes(clients)
+                b0 = built_at()
+                t0 = time.perf_counter()
                 km._push(clients, tmux=tmux)
-            st, _ = timed(one_push, iters, warmup=0)
-            st["bytes"] = client_bytes(clients)
-            st["clients"] = apps
+                ms = (time.perf_counter() - t0) * 1000
+                b1 = built_at()
+                flags = {"ms": round(ms, 2), "rebuilt_feed": b1[0] != b0[0], "rebuilt_timeline": b1[1] != b0[1],
+                         "bytes": total_bytes(clients)}
+                samples.append(flags)
+                (rebuilt if (flags["rebuilt_feed"] or flags["rebuilt_timeline"]) else quiet).append(flags)
+                if len(quiet) >= iters:
+                    break
+            st = ms_stats([f["ms"] for f in quiet])
+            st.update({"bytes_per_push": (sum(f["bytes"] for f in quiet) / len(quiet)) if quiet else None,
+                       "samples": samples, "clients": apps, "rebuild_samples": len(rebuilt)})
             bench["push_steady"] = st
+            if rebuilt:
+                st2 = ms_stats([f["ms"] for f in rebuilt])
+                st2["bytes_per_push"] = sum(f["bytes"] for f in rebuilt) / len(rebuilt)
+                bench["push_steady_rebuild"] = st2
+            reset_client_bytes(clients)
+            km._live_scope.paths = {}
+            km._push(clients, tmux=tmux)
+            bench["push_steady"]["bytes"] = client_bytes(clients)   # one further cycle's per-slot bytes
+            out["push_rebuilds"] = len(rebuilt)
             if args.profile:
-                pr, ms = profile_once(one_push)
-                profiles["push_steady"] = {"ms": round(ms, 2), "cumulative": profile_rows(pr, "cumulative", PROFILE_TOP, repo),
-                                           "tottime": profile_rows(pr, "tottime", PROFILE_TOP, repo)}
+                def one_push():
+                    km._live_scope.paths = {}
+                    km._push(clients, tmux=tmux)
+                profiles["push_steady"] = profile_entry(one_push, None, repo)
     finally:
         unscope()
 
@@ -678,11 +951,8 @@ def run(args, state, mirror_of, out):
     out["writes"]["atomic_writes"] = sorted(set(rec["atomic_writes"]))
     out["notifications_suppressed"] = len(rec["notifications"])
     out["spawn_attempts"] = rec["spawns"]
-    git = {}
-    for tw in rec["tripwires"]:
-        for sub, n in tw.git_calls.items():
-            git[sub] = git.get(sub, 0) + n
-    out["git_queries"] = {"answered_as_failure": bool(args.no_git), "calls": git}
+    out["git_queries"] = {"answered_as_failure": bool(args.no_git), "calls": git_calls_total(rec)}
+    out["nss_lookups"] = dict(rec["nss"])
     out["threads_new"] = sorted({t.name for t in threading.enumerate()} - threads_before)
     return out
 
@@ -692,16 +962,37 @@ def fmt_ms(v):
     return "%9.2f" % v if isinstance(v, (int, float)) else "%9s" % "-"
 
 
+def row_note(name, st):
+    parts = []
+    g = st.get("git_per_build") or {}
+    if g:
+        parts.append("git/build " + ",".join("%s=%s" % kv for kv in sorted(g.items())))
+    a = st.get("asm") or {}
+    if a:
+        parts.append("asm " + ",".join("%s=%s" % kv for kv in sorted(a.items())))
+    if name.startswith("build_session_cold") and (a.get("serve") or a.get("fold")):
+        # the sample started with the assembly cache empty, so a serve or fold inside it can only be a
+        # second read of a transcript the same build assembled (the emwarm row's serve is its definition)
+        parts.append("(a transcript read twice inside one build)")
+    if st.get("rebuild_samples") is not None:
+        parts.append("%d rebuild sample(s) set aside" % st["rebuild_samples"])
+    if st.get("bytes_per_push") is not None:
+        parts.append("%.0f B/push" % st["bytes_per_push"])
+    return "  ".join(parts)
+
+
 def render_text(out, profile):
     L = []
     L.append("perf-bench  repo=%s (%s)  state=%s%s" % (out["repo"], out.get("repo_head") or "no git",
                                                      out["state"], ("  [mirror of %s]" % out["state_mirror_of"]) if out.get("state_mirror_of") else ""))
     lv = out.get("liveness", {})
+    lt = out.get("live_transcripts", {})
     L.append("liveness: %d live rows (%d alive regs, %d closed, %d threads skipped; rows from %s); "
-             "%d live transcripts discovered, %.1f MB total" % (lv.get("live", 0), lv.get("alive_regs", 0), lv.get("closed_regs", 0),
-                                                              lv.get("thread_regs", 0), lv.get("rows", "?"),
-                                                              out.get("live_transcripts", {}).get("count", 0),
-                                                              out.get("live_transcripts", {}).get("bytes", 0) / 1e6))
+             "%d live transcripts (%d in the discovery window, %d backfilled, %d without one), %.1f MB total"
+             % (lv.get("live", 0), lv.get("alive_regs", 0), lv.get("closed_regs", 0), lv.get("thread_regs", 0), lv.get("rows", "?"),
+                lt.get("count", 0), lt.get("in_window", 0), lt.get("backfilled", 0), len(lt.get("no_transcript") or []), lt.get("bytes", 0) / 1e6))
+    if lt.get("no_transcript"):
+        L.append("live sids with no transcript anywhere: " + ", ".join(lt["no_transcript"]))
     if out.get("benched_sessions"):
         L.append("transcripts benched: " + ", ".join("%s (%.1f MB, %d events)" % (s["sid8"], s["bytes"] / 1e6, s["events"])
                                                     for s in out["benched_sessions"]))
@@ -709,15 +1000,15 @@ def render_text(out, profile):
         L.append("goal stores benched: " + ", ".join("%s (%.0f KB, %d nodes)" % (g["fsid8"], g["bytes"] / 1e3, g["nodes"])
                                                      for g in out["goal_stores"]))
     L.append("")
-    L.append("%-34s %4s %9s %9s %9s" % ("benchmark", "n", "min ms", "median", "max"))
+    L.append("%-34s %4s %9s %9s %9s  %s" % ("benchmark", "n", "min ms", "median", "max", "notes"))
     for name, st in out["benchmarks"].items():
-        L.append("%-34s %4d %s %s %s" % (name, st.get("n", 0), fmt_ms(st.get("min")), fmt_ms(st.get("median")), fmt_ms(st.get("max"))))
-    for name in ("push_connect", "push_steady"):
-        st = out["benchmarks"].get(name)
-        if st and st.get("bytes"):
+        L.append("%-34s %4d %s %s %s  %s" % (name, st.get("n", 0), fmt_ms(st.get("min")), fmt_ms(st.get("median")), fmt_ms(st.get("max")), row_note(name, st)))
+    for name, st in out["benchmarks"].items():
+        if name.startswith("push") and st.get("bytes"):
             L.append("")
             L.append("%s bytes per client slot:" % name)
-            for app, d in st["bytes"].items():
+            b = st["bytes"] if "frames" not in st["bytes"] else {name.split(":", 1)[1]: st["bytes"]}
+            for app, d in b.items():
                 slots = ", ".join("%s=%d" % (k, v) for k, v in d["slots"].items()) or "nothing sent"
                 L.append("  %-9s %4d frames  %s" % (app, d["frames"], slots))
     L.append("")
@@ -729,6 +1020,12 @@ def render_text(out, profile):
     g = out.get("git_queries", {})
     L.append("git read-only queries %s: %s" % ("answered as failures (--no-git)" if g.get("answered_as_failure") else "run",
                                              ", ".join("%s=%d" % kv for kv in sorted(g.get("calls", {}).items())) or "none"))
+    L.append("name-service lookups (AF_UNIX connects under strace): %s"
+             % (", ".join("%s=%d" % kv for kv in sorted(out.get("nss_lookups", {}).items())) or "none"))
+    cc = out.get("cold_caches") or {}
+    if cc:
+        L.append("caches emptied before each cold build_session sample: kernel %s; event model %s"
+                 % (", ".join(cc.get("kernel") or []) or "none", ", ".join(cc.get("event_model") or []) or "none"))
     L.append("notifications suppressed: %d; refused spawns: %d; new threads: %s"
              % (out.get("notifications_suppressed", 0), len(out.get("spawn_attempts", [])), out.get("threads_new") or "none"))
     if profile and out.get("profiles"):
@@ -740,12 +1037,28 @@ def render_text(out, profile):
     return "\n".join(L)
 
 
+def _dig(d, dotted):
+    for k in dotted.split("."):
+        d = d.get(k) if isinstance(d, dict) else None
+    return d
+
+
 def compare(a_path, b_path):
     with open(a_path) as f:
         a = json.load(f)
     with open(b_path) as f:
         b = json.load(f)
     L = ["perf-bench compare  A=%s (%s)  B=%s (%s)" % (a_path, a.get("repo_head") or "?", b_path, b.get("repo_head") or "?")]
+    L.append("world:")
+    mismatched = []
+    for key, label in WORLD_KEYS:
+        va, vb = _dig(a, key), _dig(b, key)
+        flag = "" if va == vb else "   MISMATCH"
+        if flag:
+            mismatched.append(label)
+        L.append("  %-28s A=%-8s B=%-8s%s" % (label, va, vb, flag))
+    if mismatched:
+        L.append("  the two runs saw different worlds (%s); deltas below compare unlike things" % ", ".join(mismatched))
     L.append("%-34s %9s %9s %10s %8s" % ("benchmark", "A median", "B median", "delta ms", "delta %"))
     ab, bb = a.get("benchmarks", {}), b.get("benchmarks", {})
     for name in ab:
@@ -763,14 +1076,18 @@ def compare(a_path, b_path):
         L.append("only in A: " + ", ".join(only_a))
     if only_b:
         L.append("only in B: " + ", ".join(only_b))
-    for name in ("push_connect", "push_steady"):
+    for name in sorted(set(ab) & set(bb)):
+        if not name.startswith("push"):
+            continue
         ba, bbb = (ab.get(name) or {}).get("bytes"), (bb.get(name) or {}).get("bytes")
-        if ba and bbb:
-            for app in ba:
-                if app in bbb:
-                    ta = sum(ba[app]["slots"].values())
-                    tb = sum(bbb[app]["slots"].values())
-                    L.append("%s bytes %-9s A=%d B=%d delta=%+d" % (name, app, ta, tb, tb - ta))
+        if not (ba and bbb):
+            continue
+        if "frames" in ba:                                  # a per-app row
+            ba, bbb = {name.split(":", 1)[1]: ba}, {name.split(":", 1)[1]: bbb}
+        for app in ba:
+            if app in bbb:
+                ta, tb = sum(ba[app]["slots"].values()), sum(bbb[app]["slots"].values())
+                L.append("%s bytes %-9s A=%d B=%d delta=%+d" % (name, app, ta, tb, tb - ta))
     return "\n".join(L)
 
 
@@ -790,23 +1107,45 @@ def main(argv=None):
         if not os.path.isdir(os.path.join(state, sub)):
             sys.stderr.write("perf-bench: %s has no %s/ — not a romp state directory?\n" % (state, sub))
             return 2
-    mirror_of = None
+    mirror_of = mirror_root = None
     if state in live_state_dirs(os.environ):
         if not args.i_know_this_is_live:
             sys.stderr.write("perf-bench: %s is the LIVE state directory. Bench a copy (see --help), or pass "
                              "--i-know-this-is-live to have it mirrored to a temp directory first.\n" % state)
             return 2
-        mirror_of, state = state, mirror_state(state)
-        sys.stderr.write("perf-bench: mirrored the live directory to %s (sdkvenv excluded); benching the mirror\n" % state)
+        mirror_of = state
+        mirror_root, state = mirror_state(state)
+        sys.stderr.write("perf-bench: mirrored the live directory to %s (%s excluded); benching the mirror\n"
+                         % (state, ", ".join(MIRROR_IGNORE)))
+    private = tempfile.mkdtemp(prefix="romp-perf-private-")
     out = {"schema": SCHEMA, "tool": "perf-bench", "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "python": sys.version.split()[0], "iters": args.iters, "sessions_requested": args.sessions}
-    run(args, state, mirror_of, out)
-    print(render_text(out, args.profile))
-    if args.json:
-        with open(args.json, "w") as f:
-            json.dump(out, f, indent=1, sort_keys=True)
-        print("\njson written to %s" % args.json)
-    return 0
+    rc = 0
+    try:
+        try:
+            run(args, state, mirror_of, out, private)
+        except BenchError as e:
+            # keep what was measured: the rows so far print and the JSON carries the error, so a
+            # revision that trips a guard late in the run still yields its earlier numbers
+            out["error"] = str(e)
+            rc = 1
+        if out.get("benchmarks"):
+            print(render_text(out, args.profile))
+        if out.get("error"):
+            sys.stderr.write("perf-bench: %s\n" % out["error"])
+        if args.json:
+            with open(args.json, "w") as f:
+                json.dump(out, f, indent=1, sort_keys=True)
+            print("\njson written to %s%s" % (args.json, " (partial: the run stopped on an error)" if rc else ""))
+    finally:
+        shutil.rmtree(private, ignore_errors=True)
+        if mirror_root:
+            if args.keep_mirror:
+                sys.stderr.write("perf-bench: mirror kept at %s\n" % state)
+            else:
+                shutil.rmtree(mirror_root, ignore_errors=True)
+                sys.stderr.write("perf-bench: mirror removed\n")
+    return rc
 
 
 if __name__ == "__main__":

@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """tools/perf-bench.py against a SYNTHETIC state directory (invented sessions in the notes-api demo
-domain, placeholder uuids, no real data): it runs end to end and emits the JSON shape, it refuses the
-live default state directory without the flag and mirrors it with the flag, and --compare prints
-deltas. The tool is driven as a subprocess with the same env recipe a person would use, so nothing
-here loads romp code in-process."""
+domain, placeholder uuids, no real data): it runs end to end and emits the JSON shape, its cold
+build_session row is a real cold parse, it refuses the live default state directory without the flag
+and mirrors it with the flag, and --compare prints deltas. The tool is driven as a subprocess with the
+same env recipe a person would use, so nothing here loads romp code in-process; the tool module itself
+is loaded once, for a direct check of its fake client's frame labelling (its import pulls in only the
+standard library)."""
+import copy
 import json
 import os
 import re
+from importlib.machinery import SourceFileLoader
+from types import SimpleNamespace
 import subprocess
 import sys
 import tempfile
@@ -19,8 +24,12 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 TOOL = os.path.join(ROOT, "tools", "perf-bench.py")
 
-# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
-# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+# Two effects. For the CHILD (the tool runs as a subprocess and sets its own state root before it loads
+# the kernel) this points the default state root at a temp dir, so the refusal tests' XDG_STATE_HOME /
+# ROMP_STATE_DIR overrides are the only "live" candidates the tool can see. It is also the ratchet's
+# preamble for the one in-process load below, the tool module, which loads no romp code at import. It
+# replaces conftest's suite-wide floor with another temp dir for the modules collected after this one,
+# which changes nothing for them.
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 
@@ -28,6 +37,24 @@ SID_WEB = "11111111-2222-3333-4444-555555555555"
 SID_API = "22222222-3333-4444-5555-666666666666"
 SID_TESTS = "33333333-4444-5555-6666-777777777777"
 MANAGER_VARS = ("ROMP_MANAGER_PORT", "ROMP_SERVE_PORT", "ROMP_MANAGER_PID", "ROMP_SUPERVISED")
+WEB_TURNS = 400       # large enough that a cold build (parse + fold) measurably outlasts a warm one
+EXPECTED_NEUTRALIZED = {
+    "km._refresh_remote_prices", "km._warm_fleet_bg", "km._system_notify", "km._push_notify", "km._push_forward",
+    "km._badge_push", "romp_kernel_perf_bench.subprocess", "romp_judge.subprocess", "romp_sdk_backend.subprocess",
+    "km._atomic_write (checked)", "pwd.getpwnam (counted)", "pwd.getpwuid (counted)"}
+# The caches the tool empties before each cold build_session sample, as this kernel has them. The tool
+# skips a name a revision lacks, so a rename here would silently leave that cache warm: this pins the
+# HEAD set, and a kernel change that renames or adds one must change it deliberately.
+EXPECTED_COLD_CACHES = {
+    "kernel": {"_parse_cache", "_built_chat", "_prev_chat_events", "_prev_chat_ledger", "_arch_tops_cache",
+               "_PATH_LINK_CACHE", "_states_notes_cache", "_state_ev_cache", "_bgtasks_cache", "_bgall_cache",
+               "_queued_parse_cache", "_wake_tail_cache", "_session_meta_cache", "_session_tok_cache",
+               "_machine_cut_cache", "_chat_fold"},
+    "event_model": {"_JSONL_CACHE", "_ASM_CACHE", "_TRAILING_CACHE"}}
+# What the builders and the push write into the copy on a normal run: the import-time repo-root
+# marker, the tab-order audit and the session order the push maintains. A new write path in a
+# builder must change this set deliberately.
+EXPECTED_WRITES = {"+ order-audit.jsonl", "+ repo-root", "+ session-order.json"}
 
 
 def _iso(t):
@@ -35,7 +62,8 @@ def _iso(t):
 
 
 def _transcript(path, sid, cwd, n_turns, t0):
-    """A synthetic Claude Code transcript: n_turns of prompt, one tool round, reply."""
+    """A synthetic Claude Code transcript: n_turns of prompt, one tool round, reply. One reply carries a
+    `~someone/...` path token, which the chat build's path-link pass hands to os.path.expanduser."""
     n = [0]
     parent = [None]
     t = [t0]
@@ -53,6 +81,9 @@ def _transcript(path, sid, cwd, n_turns, t0):
     with open(path, "w") as f:
         for i in range(n_turns):
             tid = "toolu_%06d" % i
+            reply = "Step %d done: the suite passes." % i
+            if i == 1:
+                reply += " Notes are in `~someone/notes/index.md` for later."
             rows = [
                 rec("user", {"role": "user", "content": "step %d: tighten the search index and rerun the suite" % i},
                     promptSource="typed"),
@@ -63,26 +94,30 @@ def _transcript(path, sid, cwd, n_turns, t0):
                 rec("user", {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tid, "content": "ok\n"}]},
                     toolUseResult={"stdout": "ok"}),
                 rec("assistant", {"role": "assistant", "model": "claude-sonnet-4", "stop_reason": "end_turn",
-                                  "content": [{"type": "text", "text": "Step %d done: the suite passes." % i}]}),
+                                  "content": [{"type": "text", "text": reply}]}),
             ]
             for r in rows:
                 f.write(json.dumps(r) + "\n")
 
 
-def build_synthetic(root):
+def build_synthetic(root, web_turns=WEB_TURNS):
     """A state directory at root/romp (named `romp` so XDG_STATE_HOME=root resolves it as the default)
-    plus a Claude config dir at root/claude holding the transcripts. Returns (state, claude_dir)."""
+    plus a Claude config dir at root/claude holding the transcripts. Returns (state, claude_dir). The
+    state carries the two credential-shaped files a real one has (synthetic contents), which the mirror
+    must leave behind."""
     root = Path(root)
     state = root / "romp"
     cwd = root / "notes-api"
     cwd.mkdir(parents=True)
     for d in ("names", "sdk", "states", "goals"):
         (state / d).mkdir(parents=True)
+    (state / "serve-token").write_text("synthetic-serve-token-not-real\n")
+    (state / "push-vapid.json").write_text(json.dumps({"synthetic": True}))
     claude = root / "claude"
     proj = claude / "projects" / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(cwd)))
     proj.mkdir(parents=True)
     now = int(time.time())
-    for sid, name, color, alive, turns in ((SID_WEB, "web", "#4a7bd0", True, 12),
+    for sid, name, color, alive, turns in ((SID_WEB, "web", "#4a7bd0", True, web_turns),
                                            (SID_API, "api", "#d07b4a", True, 3),
                                            (SID_TESTS, "tests", "#4ad07b", False, 1)):
         (state / "names" / sid).write_text("%s\t%s\t%s\t#ffffff\n" % (name, cwd, color))
@@ -92,7 +127,7 @@ def build_synthetic(root):
         with open(state / "states" / (sid + ".jsonl"), "w") as f:
             f.write(json.dumps({"t": now - 3600, "state": "waiting"}) + "\n")
             f.write(json.dumps({"t": now - 60, "state": "working" if name == "web" else "waiting"}) + "\n")
-        _transcript(proj / (sid + ".jsonl"), sid, str(cwd), turns, now - 3000)
+        _transcript(proj / (sid + ".jsonl"), sid, str(cwd), turns, now - 3 * turns * 4 - 60)
     (state / "goals" / (SID_WEB + ".json")).write_text(json.dumps(
         {"rompUuid": SID_WEB, "seq": 1, "rev": 1, "placementsV": 11,
          "nodes": {"g1": {"parentId": None, "t": now - 500, "text": "wire the notes search index"}},
@@ -100,7 +135,7 @@ def build_synthetic(root):
     return str(state), str(claude)
 
 
-def run_tool(args, env_extra=None, timeout=240):
+def run_tool(args, env_extra=None, timeout=300):
     env = {k: v for k, v in os.environ.items() if k not in MANAGER_VARS}
     env.update(env_extra or {})
     return subprocess.run([sys.executable, TOOL] + list(args), capture_output=True, text=True, env=env, timeout=timeout)
@@ -116,41 +151,44 @@ class PerfBench(unittest.TestCase):
                                       re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.path.join(cls.root, "notes-api"))),
                                       SID_WEB + ".jsonl")
         cls.transcript_mtime = os.stat(cls.transcript).st_mtime_ns
-        cls.main = run_tool(["--state", cls.state, "--claude-dir", cls.claude, "--repo", ROOT, "--iters", "1",
+        cls.main = run_tool(["--state", cls.state, "--claude-dir", cls.claude, "--repo", ROOT, "--iters", "2",
                              "--sessions", "2", "--profile", "--json", cls.json_path])
 
     def _ok(self, r):
         self.assertEqual(r.returncode, 0, "rc=%d\nstdout:\n%s\nstderr:\n%s" % (r.returncode, r.stdout[-4000:], r.stderr[-4000:]))
 
-    def test_runs_and_reports_every_builder(self):
+    def _out(self):
         self._ok(self.main)
         with open(self.json_path) as f:
-            out = json.load(f)
-        self.assertEqual(out["schema"], 1)
+            return json.load(f)
+
+    def test_runs_and_reports_every_builder(self):
+        out = self._out()
+        self.assertEqual(out["schema"], 2)
         self.assertEqual(os.path.realpath(out["state"]), os.path.realpath(self.state))
         b = out["benchmarks"]
         for name in ("liveness_snapshot", "names_snapshot", "discover_cold", "discover_warm", "build_feed",
                      "build_feed_noparse", "build_timeline_bars", "build_timeline_skel",
-                     "build_session_cold:11111111", "build_session_warm:11111111",
-                     "build_session_cold:22222222", "load_goals:11111111", "push_connect", "push_steady"):
+                     "build_session_cold:11111111", "build_session_emwarm:11111111", "build_session_warm:11111111",
+                     "build_session_cold:22222222", "load_goals:11111111", "push_cold_cycle", "push_steady",
+                     "push_connect:chat", "push_connect:feed", "push_connect:timeline"):
             self.assertIn(name, b, "missing benchmark %s in %s" % (name, sorted(b)))
             self.assertIsInstance(b[name]["median"], (int, float), name)
         self.assertNotIn("build_session_cold:33333333", b, "a closed reg (alive=false) is not a live session")
         self.assertEqual(out["liveness"]["live"], 2)
         self.assertEqual(out["liveness"]["closed_regs"], 1)
+        self.assertEqual(out["live_transcripts"]["count"], 2)
+        self.assertEqual(out["live_transcripts"]["no_transcript"], [])
         web = next(s for s in out["benched_sessions"] if s["sid8"] == "11111111")
         self.assertGreater(web["events"], 0, "the chat build saw the synthetic transcript's events")
         self.assertEqual(out["benched_sessions"][0]["sid8"], "11111111", "largest transcript first")
         self.assertEqual(out["goal_stores"][0]["nodes"], 1)
-        chat = b["push_connect"]["bytes"]["chat"]["slots"]
-        self.assertIn("chat:11111111", chat, "the fake chat client received the active tab's session frame")
-        self.assertGreater(chat["chat:11111111"], 0)
-        self.assertIn("feed", b["push_connect"]["bytes"]["feed"]["slots"])
         self.assertEqual(out["spawn_attempts"], [], "no builder spawned a process")
         self.assertEqual(out["threads_new"], [], "no builder left a thread running")
-        self.assertIn("km._refresh_remote_prices", out["neutralized"])
-        self.assertIn("km._warm_fleet_bg", out["neutralized"])
+        self.assertEqual(set(out["neutralized"]), EXPECTED_NEUTRALIZED)
         self.assertEqual(os.stat(self.transcript).st_mtime_ns, self.transcript_mtime, "transcripts are read-only")
+        self.assertEqual(set(out["writes"]["sample"]), EXPECTED_WRITES)
+        self.assertEqual(out["writes"]["removed"], 0)
         prof = out["profiles"]
         for name in ("build_feed", "build_timeline_bars", "build_session_cold:11111111", "load_goals:11111111", "push_steady"):
             self.assertIn(name, prof)
@@ -160,9 +198,64 @@ class PerfBench(unittest.TestCase):
         self.assertIn("build_feed", self.main.stdout)
         self.assertIn("top 25 by cumulative time", self.main.stdout)
 
+    def test_cold_build_is_a_full_parse_and_slower_than_warm(self):
+        b = self._out()["benchmarks"]
+        cold, em, warm = b["build_session_cold:11111111"], b["build_session_emwarm:11111111"], b["build_session_warm:11111111"]
+        self.assertEqual(cold["asm"].get("full", 0), cold["n"], "every kept cold sample ran exactly one full assembly")
+        self.assertEqual(cold["asm"].get("serve", 0), 0, "a single-session transcript is assembled once per cold build")
+        self.assertEqual(cold["asm"].get("fold", 0), 0, "nothing grows between reads in a static fixture")
+        self.assertEqual(em["asm"].get("full", 0), 0, "the em-warm row never re-parses")
+        self.assertGreater(cold["median"], warm["median"], "a %d-turn transcript's cold build outlasts its warm build (%s vs %s ms)"
+                           % (WEB_TURNS, cold["median"], warm["median"]))
+        self.assertGreater(cold["median"], em["median"], "the parse is part of the cold row, not the em-warm row")
+        self.assertIn("git_per_build", cold)
+        self.assertEqual({k: set(v) for k, v in self._out()["cold_caches"].items()}, EXPECTED_COLD_CACHES)
+
+    def test_path_token_lookups_are_counted(self):
+        out = self._out()
+        self.assertGreaterEqual(out["nss_lookups"].get("getpwnam", 0), 1,
+                                "the `~someone/...` token reached pwd.getpwnam through os.path.expanduser")
+
+    def test_push_rows_report_bytes_and_rebuild_flags(self):
+        b = self._out()["benchmarks"]
+        chat = b["push_cold_cycle"]["bytes"]["chat"]["slots"]
+        self.assertIn("chat:11111111", chat, "the fake chat client received the active tab's session frame")
+        self.assertGreater(chat["chat:11111111"], 0)
+        self.assertIn("feed", b["push_cold_cycle"]["bytes"]["feed"]["slots"])
+        self.assertIn("chat:11111111", b["push_connect:chat"]["bytes"]["slots"], "a fresh chat client gets the full session")
+        self.assertIn("feed", b["push_connect:feed"]["bytes"]["slots"])
+        self.assertIn("timeline", b["push_connect:timeline"]["bytes"]["slots"])
+        st = b["push_steady"]
+        self.assertGreaterEqual(len(st["samples"]), st["n"])
+        self.assertEqual(st["n"], 2, "the loop ran until two quiet samples existed")
+        for s in st["samples"]:
+            self.assertEqual(set(s), {"ms", "rebuilt_feed", "rebuilt_timeline", "bytes"})
+        quiet = [s for s in st["samples"] if not (s["rebuilt_feed"] or s["rebuilt_timeline"])]
+        self.assertEqual(len(quiet), st["n"])
+        self.assertEqual(st["rebuild_samples"], len(st["samples"]) - len(quiet))
+        for name, row in b.items():
+            if name.startswith("push") and row.get("bytes"):
+                self.assertNotIn("unknown", json.dumps(row["bytes"]), "%s: every frame the fake clients got was labelled" % name)
+
+    def test_fake_client_labels_direct_delta_frames_by_their_slot(self):
+        # the static fixture never changes between pushes, so no delta frame reaches a fake client in the
+        # run above; this drives the client's send() directly with the three frame shapes it can see
+        pb = SourceFileLoader("perf_bench_under_test", TOOL).load_module()
+        c = pb.fake_client(SimpleNamespace(), "timeline")      # no _perf_slot: a keyed label is str(key)
+        delta = '{"type": "delta", "slot": "bars", "base": 3, "rev": 4, "coll": {}}'
+        c["send"](delta)                                        # _send_slot_delta: send() directly, no curSlot
+        c["curSlot"] = ("timeline",)                            # what _client_send sets around its call
+        full = '{"type": "timeline", "sessions": []}'
+        c["send"](full)
+        del c["curSlot"]
+        other = '{"type": "warn", "text": "not a slot frame"}'
+        c["send"](other)
+        self.assertEqual(c["bytes"], {"bars-delta": len(delta), "('timeline',)": len(full), "warn": len(other)})
+        self.assertEqual(c["frames"], 3)
+
     def test_refuses_the_live_default_dir_without_the_flag(self):
         root = tempfile.mkdtemp(prefix="perf-bench-live-")
-        state, claude = build_synthetic(root)
+        state, claude = build_synthetic(root, web_turns=3)
         r = run_tool(["--state", state, "--claude-dir", claude, "--repo", ROOT, "--iters", "1"],
                      env_extra={"XDG_STATE_HOME": root})
         self.assertEqual(r.returncode, 2, r.stderr)
@@ -174,29 +267,58 @@ class PerfBench(unittest.TestCase):
 
     def test_live_flag_benches_a_mirror_and_leaves_the_original_alone(self):
         root = tempfile.mkdtemp(prefix="perf-bench-live-")
-        state, claude = build_synthetic(root)
+        state, claude = build_synthetic(root, web_turns=3)
         before = {p: os.stat(p).st_mtime_ns for p in Path(state).rglob("*") if p.is_file()}
         out_json = os.path.join(root, "out.json")
         r = run_tool(["--state", state, "--claude-dir", claude, "--repo", ROOT, "--iters", "1", "--sessions", "1",
-                      "--clients", "", "--i-know-this-is-live", "--json", out_json], env_extra={"XDG_STATE_HOME": root})
+                      "--clients", "", "--i-know-this-is-live", "--keep-mirror", "--json", out_json],
+                     env_extra={"XDG_STATE_HOME": root})
         self._ok(r)
         self.assertIn("mirrored", r.stderr)
+        self.assertIn("mirror kept at", r.stderr)
         after = {p: os.stat(p).st_mtime_ns for p in Path(state).rglob("*") if p.is_file()}
         self.assertEqual(before, after, "the live directory is only read")
         with open(out_json) as f:
             out = json.load(f)
         self.assertEqual(os.path.realpath(out["state_mirror_of"]), os.path.realpath(state))
-        self.assertNotEqual(os.path.realpath(out["state"]), os.path.realpath(state))
+        mirror = out["state"]
+        self.assertNotEqual(os.path.realpath(mirror), os.path.realpath(state))
+        self.assertTrue(os.path.isdir(os.path.join(mirror, "sdk")), "the mirror is a state directory")
+        for name in ("serve-token", "push-vapid.json"):
+            self.assertFalse(os.path.exists(os.path.join(mirror, name)), "%s is not copied into the mirror" % name)
         self.assertIn("build_feed", out["benchmarks"])
         self.assertNotIn("push_steady", out["benchmarks"], "--clients '' skips the push benchmarks")
+        # without --keep-mirror the mirror is removed
+        r = run_tool(["--state", state, "--claude-dir", claude, "--repo", ROOT, "--iters", "1", "--sessions", "1",
+                      "--clients", "", "--i-know-this-is-live", "--json", out_json], env_extra={"XDG_STATE_HOME": root})
+        self._ok(r)
+        self.assertIn("mirror removed", r.stderr)
+        with open(out_json) as f:
+            self.assertFalse(os.path.exists(json.load(f)["state"]))
 
     def test_compare_prints_per_benchmark_deltas(self):
-        self._ok(self.main)
+        out = self._out()
+        b = copy.deepcopy(out)
+        feed = out["benchmarks"]["build_feed"]["median"]
+        b["benchmarks"]["build_feed"]["median"] = feed * 2
+        del b["benchmarks"]["discover_warm"]
+        b["benchmarks"]["invented_row"] = {"n": 1, "median": 1.0}
+        b["iters"] = 9
+        b_path = os.path.join(self.root, "b.json")
+        with open(b_path, "w") as f:
+            json.dump(b, f)
+        r = run_tool(["--compare", self.json_path, b_path])
+        self._ok(r)
+        lines = r.stdout.splitlines()
+        feed_line = next(l for l in lines if l.startswith("build_feed "))
+        self.assertEqual(feed_line.split(), ["build_feed", "%.2f" % feed, "%.2f" % (feed * 2), "%+.2f" % feed, "+100.0%"])
+        self.assertIn("only in A: discover_warm", r.stdout)
+        self.assertIn("only in B: invented_row", r.stdout)
+        self.assertIn("MISMATCH", r.stdout, "a differing iters count is flagged before the table")
+        self.assertIn("push_cold_cycle bytes chat", r.stdout)
         r = run_tool(["--compare", self.json_path, self.json_path])
         self._ok(r)
-        self.assertIn("build_feed", r.stdout)
-        self.assertIn("+0.00", r.stdout)
-        self.assertIn("push_connect bytes", r.stdout)
+        self.assertNotIn("MISMATCH", r.stdout)
 
     def test_requires_a_state_dir(self):
         r = run_tool([])
