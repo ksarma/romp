@@ -55,6 +55,13 @@ _keysrc = _SFL("romp_keysource", str(Path(__file__).resolve().parent / "keysourc
 # selects it; unset, every call here returns an empty set and the file source above is the whole
 # story. Values leave that module through one accessor (injection), never through a log or a wire.
 _envsrc = _SFL("romp_envsource", str(Path(__file__).resolve().parent / "envsource.py")).load_module()
+# The by-text KEY RULE (session_backend.echo_text_key): the one normalization under which an input echo's
+# text is compared with a transcript record's, shared with the kernel's _atom_user_texts so the landing
+# scan below can never find what prune_live cannot retire. Loaded under its own module name on purpose:
+# the kernel loads that file as romp_session_backend and TmuxBackend subclasses that copy's ABC, and
+# re-executing the source into that module object would rebind the class out from under the subclass.
+echo_text_key = _SFL("romp_session_backend_keys",
+                     str(Path(__file__).resolve().parent / "session_backend.py")).load_module().echo_text_key
 
 
 def _bin_on_path_env(environ) -> dict:
@@ -763,6 +770,176 @@ def last_record_uuid(path, tail_bytes: int = 262144) -> str:
         if u:
             return u
     return ""
+
+
+# ── spend metering: which of the result event's token counters to fold ─────────────────────────────
+# A ResultMessage carries TWO token accounts, and only one of them is fit for accounting (verified
+# against Claude Code 2.1.261's own schema text, 2026-09-05):
+#   `usage`       — "MAIN AGENT LOOP ONLY … per-turn in streaming-input sessions. Prefer modelUsage for
+#                   token/cost accounting". It omits every subagent, sidechain and internal call, and in
+#                   a streaming session it is THIS TURN's count, not a running total. Diffing it as a
+#                   cumulative counter under-counted a 2.6M-token turn as 6,346 tokens.
+#   `modelUsage`  — cumulative across the CLI process, per model, covering the main loop, subagents,
+#                   sidechains and internal calls (the SDK passes it through as `model_usage`, camelCase
+#                   keys). Summed across models per field it is the counter the dollars already diff.
+# The spend recorder keys its token fields by the `usage` dict's names, so the camelCase fields map
+# onto those. `usage` is the FALLBACK when a paid result carries no modelUsage, and then it is folded
+# for what it is: this turn's main-loop count (per-turn on every CLI build we can read, 2.1.224 through
+# 2.1.261), never diffed as a counter, with ONE problem line per session saying the token columns are
+# main-loop-only from there on (usage_fallback_notice). Two routes reach it. A claude-agent-sdk older
+# than 0.1.51 has no model_usage field on ResultMessage at all; the kernel imports whichever copy
+# importlib finds first, so one installed outside the sdkvenv shadows the venv's current SDK
+# (kernel._ensure_sdk_on_path). Such an SDK also lacks ClaudeAgentOptions.session_id, so fresh sessions
+# die at launch with a logged TypeError while plain RESUMES (no session_id kwarg) connect and take this
+# path on every turn. The other route is a CLI that emits no modelUsage on a paid result (2.1.261 omits
+# it on zero-cost results only, which the total > 0 gate skips).
+_MODEL_USAGE_KEYS = (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens"),
+                     ("cache_read_input_tokens", "cacheReadInputTokens"),
+                     ("cache_creation_input_tokens", "cacheCreationInputTokens"))
+
+
+def model_usage_totals(model_usage):
+    """Sum a `modelUsage` map ({model: {inputTokens, outputTokens, cacheReadInputTokens,
+    cacheCreationInputTokens, …}}) across models into the four `usage`-named token fields. None when
+    the map is absent, empty or holds no per-model dict — the caller falls back to `usage` then."""
+    if not isinstance(model_usage, dict) or not model_usage:
+        return None
+    out = {k: 0 for k, _ in _MODEL_USAGE_KEYS}
+    seen = False
+    for per_model in model_usage.values():
+        if not isinstance(per_model, dict):
+            continue
+        seen = True
+        for k, ck in _MODEL_USAGE_KEYS:
+            n = per_model.get(ck)
+            if isinstance(n, (int, float)):
+                out[k] += int(n)
+    return out if seen else None
+
+
+def result_token_totals(msg):
+    """The token counters a ResultMessage carries, in `usage`-dict names, with what KIND of counter
+    they are: (modelUsage summed across models, True) when the CLI emits it — cumulative per process,
+    the settle diffs it — else (the `usage` dict itself, False): this turn's main-loop count, which
+    the settle folds as is. Missing fields read 0."""
+    totals = model_usage_totals(getattr(msg, "model_usage", None))
+    if totals is not None:
+        return totals, True
+    u = getattr(msg, "usage", None)
+    u = u if isinstance(u, dict) else {}
+    out = {}
+    for k, _ in _MODEL_USAGE_KEYS:
+        v = u.get(k)
+        out[k] = int(v) if isinstance(v, (int, float)) else 0
+    return out, False
+
+
+def usage_fallback_is_sdk(msg):
+    """True when a paid result's missing modelUsage is the SDK's doing: a ResultMessage with no
+    model_usage ATTRIBUTE at all is a claude-agent-sdk older than 0.1.51 (a dataclass field from there
+    on — None, not missing, when the CLI sends nothing). A HOST-level fact: the kernel imported one SDK
+    for every session it runs."""
+    return not hasattr(msg, "model_usage")
+
+
+def usage_fallback_notice(name, msg):
+    """The problem line for a paid result with no modelUsage (result_token_totals took the `usage`
+    fallback). The cause the message can tell apart decides both the words and how often the settle
+    says them: the SDK cause (usage_fallback_is_sdk) is the same for every session, so its line names no
+    session and is said ONCE PER KERNEL LIFE, on the backend's flag — said per session it filled the
+    error center with one near-identical card per live session (texts differing only by name, so they
+    could not collapse) and another on every dormant revive, for one remedy (2026-09-06); a field that
+    is there but empty is THIS session's CLI's doing on this result, which can differ per session, so
+    that line names the session and is said once per session."""
+    if usage_fallback_is_sdk(msg):
+        return ("spend: every session's token columns are per-turn main-loop figures from here on (no subagent, "
+                "sidechain or compaction tokens; dollars are unaffected). Cause: the ResultMessage has no "
+                "model_usage field, so the kernel imported a claude-agent-sdk that predates 0.1.51. A copy "
+                "installed outside the sdkvenv shadows the venv's: upgrade or remove it.")
+    return ("spend: %s's token columns are per-turn main-loop figures from here on (no subagent, sidechain or "
+            "compaction tokens; dollars are unaffected). Cause: the CLI emitted no modelUsage on a paid result."
+            % name)
+
+
+# The first cost delta after a connect above which the recorder leaves a trace in the kernel log: an
+# INFO line, not a problem. On Claude Code 2.1.261 a print-mode CLI resumes with its cost counters at
+# zero (a resume neither restores a cost-state record nor arms its writer; probed 2026-09-06), so a
+# first delta this large is the turn's own cost, recorded right, with nothing for the user to act on (a
+# problem card here sent them to check a ledger that was correct). The trace is for the day a CLI
+# restores history in print mode: then a first result carries the whole history in total_cost_usd,
+# and the figure is wrong only if that restore and the seed read different files (see last_cost_state).
+SANE_TURN_USD = 200.0
+
+
+def last_cost_state(path):
+    """The resumed transcript's LAST `cost-state` record, as the watermarks a CLI that restores it
+    would hold: {"total": totalCostUSD, "tokens": modelUsage summed per field} — or None when the file
+    has no such record.
+
+    Where a record can land (Claude Code 2.1.261, probed in print mode under a hermetic config dir,
+    2026-09-06): the CLI's writer runs only while its cost ledger has an owner. The interactive TUI
+    claims one at startup; a print-mode (SDK) process gets one only from the /clear session-id
+    rotation — a print-mode resume sets none, and restores nothing. The /clear saver runs before the
+    rotation, so the SECOND and later /clear in one process appends a record to the episode that
+    /clear abandons; the episode romp resumes (the reg's lastSid, the current one) never carries one,
+    and a record-carrying episode resumed in print mode gains none. So every romp seed today reads
+    zero, and the CLI's counters start at zero on the same resume: the two agree. The one way a record
+    reaches a resumed file is lastSid stranded on an abandoned episode (the kernel dying between the
+    saver's write and the init flip); the print-mode CLI still starts at zero there, and the
+    shrink-folds-whole rule folds the first turn whole while its own total sits below the seed — the
+    residual, a first turn costlier than the whole recorded history, under-counts that turn by the seed.
+
+    Why read it at all: the CLI HAS a restore path for this record (its transcript loader files
+    `cost-state` as last-wins; interactive resumes restore totalCostUSD + modelUsage, the two counters
+    the settle diffs). Should a CLI restore it in print mode, the first result after a reconnect would
+    carry the whole session's history in total_cost_usd, and watermarks reset to zero would fold that
+    history as one turn's spend; seeding from the same file the CLI reads makes the first delta this
+    turn's work. The seed reads transcript_path(cwd, resume_sid), and re-reads it when init corrects
+    the cwd (the CLI's own string keys its transcript path) — with the sid the CLI LOADED when that init
+    also landed a new fsid (a fork landing moves resume_sid to the file the CLI will write) — so the two
+    sides open the same file.
+
+    Scans BACKWARDS in chunks and stops at the first hit, so a transcript that carries the record
+    (near its tail: the writer appends it at /clear, not per turn) costs a chunk or two, and one that
+    never carried it costs one sequential read of the file at connect time."""
+    marker = b'"cost-state"'
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            pos = f.tell()
+            carry = b""
+            while pos > 0:
+                step = min(pos, 1 << 16)
+                pos -= step
+                f.seek(pos)
+                chunk = f.read(step) + carry     # carry: the earlier-read chunk's first-line fragment,
+                #                                  which this chunk's last line continues into
+                head, nl, body = chunk.partition(b"\n")
+                if pos > 0:
+                    carry = head                 # the chunk's first line is a fragment: it completes in
+                    #                              the next (earlier) chunk, so it travels there whole
+                    if not nl:
+                        continue                 # no line boundary in this chunk at all
+                else:
+                    carry, body = b"", chunk     # the file's head: every line here is complete
+                if marker not in body:
+                    continue
+                for line in reversed(body.split(b"\n")):
+                    if marker not in line:
+                        continue
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(o, dict) or o.get("type") != "cost-state":
+                        continue
+                    total = o.get("totalCostUSD")
+                    if not isinstance(total, (int, float)) or total < 0:
+                        continue
+                    return {"total": float(total), "tokens": model_usage_totals(o.get("modelUsage")) or {}}
+    except OSError:
+        return None
+    return None
 
 
 def rewind_disposition(rewind_to: str, rewind_leaf: str, leaf_now: str) -> str:
@@ -4052,11 +4229,20 @@ class SdkSession:
         #   so spend folds the DELTA between results — folding the raw value re-added the whole
         #   session-so-far cost every turn (the user 2026-08-08, whose spend line was fiction). Reset
         #   at each connect: a fresh CLI process starts its counter at zero.
-        self._last_usage_totals = {}  # same for the TOKEN counts: the result event's usage is the
-        #   process-lifetime `this.totalUsage` counter (verified in the bundle beside total_cost_usd),
-        #   so each field folds as a delta too — raw folding compounded the token readout exactly like
-        #   the dollars (the user 2026-08-08, round two: the hover's 5h/7d/month $-per-token ratios
-        #   diverged wildly because each window carried a different inflation factor).
+        self._last_usage_totals = {}  # same for the TOKEN counts: per-field watermarks of the result
+        #   event's cumulative counters — `modelUsage` summed across models (see result_token_totals;
+        #   the `usage` dict is per-turn and main-loop-only on current CLIs, so diffing IT under-counted
+        #   tokens by orders of magnitude, 2026-09-05), each field folding as a delta — raw folding
+        #   compounded the token readout exactly like the dollars (the user 2026-08-08, round two: the
+        #   hover's 5h/7d/month $-per-token ratios diverged wildly because each window carried a
+        #   different inflation factor).
+        self._spend_first_result = False   # True from a connect until its first result settles: that
+        #   result's delta is checked against SANE_TURN_USD (an info-line trace — see the constant), and
+        #   the init handler may re-seed the watermarks while it is still True (a cwd correction)
+        self._usage_fallback_noted = False  # the once-per-session problem line for paid results whose
+        #   modelUsage the CLI left empty (usage_fallback_notice) has been logged: the token columns are
+        #   main-loop-only. The SDK cause (no model_usage field at all) is host-level and has the
+        #   BACKEND's once flag, _usage_fallback_sdk_noted — one card per kernel life, not per session
         # Pending conversation REWIND (the chat's edit-message branch): the target record uuid +
         # the transcript leaf recorded at request time (the one-shot guard — see rewind_disposition).
         # Seeded from the reg so a kernel death mid-rewind re-applies it iff nothing landed since.
@@ -4187,6 +4373,15 @@ class SdkSession:
         renders these as the chat's 'queued' indicator for this SDK session."""
         with self._lock:
             return list(self._pending)
+
+    def fed_texts(self) -> list[str]:
+        """The texts FED to the current client whose ResultMessage has not landed (`_inflight_texts`,
+        oldest first); thread-safe. A mid-turn send lives here from the inputs() pop until the turn
+        settles: the CLI holds it, queued behind the running turn, to splice at the next tool boundary.
+        The observable twin of `inflight`, for diagnostics and tests; prune_live read it for one day as a
+        floor guard, until the floor itself went (no SDK echo is floored — its docstring)."""
+        with self._lock:
+            return list(self._inflight_texts)
 
     def unqueue(self, idx: int, expect: str | None = None) -> str | None:
         """Remove the queued turn at position `idx` (the chat's queued list is this same _pending order)
@@ -4387,9 +4582,10 @@ class SdkSession:
         - A RESUMABLE conversation: the atom may genuinely have landed, so re-feeding risks a real
           duplicate. Surface the loss instead, FLAG-ONLY (refeed=False, 2026-08-26): the drop-mark flips
           the echo to "never delivered" NOW — with the todo-reopen seam — rather than hours later at the
-          next thread spawn. _mark_dropped_echoes' redeliver arm must not run here: its _text_landed scan
-          is a bounded transcript-tail read whose miss would land the message TWICE in the resumed
-          conversation, the exact duplicate this branch is documented to refuse. The re-feed lives only
+          next thread spawn. _mark_dropped_echoes' redeliver arm must not run here: the abandoned client
+          may still be flushing the record its _text_landed scan looks for, so a miss is not proof of
+          loss, and a re-feed would land the message TWICE in the resumed conversation, the exact
+          duplicate this branch is documented to refuse. The re-feed lives only
           where the conversation is NOT resumable — the re-head above, and the boot/dead-spawn callers
           (_reseed_echoes, _run), where no client survives to have landed it."""
         if not self.inflight:
@@ -4950,8 +5146,8 @@ class SdkSession:
                     # create, the ready chip landing at 5-12s with the cycle).
                     self.backend._push_session(self.sid)
                     self._connected.set()   # the control channel exists from here (move() waits on this)
-                    self._last_cost_total = 0.0   # a fresh CLI process starts its cumulative cost at zero
-                    self._last_usage_totals = {}  # …and its cumulative token counters
+                    self._seed_spend_watermarks()   # a fresh CLI process starts its cumulative counters at
+                    #   zero — or at what it restores from the resumed transcript's cost-state record
                     # The CLI is demonstrably up, so any recorded launch failure is HISTORY — clear it
                     # here, at the proof, rather than on a timer. This is what lifts the usage-limit
                     # hold once the window resets: the next _ensure connects, the error record goes, and
@@ -5306,6 +5502,33 @@ class SdkSession:
             if _lg:
                 _lg("api-health: give-up ingest failed: %s" % e)
 
+    def _seed_spend_watermarks(self, resume_sid=None):
+        """Reset the spend watermarks for the CLI process a connect just started. Zero for a fresh
+        process — or, when the resumed transcript carries a `cost-state` record, the counters that
+        record holds, because a CLI that restores them reports its first total_cost_usd as the whole
+        session's history plus this turn (last_cost_state has the full story, including why every
+        romp resume reads zero today). Arms the first-result check either way. Called at connect, and
+        again from the init handler when the CLI's cwd corrects the registry's before any result has
+        settled — the transcript path is keyed on the cwd, so that is when the seed can have read the
+        wrong file. `resume_sid` names the transcript the CLI LOADED when that differs from
+        self.resume_sid: the init that corrects the cwd may in the same message have landed a new fsid
+        (a born-as-a-fork copy, or the CLI's adoption gate turning a plain resume into a fork under a
+        fresh id), and the file a restoring CLI took its counters from is the OLD one — the new fsid's
+        file has no record yet (2026-09-06; the fix's test double showed a 12.5 seed landing at zero)."""
+        self._last_cost_total = 0.0   # a fresh CLI process starts its cumulative cost at zero
+        self._last_usage_totals = {}  # …and its cumulative token counters
+        self._spend_first_result = True
+        sid = resume_sid or self.resume_sid
+        if not sid:
+            return
+        cs = last_cost_state(transcript_path(self.cwd, sid))
+        if not cs:
+            return
+        self._last_cost_total = cs["total"]
+        self._last_usage_totals = dict(cs["tokens"])
+        self.backend._log("spend: %s resumes a transcript with a cost-state record — watermarks seeded at its "
+                  "totals (cumulative $%.2f) so the first result folds only this turn" % (self.name, cs["total"]))
+
     async def _drain(self, client, AssistantMessage, ResultMessage, SystemMessage):
         """The receive loop. Every streamed message goes through _handle_stream_message, which keeps
         a handler's failure to that one message; what ends this loop is the STREAM ending — the CLI
@@ -5414,6 +5637,8 @@ class SdkSession:
             # rail's /usage bars — see _note_auth_source.
             self.backend._note_auth_source(self, d.get("apiKeySource"))
             fsid = d.get("session_id")
+            loaded_sid = self.resume_sid   # the transcript the CLI LOADED — a flip below moves resume_sid to
+            #                                the fsid it will WRITE, and the spend re-seed wants the former
             if fsid and fsid != self.resume_sid:
                 old = self.resume_sid
                 self.resume_sid = fsid
@@ -5448,6 +5673,16 @@ class SdkSession:
                 self.backend._log("sdk %s: adopting CLI cwd %r (registry had %r)" % (self.sid[:8], cli_cwd, self.cwd))
                 self.cwd = cli_cwd
                 self.backend._update_reg(self.sid, cwd=cli_cwd)
+                if getattr(self, "_spend_first_result", False):   # getattr: __new__-built test doubles
+                    # The connect-time seed read the transcript under the REGISTRY's cwd; the CLI loaded
+                    # the one under ITS cwd (the same keying). No result has settled since the connect,
+                    # so re-seed from the file the CLI opened — a registry variant that holds no transcript
+                    # left the seed at zero for a file that carries a record, or the reverse. Never after
+                    # a settle: resetting the watermarks mid-process would fold the counters whole again.
+                    # The file the CLI opened is the PRE-flip sid's: when this same init also landed a new
+                    # fsid (a fork landing), resume_sid now names the file the CLI will write, which holds
+                    # no record — seeding from it read zero for a loaded file that carried one (2026-09-06).
+                    self._seed_spend_watermarks(resume_sid=loaded_sid)
             self.backend._poke()   # publish the model + permission-mode from init promptly: the snapshot reads
                                    # self.model, but with no poke the new model would wait out the 3s producer
                                    # backstop. NB: this init branch fires only once the FIRST turn arrives — the
@@ -5635,17 +5870,52 @@ class SdkSession:
                 if isinstance(total, (int, float)) and total > 0:
                     delta = total - self._last_cost_total if total >= self._last_cost_total else total
                     self._last_cost_total = float(total)
-                    # the usage dict is the SAME kind of counter (`usage: this.totalUsage` in the bundle):
-                    # per-field deltas, a shrunken field folding whole — see _last_usage_totals in __init__
-                    u = getattr(msg, "usage", None)
-                    u = u if isinstance(u, dict) else {}
+                    if getattr(self, "_spend_first_result", False):   # getattr: __new__-built test doubles
+                        self._spend_first_result = False
+                        if delta > SANE_TURN_USD:
+                            # A first-after-connect delta above the mark: the turn's own cost on this CLI (a
+                            # print-mode resume starts its counters at zero — see SANE_TURN_USD), so recorded
+                            # as is and traced as an INFO line, not a problem — the figure is right and there
+                            # is nothing for the user to act on. It is wrong only if a CLI that restores cost
+                            # history in print mode read a different file than the seed (last_cost_state).
+                            self.backend._log("spend: %s's first result after connect cost $%.2f, above %.0f USD for "
+                                      "one turn (the CLI's cumulative total: $%.2f). Recorded as is: on this CLI a "
+                                      "resumed process starts its cost at zero, so this is the turn's own cost. It "
+                                      "would be wrong only if a CLI that restores cost history read a different "
+                                      "transcript than the connect-time seed (last_cost_state)."
+                                      % (self.name, delta, SANE_TURN_USD, total), problem=False)
+                    totals, cumulative = result_token_totals(msg)
                     turn_u = {}
-                    for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
-                        v = u.get(k)
-                        v = int(v) if isinstance(v, (int, float)) else 0
-                        last = self._last_usage_totals.get(k, 0)
-                        turn_u[k] = v - last if v >= last else v
-                        self._last_usage_totals[k] = v
+                    if cumulative:
+                        # modelUsage summed across models: the SAME kind of counter as the dollars — cumulative
+                        # per process, subagent-inclusive — so per-field deltas against the watermarks, a
+                        # shrunken field folding whole (see _last_usage_totals in __init__)
+                        for k, v in totals.items():
+                            last = self._last_usage_totals.get(k, 0)
+                            turn_u[k] = v - last if v >= last else v
+                            self._last_usage_totals[k] = v
+                    else:
+                        # No modelUsage on a paid result: the `usage` dict is THIS TURN's main-loop count
+                        # (per-turn in streaming-input sessions on every CLI build we can read), so it lands as
+                        # the turn's figure — diffing it as a counter recorded turn-to-turn growth (the 2.6M-token
+                        # turn that landed as 6,346). It is ADDED to the watermarks so they keep meaning "tokens
+                        # this process has accounted for": should modelUsage appear later in the same process,
+                        # its delta catches up the subagent tokens without re-counting what landed here. Said as
+                        # a problem the user can act on (usage_fallback_notice): the token columns are
+                        # main-loop-only from here on; the dollars are unaffected. ONCE PER KERNEL LIFE for the
+                        # SDK cause, which is the host's (the backend's flag: per session it was one card per
+                        # live session plus one per dormant revive, for a single remedy); once per session for
+                        # the CLI cause, which is this session's.
+                        for k, v in totals.items():
+                            turn_u[k] = v
+                            self._last_usage_totals[k] = self._last_usage_totals.get(k, 0) + v
+                        if usage_fallback_is_sdk(msg):
+                            if not getattr(self.backend, "_usage_fallback_sdk_noted", False):   # getattr: test doubles
+                                self.backend._usage_fallback_sdk_noted = True
+                                self.backend._log(usage_fallback_notice(self.name, msg), problem=True)
+                        elif not getattr(self, "_usage_fallback_noted", False):   # getattr: __new__-built doubles
+                            self._usage_fallback_noted = True
+                            self.backend._log(usage_fallback_notice(self.name, msg), problem=True)
                     self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,
                                                sid=self.thread_of or self.sid)   # the rail's spend —
                     #   a comment THREAD bills its owning session (T144: whole-session truth for the
@@ -6795,15 +7065,74 @@ class SdkSession:
 
 LIVE_TAIL_CAP = 100
 
-# A path-looking token (absolute or ~-rooted): the one case where an echo's text-match against the
-# transcript can structurally FAIL — the transcript extracts an attached file's path out of the user
-# text (the user 2026-06-25) — so only these echoes stay eligible for the genuine-human-turn floor
-# retire in prune_live. Everything else prunes by its own text landing, or persists (a visible loss).
-_PATHY_RE = re.compile(r"(?:^|[\s'\"`(])(?:~/|/)[^\s'\"`)]+")
+# An IMAGE path (absolute or ~-rooted) with one of the extensions the CLI's composer paste hook
+# recognises. SOURCE OF TRUTH: the installed Claude Code bundle (2.1.261) carries exactly one image-path
+# test, `/\.(png|jpe?g|gif|webp)$/i`, and its callers are the terminal composer's bracketed-paste
+# handler — which reads a pasted path wearing one of those extensions and rewrites the token in the
+# submitted text to "[Image #N]", so the picture lands as an image block and the path is gone from the
+# record's text (the user 2026-06-25, the screenshots-piling-up bug) — and two attachment uploaders'
+# isImage. No bmp, no svg: the set this carried until 2026-09-06 had both, so a `.svg` path echo was
+# classed as an extraction the CLI never performs (adversarial review, F2).
+# WHO READS IT. The kernel's _tmux_echo_settle borrows _path_bearing for the TMUX route, where a send
+# IS a paste into the composer and the hook runs. The SDK route never reaches it: its input is
+# stream-json and the CLI takes the text as typed (counts over 71 SDK sessions' transcripts, 2026-09-06:
+# 0 image blocks in 8,569 user records; every image-path text landed verbatim), which is why prune_live
+# below floors NO echo — see its docstring. Twin of the kernel's _IMG_PATH_RE (_injected_img_paths
+# waits on the CLI's rewrite and _paste_landed_texts reads it back; the kernel's bare-path PREVIEW,
+# _user_images, is romp's own feature on its own set, _PREVIEW_IMG_RE — not bound to the CLI's);
+# tests/test_kernel_fed_echo_absorbed.py pins both twins to the CLI's set.
+_IMG_PATH_RE = re.compile(r"(?:^|[\s'\"`(])((?:~/|/)[^\s'\"`()]+\.(?:png|jpe?g|gif|webp))\b", re.I)
 
 
 def _path_bearing(text: str) -> bool:
-    return bool(_PATHY_RE.search(text or ""))
+    """True when `text` carries an image path the CLI's composer paste hook would extract (_IMG_PATH_RE).
+    Read by kernel._tmux_echo_settle through sys.modules — the tmux route's floor; keep the name."""
+    return bool(_IMG_PATH_RE.search(text or ""))
+
+
+def _landed_texts(rec: dict) -> set:
+    """Every text a transcript record could have landed a send as — _text_landed's match set, keyed by
+    echo_text_key exactly as the kernel's _atom_user_texts keys the by-text prune (the joined text AND
+    each text block: romp bundles its injected messages as several blocks in one record). Two record
+    shapes carry user text: a native USER record, and the queued_command ATTACHMENT a mid-turn splice
+    leaves, whose prompt is a plain string or a content-block list (the SDK injection path; event_model
+    reads it the same way). Anything else → empty."""
+    out: set = set()
+    typ = rec.get("type")
+    if typ == "user":
+        c = (rec.get("message") or {}).get("content")
+    elif typ == "attachment":
+        a = rec.get("attachment") or {}
+        if a.get("type") != "queued_command":
+            return out
+        c = a.get("prompt")
+    else:
+        return out
+    if isinstance(c, str):
+        blocks = [c]
+    elif isinstance(c, list):
+        blocks = [str(b.get("text") or "") for b in c if isinstance(b, dict) and b.get("type") == "text"]
+    else:
+        return out
+    joined = echo_text_key(" ".join(blocks))
+    if joined:
+        out.add(joined)
+    for b in blocks:
+        cb = echo_text_key(b)
+        if cb:
+            out.add(cb)
+    return out
+
+
+def _record_epoch(ts) -> int | None:
+    """A transcript record's ISO-8601 'Z' stamp as an epoch second, or None when absent or unreadable."""
+    if not isinstance(ts, str) or not ts.strip():
+        return None
+    try:
+        from datetime import datetime
+        return int(datetime.fromisoformat(ts.strip().replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return None
 
 
 _UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
@@ -7001,6 +7330,8 @@ class SdkBackend:
         self.append_prompt_path = append_prompt_path
         self._log_cb = log
         self._thinking_override_logged = False   # thinking_override_note said once per backend (see _options)
+        self._usage_fallback_sdk_noted = False   # usage_fallback_notice's SDK cause said once per kernel life:
+        #   the imported SDK is the host's, one for every session (the CLI cause keeps a per-session flag)
         self.sessions: dict[str, SdkSession] = {}
         self._lock = threading.Lock()
         self._turn_seq: dict = {}                 # sid -> turns ended this kernel life (turn_seq; under _lock)
@@ -9272,8 +9603,12 @@ class SdkBackend:
             # from the instant of the send. Cleared event-based by the lastSid-flipping init (the fresh
             # conversation exists) / the turn's ResultMessage.
             s._clearing = True
-        sent_t = int(time.time())              # the echo's stamp, minted BEFORE the CLI can see the text: the
-        s.enqueue(text, todo=user_todo or "")  # record it writes is then at or after it by construction (T237b)
+        # The echo's stamp AND the transcript's byte size, both taken BEFORE the CLI can see the text: the
+        # record it writes is then at or after both by construction (T237b for the stamp; the size,
+        # 2026-09-06, is where _text_landed starts the scan for this echo — see _transcript_mark).
+        sent_t = int(time.time())
+        sent_off, sent_fsid = self._transcript_mark(sid)
+        s.enqueue(text, todo=user_todo or "")
         # optimistic input echo: show the user's own message INSTANTLY (neither the transcript nor the
         # stream has it yet at send time — only we know the text). Synthetic uuid; pruned by text once the
         # transcript writes the real user atom.
@@ -9294,10 +9629,32 @@ class SdkBackend:
             echo["rompAuto"] = True                          # auto-nudge → romp-logo on the chat/timeline
         if user_todo:
             echo["_todo"] = str(user_todo)                   # the answer's ask, for the loss-reopen seam
+        if sent_off is not None:
+            echo["_echo_off"], echo["_echo_fsid"] = sent_off, sent_fsid   # the landing scan's start
         self._stash_live(sid, key, echo)
         self._persist_echoes(sid)                            # unlanded echoes survive a kernel restart (reg mirror)
         self._wake_push()
         return True
+
+    def _transcript_mark(self, sid: str):
+        """(byte size, fsid) of the sid's current transcript at this instant — the send-time mark an echo
+        carries as _echo_off / _echo_fsid (mirrored as off / fsid), so _text_landed can start its scan
+        where this send's landing can first appear. The transcript is append-only and the CLI has not
+        seen the text yet, so every record that can land it begins at or after this size; a file that
+        does not exist yet marks 0. The fsid names the file the mark was measured on: a /clear or a fork
+        lands later sends in a different file, where the mark means nothing and the scan reads from the
+        start. (None, None) when the registry cannot be read — the echo then carries no mark and the
+        scan reads the whole file, the side that never duplicates."""
+        try:
+            reg = read_reg(self.state_dir, sid) or {}
+            fsid = str(reg.get("lastSid") or sid)
+            try:
+                size = os.path.getsize(transcript_path(reg.get("cwd") or "", fsid))
+            except OSError:
+                size = 0
+            return size, fsid
+        except Exception:
+            return None, None
 
     def _persist_echoes(self, sid: str) -> None:
         """Mirror the sid's UNLANDED input echoes to the registry (reg['echoes']), the way _persist_queue
@@ -9323,6 +9680,11 @@ class SdkBackend:
                      "rompAuto": bool(a.get("rompAuto")), "dropped": bool(a.get("dropped"))}
                 if a.get("_todo"):
                     e["todo"] = str(a["_todo"])   # a user-todo ANSWER's echo keeps its ask's id across restarts
+                if a.get("_echo_off") is not None:
+                    e["off"] = int(a["_echo_off"])                 # the send-time transcript mark (_transcript_mark)
+                    e["fsid"] = str(a.get("_echo_fsid") or "")
+                if a.get("_landed"):
+                    e["landed"] = True            # the boot/spawn scan found its record: prune_live retires it
                 snap.append(e)
         try:
             self._update_reg(sid, echoes=snap)
@@ -9354,6 +9716,10 @@ class SdkBackend:
                     atom["dropped"] = True
                 if e.get("todo"):
                     atom["_todo"] = str(e["todo"])   # the loss-reopen seam survives the restart too
+                if isinstance(e.get("off"), int) and not isinstance(e.get("off"), bool):
+                    atom["_echo_off"], atom["_echo_fsid"] = e["off"], str(e.get("fsid") or "")
+                if e.get("landed"):
+                    atom["_landed"] = True           # already adjudicated landed: never re-scanned, never flagged
                 self._stash_live(reg["sid"], key, atom)
             if self._live.get(reg["sid"]):
                 self._mark_dropped_echoes(reg["sid"], _queue_texts(reg.get("queue")))
@@ -9367,15 +9733,17 @@ class SdkBackend:
         a two-day-old lost send kept resurfacing mid-chat, hopping turns as new ones landed, posing as
         history). Event-based — keyed on the spawn/boot that orphaned the send, never on age — and
         self-correcting: an echo whose text actually LANDED still prunes by text on the next build, so a
-        premature flag can never stick to a delivered message. The flag rides the registry mirror
+        premature flag can never stick to a delivered message; and one the transcript scan below FINDS
+        is not flagged in the first place (2026-09-06). The flag rides the registry mirror
         (_persist_echoes), so it survives further restarts.
 
         `refeed=False` (2026-08-26, honoring _reconcile_stranded's documented policy): the RESUMABLE-
-        reconnect caller takes the flag path ONLY — the redeliver arm's _text_landed scan is a bounded
-        tail read whose miss would land the message a second time in a conversation that genuinely
-        kept the first, exactly the duplicate that branch refuses by design. The loss still surfaces in
-        full (the dropped flag, the todo-reopen seam); only the queue re-add is withheld. Boot and
-        dead-spawn callers keep the default: no client survived there to have landed anything."""
+        reconnect caller takes the flag path ONLY — the abandoned client may still be flushing the record
+        the redeliver arm's _text_landed scan looks for, so a miss there is not proof of loss, and a
+        re-feed would land the message a second time in a conversation that genuinely kept the first,
+        exactly the duplicate that branch refuses by design. The loss still surfaces in full (the dropped
+        flag, the todo-reopen seam); only the queue re-add is withheld. Boot and dead-spawn callers keep
+        the default: no client survived there to be writing anything."""
         qs = {q for q in queued_texts if isinstance(q, str)}
         # The selection is under the live-tail lock; everything after it (the transcript scan, the
         # queue re-add, the reg write) is not. This runs on the SESSION thread at spawn and at every
@@ -9388,26 +9756,40 @@ class SdkBackend:
                 return
             newly = [a for a in list(d.values())
                      if a.get("_echo_text") and not a.get("command") and not a.get("dropped")
-                     and a["_echo_text"] not in qs]
+                     and not a.get("_landed") and a["_echo_text"] not in qs]
         if not newly:
             return
         # RE-DELIVER, don't just flag (the user 2026-08-23, their strongest point in the restart
-        # audit: "it would be very, very bad if we ever lost stuff because of restarts" — a typed
-        # prompt queued at 11:20 was silently discarded by the 11:25 restart). A HUMAN send whose
-        # loss is proven — and whose text a direct transcript scan confirms never landed as a user
-        # record (the flag path self-corrects on a wrong guess; a re-delivery would DUPLICATE, so it
-        # verifies first) — goes back into the queue in send order, exactly like the surviving
-        # queue, recreating the pre-restart state: the LIVE session's _pending when one is running
-        # (its mirror rewrites reg['queue'] on every mutation, so only _pending sticks), else the
-        # persisted reg queue the next spawn's seed reads.
+        # audit: a typed prompt queued at 11:20 was silently discarded by the 11:25 restart, and
+        # losing input to a restart is the one thing this must never do). A HUMAN send whose loss is
+        # proven — and whose text a direct transcript scan (_text_landed) confirms never landed, as a
+        # user record or as the queued_command attachment of a mid-turn splice — goes back into the
+        # queue in send order, exactly like the surviving queue, recreating the pre-restart state:
+        # the LIVE session's _pending when one is running (its mirror rewrites reg['queue'] on every
+        # mutation, so only _pending sticks), else the persisted reg queue the next spawn's seed reads.
+        # A send the scan FINDS is neither re-delivered (a duplicate) nor flagged: it landed and is
+        # merely un-pruned. The verdict is recorded on the echo (`_landed`, mirrored to the reg) and the
+        # next build's prune_live retires it — by text, or on the verdict alone should the two texts
+        # not meet — and a later boot never re-scans it. A `dropped` flag would call a delivered message
+        # "never delivered" for a push (the absorbed case, 2026-09-06: the scan knew only user records,
+        # so an absorbed send was re-queued and ran twice). A scan that cannot read the transcript
+        # answers None and the echo takes the flag path: never re-deliver on doubt, but never hide the
+        # possible loss either.
         # romp-authored echoes (nudges) keep the flag path: re-delivering one could double-nudge,
         # and its content is regenerable machinery, not the user's words. A refeed=False caller
         # (the resumable reconnect — docstring above) keeps EVERY echo on the flag path.
-        redeliver = []
+        redeliver, landed = [], set()
         if refeed:
             for a in sorted(newly, key=lambda x: x.get("t") or 0):
-                if a.get("author") == "human" and not self._text_landed(sid, a["_echo_text"]):
+                if a.get("author") != "human":
+                    continue
+                seen = self._text_landed(sid, a["_echo_text"], a.get("t"),
+                                         a.get("_echo_off"), a.get("_echo_fsid"))
+                if seen is False:
                     redeliver.append(a)
+                elif seen:
+                    a["_landed"] = True                    # the verdict, for prune_live and the next boot
+                    landed.add(a["_echo_text"])
         if redeliver:
             # The LIVE-session caller (a fresh spawn's _run) must deliver through the session's
             # own queue: there the in-memory _pending is authoritative and its very next
@@ -9462,6 +9844,8 @@ class SdkBackend:
         for a in newly:
             if a["_echo_text"] in rekeyed:
                 continue                                   # now in the queue → renders as queued, prunes on landing
+            if a["_echo_text"] in landed:
+                continue                                   # landed, un-pruned → the next build's prune_live
             a["dropped"] = True
             self._log("%s: a send never reached its CLI (the process died holding it) — kept in the chat "
                       "as never-delivered: %.80r" % (sid[:8], a["_echo_text"]), problem=True)
@@ -9474,35 +9858,64 @@ class SdkBackend:
         self._persist_echoes(sid)
         self._wake_push()
 
-    def _text_landed(self, sid: str, text: str) -> bool:
-        """Did `text` land as a USER record in the sid's transcript? The re-delivery guard: the echo
-        prune is lazy (a landed echo may still be un-pruned at boot), so a queue re-add without this
-        scan would duplicate a delivered message. Reads the transcript TAIL (the loss window is recent
-        by construction — the send predates the death that orphaned it); unreadable → True, the safe
-        side: never re-deliver on doubt, the flag path still surfaces the loss for a human call."""
+    def _text_landed(self, sid: str, text: str, t: int | None = None, off=None, fsid=None):
+        """Did `text` land in the sid's transcript? The re-delivery guard: the echo prune is lazy (a landed
+        echo may still be un-pruned at boot), so a queue re-add without this scan would duplicate a
+        delivered message. Three answers, because the caller acts on each differently:
+          True  — a record carries the text: a native USER record, or the queued_command ATTACHMENT a
+                  mid-turn splice leaves. That attachment is the ONLY record an absorbed send ever gets
+                  (event_model._absorbed reads the atom's text off it; _landed_texts reads it the same
+                  way). Until 2026-09-06 this scan accepted user records alone, so after a kernel restart
+                  an absorbed send read as never landed, was re-queued, and the resumed CLI ran the same
+                  instruction twice — the chat showed it twice, the absorbed atom and a new native record.
+          False — the transcript is readable and no record carries it: the send is provably lost.
+          None  — the transcript cannot be read: never re-deliver on doubt; the caller flags the echo, so
+                  the loss still surfaces for a human call.
+        `t` is the echo's send time: a record stamped BEFORE it is not this send's landing — "ok", "go
+        ahead" and a deliberate re-send repeat earlier texts (prune_live's own rule, T237b) — while a
+        record with no readable stamp still counts, the side that never duplicates. The match is
+        echo_text_key's, the same rule the kernel's _atom_user_texts keys prune_live's by-text retire
+        with, so a found echo is always one the prune can retire: the joined text or any one text block
+        EQUAL to the send — never a substring, or a found-but-never-pruned echo would ride the tail
+        forever. `off` / `fsid` are the echo's send-time transcript mark (_transcript_mark): the file's
+        byte size when the send was made, and the fsid it was measured on. The scan starts THERE — every
+        record that can land this send is at or after it, however much the session wrote afterwards —
+        rather than at a fixed distance from EOF, which read a landed send whose record sat more than
+        2 MB before EOF as never landed and re-queued it (2026-09-06). A mark from another file (the
+        fsid changed: a /clear, a fork), one past the file's end, or no mark at all (an echo persisted
+        before marks existed) reads from the start. Lines are streamed, never read whole, and
+        pre-filtered on the two record types' literals only, never on the text: JSON escapes newlines
+        and quotes, so a raw-line prefix test skipped every multi-line send (a quote chip's reply, for
+        one) as never landed. A mark taken while the CLI was mid-write leaves a line fragment first; it
+        fails to parse and is skipped like any other non-record line."""
         try:
             reg = read_reg(self.state_dir, sid) or {}
-            path = transcript_path(reg.get("cwd") or "", reg.get("lastSid") or sid)
-            want = " ".join(text.split())
+            cur = str(reg.get("lastSid") or sid)
+            path = transcript_path(reg.get("cwd") or "", cur)
+            want = echo_text_key(text)
+            floor = int(t or 0)
+            start = 0
+            if (isinstance(off, int) and not isinstance(off, bool) and fsid is not None
+                    and str(fsid) == cur and 0 <= off <= os.path.getsize(path)):
+                start = off
             with open(path, "rb") as f:
-                f.seek(max(0, os.path.getsize(path) - 2_000_000))
-                for line in f.read().decode(errors="replace").splitlines():
-                    if '"user"' not in line or want[:60] not in " ".join(line.split()):
+                f.seek(start)
+                for raw in f:
+                    if b'"user"' not in raw and b'"queued_command"' not in raw:
                         continue
                     try:
-                        rec = json.loads(line)
+                        rec = json.loads(raw.decode(errors="replace"))
                     except ValueError:
                         continue
-                    if rec.get("type") != "user":
+                    if not isinstance(rec, dict) or want not in _landed_texts(rec):
                         continue
-                    c = ((rec.get("message") or {}).get("content"))
-                    txt = c if isinstance(c, str) else " ".join(
-                        b.get("text", "") for b in c if isinstance(b, dict)) if isinstance(c, list) else ""
-                    if want in " ".join(txt.split()):
-                        return True
+                    ts = _record_epoch(rec.get("timestamp"))
+                    if floor and ts is not None and ts < floor:
+                        continue                       # an earlier record wearing the same words
+                    return True
             return False
         except Exception:
-            return True
+            return None
 
     def dismiss_echo(self, sid: str, uuid: str | None = None, t: int | None = None) -> str | None:
         """✕ on a never-delivered bubble: retire a DROPPED echo the user has acknowledged. Matched by the
@@ -10945,16 +11358,39 @@ class SdkBackend:
         """Drop live atoms the transcript has now caught up on — by uuid (assistant/tool/user from the
         stream) or by text (the optimistic input echo, which has a synthetic uuid).
 
-        FIFO floor for echoes — PATH-BEARING ONLY (narrowed, the user 2026-07-20): an input echo whose text
-        can't match because the transcript EXTRACTED an image path out of the user text (`_atom_user_text`
-        no longer contains the echoed path — the screenshots-piling-up-at-the-bottom bug, the user
-        2026-06-25) is retired once the transcript's newest GENUINE-HUMAN turn is at/after the echo's send
-        time. The floor used to apply to EVERY echo, justified by "a still-queued send keeps showing via
-        the queued indicator" — but since queued sends FORWARD into the CLI mid-turn (2026-07-17) a message
-        can be neither queued nor landed, and the blanket floor hid exactly that in-flight message the
-        moment any other human record landed. A plain-text echo now prunes ONLY by its own text landing —
-        and a genuinely dropped send's echo PERSISTS, so the loss shows (the tmux echo's semantics).
-        (Echo-only: real stream atoms have no _echo_text and prune by uuid as before.)
+        NO FLOOR RETIRES AN ECHO ON THIS BACKEND (2026-09-06). An input echo retires on exactly two
+        events: its text LANDS — a native user record, or the queued_command attachment a mid-turn splice
+        leaves; the kernel's _atom_user_texts reads both, and `tx_user_texts` maps each text to the newest
+        record time carrying it, so the record must be stamped at or after the send — or the CLI DIES
+        holding it, when _mark_dropped_echoes / _reconcile_stranded flag it `dropped` and it stays as the
+        visible loss until the user dismisses it. A dropped echo that never lands persists on purpose
+        (the tmux echo's semantics): a genuinely lost send must show.
+
+        The floor this replaces: `human_floor` (the newest genuine-human atom's time) once retired every
+        echo it postdated, was narrowed to path-bearing echoes (the user 2026-07-20) — the image-
+        extraction case, where the CLI's composer paste hook rewrites a pasted image path to "[Image #N]"
+        and the echo's text can never match — and narrowed again to image paths (2026-09-06) after it
+        retired a staged comment whose quote chip carried a `path:line` label while the CLI still held
+        the message. The review of that change found the remaining rule had no true positives here: the
+        hook runs only in the terminal composer, and an SDK session's input is stream-json, so the CLI
+        takes the text as typed (0 image blocks in 8,569 user records over 71 sessions; every image-path
+        text landed verbatim). Its only effect was the false kind — a `.png` echo retired while its text
+        sat in the CLI's queue, or in the gap between the turn's ResultMessage and the next turn's record,
+        so the message blinked out of every client but the sender's. The fed-texts guard that shielded a
+        fed echo from the floor went with it (nothing left to shield from; `SdkSession.fed_texts` stays
+        as the observable twin of `inflight`). The tmux route keeps its own floor in
+        kernel._tmux_echo_settle, borrowing _path_bearing: there a send is a paste into the composer.
+
+        The by-text comparison is keyed by echo_text_key on BOTH sides (2026-09-06): the kernel builds
+        `tx_user_texts` from _atom_user_texts, and the echo's text is keyed the same way here — before,
+        the raw text was compared against stripped keys, so an echo whose text carried a trailing
+        newline never retired. An echo the boot/spawn scan already FOUND (`_landed`, recorded by
+        _mark_dropped_echoes from a direct read of the transcript and mirrored to the reg) retires
+        without the comparison at all: that is its exit when the two texts cannot meet, since a found
+        echo is neither flagged nor dismissable.
+
+        `human_floor` still retires COMMAND atoms below. (Echo-only: real stream atoms have no
+        _echo_text and prune by uuid as before.)
 
         Pure dict work, so the whole sweep runs under the live-tail lock (the emptiness check and the
         sid-level pop included — one step, so a stash can never land in a dict this pops); the echo
@@ -10966,11 +11402,12 @@ class SdkBackend:
         # held. A plain set (older callers) keeps the unfloored match.
         text_t = tx_user_texts if isinstance(tx_user_texts, dict) else None
         def _by_text(a, et):
-            if not et:
+            key = echo_text_key(et)
+            if not key:
                 return False
             if text_t is None:
-                return et in tx_user_texts
-            return et in text_t and float(text_t[et] or 0) >= float(a.get("t") or 0)
+                return key in tx_user_texts
+            return key in text_t and float(text_t[key] or 0) >= float(a.get("t") or 0)
         echo_removed = False
         vanished = 0
         with self._live_lock:
@@ -10979,15 +11416,13 @@ class SdkBackend:
                 return
             for k, a in list(d.items()):   # a SNAPSHOT (belt-and-braces under the lock — _note_live_tail_race)
                 et = a.get("_echo_text")
-                landed = a.get("uuid") in tx_uuids or _by_text(a, et)
-                stale_echo = (bool(et) and human_floor and a.get("t", 0) <= human_floor
-                              and not a.get("command") and _path_bearing(et))
+                landed = a.get("uuid") in tx_uuids or bool(a.get("_landed")) or _by_text(a, et)
                 # A COMMAND atom (the CLI's streamed /model, /compact feedback) from a TURN-LESS control
                 # request may never get a transcript record to land against — retire it once a genuine human
                 # turn postdates it, so the stale confirmation line doesn't ride pinned inside every later
                 # turn forever (the user 2026-07-02, with the live_work command exemption).
                 stale_cmd = bool(a.get("command")) and human_floor and a.get("t", 0) <= human_floor
-                if landed or stale_echo or stale_cmd:
+                if landed or stale_cmd:
                     echo_removed = echo_removed or bool(et and not a.get("command"))
                     if d.pop(k, None) is None:
                         vanished += 1
