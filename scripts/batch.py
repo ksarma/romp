@@ -374,9 +374,11 @@ def cmd_plan(args):
                 "mergeable": pr.get("mergeable"), "ci": ci_of(pr),
                 "touches": [], "predicted_conflict": None,
             }
-    # A base that is another candidate's branch is a dependency; any other non-main base leaves the
-    # PR out (a base belonging to a merged PR is the stranded case and gets the fix in its reason).
-    heads = {m["head_ref"]: n for n, m in cands.items()}
+    # A base that is another open PR's branch is a dependency on that PR (and if that PR is not a
+    # candidate, the fixpoint below takes the dependent out with it, naming why); any other non-main
+    # base leaves the PR out (a base belonging to a merged PR is the stranded case and gets the fix
+    # in its reason).
+    heads = {pr["headRefName"]: n for n, pr in by_n.items()}
     for n, m in list(cands.items()):
         b = m["base_ref"]
         if b == MAIN:
@@ -699,7 +701,8 @@ def cmd_assemble(args):
         else:
             abort_resolution(root, wt, state)
         save_state(root, state)
-        run_assembly(root, state, set(args.resolve or []), resume=True)
+        if not run_assembly(root, state, set(args.resolve or []), resume=True):
+            raise Fail("stopped at #%d for a hand resolution (see above)" % state["assembly"]["cursor"]["n"], code=3)
         return
     if os.path.isdir(wt) and git_ok("rev-parse", "--is-inside-work-tree", cwd=wt) and merge_in_progress(wt) \
             and state["assembly"].get("cursor"):
@@ -745,7 +748,8 @@ def cmd_assemble(args):
                                                             ", ".join("#%d" % n for n in state["pulled"]) or "none"))
     for d, n in dropped:
         log(state, "#%d dropped with #%d (depends on it)" % (d, n))
-    run_assembly(root, state, set(args.resolve or []), resume=False)
+    if not run_assembly(root, state, set(args.resolve or []), resume=False):
+        raise Fail("stopped at #%d for a hand resolution (see above)" % state["assembly"]["cursor"]["n"], code=3)
 
 
 # ── verify ───────────────────────────────────────────────────────────────────
@@ -849,9 +853,11 @@ def cmd_verify(args, quiet=False):
     if state["assembly"].get("cursor"):
         raise Fail("#%d is still stopped for resolution; --continue or --abort first" % state["assembly"]["cursor"]["n"])
     if state["assembly"].get("head") != head:
-        ok = False
-        lines.append("FAIL head: %s is at %s but the assembly recorded %s; re-assemble or record the change"
-                     % (br, short(head), short(state["assembly"].get("head"))))
+        # A `batch:` commit the batcher added after assembly moves the tip; provenance below decides
+        # whether what moved it is allowed. The recorded head follows the branch.
+        lines.append("note head: %s moved from %s to %s since assembly; the chain is checked below"
+                     % (br, short(state["assembly"].get("head")), short(head)))
+        state["assembly"]["head"] = head
     ok = check_provenance(root, state, lines) and ok
     members = members_by_n(state)
     merged = state["assembly"].get("merged", [])
@@ -871,7 +877,7 @@ def cmd_verify(args, quiet=False):
         if pr.get("baseRefName") != MAIN:
             b = pr.get("baseRefName")
             if b in in_batch_refs:
-                lines.append("ok   base: #%d is based on %s, which is in the batch" % (m["n"], b))
+                lines.append("ok   base: #%d is based on %s, which is in the batch (land retargets it to %s before the merge)" % (m["n"], b, MAIN))
             elif git_ok("rev-parse", "--verify", "--quiet", "%s/%s" % (REMOTE, b), cwd=root) and is_ancestor("%s/%s" % (REMOTE, b), remote_main(), root):
                 lines.append("ok   base: #%d is based on %s, already in %s" % (m["n"], b, MAIN))
             else:
@@ -1232,6 +1238,27 @@ def ruleset_exists(root):
     return bool(rows)
 
 
+def retarget_stacked_members(root, state):
+    """A member based on another member's branch is retargeted to main right before the merge.
+
+    GitHub marks a PR merged when its head becomes reachable from ITS BASE. The batch merges into
+    main, so a member whose base is a sibling branch would stay open (its base never moves) even
+    though its content is in main. Against main, the documented indirect-merge rule applies to it
+    like every other member. Done here and not at plan time so the member keeps its stacked diff
+    and review until the moment it lands."""
+    members = members_by_n(state)
+    merged = state["assembly"].get("merged", [])
+    in_batch = {members[e["n"]]["head_ref"] for e in merged}
+    for e in merged:
+        m = members[e["n"]]
+        if m["base_ref"] != MAIN and m["base_ref"] in in_batch:
+            gh("pr", "edit", str(m["n"]), "--base", MAIN, cwd=root)
+            log(state, "retargeted #%d from %s to %s before the merge, so the indirect merge marks it" % (m["n"], m["base_ref"], MAIN))
+            m["base_ref"] = MAIN
+            state["members"][str(m["n"])] = m
+    save_state(root, state)
+
+
 def cmd_land(args):
     root = repo_root()
     state = cmd_verify(argparse.Namespace(name=args.name, sweep=None, no_fetch=args.no_fetch), quiet=False)
@@ -1248,6 +1275,7 @@ def cmd_land(args):
     remote_head = git("ls-remote", REMOTE, "refs/heads/" + branch_of(args.name), cwd=root).split()
     if not remote_head or remote_head[0] != head:
         raise Fail("%s on %s is at %s, verified %s; push the batch first" % (branch_of(args.name), REMOTE, short(remote_head[0]) if remote_head else "nothing", short(head)))
+    retarget_stacked_members(root, state)
     cmd = ["pr", "merge", str(b), "--merge", "--match-head-commit", head]
     if args.auto:
         if not ruleset_exists(root):
@@ -1287,28 +1315,43 @@ def cmd_finish(args):
         raise Fail("batch PR #%d's merge commit %s is not an ancestor of %s; was it squashed or rebased?" % (b, short(merge_sha), remote_main()))
     members = members_by_n(state)
     merged = state["assembly"].get("merged", [])
+    member_refs = {members[e["n"]]["head_ref"] for e in merged} | {branch_of(args.name)}
     report = {"merged": [], "open": [], "retargeted": [], "deleted": [], "already_gone": [], "observations": []}
     for e in merged:
         m = members[e["n"]]
         pr = gh_json("pr", "view", str(m["n"]), "--json", "state,headRefOid,baseRefName,headRefName", cwd=root)
+        was_stacked = pr.get("baseRefName") in member_refs
+        if pr.get("state") == "OPEN" and was_stacked:
+            # The maintainer merged by hand, so land's retarget did not run: a member still based on
+            # a sibling branch cannot have been marked merged. Retarget now and look again; whether
+            # GitHub marks it merged on the retarget is to verify on the first batch, so the outcome
+            # is recorded either way.
+            gh("pr", "edit", str(m["n"]), "--base", MAIN, cwd=root)
+            pr = gh_json("pr", "view", str(m["n"]), "--json", "state,headRefOid,baseRefName,headRefName", cwd=root)
+            report["observations"].append("#%d was still based on a member branch; retargeted to %s, now %s" % (m["n"], MAIN, pr.get("state")))
         if pr.get("state") == "MERGED":
             report["merged"].append(m["n"])
             continue
         report["open"].append(m["n"])
         moved = pr.get("headRefOid") != m["head"]
-        why = ("its head moved to %s after the cut at %s, so the batch carried the old head" % (short(pr.get("headRefOid")), short(m["head"]))
-               if moved else "GitHub did not mark it merged although the batch carried its head %s (record this)" % short(m["head"]))
-        text = ("This PR was in batch %s but is not marked merged: %s. What the batch carried is in %s; "
-                "merge origin/%s, push, and it goes into the next batch." % (args.name, why, MAIN, MAIN))
+        if moved:
+            why = "its head moved to %s after the cut at %s, so the batch carried the old head" % (short(pr.get("headRefOid")), short(m["head"]))
+            todo = "Merge origin/%s, push, and it goes into the next batch." % MAIN
+        elif was_stacked:
+            why = "it was based on another PR's branch, and GitHub marks a PR merged only when its base reaches its head"
+            todo = "It is retargeted to %s now; its content is already there, so close it if it does not read merged by itself." % MAIN
+        else:
+            why = "GitHub did not mark it merged although the batch carried its head %s" % short(m["head"])
+            todo = "Its content is in %s; close it if it does not read merged by itself." % MAIN
+        text = "This PR was in batch %s but is not marked merged: %s. %s" % (args.name, why, todo)
         if not args.no_notify:
             gh("pr", "comment", str(m["n"]), "--body", text, cwd=root, check=False)
         if not moved:
-            report["observations"].append("#%d: indirect-merge marking did not fire" % m["n"])
+            report["observations"].append("#%d: indirect-merge marking did not fire (head %s is in %s)" % (m["n"], short(m["head"]), MAIN))
     # Retarget still-open PRs based on a member branch or the batch branch BEFORE deleting anything:
     # GitHub retargets dependents itself when it deletes a head branch on merge, but whether that
     # happens for an indirectly merged PR's branch (and after an explicit delete) is to verify on
     # the first batch, so the tool does it explicitly.
-    member_refs = {members[e["n"]]["head_ref"] for e in merged} | {branch_of(args.name)}
     open_prs = gh_json("pr", "list", "--state", "open", "--limit", str(PR_LIST_LIMIT), "--json", "number,baseRefName,headRefName", cwd=root) or []
     for pr in open_prs:
         if pr["baseRefName"] in member_refs:

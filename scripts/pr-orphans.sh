@@ -24,6 +24,13 @@ GH="${ROMP_GH:-gh}"
 MAIN="${ROMP_MAIN_BRANCH:-main}"
 LIMIT="${ROMP_ORPHANS_LIMIT:-200}"
 
+# Check against the remote's main, not a stale local copy: land.sh runs this right after a merge
+# the clone has not seen yet, and a clone that never fetched would report every recent merge.
+# ROMP_ORPHANS_NO_FETCH=1 skips the fetch (CI's fresh checkout does not need one).
+if [ -z "${ROMP_ORPHANS_NO_FETCH:-}" ] && git remote get-url origin >/dev/null 2>&1; then
+    git fetch --quiet --prune origin 2>/dev/null || echo "pr-orphans: fetch from origin failed; checking what the clone has" >&2
+fi
+
 if git rev-parse --verify --quiet "refs/remotes/origin/$MAIN" >/dev/null; then
     ref="origin/$MAIN"
 elif git rev-parse --verify --quiet "refs/heads/$MAIN" >/dev/null; then
