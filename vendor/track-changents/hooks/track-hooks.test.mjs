@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import { evaluate as guard } from './track-guard.mjs';
 import {
@@ -230,6 +232,28 @@ test('guard blocks a file tracked via a folder/ entry', () => {
   assert.ok(guard(payload('Edit', sub)));
 });
 
+test('guard lets a raw write through on a TRACKED file that is not text (image, PDF, NUL bytes)', () => {
+  // track-edit refuses such files (a text rewrite would destroy them), so the
+  // deny would strand the agent between two refusals; the raw write is the
+  // only way to regenerate a figure.
+  const png = path.join(vault, 'figure.png');
+  fs.writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d]));
+  const pdf = path.join(vault, 'report.pdf');
+  fs.writeFileSync(pdf, '%PDF-1.4\n');
+  const blob = path.join(vault, 'weights.dat');
+  fs.writeFileSync(blob, Buffer.from([0x01, 0x00, 0x02, 0x00]));
+  fs.writeFileSync(note, 'prose');
+  setTracked(vault, 'figure.png', true);
+  setTracked(vault, 'report.pdf', true);
+  setTracked(vault, 'weights.dat', true);
+  setTracked(vault, 'note.md', true);
+  assert.equal(guard(payload('Write', png)), null, 'a tracked image passes by name');
+  assert.equal(guard(payload('Edit', pdf)), null, 'a tracked PDF passes by name');
+  assert.equal(guard(payload('Write', path.join(vault, 'new-figure.PNG'))), null, 'a new image passes by name, case-insensitively');
+  assert.equal(guard(payload('Write', blob)), null, 'a tracked binary under a text-looking name passes by its NUL bytes');
+  assert.ok(guard(payload('Write', note)), 'a tracked text file is still denied');
+});
+
 test('guard ignores a file outside any vault (no root, no config)', () => {
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-bare-'));
   const f = path.join(outside, 'loose.md');
@@ -237,4 +261,54 @@ test('guard ignores a file outside any vault (no root, no config)', () => {
   assert.equal(findVaultRoot(f), null);
   assert.equal(guard(payload('Edit', f)), null);
   try { fs.rmSync(outside, { recursive: true, force: true }); } catch { /* ignore */ }
+});
+
+// ── the guard as a PROCESS, under romp (vendor/track-changents/patches/0004) ──
+// romp registers the guard machine-wide and gates it on ROMP_SID, the stable
+// session id both romp backends put in a session's environment. Outside a romp
+// session it must exit 0 at once, before reading stdin, so a session romp did
+// not launch never waits on it; inside one it reads Claude Code's PreToolUse
+// JSON from stdin and denies with exit 2.
+
+const GUARD = fileURLToPath(new URL('./track-guard.mjs', import.meta.url));
+const ROMP_SID = '11111111-2222-3333-4444-555555555555';
+
+function guardEnv(extra) {
+  const env = { ...process.env, ...extra };
+  delete env.TRACKCHANGES_ROOT;
+  if (!('ROMP_SID' in extra)) delete env.ROMP_SID;   // the suite may itself run inside a romp session
+  return env;
+}
+
+test('guard process exits 0 at once without ROMP_SID, with stdin still open', async () => {
+  const child = spawn(process.execPath, [GUARD], { env: guardEnv({}), stdio: ['pipe', 'pipe', 'pipe'] });
+  // stdin is a pipe that is never ended: a guard that waited for it would hang here.
+  const code = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('the guard did not exit within 2 s without ROMP_SID'));
+    }, 2000);
+    child.on('error', reject);
+    child.on('exit', (c) => { clearTimeout(timer); resolve(c); });
+  });
+  child.stdin.destroy();
+  assert.equal(code, 0);
+});
+
+test('guard process with ROMP_SID denies a Write to a tracked text file, passes an untracked file and a tracked image', () => {
+  fs.writeFileSync(note, 'prose');
+  const other = path.join(vault, 'other.md');
+  fs.writeFileSync(other, 'untracked prose');
+  const png = path.join(vault, 'figure.png');
+  fs.writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]));
+  setTracked(vault, 'note.md', true);
+  setTracked(vault, 'figure.png', true);
+  const run = (file) => spawnSync(process.execPath, [GUARD], {
+    input: payload('Write', file), encoding: 'utf8', env: guardEnv({ ROMP_SID }),
+  });
+  const denied = run(note);
+  assert.equal(denied.status, 2, denied.stderr);
+  assert.match(denied.stderr, /track-edit/);
+  assert.equal(run(other).status, 0, 'an untracked file passes');
+  assert.equal(run(png).status, 0, 'a tracked image passes');
 });

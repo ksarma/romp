@@ -1,0 +1,129 @@
+# Patch 0001 — A1: a reply into a comment the live sidecar lacks must not erase its changes
+# Offered back: yes (track-changents survey item A1, 2026-09-03)
+# Files: store-io.mjs, cli/track-reply.mjs, cli/track-edit.mjs
+#
+# Reason: when a live sidecar existed but lacked the thread a reply named, both CLIs
+# revived the thread from the `.superseded` park with reviveThreadFromSuperseded, which
+# builds a FRESH store with an empty suggestion list and saves it over the sidecar.
+# track-reply then saved that store (every pending change and every other comment gone);
+# track-edit --thread did it right after recordAgentEdit had saved the new op, erasing the
+# very change it had just recorded. The fix adds reviveThreadInto(vaultRoot, file, threadId,
+# store), which appends the parked thread to a store the caller already holds, in place and
+# without saving; reviveThreadFromSuperseded is rebuilt on it and keeps its behaviour for the
+# no-live-store case (its upstream test still holds). The exported addReply signature is
+# unchanged. Tests: tools/vendor-patches.test.mjs (P1 cases).
+diff --git a/cli/track-edit.mjs b/cli/track-edit.mjs
+index 1059a993..6093121a 100755
+--- a/cli/track-edit.mjs
++++ b/cli/track-edit.mjs
+@@ -20,7 +20,7 @@ import fs from 'node:fs';
+ import path from 'node:path';
+ import { fileURLToPath } from 'node:url';
+ import {
+-  findVaultRoot, recordAgentEdit, addThreadEditTurn, storePathFor, reviveThreadFromSuperseded,
++  findVaultRoot, recordAgentEdit, addThreadEditTurn, storePathFor, loadStore, saveStore, reviveThreadInto,
+ } from '../store-io.mjs';
+ import { parseArgs } from './cli-args.mjs';
+ 
+@@ -135,9 +135,13 @@ function run(argv) {
+         // The review may have CLOSED under this edit (last change
+         // accepted → store parked as .superseded, thread dropped) —
+         // revive the thread and retry, so the conversation continues
+-        // (agent-session report 2026-08-27).
+-        const revived = reviveThreadFromSuperseded(vaultRoot, abs, args.thread, res.text);
+-        if (revived) {
++        // (agent-session report 2026-08-27). The live sidecar now holds
++        // the op recordAgentEdit just saved (and any other pending
++        // change), so the thread is revived INTO it: reviving into a
++        // fresh store and saving that over the sidecar erased them all.
++        const live = loadStore(storePath, res.text);
++        if (live && reviveThreadInto(vaultRoot, abs, args.thread, live)) {
++          saveStore(vaultRoot, storePath, live, res.text);
+           addThreadEditTurn(vaultRoot, abs, args.thread, author, args.old, args.new, now, res.text,
+             recorded && recorded.lastOpId, authorId);
+         }
+diff --git a/cli/track-reply.mjs b/cli/track-reply.mjs
+index 53cb2033..64ba1c9c 100755
+--- a/cli/track-reply.mjs
++++ b/cli/track-reply.mjs
+@@ -12,7 +12,9 @@
+ import fs from 'node:fs';
+ import path from 'node:path';
+ import { fileURLToPath } from 'node:url';
+-import { findVaultRoot, storePathFor, loadStore, saveStore, reviveThreadFromSuperseded } from '../store-io.mjs';
++import {
++  findVaultRoot, storePathFor, loadStore, saveStore, reviveThreadFromSuperseded, reviveThreadInto,
++} from '../store-io.mjs';
+ import { parseArgs } from './cli-args.mjs';
+ 
+ // ── pure core (exported for tests) ──────────────────────────────────
+@@ -62,10 +64,11 @@ function run(argv) {
+   if (!store) fail(`No tracking store for ${abs}`);
+   let res = addReply(store, args.thread, sessionLabel(), args.note, Date.now(), process.env.ROMP_SID || null);
+   if (res.error && /thread/i.test(String(res.error))) {
+-    // Live store exists but the THREAD was resolved away — same revive.
+-    const revived = reviveThreadFromSuperseded(vaultRoot, abs, args.thread, text);
+-    if (revived) {
+-      store = revived;
++    // Live store exists but the THREAD was resolved away — revive it INTO
++    // the live store. Replacing the store with a revived one (as before)
++    // saved a copy with an empty suggestion list over the live sidecar and
++    // erased every pending change and every other comment in it.
++    if (reviveThreadInto(vaultRoot, abs, args.thread, store)) {
+       res = addReply(store, args.thread, sessionLabel(), args.note, Date.now(), process.env.ROMP_SID || null);
+     }
+   }
+diff --git a/store-io.mjs b/store-io.mjs
+index 1c00491b..3e991322 100644
+--- a/store-io.mjs
++++ b/store-io.mjs
+@@ -542,24 +542,40 @@ export function recordAgentEdit(vaultRoot, file, preText, ch, author, now, autho
+ // thread into a fresh live store so the conversation continues;
+ // everything else in the park stays archived. Returns the store or null.
+ export function reviveThreadFromSuperseded(vaultRoot, file, threadId, currentText) {
+-  const storePath = storePathFor(vaultRoot, file);
+-  let parked = null;
+-  try { parked = JSON.parse(fs.readFileSync(storePath + '.superseded', 'utf8')); }
+-  catch { return null; }
+-  const thread = ((parked && parked.comments) || [])
+-    .find((c) => c && String(c.id) === String(threadId));
+-  if (!thread) return null;
+   const store = {
+     v: 3,
+     path: relPathFor(vaultRoot, file),
+     suggestions: [],
+-    comments: [{ ...thread, resolved: false }],
++    comments: [],
+     detached: [],
+   };
+-  saveStore(vaultRoot, storePath, store, currentText == null ? '' : currentText);
++  if (!reviveThreadInto(vaultRoot, file, threadId, store)) return null;
++  saveStore(vaultRoot, storePathFor(vaultRoot, file), store, currentText == null ? '' : currentText);
+   return store;
+ }
+ 
++// The same revive INTO a store that is already live, in place and without
++// saving: the parked thread is appended to `store.comments` (reopened) and
++// everything else in the store — its pending suggestions, its other
++// comments — is kept. Use this when a live store exists but lacks the
++// thread; reviveThreadFromSuperseded is only for the no-live-store case,
++// because it builds a fresh store with an EMPTY suggestion list, and saving
++// that over a live sidecar erased every pending change (a track-edit
++// --thread reply used to erase the very op it had just recorded). Returns
++// true when the thread was found in the park and added, false otherwise.
++export function reviveThreadInto(vaultRoot, file, threadId, store) {
++  const storePath = storePathFor(vaultRoot, file);
++  let parked = null;
++  try { parked = JSON.parse(fs.readFileSync(storePath + '.superseded', 'utf8')); }
++  catch { return false; }
++  const thread = ((parked && parked.comments) || [])
++    .find((c) => c && String(c.id) === String(threadId));
++  if (!thread) return false;
++  if (!Array.isArray(store.comments)) store.comments = [];
++  store.comments.push({ ...thread, resolved: false });
++  return true;
++}
++
+ export function addThreadEditTurn(vaultRoot, file, threadId, author, oldText, newText, now, currentText, opId, authorId) {
+   if (!threadId) return false;
+   const storePath = storePathFor(vaultRoot, file);

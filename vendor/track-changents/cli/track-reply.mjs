@@ -12,7 +12,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findVaultRoot, storePathFor, loadStore, saveStore, reviveThreadFromSuperseded } from '../store-io.mjs';
+import {
+  findVaultRoot, storePathFor, loadStore, saveStore, reviveThreadFromSuperseded, reviveThreadInto,
+} from '../store-io.mjs';
 import { parseArgs } from './cli-args.mjs';
 
 // ── pure core (exported for tests) ──────────────────────────────────
@@ -62,10 +64,11 @@ function run(argv) {
   if (!store) fail(`No tracking store for ${abs}`);
   let res = addReply(store, args.thread, sessionLabel(), args.note, Date.now(), process.env.ROMP_SID || null);
   if (res.error && /thread/i.test(String(res.error))) {
-    // Live store exists but the THREAD was resolved away — same revive.
-    const revived = reviveThreadFromSuperseded(vaultRoot, abs, args.thread, text);
-    if (revived) {
-      store = revived;
+    // Live store exists but the THREAD was resolved away — revive it INTO
+    // the live store. Replacing the store with a revived one (as before)
+    // saved a copy with an empty suggestion list over the live sidecar and
+    // erased every pending change and every other comment in it.
+    if (reviveThreadInto(vaultRoot, abs, args.thread, store)) {
       res = addReply(store, args.thread, sessionLabel(), args.note, Date.now(), process.env.ROMP_SID || null);
     }
   }
