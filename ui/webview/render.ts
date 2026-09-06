@@ -8520,10 +8520,23 @@ function pickerKey(e: KeyboardEvent) {
 // prefilled into the dir field when there's no gear default, so "the default path is written in there".
 let kernelDefaultDir = "";
 // This machine's name as the kernel's peers know it (_self_host — short hostname, ROMP_HOST_NAME
-// override), from the same payload and from every LOCAL session frame (upsert). The + picker's Host row
-// labels its first option with it, so the row reads as a list of machines by name rather than named hosts
-// plus a "local" (the user 2026-08-12); postalRepoFor reads a postal card's sender host against it.
+// override). The + picker's Host row labels its first option with it, so the row reads as a list of
+// machines by name rather than named hosts plus a "local" (the user 2026-08-12); postalRepoFor reads a
+// postal card's sender host against it. Three sources, one adopter (adoptSelfHost): every tabOrder frame
+// — the one every chat receives, first of all on connect, and the only one a dashboard whose kernel runs
+// no local session gets — every LOCAL session frame (upsert), and the picker's sessionList reply.
 let localSelfHost = "";
+// Adopt the name. A postal card rendered BEFORE the name was known read its own kernel's name for this
+// host as a peer's — it matched no `host:` row and stayed plain — and was rebuilt only on its session's
+// next push (review find, 2026-09-06): so a name that CHANGES re-renders every built view, and each card's
+// body is read against the name once it is known. In practice nothing is built when the name arrives (the
+// tabOrder frame lands before any session frame); a late arrival — a remote kernel's frame ahead of the
+// local strip, or the name learned from the picker alone against an older kernel — is what this covers.
+function adoptSelfHost(name: string): void {
+  if (name === localSelfHost) return;
+  localSelfHost = name;
+  if (views.size) rerenderAll();
+}
 // Is this session already an open tab in THIS dashboard? (loaded session, or a not-yet-loaded placeholder tab
 // the kernel's order carries.) The + picker uses it to hide sessions you can already reach by a tab-click.
 function isOpenTab(id: string): boolean {
@@ -12434,12 +12447,12 @@ function sharesAnyUuid(a: ChatEvent[], b: ChatEvent[]): boolean {
 
 function upsert(msg: any) {
   retryCmtCreates(String(msg.id || ""));   // a session frame = the kernel re-parsed → retry a lag-refused create (T106)
-  // The LOCAL kernel's own machine name rides its session frames (the kernel's _self_host, as the feed
-  // frame carries it): the chat reads a postal card's sender host against it (postalSenderHost). It was
-  // learned only from the + picker's sessionList reply before, so that reading was inert in any chat whose
-  // picker had not been opened (review find, 2026-09-06). A remote kernel's frame names ITSELF — the id's
-  // host prefix says whose frame this is, and only the local kernel's is this dashboard's own name.
-  if (typeof msg.selfHost === "string" && msg.selfHost && !hostOf(msg.id)) localSelfHost = msg.selfHost;
+  // The LOCAL kernel's own machine name rides its session frames (the kernel's _self_host, as the tabOrder
+  // and feed frames carry it): the chat reads a postal card's sender host against it (postalSenderHost). It
+  // was learned only from the + picker's sessionList reply before, so that reading was inert in any chat
+  // whose picker had not been opened (review find, 2026-09-06). A remote kernel's frame names ITSELF — the
+  // id's host prefix says whose frame this is, and only the local kernel's is this dashboard's own name.
+  if (typeof msg.selfHost === "string" && msg.selfHost && !hostOf(msg.id)) adoptSelfHost(msg.selfHost);
   const existed = sessions.has(msg.id);
   const prev = sessions.get(msg.id);
   awaitingFull.delete(msg.id);   // a full session landed → this session is re-based; a later gap may ask again
@@ -13208,7 +13221,7 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
     // this-machine button in place — the row's first-ever open is the only one that shows the
     // "local" placeholder.
     if (typeof m.selfHost === "string" && m.selfHost && !from) {
-      localSelfHost = m.selfHost;
+      adoptSelfHost(m.selfHost);
       const lb = document.querySelector('#picker .picker-host .picker-be-opt[data-host=""]') as HTMLElement | null;
       if (lb) lb.textContent = localSelfHost;
     }
@@ -13299,6 +13312,7 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
   else if (m.type === "working") { workingSet = new Set(Array.isArray(m.names) ? m.names : []); refreshPostalDots(); }
   else if (m.type === "imgData" && typeof m.path === "string") onImgData(m.path, typeof m.url === "string" ? m.url : null, typeof m.sid === "string" ? m.sid : null);
   else if (m.type === "tabOrder") {
+    if (typeof m.selfHost === "string" && m.selfHost) adoptSelfHost(m.selfHost);   // the LOCAL kernel's own name: federation puts only its own on the merged frame
     captureViews(m.views || null);
     applyTabOrder(m.order, m.tabs, { reemit: m.reemit === true, freshHost: typeof m.freshHost === "string" ? m.freshHost : undefined });
   }

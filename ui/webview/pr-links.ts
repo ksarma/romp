@@ -252,7 +252,19 @@ export function senderPrRepo(rows: readonly SessionRepoRow[], sender: string, ho
  *  remote card from its own kernel's session resolved against the LOCAL rows by bare name (review find,
  *  2026-09-06). An unknown origin ("?") is undefined, as the feed reads `blocked.origin`; a card from a
  *  kernel that predates the field has no peerHost at all → undefined, the name-only resolution
- *  senderPrRepo keeps for it. */
+ *  senderPrRepo keeps for it.
+ *
+ *  A peer's name is the card's kernel's OWN name for that host, not a name every kernel shares: the bus
+ *  files each peer under the name the local side knows it by — the ssh alias it was attached as when
+ *  there is one, else the name the peer declared at check-in (postal_service.py `_canon_peer_name`) —
+ *  and no host id crosses the wire for the dashboard to match on instead (its rows wear the aliases IT
+ *  attached each host as; the bus id never reaches a frame). So the fold and the row match hold when
+ *  the two kernels agree on the name, which the common topology gives: the dashboard's kernel declares
+ *  its own name (`selfHost`) at check-in and the remote files it under that, unless it attached this
+ *  machine under an alias of its own. When the names disagree the stamp matches no row and the
+ *  reference stays text — the safe direction, pinned by the tests; a WRONG link needs the card's kernel
+ *  to use this dashboard's own name, or an attached host's alias, for a different machine — a collision
+ *  in the user's own naming. */
 export function postalSenderHost(peerHost: unknown, selfHost: string, cardHost = ""): string | undefined {
   if (typeof peerHost !== "string" || peerHost === "?") return undefined;
   if (peerHost === "") return cardHost;

@@ -434,6 +434,24 @@ test("postalSenderHost with the dashboard's own name not yet known (selfHost '')
   assert.equal(senderPrRepo(rows, "api", postalSenderHost("TESTHOST", "", "")), "other-org/api");
 });
 
+test("peerHost is the card's kernel's OWN name for the sender's host: when the two kernels' names for a host disagree the reference stays text, never a wrong link", () => {
+  // the dashboard's kernel calls itself SELFHOST and declared that at check-in; the card's kernel (TESTHOST)
+  // had attached this machine under an alias of its own, HUBALIAS, so its log stamps mail from here with
+  // that name (the bus files a peer under the local dialable alias when one exists) — the fold does not apply…
+  assert.equal(postalSenderHost("HUBALIAS", "SELFHOST", "TESTHOST"), "HUBALIAS");
+  // …and the alias names no row this dashboard holds (its rows wear the aliases IT attached hosts as), so the
+  // sender is plain text — not the local api's repo, not TESTHOST's api's
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost("HUBALIAS", "SELFHOST", "TESTHOST")), null);
+  assert.equal(senderPrRepo(rows, "web", postalSenderHost("HUBALIAS", "SELFHOST", "TESTHOST")), null);
+  // the same disagreement over a third host: TESTHOST's name for it is not the one this dashboard attached it as
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost("OTHERBOX", "SELFHOST", "TESTHOST")), null);
+  // agreement — the common topology — folds to the local row; the stamp is compared to selfHost exactly
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost("SELFHOST", "SELFHOST", "TESTHOST")), "example-org/notes-api");
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost("selfhost", "SELFHOST", "TESTHOST")), null, "no case folding: a near-name is another name");
+  // the name is all there is to match on: no host id rides the card or the rows
+  assert.doesNotMatch(RENDER, /busId|hostId/, "the chat matches hosts by name alone, as the frames key them");
+});
+
 test("senderPrRepo tolerates malformed rows and an invalid repo value", () => {
   assert.equal(senderPrRepo([{ sid: U, name: "web", githubRepo: "https://github.com/x/y" }], "web"), null);
   assert.equal(senderPrRepo([null as any, { sid: 5 as any, name: "web" }, { sid: U, name: "web", githubRepo: "x/y" }], "web"), "x/y");
@@ -588,6 +606,7 @@ test("targets that are not a pr-link, or whose href is not a GitHub URL, are lef
 const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const RENDER = read("render.ts");
 const FEED = read("feed.ts");
+const FED = read("federation.ts");
 const OUTLINE = read("fleet.ts");
 
 test("the chat links inside md(): the sanitized tree is walked before it serializes, against the owning session's repo", () => {
@@ -616,11 +635,30 @@ test("postal bodies link against the SENDER's frame-known repo only: outbound = 
     "the sender's host rides the card (peerHost), read relative to the card's kernel and against this kernel's own name");
   assert.equal((fn.match(/prRepoFor\(/g) || []).length, 1, "the reading session's repo is used for OUTBOUND mail only");
   // this dashboard's own name is learned from every LOCAL session frame, not only from the + picker's reply
-  assert.match(RENDER, /if \(typeof msg\.selfHost === "string" && msg\.selfHost && !hostOf\(msg\.id\)\) localSelfHost = msg\.selfHost;/,
+  assert.match(RENDER, /if \(typeof msg\.selfHost === "string" && msg\.selfHost && !hostOf\(msg\.id\)\) adoptSelfHost\(msg\.selfHost\);/,
     "a remote kernel's frame names itself; only a frame with no host prefix is this kernel's");
   const upsertFn = RENDER.match(/function upsert\(msg: any\) \{[\s\S]*?\n\}/)?.[0] || "";
-  assert.match(upsertFn, /localSelfHost = msg\.selfHost;/, "adopted in upsert, the session frame's one ingest point");
+  assert.match(upsertFn, /adoptSelfHost\(msg\.selfHost\);/, "adopted in upsert, the session frame's one ingest point");
   assert.match(RENDER, /kind: "postal-service";\s*\n\s*direction: "in" \| "out";\s*\n\s*peer: string;\s*\n(?:\s*\/\/[^\n]*\n)*\s*peerHost\?: string;/, "the event type carries the optional host");
+});
+
+test("the chat learns its kernel's own name from every tabOrder frame too, through one adopter that re-renders built views when the name changes; federation carries the LOCAL kernel's name on the merged frame", () => {
+  // tabOrder is the frame every chat receives, first of all on connect; a dashboard whose kernel runs no
+  // local session has no session frame to learn the name from and learned it only when the + picker opened
+  // (review find, 2026-09-06)
+  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);/,
+    "adopted before the strip is applied");
+  const adopt = RENDER.match(/function adoptSelfHost\(name: string\): void \{[\s\S]*?\n\}/)?.[0] || "";
+  assert.match(adopt, /if \(name === localSelfHost\) return;/, "the same name again is no event");
+  assert.match(adopt, /localSelfHost = name;\s*\n\s*if \(views\.size\) rerenderAll\(\);/,
+    "a postal card rendered before the name was known is re-read against it; nothing built → nothing to redo");
+  // the picker's reply goes through the same adopter, and the name is assigned in exactly one place
+  assert.match(RENDER, /if \(typeof m\.selfHost === "string" && m\.selfHost && !from\) \{\s*\n\s*adoptSelfHost\(m\.selfHost\);/);
+  assert.equal((RENDER.match(/\blocalSelfHost = /g) || []).length, 2, "the declaration and the adopter");
+  // federation re-emits a MERGED tabOrder frame in place of every host's own: the local kernel's name must
+  // ride it, and a remote kernel's — which names itself — must not (multi-kernel-merge.test.ts runs it)
+  assert.match(FED, /if \(host === LOCAL && typeof m\.selfHost === "string" && m\.selfHost\) this\.localSelfHost = m\.selfHost;/);
+  assert.match(FED, /\{ type: "tabOrder", order, tabs, views: this\.localViews \?\? undefined, selfHost: this\.localSelfHost \|\| undefined \}/);
 });
 
 test("the chat's plain-text surfaces link too: user-todo rows, their detail folds, and the reply prompt's quote", () => {
