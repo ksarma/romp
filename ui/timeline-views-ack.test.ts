@@ -105,7 +105,8 @@ function drawnPanel(views: any = S0, caps: string[] = ["tagEdit"]): any {
     turns: { [SID1]: [{ id: "t1", start: now - 400, end: now - 100, prompt: "do the thing", tid: "f1", mids: [] }] },
     messages: [], judging: [], views: copy(views), palette: PALETTE.slice(),
   });
-  panel.setCaps({ type: "caps", caps });
+  // the caps frame names the seq of the views blob the connect push above served (viewsSeq; null for a seq-less one)
+  panel.setCaps({ type: "caps", caps, viewsSeq: typeof views.seq === "number" ? views.seq : null });
   return panel;
 }
 // a kernel push carrying a views blob (the two-message path's skeleton frame)
@@ -542,10 +543,11 @@ test("executed: a lost ack — the caps frame the kernel sends at every ready (a
   assert.equal(panel._tagEditErr, before);
 });
 
-// ── ROUND 6 of the 2026-09-05 review, the refuters' F6/F7: the caps frame adopts the blob the gate last
-// turned away (the connect push precedes it), and never opens the gate.
-test("executed: a restored store lands on the caps frame itself — the connect push the restarted kernel serves under an older seq is turned away, then adopted on caps, with nothing to wait for", () => {
-  const panel = drawnPanel();                       // the load: S0's frame (adopted), then the caps frame (nothing retained: inert)
+// ── ROUNDS 6 and 7 of the 2026-09-05 review, the refuters' F6/F7: the caps frame adopts the blob the gate last
+// turned away when its viewsSeq (the seq of the blob the kernel's own connect push served) names it, and never
+// opens the gate.
+test("executed: a restored store lands on the caps frame itself — the connect push the restarted kernel serves under an older seq is turned away, then adopted on the caps frame that names it, with nothing to wait for", () => {
+  const panel = drawnPanel();                       // the load: S0's frame (adopted), then the caps frame (nothing kept: inert)
   assert.equal(panel._views.seq, 1000, "the load-time caps frame leaves the held seq alone");
   const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
   try {
@@ -555,7 +557,7 @@ test("executed: a restored store lands on the caps frame itself — the connect 
     frame(panel, restored);
     assert.equal(panel._views.seq, 1000, "…and the gate turns it away, as it must before the reconnect event");
     assert.equal(warned.length, 1);
-    panel.setCaps({ type: "caps", caps: ["tagEdit"] });   // …then its caps frame
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 900 });   // …then its caps frame, naming what that push served
     assert.equal(panel._views.seq, 900, "the caps frame adopts exactly the blob the gate turned away — no repost to wait for");
     assert.equal(panel._curViews().tags[0].name, "site", "the page shows the restored store at once");
     assert.equal(panel._tagEditErr, null, "nothing was in flight: nothing is said");
@@ -563,30 +565,57 @@ test("executed: a restored store lands on the caps frame itself — the connect 
     assert.equal(panel._views.seq, 900, "and the store's own order gates again from its seq");
     frame(panel, restored);
     assert.equal(panel._views.seq, 900);
-    // the pre-restore blob, should some late frame of the old process ever turn up, would pass the gate (1000 >= 900):
-    // the gate knows one order, not two lineages — but nothing from the old socket can arrive after the new one's caps
   } finally { console.warn = cw; }
 });
 
-test("executed: a healthy reconnect keeps the gate — the connect push is adopted, the caps frame retains nothing, and a pusher frame built before a concurrent write is still turned away", () => {
+test("executed: a healthy reconnect keeps the gate — the connect push is adopted, the caps frame names it and adopts nothing, and a pusher frame built before a concurrent write is turned away whether it lands before or after the caps frame", () => {
   const panel = drawnPanel();
   const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
   try {
     // the socket dropped and came back on the same kernel; meanwhile another dashboard's write landed (seq 1001)
     const S1 = copy(S0); S1.seq = 1001; S1.tags[0].members = [SID1, SID2];
     frame(panel, S1);                                 // the connect push: current, adopted
-    panel.setCaps({ type: "caps", caps: ["tagEdit"] });
-    assert.equal(panel._views.seq, 1001, "nothing was turned away, so the caps frame changes nothing: the seq is held, not forgotten");
-    frame(panel, S0);                                 // the pusher thread's frame, built from its cache before that write, enqueued after caps
-    assert.equal(panel._views.seq, 1001, "turned away: the gate never opened, so there is no one-cycle flap");
-    assert.deepEqual(panel._curViews().tags[0].members, [SID1, SID2]);
+    // the pusher thread's frame, built from its cache BEFORE that write and enqueued between the connect push and
+    // the caps frame — the window round 6 left open: the client turns it away and keeps it…
+    frame(panel, S0);
+    assert.equal(panel._views.seq, 1001);
     assert.equal(warned.length, 1);
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 1001 });   // …and the caps frame names the connect push, not it
+    assert.equal(panel._views.seq, 1001, "the kept frame's seq is not the one named: discarded, the gate stands");
+    assert.deepEqual(panel._curViews().tags[0].members, [SID1, SID2], "no flap: the other dashboard's member never blinks out");
+    frame(panel, S0);                                 // the same stale frame landing AFTER the caps frame instead
+    assert.equal(panel._views.seq, 1001, "turned away by the gate, which never opened");
     frame(panel, S1);
-    assert.equal(panel._views.seq, 1001, "the next cycle's frame is the same write, seen again");
-    // the kept blob (S0) was let go by that adoption: a later caps frame has nothing to adopt
-    panel.setCaps({ type: "caps", caps: ["tagEdit"] });
+    assert.equal(panel._views.seq, 1001, "the next cycle's frame is the same write, seen again — and lets the kept blob go");
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 1001 });
     assert.equal(panel._views.seq, 1001);
     assert.deepEqual(panel._curViews().tags[0].members, [SID1, SID2]);
+  } finally { console.warn = cw; }
+});
+
+test("executed: a caps frame whose connect push served no views blob (viewsSeq null) adopts nothing, and lets a kept blob go", () => {
+  const panel = drawnPanel();
+  const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
+  try {
+    frame(panel, Object.assign(copy(S0), { seq: 999 }));   // a stale frame turned away just before the socket dropped: kept
+    assert.equal(panel._views.seq, 1000);
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: null });   // the reconnect's push carried no views (a sentinel cycle)
+    assert.equal(panel._views.seq, 1000, "nothing named, nothing adopted: the gate stands");
+    panel.setCaps({ type: "caps", caps: ["tagEdit"] });                    // even a field-less frame now: the kept blob was let go
+    assert.equal(panel._views.seq, 1000);
+  } finally { console.warn = cw; }
+});
+
+test("executed: a caps frame without viewsSeq (a kernel from before the field) adopts the kept blob outright — the round-6 rule", () => {
+  const panel = drawnPanel();
+  const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
+  try {
+    const restored = copy(S0); restored.seq = 900; restored.tags[0].name = "site";
+    frame(panel, restored);
+    assert.equal(panel._views.seq, 1000);
+    panel.setCaps({ type: "caps", caps: ["tagEdit"] });
+    assert.equal(panel._views.seq, 900, "no field to match against: the kept blob is adopted");
+    assert.equal(panel._curViews().tags[0].name, "site");
   } finally { console.warn = cw; }
 });
 
@@ -602,7 +631,7 @@ test("executed: a write in flight at a restored-store reconnect is dropped and s
     const restored = copy(S0); restored.seq = 900; restored.tags[0].name = "site";   // the store the restarted kernel serves
     frame(panel, restored);                            // the connect push, turned away
     assert.equal(panel._curViews().tags[0].name, "notes", "the copy still shows until the reconnect event");
-    panel.setCaps({ type: "caps", caps: ["tagEdit"] });
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 900 });
     assert.deepEqual(panel._viewsWrites, [], "the write is dropped: its ack cannot reach this socket");
     assert.equal(panel._pendingViews, null);
     assert.equal(panel._views.seq, 900, "the base is the restored store…");

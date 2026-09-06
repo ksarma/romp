@@ -11,7 +11,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ackOutcome, adoptViews, applyTagEdit, createInFlight, mintWriteId, rederivePending, seqOf, lensBlob, applyLensFields, isPlaceholderId, adoptOnCaps, type InflightWrite } from "./views-writes";
+import { ackOutcome, adoptViews, applyTagEdit, createInFlight, mintWriteId, rederivePending, seqOf, lensBlob, applyLensFields, isPlaceholderId, capsAdopts, type InflightWrite } from "./views-writes";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const S1 = { active: "all", at: 113, tags: [{ id: "g1", name: "qa", color: "#DD42FF", members: ["tests"], mtime: 113 }] };
@@ -100,32 +100,34 @@ test("executed: a blob is adopted by write SEQUENCE, never by arrival order — 
   assert.equal(seqOf(null), null);
 });
 
-test("executed: adoptOnCaps — the caps frame adopts the blob the gate last turned away, and only that; nothing retained, nothing changes", () => {
+test("executed: capsAdopts — the caps frame adopts the kept blob only when viewsSeq (what the kernel's own connect push served) names its seq; an older kernel's frame, without the field, adopts it outright", () => {
   // the kernel restarted over a store restored from an older copy: its connect push carries seq 900 where the page holds 1000
   const held = { active: "all", tags: [{ id: "g1", name: "qa", color: "", members: [] }], seq: 1000 } as any;
   const restored = { active: "all", tags: [], seq: 900 } as any;
   assert.equal(adoptViews(held, restored), false, "the connect push meets the gate first and is turned away…");
-  assert.equal(adoptOnCaps(held, restored), restored, "…and the caps frame that follows it adopts exactly that blob — zero residual, no wait on the pusher's repost");
+  assert.equal(capsAdopts(restored, 900), true, "…and the caps frame that follows names it (viewsSeq 900): adopted, zero residual, no wait on the pusher's repost");
   assert.equal(adoptViews(restored, { active: "all", tags: [], seq: 899 }), false, "the gate re-arms at its seq: the store's own order gates again");
-  assert.equal(adoptViews(restored, { active: "all", tags: [], seq: 900 }), true);
-  // a healthy reconnect: the connect push (seq 1001) was adopted, so nothing was turned away — the caps frame changes nothing
-  const fresh = { active: "all", tags: [], seq: 1001 } as any;
-  assert.equal(adoptOnCaps(fresh, null), fresh, "nothing retained: the held blob stands, seq and all");
-  assert.equal(adoptViews(fresh, held), false, "…so a pusher frame built before a concurrent write (seq 1000, arriving after caps) is still turned away — the gate never opens");
-  assert.equal(adoptOnCaps(null, null), null); assert.equal(adoptOnCaps(undefined, undefined), null);
-  assert.equal(adoptOnCaps(null, restored), restored, "a page holding nothing yet adopts what it kept (unreachable in practice: with nothing held the gate adopts everything)");
+  // the residual round 6 left: a pusher-thread frame built before a concurrent write (seq 1000), enqueued
+  // between the connect push (seq 1001, adopted) and the caps frame — turned away and kept
+  const stale = { active: "all", tags: [], seq: 1000 } as any;
+  assert.equal(capsAdopts(stale, 1001), false, "the caps frame names the connect push's seq, not the stale frame's: discarded, the gate stands at 1001");
+  assert.equal(capsAdopts(stale, null), false, "the connect push carried no views blob (viewsSeq null): nothing to match, nothing adopted");
+  assert.equal(capsAdopts(stale, "1000"), false, "a non-number is no seq");
+  assert.equal(capsAdopts(stale, undefined), true, "a caps frame without the field (a kernel from before it) adopts the kept blob — the round-6 rule");
+  assert.equal(capsAdopts(null, 900), false); assert.equal(capsAdopts(undefined, undefined), false, "nothing kept: nothing to adopt, whatever the frame says");
+  assert.equal(capsAdopts({ active: "all", tags: [] } as any, 900), false, "a kept blob without a seq cannot match (unreachable: the gate adopts every seq-less blob)");
 });
 
-test("pins: render.ts keeps the last blob its gate turned away, lets it go on the next adoption, and adopts it on the caps frame before anything else it does there", () => {
+test("pins: render.ts keeps the last blob its gate turned away, lets it go on the next adoption, and on the caps frame adopts it only when viewsSeq names it — before anything else it does there", () => {
   const take = RENDER.slice(RENDER.indexOf("function takeViews("), RENDER.indexOf("\n}\n", RENDER.indexOf("function takeViews(")));
   assert.match(take, /if \(adoptViews\(sessionViews, v\)\) \{ sessionViews = v; rejectedViews = null; return true; \}\s*\n\s*rejectedViews = v;/,
-    "an adoption lets the kept blob go; a rejection keeps this one (the LAST turned away — the connect push is the last frame before caps)");
+    "an adoption lets the kept blob go; a rejection keeps this one (the LAST turned away — the connect push is the last frame before caps on the handler's thread)");
   const caps = RENDER.slice(RENDER.indexOf("function onKernelCaps("), RENDER.indexOf("function onUnknownOp("));
-  assert.match(caps, /kernelCaps = new Set\([\s\S]*?\);\n\s*const adopted = rejectedViews !== null;\n\s*sessionViews = adoptOnCaps\(sessionViews, rejectedViews\); rejectedViews = null;\n\s*if \(viewsWrites\.length\) \{/,
-    "the adoption runs on EVERY caps frame, in-flight writes or not, and before the in-flight drop: the dropped copy reverts to the adopted base");
+  assert.match(caps, /kernelCaps = new Set\([\s\S]*?\);\n\s*const adopted = capsAdopts\(rejectedViews, m\.viewsSeq\);\n\s*if \(adopted\) sessionViews = rejectedViews;\n\s*rejectedViews = null;\n\s*if \(viewsWrites\.length\) \{/,
+    "the verdict runs on EVERY caps frame, in-flight writes or not, on the frame's viewsSeq, and before the in-flight drop: the dropped copy reverts to the adopted base; the kept blob is let go either way");
   assert.match(caps, /\} else if \(!adopted\) return;/, "nothing in flight and nothing adopted: the caps frame changes nothing shown");
   assert.match(caps, /if \(activeId\) assertPeekFor\(activeId\);[^\n]*\n\s*renderTabs\(\);\n\}/, "an adoption renders like any views arrival: the peek is re-derived and the strip redrawn");
-  assert.doesNotMatch(RENDER, /forgetSeq/, "the held seq is never forgotten: the gate is never left open (round 6 refuters: the one-cycle flap window)");
+  assert.doesNotMatch(RENDER, /forgetSeq|adoptOnCaps/, "the held seq is never forgotten and no kept blob is adopted unnamed: the gate is never left open (round 6's refuters: the one-cycle flap window)");
 });
 
 test("executed: write ids are unique per page across same-ms gestures", () => {
@@ -179,8 +181,8 @@ test("pins: every views arrival in render.ts goes through the ONE seq-gated adop
     "the exact-echo clear and the three-frame yield survive ONLY for a blob without a seq (a kernel that acks nothing); a stamped kernel's frames never clear a write they cannot name");
   assert.equal((cap.match(/>= 3/g) || []).length, 1, "one legacy yield, under the seq-less condition, nowhere else");
   assert.equal((RENDER.match(/(?<!pending)(?<!\w)sessionViews = /g) || []).length, 2,
-    "the base is assigned in exactly two places: inside the gate, and the caps frame's adoption of the blob the gate last turned away (round 6)");
-  assert.match(RENDER, /sessionViews = adoptOnCaps\(sessionViews, rejectedViews\);/, "…that second one is the reconnect event's adoption and nothing else");
+    "the base is assigned in exactly two places: inside the gate, and the caps frame's adoption of the blob the gate last turned away (rounds 6 and 7)");
+  assert.match(RENDER, /if \(adopted\) sessionViews = rejectedViews;/, "…that second one is the reconnect event's adoption and nothing else");
 });
 
 test("pins: the Tags flyout's local edits are targeted ops on ONE optimistic blob; a MOVE is two ops, one blob", () => {

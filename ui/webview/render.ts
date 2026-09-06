@@ -16,7 +16,7 @@ import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./ta
 import { ctxFallbackColor, pickTone, readableRgb } from "./ctx-color";
 import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
-import { mintWriteId, ackOutcome, adoptViews, seqOf, adoptOnCaps, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
+import { mintWriteId, ackOutcome, adoptViews, seqOf, capsAdopts, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
 import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, PendingTabMeta } from "./tab-meta";
@@ -518,8 +518,8 @@ function effViews(): SessionViews | null { return pendingSessionViews ?? session
 // breadcrumb per page load (the kernel's client-diag log), so a kernel serving stale frames is a
 // visible fact rather than a flicker nobody can explain. The last ignored blob is KEPT (and let go
 // by the next adoption): a kernel restarted over a store restored from an older copy serves it under
-// the old seq, so its connect push is turned away here — and the caps frame that follows it is the
-// event that adopts it (round 6 of the 2026-09-05 review; adoptOnCaps).
+// the old seq, so its connect push is turned away here — and the caps frame that follows it, naming
+// that push's seq, is the event that adopts it (rounds 6 and 7 of the 2026-09-05 review; capsAdopts).
 function takeViews(v: SessionViews | null | undefined): boolean {
   if (!v) return false;
   if (adoptViews(sessionViews, v)) { sessionViews = v; rejectedViews = null; return true; }
@@ -618,18 +618,20 @@ function postTagEdit(nv: SessionViews, edit: TagEditOp, newId?: string) {
 // between the write and its answer), so writes still in flight when this frame arrives are unknowable:
 // they are dropped, the copy reverts to what the kernel's frames show, and the user is told — never a
 // pinned copy faking success, never a silent revert. It is also the event that adopts the blob the
-// gate last turned away, when there is one (round 6 of the 2026-09-05 review; adoptOnCaps): the
-// kernel sends its connect push before this frame, so a push a restarted kernel served under an
-// OLDER seq (a store restored while it was down) was rejected a frame ago and is adopted here, the
-// gate re-arming at its seq; a healthy reconnect's push was adopted, nothing is retained, and the
-// gate stands — a pusher frame built before a concurrent write is still turned away. A write in
-// flight is dropped whatever the base became: its ack cannot reach this socket, and one that somehow
-// did would be an ack for a write this page no longer tracks — its blob meets the gate like any other
-// arrival, and nothing is re-pinned (onViewsAck).
-function onKernelCaps(m: { caps?: unknown }) {
+// gate last turned away, when the frame names it (rounds 6 and 7 of the 2026-09-05 review;
+// capsAdopts): the kernel sends its connect push before this frame and `viewsSeq` is the seq of the
+// views blob that push served, so a push a restarted kernel served under an OLDER seq (a store
+// restored while it was down) was rejected a frame ago and is adopted here, the gate re-arming at its
+// seq; a healthy reconnect's push was adopted, nothing is kept, and the gate stands; a pusher frame
+// built before a concurrent write, kept because it arrived between the push and this frame, carries a
+// seq the frame does not name and is discarded. A write in flight is dropped whatever the base became:
+// its ack cannot reach this socket, and one that somehow did would be an ack for a write this page no
+// longer tracks — its blob meets the gate like any other arrival, and nothing is re-pinned (onViewsAck).
+function onKernelCaps(m: { caps?: unknown; viewsSeq?: unknown }) {
   kernelCaps = new Set(Array.isArray(m.caps) ? m.caps.filter((c): c is string => typeof c === "string") : []);
-  const adopted = rejectedViews !== null;
-  sessionViews = adoptOnCaps(sessionViews, rejectedViews); rejectedViews = null;
+  const adopted = capsAdopts(rejectedViews, m.viewsSeq);
+  if (adopted) sessionViews = rejectedViews;
+  rejectedViews = null;
   if (viewsWrites.length) {
     viewsWrites = []; pendingSessionViews = null;
     warnToast("The connection to romp was re-established; a tag edit made just before it may not have landed. Check the tag.");

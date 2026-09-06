@@ -53,13 +53,20 @@ function viewsAdopts(held, incoming) {
   const h = viewsSeq(held), i = viewsSeq(incoming);
   return h === null || i === null || i >= h;
 }
-// the base after the kernel's `caps` frame, the reconnect event — the hand-mirror of views-writes.ts
-// adoptOnCaps (round 6 of the 2026-09-05 review): the blob the gate last REJECTED since its last
-// adoption, when there is one, else the held blob unchanged. The connect push precedes the caps frame,
-// so a push a restarted kernel served under an OLDER seq (a store restored while it was down; its seq
-// floor lives for its process) was turned away a frame ago and is adopted here; a healthy reconnect's
-// push was adopted, nothing is retained, and the gate stands
-function viewsAdoptOnCaps(held, rejected) { return rejected || held || null; }
+// whether the kernel's `caps` frame, the reconnect event, adopts the blob the gate last REJECTED since
+// its last adoption — the hand-mirror of views-writes.ts capsAdopts (rounds 6 and 7 of the 2026-09-05
+// review). The connect push precedes the caps frame and `served` is the frame's viewsSeq, the seq of the
+// views blob that push put on this socket (null when it carried none; undefined on a frame from a kernel
+// before the field). A push a restarted kernel served under an OLDER seq (a store restored while it was
+// down; its seq floor lives for its process) was turned away a frame ago and is the kept blob: its seq
+// matches, it is adopted. A pusher-thread frame built before a concurrent write and kept because it
+// arrived between the push and the caps frame carries an older seq: no match, discarded, the gate stands.
+// A frame without the field adopts the kept blob outright (the round-6 rule).
+function viewsCapsAdopts(rejected, served) {
+  if (!rejected) return false;
+  if (served === undefined) return true;
+  return typeof served === 'number' && isFinite(served) && viewsSeq(rejected) === served;
+}
 // The hand-mirror of views-writes.ts applyTagEdit / rederiveViews (round 3 of the 2026-09-05
 // review): one targeted op applied to a blob's LOCAL tags the way the gesture applied it (a copy;
 // an unknown tid is a no-op — the kernel refuses it), and the optimistic copy rebuilt from the base
@@ -3156,17 +3163,19 @@ class TimelinePanel {
   // can lose an ack (the socket died between the write and its answer), so writes still in flight
   // when this frame arrives are unknowable: they are dropped, the copy reverts to what the kernel's
   // frames show, and the dialog says so — never a pinned copy faking success, never a silent revert.
-  // It is also the event that adopts the blob the gate last turned away, when there is one
-  // (viewsAdoptOnCaps): the connect push a restarted kernel served under an OLDER seq (a store
-  // restored while it was down) was rejected a frame ago and is adopted here, the gate re-arming at
-  // its seq; a healthy reconnect's push was adopted, nothing is retained, and the gate stands. A write
-  // in flight is dropped whatever the base became: its ack cannot reach this socket, and one that
-  // somehow did is an ack for a write this page no longer tracks — its blob meets the gate like any
-  // other arrival, and nothing is re-pinned (viewsAck).
+  // It is also the event that adopts the blob the gate last turned away, when the frame names it
+  // (viewsCapsAdopts, on its `viewsSeq`): the connect push a restarted kernel served under an OLDER
+  // seq (a store restored while it was down) was rejected a frame ago and is adopted here, the gate
+  // re-arming at its seq; a healthy reconnect's push was adopted, nothing is kept, and the gate stands;
+  // a pusher frame kept because it arrived between the push and this frame carries a seq the frame
+  // does not name and is discarded. A write in flight is dropped whatever the base became: its ack
+  // cannot reach this socket, and one that somehow did is an ack for a write this page no longer
+  // tracks — its blob meets the gate like any other arrival, and nothing is re-pinned (viewsAck).
   setCaps(m) {
     this._caps = new Set((m && Array.isArray(m.caps)) ? m.caps.filter((c) => typeof c === 'string') : []);
-    const adopted = this._rejectedViews !== null;
-    this._views = viewsAdoptOnCaps(this._views, this._rejectedViews); this._rejectedViews = null;
+    const adopted = viewsCapsAdopts(this._rejectedViews, m ? m.viewsSeq : undefined);
+    if (adopted) this._views = this._rejectedViews;
+    this._rejectedViews = null;
     if (this._viewsWrites.length) {
       this._viewsWrites = []; this._pendingViews = null;
       this._tagEditErr = { host: '', name: '', error: 'the connection was re-established; an edit made just before it may not have landed — check the list' };

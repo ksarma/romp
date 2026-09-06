@@ -61,20 +61,24 @@ export function adoptViews(held: SessionViews | null | undefined, incoming: Sess
   return h === null || i === null || i >= h;
 }
 
-/** The base after the kernel's `caps` frame — the reconnect event (round 6 of the 2026-09-05 review):
- *  the blob the gate last REJECTED since its last adoption, when there is one; else the held blob,
- *  unchanged. The kernel's seq floor lives for its process, so a store restored while the kernel was
- *  down is served under its old seq after the restart, and a page that stayed open across it holds
- *  the higher seq. The kernel sends the connect push BEFORE the caps frame, so by the time caps
- *  arrives that push has met the gate: adopted (a healthy reconnect — its seq is at least the held
- *  one), and nothing was rejected, so the caps frame changes nothing and the gate stands, still
- *  rejecting a pusher frame built before a concurrent write; or rejected (the restored store), and
- *  the caps frame adopts exactly that blob, the gate re-arming at its seq. No timer, no open gate:
- *  a page keeps the last blob the gate turned away (cleared by any adoption) and the caps frame is
- *  the one event that adopts it. Forgetting the seq instead left the gate open until the next
- *  adopted blob, and the restored store waited on the pusher's next repost (up to a minute). */
-export function adoptOnCaps(held: SessionViews | null | undefined, rejected: SessionViews | null | undefined): SessionViews | null {
-  return rejected ?? held ?? null;
+/** Whether the kernel's `caps` frame — the reconnect event — adopts the blob the gate last REJECTED
+ *  since its last adoption (rounds 6 and 7 of the 2026-09-05 review). The kernel's seq floor lives
+ *  for its process, so a store restored while the kernel was down is served under its old seq after
+ *  the restart, and a page that stayed open across it holds the higher seq: its gate turns the
+ *  kernel's connect push away. The kernel sends that push BEFORE the caps frame, and the frame names
+ *  what the push served: `served` is its `viewsSeq`, the write seq of the views blob the ready
+ *  handler's own push put on this socket (read from the frames that handler's thread enqueued, so a
+ *  pusher-thread frame is never what it names), null when the push carried none, undefined when the
+ *  frame has no such field (a kernel from before it). The kept blob is adopted when its seq equals
+ *  `served`: the restore case (the kept blob IS the connect push), the gate re-arming at its seq. A
+ *  pusher frame built before a concurrent write and enqueued between the push and the caps frame is
+ *  kept too, but its seq is older than the push's, so it never matches and is discarded — the gate
+ *  stands, and the next pusher cycle carries the newer blob. A frame without the field adopts the
+ *  kept blob outright, the round-6 rule. Nothing kept: nothing to adopt, whatever the frame says. */
+export function capsAdopts(rejected: SessionViews | null | undefined, served: unknown): boolean {
+  if (!rejected) return false;
+  if (served === undefined) return true;
+  return typeof served === "number" && Number.isFinite(served) && seqOf(rejected) === served;
 }
 
 /** the fields a lens or order write sets — the whole-blob write's only content of its own: the

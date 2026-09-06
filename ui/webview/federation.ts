@@ -14,7 +14,7 @@
 import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder, pruneViewOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
 import { applyFeedDelta } from "./feed-delta";
-import { adoptViews, adoptOnCaps } from "./views-writes";
+import { adoptViews, capsAdopts } from "./views-writes";
 import { hostOf, bareId } from "./host-prefix";
 
 export const SEP = ":";
@@ -763,23 +763,27 @@ export class FederationManager {
     // store is the one they write). A remote's would read as the local kernel's — dropped here.
     if (m && m.type === "caps" && host !== LOCAL) return;
     // The local kernel's caps frame is the reconnect event: each replayed views store adopts the blob its
-    // gate last turned away, when there is one (round 6 of the 2026-09-05 review; adoptOnCaps), as the
-    // panes do — the kernel sends its connect push before this frame, so a push a restarted kernel served
-    // under an OLDER seq (a store restored while it was down) was rejected a frame ago and is adopted here;
-    // a healthy reconnect's push was adopted, nothing is retained, and the stores stand. A store that
-    // adopted RE-EMITS before the caps frame is handed on: the panes see the local blob only through these
-    // re-emits (a rejected push reached them wearing the stored blob), so the restored blob must meet their
-    // own gate — and be turned away there — before their caps door adopts it. Nothing is re-emitted otherwise.
+    // gate last turned away when the frame names it (rounds 6 and 7 of the 2026-09-05 review; capsAdopts),
+    // as the panes do — the kernel sends its connect push before this frame and `viewsSeq` is the seq of
+    // the views blob that push served, so a push a restarted kernel served under an OLDER seq (a store
+    // restored while it was down) was rejected a frame ago and is adopted here; a healthy reconnect's push
+    // was adopted, nothing is kept, and the stores stand; a pusher frame kept because it arrived between
+    // the push and this frame carries a seq the frame does not name and is discarded. A store that adopted
+    // RE-EMITS before the caps frame is handed on: the panes see the local blob only through these re-emits
+    // (a rejected push reached them wearing the stored blob), so the restored blob must meet their own gate
+    // — and be turned away there — before their caps door adopts it. Nothing is re-emitted otherwise.
     if (m && m.type === "caps") {
-      if (this.localViewsRejected) {
-        this.localViews = adoptOnCaps(this.localViews, this.localViewsRejected); this.localViewsRejected = null;
+      if (capsAdopts(this.localViewsRejected, m.viewsSeq)) {
+        this.localViews = this.localViewsRejected;
         this.emitMergedOrder();
       }
+      this.localViewsRejected = null;
       const tl = this.perHostTl[LOCAL];
-      if (this.tlViewsRejected && tl) {
-        this.perHostTl[LOCAL] = { ...tl, views: adoptOnCaps(tl.views, this.tlViewsRejected) }; this.tlViewsRejected = null;
+      if (tl && capsAdopts(this.tlViewsRejected, m.viewsSeq)) {
+        this.perHostTl[LOCAL] = { ...tl, views: this.tlViewsRejected };
         this.emitMergedTimeline(false);
       }
+      this.tlViewsRejected = null;
     }
     // A kernel's `closed` frame is ITS OWN report that the session is gone — the one other writer allowed
     // to touch the per-host store (T233, the user 2026-09-03). The 2026-08-02 rule below forbids
