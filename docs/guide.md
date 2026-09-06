@@ -79,14 +79,23 @@ while its section is folded, right-click the tab and pick **Show when folded** u
 the header's count and flag then leave that tab out; when every tab in a section is set to
 show, the folded header shows the full count and its tooltip says nothing is hidden. Pick it
 again to fold the tab with the rest. A tab set to show when folded keeps that setting when its
-group is renamed. The section of the tab you are reading never
-folds (its header says so, and a click there changes nothing), and the `archived` section
-starts folded. Drag a header to reorder the groups, which
+group is renamed. The `archived` section starts folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
 a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
 adds that tag and drops the tab's current group tag, leaving its other tags alone. The row's
 **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
 button's menu, turns the sections off for this browser.
+
+**A section at a glance.** Clicking a header also shows the section in the transcript's place:
+one row per session, with its color and emoji, a dot for its state (yellow working, red needs
+you, green waiting on background work), a **needs you** or **waiting** word when one applies, a
+⚑ when it has asked you for something, what it is doing now in a few words (its own note of what
+it is working on, else its current task), and how long ago it last did anything. Hover a row for
+its last message; click one to open that session, which also opens its section. The rows update
+as the sessions work and change only when something about a session changes. The section of the
+tab you are reading folds like any other; its header then stands in for the tab (the name is
+underlined, ←/→ step from there), and the transcript comes back when you pick a session. Sections,
+and this view with them, are for the desktop layout; the phone layout keeps its flat list.
 
 ### The feed
 
