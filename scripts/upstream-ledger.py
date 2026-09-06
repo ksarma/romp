@@ -808,6 +808,10 @@ def main(argv=None):
             print("\n".join(problems), file=sys.stderr)
             return 1
         keep = {s for s in a.status.split(",") if s}
+        unknown = sorted(keep - set(STATUSES))
+        if unknown:   # a typo must not read as "nothing approved"
+            print(f"list: unknown status {', '.join(repr(s) for s in unknown)} (known: {', '.join(STATUSES)})", file=sys.stderr)
+            return 2
         for e in entries:
             if keep and e.get("status") not in keep:
                 continue

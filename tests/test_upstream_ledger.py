@@ -765,6 +765,20 @@ class SetAndImport(unittest.TestCase):
         _, got = L.parse_entry(written[0].name, written[0].read_text(encoding="utf-8"))
         self.assertEqual(got, [f"{written[0].name}: required key `status` is blank"])
 
+    def test_list_refuses_an_unknown_status_naming_the_vocabulary(self):
+        (self.d / "upstream").mkdir()
+        (self.d / "upstream" / "2026-09-06-alpha.md").write_text(_entry(status="approved"), encoding="utf-8")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = L.main(["--root", str(self.d), "list", "--status", "aproved"])
+        self.assertEqual(rc, 2)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("list: unknown status 'aproved' (known: approved, candidate", err.getvalue())
+        with contextlib.redirect_stdout(out):
+            rc = L.main(["--root", str(self.d), "list", "--status", "approved,candidate"])
+        self.assertEqual(rc, 0)
+        self.assertIn('"status": "approved"', out.getvalue())
+
     def test_new_writes_the_file_and_refuses_a_bad_slug_or_a_second_write(self):
         p = L.new_entry(self.d, "romp-perf", "Kernel perf counters", "`kernel/kernel.py`", pr="199", tier="feature", notes="Why.", added="2026-09-06")
         self.assertEqual(p.name, "2026-09-06-romp-perf.md")
