@@ -6,15 +6,16 @@
 //   stdin   {"verb", "path", "args": {...}, "fence": {...}|null}
 //   stdout  {"ok": true, "verb", "root", "storePath", "trackedBy", "agentTooling", "fileMtimeNs",
 //            "storeMtimeNs", "configMtimeNs", "store", "hunks", "unsent", "log", "logTruncated",
-//            "baseline"?, "logged"?}
+//            "baseline"?, "logged"?, "accepted"?, "rejected"?}
 //        or {"ok": false, "code", "error"}          — a refusal; exit status 0
 //   crash   a non-zero exit with the reason on stderr  — a malformed request or a program error
 //
 // Every verb is one load-mutate-write in this one process: root discovery, the sidecar path, the
-// load-time rebase that re-places changes after outside edits, anchor location, the write, the
-// comments-log append. The sidecar format is track-changents v3, read and written ONLY through the
-// vendored store-io (never a second implementation of the format); the comments log beside it is
-// romp's own, outside that contract. Four rules the file-review plan fixes and this script keeps:
+// load-time rebase that re-places changes after outside edits, anchor location, accept and reject
+// through the engine, the write, the comments-log append, the prune of an emptied sidecar. The
+// sidecar format is track-changents v3, read and written ONLY through the vendored store-io (never
+// a second implementation of the format); the comments log beside it is romp's own, outside that
+// contract. Five rules the file-review plan fixes and this script keeps:
 //   * a corrupt or newer-version sidecar is refused, never replaced (loadStoreStatus, not loadStore
 //     or ensureStore, which mint a fresh sidecar over anything they cannot read);
 //   * the same for .trackchanges/config.json: a config that exists but cannot be read (conflict
@@ -27,9 +28,17 @@
 //     check the verb can refuse on has passed (withSidecar, doSetTracked).
 //   * a reply or resolve into a comment the live sidecar lacks refuses `no-comment`; this script
 //     never calls reviveThreadFromSuperseded, which overwrites the live sidecar from a park.
+//   * a decision about a change that is no longer pending (accepted already, or coalesced away by a
+//     later track-edit) refuses `no-change` by id, so the caller reloads instead of deciding a
+//     different change under the same name; and accept never drops a comment bound to the change
+//     (`suggestionId`), it marks it resolved, so the ids in a sent message stay addressable.
 // The file's text is read only when a verb needs it: to rebase an existing sidecar, to place an
 // anchor, to stamp a fingerprint. `status` runs on every viewer open, a file the viewer refuses
 // above 2 MB included, so on a file with no sidecar it stats the file and reads nothing (statFile).
+// The verbs that change the FILE (reject, reject-all) fence on its mtime too, refuse a file that is
+// not UTF-8 text (`not-text`) or would exceed the 2 MB cap (`too-large`) before any write, write the
+// sidecar first and the file second, and put the prior sidecar back if the file write fails — the
+// order track-edit uses, so a reader never finds a file whose changes its sidecar does not describe.
 //
 // Vendored code: vendor/track-changents (MIT, LICENSE beside it).
 
@@ -41,9 +50,10 @@ import { fileURLToPath } from 'node:url';
 import engine from '../vendor/track-changents/engine.js';
 import {
   findVaultRoot, storePathFor, relPathFor, configPathFor, trackedPaths, untrackedPaths,
-  trackedClosure, isTrackedFile, loadStoreStatus, saveStore, STORE_VERSION,
+  trackedClosure, isTrackedFile, loadStoreStatus, saveStore, pruneIfClean, STORE_VERSION,
 } from '../vendor/track-changents/store-io.mjs';
 import { addReply } from '../vendor/track-changents/cli/track-reply.mjs';
+import { decodeTextOrNull } from '../vendor/track-changents/cli/track-edit.mjs';
 
 // ── constants ───────────────────────────────────────────────────────
 
@@ -58,11 +68,13 @@ export const LOG_SUFFIX = '.comments-log.jsonl';
 // and the vendored CLIs read and write.
 const CONFIG_VERSION = 2;
 
-// Slice 1 verbs. Slice 2 adds accept, reject, accept-all, reject-all; Slice 5 adds save. The
-// verbs that write the FILE (not only the sidecar) — reject, reject-all, save — also fence on
-// fileMtimeNs (requireFence with 'file-moved') and call checkTooLarge before any write; no Slice
-// 1 verb does either.
-const VERBS = new Set(['status', 'set-tracked', 'comment', 'reply', 'resolve', 'log-edit', 'log-send']);
+// The verbs through Slice 2; Slice 5 adds save. The verbs that write the FILE (not only the
+// sidecar) — reject, reject-all, and later save — also fence on fileMtimeNs (requireFence with
+// 'file-moved') and check the text (not-text, too-large) before any write; no other verb does.
+const VERBS = new Set([
+  'status', 'set-tracked', 'comment', 'reply', 'resolve', 'log-edit', 'log-send',
+  'accept', 'accept-all', 'reject', 'reject-all',
+]);
 
 // ── outcome classes ─────────────────────────────────────────────────
 
@@ -389,18 +401,22 @@ function openRegular(ctx) {
 // the fingerprint this script stamps equals theirs. The mtime comes from the same descriptor the
 // text is read through, taken before the read: a file that changes between the two then carries
 // the older stamp, so the next fenced write refuses and the caller reloads, rather than a newer
-// stamp over text the caller never saw.
+// stamp over text the caller never saw. `isText` says whether the bytes ARE UTF-8 text (no NUL
+// byte, no invalid sequence — track-edit's decodeTextOrNull, the same judgement the CLI makes):
+// when they are not, `text` is the lossy decode the fingerprint needs, and the verbs that write
+// the file refuse (`not-text`) rather than write that decode back over the bytes.
 function readFile(ctx) {
   const { fd, st } = openRegular(ctx);
-  let text;
+  let buf;
   try {
-    text = fs.readFileSync(fd, 'utf8');
+    buf = fs.readFileSync(fd);
   } catch (e) {
     throw new Refusal('unreadable', `cannot read ${ctx.shown}: ${tildeText(e && e.message ? e.message : String(e))}`);
   } finally {
     try { fs.closeSync(fd); } catch { /* ignore */ }
   }
-  return { text, fileMtimeNs: st.mtimeNs.toString() };
+  const strict = decodeTextOrNull(buf);
+  return { text: strict != null ? strict : buf.toString('utf8'), isText: strict != null, fileMtimeNs: st.mtimeNs.toString() };
 }
 
 // The file opened and stat'ed, not read: for the verbs that need no text when no sidecar exists
@@ -421,11 +437,42 @@ export function checkTooLarge(shown, text) {
   }
 }
 
+// `not-text`: the verbs that write the file refuse a file whose bytes are not UTF-8 text, before
+// any write. Writing back the lossy decode would replace every invalid sequence with U+FFFD and
+// destroy the file; the sidecar-only verbs never write the file, so they take such a file as the
+// CLIs do.
+function checkIsText(shown, file) {
+  if (!file.isText) {
+    throw new Refusal('not-text', `${shown} is not UTF-8 text, so a change in it cannot be rejected from the dashboard: writing the file back would rewrite it from a lossy decode and destroy it; nothing was changed`);
+  }
+}
+
+// Apply the engine's reverse edits ({from, to, insert} in CURRENT coordinates, highest offset
+// first — the order engine.rejectSuggestions and rejectAll return them in, so no edit shifts the
+// ones after it) to a string: the CodeMirror dispatch for a file with no editor. Adapted from
+// track-changents' obsidian/src/track-rollup.js applyEditsToText with one change: an edit that
+// does not fit the text, or that reaches past the one before it, THROWS instead of being skipped.
+// A skipped edit would write a file with some changes reverted and others silently kept while
+// the sidecar says they are all gone; a thrown one is a program error the kernel reports as such.
+export function applyEdits(text, edits) {
+  let out = String(text == null ? '' : text);
+  let floor = out.length; // the lowest offset an applied edit reached; the next may not cross it
+  for (const e of Array.isArray(edits) ? edits : []) {
+    const from = e && e.from;
+    const to = e && (e.to == null ? e.from : e.to);
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > floor) {
+      throw new Error(`reverse edit ${JSON.stringify(e)} does not fit the text (${out.length} chars, next edit must end at or before ${floor})`);
+    }
+    out = out.slice(0, from) + (e.insert == null ? '' : String(e.insert)) + out.slice(to);
+    floor = from;
+  }
+  return out;
+}
+
 // Atomic write of a file's new text, for the verbs that change file bytes (reject, save): a
 // temp file in the same directory whose name does not end in .json (so the other hosts' sidecar
 // scans skip it), written through the realpath (never over a symlink), mode preserved, renamed
-// into place. Returns the new mtime string. Nothing in Slice 1 calls it; it is the seam Slice 2's
-// reject and Slice 5's save write through.
+// into place. Returns the new mtime string. Reject writes through it; Slice 5's save will too.
 export function writeFileAtomic(absPath, text) {
   const real = fs.realpathSync(absPath);
   const st = fs.statSync(real);
@@ -560,10 +607,26 @@ function validateAnchor(anchor) {
 // The comment object in addComment's exact shape (cli/track-comment.mjs): id `${now}-${idx}`,
 // author `you`, no authorId, ts, anchor (a passage only), body, replies [], resolved false. A
 // whole-file comment has no anchor and the id `${now}-0`. `target` (a region on an image or a
-// PDF page, Slices 3 and 4) passes through untouched.
-export function buildComment(text, args, now) {
+// PDF page, Slices 3 and 4) passes through untouched. A CHANGE comment (`args.suggestionId`, the
+// Reply on a change's card) has no anchor and no target, carries `suggestionId`, and takes its id
+// from the change's current offset the way the other hosts' change threads do; the change must be
+// pending in `suggestions`, else `{error: 'no-change'}`. The other hosts bind a thread to a change
+// on this field (track-edit --thread sets it on a passage comment too), so accept's resolve pass
+// and the panel's card both read it.
+export function buildComment(text, args, now, suggestions) {
   const note = requireNote(args);
   let c;
+  if (args.suggestionId != null) {
+    if (args.anchor != null) throw new BadRequest('a change comment (suggestionId) takes no anchor');
+    if (args.target != null) throw new BadRequest('a change comment (suggestionId) takes no target');
+    if ((typeof args.suggestionId !== 'string' && typeof args.suggestionId !== 'number') || args.suggestionId === '') {
+      throw new BadRequest('suggestionId must be a non-empty string');
+    }
+    const op = (suggestions || []).find((s) => s && String(s.id) === String(args.suggestionId));
+    if (!op) return { error: 'no-change' };
+    c = { id: `${now}-${engine.span(op).a}`, author: AUTHOR, ts: now, suggestionId: op.id, body: note, replies: [], resolved: false };
+    return { comment: c };
+  }
   if (args.anchor == null) {
     c = { id: `${now}-0`, author: AUTHOR, ts: now, body: note, replies: [], resolved: false };
   } else {
@@ -636,7 +699,8 @@ function doStatus(ctx) {
 }
 
 // comment, reply, resolve: fence on the sidecar, load, decide, then write. `plan(store, text)`
-// runs every check the verb itself can refuse on (the anchor, the comment id) and returns the
+// runs every check the verb itself can refuse on (the anchor, the comment id, the change id a
+// change comment binds to) and returns the
 // step that changes the store; it runs BEFORE the landmark, so a refused verb leaves the disk as
 // it found it. Ordered the other way, a passage comment whose passage was edited away between the
 // selection and Enter left an empty `.trackchanges/` beside a loose file — a root for every later
@@ -666,15 +730,22 @@ function withSidecar(ctx, create, plan) {
   return reply(ctx, { root, paths, store: reloadSaved(ctx, paths, file.text), ...file });
 }
 
+function noChange(ctx, ids) {
+  const list = ids.map(String);
+  const what = list.length === 1 ? `change ${list[0]} is` : `changes ${list.join(', ')} are`;
+  return new Refusal('no-change', `${what} no longer pending in ${ctx.shown} — reload and retry`);
+}
+
 function doComment(ctx) {
   return withSidecar(ctx, true, (store, text) => {
-    const built = buildComment(text, ctx.args, Date.now());
+    const built = buildComment(text, ctx.args, Date.now(), store ? store.suggestions : []);
     if (built.error === 'anchor-not-found') {
       throw new Refusal('anchor-not-found', `the selected passage is no longer in ${ctx.shown} — reload and select it again`);
     }
     if (built.error === 'anchor-ambiguous') {
       throw new Refusal('anchor-ambiguous', `the selected passage occurs more than once in ${ctx.shown} with the same surroundings, so a comment on it could not be placed again later — select more of the text around it`);
     }
+    if (built.error === 'no-change') throw noChange(ctx, [ctx.args.suggestionId]);
     return (s) => { s.comments.push(built.comment); };
   });
 }
@@ -700,6 +771,139 @@ function doResolve(ctx) {
     if (!findComment(store, id)) throw new Refusal('no-comment', `comment ${String(id)} is not among the comments for ${ctx.shown} — reload and retry`);
     return (s) => { findComment(s, id).resolved = ctx.args.on; };
   });
+}
+
+// ── accept and reject ───────────────────────────────────────────────
+
+function requireIds(ctx) {
+  const ids = ctx.args.ids;
+  if (!Array.isArray(ids) || !ids.length) throw new BadRequest(`${ctx.verb} needs ids: a non-empty array of change ids`);
+  for (const id of ids) {
+    if ((typeof id !== 'string' && typeof id !== 'number') || id === '') throw new BadRequest('every change id must be a non-empty string');
+  }
+  return ids;
+}
+
+// The file and its sidecar for a decision, checked in the order every fenced verb uses: the
+// request's shape (a missing fence key is a caller bug whatever the disk says), the file, the
+// sidecar fence, for the file-writing verbs the file fence too, the config, then the load. `store`
+// is null when there is no sidecar, which for a decision means nothing is pending.
+function loadForDecision(ctx, writesFile) {
+  for (const k of writesFile ? ['storeMtimeNs', 'fileMtimeNs'] : ['storeMtimeNs']) {
+    if (typeof ctx.fence[k] !== 'string') throw new BadRequest(`fence.${k} is required for ${ctx.verb}`);
+  }
+  const file = readFile(ctx);
+  const root = findVaultRoot(ctx.abs);
+  const paths = root ? pathsFor(root, ctx.abs) : null;
+  requireFence(ctx, 'storeMtimeNs', paths ? statNs(paths.storePath) : null, 'store-moved', `the comments for ${ctx.shown}`);
+  if (writesFile) requireFence(ctx, 'fileMtimeNs', file.fileMtimeNs, 'file-moved', `the file ${ctx.shown}`);
+  if (paths) checkConfig(ctx, paths);
+  const store = root ? loadOrRefuse(ctx, paths, file.text) : null;
+  return { file, root, paths, store };
+}
+
+// The pending changes a verb decides, as toHunks rows in document order: every one for the -all
+// verbs (none pending refuses no-change), else the caller's ids, each of which must still be
+// pending. A change a later track-edit coalesced away, or one an earlier decision removed, refuses
+// `no-change` by id and the whole request with it — nothing is decided under a name that no longer
+// means what the caller saw. The rows carry the store's own id values, which the engine filters by.
+function decidedChanges(ctx, store, all) {
+  const hunks = store ? engine.toHunks(store.suggestions) : [];
+  if (all) {
+    if (!hunks.length) throw new Refusal('no-change', `no changes are pending in ${ctx.shown} — reload and retry`);
+    return hunks;
+  }
+  const want = requireIds(ctx).map(String);
+  const byId = new Set(hunks.map((h) => String(h.id)));
+  const missing = want.filter((id) => !byId.has(id));
+  if (missing.length) throw noChange(ctx, missing);
+  const set = new Set(want);
+  return hunks.filter((h) => set.has(String(h.id)));
+}
+
+// What the log remembers of a decision: the ids and their texts at the time, so the decision
+// survives the change leaving the sidecar (and deriveUnsent counts one per element).
+function changesOf(hunks) {
+  return hunks.map((h) => ({ id: h.id, oldText: h.oldText, newText: h.newText }));
+}
+
+// The sidecar after a decision, or null once pruneIfClean has removed it. An emptied sidecar (no
+// changes, no comments, no detached ops — pruneIfClean's own judgement, re-read from disk) is
+// deleted, so the file returns to the absent state and the client renders it as such; a comment,
+// resolved or not, keeps the sidecar, as does a detached op the person has not dealt with.
+function afterDecision(ctx, paths, store, text) {
+  if (pruneIfClean(paths.storePath, store)) return null;
+  return reloadSaved(ctx, paths, text);
+}
+
+// accept / accept-all: the engine drops the records and the file is untouched (a change's effect
+// is already in the text). Every comment bound to an accepted change by `suggestionId` is marked
+// resolved and KEPT — a stated divergence from the Obsidian host, which drops them — so the ids a
+// sent message named still answer to track-reply. The match is on the field alone, anchor or not:
+// track-edit --thread gives a passage comment a suggestionId while it keeps its anchor.
+function doAccept(ctx, all) {
+  const { file, root, paths, store } = loadForDecision(ctx, false);
+  const decided = decidedChanges(ctx, store, all);
+  const ids = decided.map((h) => h.id);
+  const set = new Set(ids.map(String));
+  store.suggestions = (all ? engine.acceptAll(store.suggestions) : engine.acceptSuggestions(store.suggestions, ids)).suggestions;
+  for (const c of store.comments) {
+    if (c && c.suggestionId != null && set.has(String(c.suggestionId))) c.resolved = true;
+  }
+  saveStore(root, paths.storePath, store, file.text);
+  appendLog(paths.logPath, logEntry('accept', { changes: changesOf(decided) }));
+  return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, file.text), ...file }, { accepted: ids });
+}
+
+// Put the sidecar back as it was before a reject whose file write failed: the prior bytes, or
+// nothing when there were none (a reject always finds a sidecar, so that branch is a guard).
+// Replaced by temp-and-rename like every other sidecar write, with a name no .json scan matches.
+function restoreSidecar(storePath, prior) {
+  if (prior == null) { fs.unlinkSync(storePath); return; }
+  const tmp = `${storePath}.romp-fc-restore-${process.pid}.tmp`;
+  fs.writeFileSync(tmp, prior);
+  fs.renameSync(tmp, storePath);
+}
+
+// reject / reject-all: the engine's reverse edits give the new text, applied by applyEdits and
+// checked against the file before anything is written (not-text, too-large). Then the order
+// track-edit uses: the sidecar first, saved against the NEW text so its fingerprint describes the
+// file about to exist, then the file through writeFileAtomic; if the file write fails the prior
+// sidecar bytes go back and the verb refuses `unreadable` with the OS text. The survivors come
+// back from the engine remapped into post-reject coordinates; reloading the saved sidecar against
+// the new text re-verifies them the way every later load will.
+function doReject(ctx, all) {
+  const { file, root, paths, store } = loadForDecision(ctx, true);
+  const decided = decidedChanges(ctx, store, all);
+  const ids = decided.map((h) => h.id);
+  checkIsText(ctx.shown, file);
+  for (const h of decided) {
+    // The load-time rebase placed every kept op where its text is; a row that disagrees with the
+    // file is an invariant broken upstream, and a reject written from it would eat other text.
+    if (file.text.slice(h.curFrom, h.curTo) !== h.newText) {
+      throw new Error(`change ${h.id} does not match ${ctx.shown} at ${h.curFrom}..${h.curTo} after the rebase; nothing was changed`);
+    }
+  }
+  const res = all ? engine.rejectAll(store.suggestions) : engine.rejectSuggestions(store.suggestions, ids);
+  const newText = applyEdits(file.text, res.edits);
+  checkTooLarge(ctx.shown, newText);
+  let prior = null;
+  try { prior = fs.readFileSync(paths.storePath); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+  store.suggestions = res.suggestions;
+  saveStore(root, paths.storePath, store, newText);
+  let fileMtimeNs;
+  try {
+    fileMtimeNs = writeFileAtomic(ctx.abs, newText);
+  } catch (e) {
+    const why = tildeText(e && e.message ? e.message : String(e));
+    let restored = 'the comments file was put back as it was and nothing was changed';
+    try { restoreSidecar(paths.storePath, prior); } catch (e2) {
+      restored = `the comments file could not be put back either (${tildeText(e2 && e2.message ? e2.message : String(e2))}) — reload before doing anything else`;
+    }
+    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${why}; ${restored}`);
+  }
+  appendLog(paths.logPath, logEntry('reject', { changes: changesOf(decided) }));
+  return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, newText), text: newText, fileMtimeNs }, { rejected: ids });
 }
 
 // The folder entry that tracks a file's directory: `<dir>/` relative to the root. A file at the
@@ -880,6 +1084,10 @@ const HANDLERS = {
   resolve: doResolve,
   'log-edit': doLogEdit,
   'log-send': doLogSend,
+  accept: (ctx) => doAccept(ctx, false),
+  'accept-all': (ctx) => doAccept(ctx, true),
+  reject: (ctx) => doReject(ctx, false),
+  'reject-all': (ctx) => doReject(ctx, true),
 };
 
 // One request in, one result object out; throws Refusal or BadRequest (or a program error).
