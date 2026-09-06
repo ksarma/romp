@@ -113,7 +113,7 @@ test("boot default: a framed pane with a zero viewport is hidden until the first
   });
 });
 
-test("an unframed page (VS Code, standalone) is never hidden by the probe", () => {
+test("an unframed page (a standalone kernel page) is never hidden by the probe", () => {
   const { win, emitted } = makeWindow({ framed: false, innerWidth: 0, innerHeight: 0 });
   withWindow(win, () => {
     const fm = new FederationManager(); fm.app = "fleet";
