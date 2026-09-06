@@ -346,6 +346,11 @@ def cmd_plan(args):
     fetch(root, args.no_fetch)
     base_sha = git("rev-parse", remote_main(), cwd=root)
     name = args.name or pick_name(root)
+    if os.path.exists(state_path(root, name)) and not args.force:
+        old = load_state(root, name)
+        if old.get("assembly", {}).get("head"):
+            raise Fail("%s is already assembled (pulled: %s); re-planning would forget that. Use a new --name, or --force."
+                       % (name, ", ".join("#%d" % n for n in old.get("pulled", [])) or "none"), code=2)
     prs = gh_json("pr", "list", "--state", "open", "--limit", str(PR_LIST_LIMIT), "--json", PR_FIELDS, cwd=root)
     by_n = {pr["number"]: pr for pr in prs}
 
@@ -467,6 +472,7 @@ def prepare_worktree(root, name):
             git("merge", "--abort", cwd=wt)
         git("checkout", "--quiet", "-B", br, remote_main(), cwd=wt)
     else:
+        git("worktree", "prune", cwd=root)    # a directory removed by hand leaves a registration that blocks -B
         git("worktree", "add", "--quiet", "-B", br, wt, remote_main(), cwd=root)
     # rerere in the repository config: the cache (.git/rr-cache) is shared by every worktree, which
     # is what lets a re-assemble replay a resolution the batcher made once.
@@ -1137,7 +1143,9 @@ def render_body(state, inputs, cap=BODY_CAP):
 def find_batch_pr(root, state):
     if state.get("pr") and state["pr"].get("number"):
         return state["pr"]["number"]
-    rows = gh_json("pr", "list", "--state", "open", "--head", branch_of(state["name"]), "--json", "number,url", "--limit", "5", cwd=root)
+    # --state all: after the maintainer clicks merge, the PR is no longer open, and finish must
+    # still find it when summarize never recorded it (a PR opened by hand).
+    rows = gh_json("pr", "list", "--state", "all", "--head", branch_of(state["name"]), "--json", "number,url", "--limit", "5", cwd=root)
     if rows:
         state["pr"] = {"number": rows[0]["number"], "url": rows[0].get("url")}
         return rows[0]["number"]
@@ -1445,6 +1453,7 @@ def main(argv=None):
     p = sub.add_parser("plan", help="pick and order the members, predict conflicts, write the plan")
     p.add_argument("--labeled", action="store_true", help="only PRs labeled `%s`" % LABEL_LAND)
     p.add_argument("--name", help="batch name (default: today's date plus the first free letter)")
+    p.add_argument("--force", action="store_true", help="overwrite a plan that was already assembled")
     p.add_argument("--no-fetch", action="store_true")
     p.set_defaults(func=cmd_plan)
 
