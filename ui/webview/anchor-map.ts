@@ -815,8 +815,11 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
     return { blockStartLine: rawOffsetToLine(source, off), blockStartOffset: off, ...rawExtra() };
   };
   // endpoint → (block, non-whitespace index); whitespace between blocks snaps to the nearest block edge
-  const nextBlock = (from: number): number => { for (let b = from; b < idx.blocks.length; b++) if (idx.blocks[b].chars.length || idx.blocks[b].refused !== null) return b; return -1; };
-  const prevBlock = (from: number): number => { for (let b = from; b >= 0; b--) if (idx.blocks[b].chars.length || idx.blocks[b].refused !== null) return b; return -1; };
+  // a block the selection can land on or touch: it shows text, or it is a refusal with an element on the
+  // page. An html block that rendered nothing (a comment) is invisible and never in the way.
+  const visible = (b: Block): boolean => b.chars.length > 0 || (b.refused !== null && b.dom.length > 0);
+  const nextBlock = (from: number): number => { for (let b = from; b < idx.blocks.length; b++) if (visible(idx.blocks[b])) return b; return -1; };
+  const prevBlock = (from: number): number => { for (let b = from; b >= 0; b--) if (visible(idx.blocks[b])) return b; return -1; };
   const locate = (g: number, isStart: boolean): { b: number; k: number } | null => {
     if (g >= idx.total) { const b = prevBlock(idx.blocks.length - 1); return b < 0 ? null : { b, k: idx.blocks[b].chars.length }; }
     const { t, c } = topAt(idx, g);
@@ -848,11 +851,12 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   // the mapping knows about it
   for (let b = Math.min(bs, be); b <= Math.max(bs, be); b++) {
     const blk = idx.blocks[b];
-    if (blk.refused !== null) return refuse(`This selection touches ${blk.refused}; comment on it from the Raw view.`, blockExtra(blk));
+    if (blk.refused !== null && visible(blk)) return refuse(`This selection touches ${blk.refused}; comment on it from the Raw view.`, blockExtra(blk));
   }
   if (bs > be || (bs === be && ks >= ke)) return refuse("The selection is only whitespace.", rawExtra());
   for (let b = bs; b <= be; b++) {
     const blk = idx.blocks[b];
+    if (blk.refused !== null) continue;   // invisible (nothing rendered): its source travels inside the quote
     const from = b === bs ? ks : 0, to = b === be ? ke : blk.chars.length;
     for (let k = from; k < to; k++) {
       const p = blk.pos[k];
