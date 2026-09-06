@@ -53,7 +53,10 @@ full run left ~5,600 entries in `/tmp` and over a million had piled up). Still
 clean up what you create — `with tempfile.TemporaryDirectory()`,
 `self.addCleanup(shutil.rmtree, ...)`, a `tearDownClass` for a class-level
 fixture — so a fixture is gone when its test is, not at exit; bats suites use
-`mktemp -d` in `setup` and `rm -rf` it in `teardown`. Never give a tempfile
+`mktemp -d` in `setup` and `rm -rf` it in `teardown`, and stand in for any
+subject that detaches work (bin/romp's resume picker-check, reached through
+`ROMP_POSTAL_BIN`, re-created four to six test dirs per run by minting a
+serve-token after the teardown). Never give a tempfile
 call a literal directory as `dir=` (or `mktemp` a path under `/tmp`): that
 bypasses the redirect, and the hygiene test reads every test file for the
 shape. The one test that must leave the root — an AF_UNIX socket whose path
