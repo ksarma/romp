@@ -1457,7 +1457,8 @@ class Floor(unittest.TestCase):
     that does not exist (2026-09-06; popped before, which meant the default under HOME). The import-time
     half holds only if no module undoes it during collection: this module's own import leaves the floor
     in place (it popped the variable until 2026-09-06), and conftest refuses a collection that ends
-    without the floor, naming the fix."""
+    without the floor, naming the fix: a UsageError serially, and under xdist a failure per item, or the
+    controller's Interrupted when nothing was selected."""
 
     REAL_DEFAULT = os.path.realpath(os.path.join(os.path.expanduser("~"), ".config", "romp", "credential-selector"))
 
@@ -1538,6 +1539,31 @@ class Floor(unittest.TestCase):
             rc, out = self.run_pytest(d, "-n", "2", "test_floorer.py", "test_plain.py")
             self.assertEqual(rc, 0, out[-800:])
             self.assertIn("3 passed", out, out[-800:])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_under_xdist_with_nothing_selected_the_controller_stops_with_the_refusal(self):
+        # the popper under `pytest -n 2 -k <nothing>`: no item is selected, so no setup carries the held
+        # refusal, and the run ended `no tests ran` (exit status 5) with the refusal said nowhere. Now a worker
+        # whose session.items is empty sets session.shouldfail with it, which xdist carries to the controller
+        # at the worker's finish, and the controller ends the run as Interrupted with the message, once,
+        # exit status 2; the floorer under the same -k is a plain empty run
+        if importlib.util.find_spec("xdist") is None:
+            self.skipTest("pytest-xdist is not installed")
+        d = self.scratch_suite()
+        try:
+            rc, out = self.run_pytest(d, "-n", "2", "test_popper.py", "test_plain.py", "-k", "zzz_nothing")
+            self.assertEqual(rc, 2, out[-1200:])                                  # pytest's interrupted exit
+            self.assertNotIn("INTERNALERROR", out, out[-1200:])
+            self.assertEqual(out.count(self.REFUSAL), 1, out[-1200:])
+            self.assertIn("Interrupted: " + self.REFUSAL, out, out[-1200:])
+            self.assertIn(self.THE_FIX, out)
+            self.assertIn("no tests ran", out, "nothing ran")
+            self.assertNotIn("passed", out)
+            rc, out = self.run_pytest(d, "-n", "2", "test_floorer.py", "test_plain.py", "-k", "zzz_nothing")
+            self.assertEqual(rc, 5, out[-800:])                                   # no tests collected, no refusal
+            self.assertNotIn(self.REFUSAL, out, out[-800:])
+            self.assertNotIn("Interrupted", out, out[-800:])
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
