@@ -16,6 +16,26 @@ Every bug fix or feature change lands with a test (repo rule). Four suites:
 - **`*.bats`** — the shell surfaces: `bin/romp`, the launch chain, hooks,
   postal CLI. Keep them GNU/BSD-portable (CI runs bats on ubuntu).
   Run: `bats tests/*.bats`.
+  Any test whose subject shells out to tmux must isolate the tmux socket
+  directory: `load tmux-private`, `tmux_private_socket_dir "$TEST_DIR"` in
+  setup (it exports `TMUX_TMPDIR` under the test dir and creates it first;
+  tmux 3.4 silently uses the machine's default socket directory when
+  `TMUX_TMPDIR` names a missing one), and `tmux_private_kill && rm -rf
+  "$TEST_DIR"` as the last line of teardown (the kill fails when the
+  directory is already gone, since a server started under it has then
+  leaked; it has to be teardown's final status, because bats swallows a
+  failing command mid-teardown). A tmux mock on PATH
+  covers only the tests that install one: on 2026-09-06 a full bats run
+  ran `romp-manager-ensure.bats` while the machine's default tmux server
+  was down, the real manager it starts ran `tmux start-server` on the
+  default socket, and for the rest of the day the machine's tmux server was
+  the test's, carrying the run's environment inside the service's cgroup.
+  Any test whose subject binds a loopback port picks it with `load
+  free-port` + `free_port VAR...`, never a literal: a literal shared by two
+  files collided within one run (`romp-manager-ensure.bats` once used
+  `romp-manager-origin.bats`'s control port), and any literal collides when
+  two checkouts run bats at once on one machine. The helper picks below
+  the ephemeral range, so a transient source port cannot hold the pick.
 - **node suites** — live beside their sources in `ui/webview/*.test.ts` and
   `vscode-extension/src/*.test.ts`, run with `npm test` from
   `vscode-extension/`. Many pin lines of `kernel/kernel.py` as strings — run

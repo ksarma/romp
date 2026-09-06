@@ -4,6 +4,7 @@
 ROMP_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp"
 
 load free-port
+load tmux-private
 
 setup() {
     TEST_DIR="$(mktemp -d)"
@@ -80,6 +81,11 @@ MOCK
     _stub_claude "2.1.226"
 
     export PATH="$MOCK_DIR:$PATH"
+    # The romp-manager tests below start a REAL bin/romp-manager, whose startup runs `tmux start-server`,
+    # and `romp new -t` runs `tmux new-session`: the mock above takes both, and the private socket
+    # directory keeps any call that reaches the real binary off the machine's tmux server
+    # (tests/tmux-private.bash has the 2026-09-06 incident).
+    tmux_private_socket_dir "$TEST_DIR"
     unset TMUX            # default: outside tmux → attach-session branch
     # Hermetic HOME: bin/romp probes $HOME/.claude/romp-postal.mcp.json (would
     # nondeterministically append --mcp-config on a dev machine) and writes the
@@ -94,7 +100,9 @@ teardown() {
     # Tests that launch a background romp-manager record its pid in MGR_PID so we
     # always reap it (and its child kernels), even if an assertion aborted the test.
     [[ -n "${MGR_PID:-}" ]] && kill "$MGR_PID" 2>/dev/null
-    rm -rf "$TEST_DIR"
+    # The kill before the rm (a server the real tmux started must not outlive the test), and last, so
+    # its failure is teardown's status: bats swallows a failing command mid-teardown.
+    tmux_private_kill && rm -rf "$TEST_DIR"
 }
 
 # Helper — runs romp with merged stdout+stderr so BATS captures errors
