@@ -6,6 +6,7 @@ message without touching the composer. The kernel uses that leg ONLY for session
 inbound-accept setting, so a held-then-dropped banner can never read as delivered (the socket
 sends no ack). Untagged sessions must keep today's pane injection untouched. Synthetic
 fixtures only."""
+import errno
 import json
 import os
 import shutil
@@ -49,19 +50,29 @@ def _registry_row(dirpath, pid, session_id, sock, started_at=1000):
 # controller's root, which under such a TMPDIR is itself too deep (recording that had four tests
 # here failing at bind with "AF_UNIX path too long" under -n 2, 2026-09-06); without conftest,
 # gettempdir() already is that dir. A handed dir too deep to hold the socket at all (about 80
-# bytes) fails at bind, loudly, as any AF_UNIX user under it would. Either way close() removes the
-# directory. Before this the dir was pinned to "/tmp" and never removed: the pin bypassed the
-# redirect and every run left three rompsock* directories behind.
+# bytes) is refused before anything is minted there, loudly (ENAMETOOLONG naming the dir), as a bind
+# under it would fail anyway; the refusal comes first because a caller registers close() only once
+# the constructor returns, so a directory minted for a bind that then failed was one leaked
+# rompsock* directory per test, per run (the round-2 review, 2026-09-06). Either way close()
+# removes the directory. Before this the dir was pinned to "/tmp" and never removed: the pin
+# bypassed the redirect and every run left three rompsock* directories behind.
 _SUN_PATH_MAX = 104 if sys.platform == "darwin" else 108
 _SOCK_NAME = "inbox.sock"
 
 
 def _socket_dir():
+    """The socket's directory: under the private root when the path fits sun_path, else under the
+    dir the run was handed. Refuses (OSError, ENAMETOOLONG) BEFORE minting when the handed dir would
+    not fit either, so a caller that never gets an inbox has nothing to remove."""
     d = tempfile.mkdtemp(prefix="rompsock")
     if len(os.fsencode(os.path.join(d, _SOCK_NAME))) < _SUN_PATH_MAX:
         return d
     os.rmdir(d)
-    return tempfile.mkdtemp(prefix="rompsock", dir=os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir())
+    handed = os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir()
+    if len(os.fsencode(os.path.join(handed, "rompsock" + "x" * 8, _SOCK_NAME))) >= _SUN_PATH_MAX:  # mkdtemp's suffix is 8 chars
+        raise OSError(errno.ENAMETOOLONG, "the temp dir this run was handed is too deep for an AF_UNIX "
+                      "socket path (%d-byte sun_path): %s" % (_SUN_PATH_MAX, handed))
+    return tempfile.mkdtemp(prefix="rompsock", dir=handed)
 
 
 class _OneShotInbox:
@@ -73,13 +84,24 @@ class _OneShotInbox:
         self.dir = _socket_dir()
         self.path = os.path.join(self.dir, _SOCK_NAME)
         self.got = []
-        self._srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._srv.bind(self.path)
-        self._srv.listen(1)
-        self._srv.settimeout(5.0)                      # can-never-trap backstop: a never-connected inbox's
-        #                                                accept() returns instead of parking the thread
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self._srv = None
+        try:
+            self._srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self._srv.bind(self.path)
+            self._srv.listen(1)
+            self._srv.settimeout(5.0)                  # can-never-trap backstop: a never-connected inbox's
+            #                                            accept() returns instead of parking the thread
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+        except BaseException:
+            # Nothing after the mkdtemp may leave the directory standing: the caller registers
+            # close() only once this returns, so a refused bind (a filesystem without AF_UNIX
+            # support, a permission) or a thread that would not start had left one rompsock*
+            # directory per test, per run, in the handed dir.
+            if self._srv is not None:
+                self._srv.close()
+            shutil.rmtree(self.dir, ignore_errors=True)
+            raise
 
     def _run(self):
         try:
@@ -149,6 +171,42 @@ class InboxDir(unittest.TestCase):
         self.assertEqual(os.path.dirname(d), handed)
         self.assertLess(len(os.fsencode(os.path.join(d, _SOCK_NAME))), _SUN_PATH_MAX)
         self.assertEqual(os.listdir(deep), [], "the too-long candidate was removed, not left behind")
+
+    def test_a_handed_dir_too_deep_for_the_socket_is_refused_before_anything_is_minted(self):
+        # Both candidates too deep. The constructor raises with the cause and the dir named, and
+        # neither the root nor the handed dir holds a rompsock* entry: a caller that never got an
+        # inbox has nothing to close, so a directory minted for a bind that then failed was one
+        # leaked directory per test, per run.
+        deep = os.path.join(tempfile.gettempdir(), "d" * 120)
+        os.mkdir(deep)
+        self.addCleanup(shutil.rmtree, deep, ignore_errors=True)
+        with patch.dict(os.environ, {"ROMP_TESTS_SYSTEM_TMPDIR": deep}), patch.object(tempfile, "tempdir", deep):
+            with self.assertRaises(OSError) as cm:
+                _OneShotInbox()
+        self.assertEqual(os.listdir(deep), [], "nothing is minted where no socket can bind")
+        self.assertEqual(cm.exception.errno, errno.ENAMETOOLONG)
+        self.assertIn(deep, str(cm.exception))
+
+    def test_a_refused_bind_removes_the_minted_dir(self):
+        # The length check above is the case the suite meets; a bind can be refused for other reasons
+        # (a filesystem without AF_UNIX support, a permission). Stubbed here: the constructor
+        # raises, and the directory _socket_dir minted for it is gone.
+        handed = os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir()
+        if len(os.fsencode(os.path.join(handed, "rompsock" + "x" * 8, _SOCK_NAME))) >= _SUN_PATH_MAX:
+            self.skipTest("the temp dir this run was handed is itself too deep for sun_path")   # refused before any bind
+        made = []
+        real = _socket_dir
+
+        def recording():
+            made.append(real())
+            return made[-1]
+        with patch.object(sys.modules[__name__], "_socket_dir", recording), \
+                patch.object(socket.socket, "bind", side_effect=OSError(errno.EACCES, "stub")):
+            with self.assertRaises(OSError) as cm:
+                _OneShotInbox()
+        self.assertEqual(cm.exception.errno, errno.EACCES)
+        self.assertEqual(len(made), 1)
+        self.assertFalse(os.path.exists(made[0]), "a refused bind leaves no rompsock* directory")
 
     def test_the_rule_is_exercised_under_the_limit_by_a_real_bind(self):
         # The constant is the platform's, not a guess: a socket at exactly _SUN_PATH_MAX - 1 bytes
