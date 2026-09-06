@@ -5755,8 +5755,9 @@ function showTabMenu(e: MouseEvent, id: string) {
         }
         // SHOW WHEN FOLDED (the user 2026-09-06): keep this tab visible under its folded group. A
         // per-browser view preference like the fold itself (romp:tabgroups), keyed by the section the
-        // user sees (sectionKey: the local tag's id, else the name) and the sid, so a move to another
-        // group starts unpinned. Only while the strip is sectioned and the session has a home tag —
+        // user sees (pinKey: the local tag's id, or the name for a member a remote host's tag holds)
+        // and the sid, so a move to another group starts unpinned. Only while the strip is sectioned
+        // and the session has a home tag —
         // there is no fold to show through otherwise. The row wears the home tag's chip and the menus'
         // ✓ when on; the write prunes the pins of tags and sessions that are gone (this is the one
         // write path, and a prune here moves nothing on screen), notifies (TABGROUPS_EVENT), and the
