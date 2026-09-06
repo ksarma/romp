@@ -38,6 +38,18 @@ class BuildGating(unittest.TestCase):
         self.assertIn('m.type==="bars"', boot)
         self.assertIn("panel.applyBars(m)", boot)
 
+    def test_the_host_shim_wraps_its_listener_through_the_page_collector_when_there_is_one(self):
+        # The page's performance collector (ui/webview/perf-telemetry.ts) is published on window.__rompPerf by
+        # federation.js, which the timeline page loads before this boot (test_browser_owned_order pins the
+        # order). Wrapped, the frames the boot dispatches are timed by type like every pane's, so the view's
+        # hover/activeChat/revealEvent/models handling is not left inside federation's fed:<type> bracket
+        # (2026-09-06); without a collector the plain listener is registered.
+        boot = km._TIMELINE_BOOT
+        self.assertIn("var onFrame=function(ev){var m=ev.data;if(!m||!panel)return;", boot)
+        self.assertIn('window.addEventListener("message",(window.__rompPerf&&window.__rompPerf.wrapFrameHandler)'
+                      "?window.__rompPerf.wrapFrameHandler(onFrame):onFrame);", boot)
+        self.assertEqual(boot.count('addEventListener("message"'), 1, "one listener, the wrapped one")
+
     def test_the_lanes_skeleton_does_not_parse_any_transcript(self):
         # cold-start speed (the user 2026-06-26): a fresh kernel (the refresh button = POST /restart) re-parses
         # every transcript (~1.3s). The lanes don't need it — derive them from tmux + goals + the transcript
@@ -101,6 +113,49 @@ class PushSplit(unittest.TestCase):
         self.assertEqual(bars["turns"], {"S": [{"id": "b1"}]}, "the heavy bars ride the {type:bars} message")
         for k in ("judging", "messages"):
             self.assertIn(k, bars, "the whole time-plotted detail rides the bars message")
+
+    def test_a_steady_push_of_an_unchanged_timeline_sends_no_bars_and_a_rebuilt_one_sends_a_slotted_delta(self):
+        """The pusher hands _send_slot the same bars object while the cached timeline's identity holds (_bars_wire),
+        so a delta client's unchanged cycle runs no per-entry compare and sends nothing. When the timeline is
+        rebuilt the bars cross as a delta frame that goes through _client_send: the slot key is on the client
+        while it goes (what the drop log and the bench harness read), where a bare send left it unset."""
+        sent = []
+        client = {"app": "timeline", "sent": {}, "alive": True, "delta": True}
+        client["send"] = lambda s: sent.append((client.get("curSlot"), json.loads(s)))
+        SKEL = {"type": "timeline", "sessions": [{"id": "S"}], "turns": {}, "judging": [],
+                "messages": [], "now": 1, "usage": {}}
+        FULL1 = {"type": "timeline", "sessions": [{"id": "S"}], "turns": {"S": [{"id": "b1"}]},
+                 "judging": [], "messages": [], "now": 1}
+        FULL2 = {"type": "timeline", "sessions": [{"id": "S"}], "turns": {"S": [{"id": "b1"}, {"id": "b2"}]},
+                 "judging": [], "messages": [], "now": 2}
+        holder = {"tl": FULL1}
+        calls = []
+        o_bt, o_ct, o_tmux, o_sig, o_frac, o_order, o_wire = (km.build_timeline, km._cached_timeline, km._tmux_sessions,
+                                                             km._fleet_view_sig, km._DELTA_MAX_FRACTION, km._client_order,
+                                                             km._bars_wire)
+        km.build_timeline = lambda now, tmux, with_bars=True, live_only=False: (holder["tl"] if with_bars else SKEL)
+        km._cached_timeline = lambda now, tmux, sig, connect=False: holder["tl"]
+        km._tmux_sessions = lambda: {}
+        km._fleet_view_sig = lambda now, tmux: ("sig",)
+        km._DELTA_MAX_FRACTION = 10.0         # synthetic payloads are tiny: the size guard would send the whole instead
+        km._client_order = lambda *a: calls.append(1) or o_order(*a)
+        try:
+            km._push([client])                # the skeleton and the keyed full bars
+            km._push([client])                # the same timeline object: the same bars object
+            n_sent, n_calls = len(sent), len(calls)
+            km._push([client])
+            self.assertEqual(len(sent), n_sent, "an unchanged timeline sends no bars frame")
+            self.assertEqual(len(calls), n_calls, "…and runs no per-entry compare to find that out")
+            holder["tl"] = FULL2              # a rebuild: a new timeline object with one more bar
+            km._push([client])
+        finally:
+            (km.build_timeline, km._cached_timeline, km._tmux_sessions, km._fleet_view_sig, km._DELTA_MAX_FRACTION,
+             km._client_order, km._bars_wire) = o_bt, o_ct, o_tmux, o_sig, o_frac, o_order, o_wire
+        bars = [(k, m) for k, m in sent if m["type"] in ("bars", "delta")]
+        self.assertEqual([m["type"] for _k, m in bars], ["bars", "delta"])
+        self.assertEqual([k for k, _m in bars], [("timelinebars",), ("timelinebars",)],
+                         "both bars frames went with the slot key on the client")
+        self.assertEqual(set(bars[1][1]["coll"]["turns"]["set"]), {"S\u001fb2"}, "one bar crosses")
 
 
 class DeadLaneWindow(unittest.TestCase):
