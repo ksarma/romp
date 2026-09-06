@@ -30214,6 +30214,8 @@ def _shim(app, v=0):
     # pane sat silent through rebuilds).
     return """
 (function(){var queue=[],ws=null,everConnected=false;
+var queuedDiag=0,DIAG_QUEUE_MAX=20;   // clientDiag rows waiting in `queue` for a reconnect, capped (an outage must not pile up breadcrumbs); other queued messages are untouched
+var failedConnects=0,firstFailT=0;   // handshakes that never OPENED since the last open: reported as ONE wsconnfail row on the next open, never one wsclose per redial
 // This pane's DASHBOARD id. ?wid= when the host supplies one (the VS Code extension builds its own pane
 // URLs); otherwise the shell's per-tab id from sessionStorage, which is scoped to the browsing context and
 // shared with same-origin iframes — so every pane of one window agrees, a second window differs, and no
@@ -30250,7 +30252,7 @@ function selfStale(){selfBar("romp lost the live connection, so what you see may
 // the kernel's connect-time push has landed, which IS the resync the banner offers a reload for. Fires on
 // the first non-keepalive frame after a reconnect — the event, not a timer. A BUILD prompt is untouched:
 // new code is not delivered by a resync, so only a reload can answer that one.
-function clearStale(){if(staleTimer){clearTimeout(staleTimer);staleTimer=0;}   // armed but never shown → nothing to see
+function clearStale(){stalePending="";   // armed but never shown → nothing to see
 if(window.parent!==window){try{window.parent.postMessage({romp:"wsFresh"},"*");}catch(e){}}
 else{var b=document.getElementById("romp-stale-self");if(b&&b.dataset.kind==="conn")b.remove();}}
 // A pane the user cannot SEE never interrupts them about ITS OWN staleness (the user 2026-08-15: the
@@ -30273,14 +30275,24 @@ staleDiag("stale-raise",why);
 if(window.parent!==window){try{window.parent.postMessage({romp:"wsStale"},"*");}catch(e){}}else{selfStale();}}
 // ARM it rather than show it (the user 2026-08-01): the resync almost always lands within a beat of the
 // reconnect, so raising immediately made the prompt FLASH up and straight back down on nearly every
-// dashboard open — visual noise for a problem that fixed itself. A short arming window lets the common
-// case pass in silence, and clearStale below disarms it the moment the resync frame arrives.
-// Why a timer here, against the standing preference for events: the prompt asserts "your view MAY be
-// stale", and the only proof it is NOT is the resync landing — an event we key on. The only proof it IS
-// is that resync FAILING to arrive, which has no event to key on at all. So the window is exactly the
-// unavoidable minimum, and the event still wins whenever it exists.
-var staleTimer=0;
-function armStale(why){if(staleTimer)return;staleTimer=setTimeout(function(){staleTimer=0;raiseStale(why);},1000);}
+// dashboard open — visual noise for a problem that fixed itself. clearStale above disarms it the moment
+// the resync frame arrives. The arm used to be a 1s TIMER, on the argument that "the resync failed to
+// arrive" has no event of its own. It has two: the SECOND KEEPALIVE landing on the reconnected socket
+// while the resync is still pending — one full heartbeat period, bracketed by two kernel heartbeats on
+// this very socket with no resync between them: the kernel is alive and talking to it and has not
+// resynced it, exactly the state the prompt warns about — and the reconnected socket CLOSING again before
+// its resync — no frame is coming on it. Both fire in onmessage/onclose below. ONE keepalive is not the
+// event: the heartbeat thread can enqueue a beat the instant a socket is accepted, ahead of the connect
+// push, and raising on it flashed the banner exactly as the timer did. The timer was approximating all
+// this, and on a board of several hundred cards the connect push is a multi-megabyte frame that takes
+// longer than a second to land over a forwarded or tunnelled link, so it fired a beat BEFORE the resync
+// on nearly every reconnect. stalePending holds the PATH that armed ("reconnect"/"foreground") for the
+// breadcrumb; empty = not armed; staleKa counts the keepalives since the arm. pendingWhy carries the
+// foreground path's reason to the reconnect that arms for it; openSock/openT identify the socket that
+// last opened (the close rule applies to a socket that OPENED and armed, never to the one the foreground
+// path itself closes).
+var stalePending="",staleKa=0,pendingWhy="",openSock=null,openT=0;
+function armStale(why){stalePending=why;staleKa=0;}
 // BUILD drift (the user 2026-07-13): the keepalive carries the kernel's current dist token (dv); a page whose
 // baked LOADEDV is older is running outdated code against newer kernel state — prompt a reload (never auto).
 // In the dashboard the raise routes to the shell's #rstale banner (build:1 → its BUILDMSG); standalone pages
@@ -30300,12 +30312,15 @@ ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponen
 // socket dropped (the pane's romp loader) needs the socket's RETURN as its event to come back down. The
 // first connect deliberately doesn't fire it — nothing is waiting on it, and the loader must stay up until
 // real content lands.
-ws.onopen=function(){lastRecv=Date.now();netState("up");var wasReconn=everConnected;everConnected=true;for(var i=0;i<queue.length;i++)ws.send(queue[i]);queue=[];
+ws.onopen=function(){lastRecv=Date.now();openT=lastRecv;openSock=this;netState("up");var wasReconn=everConnected;everConnected=true;for(var i=0;i<queue.length;i++)ws.send(queue[i]);queue=[];queuedDiag=0;
+if(failedConnects){send({type:"clientDiag",surface:"pane-shim",what:"wsconnfail",data:{app:APP,attempts:failedConnects,firstFailMs:Date.now()-firstFailT}});failedConnects=0;firstFailT=0;}   // the redials that never opened since the last open, as ONE row: how many, and how long ago the first failed
 if(wasReconn){var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;restartAnnounced=0;   // one-shot: spent here
-if(!ann)armStale("reconnect");   // T217: an ANNOUNCED restart's reconnect skips the arm — the resync lands in a beat and the flash was pure noise; the resync-never-arrives case re-raises through the keepalive watchdog's forced second reconnect, which arms as always
-freshPending=true;try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}};
+if(!ann)armStale(pendingWhy||"reconnect");   // T217: an ANNOUNCED restart's reconnect skips the arm — the resync lands in a beat and the flash was pure noise; a restart that never comes back stays loud through the disconnected state itself, and a SECOND reconnect arms as always
+pendingWhy="";freshPending=true;try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}};
 ws.onmessage=function(ev){lastRecv=Date.now();var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
-if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild();return;}   // keepalive: stamped lastRecv above; carries the build token (drift → reload banner); nothing for the bundle to render
+if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild();
+if(stalePending&&++staleKa>=2){var sw=stalePending;stalePending="";raiseStale(sw);}   // the SECOND keepalive since the arm, no resync between: a full heartbeat period on THIS socket with the kernel alive, talking to it, and not resyncing it — the view IS stale. (One keepalive alone can be a beat queued at accept, ahead of the resync frame.)
+return;}   // keepalive: stamped lastRecv above; carries the build token (drift → reload banner); nothing for the bundle to render
 // T217: the kernel announces its own death (one final frame from the dying process). Latch it: the
 // imminent close is EXPECTED — onclose redials eagerly instead of on the blind cadence, and the
 // reconnect skips the stale-banner arm once (the resync is seconds away; a restart that never
@@ -30324,10 +30339,23 @@ else if(msg&&DELTA_KINDS[msg.type]){var keys=msg._keys;delete msg._keys;LAST[msg
 if(window.__rompFed){window.__rompFed.inbound("",msg);}else{window.dispatchEvent(new MessageEvent("message",{data:msg}));}};
 // onclose: flag the shell, RE-SHOW this pane's romp loader (the user 2026-06-29, who wanted the swirling loader on
 // kernel restart), + RETRY (don't blind-reload — on a real outage the reload just fails into a dead page).
-ws.onclose=function(){netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}
+// Every close of a socket that OPENED leaves a breadcrumb with the CLOSE CODE and reason: a kernel-side drop
+// (the client fell WS_QUEUE_BYTES behind — shutdown, no close frame → 1006), a clean kernel restart, a proxy
+// timeout and the watchdog's own close all looked identical from here, and a day of drops read as a flaky
+// network. send() queues while the socket is down, so the row rides the reconnect. A handshake that never
+// opened fires onclose too (every 1.5 s redial of an outage — an 8 h outage is ~19k of them, and their timings
+// would be the PREVIOUS socket's): those are counted and reported as one wsconnfail row on the next open,
+// never queued one by one.
+ws.onclose=function(ev){netState("down");
+if(openSock===this){try{send({type:"clientDiag",surface:"pane-shim",what:"wsclose",data:{app:APP,code:ev?ev.code:-1,reason:(ev&&ev.reason)||"",wasClean:!!(ev&&ev.wasClean),sinceOpenMs:openT?Date.now()-openT:-1,quietMs:lastRecv?Date.now()-lastRecv:-1,everConnected:everConnected}});}catch(e){}}
+else{if(!failedConnects)firstFailT=Date.now();failedConnects++;}
+if(stalePending&&openSock===this){var cw=stalePending;stalePending="";raiseStale(cw+"-closed");}   // the reconnected socket died before its resync: nothing is coming on it, and the view IS stale
+try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}
 setTimeout(connect,(restartAnnounced&&Date.now()-restartAnnounced<30000)?250:1500);};   // announced death → tight redial (the frame is the event; the blind 1.5s stays for unannounced drops)
 ws.onerror=function(){try{ws.close();}catch(e){}};}
-function send(m){var s=JSON.stringify(m);if(ws&&ws.readyState===1)ws.send(s);else queue.push(s);}
+function send(m){var s=JSON.stringify(m);if(ws&&ws.readyState===1){ws.send(s);return;}
+if(m&&m.type==="clientDiag"){if(queuedDiag>=DIAG_QUEUE_MAX)return;queuedDiag++;}   // breadcrumbs waiting for a reconnect are capped; everything else queues as before
+queue.push(s);}
 // The delta reassembler. DELTA_KINDS mirrors the kernel's _DELTA_SLOTS: which top-level collections of each
 // slot are keyed, and how — "dict" (an object keyed by its own keys), "byid" (a list keyed by item id),
 // "bykeys:a,b" (a list keyed by a composite of item fields), "dictlist:id" (an object of lists, each item keyed by its
@@ -30379,10 +30407,11 @@ if(ws.readyState===0&&Date.now()-connT>15000){try{ws.close();}catch(e){}return;}
 if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 // visibility fast-path (the user 2026-07-05): a BACKGROUNDED tab has its timers throttled, so the 5s watchdog
 // above can lag and the browser may have quietly dropped the socket while it slept. The instant the tab is
-// foregrounded, if the socket isn't open or has gone quiet past the watchdog window, treat the view as stale —
-// prompt at once AND force a reconnect (which resyncs live), rather than leaving the user on a frozen frame.
+// foregrounded, if the socket isn't open or has gone quiet past the watchdog window, treat the view as stale:
+// force a reconnect (which resyncs live) and hand the reconnect its reason, so ITS arm reads "foreground" —
+// the prompt then follows the same two events as any reconnect, rather than leaving the user on a frozen frame.
 document.addEventListener("visibilitychange",function(){if(document.visibilityState!=="visible"||!everConnected)return;
-if(!ws||ws.readyState!==1||Date.now()-lastRecv>STALE_MS){armStale("foreground");freshPending=true;
+if(!ws||ws.readyState!==1||Date.now()-lastRecv>STALE_MS){pendingWhy="foreground";freshPending=true;
 if(ws&&ws.readyState===1)abandon();else{try{if(ws&&ws.readyState===0)ws.close();}catch(e){}}   // OPEN-but-quiet → abandoned + redialed below, now; stuck-CONNECTING → aborted, onclose retries
 if(!ws||ws.readyState===3)connect();}});})();
 """ % (app, int(v), app, app)

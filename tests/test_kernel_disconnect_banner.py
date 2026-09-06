@@ -29,8 +29,8 @@ class DisconnectBanner(unittest.TestCase):
         js = km._shim("chat")
         # reports up/down to the shell
         self.assertIn('postMessage({romp:"wsState",app:APP,state:s}', js)
-        self.assertIn('ws.onopen=function(){lastRecv=Date.now();netState("up");', js)   # lastRecv stamp → heartbeat watchdog
-        self.assertIn('ws.onclose=function(){netState("down");', js)   # reconnects on close (wsdown loader + retry follow)
+        self.assertIn('ws.onopen=function(){lastRecv=Date.now();openT=lastRecv;openSock=this;netState("up");', js)   # lastRecv stamp → heartbeat watchdog; openT/openSock → the close rule + wsclose breadcrumb
+        self.assertIn('ws.onclose=function(ev){netState("down");', js)   # reconnects on close (wsdown loader + retry follow)
         self.assertIn("setTimeout(connect,(restartAnnounced&&Date.now()-restartAnnounced<30000)?250:1500);",
                       js, "T217: an ANNOUNCED death redials tight; the blind 1.5s stays for real drops")
         self.assertIn("ws.onerror=function(){try{ws.close();}catch(e){}};", js)
@@ -42,7 +42,7 @@ class DisconnectBanner(unittest.TestCase):
         # (the user 2026-08-01) — see test_the_connection_prompt_retires_when_the_resync_lands
         self.assertIn('if(wasReconn){var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;'
                       'restartAnnounced=0;', js)   # T217: the announced-restart latch spends inside the gate
-        self.assertIn('if(!ann)armStale("reconnect");', js)
+        self.assertIn('if(!ann)armStale(pendingWhy||"reconnect");', js)
         self.assertIn('try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}', js)
         self.assertNotIn("if(everConnected){location.reload();return;}", js,
                          "the silent auto-reload-on-reconnect is replaced by a reload PROMPT")
@@ -55,11 +55,11 @@ class DisconnectBanner(unittest.TestCase):
         self.assertIn('window.parent.postMessage({romp:"wsStale"}', js, "embedded pane hands off to the shell banner")
         self.assertIn("function selfStale()", js, "standalone page (no shell) gets its own reload bar")
         self.assertIn("romp-stale-self", js)
-        # visibility fast-path: a foregrounded tab whose socket is dead/quiet ARMS the prompt at once (not
-        # after the throttled 5s watchdog), and forces a reconnect to resync — which disarms it again if the
-        # resync lands inside the arming window (the user 2026-08-01).
+        # visibility fast-path: a foregrounded tab whose socket is dead/quiet forces a reconnect to resync and
+        # hands that reconnect its reason; the reconnect's arm then follows the same two events as any other
+        # (a keepalive or a close before the resync), and the resync frame disarms it (the user 2026-08-01).
         self.assertIn('document.addEventListener("visibilitychange"', js)
-        self.assertIn('Date.now()-lastRecv>STALE_MS){armStale("foreground");freshPending=true;', js)
+        self.assertIn('Date.now()-lastRecv>STALE_MS){pendingWhy="foreground";freshPending=true;', js)
 
     def test_a_hidden_pane_never_raises_the_stale_banner(self):
         # the user 2026-08-15, on the phone: the mobile shell shows ONE pane, hiding the rest with
@@ -85,8 +85,19 @@ class DisconnectBanner(unittest.TestCase):
         self.assertIn('staleDiag("stale-raise",why);', js)
         self.assertIn('staleDiag("stale-suppressed-hidden",why);', js)
         self.assertIn('staleDiag("watchdog-close","quiet");', js)
-        self.assertIn('armStale("reconnect");', js)
-        self.assertIn('armStale("foreground");', js)
+        self.assertIn('armStale(pendingWhy||"reconnect");', js)
+        self.assertIn('pendingWhy="foreground";', js)
+        # …and every CLOSE leaves one too, with the close code/reason and the socket's age: a kernel-side
+        # drop (1006, no reason), a clean restart and a proxy timeout were indistinguishable
+        self.assertIn('if(openSock===this){try{send({type:"clientDiag",surface:"pane-shim",what:"wsclose",data:{app:APP,code:ev?ev.code:-1,'
+                      'reason:(ev&&ev.reason)||"",wasClean:!!(ev&&ev.wasClean),'
+                      'sinceOpenMs:openT?Date.now()-openT:-1,quietMs:lastRecv?Date.now()-lastRecv:-1,everConnected:everConnected}', js)
+        # …for a socket that OPENED. A handshake that never opened fires onclose too — every redial of an
+        # outage, ~19k in 8 h — and those are counted and reported as ONE row on the next open, never queued
+        # one by one; queued breadcrumbs are capped besides. pane-shim-stale.test.ts runs both.
+        self.assertIn('else{if(!failedConnects)firstFailT=Date.now();failedConnects++;}', js)
+        self.assertIn('if(failedConnects){send({type:"clientDiag",surface:"pane-shim",what:"wsconnfail",data:{app:APP,attempts:failedConnects,firstFailMs:Date.now()-firstFailT}});failedConnects=0;firstFailT=0;}', js)
+        self.assertIn('if(m&&m.type==="clientDiag"){if(queuedDiag>=DIAG_QUEUE_MAX)return;queuedDiag++;}', js)
 
     def test_shim_reconnect_loop_cannot_die(self):
         # The retry chain used to hang entirely off onclose, and the watchdog only ever closed OPEN
@@ -148,13 +159,24 @@ class DisconnectBanner(unittest.TestCase):
         self.assertIn("freshPending=true", js, "a reconnect arms the retire")
         # …and the prompt is ARMED, not shown (the user 2026-08-01): raising it at once made it flash up
         # and straight back down on nearly every dashboard open, since the resync lands within a beat.
-        self.assertIn("staleTimer=setTimeout(function(){staleTimer=0;raiseStale(why);},1000)", js,
-                      "a one-second arming window, not an immediate raise")
-        self.assertIn('if(!ann)armStale("reconnect");', js,
+        # The arm is EVENT-keyed (it was a 1s timer, which fired a beat before the resync on nearly every
+        # reconnect once frames grew): it raises on the SECOND KEEPALIVE arriving while the resync is still
+        # pending — one full heartbeat period on this socket with the kernel alive, talking to it, and not
+        # resyncing it; a single keepalive can be a beat queued at accept, ahead of the resync frame — or on
+        # the reconnected socket CLOSING again before its resync. Nothing else. pane-shim-stale.test.ts RUNS
+        # the rule; these pins hold its text.
+        self.assertIn("function armStale(why){stalePending=why;staleKa=0;}", js, "arming records the path, shows nothing")
+        self.assertNotIn("setTimeout(function(){staleTimer=0;raiseStale(why);},1000)", js, "the timer is gone")
+        self.assertNotIn("staleTimer", js)
+        self.assertIn('if(stalePending&&++staleKa>=2){var sw=stalePending;stalePending="";raiseStale(sw);}', js,
+                      "the second keepalive on the reconnected socket, resync still pending → raise")
+        self.assertIn('if(stalePending&&openSock===this){var cw=stalePending;stalePending="";raiseStale(cw+"-closed");}', js,
+                      "the reconnected socket closing before its resync → raise")
+        self.assertIn('if(!ann)armStale(pendingWhy||"reconnect");', js,
                       "the reconnect ARMS it — except the one an ANNOUNCED restart already explained (T217)")
         self.assertNotIn("if(wasReconn){raiseStale();", js, "…and never raises it outright")
-        self.assertIn("if(staleTimer){clearTimeout(staleTimer);staleTimer=0;}", js,
-                      "a resync inside the window disarms it, so it never appears at all")
+        self.assertIn('function clearStale(){stalePending="";', js,
+                      "the resync disarms it, so it never appears at all")
         self.assertIn("if(freshPending){freshPending=false;clearStale();}", js,
                       "the first real frame after it fires the retire")
         # keepalives must NOT count as a resync — the ka branch returns before the retire line
@@ -171,7 +193,7 @@ class DisconnectBanner(unittest.TestCase):
         # a tab foregrounded onto a dead socket forces a reconnect and used to prompt immediately; that
         # reconnect resyncs like any other, so it arms the same window and disarms on the same frame
         js = km._shim("chat", 7777)
-        self.assertIn('Date.now()-lastRecv>STALE_MS){armStale("foreground");freshPending=true;', js)
+        self.assertIn('Date.now()-lastRecv>STALE_MS){pendingWhy="foreground";freshPending=true;', js)
         self.assertNotIn("STALE_MS){raiseStale();", js)
 
     def test_a_standalone_page_retires_only_its_connection_bar(self):
