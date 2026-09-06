@@ -201,6 +201,38 @@ const STORM_COOLDOWN_MS = 30000;      // during a storm, hold to 1 restart per t
 const QUIET_POLL_MS = Number(process.env.ROMP_QUIET_POLL_MS) || 3000;
 const QUIET_MAX_DEFER_MS = Number(process.env.ROMP_QUIET_MAX_DEFER_MS) || 15 * 60 * 1000;
 
+// The manager's own note of a SIGTERM it is about to send, in the SAME restart-audit.jsonl the
+// requesters (bin/romp refresh, the kernel's self-update, the dashboard button) and the kernel's
+// cut ledger read. Without it a `romp on restart` or a service stop reached the kernel with no
+// row on disk, indistinguishable from a stray kill, and the kernel's "no request on record"
+// verdict would name the manager's own kills wrongly. Aux kernels read the file under their own
+// state root, so the row goes where that kernel will look. Best-effort: never blocks the kill.
+function auditSigterm(spec, pid, reason) {
+  const t = Math.floor(Date.now() / 1000);
+  try {
+    const root = (spec && spec.stateDir) || STATE_ROOT;
+    fs.mkdirSync(root, { recursive: true });
+    fs.appendFileSync(path.join(root, 'restart-audit.jsonl'),
+      JSON.stringify({ t, action: 'manager-sigterm', kernel: spec.id, pid, reason }) + '\n');
+  } catch (e) { /* a lost note, not a lost restart */ }
+  return t;
+}
+
+// The exit handler's verdict (pure, exported for tests): what to log and whether to respawn. A
+// kernel we asked to stop is reaped; one we SIGTERMed for a restart keeps the plain respawn line;
+// one that exited with NEITHER on record (a signal from elsewhere, or a crash) says so, because
+// that is the exit worth a second look (2026-09-06: a direct SIGTERM to the kernel pid was logged
+// like any requested restart, and the respawn that followed started a two-hour outage).
+function exitLine(rec, code, sig, delay) {
+  const id = rec.spec.id;
+  if (rec.stopping) return { respawn: false, line: `kernel '${id}' stopped` };
+  const how = `code=${code} sig=${sig || '-'}`;
+  const n = `[#${rec.restarts}]`;
+  if (rec.requested) return { respawn: true, line: `kernel '${id}' exited (${how}); respawning in ${delay}ms ${n}` };
+  return { respawn: true,
+    line: `kernel '${id}' (pid ${rec.child && rec.child.pid}) exited without a restart request (signal or crash); respawning in ${delay}ms (${how}) ${n}` };
+}
+
 function spawnKernel(spec) {
   // SPAWN-TIME RE-READ (the --refresh stale-manager incident): re-resolve this kernel's profile from
   // kernels.json at EVERY spawn — a config edit lands on the kernel's next restart, never waiting on
@@ -222,18 +254,19 @@ function spawnKernel(spec) {
     restarts: prev ? prev.restarts : 0,
     quickCrashes: prev ? prev.quickCrashes : 0,
     startedAt: Date.now(), stopping: false,
+    requested: null,          // when restartKernel SIGTERMed this child (exitLine: asked vs not)
   });
   log(`kernel '${spec.id}' → :${spec.port} (pid ${child.pid})`);
   child.on('error', (e) => log(`kernel '${spec.id}' spawn error: ${e.message}`));
   child.on('exit', (code, sig) => {
     const cur = kernels.get(spec.id);
     if (!cur || cur.child !== child) return;                 // already superseded by a fresh spawn
-    if (cur.stopping) { kernels.delete(spec.id); log(`kernel '${spec.id}' stopped`); return; }
+    if (cur.stopping) { kernels.delete(spec.id); log(exitLine(cur, code, sig, 0).line); return; }
     cur.restarts++;
     // crash-loop? back off. A healthy run (uptime ≥ QUICK_CRASH_MS) resets the counter.
     cur.quickCrashes = (Date.now() - cur.startedAt) < QUICK_CRASH_MS ? cur.quickCrashes + 1 : 0;
     const delay = Math.min(cur.quickCrashes * 1000, MAX_BACKOFF_MS);
-    log(`kernel '${spec.id}' exited (code=${code} sig=${sig || '-'}) — respawning in ${delay}ms [#${cur.restarts}]`);
+    log(exitLine(cur, code, sig, delay).line);
     setTimeout(() => {
       const c = kernels.get(spec.id);
       if (c && c.child === child && !c.stopping) spawnKernel(spec);   // still ours & not asked to stop
@@ -284,6 +317,8 @@ function restartKernel(id) {
   }
   rec._stormLogged = false;
   rec.stopping = false;          // ensure the exit handler RESPAWNS rather than reaps
+  rec.requested = Date.now();    // ...and knows this exit was asked for (exitLine)
+  auditSigterm(rec.spec, rec.child.pid, 'restart');
   rec.child.kill('SIGTERM');     // the exit handler spawns a fresh one (romp-serve rebuilds if stale)
   return true;
 }
@@ -519,6 +554,7 @@ function stopKernel(id) {
   const rec = kernels.get(id);
   if (!rec) return false;
   rec.stopping = true;
+  auditSigterm(rec.spec, rec.child.pid, 'stop');
   rec.child.kill('SIGTERM');
   return true;
 }
@@ -718,7 +754,7 @@ function ensureUp() {
 // file is executed directly, so require()-ing it from a test has no side effects.
 module.exports = { restartGate, quietGate, quietTick, loadSpecs, specEnv, fileStamp,
                    kernelToken, fetchBusy, resetDrainNotices, queueQuietRestart, clearPendingQuiet,
-                   tmuxStartArgv, commandOnPath, TMUX_START_ARGV };
+                   tmuxStartArgv, commandOnPath, TMUX_START_ARGV, exitLine, auditSigterm };
 if (require.main === module) {
   const cmd = process.argv[2];
   // `restart-all` (the `romp refresh` deploy path) bounces IMMEDIATELY by default (T160, the user

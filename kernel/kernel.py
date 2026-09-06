@@ -18452,6 +18452,34 @@ def _audit_restart_request(action, **kw):
         pass
 
 
+def _audit_unrequested_signal(signum, pending=False, now=None):
+    """The audit row for a SIGTERM that no request on record explains: a stray `kill`, a test that
+    fired a real restart, a crash-and-respawn nobody asked for. Before this there was NOTHING on disk
+    for such a cut (2026-09-06: a direct signal to the kernel pid restarted it onto a different
+    python, and the two-hour outage that followed had no first cause anywhere; restart-cuts.jsonl
+    carried an empty reason). Records what a signal.signal handler can know: no siginfo reaches it,
+    so the sender's pid is out of reach; what IS knowable is the signal, this pid, the parent's pid,
+    the manager pid the kernel was spawned with (ROMP_MANAGER_PID, None standalone), whether a
+    manager restart was parked (the drain lease), and that nothing asked for it through the manager.
+    Returns the reason text the cut row carries, so the two ledgers agree. Best-effort, never raises."""
+    reason = "signal, not requested through the manager"
+    try:
+        try:
+            name = signal.Signals(signum).name
+        except Exception:
+            name = str(signum)
+        mgr = os.environ.get("ROMP_MANAGER_PID") or ""
+        rec = {"t": int(now if now is not None else time.time()), "action": "signal", "signal": name,
+               "pid": os.getpid(), "ppid": os.getppid(),
+               "managerPid": int(mgr) if mgr.isdigit() else None,
+               "managerRequested": False, "managerRestartPending": bool(pending), "reason": reason}
+        with open(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+    return reason
+
+
 RESTART_CUTS_FILE = jd.STATE / "restart-cuts.jsonl"
 
 
@@ -18548,20 +18576,38 @@ def _mark_boot(kind):
 
 def _recent_restart_reason(window=90, now=None):
     """The most recent restart-audit action within `window` seconds — joins the cut row to WHO asked
-    (deploy refresh, self-update, the rail button…). Best-effort: an anonymous SIGTERM has no row
-    and reads as ""."""
+    (deploy refresh, self-update, the rail button…). Best-effort: a SIGTERM with no row within the
+    window reads as "", and _graceful_term then files its own row for it. The manager notes every
+    SIGTERM it sends (action manager-sigterm, bin/romp-manager auditSigterm); that note says the
+    manager was the messenger, not who asked, so a requester's row just beneath it within the window
+    wins, and the manager's own note answers only when nothing else does (a `romp on restart`, a
+    service stop)."""
     try:
         tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
         if not tail:
             return ""
-        rec = json.loads(tail[-1])
         t0 = int(now if now is not None else time.time())
-        if isinstance(rec, dict) and rec.get("when") == "quiet":
-            # a QUIET-WINDOW request is pending until the restart it asked for lands — up to the far
-            # manager's 15-minute backstop — so it names the cut well past the immediate window (T238)
-            window = max(window, RESTART_EXPECT_MAX_S)
-        if isinstance(rec, dict) and isinstance(rec.get("t"), int) and t0 - rec["t"] <= window:
-            return str(rec.get("action") or "") + (": " + str(rec["reason"]) if rec.get("reason") else "")
+        via_manager = ""
+        for line in reversed(tail[-8:]):
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if not (isinstance(rec, dict) and isinstance(rec.get("t"), int)):
+                continue
+            win = window
+            if rec.get("when") == "quiet":
+                # a QUIET-WINDOW request is pending until the restart it asked for lands, up to the far
+                # manager's 15-minute backstop, so it names the cut well past the immediate window (T238)
+                win = max(window, RESTART_EXPECT_MAX_S)
+            if t0 - rec["t"] > win:
+                break                                       # older rows are older still
+            label = str(rec.get("action") or "") + (": " + str(rec["reason"]) if rec.get("reason") else "")
+            if rec.get("action") == "manager-sigterm":
+                via_manager = via_manager or label
+                continue
+            return label
+        return via_manager
     except Exception:
         pass
     return ""
@@ -43604,9 +43650,9 @@ def _graceful_term(signum, frame):
     #                                                sub-second budget cannot widen the shutdown
     res = {}
     err = ""
+    be = _sdk_backend or None
     try:
         sys.stderr.write("romp-kernel: SIGTERM — draining SDK sessions\n")
-        be = _sdk_backend or None
         if be is not None and hasattr(be, "drain"):
             res = be.drain(2.0)
     except Exception:
@@ -43617,8 +43663,22 @@ def _graceful_term(signum, frame):
         # the restart-cut ledger (T121): one row per restart, ALWAYS — an empty cutTurns row is the
         # clean-drain metric, and a drain that errored writes what it knew plus the error (T143).
         try:
+            # WHO asked: the audit tail names the requester, or the manager's own note of a kill it
+            # sent. Neither present means the signal reached this pid with no request on record, and
+            # that is worth a row of its own plus a cut reason that says so (2026-09-06: an empty
+            # reason was all the ledger had for the restart that started a two-hour outage).
+            reason = _recent_restart_reason()
+            if not reason:
+                pending = False
+                try:
+                    pending = bool(be.drain_holding()) if be is not None and hasattr(be, "drain_holding") else False
+                except Exception:
+                    pass
+                reason = _audit_unrequested_signal(signum, pending=pending)
+                sys.stderr.write("romp-kernel: this SIGTERM matched no restart request on record "
+                                 "(restart-audit.jsonl has a 'signal' row for it)\n")
             row = _restart_cut_row(res, watches_armed=len(_pr_watches) + len(_watches),
-                                   audit_reason=_recent_restart_reason())
+                                   audit_reason=reason)
             if err:
                 row["drainError"] = err.strip().splitlines()[-1][:200]
             _append_restart_cut(row)
