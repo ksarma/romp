@@ -1018,6 +1018,15 @@ that passes untracked files through.
   step 8, and the fix is offered back. Skill drift C3 (the skill says `track-edit` refuses stale
   text; it usually detaches the displaced changes instead) is corrected in the vendored skill and
   offered back.
+- **A session rebases its own branch** (the user 2026-09-06: romp sessions are allowed to). A
+  rebase can rewrite a commented file under the open panel and, when `.trackchanges/` is
+  committed, rewrites the sidecar and the comments log like any other file. The design tolerates
+  it without new mechanism: the poll sees the new mtimes, changes rebase or detach and comment
+  anchors relocate or show detached, every fence refuses a write against the pre-rebase state,
+  the log is append-only, and a sidecar left with conflict markers reads as corrupt and is
+  refused, never replaced. The implementing session decides how the panel words a conflicted
+  sidecar and whether the guide tells sessions to resolve `.trackchanges/` conflicts by taking the
+  branch that holds the newer comments; nothing here changes the plan's shape.
 - **A PDF rendering dependency** (Slice 4). Mitigation: lazy chunk, size cap, frame fallback, and
   a slice of its own so the rest of the feature never waits on it.
 - **Polling cost.** Two HEAD requests every 2.5 s per open panel. Mitigation: only while the
