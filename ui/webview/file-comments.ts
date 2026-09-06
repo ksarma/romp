@@ -211,10 +211,15 @@ class Panel {
       ctx.post(msg);
     });
   }
+  /** The kernel's reply carries two optional texts on a SENT message: `warning` (nothing stamped:
+   *  the todo switch is off, or the todo was already settled) and `logWarning` (the comments log
+   *  append failed, so the Log and the unsent count will not reflect this send). Both are shown; a
+   *  send whose record is missing must never look fully done (CLAUDE.md, fail loudly). */
   requestSend(msg: Record<string, unknown>): Promise<{ queued: boolean; warning?: string }> {
     const reqId = ++reqSeq;
+    const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
     return new Promise((ok, fail) => {
-      this.pending.set(reqId, { verb: "send", ok: (m) => ok({ queued: m.queued === true, warning: typeof m.warning === "string" ? m.warning : undefined }), fail });
+      this.pending.set(reqId, { verb: "send", ok: (m) => ok({ queued: m.queued === true, warning: [str(m.warning), str(m.logWarning)].filter(Boolean).join(" ") || undefined }), fail });
       this.ctx.post({ ...msg, type: "fileCommentsSend", reqId });
     });
   }

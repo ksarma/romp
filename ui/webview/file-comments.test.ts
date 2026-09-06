@@ -450,6 +450,8 @@ test("the send sequence: build from the current status, set-tracked when asked, 
   assert.ok(at("tracked = !!r.trackedBy;") < at("await this.requestSend(msg)"), "tracked is the post-toggle verdict");
   assert.match(send, /this\.sentNote = reply\.queued \? "Queued for " \+ who : "Sent to " \+ who \+ " at " \+ clock\(Date\.now\(\)\);/);
   assert.match(send, /if \(reply\.warning\) this\.errors\.set\("send", \{ text: reply\.warning, reload: false, warn: true \}\);/, "sent but nothing stamped: the kernel's own reason shows");
+  assert.match(SRC, /warning: \[str\(m\.warning\), str\(m\.logWarning\)\]\.filter\(Boolean\)\.join\(" "\) \|\| undefined/,
+    "a send whose comments-log append failed is loud too: the kernel's logWarning rides the same warn row");
   assert.match(SRC, /btn\(this\.sending \? "Sending…" : "Send to session" \+ \(n \? " \(" \+ n \+ "\)" : ""\), "fcsend"\)/, "count = unsent; relabeled while sending");
   assert.match(SRC, /b\.disabled = !s \|\| !n \|\| this\.sending \|\| !this\.ctx\.sid;/);
   assert.match(SRC, /if \(this\.ctx\.todoId && !this\.todoAnswered\) opts\.appendChild\(this\.opt\("todo", "answer the todo this file was opened from"\)\);/);
