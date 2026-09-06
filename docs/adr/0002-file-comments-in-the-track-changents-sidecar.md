@@ -1,6 +1,6 @@
 # File comments and changes live in the track-changents sidecar, plus a romp-only comments log
 
-Status: proposed (2026-09-06); to be accepted with Slice 1 of `plans/file-review.md`
+Status: accepted (2026-09-06), with Slice 1 of `plans/file-review.md`
 
 A file comment or a session's tracked change is stored in the format the track-changents tools
 already read and write: one JSON sidecar per file under the project's `.trackchanges/` folder,

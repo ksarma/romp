@@ -560,3 +560,176 @@ STUB
     [ -n "$a" ]
     [ "$a" = "$b" ]
 }
+
+# ─── the tracked-changes tooling (vendor/track-changents) ─────────────
+
+TC_LINKS="track-edit.mjs track-comment.mjs track-reply.mjs track-config.mjs track-guard.mjs"
+
+guard_groups() {   # PreToolUse groups holding track-guard.mjs: "<count> <matcher> <timeout> <async>" per group
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+for g in s.get("hooks", {}).get("PreToolUse", []):
+    hs = [h for h in g.get("hooks", []) if h.get("command", "").endswith("track-guard.mjs")]
+    if hs:
+        print(len(hs), g.get("matcher"), hs[0].get("timeout"), hs[0].get("async"))
+PY
+}
+
+@test "install.sh: links the tracked-changes CLIs, guard and skill from the vendored copy" {
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Symlinked the tracked-changes tooling"* ]]
+    for tc in track-edit track-comment track-reply track-config; do
+        [ -L "$HOME/.claude/hooks/$tc.mjs" ]
+        [ "$(readlink "$HOME/.claude/hooks/$tc.mjs")" = "$ROMP_DIR/vendor/track-changents/cli/$tc.mjs" ]
+    done
+    [ "$(readlink "$HOME/.claude/hooks/track-guard.mjs")" = "$ROMP_DIR/vendor/track-changents/hooks/track-guard.mjs" ]
+    [ "$(readlink "$HOME/.claude/skills/tracked-changes")" = "$ROMP_DIR/vendor/track-changents/skill" ]
+    [ -f "$HOME/.claude/skills/tracked-changes/SKILL.md" ]
+    [[ "$output" != *"Replaced links"* ]]   # nothing was there to replace
+}
+
+@test "install.sh: registers the guard once, in a PreToolUse group whose matcher is exactly Write|Edit|MultiEdit, synchronous, timeout 10" {
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PreToolUse:track-guard.mjs"* ]]
+    [ "$(count_cmd PreToolUse track-guard.mjs)" = "1" ]
+    [ "$(guard_groups)" = "1 Write|Edit|MultiEdit 10 False" ]
+    # the command is the ~ form the uninstaller and the other romp entries use
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+cmds = [h["command"] for g in s["hooks"]["PreToolUse"] for h in g["hooks"]]
+assert cmds == ["~/.claude/hooks/track-guard.mjs"], cmds
+# romp's matcher-less hooks did not land in the guard's group, and no empty group was left behind
+assert all(g.get("hooks") for e in s["hooks"].values() for g in e), s["hooks"]
+PY
+}
+
+@test "install.sh: a second run adds no second guard entry, no second group, and reports no replacement" {
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already registered"* ]]
+    [[ "$output" != *"Replaced links"* ]]
+    [ "$(count_cmd PreToolUse track-guard.mjs)" = "1" ]
+    [ "$(guard_groups | wc -l)" = "1" ]
+    for tc in $TC_LINKS; do
+        [ -L "$HOME/.claude/hooks/$tc" ]
+    done
+    [ -L "$HOME/.claude/skills/tracked-changes" ]
+    # the dir-symlink was replaced, not followed: no stray link INSIDE the vendored skill dir
+    [ ! -e "$ROMP_DIR/vendor/track-changents/skill/tracked-changes" ]
+}
+
+@test "install.sh: a guard entry written by track-changents' own installer (expanded home path, no async key) counts as registered" {
+    mkdir -p "$HOME/.claude"
+    cat > "$HOME/.claude/settings.json" <<JSON
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Write|Edit|MultiEdit",
+        "hooks": [ { "type": "command", "command": "$HOME/.claude/hooks/track-guard.mjs", "timeout": 10 } ] }
+    ]
+  }
+}
+JSON
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"PreToolUse:track-guard.mjs"* ]]
+    [ "$(count_cmd PreToolUse track-guard.mjs)" = "1" ]
+    [ "$(guard_groups | wc -l)" = "1" ]
+    # the existing entry is left exactly as it was
+    python3 - "$HOME/.claude/settings.json" "$HOME" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+g = s["hooks"]["PreToolUse"]
+assert len(g) == 1, g
+assert g[0]["hooks"] == [{"type": "command", "command": sys.argv[2] + "/.claude/hooks/track-guard.mjs", "timeout": 10}], g
+PY
+}
+
+@test "install.sh: the guard gets its own group beside a user's PreToolUse group with another matcher" {
+    mkdir -p "$HOME/.claude"
+    cat > "$HOME/.claude/settings.json" <<'JSON'
+{
+  "hooks": {
+    "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": "my-bash-check.sh" } ] } ]
+  }
+}
+JSON
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+groups = s["hooks"]["PreToolUse"]
+assert [g.get("matcher") for g in groups] == ["Bash", "Write|Edit|MultiEdit"], groups
+assert groups[0]["hooks"] == [{"type": "command", "command": "my-bash-check.sh"}], groups[0]
+assert [h["command"] for h in groups[1]["hooks"]] == ["~/.claude/hooks/track-guard.mjs"], groups[1]
+PY
+}
+
+@test "install.sh: links into another track-changents checkout are re-pointed at the vendored copy, and the replacement is reported" {
+    # The shape track-changents' own installer leaves behind: every link into a checkout of that project.
+    other="$TEST_DIR/track-changents"
+    mkdir -p "$other/cli" "$other/hooks" "$other/skill" "$HOME/.claude/hooks" "$HOME/.claude/skills"
+    for tc in track-edit track-comment track-reply track-config; do
+        echo "// old" > "$other/cli/$tc.mjs"
+        ln -s "$other/cli/$tc.mjs" "$HOME/.claude/hooks/$tc.mjs"
+    done
+    echo "// old" > "$other/hooks/track-guard.mjs"
+    ln -s "$other/hooks/track-guard.mjs" "$HOME/.claude/hooks/track-guard.mjs"
+    echo "old skill" > "$other/skill/SKILL.md"
+    ln -s "$other/skill" "$HOME/.claude/skills/tracked-changes"
+
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Replaced links from another track-changents install"* ]]
+    [[ "$output" == *"track-edit.mjs (was $other/cli/track-edit.mjs)"* ]]
+    [[ "$output" == *"track-guard.mjs (was"* ]]
+    [[ "$output" == *"tracked-changes (was"* ]]
+    for tc in track-edit track-comment track-reply track-config; do
+        [ "$(readlink "$HOME/.claude/hooks/$tc.mjs")" = "$ROMP_DIR/vendor/track-changents/cli/$tc.mjs" ]
+    done
+    [ "$(readlink "$HOME/.claude/hooks/track-guard.mjs")" = "$ROMP_DIR/vendor/track-changents/hooks/track-guard.mjs" ]
+    [ "$(readlink "$HOME/.claude/skills/tracked-changes")" = "$ROMP_DIR/vendor/track-changents/skill" ]
+    [ -f "$other/skill/SKILL.md" ]   # the checkout itself is untouched
+    [ "$(cat "$other/cli/track-edit.mjs")" = "// old" ]
+
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Replaced links"* ]]   # settled: nothing to report the second time
+}
+
+@test "install.sh: a real file named like a track-changents CLI is left alone, with a notice" {
+    mkdir -p "$HOME/.claude/hooks"
+    echo "mine" > "$HOME/.claude/hooks/track-edit.mjs"
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"track-edit.mjs is a real file, not a link"* ]]
+    [ ! -L "$HOME/.claude/hooks/track-edit.mjs" ]
+    [ "$(cat "$HOME/.claude/hooks/track-edit.mjs")" = "mine" ]
+    [ -L "$HOME/.claude/hooks/track-comment.mjs" ]   # its neighbours are linked as usual
+    [ -L "$HOME/.claude/hooks/track-guard.mjs" ]
+}
+
+@test "install.sh: the linked CLIs run through the symlink and resolve their imports from the vendored copy" {
+    command -v node >/dev/null || skip "node not installed"
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    vault="$TEST_DIR/notes-api"
+    mkdir -p "$vault/.git/hooks" "$vault/docs"
+    echo "# Report" > "$vault/docs/report.md"
+    # track-config's exit status IS its answer: 1 = off, 0 = on (see the skill)
+    run node "$HOME/.claude/hooks/track-config.mjs" --file "$vault/docs/report.md"
+    [ "$status" -eq 1 ]
+    [ "$output" = "off" ]
+    mkdir -p "$vault/.trackchanges"
+    echo '{"v":2,"tracked":["docs/"]}' > "$vault/.trackchanges/config.json"
+    run node "$HOME/.claude/hooks/track-config.mjs" --file "$vault/docs/report.md"
+    [ "$status" -eq 0 ]
+    [ "$output" = "on" ]
+}

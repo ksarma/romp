@@ -324,6 +324,20 @@ through to `install.sh`:
   release tag, falling back to `main` when none is published.
 - `ROMP_NO_PATH=1` leaves your shell rc alone.
 
+**File comments** (the viewer's Comments panel) have two prerequisites and one
+consent. The **User todos** switch (above) is what lets a session flag a file
+for you to look at: without it the session has no `add_user_todo` tool, so no
+request appears under Waiting on you, and a comment you send from the viewer
+reaches the session as a plain message. The machine whose kernel holds the
+file needs `node`: the kernel runs a small node helper for every read and
+write of a file's comments, and without it the viewer shows no Comments
+action. For the session to reply, `install.sh` must have linked the comment
+tools into `~/.claude/hooks` on that machine. Writing a comment also stands
+behind the **File editing** consent, like any dashboard write to a file, and so
+does **Send to session**: the send is recorded in the comments log, so with the
+consent off it is refused and the panel offers the consent and sends again on
+yes. The gear reports a machine that is missing node or the comment tools.
+
 ### Ports
 
 - `ROMP_KERNEL_PORT=<port>` moves the kernel and its dashboard off the default
