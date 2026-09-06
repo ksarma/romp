@@ -215,15 +215,35 @@ const store = new Map<string, string>();
 };
 // The editing substrate: the lazily-loaded CodeMirror chunk registers a window global the viewer's
 // editorChunk() resolves from; this one is a buffer with the two callbacks the viewer wires.
-const ed = { buf: "", onChange: null as (() => void) | null, mounted: 0, destroyed: 0 };
+// Slice 5: the stub carries the mount's `track` option the way the real chunk does — the handle grows `track` with the
+// records (as seeded; a test may remap them) and the ledger of decisions, and `onLedger` is the callback the viewer wired.
+// `tracks: false` plays an older bundle that ignores the option (no `track` on the handle).
+type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onLedger: (l: { accepted: unknown[]; rejected: unknown[] }) => void };
+type Decided = { accepted: Array<{ id: string; oldText: string; newText: string }>; rejected: Array<{ id: string; oldText: string; newText: string }> };
+const ed = {
+  buf: "", onChange: null as (() => void) | null, mounted: 0, destroyed: 0,
+  tracks: true, trackOpts: null as TrackStub | null, records: [] as unknown[], ledger: { accepted: [], rejected: [] } as Decided,
+};
 win.__rompEditor = {
-  mount(host: El, opts: { text: string; onChange: () => void; onSave: () => void }) {
-    ed.buf = opts.text; ed.onChange = opts.onChange; ed.mounted++;
+  mount(host: El, opts: { text: string; onChange: () => void; onSave: () => void; track?: TrackStub }) {
+    ed.buf = opts.text; ed.onChange = opts.onChange; ed.mounted++; ed.trackOpts = opts.track || null;
     host.appendChild(new Txt(opts.text));
-    return { value: () => ed.buf, focus() { /* inert */ }, destroy() { ed.destroyed++; } };
+    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; ledger(): Decided } } =
+      { value: () => ed.buf, focus() { /* inert */ }, destroy() { ed.destroyed++; } };
+    if (opts.track && ed.tracks) {
+      ed.records = opts.track.suggestions.slice(); ed.ledger = { accepted: [], rejected: [] };
+      h.track = { suggestions: () => ed.records, ledger: () => ed.ledger };
+    }
+    return h;
   },
 };
 const typeInto = (s: string) => { ed.buf = s; ed.onChange!(); };
+/** An in-editor decision: the chunk drops the record from its field and reports the ledger (no text changes on an accept). */
+const decideInEditor = (side: "accepted" | "rejected", id: string, oldText: string, newText: string) => {
+  ed.records = ed.records.filter((r) => (r as { id: string }).id !== id);
+  ed.ledger = { ...ed.ledger, [side]: [...ed.ledger[side], { id, oldText, newText }] };
+  ed.trackOpts!.onLedger(ed.ledger);
+};
 // The PDF renderer chunk (Slice 4) the viewer's pdfChunkLoad resolves from: two page shells in the chunk's own DOM
 // shape (div.fileview-pdf > div.fileview-pdf-page[data-page] > canvas.fileview-pdf-canvas), page 1 "drawn" before the
 // promise resolves as the real chunk does, later pages drawn when a test calls onPage; a test may make it refuse.
@@ -252,7 +272,7 @@ const fetches: string[] = [];
 (globalThis as any).fetch = async (url: string, init?: { method?: string }) => {
   fetches.push((init && init.method || "GET") + " " + url.replace(/[?&]token=[^&]*/, ""));
   if (url.startsWith("/version")) return { json: async () => ({ fileEditing: true }) };   // consent already given
-  if (url.startsWith("/sessions")) return { json: async () => [] };
+  if (url.startsWith("/sessions")) return { json: async () => [{ id: SID, name: "api", bg: "#123456", fg: "#ffffff" }] };
   const p = decodeURIComponent((/[?&]path=([^&]*)/.exec(url) || [])[1] || "");
   const f = disk[p];
   const headers = { get: (h: string) => (f ? (h === "Content-Type" ? f.type : h === "X-Romp-Mtime-Ns" ? f.mtimeNs : h === "X-Romp-Text-Utf8" ? "1" : null) : null) };
@@ -278,12 +298,15 @@ const PY = "def main():\n    return 0\n";
 const MT = "1757145600000000001";
 const T0 = 1757145600000;
 const hunk = (id: string): Hunk => ({ id, author: "api", ts: T0, kind: "sub", curFrom: 28, curTo: 31, baseFrom: 28, baseTo: 31, oldText: "p95", newText: "p99", anchor: null });
-function status(hunks: Hunk[]): Status {
+/** The sidecar's record behind a hunk (the storage format's shape), as `status` carries it in `store` (Slice 5). */
+const record = (id: string) => ({ id, author: "api", authorId: SID, ts: T0, kind: "sub", from: DOC.indexOf("p95"), newText: "p99", oldText: "p95" });
+function status(hunks: Hunk[], over: Partial<Status> = {}): Status {
   return {
     verb: "status", root: ROOT, storePath: ROOT + "/.trackchanges/docs%2Freport.md.json", trackedBy: { kind: "file", entry: "docs/report.md" },
     agentTooling: "present", fileMtimeNs: MT, storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003",
-    store: { v: 3, path: "docs/report.md", suggestions: [], comments: [] }, hunks,
+    store: { v: 3, path: "docs/report.md", suggestions: hunks.map((h) => record(h.id)), comments: [] }, hunks,
     unsent: { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null }, log: [],
+    ...over,
   };
 }
 const WARN = "saved, but not written to the comments log for ~/notes-api/docs/report.md: the comments helper failed (exit 1): EACCES: permission denied";
@@ -318,7 +341,7 @@ async function open(p: string, t: TestContext, sid: string | null = SID): Promis
   disk[DECK] = { bytes: "%PDF-1.4\n", type: "application/pdf", mtimeNs: MT };
   posted.length = 0; fetches.length = 0; savedInfos.length = 0; paints = 0; seam = null;
   store.delete("romp:fileviewFmt");                     // every open starts from the default: markdown Rendered
-  ed.mounted = 0; ed.destroyed = 0;
+  ed.mounted = 0; ed.destroyed = 0; ed.tracks = true; ed.trackOpts = null; ed.records = []; ed.ledger = { accepted: [], rejected: [] };
   pdf.renders = 0; pdf.disposed = 0; pdf.bytes = 0; pdf.opts = null; pdf.refuse = null; pdf.roots.length = 0;
   assert.equal(fv.openFileView(p, sid), true, "the open happened");
   t.after(() => { fv.closeFileView(); });
@@ -358,6 +381,25 @@ function save(o: Open, content: string): number {
   assert.equal(o.b.save.disabled, true); assert.equal(o.b.save.textContent, "Saving…", "acknowledged before the round-trip");
   return m.reqId;
 }
+/** Save through the PANEL (Slice 5: a tracked file, or one with a sidecar): the `save` verb goes out instead of saveFile. */
+function saveTracked(o: Open, content: string): any {
+  typeInto(content);
+  const saves = posted.filter((m) => m.type === "saveFile").length;
+  o.b.save.click();
+  const m = lastOf("fileComments", "save");
+  assert.ok(m, "the save went through the panel");
+  assert.equal(posted.filter((x) => x.type === "saveFile").length, saves, "…and not through saveFile");
+  assert.equal(o.b.save.disabled, true); assert.equal(o.b.save.textContent, "Saving…", "acknowledged before the round-trip");
+  return m;
+}
+const saveReply = async (reqId: number, s: Status, extra: Record<string, unknown> = {}) => {
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId, ...s, verb: "save", logged: true, ...extra } }));
+  await settle();
+};
+const saveRefused = async (reqId: number, code: string, error: string) => {
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsFailed", reqId, verb: "save", code, error } }));
+  await settle();
+};
 const fileSaved = (reqId: number, extra: Record<string, unknown>) =>
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileSaved", reqId, path: REPORT, mtimeNs: "1757145600000000009", ...extra } }));
 const errBar = (body: El) => body.querySelector(".fileview-err");
@@ -642,13 +684,16 @@ test("rewriteFigureSrcs, executed over a sanitized DOM stand-in: relative srcs g
   assert.equal(bare.getAttribute("src"), "/file?path=plot.png");
 });
 
-test("setEditBlocked, from the kernel's hunks through the panel: Edit refuses in words, in place, and opens no editor; null lifts it", async (t) => {
+test("setEditBlocked through the seam: Edit refuses in words, in place, and opens no editor; null lifts it (pending changes no longer set it — Slice 5)", async (t) => {
   const o = await open(REPORT, t);
   const { ctx, body, b } = o;
   assert.equal(b.edit.title, "Edit this file in place", "before the kernel has spoken: no reason");
   await answerStatus(status([hunk("h1"), hunk("h2")]));
-  const reason = b.edit.title;
-  assert.match(reason, /^2 changes are pending in this file, so Edit is off here/, "the panel's reason is the button's tooltip");
+  assert.equal(b.edit.title, "Edit this file in place", "two pending changes block nothing: they ride into the editor (Slice 5)");
+  assert.equal(b.edit.classList.contains("fileview-btn-blocked"), false);
+  const reason = "2 changes are pending in this file, so Edit is off here (a caller's own reason)";
+  ctx.setEditBlocked(reason);
+  assert.equal(b.edit.title, reason, "a caller's reason is the button's tooltip");
   assert.equal(b.edit.classList.contains("fileview-btn-blocked"), true);
   assert.equal(b.edit.hidden, false, "a real button, not a hidden or disabled one — the reason must reach touch and keyboard users");
   assert.equal(b.edit.disabled, false);
@@ -715,7 +760,8 @@ test("in-flight typing: a fileSaved with logWarning keeps edit mode and the newe
   assert.equal(b.save.hidden, false, "still editing");
   assert.equal(b.save.disabled, false); assert.equal(b.save.textContent, "Save", "re-armed");
   assert.equal(ed.destroyed, 0, "the editor and its newer keystrokes survive the ack");
-  assert.equal(ctx.text(), v2, "the saved snapshot is the new baseline");
+  assert.equal(ctx.text(), v2 + "typed while saving", "text() is the BUFFER while the editor is up (Slice 5), newer keystrokes included");
+  assert.equal(ctx.editing(), true);
   assert.equal(body.childNodes.length, 2, "the note bar and the editor host, nothing else");
   assert.equal((body.childNodes[0] as El).className, "fileview-err");
   assert.equal(body.childNodes[0].textContent, WARN);
@@ -829,4 +875,223 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(rw, /img\.setAttribute\("data-fv-src", src\);\n\s*img\.setAttribute\("src", fileUrl\(dir \+ rel, sid\)\);/, "the authored value kept, then the kernel URL for <dir>/<src>");
   assert.doesNotMatch(rw, /innerHTML|outerHTML|\.replace\(|DOMParser/, "never a string rewrite of marked's HTML");
   assert.doesNotMatch(rw, /normalize|\.\.\//, "no client-side path normalization: the kernel resolves and gates `..`");
+});
+
+// ── editing over pending changes (plans/file-review.md Slice 5; the Slice 5 contract, H3 and H4) ────
+// The panel registers its half through setTrackedEdit; the viewer mounts the editor with the status's records and the
+// colour map, answers text() from the buffer, counts an in-editor decision as a change worth saving, and sends Save
+// through the panel's `save` verb — fenced on the sidecar the records came from AND the file the editor loaded — with
+// the buffer surviving every refusal. An untracked file's save is saveFile, unchanged.
+
+test("Edit over pending changes: the mount carries the status's records and the colour map; text() and editing() follow the buffer; an in-editor accept alone makes Save write, through the panel", async (t) => {
+  const o = await open(REPORT, t);
+  const { ctx, wrap, b } = o;
+  await answerStatus(status([hunk("h1")]));
+  // the panel open: its colour map loads (GET /sessions) so the marks can wear the author's session colour
+  const comments = wrap.querySelector(".fileview-fc button")!;
+  comments.click();
+  await answerStatus(status([hunk("h1")]));
+  const statusAsks = posted.filter((m) => m.type === "fileComments" && m.verb === "status").length;
+  assert.equal(b.edit.title, "Edit this file in place", "a pending change no longer blocks Edit");
+  await enterEdit(o);
+  assert.ok(ed.trackOpts, "the mount got the track option");
+  assert.deepEqual(ed.trackOpts!.suggestions, [record("h1")], "the sidecar's records as the status held them");
+  assert.equal(ed.trackOpts!.authorColor("api"), "#123456", "the author label maps to the session's colour through the record's authorId");
+  assert.equal(ed.trackOpts!.authorColor("web"), null, "an author no record carries: neutral");
+  assert.equal(ctx.editing(), true);
+  assert.equal(ctx.text(), DOC, "text() is the buffer, which starts as the file");
+  typeInto(DOC + "x");
+  assert.equal(ctx.text(), DOC + "x", "…and follows every keystroke");
+  typeInto(DOC);
+  // an accept changes no text: the text comparison alone would call the buffer clean and Save would just leave
+  decideInEditor("accepted", "h1", "p95", "p99");
+  const m = saveTracked(o, DOC);
+  assert.deepEqual(m.args, { content: DOC, suggestions: [], accepted: [{ id: "h1", oldText: "p95", newText: "p99" }], rejected: [] },
+    "the records as the editor holds them now (the accepted one gone) and the decisions taken in it");
+  assert.deepEqual(m.fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003", fileMtimeNs: MT },
+    "fenced on the sidecar the records came from, the config, and the file the editor loaded");
+  assert.equal(m.sid, SID); assert.equal(m.path, REPORT);
+  const after = status([], { fileMtimeNs: "1757145600000000009", storeMtimeNs: "1757145600000000010" });
+  await saveReply(m.reqId, after);
+  assert.deepEqual(savedInfos, [{ mtimeNs: "1757145600000000009", logged: true }], "the reply is the viewer's saved event: onSaved fires as after saveFile");
+  assert.equal(ctx.mtimeNs(), "1757145600000000009", "the save fence moves to the host's new file mtime");
+  assert.equal(ctx.editing(), false); assert.equal(b.save.hidden, true); assert.equal(b.edit.hidden, false, "edit mode left");
+  assert.equal(ctx.text(), DOC, "text() is the saved bytes again");
+  assert.equal(ed.destroyed, 1);
+  assert.equal(posted.filter((x) => x.type === "fileComments" && x.verb === "status").length, statusAsks,
+    "no status re-ask after the save: the reply IS the panel's status");
+  assert.equal(wrap.querySelector(".fileview-fc button")!.textContent, "Comments · 0", "…and the glance follows the reply (a sidecar, no changes left)");
+});
+
+test("a tracked file with nothing pending, or one with only a sidecar, still saves through the panel with no records; an untracked file saves through saveFile, byte for byte", async (t) => {
+  const o = await open(REPORT, t);
+  await answerStatus(status([]));                       // tracked, sidecar present, no changes
+  await enterEdit(o);
+  assert.equal(ed.trackOpts, null, "nothing pending: the editor mounts as for any file");
+  const m = saveTracked(o, DOC + "\nMore.\n");
+  assert.deepEqual(m.args, { content: DOC + "\nMore.\n", suggestions: [], accepted: [], rejected: [] });
+  assert.deepEqual(m.fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003", fileMtimeNs: MT }, "the latest status's fence when no records rode in");
+  await saveReply(m.reqId, status([], { fileMtimeNs: "1757145600000000009" }));
+  assert.equal(o.ctx.mtimeNs(), "1757145600000000009");
+  // a sidecar with a comment and no tracking: still the panel's save (the host rewrites the fingerprint)
+  const c = await open(REPORT, t);
+  await answerStatus(status([], { trackedBy: null }));
+  await enterEdit(c);
+  const m2 = saveTracked(c, DOC + "\nMore.\nAgain.\n");
+  assert.deepEqual(m2.fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003", fileMtimeNs: MT });
+  await saveReply(m2.reqId, status([], { trackedBy: null, fileMtimeNs: "1757145600000000011" }));
+  assert.equal(c.ctx.mtimeNs(), "1757145600000000011");
+  // no sidecar, not tracked: saveFile, the pinned frame
+  const u = await open(APP, t);
+  await answerStatus({ ...status([]), root: ROOT, storePath: null, trackedBy: null, store: null, storeMtimeNs: null });
+  await enterEdit(u);
+  const reqId = save(u, PY + "x = 1\n");
+  assert.deepEqual(lastOf("saveFile"), { type: "saveFile", path: APP, sid: SID, content: PY + "x = 1\n", baseMtimeNs: MT, reqId });
+  assert.equal(lastOf("fileComments", "save"), undefined, "no save verb for an untracked file");
+});
+
+test("a store-moved refusal: the panel re-reads status and retries once when the sidecar's records are still the ones the editor carries; when they changed, the refusal reaches the bar with Reload, and the buffer survives; Reload asks, then re-opens", async (t) => {
+  const o = await open(REPORT, t);
+  const { body, b } = o;
+  await answerStatus(status([hunk("h1")]));
+  await enterEdit(o);
+  const v2 = DOC.replace("40%", "45%");
+  const m = saveTracked(o, v2);
+  await saveRefused(m.reqId, "store-moved", "the comments for ~/notes-api/docs/report.md changed on disk since you opened the file — reload and retry");
+  // a reply a session wrote moved the sidecar; its records are unchanged: the save goes again with the new fence
+  await answerStatus(status([hunk("h1")], { storeMtimeNs: "1757145600000000020" }));
+  const again = lastOf("fileComments", "save");
+  assert.notEqual(again.reqId, m.reqId, "a second save frame");
+  assert.deepEqual(again.fence, { storeMtimeNs: "1757145600000000020", configMtimeNs: "1757145600000000003", fileMtimeNs: MT }, "re-fenced on the sidecar as it stands now, the file as loaded");
+  assert.deepEqual(again.args, m.args, "the same text and records");
+  assert.equal(b.save.disabled, true, "still saving");
+  // refused again, and this time a session's change is new in the sidecar: the refusal stands, in the host's words
+  await saveRefused(again.reqId, "store-moved", "the comments for ~/notes-api/docs/report.md changed on disk since you opened the file — reload and retry");
+  await answerStatus(status([hunk("h1"), hunk("h2")], { storeMtimeNs: "1757145600000000030" }));
+  assert.equal(lastOf("fileComments", "save").reqId, again.reqId, "no third attempt: the records changed under the editor");
+  const bar = errBar(body)!;
+  assert.ok(bar, "the refusal is the note bar over the editor");
+  assert.equal(bar.childNodes[0].textContent, "the comments for ~/notes-api/docs/report.md changed on disk since you opened the file — reload and retry");
+  const reload = bar.querySelector("button")!;
+  assert.equal(reload.textContent, "Reload file", "a moved fence offers Reload");
+  assert.equal(b.save.hidden, false); assert.equal(b.save.disabled, false); assert.equal(b.save.textContent, "Save", "re-armed");
+  assert.equal(ed.destroyed, 0, "the buffer survives");
+  assert.equal(ed.buf, v2);
+  assert.equal(body.childNodes[1], body.querySelector(".fileview-cm"), "the editor host is still the body, under the bar");
+  // Reload: asks (dirty), then re-opens the same file fresh — the buffer goes only on that click
+  let asked = 0;
+  win.confirm = () => { asked++; return false; };
+  reload.click();
+  await settle();
+  assert.equal(asked, 1, "the discard question");
+  assert.equal(ed.destroyed, 0, "declined: the buffer stays");
+  const asks = posted.filter((x) => x.type === "fileComments" && x.verb === "status").length;
+  win.confirm = () => { asked++; return true; };
+  reload.click();
+  await settle();
+  assert.equal(asked, 2);
+  const fresh = doc.getElementById("romp-fileview")!;
+  assert.ok(fresh && fresh !== o.wrap, "accepted: a fresh viewer replaced the old one, buffer and all");
+  assert.equal(fresh.querySelector(".fileview-cm"), null, "…reading, not editing");
+  assert.ok(fresh.querySelector("code.hljs"), "the file as it is on disk");
+  assert.equal(posted.filter((x) => x.type === "fileComments" && x.verb === "status").length, asks + 1, "the fresh panel probes status");
+  win.confirm = () => true;
+});
+
+test("desync and file-moved: the reason shows, the buffer stays; file-moved offers Reload (the editor's text is from the old bytes), desync does not; editing-off re-offers the consent and retries", async (t) => {
+  const o = await open(REPORT, t);
+  const { body, b } = o;
+  await answerStatus(status([hunk("h1")]));
+  await enterEdit(o);
+  const m = saveTracked(o, DOC + "z");
+  await saveRefused(m.reqId, "desync", "change h1 does not fit the text being saved to ~/notes-api/docs/report.md: the text at 42..45 is not the change's text; nothing was changed — reload and retry");
+  let bar = errBar(body)!;
+  assert.match(bar.childNodes[0].textContent, /^change h1 does not fit/);
+  assert.equal(bar.querySelector("button"), null, "no Reload on a desync: nothing on disk moved");
+  assert.equal(ed.destroyed, 0); assert.equal(b.save.disabled, false);
+  assert.equal(lastOf("fileComments", "status").reqId < m.reqId, true, "no status re-read for a desync");
+  const m2 = saveTracked(o, DOC + "zz");
+  await saveRefused(m2.reqId, "file-moved", "the file ~/notes-api/docs/report.md changed on disk since you opened the file — reload and retry");
+  bar = errBar(body)!;
+  assert.match(bar.childNodes[0].textContent, /^the file .* changed on disk/);
+  assert.equal(bar.querySelector("button")!.textContent, "Reload file");
+  assert.equal(ed.destroyed, 0, "the buffer stays");
+  assert.equal(lastOf("fileComments", "save").reqId, m2.reqId, "a moved FILE is never retried");
+  // editing-off: the consent is re-offered (the confirm), and a yes retries the save
+  const m3 = saveTracked(o, DOC + "zzz");
+  const confirms: string[] = [];
+  win.confirm = (text: string) => { confirms.push(text); return true; };
+  await saveRefused(m3.reqId, "editing-off", "cannot write the comments for ~/notes-api/docs/report.md: dashboard file editing is off on this machine — the viewer's Edit button asks to turn it on");
+  assert.equal(confirms.length, 1); assert.match(confirms[0], /^Editing is off on/);
+  assert.ok(lastOf("setFileEditing"), "the opt-in is re-posted");
+  const m4 = lastOf("fileComments", "save");
+  assert.notEqual(m4.reqId, m3.reqId, "…and the save retried");
+  assert.equal(m4.args.content, DOC + "zzz");
+  win.confirm = () => true;
+});
+
+test("an older editor bundle (a mount that ignores `track`): Edit refuses with the Slice 2 wording once the chunk answers, opens no editor, and refuses at the click from then on; with nothing pending the same bundle edits as before", async (t) => {
+  const o = await open(REPORT, t);
+  const { body, b } = o;
+  await answerStatus(status([hunk("h1"), hunk("h2")]));
+  ed.tracks = false;
+  b.edit.click();
+  await settle();
+  const bar = errBar(body);
+  assert.ok(bar, "the refusal is in the body");
+  assert.equal(bar!.textContent, "2 changes are pending in this file, so Edit is off here: a direct edit would move them. Accept or reject the 2 changes first; the session's own track-edit still works.");
+  assert.equal(b.save.hidden, true, "no edit mode");
+  assert.equal(ed.mounted, 1); assert.equal(ed.destroyed, 1, "the untracked editor the bundle built was torn down at once");
+  assert.ok(body.querySelector("code.hljs"), "the read view is back");
+  const reads = fetches.length;
+  b.edit.click();
+  await settle();
+  assert.equal(ed.mounted, 1, "the next click refuses before the chunk: the bundle proved itself");
+  assert.equal(fetches.length, reads, "not even the consent read");
+  assert.equal(errBar(body)!.textContent, bar!.textContent);
+  // the changes decided elsewhere: nothing pending, and the old bundle edits as it always did (the panel open re-asks status)
+  o.wrap.querySelector(".fileview-fc button")!.click();
+  await answerStatus(status([]));
+  await enterEdit(o);
+  assert.equal(ed.mounted, 2);
+});
+
+test("the chunk failing to load over pending changes: no fallback textarea (it cannot carry the changes) — the load error and the Slice 2 wording, read view kept; CRLF endings refuse at the click", async (t) => {
+  const o = await open(REPORT, t);
+  const { body, b } = o;
+  await answerStatus(status([hunk("h1")]));
+  const chunk = win.__rompEditor;
+  delete win.__rompEditor;                               // no global and no bundle script tag: the load rejects
+  try {
+    b.edit.click();
+    await settle();
+    const bar = errBar(body)!;
+    assert.match(bar.textContent, /^no bundle script tag to derive the editor chunk URL from — 1 change is pending in this file, so Edit is off here/);
+    assert.equal(body.querySelector("textarea"), null, "no plain editor over pending changes");
+    assert.equal(b.save.hidden, true);
+    assert.ok(body.querySelector("code.hljs"));
+  } finally { win.__rompEditor = chunk; }
+  // CRLF: the editor normalizes line endings, which moves every offset the records hold — refused before the chunk loads
+  disk[REPORT] = { bytes: DOC.replace(/\n/g, "\r\n"), type: "text/plain; charset=utf-8", mtimeNs: MT };
+  o.ctx.reload();
+  await settle();
+  await answerStatus(status([hunk("h1")]));
+  const mounted = ed.mounted;
+  b.edit.click();
+  await settle();
+  assert.equal(ed.mounted, mounted, "no mount");
+  assert.match(errBar(body)!.textContent, /^This file has CRLF line endings, which the editor rewrites as it loads the text, so its pending changes cannot ride into it\. 1 change is pending/);
+  assert.equal(b.save.hidden, true);
+});
+
+test("source: the Slice 5 seam — text() answers the buffer in edit mode, the mount spreads the track option only when something is pending, Save routes by routesSave(), and the saveFile frame is byte for byte the pinned one", () => {
+  assert.match(VIEW, /text: \(\) => \(editing && bufValue\(\) !== null \? bufValue\(\) : viewText\(\)\),/);
+  assert.match(VIEW, /editing: \(\) => editing,\n\s*setTrackedEdit: \(t\) => \{ trackedEdit = t; \},/);
+  assert.match(VIEW, /\.\.\.\(pending \? \{ track: \{ suggestions: pending\.records, authorColor: pending\.authorColor, onLedger: \(\) => \{ dirty = cm!\.value\(\) !== norm\(text!\) \|\| decided\(\); \} \} \} : \{\}\),/,
+    "the option's shape is the chunk's TrackOpts, data only");
+  assert.match(VIEW, /onChange: \(\) => \{ dirty = cm!\.value\(\) !== norm\(text!\); if \(!dirty\) dirty = decided\(\); \},/, "a keystroke that restores the text leaves the decisions dirty");
+  assert.match(VIEW, /if \(pending && !cm\.track\) \{/, "an older bundle is detected by the handle it returns, not by a flag");
+  assert.match(VIEW, /if \(trackedEdit && trackedEdit\.routesSave\(\)\) \{[\s\S]*?trackedEdit\.save\(content, records, decisions\)\.then\(/);
+  assert.match(VIEW, /\n    post\(\{ type: "saveFile", path, sid: sid \|\| undefined, content, baseMtimeNs: mtimeNs, reqId: saveSeq \}\);\n  \};/, "the untracked path ends in the pinned frame");
+  assert.doesNotMatch(VIEW, /@codemirror|track-decorations|editor-chunk"/, "the viewer imports nothing from the chunk: the option is data through the mount call");
 });

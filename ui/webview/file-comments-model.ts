@@ -502,6 +502,49 @@ export function editBlockedReason(hunks: Hunk[]): string | null {
     + " first; the session's own track-edit still works.";
 }
 
+// ── editing over pending changes (Slice 5) ─────────────────────────────────────────────────────────
+/** One decision taken inside the editor: the change's id and its two texts as the record held them then. */
+export type EditDecision = { id: string; oldText: string; newText: string };
+/** The editor's decisions since it mounted, net of undo, as its handle reports them. */
+export type EditDecisions = { accepted: EditDecision[]; rejected: EditDecision[] };
+
+/** The change records the editor carries as marks: the sidecar's own records, as the status holds them (the
+ *  storage format's array; the panel never reads inside them). [] with no sidecar. */
+export function pendingRecords(store: Store | null): unknown[] {
+  return store && Array.isArray(store.suggestions) ? store.suggestions : [];
+}
+
+/** The session id behind an author label on the file's pending changes: the editor's marks ask for a colour by the
+ *  record's `author` (the label), and the colour map is keyed by session id. null when no record carries the label. */
+export function authorIdByLabel(store: Store | null, author: string): string | null {
+  for (const s of pendingRecords(store)) {
+    if (s && typeof s === "object" && (s as { author?: unknown }).author === author) {
+      const a = (s as { authorId?: unknown }).authorId;
+      return typeof a === "string" && a ? a : null;
+    }
+  }
+  return null;
+}
+
+/** The `save` verb's arguments (the Slice 5 contract, H4): the whole new text, the records as the editor's field
+ *  holds them after the person's typing remapped them, and the decisions taken in the editor. Built here so the
+ *  panel speaks the person's words and the wire keeps the format's. */
+export function saveArgs(content: string, records: unknown[], decided: EditDecisions): Record<string, unknown> {
+  return { content, suggestions: records, accepted: decided.accepted, rejected: decided.rejected };
+}
+
+/** Two record lists that hold the same changes: the same records in the same order, field for field. The panel
+ *  compares what rode into the editor with what the sidecar holds after a `store-moved` refusal — a reply a
+ *  session wrote mid-edit moves the sidecar without touching the records, and that save may go through. */
+export function sameRecords(a: unknown[], b: unknown[]): boolean {
+  return a.length === b.length && JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** The panel's row while the file changes on disk under an edit (the poll saw it move; the viewer's reload is a
+ *  no-op in edit mode, so nothing repaints over the person's text). Named after what happens next. */
+export const MOVED_UNDER_EDIT = "The file changed on disk while you were editing it. Save will refuse and offer Reload; "
+  + "Cancel shows the file as it is now.";
+
 /** The source offset where 0-based line `line` starts (for the mapping refusal's scroll-to-block offer). */
 export function lineStartOffset(source: string, line: number): number {
   let at = 0;

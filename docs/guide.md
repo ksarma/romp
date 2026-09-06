@@ -195,10 +195,18 @@ the file. **Accept all** and **Reject all** decide every change at once; Reject 
 confirm. A deletion has nothing to mark in the Rendered view, so its card offers **Reveal**,
 which opens the Raw view at the deletion; any change the current view cannot show offers it
 too. Reply on a change's card leaves a comment on the change itself, and the session's answer
-comes back to that card. While changes are pending, the viewer's **Edit** button refuses,
-because a direct edit would move them: accept or reject them first. The session's own
-track-edit keeps working. A session's tools refuse to rewrite an image or a PDF as text, so a
+comes back to that card. A session's tools refuse to rewrite an image or a PDF as text, so a
 tracked folder may hold figures.
+
+**Edit** works while changes are pending. The editor shows them inline, an insertion tinted
+and a deletion struck, and typing around them moves them with the text. Click a change to
+accept it; Alt-click (Cmd-click on a Mac, Ctrl-click elsewhere) rejects it; undo restores
+either, so nothing is final until you save. **Save** writes the file and the changes together.
+A save that is refused, because the file or its changes moved on disk while you were editing,
+keeps your text and offers **Reload file**, which asks before discarding it; while you edit,
+the panel says when the file changed under you. The session's own track-edit keeps working
+throughout. A file with CRLF line endings cannot be edited while changes are pending, because
+the editor rewrites its line endings, which would move them; accept or reject them first.
 
 **Send to session** hands everything unsent to the session that owns the file as one
 message, in your words: the comments and replies you wrote since the last send, each with

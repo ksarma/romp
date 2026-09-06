@@ -700,7 +700,8 @@ test("a save refused by the OWNING kernel's edit gate re-offers the consent and 
   // the arm hands the refusal to ensureEditingAllowed's re-consent path (shared with the comment
   // verbs since Slice 1) and retries on a yes; the helper re-posts the SAME opt-in the first popup
   // sends — gesture-stamped like it — before the caller's retry rides the same socket
-  const failedArm = VIEW.split("failed: (err) => {")[1].split("showSaveError(err);\n      },")[0];
+  // `code` (Slice 5): the comments host's refusal code when the save went through the panel — the moved fences offer Reload
+  const failedArm = VIEW.split("failed: (err, code) => {")[1].split('showSaveError(err, code === "store-moved" || code === "file-moved" || code === "config-moved");\n      },')[0];
   assert.match(failedArm, /void ensureEditingAllowed\(sid, err\)\.then\(\(ok\) => \{ if \(ok\) doSave\(\); else showSaveError\(err\); \}\);/);
   const helper = VIEW.split("export async function ensureEditingAllowed(")[1].split("\n}")[0];
   assert.match(helper, /if \(!\/file editing is off\/\.test\(refusal\)\) return false;/, "only the gate's own text re-offers");

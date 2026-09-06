@@ -10,8 +10,9 @@ import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { FileViewActionCtx } from "./file-view";
+import type { FileViewActionCtx, TrackedEdit } from "./file-view";
 import type { Status, StoreComment } from "./file-comments-model";
+import { MOVED_UNDER_EDIT } from "./file-comments-model";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -239,6 +240,7 @@ type World = {
   hooks: { rendered: Array<() => void>; selection: Array<(s: Selection) => void>; saved: Array<(i: { mtimeNs: string; logged: boolean }) => void>; close: Array<() => void> };
   disk: string; reloads: number; scrolls: number[]; modes: string[];
   mtimes: Record<string, string>; heads: string[];
+  editing: boolean; tracked: TrackedEdit | null;    // the viewer's edit mode, and the panel's half of editing over pending changes (Slice 5)
   setText(src: string): void; close(): void;
 };
 let cur: World | null = null;
@@ -277,6 +279,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
     posted: [] as any[], main, body, code, actions,
     hooks: { rendered: [] as Array<() => void>, selection: [] as Array<(s: Selection) => void>, saved: [] as Array<(i: { mtimeNs: string; logged: boolean }) => void>, close: [] as Array<() => void> },
     disk: text, reloads: 0, scrolls: [] as number[], modes: [] as string[], mtimes: {} as Record<string, string>, heads: [] as string[],
+    editing: false, tracked: null,
   } as World;
   rows(code, text);
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };   // the viewer's renderBody + fireRendered
@@ -286,7 +289,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: (cb) => { w.hooks.selection.push(cb); },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     reload: () => { w.reloads++; w.setText(w.disk); },   // fetchFile: the bytes now on disk, repainted, the seam's onRendered fired
@@ -743,4 +746,55 @@ test("source pins: the in-flight guard, the touch handlers, the selection gate, 
   assert.match(SRC, /ctx\.onRendered\(\(\) => \{ this\.float\.hidden = true; this\.retargetComposer\(\); this\.paintAll\(\); \}\);/);
   assert.match(SRC, /this\.errors\.set\("head", \{ text: e\.error, reload: true \}\);/, "a refused refresh offers Reload");
   assert.doesNotMatch(SRC, /Reading the file's comments/, "no line claims a read");
+});
+
+// ── editing over pending changes (Slice 5): the poll and the paint pass while the editor is up ─────
+
+test("while the editor is up (Slice 5): a moved file never reloads the view — the head says the bytes moved, with no Reload — the sidecar and config are still watched, and the first paint after the edit ends re-reads the bytes and drops the row", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w);
+  const asks = countOf(w, "fileComments", "status");
+  w.editing = true;
+  w.mtimes[ABS] = "1757145600000000033";                  // the session wrote the file under the person's edit
+  t.mock.timers.tick(2500); await flush(); await flush(); await flush();
+  assert.equal(w.reloads, 0, "no reload over the person's buffer");
+  assert.equal(countOf(w, "fileComments", "status"), asks + 1, "status is still re-read");
+  answer(w, status({ fileMtimeNs: "1757145600000000033" })); await flush();
+  const row = aside.querySelector(".fc-sec-head .fc-err")!;
+  assert.ok(row, "the head says so");
+  assert.equal(row.childNodes[0].textContent, MOVED_UNDER_EDIT);
+  assert.equal(row.querySelector('[data-act="fcreload"]'), null, "no Reload here: the viewer's own Save refusal offers it, and Cancel re-reads");
+  assert.equal(w.reloads, 0);
+  // the sidecar is still watched while the editor is up (a reply the session writes shows up in the cards)
+  w.mtimes[STORE_PATH] = "1757145600000000044";
+  t.mock.timers.tick(2500); await flush(); await flush(); await flush();
+  assert.equal(countOf(w, "fileComments", "status"), asks + 2, "a moved sidecar re-reads status in edit mode too");
+  answer(w, status({ fileMtimeNs: "1757145600000000033", storeMtimeNs: "1757145600000000044" })); await flush();
+  assert.equal(w.reloads, 0);
+  assert.ok(aside.querySelector(".fc-sec-head .fc-err"), "the row stays across the re-read");
+  // the edit ends (Cancel): the viewer repaints the OLD bytes and fires onRendered — the panel re-reads the bytes and drops the row
+  w.editing = false;
+  w.setText(w.disk);
+  await flush();
+  assert.equal(w.reloads, 1, "the first paint after the edit re-reads the file the session rewrote");
+  assert.equal(aside.querySelector(".fc-sec-head .fc-err"), null, "…and the row is gone");
+  // the same row after a reject from a card while editing: the second call site, pinned at source
+  assert.match(SRC, /this\.ctx\.reload\(\);\n\s*this\.noteMovedUnderEdit\(\);\s*\/\/ a reject from a card while the editor is up/);
+  assert.match(SRC, /await this\.refresh\(\);[^\n]*\n\s*this\.noteMovedUnderEdit\(\);/, "…and the poll's, after its refresh");
+  assert.match(SRC, /if \(!this\.ctx\.editing\(\) \|\| !s \|\| !laterNs\(s\.fileMtimeNs, this\.ctx\.mtimeNs\(\)\)\) return;/, "keyed on the clocks: the status read a later file than the editor loaded");
+});
+
+test("the paint pass stands down while the editor is up (Slice 5): a repaint marks nothing in the body and the panel still renders; the paint after the edit ends marks the passage again", async (t: TestContext) => {
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w);
+  assert.ok(w.body.querySelector(".fc-hl"), "read mode: the passage comment is marked in the rows");
+  w.editing = true;
+  w.setText(w.disk);                                     // the viewer's body swap on Edit: fresh rows, onRendered
+  assert.equal(w.body.querySelectorAll(".fc-hl").length, 0, "nothing painted over the editor's host");
+  assert.ok(aside.querySelector(".fc-card"), "the cards still render");
+  w.editing = false;
+  w.setText(w.disk);                                     // Cancel or Save: the read view is back
+  assert.ok(w.body.querySelector(".fc-hl"), "…and the marks with it");
+  assert.match(SRC, /paintAll\(\): void \{\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.render\(\); return; \}/, "the first line of the pass");
 });

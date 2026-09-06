@@ -1631,6 +1631,22 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-del { border-bottom: 2px solid var(--fc-author, var(--accent)); cursor: pointer; user-select: none; -webkit-user-select: none; }
 .fc-del::before { content: attr(data-fc-text); text-decoration: line-through; color: var(--dim);
   background: color-mix(in srgb, var(--err) 9%, transparent); }
+/* the editor's marks over pending changes (Slice 5; ui/webview/track-decorations.ts, whose CLS names these classes): while a
+   tracked file is edited, CodeMirror draws each change itself — an insertion as a mark over its new text (tc-diff-ins), a
+   deletion as a widget holding the struck old text in place (tc-diff-del), a substitution as the struck text right before the
+   new run (tc-diff-sub on both halves; a hair of space keeps the two apart), a whole-paragraph substitution as the struck rows
+   stacked above the new paragraph (tc-diff-del-block, one tc-diff-del-line per row). A click on either half accepts, a
+   modifier-click rejects, and both halves light together under the pointer (tc-diff-hover). The tint, the struck wash and
+   the --fc-author underline are the panel's own marks' (.fc-ins / .fc-del above), so a change reads the same edited as read. */
+.tc-diff-ins { background: color-mix(in srgb, var(--green) 12%, transparent); border-bottom: 2px solid var(--fc-author, var(--accent));
+  cursor: pointer; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.tc-diff-del { text-decoration: line-through; color: var(--dim); background: color-mix(in srgb, var(--err) 9%, transparent);
+  border-bottom: 2px solid var(--fc-author, var(--accent)); cursor: pointer; user-select: none; -webkit-user-select: none; }
+.tc-diff-sub { margin-right: 1px; }
+.tc-diff-del.tc-diff-sub { margin-right: 3px; }
+.tc-diff-del-block { display: block; padding: 0 4px; border-left: 2px solid var(--fc-author, var(--accent)); border-bottom: none; }
+.tc-diff-del-line { display: block; min-height: 1.2em; }
+.tc-diff-hover { background: color-mix(in srgb, var(--fc-author, var(--accent)) 24%, transparent); }
 /* region comments on images (Slice 3; file-comments-regions.ts): a wrapper hugs the <img> — inline-block, so it sits in the
    flow where the picture was, the picture a block inside it so no line-height gap widens the box — an overlay the drawn
    image's size takes the drag, and each rectangle is placed by PERCENTAGES of it, so it is right at any width. The author

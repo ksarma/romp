@@ -69,7 +69,7 @@ const stubCtx = (): FileViewActionCtx => ({
   path: "/tmp/notes-api/src/app.py", sid: null,
   body: () => new El("div") as unknown as HTMLElement, mode: () => "raw", text: () => null, mtimeNs: () => "",
   media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => null, onRendered: noop, onSelection: noop, onSaved: noop, onClose: noop,
-  post: noop, ensureEditingAllowed: async () => true, setEditBlocked: noop, aside: noop, setMode: noop,
+  post: noop, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, aside: noop, setMode: noop,
   scrollToOffset: noop, reload: noop,
 });
 async function mountAndAnswer(url: string, reason: string): Promise<El> {

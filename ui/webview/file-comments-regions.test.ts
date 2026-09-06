@@ -323,7 +323,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "pd
     pdfPages: () => pages as unknown as HTMLElement[],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { rendered.push(cb); }, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop,
+    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
     setMode: (m) => { modes.push(m); }, scrollToOffset: noop, reload: noop,
     ...ctxOver,

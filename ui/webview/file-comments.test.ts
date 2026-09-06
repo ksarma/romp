@@ -432,7 +432,7 @@ test("the poll's HEAD targets: the file, the sidecar the kernel named, config.js
   assert.match(SRC, /if \(paneHidden\(\)\) \{ this\.tickSkipped = true; return; \}/);
   assert.match(SRC, /document\.addEventListener\("visibilitychange", this\.catchUp\);\n\s*window\.addEventListener\("resize", this\.catchUp\);/);
   assert.match(SRC, /this\.base = pollBaseline\(s\);/, "every fileCommentsResult re-baselines the poll — the person's own writes never fire it");
-  assert.match(SRC, /if \(fileMoved\) this\.ctx\.reload\(\);/);
+  assert.match(SRC, /if \(fileMoved && !this\.ctx\.editing\(\)\) this\.ctx\.reload\(\);/, "a moved file repaints the view — never while the editor holds the body (Slice 5)");
   assert.match(SRC, /this\.stopped\.add\(target\);/);
 });
 
@@ -441,7 +441,10 @@ test("the Edit refusal while changes are pending (Slice 2 wording: accept or rej
   assert.equal(editBlockedReason([hunk]), "1 change is pending in this file, so Edit is off here: a direct edit would move it. Accept or reject the change first; the session's own track-edit still works.");
   assert.equal(editBlockedReason([hunk, { ...hunk, id: "h2" }, { ...hunk, id: "h3" }]), "3 changes are pending in this file, so Edit is off here: a direct edit would move them. Accept or reject the 3 changes first; the session's own track-edit still works.");
   assert.doesNotMatch(editBlockedReason([hunk])!, /next update|next slice/, "the Slice 1 wording is gone");
-  assert.match(SRC, /this\.ctx\.setEditBlocked\(editBlockedReason\(s\.hunks \|\| \[\]\)\);/, "set from every status reply");
+  // Slice 5: the panel no longer blocks Edit from a status; the wording rides in trackedEdit.begin() as the refusal the
+  // viewer raises when its editor bundle cannot carry the pending changes (an older bundle, a failed load)
+  assert.doesNotMatch(SRC, /this\.ctx\.setEditBlocked\(/, "no status reply blocks Edit any more");
+  assert.match(SRC, /refusal: editBlockedReason\(hunks\) \|\| "",/, "the Slice 2 wording is what the editor's refusal says");
   assert.equal(lineStartOffset("ab\ncd\nef", 0), 0);
   assert.equal(lineStartOffset("ab\ncd\nef", 1), 3);
   assert.equal(lineStartOffset("ab\ncd\nef", 2), 6);
@@ -563,7 +566,7 @@ function stubCtx(posted: any[], over: Partial<FileViewActionCtx> = {}): FileView
     body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: noop, onClose: noop,
-    post: (m) => posted.push(m), ensureEditingAllowed: async () => true, setEditBlocked: noop, aside: noop, setMode: noop,
+    post: (m) => posted.push(m), ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, aside: noop, setMode: noop,
     scrollToOffset: noop, reload: noop, ...over,
   };
 }
@@ -584,7 +587,7 @@ test("the Comments action mounts hidden, asks `status` with sid, and is revealed
   await tick();
   assert.equal(unit.hidden, false, "the answer reveals the action");
   assert.equal(b.textContent, "Comments · 3 · 1 change");
-  assert.deepEqual(blocked, [editBlockedReason([hunk])], "pending changes block Edit through the seam");
+  assert.deepEqual(blocked, [], "pending changes no longer block Edit through the seam: they ride into the editor as marks (Slice 5)");
 });
 
 test("a `no-node` refusal keeps the action away for good; a stale reqId lands nowhere", async () => {
@@ -635,7 +638,7 @@ test("the registry entry: exported by file-comments.ts, registered in file-view.
   assert.match(VIEW, /registerFileViewAction\(githubLinkAction\);\n(?:\/\/[^\n]*\n)*registerFileViewAction\(fileCommentsAction\);/, "second entry, after the GitHub link");
   assert.doesNotMatch(SRC.replace(/^\s*\/\/.*$/gm, ""), /registerFileViewAction/, "registered by the viewer, not at this module's top level");
   const fromView = SRC.match(/^import .* from "\.\/file-view";$/gm) || [];
-  assert.deepEqual(fromView, ['import type { FileViewAction, FileViewActionCtx, FileViewIdentity } from "./file-view";'], "types only");
+  assert.deepEqual(fromView, ['import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit } from "./file-view";'], "types only");
   // contract C4: the anchor-map API, imported by name
   assert.match(SRC, /import \{ mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine \} from "\.\/anchor-map";/);
   assert.doesNotMatch(SRC, /vendor\/track-changents/, "the engine is reached through anchor-map, never twice");
@@ -751,8 +754,14 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
     "onSelection(cb: (sel: Selection) => void): void;", "onSaved(cb: (info: { mtimeNs: string; logged: boolean }) => void): void;",
     "onClose(cb: () => void): void;", "post(m: Record<string, unknown>): void;", "ensureEditingAllowed(refusal?: string): Promise<boolean>;",
     "setEditBlocked(reason: string | null): void;", "aside(el: HTMLElement | null): void;", 'setMode(mode: "raw" | "rendered"): void;',
-    "scrollToOffset(n: number): void;", "reload(): void;"]) {
+    "scrollToOffset(n: number): void;", "reload(): void;",
+    // Slice 5: the viewer says whether its editor is up, and the panel registers its half of editing over pending changes
+    "editing(): boolean;", "setTrackedEdit(t: TrackedEdit | null): void;"]) {
     assert.ok(VIEW.includes(m), "FileViewActionCtx has " + m);
+  }
+  for (const m of ["begin(): { records: unknown[]; authorColor: (author: string) => string | null; refusal: string } | null;",
+    "routesSave(): boolean;", "save(content: string, records: unknown[], decided: EditDecisions): Promise<{ mtimeNs: string; logged: boolean }>;"]) {
+    assert.ok(VIEW.includes(m), "TrackedEdit has " + m);
   }
   assert.match(VIEW, /export async function ensureEditingAllowed\(sid: string \| null \| undefined, refusal\?: string\): Promise<boolean> \{/);
   assert.match(VIEW, /ensureEditingAllowed: \(refusal\) => ensureEditingAllowed\(sid, refusal\),/);

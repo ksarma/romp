@@ -190,7 +190,8 @@ test("the Edit refusal (Slice 2 wording): one line naming the count, saying to a
   assert.equal(editBlockedReason([]), null);
   assert.doesNotMatch(editBlockedReason([h1])!, /\n/, "one line");
   assert.doesNotMatch(editBlockedReason([h1])!, /next update|next slice|card|board|goal|nudge/i);
-  assert.match(SRC, /this\.ctx\.setEditBlocked\(editBlockedReason\(s\.hunks \|\| \[\]\)\);/, "set from every status reply");
+  assert.doesNotMatch(SRC, /this\.ctx\.setEditBlocked\(/, "Slice 5: a status no longer blocks Edit; the wording is the refusal trackedEdit.begin() hands the viewer");
+  assert.match(SRC, /refusal: editBlockedReason\(hunks\) \|\| "",/);
 });
 
 test("a decided change is remembered from the log: describeComment and the card keep the change's texts after Accept dropped it from the sidecar", () => {
@@ -515,7 +516,7 @@ function world(over: { todoId?: string | null; src?: string } = {}): World {
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     // fetchFile: the bytes and mtime now on disk, repainted, the seam's onRendered fired

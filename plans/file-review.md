@@ -282,7 +282,11 @@ inheritance, naming the parent note; `comment {anchor?, note, hintOffset?, targe
 present for a passage, absent for a whole-file comment, `target` from Slices 3 and 4);
 `reply {commentId, note}`; `resolve {commentId, on}`; `log-edit {summary}` (called by the kernel
 after a direct edit, see The comments log). Slice 2: `accept {ids}`, `reject {ids}`,
-`accept-all`, `reject-all`. Slice 5: `save {content, ops}`. Every mutating verb (all but
+`accept-all`, `reject-all`. Slice 5: `save {content, suggestions, accepted, rejected}` (as built: the
+records as the editor's field holds them after the person's typing remapped them, which is what
+this plan called `ops`, and the decisions taken in the editor, each `{id, oldText, newText}`;
+the records are checked against `content` and refuse `desync` naming the first that does not
+fit). Every mutating verb (all but
 `status`) carries a fence: `storeMtimeNs` must equal the sidecar's current mtime, with `""`
 meaning the sidecar must not exist yet, so two browsers cannot both create it; `reject`,
 `reject-all`, and `save` also fence on `fileMtimeNs`; `set-tracked` fences on `configMtimeNs`
@@ -941,6 +945,23 @@ read at `:595-596` replaced by a constant and the `mouseover` handler at `:774-7
 the editor view (survey A6), `file-view.ts` `doSave` sending the `save` verb instead of
 `saveFile` when the panel is open. Size: ~500 / ~60 / ~40. Lowest confidence of the six; it is
 the one slice that touches the editor chunk's contract.
+
+The Slice 5 build (2026-09-06): the track field, the marks and the click handling live inside
+the editor chunk's own bundle, reached through the typed `track` mount option (decision 14),
+because two bundles that each carry `@codemirror/state` cannot share a page; there is no
+separate comments chunk, and the oracle tests run under `node:test` as
+`ui/webview/track-cm-oracle.test.ts`. The viewer knows nothing of sidecars: the panel
+registers its half through one seam member (`setTrackedEdit`: what rides into the editor at
+Edit, whether Save goes through the host, and the save itself), and the viewer answers
+`text()` from the buffer and says `editing()` while the editor is up, so the panel's paint
+pass and the poll's file reload stand down. The save is fenced on the sidecar the records came
+from (the status at Edit, not the poll's latest), the config, and the file the editor loaded;
+a moved sidecar or config is retried once when the sidecar's records are still the ones the
+editor carries (a reply a session wrote mid-edit), a moved file never. An older editor bundle
+that ignores the option is detected by the handle it returns, and Edit then refuses with the
+Slice 2 wording; a bundle that fails to load over pending changes refuses the same way rather
+than falling back to the plain editor. A CRLF file with pending changes refuses Edit: the
+editor normalizes line endings, which moves every offset the records hold.
 
 ### Optional: per-comment fork dispatch
 

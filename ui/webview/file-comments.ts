@@ -1,4 +1,4 @@
-// File comments and tracked changes — the viewer's Comments panel (plans/file-review.md, Slices 1 and 2).
+// File comments and tracked changes — the viewer's Comments panel (plans/file-review.md, Slices 1 to 5).
 //
 // The person who directs the sessions reads their output as files, and until now a comment on a file
 // left romp: GitHub, a chat quote that scrolled away, or a note typed into the file itself. This panel
@@ -22,6 +22,10 @@
 //     rectangle placed by percentages, dashed once the image's bytes changed under it (the host's hash against
 //     the stored one). The card shows the region cut from the picture and offers Re-place, which retargets the
 //     comment to the next region drawn. Desktop only; a coarse pointer reads and comments on the whole file.
+//   • Edit over pending changes (Slice 5): the viewer's editor carries the changes as marks of its own, so while it is
+//     up the paint pass stands down and the poll's file reload does too (a row in the head says the bytes moved). Save
+//     goes through this panel (`save`: the text, the records as the editor remapped them, the decisions taken in it),
+//     fenced on the sidecar the records came from and on the file the editor loaded; a refused save keeps the buffer.
 //   • The kernel does the disk work on the OWNING kernel (the `fileComments` op runs a node host
 //     script over the vendored track-changents store); this module renders JSON and never holds a
 //     sidecar it writes back. Both ops carry `sid`, so federation routes a remote session's file to
@@ -44,7 +48,7 @@
 //
 // This module imports only TYPES from file-view.ts and is registered there (registerFileViewAction
 // in file-view.ts), so the two never form a runtime import cycle.
-import type { FileViewAction, FileViewActionCtx, FileViewIdentity } from "./file-view";
+import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit } from "./file-view";
 import { delegate, flash, type ActionHandler } from "./actions";
 import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
@@ -57,6 +61,7 @@ import {
   foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, sendParts, sendCounts, buildSendMessage, unsentCount,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   regionTarget, regionState, type PollBaseline,
+  pendingRecords, authorIdByLabel, saveArgs, sameRecords, MOVED_UNDER_EDIT, type EditDecisions,   // editing over pending changes (Slice 5)
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
 import { regionDesc, type Region } from "./region-geometry";
@@ -401,6 +406,12 @@ class Panel {
   colors: Map<string, FileViewIdentity> | null = null;
   located = new Map<string, Located & { painted: boolean }>();
   base: PollBaseline | null = null;
+  // editing over pending changes (Slice 5): what rode into the editor at Edit — the records and the sidecar/config fence
+  // of the status they came from, which the save fences on (a change a session records mid-edit moves the sidecar, and a
+  // fence from the poll's later status would let the save write over it); null when nothing rode in. `lastSaveNs` is the
+  // fileMtimeNs of a save reply this panel applied as its status itself, so onSaved skips the re-read it does for saveFile.
+  editSeed: { records: unknown[]; storeMtimeNs: string; configMtimeNs: string } | null = null;
+  lastSaveNs: string | null = null;
   stopped = new Set<string>();              // poll targets a 413/415 retired
   timer: ReturnType<typeof setInterval> | null = null;
   polling = false;
@@ -455,9 +466,11 @@ class Panel {
     ctx.onRendered(() => { this.float.hidden = true; this.retargetComposer(); this.paintAll(); });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
+      if (this.lastSaveNs === info.mtimeNs) { this.lastSaveNs = null; return; }   // a save through this panel: its reply IS the status (Slice 5)
       if (this.status) void this.refresh();            // the Log gained the edit entry before the reply
     });
     ctx.onClose(() => this.dispose());
+    ctx.setTrackedEdit(this.trackedEdit());            // the editor's half of editing over pending changes (Slice 5)
     // every control the panel ever renders hangs off ONE stable root (ui/CLAUDE.md, click-safe): the
     // viewer's body row, which also holds the painted highlights — so a highlight click routes here too.
     // The same row holds the FILE's rendered markdown, and the sanitizer keeps data-* attributes (DOMPurify's
@@ -642,7 +655,8 @@ class Panel {
     this.unit.hidden = false;
     this.button.textContent = actionLabel(s);
     this.button.title = s.store ? "Comments and changes kept beside this file" : "Comment on this file, or track a session's changes to it";
-    this.ctx.setEditBlocked(editBlockedReason(s.hunks || []));
+    // Edit is not refused for pending changes any more (Slice 5): they ride into the editor as marks (trackedEdit.begin),
+    // and the viewer raises the Slice 2 wording itself when its editor bundle cannot carry them
     this.paintAll();                                   // repaints the highlights and renders the panel
     return true;
   }
@@ -787,8 +801,9 @@ class Panel {
         if (mtimeMoved(base[key], v.value)) { moved = true; if (key === "file") fileMoved = true; }
       }
       if (moved) {
-        if (fileMoved) this.ctx.reload();            // the bytes changed under the view — repaint them
+        if (fileMoved && !this.ctx.editing()) this.ctx.reload();   // the bytes changed under the view — repaint them; never over an editor's buffer (Slice 5)
         await this.refresh();                        // fresh sidecar, log, and a new baseline
+        this.noteMovedUnderEdit();                   // reload() stands down in edit mode: the head says the bytes moved (Slice 5)
       }
     } finally { this.polling = false; }
   }
@@ -821,6 +836,7 @@ class Panel {
       // the file's bytes changed under the view: re-fetch them (the hunks and anchors in this reply index the NEW
       // text, and the poll will not do it — the reply just re-baselined it). The repaint arrives through onRendered.
       if (FILE_VERBS.has(verb) && r.fileMtimeNs && this.ctx.mtimeNs() && mtimeMoved(this.ctx.mtimeNs(), r.fileMtimeNs)) this.ctx.reload();
+      this.noteMovedUnderEdit();                       // a reject from a card while the editor is up (Slice 5): reload() stood down
       return r;
     } catch (err) {
       const e = err as { code: string; error: string };
@@ -834,6 +850,74 @@ class Panel {
       this.errors.set(slot, { text: e.error, reload: MOVED.has(e.code) });
       return null;
     }
+  }
+
+  // ── editing over pending changes (Slice 5; the contract's H3 and H4) ──────────────────────────
+  /** The viewer's seam object: what rides into the editor at Edit, where Save goes, and the save itself. */
+  private trackedEdit(): TrackedEdit {
+    return {
+      begin: () => {
+        const s = this.status;
+        const hunks = s ? s.hunks || [] : [];
+        if (!s || !hunks.length) { this.editSeed = null; return null; }
+        const records = pendingRecords(s.store);
+        this.editSeed = { records, storeMtimeNs: s.storeMtimeNs ?? "", configMtimeNs: s.configMtimeNs ?? "" };
+        return {
+          records,
+          // the mark's colour is the author's session colour from the Slice 1 map, as on the panel's own marks; neutral when
+          // the label maps to no session here (a remote kernel's author, a session the list no longer holds)
+          authorColor: (author) => { const aid = authorIdByLabel(s.store, author); const c = aid && this.colors ? this.colors.get(aid) : null; return c && c.color ? c.color.bg : null; },
+          refusal: editBlockedReason(hunks) || "",
+        };
+      },
+      routesSave: () => { const s = this.status; return !!s && (!!s.trackedBy || !!s.store); },
+      save: (content, records, decided) => this.saveThroughComments(content, records, decided),
+    };
+  }
+  /** The editor's Save through the host: `save` with the text, the records as the editor holds them and its decisions,
+   *  fenced on the sidecar the records came from (editSeed; the latest status when none rode in), the config, and the
+   *  file as the viewer loaded it. One retry, as every mutating verb gets (mutateOnce), when the sidecar or config moved
+   *  but the records the editor carries are still the sidecar's own — a reply a session wrote mid-edit, a toggle from
+   *  another browser; never for a moved file (the editor's text is from the old bytes) or a sidecar whose records
+   *  changed. The reply is applied as the status (it is one), so onSaved has nothing left to re-read. */
+  async saveThroughComments(content: string, records: unknown[], decided: EditDecisions): Promise<{ mtimeNs: string; logged: boolean }> {
+    const seed = this.editSeed;
+    const fenceOf = (s: Status | null): Record<string, string> => ({
+      storeMtimeNs: s && s.storeMtimeNs !== null ? s.storeMtimeNs : "", configMtimeNs: s && s.configMtimeNs !== null ? s.configMtimeNs : "",
+    });
+    let fence: Record<string, string> = { ...(seed ? { storeMtimeNs: seed.storeMtimeNs, configMtimeNs: seed.configMtimeNs } : fenceOf(this.status)), fileMtimeNs: this.ctx.mtimeNs() };
+    const args = saveArgs(content, records, decided);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const r = await this.request("save", args, fence);
+        this.markOverlapped();                         // the status asks still out may have read the disk before this write
+        this.editSeed = null;
+        this.lastSaveNs = r.fileMtimeNs;
+        this.applyStatus(r);
+        return { mtimeNs: r.fileMtimeNs, logged: (r as { logged?: unknown }).logged === true };
+      } catch (err) {
+        const e = err as { code: string; error: string };
+        if (attempt === 0 && (e.code === "store-moved" || e.code === "config-moved")) {
+          await this.refresh();
+          const s = this.status;
+          if (s && sameRecords(seed ? seed.records : [], pendingRecords(s.store))) {
+            fence = { ...fenceOf(s), fileMtimeNs: this.ctx.mtimeNs() };
+            if (seed) this.editSeed = { ...seed, storeMtimeNs: fence.storeMtimeNs, configMtimeNs: fence.configMtimeNs };
+            continue;
+          }
+        }
+        throw e;
+      }
+    }
+  }
+  /** The file's bytes moved under an edit (the poll saw it; a reject from a card rewrote it): the viewer's reload() stands
+   *  down in edit mode, so the head says so. Save will refuse on its file fence; the first paint after the edit ends
+   *  re-reads the bytes (paintAll). Keyed on the clocks: the status read a later file than the one the editor loaded. */
+  private noteMovedUnderEdit(): void {
+    const s = this.status;
+    if (!this.ctx.editing() || !s || !laterNs(s.fileMtimeNs, this.ctx.mtimeNs())) return;
+    this.errors.set("edit", { text: MOVED_UNDER_EDIT, reload: false });
+    this.render();
   }
 
   // ── Track changes ──────────────────────────────────────────────────────────────────────────────
@@ -1057,6 +1141,8 @@ class Panel {
    *  over the new text, deletions struck at their point in Raw and card-only in Rendered, each mark
    *  carrying the change's id and the author's session colour. The composer's pending target is painted last. */
   paintAll(): void {
+    if (this.ctx.editing()) { this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render
+    if (this.errors.delete("edit")) this.ctx.reload();   // the edit ended over bytes that moved under it (Cancel — a Save would have refused): re-read them
     this.located = new Map();
     this.paintedChanges = new Set();
     unpaintChanges(this.ctx.body());                   // before each repaint (D5): the marks are unwrapped, never stacked
@@ -1518,7 +1604,7 @@ class Panel {
       stop.appendChild(btn("Cancel", "fctrackcancel"));
       head.appendChild(stop);
     }
-    for (const n of [this.loader("track"), this.errRow("track"), this.errRow("head"), this.errRow("poll")]) if (n) head.appendChild(n);
+    for (const n of [this.loader("track"), this.errRow("track"), this.errRow("head"), this.errRow("poll"), this.errRow("edit")]) if (n) head.appendChild(n);
     // a Reload from the head's or the poll's row: the slot wears the loader where the row was, until the answer (refresh)
     for (const n of [this.loader("head"), this.loader("poll")]) if (n) head.appendChild(n);
     if (s && s.agentTooling === "absent") {

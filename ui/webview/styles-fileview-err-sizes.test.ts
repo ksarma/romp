@@ -233,7 +233,7 @@ test("the chains above are the real DOM: the builders in file-view.ts and file-c
   assert.match(PANEL, /if \(e\.reload\) \{ const b = btn\("Reload", "fcreload"\);[^\n]*row\.appendChild\(b\); \}/);
   assert.match(PANEL, /const x = btn\("✕", "fcerrx", "fileview-btn fc-x"\);[^\n]*row\.appendChild\(x\);/);
   // …and where each slot's row lands
-  assert.match(PANEL, /\[this\.loader\("track"\), this\.errRow\("track"\), this\.errRow\("head"\), this\.errRow\("poll"\)\]\) if \(n\) head\.appendChild\(n\);/);
+  assert.match(PANEL, /\[this\.loader\("track"\), this\.errRow\("track"\), this\.errRow\("head"\), this\.errRow\("poll"\), this\.errRow\("edit"\)\]\) if \(n\) head\.appendChild\(n\);/);
   assert.match(PANEL, /const err = this\.composerErr;\n\s*err\.replaceChildren\(\.\.\.\[this\.loader\("composer"\), this\.errRow\("composer"\)\]/);
   assert.match(PANEL, /box\.replaceChildren\(ref, this\.input, acts, err\);/);
   assert.match(PANEL, /\[this\.loader\("card:" \+ c\.id\), this\.errRow\("card:" \+ c\.id\)\]\) if \(n\) card\.appendChild\(n\);/);
