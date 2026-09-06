@@ -841,6 +841,50 @@ class Assemble(_Base):
         self.assertIn("notes.txt", p.stdout)
         self.assertIn("not cover", p.stdout)
 
+    def test_a_file_vs_symlink_conflict_claims_no_rerere_replay(self):
+        """A distinct-types conflict: merge-tree names the aside copy `notes.txt~<HEAD sha>` (its parents
+        are given by SHA) while `git merge` names it `notes.txt~HEAD`, so the merge-tree path is neither
+        unmerged nor in the index. Every conflicted path that was not unmerged used to count as a
+        rerere replay, so a FIRST assembly said rerere had replayed that phantom path, and the record
+        and the digest repeated it. A replayed path is one the index holds at stage 0."""
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo-a\nthree\n"})
+        fx._git("fetch", "-q", "origin", cwd=fx.author)
+        fx._git("checkout", "-q", "-B", "g", "origin/main", cwd=fx.author)
+        os.remove(os.path.join(fx.author, "notes.txt"))
+        os.symlink("README.md", os.path.join(fx.author, "notes.txt"))
+        fx._git("add", "-A", cwd=fx.author)
+        fx._git("commit", "-q", "-m", "notes.txt becomes a link", cwd=fx.author)
+        fx._git("push", "-q", "-f", "origin", "g", cwd=fx.author)
+        fx.pr(101, "a", labels=["fix"], body=TRAILER)
+        fx.pr(108, "g", title="notes: a link", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        p = fx.run("assemble", "b1", "--resolve", "108")
+        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+        self.assertNotIn("rerere replayed", p.stdout, "nothing was replayed on a first assembly")
+        cur = fx.state("b1")["assembly"]["cursor"]
+        self.assertEqual(cur["replayed"], [])
+        self.assertIn("notes.txt", cur["files"])
+        wt = fx.wt("b1")
+        self.assertEqual(fx._git("diff", "--name-only", "--diff-filter=U", cwd=wt).split(), ["notes.txt", "notes.txt~HEAD"],
+                         "git's own names for the conflict")
+        # Keep #101's file: drop the aside copy git wrote, put the file back under its name.
+        fx._git("rm", "-q", "--", "notes.txt~HEAD", cwd=wt)
+        os.remove(os.path.join(wt, "notes.txt"))
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a\nthree\n")
+        fx._git("add", "--", "notes.txt", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "kept the file")
+        rec = [e for e in fx.state("b1")["assembly"]["merged"] if e["n"] == 108][0]["resolved"]
+        self.assertNotIn("rerere", rec["how"])
+        self.assertNotIn("replayed_files", rec)
+        self.assertEqual(fx.dev_git("show", "batch/b1:notes.txt"), "one\ntwo-a\nthree")
+        p = fx.ok("verify", "b1", "--sweep", "x")
+        self.assertIn("#108 merge carries a recorded resolution (resolved by the batcher, per hunk)", p.stdout)
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        self.assertNotIn("rerere", body)
+        self.assertIn("one review round: kept the file", body)
+
     def test_a_member_already_contained_by_an_earlier_member_is_recorded_as_contained(self):
         """Ordering missed a dependency: #101's branch was built on #102's. `git merge` says
         'Already up to date' and makes no commit, which must not be recorded as a merge."""

@@ -653,6 +653,28 @@ def unmerged_paths(wt):
     return git("diff", "--name-only", "--diff-filter=U", cwd=wt).split()
 
 
+def staged_paths(wt, paths):
+    """Among `paths`, those the index holds at stage 0: staged whole, neither unmerged nor absent."""
+    if not paths:
+        return []
+    out = []
+    for entry in _run(["git", "ls-files", "--stage", "-z", "--", *paths], cwd=wt).stdout.split("\0"):
+        meta, _, path = entry.partition("\t")
+        if path and meta.split()[2] == "0":
+            out.append(path)
+    return out
+
+
+def replayed_paths(wt, conflicted, still):
+    """The conflicted paths rerere replayed and staged: conflicted, not unmerged, and in the index at
+    stage 0. The last condition is not implied by the first two: for a distinct-types conflict (a file
+    on one side, a symlink on the other) merge-tree names the aside copy after the SHA it was given
+    (`notes.txt~<sha>`) while `git merge` names it `notes.txt~HEAD`, so the merge-tree path is
+    conflicted and not unmerged and exists nowhere; without the index check a first assembly said
+    rerere had replayed it."""
+    return sorted(staged_paths(wt, sorted(set(conflicted) - set(still))))
+
+
 def resolution_diff(cwd, merge, paths):
     """The resolution as a diff: from the merge-tree of the merge's parents (conflict markers left in
     the conflicted files) to the merge, over `paths`. That shows the conflict text turning into the
@@ -849,13 +871,14 @@ def merge_member(root, wt, state, m, resolve_set):
     if not merge_in_progress(wt):
         raise Fail("git merge of #%d failed without a conflict to resolve:\n%s%s" % (n, proc.stdout, proc.stderr))
     # The files that conflicted are what git would conflict on by itself (merge-tree, plumbing) plus
-    # what is unmerged in the index; the difference is what rerere replayed and staged. A stop lists
+    # what is unmerged in the index; those of the difference that the index holds at stage 0 are what
+    # rerere replayed and staged (replayed_paths says why the index check is needed). A stop lists
     # ALL of them: a replayed file left off the cursor read as a stray change at --continue, and the
     # restore that refusal advised wrote the conflicted tree's markers into it.
     still = unmerged_paths(wt)
     _, _, would = merge_tree_of(before, m["head"], wt)
     conflicted = sorted(set(still) | set(would or []))
-    replayed = sorted(set(conflicted) - set(still))
+    replayed = replayed_paths(wt, conflicted, still)
     resolved = None
     if not still and merge_in_progress(wt):
         # rerere replayed a recorded resolution and staged the result (rerere.autoUpdate). The review
@@ -987,7 +1010,7 @@ def merge_main(root, wt, state):
         still = unmerged_paths(wt)
         _, _, would = merge_tree_of(git("rev-parse", "HEAD", cwd=wt), main_sha, wt)
         conflicted = sorted(set(still) | set(would or []))
-        replayed = sorted(set(conflicted) - set(still))
+        replayed = replayed_paths(wt, conflicted, still)
         if still:
             state["assembly"]["cursor"] = {"n": None, "main": main_sha, "files": conflicted, "replayed": replayed}
             log(state, "the merge of %s stopped for resolution in %s%s; resolve per hunk in %s, `git add` the files, then "
