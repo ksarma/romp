@@ -546,8 +546,9 @@ Romp spends tokens on top of what you spend yourself. If you are running models
 like Opus or Fable at high effort, the judging costs much less than the sessions
 themselves. The analytics modal in settings separates your sessions from the
 judge pipeline. The judge dollars are the exact cost each judge call reported;
-the session dollars are the CLI's own per-turn cost where romp's spend ledger
-covers the period, and otherwise an estimate from transcript tokens and a
-price table (the footnote says which). You can also reconfigure the
+the session dollars are the CLI's own per-turn cost from romp's spend ledger,
+plus an estimate from transcript tokens and a price table for any part of the
+period the ledger predates (the footnote names each amount; the estimate
+stands alone only where there is no ledger). You can also reconfigure the
 judges from the gear: the high-volume indexing tier defaults to Haiku, and the
 judgment tier defaults to Sonnet.

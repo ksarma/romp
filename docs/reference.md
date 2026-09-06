@@ -299,11 +299,21 @@ recorded separately (`judge-usage.jsonl`) and is not part of this cell. Day
 buckets recorded before 2026-08-10 predate the per-turn fold and are inflated;
 they stay as recorded, and a window that includes one says so in the hover.
 
-The gear's analytics modal (the Sessions and Judges bars) shows the same
-ledger figure for the session dollars wherever the ledger covers the chosen
-period. Where it does not, the modal prices the transcripts' tokens with a
-per-model table and its footnote says so; that estimate misses fast mode's
-premium and any model the table lacks.
+The gear's analytics modal (the Sessions and Judges bars) shows the session
+dollars from the same ledger, over periods made of the same whole buckets:
+`1h` is this hour and the one before it, `24h` this hour and the 24 hours
+before it, `30d` today and the 30 local dates before it, and the footnote
+names the time the period starts from. Every figure in the modal (the ledger
+dollars, the transcript tokens, the judge dollars) is cut at that same start,
+so the `judges = N% of session cost` line compares two figures over the same
+span. On a host that runs a login beside a key the session dollars count
+key-billed turns only, as the API cell does, and the footnote says so. Where
+the ledger began inside the period, the modal adds an
+estimate for the time before the ledger's first bucket, priced from the
+transcripts' tokens with a per-model table, and labels the two amounts; the
+estimate stands alone only when the ledger has no bucket of the period's
+kind at all. The estimate misses fast mode's premium and any model the table
+lacks, and it prices every session's transcript, login sessions included.
 
 ### Self-scheduled work wakes an idle session
 

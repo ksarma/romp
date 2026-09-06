@@ -28534,30 +28534,65 @@ def _session_cost(path, t0, prices):
 _ANALYTICS_MEMO = {}   # window -> {"t": epoch, "jkey": judge-usage cache size, "resp": the payload}
 
 
-def _spend_ledger_window(now, window):
-    """The sessions' spend over the trailing `window` seconds as the RAIL's ledger recorded it — the
-    CLI's own per-turn total_cost_usd, folded per result into spend.json (sdk_backend _record_spend) —
-    for the analytics modal to show in place of its token-price estimate wherever the ledger reaches
-    (2026-09-05: the estimate read 1.55x the ledger over a day). {usd, turns, tok, since?}, or None
-    when the ledger holds no bucket at all. Hour buckets for a window the 8-day hour ledger covers
-    (exact to the hour — the rail's own _rolling math), day buckets beyond (exact to the local date).
-    `since` names the oldest bucket when the ledger starts INSIDE the window, so a young ledger says how
-    far back it reaches rather than reading as a quietly short window (the T235 discipline)."""
+def _bucket_start(key):
+    """Epoch start of a ledger bucket key — a local hour (`%Y-%m-%dT%H`) or a local date (`%Y-%m-%d`);
+    None for anything else."""
+    try:
+        return time.mktime(time.strptime(key, "%Y-%m-%dT%H" if "T" in key else "%Y-%m-%d"))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _analytics_edges(now, window):
+    """The analytics window's edges, by the RAIL's own bucket rule so the modal's ledger figure IS the rail
+    cell's: `window` seconds rounded up to n whole hour buckets plus the current one (this hour and the n
+    before it) while the 8-day hour ledger covers it, else n whole local dates plus today. Returns
+    (kind, keys, t0): kind "hours"|"days", the bucket keys newest first, and t0 — the epoch start of the
+    oldest bucket. t0 is the ONE cut every figure in the modal takes (the ledger sum, the transcript rows,
+    the judge rows), so the 'judges = N% of session cost' line compares like-for-like. Before this
+    (2026-09-06) the ledger summed whole buckets while the judge and token figures were cut at exactly
+    now - window, so a 1h view opened at :59 divided 60 minutes of judge dollars by 120 minutes of
+    session dollars. So `1h` covers 60 to 120 minutes, `24h` 24 to 25 hours and `30d` 30 to 31 local
+    dates — the rail's `1 hour` / `1 day` / `1 month` read the same way — and the modal says where the
+    period starts (`from` in the payload) rather than promising an exact hour."""
+    if window <= (_SERIES_HOURS - 1) * 3600:
+        n = -(-int(window) // 3600)
+        keys = [time.strftime("%Y-%m-%dT%H", time.localtime(now - i * 3600)) for i in range(n + 1)]
+        lt = time.localtime(now)
+        this_hour = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, lt.tm_hour, 0, 0, 0, 0, -1))
+        return "hours", keys, this_hour - n * 3600
+    n = -(-int(window) // 86400)
+    today = datetime.fromtimestamp(now).date()
+    keys = [(today - timedelta(days=i)).isoformat() for i in range(n + 1)]
+    first = today - timedelta(days=n)
+    return "days", keys, time.mktime((first.year, first.month, first.day, 0, 0, 0, 0, 0, -1))
+
+
+def _spend_ledger_window(now, window, keyed_only=False):
+    """The sessions' spend over the analytics window as the RAIL's ledger recorded it — the CLI's own
+    per-turn total_cost_usd, folded per result into spend.json (sdk_backend _record_spend) — for the
+    modal to show in place of its token-price estimate wherever the ledger reaches (2026-09-05: the
+    estimate read 1.55x the ledger over a day). {usd, turns, tok, since?, sinceT?, preFix?, keyed?}, or
+    None when the ledger holds no bucket of the window's kind.
+
+    THE WINDOW is the rail's, whole buckets per _analytics_edges, summed whole — so this figure equals
+    the rail cell's for the matching window, and the build cuts every other figure at the same edges'
+    t0. `keyed_only` sums each bucket's `key` sub-counters instead — the turns whose session billed an
+    API key — the rail's own rule on a host that runs a login beside a key (a login turn's computed cost
+    is billed to no one, the user 2026-08-08); the caller decides by the rail's arms (_token_analytics)
+    and the result says `keyed` so the modal can say what it left out. `since` names the oldest bucket
+    when the ledger starts INSIDE the window, `sinceT` its epoch start, so the build can price the
+    window's earlier part from transcripts instead of letting a young ledger read as a quietly short
+    window (the T235 discipline). The oldest bucket itself may hold only part of its hour or day (the
+    ledger began mid-bucket); that sliver is in neither figure."""
     try:
         d = json.loads((jd.STATE / "spend.json").read_text())
     except Exception:
         return None
     days = d.get("days") if isinstance(d.get("days"), dict) else {}
     hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
-    if window <= (_SERIES_HOURS - 1) * 3600:
-        n = -(-int(window) // 3600)
-        keys = [time.strftime("%Y-%m-%dT%H", time.localtime(now - i * 3600)) for i in range(n + 1)]
-        buckets = hours
-    else:
-        n = -(-int(window) // 86400)
-        today = datetime.fromtimestamp(now).date()
-        keys = [(today - timedelta(days=i)).isoformat() for i in range(n + 1)]
-        buckets = days
+    kind, keys, _t0 = _analytics_edges(now, window)
+    buckets = hours if kind == "hours" else days
     if not buckets:
         return None
     out = {"usd": 0.0, "turns": 0, "tok": 0}
@@ -28567,24 +28602,42 @@ def _spend_ledger_window(now, window):
             continue
         if _spend_pre_fix(k):
             out["preFix"] = True   # a bucket from before the per-turn fix is in this sum (see the constant)
-        out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
-        out["turns"] += int(e.get("turns") or 0)
-        out["tok"] += sum(int(e.get(kk) or 0) for kk in ("tokIn", "tokOut", "tokCacheR", "tokCacheW"))
+        if keyed_only:
+            e = e.get("key") if isinstance(e.get("key"), dict) else {}
+            out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
+            out["turns"] += int(e.get("turns") or 0)
+            out["tok"] += int(e.get("tok") or 0)
+        else:
+            out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
+            out["turns"] += int(e.get("turns") or 0)
+            out["tok"] += sum(int(e.get(kk) or 0) for kk in ("tokIn", "tokOut", "tokCacheR", "tokCacheW"))
+    if keyed_only:
+        out["keyed"] = True
     oldest = min(k for k in buckets if isinstance(k, str))   # one ledger's keys sort chronologically
     if oldest > min(keys):
         out["since"] = oldest
+        st = _bucket_start(oldest)
+        if st is not None:
+            out["sinceT"] = st
     return out
 
 
 def _token_analytics(now, window):
-    """Token usage over the trailing `window` seconds for the analytics modal (the /analytics endpoint):
-    the coding SESSIONS total (summed transcript usage of the discovered sessions, subagents included)
-    vs the judge PIPELINE broken out per judge AND per tier (_judge_usage). One ARBITRARY window — the
-    modal's period picker. Each side also carries $ cost so the modal can toggle tokens↔cost without
-    a refetch: judges = exact logged cost, sessions = tokens × _model_prices as an ESTIMATE, plus
-    `sessions.ledger` — the CLI's own per-turn cost from the rail's ledger (_spend_ledger_window) —
-    wherever spend.json reaches, which the modal shows first. Cheap: _session_tokens caches per-path
-    rows and _judge_usage reads the shared incremental row cache, so this re-sums memory."""
+    """Token usage over the analytics window for the modal (the /analytics endpoint): the coding SESSIONS
+    total (summed transcript usage of the discovered sessions, subagents included) vs the judge PIPELINE
+    broken out per judge AND per tier (_judge_usage). One ARBITRARY window — the modal's period picker —
+    read at the rail's bucket edges (_analytics_edges): `from` is the period's real start, and the
+    ledger sum, the transcript rows and the judge rows are all cut there, so every ratio in the modal is
+    like-for-like. Each side carries $ so the modal toggles tokens<->cost without a refetch: judges =
+    exact logged cost; sessions = `cost`, tokens x _model_prices over the whole period (an ESTIMATE),
+    plus `ledger` — the CLI's own per-turn cost from the rail's ledger (_spend_ledger_window), which the
+    modal shows first. On a host that runs a login beside a key the ledger figure is the KEYED split,
+    the rail's own rule (`ledger.keyed`); with a key alone or no key it is the total. Where the ledger
+    began inside the period, `ledger.estBefore` is the estimate for [from, ledger.sinceT) — the part the
+    ledger predates, priced from every session's transcript (the estimate cannot tell a login turn from
+    a key turn) — and the modal adds it to the ledger's dollars, each labelled. Cheap: _session_tok_rows
+    caches per-path rows (one walk + stats per session per build, parse only on change) and
+    _judge_usage reads the shared incremental row cache, so this re-sums memory."""
     # a tiny TTL memo: the modal refetches on every period click and every reopen, and the recompute is
     # honest-but-pointless within seconds of itself (the user 2026-08-13's fast-and-visible rule); a new
     # judge row (cache size moved) invalidates early so the numbers never sit stale behind live judging
@@ -28592,20 +28645,28 @@ def _token_analytics(now, window):
     jkey = _JUDGE_USAGE_CACHE["size"]
     if memo and memo["jkey"] == jkey and now - memo["t"] < 15:
         return memo["resp"]
-    t0 = now - window
+    kind, _keys, t0 = _analytics_edges(now, window)
+    # the rail's arm for the session dollars: a key beside a login → the keyed split (login turns'
+    # computed cost is billed to no one); a key alone → the total (every turn bills it, and legacy
+    # buckets predate the split); no key → the total, the CLI's computed cost, billed to no one
+    keyed = bool(_auth_key_present() and _claude_account())
+    led = _spend_ledger_window(now, window, keyed_only=keyed)
+    split = led.get("sinceT") if led else None
     prices = _model_prices(now)
     s = {"in": 0, "out": 0, "cost": 0.0}
+    before = 0.0
     # discover at the MODAL's window, never the 48h default: the 7d/30d views used to sum judges over
     # the full window but sessions over only the last 48h of activity — the "judges = N% of session
     # cost" note was wrong there by construction (the user 2026-08-13's map)
-    for fsid, path, anchor, name in jd.discover(now, window=max(window, 48 * 3600)):
-        d = _session_tokens(str(path), t0)
+    for fsid, path, anchor, name in jd.discover(now, window=max(int(now - t0), 48 * 3600)):
+        d = _session_usage(str(path), t0, prices, split)
         s["in"] += d["in"]; s["out"] += d["out"]
-        s["cost"] += _session_cost(str(path), t0, prices)
-    led = _spend_ledger_window(now, window)
+        s["cost"] += d["cost"]; before += d["costBefore"]
     if led:
+        if split is not None:
+            led["estBefore"] = round(before, 6)
         s["ledger"] = led
-    resp = {"window": window, "now": now, "sessions": s, "judges": _judge_usage(t0)}
+    resp = {"window": window, "now": now, "from": t0, "buckets": kind, "sessions": s, "judges": _judge_usage(t0)}
     _ANALYTICS_MEMO[window] = {"t": now, "jkey": _JUDGE_USAGE_CACHE["size"], "resp": resp}
     return resp
 

@@ -220,21 +220,32 @@ test("every tip string carries data — the narration is gone and stays gone", (
 // 2026-08-08). The rail passes the CLI's own per-turn total_cost_usd through, premium included; the
 // gear's cost view priced session tokens from a per-model table that fast mode is invisible to, because
 // it changes no model id. Since 2026-09-05 the view shows the rail's ledger figure — the CLI's own
-// cost — wherever spend.json reaches, and the estimate (with its footnote) only where it does not. Both
-// wordings are pinned here so neither can quietly vanish while the gap is still real.
-test("the cost view shows the CLI's own cost where the ledger reaches, and calls its estimate an estimate elsewhere", () => {
+// cost — and since 2026-09-06 at the rail's own bucket edges, with every other figure cut at the same
+// start, the keyed split where a key runs beside a login, and a labelled token-price estimate added for
+// any part of the period the ledger predates; the estimate stands alone only where the ledger has
+// nothing. The wordings are pinned here so none can quietly vanish while the gap is still real.
+test("the cost view shows the CLI's own cost, adds a labelled estimate for the time before the ledger, and calls its estimate an estimate elsewhere", () => {
   const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
   assert.match(GEAR, /var led = \(sess\.ledger && typeof sess\.ledger\.usd === 'number'\) \? sess\.ledger : null;/);
-  assert.match(GEAR, /var sessCost = led \? led\.usd : \(sess\.cost \|\| 0\);/, "the ledger's figure first, the estimate as the fallback");
+  assert.match(GEAR, /var before = \(led && typeof led\.estBefore === 'number'\) \? led\.estBefore : 0;/, "the estimate for the part of the period the ledger predates");
+  assert.match(GEAR, /var sessCost = led \? led\.usd \+ before : est;/, "the ledger's figure plus that estimate; the estimate alone as the fallback");
   assert.match(GEAR, /session \$ is the CLI\\'s own per-turn cost/);
-  assert.match(GEAR, /' \(ledger since ' \+ led\.since \+ '\)'/, "a young ledger says how far back it reaches");
+  assert.match(GEAR, /plus a token-price estimate for the time before it \(/, "a young ledger says where it begins and what was estimated");
+  assert.match(GEAR, /key-billed turns only, login turns left out/, "the keyed split names what it excludes (the rail's rule)");
+  assert.match(GEAR, /raState\.periodLabel \+ ' · from ' \+ fromTxt/, "the footnote names the period's real start");
+  assert.ok(!/led\.since\b/.test(GEAR), "no raw bucket key reaches the modal: sinceT renders as a time in the user's clock");
   assert.match(GEAR, /session \$ estimated from token prices; fast mode draws more than shown/);
   assert.match(GEAR, /raCost\(\) \? \(led \?/, "shown only on the cost metric, not tokens");
-  // the kernel serves the ledger beside the estimate: the CLI's own per-turn cost summed from spend.json
-  assert.match(KERNEL, /def _spend_ledger_window\(now, window\):/);
+  // the kernel serves the ledger beside the estimate at the rail's bucket edges, every figure cut at one start
+  assert.match(KERNEL, /def _analytics_edges\(now, window\):/);
+  assert.match(KERNEL, /def _spend_ledger_window\(now, window, keyed_only=False\):/);
+  assert.match(KERNEL, /keyed = bool\(_auth_key_present\(\) and _claude_account\(\)\)/, "the rail's mixed-host arm decides the split");
+  assert.match(KERNEL, /led\["estBefore"\] = round\(before, 6\)/);
   assert.match(KERNEL, /s\["ledger"\] = led/);
-  // …and the estimate itself dedupes split responses and reads subagent transcripts (2026-09-05)
+  assert.match(KERNEL, /"from": t0, "buckets": kind/);
+  // …and the estimate itself dedupes split responses and reads subagent transcripts, nested ones too (2026-09-06)
   assert.match(KERNEL, /def _subagent_transcripts\(path\):/);
+  assert.match(KERNEL, /for root, dirs, files in os\.walk\(d\):/, "Workflow agents nest under subagents/workflows/");
   assert.match(KERNEL, /j = by_id\.get\(mid\)/, "one row per message.id");
   assert.match(KERNEL, /"claude-fable-5-1":\s+\{"in": 10e-6, "out": 50e-6, "cache_w": 12\.5e-6, "cache_r": 0\.25e-6\}/);
 });

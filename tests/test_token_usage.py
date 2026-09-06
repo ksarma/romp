@@ -317,6 +317,8 @@ class TokenAnalytics(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.saved_state, self.saved_discover = jd.STATE, jd.discover
         self.saved_cfg, self.saved_refresh = km.PRICE_CONFIG, km._refresh_remote_prices
+        self.saved_auth = (km._auth_key_present, km._claude_account)
+        km._auth_key_present, km._claude_account = (lambda: False), (lambda: "")   # no key, no login unless a test says
         jd.STATE = pathlib.Path(self.td.name)
         km.PRICE_CONFIG = pathlib.Path(self.td.name) / "no-prices.json"   # nonexistent → defaults only
         km._refresh_remote_prices = lambda now: None                     # no network in tests
@@ -326,6 +328,7 @@ class TokenAnalytics(unittest.TestCase):
     def tearDown(self):
         jd.STATE, jd.discover = self.saved_state, self.saved_discover
         km.PRICE_CONFIG, km._refresh_remote_prices = self.saved_cfg, self.saved_refresh
+        km._auth_key_present, km._claude_account = self.saved_auth
         self.td.cleanup()
 
     def test_window_splits_sessions_vs_per_judge_and_tier(self):
@@ -378,6 +381,8 @@ class TokenAnalytics(unittest.TestCase):
         a = km._token_analytics(later, 3600)
         self.assertEqual(a["sessions"]["ledger"], {"usd": 3.5, "turns": 3, "tok": 105},
                          "this hour + the previous one, the rail's rolling math")
+        self.assertEqual((a["from"], a["buckets"]), (time.mktime((2026, 10, 15, 11, 0, 0, 0, 0, -1)), "hours"),
+                         "the payload names the period's real start: the oldest bucket's")
         km._ANALYTICS_MEMO.clear()
         a = km._token_analytics(later, 30 * 86400)
         self.assertEqual(a["sessions"]["ledger"], {"usd": 43.5, "turns": 10, "tok": 1105},
@@ -401,6 +406,92 @@ class TokenAnalytics(unittest.TestCase):
         km._ANALYTICS_MEMO.clear()
         (jd.STATE / "spend.json").write_text(json.dumps({"days": {}, "hours": {}}))
         self.assertNotIn("ledger", km._token_analytics(later, 3600)["sessions"])
+
+    def test_every_figure_is_cut_at_the_oldest_buckets_start(self):
+        """The ledger sums whole buckets (the rail's rule: `1h` is this hour and the previous one), so the
+        judge rows and the transcript rows are cut at the oldest bucket's START, not at now - window —
+        otherwise a 1h view opened at :30 divided 60 minutes of judge dollars by 90 minutes of session
+        dollars (2026-09-06). `from` in the payload is that start; `buckets` says hours or days."""
+        clock = time.mktime((2026, 10, 15, 12, 30, 0, 0, 0, -1))
+        start = time.mktime((2026, 10, 15, 11, 0, 0, 0, 0, -1))
+        hk = lambda n: time.strftime("%Y-%m-%dT%H", time.localtime(clock - n * 3600))
+        (jd.STATE / "spend.json").write_text(json.dumps({"hours": {hk(0): {"usd": 1.0, "turns": 1},
+                                                                   hk(1): {"usd": 1.0, "turns": 1},
+                                                                   hk(2): {"usd": 50.0, "turns": 1}}, "days": {}}))
+        p1 = pathlib.Path(self.td.name) / "s1.jsonl"
+        p1.write_text(_asst({"input_tokens": 100, "output_tokens": 10}, iso(start + 120)) + "\n" +    # 11:02 — inside the oldest bucket, before now - 1h
+                      _asst({"input_tokens": 1000, "output_tokens": 1}, iso(start - 120)) + "\n" +    # 10:58 — before the period
+                      _asst({"input_tokens": 5, "output_tokens": 5}, iso(clock - 60)) + "\n")
+        jd.discover = lambda now, window=None, forks=True: [("fs1", p1, "a1", "s1")]
+        (jd.STATE / "judge-usage.jsonl").write_text("\n".join(json.dumps(r) for r in [
+            {"t": start + 60, "judge": "captioner", "tier": "index", "in": 10, "out": 4, "cost": 1.0, "ms": 50},   # 11:01 counts
+            {"t": start - 60, "judge": "captioner", "tier": "index", "in": 10, "out": 4, "cost": 100.0, "ms": 50},  # 10:59 does not
+            {"t": clock - 30, "judge": "planner", "tier": "triage", "in": 1, "out": 1, "cost": 1.0, "ms": 5},
+        ]) + "\n")
+        a = km._token_analytics(clock, 3600)
+        self.assertEqual((a["from"], a["buckets"]), (start, "hours"))
+        self.assertEqual(a["sessions"]["ledger"]["usd"], 2.0, "the two buckets, whole")
+        self.assertEqual((a["sessions"]["in"], a["sessions"]["out"]), (105, 15), "rows from 11:00 on, the 10:58 row out")
+        self.assertEqual(a["judges"]["total"]["cost"], 2.0, "judge rows from 11:00 on — the same cut as the ledger and the tokens")
+        # a day-bucket period starts at local midnight of the oldest date
+        km._ANALYTICS_MEMO.clear()
+        a = km._token_analytics(clock, 30 * 86400)
+        self.assertEqual((a["from"], a["buckets"]), (time.mktime((2026, 9, 15, 0, 0, 0, 0, 0, -1)), "days"))
+        self.assertEqual(a["judges"]["total"]["calls"], 3, "every row is inside 31 local dates")
+
+    def test_a_young_ledger_adds_the_estimate_for_the_time_before_it(self):
+        """A ledger that began inside the period covers only its own span. The build prices the
+        transcripts for [from, the ledger's first bucket) and hands it over as `estBefore`, so the modal
+        shows ledger dollars plus a labelled estimate rather than a short ledger figure against a full
+        period of judges (2026-09-06). `sinceT` is the first bucket's start; `cost` stays the estimate
+        for the whole period, for the hover."""
+        clock = time.mktime((2026, 10, 15, 12, 30, 0, 0, 0, -1))
+        dk = lambda n: (datetime.fromtimestamp(clock).date() - timedelta(days=n)).isoformat()
+        since_t = time.mktime((2026, 10, 14, 0, 0, 0, 0, 0, -1))
+        (jd.STATE / "spend.json").write_text(json.dumps({"days": {dk(0): {"usd": 10.0, "turns": 2},
+                                                                  dk(1): {"usd": 5.0, "turns": 1}}, "hours": {}}))
+        start = time.mktime((2026, 9, 15, 0, 0, 0, 0, 0, -1))
+        p1 = pathlib.Path(self.td.name) / "s1.jsonl"
+        p1.write_text(_asst({"input_tokens": 1000, "output_tokens": 0}, iso(start + 3600), model="claude-opus-4-8") + "\n"      # before the ledger
+                      + _asst({"input_tokens": 1000, "output_tokens": 0}, iso(since_t + 3600), model="claude-opus-4-8") + "\n"  # inside it
+                      + _asst({"input_tokens": 1000, "output_tokens": 0}, iso(start - 3600), model="claude-opus-4-8") + "\n")   # before the period
+        jd.discover = lambda now, window=None, forks=True: [("fs1", p1, "a1", "s1")]
+        a = km._token_analytics(clock, 30 * 86400)
+        led = a["sessions"]["ledger"]
+        self.assertEqual((led["usd"], led["since"], led["sinceT"]), (15.0, dk(1), since_t))
+        self.assertAlmostEqual(led["estBefore"], 1000 * 5e-6, places=9, msg="only the row before the ledger's first bucket")
+        self.assertAlmostEqual(a["sessions"]["cost"], 2 * 1000 * 5e-6, places=9, msg="the whole-period estimate, for the hover")
+        self.assertEqual(a["sessions"]["in"], 2000)
+        # a ledger older than the period carries neither `since` nor an estimate to add
+        km._ANALYTICS_MEMO.clear()
+        (jd.STATE / "spend.json").write_text(json.dumps({"days": {dk(0): {"usd": 10.0, "turns": 2},
+                                                                  dk(40): {"usd": 1.0, "turns": 1}}, "hours": {}}))
+        led = km._token_analytics(clock, 30 * 86400)["sessions"]["ledger"]
+        self.assertEqual(led, {"usd": 10.0, "turns": 2, "tok": 0})
+
+    def test_the_session_dollars_follow_the_rails_keyed_rule(self):
+        """The rail's API cell counts key-billed turns only on a host that runs a login beside a key (a
+        login turn's computed cost is billed to no one, the user 2026-08-08); with a key alone or no key
+        it sums the total. The modal's ledger figure follows the same arms — it used to sum every
+        bucket's total on every host while the docs called the two the same figure (2026-09-06) — and
+        says `keyed` so the footnote can name what it left out."""
+        clock = time.mktime((2026, 10, 15, 12, 30, 0, 0, 0, -1))
+        hk = lambda n: time.strftime("%Y-%m-%dT%H", time.localtime(clock - n * 3600))
+        (jd.STATE / "spend.json").write_text(json.dumps({"hours": {
+            hk(0): {"usd": 40.0, "turns": 4, "tokIn": 400, "key": {"usd": 4.0, "turns": 1, "tok": 100}},   # 3 login turns + 1 key turn
+            hk(1): {"usd": 2.0, "turns": 1, "tokIn": 20}}, "days": {}}))                                     # a login-only hour, no split
+        jd.discover = lambda now, window=None, forks=True: []
+        km._auth_key_present, km._claude_account = (lambda: True), (lambda: "0123456789ab")   # a key beside a login
+        self.assertEqual(km._token_analytics(clock, 3600)["sessions"]["ledger"],
+                         {"usd": 4.0, "turns": 1, "tok": 100, "keyed": True}, "mixed host: the key turn only")
+        km._ANALYTICS_MEMO.clear()
+        km._claude_account = lambda: ""                                                       # a key alone
+        self.assertEqual(km._token_analytics(clock, 3600)["sessions"]["ledger"],
+                         {"usd": 42.0, "turns": 5, "tok": 420}, "key-only host: every turn bills the key, the total")
+        km._ANALYTICS_MEMO.clear()
+        km._auth_key_present, km._claude_account = (lambda: False), (lambda: "0123456789ab")  # a login alone
+        self.assertEqual(km._token_analytics(clock, 3600)["sessions"]["ledger"],
+                         {"usd": 42.0, "turns": 5, "tok": 420}, "no key: the CLI's computed total, nothing to split")
 
 
 class CostWeighting(unittest.TestCase):
