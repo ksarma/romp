@@ -28,7 +28,13 @@ passage, and repeat — each staged note remembers its quote and its place. **�
 everything you staged along with whatever is in the box, so the session applies the lot
 in one pass, and you never copy a line out of the document by hand. The line in each
 label is checked against the file at the moment you select, so numbers that moved under
-you are caught rather than quietly carried.
+you are caught rather than quietly carried. The title bar's **GitHub ↗** button opens the
+file on GitHub. When there is nothing to open, the button stays in place, dimmed, and a
+caption beside it says why (the file is not committed, the repository has no origin remote,
+or its origin is not on GitHub); the button's tooltip repeats the reason in full. A file on a
+branch that is not on origin keeps its link, drawn with a dashed border, and the caption says
+the branch is not on origin yet. That check reads the local tracking ref, so after a branch
+is deleted on GitHub the link looks normal until `git fetch --prune` has refreshed it.
 
 ### The feed
 
