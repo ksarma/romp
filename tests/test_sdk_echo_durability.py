@@ -15,12 +15,17 @@ guarantees, each pinned here:
      kernel restart cannot wipe the only evidence of an in-flight send,
   4. an echo that survives its holder is MARKED dropped at the event that orphaned it (boot reseed /
      fresh CLI spawn), so persistence reads as "never delivered", not as delivered history (the user
-     2026-07-29: a two-day-old lost send kept resurfacing mid-chat, posing as an ordinary bubble).
+     2026-07-29: a two-day-old lost send kept resurfacing mid-chat, posing as an ordinary bubble) —
+     unless the transcript already carries the text, as a native user record OR as the queued_command
+     attachment a mid-turn splice leaves (the absorbed send's only record): that echo is neither
+     re-delivered nor flagged, it just waits for the by-text prune (AbsorbedSendsCountAsLandedAtBoot).
 SYNTHETIC fixtures only."""
+import json
 import os
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -669,6 +674,187 @@ class ReconnectStrandIsFlagOnly(unittest.TestCase):
         s._reconcile_stranded()
         self.assertEqual(s.pending(), [self.TEXT],
                          "the not-yet-materialized conversation re-heads the queue, as documented")
+
+
+class AbsorbedSendsCountAsLandedAtBoot(unittest.TestCase):
+    """The boot/dead-spawn duplicate guard (_text_landed) must know the shape an ABSORBED send leaves. A
+    message fed into a running turn is spliced in at the CLI's next tool boundary as a queued_command
+    ATTACHMENT record — no native user line is ever written for it — and until 2026-09-06 the scan
+    accepted user records alone (its raw-line prefilter even required the literal '"user"', which an
+    attachment line lacks; it carries `userType`). So a kernel restart in the window between the splice
+    and the next merged build reseeded the echo, read the send as never landed, re-queued the text, and
+    the resumed CLI ran the same instruction a second time — the chat showed it twice.
+
+    Now a found text is neither re-delivered nor flagged: it landed and is merely un-pruned, and the next
+    build's by-text prune (the absorbed atom's text reaches _atom_user_texts) retires it. Two more scan
+    rules ride along, both mirrored from prune_live's by-text rule: a record stamped BEFORE the send is
+    not this send's landing ("ok" repeats), and the match is the whole collapsed text, never a substring.
+    A PRIVATE synthetic sid (the shared placeholder is reserved for fixtures other modules journal
+    against); the notes-api demo domain."""
+
+    SID = "5a5a5a5a-6b6b-4c7c-8d8d-9e9e9e9e9e9e"
+    SENT = ("Replying to this highlighted code (/tmp/notes-api/notes/api.py:42):\n"
+            "> def list_notes():\n\nrename this to fetch_notes")
+    T = 1_800_000_038          # the send (the echo's stamp)
+
+    def setUp(self):
+        self.state = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.state, "sdk"))
+        os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(self.state, "claude")
+        self.cwd = os.path.join(self.state, "proj")
+        os.makedirs(self.cwd, exist_ok=True)
+        self.tpath = sb.transcript_path(self.cwd, self.SID)
+        os.makedirs(os.path.dirname(self.tpath), exist_ok=True)
+        open(self.tpath, "w").close()
+
+    def tearDown(self):
+        os.environ.pop("CLAUDE_CONFIG_DIR", None)
+
+    @staticmethod
+    def _iso(t):
+        return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    def _user(self, t, text, uuid, parent):
+        return {"type": "user", "timestamp": self._iso(t), "uuid": uuid, "parentUuid": parent,
+                "promptSource": "sdk", "userType": "external", "isSidechain": False,
+                "message": {"role": "user", "content": text}}
+
+    def _att(self, t, prompt, uuid, parent):
+        # the real record's key shape (keys only — content invented): no '"user"' literal anywhere,
+        # `userType` is the near-miss; the prompt is a string or a content-block list
+        return {"type": "attachment", "timestamp": self._iso(t), "uuid": uuid, "parentUuid": parent,
+                "isSidechain": False, "userType": "external",
+                "attachment": {"type": "queued_command", "prompt": prompt, "commandMode": "prompt",
+                               "timestamp": int(t) * 1000}}
+
+    def _qop(self, t, op, content=None):
+        return {"type": "queue-operation", "timestamp": self._iso(t), "operation": op, "content": content}
+
+    def _write(self, recs):
+        with open(self.tpath, "w") as f:
+            for r in recs:
+                f.write(json.dumps(r) + "\n")
+
+    def _running_turn(self):
+        return [self._user(self.T - 38, "tighten the notes-api search", "u1", None),
+                {"type": "assistant", "timestamp": self._iso(self.T - 28), "uuid": "a1", "parentUuid": "u1",
+                 "message": {"role": "assistant", "content": [
+                     {"type": "tool_use", "id": "tu_a1_0", "name": "Bash", "input": {"command": "true"}}],
+                     "stop_reason": "tool_use"}}]
+
+    def _splice(self, prompt=None, t=None):
+        # the CLI's shape for a mid-turn splice: enqueue op (no uuid), the tool_result it waited for,
+        # then the attachment stamped with the ENQUEUE time — and no user record for the text, ever
+        return [self._qop(self.T, "enqueue", None),
+                {"type": "user", "timestamp": self._iso(self.T + 12), "uuid": "tr1", "parentUuid": "a1",
+                 "message": {"role": "user", "content": [
+                     {"type": "tool_result", "tool_use_id": "tu_a1_0", "content": "ok"}]}},
+                self._qop(self.T + 12, "remove"),
+                self._att(t if t is not None else self.T, prompt if prompt is not None else self.SENT,
+                          "att1", "tr1")]
+
+    def _backend(self, echoes, queue=()):
+        sb.write_reg(self.state, self.SID, {"sid": self.SID, "name": "web", "mode": "acceptEdits",
+                                            "alive": True, "cwd": self.cwd, "lastSid": self.SID,
+                                            "queue": list(queue), "echoes": echoes})
+        return sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None)   # __init__ runs the reseed
+
+    def _echo(self, text=None, t=None):
+        return {"t": t if t is not None else self.T, "text": text if text is not None else self.SENT,
+                "author": "human", "rompAuto": False, "dropped": False}
+
+    def _queue(self):
+        return (sb.read_reg(self.state, self.SID) or {}).get("queue") or []
+
+    def _live(self, be):
+        return list((be._live.get(self.SID) or {}).values())
+
+    def test_the_attachment_only_transcript_counts_as_landed(self):
+        self._write(self._running_turn() + self._splice())
+        be = self._backend([])
+        self.assertIs(be._text_landed(self.SID, self.SENT, self.T), True,
+                      "the queued_command attachment IS the absorbed send's landing")
+
+    def test_a_content_block_prompt_counts_too(self):
+        # the SDK injection path writes the prompt as a content-block list, not a string
+        self._write(self._running_turn() + self._splice(prompt=[{"type": "text", "text": self.SENT}]))
+        be = self._backend([])
+        self.assertIs(be._text_landed(self.SID, self.SENT, self.T), True)
+
+    def test_boot_reseed_neither_refeeds_nor_flags_an_absorbed_send(self):
+        # the F1 shape: the CLI spliced the message (attachment written), the kernel died before the
+        # next merged build pruned the echo. Pre-fix: the echo was re-queued and the CLI ran it twice.
+        self._write(self._running_turn() + self._splice())
+        be = self._backend([self._echo()])
+        self.assertEqual(self._queue(), [], "a landed send is never re-queued — the CLI would run it twice")
+        live = self._live(be)
+        self.assertEqual([a["_echo_text"] for a in live], [self.SENT], "the echo is reseeded, awaiting its prune")
+        self.assertFalse(live[0].get("dropped"), "…and not flagged: it landed, it is merely un-pruned")
+        self.assertFalse((sb.read_reg(self.state, self.SID).get("echoes") or [{}])[0].get("dropped"))
+        # the next merged build lands the absorbed atom's text at the attachment's (enqueue) stamp
+        be.prune_live(self.SID, tx_uuids=set(), tx_user_texts={self.SENT: self.T}, human_floor=self.T - 38)
+        self.assertNotIn(self.SID, be._live, "the by-text prune retires it, exactly once")
+
+    def test_a_multi_line_send_is_found_through_the_json_escaping(self):
+        # the old raw-line prefilter looked for the collapsed text's first 60 chars in the raw JSON line,
+        # where every newline is the two characters backslash-n — a quote chip's reply never matched
+        self._write(self._running_turn() + [self._user(self.T + 3, self.SENT, "u2", "a1")])
+        be = self._backend([])
+        self.assertIs(be._text_landed(self.SID, self.SENT, self.T), True)
+
+    def test_an_earlier_twin_of_the_text_is_not_this_sends_landing(self):
+        # prune_live's T237b rule, mirrored: "ok" from an hour ago is not the landing of the "ok" the
+        # dead CLI was holding — that send IS lost, and it goes back into the queue
+        self._write([self._user(self.T - 3600, "ok", "u1", None)])
+        be = self._backend([self._echo(text="ok")])
+        self.assertIs(be._text_landed(self.SID, "ok", self.T), False)
+        self.assertEqual(self._queue(), ["ok"], "re-delivered: the only record of the text predates the send")
+        self.assertFalse(self._live(be)[0].get("dropped"))
+
+    def test_a_record_at_the_send_second_counts(self):
+        # the echo's stamp is minted before the CLI can see the text, so its record is at or after it —
+        # the same second included (both stamps are whole seconds)
+        self._write([self._user(self.T, "ok", "u1", None)])
+        be = self._backend([])
+        self.assertIs(be._text_landed(self.SID, "ok", self.T), True)
+
+    def test_a_superstring_record_is_not_a_match(self):
+        # the whole collapsed text, never a substring: a found echo is handed to the by-text prune, which
+        # matches exactly — a substring "find" would leave an echo nothing ever prunes
+        self._write([self._user(self.T + 2, "ok go ahead with the rename", "u1", None)])
+        be = self._backend([])
+        self.assertIs(be._text_landed(self.SID, "ok", self.T), False)
+
+    def test_a_lost_send_with_only_its_enqueue_op_is_still_re_delivered(self):
+        # the control: the CLI died holding the message — the enqueue op is on disk, no attachment, no
+        # user record. Provably lost → back into the queue, as before.
+        self._write(self._running_turn() + [self._qop(self.T, "enqueue", None)])
+        be = self._backend([self._echo()])
+        self.assertIs(be._text_landed(self.SID, self.SENT, self.T), False)
+        self.assertEqual(self._queue(), [self.SENT])
+        self.assertFalse(self._live(be)[0].get("dropped"), "re-queued renders as queued, never as lost")
+
+    def test_an_unreadable_transcript_still_takes_the_flag_path(self):
+        os.remove(self.tpath)
+        be = self._backend([self._echo()])
+        self.assertIsNone(be._text_landed(self.SID, self.SENT, self.T), "cannot read → no verdict")
+        self.assertEqual(self._queue(), [], "never re-deliver on doubt")
+        self.assertTrue(self._live(be)[0].get("dropped"), "…but the possible loss is shown, for a human call")
+
+    def test_the_match_set_reads_both_record_shapes(self):
+        # the helper _text_landed matches against: user text (string or blocks, joined AND per block —
+        # romp bundles injected messages), and the queued_command prompt (string or blocks); nothing else
+        self.assertEqual(sb._landed_texts({"type": "user", "message": {"content": " a  b "}}), {"a b"})
+        self.assertEqual(sb._landed_texts({"type": "user", "message": {"content": [
+            {"type": "text", "text": "one"}, {"type": "text", "text": "two"}]}}), {"one two", "one", "two"})
+        self.assertEqual(sb._landed_texts({"type": "attachment", "attachment": {
+            "type": "queued_command", "prompt": "x\ny"}}), {"x y"})
+        self.assertEqual(sb._landed_texts({"type": "attachment", "attachment": {
+            "type": "queued_command", "prompt": [{"type": "text", "text": "p"}]}}), {"p"})
+        self.assertEqual(sb._landed_texts({"type": "attachment", "attachment": {"type": "total_tokens_reminder"}}), set())
+        self.assertEqual(sb._landed_texts({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t", "content": "ok"}]}}), set())
+        self.assertEqual(sb._landed_texts({"type": "assistant", "message": {"content": [{"type": "text", "text": "z"}]}}), set())
 
 
 if __name__ == "__main__":
