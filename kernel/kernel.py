@@ -2504,9 +2504,12 @@ def _lens_seed(active, tags):
     return {"tags": [t["name"]]} if t else {"all": True}
 
 
-def _norm_timeline_views(d):
+def _norm_timeline_views(d, tag_cap=_VIEWS_MAX_TAGS):
     """Validate + normalize a views blob from disk or a client: always returns the full shape, drops
     junk quietly, clamps sizes, and falls back active→"all" when the named tag does not exist.
+    `tag_cap` bounds the tag list (the store's cap by default); the write door reads a posted blob
+    under a wider bound so ITS cap pass can refuse the excess with a reason instead of this slice
+    dropping a posted create in silence (round 6 of the 2026-09-05 review).
     "all" and "untagged" are the two built-in sentinels; "untagged" must pass the whitelist below,
     or a picked untagged view silently reverts on the next read (the client's optimistic hold makes
     that failure read as flicker three pushes later, not as an error).
@@ -2531,7 +2534,7 @@ def _norm_timeline_views(d):
     tags = []
     seen = set()   # ids are addresses: a blob carrying one id twice reads as the first entry (round 4 of the 2026-09-05 review)
     raw = d.get("tags") if isinstance(d.get("tags"), list) else d.get("groups")
-    for g in _lst(raw)[:_VIEWS_MAX_TAGS]:
+    for g in _lst(raw)[:tag_cap]:
         if not isinstance(g, dict) or not g.get("id") or not isinstance(g.get("id"), str):
             continue
         if g["id"][:64] in seen:
@@ -2877,7 +2880,10 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     # mark only the kernel puts on a tag: an mtime. A tag the store lacks that carries one existed
     # in a store once — the writer's copy of a tag deleted since — and is not re-created; one
     # without is the writer's own create (a client-minted row) and lands.
-    v = _norm_timeline_views(blob)
+    # read under a wider bound than the store's cap (twice it: a client can hold at most the store's
+    # 32 plus its own creates; more is junk), so a posted 33rd tag reaches the cap pass below and is
+    # refused with a reason — the normalizer's own slice dropped it before the judge saw it
+    v = _norm_timeline_views(blob, tag_cap=_VIEWS_MAX_TAGS * 2)
     ed = set(x for x in edited if isinstance(x, str)) if isinstance(edited, list) else None
     if base is None:
         try:
@@ -3022,7 +3028,26 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
             settled.setdefault(pt["name"], struck)          # …which no taker in this write can have
         else:
             del by_id[struck]                               # a new tag under a taken name is kept out
-    v["tags"] = [by_id[t["id"]] for t in kept if t["id"] in by_id][:_VIEWS_MAX_TAGS]
+    stands = [by_id[t["id"]] for t in kept if t["id"] in by_id]
+    # THE CAP (round 6 of the 2026-09-05 review): the set that stands can exceed _VIEWS_MAX_TAGS when
+    # the store's kept copies join the blob's tags — the store-only keeps sit at the END of `kept`
+    # (blob order first), so a slice here dropped exactly the tag the ack had just said was kept,
+    # and the client's own create took its place, acked ok. A kept store tag always survives: the
+    # write's CREATES are refused instead, last in array order first, with a reason naming the cap
+    # (_edit_tag refuses its 33rd the same way). With no create left to refuse, what stands is the
+    # store's own set, which the normalizer bounds to the cap on every read — so a remaining excess
+    # is a broken invariant, and the write fails loudly (the door acks the error) rather than
+    # truncating a tag somebody holds.
+    while len(stands) > _VIEWS_MAX_TAGS:
+        i = next((i for i in range(len(stands) - 1, -1, -1) if prev.get(stands[i]["id"]) is None), None)
+        if i is None:
+            raise ValueError("the views store would hold %d tags, over its cap of %d, with no new tag to refuse"
+                             % (len(stands), _VIEWS_MAX_TAGS))
+        t = stands.pop(i)
+        refused.append(('"%s" (over the cap)' % t.get("name"), t["id"]))
+        rows.append({"tid": t["id"], "name": t.get("name"),
+                     "reason": "the views blob caps at %d tags, so it was not created" % _VIEWS_MAX_TAGS})
+    v["tags"] = stands
     # The refusal's two audiences: a kept tag the poster EDITED is a lost edit — stderr plus a red
     # dashboard notice (the user 2026-08-31's silent loss, never again silent). A kept tag the
     # poster did not edit (`edited` names the ones it did) is a stale copy of an untouched tag,
@@ -3032,9 +3057,10 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     loud = sorted(set(lb for lb, tid in refused if ed is None or tid in ed))
     quiet = sorted(set(lb for lb, tid in refused if ed is not None and tid not in ed))
     if loud:
-        why = ("%s was partially refused: its copy of %s was not applied — each predates a newer edit "
-               "or takes a name another tag holds (the store's state was kept; %s)"
-               % (foreign or "a stale dashboard write", ", ".join(loud),
+        why = ("%s was partially refused: its copy of %s was not applied — each predates a newer edit, "
+               "takes a name another tag holds, or would put the store over its %d-tag cap (the store's "
+               "state was kept; %s)"
+               % (foreign or "a stale dashboard write", ", ".join(loud), _VIEWS_MAX_TAGS,
                   "reload the panel that wrote it to resync" if foreign else "reload that dashboard to resync"))
         sys.stderr.write("romp-kernel: %s\n" % why)
         try:

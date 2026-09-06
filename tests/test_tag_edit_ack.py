@@ -1420,6 +1420,104 @@ class WholeBlobNameCollisions(_Wire):
         self.assertEqual([m["sid"] for m in v["tags"][0]["members"]], [SID1], "the first entry is the one kept")
 
 
+class CapNeverDropsAKeptStoreTag(_Wire):
+    """Round 6 of the 2026-09-05 review (the MEDIUM finding): the door assembled the set that stands
+    as the blob's tags first and the store's kept copies after, then sliced it to _VIEWS_MAX_TAGS —
+    so when a stale client's tags plus the store's keeps exceeded the cap, the tag dropped was
+    exactly the one the ack had just said was kept ("this write did not edit it, so it was not
+    deleted"), and the client's own create took its place under an ok ack. Now a kept store tag
+    always survives: the write's creates are refused instead, with a reason naming the cap, the same
+    way _edit_tag refuses a 33rd."""
+
+    def _seed_many(self, n):
+        tags = [{"id": "g%d" % i, "name": "t%d" % i, "color": "", "members": []} for i in range(n)]
+        ack = self.post({"type": "setTimelineViews", "writeId": "w0", "views": {"active": "all", "tags": tags}})
+        self.assertEqual((ack["ok"], ack["refused"], len(ack["views"]["tags"])), (True, [], n))
+        return ack["views"]
+
+    def test_edited_path_a_create_over_the_cap_is_refused_and_the_quietly_kept_tag_survives(self):
+        served = self._seed_many(km._VIEWS_MAX_TAGS)                       # the store is full
+        stale = json.loads(json.dumps(served))
+        stale["tags"] = [t for t in stale["tags"] if t["id"] != "g31"]      # a copy from before the 32nd…
+        stale["tags"].append({"id": "gnew", "name": "mine", "color": "#DD42FF", "members": [SID1]})   # …plus a create
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale, "edited": ["gnew"]})
+        self.assertFalse(a["ok"], "the client's own create was refused, so the ack is not ok")
+        rows = {r["tid"]: r["reason"] for r in a["refused"]}
+        self.assertEqual(rows, {"gnew": "the views blob caps at 32 tags, so it was not created",
+                                "g31": "this write did not edit it, so it was not deleted"})
+        ids = [t["id"] for t in km._timeline_views()["tags"]]
+        self.assertEqual(len(ids), km._VIEWS_MAX_TAGS)
+        self.assertIn("g31", ids, "the kept tag the ack names is in the store")
+        self.assertNotIn("gnew", ids, "the create is not")
+        self.assertEqual([t["id"] for t in a["views"]["tags"]], ids, "the ack's blob is the store")
+        self.assertEqual(len(self.notices), 1, "a refused create is the poster's lost edit: loud")
+        self.assertIn('"mine" (over the cap)', self.notices[0][0])
+        self.assertIn("32-tag cap", self.notices[0][0])
+
+    def test_edited_less_path_the_loudly_kept_tag_survives_and_the_create_is_refused(self):
+        served = self._seed_many(km._VIEWS_MAX_TAGS - 1)                   # 31 in the store
+        t31, err = km._edit_tag("t31", add=[SID2])                         # another surface's create: 32
+        self.assertIsNone(err)
+        stale = json.loads(json.dumps(served))                             # an older client's copy of the 31…
+        stale["at"] -= 10                                                  # …with evidence older than the create
+        for t in stale["tags"]:
+            t["mtime"] -= 10
+        stale["tags"].append({"id": "gnew", "name": "mine", "color": "", "members": []})
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale})   # no `edited`: the legacy reading
+        self.assertFalse(a["ok"])
+        rows = {r["tid"]: r["reason"] for r in a["refused"]}
+        self.assertEqual(rows, {"gnew": "the views blob caps at 32 tags, so it was not created",
+                                t31["id"]: "it was edited after your copy was taken, so it was not deleted"})
+        ids = [t["id"] for t in km._timeline_views()["tags"]]
+        self.assertEqual(len(ids), km._VIEWS_MAX_TAGS)
+        self.assertIn(t31["id"], ids, "the store's newer tag stands, as the notice says it does")
+        self.assertNotIn("gnew", ids)
+        self.assertEqual(len(self.notices), 1)
+        self.assertIn('"t31" (deletion)', self.notices[0][0])
+        self.assertIn('"mine" (over the cap)', self.notices[0][0])
+
+    def test_creates_that_fit_land_and_only_the_excess_is_refused_last_first(self):
+        served = self._seed_many(km._VIEWS_MAX_TAGS - 2)                   # room for two
+        w = json.loads(json.dumps(served))
+        w["tags"] += [{"id": "gx", "name": "x", "color": "", "members": []},
+                      {"id": "gy", "name": "y", "color": "", "members": []}]
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": w, "edited": ["gx", "gy"]})
+        self.assertEqual((a["ok"], a["refused"]), (True, []), "both creates fit")
+        self.assertEqual(len(km._timeline_views()["tags"]), km._VIEWS_MAX_TAGS)
+        w2 = json.loads(json.dumps(a["views"]))
+        w2["tags"].append({"id": "gz", "name": "z", "color": "", "members": []})
+        b = self.post({"type": "setTimelineViews", "writeId": "w2", "views": w2, "edited": ["gz"]})
+        self.assertEqual((b["ok"], [(r["tid"], r["reason"]) for r in b["refused"]]),
+                         (False, [("gz", "the views blob caps at 32 tags, so it was not created")]))
+        self.assertEqual(len(km._timeline_views()["tags"]), km._VIEWS_MAX_TAGS)
+        self.assertIsNone(store_tag("z"))
+        self.assertEqual(self.notices[-1][1], False)
+        # two creates where only one fits: the later one in array order is the one refused
+        w3 = json.loads(json.dumps(served))
+        w3["tags"] += [{"id": "ga", "name": "a", "color": "", "members": []},
+                       {"id": "gb", "name": "b", "color": "", "members": []},
+                       {"id": "gc", "name": "c", "color": "", "members": []}]
+        try:
+            km._views_path().unlink()
+        except OSError:
+            pass
+        self._seed_many(km._VIEWS_MAX_TAGS - 2)
+        c = self.post({"type": "setTimelineViews", "writeId": "w3", "views": w3, "edited": ["ga", "gb", "gc"]})
+        self.assertEqual([r["tid"] for r in c["refused"]], ["gc"])
+        self.assertEqual(sorted(t["name"] for t in km._timeline_views()["tags"] if t["id"] in ("ga", "gb", "gc")), ["a", "b"])
+
+    def test_a_posted_33rd_tag_reaches_the_door_and_is_refused_not_sliced_off_by_the_normalizer(self):
+        """The normalizer bounds a blob to the cap on every read, and the door read the posted blob
+        through it — so a client's 33rd tag was gone before the judge saw it, no row, no notice. The
+        door reads under a wider bound and its cap pass refuses the excess; disk reads keep the cap."""
+        many = [{"id": "g%d" % i, "name": "t%d" % i, "color": "", "members": []} for i in range(km._VIEWS_MAX_TAGS + 1)]
+        self.assertEqual(len(km._norm_timeline_views({"tags": many})["tags"]), km._VIEWS_MAX_TAGS, "a read is bounded, as before")
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": {"active": "all", "tags": many}})
+        self.assertEqual((a["ok"], [(r["tid"], r["reason"]) for r in a["refused"]]),
+                         (False, [("g32", "the views blob caps at 32 tags, so it was not created")]))
+        self.assertEqual(len(km._timeline_views()["tags"]), km._VIEWS_MAX_TAGS)
+
+
 class WebBootWiring(unittest.TestCase):
     """The kernel-served timeline page: the inline _TIMELINE_BOOT twin of timeline-boot.ts exposes
     the targeted-edit bridge and routes both acks to the panel (timeline-boot.test.ts pins the two
