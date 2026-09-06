@@ -2936,7 +2936,7 @@ class SpendRecord(unittest.TestCase):
         self.assertIn('if o.get("apiKey") or (not _claude_account() and (jd.STATE / "spend.json").exists()):',
                       ksrc, "_usage serves spend on the legacy marker OR a login-less machine with recorded spend")
         self.assertIn('"spend": _spend_windows()', ksrc)
-        self.assertIn("def _spend_windows(keyed_only=False):", ksrc)   # keyed_only: the mixed-host API sum (test_session_auth)
+        self.assertIn("def _spend_windows(keyed_only=False, now=None):", ksrc)   # keyed_only: the mixed-host API sum (test_session_auth)
 
     def test_cumulative_process_totals_fold_as_per_turn_deltas(self):
         """The CLI's total_cost_usd AND its modelUsage counters are CUMULATIVE per process (the result

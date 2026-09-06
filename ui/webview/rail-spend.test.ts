@@ -32,7 +32,7 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   assert.ok(KERNEL.includes('out["spendSeries"] = ss'));
   // the bars payload attaches the KEYED split only — a login turn's computed cost there would be
   // dollars nobody is billed — and only when key turns actually exist (the user 2026-08-08)
-  assert.ok(KERNEL.includes("def _spend_windows(keyed_only=False):"));
+  assert.ok(KERNEL.includes("def _spend_windows(keyed_only=False, now=None):"));
   assert.ok(KERNEL.includes("ksp = _spend_windows(keyed_only=True)"));
   assert.match(KERNEL, /if any\(\(ksp\.get\(k\) or \{\}\)\.get\("turns"\) for k in \("day", "week", "month"\)\):/);
   // no fragment of the key rides ANY payload (the user 2026-08-08, evening): the tail plumbing is
@@ -230,10 +230,17 @@ test("the cost view shows the CLI's own cost, adds a labelled estimate for the t
   assert.match(GEAR, /var before = \(led && typeof led\.estBefore === 'number'\) \? led\.estBefore : 0;/, "the estimate for the part of the period the ledger predates");
   assert.match(GEAR, /var sessCost = led \? led\.usd \+ before : est;/, "the ledger's figure plus that estimate; the estimate alone as the fallback");
   assert.match(GEAR, /session \$ is the CLI\\'s own per-turn cost/);
-  assert.match(GEAR, /plus a token-price estimate for the time before it \(/, "a young ledger says where it begins and what was estimated");
+  assert.match(GEAR, /plus a token-price estimate for the time before ' \+ ledFrom \+ ' \(/, "a young ledger says where it begins and what was estimated");
+  assert.match(GEAR, /recording began partway through that ' \+ \(dayB \? 'day' : 'hour'\) \+ ', so turns earlier in it are in neither figure/,
+    "…and that its first bucket is partial: the turns before recording began are in neither figure (2026-09-06)");
   assert.match(GEAR, /key-billed turns only, login turns left out/, "the keyed split names what it excludes (the rail's rule)");
   assert.match(GEAR, /raState\.periodLabel \+ ' · from ' \+ fromTxt/, "the footnote names the period's real start");
-  assert.ok(!/led\.since\b/.test(GEAR), "no raw bucket key reaches the modal: sinceT renders as a time in the user's clock");
+  assert.ok(!/led\.since\b/.test(GEAR), "no raw hour key reaches the modal: an hour edge renders as a time in the user's clock, a day edge as the kernel's date");
+  // day edges come as the kernel's own DATE strings and render from them; hour edges stay instants
+  assert.match(GEAR, /var fromTxt = dayB \? raDate\(d\.fromDate\) : \(\(typeof d\.from === 'number'\) \? raWhen\(d\.from\) : ''\);/);
+  assert.match(GEAR, /var ledFrom = led \? \(dayB \? raDate\(led\.sinceDate\) : \(\(typeof led\.sinceT === 'number'\) \? raWhen\(led\.sinceT\) : ''\)\) : '';/);
+  assert.match(KERNEL, /resp\["fromDate"\] = _keys\[-1\]/, "the kernel names the period's first local date for day buckets");
+  assert.match(KERNEL, /out\["sinceDate"\] = oldest/, "…and a young day ledger's first date");
   assert.match(GEAR, /session \$ estimated from token prices; fast mode draws more than shown/);
   assert.match(GEAR, /raCost\(\) \? \(led \?/, "shown only on the cost metric, not tokens");
   // the kernel serves the ledger beside the estimate at the rail's bucket edges, every figure cut at one start
@@ -249,6 +256,34 @@ test("the cost view shows the CLI's own cost, adds a labelled estimate for the t
   assert.match(KERNEL, /for root, dirs, files in os\.walk\(d\):/, "Workflow agents nest under subagents/workflows/");
   assert.match(KERNEL, /j = by_id\.get\(mid\)/, "one row per message.id");
   assert.match(KERNEL, /"claude-fable-5-1":\s+\{"in": 10e-6, "out": 50e-6, "cache_w": 12\.5e-6, "cache_r": 0\.25e-6\}/);
+});
+
+// BEHAVIORAL: the two edge formatters run for real under three process zones. A day bucket is a kernel-local
+// DATE, so its edge must print as that date in every browser; an hour bucket's edge is an instant, so each
+// browser prints it in its own clock. Node applies a runtime TZ change to Date formatting (checked on v22).
+test("a day edge renders as the kernel's own date in every browser zone; an hour edge as an instant in the browser's clock", () => {
+  const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
+  const start = GEAR.indexOf("  function raWhen(epoch)"), end = GEAR.indexOf("  function raSegments()");
+  assert.ok(start > 0 && end > start, "raWhen and raDate sit together ahead of raSegments");
+  const fns = new Function(GEAR.slice(start, end) + "\nreturn { raWhen: raWhen, raDate: raDate };")() as
+    { raWhen: (epoch: number) => string; raDate: (iso: string) => string };
+  const fmt = (t: Date) => t.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const saved = process.env.TZ;
+  try {
+    process.env.TZ = "America/Los_Angeles";   // a browser west of a UTC kernel
+    assert.equal(fns.raDate("2026-09-05"), "Sep 5", "the kernel's date, as the kernel named it");
+    assert.equal(fmt(new Date(Date.UTC(2026, 8, 5))), "Sep 4", "…where the kernel's midnight epoch prints the day before (the bug the string avoids)");
+    const west = fns.raWhen(Date.UTC(2020, 0, 15, 12) / 1000);
+    process.env.TZ = "Asia/Tokyo";            // and one east of it
+    assert.equal(fns.raDate("2026-09-05"), "Sep 5");
+    const east = fns.raWhen(Date.UTC(2020, 0, 15, 12) / 1000);
+    assert.ok(west.startsWith("Jan 15, ") && east.startsWith("Jan 15, "), "an hour edge not on today carries its date: " + west + " / " + east);
+    assert.notEqual(west, east, "the same instant, each browser's own clock");
+    assert.equal(fns.raDate(""), "", "no date (an older kernel's payload) prints nothing; the footnote then reads 'last 30d'");
+    assert.equal(fns.raDate("2026-09-05T13"), "", "an hour key is not a date");
+  } finally {
+    if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved;
+  }
 });
 
 // Day buckets from before the per-turn delta fix (2026-08-07..09) hold inflated figures — each result

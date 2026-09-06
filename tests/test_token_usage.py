@@ -453,10 +453,14 @@ class TokenAnalytics(unittest.TestCase):
         self.assertEqual(a["sessions"]["ledger"]["usd"], 2.0, "the two buckets, whole")
         self.assertEqual((a["sessions"]["in"], a["sessions"]["out"]), (105, 15), "rows from 11:00 on, the 10:58 row out")
         self.assertEqual(a["judges"]["total"]["cost"], 2.0, "judge rows from 11:00 on — the same cut as the ledger and the tokens")
-        # a day-bucket period starts at local midnight of the oldest date
+        self.assertNotIn("fromDate", a, "hour edges are instants: the browser renders them in its own clock")
+        # a day-bucket period starts at local midnight of the oldest date — and names that DATE as the
+        # kernel's own string, because the buckets are the kernel's local dates and a browser west of the
+        # kernel rendering the midnight epoch printed the day before (2026-09-06)
         km._ANALYTICS_MEMO.clear()
         a = km._token_analytics(clock, 30 * 86400)
         self.assertEqual((a["from"], a["buckets"]), (time.mktime((2026, 9, 15, 0, 0, 0, 0, 0, -1)), "days"))
+        self.assertEqual(a["fromDate"], "2026-09-15")
         self.assertEqual(a["judges"]["total"]["calls"], 3, "every row is inside 31 local dates")
 
     def test_a_young_ledger_adds_the_estimate_for_the_time_before_it(self):
@@ -479,6 +483,7 @@ class TokenAnalytics(unittest.TestCase):
         a = km._token_analytics(clock, 30 * 86400)
         led = a["sessions"]["ledger"]
         self.assertEqual((led["usd"], led["since"], led["sinceT"]), (15.0, dk(1), since_t))
+        self.assertEqual(led["sinceDate"], dk(1), "day buckets: the ledger's first date as the kernel's own string")
         self.assertAlmostEqual(led["estBefore"], 1000 * 5e-6, places=9, msg="only the row before the ledger's first bucket")
         self.assertAlmostEqual(a["sessions"]["cost"], 2 * 1000 * 5e-6, places=9, msg="the whole-period estimate, for the hover")
         self.assertEqual(a["sessions"]["in"], 2000)
@@ -620,6 +625,7 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
         jd.discover = lambda now, window=None, forks=True: [("fs1", p1, "a1", "s1")]
         led = km._token_analytics(now, 86400)["sessions"]["ledger"]
         self.assertEqual((led["usd"], led["since"], led["sinceT"]), (4.0, "2026-11-01T01", self.FIRST_0100))
+        self.assertNotIn("sinceDate", led, "an hour edge is an instant, rendered in the browser's own clock")
         self.assertAlmostEqual(led["estBefore"], 1000 * 5e-6, places=9, msg="the 00:30 row alone; neither 01:30 row is re-priced")
 
 

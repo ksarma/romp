@@ -28611,8 +28611,10 @@ def _spend_ledger_window(now, window, keyed_only=False):
     and the result says `keyed` so the modal can say what it left out. `since` names the oldest bucket
     when the ledger starts INSIDE the window, `sinceT` its epoch start, so the build can price the
     window's earlier part from transcripts instead of letting a young ledger read as a quietly short
-    window (the T235 discipline). The oldest bucket itself may hold only part of its hour or day (the
-    ledger began mid-bucket); that sliver is in neither figure."""
+    window (the T235 discipline); for day buckets `sinceDate` is that oldest local DATE as a string, so
+    the modal prints the kernel's date rather than an epoch in the browser's zone (a browser west of the
+    kernel rendered the previous date, 2026-09-06). The oldest bucket itself may hold only part of its
+    hour or day (the ledger began mid-bucket); that sliver is in neither figure, and the modal says so."""
     try:
         d = json.loads((jd.STATE / "spend.json").read_text())
     except Exception:
@@ -28647,6 +28649,8 @@ def _spend_ledger_window(now, window, keyed_only=False):
         st = _bucket_start(oldest)
         if st is not None:
             out["sinceT"] = st
+        if kind == "days":
+            out["sinceDate"] = oldest   # the kernel's own local date, for the modal to print as a date
     return out
 
 
@@ -28654,9 +28658,10 @@ def _token_analytics(now, window):
     """Token usage over the analytics window for the modal (the /analytics endpoint): the coding SESSIONS
     total (summed transcript usage of the discovered sessions, subagents included) vs the judge PIPELINE
     broken out per judge AND per tier (_judge_usage). One ARBITRARY window — the modal's period picker —
-    read at the rail's bucket edges (_analytics_edges): `from` is the period's real start, and the
-    ledger sum, the transcript rows and the judge rows are all cut there, so every ratio in the modal is
-    like-for-like. Each side carries $ so the modal toggles tokens<->cost without a refetch: judges =
+    read at the rail's bucket edges (_analytics_edges): `from` is the period's real start (`fromDate` the
+    same edge as the kernel's local date string when the buckets are days — dates are the kernel's, and
+    an epoch rendered in the browser's zone can name the wrong one), and the ledger sum, the transcript
+    rows and the judge rows are all cut there, so every ratio in the modal is like-for-like. Each side carries $ so the modal toggles tokens<->cost without a refetch: judges =
     exact logged cost; sessions = `cost`, tokens x _model_prices over the whole period (an ESTIMATE),
     plus `ledger` — the CLI's own per-turn cost from the rail's ledger (_spend_ledger_window), which the
     modal shows first. On a host that runs a login beside a key the ledger figure is the KEYED split,
@@ -28702,6 +28707,10 @@ def _token_analytics(now, window):
             led["estBefore"] = round(before, 6)
         s["ledger"] = led
     resp = {"window": window, "now": now, "from": t0, "buckets": kind, "sessions": s, "judges": _judge_usage(t0)}
+    if kind == "days":
+        resp["fromDate"] = _keys[-1]   # the oldest local DATE as the kernel names it — the modal prints this,
+        #                                not `from` through the browser's zone (a browser west of the kernel
+        #                                showed the day before the period's first date, 2026-09-06)
     _ANALYTICS_MEMO[window] = {"t": now, "jkey": _JUDGE_USAGE_CACHE["size"], "resp": resp}
     return resp
 
