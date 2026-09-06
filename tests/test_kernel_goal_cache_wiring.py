@@ -63,7 +63,7 @@ class WiringPins(unittest.TestCase):
 
     def test_perf_reports_the_cache_beside_the_snapshot_memo(self):
         src = inspect.getsource(km._PerfStats.snapshot)
-        self.assertIn('"goals_shared": jd.shared_store_stats()', src)
+        self.assertIn('("goals_shared", jd.shared_store_stats)', src, "one (name, report) pair in the memos loop")
 
 
 class SharedViewInBuilds(unittest.TestCase):

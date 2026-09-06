@@ -253,6 +253,10 @@ class SharedStoreCache(unittest.TestCase):
         self.assertEqual((a["nodes"], a["_baseRev"]), ({}, 0), "load_goals' answer to a file that does not parse")
         self.assertEqual(type(a), dict)
         self.assertIsNot(a, b, "a fresh store each time (private, mutable)")
+        self.assertEqual((a.get("_unread"), b.get("_unread")), (True, True),
+                         "the file exists and this is not its content: marked on the fill and on the hit, as "
+                         "load_goals marks it")
+        self.assertIs(jd.load_goals(SID).get("_unread"), True)
         self.assertEqual((self._delta("corrupt"), self._delta("hit")), (1, 1), "the failed parse ran once")
         self.assertEqual(err.getvalue().count("goals-shared:"), 1, "said once per version")
         self.assertEqual(jd.shared_store_stats()["entries"], 1, "remembered under the version's key and bytes")
@@ -271,6 +275,7 @@ class SharedStoreCache(unittest.TestCase):
         b = jd.load_goals_shared(SID)
         self.assertEqual(type(a), dict, "load_goals' own result, private")
         self.assertIsNot(a, b)
+        self.assertIs(a.get("_unread"), True, "load_goals' mark rides along: the view is not what the files say")
         self.assertEqual(self._delta("unreadable_journal"), 2)
         self.assertEqual(jd.shared_store_stats()["entries"], 0, "never memoized while the journal cannot be read")
         rows = [r for r in self._errors() if r["err"] == "history-unreadable"]
@@ -279,6 +284,30 @@ class SharedStoreCache(unittest.TestCase):
         c = jd.load_goals_shared(SID)
         self.assertIsInstance(c, jd.FrozenStore)
         self.assertTrue(c["nodes"][self._nid(1)]["nodeComplete"], "once it reads, the replayed view is shared")
+
+    def test_a_store_the_replay_marked_unread_is_never_published(self):
+        # The fill hands the journal's rows to _replay_overrides as `lines`, so the one path that marks a
+        # store `_unread` inside the replay (the journal exists and cannot be read) is not reachable from
+        # it — the fill's _journal_read raises first and load_goals answers. The guard after _finish_load
+        # holds the invariant at the write moment anyway: a marked store is a fallback view, and a fallback
+        # view is never published as the disk's content. Stand in for a marker with a stub replay.
+        self._seed()
+
+        def marking_replay(fsid, store, lines=None):
+            store["_unread"] = True
+            return False
+        o_rp = jd._replay_overrides
+        jd._replay_overrides = marking_replay
+        try:
+            a = jd.load_goals_shared(SID)
+        finally:
+            jd._replay_overrides = o_rp
+        self.assertEqual(type(a), dict, "served private and mutable, like load_goals' fallback")
+        self.assertIs(a.get("_unread"), True)
+        self.assertEqual(jd.shared_store_stats()["entries"], 0, "not published")
+        self.assertEqual(self._delta("unreadable_journal"), 1)
+        self.assertIsInstance(jd.load_goals_shared(SID), jd.FrozenStore, "the real replay publishes")
+        self.assertNotIn("_unread", jd.load_goals_shared(SID))
 
     def test_a_malformed_journal_row_raises_in_both_loaders(self):
         self._seed()
