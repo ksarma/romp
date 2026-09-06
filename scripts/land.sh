@@ -136,7 +136,7 @@ for arg in "$@"; do
         *) [[ "$arg" =~ ^[0-9]+$ ]] || usage; prs+=("$arg") ;;
     esac
 done
-[ "${#prs[@]}" -ge 1 ] && [ "${#prs[@]}" -le 2 ] || usage
+if [ "${#prs[@]}" -lt 1 ] || [ "${#prs[@]}" -gt 2 ]; then usage; fi
 
 # Repository settings: merge commits must be allowed, and the other two methods being off is what
 # makes the wrong click impossible (a warning here, not a refusal: the settings are the maintainer's).
@@ -259,7 +259,7 @@ fail() {  # fail <verb> <message>: a refusal before any merge, or a stop after o
 }
 
 notes=1
-note() { [ "$notes" = 1 ] && echo "land: $*" || true; }  # printed in the first pass only
+note() { if [ "$notes" = 1 ]; then echo "land: $*"; fi; }  # printed in the first pass only
 
 # check_pr <i> <verb>: the rules, against the pr_* variables loaded for prs[i]. <verb> is "refused"
 # before any merge and "stopped" after one. Order: state, draft, base, mergeability, checks, then
@@ -336,7 +336,7 @@ merged_in_run=()
 for i in "${!prs[@]}"; do
     read_pr "${prs[$i]}"
     stash_pr "$i"
-    merged_in_run[$i]=0
+    merged_in_run[i]=0
 done
 for i in "${!prs[@]}"; do
     load_pr "$i"
@@ -359,7 +359,7 @@ for i in "${order[@]}"; do
     read_pr "$n"
     if [ "$pr_state" = "MERGED" ]; then
         echo "land: #$n was marked merged by an earlier merge of this run; nothing to do for it"
-        merged_in_run[$i]=1
+        merged_in_run[i]=1
         continue
     fi
     if [ "$pr_head_sha" != "${head_shas[$i]}" ]; then
@@ -378,7 +378,7 @@ for i in "${order[@]}"; do
         echo "land: #$n reads $after after the merge call (auto-merge armed: it lands when the required checks pass); nothing more to do for it now"
         continue
     fi
-    merged_in_run[$i]=1
+    merged_in_run[i]=1
     merged_list="$merged_list #$n"
     if [ "$deletes_on_merge" = "true" ]; then
         echo "land: #$n merged; the repository deletes '$pr_head_ref' on merge (local branches are untouched)"
