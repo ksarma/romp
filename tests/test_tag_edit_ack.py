@@ -782,7 +782,8 @@ class Capability(_Wire):
                         "after the pushes: the shim's stale banner clears on the first real frame after a "
                         "reconnect, which must stay the resync frame itself")
         caps = next(m for m in self.sent if m["type"] == "caps")
-        self.assertEqual(caps, {"type": "caps", "caps": ["tagEdit"]})
+        self.assertEqual(caps, {"type": "caps", "caps": ["tagEdit"], "viewsSeq": None},
+                         "the stubbed push served no views blob: viewsSeq is null, the key always present")
         # a RE-SENT ready (the shim, on a reconnected socket) gets the caps again — the event a page
         # with writes in flight across the drop keys on
         n = len(self.sent)
@@ -825,6 +826,92 @@ class Capability(_Wire):
             self.assertIsNone(self.post(None), "an undecodable frame was already reported by the recv loop")
             self.assertIsNone(self.post({"type": ""}))
         self.assertEqual(err.getvalue(), "")
+
+    def _ready(self):
+        self.client["ready"] = False
+        km.Handler._dispatch_ws(self.handler, {"type": "ready"}, self.client)
+        return next(m for m in reversed(self.sent) if m["type"] == "caps")
+
+    def test_the_caps_frame_carries_the_seq_of_the_connect_pushs_own_views_blob_not_a_fresh_read(self):
+        """Round 7 of the 2026-09-05 review: a client that kept the blob its seq gate last turned away
+        adopts it on the caps frame; it must do so only when that blob IS the connect push's (the
+        restore case), so the frame names the connect push's seq — read from the frame the push
+        enqueued, not from the store, which a write between the push and the caps frame moves on."""
+        s0 = self.seed()["seq"]
+
+        def push(c):                                     # the connect push's tabOrder frame, then a write lands before caps
+            km._send_client(c, ("taborder",), {"type": "tabOrder", "order": [], "tabs": [], "views": km._views_client()})
+            self.assertIsNone(km._edit_tag(tid="gA", add=[SID2])[1])
+        self.handler._push_one = push
+        caps = self._ready()
+        s1 = km._views_client()["seq"]
+        self.assertGreater(s1, s0, "the write moved the store on")
+        pushed = next(m for m in self.sent if m["type"] == "tabOrder")
+        self.assertEqual(pushed["views"]["seq"], s0)
+        self.assertEqual(caps["viewsSeq"], s0, "the connect push's blob, not the store's current seq")
+        self.assertEqual([m["type"] for m in self.sent if m["type"] in ("tabOrder", "caps")], ["tabOrder", "caps"])
+
+    def test_a_pusher_thread_frame_enqueued_between_the_push_and_the_caps_is_not_what_the_caps_names(self):
+        """The residual race the client cannot see: a pusher-thread frame built before a concurrent write
+        is enqueued after the handler's connect push and before its caps frame. The client rejects it
+        and keeps it; caps must not name its seq, or the client would adopt a stale blob."""
+        served = self.seed()
+        stale = json.loads(json.dumps(served))           # the pusher's frame, built before the write below
+        self.assertIsNone(km._edit_tag(tid="gA", add=[SID2])[1])
+        s_new = km._views_client()["seq"]
+
+        def push(c):
+            km._send_client(c, ("taborder",), {"type": "tabOrder", "order": [], "tabs": [], "views": km._views_client()})
+            t = threading.Thread(target=lambda: km._send_client(
+                c, ("taborder",), {"type": "tabOrder", "order": ["x"], "tabs": [], "views": stale}))
+            t.start(); t.join()
+        self.handler._push_one = push
+        caps = self._ready()
+        seqs = [m["views"]["seq"] for m in self.sent if m["type"] == "tabOrder"]
+        self.assertEqual(seqs, [s_new, served["seq"]], "the stale frame went out after the connect push's")
+        self.assertEqual(caps["viewsSeq"], s_new, "the caps names the connect push's seq, never the pusher thread's")
+        self.assertNotEqual(caps["viewsSeq"], served["seq"])
+
+    def test_the_timeline_skeletons_nested_views_blob_is_read_and_a_push_without_one_gives_null(self):
+        s0 = self.seed()["seq"]
+        self.handler._push_one = lambda c: km._send_client(
+            c, ("timeline",), {"type": "data", "data": {"sessions": [], "views": km._views_client()}})
+        self.assertEqual(self._ready()["viewsSeq"], s0, "the skeleton carries views under `data`")
+        self.handler._push_one = lambda c: km._send_client(c, ("working",), {"type": "working", "names": []})
+        self.assertIsNone(self._ready()["viewsSeq"], "a push that served no views blob: null")
+        self.assertIsNone(km._views_seq_of({"type": "tabOrder", "views": {"tags": []}}), "a seq-less blob: null")
+        self.assertIsNone(km._views_seq_of({"type": "tabOrder", "views": {"seq": "x"}}))
+        self.assertEqual(km._views_seq_of({"type": "tabOrder", "views": {"seq": 7}}), 7)
+
+    def test_the_real_connect_push_and_the_caps_frame_agree_on_the_seq(self):
+        """End to end through the real _push (the test_tab_meta_push.py stubs): the tabOrder frame the
+        connect push sends a chat page carries the same seq the caps frame that follows it names."""
+        import tempfile as _tf
+        from pathlib import Path as _P
+        s0 = self.seed()["seq"]
+        tmp = _tf.mkdtemp()
+        names = _P(tmp) / "names"
+        names.mkdir()
+        (names / SID1).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
+        saved = (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed)
+        try:
+            km.NAMES = names
+            km._tmux_sessions = lambda: {}
+            km._mark_views_dirty = lambda: None
+            km._chat_tab_sessions = lambda now, tmux: [{"sid": SID1, "name": "web", "path": os.path.join(tmp, "none.jsonl"),
+                                                         "anchor": SID1}]
+            km._cached_feed = lambda *a, **k: None
+            self.client["app"] = "chat"
+            self.client["sent"] = {}
+            caps = self._ready()
+            tab = [m for m in self.sent if m["type"] == "tabOrder"]
+            self.assertEqual(len(tab), 1, "the real connect push sent one tabOrder frame")
+            self.assertEqual(tab[0]["views"]["seq"], s0)
+            self.assertEqual(caps["viewsSeq"], s0)
+            types = [m["type"] for m in self.sent]
+            self.assertLess(types.index("tabOrder"), types.index("caps"))
+        finally:
+            (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed) = saved
 
     def test_the_inline_boot_routes_caps_and_unknown_op_to_the_panel(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
@@ -1632,6 +1719,185 @@ class CapNeverDropsAKeptStoreTag(_Wire):
         self.assertEqual((a["ok"], [(r["tid"], r["reason"]) for r in a["refused"]]),
                          (False, [("g32", "the views blob caps at 32 tags, so it was not created")]))
         self.assertEqual(len(km._timeline_views()["tags"]), km._VIEWS_MAX_TAGS)
+
+
+class PastTheDoorBoundNothingVanishesSilently(_Wire):
+    """Round 7 of the 2026-09-05 review: the door reads a posted blob under twice the cap so a 33rd
+    tag reaches the cap pass (round 6) — but the normalizer's slice still dropped everything past
+    the 64th BEFORE the judge saw it: no row, absent from the ack's blob, invisible to the ack's
+    `ok` (computed from rows), so a client whose `edited` named only ids past the bound was acked
+    ok and adopted a blob missing its own creates. Now every posted entry the slice leaves unread
+    gets a row — "not created" for a new id, "the store's copy was kept" for a store tag whose copy
+    fell past the bound (it is not a deletion either) — and nothing is stored past the bound."""
+
+    def _seed_many(self, n):
+        tags = [{"id": "g%d" % i, "name": "t%d" % i, "color": "", "members": []} for i in range(n)]
+        ack = self.post({"type": "setTimelineViews", "writeId": "w0", "views": {"active": "all", "tags": tags}})
+        self.assertEqual((ack["ok"], ack["refused"], len(ack["views"]["tags"])), (True, [], n))
+        return ack["views"]
+
+    def test_seventy_creates_all_edited_every_posted_id_is_in_the_ack_blob_or_in_a_row(self):
+        many = [{"id": "g%d" % i, "name": "t%d" % i, "color": "", "members": []} for i in range(70)]
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": {"active": "all", "tags": many},
+                       "edited": [t["id"] for t in many]})
+        self.assertFalse(a["ok"])
+        in_blob = {t["id"] for t in a["views"]["tags"]}
+        rows = {r["tid"]: r["reason"] for r in a["refused"]}
+        self.assertEqual(in_blob, {"g%d" % i for i in range(32)})
+        self.assertEqual(set(rows), {"g%d" % i for i in range(32, 70)}, "every posted id is in the blob or in a row")
+        self.assertEqual(rows["g32"], "the views blob caps at 32 tags, so it was not created")
+        self.assertEqual(rows["g64"], "a write is read to 64 tags and it was past that bound, so it was not created")
+        self.assertEqual(rows["g69"], rows["g64"])
+        self.assertEqual(len(km._timeline_views()["tags"]), 32, "nothing past the bound is stored")
+        self.assertEqual(len(self.notices), 1)
+        self.assertIn('"t69" (unread)', self.notices[0][0])
+        self.assertIn("past the 64 tags a write is read to", self.notices[0][0])
+
+    def test_creates_past_the_bound_that_edited_names_are_refused_never_acked_ok(self):
+        served = self._seed_many(km._VIEWS_MAX_TAGS)
+        w = json.loads(json.dumps(served))
+        w["tags"] += [{"id": "h%d" % i, "name": "h%d" % i, "color": "", "members": []} for i in range(38)]
+        tail = ["h%d" % i for i in range(32, 38)]
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": w, "edited": tail})
+        self.assertFalse(a["ok"], "the client's own creates were refused, so the ack is not ok")
+        rows = {r["tid"]: r["reason"] for r in a["refused"]}
+        for h in tail:
+            self.assertEqual(rows[h], "a write is read to 64 tags and it was past that bound, so it was not created")
+        self.assertEqual(rows["h0"], "it was deleted after your copy was taken, so it was not re-created",
+                         "h0..h31 sat within the bound and were not in `edited`: re-creations, quietly")
+        self.assertEqual([t["id"] for t in a["views"]["tags"]], [t["id"] for t in served["tags"]])
+        self.assertEqual(len(self.notices), 1, "the refused creates were the poster's: loud")
+        self.assertIn("(unread)", self.notices[0][0])
+
+    def test_a_duplicate_entry_consumes_a_slot_and_the_create_it_pushes_past_the_bound_gets_a_row(self):
+        served = self._seed_many(km._VIEWS_MAX_TAGS)
+        w = json.loads(json.dumps(served))
+        w["tags"] = w["tags"] + json.loads(json.dumps(w["tags"])) \
+            + [{"id": "h0", "name": "mine", "color": "", "members": []}]        # the 65th entry
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": w, "edited": ["h0"]})
+        self.assertEqual((a["ok"], [(r["tid"], r["name"]) for r in a["refused"]]), (False, [("h0", "mine")]))
+        self.assertIsNone(store_tag("mine"))
+
+    def test_a_store_tags_copy_past_the_bound_is_kept_not_deleted(self):
+        served = self._seed_many(km._VIEWS_MAX_TAGS)
+        creates = [{"id": "n%d" % i, "name": "n%d" % i, "color": "", "members": []} for i in range(33)]
+        w = json.loads(json.dumps(served))
+        w["tags"] = creates + w["tags"]                    # 65 entries: the store's g31 is the 65th
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": w})   # no `edited`: an older client
+        self.assertFalse(a["ok"])
+        rows = {r["tid"]: r["reason"] for r in a["refused"]}
+        self.assertEqual(rows["g31"],
+                         "a write is read to 64 tags and its copy was past that bound, so the store's copy was kept")
+        self.assertEqual(sorted(k for k in rows if k.startswith("n")), sorted("n%d" % i for i in range(33)),
+                         "every create is refused by the cap: the store is full")
+        ids = [t["id"] for t in km._timeline_views()["tags"]]
+        self.assertEqual(sorted(ids), sorted(t["id"] for t in served["tags"]), "the store is intact, g31 included")
+        self.assertIn('"t31" (unread)', self.notices[0][0])
+
+    def test_a_lens_only_write_touches_no_tag_whatever_the_blob_carries_by_design(self):
+        served = self._seed_many(3)
+        w = json.loads(json.dumps(served))
+        w["tags"] += [{"id": "h%d" % i, "name": "h%d" % i, "color": "", "members": []} for i in range(70)]
+        w["actives"] = {"timeline": {"tags": ["t1"]}, "chat": {"all": True}, "outline": {"all": True}}
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": w, "edited": []})
+        self.assertEqual((a["ok"], a["refused"]), (True, []),
+                         "edited=[] is the client's word that it changed no tag (docs/read-side.md): no rows")
+        self.assertEqual(len(km._timeline_views()["tags"]), 3)
+        self.assertEqual(km._timeline_views()["actives"]["timeline"], {"tags": ["t1"]})
+        self.assertEqual(self.notices, [])
+
+
+class ReaderRestampKeepsTheDiskCap(_Wire):
+    """Round 7 of the 2026-09-05 review: the reader's first-read stamp and the hidden migration judged
+    the file's own content through the door, which since round 6 reads its blob under twice the cap
+    while the base is normalized under the cap — so a file holding more than 32 tags had its excess
+    (the migration's appended "archived" tag first) judged as creates and refused by the cap pass,
+    under a red notice worded as a stale DASHBOARD write ("reload that dashboard to resync"), on a
+    read, blaming a dashboard that wrote nothing. The re-stamp now reads the file under the disk cap,
+    as every read does, and what the cap leaves out is named in a notice as a fact about the file."""
+
+    def _file(self, n, **extra):
+        tags = [{"id": "t%d" % i, "name": "t%d" % i, "color": "", "members": [{"host": "", "sid": "s%d" % i}]}
+                for i in range(n)]
+        d = dict({"active": "all", "tags": tags}, **extra)
+        km._views_path().write_text(json.dumps(d))
+        return d
+
+    def test_a_seq_less_40_tag_file_with_hidden_entries_migrates_stamps_and_names_the_drop_as_a_file_fact(self):
+        p = km._views_path()
+        self._file(40, hidden=[SID3])
+        v = km._timeline_views()
+        self.assertEqual(len(v["tags"]), km._VIEWS_MAX_TAGS, "served under the cap, as every read")
+        self.assertIsInstance(v.get("seq"), int, "stamped")
+        on_disk = json.loads(p.read_text())
+        self.assertNotIn("hidden", on_disk, "the migration landed: the hidden key is consumed")
+        self.assertEqual(len(on_disk["tags"]), km._VIEWS_MAX_TAGS)
+        self.assertTrue(all(t.get("mtime") for t in on_disk["tags"]))
+        self.assertEqual(len(self.notices), 1, "one notice: the file fact")
+        text, ok = self.notices[0]
+        self.assertFalse(ok)
+        self.assertIn("the views file held 41 tags, over the store's 32-tag cap", text)
+        for nm in ("t32", "t39"):
+            self.assertIn('"%s" (1 member)' % nm, text)
+        self.assertIn('"archived" (1 member)', text, "the migrated hidden entry is named as what was dropped")
+        self.assertIn("No dashboard wrote this", text)
+        self.assertNotIn("dashboard write", text)
+        self.assertNotIn("reload", text)
+        self.assertNotIn("refused", text)
+        # idempotent: a cold second read writes nothing and says nothing more
+        before = p.read_bytes()
+        km._flags_cache.clear()
+        km._timeline_views()
+        self.assertEqual(p.read_bytes(), before)
+        self.assertEqual(len(self.notices), 1)
+
+    def test_a_full_store_with_hidden_entries_the_kernel_once_wrote_loses_only_the_archived_tag_and_says_so(self):
+        # kernel-producible: the cap and the hidden field were born together (2026-08-18), hidden retired 08-24
+        p = km._views_path()
+        self._file(km._VIEWS_MAX_TAGS, hidden=[SID2, SID3], seq=7)
+        v = km._timeline_views()
+        self.assertEqual([t["id"] for t in v["tags"]], ["t%d" % i for i in range(32)], "every real tag stands")
+        self.assertIsNone(store_tag("archived"))
+        self.assertNotIn("hidden", json.loads(p.read_text()))
+        self.assertEqual(len(self.notices), 1)
+        text, ok = self.notices[0]
+        self.assertFalse(ok)
+        self.assertIn('"archived" (2 members) was dropped', text)
+        self.assertIn("hidden entries migrated into the archived tag", text)
+        self.assertNotIn("dashboard write", text)
+
+    def test_a_31_tag_file_with_hidden_entries_fits_and_nothing_is_said(self):
+        self._file(km._VIEWS_MAX_TAGS - 1, hidden=[SID3])
+        v = km._timeline_views()
+        self.assertEqual([m["sid"] for m in store_tag("archived")["members"]], [SID3])
+        self.assertEqual(len(v["tags"]), km._VIEWS_MAX_TAGS)
+        self.assertEqual(self.notices, [], "the migration fits: a stamp is not a refusal")
+
+    def test_a_seq_less_file_over_the_cap_is_stamped_under_the_cap_and_the_drop_is_a_file_fact(self):
+        p = km._views_path()
+        self._file(40, at=1000)
+        v = km._timeline_views()
+        self.assertEqual(len(v["tags"]), 32)
+        self.assertEqual(len(json.loads(p.read_text())["tags"]), 32)
+        self.assertEqual(len(self.notices), 1)
+        text, ok = self.notices[0]
+        self.assertFalse(ok)
+        self.assertIn("the views file held 40 tags", text)
+        self.assertIn("a store from before the write sequence, stamped once", text)
+        self.assertNotIn("partially refused", text)
+        self.assertNotIn("dashboard", text.replace("No dashboard wrote this", ""))
+
+    def test_the_judges_loud_notice_names_the_writer_and_offers_a_reload_only_to_a_dashboard(self):
+        self.seed()
+        self.assertIsNone(km._edit_tag(tid="gA", add=[SID2])[1])            # newer state in the store
+        stale = {"active": "all", "at": 1, "tags": [dict(WEB, mtime=1)]}    # a copy predating it
+        km._judge_timeline_views(json.loads(json.dumps(stale)), writer="the views file's re-stamp on read")
+        self.assertEqual(len(self.notices), 1)
+        self.assertTrue(self.notices[0][0].startswith("the views file's re-stamp on read was partially refused"))
+        self.assertNotIn("reload", self.notices[0][0], "no dashboard wrote it: nothing to reload")
+        km._judge_timeline_views(json.loads(json.dumps(stale)))
+        self.assertTrue(self.notices[1][0].startswith("a stale dashboard write was partially refused"))
+        self.assertIn("reload that dashboard to resync", self.notices[1][0])
 
 
 class WebBootWiring(unittest.TestCase):

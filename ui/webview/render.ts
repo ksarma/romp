@@ -16,7 +16,7 @@ import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./ta
 import { ctxFallbackColor, pickTone, readableRgb } from "./ctx-color";
 import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
-import { mintWriteId, ackOutcome, adoptViews, seqOf, forgetSeq, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
+import { mintWriteId, ackOutcome, adoptViews, seqOf, capsAdopts, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
 import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, PendingTabMeta } from "./tab-meta";
@@ -510,15 +510,20 @@ let legacyViewsAge = 0;           // LEGACY kernels only (no `seq`, no acks): fr
 let kernelCaps = new Set<string>();   // what the LOCAL kernel announced at `ready` ({type:"caps"}); "tagEdit" = targeted ops, acks, seq
 let allHiddenBlanked = false;   // the active transcript was blanked because EVERY session is view-hidden
 let staleViewsDiagSent = false; // one breadcrumb per page load for an out-of-order views blob (below)
+let rejectedViews: SessionViews | null = null;   // the last blob the gate turned away since it last adopted one — what the caps frame adopts (onKernelCaps)
 function effViews(): SessionViews | null { return pendingSessionViews ?? sessionViews; }
 // an arriving views blob (a frame's or an ack's) becomes the base only if its write sequence is at
 // least the held one — a frame the pusher built from its warmed cache before a write, delivered
 // after that write's ack, must not put the older blob back (2026-09-05). Ignored blobs leave one
 // breadcrumb per page load (the kernel's client-diag log), so a kernel serving stale frames is a
-// visible fact rather than a flicker nobody can explain.
+// visible fact rather than a flicker nobody can explain. The last ignored blob is KEPT (and let go
+// by the next adoption): a kernel restarted over a store restored from an older copy serves it under
+// the old seq, so its connect push is turned away here — and the caps frame that follows it, naming
+// that push's seq, is the event that adopts it (rounds 6 and 7 of the 2026-09-05 review; capsAdopts).
 function takeViews(v: SessionViews | null | undefined): boolean {
   if (!v) return false;
-  if (adoptViews(sessionViews, v)) { sessionViews = v; return true; }
+  if (adoptViews(sessionViews, v)) { sessionViews = v; rejectedViews = null; return true; }
+  rejectedViews = v;
   if (!staleViewsDiagSent) {
     staleViewsDiagSent = true;
     vscodeApi?.postMessage({ type: "clientDiag", surface: "chat", what: "views-stale-blob",
@@ -612,18 +617,27 @@ function postTagEdit(nv: SessionViews, edit: TagEditOp, newId?: string) {
 // re-send on a reconnected socket. A reconnect is the one event that can lose an ack (the socket died
 // between the write and its answer), so writes still in flight when this frame arrives are unknowable:
 // they are dropped, the copy reverts to what the kernel's frames show, and the user is told — never a
-// pinned copy faking success, never a silent revert. It is also the event on which the held seq is
-// forgotten (round 6 of the 2026-09-05 review): a kernel restarted over a store restored from an
-// older copy serves it under the old seq, and a page holding the higher one would otherwise ignore
-// every frame until the next write — the next blob to arrive is adopted whatever its seq.
-function onKernelCaps(m: { caps?: unknown }) {
+// pinned copy faking success, never a silent revert. It is also the event that adopts the blob the
+// gate last turned away, when the frame names it (rounds 6 and 7 of the 2026-09-05 review;
+// capsAdopts): the kernel sends its connect push before this frame and `viewsSeq` is the seq of the
+// views blob that push served, so a push a restarted kernel served under an OLDER seq (a store
+// restored while it was down) was rejected a frame ago and is adopted here, the gate re-arming at its
+// seq; a healthy reconnect's push was adopted, nothing is kept, and the gate stands; a pusher frame
+// built before a concurrent write, kept because it arrived between the push and this frame, carries a
+// seq the frame does not name and is discarded. A write in flight is dropped whatever the base became:
+// its ack cannot reach this socket, and one that somehow did would be an ack for a write this page no
+// longer tracks — its blob meets the gate like any other arrival, and nothing is re-pinned (onViewsAck).
+function onKernelCaps(m: { caps?: unknown; viewsSeq?: unknown }) {
   kernelCaps = new Set(Array.isArray(m.caps) ? m.caps.filter((c): c is string => typeof c === "string") : []);
-  sessionViews = forgetSeq(sessionViews);
-  if (!viewsWrites.length) return;
-  viewsWrites = []; pendingSessionViews = null;
-  warnToast("The connection to romp was re-established; a tag edit made just before it may not have landed. Check the tag.");
-  if (activeId) assertPeekFor(activeId);
-  syncNewTagInput();                       // a dropped create no longer gates the flyout's input
+  const adopted = capsAdopts(rejectedViews, m.viewsSeq);
+  if (adopted) sessionViews = rejectedViews;
+  rejectedViews = null;
+  if (viewsWrites.length) {
+    viewsWrites = []; pendingSessionViews = null;
+    warnToast("The connection to romp was re-established; a tag edit made just before it may not have landed. Check the tag.");
+    syncNewTagInput();                     // a dropped create no longer gates the flyout's input
+  } else if (!adopted) return;             // nothing in flight, nothing adopted: the caps changed, nothing shown did
+  if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek
   renderTabs();
 }
 // the kernel does not know an op this page posted (a dashboard newer than its kernel): the write is

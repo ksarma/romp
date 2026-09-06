@@ -2471,7 +2471,12 @@ def _tag_name_basis(n):
     lens entry or an order entry read on any other basis names nothing: a store that already held a
     padded twin ("web " beside "web") read both rows as "web" on the first post-upgrade read while
     its lens and order still carried "web ", so the surface filtered to it showed no session and the
-    tag fell to the end of the order. "" for a non-string or an all-whitespace name."""
+    tag fell to the end of the order. A REMOTE tag's rendered name is on it too (_views_client), and
+    so is a pending edit's name (_queue_pending_tag_edit): a remote kernel on an older build, or a
+    padded remote store, serves "web " raw, and a lens stored as "web" — every entry is — never
+    matched the rendered "web ", so the surface filtered to that tag showed none of its members and
+    the name-keyed union kept the padded twin apart from the local tag. Every name a client sees or
+    a lens compares is on this one basis. "" for a non-string or an all-whitespace name."""
     return str(n)[:_VIEWS_MAX_NAME].strip() if isinstance(n, str) else ""
 
 
@@ -2512,7 +2517,9 @@ def _norm_timeline_views(d, tag_cap=_VIEWS_MAX_TAGS):
     junk quietly, clamps sizes, and falls back active→"all" when the named tag does not exist.
     `tag_cap` bounds the tag list (the store's cap by default); the write door reads a posted blob
     under a wider bound so ITS cap pass can refuse the excess with a reason instead of this slice
-    dropping a posted create in silence (round 6 of the 2026-09-05 review).
+    dropping a posted create in silence (round 6 of the 2026-09-05 review), and whatever a blob
+    carries past the bound is listed by _views_unread, so the door and the reader's re-stamp can
+    say what this slice left unread (round 7).
     "all" and "untagged" are the two built-in sentinels; "untagged" must pass the whitelist below,
     or a picked untagged view silently reverts on the next read (the client's optimistic hold makes
     that failure read as flicker three pushes later, not as an error).
@@ -2609,6 +2616,33 @@ def _norm_timeline_views(d, tag_cap=_VIEWS_MAX_TAGS):
     return out
 
 
+def _views_unread(d, kept):
+    """The tag entries of a blob that a normalization under a bound left UNREAD — every entry carrying
+    a valid id that none of the `kept` (normalized) tags has — as (id, name, member count) triples in
+    array order, one per id (round 7 of the 2026-09-05 review). The write door lists them in the ack
+    as refusal rows and the reader's re-stamp names them in a notice; neither stores them. Until now
+    the normalizer's slice was the one place a posted tag could vanish with nothing said: the door
+    reads a blob under twice the cap, and a client whose `edited` named only ids past that bound was
+    acked ok with a blob missing its own creates (a duplicate entry consumes a slot too, so 33
+    distinct tags posted twice reach it). Junk entries (no id, not a dict) drop quietly here as in
+    the normalizer; the name is on the stored basis, "tag" when empty."""
+    if not isinstance(d, dict):
+        return []
+    raw = d.get("tags") if isinstance(d.get("tags"), list) else d.get("groups")
+    have = {t["id"] for t in kept if isinstance(t, dict) and t.get("id")}
+    out = []
+    for g in (raw if isinstance(raw, list) else []):
+        if not isinstance(g, dict) or not g.get("id") or not isinstance(g.get("id"), str):
+            continue
+        i = g["id"][:64]
+        if i in have:
+            continue
+        have.add(i)
+        m = g.get("members")
+        out.append((i, _tag_name_basis(g.get("name")) or "tag", len(m) if isinstance(m, list) else 0))
+    return out
+
+
 _VIEWS_RESTAMP_ERR = [None]   # the last OSError the reader's re-stamp write hit, as text — one stderr line per distinct error
 # The highest seq this kernel has served or written (round 5 of the 2026-09-05 review), kept apart
 # from the read cache: a store read as MISSING forgets its cache entry (rightly — a file that then
@@ -2695,12 +2729,52 @@ def _timeline_views():
                 floor = 0
             floor = max(floor, _views_seq_floor(p))
             base = hit[1] if (judge and hit is not None) else _norm_timeline_views(d)
+            lost = []
+            if not judge:
+                # The file's OWN content, under the DISK cap (round 7 of the 2026-09-05 review): the
+                # migration and the first stamp are reads, not writes, and the door's wider read
+                # bound is for a dashboard's posted creates — read through it, a file holding more
+                # than the cap had its excess (the migration's appended "archived" tag first) judged
+                # as creates and refused by the cap pass, under a notice blaming a stale dashboard
+                # write. The normalizer bounds every read to the cap, so the file's tags past it were
+                # never served; the stamp writes what every read served, as it did before the door
+                # bound — and what the cap leaves out is NAMED (`lost`, below), as a fact about the
+                # file, where until now it was dropped with nothing said.
+                d2n = _norm_timeline_views(d2)
+                lost = _views_unread(d2, d2n["tags"])
+                d2raw, d2 = d2, d2n
             judged, _rows = _judge_timeline_views(
                 d2, base=base, seq_floor=floor,
-                foreign="a stale write to the views file from outside the kernel" if judge else None)
+                foreign="a stale write to the views file from outside the kernel" if judge else None,
+                writer=None if judge else "the views file's re-stamp on read")
             try:
                 _write_timeline_views(judged)
                 sys.stderr.write("romp-kernel: views store re-stamped on read: %s\n" % why)
+                if lost:
+                    # No dashboard wrote this — the file itself was over the cap (an edit outside the
+                    # kernel, or a kernel from before the cap that held 32 tags plus hidden entries,
+                    # which the migration's archived tag then puts over). The drop is permanent once
+                    # the stamp is written, so it is said once, here, with the member count of each
+                    # tag dropped; stderr also lists the members.
+                    held = len(d2["tags"]) + len(lost)
+                    names = ", ".join('"%s" (%d member%s)' % (nm, n, "" if n == 1 else "s") for _i, nm, n in lost)
+                    note = ("the views file held %d tags, over the store's %d-tag cap: %s %s dropped when the "
+                            "file was re-stamped on read (%s). No dashboard wrote this: the file itself was "
+                            "over the cap." % (held, _VIEWS_MAX_TAGS, names,
+                                               "was" if len(lost) == 1 else "were", why))
+                    ids = set(i for i, _nm, _n in lost)
+                    raw = [g for g in (d2raw.get("tags") or []) if isinstance(g, dict)
+                           and isinstance(g.get("id"), str) and g["id"][:64] in ids]
+                    members = "; ".join('"%s": %s' % (_tag_name_basis(g.get("name")) or "tag",
+                                                       ", ".join(_member_str(m) for m in
+                                                                 (_member_pair(x) for x in (g.get("members") or []))
+                                                                 if m) or "no members")
+                                        for g in raw)
+                    sys.stderr.write("romp-kernel: %s [%s]\n" % (note, members))
+                    try:
+                        _sync_notice(note, ok=False)
+                    except Exception:
+                        pass
             except OSError as e:
                 # The state dir is unwritable or full: a READ must still answer (every frame builds
                 # on it), so a blob is served and cached under the file's key — the next read is a
@@ -2761,7 +2835,10 @@ def _views_restamp(d, hit):
       the user's intent record and keeping them out of the untagged view. They WILL show under
       All: nothing can hide from All post-retirement — that is All's meaning now, and the feed's
       needs-you machinery carries anything that matters. Minted only when hidden entries exist;
-      idempotent (the write drops the hidden key, so the next read has nothing to migrate).
+      idempotent (the write drops the hidden key, so the next read has nothing to migrate). The
+      archived tag is appended LAST, so a store already at the cap loses it to the disk cap when
+      the reader stamps the file — named in the reader's notice as a fact about the file (round 7
+      of the 2026-09-05 review), never dropped in silence.
     - A STORE WITHOUT A WRITE SEQUENCE (every install upgrading to the 2026-09-05 stamp): served
       seq-less, it would leave every client on the null rule — adopt anything — until the first
       write, so the seq gate could not protect that first write against a frame the pusher built
@@ -2858,7 +2935,7 @@ def _write_timeline_views(v):
     _VIEWS_RESTAMP_ERR[0] = None      # the store is writable again: a later failure logs afresh
 
 
-def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None):
+def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None, writer=None):
     # The write door's judgment, without the write: returns (blob-to-store, refused rows). The blob
     # carries every stamp a write puts on it (per-tag mtimes, `at`, `seq`) so the caller stores it
     # as is — or, when it cannot (the reader's re-stamp of an unwritable store), serves it as is.
@@ -2891,10 +2968,19 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     # mark only the kernel puts on a tag: an mtime. A tag the store lacks that carries one existed
     # in a store once — the writer's copy of a tag deleted since — and is not re-created; one
     # without is the writer's own create (a client-minted row) and lands.
-    # read under a wider bound than the store's cap (twice it: a client can hold at most the store's
-    # 32 plus its own creates; more is junk), so a posted 33rd tag reaches the cap pass below and is
-    # refused with a reason — the normalizer's own slice dropped it before the judge saw it
-    v = _norm_timeline_views(blob, tag_cap=_VIEWS_MAX_TAGS * 2)
+    # `writer` — the words the loud notice below uses for the writer when it is not a dashboard and
+    # not a foreign file: the reader's re-stamp of the file's own content (round 7 of the 2026-09-05
+    # review — its refusals, when the cap pass fired on a file over the cap, were filed as "a stale
+    # dashboard write ... reload that dashboard", on a read, blaming a dashboard that wrote nothing).
+    # Separate from `foreign` on purpose: `foreign` is also the judging mode for unknown tags above,
+    # and a re-stamp under it would refuse every freshly stamped tag as a re-creation.
+    # Read under a wider bound than the store's cap (twice it: a client holds at most the store's 32
+    # plus its own creates), so a posted 33rd tag reaches the cap pass below and is refused with a
+    # reason — the normalizer's own slice dropped it before the judge saw it. Whatever the blob
+    # carries PAST that bound is unread, and listed (`unread`, below) rather than dropped in silence.
+    bound = _VIEWS_MAX_TAGS * 2
+    v = _norm_timeline_views(blob, tag_cap=bound)
+    unread = _views_unread(blob, v["tags"])
     ed = set(x for x in edited if isinstance(x, str)) if isinstance(edited, list) else None
     if base is None:
         try:
@@ -2984,6 +3070,26 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
             kept.append(json.loads(json.dumps(pt)))       # the store's newer truth stands
         else:
             kept.append(t)
+    for tid, nm, _n in ([] if lens_only else unread):
+        # PAST THE DOOR'S BOUND (round 7 of the 2026-09-05 review): an entry the normalizer's slice
+        # left unread is neither a create nor a deletion — it was not read. A store tag whose copy
+        # fell past the bound is KEPT (its absence from `incoming` would have read as a deletion
+        # below); anything else is not created. Each gets a row, so a client whose `edited` names
+        # only ids past the bound is acked not-ok with the reason, where it was acked ok with a
+        # blob missing its own creates. Rows only, never stored — the bound stands.
+        pt = prev.get(tid)
+        if pt is not None:
+            incoming.add(tid)
+            kept.append(json.loads(json.dumps(pt)))
+            refused.append(('"%s" (unread)' % pt.get("name"), tid))
+            rows.append({"tid": tid, "name": pt.get("name"),
+                         "reason": "a write is read to %d tags and its copy was past that bound, "
+                                   "so the store's copy was kept" % bound})
+        else:
+            refused.append(('"%s" (unread)' % nm, tid))
+            rows.append({"tid": tid, "name": nm,
+                         "reason": "a write is read to %d tags and it was past that bound, "
+                                   "so it was not created" % bound})
     for tid, pt in prev.items():
         if tid in incoming:
             continue
@@ -3085,11 +3191,15 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     loud = sorted(set(lb for lb, tid in refused if ed is None or tid in ed))
     quiet = sorted(set(lb for lb, tid in refused if ed is not None and tid not in ed))
     if loud:
+        # the sentence names the writer: a foreign file's panel, the reader's own re-stamp (`writer`,
+        # nothing to reload — no dashboard wrote it), else a dashboard
+        remedy = ("reload the panel that wrote it to resync" if foreign
+                  else None if writer else "reload that dashboard to resync")
         why = ("%s was partially refused: its copy of %s was not applied — each predates a newer edit, "
-               "takes a name another tag holds, or would put the store over its %d-tag cap (the store's "
-               "state was kept; %s)"
-               % (foreign or "a stale dashboard write", ", ".join(loud), _VIEWS_MAX_TAGS,
-                  "reload the panel that wrote it to resync" if foreign else "reload that dashboard to resync"))
+               "takes a name another tag holds, would put the store over its %d-tag cap, or was past the "
+               "%d tags a write is read to (the store's state was kept%s)"
+               % (foreign or writer or "a stale dashboard write", ", ".join(loud), _VIEWS_MAX_TAGS, bound,
+                  ("; " + remedy) if remedy else ""))
         sys.stderr.write("romp-kernel: %s\n" % why)
         try:
             _sync_notice(why, ok=False)
@@ -3231,7 +3341,10 @@ def _queue_pending_tag_edit(host, body):
     for its (host, name) and refuses later ones (the delete already rules); removes merge; a
     rename replaces a prior rename. Only ATTACHED hosts queue — a detached host has no reattach
     event coming, and detach was its own intent."""
-    name = str(body.get("name") or "")
+    # the NAME BASIS (round 7 of the 2026-09-05 review): the row's name is matched against the
+    # host's tag names at capture and at late-apply, and joined to the rendered row for the
+    # pending badge — every one of those is on the stored basis, so the row is too
+    name = _tag_name_basis(body.get("name"))
     qual = bool(body.get("delete")) or isinstance(body.get("rename"), str) \
         or (isinstance(body.get("remove"), list) and body.get("remove"))
     if not (host and name and qual):
@@ -3242,20 +3355,20 @@ def _queue_pending_tag_edit(host, body):
     if r is None:
         return False
     tid = next((str(t.get("id") or "") for t in (cached.get("tags") or [])
-                if isinstance(t, dict) and t.get("name") == name), "")
+                if isinstance(t, dict) and _tag_name_basis(t.get("name")) == name), "")
     rows = _pending_tag_rows()
-    mine = [x for x in rows if x.get("host") == host and x.get("name") == name]
+    same = lambda x: x.get("host") == host and _tag_name_basis(x.get("name")) == name   # a journal from before the basis may hold a padded name
+    mine = [x for x in rows if same(x)]
     if any(x.get("delete") for x in mine):
         return True                              # the delete already rules this name; nothing to add
     row = {"host": host, "name": name, "tagId": tid, "ruledAt": int(time.time()), "at": int(time.time())}
     if body.get("delete"):
-        rows = [x for x in rows if not (x.get("host") == host and x.get("name") == name)]
+        rows = [x for x in rows if not same(x)]
         row["delete"] = True
     else:
         if isinstance(body.get("rename"), str) and body["rename"].strip():
             row["rename"] = body["rename"]
-            rows = [x for x in rows if not (x.get("host") == host and x.get("name") == name
-                                            and x.get("rename"))]
+            rows = [x for x in rows if not (same(x) and x.get("rename"))]
         if isinstance(body.get("remove"), list) and body.get("remove"):
             merged = []
             for x in mine:
@@ -3299,13 +3412,13 @@ def _apply_pending_tag_edits(r):
                     pending=len(rows))
         return 0
     r["views"] = rv
-    by_name = {}
+    by_name = {}                                 # keyed on the name basis: the host's raw name may be padded
     for t in (rv.get("tags") or []):
         if isinstance(t, dict):
-            by_name.setdefault(str(t.get("name") or ""), []).append(t)
+            by_name.setdefault(_tag_name_basis(t.get("name")), []).append(t)
     retired, applied = [], 0
     for row in rows:
-        cand = by_name.get(row.get("name") or "") or []
+        cand = by_name.get(_tag_name_basis(row.get("name"))) or []
         t = next((x for x in cand if row.get("tagId") and x.get("id") == row["tagId"]), None)
         if t is None and cand:
             # same name, different identity: NEW if its id says it was created after the ruling;
@@ -3379,8 +3492,11 @@ def _views_client():
             if not isinstance(t, dict) or not t.get("id"):
                 continue
             members = [m for m in (_member_pair(x) for x in (t.get("members") or [])) if m]
+            # the NAME BASIS (round 7 of the 2026-09-05 review): an older remote build, or a padded
+            # remote store, serves "web " raw; rendered raw, no lens entry (all on the basis) could
+            # pick it and the union kept it apart from a local "web" — see _tag_name_basis
             remote.append({"id": host + ":" + str(t["id"])[:64], "host": host,
-                           "name": str(t.get("name") or "tag")[:_VIEWS_MAX_NAME],
+                           "name": _tag_name_basis(t.get("name")) or "tag",
                            "color": str(t.get("color") or "")[:16],
                            "members": [_remote_tag_member_str(host, m) for m in members]})
     if remote:
@@ -3391,9 +3507,11 @@ def _views_client():
     # still surfaces.
     pend = _pending_tag_rows()
     if pend:
-        v["pendingTagEdits"] = [{"host": x.get("host") or "", "name": x.get("name") or "",
+        v["pendingTagEdits"] = [{"host": x.get("host") or "", "name": _tag_name_basis(x.get("name")),
                                  "op": _row_op(x)} for x in pend]
-        by_hn = {(x.get("host"), x.get("name")): _row_op(x) for x in pend}
+        # joined on the name basis, like the rendered row (a journal from before the basis may hold
+        # a padded name; the row's name is the client's word, the rendered name the remote's)
+        by_hn = {(x.get("host"), _tag_name_basis(x.get("name"))): _row_op(x) for x in pend}
         for t in (v.get("remoteTags") or []):
             op = by_hn.get((t.get("host"), t.get("name")))
             if op:
@@ -30542,6 +30660,14 @@ def _send_client(c, key, msg, pre=None, sig=None):
     Returns whether a frame went out (False: deduped, or the client is dead)."""
     s = pre if pre is not None else json.dumps(msg)
     sig = sig if sig is not None else _dedup_sig(msg, s)
+    seqs = getattr(_VIEWS_SERVED, "seqs", None)
+    if seqs is not None:
+        # the ready handler is capturing ITS connect push (the caps frame's viewsSeq, see KERNEL_WS_CAPS):
+        # a frame this thread enqueues, deduped or not — a deduped frame is one the client already holds
+        # byte-for-byte, so its blob is what the client has either way
+        sq = _views_seq_of(msg)
+        if sq is not None:
+            seqs.append(sq)
     with _client_lock(c):    # the dedup dict is shared with the handler thread's `ready`
         prev = c.setdefault("sent", {}).get(key)      # reset (_client_reset_chat_base) — one writer at a time
         now = time.time()
@@ -30662,14 +30788,45 @@ READY_GATE_CAP = "readyGate"
 #             delete / move, by tag id), the `tagEditAck` / `viewsAck` answers on the poster's socket,
 #             and the write sequence (`seq`) on every views blob.
 KERNEL_WS_CAPS = ("tagEdit",)
+# The caps frame: {type: "caps", caps: [...], viewsSeq: int|null}. `viewsSeq` (round 7 of the 2026-09-05
+# review) is the write seq of the views blob the READY HANDLER'S OWN connect push served this client — the
+# tabOrder frame's for a chat page, the timeline skeleton's (`data.views`), the feed frame's — read from
+# the frames that push enqueued (_VIEWS_SERVED, captured in _send_client on the handler's thread), never
+# from a fresh cache read, so a write landing between the push and this frame cannot skew it; the highest
+# when the push carried more than one; null when it carried none (a sentinel cycle sends no tabOrder). A
+# client that kept a blob its seq gate turned away adopts it on this frame only when the kept blob's seq
+# equals viewsSeq: the restore case (the store's seq fell behind what the page holds, and the connect push
+# IS the kept blob), and never a pusher-thread frame built before a concurrent write and enqueued between
+# the connect push and this frame — its seq is older than the connect push's, so it does not match, and
+# the next pusher cycle carries the newer blob.
+
+_VIEWS_SERVED = threading.local()   # .seqs: a list while the ready handler captures its connect push, else absent/None
 
 
-def _send_caps(client):
-    """The caps frame, on the client's own socket. Sent AFTER the ready handler's pushes: the shim clears
-    its stale banner on the first non-keepalive frame after a reconnect, which must stay the resync frame
-    itself and not this one."""
+def _views_seq_of(msg):
+    """The write seq of the views blob a frame carries, or None: `views` rides at the top level of the
+    tabOrder and feed frames and under `data` in the timeline skeleton."""
+    if not isinstance(msg, dict):
+        return None
+    v = msg.get("views")
+    if not isinstance(v, dict) and isinstance(msg.get("data"), dict):
+        v = msg["data"].get("views")
+    if not isinstance(v, dict) or v.get("seq") is None:
+        return None
     try:
-        client["send"](json.dumps({"type": "caps", "caps": list(KERNEL_WS_CAPS)}))
+        return int(v["seq"])
+    except (TypeError, ValueError):
+        return None
+
+
+def _send_caps(client, views_seq=None):
+    """The caps frame, on the client's own socket: {type: "caps", caps, viewsSeq} (the comment on
+    KERNEL_WS_CAPS has the field). Sent AFTER the ready handler's pushes: the shim clears its stale banner
+    on the first non-keepalive frame after a reconnect, which must stay the resync frame itself and not
+    this one. `views_seq` is the seq of the views blob those pushes served, None when they served none."""
+    try:
+        client["send"](json.dumps({"type": "caps", "caps": list(KERNEL_WS_CAPS),
+                                   "viewsSeq": views_seq if isinstance(views_seq, int) else None}))
     except Exception:
         pass
 
@@ -39455,18 +39612,26 @@ class Handler(BaseHTTPRequestHandler):
                 _client_reset_feed_base(client)     # both protocols' bases and the dedup slot, under the slot lock
             client["ready"] = True
             client["readySeen"] = True
-            served = client.get("app") in ("feed", "fleet", "waiting") and _send_feed_now(client)
-            # The connect push serves the pusher-warmed caches for everything else. A feed client that was
-            # just served skips it: the push could add nothing for that pane (its warmed cache IS what was
-            # served), and a feed-only push re-serializes the wire cache ledger-less for the pusher to redo.
-            # The Waiting-on-you pane is a feed client in this sense too: it reads the frame's userTodoRows
-            # and needs no ledgers, so the served frame is all the push could give it.
-            if not (served and client.get("app") in ("feed", "waiting")):
-                self._push_one(client)
+            # Capture the seq of the views blob the pushes below serve — from the frames THIS thread
+            # enqueues, so a pusher-thread frame landing meanwhile is not mistaken for the connect push's
+            # (the caps frame's viewsSeq, see KERNEL_WS_CAPS)
+            _VIEWS_SERVED.seqs = []
+            try:
+                served = client.get("app") in ("feed", "fleet", "waiting") and _send_feed_now(client)
+                # The connect push serves the pusher-warmed caches for everything else. A feed client that was
+                # just served skips it: the push could add nothing for that pane (its warmed cache IS what was
+                # served), and a feed-only push re-serializes the wire cache ledger-less for the pusher to redo.
+                # The Waiting-on-you pane is a feed client in this sense too: it reads the frame's userTodoRows
+                # and needs no ledgers, so the served frame is all the push could give it.
+                if not (served and client.get("app") in ("feed", "waiting")):
+                    self._push_one(client)
+            finally:
+                seqs, _VIEWS_SERVED.seqs = _VIEWS_SERVED.seqs, None
             # What this kernel can do for the page (KERNEL_WS_CAPS), after the pushes above and on every
             # `ready` — so a reconnected socket learns them again, and a page whose views writes were
-            # in flight across the drop learns, by this frame, that their answers may never come.
-            _send_caps(client)
+            # in flight across the drop learns, by this frame, that their answers may never come. It
+            # carries the seq of the views blob those pushes served (viewsSeq), read above.
+            _send_caps(client, views_seq=(max(seqs) if seqs else None))
             # The tab order rides the connect push (chat clients, through the _tab_list_tmux collapse
             # guard). This handler used to send a SECOND tabOrder built from a raw _tmux_sessions() read,
             # bypassing that guard — and the client treats an omitted id as an authoritative teardown

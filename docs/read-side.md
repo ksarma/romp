@@ -396,20 +396,41 @@ naming the collision: a renamed tag stands as the store has it and keeps its cla
 on that name, so a tag created under it in the same write is refused too; a new one
 is kept out. Names address edits, so the store holds one tag per name, and a
 name is clamped and stripped at both doors, so a padded spelling is the same
-name. A lens or order
-write is built from the store's blob the client last adopted plus the fields it
-sets. It never carries a targeted edit still in flight, which is that edit's own
-claim; the copy the client shows keeps such edits, and a refusal of one reverts
-it alone. Both acks carry the write's `writeId` and the blob's `seq`.
+name. The store caps at 32 tags, and the cap never drops a kept store tag: when
+the tags that stand after a write would exceed it, the write's own creates are
+refused instead, last in array order first, each with a reason naming the cap
+(`_edit_tag` refuses a 33rd create the same way). The door reads a posted blob
+to 64 tags, so a 33rd reaches that pass; every posted entry with a valid id
+past that bound gets a row of its own, never a silent drop: one the store lacks
+is not created ("a write is read to 64 tags and it was past that bound, so it
+was not created"), one the store holds keeps the store's copy ("a write is read
+to 64 tags and its copy was past that bound, so the store's copy was kept"),
+and nothing past the bound is stored. A duplicate entry consumes a slot. `ok`
+is false when a refused tag is one `edited` names, and on any refusal when the
+write carries no `edited`. The loud notice names the four causes a kept copy
+can have (it predates a newer edit, takes a name another tag holds, would put
+the store over its 32-tag cap, or was past the 64 tags a write is read to) and
+says that the store's state was kept. A remote tag's rendered name is on the
+same stored basis (clamped, then stripped; "tag" when empty) as the lens and
+order entries, so a padded name a remote kernel serves raw reads as the name a
+lens stores: a lens can select it, and it joins the union of a local tag of that
+name. A lens or order write (`edited: []`) touches no tag whatever the blob carries and
+files none of these rows; it is built from the store's blob the client last
+adopted plus the fields it sets. It never carries a targeted edit still in
+flight, which is that edit's own claim; the copy the client shows keeps such
+edits, and a refusal of one reverts it alone. Both acks carry the write's `writeId` and the blob's `seq`.
 
 `seq` is the store's write sequence. `_set_timeline_views` stamps every accepted
 write with a number greater than the last (seeded from the clock, so a store
 recreated from nothing starts past what any connected client holds), and every
 frame that embeds the blob (the timeline skeleton, the feed frame, the tabOrder
 frames) carries it. A client adopts a blob only when its `seq` is at least the
-one it holds, so a frame the pusher built from its warmed cache before a write
-cannot replace the ack's newer blob, whatever order the socket delivered them
-in. The optimistic copy a gesture shows clears on the ack; a refusal reverts
+one it holds, or when either side carries no seq, so a frame the pusher built
+from its warmed cache before a write cannot replace the ack's newer blob,
+whatever order the socket delivered them in. The gate keeps the last blob it
+turned away and lets it go on its next adoption; the caps frame is the one
+event that adopts a kept blob. The optimistic copy a gesture shows clears
+on the ack; a refusal reverts
 its own write at once and shows the reason (a notice in the dialog and the lane
 gear menu, a toast in the chat pane), and a later write still in flight keeps
 its change: the copy is re-derived from the store's blob plus the remaining
@@ -438,10 +459,23 @@ never touched, because the guard compares the tag's mtime to the writer's
 evidence. The refusal is loud, the client adopts the ack's blob, and its next
 write carries the new `at`, so it happens once per stale copy; a copy taken
 at that last write lands (the comparison is strict). Targeted edits read the
-store first and are never affected. A
-file written outside the kernel (the
-timeline's Electron branch writes `timeline-views.json` itself, with the seq it
-holds) can carry a seq behind the last one served. By its own seq the writer
+store first and are never affected. For the first-read stamp and the migration
+the file is normalized under the disk cap of 32 before the judge sees it, as
+every read normalizes what it serves, so a read never runs the door's
+create-refusal pass and never files a refusal worded as a dashboard's. What the
+cap leaves out is named once, after the stamp is written, in a sync notice
+worded as a fact about the file: "the views file held N tags, over the store's
+32-tag cap: <each dropped tag, with its member count> were dropped when the file
+was re-stamped on read (<why the file was stamped>). No dashboard wrote this:
+the file itself was over the cap." Stderr lists the members as well. The judge
+carries a `writer` label apart from `foreign`, because `foreign` is also the
+judging mode for unknown tags and would refuse every freshly stamped tag as a
+re-creation. A loud notice names its writer and offers a remedy only when there
+is something to reload: a dashboard's ends "reload that dashboard to resync", a
+foreign file's ends "reload the panel that wrote it to resync", and the
+re-stamp's ends "(the store's state was kept)" with no reload clause. A file written
+outside the kernel (the timeline's Electron branch writes `timeline-views.json`
+itself, with the seq it holds) can carry a seq behind the last one served. By its own seq the writer
 held an older copy, so the reader judges the file against the last served blob
 through the stale-writer guard, then re-stamps it past that seq: a tag deleted
 since is not brought back (an unknown tag carrying an mtime existed in a store
@@ -461,14 +495,37 @@ that lands persists the judged state) and the file as read otherwise, logs
 once per distinct error, and stops retrying until the file changes or a
 write succeeds.
 
-The kernel announces what it can do in a `{type: "caps"}` frame in reply to
-every `ready` and lists the same on `/version`; `tagEdit` covers the targeted op,
-the acks and the `seq`. A client uses the targeted op only when the cap is
-present and posts the whole blob otherwise. A message no handler takes is
+The kernel announces what it can do in a `{type: "caps", caps, viewsSeq}` frame
+in reply to every `ready` and lists the caps on `/version`; `tagEdit` covers the
+targeted op, the acks and the `seq`. A client uses the targeted op only when the
+cap is present and posts the whole blob otherwise. A message no handler takes is
 answered `{type: "unknownOp", op, writeId}`, which the client treats as a refusal
 of that write and as withdrawing the cap. The caps frame is also the reconnect
-signal: writes still in flight when it arrives cannot be answered, so the client
-drops them, reverts the copy, and says so.
+signal, and the `ready` handler sends it after its own connect push. `viewsSeq`
+is the write seq of the views blob that push put on the socket: the tabOrder
+frame's, the timeline skeleton's or the feed frame's, the highest when the push
+carried more than one, and null when it carried none. The kernel reads it from
+the frames the handler's own thread enqueued, so a write landing between the
+push and the caps frame does not skew it, and a pusher-thread frame is never
+what it names. A client adopts the blob its gate kept only when that blob's seq
+equals `viewsSeq`, and discards the kept blob otherwise. The kernel's seq floor
+lives for its process, so a store restored from an older copy while the kernel
+was down is served under its old seq after the restart. A page that stayed open
+holds the higher seq: its gate turns the connect push away and keeps it, the
+caps frame names that blob, and the restored store is adopted on the caps frame
+itself, with nothing to wait for. A pusher frame built before a concurrent write
+carries a seq older than the connect push's, so whether it lands before the caps
+frame (kept, then discarded) or after it (turned away), it is never adopted: the
+gate is never open. A caps frame without the field (a kernel from before it)
+adopts the kept blob outright. Writes still in flight when the caps frame
+arrives cannot be answered, so the client drops them after that adoption,
+reverts the copy to the adopted base, and says so. A remote kernel's caps frame
+describes that kernel and is dropped by the federation router before it reaches
+a pane. The router's own two replayed stores, the merged tabOrder's blob and
+the merged lanes payload's, keep and adopt by the same rule. A store that
+adopted re-emits before it hands the caps frame on: a pane sees the local blob
+only through those re-emits, so the restored blob must meet the pane's own
+gate, and be turned away there, before the pane's caps door adopts it.
 
 The Outline pane's tag filter posts its lens the same way: the frame copy it
 holds with only the outline lens changed, with a `writeId` and `edited: []`, so

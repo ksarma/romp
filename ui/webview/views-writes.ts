@@ -61,18 +61,24 @@ export function adoptViews(held: SessionViews | null | undefined, incoming: Sess
   return h === null || i === null || i >= h;
 }
 
-/** The held blob with its write sequence forgotten (a copy; null for none held) — what a page does
- *  to its base on the kernel's `caps` frame, the reconnect event (round 6 of the 2026-09-05 review).
- *  The kernel's seq floor lives for its process: a store restored while the kernel was down is
- *  served under its old seq after the restart, and a page that stayed open across it holds the
- *  higher seq and would ignore every frame until the next write. With the seq forgotten, the next
- *  blob to arrive is adopted whatever its seq, and from then on the gate is the store's own order
- *  again. Nothing else about the base changes: the tags shown stay until that blob comes. */
-export function forgetSeq(held: SessionViews | null | undefined): SessionViews | null {
-  if (!held) return null;
-  const v = JSON.parse(JSON.stringify(held)) as SessionViews;
-  delete (v as any).seq;
-  return v;
+/** Whether the kernel's `caps` frame — the reconnect event — adopts the blob the gate last REJECTED
+ *  since its last adoption (rounds 6 and 7 of the 2026-09-05 review). The kernel's seq floor lives
+ *  for its process, so a store restored while the kernel was down is served under its old seq after
+ *  the restart, and a page that stayed open across it holds the higher seq: its gate turns the
+ *  kernel's connect push away. The kernel sends that push BEFORE the caps frame, and the frame names
+ *  what the push served: `served` is its `viewsSeq`, the write seq of the views blob the ready
+ *  handler's own push put on this socket (read from the frames that handler's thread enqueued, so a
+ *  pusher-thread frame is never what it names), null when the push carried none, undefined when the
+ *  frame has no such field (a kernel from before it). The kept blob is adopted when its seq equals
+ *  `served`: the restore case (the kept blob IS the connect push), the gate re-arming at its seq. A
+ *  pusher frame built before a concurrent write and enqueued between the push and the caps frame is
+ *  kept too, but its seq is older than the push's, so it never matches and is discarded — the gate
+ *  stands, and the next pusher cycle carries the newer blob. A frame without the field adopts the
+ *  kept blob outright, the round-6 rule. Nothing kept: nothing to adopt, whatever the frame says. */
+export function capsAdopts(rejected: SessionViews | null | undefined, served: unknown): boolean {
+  if (!rejected) return false;
+  if (served === undefined) return true;
+  return typeof served === "number" && Number.isFinite(served) && seqOf(rejected) === served;
 }
 
 /** the fields a lens or order write sets — the whole-blob write's only content of its own: the
