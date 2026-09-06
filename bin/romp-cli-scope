@@ -72,7 +72,9 @@
 #                                   userspace killers such as earlyoom rank by a score this adds to, so a
 #                                   raised session is chosen over the kernel. Raising needs no privilege;
 #                                   lowering below the floor this process inherited (the user manager's
-#                                   own oom_score_adj) does: the write fails, and is reported.
+#                                   own oom_score_adj) does: the write fails, and is reported as the
+#                                   floor. A /proc/self/oom_score_adj this process cannot open for
+#                                   writing (a read-only /proc) is reported as that, not as the floor.
 # Sizes are digits with one optional K, M, G or T suffix (binary, as systemd reads them) or `infinity`;
 # the adjustment is an integer in -1000..1000 with no leading zero (Linux reads `0400` as octal, 256). A
 # value that does not parse is skipped with one `ignored:` line naming the variable, and the scope
@@ -153,15 +155,29 @@ done
 [ -n "$props" ] && props="$props -p OOMPolicy=continue"
 
 # The OOM-score adjustment, on this process: exec-in-place carries it to the CLI and on to everything
-# the CLI spawns. `echo` is a builtin, so the redirection is opened by this shell and /proc/self is it.
-# Ahead of the pre-flight, so the fallback exec below carries it too (it is a /proc write and needs no
-# scope; the pre-flight's `true` inheriting it costs nothing).
+# the CLI spawns. `echo` is a builtin and a function runs in this shell, so the redirection is opened by
+# this shell and /proc/self is it. Ahead of the pre-flight, so the fallback exec below carries it too (it
+# is a /proc write and needs no scope; the pre-flight's `true` inheriting it costs nothing).
+apply_adj() {   # $1: the value; $2: the oom_score_adj file to write — this process's own, /proc/self's
+    # Two steps, so the line names what failed. A file this process cannot open for writing (a read-only or
+    # masked /proc) is reported as that; only a write Linux refused is called the floor, since an
+    # in-range value's write fails one way: EACCES, for a value below the oom_score_adj this process
+    # inherited (the user manager's own). Brace groups, because a shell prints a failed redirection's
+    # message before it applies the command's own 2>. The kernel makes the same two checks once at its
+    # start (CLI_SCOPE_ADJ_PROBE_CMD in sdk_backend.py) and hands a refused value down empty, so on a
+    # kernel-driven launch either line means the box changed since boot.
+    if ! { true > "$2"; } 2>/dev/null; then
+        ignored "ROMP_CLI_SCOPE_OOM_SCORE_ADJ could not be applied ($2 cannot be opened for writing by this process)"
+    elif ! { echo "$1" > "$2"; } 2>/dev/null; then
+        ignored "ROMP_CLI_SCOPE_OOM_SCORE_ADJ could not be applied (the write was refused: a value below the user manager's own oom_score_adj needs a privilege it does not have)"
+    fi
+}
 adj="${ROMP_CLI_SCOPE_OOM_SCORE_ADJ:-}"
 if [ -n "$adj" ]; then
     if ! adj_ok "$adj"; then
         ignored "ROMP_CLI_SCOPE_OOM_SCORE_ADJ is not an integer in -1000..1000"
-    elif ! echo "$adj" > /proc/self/oom_score_adj 2>/dev/null; then
-        ignored "ROMP_CLI_SCOPE_OOM_SCORE_ADJ could not be applied (a value below the user manager's own oom_score_adj needs a privilege it does not have)"
+    else
+        apply_adj "$adj" /proc/self/oom_score_adj
     fi
 fi
 

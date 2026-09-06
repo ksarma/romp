@@ -443,8 +443,8 @@ class FallbackNotice(_Backend):
 # functions (size_ok, adj_ok) must give the same verdict on every value, or a value the kernel accepts
 # and hands down is refused at launch (or the reverse: never reported at boot, refused per launch).
 SIZE_OK = ["16G", "8192M", "1024", "0", "1T", "5K", "infinity", "016M", "12345678901234567890"]
-SIZE_BAD = ["16g", "abc", "16 G", "16GB", "1.5G", "-1", "G", "50%", "Infinity", "16GG", " 16G", "16G\n",
-            "1_000", "infinity ", "K16", "0x10", "16P", "1G 512M",      # forms systemd takes, which the docs name
+SIZE_BAD = ["16g", "abc", "16GB", "-1", "G", "Infinity", "16GG", " 16G", "16G\n", "1_000", "infinity ", "K16", "0x10",
+            "50%", "1.5G", "16 G", "16P", "1G 512M",      # the five forms systemd takes, which the docs name as refused
             "16E",                            # an E suffix: not in the rule (and 16E is past systemd's own range too)
             "\u0663M", "\uff11\uff10M"]   # other scripts' digits: not [0-9]
 ADJ_OK = ["500", "-1000", "0", "1000", "-1", "-0", "999"]
@@ -850,7 +850,7 @@ DELEGATION_PROBE = PROBE[:-2] + PROPS + ["--", "sh", "-c", 'test -e "/sys/fs/cgr
                                                          '&& echo has-memory-max || echo no-memory-max']
 HAS = (0, b"", b"has-memory-max\n")   # the controller probe's answer on a box with the controller…
 NO = (0, b"", b"no-memory-max\n")     # …and on a user manager without it: the scope ran, the file is absent
-ADJ_PROBE = ["sh", "-c", 'echo "$1" > /proc/self/oom_score_adj', "sh", "500"]
+ADJ_PROBE = ["sh", "-c", 'true > /proc/self/oom_score_adj || exit 3; echo "$1" > /proc/self/oom_score_adj', "sh", "500"]
 BOTH = {"ROMP_CLI_SCOPE_MEMORY_MAX": "16G", "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX": "0", "ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"}
 
 
@@ -1023,7 +1023,8 @@ class LimitsSettledAtBoot(unittest.TestCase):
         m = rows[0][0]
         self.assertIn("memory-controller check", m)
         self.assertIn("its probe failed to start its scope (Failed to start transient scope unit: Connection timed out), "
-                      "and again on the retry, moments after one with the same properties started", m, "systemd's own words, both tries")
+                      "moments after one with the same properties started, and again on the retry", m,
+                      "systemd's own words, both tries; the remark on the refusal it is about")
         self.assertNotIn("not delegated", m)
         self.assertNotIn("DelegateControllers", m)
         self.assertIn("memoryMax=16G memorySwapMax=0 set but not settled (the memory-controller check settled nothing", rows[1][0])
@@ -1109,8 +1110,11 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertIn("; oomScoreAdj=500 in force", rows[1][0])
 
     def test_an_adjustment_below_the_floor_lands_in_rejected_and_the_memory_limits_stand(self):
+        # exit 1 from the probe is echo's own failure: the file opened and Linux refused the write,
+        # which for an in-range value is EACCES, the floor. dash reports it as an I/O error; the text is
+        # quoted, and the verdict rides the status
         rows, log = self._log()
-        runs = _Runs((0, b""), HAS, (1, b"sh: 1: cannot create /proc/self/oom_score_adj: Permission denied\n"))
+        runs = _Runs((0, b""), HAS, (1, b"sh: 1: echo: echo: I/O error\n"))
         in_force, rejected, delegated, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, DELEGATION_PROBE, ADJ_PROBE])
         self.assertEqual(in_force, {"memoryMax": "16G", "memorySwapMax": "0"})
@@ -1121,8 +1125,44 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertIn("ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500", m)
         self.assertIn("user manager's own oom_score_adj", m, "the floor, named")
         self.assertIn("privilege", m)
+        self.assertIn("the write was refused (sh: 1: echo: echo: I/O error)", m, "the shell's own text, quoted")
         self.assertIn("without it", m)
         self.assertEqual(rows[1][0], "cli scope: per-session limits — memoryMax=16G memorySwapMax=0 in force")
+
+    def test_an_adjustment_file_that_cannot_be_opened_is_rejected_as_that_not_as_the_floor(self):
+        # the probe's own exit for a failed open (a read-only /proc in a hardened container): the line
+        # quotes the shell and never sends the operator hunting a floor (round-4 finding, 2026-09-06)
+        rows, log = self._log()
+        runs = _Runs((0, b""), HAS, (3, b"sh: 1: cannot create /proc/self/oom_score_adj: Read-only file system\n"))
+        in_force, rejected, _d, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        self.assertEqual(rejected, {"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"})
+        self.assertEqual(in_force, {"memoryMax": "16G", "memorySwapMax": "0"})
+        self.assertEqual([p for _m, p in rows], [True, False])
+        m = rows[0][0]
+        self.assertIn("/proc/self/oom_score_adj could not be opened for writing (sh: 1: cannot create "
+                      "/proc/self/oom_score_adj: Read-only file system)", m)
+        for floor in ("privilege", "floor", "user manager's own"):
+            self.assertNotIn(floor, m)
+        self.assertEqual(unsettled, [])
+        # any other status is reported as the status and the text, with no cause guessed at
+        rows, log = self._log()
+        runs = _Runs((0, b""), HAS, (2, b"sh: 1: cannot create /proc/self/oom_score_adj: Permission denied\n"))
+        _i, rejected, _d, _u = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        self.assertEqual(rejected, {"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"})
+        self.assertIn("its probe exited 2 (sh: 1: cannot create /proc/self/oom_score_adj: Permission denied)", rows[0][0])
+        self.assertNotIn("privilege", rows[0][0], "Permission denied on the OPEN is not the floor")
+
+    def test_an_adjustment_child_killed_by_a_signal_settles_nothing(self):
+        # like the controller check: a negative status is no verdict, so the value stands as read and the
+        # wrapper reports per launch — never `rejected` on a write that did not happen
+        rows, log = self._log()
+        runs = _Runs((0, b""), HAS, (-9, b""))
+        in_force, rejected, _d, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        self.assertEqual((rejected, in_force["oomScoreAdj"], unsettled), ({}, "500", ["oomScoreAdj"]))
+        self.assertEqual([p for _m, p in rows], [False, False])
+        self.assertEqual(rows[0][0], "cli scope: the oom_score_adj check was killed by signal 9 before it wrote; "
+                                     "ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500 stands as read, and the wrapper reports on each launch")
+        self.assertIn("oomScoreAdj=500 set but not settled (the oom_score_adj check settled nothing at start", rows[1][0])
 
     def test_an_adjustment_check_that_cannot_run_leaves_the_value_standing(self):
         rows, log = self._log()
@@ -1183,25 +1223,36 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertEqual((rc, err), (0, ""))
         self.assertIn(out, sb.CLI_SCOPE_MEMORY_PROBE_MARKS)
         self.assertEqual(sb.CLI_SCOPE_MEMORY_PROBE_MARKS, {"has-memory-max": True, "no-memory-max": False})
-        self.assertEqual(sb.CLI_SCOPE_ADJ_PROBE_CMD, ["sh", "-c", 'echo "$1" > /proc/self/oom_score_adj', "sh"])
+        self.assertEqual(sb.CLI_SCOPE_ADJ_PROBE_CMD,
+                         ["sh", "-c", 'true > /proc/self/oom_score_adj || exit 3; echo "$1" > /proc/self/oom_score_adj', "sh"])
+        self.assertEqual(sb.CLI_SCOPE_ADJ_PROBE_UNOPENABLE, 3)
         with open(os.path.join(BIN, "romp-cli-scope")) as f:
             src = f.read()
-        self.assertIn('echo "$adj" > /proc/self/oom_score_adj', src)
+        # the wrapper makes the same two checks, in this order, on its own file
+        self.assertIn('apply_adj "$adj" /proc/self/oom_score_adj', src)
+        self.assertLess(src.index('{ true > "$2"; } 2>/dev/null'), src.index('{ echo "$1" > "$2"; } 2>/dev/null'))
         # and the write really is refused below the floor / accepted at it, on this box — the child
         # keeps its own /proc/self, so this process's value is untouched either way
         if os.path.exists("/proc/self/oom_score_adj") and os.getuid() != 0:
             with open("/proc/self/oom_score_adj") as f:
                 cur = int(f.read().strip())
             if cur > -1000:
-                rc, _err, _out = sb._cli_scope_probe(subprocess.run, sb.CLI_SCOPE_ADJ_PROBE_CMD + ["-1000"])
-                self.assertEqual(rc, 1, "below every floor: refused")
+                rc, err, _out = sb._cli_scope_probe(subprocess.run, sb.CLI_SCOPE_ADJ_PROBE_CMD + ["-1000"])
+                self.assertEqual(rc, 1, "below every floor: the file opens, the write is refused, echo exits 1")
+                self.assertNotIn("/proc/self/oom_score_adj", err, "a refused write does not name the file; a failed open does")
             rc, err, out = sb._cli_scope_probe(subprocess.run, sb.CLI_SCOPE_ADJ_PROBE_CMD + [str(cur)])
             self.assertEqual((rc, err, out), (0, "", ""), "the inherited value itself is always writable; stdout unread")
             with open("/proc/self/oom_score_adj") as f:
                 self.assertEqual(int(f.read().strip()), cur)
+            # a file this user cannot open for writing (pid 1's, root-owned) is the probe's own exit 3,
+            # whatever the shell says about it — `true >` failing is not fatal to sh, so `|| exit 3` runs
+            unopenable = [w.replace("/proc/self/", "/proc/1/") for w in sb.CLI_SCOPE_ADJ_PROBE_CMD]
+            rc, err, _out = sb._cli_scope_probe(subprocess.run, unopenable + [str(cur)])
+            self.assertEqual(rc, sb.CLI_SCOPE_ADJ_PROBE_UNOPENABLE, err)
+            self.assertIn("/proc/1/oom_score_adj", err, "the shell names the file it could not open")
 
 
-# ---- every cell of the boot probe's table (2026-09-06, round-4 fixes) ----
+# ---- every cell of the boot probe's table (2026-09-06, round-4 and round-5 fixes) ----
 
 FAULT = (1, b"Failed to start transient scope unit: Connection timed out\n")
 FAULT_B = (1, b"Failed to start transient scope unit: Transport endpoint is not connected\n")
@@ -1210,43 +1261,67 @@ REJECT = (1, b"Failed to start transient scope unit: Unknown assignment: OOMPoli
 KILLED = (-9, b"")           # subprocess reports a child killed by a signal as -N: the scope started, its sh was killed
 KILLED_SAID = (-9, b"sh: killed\n")
 SILENT = (1, b"")            # a non-zero exit with nothing on stderr: not systemd-run's, which always says when it cannot start
+SILENT_2 = (2, b"")
 ODD = (0, b"", b"Running scope as unit: run-r1.scope\n")
 STDERR_MARK = (0, b"has-memory-max\n", b"")   # the marker on the wrong stream: no verdict
-ADJ_DENIED = (1, b"sh: 1: cannot create /proc/self/oom_score_adj: Permission denied\n")
 OK = (0, b"")
 TIMEOUT = lambda: subprocess.TimeoutExpired(PROBE, 10)    # str(): "Command '[…]' timed out after 10 seconds"
 RAISE = lambda text: (lambda: OSError(text))
 TIMED_OUT = "timed out after 10 seconds"
+# the adjustment write, a two-step probe whose exit status says what failed (CLI_SCOPE_ADJ_PROBE_CMD)
+FLOOR = (1, b"sh: 1: echo: echo: I/O error\n")                          # the file opened, the write was refused: dash's text
+FLOOR_BASH = (1, b"sh: line 1: echo: write error: Permission denied\n")  # the same under bash or busybox as sh
+UNOPENABLE = (3, b"sh: 1: cannot create /proc/self/oom_score_adj: Read-only file system\n")   # the probe's own exit 3
+ADJ_ODD = (2, b"sh: 1: cannot create /proc/self/oom_score_adj: Permission denied\n")          # a status the probe does not produce
+ADJ_KILLED = (-9, b"")
+ADJ_KILLED_SAID = (-15, b"sh: terminated\n")
 P, B, D, A = PROPS_PROBE, PROBE, DELEGATION_PROBE, ADJ_PROBE
 MEM = {"memoryMax": "16G", "memorySwapMax": "0"}
-ALL3 = dict(MEM, oomScoreAdj="500")
+ADJ = {"oomScoreAdj": "500"}
+ALL3 = dict(MEM, **ADJ)
 MEM_REJECTED = {"ROMP_CLI_SCOPE_MEMORY_MAX": "16G", "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX": "0"}
 ADJ_REJECTED = {"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"}
-# the boot line's clauses (each value under its own verdict; _cli_scope_boot_line)
-MEM_IN_FORCE = "memoryMax=16G memorySwapMax=0 in force"
-ADJ_IN_FORCE = "oomScoreAdj=500 in force"
-ALL_IN_FORCE = "memoryMax=16G memorySwapMax=0 oomScoreAdj=500 in force"
-MEM_NOT_DELEGATED = ("memoryMax=16G memorySwapMax=0 set but applied to nothing until the memory controller is "
-                     "delegated to the user manager")
-MEM_UNSETTLED_LIMITS = ("memoryMax=16G memorySwapMax=0 set but not settled (the memory-limits probe settled nothing at "
-                        "start, as logged above)")
-MEM_UNSETTLED_CONTROLLER = ("memoryMax=16G memorySwapMax=0 set but not settled (the memory-controller check settled "
-                            "nothing at start, as logged above)")
-ADJ_UNSETTLED = "oomScoreAdj=500 set but not settled (the oom_score_adj check settled nothing at start, as logged above)"
+ADJ_ONLY = {"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"}
+# the boot line's clauses (each value under its own verdict; _cli_scope_boot_line), as (words, verdict):
+# the line merges neighbours with one verdict, so a box that takes everything reads ALL_IN_FORCE
+MEM_WORDS, ADJ_WORDS = "memoryMax=16G memorySwapMax=0", "oomScoreAdj=500"
+IN_FORCE = "in force"
+NOT_DELEGATED = "set but applied to nothing until the memory controller is delegated to the user manager"
+UNSETTLED_BY = lambda check: "set but not settled (the %s settled nothing at start, as logged above)" % sb.CLI_SCOPE_CHECK_NAMES[check]
+MEM_IN_FORCE = MEM_WORDS + " " + IN_FORCE
+ADJ_IN_FORCE = ADJ_WORDS + " " + IN_FORCE
+ALL_IN_FORCE = MEM_WORDS + " " + ADJ_WORDS + " " + IN_FORCE
+MEM_UNSETTLED_LIMITS = MEM_WORDS + " " + UNSETTLED_BY("memoryLimits")
+MEM_UNSETTLED_CONTROLLER = MEM_WORDS + " " + UNSETTLED_BY("memoryController")
 # the problem/plain lines before the boot line: (problem?, substrings present, substrings absent)
 NOT_DELEGATED_LINE = (True, ["memory controller is not delegated", "applies nothing", "DelegateControllers"], [])
-LIMITS_UNSETTLED_LINE = lambda *quoted: (False, ["per-session memory limits could not be settled", "wrapper reports on each launch"] + list(quoted), [])
-CONTROLLER_UNSETTLED_LINE = lambda present, absent=(): (True, ["memory-controller check could not be settled", "until the next kernel start"] + list(present),
-                                                       ["not delegated", "DelegateControllers"] + list(absent))
-ADJ_UNSETTLED_LINE = lambda *quoted: (False, ["oom_score_adj check could not run", "ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500 stands as read"] + list(quoted), [])
-MEM_REJECTED_LINE = (True, ["rejected the per-session memory limits", "Unknown assignment", "systemd 253"], ["Connection timed out"])
-ADJ_REJECTED_LINE = (True, ["ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500 cannot be written", "privilege"], [])
+LIMITS_UNSETTLED_LINE = lambda t1, t2: (False, ["cli scope: the per-session memory limits could not be settled at start — a probe scope "
+                                                 "with them failed (%s) and so did one without (%s); the values stand as read, and the "
+                                                 "wrapper reports on each launch" % (t1, t2)], [])
+LIMITS_RETRY_UNSETTLED_LINE = lambda t1, t3: (False, ["cli scope: the per-session memory limits could not be settled at start — a probe "
+                                                       "scope with them failed (%s), one without passed, and the retry with them did not "
+                                                       "answer (%s); the values stand as read, and the wrapper reports on each launch" % (t1, t3)], [])
+MEM_REJECTED_LINE = (True, ["cli scope: systemd-run rejected the per-session memory limits (%s: Failed to start transient scope unit: "
+                            "Unknown assignment: OOMPolicy=continue) — not applied; sessions run in their scopes without them "
+                            "(OOMPolicy= on scopes needs systemd 253)" % " ".join(PROPS)], ["Connection timed out", TIMED_OUT])
+CONTROLLER_UNSETTLED_LINE = lambda why, absent=(): (True, ["cli scope: the memory-controller check could not be settled — %s; whether the "
+                                                           "memory limits (%s) apply is unknown until the next kernel start, and the values "
+                                                           "stand as read" % (why, " ".join(PROPS))],
+                                                    ["not delegated", "DelegateControllers", "twice"] + list(absent))
+ADJ_UNSETTLED_LINE = lambda what: (False, ["cli scope: the oom_score_adj check %s; ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500 stands as read, "
+                                           "and the wrapper reports on each launch" % what], [])
+ADJ_REJECTED_LINE = lambda why, absent=(): (True, ["cli scope: ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500 cannot be written by this process — %s — "
+                                                   "not applied; sessions run in their scopes without it" % why], list(absent))
+FLOOR_WHY = lambda quoted: ("the write was refused (%s): a value below the systemd user manager's own oom_score_adj (the floor every "
+                            "process under it inherits; 100 on a typical machine) needs a privilege it does not have" % quoted)
+NOT_THE_FLOOR = ("privilege", "floor", "user manager's own", "the write was refused")
 MOMENTS = ", moments after one with the same properties started"
 FAULT_TEXT = "failed to start its scope (Failed to start transient scope unit: Connection timed out)"
 FAULT_B_TEXT = "failed to start its scope (Failed to start transient scope unit: Transport endpoint is not connected)"
 KILLED_TEXT = "was killed by signal 9 in its scope before it printed a marker"
 SILENT_TEXT = ("exited 1 with no marker and nothing on stderr — the scope started (systemd-run says when one cannot) "
                "and its command did not finish the check")
+EXPECTED_MARK = " where has-memory-max or no-memory-max was expected"
 
 
 def _cell(name, script, calls, in_force, rejected, delegated, unsettled, lines, boot, health, env=None):
@@ -1261,147 +1336,265 @@ def _health(memoryMax="16G", memorySwapMax="0", oomScoreAdj=500, rejected=(), de
             "rejected": sorted(rejected), "memoryControllerDelegated": delegated, "unsettled": list(unsettled)}
 
 
-SETTLE_TABLE = [
-    # -- the property chain: P (with the properties), then B (bare) on a failure, then P again on a bare pass
-    _cell("P ok, controller has, adj ok: everything in force",
-          [OK, HAS, OK], [P, D, A], ALL3, {}, True, [], [], ALL_IN_FORCE, _health(delegated=True)),
-    _cell("P fail, B fail: the memory limits unsettled, quoting both; the adjustment in force",
-          [BUS_GONE, BUS_GONE, OK], [P, B, A], ALL3, {}, None, ["memoryLimits"],
-          [LIMITS_UNSETTLED_LINE("No such file or directory")],
-          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
-    _cell("P raise, B raise: both exception texts quoted",
-          [TIMEOUT, RAISE("bus gone"), OK], [P, B, A], ALL3, {}, None, ["memoryLimits"],
-          [LIMITS_UNSETTLED_LINE(TIMED_OUT, "bus gone")],
-          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
-    _cell("P fail, B raise",
-          [BUS_GONE, TIMEOUT, OK], [P, B, A], ALL3, {}, None, ["memoryLimits"],
-          [LIMITS_UNSETTLED_LINE("No such file or directory", TIMED_OUT)],
-          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
-    _cell("P raise, B fail",
-          [TIMEOUT, BUS_GONE, OK], [P, B, A], ALL3, {}, None, ["memoryLimits"],
-          [LIMITS_UNSETTLED_LINE(TIMED_OUT, "No such file or directory")],
-          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
-    _cell("P fail, B ok, P fail: the memory limits rejected on the deciding failure",
-          [FAULT, OK, REJECT, OK], [P, B, P, A], {"oomScoreAdj": "500"}, MEM_REJECTED, None, [],
-          [MEM_REJECTED_LINE], ADJ_IN_FORCE, _health(None, None, 500, MEM_REJECTED)),
-    _cell("P raise, B ok, P raise: two exception texts, the first as first_err",
-          [TIMEOUT, OK, RAISE("boom"), OK], [P, B, P, A], ALL3, {}, None, ["memoryLimits"],
-          [LIMITS_UNSETTLED_LINE(TIMED_OUT, "boom", "did not answer")],
-          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
-    _cell("P fail, B ok, P raise: the refusal and the non-answer both quoted",
-          [FAULT, OK, TIMEOUT, OK], [P, B, P, A], ALL3, {}, None, ["memoryLimits"],
-          [LIMITS_UNSETTLED_LINE("Connection timed out", TIMED_OUT)],
-          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
-    _cell("P raise, B ok, P ok: a passing fault, then the controller check",
-          [TIMEOUT, OK, OK, HAS, OK], [P, B, P, D, A], ALL3, {}, True, [], [], ALL_IN_FORCE, _health(delegated=True)),
-    _cell("P fail, B ok, P ok, controller no: not delegated after a passing fault",
-          [FAULT, OK, OK, NO, OK], [P, B, P, D, A], ALL3, {}, False, [], [NOT_DELEGATED_LINE],
-          MEM_NOT_DELEGATED + "; " + ADJ_IN_FORCE, _health(delegated=False)),
-    # -- the controller check: one retry for anything but a marker on exit 0
-    _cell("controller no: a false verdict, the memory limits applied to nothing, the adjustment in force",
-          [OK, NO, OK], [P, D, A], ALL3, {}, False, [], [NOT_DELEGATED_LINE],
-          MEM_NOT_DELEGATED + "; " + ADJ_IN_FORCE, _health(delegated=False)),
-    _cell("controller fault, then has: a passing fault costs nothing",
-          [OK, FAULT, HAS, OK], [P, D, D, A], ALL3, {}, True, [], [], ALL_IN_FORCE, _health(delegated=True)),
-    _cell("controller raise, then has: the raise branch of the one-retry rule recovers too",
-          [OK, RAISE("boom"), HAS, OK], [P, D, D, A], ALL3, {}, True, [], [], ALL_IN_FORCE, _health(delegated=True)),
-    _cell("controller killed, then has",
-          [OK, KILLED, HAS, OK], [P, D, D, A], ALL3, {}, True, [], [], ALL_IN_FORCE, _health(delegated=True)),
-    _cell("controller fault, fault: two start failures, one text",
-          [OK, FAULT, FAULT, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
-          [CONTROLLER_UNSETTLED_LINE(["its probe " + FAULT_TEXT + ", and again on the retry" + MOMENTS + ";"], ["did not answer"])],
+# A few rows with their line written out in full, as the wording's anchors; every other cell comes from
+# the axes below (_settle_rows), whose expected texts are assembled by the same rule the kernel follows.
+SETTLE_ANCHORS = [
+    _cell("controller fault, then silent: the remark rides the start refusal, not the sentence's end",
+          [OK, FAULT, SILENT, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE("its probe failed to start its scope (Failed to start transient scope unit: Connection timed "
+                                     "out), moments after one with the same properties started, and the retry exited 1 with no "
+                                     "marker and nothing on stderr — the scope started (systemd-run says when one cannot) and its "
+                                     "command did not finish the check", ["again on the retry", "did not answer"])],
           MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
-    _cell("controller fault A, fault B: two start failures, both texts",
-          [OK, FAULT, FAULT_B, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
-          [CONTROLLER_UNSETTLED_LINE(["its probe " + FAULT_TEXT + ", and the retry " + FAULT_B_TEXT + MOMENTS + ";"], ["again on the retry"])],
-          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
-    _cell("controller raise, raise: two non-answers",
-          [OK, RAISE("boom"), RAISE("boom"), OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
-          [CONTROLLER_UNSETTLED_LINE(["its probe did not answer (boom), and again on the retry;"], ["failed to start", "moments after"])],
+    _cell("controller fault, then raise: a start failure then a non-answer (systemd's text kept, the remark on it)",
+          [OK, FAULT, TIMEOUT, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE("its probe failed to start its scope (Failed to start transient scope unit: Connection timed "
+                                     "out), moments after one with the same properties started, and the retry did not answer (%s)"
+                                     % str(TIMEOUT()), ["again on the retry"])],
           MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
     _cell("controller raise, then fault: a non-answer then a start failure (never 'twice failed to start')",
           [OK, TIMEOUT, FAULT, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
-          [CONTROLLER_UNSETTLED_LINE(["its probe did not answer (Command ", TIMED_OUT + "), and the retry " + FAULT_TEXT + MOMENTS + ";"],
-                                     ["again on the retry", "twice"])],
+          [CONTROLLER_UNSETTLED_LINE("its probe did not answer (%s), and the retry failed to start its scope (Failed to start "
+                                     "transient scope unit: Connection timed out), moments after one with the same properties "
+                                     "started" % str(TIMEOUT()), ["again on the retry"])],
           MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
-    _cell("controller fault, then raise: a start failure then a non-answer (systemd's text kept)",
-          [OK, FAULT, TIMEOUT, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
-          [CONTROLLER_UNSETTLED_LINE(["its probe " + FAULT_TEXT + ", and the retry did not answer (Command ", TIMED_OUT + ")" + MOMENTS + ";"],
+    _cell("controller fault A, fault B: two start failures, both texts, the remark once",
+          [OK, FAULT, FAULT_B, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE("its probe failed to start its scope (Failed to start transient scope unit: Connection timed "
+                                     "out), moments after one with the same properties started, and the retry failed to start its "
+                                     "scope (Failed to start transient scope unit: Transport endpoint is not connected)",
                                      ["again on the retry"])],
           MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
-    _cell("controller killed, killed: a scope that ran and had its command killed, twice (not a start failure)",
-          [OK, KILLED, KILLED, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
-          [CONTROLLER_UNSETTLED_LINE(["its probe " + KILLED_TEXT + ", and again on the retry;"], ["failed to start", "moments after", "did not answer", "stderr:"])],
-          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
-    _cell("controller exit 1 with nothing on stderr, twice: ran without a marker, the status quoted",
-          [OK, SILENT, SILENT, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
-          [CONTROLLER_UNSETTLED_LINE(["its probe " + SILENT_TEXT + ", and again on the retry;"], ["failed to start", "moments after", "no detail"])],
-          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
-    _cell("controller killed with stderr, then fault: the signal, its stderr, and systemd's refusal",
-          [OK, KILLED_SAID, FAULT, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
-          [CONTROLLER_UNSETTLED_LINE(["its probe " + KILLED_TEXT + " (stderr: sh: killed), and the retry " + FAULT_TEXT + MOMENTS + ";"], [])],
-          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
-    _cell("controller exit 0 with neither marker: no retry, what it printed quoted",
-          [OK, ODD, OK], [P, D, A], ALL3, {}, None, ["memoryController"],
-          [CONTROLLER_UNSETTLED_LINE(["its probe printed 'Running scope as unit: run-r1.scope' where has-memory-max or no-memory-max was expected;"],
-                                     ["after a first try"])],
-          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
-    _cell("controller marker on stderr only, exit 0: unsettled, not accepted (stdout is the contract)",
-          [OK, STDERR_MARK, OK], [P, D, A], ALL3, {}, None, ["memoryController"],
-          [CONTROLLER_UNSETTLED_LINE(["its probe printed '' where has-memory-max or no-memory-max was expected;"], [])],
-          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
-    _cell("controller fault, then exit 0 with neither marker: the odd print, and the first try named",
+    _cell("controller fault, then exit 0 with neither marker: the odd print, and the first try named with its remark",
           [OK, FAULT, ODD, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
-          [CONTROLLER_UNSETTLED_LINE(["its probe printed 'Running scope as unit: run-r1.scope' where has-memory-max or no-memory-max was expected, "
-                                      "after a first try that " + FAULT_TEXT + ";"], [])],
+          [CONTROLLER_UNSETTLED_LINE("its probe printed 'Running scope as unit: run-r1.scope' where has-memory-max or no-memory-max "
+                                     "was expected, after a first try that failed to start its scope (Failed to start transient "
+                                     "scope unit: Connection timed out), moments after one with the same properties started")],
           MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
-    # -- the adjustment write
-    _cell("adj denied: rejected, the memory limits in force",
-          [OK, HAS, ADJ_DENIED], [P, D, A], MEM, ADJ_REJECTED, True, [], [ADJ_REJECTED_LINE],
+    _cell("P fail, B ok, P raise: the refusal and the non-answer both quoted",
+          [FAULT, OK, RAISE("boom"), OK], [P, B, P, A], ALL3, {}, None, ["memoryLimits"],
+          [(False, ["cli scope: the per-session memory limits could not be settled at start — a probe scope with them failed "
+                    "(Failed to start transient scope unit: Connection timed out), one without passed, and the retry with them did "
+                    "not answer (boom); the values stand as read, and the wrapper reports on each launch"], [])],
+          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
+    _cell("adj floor: rejected with the floor named, the shell's text quoted, the memory limits in force",
+          [OK, HAS, FLOOR], [P, D, A], MEM, ADJ_REJECTED, True, [],
+          [(True, ["cli scope: ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500 cannot be written by this process — the write was refused (sh: 1: "
+                   "echo: echo: I/O error): a value below the systemd user manager's own oom_score_adj (the floor every process "
+                   "under it inherits; 100 on a typical machine) needs a privilege it does not have — not applied; sessions run in "
+                   "their scopes without it"], [])],
           MEM_IN_FORCE, _health(oomScoreAdj=None, rejected=ADJ_REJECTED, delegated=True)),
-    _cell("adj raise: the adjustment unsettled beside memory limits in force (never 'whether they apply is unknown')",
-          [OK, HAS, RAISE("no sh")], [P, D, A], ALL3, {}, True, ["oomScoreAdj"], [ADJ_UNSETTLED_LINE("no sh")],
-          MEM_IN_FORCE + "; " + ADJ_UNSETTLED, _health(delegated=True, unsettled=["oomScoreAdj"])),
-    _cell("controller no, adj raise: the not-delegated verdict keeps its clause beside the unsettled adjustment",
-          [OK, NO, TIMEOUT], [P, D, A], ALL3, {}, False, ["oomScoreAdj"], [NOT_DELEGATED_LINE, ADJ_UNSETTLED_LINE(TIMED_OUT)],
-          MEM_NOT_DELEGATED + "; " + ADJ_UNSETTLED, _health(delegated=False, unsettled=["oomScoreAdj"])),
-    _cell("controller fault, fault, adj raise: two checks unsettled, both named",
-          [OK, FAULT, FAULT, RAISE("boom")], [P, D, D, A], ALL3, {}, None, ["memoryController", "oomScoreAdj"],
-          [CONTROLLER_UNSETTLED_LINE([FAULT_TEXT]), ADJ_UNSETTLED_LINE("boom")],
-          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_UNSETTLED, _health(unsettled=["memoryController", "oomScoreAdj"])),
-    _cell("P fail, B fail, adj raise: the chain and the adjustment unsettled",
-          [BUS_GONE, BUS_GONE, RAISE("boom")], [P, B, A], ALL3, {}, None, ["memoryLimits", "oomScoreAdj"],
-          [LIMITS_UNSETTLED_LINE(), ADJ_UNSETTLED_LINE("boom")],
-          MEM_UNSETTLED_LIMITS + "; " + ADJ_UNSETTLED, _health(unsettled=["memoryLimits", "oomScoreAdj"])),
-    _cell("memory rejected, adj raise: only the adjustment is left, and it is not settled",
-          [FAULT, OK, REJECT, RAISE("boom")], [P, B, P, A], {"oomScoreAdj": "500"}, MEM_REJECTED, None, ["oomScoreAdj"],
-          [MEM_REJECTED_LINE, ADJ_UNSETTLED_LINE("boom")], ADJ_UNSETTLED,
-          _health(None, None, 500, MEM_REJECTED, unsettled=["oomScoreAdj"])),
-    _cell("everything rejected: no boot line (each rejection is its own problem line)",
-          [FAULT, OK, REJECT, ADJ_DENIED], [P, B, P, A], {}, dict(MEM_REJECTED, **ADJ_REJECTED), None, [],
-          [MEM_REJECTED_LINE, ADJ_REJECTED_LINE], None, _health(None, None, None, dict(MEM_REJECTED, **ADJ_REJECTED))),
-    _cell("the adjustment alone, its check raising: one clause, not settled",
-          [RAISE("boom")], [A], {"oomScoreAdj": "500"}, {}, None, ["oomScoreAdj"], [ADJ_UNSETTLED_LINE("boom")],
-          ADJ_UNSETTLED, _health(None, None, 500, unsettled=["oomScoreAdj"]), env={"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"}),
+    _cell("adj unopenable: rejected as a file that would not open, quoted, and never as the floor",
+          [OK, HAS, UNOPENABLE], [P, D, A], MEM, ADJ_REJECTED, True, [],
+          [(True, ["cli scope: ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500 cannot be written by this process — /proc/self/oom_score_adj could "
+                   "not be opened for writing (sh: 1: cannot create /proc/self/oom_score_adj: Read-only file system) — not applied; "
+                   "sessions run in their scopes without it"], list(NOT_THE_FLOOR))],
+          MEM_IN_FORCE, _health(oomScoreAdj=None, rejected=ADJ_REJECTED, delegated=True)),
     _cell("one memory limit alone, controller raise then fault: one clause, not settled, no adjustment",
           [OK, TIMEOUT, FAULT], [PROBE[:-2] + ["-p", "MemoryMax=16G", "-p", "OOMPolicy=continue", "--", "true"]]
           + [PROBE[:-2] + ["-p", "MemoryMax=16G", "-p", "OOMPolicy=continue", "--"] + sb.CLI_SCOPE_MEMORY_PROBE_CMD] * 2,
           {"memoryMax": "16G"}, {}, None, ["memoryController"],
-          [CONTROLLER_UNSETTLED_LINE(["its probe did not answer (Command ", "), and the retry " + FAULT_TEXT + MOMENTS + ";"], [])],
-          "memoryMax=16G set but not settled (the memory-controller check settled nothing at start, as logged above)",
+          [(True, ["cli scope: the memory-controller check could not be settled — its probe did not answer (%s), and the retry "
+                   "failed to start its scope (Failed to start transient scope unit: Connection timed out), moments after one with "
+                   "the same properties started; whether the memory limits (-p MemoryMax=16G -p OOMPolicy=continue) apply is unknown "
+                   "until the next kernel start, and the values stand as read" % str(TIMEOUT())], [])],
+          "memoryMax=16G " + UNSETTLED_BY("memoryController"),
           _health(memorySwapMax=None, oomScoreAdj=None, unsettled=["memoryController"]), env={"ROMP_CLI_SCOPE_MEMORY_MAX": "16G"}),
 ]
+
+# The axes. Each part is what one step of the settle contributes to a row: the probes' answers, the
+# argvs those answers consume, the values it leaves in force and rejected, the checks it leaves
+# unsettled, the lines it logs, and its clause of the boot line — (words, verdict), None for none.
+# ATTEMPTS: every way one controller attempt gives no verdict (_cli_scope_attempt's kinds, with a second
+# text for each so the "and again on the retry" / "and the retry …" choice is pinned both ways), as
+# (label, scripted answer, the text the line gives it, its kind).
+ATTEMPTS = [
+    ("fault", FAULT, FAULT_TEXT, "no-start"),
+    ("fault B", FAULT_B, FAULT_B_TEXT, "no-start"),
+    ("raise", RAISE("boom"), "did not answer (boom)", "no-answer"),
+    ("raise B", RAISE("bang"), "did not answer (bang)", "no-answer"),
+    ("timeout", TIMEOUT, "did not answer (%s)" % str(TIMEOUT()), "no-answer"),
+    ("killed", KILLED, KILLED_TEXT, "no-marker"),
+    ("killed, stderr", KILLED_SAID, KILLED_TEXT + " (stderr: sh: killed)", "no-marker"),
+    ("silent", SILENT, SILENT_TEXT, "no-marker"),
+    ("exit 2", SILENT_2, SILENT_TEXT.replace("exited 1", "exited 2"), "no-marker"),
+]
+MARKS = [("has", HAS, True, [], (MEM_WORDS, IN_FORCE)), ("no", NO, False, [NOT_DELEGATED_LINE], (MEM_WORDS, NOT_DELEGATED))]
+ODDS = [("odd print", ODD, "'Running scope as unit: run-r1.scope'"), ("marker on stderr", STDERR_MARK, "''")]
+
+
+def _said(attempt, remark=True):
+    """An attempt's text in the line: a start refusal carries the remark, once, on the attempt it is about."""
+    _label, _answer, text, kind = attempt
+    return text + (MOMENTS if remark and kind == "no-start" else "")
+
+
+def _pair_why(first, second):
+    if first[2] == second[2]:
+        return "its probe %s, and again on the retry" % _said(first)
+    return "its probe %s, and the retry %s" % (_said(first), _said(second, remark=first[3] != "no-start"))
+
+
+def _part(script=(), calls=(), in_force=None, rejected=None, delegated=None, unsettled=(), lines=(), clause=None):
+    return dict(script=list(script), calls=list(calls), in_force=dict(in_force or {}), rejected=dict(rejected or {}),
+                delegated=delegated, unsettled=list(unsettled), lines=list(lines), clause=clause)
+
+
+def _controller_parts():
+    """Every outcome of the controller check, after a property probe that passed: (label, part)."""
+    settled = [("controller " + label, _part([answer], [D], MEM, delegated=verdict, lines=lines, clause=clause))
+               for label, answer, verdict, lines, clause in MARKS]
+    no_verdict = lambda script, why, absent=(): _part(script, [D] * len(script), MEM, unsettled=["memoryController"],
+                                                      lines=[CONTROLLER_UNSETTLED_LINE(why, absent)],
+                                                      clause=(MEM_WORDS, UNSETTLED_BY("memoryController")))
+    odd_why = lambda shown: "its probe printed %s%s" % (shown, EXPECTED_MARK)
+    parts = list(settled)
+    for first in ATTEMPTS:
+        # recovered by either marker: a passing fault costs nothing
+        for label, answer, verdict, lines, clause in MARKS:
+            parts.append(("controller %s, then %s" % (first[0], label),
+                          _part([first[1], answer], [D, D], MEM, delegated=verdict, lines=lines, clause=clause)))
+        # no verdict on the retry either: what each attempt did, the remark on a start refusal
+        for second in ATTEMPTS:
+            absent = ([MOMENTS] if "no-start" not in (first[3], second[3]) else []) + (
+                ["again on the retry"] if first[2] != second[2] else ["and the retry"])
+            parts.append(("controller %s, then %s" % (first[0], second[0]),
+                          no_verdict([first[1], second[1]], _pair_why(first, second), absent)))
+        # an odd print on the retry: no third try; the first named
+        for label, answer, shown in ODDS:
+            parts.append(("controller %s, then %s" % (first[0], label),
+                          no_verdict([first[1], answer], odd_why(shown) + ", after a first try that " + _said(first))))
+    for label, answer, shown in ODDS:   # an odd print first: no retry at all
+        parts.append(("controller " + label, no_verdict([answer], odd_why(shown), ["after a first try"])))
+    return parts
+
+
+def _chain_parts():
+    """Every outcome of the property chain (P with the properties; B bare on a failure; P again on a bare
+    pass), each path that reaches the controller paired with both markers: (label, part)."""
+    text = lambda answer: str(answer()) if callable(answer) else answer[1].decode().strip()
+    first_tries = [("fail", FAULT), ("raise", TIMEOUT)]
+    bare_tries = [("fail", BUS_GONE), ("raise", RAISE("bus gone"))]
+    retries = [("ok", OK), ("reject", REJECT), ("raise", RAISE("boom"))]
+    limits_unsettled = lambda script, calls, line: _part(script, calls, MEM, unsettled=["memoryLimits"], lines=[line],
+                                                         clause=(MEM_WORDS, UNSETTLED_BY("memoryLimits")))
+    reaching = [("P ok", _part([OK], [P]))]
+    parts = []
+    for l1, a1 in first_tries:
+        for l2, a2 in bare_tries:
+            parts.append(("P %s, B %s" % (l1, l2), limits_unsettled([a1, a2], [P, B], LIMITS_UNSETTLED_LINE(text(a1), text(a2)))))
+        for l3, a3 in retries:
+            label = "P %s, B ok, P %s" % (l1, l3)
+            if l3 == "ok":
+                reaching.append((label, _part([a1, OK, a3], [P, B, P])))
+            elif l3 == "reject":
+                parts.append((label, _part([a1, OK, a3], [P, B, P], rejected=MEM_REJECTED, lines=[MEM_REJECTED_LINE])))
+            else:
+                parts.append((label, limits_unsettled([a1, OK, a3], [P, B, P], LIMITS_RETRY_UNSETTLED_LINE(text(a1), text(a3)))))
+    for label, chain in reaching:
+        for mark, answer, verdict, lines, clause in MARKS:
+            parts.append(("%s, controller %s" % (label, mark),
+                          _part(chain["script"] + [answer], chain["calls"] + [D], MEM, delegated=verdict, lines=lines, clause=clause)))
+    return parts
+
+
+# Every outcome of the adjustment write: (label, part). The verdict rides the probe's exit status —
+# 1 is echo's, the file opened and Linux refused the write (the floor); 3 is the probe's own, the
+# file would not open; any other status is quoted as it is; no answer or a signal settles nothing.
+ADJ_PARTS = [
+    ("adj ok", _part([OK], [A], ADJ, clause=(ADJ_WORDS, IN_FORCE))),
+    ("adj floor", _part([FLOOR], [A], rejected=ADJ_REJECTED, lines=[ADJ_REJECTED_LINE(FLOOR_WHY("sh: 1: echo: echo: I/O error"))])),
+    ("adj floor, bash's text", _part([FLOOR_BASH], [A], rejected=ADJ_REJECTED,
+                                     lines=[ADJ_REJECTED_LINE(FLOOR_WHY("sh: line 1: echo: write error: Permission denied"))])),
+    ("adj unopenable", _part([UNOPENABLE], [A], rejected=ADJ_REJECTED,
+                             lines=[ADJ_REJECTED_LINE("/proc/self/oom_score_adj could not be opened for writing (sh: 1: cannot create "
+                                                      "/proc/self/oom_score_adj: Read-only file system)", NOT_THE_FLOOR)])),
+    ("adj exit 2", _part([ADJ_ODD], [A], rejected=ADJ_REJECTED,
+                         lines=[ADJ_REJECTED_LINE("its probe exited 2 (sh: 1: cannot create /proc/self/oom_score_adj: Permission denied)",
+                                                  NOT_THE_FLOOR)])),
+    ("adj raise", _part([RAISE("no sh")], [A], ADJ, unsettled=["oomScoreAdj"], lines=[ADJ_UNSETTLED_LINE("could not run (no sh)")],
+                        clause=(ADJ_WORDS, UNSETTLED_BY("oomScoreAdj")))),
+    ("adj timeout", _part([TIMEOUT], [A], ADJ, unsettled=["oomScoreAdj"], lines=[ADJ_UNSETTLED_LINE("could not run (%s)" % str(TIMEOUT()))],
+                          clause=(ADJ_WORDS, UNSETTLED_BY("oomScoreAdj")))),
+    ("adj killed", _part([ADJ_KILLED], [A], ADJ, unsettled=["oomScoreAdj"],
+                         lines=[ADJ_UNSETTLED_LINE("was killed by signal 9 before it wrote")], clause=(ADJ_WORDS, UNSETTLED_BY("oomScoreAdj")))),
+    ("adj killed, stderr", _part([ADJ_KILLED_SAID], [A], ADJ, unsettled=["oomScoreAdj"],
+                                 lines=[ADJ_UNSETTLED_LINE("was killed by signal 15 before it wrote (stderr: sh: terminated)")],
+                                 clause=(ADJ_WORDS, UNSETTLED_BY("oomScoreAdj")))),
+]
+# Every memory verdict a boot line can carry beside the adjustment's: (label, part).
+MEM_PARTS = [
+    ("memory in force", _part([OK, HAS], [P, D], MEM, delegated=True, clause=(MEM_WORDS, IN_FORCE))),
+    ("controller no", _part([OK, NO], [P, D], MEM, delegated=False, lines=[NOT_DELEGATED_LINE], clause=(MEM_WORDS, NOT_DELEGATED))),
+    ("memory limits unsettled", _part([FAULT, BUS_GONE], [P, B], MEM, unsettled=["memoryLimits"],
+                                      lines=[LIMITS_UNSETTLED_LINE("Failed to start transient scope unit: Connection timed out",
+                                                                   "Failed to connect to bus: No such file or directory")],
+                                      clause=(MEM_WORDS, UNSETTLED_BY("memoryLimits")))),
+    ("controller unsettled", _part([OK, FAULT, FAULT], [P, D, D], MEM, unsettled=["memoryController"],
+                                   lines=[CONTROLLER_UNSETTLED_LINE("its probe " + FAULT_TEXT + MOMENTS + ", and again on the retry")],
+                                   clause=(MEM_WORDS, UNSETTLED_BY("memoryController")))),
+    ("memory rejected", _part([FAULT, OK, REJECT], [P, B, P], rejected=MEM_REJECTED, lines=[MEM_REJECTED_LINE])),
+    ("no memory limit", _part()),
+]
+
+
+def _compose(name, env, *parts):
+    """A row from the parts of one settle, in the order the kernel runs them: memory steps, then the
+    adjustment. The boot line merges neighbouring clauses with one verdict, as _cli_scope_boot_line does."""
+    script, calls, in_force, rejected, unsettled, lines, clauses = [], [], {}, {}, [], [], []
+    delegated = None
+    for part in parts:
+        script += part["script"]
+        calls += part["calls"]
+        in_force.update(part["in_force"])
+        rejected.update(part["rejected"])
+        delegated = part["delegated"] if part["delegated"] is not None else delegated
+        unsettled += part["unsettled"]
+        lines += part["lines"]
+        if part["clause"]:
+            words, verdict = part["clause"]
+            if clauses and clauses[-1][1] == verdict:
+                clauses[-1][0] += " " + words
+            else:
+                clauses.append([words, verdict])
+    boot = "; ".join("%s %s" % (words, verdict) for words, verdict in clauses) or None
+    health = _health(in_force.get("memoryMax"), in_force.get("memorySwapMax"),
+                     int(in_force["oomScoreAdj"]) if "oomScoreAdj" in in_force else None, rejected, delegated, unsettled)
+    return _cell(name, script, calls, in_force, rejected, delegated, unsettled, lines, boot, health, env=env)
+
+
+def _settle_rows():
+    """The axes' rows: every chain outcome and every controller outcome beside an adjustment that passes,
+    and every adjustment outcome beside every memory verdict."""
+    adj_ok = ADJ_PARTS[0][1]
+    rows = [_compose(label, BOTH, part, adj_ok) for label, part in _chain_parts()]
+    p_ok = _part([OK], [P])
+    rows += [_compose(label, BOTH, p_ok, part, adj_ok) for label, part in _controller_parts()]
+    for mem_label, mem in MEM_PARTS:
+        env = ADJ_ONLY if mem_label == "no memory limit" else BOTH
+        rows += [_compose("%s, %s" % (mem_label, adj_label), env, mem, adj) for adj_label, adj in ADJ_PARTS]
+    return rows
+
+
+SETTLE_TABLE = SETTLE_ANCHORS + _settle_rows()
 
 
 class SettleTable(_Backend):
     """Every cell of the boot probe's table, pinned as one row each (SETTLE_TABLE): the probes' answers
     → the argvs run, the values handed down, `rejected`, the controller verdict, `unsettled`, every log
-    line's kind and quoted text, the exact boot line, and the /api-health fields. The round-3 review
-    found the wording keyed on the controller retry alone (a raise then a start failure read as two
-    start failures; a start failure then a raise lost systemd's text), the boot line calling settled
-    values unknown when only the adjustment check did not answer, /api-health with no field for that,
-    and several cells unpinned (a recovered retry after a raise; a marker on stderr; the mixed pairs;
-    two exception texts in the chain) — so a later edit could move a cell without a test noticing."""
+    line (its kind and, for the lines the settle words, its whole text), the exact boot line, and the
+    /api-health fields. The rows come from the axes (_settle_rows): the property chain's eleven outcomes,
+    each path that reaches the controller with both markers; every controller outcome — both markers,
+    each no-verdict attempt kind (ATTEMPTS) recovered by either marker, paired with every kind on the
+    retry, or followed by either odd print, and each odd print alone; and every adjustment outcome
+    (ADJ_PARTS) beside every memory verdict a boot line can carry (MEM_PARTS) — plus SETTLE_ANCHORS, a
+    few rows whose line is written out in full. The round-3 review found the wording keyed on the
+    controller retry alone (a raise then a start failure read as two start failures; a start failure then
+    a raise lost systemd's text), the boot line calling settled values unknown when only the adjustment
+    check did not answer, and /api-health with no field for that; round 4 found the table pinning a third
+    of the controller pairs while claiming every cell, the start-refusal remark at the sentence's end
+    (about the retry, whichever attempt it was), and the adjustment line naming the floor for every
+    status while dropping the shell's text — so the rows are now enumerated rather than listed."""
 
     def test_every_cell(self):
         seen = set()
@@ -1465,9 +1658,20 @@ class SettleTable(_Backend):
         self.assertEqual(sb._cli_scope_attempt(-15, "sh: terminated"),
                          ("no-marker", "was killed by signal 15 in its scope before it printed a marker (stderr: sh: terminated)"))
         self.assertEqual(sb._cli_scope_attempt(1, ""), ("no-marker", SILENT_TEXT))
-        texts = " ".join(text for row in SETTLE_TABLE for _p, present, _a in row["lines"] for text in present)
-        for kind_text in (FAULT_TEXT, KILLED_TEXT, SILENT_TEXT, "did not answer (boom)"):
-            self.assertIn(kind_text, texts)
+        for _label, answer, text, kind in ATTEMPTS:   # the axis agrees with the function it enumerates
+            rc, err = (None, str(answer())) if callable(answer) else (answer[0], answer[1].decode().strip())
+            self.assertEqual(sb._cli_scope_attempt(rc, err), (kind, text))
+        self.assertEqual({kind for *_r, kind in ATTEMPTS}, {"no-start", "no-answer", "no-marker"})
+        # the axes are what the docstring says: 11 chain outcomes (3 reaching the controller, × 2 markers), the
+        # controller's 2 + 9 × (2 + 9 + 2) + 2, the adjustment's 9 beside the memory's 6, plus the anchors
+        self.assertEqual(len(_chain_parts()), 8 + 3 * 2)
+        self.assertEqual(len(_controller_parts()), 2 + len(ATTEMPTS) * (2 + len(ATTEMPTS) + 2) + 2)
+        self.assertEqual(len(SETTLE_TABLE), len(SETTLE_ANCHORS) + 14 + 121 + len(ADJ_PARTS) * len(MEM_PARTS))
+        # every anchor's cell is on an axis too, under the same answers (an exception by its text)
+        keyed = lambda row: (tuple(sorted(row["env"].items())), tuple(str(i()) if callable(i) else i for i in row["script"]))
+        axis_keys = {keyed(row) for row in _settle_rows()}
+        for row in SETTLE_ANCHORS[:-1]:   # the one-limit row's env is on no axis, by design
+            self.assertIn(keyed(row), axis_keys, row["name"])
 
 
 if __name__ == "__main__":

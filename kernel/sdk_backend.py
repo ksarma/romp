@@ -93,13 +93,24 @@ CLI_SCOPE_PROBE_TIMEOUT = 10.0
 #     not). Keyed on the exit status alone, a scope that failed to start — a bus fault moments after the
 #     property probe's scope had started — read as "no controller" for the kernel's whole life (round-2
 #     finding, 2026-09-06);
-#   * a throwaway child writing the adjustment to ITS OWN oom_score_adj. A value below the floor this
-#     process inherited (the user manager's own oom_score_adj; 100 on a typical machine) fails with EACCES for
-#     the wrapper too, which is spawned from here with the same floor. The kernel's own value is untouched.
+#   * a throwaway child writing the adjustment to ITS OWN oom_score_adj, in two steps, so the exit status
+#     says which failed: opening the file for writing (`true >`; exit CLI_SCOPE_ADJ_PROBE_UNOPENABLE — a
+#     read-only or masked /proc, a child that is not dumpable; the shell's text names the file and the
+#     reason), then the write (`echo`'s own failure; exit 1). A value below the floor this process inherited
+#     (the user manager's own oom_score_adj; 100 on a typical machine) opens the file and fails on the write,
+#     with EACCES, for the wrapper too, which is spawned from here with the same floor — and that is the one
+#     way an in-range value's write fails, so exit 1 is the floor and no other status is called that. The
+#     shells differ on what they print for it (dash: `echo: I/O error`; bash and busybox: `write error:
+#     Permission denied`), and an open failure can say `Permission denied` too, which is why the status
+#     carries the verdict and the text is only quoted. A redirection that fails on a regular builtin is not
+#     fatal to a POSIX shell, so `|| exit 3` runs (verified on dash, bash and busybox). The kernel's own
+#     value is untouched.
 CLI_SCOPE_MEMORY_PROBE_CMD = ["sh", "-c", 'test -e "/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.max" '
                                           '&& echo has-memory-max || echo no-memory-max']
 CLI_SCOPE_MEMORY_PROBE_MARKS = {"has-memory-max": True, "no-memory-max": False}   # what it prints → delegated
-CLI_SCOPE_ADJ_PROBE_CMD = ["sh", "-c", 'echo "$1" > /proc/self/oom_score_adj', "sh"]   # + the value
+CLI_SCOPE_ADJ_PROBE_CMD = ["sh", "-c", 'true > /proc/self/oom_score_adj || exit 3; '
+                                       'echo "$1" > /proc/self/oom_score_adj', "sh"]   # + the value
+CLI_SCOPE_ADJ_PROBE_UNOPENABLE = 3   # its exit when /proc/self/oom_score_adj could not be opened for writing
 # What every line bin/romp-cli-scope writes to stderr starts with. The wrapper writes only when something
 # it was asked for did not happen — the scope itself, or one of the limits on it — and the line's second
 # word says which of its three messages it is:
@@ -243,14 +254,21 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
         since systemd accepts the properties from a user manager without the controller and applies
         nothing. The verdict is the marker the command prints (CLI_SCOPE_MEMORY_PROBE_MARKS): no
         memory.max is a problem line, the values stay in `in_force` (they are set, and systemd holds
-        them) and the verdict rides /api-health as memoryControllerDelegated. Anything but a marker on
-        exit 0 gets one retry; a second such attempt leaves the check UNSETTLED, as a problem line that
-        says what each attempt did (_cli_scope_attempt: a start refusal quoting systemd, a non-answer,
-        a scope that ran without printing a marker): the wrapper does not make this check, so nothing
+        them) and the verdict rides /api-health as memoryControllerDelegated. An attempt that gives no
+        verdict without exiting 0 — the scope did not start, the probe did not answer, the command was
+        killed or exited non-zero without a marker — gets one retry; an exit 0 without a marker gets
+        none (the command ran, and what it printed is the broken contract). When no attempt gives a
+        verdict the check is UNSETTLED, as a problem line that says what each attempt did, one or two
+        (_cli_scope_attempt: a start refusal quoting systemd, a non-answer, a scope that ran without
+        printing a marker; an odd print is quoted): the wrapper does not make this check, so nothing
         reports it per launch, and an unknown here would otherwise stay silent for the kernel's life;
-      * the adjustment, written by a throwaway child (CLI_SCOPE_ADJ_PROBE_CMD): a failed write is the
-        floor (a value below the user manager's own oom_score_adj), and rejects it; no answer settles
-        nothing (a plain line; the wrapper reports per launch).
+      * the adjustment, written by a throwaway child (CLI_SCOPE_ADJ_PROBE_CMD) in two steps, so its exit
+        status says what failed: the file could not be opened for writing (CLI_SCOPE_ADJ_PROBE_UNOPENABLE:
+        a read-only or masked /proc), or the write was refused (exit 1: the floor, a value below the user
+        manager's own oom_score_adj — the one way an in-range value's write fails). Either rejects the
+        value, with a line that quotes the shell's stderr and names the floor only for the refused write;
+        any other status is quoted as it is. No answer, or a child killed by a signal, settles nothing (a
+        plain line; the wrapper reports per launch).
     Returns (rejected: variable → value, memory_delegated: True/False, None when not settled, unsettled:
     the checks that were due and settled nothing, named as CLI_SCOPE_CHECKS — empty when every due check
     answered; the caller words its boot line and /api-health's `unsettled` from it, so no value whose
@@ -305,34 +323,48 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
             else:
                 unsettled.append("memoryController")
                 if log:
+                    # a start refusal carries the remark that a scope with these properties started moments
+                    # earlier (the property probe passed): on the attempt it is about, once, never at the
+                    # sentence's end, where it read as a remark about the retry
+                    def said(attempt, remark=True):
+                        return attempt[1] + (", moments after one with the same properties started"
+                                             if remark and attempt[0] == "no-start" else "")
                     if d_rc == 0:
                         why = "its probe printed %r where has-memory-max or no-memory-max was expected" % d_out
                         if first:
-                            why += ", after a first try that %s" % first[1]
+                            why += ", after a first try that %s" % said(first)
                     else:   # a retry happened (the first attempt gave no verdict), and it gave none either
-                        kind, what = _cli_scope_attempt(d_rc, d_err)
-                        why = ("its probe %s, and again on the retry" % what if what == first[1]
-                               else "its probe %s, and the retry %s" % (first[1], what))
-                        if "no-start" in (first[0], kind):
-                            why += ", moments after one with the same properties started"
+                        second = _cli_scope_attempt(d_rc, d_err)
+                        why = ("its probe %s, and again on the retry" % said(first) if second[1] == first[1] else
+                               "its probe %s, and the retry %s" % (said(first), said(second, first[0] != "no-start")))
                     log("cli scope: the memory-controller check could not be settled — %s; whether the memory "
                         "limits (%s) apply is unknown until the next kernel start, and the values stand as read"
                         % (why, " ".join(props)), problem=True)
     adj = in_force.get("oomScoreAdj")
     if adj is not None:
         a_rc, a_err, _out = _cli_scope_probe(run, CLI_SCOPE_ADJ_PROBE_CMD + [adj])
-        if a_rc is None:
+        if a_rc is None or a_rc < 0:   # no verdict: the child did not answer, or was killed before it wrote
             unsettled.append("oomScoreAdj")
             if log:
-                log("cli scope: the oom_score_adj check could not run (%s); ROMP_CLI_SCOPE_OOM_SCORE_ADJ=%s stands "
-                    "as read, and the wrapper reports on each launch" % (a_err or "no detail", adj))
+                what = ("could not run (%s)" % (a_err or "no detail") if a_rc is None else
+                        "was killed by signal %d before it wrote%s"
+                        % (-a_rc, (" (stderr: %s)" % a_err) if a_err else ""))
+                log("cli scope: the oom_score_adj check %s; ROMP_CLI_SCOPE_OOM_SCORE_ADJ=%s stands as read, and the "
+                    "wrapper reports on each launch" % (what, adj))
         elif a_rc != 0:
             rejected["ROMP_CLI_SCOPE_OOM_SCORE_ADJ"] = adj
             if log:
-                log("cli scope: ROMP_CLI_SCOPE_OOM_SCORE_ADJ=%s cannot be written by this process — a value below "
-                    "the systemd user manager's own oom_score_adj (the floor every process under it inherits; "
-                    "100 on a typical machine) needs a privilege it does not have — not applied; sessions run in their "
-                    "scopes without it" % adj, problem=True)
+                quoted = a_err or "nothing on stderr"
+                if a_rc == CLI_SCOPE_ADJ_PROBE_UNOPENABLE:
+                    why = "/proc/self/oom_score_adj could not be opened for writing (%s)" % quoted
+                elif a_rc == 1:   # the file opened and the write was refused: EACCES, an in-range value's one failure
+                    why = ("the write was refused (%s): a value below the systemd user manager's own oom_score_adj "
+                           "(the floor every process under it inherits; 100 on a typical machine) needs a privilege it "
+                           "does not have" % quoted)
+                else:
+                    why = "its probe exited %d (%s)" % (a_rc, quoted)
+                log("cli scope: ROMP_CLI_SCOPE_OOM_SCORE_ADJ=%s cannot be written by this process — %s — not applied; "
+                    "sessions run in their scopes without it" % (adj, why), problem=True)
     return rejected, delegated, unsettled
 
 
@@ -377,7 +409,8 @@ def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[d
     reason. An unset or empty variable is neither. Two kinds of refusal: a value that fails its rule (the
     syntax; pure, checked on every OS), and — with `run` given (subprocess.run or a stand-in) and the
     scopes on — a value this box refuses (_cli_scope_settle): memory properties systemd rejects, an
-    adjustment below the inherited floor. `memory_delegated` is that probe's verdict on the memory
+    adjustment the process cannot write (below the inherited floor, or a /proc/self/oom_score_adj it
+    cannot open for writing). `memory_delegated` is that probe's verdict on the memory
     controller (True/False), None when it did not run or could not be settled; `unsettled` names the
     probe's checks that were due and settled nothing (CLI_SCOPE_CHECKS; empty when every due check
     answered, and when none was due). `log`, when given, takes (message, problem=bool); the boot line

@@ -609,9 +609,48 @@ SH
     [ "$status" -eq 0 ]
     [ "$output" = "ADJ:$cur" ]
     [ "$(wc -l < "$ERR")" -eq 1 ]
-    grep -q '^romp-cli-scope: ignored: ROMP_CLI_SCOPE_OOM_SCORE_ADJ could not be applied' "$ERR"
+    grep -q '^romp-cli-scope: ignored: ROMP_CLI_SCOPE_OOM_SCORE_ADJ could not be applied (the write was refused: ' "$ERR"
     grep -q 'privilege' "$ERR"
+    run grep -q 'cannot be opened' "$ERR"     # the file opened; only the write was refused
+    [ "$status" -ne 0 ]
     [[ "$(sed -n 2p "$FAKE_CALLS")" == *"--unit=romp-session-11111111-"* ]]
+}
+
+_wrapper_fns() {   # $@: function names — their bodies, lifted verbatim out of the wrapper (which execs, so cannot be
+    local name       # sourced), each followed by a newline, so a command can be appended to the result of $(…)
+    for name in "$@"; do sed -n "/^$name() {/,/^}/p" "$WRAPPER"; echo; done
+}
+
+@test "apply_adj names what failed: a file it cannot open for writing is reported as that, never as the floor" {
+    # the wrapper writes /proc/self/oom_score_adj and nothing else, and that file cannot be made unopenable
+    # here without a user namespace, so its own function runs, lifted, against a file this user cannot open
+    # for writing — the same two checks it makes on the real one, in the same shell. Before this, the one
+    # line asserted the floor for any failure, so a read-only /proc in a hardened container sent the operator
+    # hunting a floor (round-4 finding, 2026-09-06)
+    [ "$(id -u)" -ne 0 ] || skip "root can open anything"
+    : > "$TEST_DIR/oom_score_adj" && chmod 444 "$TEST_DIR/oom_score_adj"
+    run sh -c "$(_wrapper_fns ignored apply_adj)"$'\n''apply_adj "$1" "$2"; cat "$2"' sh 500 "$TEST_DIR/oom_score_adj"
+    [ "$status" -eq 0 ]
+    [ "$output" = "romp-cli-scope: ignored: ROMP_CLI_SCOPE_OOM_SCORE_ADJ could not be applied ($TEST_DIR/oom_score_adj cannot be opened for writing by this process) — the CLI runs in its scope without it" ]
+    run grep -c 'privilege' <<< "$output"
+    [ "$output" = "0" ]
+}
+
+@test "apply_adj on this process's own file: the floor line for a value below it, no line for the inherited value" {
+    [ -r /proc/self/oom_score_adj ] || skip "no /proc/self/oom_score_adj on this box"
+    [ "$(id -u)" -ne 0 ] || skip "root may lower it"
+    local cur; cur="$(cat /proc/self/oom_score_adj)"
+    [ "$cur" -gt -1000 ] || skip "already at the floor"
+    local fns; fns="$(_wrapper_fns ignored apply_adj)"$'\n'
+    # `run` forks, so the sh below writes its own oom_score_adj, and prints it after the attempt
+    run sh -c "$fns"'apply_adj "$1" /proc/self/oom_score_adj; cat /proc/self/oom_score_adj' sh -1000
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "romp-cli-scope: ignored: ROMP_CLI_SCOPE_OOM_SCORE_ADJ could not be applied (the write was refused: a value below the user manager's own oom_score_adj needs a privilege it does not have) — the CLI runs in its scope without it" ]
+    [ "${lines[1]}" = "$cur" ]
+    run sh -c "$fns"'apply_adj "$1" /proc/self/oom_score_adj; cat /proc/self/oom_score_adj' sh "$cur"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$cur" ]
+    [ "$(cat /proc/self/oom_score_adj)" = "$cur" ]
 }
 
 @test "the adjustment applies on the fallback path too: a session run directly still carries it, with the one fallback line" {

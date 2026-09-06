@@ -502,23 +502,28 @@ rule means the value reached the wrapper some other way.
 
 The rules are syntax, and two kinds of value that pass them can still be refused
 by the machine: a memory property this systemd does not take on a scope
-(`OOMPolicy=` on scopes needs systemd 253), and an adjustment below the user
-manager's own `oom_score_adj`. Without a check at the kernel's start, both would
-be refused again on every launch, one `ignored:` line and one problem each,
-while the kernel's log and `/api-health` (the `cliScope` block, below) said the
-value was in force. So with the scopes on, the kernel runs the wrapper's own
-steps once at its start: it starts a probe scope carrying the memory properties,
-and has a throwaway child write the adjustment to its own `oom_score_adj`. A
-refusal there is a problem line at the kernel's start, joins `cliScope.rejected`
-in `/api-health`, and reaches the wrapper as an empty variable, so no launch
-repeats it. A probe that does not answer (the user bus away at that moment)
-settles nothing. The kernel says so in its log (a plain line, not a problem),
-hands the values down as read, and lists them in its boot line as set but not
-settled, naming the check; the values whose checks did answer keep their own
-verdict in the same line, so an unanswered check for one value never makes
-another unknown. `cliScope.unsettled` in `/api-health` names the check too.
-Whether the values apply is then known from the wrapper's report on each
-launch. The wrapper keeps the same guard on every launch. Its pre-flight
+(`OOMPolicy=` on scopes needs systemd 253), and an adjustment the process cannot
+write, because it is below the user manager's own `oom_score_adj` or because
+`/proc/self/oom_score_adj` cannot be opened for writing (a read-only `/proc` in
+a hardened container). Without a check at the kernel's start, each would be
+refused again on every launch, one `ignored:` line and one problem each, while
+the kernel's log and `/api-health` (the `cliScope` block, below) said the value
+was in force. So with the scopes on, the kernel runs the wrapper's own steps
+once at its start: it starts a probe scope carrying the memory properties, and
+has a throwaway child write the adjustment to its own `oom_score_adj`. A refusal
+there is a problem line at the kernel's start, joins `cliScope.rejected` in
+`/api-health`, and reaches the wrapper as an empty variable, so no launch
+repeats it. The adjustment's problem line quotes the shell and says which step
+failed: it names the floor only when the file opened and the write was refused;
+otherwise it says the file could not be opened, and why. The wrapper's
+`ignored:` line makes the same distinction. A probe that does not answer (the
+user bus away at that moment) settles nothing. The kernel says so in its log (a
+plain line, not a problem), hands the values down as read, and lists them in its
+boot line as set but not settled, naming the check; the values whose checks did
+answer keep their own verdict in the same line, so an unanswered check for one
+value never makes another unknown. `cliScope.unsettled` in `/api-health` names
+the check too. Whether the values apply is then known from the wrapper's report
+on each launch. The wrapper keeps the same guard on every launch. Its pre-flight
 scope carries the properties. If that fails, it retries bare; if the bare scope
 starts, it tries once more with the properties, and only that second failure
 drops them, for that launch, with one `ignored:` line quoting the failure that
@@ -544,11 +549,13 @@ hierarchy, a kernel booted with the controller off, and a container whose cgroup
 subtree lacks it. The kernel checks for this at its start, inside the probe
 scope above: the scope's cgroup has a `memory.max` file when, and only when, the
 controller is there. A missing one is a problem line at the kernel's start, and
-`/api-health` carries the verdict as `cliScope.memoryControllerDelegated`. When
-the check itself does not answer (its probe scope fails to start twice, does
-not finish, or runs without printing its marker), that is a problem line too,
-saying what each of its two tries did and quoting systemd's refusal or the exit
-status; the verdict stays `null`, and `cliScope.unsettled` names the check.
+`/api-health` carries the verdict as `cliScope.memoryControllerDelegated`. A
+probe that exits non-zero or does not answer (its scope fails to start, it does
+not finish, its command is killed or exits without a marker) is tried once more;
+one that exits 0 without printing a marker is not. When no try gives a verdict,
+that is a problem line too: it says what each try did (one try, or two) and
+quotes systemd's refusal, the exit status, or what was printed; the verdict
+stays `null`, and `cliScope.unsettled` names the check.
 Whether the memory limits apply is then unknown until the next kernel start. To
 check a live session, run from a shell inside it: `cat /sys/fs/cgroup$(cut -d:
 -f3 /proc/self/cgroup)/memory.max` prints the limit in bytes, `max` when none
@@ -726,8 +733,8 @@ and `key:managed` name sources whose material the kernel never holds.
     limit applies).
   - `rejected`, the names of the variables whose values were refused, by their
     rule or by this machine at the kernel's start (memory properties systemd
-    rejected; an adjustment below the user manager's own `oom_score_adj`), each
-    also a problem line at the kernel's start.
+    rejected; an adjustment the process could not write), each also a problem
+    line at the kernel's start.
   - `memoryControllerDelegated`, the kernel's start-time check of whether a
     probe scope carrying the memory properties had a `memory.max` file in its
     cgroup: `true`, `false` (systemd holds the sizes above and applies nothing;
