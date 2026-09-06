@@ -17,7 +17,9 @@
 #     vendor/track-changents/, or into a vendor/track-changents/ that no longer exists (a romp
 #     clone moved or deleted after install.sh ran); the guard's entry also goes when it is the
 #     exact string install.sh writes and nothing is at that path any more (its link removed by
-#     hand before this ran); a track-changents install of your own is left as it is
+#     hand before this ran). Links install.sh RE-POINTED from a track-changents install of your
+#     own now lead into this clone, so they go too: re-run that project's install.sh to get them
+#     back. A real file of one of those names, or a link that still points elsewhere, stays.
 #   - the git pre-push hook symlink
 #   - vscode-extension/node_modules, dist, *.vsix   (build artifacts)
 #   - the SDK venv under the state dir
@@ -83,7 +85,7 @@ pkill -f "$ROMP_DIR/bin/romp-kernel"  2>/dev/null || true
 # ── 2. ~/.claude wiring ────────────────────────────────────────────────
 echo "==> ~/.claude hook + skill symlinks"
 for h in romp-summarize.sh romp-postal-drain.sh romp-postal-ensure.sh \
-         romp-postal-revive.sh romp-postal-context.sh romp-wake.sh tmux-status.sh; do
+         romp-postal-revive.sh romp-postal-context.sh romp-usertodo-context.sh romp-wake.sh tmux-status.sh; do
     rm -f "$HOME/.claude/hooks/$h"
 done
 rm -f "$HOME/.claude/skills/romp" "$HOME/.claude/skills/romp-postal"
@@ -121,7 +123,7 @@ import json, os, sys
 
 SETTINGS = os.path.expanduser("~/.claude/settings.json")
 OURS = {"tmux-status.sh", "romp-summarize.sh", "romp-postal-drain.sh", "romp-postal-ensure.sh",
-        "romp-postal-revive.sh", "romp-postal-context.sh", "romp-wake.sh"}
+        "romp-postal-revive.sh", "romp-postal-context.sh", "romp-usertodo-context.sh", "romp-wake.sh"}
 VENDORED = os.path.realpath(os.path.join(sys.argv[1], "vendor", "track-changents"))
 VENDOR_PART = os.sep + os.path.join("vendor", "track-changents") + os.sep
 INSTALLED_GUARD = "~/.claude/hooks/track-guard.mjs"     # the exact command string install.sh registers
@@ -232,8 +234,10 @@ PYEOF
 # become once the clone they point into is moved or deleted (a dangling link is nobody's live
 # install, and only romp links into a vendor/track-changents/). A link into a checkout of
 # track-changents (the shape its own installer leaves) or a real file of the same name is someone's
-# own and stays, with a notice — the same rule install.sh applies when it finds one. Resolved in
-# python3 (already required above) because `readlink -f` is not on every macOS.
+# own and stays, with a notice. install.sh is not symmetrical here: it RE-POINTS such a link at the
+# vendored copy (and leaves a real file alone), so after an install the user's own links resolve into
+# this clone and this step removes them; re-running that project's install.sh restores them. Resolved
+# in python3 (already required above) because `readlink -f` is not on every macOS.
 echo "==> ~/.claude tracked-changes tooling"
 python3 - "$ROMP_DIR" "$HOME" <<'PYEOF'
 import os, sys
