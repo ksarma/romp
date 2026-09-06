@@ -144,6 +144,8 @@ teardown() {
     # the down tests' fake kernel: -9, because its ignore-term variant swallows SIGTERM by design, and a
     # background child left alive holds bats' output pipe open, stalling the whole run
     [[ -n "${KERNEL_PID:-}" ]] && kill -9 "$KERNEL_PID" 2>/dev/null
+    # a stand-in process a down test started to own a second pid (the /version-disagrees case)
+    [[ -n "${OTHER_PID:-}" ]] && kill -9 "$OTHER_PID" 2>/dev/null
     tmux_private_kill            # before the rm: a server the real tmux started must not outlive the test
     rm -rf "$TEST_DIR"
 }
@@ -1707,14 +1709,23 @@ MOCK
 # audit row, and stops THROUGH the supervisor (romp-service stop); only when no login service is
 # installed (exit 3) does it fall back to the manager's own /stop. Last it probes the kernel port
 # itself (GET /healthz) and stops a kernel nothing above took down through the kernel's own door,
-# a SIGTERM at the pid /version reports. A fake kernel (python http.server, alive until teardown or
-# until a stop takes it) answers POST /down from $TEST_DIR/down-reply and logs every POST (path,
-# token ok?, body) to $TEST_DIR/kreq and every GET and signal to $TEST_DIR/kget; recording mocks
-# stand in for romp-service and romp-manager, so nothing here can reach the machine's systemctl or
-# its live manager. A mock stop that lands takes the fake kernel with it (kill -9, so a SIGTERM in
-# kget can only be the CLI's own), as the real service and manager do; "keep-kernel" leaves it up.
+# a SIGTERM at the pid it named on POST /down under this romp's serve token, and only when the
+# auth-exempt GET /version names the same pid. A kernel that rejects the token is another romp's
+# and is left alone (2026-09-06: a `romp down` aimed at a port it did not mean, an empty
+# ROMP_KERNEL_PORT falling to the default, took a 403 for "nothing answered", read the pid off
+# /version and SIGTERMed another romp's kernel, cutting every session there). A fake kernel (python
+# http.server, alive until teardown or until a stop takes it) answers POST /down from
+# $TEST_DIR/down-reply, adding its own pid the way the real kernel does unless the body names one or
+# the mode is no-pid, and logs every POST (path, token ok?, body) to $TEST_DIR/kreq and every GET and
+# signal to $TEST_DIR/kget; its GET /version names its own pid, or the one $TEST_DIR/version-pid
+# holds. Recording mocks stand in for romp-service and romp-manager, so nothing here can reach the
+# machine's systemctl or its live manager. A mock stop that lands takes the fake kernel with it
+# (kill -9, so a SIGTERM in kget can only be the CLI's own), as the real service and manager do;
+# "keep-kernel" leaves it up. Every case sets ROMP_KERNEL_PORT to the fake's port, or to the floor
+# port 1 when it starts no fake, and start_down_kernel asserts the fake answers before the CLI runs:
+# `romp down` in a test must never reach a port that could be the machine's own kernel.
 
-start_down_kernel() {   # $1 = the /down reply body; $2 = "" | ignore-term | exit-after-down
+start_down_kernel() {   # $1 = the /down reply body; $2 = "" | ignore-term | exit-after-down | refuse-401 | no-pid
     printf '%s' "$1" > "$TEST_DIR/down-reply"
     export ROMP_SERVE_TOKEN="test-token-DO-NOT-USE"
     rm -f "$TEST_DIR/kport" "$TEST_DIR/kpid"
@@ -1739,7 +1750,14 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.path == "/healthz":
             body, ctype = b"ok", "text/plain"
         elif self.path == "/version":
-            body, ctype = json.dumps({"pid": os.getpid(), "kernel_ver": "test"}).encode(), "application/json"
+            # this process, or the pid $TEST_DIR/version-pid names: a kernel whose auth-exempt word
+            # disagrees with what it said under the token
+            pid = os.getpid()
+            try:
+                pid = int(open(tdir + "/version-pid").read().strip())
+            except (OSError, ValueError):
+                pass
+            body, ctype = json.dumps({"pid": pid, "kernel_ver": "test"}).encode(), "application/json"
         else:
             self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers(); return
         self.send_response(200)
@@ -1753,9 +1771,20 @@ class H(http.server.BaseHTTPRequestHandler):
         ok = self.headers.get("X-Romp-Token") == tok
         with open(tdir + "/kreq", "a") as f:
             f.write("%s token=%s %s\n" % (self.path, "ok" if ok else "BAD", body))
+        if mode == "refuse-401" and self.path == "/down":
+            self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers(); return
         if not ok:
             self.send_response(403); self.send_header("Content-Length", "0"); self.end_headers(); return
         reply = open(tdir + "/down-reply", "rb").read() if self.path == "/down" else b'{"ok": true}'
+        if self.path == "/down" and mode != "no-pid":
+            # the real kernel names its pid on every /down 200 (the one pid the CLI may signal)
+            try:
+                d = json.loads(reply)
+                if isinstance(d, dict) and "pid" not in d:
+                    d["pid"] = os.getpid()
+                    reply = json.dumps(d).encode()
+            except ValueError:
+                pass
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(reply)))
@@ -1776,6 +1805,17 @@ PY
     KERNEL_PID=$!
     until [ -s "$TEST_DIR/kport" ]; do sleep 0.05; done
     export ROMP_KERNEL_PORT="$(cat "$TEST_DIR/kport")"
+    assert_fake_kernel_up
+}
+
+assert_fake_kernel_up() {   # the CLI runs against a kernel that ANSWERS on ROMP_KERNEL_PORT, never a port that might be someone else's
+    local i
+    for i in $(seq 1 50); do
+        [[ "$(curl -s -m 1 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$ROMP_KERNEL_PORT/healthz" 2>/dev/null)" == 200 ]] && return 0
+        sleep 0.1
+    done
+    echo "the fake kernel did not come up on :$ROMP_KERNEL_PORT" >&2
+    return 1
 }
 
 kernel_port_closed() {   # the fake kernel is gone, not merely asked: nothing answers on its port
@@ -1882,6 +1922,7 @@ MOCK
 
 @test "romp down: bad options are loud exit 2 and touch nothing" {
     mock_service 0
+    export ROMP_KERNEL_PORT=1                          # no fake here: the floor port, which refuses at once
     # 600.4 / 600.5 round to 600 under printf %.0f but the kernel refuses anything above 600.0 with a
     # 400, which the CLI would turn into a stop with no wait: the CLI's bound is the same, unrounded
     # a leading zero is not JSON: 05 / 0600 / 00.5 went into the body raw and came back as a 400, a stop with no wait
@@ -1921,12 +1962,17 @@ MOCK
 @test "romp down: nothing running and nothing installed is a no-op that still holds the auto-start" {
     mock_service 3
     mock_manager 1
-    export ROMP_KERNEL_PORT=1                          # a dead port: nothing to quiesce
+    # a port nothing listens on, set explicitly: with ROMP_KERNEL_PORT unset the CLI probes its
+    # default port, which on a machine running romp is the live kernel (the 2026-09-06 incident),
+    # so no test here ever leaves it unset. The floor port stands in for "nothing there".
+    export ROMP_KERNEL_PORT=1
     run run_romp down
     [ "$status" -eq 0 ]
     [[ "$output" == *"isn't answering on :1 — nothing to quiesce"* ]]
     [[ "$output" == *"nothing was running"* ]]
     [[ "$output" == *"auto-start stays held until \`romp up\`"* ]]
+    [[ "$output" != *"pid"* ]]                         # no pid was learned, so none could be signaled
+    [[ "$output" != *"stopped"* ]]
     [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
 }
 
@@ -1949,38 +1995,161 @@ MOCK
     grep -q '"action": "down"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"   # the attempt itself stays on the record
 }
 
-@test "romp down: an older kernel without /down, or a refused token, stops without waiting" {
-    mock_service 0
-    # 404: a kernel from before the route
+start_old_kernel() {   # a kernel from before the /down route: 404 on every POST, /healthz and /version as ever
+    rm -f "$TEST_DIR/kport" "$TEST_DIR/kpid"
     python3 - "$TEST_DIR" <<'PY' &
-import http.server, sys
+import http.server, json, os, sys
 tdir = sys.argv[1]
 class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        with open(tdir + "/kget", "a") as f:
+            f.write(self.path + "\n")
+        body = b"ok" if self.path == "/healthz" else json.dumps({"pid": os.getpid()}).encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
+        self.wfile.write(body)
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length") or 0))
         self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers()
     def log_message(self, *a): pass
 s = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(tdir + "/kpid", "w").write(str(os.getpid()))
 open(tdir + "/kport", "w").write(str(s.server_address[1]))
 s.serve_forever()
 PY
     KERNEL_PID=$!
     until [ -s "$TEST_DIR/kport" ]; do sleep 0.05; done
     export ROMP_KERNEL_PORT="$(cat "$TEST_DIR/kport")"
+    assert_fake_kernel_up
+}
+
+@test "romp down: an older kernel without /down stops without waiting, through the service; one the service does not take is not signaled" {
+    # 404: the route is missing, so no quiesce; the supervised stop still runs and takes the kernel
+    mock_service 0
+    start_old_kernel
     run run_romp down
     [ "$status" -eq 0 ]
     [[ "$output" == *"predates the quiesce route — stopping without waiting"* ]]
     grep -q 'romp-service called: stop' "$MOCK_LOG"
-    kill "$KERNEL_PID"; KERNEL_PID=""; rm -f "$TEST_DIR/kport"
-    # 403: the token the CLI holds is not this kernel's
-    : > "$MOCK_LOG"
+    kernel_port_closed; KERNEL_PID=""
+    # the same kernel with nothing above it: it cannot name its pid under the token, so the probe
+    # will not signal it. Loud exit 1, the kernel left alive, marker taken back
+    : > "$MOCK_LOG"; rm -f "$TEST_DIR/kget"
+    mock_service 3
+    mock_manager 1
+    start_old_kernel
+    local kpid; kpid="$(cat "$TEST_DIR/kpid")"
+    run run_romp down
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp down: the kernel on :$ROMP_KERNEL_PORT was not confirmed as the one this romp manages (POST /down answered HTTP 404, not a 200 naming its pid); not touching it. Check ROMP_KERNEL_PORT and the state dir"* ]]
+    kill -0 "$kpid"
+    [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]
+    [[ "$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")" == *'"action": "down-failed"'* ]]
+}
+
+@test "romp down: a kernel that rejects the serve token is another romp's: exit 1, the line, nothing touched, the kernel left alive" {
+    # the 2026-09-06 incident, paraphrased: a `romp down` aimed at a port it did not mean got a 403
+    # from the kernel there, went on as if nothing had answered, read that kernel's pid off the
+    # auth-exempt GET /version and SIGTERMed it: another romp's kernel, every session on it cut for
+    # two hours. A refused token now ends the command before the marker, the service, the manager
+    # or any signal. Both codes a token gate can answer.
+    mock_service 0
+    mock_manager 0
+    local code kpid
+    for code in 403 401; do
+        : > "$MOCK_LOG"; rm -f "$TEST_DIR/kreq" "$TEST_DIR/kget"
+        if [ "$code" = 403 ]; then
+            start_down_kernel '{"ok": true}'
+            export ROMP_SERVE_TOKEN="some-other-token"       # the token this romp holds is not that kernel's
+        else
+            start_down_kernel '{"ok": true}' refuse-401
+        fi
+        kpid="$(cat "$TEST_DIR/kpid")"
+        run run_romp down
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"romp down: the kernel on :$ROMP_KERNEL_PORT is not the one this romp manages (it rejected the serve token); not touching it. Check ROMP_KERNEL_PORT and the state dir"* ]]
+        [[ "$output" != *"stopping without waiting"* ]]
+        [[ "$output" != *"[romp] down"* ]]
+        [ "$(grep -c '^/down' "$TEST_DIR/kreq")" -eq 1 ]   # asked once; it said no; that was the end
+        [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]        # no marker: nothing of ours was stopped
+        run grep -q '"action": "down' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
+        [ "$status" -ne 0 ]
+        run grep -q 'called' "$MOCK_LOG"                    # neither the service nor the manager
+        [ "$status" -ne 0 ]
+        run grep -q '/version\|SIGTERM' "$TEST_DIR/kget"    # its pid was never asked for, let alone signaled
+        [ "$status" -ne 0 ]
+        kill -0 "$kpid"                                     # alive
+        kill -9 "$KERNEL_PID"; KERNEL_PID=""
+    done
+}
+
+@test "romp down: a kernel whose GET /version pid differs from the pid it gave under the token is not signaled: exit 1, the line" {
+    # the pid the CLI signals is the one the kernel named on POST /down under this romp's token, and
+    # only when the auth-exempt GET /version agrees. The pid /version names here belongs to a sleep
+    # this test owns, so a stray SIGTERM would show as its death
+    sleep 300 >/dev/null 2>&1 &
+    OTHER_PID=$!
+    echo "$OTHER_PID" > "$TEST_DIR/version-pid"
+    start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}'
+    mock_service 3
+    mock_manager 1
+    local kpid; kpid="$(cat "$TEST_DIR/kpid")"
+    run run_romp down
+    kill -0 "$OTHER_PID"                                    # the pid /version named was never signaled
+    kill -0 "$kpid"                                         # nor the kernel itself
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp down: the kernel on :$ROMP_KERNEL_PORT was not confirmed as the one this romp manages (it named pid $kpid on POST /down but GET /version says pid $OTHER_PID); not touching it. Check ROMP_KERNEL_PORT and the state dir"* ]]
+    run grep -q 'SIGTERM' "$TEST_DIR/kget"
+    [ "$status" -ne 0 ]
+    grep -q '^/down token=ok {"wait": 0}$' "$TEST_DIR/kreq"        # the confirmation, under the token
+    grep -q '^/down token=ok {"cancel": true}$' "$TEST_DIR/kreq"   # the hold released: turns resume now
+    [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]
+    [[ "$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")" == *'"action": "down-failed"'* ]]
+}
+
+@test "romp down: a kernel that answers the quiesce without naming its pid is not signaled: exit 1, the line" {
+    start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}' no-pid
+    mock_service 3
+    mock_manager 1
+    local kpid; kpid="$(cat "$TEST_DIR/kpid")"
+    run run_romp down
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp down: the kernel on :$ROMP_KERNEL_PORT was not confirmed as the one this romp manages (it answered POST /down without naming its pid); not touching it. Check ROMP_KERNEL_PORT and the state dir"* ]]
+    run grep -q 'SIGTERM' "$TEST_DIR/kget"
+    [ "$status" -ne 0 ]
+    kill -0 "$kpid"
+    [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]
+}
+
+@test "romp down --now: a bare kernel is confirmed under the token before the signal (the quiesce with no wait)" {
+    # --now skips step 1, so the ownership check is the probe's own: POST /down {"wait": 0}, no wait
+    start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}'
+    mock_service 3
+    mock_manager 1
+    local kpid; kpid="$(cat "$TEST_DIR/kpid")"
+    run run_romp down --now
+    [ "$status" -eq 0 ]
+    [ "$(grep -c '^/down' "$TEST_DIR/kreq")" -eq 1 ]
+    grep -q '^/down token=ok {"wait": 0}$' "$TEST_DIR/kreq"
+    grep -q '^SIGTERM$' "$TEST_DIR/kget"
+    [[ "$output" == *"[romp] down: a kernel was running on :$ROMP_KERNEL_PORT (pid $kpid) with no manager; stopped it. \`romp up\` starts it again"* ]]
+    kernel_port_closed; KERNEL_PID=""
+    [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
+}
+
+@test "romp down --now: a kernel that rejects the token at the probe is left alone, marker taken back, exit 1" {
     start_down_kernel '{"ok": true}'
     export ROMP_SERVE_TOKEN="some-other-token"
-    run run_romp down
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"refused the serve token — stopping without waiting"* ]]
-    grep -q '^/down token=BAD' "$TEST_DIR/kreq"
-    grep -q 'romp-service called: stop' "$MOCK_LOG"
+    mock_service 3
+    mock_manager 1
+    local kpid; kpid="$(cat "$TEST_DIR/kpid")"
+    run run_romp down --now
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp down: the kernel on :$ROMP_KERNEL_PORT is not the one this romp manages (it rejected the serve token); not touching it. Check ROMP_KERNEL_PORT and the state dir"* ]]
+    run grep -q 'SIGTERM' "$TEST_DIR/kget"
+    [ "$status" -ne 0 ]
+    kill -0 "$kpid"
+    [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]
+    [[ "$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")" == *'"action": "down-failed"'* ]]
 }
 
 @test "romp down: the login service is stopped (4) but a manager runs outside it: stopped through its own /stop" {
