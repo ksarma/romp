@@ -1113,7 +1113,13 @@ function initGear(post) {
   function raRender() {
     if (raState.loading) { raChart.innerHTML = '<div class=ra-empty>loading…</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; return; }
     var d = raState.data; if (!d) { raChart.innerHTML = '<div class=ra-empty>no data</div>'; return; }
-    var sess = d.sessions || { in: 0, out: 0, cost: 0 }, sessTot = raVal(sess);
+    var sess = d.sessions || { in: 0, out: 0, cost: 0 };
+    // Two session-dollar figures can arrive: `ledger` is the CLI's own per-turn cost as the rail's
+    // recorder folded it (spend.json, wherever it reaches), `cost` is tokens × a price table. The CLI's
+    // figure is the measurement; the table is the estimate — shown only where the ledger has nothing.
+    var led = (sess.ledger && typeof sess.ledger.usd === 'number') ? sess.ledger : null;
+    var sessCost = led ? led.usd : (sess.cost || 0);
+    var sessTot = raCost() ? sessCost : raVal(sess);
     var segs = raSegments(), judgeTot = segs.reduce(function (a, s) { return a + raVal(s); }, 0);
     var maxV = Math.max(sessTot, judgeTot, 1);
     var W = 480, H = 250, top = 24, bot = 30, chartH = H - top - bot, baseY = top + chartH, barW = 92, cx1 = W * 0.30, cx2 = W * 0.70;
@@ -1121,7 +1127,8 @@ function initGear(post) {
     var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="xMidYMid meet">';
     svg += '<line x1="6" y1="' + baseY + '" x2="' + (W - 6) + '" y2="' + baseY + '" style="stroke:var(--hairline, #3a3a3a)"/>';
     var sh = sessTot / maxV * chartH;
-    svg += rect(cx1 - barW / 2, baseY - sh, barW, sh, 'var(--text-faint, #7d8590)', 'sessions · ' + fmtTok(sess.in) + ' in / ' + fmtTok(sess.out || 0) + ' out · ' + fmtUsd(sess.cost || 0));
+    svg += rect(cx1 - barW / 2, baseY - sh, barW, sh, 'var(--text-faint, #7d8590)', 'sessions · ' + fmtTok(sess.in) + ' in / ' + fmtTok(sess.out || 0) + ' out · ' + fmtUsd(sessCost)
+      + (led ? ' (the CLI\'s own cost' + (led.since ? ', ledger since ' + led.since : '') + '; token-price estimate ' + fmtUsd(sess.cost || 0) + ')' : ''));
     svg += '<text x="' + cx1 + '" y="' + (baseY - sh - 6) + '" text-anchor="middle" style="fill:var(--text-bright, #ddd)" font-size="12">' + raFmt(sessTot) + '</text>';
     svg += '<text x="' + cx1 + '" y="' + (baseY + 18) + '" text-anchor="middle" style="fill:var(--text-muted, #9aa0a6)" font-size="12">Sessions</text>';
     var cum = 0; segs.forEach(function (s) { var st = raVal(s), h = st / maxV * chartH, y = baseY - cum - h; cum += h;
@@ -1133,13 +1140,14 @@ function initGear(post) {
     raLegend.innerHTML = '<span class=ra-li><span class="ra-sw" style="background:#7d8590"></span>sessions <b>' + raFmt(sessTot) + '</b></span>' + lg;
     var ratio = sessTot ? (judgeTot / sessTot * 100) : 0;
     raNote.textContent = 'last ' + raState.periodLabel + ' · judges = ' + (sessTot ? ratio.toFixed(1) : '0') + '% of session ' + (raCost() ? 'cost' : 'tokens') + ' · combined ' + raFmt(sessTot + judgeTot)
-      // Say what the session dollars are, because they are not measured the way the judge dollars are:
-      // judges log claude -p's exact total_cost_usd, while sessions carry tokens only and get priced
-      // tokens × a per-model table. Fast mode is invisible to that table — it changes no model id — so a
-      // fast session's real draw is HIGHER than what this shows (the user 2026-08-08 asked that the gap be
-      // written down where someone would meet it). The rail's spend figure has no such gap: it passes the
-      // CLI's own per-turn cost through.
-      + (raCost() ? ' · session $ estimated from token prices; fast mode draws more than shown' : ''); }
+      // Say what the session dollars are. With the ledger they are the CLI's own per-turn cost, the same
+      // figure the rail's spend cell shows (fast mode and web search included). Without it they are
+      // tokens × a per-model table, and that is not measured the way the judge dollars are (judges log
+      // claude -p's exact total_cost_usd): fast mode is invisible to the table — it changes no model id —
+      // so a fast session's real draw is HIGHER than the estimate (the user 2026-08-08 asked that the gap
+      // be written down where someone would meet it).
+      + (raCost() ? (led ? ' · session $ is the CLI\'s own per-turn cost' + (led.since ? ' (ledger since ' + led.since + ')' : '')
+                         : ' · session $ estimated from token prices; fast mode draws more than shown') : ''); }
   function raFetch() { raState.loading = true; raRender();
     fetch(ku('/analytics?window=' + raState.window), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) { raState.loading = false; raState.data = d; raRender(); }).catch(function () { raState.loading = false; raChart.innerHTML = '<div class=ra-empty>analytics unavailable</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; }); }
   if (raOpen) raOpen.onclick = function (e) { e.stopPropagation(); raBack.hidden = false; p.hidden = true; raFetch(); };

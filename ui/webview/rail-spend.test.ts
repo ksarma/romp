@@ -218,13 +218,25 @@ test("every tip string carries data — the narration is gone and stays gone", (
 
 // The two cost surfaces are measured differently, and only one of them sees fast mode (the user
 // 2026-08-08). The rail passes the CLI's own per-turn total_cost_usd through, premium included; the
-// gear's cost view prices session tokens from a per-model table that fast mode is invisible to, because
-// it changes no model id. That gap is a footnote in the view and a comment at the table — pinned here so
-// neither can quietly vanish while the gap is still real.
-test("the cost view says its session dollars are an estimate that fast mode exceeds", () => {
+// gear's cost view priced session tokens from a per-model table that fast mode is invisible to, because
+// it changes no model id. Since 2026-09-05 the view shows the rail's ledger figure — the CLI's own
+// cost — wherever spend.json reaches, and the estimate (with its footnote) only where it does not. Both
+// wordings are pinned here so neither can quietly vanish while the gap is still real.
+test("the cost view shows the CLI's own cost where the ledger reaches, and calls its estimate an estimate elsewhere", () => {
   const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
+  assert.match(GEAR, /var led = \(sess\.ledger && typeof sess\.ledger\.usd === 'number'\) \? sess\.ledger : null;/);
+  assert.match(GEAR, /var sessCost = led \? led\.usd : \(sess\.cost \|\| 0\);/, "the ledger's figure first, the estimate as the fallback");
+  assert.match(GEAR, /session \$ is the CLI\\'s own per-turn cost/);
+  assert.match(GEAR, /' \(ledger since ' \+ led\.since \+ '\)'/, "a young ledger says how far back it reaches");
   assert.match(GEAR, /session \$ estimated from token prices; fast mode draws more than shown/);
-  assert.match(GEAR, /raCost\(\) \? ' · session \$ estimated/, "shown only on the cost metric, not tokens");
+  assert.match(GEAR, /raCost\(\) \? \(led \?/, "shown only on the cost metric, not tokens");
+  // the kernel serves the ledger beside the estimate: the CLI's own per-turn cost summed from spend.json
+  assert.match(KERNEL, /def _spend_ledger_window\(now, window\):/);
+  assert.match(KERNEL, /s\["ledger"\] = led/);
+  // …and the estimate itself dedupes split responses and reads subagent transcripts (2026-09-05)
+  assert.match(KERNEL, /def _subagent_transcripts\(path\):/);
+  assert.match(KERNEL, /j = by_id\.get\(mid\)/, "one row per message.id");
+  assert.match(KERNEL, /"claude-fable-5-1":\s+\{"in": 10e-6, "out": 50e-6, "cache_w": 12\.5e-6, "cache_r": 0\.25e-6\}/);
 });
 
 test("the price table records the fast-mode gap for whoever maintains it", () => {

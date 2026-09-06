@@ -7,8 +7,9 @@ import json
 import os
 import pathlib
 import tempfile
+import time
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from importlib.machinery import SourceFileLoader
 
 BIN = os.path.join(os.path.dirname(__file__), "..", "bin")
@@ -26,10 +27,12 @@ def iso(epoch):
     return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
-def _asst(usage, ts=None, model=None):
+def _asst(usage, ts=None, model=None, mid=None):
     msg = {"role": "assistant", "content": [], "usage": usage}
     if model is not None:
         msg["model"] = model
+    if mid is not None:
+        msg["id"] = mid
     o = {"type": "assistant", "message": msg}
     if ts is not None:
         o["timestamp"] = ts
@@ -55,6 +58,53 @@ class SessionTokens(unittest.TestCase):
     def test_missing_file_returns_zeros(self):
         self.assertEqual(km._session_tokens("/no/such/transcript.jsonl", NOW - 3600),
                          {"in": 0, "out": 0, "cache_w": 0, "cache_r": 0})
+
+    def test_records_sharing_a_message_id_count_once(self):
+        """The CLI writes a multi-block response as several assistant records with one message.id and
+        the SAME usage block (verified on live transcripts 2026-09-05: 2,515 groups, none differing);
+        summing records counted each response 2.3-3.0x. One row per id; an id-less record stands alone."""
+        u = {"input_tokens": 10, "output_tokens": 5, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 200}
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "s.jsonl")
+            with open(p, "w") as f:
+                for _ in range(3):
+                    f.write(_asst(u, iso(NOW - 100), mid="msg_aaaa") + "\n")         # a 3-block response
+                f.write(_asst({"input_tokens": 1, "output_tokens": 1}, iso(NOW - 90)) + "\n")   # no id
+                f.write(_asst({"input_tokens": 1, "output_tokens": 1}, iso(NOW - 80)) + "\n")   # no id
+                f.write(_asst({"input_tokens": 7, "output_tokens": 2}, iso(NOW - 70), mid="msg_bbbb") + "\n")
+                # a split response whose LAST record carries a larger output count (a final tally): the
+                # larger figure is the one kept, never both
+                f.write(_asst({"input_tokens": 4, "output_tokens": 1}, iso(NOW - 60), mid="msg_cccc") + "\n")
+                f.write(_asst({"input_tokens": 4, "output_tokens": 9}, iso(NOW - 59), mid="msg_cccc") + "\n")
+            self.assertEqual(km._session_tokens(p, NOW - 3600),
+                             {"in": 10 + 2 + 7 + 4, "out": 5 + 2 + 2 + 9, "cache_w": 100, "cache_r": 200})
+
+    def test_subagent_transcripts_beside_the_main_one_count_and_refresh_the_cache(self):
+        """`<sid>/subagents/agent-<id>.jsonl` holds each spawned agent's conversation; its tokens are the
+        session's spend too (the ledger already counts them via modelUsage). The row cache fingerprints
+        every contributing file, so a subagent landing later refreshes the sum while the main file rests."""
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "11111111-2222-3333-4444-555555555555.jsonl")
+            with open(p, "w") as f:
+                f.write(_asst({"input_tokens": 10, "output_tokens": 5}, iso(NOW - 100), mid="m1") + "\n")
+            sub = pathlib.Path(d) / "11111111-2222-3333-4444-555555555555" / "subagents"
+            sub.mkdir(parents=True)
+            (sub / "agent-a1.jsonl").write_text(
+                _asst({"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 1000},
+                      iso(NOW - 90), mid="m2") + "\n"
+                + _asst({"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 1000},
+                        iso(NOW - 89), mid="m2") + "\n"                       # a split block, deduped too
+                + _asst({"input_tokens": 999, "output_tokens": 999}, iso(NOW - 99999), mid="m3") + "\n")  # out of window
+            (sub / "notes.txt").write_text("not a transcript\n")
+            self.assertEqual(km._session_tokens(p, NOW - 3600), {"in": 110, "out": 55, "cache_w": 0, "cache_r": 1000})
+            # a second subagent lands; the main transcript's mtime has not moved
+            mt = os.path.getmtime(p)
+            (sub / "agent-b2.jsonl").write_text(_asst({"input_tokens": 1, "output_tokens": 1}, iso(NOW - 10), mid="m4") + "\n")
+            os.utime(p, (mt, mt))
+            self.assertEqual(km._session_tokens(p, NOW - 3600)["in"], 111, "the new subagent file refreshes the rows")
+            self.assertEqual(km._subagent_transcripts(p), [str(sub / "agent-a1.jsonl"), str(sub / "agent-b2.jsonl")])
+            self.assertEqual(km._subagent_transcripts(os.path.join(d, "no-such.jsonl")), [])
+            self.assertEqual(km._subagent_transcripts(os.path.join(d, "x.txt")), [])
 
 
 class JudgeUsageIncrementalCache(unittest.TestCase):
@@ -270,6 +320,40 @@ class TokenAnalytics(unittest.TestCase):
         self.assertEqual((a["sessions"]["in"], a["sessions"]["out"], a["sessions"]["cost"]), (0, 0, 0.0))
         self.assertEqual(a["judges"]["total"]["calls"], 0)
         self.assertEqual(a["judges"]["byJudge"], {})
+        self.assertNotIn("ledger", a["sessions"], "no spend.json → no ledger figure, the estimate stands alone")
+
+    def test_the_ledgers_own_cost_rides_the_sessions_side_where_spend_json_reaches(self):
+        """The rail's ledger holds the CLI's own per-turn cost (2026-09-05: the token-price estimate read
+        1.55x that over a day). Hour buckets for a window inside the 8-day hour ledger, day buckets
+        beyond; a ledger that starts inside the window says `since`."""
+        jd.discover = lambda now, window=None, forks=True: []
+        hk = lambda n: time.strftime("%Y-%m-%dT%H", time.localtime(NOW - n * 3600))
+        dk = lambda n: (datetime.fromtimestamp(NOW).date() - timedelta(days=n)).isoformat()
+        hours = {hk(0): {"usd": 1.5, "turns": 2, "tokIn": 10, "tokCacheR": 90},
+                 hk(1): {"usd": 2.0, "turns": 1, "tokOut": 5},
+                 hk(5): {"usd": 100.0, "turns": 9}}                        # outside a 1h window
+        days = {dk(0): {"usd": 3.5, "turns": 3, "tokIn": 105},
+                dk(20): {"usd": 40.0, "turns": 7, "tokIn": 1000},
+                dk(45): {"usd": 999.0, "turns": 1}}                          # outside a 30d window
+        (jd.STATE / "spend.json").write_text(json.dumps({"days": days, "hours": hours}))
+        a = km._token_analytics(NOW, 3600)
+        self.assertEqual(a["sessions"]["ledger"], {"usd": 3.5, "turns": 3, "tok": 105},
+                         "this hour + the previous one, the rail's rolling math")
+        km._ANALYTICS_MEMO.clear()
+        a = km._token_analytics(NOW, 30 * 86400)
+        self.assertEqual(a["sessions"]["ledger"], {"usd": 43.5, "turns": 10, "tok": 1105},
+                         "a 30-day window reads the day ledger and leaves the 45-day-old bucket out")
+        # a ledger younger than the window names how far back it reaches
+        km._ANALYTICS_MEMO.clear()
+        (jd.STATE / "spend.json").write_text(json.dumps({"days": {dk(0): days[dk(0)], dk(20): days[dk(20)]}, "hours": hours}))
+        self.assertEqual(km._token_analytics(NOW, 30 * 86400)["sessions"]["ledger"]["since"], dk(20))
+        km._ANALYTICS_MEMO.clear()
+        self.assertNotIn("since", km._token_analytics(NOW, 3600)["sessions"]["ledger"],
+                         "hour buckets older than the window exist → no caveat")
+        # an empty ledger is no ledger
+        km._ANALYTICS_MEMO.clear()
+        (jd.STATE / "spend.json").write_text(json.dumps({"days": {}, "hours": {}}))
+        self.assertNotIn("ledger", km._token_analytics(NOW, 3600)["sessions"])
 
 
 class CostWeighting(unittest.TestCase):
@@ -309,6 +393,18 @@ class CostWeighting(unittest.TestCase):
             self.assertEqual(row["out"], rate, mid + " output rate")
         self.assertEqual(km._price_for("claude-fable-5", prices)["in"], 10e-6, "fable input is 2x opus")
         self.assertEqual(km._price_for("claude-opus-4-8", prices)["in"], 5e-6, "opus rate unchanged")
+
+    def test_fable_5_1_has_its_own_row_with_the_quarter_rate_cache_read(self):
+        # Before the row existed the family fallback handed Fable 5.1 Fable 5's $1/Mtok cache read — 4x
+        # its list rate (Claude Code 2.1.261's catalog: tier_10_50_cache_read_0_25), and the remote feed
+        # could never correct it because only exact (family, major, minor) signatures match.
+        prices = km._model_prices(NOW)
+        row = km._price_for("claude-fable-5-1", prices)
+        self.assertEqual((row["in"], row["out"], row["cache_w"], row["cache_r"]), (10e-6, 50e-6, 12.5e-6, 0.25e-6))
+        self.assertEqual(km._price_for("claude-fable-5", prices)["cache_r"], 1e-6, "Fable 5 keeps its own rate")
+        self.assertEqual(km._price_sig("claude-fable-5-1"), ("fable", "5", "1"), "signs distinctly, so the feed can reach it")
+        self.assertEqual(km._price_for("claude-fable-5-1-20261201", prices)["cache_r"], 0.25e-6,
+                         "…and a dated id of the same model lands on the fable-5-1 row by signature, not on the first fable row")
 
     def test_price_sig_signs_single_number_ids_and_ignores_date_suffixes(self):
         self.assertEqual(km._price_sig("claude-opus-4-8"), ("opus", "4", "8"), "X-Y pair still signs")

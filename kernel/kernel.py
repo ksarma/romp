@@ -28161,7 +28161,22 @@ def _derive_judging(sid, caps, goals, t0, out, seg_ends=None):
         pass
 
 
-_session_tok_cache = {}   # path -> (mtime, [(t, in, out, cache_w, cache_r, model), ...]): per-message token rows
+_session_tok_cache = {}   # path -> (fingerprint, [(t, in, out, cache_w, cache_r, model), ...]): one token row
+#                           per API RESPONSE (message.id) across the main transcript and its subagent
+#                           transcripts; the fingerprint is every contributing file's path + mtime
+
+
+def _subagent_transcripts(path):
+    """The subagent transcripts beside a session's main one: the CLI writes each spawned agent's
+    conversation to `<sid>/subagents/agent-<id>.jsonl` next to `<sid>.jsonl`. Sorted; [] when none."""
+    base, ext = os.path.splitext(str(path))
+    if ext != ".jsonl":
+        return []
+    d = os.path.join(base, "subagents")
+    try:
+        return sorted(os.path.join(d, n) for n in os.listdir(d) if n.endswith(".jsonl"))
+    except OSError:
+        return []
 
 
 def _msg_epoch(o):
@@ -28179,34 +28194,57 @@ def _session_tokens(path, t0):
     """Sum a session's token usage over assistant messages timestamped >= t0 — the SESSIONS half of the
     token split, windowed to match the PIPELINE half (_judge_usage) so the footer compares like-for-like.
     Each assistant record carries a `usage` block. The per-message rows are mtime-cached (now-independent);
-    the windowed sum is computed per call. Undated rows are counted (defensive). Zeros on error."""
+    the windowed sum is computed per call. Undated rows are counted (defensive). Zeros on error.
+
+    ONE row per API response, not per transcript record (2026-09-05): the CLI writes a response with
+    several content blocks as several assistant records that share one `message.id` and repeat its
+    usage block, so summing records counted each response 2.3-3.0x (measured over a day; the analytics
+    read 1.55x the ledger). Records sharing an id fold to one row — the one with the largest output
+    count, the stream's final tally if they differ at all; a record with no id counts on its own.
+    The session's SUBAGENT transcripts (`<sid>/subagents/*.jsonl`, see _subagent_transcripts) are read
+    beside the main one: their tokens are the session's spend too, and the rail's ledger already counts
+    them (modelUsage), so the two surfaces cover the same work. The cache fingerprint is every file's
+    path + mtime, so a subagent that lands or grows refreshes the rows even while the main file rests."""
     z = {"in": 0, "out": 0, "cache_w": 0, "cache_r": 0}
+    files = [str(path)] + _subagent_transcripts(path)
     try:
-        mt = os.path.getmtime(path)
+        fp = tuple((p, os.path.getmtime(p)) for p in files)
     except OSError:
         return dict(z)
     hit = _session_tok_cache.get(path)
-    if not hit or hit[0] != mt:
-        rows = []
-        try:
-            with open(path, errors="replace") as f:
-                for line in f:
-                    try:
-                        o = json.loads(line)
-                    except Exception:
-                        continue
-                    if o.get("type") != "assistant":
-                        continue
-                    m = o.get("message") or {}
-                    u = m.get("usage") or {}
-                    rows.append((_msg_epoch(o),
-                                 int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
-                                 int(u.get("cache_creation_input_tokens") or 0),
-                                 int(u.get("cache_read_input_tokens") or 0),
-                                 m.get("model") or ""))   # for cost weighting (price is per-model)
-        except OSError:
-            return dict(z)
-        _session_tok_cache[path] = (mt, rows)
+    if not hit or hit[0] != fp:
+        rows, by_id = [], {}
+        for p in files:
+            try:
+                with open(p, errors="replace") as f:
+                    for line in f:
+                        try:
+                            o = json.loads(line)
+                        except Exception:
+                            continue
+                        if not isinstance(o, dict) or o.get("type") != "assistant":
+                            continue
+                        m = o.get("message") or {}
+                        u = m.get("usage") or {}
+                        row = (_msg_epoch(o),
+                               int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
+                               int(u.get("cache_creation_input_tokens") or 0),
+                               int(u.get("cache_read_input_tokens") or 0),
+                               m.get("model") or "")   # for cost weighting (price is per-model)
+                        mid = m.get("id")
+                        if mid:
+                            j = by_id.get(mid)
+                            if j is not None:            # the same response again (another content block)
+                                if row[2] > rows[j][2]:
+                                    rows[j] = (rows[j][0],) + row[1:]
+                                continue
+                            by_id[mid] = len(rows)
+                        rows.append(row)
+            except OSError:
+                if p == files[0]:
+                    return dict(z)
+                continue   # a subagent file gone between the listing and the read — the rest still count
+        _session_tok_cache[path] = (fp, rows)
         hit = _session_tok_cache[path]
     acc = dict(z)
     for (t, i, o, cw, cr, _m) in hit[1]:
@@ -28326,6 +28364,11 @@ DEFAULT_MODEL_PRICES = {   # $/token: input, output, cache write (5m), cache rea
                            # the LiteLLM refresh overwrites these with the live feed (which carries the
                            # exact ids), so they just need to be sane when offline / before the first fetch.
     "claude-fable-5":            {"in": 10e-6, "out": 50e-6, "cache_w": 12.5e-6, "cache_r": 1e-6},
+    "claude-fable-5-1":          {"in": 10e-6, "out": 50e-6, "cache_w": 12.5e-6, "cache_r": 0.25e-6},   # its
+    #   own row (2026-09-05): without one the family fallback priced Fable 5.1's cache reads at Fable 5's
+    #   $1/Mtok — 4x the list rate. Rates read from Claude Code 2.1.261's baked-in model catalog, where
+    #   claude-fable-5-1 carries the tier `tier_10_50_cache_read_0_25` (10 / 50 / 12.5 / 0.25 $/Mtok;
+    #   1h cache writes are 20 and are folded into cache_w here at the 5m rate, a known simplification)
     "claude-opus-4-8":           {"in": 5e-6, "out": 25e-6, "cache_w": 6.25e-6, "cache_r": 0.5e-6},
     "claude-sonnet-5":           {"in": 3e-6, "out": 15e-6, "cache_w": 3.75e-6, "cache_r": 0.3e-6},
     "claude-sonnet-4-6":         {"in": 3e-6, "out": 15e-6, "cache_w": 3.75e-6, "cache_r": 0.3e-6},
@@ -28401,11 +28444,17 @@ def _model_prices(now=None):
 
 
 def _price_for(model, prices):
-    """The price row for a model: exact id, else any priced model of the same family
-    (fable/opus/sonnet/haiku) so a differently-dated id still gets a sane rate, else None
-    (uncounted — defensive)."""
+    """The price row for a model: exact id, else the priced model with the same (family, major, minor)
+    signature (a dated `claude-fable-5-1-2026…` lands on the fable-5-1 row, not on whichever fable row
+    the table lists first — the two differ 4x on cache reads), else any priced model of the same family
+    (fable/opus/sonnet/haiku) so an unknown id still gets a sane rate, else None (uncounted — defensive)."""
     if model in prices:
         return prices[model]
+    sig = _price_sig(model)
+    if sig:
+        for k, v in prices.items():
+            if _price_sig(k) == sig:
+                return v
     m = (model or "").lower()
     for fam in ("fable", "opus", "sonnet", "haiku"):
         if fam in m:
@@ -28436,13 +28485,55 @@ def _session_cost(path, t0, prices):
 _ANALYTICS_MEMO = {}   # window -> {"t": epoch, "jkey": judge-usage cache size, "resp": the payload}
 
 
+def _spend_ledger_window(now, window):
+    """The sessions' spend over the trailing `window` seconds as the RAIL's ledger recorded it — the
+    CLI's own per-turn total_cost_usd, folded per result into spend.json (sdk_backend _record_spend) —
+    for the analytics modal to show in place of its token-price estimate wherever the ledger reaches
+    (2026-09-05: the estimate read 1.55x the ledger over a day). {usd, turns, tok, since?}, or None
+    when the ledger holds no bucket at all. Hour buckets for a window the 8-day hour ledger covers
+    (exact to the hour — the rail's own _rolling math), day buckets beyond (exact to the local date).
+    `since` names the oldest bucket when the ledger starts INSIDE the window, so a young ledger says how
+    far back it reaches rather than reading as a quietly short window (the T235 discipline)."""
+    try:
+        d = json.loads((jd.STATE / "spend.json").read_text())
+    except Exception:
+        return None
+    days = d.get("days") if isinstance(d.get("days"), dict) else {}
+    hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
+    if window <= (_SERIES_HOURS - 1) * 3600:
+        n = -(-int(window) // 3600)
+        keys = [time.strftime("%Y-%m-%dT%H", time.localtime(now - i * 3600)) for i in range(n + 1)]
+        buckets = hours
+    else:
+        n = -(-int(window) // 86400)
+        today = datetime.fromtimestamp(now).date()
+        keys = [(today - timedelta(days=i)).isoformat() for i in range(n + 1)]
+        buckets = days
+    if not buckets:
+        return None
+    out = {"usd": 0.0, "turns": 0, "tok": 0}
+    for k in keys:
+        e = buckets.get(k)
+        if not isinstance(e, dict):
+            continue
+        out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
+        out["turns"] += int(e.get("turns") or 0)
+        out["tok"] += sum(int(e.get(kk) or 0) for kk in ("tokIn", "tokOut", "tokCacheR", "tokCacheW"))
+    oldest = min(k for k in buckets if isinstance(k, str))   # one ledger's keys sort chronologically
+    if oldest > min(keys):
+        out["since"] = oldest
+    return out
+
+
 def _token_analytics(now, window):
     """Token usage over the trailing `window` seconds for the analytics modal (the /analytics endpoint):
-    the coding SESSIONS total (summed transcript usage of the discovered fleet) vs the judge PIPELINE
-    broken out per judge AND per tier (_judge_usage). One ARBITRARY window — the modal's period picker.
-    Each side also carries $ cost so the modal can toggle tokens↔cost without a refetch: judges = exact
-    logged cost, sessions = tokens × _model_prices. Cheap: _session_tokens caches per-path rows and
-    _judge_usage reads the shared incremental row cache, so this re-sums memory."""
+    the coding SESSIONS total (summed transcript usage of the discovered sessions, subagents included)
+    vs the judge PIPELINE broken out per judge AND per tier (_judge_usage). One ARBITRARY window — the
+    modal's period picker. Each side also carries $ cost so the modal can toggle tokens↔cost without
+    a refetch: judges = exact logged cost, sessions = tokens × _model_prices as an ESTIMATE, plus
+    `sessions.ledger` — the CLI's own per-turn cost from the rail's ledger (_spend_ledger_window) —
+    wherever spend.json reaches, which the modal shows first. Cheap: _session_tokens caches per-path
+    rows and _judge_usage reads the shared incremental row cache, so this re-sums memory."""
     # a tiny TTL memo: the modal refetches on every period click and every reopen, and the recompute is
     # honest-but-pointless within seconds of itself (the user 2026-08-13's fast-and-visible rule); a new
     # judge row (cache size moved) invalidates early so the numbers never sit stale behind live judging
@@ -28460,6 +28551,9 @@ def _token_analytics(now, window):
         d = _session_tokens(str(path), t0)
         s["in"] += d["in"]; s["out"] += d["out"]
         s["cost"] += _session_cost(str(path), t0, prices)
+    led = _spend_ledger_window(now, window)
+    if led:
+        s["ledger"] = led
     resp = {"window": window, "now": now, "sessions": s, "judges": _judge_usage(t0)}
     _ANALYTICS_MEMO[window] = {"t": now, "jkey": _JUDGE_USAGE_CACHE["size"], "resp": resp}
     return resp
