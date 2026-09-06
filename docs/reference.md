@@ -807,6 +807,13 @@ romp-manager -f | grep romp-perf`; under launchd (macOS), `tail -f
 ~/.local/state/romp/manager.log | grep romp-perf`. Setting `ROMP_PERF=1` in the
 kernel's environment still turns it on at start.
 
+These counters describe the kernel process only. `tools/ui-bench.mjs` measures
+the browser's side: it replays a recorded or synthetic frame stream into a
+headless Chromium and reports per-frame main-thread time, long animation
+frames, JavaScript heap, and DOM size, and with `--cpu-profile` the functions
+inside the bundles that took the time. See "Measuring dashboard pane
+performance" in `CONTRIBUTING.md`.
+
 ## Browser-side performance telemetry
 
 The counters above say what the kernel spent. What the browser spent on the
