@@ -48,6 +48,7 @@ floors the selector file before every test; this module does the same at import 
 undo conftest's floor for every module collected after it); the classes below set what they need in
 setUp and restore the world after.
 """
+import importlib.util
 import json
 import os
 import shutil
@@ -1456,7 +1457,8 @@ class Floor(unittest.TestCase):
     that does not exist (2026-09-06; popped before, which meant the default under HOME). The import-time
     half holds only if no module undoes it during collection: this module's own import leaves the floor
     in place (it popped the variable until 2026-09-06), and conftest refuses a collection that ends
-    without the floor, naming the fix."""
+    without the floor, naming the fix: a UsageError serially, and under xdist a failure per item, or the
+    controller's Interrupted when nothing was selected."""
 
     REAL_DEFAULT = os.path.realpath(os.path.join(os.path.expanduser("~"), ".config", "romp", "credential-selector"))
 
@@ -1465,33 +1467,103 @@ class Floor(unittest.TestCase):
         self.assertFalse(os.path.exists(_SELECTOR_AT_IMPORT), "the floor this module left points at a file that exists")
         self.assertNotEqual(os.path.realpath(_SELECTOR_AT_IMPORT), self.REAL_DEFAULT)
 
+    REFUSAL = "ROMP_CREDENTIAL_SELECTOR_FILE is absent after collection"
+    THE_FIX = "path that does not exist"
+
+    def scratch_suite(self):
+        """A copy of conftest and its pattern module beside three modules: one whose top level pops the
+        variable (collection runs it), one that floors it to a path that does not exist as this module does,
+        and a plain one with two tests, so a run has items to spread over xdist workers."""
+        d = tempfile.mkdtemp()
+        for name in ("conftest.py", "credential_patterns.py"):
+            shutil.copy(os.path.join(HERE, name), os.path.join(d, name))
+        with open(os.path.join(d, "test_popper.py"), "w") as fh:
+            fh.write("import os\nos.environ.pop('ROMP_CREDENTIAL_SELECTOR_FILE', None)\n\n\n"
+                     "def test_nothing():\n    pass\n")
+        with open(os.path.join(d, "test_floorer.py"), "w") as fh:
+            fh.write("import os\nos.environ['ROMP_CREDENTIAL_SELECTOR_FILE'] = os.path.join(%r, 'no-such-selector')\n\n\n"
+                     "def test_nothing():\n    pass\n" % d)
+        with open(os.path.join(d, "test_plain.py"), "w") as fh:
+            fh.write("def test_a():\n    pass\n\n\ndef test_b():\n    pass\n")
+        return d
+
+    @staticmethod
+    def run_pytest(d, *args):
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", d] + list(args),
+                           cwd=d, capture_output=True, text=True, timeout=180)
+        return r.returncode, r.stdout + r.stderr
+
     def test_a_module_that_pops_the_selector_variable_at_import_fails_collection_loudly(self):
         # conftest's pytest_collection_finish, in a subprocess against a copy of conftest: a module whose top
-        # level pops the variable (collection runs it) is refused with the fix named; one that floors it
-        # to a path that does not exist, as this module does, collects.
-        d = tempfile.mkdtemp()
+        # level pops the variable (collection runs it) is refused with the fix named — under --collect-only,
+        # in a serial run, and in a serial run whose -k deselects everything (nothing runs, and the refusal
+        # is still the one line said); one that floors it to a path that does not exist, as this module
+        # does, collects and runs.
+        d = self.scratch_suite()
         try:
-            for name in ("conftest.py", "credential_patterns.py"):
-                shutil.copy(os.path.join(HERE, name), os.path.join(d, name))
-            with open(os.path.join(d, "test_popper.py"), "w") as fh:
-                fh.write("import os\nos.environ.pop('ROMP_CREDENTIAL_SELECTOR_FILE', None)\n\n\n"
-                         "def test_nothing():\n    pass\n")
-            with open(os.path.join(d, "test_floorer.py"), "w") as fh:
-                fh.write("import os\nos.environ['ROMP_CREDENTIAL_SELECTOR_FILE'] = os.path.join(%r, 'no-such-selector')\n\n\n"
-                         "def test_nothing():\n    pass\n" % d)
-
-            def collect(module):
-                r = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
-                                    "--rootdir", d, module], cwd=d, capture_output=True, text=True, timeout=180)
-                return r.returncode, r.stdout + r.stderr
-
-            rc, out = collect("test_popper.py")
+            rc, out = self.run_pytest(d, "--collect-only", "test_popper.py")
             self.assertNotEqual(rc, 0, out[-800:])
-            self.assertIn("ROMP_CREDENTIAL_SELECTOR_FILE is absent after collection", out, out[-800:])
-            self.assertIn("path that does not exist", out, "the refusal names the fix")
-            rc, out = collect("test_floorer.py")
+            self.assertIn(self.REFUSAL, out, out[-800:])
+            self.assertIn(self.THE_FIX, out, "the refusal names the fix")
+            rc, out = self.run_pytest(d, "--collect-only", "test_floorer.py")
             self.assertEqual(rc, 0, out[-800:])
             self.assertIn("1 test collected", out, out[-800:])
+            for args in (("test_popper.py", "test_plain.py"), ("test_popper.py", "test_plain.py", "-k", "zzz_nothing")):
+                rc, out = self.run_pytest(d, *args)
+                self.assertEqual(rc, 4, (args, out[-800:]))                       # pytest's usage-error exit
+                self.assertEqual(out.count(self.REFUSAL), 1, (args, out[-800:]))
+                self.assertIn(self.THE_FIX, out, args)
+                self.assertNotIn("passed", out, (args, "nothing ran"))
+            rc, out = self.run_pytest(d, "test_floorer.py", "test_plain.py")
+            self.assertEqual(rc, 0, out[-800:])
+            self.assertIn("3 passed", out, out[-800:])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_under_xdist_every_item_fails_with_the_refusal_and_the_controller_reports_it(self):
+        # the same popper under `pytest -n 2`: the controller does not collect, so the hook runs in the
+        # workers, where a UsageError died with the worker and the controller printed forty lines of
+        # INTERNALERROR naming neither the variable nor the fix. Now the worker holds the refusal and every
+        # item fails at setup with it, so the controller's report carries the message once per item and no
+        # internal error; the floorer runs clean under the same runner.
+        if importlib.util.find_spec("xdist") is None:
+            self.skipTest("pytest-xdist is not installed")
+        d = self.scratch_suite()
+        try:
+            rc, out = self.run_pytest(d, "-n", "2", "test_popper.py", "test_plain.py")
+            self.assertEqual(rc, 1, out[-1200:])
+            self.assertNotIn("INTERNALERROR", out, out[-1200:])
+            self.assertGreaterEqual(out.count(self.REFUSAL), 3, ("one per item", out[-1200:]))
+            self.assertIn(self.THE_FIX, out)
+            self.assertNotIn("passed", out, "nothing ran")
+            rc, out = self.run_pytest(d, "-n", "2", "test_floorer.py", "test_plain.py")
+            self.assertEqual(rc, 0, out[-800:])
+            self.assertIn("3 passed", out, out[-800:])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_under_xdist_with_nothing_selected_the_controller_stops_with_the_refusal(self):
+        # the popper under `pytest -n 2 -k <nothing>`: no item is selected, so no setup carries the held
+        # refusal, and the run ended `no tests ran` (exit status 5) with the refusal said nowhere. Now a worker
+        # whose session.items is empty sets session.shouldfail with it, which xdist carries to the controller
+        # at the worker's finish, and the controller ends the run as Interrupted with the message, once,
+        # exit status 2; the floorer under the same -k is a plain empty run
+        if importlib.util.find_spec("xdist") is None:
+            self.skipTest("pytest-xdist is not installed")
+        d = self.scratch_suite()
+        try:
+            rc, out = self.run_pytest(d, "-n", "2", "test_popper.py", "test_plain.py", "-k", "zzz_nothing")
+            self.assertEqual(rc, 2, out[-1200:])                                  # pytest's interrupted exit
+            self.assertNotIn("INTERNALERROR", out, out[-1200:])
+            self.assertEqual(out.count(self.REFUSAL), 1, out[-1200:])
+            self.assertIn("Interrupted: " + self.REFUSAL, out, out[-1200:])
+            self.assertIn(self.THE_FIX, out)
+            self.assertIn("no tests ran", out, "nothing ran")
+            self.assertNotIn("passed", out)
+            rc, out = self.run_pytest(d, "-n", "2", "test_floorer.py", "test_plain.py", "-k", "zzz_nothing")
+            self.assertEqual(rc, 5, out[-800:])                                   # no tests collected, no refusal
+            self.assertNotIn(self.REFUSAL, out, out[-800:])
+            self.assertNotIn("Interrupted", out, out[-800:])
         finally:
             shutil.rmtree(d, ignore_errors=True)
 

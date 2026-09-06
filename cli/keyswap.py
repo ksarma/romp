@@ -237,7 +237,7 @@ def _compare(kfp, path, out, refreshed=None):
     out("            kernel, the file has no %s line and the kernel still holds its startup" % ks.KEY_VAR)
     out("            key, or the kernel reads another service.env:")
     pad = " " * 12
-    for line in _other_file(path, len(pad)) + _restart_block():
+    for line in _other_file(path, len(pad), _path_alias()) + _restart_block():
         out(pad + line)
     return 1
 
@@ -348,7 +348,18 @@ def _explain(status):
     }.get(status, status)
 
 
-def _other_file(path, indent=0):
+def _path_alias():
+    """True when this shell's service.env path comes from ROMP_SERVICE_ENV, the alias kernel/keysource.py
+    accepts after ROMP_SERVICE_ENV_FILE (service_env_path). The other-file hint then says so: its
+    "unset the variable in this shell" otherwise names a variable such a shell never set, and its
+    "install from this shell" remedy holds only because bin/romp-service resolves the alias the same way
+    and writes the primary name into the unit or the plist (it read the primary alone, so the install
+    wrote no override line and the kernel kept the default; review find, 2026-09-06)."""
+    primary = (os.environ.get("ROMP_SERVICE_ENV_FILE") or "").strip()
+    return not primary and bool((os.environ.get("ROMP_SERVICE_ENV") or "").strip())
+
+
+def _other_file(path, indent=0, alias=False):
     """The one explanation the three MISMATCH hints share for a kernel that reads ANOTHER service.env
     (the file-mode fingerprint MISMATCH, the command-mode MISMATCH's other-file cause, and the file-mode
     MISMATCH under a shell whose file carries the line). The kernel resolves its path from
@@ -359,35 +370,45 @@ def _other_file(path, indent=0):
     on Linux or the plist's EnvironmentVariables on macOS (bin/romp-service writes the variable there
     when the installing shell's path is not the default: _service_env_override), the profile a
     shell-wrapped ExecStart sources, or the shell that ran `romp up`. The lines name the variable, this
-    shell's path and those places, then the remedy for each direction: if found, run this command with
-    the same value, or change it there and restart the manager (`romp-service install` from a shell
-    with the wanted path rewrites the unit's or the plist's line; a `romp up` shell starts again with
-    the path); if not found, the kernel reads the default path, so unset the variable in this shell or
-    install from this shell. The restart itself, the reload a unit, drop-in or plist line takes first
-    and the install's cost are _restart_block's, which every hint renders once after its causes. Never
+    shell's path and those places, under either name the kernel's resolver reads (ROMP_SERVICE_ENV_FILE
+    or its alias ROMP_SERVICE_ENV: a drop-in, a profile or the `romp up` shell can carry either), then
+    the remedy for each direction: if found, run this command with the same value, or change it there
+    and restart the manager (`romp-service install` from a shell with the wanted path rewrites the
+    unit's or the plist's line; a `romp up` shell starts again with the path); if not found, the kernel
+    reads the default path, so unset the variable in this shell or install from this shell. The restart
+    itself, the reload a unit, drop-in or plist line takes first and the install's cost are
+    _restart_block's, which every hint renders once after its causes. Never
     a value. Unindented; the caller's lead-in ends with "another service.env:", and `indent` is the
     width of the pad the caller prints before each line. The path is the one part not written here,
     and it can be any length: when it would carry its sentence past WIDTH columns, pad included, the
     sentence stops at "reads" and the path follows whole on a line of its own, four columns deeper, so
     a path is never broken and every prose line stays within WIDTH (a long TMPDIR made the line 124
-    columns in the tests, 2026-09-06). The words are the same either way."""
+    columns in the tests, 2026-09-06). The words are the same either way. `alias` (_path_alias) adds
+    two lines after the path under a shell whose path comes from the alias ROMP_SERVICE_ENV: which
+    variable this shell set, and that the installer reads it too and writes the primary name."""
     reads = "in their own environment; this shell reads"
     inline = "%s %s." % (reads, path)
     if indent + len(inline) <= WIDTH:
         where = (inline,)
     else:
         where = (reads, "    %s." % path)
+    if alias:
+        where += (
+            "This shell set it under the alias ROMP_SERVICE_ENV, which the installer reads too; the",
+            "line it writes into the unit or the plist is ROMP_SERVICE_ENV_FILE.",
+        )
     return (
         "the kernel and this shell each resolve the service.env path from ROMP_SERVICE_ENV_FILE",
     ) + where + (
-        "Look for it where the kernel's environment comes from: the unit's Environment= and its",
-        "drop-ins (Linux) or the plist's EnvironmentVariables (macOS), where `romp-service",
-        "install` writes it when the installing shell's path is not the default (and rewrites",
-        "it from a shell with the wanted path); the profile a shell-wrapped ExecStart sources;",
-        "or the shell that ran `romp up` (start it again with the path). If found, run this",
-        "command with the same value, or change it there and restart the manager (below). If",
-        "not found, the kernel reads the default path: unset the variable in this shell, or",
-        "point the kernel at this file with `romp-service install` from this shell.",
+        "Look for it where the kernel's environment comes from, under ROMP_SERVICE_ENV_FILE or",
+        "its alias ROMP_SERVICE_ENV: the unit's Environment= and its drop-ins (Linux) or the",
+        "plist's EnvironmentVariables (macOS), where `romp-service install` writes it when the",
+        "installing shell's path is not the default (and rewrites it from a shell with the",
+        "wanted path); the profile a shell-wrapped ExecStart sources; or the shell that ran",
+        "`romp up` (start it again with the path). If found, run this command with the same",
+        "value, or change it there and restart the manager (below). If not found, the kernel",
+        "reads the default path: unset the variable in this shell, or point the kernel at this",
+        "file with `romp-service install` from this shell.",
     )
 
 
@@ -473,7 +494,7 @@ def _mode_mismatch(body, out, path=None):
         out("              these, so remove the line there first, reload the definition, then restart (below)")
         out("            - another service.env:")
         pad = " " * 14
-        for line in _other_file(path, len(pad)):
+        for line in _other_file(path, len(pad), _path_alias()):
             out(pad + line)
         out("            - service.env, edited since the kernel read it at its start: `romp refresh`")
         out("            - the shell that ran `romp up`, which exported it: stop that `romp up`; start it again")
@@ -491,7 +512,7 @@ def _mode_mismatch(body, out, path=None):
         out("            the kernel injects no set.")
         out("            If the kernel is still in file mode after `romp refresh`, it reads another service.env:")
         pad = " " * 12
-        for line in _other_file(path, len(pad)) + _restart_block():
+        for line in _other_file(path, len(pad), _path_alias()) + _restart_block():
             out(pad + line)
     else:
         out("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in this")
@@ -589,7 +610,11 @@ def _names_phrase(snap):
 def _kernel_lines(body, st, out):
     """The command-mode report's kernel half from a /keycycle read: what the kernel's own run yields,
     how many live sessions launched on which fingerprint, and MISMATCH when the kernel's run and this
-    shell's disagree. Returns the exit code the comparison deserves."""
+    shell's disagree. Returns the exit code the comparison deserves. The fingerprint MISMATCH's hint
+    names `romp-service install` as the reload a plist line takes, so it states the install's cost in
+    the same breath, as every other hint that names the install does (_restart_block, _mode_mismatch):
+    the rewrite drops a hand-added unit or plist line and the next kernel pins file mode, a drop-in
+    survives (the one hint round 8 left without it, 2026-09-06)."""
     if (body.get("keySource") or "file") != "command":
         return _mode_mismatch(body, out)
     kfp = body.get("keyFp") or ""
@@ -643,9 +668,11 @@ def _kernel_lines(body, st, out):
         out("            kernel at its next start, `romp refresh`; a line changed or removed there, or one in the")
         out("            unit, at the next manager restart, whose environment holds the copy loaded at its start,")
         out("            and a unit or plist line reaches that restart only once the definition is reloaded:")
-        out("            daemon-reload on Linux, `romp-service install` on macOS), the two resolve different")
-        out("            selector files, or CLAUDE_CONFIG_DIR differs (the apiKeyHelper the kernel fingerprints")
-        out("            is the one its own settings name).")
+        out("            daemon-reload on Linux, `romp-service install` on macOS, which rewrites the plist as the")
+        out("            Linux install rewrites the unit, so a line added to either by hand is gone and the next")
+        out("            kernel pins file mode; drop-ins survive, so put your own lines in service.env or a")
+        out("            drop-in), the two resolve different selector files, or CLAUDE_CONFIG_DIR differs (the")
+        out("            apiKeyHelper the kernel fingerprints is the one its own settings name).")
     return 1
 
 

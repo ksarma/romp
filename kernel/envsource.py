@@ -3,8 +3,8 @@ written to the kernel's own environment or to any file.
 
 The file source (keysource.py) reads `ANTHROPIC_API_KEY=` out of the manager's env file. Some
 installations forbid a credential in any file. For them this module is the source instead:
-`ROMP_CREDENTIAL_COMMAND` (a non-secret shell command, set in the same env file or unit
-environment) is run by the kernel, prints `NAME=VALUE` lines, and the resulting SET is merged into
+`ROMP_CREDENTIAL_COMMAND` (a non-secret shell command, set in the same env file or a systemd
+drop-in) is run by the kernel, prints `NAME=VALUE` lines, and the resulting SET is merged into
 the launch environment of every session CLI, every judge call and the catalog fetch. Setting the
 variable is what selects this mode; unset, nothing here runs and every caller sees an empty set.
 

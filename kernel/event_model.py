@@ -1381,10 +1381,12 @@ class FileAdapter:
         and a late-written burst veto it). A branch qualifies when its fork-side HEAD is an
         assistant record (a user gesture's head is always the user's own record) and it
         carries reply text anywhere in the sub-tree; the winner is the branch with the
-        latest-written reply text, tiebroken by head seq. The text witness is landed_text_uuids
-        MINUS isApiErrorMessage records (error-as-text failure echoes, which atoms() likewise
-        refuses to treat as replies) — so junk carries no weight in the key, and no textless
-        tail can move the pick whatever its file position. The unit is deliberately the WHOLE
+        latest-written reply text, tiebroken by head seq. The text witness is the eclipse
+        set's text-bearing assistant records (landed_text_uuids' own test, applied to the
+        eclipse set alone — the ranking reads it for sub-tree members only, and the sub-trees
+        lie inside that set) MINUS isApiErrorMessage records (error-as-text failure echoes,
+        which atoms() likewise refuses to treat as replies) — so junk carries no weight in the
+        key, and no textless tail can move the pick whatever its file position. The unit is deliberately the WHOLE
         branch, never a leaf-chain within it: leaf-chains of one branch share records, and
         every per-chain read of shared state proved breakable (a full-chain gate laundered a
         junk tail's steal; a unique-suffix gate let a branch's own twin sub-branches strip
@@ -1417,19 +1419,29 @@ class FileAdapter:
         ecl = {u for u, v in verdict.items() if v == "eclipsed"}
         if not ecl:
             return
-        children = {}
-        for u in self.by_uuid:
-            p = self.parent_of.get(u)
-            if p is not None:
-                children.setdefault(p, []).append(u)
+        # Everything below reads only uuids INSIDE the eclipse set, so build only that much (perf
+        # plan B1, 2026-09-06): the child map over ecl (the component walk skips any popped uuid
+        # outside ecl, and a sub-tree walk skips anything outside its component, so children
+        # outside ecl were never followed) and the text witness over ecl (the ranking tests it for
+        # sub-tree members only). A whole-graph child map and landed_text_uuids() over every
+        # record made this walk a third of chain_membership's cost on a large transcript with
+        # a handful of eclipsed records; the verdicts are identical. Nothing here is cached on
+        # the adapter: _run_graph_passes mutates parent_of after ingest, so a per-adapter child
+        # map would go stale under the repair passes.
+        children = {}                     # parent -> its children in ecl
         forks = {}                        # fork uuid -> its eclipsed branch heads
         for u in ecl:
             p = self.parent_of.get(u)
+            if p is None:
+                continue
+            children.setdefault(p, []).append(u)
             if p in active:
                 forks.setdefault(p, []).append(u)
-        landed = None                     # text-bearing assistant uuids (the reply witness) — computed
-        #                                   lazily: chain_verdicts runs on every build of a held
-        #                                   session, and most transcripts carry no eclipse at all
+        landed = set()                    # text-bearing assistant uuids in ecl (the reply witness)
+        for u in ecl:
+            r = self.by_uuid.get(u) or {}
+            if r.get("type") == "assistant" and _text_of(_content(r.get("message"))).strip():
+                landed.add(u)
         for F, heads in forks.items():
             comp, stack = set(), list(heads)
             while stack:                  # the branch component: child-closure of the eclipsed heads
@@ -1438,8 +1450,6 @@ class FileAdapter:
                     continue
                 comp.add(x)
                 stack.extend(children.get(x, ()))
-            if landed is None:
-                landed = self.landed_text_uuids()
             # SELECTION IS PER BRANCH — the sub-tree under each fork-side head — never per
             # leaf-chain. Leaf-chains of one branch SHARE records, and any per-chain read of
             # shared state proved breakable by construction: a full-chain gate let a junk tail
@@ -2378,8 +2388,10 @@ def chain_membership(leaf_path, candidate_files=None, states=None, leaf_override
 # (2026-09-01.) _read_jsonl_incremental already amortizes bytes -> records; what still re-ran in full
 # on every append was everything ABOVE the records. Measured on the live corpus: the emit layer is
 # 0.2-0.5s per parse at 20-130MB transcripts, while the graph semantics (active_path, chain_verdicts
-# incl. the eclipsed probe, kept_uuids) cost 2-6ms even at 28k records. So a fold RE-DERIVES all
-# graph semantics exactly, every time, and folds ONLY the emit: appended records run through the
+# incl. the eclipsed probe, kept_uuids) are cheaper: about 110 ms for chain_membership over a 24k-record
+# synthetic transcript with one eclipsed fork, records already cached (2026-09-06, after the eclipse
+# selection's child map and text witness were narrowed to the eclipse set; 186 ms before that). So a
+# fold RE-DERIVES all graph semantics exactly, every time, and folds ONLY the emit: appended records run through the
 # same _prepass/_emit_fold/_absorbed code with the carried emit state. Gates demote anything the
 # carry cannot provably absorb to a full parse — a fold never guesses; wrong means full, never
 # divergent:

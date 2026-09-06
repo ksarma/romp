@@ -159,6 +159,20 @@ def _no_credential_command():
     yield
 
 
+_SELECTOR_FLOOR_VIOLATION = None   # the refusal below, held for pytest_runtest_setup when this process is an xdist worker
+
+
+def _selector_floor_violation():
+    """The refusal's text when ROMP_CREDENTIAL_SELECTOR_FILE is absent or names a file that exists; None
+    while the floor holds."""
+    p = os.environ.get("ROMP_CREDENTIAL_SELECTOR_FILE") or ""
+    if p and not os.path.exists(p):
+        return None
+    return ("ROMP_CREDENTIAL_SELECTOR_FILE is %s after collection: a test module popped it, or pointed it at a "
+            "real file, at import. Floor it at module level to a path that does not exist, as tests/conftest.py "
+            "and tests/test_envsource.py do." % ("absent" if not p else "a path that exists (%s)" % p))
+
+
 def pytest_collection_finish(session):
     """The import-time half of the selector floor, checked where it can fail: collection runs every test
     module's top level after the floor above, and a module that pops ROMP_CREDENTIAL_SELECTOR_FILE there
@@ -166,13 +180,40 @@ def pytest_collection_finish(session):
     later module reading the selector at import would read the developer's own mode file, the read the
     floor exists to prevent, before any per-test re-assert runs. Refused here, naming the fix, rather
     than left to pass on what the box has selected (2026-09-06: tests/test_envsource.py popped it at
-    import, from before the floor existed). tests/test_envsource.py's Floor class pins this."""
-    p = os.environ.get("ROMP_CREDENTIAL_SELECTOR_FILE") or ""
-    if not p or os.path.exists(p):
-        raise pytest.UsageError(
-            "ROMP_CREDENTIAL_SELECTOR_FILE is %s after collection: a test module popped it, or pointed it at a "
-            "real file, at import. Floor it at module level to a path that does not exist, as tests/conftest.py "
-            "and tests/test_envsource.py do." % ("absent" if not p else "a path that exists (%s)" % p))
+    import, from before the floor existed).
+
+    Refused two ways, because a pytest-xdist worker cannot refuse here. The controller never collects
+    (xdist skips its collection), so this hook runs only in the workers, and a UsageError raised there
+    ends the worker before it reports anything: the controller then died on an internal assertion,
+    forty lines that never named the variable or the fix (2026-09-06, under `-n 8`). In a worker the
+    refusal is held instead, and every item fails at setup with it (pytest_runtest_setup below), which
+    the controller reports as it reports any failure. When nothing is selected (a `-k` that deselects
+    everything) no setup runs, so the worker asks for the stop itself: session.shouldfail, the field
+    `-x` sets, which xdist carries to the controller at the worker's finish and the controller reports
+    as `Interrupted: <the refusal>`, exit status 2 (2026-09-06: the held refusal went unreported and
+    the run ended `no tests ran`, exit status 5, saying nothing). session.items is final by this hook
+    (deselection runs in pytest_collection_modifyitems, before it) and the same on every worker, so an
+    empty list means no item can run anywhere; a worker the scheduler happens to give no item while
+    others run theirs says nothing, since their items carry it. Serially the UsageError stands: one line,
+    nothing runs, a `-k` that deselects everything included; `--collect-only` is serial too, xdist
+    leaves it alone. tests/test_envsource.py's Floor class pins all three."""
+    global _SELECTOR_FLOOR_VIOLATION
+    msg = _selector_floor_violation()
+    if msg is None:
+        return
+    if hasattr(session.config, "workerinput"):     # an xdist worker: the message would die with the process
+        _SELECTOR_FLOOR_VIOLATION = msg
+        if not session.items:                      # nothing will reach pytest_runtest_setup
+            session.shouldfail = msg
+        return
+    raise pytest.UsageError(msg)
+
+
+def pytest_runtest_setup(item):
+    """The worker half of the refusal above when items were selected: every item fails with the message,
+    none runs."""
+    if _SELECTOR_FLOOR_VIOLATION:
+        pytest.fail(_SELECTOR_FLOOR_VIOLATION, pytrace=False)
 
 
 # No test may read the REAL service unit, launchd plist or Claude Code settings (2026-09-05):
