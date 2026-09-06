@@ -43,6 +43,10 @@ in full. A file on a branch that is not on origin keeps its link, drawn with a d
 and the caption says the branch is not on origin yet. That check reads the local tracking
 ref, so after a branch is deleted on GitHub the link looks normal until `git fetch --prune`
 has refreshed it.
+A pull request number in a message, a card, or a note (`#123`, `PR #123`, or
+`owner/repo#123`) links to that pull request on GitHub, in the repository the session's
+directory has as its `origin` remote; when that remote is not on GitHub, the number stays
+plain text.
 
 **Sending while the session is working.** The session takes your message at its next
 step, and the chat places it at the time you sent it, above the steps that were already

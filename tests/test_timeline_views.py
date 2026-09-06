@@ -262,10 +262,12 @@ class TimelineViews(unittest.TestCase):
         src = open(os.path.join(BIN, "romp-kernel")).read()
         self.assertIn('"views": _views_client(),', src, "the timeline payload carries the RENDERED shape")
         self.assertIn('"palette": pal.colors(_palette_name()),', src, "and the palette, for tag colors in every host")
-        self.assertIn('"tabs": tab_meta, "views": _views_client()', src, "tabOrder pushes carry it")
+        # every tabOrder frame is built by ONE helper (2026-09-06: the frame also carries selfHost)
+        self.assertIn('return {"type": "tabOrder", "order": tab_order, "tabs": tab_meta, "selfHost": _self_host(),\n'
+                      '            "views": _views_client()}', src, "tabOrder frames carry it")
         # the connect-time tabOrder IS the push's (the ready handler's own frame is gone, 2026-09-03)
         self.assertNotIn('"tabs": _tabs, "views": _views_client()', src)
-        self.assertIn('_send_client(c, ("taborder",), {"type": "tabOrder", "order": tab_order, "tabs": tab_meta, "views": _views_client()})',
+        self.assertIn('_send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta))',
                       src, "the guarded push carries the views blob to a fresh client too")
 
     def test_web_boot_exposes_the_set_views_hook(self):
