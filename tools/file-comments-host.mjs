@@ -33,9 +33,14 @@
 //     later track-edit) refuses `no-change` by id, so the caller reloads instead of deciding a
 //     different change under the same name; and accept never drops a comment bound to the change
 //     (`suggestionId`), it marks it resolved, so the ids in a sent message stay addressable;
-//   * a region comment's `target.hash` is this script's sha256 of the figure's BYTES (Slice 3), never
-//     the client's value and never a hash of the lossy text: for a standalone image or PDF the file's
-//     own, for a figure embedded in a markdown file the bytes of the `src` the embed names, resolved
+//   * a region comment's stored target is `{kind, region, page?, hash, src?}` (validateTarget, then
+//     stampTarget, in that key order): `page` on a PDF only, and `src` only on a figure embedded in a
+//     markdown file — the embed's destination as written, which keys the reply's `embeddedHashes`
+//     and which the anchor quote does not always carry (a reference-style embed's destination sits
+//     in a `[ref]: dest` definition elsewhere in the file); a target with no anchor has none. The
+//     `hash` is this script's sha256 of the figure's BYTES (Slice 3), never the client's value and
+//     never a hash of the lossy text: for a standalone image or PDF the file's own, for a figure
+//     embedded in a markdown file the bytes of the `src` the embed names, resolved
 //     against the file's directory and refused unless it is a regular file inside the project root,
 //     one the anchored passage embeds (`figure-mismatch`), of the kind the target claims, and no
 //     larger than the viewer shows (`too-large`); the region lies inside the unit square. Every

@@ -3,9 +3,10 @@
 // A region is a rectangle stored in FRACTIONS of the image's natural size (`target.region`, x y w h in
 // 0..1, four decimals stored, two shown), so it re-paints correctly at any viewer width by construction:
 // the overlay places each rectangle by CSS percentages, and nothing here depends on pixels once the
-// fractions exist. This module turns the browser's measurements (an element's client rect, the image's
-// natural size, two pointer points) into those fractions and back, computes the crop the card's
-// thumbnail draws, words the region for the composer and the sent message, and rules on staleness.
+// fractions exist. This module turns the browser's measurements (an element's client rect, its computed
+// `object-fit`, the image's natural size, two pointer points) into those fractions and back, computes the
+// crop the card's thumbnail draws, words the region for the composer and the sent message, and rules on
+// staleness.
 // No DOM: every function is a transform over plain numbers, so region-geometry.test.ts runs it under
 // node with no stand-in, and file-comments-regions.ts (the overlay) holds only the wiring.
 
@@ -28,27 +29,23 @@ export const CLICK_THRESHOLD_PX = 4;
 const round4 = (v: number): number => Math.round(v * 10 ** FRACTION_DECIMALS) / 10 ** FRACTION_DECIMALS;
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
-/** The `object-fit` keywords a browser computes for an <img>. `fill` is the CSS initial value: an image
- *  with no `object-fit` rule is stretched over its element. */
-export type ObjectFit = "fill" | "contain" | "cover" | "none" | "scale-down";
-/** What the caller omits: the media body's `.fileview-img` has `object-fit: contain`. See drawnBox. */
-export const DEFAULT_FIT: ObjectFit = "contain";
-
 /** The box the image's pixels are DRAWN in, relative to the element's client rect: a fraction of the
  *  natural size is a fraction of THIS box, not of the element, and the two differ whenever the element's
  *  aspect is not the picture's. Which box depends on the element's `object-fit`, so `fit` is its COMPUTED
- *  value (`getComputedStyle(img).objectFit`): `contain` letterboxes the picture inside the element;
+ *  value (`getComputedStyle(img).objectFit`), and it is REQUIRED: the caller measures, it never assumes a
+ *  stylesheet's rule. The two rules romp's sheets give a picture differ, and an assumed one placed the
+ *  overlay wrong: the media body's `.fileview-img` has `object-fit: contain`, while `.fileview-md img` sets
+ *  none, so a figure in rendered markdown with `width` and `height` that disagree with its aspect (raw HTML
+ *  the sanitizer keeps, or a correct pair squeezed by `max-width: 100%` in a narrow column) is drawn under
+ *  the initial `fill`, stretched over the whole element — and a letterbox computed for it put the overlay
+ *  over pixels that hold no picture. Per keyword: `contain` letterboxes the picture inside the element;
  *  `fill` stretches it over the whole element, so the box IS the rect; `cover` and `none` can overflow the
  *  element (the element clips what falls outside); `scale-down` is `none` for a picture that fits and
- *  `contain` otherwise. A word that is none of the five (a stand-in with no computed style) is treated as
- *  `fill`, the initial value. Omitted, `fit` is DEFAULT_FIT — the media body's rule — which is WRONG for a
- *  figure in rendered markdown: `.fileview-md img` sets no `object-fit`, so a figure with `width` and
- *  `height` that disagree with its aspect (raw HTML, or a correct pair squeezed by `max-width: 100%` in a
- *  narrow column) is drawn stretched, and a letterbox computed for it places the overlay over pixels that
- *  hold no picture. Callers pass the measured value. Centered placement (`object-position`'s initial
- *  `50% 50%`) is assumed: no romp stylesheet moves it. Equal to `rect` when the natural size is unknown
- *  (an SVG with no intrinsic size, a picture still loading) or either box is empty. */
-export function drawnBox(rect: Box, natural: Size | null | undefined, fit: string = DEFAULT_FIT): Box {
+ *  `contain` otherwise. A word that is none of the five (a stand-in with no computed style, or a value a
+ *  JavaScript caller left out) is `fill`, the CSS initial value. Centered placement (`object-position`'s
+ *  initial `50% 50%`) is assumed: no romp stylesheet moves it. Equal to `rect` when the natural size is
+ *  unknown (an SVG with no intrinsic size, a picture still loading) or either box is empty. */
+export function drawnBox(rect: Box, natural: Size | null | undefined, fit: string): Box {
   if (!natural || !(natural.width > 0) || !(natural.height > 0) || !(rect.width > 0) || !(rect.height > 0)) return { ...rect };
   const scale = drawnScale(rect, natural, fit);
   if (scale === null) return { ...rect };
@@ -57,7 +54,8 @@ export function drawnBox(rect: Box, natural: Size | null | undefined, fit: strin
 }
 
 /** The factor the natural size is drawn at under `fit`; null when the picture is stretched to the element
- *  (`fill`, or a word that is not an object-fit keyword), where no single factor applies. */
+ *  (`fill`, or a word that is not an object-fit keyword — `undefined` included), where no single factor
+ *  applies. */
 function drawnScale(rect: Box, natural: Size, fit: string): number | null {
   const contain = Math.min(rect.width / natural.width, rect.height / natural.height);
   switch (fit) {

@@ -4,11 +4,13 @@
 // (raw HTML the sanitizer keeps, or a correct pair squeezed by `max-width: 100%` in a narrow column)
 // stretches the picture over the whole element. A letterbox computed for THAT figure put the overlay over
 // the middle of the element and left the picture's edges undrawable — the fractions stored from a drag and
-// the rectangles painted from them were both wrong. drawnBox now takes the element's computed value.
+// the rectangles painted from them were both wrong. drawnBox now takes the element's computed value, and
+// REQUIRES it: an optional `fit` defaulting to `contain` would hand the same bug to the next caller that
+// omitted it, so the compiler refuses the omission and the runtime treats a missing word as `fill`.
 // Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { drawnBox, overlayOffsets, regionFromPoints, cropRect, DEFAULT_FIT, type Box } from "./region-geometry";
+import { drawnBox, overlayOffsets, regionFromPoints, cropRect, type Box } from "./region-geometry";
 
 // the 3:2 element of region-geometry.test.ts, and the square picture that does not share its aspect
 const RECT: Box = { left: 100, top: 200, width: 300, height: 200 };
@@ -37,12 +39,16 @@ test("fill: a figure with the right width and height, squeezed by max-width in a
   assert.deepEqual(drawnBox(el, fig, "contain"), { left: 0, top: 75, width: 500, height: 250 }, "what the letterbox would have claimed");
 });
 
-test("contain: the letterbox, and the default when the caller passes nothing (the media body's stylesheet)", () => {
+test("contain: the letterbox, only when the caller measured it — fit is required, and never assumed to be the media body's rule", () => {
   const letterbox = { left: 150, top: 200, width: 200, height: 200 };
   assert.deepEqual(drawnBox(RECT, SQUARE, "contain"), letterbox);
-  assert.equal(DEFAULT_FIT, "contain");
-  assert.deepEqual(drawnBox(RECT, SQUARE), letterbox, "omitted: .fileview-img's object-fit: contain is assumed");
   assert.deepEqual(drawnBox(RECT, { width: 600, height: 400 }, "contain"), RECT, "same aspect: the letterbox is the element");
+  // `npm run typecheck` verifies this directive: were `fit` optional again, the line below would compile and the
+  // unused @ts-expect-error would fail the build — the compiler is what refuses a caller that assumes a stylesheet
+  // @ts-expect-error drawnBox's fit is required: a caller measures the element's computed object-fit
+  const omitted = drawnBox(RECT, SQUARE);
+  assert.deepEqual(omitted, RECT, "a JavaScript caller that reaches the function with no fit gets fill, the CSS initial value — not a letterbox");
+  assert.deepEqual(drawnBox(RECT, SQUARE, undefined as unknown as string), RECT, "the same word, spelled out");
 });
 
 test("cover and none can overflow the element; scale-down is none for a picture that fits and contain otherwise", () => {
