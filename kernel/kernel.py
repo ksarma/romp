@@ -2863,27 +2863,45 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None)
     # whose name is already claimed is refused with a reason naming the collision — a renamed tag
     # stands as the store has it, a new one is kept out. Two unchanged tags sharing a name (a
     # store already holding twins) are left as they are: nothing in this write changed them.
-    claimed = {}
+    # Run to a FIXPOINT (round 5 of the 2026-09-05 review): `settled` holds the names this write
+    # does not change — a tag's stored name it keeps, and, after a refusal, the stored name a
+    # renamed tag returns to; `takers` are the tags whose resulting name is new to them (renamed
+    # or created), in array order. A taker whose name is settled, or granted to an earlier taker,
+    # is refused; a refused RENAME settles its stored name and the pass runs again from the top,
+    # so a taker that had been granted that very name is refused too. Until round 5 the pass ran
+    # once and a refused rename never claimed the name it kept: B (api → web, refused against A =
+    # web) stood as "api" while a new C named "api" in the same write landed beside it — twins.
+    # Each pass either refuses one taker or ends, so the loop is bounded by the taker count.
+    by_id = {t["id"]: t for t in kept}
+    settled = {}
     for t in kept:
         pt = prev.get(t["id"])
         if pt is not None and pt.get("name") == t.get("name"):
-            claimed.setdefault(t["name"], t["id"])
-    resolved = []
-    for t in kept:
-        pt = prev.get(t["id"])
-        if pt is None or pt.get("name") != t.get("name"):
-            other = claimed.get(t["name"])
-            if other is not None and other != t["id"]:
-                refused.append(('"%s" (name collision)' % (pt.get("name") if pt else t.get("name")), t["id"]))
-                rows.append({"tid": t["id"], "name": pt.get("name") if pt else t.get("name"),
-                             "reason": 'a tag named "%s" already exists, so it was not %s'
-                                       % (t["name"], "renamed to it" if pt else "created")})
-                if pt is not None:
-                    resolved.append(json.loads(json.dumps(pt)))    # the store's copy, under its own name
-                continue
-            claimed[t["name"]] = t["id"]
-        resolved.append(t)
-    v["tags"] = resolved[:_VIEWS_MAX_TAGS]
+            settled.setdefault(t["name"], t["id"])
+    takers = [t["id"] for t in kept if prev.get(t["id"]) is None or prev[t["id"]].get("name") != t.get("name")]
+    while True:
+        granted, struck = {}, None
+        for tid in takers:
+            nm = by_id[tid]["name"]
+            holder = settled.get(nm, granted.get(nm))
+            if holder is not None and holder != tid:
+                struck = tid
+                break
+            granted[nm] = tid
+        if struck is None:
+            break
+        takers.remove(struck)
+        t, pt = by_id[struck], prev.get(struck)
+        refused.append(('"%s" (name collision)' % (pt.get("name") if pt else t.get("name")), struck))
+        rows.append({"tid": struck, "name": pt.get("name") if pt else t.get("name"),
+                     "reason": 'a tag named "%s" already exists, so it was not %s'
+                               % (t["name"], "renamed to it" if pt else "created")})
+        if pt is not None:
+            by_id[struck] = json.loads(json.dumps(pt))     # the store's copy, under its own name…
+            settled.setdefault(pt["name"], struck)          # …which no taker in this write can have
+        else:
+            del by_id[struck]                               # a new tag under a taken name is kept out
+    v["tags"] = [by_id[t["id"]] for t in kept if t["id"] in by_id][:_VIEWS_MAX_TAGS]
     # The refusal's two audiences: a kept tag the poster EDITED is a lost edit — stderr plus a red
     # dashboard notice (the user 2026-08-31's silent loss, never again silent). A kept tag the
     # poster did not edit (`edited` names the ones it did) is a stale copy of an untouched tag,

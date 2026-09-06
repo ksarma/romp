@@ -1175,6 +1175,41 @@ class WholeBlobNameCollisions(_Wire):
         self.assertEqual(store_tag("api")["id"], "gA")
         self.assertEqual(store_tag("web")["id"], c["tid"])
 
+    def test_a_refused_rename_settles_its_stored_name_so_a_new_tag_under_it_is_refused_too(self):
+        """Round 5 of the 2026-09-05 review: B (api → web, refused against A = web) stood as "api" but
+        never claimed it, so a new C named "api" in the same write landed beside it — twins under the
+        kept name. The pass now runs to a fixpoint: a refused rename settles its stored name and the
+        takers are re-checked, in either array order, with or without `edited`."""
+        for order, named in (("ABC", True), ("ACB", True), ("ABC", False), ("ACB", False)):
+            with self.subTest(order=order, edited=named):
+                try:
+                    km._views_path().unlink()                              # a fresh store per case
+                except OSError:
+                    pass
+                self.notices.clear()
+                self.seed()
+                c = self.post({"type": "tagEdit", "writeId": "w1", "edit": {"op": "create", "name": "api", "color": "#54B204"}})
+                b_tid = c["tid"]
+                blob = json.loads(json.dumps(c["views"]))
+                a_row = next(t for t in blob["tags"] if t["id"] == "gA")
+                b_row = next(t for t in blob["tags"] if t["id"] == b_tid)
+                b_row["name"] = "web"                                       # B renamed to A's name
+                c_row = {"id": "gC", "name": "api", "color": "#DD42FF", "members": []}   # C created under B's stored name
+                blob["tags"] = [a_row, b_row, c_row] if order == "ABC" else [a_row, c_row, b_row]
+                msg = {"type": "setTimelineViews", "writeId": "w2", "views": blob}
+                if named:
+                    msg["edited"] = [b_tid, "gC"]
+                a = self.post(msg)
+                self.assertFalse(a["ok"])
+                self.assertEqual(sorted((r["tid"], r["name"]) for r in a["refused"]), sorted([(b_tid, "api"), ("gC", "api")]))
+                reasons = {r["tid"]: r["reason"] for r in a["refused"]}
+                self.assertEqual(reasons[b_tid], 'a tag named "web" already exists, so it was not renamed to it')
+                self.assertEqual(reasons["gC"], 'a tag named "api" already exists, so it was not created')
+                self.assertEqual(sorted((t["id"], t["name"]) for t in km._timeline_views()["tags"]),
+                                 sorted([("gA", "web"), (b_tid, "api")]), "one tag per name: B kept under api, C kept out")
+                self.assertTrue(self.notices and not self.notices[0][1], "both refusals are the poster's: loud")
+                self.assertIn('"api" (name collision)', self.notices[0][0])
+
     def test_the_normalizer_drops_a_second_entry_under_one_id(self):
         v = km._norm_timeline_views({"active": "all", "tags": [
             {"id": "g1", "name": "web", "members": [SID1]}, {"id": "g1", "name": "web", "members": [SID2]},
