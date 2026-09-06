@@ -455,6 +455,94 @@ MOCK
     [ "$(grep -Ec '/(color|group)' "$MOCK_LOG")" -eq 0 ]
 }
 
+@test "emoji: POST /emoji with target and the emoji; --clear posts an empty string; prints the outcome" {
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    run run_romp emoji exp-web '🌙'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"exp-web" now shows 🌙'* ]]
+    grep '/emoji' "$MOCK_LOG" | grep -q '"target": *"exp-web"'
+    grep '/emoji' "$MOCK_LOG" | grep -q '"emoji": *"🌙"'
+    run run_romp emoji exp-web --clear
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"exp-web" shows no emoji now'* ]]
+    grep '/emoji' "$MOCK_LOG" | grep -q '"emoji": *""'
+}
+
+@test "emoji: a refusal prints the kernel's reason; a bare name reads the current one off /sessions; usage and no-token are loud" {
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
+url=""; for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
+if [[ "$url" == */sessions ]]; then
+  echo '{"sessions": [{"id": "11111111-2222-3333-4444-555555555555", "name": "exp-web", "emoji": "🌙", "bg": "#1EA1EB", "fg": "white"}, {"id": "22222222-3333-4444-5555-666666666666", "name": "exp-api", "emoji": "", "bg": "", "fg": ""}]}'
+  exit 0
+fi
+echo '{"ok": false, "error": "one emoji only"}'
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    # the kernel is the validator; its one-line reason is the whole refusal
+    run run_romp emoji exp-web '🌙🌙'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refused — one emoji only"* ]]
+    # no emoji argument READS: the current one, or an empty line when there is none
+    run run_romp emoji exp-web
+    [ "$status" -eq 0 ]
+    [ "$output" = "🌙" ]
+    run run_romp emoji exp-api
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run run_romp emoji ghost
+    [ "$status" -eq 1 ]
+    [[ "$output" == *'no session named "ghost"'* ]]
+    run run_romp emoji
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp emoji"* ]]
+    run run_romp emoji exp-web --bogus
+    [ "$status" -eq 2 ]
+    run run_romp emoji exp-web '🌙' extra
+    [ "$status" -eq 2 ]
+    unset ROMP_SERVE_TOKEN
+    run run_romp emoji exp-web '🌙'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel isn't running"* ]]
+    [ "$(grep -c '/emoji' "$MOCK_LOG")" -eq 1 ]
+}
+
+@test "names map: the tab emoji (5th field) survives the rename hook's rewrite; an entry without one keeps four fields" {
+    # the kernel stores a session's tab emoji as the names entry's 5th tab field; the shell-side rewrite
+    # (the tmux after-rename-session hook → _romp_rename_record → _romp_record) must carry it, and must
+    # not swallow it into the fg word (a 4-variable `read` hands the rest of the line to the last one)
+    touch "$MOCK_LOG"
+    cat > "$MOCK_DIR/tmux" << 'MOCK'
+#!/usr/bin/env bash
+echo "tmux $*" >> "$MOCK_LOG"
+if [[ "$1" == "show" && "$5" == "@romp-session-id" ]]; then
+  case "$3" in
+    exp-api) echo 11111111-2222-3333-4444-555555555555 ;;
+    exp-y)   echo 22222222-3333-4444-5555-666666666666 ;;
+  esac
+fi
+exit 0
+MOCK
+    chmod +x "$MOCK_DIR/tmux"
+    ndir="$XDG_STATE_HOME/romp/names"
+    mkdir -p "$ndir"
+    printf 'exp-web\t%s\t#1EA1EB\twhite\t🌙\n' "$WORK_DIR" > "$ndir/11111111-2222-3333-4444-555555555555"
+    printf 'exp-x\t%s\t#1EA1EB\twhite\n' "$WORK_DIR" > "$ndir/22222222-3333-4444-5555-666666666666"
+    run run_romp _renamed exp-api
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ndir/11111111-2222-3333-4444-555555555555")" = "$(printf 'exp-api\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
+    run run_romp _renamed exp-y
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ndir/22222222-3333-4444-5555-666666666666")" = "$(printf 'exp-y\t%s\t#1EA1EB\twhite' "$WORK_DIR")" ]
+    grep -q 'send-keys -t exp-api /rename exp-api Enter' "$MOCK_LOG"
+}
+
 @test "fork: usage errors exit 2; no kernel token is a loud exit 1" {
     touch "$MOCK_LOG"
     run run_romp fork
