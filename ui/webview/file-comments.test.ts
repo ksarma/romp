@@ -244,6 +244,51 @@ test("marker hygiene: the preview neutralizes the path, id, desc and body exactl
 // bullet by the kernel's allowlist (a .dat and an .ipynb the viewer calls neither image nor PDF), a path with
 // a space, an apostrophe, shell metacharacters, non-ASCII, markers in every field, an empty body, no comments.
 const PYTHON = spawnSync("python3", ["-c", "import sys"]).status === 0;
+test("the --file word: a path with a space, one with a quote, and an empty one — the kernel's literals (test_the_file_word_literals), pinned here too", () => {
+  // tests/test_file_comments.py TheMessage::test_the_file_word_literals pins the kernel's builder to these SAME three
+  // texts. The prose keeps the plain path; both command lines carry it as one shell word (shWord = _sh_word): a
+  // space single-quotes it, a quote inside becomes '"'"' inside the single quotes, an empty path is '' (the kernel
+  // never sends one, but the builders must agree on every input the type admits, or the preview lies).
+  const one = [{ id: "1757145600000-118", desc: "on this file", body: "Good." }];
+  assert.equal(buildSendMessage({ absPath: "/repo/notes-api/vault/Meeting notes.md", comments: one, accepted: 0, rejected: 0, tracked: true, media: false }),
+    "[obsidian-diff] I left 1 comment on /repo/notes-api/vault/Meeting notes.md.\n" +
+    "\n" +
+    "Comment 1757145600000-118 (on this file):\n" +
+    "Good.\n" +
+    "\n" +
+    "To respond:\n" +
+    "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '/repo/notes-api/vault/Meeting notes.md' --thread <id> --note \"<your reply>\"\n" +
+    "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/vault/Meeting notes.md' --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n" +
+    "\n" +
+    "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
+    "naming the file.\n");
+  assert.equal(buildSendMessage({ absPath: "/repo/notes-api/vault/it's here.md", comments: one, accepted: 0, rejected: 0, tracked: false, media: false }),
+    "[obsidian-diff] I left 1 comment on /repo/notes-api/vault/it's here.md.\n" +
+    "\n" +
+    "Comment 1757145600000-118 (on this file):\n" +
+    "Good.\n" +
+    "\n" +
+    "To respond:\n" +
+    "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '/repo/notes-api/vault/it'\"'\"'s here.md' --thread <id> --note \"<your reply>\"\n" +
+    "  • to revise the text: edit the file normally, then say what you changed with the reply command above\n" +
+    "\n" +
+    "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
+    "naming the file.\n");
+  // an empty path has no extension, so both builders call it non-text (the kernel's _is_text_path, isTextPath here)
+  assert.equal(buildSendMessage({ absPath: "", comments: one, accepted: 0, rejected: 0, tracked: true, media: false }),
+    "[obsidian-diff] I left 1 comment on .\n" +
+    "\n" +
+    "Comment 1757145600000-118 (on this file):\n" +
+    "Good.\n" +
+    "\n" +
+    "To respond:\n" +
+    "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '' --thread <id> --note \"<your reply>\"\n" +
+    "  • to revise it:       regenerate the file with normal writes; never run track-edit on it\n" +
+    "\n" +
+    "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
+    "naming the file.\n");
+});
+
 test("cross-run: buildSendMessage and the kernel's _file_comments_message agree on every branch, from the same inputs",
   { skip: PYTHON ? false : "python3 not installed on this machine" }, () => {
   const REPO = path.resolve(process.cwd(), "..");

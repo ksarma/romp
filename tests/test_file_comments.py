@@ -604,6 +604,48 @@ class TheMessage(unittest.TestCase):
                 "naming the file.\n")
         self.assertEqual(km._file_comments_message(ap, cs, 0, 0, True, True), want)
 
+    def test_the_file_word_literals(self):
+        # ui/webview/file-comments.test.ts ("the --file word ...") pins the webview's builder to these SAME three
+        # texts: a path with a space (single-quoted on the command lines, plain in the prose), one with a quote
+        # (the quote becomes '"'"' inside the single quotes), and an empty one (''). The kernel never sends an
+        # empty path — _file_comments_send_op refuses first — but the builders must agree on every input the
+        # type admits, or the preview shows text the session never receives.
+        one = [{"id": "1757145600000-118", "desc": "on this file", "body": "Good."}]
+        tail = ("\n"
+                "When you have addressed these, ask me for another look the same way you asked for this one,\n"
+                "naming the file.\n")
+        self.assertEqual(km._file_comments_message("/repo/notes-api/vault/Meeting notes.md", one, 0, 0, True, True),
+                         "[obsidian-diff] I left 1 comment on /repo/notes-api/vault/Meeting notes.md.\n"
+                         "\n"
+                         "Comment 1757145600000-118 (on this file):\n"
+                         "Good.\n"
+                         "\n"
+                         "To respond:\n"
+                         "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '/repo/notes-api/vault/Meeting notes.md' --thread <id> --note \"<your reply>\"\n"
+                         "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/vault/Meeting notes.md' --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n"
+                         + tail)
+        self.assertEqual(km._file_comments_message("/repo/notes-api/vault/it's here.md", one, 0, 0, False, True),
+                         "[obsidian-diff] I left 1 comment on /repo/notes-api/vault/it's here.md.\n"
+                         "\n"
+                         "Comment 1757145600000-118 (on this file):\n"
+                         "Good.\n"
+                         "\n"
+                         "To respond:\n"
+                         "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '/repo/notes-api/vault/it'\"'\"'s here.md' --thread <id> --note \"<your reply>\"\n"
+                         "  • to revise the text: edit the file normally, then say what you changed with the reply command above\n"
+                         + tail)
+        self.assertIs(km._is_text_path(""), False, "no extension, no text-by-convention name: non-text, as the webview's isTextPath says")
+        self.assertEqual(km._file_comments_message("", one, 0, 0, True, km._is_text_path("")),
+                         "[obsidian-diff] I left 1 comment on .\n"
+                         "\n"
+                         "Comment 1757145600000-118 (on this file):\n"
+                         "Good.\n"
+                         "\n"
+                         "To respond:\n"
+                         "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '' --thread <id> --note \"<your reply>\"\n"
+                         "  • to revise it:       regenerate the file with normal writes; never run track-edit on it\n"
+                         + tail)
+
     def test_the_text_ends_with_exactly_one_newline_and_names_no_machinery(self):
         body = km._file_comments_message(REPORT, THREE, 0, 0, True, True)
         self.assertTrue(body.endswith("naming the file.\n"))
