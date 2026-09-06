@@ -702,7 +702,8 @@ test("the Waiting-on-you pane links asks and their detail per session and opens 
   assert.match(WAITING, /import \{ linkifyPrRefs, installPrLinkOpener \} from "\.\/pr-links";/);
   assert.match(WAITING, /repoBySid = new Map\(m\.sessions\.filter/);
   assert.match(WAITING, /txt\.textContent = w\.todo\.text;\s*\n\s*linkifyPrRefs\(txt, repoBySid\.get\(w\.sid\) \|\| null\);/);
-  assert.match(WAITING, /d\.textContent = w\.todo\.detail \|\| "";\s*\n\s*linkifyPrRefs\(d, repoBySid\.get\(w\.sid\) \|\| null\);/);
+  // the detail links paths first (user-todo-links.test.ts pins that line), then PR refs — each skips the other's anchors
+  assert.match(WAITING, /d\.textContent = w\.todo\.detail \|\| "";\s*\n\s*linkDetailPaths\(d, w\.sid\);[^\n]*\n\s*linkifyPrRefs\(d, repoBySid\.get\(w\.sid\) \|\| null\);/);
   assert.match(WAITING, /installPrLinkOpener\(document, vscodeApi \? \(m\) => vscodeApi\.postMessage\(m\) : undefined\);/);
 });
 

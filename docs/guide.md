@@ -16,7 +16,7 @@ complementary panes:
   chat.
 - **[The outline](#the-outline)** lists every session with its tasks, for
   reviewing what a session has done and searching across all of them.
-- **[Waiting on you](#waiting-on-you)** lists every request a session has
+- **[Waiting on you](#waiting-on-you)** lists every user todo a session has
   flagged for you, across all your sessions and machines, with Reply and
   Dismiss on each.
 - **[Files](#files)** holds the file viewer in a column of its own, so a file
@@ -54,8 +54,17 @@ surface (the tag button in the strip narrows the tabs to the tags you pick), and
 the tabs: as soon as any session carries a tag, the strip shows one section per tag, in your
 tag order, each with a header in the tag's color, and the untagged sessions after a divider
 at the end. A session with several tags sits under the first of them in your tag order; its
-other tags still filter. Click a header to fold that section down to a count, plus one pip
-when a member is working or waiting on you; the section of the tab you are reading never
+other tags still filter. Each header shows a chevron, the tag's color, its name, and a
+member count. Click a header, or press Enter on it, to fold its section down to the header
+alone; the count then says how many tabs are folded away, and a small dot after it says when
+one of them is working or waiting on you (hover it for their names). A folded header keeps the ⚑ flag
+of any session in it that has asked you for something; when several have, the flag shows how
+many, and hovering it names them. Click the flag to open the section. To keep one tab visible
+while its section is folded, right-click the tab and pick **Show when folded** under **Tags**;
+the header's count and flag then leave that tab out; when every tab in a section is set to
+show, the folded header shows the full count and its tooltip says nothing is hidden. Pick it
+again to fold the tab with the rest. A tab set to show when folded keeps that setting when its
+group is renamed. The section of the tab you are reading never
 folds (its header says so, and a click there changes nothing), and the `archived` section
 starts folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
@@ -117,15 +126,22 @@ find past work: the search box reaches every session, live or closed.
 
 ### Waiting on you
 
-One list of every request a session has flagged for you, oldest first, across
-every session and every attached machine: a decision it needs, a credential, a
-pick between two designs. Each row names its session and shows how long the
-request has waited. Reply sends your answer straight into that session, waking
-it if it has gone quiet; Dismiss clears the request without a reply. The pane is
-off by default, like the outline; turn it on from the bottom bar. Sessions flag
-requests only where the gear's **User todos** switch is on, and the switch is
-per machine: while it is off on this one, the pane says so and still lists the
-other machines' requests.
+One list of every user todo a session has flagged for you, oldest first,
+across every session and every attached machine: a decision it needs, a
+credential, a pick between two designs. Each row names its session and shows
+how long the todo has waited. Reply sends your answer straight into that
+session, waking it if it has gone quiet; Dismiss clears the todo without a
+reply. A file path in a todo's detail is a link: click it and the file opens in
+the Files pane, which comes forward if it was closed. The pane is off by
+default, like the outline; turn it on from the bottom bar. Sessions flag todos
+only where the gear's **User todos** switch is on, and the switch is per
+machine: while it is off on this one, the pane says so and still lists the
+other machines' todos. A todo you expected can be missing for two reasons. A
+session that has ended keeps its todos out of the list until you revive it
+(click **+**; closed sessions are listed under **Recent**). A session you have
+hidden from the feed (right-click its tab, **Hide from feed**) keeps them out
+too, though its tab still shows the ⚑ mark; **Show in feed** on the same menu
+brings them back. The file the todo named is still on disk.
 
 ### Files
 

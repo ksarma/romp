@@ -7,7 +7,10 @@
 
 ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 
+load git-hermetic
+
 setup() {
+    git_hermetic
     TEST_DIR="$(mktemp -d)"
     UP="$TEST_DIR/project.git"          # what we forked from
     FORK="$TEST_DIR/fork.git"           # our copy

@@ -451,8 +451,11 @@ class NewRouteTags(unittest.TestCase):
         self.assertEqual(self.created, [], "nothing created on either open")
 
     def test_a_refused_tag_edit_rides_beside_the_ack(self):
-        km._set_timeline_views({"active": "all", "tags": [
-            {"id": "g1", "name": "twin", "members": []}, {"id": "g2", "name": "twin", "members": []}]})
+        # twins written to the file: the write door refuses a second tag under a taken name (round 4
+        # of the 2026-09-05 review), so a store holding twins predates that kernel
+        km._atomic_write(km._views_path(), json.dumps({"active": "all", "tags": [
+            {"id": "g1", "name": "twin", "members": []}, {"id": "g2", "name": "twin", "members": []}]}))
+        km._flags_cache.clear()
         code, body = self._post({"name": "api", "dir": self.dir, "tags": ["twin"]})
         self.assertEqual(code, 200)
         self.assertTrue(body["ok"], "the session exists — the refusal cannot undo it")
