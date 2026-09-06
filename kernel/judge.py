@@ -160,6 +160,7 @@ def _rebind_state(path):
     CODEXDIR = STATE / "codex"
     EPIDIR = STATE / "episodes"
     _lastsid_memo.clear()   # sdk-registry reads are mtime-memoized per sid — a rebind must not serve the old root's values
+    _CHAIN_MEMO.clear()     # the write-moment chain memo keys on paths under STATESDIR; a new root is a new world
     _episode_memo.clear()   # ...and so are the episode-log reads
     _head_memo.clear()      # transcript heads are immutable per path, but a rebind swaps the whole world of paths
     _namefp_memo.clear()    # names-entry content is memoized per SID against same-second mtimes — across a
@@ -2013,6 +2014,38 @@ def _fileset_key(files):
 
 _PARSE_CACHE = {}          # fsid -> (fileset_key, parsed_session)
 
+# ── the write-moment chain memo (perf plan B1, 2026-09-06) ──
+# _rewound_away builds a FRESH FileAdapter on every call by design (the pass frame pins a stale
+# world; the guard must read the live one), and it is called at every mint site of every planner
+# pass — 97.5% of them from _plan_session's per-pass stand-down. On the live kernel that walk was
+# 11.5% of all interpreter time, and nearly every call re-derived the same answer from unchanged
+# files. This memo keeps one entry per session, keyed on the exact inputs the adapter reads: the
+# candidate paths, their (mtime, size) with the states file's, the lineage closure the states'
+# resume links add (with the from-files' (mtime, size) too), and the pending cut. A rewind always
+# moves one of them (a branch-take appends to the leaf, a resume fork writes a states row, a bare
+# rollback arms the cut), so the invariant of "a writer whose evidence predates the diary stands
+# down" holds exactly: same inputs, same verdict. The key is computed BEFORE the build reads
+# anything, so a file that changes mid-build is caught by the next call's stat (an extra miss),
+# never served stale (a stat taken after the read could match a future call whose content the
+# build never saw). A build that raises is never memoized, and a key that hits OSError bypasses the
+# memo for that call. The entry holds the base key and the cut separately so the on-disk slot
+# (cut-independent) survives a cut arming or clearing and reconcile_rewound_goals shares it.
+_CHAIN_MEMO = {}           # fsid -> {"base": key, "cut": cut the "mem" slot was built under or None,
+#                            "mem": five-way dict under that cut or None, "disk": the same with no cut
+#                            or None}; dict order = LRU, hits reinsert; evicts the oldest-used one at
+#                            the cap, never clear-at-cap (the _ASM_CACHE shape)
+_CHAIN_MEMO_MAX = 256
+_CHAIN_LOCK = threading.Lock()     # the judge tiers' worker pools and the kernel's tick jobs all call in
+_CHAIN_STATS = {"hit": 0, "miss": 0, "populate": 0, "bypass": 0}   # read by GET /perf; see D4 of the plan
+
+
+def chain_memo_stats():
+    """The write-moment chain memo's counters for GET /perf: hit (served from the memo), miss (key
+    computed, no usable entry, built and memoized), populate (entries written), bypass (the key
+    itself hit OSError: built fresh, not memoized)."""
+    with _CHAIN_LOCK:
+        return dict(_CHAIN_STATS)
+
 # ── the pending-cut wire (the rewind goal-cleanup fix, 2026-08-17) ──
 # A PENDING bare rollback (chat delete) writes NOTHING to the transcript, so for its whole armed
 # window — unbounded; the user's next message may never come — the file leaf IS the abandoned tail.
@@ -2057,13 +2090,79 @@ def _judge_candidates(fsid, files):
     return list(files)
 
 
+def _chain_key(path, cands, states):
+    """The chain memo's base key for one session, computed BEFORE the build reads anything: stat the
+    candidates and the states file first, then read the states rows once for the resume links the
+    lineage closure needs, then stat the from-files the closure added. Every file the adapter will
+    read is stat'd before it is read, so a key can never match a later call whose content this
+    build did not see (see the note at _CHAIN_MEMO). Raises OSError when any stat fails.
+
+    Two of the four components do the work and two are redundant guards: `fk` (the candidates' and
+    the states file's stats) moves on an append, a states row and an anchor appearing; the closure
+    moves when a from-file joins or vanishes. The candidate tuple repeats what `fk`'s length and
+    entries already say, and the from-file stats cover a rewrite of files the CLI never writes
+    again after their fork; both are kept because a stat costs nothing and the key must not depend
+    on that reasoning staying true."""
+    fk = _fileset_key(list(cands) + ([states] if states else []))
+    links = em.resume_fork_links(em._load_states(states))
+    closure = em._lineage_closure(Path(path), cands, links)
+    extra = closure[len(cands):]                   # the lineage from-files (frozen after their fork,
+    #                                                but a stat costs nothing and covers a rewrite)
+    return (tuple(cands), fk, tuple(closure), _fileset_key(extra) if extra else [])
+
+
+def _chain_membership(fsid, path, cut):
+    """em.chain_membership over the judge's inputs for `fsid` (leaf, anchor candidate, states, the
+    lineage closure) under `cut` (the pending bare-rollback cut, "" for the on-disk graph), served
+    from _CHAIN_MEMO when the inputs are unchanged. Returns the five-way dict with FROZENSET values,
+    shared with the memo (immutable, so no per-hit copy; the dict itself is a fresh shallow copy).
+    A build that raises propagates and leaves the memo untouched."""
+    states = STATESDIR / (fsid + ".jsonl")
+    states_s = str(states) if states.exists() else None
+    cands = _judge_candidates(fsid, [str(path)])
+    try:
+        base = _chain_key(path, cands, states_s)
+    except OSError:
+        base = None
+    if base is None:
+        with _CHAIN_LOCK:
+            _CHAIN_STATS["bypass"] += 1
+    else:
+        with _CHAIN_LOCK:
+            e = _CHAIN_MEMO.get(fsid)
+            if e is not None and e["base"] == base:
+                mem = e["disk"] if not cut else (e["mem"] if e["cut"] == cut else None)
+                if mem is not None:
+                    _CHAIN_MEMO.pop(fsid, None)
+                    _CHAIN_MEMO[fsid] = e          # a served entry is a USED entry (LRU touch)
+                    _CHAIN_STATS["hit"] += 1
+                    return dict(mem)
+            _CHAIN_STATS["miss"] += 1
+    raw = em.chain_membership(path, candidate_files=cands, states=states_s, leaf_override=cut or None)
+    mem = {k: frozenset(v) for k, v in raw.items()}
+    if base is not None:
+        with _CHAIN_LOCK:
+            e = _CHAIN_MEMO.pop(fsid, None)
+            if e is None or e["base"] != base:
+                e = {"base": base, "cut": None, "mem": None, "disk": None}
+            e = dict(e, cut=cut, mem=mem) if cut else dict(e, disk=mem)   # replace, never mutate in
+            #                                                              place: a reader outside the
+            #                                                              lock holds the old dict
+            while len(_CHAIN_MEMO) >= _CHAIN_MEMO_MAX:
+                _CHAIN_MEMO.pop(next(iter(_CHAIN_MEMO)))   # oldest-used first; hot entries survive floods
+            _CHAIN_MEMO[fsid] = e
+            _CHAIN_STATS["populate"] += 1
+    return dict(mem)
+
+
 def _rewound_away(fsid, path, uuid):
     """WRITE-MOMENT chain check: does `uuid` PROVABLY sit on a rewound-away branch RIGHT NOW?
 
     Deliberately frame-independent: inside a producer pass parsed_session returns the frame-pinned
     parse — precisely the stale world in which a mid-pass rewind's dead branch still reads active —
-    so this builds a FRESH FileAdapter (cheap: the jsonl reads are append-incremental) over the same
-    inputs the display parse uses, including the backend's pending cut. The one-shot t>=cut_t sweep
+    so this reads the LIVE inputs the display parse uses, including the backend's pending cut, and
+    builds a fresh FileAdapter over them whenever they differ from the last build's (_chain_membership
+    memoizes on the inputs' identity, never on time). The one-shot t>=cut_t sweep
     runs at gesture time and never again; a mint applied after it from a pass framed before it was
     the primary observed leak (the g44 shape), and this is the stand-down that closes it
     (CLAUDE.md: a writer whose evidence predates the diary stands down).
@@ -2089,17 +2188,13 @@ def _rewound_away(fsid, path, uuid):
     if not uuid:
         return False
     try:
-        states = STATESDIR / (fsid + ".jsonl")
         cut = _pending_cut(fsid)
-        mem = em.chain_membership(path, candidate_files=_judge_candidates(fsid, [str(path)]),
-                                  states=str(states) if states.exists() else None,
-                                  leaf_override=cut or None)
+        mem = _chain_membership(fsid, path, cut)
         if uuid not in mem["rewind"]:
             return False
         if not cut:
             return "durable"                           # proven from the on-disk graph alone
-        on_disk = em.chain_membership(path, candidate_files=_judge_candidates(fsid, [str(path)]),
-                                      states=str(states) if states.exists() else None)
+        on_disk = _chain_membership(fsid, path, "")
         return "durable" if uuid in on_disk["rewind"] else "pending"
     except Exception as e:
         _log_judge_error("romp", fsid, "chain-check",
@@ -2868,19 +2963,22 @@ def _guard_nodes(store):
 # How often the stores are read and written is the first question when the kernel is busy: every
 # judge stage, the feed build and the nudge tick load stores, so the load rate says whether a change
 # added a pass over every session. Plain counters, one lock, no formatting on the path.
-_GOAL_IO = {"loads": 0, "saves": 0, "writes": 0}
+_GOAL_IO = {"loads": 0, "saves": 0, "writes": 0, "scans": 0, "scan_hits": 0, "scan_parses": 0}
 _GOAL_IO_LOCK = threading.Lock()
 
 
-def _goal_io_bump(key):
+def _goal_io_bump(key, n=1):
     with _GOAL_IO_LOCK:
-        _GOAL_IO[key] += 1
+        _GOAL_IO[key] += n
 
 
 def goal_io_stats():
     """A copy of the goal-store I/O counters: load_goals calls (`loads`), save_goals calls (`saves`),
-    and the saves that wrote a file (`writes`; save_goals skips a byte-identical republish). The
-    counters stay private to this module; readers get a copy."""
+    and the saves that wrote a file (`writes`; save_goals skips a byte-identical republish), plus the
+    give-up scan's memo counters (judge_failure_scan): calls (`scans`), stores served from the memo
+    (`scan_hits`) and stores read and parsed, or attempted, because they were new, changed, or failed
+    to parse on the previous call (`scan_parses`). The counters stay private to this module; readers
+    get a copy."""
     with _GOAL_IO_LOCK:
         return dict(_GOAL_IO)
 
@@ -3712,9 +3810,8 @@ def reconcile_rewound_goals(fsid, path, now):
     if key is not None and memo and memo[0] == key:
         sig, kept = memo[1], memo[2]   # store-only event → reuse the memoized abandoned set, no walk
     else:
-        mem = em.chain_membership(path, candidate_files=files,
-                                  states=str(states) if states.exists() else None)
-        kept = frozenset(mem["kept"])
+        mem = _chain_membership(fsid, path, "")   # the on-disk graph, shared with _rewound_away's memo
+        kept = mem["kept"]                        # already a frozenset
         pf, pf_fails = _per_file_rewound(fsid, files)
         sig = frozenset(mem["rewind"] | (pf - kept))
     n = 0
@@ -12013,22 +12110,79 @@ def _failed_nodes(store):
                 yield nid, nd, w["kind"]
 
 
+_jf_store_memo = {}             # {store path: ((st_ino, st_mtime_ns, st_size), failed count)} — see judge_failure_scan
+_jf_cause_memo = (None, None)   # (the store keys the cause was named against, (cause, ratelimited))
+
+
 def judge_failure_scan():
-    """Fleet-wide give-up state for the top banner (the user 2026-07-03): every card whose summary/brief/
-    stall note GAVE UP carries a live "*-failed" warn; count them across all goal stores and name the CAUSE (an
-    account usage limit if one is maxed, else errors/timeouts). Returns {count, cause, ratelimited} or None
-    when nothing is failing. Cheap: read-only, one parse per store; the kernel mtime-caches it."""
+    """Give-up state across every session for the top banner (the user 2026-07-03): every card whose
+    summary/brief/stall note GAVE UP carries a live "*-failed" warn; count them across all goal stores and
+    name the CAUSE (an account usage limit if one is maxed, else errors/timeouts). Returns {count, cause,
+    ratelimited} or None when nothing is failing. Read-only.
+
+    Per-store memo (2026-09-06, perf plan B9): the kernel calls this from every timeline build and every
+    dashboard connect push once its goals-dir fingerprint moves, and one saved store made it parse EVERY
+    store again (13 MB live). Each store's failed count is memoized on the identity of the file it was
+    counted from, (st_ino, st_mtime_ns, st_size) taken by fstat on the fd that is read, so a call stats
+    every store and parses only the ones whose key changed. A store's failed count changes only when its
+    file changes, so the key must change whenever the file does, and the inode number alone does not
+    guarantee that: save_goals publishes by tmp+rename, and on ext4 (measured) consecutive publishes of one
+    path alternate between two inode numbers, so the version two publishes back reuses the inode number
+    the memo recorded. The inode distinguishes one publish only; past that, soundness depends on
+    st_mtime_ns strictly increasing across publishes of one path. Linux 6.13+ guarantees that with
+    multigrain timestamps: this scan's own stat marks the prior inode as queried, so its unlink by the
+    next rename takes a fine-grained ctime and every file created after it gets a strictly greater
+    mtime_ns. A kernel with coarse timestamps (Linux < 6.13; macOS unmeasured) aliases two publishes of
+    the same size inside one clock tick, and the store's memoized count then stays stale until its next
+    publish. That is the same failure class as, and a narrower window than, kernel.py's _jf_cache gate in
+    front of this function, keyed on int(st_mtime), which already serves a stale value for a store
+    re-saved within one second. No stat-only key closes the residual window; comparing content would cost
+    the read the memo exists to avoid. The memo is rebuilt from this call's glob and swapped in with one
+    assignment: a deleted store drops out, and concurrent callers never mutate a shared dict.
+    A store that fails to parse counts nothing and is not memoized, so it is retried next call. The cause
+    is named again only when some store key changed, the cadence the kernel's fingerprint cache already
+    imposed, so the notification center's count|cause signature does not churn per call. Counts RAW file
+    content, never a load_goals-replayed store."""
     import glob
-    count = 0
+    global _jf_store_memo, _jf_cause_memo
+    old, new = _jf_store_memo, {}
+    count = hits = parses = 0
     for fp in glob.glob(str(GOALDIR / "*.json")):
         try:
-            store = json.loads(Path(fp).read_text())
-        except Exception:
-            continue
-        count += sum(1 for _ in _failed_nodes(store))
+            st = os.stat(fp)
+        except OSError:
+            continue                                   # gone between the glob and the stat
+        key = (st.st_ino, st.st_mtime_ns, st.st_size)
+        hit = old.get(fp)
+        if hit is not None and hit[0] == key:
+            n = hit[1]
+            hits += 1
+        else:
+            parses += 1
+            try:
+                with open(fp, "rb") as f:              # one fd: the key describes exactly the bytes read
+                    st = os.fstat(f.fileno())
+                    key = (st.st_ino, st.st_mtime_ns, st.st_size)
+                    store = json.loads(f.read())
+            except Exception:
+                continue
+            n = sum(1 for _ in _failed_nodes(store))
+        new[fp] = (key, n)
+        count += n
+    _jf_store_memo = new
+    _goal_io_bump("scans")
+    if hits:
+        _goal_io_bump("scan_hits", hits)
+    if parses:
+        _goal_io_bump("scan_parses", parses)
     if not count:
         return None
-    cause, ratelimited = _giveup_cause()
+    keys = tuple(sorted((fp, k) for fp, (k, _n) in new.items()))
+    cm = _jf_cause_memo
+    if cm[0] != keys:
+        cm = (keys, _giveup_cause())
+        _jf_cause_memo = cm
+    cause, ratelimited = cm[1]
     return {"count": count, "cause": cause, "ratelimited": ratelimited}
 
 
