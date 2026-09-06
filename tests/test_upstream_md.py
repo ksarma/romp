@@ -22,8 +22,10 @@ This test reads the file and checks:
   items), so long as it holds no row;
 - every row has exactly four cells once escaped pipes (`\\|`) and pipes inside backtick code spans
   are masked (three rows carry `\\|` today, one of them outside a code span);
-- no two rows are byte-identical. The 2026-09-06 duplicate differed in text, so this is a floor
-  against the plain both-sides-of-a-conflict case, not a guarantee.
+- no two rows are byte-identical, and no two rows share their first 60 characters: a merge that
+  keeps both sides of a conflicted row leaves one row in two versions (the 2026-09-06 duplicate,
+  and six stale 'candidate' copies a branch merge kept beside main's 'offered' versions the same
+  day), and the two versions agree on how they start.
 
 Every message names the offending line number and quotes the line's first 80 characters. The
 checker is a pure function over the text so the synthetic cases below exercise each rule; the real
@@ -39,6 +41,7 @@ UPSTREAM_MD = ROOT / "UPSTREAM.md"
 HEADER = "| What | Where it lives here | Status | Notes |"
 SEPARATOR = "|---|---|---|---|"
 CELLS = 4
+PREFIX = 60   # two versions of one row agree on how they start; unrelated rows diverge well before this
 
 _ESCAPED_PIPE = re.compile(r"\\\|")
 _CODE_SPAN = re.compile(r"`[^`]*`")
@@ -125,11 +128,17 @@ def problems(text):
             out.append(f"line {n}: {len(got)} cells, expected {CELLS} (escaped and code-span pipes ignored): {_q(row)}")
 
     seen = {}
+    heads = {}
     for n, row in rows:
         if row in seen:
             out.append(f"line {n}: byte-identical to the row at line {seen[row]}: {_q(row)}")
+            continue
+        seen[row] = n
+        head = row[:PREFIX]
+        if head in heads:
+            out.append(f"line {n}: same first {PREFIX} characters as the row at line {heads[head]} (one row in two versions): {_q(row)}")
         else:
-            seen[row] = n
+            heads[head] = n
     return out
 
 
@@ -191,6 +200,18 @@ class Checker(unittest.TestCase):
         got = problems(_doc([ROW_A, ROW_B, ROW_A]))
         self.assertEqual(len(got), 1, got)
         self.assertIn("line 9: byte-identical to the row at line 7", got[0])
+
+    def test_two_versions_of_one_row_are_flagged(self):
+        v1 = "| The tags dialog's edits are targeted ops with acked writes, so a late pane cannot revert them | ui/webview/tags.ts | candidate | one review round |"
+        v2 = v1.replace("candidate | one review round", "offered as their PR #999 | ten review rounds")
+        got = problems(_doc([v1, ROW_B, v2]))
+        self.assertEqual(len(got), 1, got)
+        self.assertIn(f"line 9: same first {PREFIX} characters as the row at line 7 (one row in two versions)", got[0])
+
+    def test_rows_that_merely_start_alike_are_not_versions_of_one_row(self):
+        a = "| The feed pane repaints only the cards whose inputs changed | ui/webview/feed.ts | candidate | one |"
+        b = "| The feed pane repaints on every push, twice a second | ui/webview/feed.ts | candidate | two |"
+        self.assertEqual(problems(_doc([a, b])), [])
 
     def test_conflict_markers_are_flagged(self):
         got = problems(_doc([ROW_A, "<<<<<<< HEAD", ROW_B, "=======", ROW_B.replace("More", "Other"), ">>>>>>> theirs"]))
