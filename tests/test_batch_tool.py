@@ -1255,13 +1255,78 @@ class LandAndFinish(_Base):
         fx = self.fx
         self.ready()
         fx.set_repo(allowAutoMerge=True)
-        fx.set_gh(rulesets=[{"type": "required_status_checks"}])
+        fx.set_gh(rulesets=[{"type": "non_fast_forward"}, {"type": "required_status_checks"}])
         p = fx.ok("land", "b1", "--auto")
         self.assertIn("--auto", fx.calls("pr", "merge")[0])
-        self.assertIn("a ruleset applies to main (1 rule)", p.stdout)
+        self.assertIn("merging with --auto: auto-merge is allowed and rules on main gate a merge (required_status_checks)", p.stdout,
+                      "the go-ahead names the gating rule, not a count of every rule")
         paths = [c[1] for c in fx.calls("api")]
         self.assertIn("repos/{owner}/{repo}/rules/branches/main", paths, "the rules that apply to main, not the repository-wide list")
         self.assertNotIn("repos/{owner}/{repo}/rulesets", paths)
+
+    def test_land_auto_refuses_rules_that_gate_no_merge(self):
+        """The rules endpoint lists every rule on main, the protective ones included. A ruleset that
+        only blocks force pushes and deletion leaves --auto nothing to wait for, so it is refused
+        naming what was found; a pull_request rule (required reviews) counts like required checks
+        (scripts/land.sh applies the same gate)."""
+        fx = self.fx
+        self.ready()
+        fx.set_repo(allowAutoMerge=True)
+        fx.set_gh(rulesets=[{"type": "non_fast_forward"}, {"type": "deletion"}])
+        p = fx.run("land", "b1", "--auto")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("ruleset rules non_fast_forward, deletion, which protect the branch and gate no merge", p.stderr)
+        self.assertIn("Merge without --auto", p.stderr)
+        self.assertNotIn("no rules apply to main", p.stderr)
+        self.assertEqual(fx.calls("pr", "merge"), [])
+        self.assertNotIn(["pr", "edit", "102", "--base", "main"], fx.calls("pr", "edit"), "refused before any member was retargeted")
+        fx.set_gh(rulesets=[{"type": "non_fast_forward"}, {"type": "pull_request"}])
+        p = fx.ok("land", "b1", "--auto")
+        self.assertIn("--auto", fx.calls("pr", "merge")[0])
+        self.assertIn("rules on main gate a merge (pull_request)", p.stdout)
+
+    def test_land_auto_classic_protection_must_require_checks_or_reviews(self):
+        fx = self.fx
+        self.ready()
+        fx.set_repo(allowAutoMerge=True)
+        fx.set_gh(protection={"url": "https://api.example.invalid/protection", "enforce_admins": {"enabled": True},
+                              "required_status_checks": None, "restrictions": None})
+        p = fx.run("land", "b1", "--auto")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("branch protection on main requires no checks and no reviews (set: enforce_admins, url)", p.stderr)
+        self.assertEqual(fx.calls("pr", "merge"), [])
+        fx.set_gh(protection={"required_pull_request_reviews": {"required_approving_review_count": 1}})
+        p = fx.ok("land", "b1", "--auto")
+        self.assertIn("--auto", fx.calls("pr", "merge")[0])
+        self.assertIn("merging with --auto: auto-merge is allowed and classic branch protection on main requires reviews", p.stdout)
+
+    def test_land_auto_refuses_when_the_rules_or_protection_cannot_be_read(self):
+        """A failed read is not "none": with the rules unreadable --auto is refused with gh's error
+        even though a gating rule is set, and so is a protection read that fails with anything but
+        the 404 GitHub gives an unprotected branch."""
+        fx = self.fx
+        self.ready()
+        fx.set_repo(allowAutoMerge=True)
+        fx.set_gh(rulesets=[{"type": "required_status_checks"}])
+        p = fx.run("land", "b1", "--auto", gh_fail="api repos/{owner}/{repo}/rules/branches/main")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("could not read the rules on main", p.stderr)
+        self.assertIn("HTTP 502", p.stderr, "gh's error is printed")
+        self.assertNotIn("no rules apply", p.stderr)
+        self.assertNotIn("merging with --auto", p.stdout)
+        self.assertEqual(fx.calls("pr", "merge"), [])
+        fx.set_gh(rulesets=[], fail={"protection": "Must have admin rights to Repository. (HTTP 403)"})
+        p = fx.run("land", "b1", "--auto")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("could not read main's branch protection", p.stderr)
+        self.assertIn("HTTP 403", p.stderr)
+        self.assertNotIn("no classic protection", p.stderr)
+        self.assertEqual(fx.calls("pr", "merge"), [])
+        fx.set_gh(fail={})
+        p = fx.run("land", "b1", "--auto")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("no rules apply to main, and it has no classic protection", p.stderr, "the 404 alone reads as none")
+        self.assertEqual(fx.calls("pr", "merge"), [])
 
     def test_land_stops_when_verify_fails(self):
         fx = self.fx

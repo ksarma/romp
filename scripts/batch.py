@@ -1835,24 +1835,58 @@ def auto_merge_allowed(root):
     return v if isinstance(v, bool) else None
 
 
+# Ruleset rule types that make a merge wait for something. The rest (non_fast_forward, deletion,
+# creation, update, ...) protect the ref and gate no merge, so --auto would merge at once.
+GATING_RULE_TYPES = ("required_status_checks", "pull_request", "required_deployments", "merge_queue", "code_scanning")
+# The classic branch-protection settings that gate a merge, and how the go-ahead names them.
+GATING_PROTECTION = {"required_status_checks": "status checks", "required_pull_request_reviews": "reviews"}
+
+
 def main_protection(root):
-    """What protects main, or None: "a ruleset applies to main (N rules)" from the rules that
-    actually target the branch (`rules/branches/main`, not the repository-wide rulesets list, which
-    counts tag and push rulesets too), else "classic branch protection on main" (a 404 there means
-    none). `gh pr merge --auto` is only useful with one of these: without required checks auto-merge
-    merges at once. This detects, it never assumes."""
+    """What on main gates a merge, as (gating, found). `gating` names it, or is None when nothing
+    does: ruleset rules of a type in GATING_RULE_TYPES, read from the rules that apply to the branch
+    (`rules/branches/main`, not the repository-wide rulesets list, which counts tag and push rulesets
+    too; the endpoint lists the protective rules as well, so the types are read, not counted), or
+    classic branch protection with required status checks or required reviews. `found` says what was
+    there instead, for the refusal. A rules read that fails, or a protection read that fails with
+    anything but a 404 (GitHub's answer for an unprotected branch), raises Fail with gh's error: a
+    failed read is not "none". `gh pr merge --auto` is only useful with a gating rule: with nothing
+    required, auto-merge merges at once. This detects, it never assumes (scripts/land.sh applies the
+    same gate)."""
     proc = gh("api", "repos/{owner}/{repo}/rules/branches/%s" % MAIN, cwd=root, check=False)
+    if proc.returncode != 0:
+        raise Fail("--auto, and could not read the rules on %s: %s" % (MAIN, (proc.stderr + proc.stdout).strip()))
+    try:
+        rows = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError as e:
+        raise Fail("--auto, and could not read the rules on %s: not JSON (%s)" % (MAIN, e))
+    types = [str(r.get("type") or "?") for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    gating = [t for t in types if t in GATING_RULE_TYPES]
+    other = [t for t in types if t not in GATING_RULE_TYPES]
+    proc = gh("api", "repos/{owner}/{repo}/branches/%s/protection" % MAIN, cwd=root, check=False)
+    protected, prot_set, prot_gating = False, [], []
     if proc.returncode == 0:
         try:
-            rows = json.loads(proc.stdout or "[]")
-        except json.JSONDecodeError:
-            rows = []
-        if rows:
-            return "a ruleset applies to %s (%d rule%s)" % (MAIN, len(rows), "" if len(rows) == 1 else "s")
-    proc = gh("api", "repos/{owner}/{repo}/branches/%s/protection" % MAIN, cwd=root, check=False)
-    if proc.returncode == 0:
-        return "classic branch protection on %s" % MAIN
-    return None
+            body = json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError as e:
+            raise Fail("--auto, and could not read %s's branch protection: not JSON (%s)" % (MAIN, e))
+        protected = True
+        prot_set = sorted(k for k, v in body.items() if v is not None) if isinstance(body, dict) else []
+        prot_gating = [k for k in GATING_PROTECTION if k in prot_set]
+    elif "HTTP 404" not in proc.stderr + proc.stdout:
+        raise Fail("--auto, and could not read %s's branch protection: %s" % (MAIN, (proc.stderr + proc.stdout).strip()))
+    if gating or prot_gating:
+        parts = []
+        if gating:
+            parts.append("rules on %s gate a merge (%s)" % (MAIN, ", ".join(gating)))
+        if prot_gating:
+            parts.append("classic branch protection on %s requires %s" % (MAIN, " and ".join(GATING_PROTECTION[k] for k in prot_gating)))
+        return ", and ".join(parts), None
+    found = [("ruleset rules %s, which protect the branch and gate no merge" % ", ".join(other)) if other
+             else "no rules apply to %s" % MAIN]
+    found.append(("branch protection on %s requires no checks and no reviews (set: %s)" % (MAIN, ", ".join(prot_set) or "nothing"))
+                 if protected else "it has no classic protection")
+    return None, ", and ".join(found)
 
 
 def retarget_stacked_members(root, state):
@@ -1902,11 +1936,11 @@ def cmd_land(args):
             raise Fail("--auto needs the repository's \"Allow auto-merge\" setting, which is %s (REST allow_auto_merge). "
                        "Turning it on is the maintainer's call: `gh repo edit --enable-auto-merge`. Merge without --auto instead."
                        % ("off" if allowed is False else "unreadable"))
-        protection = main_protection(root)
-        if not protection:
-            raise Fail("--auto needs a ruleset or branch protection on %s (none found: no rules apply to %s, and it has no classic protection); "
-                       "with nothing required, auto-merge merges at once and protects nothing. Merge without --auto." % (MAIN, MAIN))
-        print("merging with --auto: auto-merge is allowed and %s" % protection)
+        gating, found = main_protection(root)
+        if not gating:
+            raise Fail("--auto needs a ruleset or branch protection on %s that gates a merge (read from GitHub: %s); "
+                       "with nothing required, auto-merge merges at once and protects nothing. Merge without --auto." % (MAIN, found))
+        print("merging with --auto: auto-merge is allowed and %s" % gating)
         cmd.append("--auto")
     retarget_stacked_members(root, state)
     gh(*cmd, cwd=root)
@@ -2207,7 +2241,8 @@ def main(argv=None):
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("--auto", action="store_true",
                    help="arm auto-merge instead (lands when the required checks pass; needs the repository's \"Allow auto-merge\" "
-                        "setting and a ruleset or branch protection on %s)" % MAIN)
+                        "setting and a rule on %s that gates a merge: a ruleset rule such as required_status_checks or "
+                        "pull_request, or classic protection with required checks or reviews)" % MAIN)
     p.add_argument("--no-notify", action="store_true", help=HELP_NO_NOTIFY + " (passed on to finish)")
     p.add_argument("--no-fetch", action="store_true", help=HELP_NO_FETCH)
     p.set_defaults(func=cmd_land)

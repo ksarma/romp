@@ -19,7 +19,7 @@ named so the fake does not pass as evidence):
     tool deletes them itself and records which case it met).
   - `--auto` is accepted and, with no ruleset, merges at once (nothing is required, so nothing
     waits); with a ruleset it also merges at once, which stands in for "when the checks pass".
-  - `--jq` is supported for the two expressions the shell scripts use, and refused otherwise.
+  - `--jq` is supported for the expressions the scripts use, and refused otherwise.
   - A MERGED or CLOSED PR keeps the head SHA it had at that moment, as GitHub reports it; only an
     OPEN PR's head follows its branch (a branch name reused after a merge is a different PR).
   - `api` serves the repository (`repos/{owner}/{repo}`: `allow_auto_merge` from the state's
@@ -29,7 +29,10 @@ named so the fake does not pass as evidence):
     none), and `-X DELETE .../git/refs/heads/<ref>` (deletes the branch and retargets its
     dependents to main, as GitHub does).
   - FAKE_GH_FAIL (`|`-separated argv prefixes) makes the matching calls fail with an HTTP 502, so
-    a test can see what the tool does when a call does not land.
+    a test can see what the tool does when a call does not land. `fail` in the state maps an
+    endpoint (`rules`, `protection`) to a gh error line the fake prints and exits 1 with, the way a
+    5xx or an auth failure (an HTTP 403 on protection) would; the 404 for an unprotected branch
+    needs no injection.
 
 Synthetic data only: PR numbers, titles and branches are the tests' inventions.
 """
@@ -354,7 +357,10 @@ def api(state, argv):
             die("unsupported --jq expression %r" % expr)
         print(json.dumps(info))
         return
+    fail = state.get("fail") or {}
     if path.endswith("/rulesets") or "/rules/branches/" in path:
+        if fail.get("rules"):
+            die(fail["rules"], code=1)
         rows = state.get("rulesets", []) if (path.endswith("/rulesets") or path.endswith("/rules/branches/main")) else []
         if o.get("--jq"):
             print(apply_jq(rows, o["--jq"][0]))
@@ -362,6 +368,8 @@ def api(state, argv):
             print(json.dumps(rows))
         return
     if "/branches/" in path and path.endswith("/protection"):
+        if fail.get("protection"):
+            die(fail["protection"], code=1)
         prot = state.get("protection")
         if prot:
             print(json.dumps(prot))

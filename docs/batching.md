@@ -52,11 +52,10 @@ of type `required_status_checks` or `pull_request` (`required_deployments`, `mer
 `code_scanning` count too), or classic branch protection with required status checks or required
 reviews. A ruleset that only blocks force pushes or deletion does not count. Without the setting
 GitHub rejects it; without such a rule it merges at once and protects nothing. `scripts/land.sh
---auto` reads both and refuses, naming the missing one or the rules it found instead. A rules read
-that fails, or a protection read that fails with anything but a 404 (GitHub's answer for no
-protection), is refused with gh's error, not reported as none. `scripts/batch.py land --auto` reads
-the setting and the rules on main and refuses, naming the one that is missing. Neither adds `--auto`
-on its own.
+--auto` and `scripts/batch.py land --auto` read both and refuse, naming the missing one or the rules
+they found instead. A rules read that fails, or a protection read that fails with anything but a 404
+(GitHub's answer for no protection), is refused with gh's error, not reported as none. Neither adds
+`--auto` on its own.
 
 Per batch, in order:
 
@@ -144,9 +143,10 @@ subject; `verify` refuses the branch otherwise.
    block. Then repeat steps 3 to 5.
 8. On the maintainer's word: `scripts/batch.py land <name>`. It verifies again, merges with a merge
    commit, and runs `finish`. `land --auto` arms auto-merge instead: it needs the repository's
-   "Allow auto-merge" setting and rules on main (a ruleset or branch protection), reads both before
-   it retargets anything, and refuses naming the one that is missing; run `finish` once the PR
-   lands. If the maintainer clicked the button, run `scripts/batch.py finish <name>` alone.
+   "Allow auto-merge" setting and a rule on main that gates a merge (the maintainer section above
+   names the types), reads both before it retargets anything, and refuses naming what is missing or
+   the rules it found instead; run `finish` once the PR lands. If the maintainer clicked the button,
+   run `scripts/batch.py finish <name>` alone.
 
 ## Checked on the first batch
 
