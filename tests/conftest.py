@@ -187,21 +187,31 @@ def pytest_collection_finish(session):
     ends the worker before it reports anything: the controller then died on an internal assertion,
     forty lines that never named the variable or the fix (2026-09-06, under `-n 8`). In a worker the
     refusal is held instead, and every item fails at setup with it (pytest_runtest_setup below), which
-    the controller reports as it reports any failure. Serially the UsageError stands: one line, nothing
-    runs, a `-k` that deselects everything included; `--collect-only` is serial too, xdist leaves it
-    alone. tests/test_envsource.py's Floor class pins both."""
+    the controller reports as it reports any failure. When nothing is selected (a `-k` that deselects
+    everything) no setup runs, so the worker asks for the stop itself: session.shouldfail, the field
+    `-x` sets, which xdist carries to the controller at the worker's finish and the controller reports
+    as `Interrupted: <the refusal>`, exit status 2 (2026-09-06: the held refusal went unreported and
+    the run ended `no tests ran`, exit status 5, saying nothing). session.items is final by this hook
+    (deselection runs in pytest_collection_modifyitems, before it) and the same on every worker, so an
+    empty list means no item can run anywhere; a worker the scheduler happens to give no item while
+    others run theirs says nothing, since their items carry it. Serially the UsageError stands: one line,
+    nothing runs, a `-k` that deselects everything included; `--collect-only` is serial too, xdist
+    leaves it alone. tests/test_envsource.py's Floor class pins all three."""
     global _SELECTOR_FLOOR_VIOLATION
     msg = _selector_floor_violation()
     if msg is None:
         return
     if hasattr(session.config, "workerinput"):     # an xdist worker: the message would die with the process
         _SELECTOR_FLOOR_VIOLATION = msg
+        if not session.items:                      # nothing will reach pytest_runtest_setup
+            session.shouldfail = msg
         return
     raise pytest.UsageError(msg)
 
 
 def pytest_runtest_setup(item):
-    """The worker half of the refusal above: every item fails with the message, none runs."""
+    """The worker half of the refusal above when items were selected: every item fails with the message,
+    none runs."""
     if _SELECTOR_FLOOR_VIOLATION:
         pytest.fail(_SELECTOR_FLOOR_VIOLATION, pytrace=False)
 
