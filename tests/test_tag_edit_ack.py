@@ -431,7 +431,7 @@ class WholeBlobAcks(_Wire):
         self.assertEqual(self.notices, [], "nothing the user did was refused, so no notice")
         lines = [ln for ln in err.getvalue().splitlines() if ln.strip()]
         self.assertEqual(len(lines), 1, "one quiet stderr line is the whole record")
-        self.assertIn('"web"', lines[0])
+        self.assertIn('"web" (differing copy)', lines[0], "the quiet label carries its cause like every other")
         self.assertNotIn("reload that dashboard", lines[0])
         self.assertIsNone(km._edit_tag(tid=c0["tid"], delete=True)[1])
         # the same write naming web as edited: the lost-edit notice, as before
@@ -460,6 +460,31 @@ class WholeBlobAcks(_Wire):
         self.assertEqual(len(self.notices), 1)
         self.assertIn('"api"', self.notices[0][0])
         self.assertNotIn('"web"', self.notices[0][0], "the untouched tag is not the user's problem")
+
+    def test_every_quiet_label_carries_its_cause(self):
+        """Round 9 of the 2026-09-05 review: the quiet stderr line labelled a kept deletion "(deletion)"
+        and an unread copy "(unread)", but a differing copy of an unedited tag stood bare beside them —
+        the one label without a cause. Now it reads "(differing copy)", so the line is uniform."""
+        self.seed()
+        api = self.post({"type": "tagEdit", "writeId": "w1", "edit": {"op": "create", "name": "api", "color": "#54B204"}})
+        tests = self.post({"type": "tagEdit", "writeId": "w2", "edit": {"op": "create", "name": "tests", "color": "#54B204"}})
+        w = json.loads(json.dumps(tests["views"]))
+        next(t for t in w["tags"] if t["id"] == "gA")["members"] = []                 # web: a differing copy…
+        w["tags"] = [t for t in w["tags"] if t["id"] != api["tid"]]                    # api: absent, a deletion…
+        next(t for t in w["tags"] if t["id"] == tests["tid"])["color"] = "#000000"    # …and this write edits tests only
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            a = self.post({"type": "setTimelineViews", "writeId": "w3", "views": w, "edited": [tests["tid"]]})
+        self.assertTrue(a["ok"], "nothing the user did was refused")
+        self.assertEqual(sorted(r["tid"] for r in a["refused"]), sorted(["gA", api["tid"]]))
+        self.assertEqual(self.notices, [])
+        lines = [ln for ln in err.getvalue().splitlines() if ln.strip()]
+        self.assertEqual(lines, ["romp-kernel: kept the store's copy of 2 tags over a dashboard's stale copy (tags that "
+                                 "dashboard did not edit; the ack carries the newer state): "
+                                 '"api" (deletion), "web" (differing copy)'],
+                         "every label on the quiet line says why")
+        self.assertEqual(store_tag("tests")["color"], "#000000", "the edited tag landed")
+        self.assertIsNotNone(store_tag("api"), "the unedited absence was not a deletion")
 
     def test_a_stale_copy_cannot_resurrect_a_tag_deleted_elsewhere_but_a_named_create_lands(self):
         """Round 3 of the 2026-09-05 review, a pre-existing hole: the guard refused a stale DELETION

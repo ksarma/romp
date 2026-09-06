@@ -3365,8 +3365,10 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
         if not same and ed is not None and t["id"] not in ed:
             # A differing copy of a tag this write did not claim to edit (round 5): the change is
             # not the client's, whatever the stamps say — the same-second race the empty list
-            # closes above would otherwise land it here too. The store's copy stands, quietly.
-            refused.append(('"%s"' % pt.get("name"), t["id"]))
+            # closes above would otherwise land it here too. The store's copy stands, quietly, under
+            # a label that carries its cause like every other (round 9 of the 2026-09-05 review: this
+            # was the one bare label, beside "(deletion)" and "(unread)" on the quiet stderr line).
+            refused.append(('"%s" (differing copy)' % pt.get("name"), t["id"]))
             rows.append({"tid": t["id"], "name": pt.get("name"),
                          "reason": "your copy of it differs from the store's and this write did not edit it, "
                                    "so the store's copy was kept"})
