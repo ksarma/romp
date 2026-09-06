@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The batch tooling (scripts/batch.py, scripts/land.sh) against a fixture repository.
+"""scripts/batch.py against a fixture repository (scripts/land.sh has its own suite in
+tests/test_land_sh.py).
 
 Every test builds its own GitHub: a bare repository as `origin`, an `author` clone that makes the
 member branches, a `dev` clone the tool acts on (the scripts are copied into its scripts/, as they
@@ -13,8 +14,7 @@ What the plan holds the tool to (next-batch-process, "What the guard tests check
   - provenance fails on an undeclared commit and passes on a `batch:` commit;
   - verify fails when a pinned head moved;
   - pull N drops N's dependents;
-  - the body stays under 65,536 characters with details truncated first;
-  - land.sh refuses --squash and a base belonging to a merged PR.
+  - the body stays under 65,536 characters with details truncated first.
 Plus the conflict paths (hold back and tell the owner once; --resolve/--continue records the
 resolution; a straggler UPSTREAM.md row is converted inside the merge), land and finish end to end,
 and the computed "Read these first" rule.
@@ -120,7 +120,7 @@ class Fixture:
         self._git("push", "-q", "-u", "origin", "main", cwd=self.author)
         self._git("clone", "-q", self.bare, self.dev, cwd=self.tmp)
         os.makedirs(os.path.join(self.dev, "scripts"), exist_ok=True)
-        for s in ("batch.py", "land.sh", "pr-orphans.sh"):
+        for s in ("batch.py", "pr-orphans.sh"):
             shutil.copy(SCRIPTS / s, os.path.join(self.dev, "scripts", s))
         self.gh_state = {"bare": self.bare, "next_number": 900, "prs": {}, "rulesets": [],
                          "repo": {"mergeCommitAllowed": True, "squashMergeAllowed": False,
@@ -1383,72 +1383,6 @@ class LandAndFinish(_Base):
         self.assertIn("it was based on another PR's branch", comments[0])
         self.assertEqual(rep["retargeted"], [112])
         self.assertIn("retargeted to main: #112", p.stdout)
-
-
-class LandSh(_Base):
-    def setUp(self):
-        super().setUp()
-        fx = self.fx
-        fx.branch("a", {"a.txt": "a\n"})
-        fx.branch("old", {"old.txt": "old\n"})
-        fx.branch("h", {"h.txt": "h\n"}, base="old")
-        fx.pr(101, "a", labels=["fix"])
-        fx.pr(100, "old", state="MERGED", merge_commit=fx.bare_rev("main"))
-        fx.pr(108, "h", base="old", labels=["fix"])
-
-    def test_refuses_squash_and_rebase(self):
-        for flag in ("--squash", "-s", "--rebase", "-r"):
-            p = self.fx.run("101", flag, script="land.sh")
-            self.assertEqual(p.returncode, 2, flag)
-            self.assertIn("Merge commits only", p.stderr)
-        self.assertEqual(self.fx.calls("pr", "merge"), [])
-
-    def test_refuses_a_base_belonging_to_a_merged_pr(self):
-        p = self.fx.run("108", script="land.sh")
-        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
-        self.assertIn("merged PR #100", p.stderr)
-        self.assertIn("gh pr edit 108 --base main", p.stderr)
-        self.assertEqual(self.fx.calls("pr", "merge"), [])
-        self.assertEqual(self.fx.gh()["prs"]["108"]["state"], "OPEN")
-
-    def test_merges_one_pr_with_a_merge_commit_and_checks_orphans(self):
-        """The merge is a merge commit pinned to the head, with no --delete-branch (gh's flag also
-        deletes the LOCAL branch, which is checked out in a sibling worktree here; the remote branch
-        is the repository setting's to delete). tests/test_land_sh.py holds land.sh to the rest."""
-        fx = self.fx
-        head = fx.bare_rev("a")
-        p = fx.run("101", script="land.sh")
-        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertEqual(fx.calls("pr", "merge"), [["pr", "merge", "101", "--merge", "--match-head-commit", head]])
-        self.assertEqual(fx.gh()["prs"]["101"]["state"], "MERGED")
-        self.assertIn("pr-orphans: clean", p.stdout)
-
-    def test_auto_is_explicit_and_needs_the_setting_and_a_rule(self):
-        fx = self.fx
-        fx.set_gh(rulesets=[{"id": 1}])
-        p = fx.run("101", script="land.sh")
-        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertNotIn("--auto", fx.calls("pr", "merge")[0], "a ruleset alone does not add --auto; the flag is explicit")
-        fx.branch("a2", {"a2.txt": "a2\n"})
-        fx.pr(114, "a2", labels=["fix"])
-        p = fx.run("--auto", "114", script="land.sh")
-        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
-        self.assertIn('"Allow auto-merge" setting, which is off', p.stderr)
-        fx.set_repo(allowAutoMerge=True)
-        p = fx.run("--auto", "114", script="land.sh")
-        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertIn("--auto", fx.calls("pr", "merge")[-1])
-        self.assertIn("merging with --auto", p.stdout)
-
-    def test_refuses_a_draft_and_a_bad_argument(self):
-        fx = self.fx
-        fx.pr(113, "a", draft=True)
-        p = fx.run("113", script="land.sh")
-        self.assertEqual(p.returncode, 2)
-        self.assertIn("draft", p.stderr)
-        p = fx.run("101", "102", "103", script="land.sh")
-        self.assertEqual(p.returncode, 2)
-        self.assertIn("usage", p.stderr)
 
 
 class Body(unittest.TestCase):
