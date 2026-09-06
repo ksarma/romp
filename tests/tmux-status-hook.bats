@@ -3,6 +3,8 @@
 # Resolve path to the hook script under test
 HOOK_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../hooks" && pwd)/tmux-status.sh"
 
+load tmux-private
+
 setup() {
     TEST_DIR="$(mktemp -d)"
     MOCK_DIR="$TEST_DIR/mock"
@@ -46,6 +48,10 @@ MOCK
     chmod +x "$MOCK_DIR/romp-idle-dots"
 
     export PATH="$MOCK_DIR:$PATH"
+    # The hook shells out to `tmux` by name on every event; the mock takes those calls, and the private
+    # socket directory keeps any that reach the real binary off the machine's tmux server
+    # (tests/tmux-private.bash has the 2026-09-06 incident).
+    tmux_private_socket_dir "$TEST_DIR"
     export TMUX="fake"
     export MOCK_SESSION_NAME="test"
     export MOCK_IS_ROMP=1
@@ -58,6 +64,7 @@ MOCK
 }
 
 teardown() {
+    tmux_private_kill
     rm -rf "$TEST_DIR"
 }
 

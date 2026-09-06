@@ -35,7 +35,14 @@ in one pass, and you never copy a line out of the document by hand. The line in 
 label is checked against the file at the moment you select, so numbers that moved under
 you are caught rather than quietly carried. When several sessions work in the same
 repository, or in worktrees of it, the viewer's title bar says which one you opened the
-file from: a chip with the session's name, in the same color as its tab.
+file from: a chip with the session's name, in the same color as its tab. The title bar's
+**GitHub ↗** button opens the file on GitHub. When there is nothing to open, the button stays
+in place, dimmed, and a caption beside it says why (the file is not committed, the repository
+has no origin remote, or its origin is not on GitHub); the button's tooltip repeats the reason
+in full. A file on a branch that is not on origin keeps its link, drawn with a dashed border,
+and the caption says the branch is not on origin yet. That check reads the local tracking
+ref, so after a branch is deleted on GitHub the link looks normal until `git fetch --prune`
+has refreshed it.
 
 **Sending while the session is working.** The session takes your message at its next
 step, and the chat places it at the time you sent it, above the steps that were already
