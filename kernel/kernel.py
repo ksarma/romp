@@ -26578,7 +26578,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     ledger = {"summary": arch.get("headline", ""), "tree": tree[:80],
               "current": current, "recent": recent_tops,
               # the session's own claim of what it is doing (the postal set_working note, the store
-              # list_agents reads) — the chat's section snapshot shows it as a row's own second line
+              # list_agents reads): the chat's section snapshot shows it as a row's own second line
               # under the task (ui/webview/tab-snapshot.ts noteLine; the user 2026-09-06). A muted
               # session keeps it: the note is the session's statement, not task tracking. "" when
               # none. Read fresh on every build; the chat-build sig folds it too (_chat_build_sig),

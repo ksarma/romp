@@ -58,7 +58,7 @@ test("executed: one row per member in strip order, from what the client already 
   assert.equal(tests.lastMsg, "");
 });
 
-test("executed: the now line's precedence — current task, summary, recent top, nothing — and one line always; the note is its own line", () => {
+test("executed: the now line's precedence (current task, summary, recent top, nothing), one line always; the note is its own line", () => {
   assert.equal(nowLine({ workingNote: "a note", tree: [{ text: "done one", current: false }, { text: "the current one", current: true }], summary: "s" }), "the current one", "a note never leads");
   assert.equal(nowLine({ tree: [{ text: "", current: true }], summary: "the headline" }), "the headline", "a blank current text does not win");
   assert.equal(nowLine({ workingNote: "a note", summary: "   ", recent: [{ text: "" }, { text: "last top" }] }), "last top", "…nor stands in for a missing task");
@@ -71,7 +71,7 @@ test("executed: the now line's precedence — current task, summary, recent top,
   assert.equal(noteLine({ workingNote: "x".repeat(300) }).length, 200, "the same cap");
 });
 
-test("executed: needs you follows the FEED's column, not the tab's chip — a judge-filed block flags the row whether the session is idle or active", () => {
+test("executed: needs you follows the FEED's column, not the tab's chip: a judge-filed block flags the row whether the session is idle or active", () => {
   // the common case the tab's rule misses: the agent asked a question and went idle; the feed files its card under needs-you
   const idle = snapshotRow("web", { name: "web", status: { state: "idle" } }, { needsInput: true, tree: [{ text: "Pick a database", current: true }] });
   assert.deepEqual([idle.pip, idle.needsYou, idle.state], ["", true, FEED_BLOCK_STATE], "idle + feed needs-you: flagged, with the feed's word; the pip stays the tab's (none)");
@@ -127,7 +127,7 @@ test("executed: lastActivity walks the tail from the end and skips undated atoms
   assert.equal(lastActivity({ events: [], status: { state: "ready", sinceEpoch: ms(T0) + 999 } }), T0, "sub-second ms floor to the second");
 });
 
-test("executed: lastMessage takes the newest assistant text as PLAIN words on one line — markdown markers and fences stripped, as the file viewer strips them", () => {
+test("executed: lastMessage takes the newest assistant text as PLAIN words on one line, markdown markers and fences stripped as the file viewer strips them", () => {
   assert.equal(lastMessage({ events: [{ kind: "assistant", md: "first" }, { kind: "user", md: "q" }, { kind: "assistant", md: "  second   line \n two " }, { kind: "tool" }] }), "second line two");
   assert.equal(lastMessage({ events: [{ kind: "assistant", md: "" }] }), "");
   assert.equal(lastMessage({ events: [{ kind: "assistant", md: "**Done.** See `ui/x.ts`:\n```ts\nconst a = 1;\n```\nand [the guide](docs/guide.md)." }] }),
@@ -238,12 +238,25 @@ test("pinned: the sheet — two sizes (the body's and the header's 0.82em), toke
   assert.deepEqual(stripped.match(/#[0-9a-fA-F]{3,8}\b/g), ["#e67e22"], "no other raw color: the light theme needs no override");
 });
 
-test("pinned: the kernel puts the working note on the ledger the chat already receives — one field, no new frame", () => {
-  assert.match(KERNEL, /"current": current, "recent": recent_tops,\s*\n(?:\s*#[^\n]*\n)*\s*"workingNote": Sessions\.working_note\(sid\)\}/);
+test("pinned: the kernel puts the working note AND the feed's needs-you verdict on the ledger the chat already receives: two fields, no new frame", () => {
+  assert.match(KERNEL, /"current": current, "recent": recent_tops,\s*\n(?:\s*#[^\n]*\n)*\s*"workingNote": Sessions\.working_note\(sid\),\s*\n(?:\s*#[^\n]*\n)*\s*"needsInput": _feed_needs_input_of\(sid\)\}/);
+  assert.match(KERNEL, /_feed_needs_input\[0\] = _needs_input_sids\(feed\)/, "set from the feed build's own payload, never re-derived");
+  assert.match(KERNEL, /if a\.get\("column"\) == "needs_input" and a\.get\("sid"\)\)/, "the filing rule feed.ts askColumn maps: it.column == needs_input");
+  // the chat-build cache: both fields ride the sig, so a background tab's row follows them at the next push
+  const SIG = KERNEL.slice(KERNEL.indexOf("def _chat_build_sig(sess):"), KERNEL.indexOf("def _parse(path, sid, now):"));
+  assert.match(SIG, /sig\.append\(Sessions\.working_note\(sess\.get\("sid"\) or ""\)\)/);
+  assert.match(SIG, /sig\.append\(_feed_needs_input_of\(sess\.get\("sid"\) or ""\)\)/);
 });
 
 test("the guide describes the view and the new fold rule", () => {
   assert.match(GUIDE, /\*\*A section at a glance\.\*\* Clicking a header also shows the section in the transcript's place/);
-  assert.match(GUIDE, /The section of the\s+tab you are reading folds like any other; its header then stands in for the tab/);
+  assert.match(GUIDE, /The section of the\s+tab you are reading folds like\s+any other; its header then stands in for the tab/);
   assert.doesNotMatch(GUIDE, /never\s+folds \(its header says so/, "the old rule is gone from the guide");
+  // the now line's real chain, the note as a second line, needs-you as the feed's word, the hover without markup
+  assert.match(GUIDE, /What it is doing now comes from its current task, else from the headline of\s+its work so far, else from the last task it had;/);
+  assert.match(GUIDE, /a session that has published a note of what it is\s+working on shows the note as a quieter second line\./);
+  assert.match(GUIDE, /\*\*Needs you\*\* appears when the feed shows one of the session's cards under Blocked, or when the\s+session is stopped on a prompt or an API error only you can clear;/);
+  assert.match(GUIDE, /the \*\*needs you\*\* word\s+follows the feed, at most a moment behind it\./);
+  assert.match(GUIDE, /Hover a row for its last message, shown without\s+its formatting;/);
+  assert.doesNotMatch(GUIDE, /its own note of what\s+it is working on, else its current task/, "the old two-rung chain, note first, is gone");
 });

@@ -886,8 +886,8 @@ class ViewBuilder(unittest.TestCase):
     def test_a_working_note_write_busts_the_chat_build_cache(self):
         """_chat_build_sig is (transcript, states, judge gen, stores…): a note write (set_working, a shell's
         `romp mail working`, the kernel's own idle+done lift) touches NONE of them, so a background tab's
-        cached ledger kept the old note until the next producer pass ended — 3 s plus the pass, minutes
-        while judges were calling the model (review 2026-09-06). The note is folded into the sig, so the
+        cached ledger kept the old note until the next producer pass ended (3 s plus the pass, minutes
+        while judges were calling the model; review 2026-09-06). The note is folded into the sig, so the
         change reaches the row at the next push like every other ledger field."""
         sess = {"path": str(self.tpath), "sid": SID, "anchor": ""}
         saved = (km._sdk, km.WORKING_DIR)
@@ -907,7 +907,7 @@ class ViewBuilder(unittest.TestCase):
     def test_ledger_carries_the_feed_needs_you_verdict(self):
         """ledger.needsInput is the FEED's per-session needs-you (review 2026-09-06): True when the last feed
         build filed a card of this session under needs_input (here the fixture's judge-filed block, g2, on
-        an IDLE session — the case the tab's chip rule never sees), False when none, None before the first
+        an IDLE session, the case the tab's chip rule never sees), False when none, None before the first
         feed build. Read from the feed build's own payload, never re-derived; a muted session has no cards.
         The chat-build sig folds the bit so a background row follows a verdict flip at the next push."""
         tmux = km._tmux_sessions()
@@ -946,9 +946,9 @@ class ViewBuilder(unittest.TestCase):
             km._built_feed[:], km._feed_needs_input[0], km._views_dirty[0], km._sdk = saved
 
     def test_ledgers_attach_carries_the_working_note_and_the_feed_verdict(self):
-        """The fleet's per-session `ledgers` (feed["ledgers"], built in _push from the chat sessions) carry
+        """The Outline's per-session `ledgers` (feed["ledgers"], built in _push from the chat sessions) carry
         the whole ledger dict, so the Outline gets workingNote and needsInput with no new frame. Executed
-        through _push with a fleet client and the REAL build_session (the source pin in
+        through _push with an Outline client (app "fleet") and the REAL build_session (the source pin in
         tests/test_kernel_fleet_ledgers.py covers the attach's shape, not its keys)."""
         sent = []
         saved = (km._chat_tab_sessions, km.build_feed, km.build_timeline, km._send_client, km.WORKING_DIR,
@@ -968,7 +968,7 @@ class ViewBuilder(unittest.TestCase):
             (km._chat_tab_sessions, km.build_feed, km.build_timeline, km._send_client, km.WORKING_DIR,
              km._built_feed[:], km._feed_needs_input[0]) = saved
         feeds = [msg for (key, msg) in sent if isinstance(msg, dict) and "ledgers" in msg]
-        self.assertTrue(feeds, "the fleet client received a feed frame with ledgers attached")
+        self.assertTrue(feeds, "the Outline client received a feed frame with ledgers attached")
         row = next(r for r in feeds[-1]["ledgers"] if r["sid"] == SID)
         self.assertEqual(row["ledger"]["workingNote"], "editing the notes-api tests", "the note rides the attach")
         self.assertIs(row["ledger"]["needsInput"], True, "…and so does the feed's verdict")

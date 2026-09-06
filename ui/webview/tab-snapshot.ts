@@ -9,7 +9,7 @@
 // frame (name, emoji, color, status, userTodos, the events tail) and its ledger (the same summary /
 // current task / recent tops the tab hover tip and the Outline pane render, plus two fields the kernel
 // puts on the ledger for this view: the postal working note, and whether the feed files one of the
-// session's cards under needs-you) — to plain rows, with NO clock in it: the last-activity time is
+// session's cards under needs-you) to plain rows, with NO clock in it: the last-activity time is
 // an epoch the renderer formats, so a push that changed nothing yields the SAME object (snapshotModel
 // returns `prev`) and the renderer rebuilds nothing — the rule that views move only on new
 // information, applied to a list that is rebuilt from every push. render.ts paints it; the shapes
@@ -217,7 +217,7 @@ export function snapshotHeading(name: string, n: number): { count: string; label
   return { count, label: `${name}: ${count}; click one to open it` };
 }
 
-/** A row's spoken label — name, state, what it needs, what it is doing, its own note — and its hover title. */
+/** A row's spoken label (name, state, what it needs, what it is doing, its own note) and its hover title. */
 export function rowWords(r: SnapRow): { label: string; title: string } {
   const parts = [r.name];
   if (r.loading) parts.push("opening");

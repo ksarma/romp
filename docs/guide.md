@@ -88,14 +88,19 @@ button's menu, turns the sections off for this browser.
 
 **A section at a glance.** Clicking a header also shows the section in the transcript's place:
 one row per session, with its color and emoji, a dot for its state (yellow working, red needs
-you, green waiting on background work), a **needs you** or **waiting** word when one applies, a
-⚑ when it has asked you for something, what it is doing now in a few words (its own note of what
-it is working on, else its current task), and how long ago it last did anything. Hover a row for
-its last message; click one to open that session, which also opens its section. The rows update
-as the sessions work and change only when something about a session changes. The section of the
-tab you are reading folds like any other; its header then stands in for the tab (the name is
-underlined, ←/→ step from there), and the transcript comes back when you pick a session. Sections,
-and this view with them, are for the desktop layout; the phone layout keeps its flat list.
+you, green waiting on background work), a **needs you** or **waiting** word, a ⚑ when it has asked
+you for something, what it is doing now in a few words, and how long ago it last did anything.
+**Needs you** appears when the feed shows one of the session's cards under Blocked, or when the
+session is stopped on a prompt or an API error only you can clear; **waiting**, when it is waiting
+on background work. What it is doing now comes from its current task, else from the headline of
+its work so far, else from the last task it had; a session that has published a note of what it is
+working on shows the note as a quieter second line. Hover a row for its last message, shown without
+its formatting; click one to open that session, which also opens its section. The rows update as
+the sessions work and change only when something about a session changes; the **needs you** word
+follows the feed, at most a moment behind it. The section of the tab you are reading folds like
+any other; its header then stands in for the tab (the name is underlined, ←/→ step from there),
+and the transcript comes back when you pick a session. Sections, and this view with them, are for
+the desktop layout; the phone layout keeps its flat list.
 
 ### The feed
 
