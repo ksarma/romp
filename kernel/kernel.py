@@ -32619,7 +32619,7 @@ def _path_pins(sid, uuid):
 
 
 # ── verified path links (the user 2026-08-09) ──────────────────────────────────────────────────────
-# The chat linkifies path-shaped tokens by SHAPE alone (render.ts CLICKABLE_PATH_RE), so a bare
+# The chat linkifies path-shaped tokens by SHAPE alone (path-links.ts CLICKABLE_PATH_RE), so a bare
 # `render.js` in a reply became a blue link that 404'd on click — the token resolved against the
 # session's cwd, where no such file lives. The kernel is the machine that HAS the filesystem, so it
 # verifies at message-build time and, when a shortened mention names exactly one real file, FIXES the
@@ -32632,9 +32632,9 @@ def _path_pins(sid, uuid):
 # The repo list is `git ls-files -co --exclude-standard` in the SESSION's cwd (each session may be a
 # different repo), re-run per build pass — ~6ms here, and any mtime-keyed cache would miss the
 # untracked files agents create constantly. Ignored files are deliberately invisible to tiers 2/3.
-_PATH_TOKEN_RE = re.compile(          # Python port of render.ts CLICKABLE_PATH_RE — parity pinned in
-    r"file:///?[^\s<>\"'`)]+"         #   tests/test_path_links.py + chat-path-links.test.ts over the
-    r"|[~.\w\-]*/[~.\w\-/]*[\w\-]"    #   shared tests/fixtures/path_token_parity.json
+_PATH_TOKEN_RE = re.compile(          # Python port of ui/webview/path-links.ts CLICKABLE_PATH_RE — parity
+    r"file:///?[^\s<>\"'`)]+"         #   pinned in tests/test_path_links.py + chat-path-links.test.ts over
+    r"|[~.\w\-]*/[~.\w\-/]*[\w\-]"    #   the shared tests/fixtures/path_token_parity.json
     r"|[\w\-][\w\-.]*\.[A-Za-z0-9]{1,8}",
     re.IGNORECASE)
 _PATH_TRAIL_RE = re.compile(r"[.,;:!?)\]}>\"'`]+$")   # the client's trailing-punctuation strip, mirrored
@@ -32727,9 +32727,9 @@ def _resolve_path_token(tok, sid, memo):
 
 
 def _path_tokens(md):
-    """CLICKABLE_PATH_RE's matches over `md`, trailing punctuation stripped, deduped — the exact token
-    strings the client will look up in pathLinks. Resumes after the STRIPPED token, as the client's
-    exec loop does. Parity with the client regex is pinned over tests/fixtures/path_token_parity.json
+    """path-links.ts CLICKABLE_PATH_RE's matches over `md`, trailing punctuation stripped, deduped — the
+    exact token strings the client will look up in pathLinks. Resumes after the STRIPPED token, as the
+    client's scan does. Parity with the client regex is pinned over tests/fixtures/path_token_parity.json
     (tests/test_path_links.py here, chat-path-links.test.ts there)."""
     toks, pos = [], 0
     while True:
@@ -36167,8 +36167,11 @@ if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElem
 // A chat file-link click routed to the FILES pane (fileLinkPane "pane", 2026-09-03: the viewer as its own
 // column) posts viewFile up with pane:'pane'; the shell brings that pane forward and forwards the click
 // with the session's identity the chat resolved (name + colour — the pane has no session list to name
-// the file's session by; files.ts caches it for the viewer's chip). The pane STAYS up — nothing to put
-// back — so none of the feed route's was-off / ack / restore machinery below applies to this branch.
+// the file's session by; files.ts caches it for the viewer's chip). The Waiting-on-you pane's detail
+// links post the same message (plans/file-review.md, Slice 0) with todoId — the user todo the path came
+// from — which is forwarded as-is so the viewer can tie its work back to the todo; a chat click carries
+// none and the pane sees null. The pane STAYS up — nothing to put back — so none of the feed route's
+// was-off / ack / restore machinery below applies to this branch.
 if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');
   try{window.__rompPaneToggle&&window.__rompPaneToggle('files',true);}catch(e){}
   // phone (one pane at a time): bring the Files tab forward ONLY in the mobile layout — on desktop the column
@@ -36176,7 +36179,7 @@ if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files
   // remember the tab the click came from, so the viewer's close puts the person back (filesViewerClosed below)
   try{if(window.__rompMobileOn&&window.__rompMobileOn()){var cur=document.body.getAttribute('data-tab')||'chat';
     if(cur!=='files'){window.__rompFilesTabFrom=cur;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
-  try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}}
+  try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null},'*');}catch(e){}}
 // A chat file-link click with the cards-pane preference set (fileLinkPane — gear.js; the user
 // 2026-08-20) posts viewFile up instead of opening in-document; the shell forwards it to the FEED
 // pane, whose initFileView (file-view.ts) opens the viewer there. The GATE lives at the click site

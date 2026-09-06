@@ -44,6 +44,7 @@ import { numberDiff, type DiffRow } from "./diff-lines";
 import { parseAgentNotif, type AgentNotif } from "./agent-notif";
 import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, setLightboxNav, type LightboxNavEntry } from "./preview";
 import { openFileView } from "./file-view";
+import { openPathLink, linkifyPathTokens } from "./path-links";
 // initFileView rides its OWN line: the import above is pinned verbatim by file-view.test.ts
 import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
 import { initFileBrowse, openFileBrowse } from "./file-browse";   // the browser is pane-local here now (the user 2026-08-24)
@@ -1499,69 +1500,36 @@ function linkifyImgPaths(root: HTMLElement, paths: string[]): void {
   }
 }
 
-// A file:// URI → its local filesystem path: strip the scheme, percent-decode. file:///a/b → /a/b.
-function fileUriToPath(uri: string): string {
-  let p = uri.replace(/^file:\/\//i, "");   // file:///Users/… → /Users/… (host is empty for file:///)
-  try { p = decodeURIComponent(p); } catch { /* malformed %-escape — use verbatim */ }
-  return p;
-}
-// A clickable, VERBATIM file link — the SAME open-the-file path the caption/image links use (openPath:
-// the editor in VS Code, the feed pane's viewer on the web). `raw` is shown as written; `open` is what
-// gets opened. A bare file:// can't be followed by the browser from the http dashboard (blocked scheme)
-// and a VS Code editor won't render a PDF, so it's routed rather than navigated. `relative` bare paths
-// carry the active session id so whoever resolves them uses THAT session's cwd — a relative
-// `design/foo.md` is relative to the repo the agent runs in, not the kernel's cwd (the user 2026-07-06).
-// `sid` names that session explicitly when the text belongs to one other than the active tab —
-// a todo's note is written by the session that flagged it, wherever the card is read.
-function openPathLink(raw: string, open: string, relative = false, sid?: string | null): HTMLElement {
-  const a = el("span", "file-uri-link");
-  a.textContent = raw;                       // shown exactly as written, selectable/copyable in place
-  a.title = "Open " + open;
+// The path-token matcher — the regex, its shape gates, the trailing-punctuation trim and the span it emits —
+// lives in path-links.ts since Slice 0 of plans/file-review.md, so the Waiting-on-you pane (an iframe of
+// its own) links a todo's detail path with the SAME matcher this chat uses. That module marks and binds
+// nothing: every span it emits carries data-act="openpath", data-path, data-rel and data-sid, and the
+// hosting document decides what a click does. Here that is openPath — the editor in VS Code, the viewer
+// or the shell's relay on the web — bound per span, exactly as the chat always did: a `relative` bare
+// path (data-rel) carries the session id so whoever resolves it uses THAT session's cwd — a relative
+// `design/foo.md` is relative to the repo the agent runs in, not the kernel's cwd (the user 2026-07-06) —
+// the named session first (a todo's note belongs to the session that flagged it, whichever tab reads
+// it), the active tab otherwise; a file:// URI names an absolute path and sends none. stopPropagation
+// as before: a path inside a fold head or a card must open the file, not toggle its container.
+function bindPathLink(a: HTMLElement): HTMLElement {
+  const open = a.dataset.path || "", relative = a.dataset.rel === "1", sid = a.dataset.sid ?? null;
   a.addEventListener("click", (e) => {
     e.stopPropagation();
     openPath(open, relative ? (sid ?? activeId) : null);
   });
   return a;
 }
-function fileUriLink(uri: string): HTMLElement { return openPathLink(uri, fileUriToPath(uri)); }
-// Is this bare token (trailing punctuation already stripped) a file path worth linkifying? Requires a slash
-// and EITHER an absolute/anchored start (/, ~/, ./, ../) OR a file extension on the final segment — so
-// "and/or", "TCP/IP", "24/7", "read/write" stay as prose. URL-ish tokens (a ':' or '//') are rejected;
-// http(s) links are already <a> (skipped) — this just guards a rare un-autolinked one.
-function looksLikeFilePath(tok: string): boolean {
-  if (tok.includes(":") || tok.includes("//") || !tok.includes("/")) return false;
-  if (/^(?:~\/|\.{1,2}\/|\/)/.test(tok)) return true;                        // absolute or anchored (/, ~/, ./, ../)
-  return /\.[A-Za-z0-9]{1,8}$/.test(tok.slice(tok.lastIndexOf("/") + 1));    // relative → the last segment has an extension
-}
-// A BARE filename (no slash — `power2_watts.pdf`) is linkified ONLY inside inline <code> (the user
-// 2026-07-17: a reply listing its output files wasn't clickable). Backticks are where agents put
-// filenames, and the KNOWN-extension gate keeps backticked dotted identifiers (`np.array`, `s.color`,
-// `romp.kernelPort`) and version numbers (`0.4.293`) reading as prose — an unknown extension stays text.
-const BARE_FILE_EXTS = new Set([
-  "md", "txt", "rst", "py", "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "jsonl", "csv", "tsv",
-  "pdf", "png", "jpg", "jpeg", "gif", "svg", "webp", "html", "htm", "css", "scss", "sh", "bash", "zsh",
-  "bats", "yaml", "yml", "toml", "ini", "cfg", "conf", "xml", "ipynb", "rs", "go", "java", "c", "h",
-  "cpp", "hpp", "cc", "rb", "php", "sql", "log", "lock", "tex", "bib", "zip", "tar", "gz", "tgz",
-  "mp4", "mov", "mp3", "wav", "vsix", "plist", "diff", "patch",
-]);
-function looksLikeBareFileName(tok: string): boolean {
-  if (tok.includes("/") || tok.includes(":")) return false;
-  const dot = tok.lastIndexOf(".");
-  if (dot <= 0) return false;                                                // needs a name before the extension
-  return BARE_FILE_EXTS.has(tok.slice(dot + 1).toLowerCase());
-}
 // Make bare file:// URLs AND bare file paths inside a rendered CHAT message clickable (assistant replies +
 // your own bubbles) — a relative `design/foo.md` opens too, resolved against the session's cwd (the user
 // 2026-07-06). marked doesn't autolink these and DOMPurify strips the file: scheme, so without this they read
-// as dead text. Deliberately NOT applied to tool-use summaries. Linkifies inside INLINE <code> too — agents
-// routinely wrap a path in backticks; only FENCED <pre> blocks and text already inside a link are skipped.
-// Trailing sentence punctuation is left out, not swallowed.
-const CLICKABLE_PATH_RE = /file:\/\/\/?[^\s<>"'`)]+|[~.\w\-]*\/[~.\w\-/]*[\w\-]|[\w\-][\w\-.]*\.[A-Za-z0-9]{1,8}/gi;
+// as dead text. Deliberately NOT applied to tool-use summaries. The token walk itself is path-links.ts's
+// (shared with the Waiting-on-you pane); what follows here is chat-only: the code-span URL pass, the
+// kernel-verified spaced spans, the click binding, and the figure previews.
 // `skipThumbs`: paths this turn ALREADY renders as full in-bubble images (a pasted screenshot's
 // ev.images) — they stay clickable links but are excluded from the mentioned-path thumbnail strip,
 // otherwise the same picture renders twice (the user 2026-07-10).
 // `spacePaths` (the user 2026-08-04): backticked filenames WITH SPACES that the KERNEL verified exist
-// (build_session's _space_paths — resolved like a click, existence-checked). The token regex below can
+// (build_session's _space_paths — resolved like a click, existence-checked). The token regex can
 // never span a space — in prose that boundary is what keeps ordinary text unlinked — so a note titled
 // `Moving from correlation to causal components.md` linkified only its last word. For exactly these
 // verified spans, the whole inline-code content becomes ONE link; the filesystem is the authority, so a
@@ -1570,9 +1538,10 @@ const CLICKABLE_PATH_RE = /file:\/\/\/?[^\s<>"'`)]+|[~.\w\-]*\/[~.\w\-/]*[\w\-]|
 // (build_session's _path_links — tier 1 exact stat, tiers 2/3 a unique repo-list match that FIXES a
 // shortened mention to its real file). When the key is present, a token links ONLY if it's in the map,
 // and it opens the map's value — so `render.js` in prose stops 404ing, and hover shows the real target.
-// Every shape gate below still applies; the map only ever narrows. An event with NO pathLinks key at
+// Every shape gate still applies; the map only ever narrows. An event with NO pathLinks key at
 // all (an old kernel, a cached payload) keeps today's shape-only linking rather than unlinking history.
-// file:// URIs are explicit absolute paths — never gated on the map.
+// file:// URIs are explicit absolute paths — never gated on the map. (The gates and the map walk are
+// path-links.ts's; the map is threaded through to it.)
 function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: string[],
     pathLinks?: Record<string, string>, pathPins?: Record<string, string>, sid?: string | null): void {
   // A whole-backtick http(s) URL becomes a TAPPABLE link that still looks like code (the user
@@ -1601,7 +1570,7 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
       if (code.closest("a, .file-uri-link, pre")) continue;    // already linked, or a fenced block
       const tok = (code.textContent || "").trim();
       if (!verified.has(tok)) continue;
-      const link = openPathLink(tok, tok, true, sid);
+      const link = bindPathLink(openPathLink(tok, tok, true, sid));
       code.replaceChildren(link);                              // the <code> chrome stays; its content is the link
       kernelVerified.add(tok);
       if (previewKind(tok) && !previewable.includes(tok) && !(skipThumbs && skipThumbs.includes(tok))) {
@@ -1610,43 +1579,16 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
       }
     }
   }
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const nodes: Text[] = [];
-  let n: Node | null;
-  while ((n = walker.nextNode())) nodes.push(n as Text);
-  for (const tn of nodes) {
-    if (tn.parentElement?.closest("a, .file-uri-link, pre")) continue;   // already a link, or a fenced code block
-    const inCode = !!tn.parentElement?.closest("code");                  // inline code — where bare filenames may link
-    const text = tn.data;
-    if (!text.includes("/") && !(inCode && text.includes("."))) continue;   // cheap pre-filter: no slash (and, in code, no dot) → nothing here
-    const re = new RegExp(CLICKABLE_PATH_RE.source, "gi");
-    const frag = document.createDocumentFragment();
-    let last = 0, any = false, m: RegExpExecArray | null;
-    while ((m = re.exec(text))) {
-      let tok = m[0];
-      const trail = tok.match(/[.,;:!?)\]}>"'`]+$/);   // don't grab a sentence's closing punctuation
-      if (trail) tok = tok.slice(0, tok.length - trail[0].length);
-      if (!tok) continue;
-      const isUri = /^file:\/\//i.test(tok);
-      if (!isUri && !looksLikeFilePath(tok) && !(inCode && looksLikeBareFileName(tok))) continue;   // "and/or", `np.array` etc. — leave as prose
-      const fixed = !isUri && pathLinks ? pathLinks[tok] : undefined;   // the kernel's verdict, when it rendered one
-      if (!isUri && pathLinks && typeof fixed !== "string") continue;   // checked against the filesystem: no such file (or several) → prose
-      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
-      const open = isUri ? fileUriToPath(tok) : (fixed ?? tok);
-      const link = isUri ? fileUriLink(tok) : openPathLink(tok, open, true, sid);
-      frag.appendChild(link);
-      if (!isUri && typeof fixed === "string") kernelVerified.add(open);   // the kernel stat'd it this build
-      if (previewKind(open) && !previewable.includes(open) && !(skipThumbs && skipThumbs.includes(open))) {
-        previewable.push(open);
-        mentionAt.set(open, link);
-      }
-      last = m.index + tok.length;
-      re.lastIndex = last;
-      any = true;
+  // The token walk is the shared one (path-links.ts linkifyPathTokens): it marks every path-shaped token
+  // — the kernel's pathLinks verdict narrowing it when the event carries one — and hands back the hits in
+  // document order; this document binds each click and reads the hits for the figure pass below.
+  for (const { el: link, open, verified } of linkifyPathTokens(root, sid, pathLinks)) {
+    bindPathLink(link);
+    if (verified) kernelVerified.add(open);   // the kernel stat'd it this build
+    if (previewKind(open) && !previewable.includes(open) && !(skipThumbs && skipThumbs.includes(open))) {
+      previewable.push(open);
+      mentionAt.set(open, link);
     }
-    if (!any) continue;
-    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
-    tn.replaceWith(frag);
   }
   // A mentioned image/PDF renders FULL-SIZE at its MENTION — the figure lands right after the
   // paragraph/list item that names it, like figures in a document (the user 2026-08-15, whose four

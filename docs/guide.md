@@ -16,7 +16,7 @@ complementary panes:
   chat.
 - **[The outline](#the-outline)** lists every session with its tasks, for
   reviewing what a session has done and searching across all of them.
-- **[Waiting on you](#waiting-on-you)** lists every request a session has
+- **[Waiting on you](#waiting-on-you)** lists every user todo a session has
   flagged for you, across all your sessions and machines, with Reply and
   Dismiss on each.
 - **[Files](#files)** holds the file viewer in a column of its own, so a file
@@ -113,15 +113,22 @@ find past work: the search box reaches every session, live or closed.
 
 ### Waiting on you
 
-One list of every request a session has flagged for you, oldest first, across
-every session and every attached machine: a decision it needs, a credential, a
-pick between two designs. Each row names its session and shows how long the
-request has waited. Reply sends your answer straight into that session, waking
-it if it has gone quiet; Dismiss clears the request without a reply. The pane is
-off by default, like the outline; turn it on from the bottom bar. Sessions flag
-requests only where the gear's **User todos** switch is on, and the switch is
-per machine: while it is off on this one, the pane says so and still lists the
-other machines' requests.
+One list of every user todo a session has flagged for you, oldest first,
+across every session and every attached machine: a decision it needs, a
+credential, a pick between two designs. Each row names its session and shows
+how long the todo has waited. Reply sends your answer straight into that
+session, waking it if it has gone quiet; Dismiss clears the todo without a
+reply. A file path in a todo's detail is a link: click it and the file opens in
+the Files pane, which comes forward if it was closed. The pane is off by
+default, like the outline; turn it on from the bottom bar. Sessions flag todos
+only where the gear's **User todos** switch is on, and the switch is per
+machine: while it is off on this one, the pane says so and still lists the
+other machines' todos. A todo you expected can be missing for two reasons. A
+session that has ended keeps its todos out of the list until you revive it
+(click **+**; closed sessions are listed under **Recent**). A session you have
+hidden from the feed (right-click its tab, **Hide from feed**) keeps them out
+too, though its tab still shows the ⚑ mark; **Show in feed** on the same menu
+brings them back. The file the todo named is still on disk.
 
 ### Files
 

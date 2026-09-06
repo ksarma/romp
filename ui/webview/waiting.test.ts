@@ -87,7 +87,7 @@ test("one row per todo, OLDEST first; the age is the kernel's clock on the recen
 
 test("click-safe: delegated on the stable #waiting-list; Dismiss arm survives a re-render; a tap elsewhere disarms", () => {
   assert.match(SRC, /const list = document\.getElementById\("waiting-list"\);\s*\n\s*if \(!list\) return;\s*\n\s*delegate\(list, \{/);
-  for (const act of ["open", "gear", "uttoggle", "utreply", "utdismiss"]) assert.match(SRC, new RegExp("\\n    " + act + ": "), act);
+  for (const act of ["open", "gear", "uttoggle", "utreply", "utdismiss", "openpath"]) assert.match(SRC, new RegExp("\\n    " + act + ": "), act);
   // the armed state lives in a Set keyed like openDetail, NOT on the DOM node, so a feed push that rebuilds
   // the list mid-arm keeps "Really dismiss?" (the 2026-09-03 review: the board re-renders on ANY session's
   // push, so a node-only arm reverted the confirm to a re-arm). rowEl paints the button from the Set.
