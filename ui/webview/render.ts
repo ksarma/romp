@@ -31,9 +31,9 @@ import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from 
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
-import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed,
-         reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
-import { tabStateClass, sectionPip, SECTION_PIP_TITLE } from "./tab-state";
+import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned, reachableFrom, headWords,
+         followAdoption, reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
+import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
@@ -532,7 +532,7 @@ function effViews(): SessionViews | null { return pendingSessionViews ?? session
 // the restored store the router adopted and re-emitted next (round 9; announcedAfter).
 function takeViews(v: SessionViews | null | undefined): boolean {
   if (!v) return false;
-  if (adoptViews(sessionViews, v, announcedViewsSeq)) { announcedViewsSeq = announcedAfter(sessionViews, v, announcedViewsSeq); sessionViews = v; rejectedViews = null; return true; }
+  if (adoptViews(sessionViews, v, announcedViewsSeq)) { announcedViewsSeq = announcedAfter(sessionViews, v, announcedViewsSeq); adoptBase(v); rejectedViews = null; return true; }
   rejectedViews = v;
   if (!staleViewsDiagSent) {
     staleViewsDiagSent = true;
@@ -540,6 +540,33 @@ function takeViews(v: SessionViews | null | undefined): boolean {
       data: { held: seqOf(sessionViews), got: seqOf(v) } });
   }
   return false;
+}
+// The base moves to `v` — the ONE assignment of sessionViews, reached from the gate above and from
+// the caps frame's adoption below; a caller that reads the held blob (the gate's announcedAfter) does
+// so before this call — and the tab strip's pins follow any tag `v` renames relative to
+// the blob it replaces (tab-groups.ts tagRenames / followTagRenames): a tag that keeps its id under a
+// new name carries its pinned members' entries to that name, so a pinned tab stays pinned to its group
+// through the rename. The store (romp:tabgroups) is rewritten only when an entry changed, and after
+// the base has moved, so the write's TABGROUPS_EVENT render reads the new blob. Renames follow the
+// ADOPTED blob, never the optimistic copy: the kernel's answer is the event, and a refused rename then
+// has nothing to undo here. The follow runs on EVERY adoption, renames or none: its memory of the name
+// each renamed tag's pins were last carried to is checked against the blob each time, so a tag the blob
+// names otherwise — renamed while no pane of this browser watched — has the pins under the remembered
+// name carried to the blob's, the rename this browser owes, and the memory re-stamped (rounds 7 and 8
+// of the 2026-09-06 review: kept, that memory read the tag's next rename to the name as followed;
+// dropped without the carry, a pane two renames stale stamped the last name over a pin the watching
+// pane had left under the middle one). Through followAdoption (round 9): a blob that names every tag as
+// the held one does is no news about names and moves nothing — a pane whose local socket is dead
+// re-adopts its stale blob on every router re-emit, and the check run on it carried a fresher pane's
+// follow back — and the memory is stamped with each tag's store's write seq, a blob older than the
+// stamp standing down on that tag.
+function adoptBase(v: SessionViews): void {
+  const prev = sessionViews;
+  sessionViews = v;
+  const unions = viewTagUnion(v);
+  const st = readTabGroups(unions);
+  const next = followAdoption(st, prev, v, unions);
+  if (next !== st) writeTabGroups(next);
 }
 function captureViews(v: SessionViews | null) {
   takeViews(v);
@@ -646,7 +673,7 @@ function postTagEdit(nv: SessionViews, edit: TagEditOp, newId?: string) {
 function onKernelCaps(m: { caps?: unknown; viewsSeq?: unknown }) {
   kernelCaps = new Set(Array.isArray(m.caps) ? m.caps.filter((c): c is string => typeof c === "string") : []);
   const adopted = capsAdopts(rejectedViews, m.viewsSeq);
-  if (adopted) sessionViews = rejectedViews;
+  if (adopted && rejectedViews) adoptBase(rejectedViews);
   announcedViewsSeq = adopted ? null : announcedSeq(m.viewsSeq);
   rejectedViews = null;
   if (viewsWrites.length) {
@@ -719,6 +746,21 @@ function tabInView(id: string): boolean { return id === peekId || chatVisible(id
 // header. Keyboard cycling walks the VISIBLE order, and a folded tab is not visible — the active
 // tab's section never renders folded, so the active id is always in it.
 let collapsedTabIds = new Set<string>();
+/** Every tab the strip knows — the kernel's order plus any pushed tab not yet in it (a placeholder):
+ *  the "does this session still exist" of the pin prune (tab-groups.ts prunePinned). */
+function knownTabIds(): Set<string> { return new Set<string>([...order, ...tabMeta.keys()]); }
+/** The remote hosts whose sessions the strip CAN know right now — attached, tunnel up, and their tab list
+ *  already in this pane — from the federation router's published lists (tab-groups.ts reachableFrom states
+ *  the rule): the prune's "this entry can be judged" (prunePinned). A detached host's sessions left `order`
+ *  with it (closeRemote's hostDrop dismissals), a down host's never arrived on a page loaded during the
+ *  outage, and a pending host's are a relay hop away; none is a session's end, so their pins stand until
+ *  the host's tabs are here. Empty where no router runs (a single-kernel page): every sid is local there,
+ *  and local sids are always judged. */
+function reachableHosts(): Set<string> { return reachableFrom((window as any).__rompFed); }
+/** The tab-groups store as a WRITE reads it: with the current unions, so an entry in the store's earlier
+ *  shape is migrated faithfully before it is written back (tab-groups.ts parseTabGroups). A read that
+ *  only looks at `.on` needs none. */
+function tabGroups() { return readTabGroups(viewTagUnion(effViews())); }
 let draggedGroup: string | null = null;   // a section header mid-drag (reorders tagOrder) — never a tab
 // the tags a create in flight named (openProvisional): the provisional tab sections under its future
 // home from the first paint (planStrip's `pending`), instead of landing loose and jumping on the frame
@@ -4749,14 +4791,29 @@ function releaseTabStrip(): void {
   if (renderPendingWhilePressed) { renderPendingWhilePressed = false; setTimeout(() => renderTabs(), 0); }
 }
 
-// A SECTION HEADER for the tab strip (tab groups on tags, the user 2026-09-04): the tag's dot and
-// name at the tab's own type size; folded, the count and one pip for the gist. It carries
-// data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip rebuilds on every
-// push) and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted union
-// order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The untagged
-// trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the loose ones
-// never read as one run.
-function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false): HTMLElement {
+// A SECTION HEADER for the tab strip (tab groups on tags, the user 2026-09-04). It reads as a LABEL,
+// not a session (the user 2026-09-06): a disclosure chevron that flips with the fold, the tag's color
+// as a short bar, the name in the strip's small letter-spaced label style, and the member count — the
+// folded-away count while folded. None of a tab's own affordances: no close, no state class, no dot of
+// its own. Folded, it carries two MEMBER-derived marks after the count, small, so a fold hides no
+// "needs you": the summary pip (tab-state.ts's rule, the tab's own colors) and the user-todo flag. It
+// carries data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip
+// rebuilds on every push), is a button to the keyboard too (Enter or Space fold and open; the chevron
+// says which), and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted
+// union order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The
+// untagged trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the
+// loose ones never read as one run. `hidden` is what a folded header stands in for — its members less
+// the ones pinned to show through the fold (planStrip) — so its count and its flag read those, never a
+// member whose own tab is on screen; its words (count, title, spoken label) are headWords, pure.
+// To assistive tech (the 2026-09-06 review, checked against a real accessibility tree): the chevron,
+// the color bar and the pip are decoration (aria-hidden — the caret glyph was read aloud before the
+// name), the header's name is an aria-label in words (name and count, plus the pip's phrase and the
+// flag's when it wears them), so nothing runs into it unplanned; the flag's phrase rides it on purpose —
+// the flag is a button nested in a role=button header, whose children ARIA lets a tool prune (WebKit
+// does), so the count and the names have a spoken carrier there too; and the header holding the active
+// tab is a labeled group, not a button — it takes no action and no focus, and "button, expanded"
+// promised both.
+function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string[]): HTMLElement {
   if (sec.name === null) {
     const sep = el("div", "tab-group-sep");
     sep.title = "sessions in no tag";
@@ -4774,31 +4831,89 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false)
   // (data-folded), never from the store.
   head.dataset.act = holdsActive ? "group-active" : "toggle-group";
   head.dataset.folded = collapsed ? "1" : "0";
-  head.title = holdsActive
-    ? `${name} — this group holds the active tab; drag to reorder the groups`
-    : collapsed
-      ? `${name} — ${sec.ids.length} session${sec.ids.length === 1 ? "" : "s"} folded; click to open`
-      : `${name} — click to fold this group; drag to reorder the groups`;
-  const dot = el("span", "tab-group-dot");
-  if (sec.color) dot.style.background = sec.color;
-  head.appendChild(dot);
+  const total = sec.ids.length;
+  const words = headWords(name, total, hidden.length, collapsed, holdsActive);
+  head.title = words.title;
+  let spoken = words.label;
+  if (holdsActive) {
+    // no fold action and no tab stop (a stop that does nothing is noise in the tab order), so not a
+    // button either: a labeled group, read once, promising nothing
+    head.setAttribute("role", "group");
+  } else {
+    // a label the keyboard can fold: Enter or Space go through the same click → delegate path as the
+    // pointer. NOT when they land on the flag button inside the header: a native button activates
+    // itself (its own click → open-group), and cancelling its keydown here clicked the header instead.
+    head.setAttribute("role", "button");
+    head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    head.tabIndex = 0;
+    head.addEventListener("keydown", (e) => {
+      if ((e.target as HTMLElement | null)?.closest(".tab-group-flag")) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); head.click(); }
+    });
+  }
+  const caret = el("span", "tab-group-caret");
+  caret.textContent = "▸";                       // turned down by CSS while open (.tab-group-head:not(.collapsed))
+  caret.setAttribute("aria-hidden", "true");
+  head.appendChild(caret);
+  const swatch = el("span", "tab-group-swatch");  // the tag's color as a short bar — a dot beside a name is a session pip
+  if (sec.color) swatch.style.background = sec.color;
+  swatch.setAttribute("aria-hidden", "true");
+  head.appendChild(swatch);
   const label = el("span", "tab-group-name");
   label.textContent = name;
   head.appendChild(label);
+  const n = el("span", "tab-group-count");
+  n.textContent = words.count;   // folded: the hidden members — a pinned one shows itself; all pinned: the total (headWords)
+  head.appendChild(n);
   if (collapsed) {
-    const n = el("span", "tab-group-count");
-    n.textContent = String(sec.ids.length);
-    head.appendChild(n);
-    // the folded gist: one pip by the TAB's own state rule (tab-state.ts) — red for a member blocked
-    // on you or waiting for you, gold for working, amber for an API error retrying on its own (the
-    // tab strip renders that amber too; a red pip there was a false interrupt)
-    const kind = sectionPip(sec.ids.map((id) => sessions.get(id)?.status));
+    // the folded gist, MEMBER-derived: one pip by the TAB's own state rule (tab-state.ts) — red for a
+    // hidden member blocked on you or waiting for you, gold for working, amber for an API error
+    // retrying on its own (the tab renders that amber too; a red pip there was a false interrupt).
+    // After the count and small, so the header still reads as a label; the tooltip names the sessions.
+    // Over the HIDDEN members only: a pinned member's own tab shows its state. Not the header's own
+    // pip — it wears no state class — and never a tab pip class (the kernel's mobile scrape keys on those).
+    const kind = sectionPip(hidden.map((id) => sessions.get(id)?.status));
     if (kind) {
       const pip = el("span", "tab-group-pip" + (kind === "working" ? "" : " " + kind));
-      pip.title = SECTION_PIP_TITLE[kind];
+      pip.title = sectionPipTitle(kind, sectionPipMembers(kind, hidden.map((id) => sessions.get(id))));
+      pip.setAttribute("aria-hidden", "true");   // a dot says nothing aloud: its phrase rides the header's label
+      spoken += "; " + pip.title;
       head.appendChild(pip);
     }
+    // the USER-TODO flag (the user 2026-09-06): a member tab's ⚑ — "this session flagged something
+    // it needs from you" — must not vanish under a fold. Derived from the field the tab itself reads
+    // (the session's userTodos, refreshed by every chat delta → renderTabs), so the frame that
+    // resolves the todo clears both. Only a FOLDED header carries it: open, every member tab wears
+    // its own glyph, and a second flag over the same need would be noise. A real <button> — focusable,
+    // Enter opens the group — with its OWN data-act for the stable #tabs delegate (the nearest data-act
+    // wins, so a click never reads as the header's fold; the header's key handler stands down for it,
+    // so Enter and Space are the button's own click too) and its own dragstart guard, so a press that
+    // wanders never starts the header's group drag (tab-state.ts owns the count and the title). Over
+    // the HIDDEN members only: a pinned member's own tab shows its glyph.
+    const flag = sectionTodoFlag(hidden.map((id) => sessions.get(id)));
+    if (flag) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tab-group-flag";
+      b.dataset.act = "open-group";
+      b.dataset.group = name;
+      b.title = sectionTodoTitle(flag);
+      b.setAttribute("aria-label", b.title);
+      spoken += "; " + b.title;   // a tool that prunes the nested button (a role=button's children are presentational) still hears the count and names
+      const glyph = el("span", "tab-usertodo");   // the tab's own mark, same class
+      glyph.textContent = "⚑";
+      b.appendChild(glyph);
+      if (flag.count > 1) {
+        const c = el("span", "tab-group-count");   // the header's text size (font: inherit)
+        c.textContent = String(flag.count);
+        b.appendChild(c);
+      }
+      b.draggable = true;
+      b.addEventListener("dragstart", (e) => { e.preventDefault(); e.stopPropagation(); });
+      head.appendChild(b);
+    }
   }
+  head.setAttribute("aria-label", spoken);
   head.draggable = true;
   head.addEventListener("dragstart", (e) => {
     draggedGroup = name;
@@ -4963,6 +5078,14 @@ function renderTabs() {
   // of the chat iframe entirely), which silently killed ←/→/Enter nav after a send or any push: you were left
   // focused on nothing, so the keyboard model was dead until you clicked again. If a tab held focus, re-focus
   // the active tab after the rebuild so "tab mode" survives the repaint.
+  // A focused section HEADER (a label the keyboard folds; headers live only in this bar) re-focuses by
+  // its group name after the rebuild, so a push mid-read does not kick the user from the header onto
+  // the active tab. The header's ⚑ flag is a button INSIDE it, and closest() names the header from
+  // there too: remember which of the two held focus, so a push does not walk the user from the flag
+  // back onto the header. Captured before the tab rule below, which keeps its pinned two-line shape.
+  const focusedEl = document.activeElement as HTMLElement | null;
+  const focusedGroup = (focusedEl?.closest(".tab-group-head") as HTMLElement | null)?.dataset.group;
+  const focusedFlag = !!focusedEl?.classList.contains("tab-group-flag");
   const refocusTab = bar.contains(document.activeElement);
   bar.replaceChildren();
   // TABS-FIRST (the user 2026-06-26): render the WHOLE strip up front, in `order` — the kernel's order
@@ -5009,11 +5132,12 @@ function renderTabs() {
   // the phone layout (phoneLayout — the kernel page's own media rule) the plan is the flat strip,
   // since the phone's session list is scraped from every rendered tab and has no header to unfold.
   // A create in flight (the provisional tab) sections under the tags its request named.
-  const plan = planStrip(visibleIds, viewTagUnion(effViews()), readTabGroups(), activeId, phoneLayout(),
+  const unions = viewTagUnion(effViews());
+  const plan = planStrip(visibleIds, unions, readTabGroups(unions), activeId, phoneLayout(),
                          provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
   collapsedTabIds = plan.folded;
   for (const item of plan.items) {
-    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded, item.active)); continue; }
+    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded, item.active, item.hidden)); continue; }
     const id = item.id;
     const s = sessions.get(id);
     if (!s) { bar.appendChild(makePlaceholderTab(id)); continue; }
@@ -5188,7 +5312,7 @@ function renderTabs() {
       // neither here nor on the phone mount below.
       ...(phoneLayout() ? {} : {
         groupToggle: { label: "Group tabs by tag", on: () => readTabGroups().on,
-                       toggle: () => { const st = readTabGroups(); writeTabGroups({ ...st, on: !st.on }); } } }),
+                       toggle: () => { const st = tabGroups(); writeTabGroups({ ...st, on: !st.on }); } } }),
       onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
     });
   });
@@ -5244,7 +5368,13 @@ function renderTabs() {
   paintTabRowLines(bar);
   ensureTabRowObserver(bar);
   // Restore tab-mode focus if a tab held it before this rebuild (see the top of renderTabs).
-  if (refocusTab) focusActiveTab();
+  if (focusedGroup !== undefined) {
+    const h = Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).find((x) => x.dataset.group === focusedGroup);
+    // back onto the flag when the flag held it — unless this very push resolved the todo and the rebuilt
+    // header has none, when the header takes it; the group gone, or now holding the active tab (no
+    // stop): the old rule
+    if (h && h.tabIndex >= 0) ((focusedFlag && h.querySelector<HTMLElement>(".tab-group-flag")) || h).focus(); else focusActiveTab();
+  } else if (refocusTab) focusActiveTab();
   // The rebuild destroyed every old tab node: a still-up tip's owner is detached and its mouseleave
   // can never fire. Re-show for the tab under the (unmoved) pointer or close — covers every rebuild
   // source, including one that REMOVED the hovered tab (view-hidden, closed): no tab there → close.
@@ -5681,6 +5811,36 @@ function showTabMenu(e: MouseEvent, id: string) {
             row.appendChild(bodyE);
             row.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
           }
+          sub.appendChild(row);
+        }
+        // SHOW WHEN FOLDED (the user 2026-09-06): keep this tab visible under its folded group. A
+        // per-browser view preference like the fold itself (romp:tabgroups), PER SECTION: one entry per
+        // tab and section, storing the section's name and its local tag's id (tab-groups.ts PinnedRef),
+        // matched under either, so the pin follows the section through a host attaching or detaching,
+        // a same-named tag appearing on the other side, and the local tag's rename (adoptBase carries
+        // the name across). A move to another group starts unpinned there; on and off act on the home
+        // section's entry alone, so the row's copy — "while <home> is folded" — is the whole truth.
+        // Only while the strip is sectioned and the session has a home tag — there is no fold to show
+        // through otherwise. The row wears the home tag's chip and the menus' ✓ when on; the write
+        // prunes the pins of tags and sessions that are gone — judging only entries whose session this
+        // page can know about: a known tab, a local sid, or one on a host that is attached and up with
+        // its tabs in this pane (reachableHosts); a detached, down or still-arriving host's pins wait
+        // for it — (this is the one write path,
+        // and a prune here moves nothing on screen), notifies (TABGROUPS_EVENT), and the strip
+        // re-renders, the fold's own path.
+        if (home) {
+          const sec = sectionRef(home);
+          const on = isPinned(tabGroups(), sec, id);
+          sub.appendChild(el("div", "ctx-sep"));
+          const row = el("div", "ctx-item ctx-item-toggle ctx-item-pin" + (on ? " current" : ""));
+          const chip = el("span", "ctx-tag-dot"); chip.style.background = home.color || "var(--dim)"; row.appendChild(chip);
+          const bodyE = el("span", "ctx-item-body");
+          const lb = el("span", "ctx-item-label"); lb.textContent = "Show when folded"; bodyE.appendChild(lb);
+          const sb2 = el("span", "ctx-item-sub");
+          sb2.textContent = on ? `stays on the strip while ${home.name} is folded` : `keep this tab on the strip while ${home.name} is folded`;
+          bodyE.appendChild(sb2);
+          row.appendChild(bodyE);
+          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(prunePinned(togglePinned(tabGroups(), sec, id), unionFor(), knownTabIds(), reachableHosts())); build(); });
           sub.appendChild(row);
         }
         if (holding().length || others.length) sub.appendChild(el("div", "ctx-sep"));
@@ -14777,11 +14937,18 @@ setupSettings();
     // toggle and a sibling pane's alike.
     "toggle-group": (el) => {
       const name = el.dataset.group;
-      if (name) writeTabGroups(setSectionCollapsed(readTabGroups(), name, el.dataset.folded !== "1"));
+      if (name) writeTabGroups(setSectionCollapsed(tabGroups(), name, el.dataset.folded !== "1"));
     },
     // the header of the section holding the ACTIVE tab (makeGroupHead): unfoldable while active, so
     // the click stores nothing — the delegate's flash is the whole acknowledgement
     "group-active": () => { /* acknowledged by the flash; nothing to store */ },
+    // the folded header's user-todo flag (makeGroupHead): OPEN that group — explicit, never a toggle.
+    // The flag exists only on a folded header, so a press that lands after a sibling pane already
+    // opened the group must still read as "open", not fold it back. Same render path as toggle-group.
+    "open-group": (el) => {
+      const name = el.dataset.group;
+      if (name) writeTabGroups(setSectionCollapsed(tabGroups(), name, false));
+    },
     close: (el) => {
       const id = el.dataset.id;
       if (!id || !vscodeApi) return;
