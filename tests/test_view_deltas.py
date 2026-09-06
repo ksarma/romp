@@ -332,6 +332,65 @@ class BarsDeltas(unittest.TestCase):
         fr = st.push(_bars({S1: self._turn(S1, 2)}, [], [], now=1005))
         self.assertEqual([f["type"] for f in fr], ["delta"], "…and the stream continues as deltas the client can apply")
 
+    def test_n_the_same_payload_object_pushed_again_skips_the_per_entry_compare_until_the_repost(self):
+        """The builders reuse an unchanged payload object across cycles (the pusher holds the bars by the cached
+        timeline's identity), so the split the client's state was last written from is the split this cycle would
+        compare against it: the compare is skipped and nothing is sent. Past the repost window the compare runs and
+        the repost goes. An EQUAL payload in a new object (a content-equal rebuild) is compared once, which adopts its
+        split, and that object is short-circuited from then on."""
+        st = _Stream("bars")
+        p = _bars({S1: self._turn(S1, 3), S2: self._turn(S2, 2)}, [{"sid": S1, "judge": "closer", "t": 1, "t1": 2}], [])
+        st.push(p)
+        self.assertIs(st.c["dstate"]["bars"]["parts"], km._delta_parts("bars", p), "the keyed full records the split it went from")
+        real_order, real_shape, calls = km._client_order, km._order_shape, []
+        def order(*a): calls.append("_client_order"); return real_order(*a)
+        def shape(*a): calls.append("_order_shape"); return real_shape(*a)
+        with mock.patch.object(km, "_client_order", order), mock.patch.object(km, "_order_shape", shape):
+            self.assertEqual(st.push(p), [], "the same object: nothing to send")
+            self.assertEqual(st.push(p), [])
+            self.assertEqual(calls, [], "…and no per-entry compare ran to find that out")
+            st.c["dstate"]["bars"]["at"] -= km._DEDUP_REPOST_S + 1
+            fr = st.push(p)
+            self.assertEqual(len(fr), 1); self.assertEqual(fr[0]["type"], "delta"); self.assertEqual(fr[0]["coll"], {})
+            self.assertTrue(calls, "past the repost window the same object is compared and the repost goes")
+            self.assertIs(st.c["dstate"]["bars"]["parts"], km._delta_parts("bars", p), "a delta that went records its split")
+            del calls[:]
+            q = dict(p, now=1002)                              # an equal payload in a NEW object: a content-equal rebuild
+            self.assertEqual(st.push(q), [], "an equal payload in a new object still sends nothing…")
+            self.assertTrue(calls, "…by comparing once: identity is the short-circuit, not equality")
+            self.assertIs(st.c["dstate"]["bars"]["parts"], km._delta_parts("bars", q), "…and the compare adopts the new split")
+            del calls[:]
+            self.assertEqual(st.push(q), [], "the same new object again: nothing to send")
+            self.assertEqual(calls, [], "…and no compare: the adopted split is an identity hit")
+        p2 = json.loads(json.dumps(p)); p2["turns"][S2] = self._turn(S2, 3); p2["now"] = 1005
+        self.assertEqual([f["type"] for f in st.push(p2)], ["delta"])
+        self.assertIs(st.c["dstate"]["bars"]["parts"], km._delta_parts("bars", p2), "the held split follows the change")
+        self.assertEqual(st.push(p2), []); self.assertEqual(st.held, p2)
+
+    def test_o_a_raising_send_on_the_delta_path_logs_a_drop_naming_the_slot_and_marks_the_client_dead(self):
+        """The delta frame used to go out with a bare send whose failure only flipped `alive`: no drop line, and no
+        slot key on the client while it went (the bench harness booked the frame under no slot). It goes through
+        _client_send now, like every other frame."""
+        st = _Stream("bars")
+        st.push(_bars({S1: self._turn(S1, 1)}, [], []))
+        seen, real_send = [], st.c["send"]
+        st.c["send"] = lambda s: (seen.append(st.c.get("curSlot")), real_send(s))
+        fr = st.push(_bars({S1: self._turn(S1, 2)}, [], [], now=1005))
+        self.assertEqual([f["type"] for f in fr], ["delta"])
+        self.assertEqual(seen, [("timelinebars",)], "the slot key is on the client for the length of the delta send")
+        rev = st.c["dstate"]["bars"]["rev"]
+        def boom(s): raise RuntimeError("synthetic socket failure")   # not a "bytes behind" drop: no bell row
+        st.c["send"] = boom
+        p3 = _bars({S1: self._turn(S1, 3)}, [], [], now=1010)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(st.push(p3), [])
+        self.assertFalse(st.c["alive"], "a failed send marks the client dead")
+        self.assertIn("ws drop:", err.getvalue()); self.assertIn("slot=timelinebars", err.getvalue())
+        self.assertIn("synthetic socket failure", err.getvalue())
+        self.assertEqual(st.c["dstate"]["bars"]["rev"], rev, "a frame that did not go does not advance what the client holds")
+        self.assertIsNot(st.c["dstate"]["bars"]["parts"], km._delta_parts("bars", p3))
+
 
     def test_g_a_bar_appended_to_an_earlier_lane_crosses_alone_and_lands_in_its_lane(self):
         """The flat key order changes (the new bar sits before the later lanes' bars) but the assembled

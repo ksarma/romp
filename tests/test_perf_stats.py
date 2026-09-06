@@ -498,6 +498,32 @@ class PusherRecords(unittest.TestCase):
         self.assertEqual(s1[("deduped", "timelinebars")] - s0.get(("deduped", "timelinebars"), 0), 1)
         self.assertEqual(s1.get(("delta", "timelinebars"), 0) - s0.get(("delta", "timelinebars"), 0), 0)
 
+    def test_a_delta_client_counts_a_changed_bars_frame_as_delta_with_the_slot_on_the_client(self):
+        # the delta frame goes through _client_send like every other frame (2026-09-06): the slot key sits on the
+        # client while it goes — what _note_ws_drop and the bench harness read — and the delta class counts it;
+        # the same payload object pushed again is the identity short-circuit, counted as deduped
+        sent = []
+        c = {"app": "timeline", "alive": True, "sent": {}, "delta": True}
+        c["send"] = lambda s: sent.append((c.get("curSlot"), s))
+        frac = km._DELTA_MAX_FRACTION
+        km._DELTA_MAX_FRACTION = 10.0        # synthetic payloads are tiny: the size guard would send the whole instead
+        self.addCleanup(setattr, km, "_DELTA_MAX_FRACTION", frac)
+        b1 = {"type": "bars", "turns": {"lane": [{"id": "t1", "a": 1}]}, "judging": [], "messages": [],
+              "now": 1, "warming": False}
+        b2 = {"type": "bars", "turns": {"lane": [{"id": "t1", "a": 1}, {"id": "t2", "a": 2}]}, "judging": [],
+              "messages": [], "now": 2, "warming": False}
+        s0 = self._sends()
+        for b in (b1, b2, b2):
+            pre = json.dumps(b)
+            km._send_slot(c, "bars", b, pre, km._dedup_sig(b, pre))
+        s1 = self._sends()
+        self.assertEqual([json.loads(s)["type"] for _k, s in sent], ["bars", "delta"])
+        self.assertEqual([k for k, _s in sent], [("timelinebars",), ("timelinebars",)], "both frames went with the slot on the client")
+        self.assertEqual(s1[("full", "timelinebars")] - s0.get(("full", "timelinebars"), 0), 1)
+        self.assertEqual(s1[("delta", "timelinebars")] - s0.get(("delta", "timelinebars"), 0), 1)
+        self.assertEqual(s1[("deduped", "timelinebars")] - s0.get(("deduped", "timelinebars"), 0), 1, "the same object again: deduped, not sent")
+        self.assertGreaterEqual(km._PERF_STATS.snapshot()["sends"]["delta"]["timelinebars"]["bytes"], len(sent[1][1]))
+
     def test_a_caught_up_chat_client_counts_its_tail_as_delta(self):
         sent = []
         c = {"app": "chat", "alive": True, "send": sent.append, "sent": {}}
