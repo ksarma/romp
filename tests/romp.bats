@@ -3,6 +3,8 @@
 # Resolve path to the romp script under test
 ROMP_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp"
 
+load free-port
+
 setup() {
     TEST_DIR="$(mktemp -d)"
     WORK_DIR="$TEST_DIR/myproject"
@@ -1016,7 +1018,8 @@ MOCK
     command -v node >/dev/null 2>&1 || skip "node not available"
     local mgr; mgr="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
     # port nothing is listening on → the control client must fail fast with a clear message
-    run env ROMP_MANAGER_PORT=7531 node "$mgr" status
+    local port; free_port port
+    run env ROMP_MANAGER_PORT=$port node "$mgr" status
     [ "$status" -eq 1 ]
     [[ "$output" == *"not running"* ]]
 }
@@ -1032,7 +1035,7 @@ MOCK
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$fake"
     chmod +x "$fake"
 
-    local cport=7541 mport=7542 kport=7543
+    local cport mport kport; free_port cport mport kport
     # Launch the manager in the background; it auto-spawns 'main' on mport via the fake launcher.
     ROMP_MANAGER_PORT=$cport ROMP_SERVE_PORT=$mport ROMP_SERVE_BIN="$fake" \
         node "$mgr" up >/dev/null 2>&1 &
@@ -1075,7 +1078,7 @@ MOCK
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$fake"
     chmod +x "$fake"
 
-    local cport=7551 mport=7552 kport=7553
+    local cport mport kport; free_port cport mport kport
     ROMP_MANAGER_PORT=$cport ROMP_SERVE_PORT=$mport ROMP_SERVE_BIN="$fake" \
         node "$mgr" up >/dev/null 2>&1 &
     MGR_PID=$!

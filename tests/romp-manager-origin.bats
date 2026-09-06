@@ -6,6 +6,8 @@
 # kill the user's kernels. Server-side clients (the kernel's Restart proxy, the
 # `romp on` CLI) send no Origin and must keep working.
 
+load free-port
+
 setup() {
     TEST_DIR="$(mktemp -d)"
     MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
@@ -13,7 +15,7 @@ setup() {
     FAKE="$TEST_DIR/fake-serve"
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$FAKE"
     chmod +x "$FAKE"
-    CPORT=7571; MPORT=7572
+    free_port CPORT MPORT   # fresh per test, never a literal (tests/free-port.bash)
 }
 
 teardown() {

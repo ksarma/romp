@@ -4,6 +4,8 @@
 # (romp-manager-ensure.sh) calls it so romp usage brings up the supervisor.
 # It must be idempotent (no second manager) and non-blocking (spawns detached).
 
+load free-port
+
 setup() {
     TEST_DIR="$(mktemp -d)"
     MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
@@ -12,7 +14,7 @@ setup() {
     FAKE="$TEST_DIR/fake-serve"
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$FAKE"
     chmod +x "$FAKE"
-    CPORT=7561 MPORT=7562
+    free_port CPORT MPORT   # fresh per test, never a literal (tests/free-port.bash)
 }
 
 teardown() {
@@ -64,9 +66,12 @@ teardown() {
     printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\nexit 0\n' "$CALLS" > "$BIN/tmux"
     chmod +x "$BIN/tmux"
 
-    # Run `up` directly on a UNIQUE port (so it doesn't no-op against the other test's manager); the
-    # manager calls startTmuxServer() at startup, before it ever binds the control port.
-    env PATH="$BIN:$PATH" ROMP_MANAGER_PORT=7571 ROMP_SERVE_PORT=7572 ROMP_SERVE_BIN="$FAKE" node "$MGR" up >/dev/null 2>&1 &
+    # Run `up` directly on this test's own ports (setup picks fresh ones per test, so it cannot no-op
+    # against another test's manager); the manager calls startTmuxServer() at startup, before it ever
+    # binds the control port. A literal here once duplicated romp-manager-origin.bats's control port,
+    # and a manager SIGTERM'd there outlives the kill by shutdownAll's exit grace, so a combined run
+    # found `up` exiting "already running" without ever calling tmux.
+    env PATH="$BIN:$PATH" ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKE" node "$MGR" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
     for i in $(seq 1 50); do [ -f "$CALLS" ] && break; sleep 0.1; done
@@ -89,12 +94,12 @@ teardown() {
     printf '#!/usr/bin/env bash\nenv > "%s"\nexec sleep 30\n' "$envdump" > "$FAKE"
     chmod +x "$FAKE"
     env TMUX="/tmp/tmux-000/default,99999,7" TMUX_PANE="%7" \
-        ROMP_MANAGER_PORT=7581 ROMP_SERVE_PORT=7582 ROMP_SERVE_BIN="$FAKE" \
+        ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKE" \
         node "$MGR" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
     for i in $(seq 1 50); do [ -s "$envdump" ] && break; sleep 0.1; done
-    curl -fsS -X POST "http://127.0.0.1:7581/stop" >/dev/null 2>&1 || true
+    curl -fsS -X POST "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
     [ -s "$envdump" ]
     # `run` + status, NOT a bare `! grep`: `!` is exempt from set -e, so mid-test it asserts nothing.
     run grep -q '^TMUX=' "$envdump"
@@ -132,20 +137,20 @@ PYEOF
     chmod +x "$FAKEK"
 
     env BUSY_FILE="$BUSY" SPAWN_LOG="$SPAWNS" ROMP_QUIET_POLL_MS=200 \
-        ROMP_MANAGER_PORT=7591 ROMP_SERVE_PORT=7592 ROMP_SERVE_BIN="$FAKEK" \
+        ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKEK" \
         node "$MGR" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
     for i in $(seq 1 50); do
-        curl -fsS "http://127.0.0.1:7591/status" >/dev/null 2>&1 && [ -s "$SPAWNS" ] && break
+        curl -fsS "http://127.0.0.1:$CPORT/status" >/dev/null 2>&1 && [ -s "$SPAWNS" ] && break
         sleep 0.1
     done
     [ "$(grep -c spawn "$SPAWNS")" -eq 1 ]
 
     # Two quiet-mode refreshes while turns are in flight: both defer, the second coalesces.
-    run curl -fsS -X POST "http://127.0.0.1:7591/restart-all?when=quiet"
+    run curl -fsS -X POST "http://127.0.0.1:$CPORT/restart-all?when=quiet"
     [[ "$output" == *'"deferred":true'* ]]
-    run curl -fsS -X POST "http://127.0.0.1:7591/restart-all?when=quiet"
+    run curl -fsS -X POST "http://127.0.0.1:$CPORT/restart-all?when=quiet"
     [[ "$output" == *'"coalesced":2'* ]]
 
     # Still busy after several poll cycles -> no bounce happened.
@@ -156,5 +161,5 @@ PYEOF
     echo 0 > "$BUSY"
     for i in $(seq 1 60); do [ "$(grep -c spawn "$SPAWNS")" -ge 2 ] && break; sleep 0.1; done
     [ "$(grep -c spawn "$SPAWNS")" -eq 2 ]
-    curl -fsS -X POST "http://127.0.0.1:7591/stop" >/dev/null 2>&1 || true
+    curl -fsS -X POST "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
 }
