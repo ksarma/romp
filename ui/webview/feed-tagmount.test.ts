@@ -20,8 +20,8 @@ const PIPE = fs.readFileSync(path.join(ROOT, "vscode-extension", "src", "pipe-in
 const U = "11111111-2222-3333-4444-555555555555";
 const V = "99999999-8888-7777-6666-555555555555";
 const unions: TagUnion[] = [
-  { name: "infra", color: "", members: [U], ids: ["t1"], localId: "t1", remotes: [] },
-  { name: "web", color: "", members: [V], ids: ["TESTHOST:t2"], localId: null, remotes: [] },
+  { name: "infra", color: "", members: [U], ids: ["t1"], localId: "t1", localMembers: [U], remotes: [] },
+  { name: "web", color: "", members: [V], ids: ["TESTHOST:t2"], localId: null, localMembers: [], remotes: [] },
 ];
 
 test("arbitrary combinations union-filter; All is exclusive and the default board is byte-identical", () => {

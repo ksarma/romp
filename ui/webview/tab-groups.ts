@@ -29,16 +29,17 @@ export interface TabSection { name: string | null; key: string; color: string; i
  *  TabSection is one. */
 export type SectionMatch = Pick<TabSection, "key" | "name">;
 
-/** A section as a pin is WRITTEN against it (setPinned, pinKey): the match plus `remoteMembers`, the
- *  members the section holds through a REMOTE host's tag — a pin on one of those is stored under the
- *  name, not the local id (pinKey). Only sectionRef builds one, from the union: the plan's sections
- *  read pins and never write them, and a TabSection is not one, so a write cannot take a section that
- *  does not know which host anchors its members. */
-export interface SectionRef extends SectionMatch { remoteMembers: readonly string[] }
+/** A section as a pin is WRITTEN against it (setPinned, pinKeys): the match plus which tag holds each
+ *  member — `localMembers`, the ones the local tag holds, and `remoteMembers`, the ones a REMOTE
+ *  host's tag holds (a member can be in both) — because the keys a pin is stored under turn on that
+ *  (pinKeys). Only sectionRef builds one, from the union: the plan's sections read pins and never
+ *  write them, and a TabSection is not one, so a write cannot take a section that does not know
+ *  which tag anchors its members. */
+export interface SectionRef extends SectionMatch { localMembers: readonly string[]; remoteMembers: readonly string[] }
 
 /** A member kept visible under its folded section — the tab menu's "Show when folded" (the user
- *  2026-09-06): `tag` is the pinKey the member was pinned under. A view preference like the fold
- *  itself: per browser. */
+ *  2026-09-06): `tag` is one of the pinKeys the member was pinned under (a member two tags hold has an
+ *  entry per key). A view preference like the fold itself: per browser. */
 export interface PinnedRef { tag: string; sid: string }
 
 export interface TabGroupsState {
@@ -58,9 +59,8 @@ export function sectionKey(u: TagUnion): string {
   return u.localId || u.name;
 }
 
-/** The union's members held through a REMOTE host's tag — the section's members whose home the local
- *  tag does not decide. Deduped; a member a local tag and a remote tag both hold is listed (remote
- *  anchoring wins in pinKey — the section exists under the name wherever that remote tag does). */
+/** The union's members held through a REMOTE host's tag — deduped across its remote tags; a member the
+ *  local tag also holds is listed too (localMembers says so, and pinKeys gives it both keys). */
 function remoteMembers(u: TagUnion): string[] {
   const out: string[] = [];
   for (const rt of u.remotes) for (const m of (rt.members || [])) if (!out.includes(m)) out.push(m);
@@ -68,22 +68,28 @@ function remoteMembers(u: TagUnion): string[] {
 }
 
 export function sectionRef(u: TagUnion): SectionRef {
-  return { key: sectionKey(u), name: u.name, remoteMembers: remoteMembers(u) };
+  return { key: sectionKey(u), name: u.name, localMembers: u.localMembers, remoteMembers: remoteMembers(u) };
 }
 
-/** The key ONE pin is stored under — a pin follows the section the user sees, whichever host's tag
+/** The keys ONE pin is stored under — a pin follows the section the user sees, whichever host's tag
  *  anchors the member in it: the section's key (the local tag's id) for a member the local tag holds,
- *  the union's NAME for a member held only through a remote host's tag. A mixed union — a local tag
- *  beside a same-named remote tag — keys by the local id, and a remote member's pin stored under it
- *  died with the local tag: deleted, the member's section was the remote-only one, keyed by the name;
- *  renamed, the local members followed the new name while the remote member stayed in the old-name
- *  section — in both, the member folded away with no gesture on it (round 2 of the 2026-09-06 review).
- *  Its section is what the remote tag's name says, so the name is its key. NOT the sid's host prefix:
- *  the tab menu adds a remote tab to a union with a local tag as that LOCAL tag's (host-prefixed)
- *  member (render.ts applyUnionEdit), and that member's section is the local tag's, id and renames
- *  and all. */
-export function pinKey(sec: SectionRef, sid: string): string {
-  return sec.remoteMembers.includes(sid) ? (sec.name ?? sec.key) : sec.key;
+ *  the union's NAME for a member held only through a remote host's tag, and BOTH for a member the two
+ *  hold together. A mixed union — a local tag beside a same-named remote tag — keys by the local id,
+ *  and a remote member's pin stored under it died with the local tag: deleted, the member's section
+ *  was the remote-only one, keyed by the name; renamed, the local members followed the new name while
+ *  the remote member stayed in the old-name section — in both, the member folded away with no gesture
+ *  on it (round 2 of the 2026-09-06 review). Its section is what the remote tag's name says, so the
+ *  name is its key. A member both tags hold has two possible homes after a local rename — the renamed
+ *  local tag, or the old-name section the remote tag still makes — and tagOrder decides between them
+ *  (the local one by default: a rename leaves tagOrder alone, and local unions sort first), so it
+ *  carries both keys and matches under either (round 3). NOT the sid's host prefix: the tab menu adds
+ *  a remote tab to a union with a local tag as that LOCAL tag's (host-prefixed) member (render.ts
+ *  applyUnionEdit), and that member's section is the local tag's, id and renames and all. */
+export function pinKeys(sec: SectionRef, sid: string): string[] {
+  const name = sec.name ?? sec.key;
+  if (!sec.remoteMembers.includes(sid)) return [sec.key];
+  if (!sec.localMembers.includes(sid) || name === sec.key) return [name];
+  return [sec.key, name];
 }
 
 /** Does a stored pin name this section? Its stored key OR its name: a pin made while the section was
@@ -191,18 +197,22 @@ export function toggleSectionCollapsed(st: TabGroupsState, name: string): TabGro
 }
 
 /** Is this member kept visible under its folded section? A pin for the sid under the section's key or
- *  its name — see pinKey and PinnedRef. */
+ *  its name — see pinKeys and PinnedRef. */
 export function isPinned(st: TabGroupsState, sec: SectionMatch, sid: string): boolean {
   return st.pinned.some((p) => p.sid === sid && pinNames(sec, p.tag));
 }
 
-/** Set a member's pin EXPLICITLY (the fold's own idiom: the menu row passes the state it rendered). On
- *  stores it under pinKey. Off drops every entry the section answers to — a name-stored pin as well as
- *  an id-stored one — else an unpin through the id left the name's entry standing and the member on
- *  the strip. */
+/** Set a member's pin EXPLICITLY (the fold's own idiom: the menu row passes the state it rendered). A
+ *  write is the TAB's one preference and replaces every entry the sid has: on stores it under the
+ *  section's pinKeys; off leaves none. The tab menu offers one toggle per tab — "Show when folded", in
+ *  the section that is its home — so off means "through no fold": an entry made under a section that
+ *  is no longer the tab's home (a rename split the mixed section, a drag reordered the holders) is not
+ *  one the user could see or clear any other way, and left standing it showed the tab through that
+ *  section's fold the next time it became the home, after the last gesture on the tab was off (round 3
+ *  of the 2026-09-06 review). */
 export function setPinned(st: TabGroupsState, sec: SectionRef, sid: string, on: boolean): TabGroupsState {
-  const pinned = st.pinned.filter((p) => !(p.sid === sid && pinNames(sec, p.tag)));
-  if (on) pinned.push({ tag: pinKey(sec, sid), sid });
+  const pinned = st.pinned.filter((p) => p.sid !== sid);
+  if (on) for (const tag of pinKeys(sec, sid)) pinned.push({ tag, sid });
   return { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned };
 }
 

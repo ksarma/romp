@@ -11,7 +11,7 @@ import * as path from "node:path";
 import { viewTagUnion } from "./session-views";
 import { sectionTabs, anySectioned, homeTag, parseTabGroups, readTabGroups, writeTabGroups, isSectionCollapsed,
          toggleSectionCollapsed, setSectionCollapsed, planStrip, reorderTagOrder, applyTagOrder, TABGROUPS_KEY,
-         DEFAULT_COLLAPSED, sectionKey, sectionRef, pinKey, isPinned, setPinned, togglePinned, prunePinned, headWords,
+         DEFAULT_COLLAPSED, sectionKey, sectionRef, pinKeys, isPinned, setPinned, togglePinned, prunePinned, headWords,
          type TabSection, type SectionRef } from "./tab-groups";
 import { sectionTodoFlag, sectionTodoTitle, sectionPipTitle } from "./tab-state";
 
@@ -407,11 +407,11 @@ test("the header's structure and gestures read as a label: chevron (flips with t
 // SHOW WHEN FOLDED (the user 2026-09-06): a member pinned to its section keeps its tab on the strip
 // under the folded header, in strip order; the header stands in for the HIDDEN members alone — its
 // count and its user-todo flag read those, never a tab already on screen. A view preference like the
-// fold, stored beside it under romp:tabgroups, keyed by the section the user sees (pinKey: the local
-// tag's id for a member the local tag holds, the name for one held through a remote host's tag) and the
-// sid. The toggle is a row in the tab menu's Tags flyout beside the "Move to" rows.
+// fold, stored beside it under romp:tabgroups, keyed by the section the user sees (pinKeys: the local
+// tag's id for a member the local tag holds, the name for one held through a remote host's tag, both for
+// one both hold) and the sid. The toggle is a row in the tab menu's Tags flyout beside the "Move to" rows.
 const VP = { ...V, tags: [...V.tags, { id: "g4", name: "archived", color: "#6b7280", members: ["old1", "old2", "old3"] }] };
-const ARCH: SectionRef = { key: "g4", name: "archived", remoteMembers: [] };
+const ARCH: SectionRef = { key: "g4", name: "archived", localMembers: ["old1", "old2", "old3"], remoteMembers: [] };
 const headsOf = (p: ReturnType<typeof planStrip>) =>
   p.items.filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[] } => "head" in i);
 const MAKE_HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
@@ -470,7 +470,7 @@ test("executed: a pin follows the section the user sees — the local tag's id, 
   const infra = both.find((u) => u.name === "infra")!;
   assert.deepEqual(infra.ids, ["TESTHOST-A:t1", "TESTHOST-B:t2"]);
   assert.equal(sectionKey(infra), "infra", "remote-only: the name");
-  assert.deepEqual(sectionRef(infra), { key: "infra", name: "infra", remoteMembers: ["TESTHOST-A:m1", "TESTHOST-B:m1"] });
+  assert.deepEqual(sectionRef(infra), { key: "infra", name: "infra", localMembers: [], remoteMembers: ["TESTHOST-A:m1", "TESTHOST-B:m1"] });
   let st = setSectionCollapsed(parseTabGroups(null), "infra", true);
   st = setPinned(st, sectionRef(infra), "TESTHOST-B:m1", true);
   assert.deepEqual(st.pinned, [{ tag: "infra", sid: "TESTHOST-B:m1" }]);
@@ -494,8 +494,8 @@ test("executed: a pin follows the section the user sees — the local tag's id, 
   assert.deepEqual(setPinned(st, sectionRef(li), "TESTHOST-B:m1", false).pinned, [], "the name-stored entry, dropped through the local id");
   assert.equal(isPinned(st, sectionRef(li), "TESTHOST-A:m1"), false, "the sid must match");
   // sectionKey itself: the local id first, else the name — a remote id never
-  assert.equal(sectionKey({ name: "infra", color: "", members: [], ids: ["TESTHOST-A:t1", "g2"], localId: "g2", remotes: [] }), "g2");
-  assert.equal(sectionKey({ name: "remotepool", color: "", members: [], ids: ["TESTHOST-A:r1"], localId: null, remotes: [] }), "remotepool");
+  assert.equal(sectionKey({ name: "infra", color: "", members: [], ids: ["TESTHOST-A:t1", "g2"], localId: "g2", localMembers: [], remotes: [] }), "g2");
+  assert.equal(sectionKey({ name: "remotepool", color: "", members: [], ids: ["TESTHOST-A:r1"], localId: null, localMembers: [], remotes: [] }), "remotepool");
   assert.equal(sectionTabs(["TESTHOST-A:m1"], viewTagUnion(V))[0].key, "remotepool", "the plan's sections carry the same key");
 });
 
@@ -510,9 +510,9 @@ test("executed: a pin on a REMOTE member of a MIXED section is stored under the 
   const li = mixed.find((u) => u.name === "infra")!;
   assert.deepEqual(li.members, ["web", "api", "TESTHOST-A:m1"], "one union");
   const ref = sectionRef(li);
-  assert.deepEqual(ref, { key: "g7", name: "infra", remoteMembers: ["TESTHOST-A:m1"] }, "the ref knows which members a remote host's tag holds");
-  assert.equal(pinKey(ref, "TESTHOST-A:m1"), "infra", "a member held through the remote tag: the name — its section is what that tag's name says");
-  assert.equal(pinKey(ref, "web"), "g7", "a member the local tag holds: the local id, stable across a rename");
+  assert.deepEqual(ref, { key: "g7", name: "infra", localMembers: ["web", "api"], remoteMembers: ["TESTHOST-A:m1"] }, "the ref knows which tag holds each member");
+  assert.deepEqual(pinKeys(ref, "TESTHOST-A:m1"), ["infra"], "a member held through the remote tag alone: the name — its section is what that tag's name says");
+  assert.deepEqual(pinKeys(ref, "web"), ["g7"], "a member the local tag holds: the local id, stable across a rename");
   let st = setSectionCollapsed(parseTabGroups(null), "infra", true);
   st = setPinned(setPinned(st, ref, "TESTHOST-A:m1", true), ref, "web", true);
   assert.deepEqual(st.pinned, [{ tag: "infra", sid: "TESTHOST-A:m1" }, { tag: "g7", sid: "web" }]);
@@ -559,8 +559,8 @@ test("executed: the pin key follows the tag that HOLDS the member, not the sid's
   const local = (name: string) => ({ id: "g7", name, color: "#4EC9B0", members: ["web", "TESTHOST-A:m1"] });
   const u = viewTagUnion({ active: "all", tags: [local("infra")], remoteTags: [] });
   const ref = sectionRef(u[0]);
-  assert.deepEqual(ref, { key: "g7", name: "infra", remoteMembers: [] }, "no remote tag holds anything here");
-  assert.equal(pinKey(ref, "TESTHOST-A:m1"), "g7", "held by the local tag: the local id, host prefix notwithstanding");
+  assert.deepEqual(ref, { key: "g7", name: "infra", localMembers: ["web", "TESTHOST-A:m1"], remoteMembers: [] }, "no remote tag holds anything here");
+  assert.deepEqual(pinKeys(ref, "TESTHOST-A:m1"), ["g7"], "held by the local tag: the local id, host prefix notwithstanding");
   let st = setSectionCollapsed(parseTabGroups(null), "infra", true);
   st = setPinned(st, ref, "TESTHOST-A:m1", true);
   assert.deepEqual(st.pinned, [{ tag: "g7", sid: "TESTHOST-A:m1" }]);
@@ -569,12 +569,11 @@ test("executed: the pin key follows the tag that HOLDS the member, not the sid's
   assert.deepEqual(p.items.map((i) => ("head" in i ? `#${i.head.name}${i.folded ? "(folded)" : ""}` : i.id)), ["#ops(folded)", "TESTHOST-A:m1", "#null", "loose"],
     "renamed: the pin followed the local tag; web folded away");
   assert.equal(prunePinned(st, renamed, new Set(["web", "TESTHOST-A:m1", "loose"])), st, "and the prune keeps it");
-  // a member a local tag AND a same-named remote tag both hold: remote anchoring wins — the section
-  // exists under the name wherever that remote tag does, so the name is the key that outlives either tag
+  // a member a local tag AND a same-named remote tag both hold: both keys (the test below walks why)
   const A = { id: "TESTHOST-A:t1", host: "TESTHOST-A", name: "infra", color: "#4EC9B0", members: ["TESTHOST-A:m1"] };
   const both = sectionRef(viewTagUnion({ active: "all", tags: [local("infra")], remoteTags: [A] })[0]);
-  assert.deepEqual(both.remoteMembers, ["TESTHOST-A:m1"]);
-  assert.equal(pinKey(both, "TESTHOST-A:m1"), "infra");
+  assert.deepEqual([both.localMembers, both.remoteMembers], [["web", "TESTHOST-A:m1"], ["TESTHOST-A:m1"]]);
+  assert.deepEqual(pinKeys(both, "TESTHOST-A:m1"), ["g7", "infra"]);
   // the type keeps the write honest: the plan's TabSection matches pins (key, name) but cannot write one —
   // it does not know which host's tag holds its members; only sectionRef(union) does
   const sec: TabSection = sectionTabs(["web"], u)[0];
@@ -582,6 +581,58 @@ test("executed: the pin key follows the tag that HOLDS the member, not the sid's
   // @ts-expect-error a TabSection has no remoteMembers, so it is not a SectionRef: setPinned refuses it at compile time (never run: at run time pinKey throws on it, loudly)
   const refused = () => setPinned(st, sec, "web", true);
   assert.equal(typeof refused, "function");
+});
+
+test("executed: a member BOTH the local tag and a same-named remote tag hold carries both keys, so its pin holds whichever holder is its home after a local rename; off drops the tab's every entry", () => {
+  // local infra (g7) holds web and api; host A's infra holds web too (a remote host tagging one of ours,
+  // or the menu's "+" on a union whose remote tag already held the sid). After a local rename to ops,
+  // web has two possible homes — ops (g7) and the old-name section the remote tag still makes — and
+  // tagOrder decides: the local one first by default, since a rename leaves tagOrder alone. A name-only
+  // pin matched nothing under ops, so web folded away with no gesture on it while api, pinned beside it
+  // in the same sitting, stayed (round 3 of the 2026-09-06 review)
+  const A = { id: "TESTHOST-A:t1", host: "TESTHOST-A", name: "infra", color: "#4EC9B0", members: ["web"] };
+  const local = (name: string) => ({ id: "g7", name, color: "#4EC9B0", members: ["web", "api"] });
+  const mixed = viewTagUnion({ active: "all", tags: [local("infra")], remoteTags: [A] });
+  const ref = sectionRef(mixed[0]);
+  assert.deepEqual(ref, { key: "g7", name: "infra", localMembers: ["web", "api"], remoteMembers: ["web"] });
+  assert.deepEqual(pinKeys(ref, "web"), ["g7", "infra"], "both hold it: both keys");
+  assert.deepEqual(pinKeys(ref, "api"), ["g7"], "the local tag alone: the id");
+  let st = setSectionCollapsed(parseTabGroups(null), "infra", true);
+  st = setPinned(setPinned(st, ref, "web", true), ref, "api", true);
+  assert.deepEqual(st.pinned, [{ tag: "g7", sid: "web" }, { tag: "infra", sid: "web" }, { tag: "g7", sid: "api" }], "an entry per key");
+  const strip = (unions: ReturnType<typeof viewTagUnion>, s: typeof st) => {
+    const p = planStrip(["web", "api", "loose"], unions, s, "loose", false);
+    return [p.items.map((i) => ("head" in i ? `#${i.head.name}${i.folded ? "(folded)" : ""}` : i.id)), [...p.folded]] as const;
+  };
+  assert.deepEqual(strip(mixed, st), [["#infra(folded)", "web", "api", "#null", "loose"], []]);
+  // renamed, no tagOrder: ops sorts first (local unions do), web homes there, and the id key matches
+  const renamed = viewTagUnion({ active: "all", tags: [local("ops")], remoteTags: [A] });
+  assert.deepEqual(renamed.map((u) => u.name), ["ops", "infra"], "the default order after a rename");
+  const st2 = setSectionCollapsed(st, "ops", true);
+  assert.deepEqual(strip(renamed, st2), [["#ops(folded)", "web", "api", "#null", "loose"], []], "web pinned under ops like api — no member of the remote-only infra is homed there, so it has no header");
+  const opsRef = sectionRef(renamed.find((u) => u.name === "ops")!);
+  assert.equal(isPinned(st2, opsRef, "web"), true, "the menu row reads ON under ops");
+  // the user had dragged infra first before the rename: web homes in the remote-only infra, and the name key matches
+  const infraFirst = viewTagUnion({ active: "all", tags: [local("ops")], remoteTags: [A], tagOrder: ["infra"] });
+  assert.deepEqual(infraFirst.map((u) => u.name), ["infra", "ops"]);
+  assert.deepEqual(strip(infraFirst, st2), [["#infra(folded)", "web", "#ops(folded)", "api", "#null", "loose"], []], "web pinned under infra; api under ops");
+  // the prune keeps both entries while both holders hold web, and drops the name entry once no union of
+  // that name holds it (the remote tag let web go) — the id entry stands, ops still holds web
+  const known = new Set(["web", "api", "loose"]);
+  assert.equal(prunePinned(st2, renamed, known), st2, "nothing dead");
+  assert.equal(prunePinned(st2, infraFirst, known), st2);
+  const remoteLetGo = viewTagUnion({ active: "all", tags: [local("ops")], remoteTags: [{ ...A, members: [] }] });
+  assert.deepEqual(prunePinned(st2, remoteLetGo, known).pinned, [{ tag: "g7", sid: "web" }, { tag: "g7", sid: "api" }], "no union named infra holds web: that entry is dead");
+  // off drops the tab's EVERY entry — the menu offers one toggle per tab, so off means "through no fold".
+  // The sequence from the review: unpinned under ops, then infra dragged first — web stays folded away,
+  // where a section-scoped off left the infra entry standing and web showed through infra's fold
+  const off = setPinned(st2, opsRef, "web", false);
+  assert.deepEqual(off.pinned, [{ tag: "g7", sid: "api" }], "the name entry goes with the id entry");
+  assert.deepEqual(strip(infraFirst, off), [["#infra(folded)", "#ops(folded)", "api", "#null", "loose"], ["web"]], "infra dragged first: web folded — the last gesture on it was off");
+  assert.deepEqual(togglePinned(togglePinned(off, opsRef, "web"), opsRef, "web"), off, "the row's toggle, on then off, lands back on off");
+  assert.deepEqual(togglePinned(off, opsRef, "web").pinned, [{ tag: "g7", sid: "api" }, { tag: "g7", sid: "web" }], "on under ops alone: the id — the remote tag's hold is on the infra section, not this one");
+  // on replaces the tab's entries too: a pin under the section that is the home now, whatever earlier ones said
+  assert.deepEqual(setPinned(st2, sectionRef(infraFirst[0]), "web", true).pinned, [{ tag: "g7", sid: "api" }, { tag: "infra", sid: "web" }], "under the remote-only infra: the name alone");
 });
 
 test("executed: prunePinned drops the pins of tags and sessions that no longer exist, and of members moved out — on the pin row's write, never per render", () => {
@@ -672,7 +723,7 @@ test("executed: a folded section whose EVERY member is pinned stays folded — t
   // pin both of infra's members, fold infra: the header read "▸ infra 0" over two visible tabs, and the
   // click flipped it to "▾ infra 2" with nothing else changing
   const unions = viewTagUnion({ ...V, tagOrder: ["infra", "qa"] });   // infra first, so api homes there: infra = web, api
-  const infra: SectionRef = { key: "g2", name: "infra", remoteMembers: [] };
+  const infra: SectionRef = { key: "g2", name: "infra", localMembers: ["web", "api"], remoteMembers: [] };
   let st = setSectionCollapsed(parseTabGroups(null), "infra", true);
   st = setPinned(setPinned(st, infra, "web", true), infra, "api", true);
   const p = planStrip(["web", "api", "tests"], unions, st, "tests", false);
@@ -698,7 +749,7 @@ test("executed: a folded section whose EVERY member is pinned stays folded — t
   assert.match(GUIDE, /when every tab in a section is set to\s+show, the folded header shows the full count and its tooltip says nothing is hidden\./);
 });
 
-test("assistive tech hears a label: decoration is aria-hidden, the header's name is words (name, count, the pip's phrase), and the active section's header is a labeled group — never a button it cannot be", () => {
+test("assistive tech hears a label: decoration is aria-hidden, the header's name is words (name, count, the pip's and the flag's phrases), and the active section's header is a labeled group — never a button it cannot be", () => {
   // a real accessibility tree (the 2026-09-06 review) read the folded header as a button named "▸ archived 2
   // waiting on you — tests flagged … click to open this group" — the caret glyph and the nested flag's
   // label folded into the name — and the active section's header as "button, expanded" with no focus
