@@ -1539,6 +1539,19 @@ class FileAdapter:
         }
         landed_t = self._landing_t(seq)
         if landed_t is not None:
+            if landed_t < t:
+                # The witness (the attachment's file-order predecessor) is stamped BEFORE the
+                # attachment's own ENQUEUE stamp. Real transcripts do this only by clock granularity
+                # (the live corpus's worst case is -0.2 s, which whole-second stamps can turn into a
+                # 1 s inversion); anything larger is a shape the CLI does not write. No truthful
+                # landing precedes the send, and the chat's cue must never read "took it at" a time
+                # before the bubble's own send time — so clamp to the send, and COUNT it: parse stats
+                # (`landedT-clamp`, beside ts-repair, served on the version route) are where a run of
+                # these would show up, since a silent clamp would hide a CLI write-order change. (The
+                # 2026-09-06 review: two goldens had pinned a landedT 30-40 s before the send, from a
+                # synthetic shape with no tool_result before the attachment.)
+                _ASM_STATS["landedT-clamp"] = _ASM_STATS.get("landedT-clamp", 0) + 1
+                landed_t = t
             atom["landedT"] = landed_t   # when the CLI TOOK it (metadata, like `absorbed`; see _landing_t)
         if ROMP_AUTO_RE.search(full):   # an AUTO-nudge → flag it, mirroring the native user-record path
             atom["rompAuto"] = True
@@ -1557,7 +1570,8 @@ class FileAdapter:
         it — a successor read would find nothing there, and no later fold re-emits the atom (the
         (ts, text) dedup). Attachment records are skipped as witnesses (a run of splices at one
         boundary all read that boundary). None only when nothing precedes the attachment in the
-        read. Metadata only: no atom-set or seg-id change, no PLACEMENTS_V bump."""
+        read. The caller clamps the result to the atom's own send time (never earlier — see
+        _absorbed_atom). Metadata only: no atom-set or seg-id change, no PLACEMENTS_V bump."""
         i = bisect.bisect_left(self._seq_ts, (seq,)) - 1
         return self._seq_ts[i][1] if i >= 0 else None
 

@@ -236,6 +236,17 @@ class AbsorbedAtomCarriesItsLandingTime(unittest.TestCase):
         a = self._absorbed(self.w.parse())
         self.assertEqual([(x["uuid"], x["landedT"]) for x in a], [("att1", T0 + 50), ("att2", T0 + 50)])
 
+    def test_a_witness_stamped_before_the_send_clamps_to_the_send(self):
+        # whole-second stamps can invert a sub-second gap between the tool_result and the enqueue (the
+        # corpus's worst case is -0.2 s); the landing then reads as the send, never earlier, so the
+        # chat's `landedAt` can never precede the bubble's own `ts`
+        recs = running_turn()[:-1] + [trline(T0 + 37, "tu_a2_0", "tr1", "a2"),
+                                      attline(T0 + 38, FED, "att1", "tr1"),
+                                      aline(T0 + 75, "Renamed.", "a3", "att1")]
+        self.w.write(recs)
+        a = self._absorbed(self.w.parse())
+        self.assertEqual([(x["t"], x["landedT"]) for x in a], [(T0 + 38, T0 + 38)])
+
     def test_an_attachment_with_no_predecessor_carries_no_stamp(self):
         # nothing before it in the read → nothing truthful to stamp; the field is simply absent
         self.w.write([attline(T0 + 38, FED, "att1", None), aline(T0 + 75, "ok", "a1", "att1")])
