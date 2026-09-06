@@ -61,6 +61,20 @@ export function adoptViews(held: SessionViews | null | undefined, incoming: Sess
   return h === null || i === null || i >= h;
 }
 
+/** The held blob with its write sequence forgotten (a copy; null for none held) — what a page does
+ *  to its base on the kernel's `caps` frame, the reconnect event (round 6 of the 2026-09-05 review).
+ *  The kernel's seq floor lives for its process: a store restored while the kernel was down is
+ *  served under its old seq after the restart, and a page that stayed open across it holds the
+ *  higher seq and would ignore every frame until the next write. With the seq forgotten, the next
+ *  blob to arrive is adopted whatever its seq, and from then on the gate is the store's own order
+ *  again. Nothing else about the base changes: the tags shown stay until that blob comes. */
+export function forgetSeq(held: SessionViews | null | undefined): SessionViews | null {
+  if (!held) return null;
+  const v = JSON.parse(JSON.stringify(held)) as SessionViews;
+  delete (v as any).seq;
+  return v;
+}
+
 /** the fields a lens or order write sets — the whole-blob write's only content of its own: the
  *  legacy scalar, the per-surface lenses, and the union display order */
 export type LensFields = Partial<Pick<SessionViews, "active" | "actives" | "tagOrder">>;

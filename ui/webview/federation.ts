@@ -14,7 +14,7 @@
 import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder, pruneViewOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
 import { applyFeedDelta } from "./feed-delta";
-import { adoptViews } from "./views-writes";
+import { adoptViews, forgetSeq } from "./views-writes";
 import { hostOf, bareId } from "./host-prefix";
 
 export const SEP = ":";
@@ -760,6 +760,15 @@ export class FederationManager {
     // a kernel's `caps` frame describes THAT kernel; the panes hold only the LOCAL kernel's (its views
     // store is the one they write). A remote's would read as the local kernel's — dropped here.
     if (m && m.type === "caps" && host !== LOCAL) return;
+    // the local kernel's caps frame is the reconnect event: the two replayed views stores forget their
+    // seq with it (round 6 of the 2026-09-05 review), as the panes do — a kernel restarted over a store
+    // restored from an older copy serves it under the old seq, and a store here holding the higher one
+    // would keep replaying the pre-restore blob to panes that had just let it go
+    if (m && m.type === "caps") {
+      this.localViews = forgetSeq(this.localViews);
+      const tl = this.perHostTl[LOCAL];
+      if (tl && tl.views) this.perHostTl[LOCAL] = { ...tl, views: forgetSeq(tl.views) };
+    }
     // A kernel's `closed` frame is ITS OWN report that the session is gone — the one other writer allowed
     // to touch the per-host store (T233, the user 2026-09-03). The 2026-08-02 rule below forbids
     // ARRANGEMENT writes on a re-emit (a stale pane pruning another pane's drag); a `closed` frame is new

@@ -16,7 +16,7 @@ import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./ta
 import { ctxFallbackColor, pickTone, readableRgb } from "./ctx-color";
 import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
-import { mintWriteId, ackOutcome, adoptViews, seqOf, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
+import { mintWriteId, ackOutcome, adoptViews, seqOf, forgetSeq, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
 import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, PendingTabMeta } from "./tab-meta";
@@ -612,9 +612,13 @@ function postTagEdit(nv: SessionViews, edit: TagEditOp, newId?: string) {
 // re-send on a reconnected socket. A reconnect is the one event that can lose an ack (the socket died
 // between the write and its answer), so writes still in flight when this frame arrives are unknowable:
 // they are dropped, the copy reverts to what the kernel's frames show, and the user is told — never a
-// pinned copy faking success, never a silent revert.
+// pinned copy faking success, never a silent revert. It is also the event on which the held seq is
+// forgotten (round 6 of the 2026-09-05 review): a kernel restarted over a store restored from an
+// older copy serves it under the old seq, and a page holding the higher one would otherwise ignore
+// every frame until the next write — the next blob to arrive is adopted whatever its seq.
 function onKernelCaps(m: { caps?: unknown }) {
   kernelCaps = new Set(Array.isArray(m.caps) ? m.caps.filter((c): c is string => typeof c === "string") : []);
+  sessionViews = forgetSeq(sessionViews);
   if (!viewsWrites.length) return;
   viewsWrites = []; pendingSessionViews = null;
   warnToast("The connection to romp was re-established; a tag edit made just before it may not have landed. Check the tag.");

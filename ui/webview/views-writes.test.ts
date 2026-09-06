@@ -11,7 +11,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ackOutcome, adoptViews, applyTagEdit, createInFlight, mintWriteId, rederivePending, seqOf, lensBlob, applyLensFields, isPlaceholderId, type InflightWrite } from "./views-writes";
+import { ackOutcome, adoptViews, applyTagEdit, createInFlight, mintWriteId, rederivePending, seqOf, lensBlob, applyLensFields, isPlaceholderId, forgetSeq, type InflightWrite } from "./views-writes";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const S1 = { active: "all", at: 113, tags: [{ id: "g1", name: "qa", color: "#DD42FF", members: ["tests"], mtime: 113 }] };
@@ -100,6 +100,25 @@ test("executed: a blob is adopted by write SEQUENCE, never by arrival order — 
   assert.equal(seqOf(null), null);
 });
 
+test("executed: forgetSeq drops the held seq so the next blob adopts whatever its seq — the reconnect event's reset; the gate is back after that blob", () => {
+  // the kernel restarted over a store restored from an older copy: it serves seq 900 where the page holds 1000
+  const held = { active: "all", tags: [{ id: "g1", name: "qa", color: "", members: [] }], seq: 1000 } as any;
+  const reset = forgetSeq(held)!;
+  assert.equal((reset as any).seq, undefined, "the seq is forgotten…");
+  assert.deepEqual(reset.tags, held.tags, "…and nothing else changes: the tags shown stay until the next blob");
+  assert.equal(held.seq, 1000, "a copy, never the input");
+  assert.equal(adoptViews(held, { active: "all", tags: [], seq: 900 }), false, "before the reset the restored store's frame is ignored");
+  assert.equal(adoptViews(reset, { active: "all", tags: [], seq: 900 }), true, "after it the frame is adopted whatever its seq");
+  assert.equal(adoptViews({ active: "all", tags: [], seq: 900 }, { active: "all", tags: [], seq: 899 }), false, "and once adopted, the store's own order gates again");
+  assert.equal(forgetSeq(null), null); assert.equal(forgetSeq(undefined), null);
+});
+
+test("pins: render.ts forgets the held seq on the caps frame — the reconnect event — before anything else it does there", () => {
+  const caps = RENDER.slice(RENDER.indexOf("function onKernelCaps("), RENDER.indexOf("function onUnknownOp("));
+  assert.match(caps, /kernelCaps = new Set\([\s\S]*?\);\n\s*sessionViews = forgetSeq\(sessionViews\);\n\s*if \(!viewsWrites\.length\) return;/,
+    "the reset runs on EVERY caps frame, in-flight writes or not: the early return for 'nothing in flight' comes after it");
+});
+
 test("executed: write ids are unique per page across same-ms gestures", () => {
   const a = mintWriteId(1), b = mintWriteId(2);
   assert.notEqual(a, b);
@@ -150,8 +169,9 @@ test("pins: every views arrival in render.ts goes through the ONE seq-gated adop
   assert.match(cap, /if \(pendingSessionViews && v && seqOf\(v\) === null\s*\n\s*&& \(viewsKey\(v\) === viewsKey\(pendingSessionViews\) \|\| \+\+legacyViewsAge >= 3\)\) \{\s*\n\s*pendingSessionViews = null; viewsWrites = \[\]; legacyViewsAge = 0;/,
     "the exact-echo clear and the three-frame yield survive ONLY for a blob without a seq (a kernel that acks nothing); a stamped kernel's frames never clear a write they cannot name");
   assert.equal((cap.match(/>= 3/g) || []).length, 1, "one legacy yield, under the seq-less condition, nowhere else");
-  assert.equal((RENDER.match(/(?<!pending)(?<!\w)sessionViews = /g) || []).length, 1,
-    "the base is assigned in exactly one place — inside the gate");
+  assert.equal((RENDER.match(/(?<!pending)(?<!\w)sessionViews = /g) || []).length, 2,
+    "the base is assigned in exactly two places: inside the gate, and the caps frame's forgetSeq (round 6), which changes nothing but the seq");
+  assert.match(RENDER, /sessionViews = forgetSeq\(sessionViews\);/, "…that second one is the reconnect event's reset and nothing else");
 });
 
 test("pins: the Tags flyout's local edits are targeted ops on ONE optimistic blob; a MOVE is two ops, one blob", () => {

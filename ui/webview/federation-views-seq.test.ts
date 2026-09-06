@@ -51,6 +51,30 @@ test("a kernel's `caps` frame describes THAT kernel: the local one reaches the p
   });
 });
 
+test("the local kernel's `caps` frame — the reconnect event — makes both replayed stores forget their seq, so a store the restarted kernel serves under an older seq lands on the next frame", () => {
+  withManager((fm, emitted) => {
+    const lanes = (v: any) => ({ type: "data", data: { sessions: [{ id: U, name: "web" }], turns: {}, messages: [], judging: [], now: 1000, views: v } });
+    fm.inbound("", { type: "tabOrder", order: [U], tabs: [{ id: U, name: "web" }], views: views(1000) });
+    fm.inbound("", lanes(views(1000)));
+    // the kernel restarted over a store restored from an older copy: its frames carry seq 900
+    fm.inbound("", { type: "tabOrder", order: [U], tabs: [{ id: U, name: "web" }], views: views(900, "untagged") });
+    fm.inbound("", lanes(views(900, "untagged")));
+    assert.equal(lastOf(emitted, "tabOrder").views.seq, 1000, "before the reconnect event the older blob is ignored, as the gate says");
+    assert.equal(lastOf(emitted, "data").data.views.seq, 1000);
+    fm.inbound("", { type: "caps", caps: ["tagEdit"] });
+    fm.inbound("", { type: "tabOrder", order: [U], tabs: [{ id: U, name: "web" }], views: views(900, "untagged") });
+    fm.inbound("", lanes(views(900, "untagged")));
+    assert.equal(lastOf(emitted, "tabOrder").views.seq, 900, "after it the restored store's blob replaces the replayed one…");
+    assert.equal(lastOf(emitted, "tabOrder").views.active, "untagged");
+    assert.equal(lastOf(emitted, "data").data.views.seq, 900, "…in the lanes payload too");
+    fm.inbound("", { type: "tabOrder", order: [U], tabs: [{ id: U, name: "web" }], views: views(899) });
+    assert.equal(lastOf(emitted, "tabOrder").views.seq, 900, "and the store's own order gates again");
+    fm.inbound("TESTHOST", { type: "caps", caps: ["tagEdit"] });
+    fm.inbound("", { type: "tabOrder", order: [U], tabs: [{ id: U, name: "web" }], views: views(899) });
+    assert.equal(lastOf(emitted, "tabOrder").views.seq, 900, "a remote kernel's caps frame resets nothing here");
+  });
+});
+
 test("…and across lanes payloads: an older LOCAL data frame keeps the stored views while its lanes still land", () => {
   withManager((fm, emitted) => {
     const lanes = (ids: string[], now: number, v: any) => ({ type: "data", data: { sessions: ids.map((id) => ({ id, name: id.slice(0, 4) })), turns: {}, messages: [], judging: [], now, views: v } });

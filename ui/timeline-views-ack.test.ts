@@ -542,6 +542,28 @@ test("executed: a lost ack — the caps frame the kernel sends at every ready (a
   assert.equal(panel._tagEditErr, before);
 });
 
+test("executed: the caps frame forgets the held seq — a kernel restarted over a store restored from an older copy is adopted on the next frame, not ignored until its next write", () => {
+  const panel = drawnPanel();                       // the load: S0's frame, then the caps frame (which forgets the seq)…
+  frame(panel, S0);                                 // …and the next push holds seq 1000 again
+  assert.equal(panel._views.seq, 1000);
+  const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
+  try {
+    const restored = copy(S0); restored.seq = 900; restored.tags[0].name = "site";   // the store as the restarted kernel serves it
+    frame(panel, restored);
+    assert.equal(panel._views.seq, 1000, "before the reconnect event an older seq is ignored, as the gate says");
+    assert.equal(warned.length, 1);
+    panel.setCaps({ type: "caps", caps: ["tagEdit"] });   // the shim reconnected and re-sent `ready`; the kernel answered with its caps
+    assert.equal(panel._views.seq, undefined, "the held seq is forgotten on it");
+    assert.equal(panel._curViews().tags[0].name, "web", "…and nothing else changes until the next blob arrives");
+    frame(panel, restored);
+    assert.equal(panel._views.seq, 900, "the next frame is adopted whatever its seq");
+    assert.equal(panel._curViews().tags[0].name, "site");
+    frame(panel, Object.assign(copy(restored), { seq: 899 }));
+    assert.equal(panel._views.seq, 900, "and the store's own order gates again after it");
+    assert.equal(panel._tagEditErr, null, "nothing was in flight: nothing is said");
+  } finally { console.warn = cw; }
+});
+
 // ── ROUND 3 (the 2026-09-05 review, verification round): the in-flight create gate, the legacy create's
 // id, the join input's draft, the create ack and an open editor, and a refusal reverting only its own write.
 test("executed: [+ New tag] takes ONE click per create — the row reads creating… until the ack, then the button is back", () => {
@@ -733,6 +755,7 @@ test("pins: no frame count settles a stamped kernel's write; the legacy exact ec
 // ── ROUND 4 of the 2026-09-05 review ──────────────────────────────────────────────────────────────────
 test("executed: a lens or order write is built from the STORE's blob — a rename still in flight never rides it, and its refusal reverts only the rename", () => {
   const panel = drawnPanel();
+  frame(panel, S0);                                 // the load's caps frame forgot the seq (round 6); the next push holds it again
   const web = viewTagUnion(panel._curViews()).find((g: any) => g.name === "web");
   panel._editTagUnion(web, { rename: "notes" });
   assert.deepEqual([tagOps().length, tagOps()[0].op, tagOps()[0].newName], [1, "rename", "notes"]);

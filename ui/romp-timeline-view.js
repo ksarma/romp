@@ -53,6 +53,16 @@ function viewsAdopts(held, incoming) {
   const h = viewsSeq(held), i = viewsSeq(incoming);
   return h === null || i === null || i >= h;
 }
+// the held blob with its seq forgotten (a copy; null for none) — the hand-mirror of views-writes.ts
+// forgetSeq (round 6 of the 2026-09-05 review): done on the kernel's `caps` frame, the reconnect
+// event, so a store the restarted kernel serves under an OLDER seq (restored while it was down; its
+// seq floor lives for its process) is adopted on the next frame instead of ignored until the next write
+function viewsForgetSeq(held) {
+  if (!held) return null;
+  const v = JSON.parse(JSON.stringify(held));
+  delete v.seq;
+  return v;
+}
 // The hand-mirror of views-writes.ts applyTagEdit / rederiveViews (round 3 of the 2026-09-05
 // review): one targeted op applied to a blob's LOCAL tags the way the gesture applied it (a copy;
 // an unknown tid is a no-op — the kernel refuses it), and the optimistic copy rebuilt from the base
@@ -3144,8 +3154,10 @@ class TimelinePanel {
   // can lose an ack (the socket died between the write and its answer), so writes still in flight
   // when this frame arrives are unknowable: they are dropped, the copy reverts to what the kernel's
   // frames show, and the dialog says so — never a pinned copy faking success, never a silent revert.
+  // The held seq is forgotten on it too (viewsForgetSeq): the next blob is adopted whatever its seq.
   setCaps(m) {
     this._caps = new Set((m && Array.isArray(m.caps)) ? m.caps.filter((c) => typeof c === 'string') : []);
+    this._views = viewsForgetSeq(this._views);
     if (!this._viewsWrites.length) return;
     this._viewsWrites = []; this._pendingViews = null;
     this._tagEditErr = { host: '', name: '', error: 'the connection was re-established; an edit made just before it may not have landed — check the list' };
