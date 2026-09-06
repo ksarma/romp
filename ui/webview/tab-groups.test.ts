@@ -13,7 +13,7 @@ import { sectionTabs, anySectioned, homeTag, parseTabGroups, readTabGroups, writ
          toggleSectionCollapsed, setSectionCollapsed, planStrip, reorderTagOrder, applyTagOrder, TABGROUPS_KEY,
          DEFAULT_COLLAPSED, sectionKey, sectionRef, pinKey, isPinned, setPinned, togglePinned, prunePinned, headWords,
          type TabSection, type SectionRef } from "./tab-groups";
-import { sectionTodoFlag } from "./tab-state";
+import { sectionTodoFlag, sectionTodoTitle, sectionPipTitle } from "./tab-state";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
@@ -707,7 +707,14 @@ test("assistive tech hears a label: decoration is aria-hidden, the header's name
   assert.match(MAKE_HEAD, /swatch\.setAttribute\("aria-hidden", "true"\);/, "so is the color bar");
   assert.match(MAKE_HEAD, /pip\.setAttribute\("aria-hidden", "true"\);[^\n]*\n\s*spoken \+= "; " \+ pip\.title;/, "the pip too — its phrase rides the label instead");
   assert.match(MAKE_HEAD, /let spoken = words\.label;/, "the label starts as headWords' (name and count, in words — executed above)");
-  assert.match(MAKE_HEAD, /head\.setAttribute\("aria-label", spoken\);\s*\n\s*head\.draggable = true;/, "set once, after the pip; an aria-label outranks name-from-content, so the flag's label stays the flag's");
+  assert.match(MAKE_HEAD, /head\.setAttribute\("aria-label", spoken\);\s*\n\s*head\.draggable = true;/, "set once, after the pip and the flag; an aria-label outranks name-from-content, so the header says what was appended and nothing that leaked in");
+  // the flag is a button nested in a role=button header, whose children ARIA lets a tool prune (WebKit
+  // does; Chromium exposes a focusable descendant anyway): its phrase rides the header's label as the
+  // pip's does, so the count and the names are announced either way
+  assert.match(MAKE_HEAD, /b\.setAttribute\("aria-label", b\.title\);\s*\n\s*spoken \+= "; " \+ b\.title;/, "the flag's phrase, appended right after its own label");
+  assert.equal(headWords("archived", 2, 2, true, false).label + "; " + sectionPipTitle("blocked", ["api", "tests"]) + "; " + sectionTodoTitle({ count: 2, names: ["api", "tests"] }),
+    "archived, 2 sessions folded; 2 sessions in this group are blocked or waiting on you: api, tests; waiting on you — 2 sessions flagged something they need from you: api, tests; click to open this group",
+    "the spoken label of a folded header wearing both marks");
   assert.ok(!MAKE_HEAD.includes('b.setAttribute("aria-hidden"') && !MAKE_HEAD.includes('label.setAttribute("aria-hidden"'), "the flag is a control and the name is the name: neither hidden");
   assert.match(MAKE_HEAD, /if \(holdsActive\) \{[^}]*head\.setAttribute\("role", "group"\);\s*\n\s*\} else \{/, "no action, no stop → a labeled group");
   assert.equal(MAKE_HEAD.split('"aria-expanded"').length - 1, 1, "aria-expanded only where the fold is — inside the foldable branch");

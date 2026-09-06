@@ -4751,8 +4751,10 @@ function releaseTabStrip(): void {
 // member whose own tab is on screen; its words (count, title, spoken label) are headWords, pure.
 // To assistive tech (the 2026-09-06 review, checked against a real accessibility tree): the chevron,
 // the color bar and the pip are decoration (aria-hidden — the caret glyph was read aloud before the
-// name), the header's name is an aria-label in words (name and count, plus the pip's phrase when it
-// wears one), so the nested flag's own label no longer runs into it; and the header holding the active
+// name), the header's name is an aria-label in words (name and count, plus the pip's phrase and the
+// flag's when it wears them), so nothing runs into it unplanned; the flag's phrase rides it on purpose —
+// the flag is a button nested in a role=button header, whose children ARIA lets a tool prune (WebKit
+// does), so the count and the names have a spoken carrier there too; and the header holding the active
 // tab is a labeled group, not a button — it takes no action and no focus, and "button, expanded"
 // promised both.
 function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string[]): HTMLElement {
@@ -4841,6 +4843,7 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
       b.dataset.group = name;
       b.title = sectionTodoTitle(flag);
       b.setAttribute("aria-label", b.title);
+      spoken += "; " + b.title;   // a tool that prunes the nested button (a role=button's children are presentational) still hears the count and names
       const glyph = el("span", "tab-usertodo");   // the tab's own mark, same class
       glyph.textContent = "⚑";
       b.appendChild(glyph);
