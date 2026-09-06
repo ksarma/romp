@@ -58,8 +58,11 @@ not the function inside the bundle that did the work; for that, add
 `--cpu-profile /tmp/romp-perf/feed.cpuprofile`, which samples the page's
 JavaScript with the V8 profiler across the replay, writes a file Chrome
 DevTools loads (Performance panel), and prints the functions with the most self
-and total time as `bundle.js:function:line`, overall and inside the first
-content frame and the largest frame of each type. The end-of-run layout, style,
+and total time as `bundle.js:function:line` with the source position from the
+dist's `.map` files, overall and inside the first content frame and the largest
+frame of each type; for the hottest functions it also names the lines that hold
+the time (a forced synchronous layout, for instance, shows up as one line of
+one function owning most of its self time). The end-of-run layout, style,
 script and task counters are cumulative since navigation, so they include page
 load and idle timers (the timeline redraws every animation frame while it
 follows the present), and `--compare` shows them without percentages when the

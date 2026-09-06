@@ -29,8 +29,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   APPS, DELTA_SEP, REPO, STRIPPED_ENV, aggregateProfile, assertTmpPath, barsKeys, browserAvailability, buildReport, classifyFrame,
-  compareReports, frameKey, loadFrames, mergeAggregates, percentile, rankProfile, recordFrames, renderCompare, renderProfile, renderReport,
-  replay, startPageServer, streamSummary, summarize, synthesizeFrames, writeFrames,
+  compareReports, frameKey, loadFrames, mergeAggregates, percentile, rankProfile, recordFrames, refineAlignment, renderCompare, renderProfile,
+  renderReport, replay, sourceLocator, startPageServer, streamSummary, summarize, synthesizeFrames, writeFrames,
 } from "../tools/ui-bench.mjs";
 
 const TOOL = path.join(REPO, "tools", "ui-bench.mjs");
@@ -480,11 +480,12 @@ const SYNTH_PROFILE = (() => {
     nodes: [
       { id: 1, callFrame: cf("(root)", -1, ""), children: [2, 3, 6] },
       { id: 2, callFrame: cf("(program)", -1, "") },
-      { id: 3, callFrame: cf("main", 9), children: [4] },
-      { id: 4, callFrame: cf("render", 19), children: [5, 7] },
-      { id: 5, callFrame: cf("fmt", 29) },
+      { id: 3, callFrame: cf("main", 9), children: [4], hitCount: 1 },
+      // V8's per-line ticks: the first render node's two samples fell on bundle lines 20 and 25, the recursive one's on 25.
+      { id: 4, callFrame: cf("render", 19), children: [5, 7], hitCount: 2, positionTicks: [{ line: 20, ticks: 1 }, { line: 25, ticks: 1 }] },
+      { id: 5, callFrame: cf("fmt", 29), hitCount: 2 },
       { id: 6, callFrame: cf("(garbage collector)", -1, "") },
-      { id: 7, callFrame: cf("render", 19) },
+      { id: 7, callFrame: cf("render", 19), hitCount: 1, positionTicks: [{ line: 25, ticks: 1 }] },
     ],
     startTime: 1000, endTime: 1900,
     samples: [3, 4, 5, 5, 7, 2, 6, 4],
@@ -495,7 +496,9 @@ const SYNTH_PROFILE = (() => {
 test("frameKey labels a call frame url-basename:function:line, 1-based, and keeps V8's bookkeeping names", () => {
   assert.equal(frameKey({ functionName: "render", url: "http://127.0.0.1:1/dist/feed.js?v=3", lineNumber: 19 }), "feed.js:render:20");
   assert.equal(frameKey({ functionName: "", url: "http://127.0.0.1:1/dist/feed.js", lineNumber: 0 }), "feed.js:(anonymous):1");
-  assert.equal(frameKey({ functionName: "tick", url: "", lineNumber: 4 }), "(inline):tick:5");
+  assert.equal(frameKey({ functionName: "tick", url: "", lineNumber: 4 }), "(inline):tick:5", "code without a url but with a line: an eval");
+  assert.equal(frameKey({ functionName: "getBoundingClientRect", url: "", lineNumber: -1 }), "(native):getBoundingClientRect", "a builtin has neither");
+  assert.equal(frameKey({ functionName: "ws.onmessage", url: "http://127.0.0.1:1/feed?token=secret-looking", lineNumber: 135 }), "feed:ws.onmessage:136", "the page's inline shim, query dropped");
   assert.equal(frameKey({ functionName: "(program)", url: "", lineNumber: -1 }), "(program)");
   assert.equal(frameKey({ functionName: "(garbage collector)", url: "", lineNumber: -1 }), "(garbage collector)");
   assert.equal(frameKey(null), "(unknown)");
@@ -507,17 +510,23 @@ test("aggregateProfile attributes each sample's interval as self time to its nod
   assert.equal(a.sampledMs, 0.8, "eight samples of 100 us, the last owning the interval to endTime");
   assert.equal(a.samples, 8);
   assert.deepEqual(a.meta, { "(program)": 0.1, "(garbage collector)": 0.1 }, "bookkeeping nodes are totalled, not ranked");
-  const by = Object.fromEntries(a.functions.map((f) => [f.key, f]));
+  const by = Object.fromEntries(a.functions.map((f) => [f.key, { key: f.key, selfMs: f.selfMs, totalMs: f.totalMs, samples: f.samples }]));
   assert.deepEqual(Object.keys(by).sort(), ["feed.js:fmt:30", "feed.js:main:10", "feed.js:render:20"]);
+  assert.equal(a.functions.find((f) => f.key === "feed.js:render:20").cf.lineNumber, 19, "each function keeps a call frame for the source locator");
+  assert.deepEqual(a.functions.find((f) => f.key === "feed.js:render:20").lines, [{ line: 25, ms: 0.2 }, { line: 20, ms: 0.1 }], "self time split over the function's lines by V8's ticks, both render nodes pooled");
+  assert.equal(a.functions.find((f) => f.key === "feed.js:fmt:30").lines, undefined, "no ticks, no lines");
   assert.deepEqual(by["feed.js:render:20"], { key: "feed.js:render:20", selfMs: 0.3, totalMs: 0.5, samples: 3 }, "the recursive call's sample counts once in total");
   assert.deepEqual(by["feed.js:fmt:30"], { key: "feed.js:fmt:30", selfMs: 0.2, totalMs: 0.2, samples: 2 });
   assert.deepEqual(by["feed.js:main:10"], { key: "feed.js:main:10", selfMs: 0.1, totalMs: 0.6, samples: 1 });
   const ranked = rankProfile(a, 2);
   assert.deepEqual(ranked.topSelf.map((f) => f.key), ["feed.js:render:20", "feed.js:fmt:30"]);
+  assert.deepEqual(ranked.topSelf[0].lines, [{ line: 25, ms: 0.2, share: 0.67 }, { line: 20, ms: 0.1, share: 0.33 }], "the hottest functions carry their lines");
+  assert.equal(ranked.topTotal[1].lines, undefined, "the total ranking does not");
   assert.deepEqual(ranked.topTotal.map((f) => f.key), ["feed.js:main:10", "feed.js:render:20"]);
   assert.equal(ranked.functions, 3);
   // A window on the profile's clock: samples at 1300 and 1400 (both fmt under render under main).
   const w = aggregateProfile(SYNTH_PROFILE, [1250, 1450]);
+  assert.ok(w.functions.every((f) => f.lines === undefined), "ticks cover the whole profile, so a window gets no lines");
   assert.equal(w.samples, 2);
   assert.equal(w.sampledMs, 0.2);
   assert.deepEqual(w.meta, {});
@@ -525,13 +534,65 @@ test("aggregateProfile attributes each sample's interval as self time to its nod
   const merged = rankProfile(mergeAggregates([a, a]), 3);
   assert.equal(merged.sampledMs, 1.6);
   assert.equal(merged.topSelf[0].selfMs, 0.6, "iterations pool by summing");
+  assert.deepEqual(merged.topSelf[0].lines, [{ line: 25, ms: 0.4, share: 0.67 }, { line: 20, ms: 0.2, share: 0.33 }], "and so do the lines");
   assert.deepEqual(merged.meta, { "(program)": 0.2, "(garbage collector)": 0.2 });
   const text = renderProfile({ files: ["/tmp/x.cpuprofile"], samplingIntervalUs: 500, alignMs: 0.4, ...ranked, windows: [{ label: "first content frame", index: 0, type: "feed", bytes: 5000, handlerMs: 0.3, ...rankProfile(w, 2) }] });
   assert.match(text, /cpu profile: 8 samples over 0\.9 ms at 500 us, 3 functions; bookkeeping: \(program\) 0\.1 ms, \(garbage collector\) 0\.1 ms/);
   assert.match(text, /written: \/tmp\/x\.cpuprofile/);
-  assert.match(text, /top 2 by self time\n\s+self ms\s+total ms\s+samples\s+url:function:line\n\s+0\.3\s+0\.5\s+3\s+feed\.js:render:20/);
+  assert.match(text, /top 2 by self time \(under a function, the lines[^\n]*\n\s+self ms\s+total ms\s+samples\s+url:function:line\n\s+0\.3\s+0\.5\s+3\s+feed\.js:render:20\n\s+67%\s+0\.2 ms  line 25\n\s+33%\s+0\.1 ms  line 20\n/);
   assert.match(text, /top 2 by total time\n[^\n]*\n\s+0\.1\s+0\.6\s+1\s+feed\.js:main:10/);
   assert.match(text, /window: first content frame \(feed, 4\.9 KB, frame 0\): handler 0\.3 ms, 2 samples/);
+  assert.doesNotMatch(text, /source:line/, "no source column without maps");
+});
+
+test("sourceLocator maps a bundle position to its source through the dist's .map file, and rankProfile carries it", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "romp-ui-bench-map-"));
+  try {
+    // A two-line bundle whose map says: generated line 1 <- src/a.ts line 1, generated line 2 <- src/a.ts line 2 ("AAAA;AACA").
+    fs.writeFileSync(path.join(tmp, "feed.js.map"), JSON.stringify({ version: 3, sources: ["../src/a.ts"], names: [], mappings: "AAAA;AACA" }));
+    const locate = sourceLocator(tmp);
+    assert.equal(locate({ functionName: "f", url: "http://127.0.0.1:1/dist/feed.js?v=9", lineNumber: 1, columnNumber: 4 }), "src/a.ts:2", "the leading ../ segments go when the source lies outside the repo");
+    assert.equal(locate({ functionName: "f", url: "http://127.0.0.1:1/dist/feed.js", lineNumber: 0, columnNumber: 0 }), "src/a.ts:1");
+    assert.equal(locate({ functionName: "g", url: "http://127.0.0.1:1/dist/other.js", lineNumber: 0, columnNumber: 0 }), null, "no map, no position");
+    assert.equal(locate({ functionName: "native", url: "", lineNumber: -1 }), null);
+    assert.equal(locate(null), null);
+    const ranked = rankProfile(aggregateProfile(SYNTH_PROFILE), 1, locate);
+    assert.equal(ranked.topSelf[0].src, undefined, "a line the map does not cover gets no position");
+    const one = rankProfile({ durationMs: 1, sampledMs: 1, samples: 1, meta: {}, functions: [{ key: "feed.js:f:2", selfMs: 1, totalMs: 1, samples: 1, cf: { url: "http://x/dist/feed.js", lineNumber: 1, columnNumber: 0 }, lines: [{ line: 2, ms: 0.9 }, { line: 1, ms: 0.1 }, { line: 7, ms: 0.01 }] }] }, 1, locate);
+    assert.deepEqual(one.topSelf, [{ key: "feed.js:f:2", selfMs: 1, totalMs: 1, samples: 1, src: "src/a.ts:2", lines: [{ line: 2, ms: 0.9, share: 0.9, src: "src/a.ts:2" }, { line: 1, ms: 0.1, share: 0.1, src: "src/a.ts:1" }] }], "lines resolve to their own source position; a line under a twentieth of the function's time is left out");
+    const native = rankProfile({ durationMs: 1, sampledMs: 1, samples: 1, meta: {}, functions: [{ key: "(native):append", selfMs: 1, totalMs: 1, samples: 1, cf: { functionName: "append", url: "", lineNumber: -1 }, lines: [{ line: 5, ms: 1 }] }] }, 1, locate);
+    assert.deepEqual(native.topSelf, [{ key: "(native):append", selfMs: 1, totalMs: 1, samples: 1 }], "a builtin's ticks name call sites in a file it does not have, so no lines");
+    assert.match(renderProfile({ files: [], samplingIntervalUs: 500, alignMs: 0.1, sourceMaps: true, ...one, windows: [] }), /url:function:line  source:line\n\s+1\.0\s+1\.0\s+1\s+feed\.js:f:2  src\/a\.ts:2/);
+    // The real dist, when built: the feed bundle's positions resolve into ui/webview.
+    const dist = path.join(REPO, "vscode-extension", "dist");
+    if (fs.existsSync(path.join(dist, "feed.js.map"))) {
+      const real = sourceLocator(dist)({ functionName: "x", url: "http://127.0.0.1:1/dist/feed.js?v=1", lineNumber: 200, columnNumber: 0 });
+      assert.match(real, /^(?!\.\.)(?!\/)\S+\.(ts|js):\d+$/, `a repo-relative source position: ${real}`);
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("refineAlignment recovers the page-to-profile offset from the wrapper's samples", () => {
+  // Ten wrapper samples 100 us apart from t=100 us, then ten (program) samples. The true page time of the
+  // profile's start is 50 ms, so the handler window is [50.1, 51.05) ms; the bracketing estimate is 3 ms off.
+  const cf = (functionName, url) => ({ functionName, url, lineNumber: 1, columnNumber: 0 });
+  const profile = {
+    nodes: [{ id: 1, callFrame: cf("(root)", ""), children: [2, 4] }, { id: 2, callFrame: cf("rompBenchOnMessage", "ui-bench-instrument.js"), children: [3] },
+      { id: 3, callFrame: cf("render", "http://x/dist/feed.js") }, { id: 4, callFrame: cf("(program)", "") }],
+    startTime: 0, endTime: 2100, samples: [...Array(10).fill(3), ...Array(10).fill(4)], timeDeltas: Array(20).fill(100),
+  };
+  const al = refineAlignment(profile, 53, 5, [[50.1, 51.05]]);
+  assert.ok(Math.abs(al.p0 - 50) <= 0.13, `refined to ${al.p0}`);
+  assert.equal(al.alignMs, 0.125, "a quarter of the sampling interval");
+  assert.equal(al.inside, 1, "every wrapper sample lands inside a handler window");
+  const none = refineAlignment(profile, 53, 5, []);
+  assert.deepEqual(none, { p0: 53, alignMs: 5, inside: null }, "without windows the estimate stands");
+  const noWrapper = refineAlignment({ ...profile, samples: Array(20).fill(4) }, 53, 5, [[50.1, 51.05]]);
+  assert.deepEqual(noWrapper, { p0: 53, alignMs: 5, inside: null }, "without wrapper samples too");
+  const far = refineAlignment(profile, 53, 5, [[80, 81]]);
+  assert.ok(far.inside === 0 && far.p0 === 53, "when no offset within the bound helps, the estimate stands and says so");
 });
 
 test("aggregateProfile on an empty or window-less profile yields nothing rather than NaN", () => {
@@ -617,18 +678,24 @@ test("startPageServer hands the Handler an isolated environment: a minted token,
 });
 
 test("startPageServer cleans up when the interpreter exits before announcing a port, and refuses without a dist before creating anything", { timeout: 30_000 }, async () => {
+  // os.tmpdir() follows TMPDIR, so the server's directories land in a private one this test can list
+  // (the machine's shared temp root is never enumerated).
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "romp-ui-bench-fail-"));
+  const scratch = path.join(tmp, "scratch");
+  fs.mkdirSync(scratch);
   try {
-    const before = new Set(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith("romp-ui-bench-")));
-    await assert.rejects(startPageServer({ dist: path.join(tmp, "nodist") }), /no built bundles/);
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist);
-    fs.writeFileSync(path.join(dist, "feed.js"), "");
-    const dying = path.join(tmp, "python-dying");
-    fs.writeFileSync(dying, "#!/bin/sh\necho 'ImportError: fake' >&2\nexit 3\n", { mode: 0o755 });
-    await assert.rejects(startPageServer({ dist, python: dying }), /exited with 3[\s\S]*ImportError: fake/);
-    const after = new Set(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith("romp-ui-bench-")));
-    assert.deepEqual([...after].filter((n) => !before.has(n)), [], "no directory left behind by either failure");
+    await withEnv({ TMPDIR: scratch }, async () => {
+      assert.equal(os.tmpdir(), scratch);
+      await assert.rejects(startPageServer({ dist: path.join(tmp, "nodist") }), /no built bundles/);
+      assert.deepEqual(fs.readdirSync(scratch), [], "the dist check runs before any directory is created");
+      const dist = path.join(tmp, "dist");
+      fs.mkdirSync(dist);
+      fs.writeFileSync(path.join(dist, "feed.js"), "");
+      const dying = path.join(tmp, "python-dying");
+      fs.writeFileSync(dying, "#!/bin/sh\necho 'ImportError: fake' >&2\nexit 3\n", { mode: 0o755 });
+      await assert.rejects(startPageServer({ dist, python: dying }), /exited with 3[\s\S]*ImportError: fake/);
+      assert.deepEqual(fs.readdirSync(scratch), [], "an interpreter that dies before its port leaves no directory behind");
+    });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -744,7 +811,12 @@ for (const app of ["feed", "timeline"]) {
           for (const k of ["nodes", "startTime", "endTime", "samples", "timeDeltas"]) assert.ok(k in raw, `.cpuprofile has ${k}`);
           assert.ok(raw.samples.length > 100, `enough samples (${raw.samples.length})`);
           assert.equal(cp.samplingIntervalUs, 500);
-          assert.ok(cp.alignMs >= 0 && cp.alignMs < 50, `clock alignment ${cp.alignMs} ms`);
+          assert.ok(cp.alignMs > 0 && cp.alignMs <= 0.2, `clock alignment refined to the sampling grid, got ${cp.alignMs} ms`);
+          assert.ok(cp.wrapperSamplesInHandlers >= 0.9, `the message handler's samples fall inside the handler windows (${cp.wrapperSamplesInHandlers})`);
+          assert.equal(cp.sourceMaps, true);
+          assert.ok(cp.topSelf.some((f) => /^ui\/webview\/\S+\.ts:\d+$/.test(f.src || "")), `source positions resolved: ${cp.topSelf.slice(0, 5).map((f) => f.src).join(", ")}`);
+          assert.ok(cp.topSelf.slice(0, 5).some((f) => f.lines && f.lines.length && f.lines[0].src), `the hottest functions name their lines: ${JSON.stringify(cp.topSelf[0].lines)}`);
+          assert.ok(cp.windows.every((w) => w.topSelf.every((f) => !f.lines)), "windows carry no line split");
           assert.ok(cp.topSelf.length > 5 && cp.topTotal.length > 5);
           assert.ok(cp.topSelf.some((f) => /^feed\.js:[^:]+:\d+$/.test(f.key)), `functions of the feed bundle are named: ${cp.topSelf.slice(0, 5).map((f) => f.key).join(", ")}`);
           assert.ok(cp.topSelf.every((f) => !/^\((program|idle|garbage collector|root)\)$/.test(f.key)), "bookkeeping nodes are not ranked");

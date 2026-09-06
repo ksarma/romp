@@ -23,8 +23,9 @@
 //      a script's evaluation; not the bundle function), JS heap after a forced GC, DOM size, and page
 //      console errors. --cpu-profile OUT.cpuprofile samples the page's JavaScript with the V8 profiler
 //      across the replay, writes a file Chrome DevTools loads, and prints the functions with the most
-//      self and total time, overall and inside the first content frame and the largest frame of each
-//      type: the function-level attribution the long-animation-frame entries cannot give.
+//      self and total time (with their source positions through the dist's .map files, and for the
+//      hottest functions the lines that hold the time), overall and inside the first content frame and
+//      the largest frame of each type: the attribution the long-animation-frame entries cannot give.
 //
 //      Serving design: the REAL kernel HTTP Handler runs in a python3 subprocess under an isolated
 //      environment (private XDG_STATE_HOME and TMUX_TMPDIR; the manager variables, the API keys and
@@ -66,7 +67,7 @@ import path from "node:path";
 import http from "node:http";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
+import { createRequire, SourceMap } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -847,7 +848,7 @@ const round1 = (x) => (x == null ? null : Math.round(x * 10) / 10);
 const roundStats = (s) => ({ n: s.n, p50: round1(s.p50), p90: round1(s.p90), max: round1(s.max), mean: round1(s.mean) });
 
 /** Fold one or more replay runs into the report shape --json writes and --compare reads. */
-export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser, runs, cpuProfileFiles = [] }) {
+export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser, runs, cpuProfileFiles = [], sourceMapDir = null }) {
   const frames = runs.flatMap((r) => r.perFrame);
   const byType = {};
   for (const f of frames) {
@@ -889,7 +890,7 @@ export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser
     clientMessages: runs.reduce((acc, r) => { for (const [k, v] of Object.entries(r.clientMessages)) acc[k] = (acc[k] || 0) + v; return acc; }, {}),
     clientDiag: runs.reduce((acc, r) => { for (const [k, v] of Object.entries(r.clientDiag)) acc[k] = (acc[k] || 0) + v; return acc; }, {}),
     perFrame: runs.length === 1 ? runs[0].perFrame.map((f) => ({ i: f.i, type: f.type, bytes: f.bytes, at: f.at, handlerMs: round1(f.handlerMs), settleMs: round1(f.settleMs) })) : undefined,
-    cpuProfile: runs.some((r) => r.profiling && r.profiling.profile) ? profileReport(runs, firstIdx, cpuProfileFiles) : undefined,
+    cpuProfile: runs.some((r) => r.profiling && r.profiling.profile) ? profileReport(runs, firstIdx, cpuProfileFiles, sourceMapDir) : undefined,
   };
 }
 
@@ -918,7 +919,7 @@ export async function replay({ app, framesFile, cpuThrottle = 1, iters = 1, fast
       runs.push(await replayOnce({ browser, app, frames, fast, cpuThrottle, front, token: pageServer.token, cpuProfile: !!cpuProfile, log }));
     }
     const cpuProfileFiles = cpuProfile ? writeProfiles(cpuProfile, runs) : [];
-    const report = buildReport({ app, framesFile, cpuThrottle, fast, iters, browser: browser.version(), runs, cpuProfileFiles });
+    const report = buildReport({ app, framesFile, cpuThrottle, fast, iters, browser: browser.version(), runs, cpuProfileFiles, sourceMapDir: dist || path.join(EXT_DIR, "dist") });
     if (jsonOut) { fs.mkdirSync(path.dirname(path.resolve(jsonOut)), { recursive: true }); fs.writeFileSync(jsonOut, JSON.stringify(report, null, 1) + "\n"); }
     return report;
   } finally {
@@ -937,13 +938,89 @@ const PROFILE_META = new Set(["(root)", "(program)", "(idle)", "(garbage collect
 const TOP_OVERALL = 25, TOP_WINDOW = 20;
 
 /** The label a call frame files under: url-basename:function:line, the line 1-based as DevTools shows
- *  it. V8's bookkeeping nodes ((program), (idle), (garbage collector), (root)) keep their bare names. */
+ *  it. V8's bookkeeping nodes ((program), (idle), (garbage collector), (root)) keep their bare names; a
+ *  builtin (no url, no line: getBoundingClientRect, querySelectorAll) is "(native):name"; code without a
+ *  url but with a line (an eval) is "(inline)". A page's inline script carries the page URL, so the shim
+ *  files under the page's basename with the query dropped. */
 export function frameKey(cf) {
   if (!cf) return "(unknown)";
   const fn = cf.functionName || "";
-  if (PROFILE_META.has(fn) && !cf.url) return fn;
-  const url = cf.url ? (path.basename(cf.url.split("?")[0]) || cf.url) : "(inline)";
-  return `${url}:${fn || "(anonymous)"}:${(cf.lineNumber ?? -1) + 1}`;
+  const line = cf.lineNumber ?? -1;
+  if (!cf.url) {
+    if (PROFILE_META.has(fn)) return fn;
+    if (line < 0) return `(native):${fn || "(anonymous)"}`;
+    return `(inline):${fn || "(anonymous)"}:${line + 1}`;
+  }
+  return `${path.basename(cf.url.split("?")[0]) || cf.url}:${fn || "(anonymous)"}:${line + 1}`;
+}
+
+/** Bundle positions to source positions through the .map files esbuild writes beside the bundles in
+ *  `distDir`. Returns a function of a call frame giving "ui/webview/feed.ts:4477" (relative to the repo
+ *  when the source lies inside it) or null when there is no map or no mapping. */
+export function sourceLocator(distDir) {
+  const maps = new Map();
+  const load = (base) => {
+    if (maps.has(base)) return maps.get(base);
+    let m = null;
+    const file = path.join(distDir, base + ".map");
+    try { m = { sm: new SourceMap(JSON.parse(fs.readFileSync(file, "utf8"))), dir: path.dirname(file) }; } catch { m = null; }
+    maps.set(base, m);
+    return m;
+  };
+  return (cf) => {
+    if (!cf || !cf.url || cf.lineNumber == null || cf.lineNumber < 0) return null;
+    const m = load(path.basename(cf.url.split("?")[0]));
+    if (!m) return null;
+    const e = m.sm.findEntry(cf.lineNumber, Math.max(0, cf.columnNumber || 0));
+    // findEntry returns the nearest mapping at or before the position, on any line; a line the map does not
+    // cover would borrow the previous line's source, so the mapping must sit on the asked-for line.
+    if (!e || e.originalSource == null || e.originalLine == null || e.generatedLine !== cf.lineNumber) return null;
+    const abs = path.resolve(m.dir, e.originalSource);
+    const rel = path.relative(REPO, abs);
+    const shown = rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : e.originalSource.replace(/^(\.\.\/)+/, "");
+    return `${shown}:${e.originalLine + 1}`;
+  };
+}
+
+/** Pin the page-to-profile clock offset with the profile's own evidence. Every sample whose stack holds
+ *  the bench's onmessage wrapper was taken inside some frame's handler window, so the offset that puts
+ *  the most of them inside the windows is the right one; the bracketing reads of performance.now() only
+ *  bound it. A grid search over ±bound ms at a quarter of the sampling interval. `windows` are [t0, t1]
+ *  in page ms. Returns {p0, alignMs, inside}: the refined page time of the profile's startTime, the grid
+ *  step as the remaining uncertainty, and the fraction of wrapper samples the offset places inside. */
+export function refineAlignment(profile, p0, bound, windows) {
+  const nodes = new Map(), parent = new Map(), wrapped = new Map();
+  for (const n of profile.nodes || []) { nodes.set(n.id, n); for (const c of n.children || []) parent.set(c, n.id); }
+  const underWrapper = (id) => {
+    if (wrapped.has(id)) return wrapped.get(id);
+    let r = false;
+    for (let cur = id; cur != null && nodes.has(cur); cur = parent.get(cur)) {
+      const cf = nodes.get(cur).callFrame;
+      if (cf && cf.url && path.basename(cf.url.split("?")[0]) === "ui-bench-instrument.js") { r = true; break; }
+    }
+    wrapped.set(id, r);
+    return r;
+  };
+  const xs = [];
+  const samples = profile.samples || [], deltas = profile.timeDeltas || [];
+  let t = profile.startTime || 0;
+  for (let i = 0; i < samples.length; i++) { t += deltas[i] || 0; if (underWrapper(samples[i])) xs.push((t - (profile.startTime || 0)) / 1000 + p0); }
+  const sorted = windows.filter((w) => w[1] > w[0]).sort((a, b) => a[0] - b[0]);
+  if (!xs.length || !sorted.length) return { p0, alignMs: bound, inside: null };
+  const inside = (x) => {
+    let lo = 0, hi = sorted.length - 1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (sorted[mid][0] <= x) lo = mid + 1; else hi = mid - 1; }
+    return hi >= 0 && x < sorted[hi][1];
+  };
+  const step = PROFILE_INTERVAL_US / 1000 / 4;
+  const span = Math.max(bound, 1);
+  let best = { d: 0, n: -1 };
+  for (let d = -span; d <= span + 1e-9; d += step) {
+    let n = 0;
+    for (const x of xs) if (inside(x + d)) n++;
+    if (n > best.n || (n === best.n && Math.abs(d) < Math.abs(best.d))) best = { d, n };
+  }
+  return { p0: p0 + best.d, alignMs: step, inside: best.n / xs.length };
 }
 
 /** Fold a V8 .cpuprofile ({nodes, samples, timeDeltas, startTime, endTime}, times in microseconds)
@@ -952,9 +1029,13 @@ export function frameKey(cf) {
  *  it once as total time, so recursion is not double counted. The bookkeeping nodes are reported in
  *  `meta`, never ranked. `window` = [fromUs, toUs] on the profile's clock restricts the fold. */
 export function aggregateProfile(profile, window = null) {
-  const nodes = new Map(), parent = new Map(), keyOf = new Map(), stacks = new Map();
+  const nodes = new Map(), parent = new Map(), keyOf = new Map(), stacks = new Map(), cfOf = new Map();
   for (const n of profile.nodes || []) { nodes.set(n.id, n); for (const c of n.children || []) parent.set(c, n.id); }
-  const key = (id) => { let k = keyOf.get(id); if (k === undefined) { const n = nodes.get(id); k = frameKey(n && n.callFrame); keyOf.set(id, k); } return k; };
+  const key = (id) => {
+    let k = keyOf.get(id);
+    if (k === undefined) { const n = nodes.get(id); k = frameKey(n && n.callFrame); keyOf.set(id, k); if (n && n.callFrame && !cfOf.has(k)) cfOf.set(k, n.callFrame); }
+    return k;
+  };
   const stackKeys = (id) => {
     let s = stacks.get(id);
     if (s) return s;
@@ -962,7 +1043,7 @@ export function aggregateProfile(profile, window = null) {
     for (let cur = id; cur != null && nodes.has(cur); cur = parent.get(cur)) { const k = key(cur); if (!PROFILE_META.has(k)) seen.add(k); }
     s = [...seen]; stacks.set(id, s); return s;
   };
-  const self = new Map(), total = new Map(), count = new Map(), meta = {};
+  const self = new Map(), total = new Map(), count = new Map(), nodeSelf = new Map(), meta = {};
   const samples = profile.samples || [], deltas = profile.timeDeltas || [];
   let t = profile.startTime || 0, sampledUs = 0, inWindow = 0;
   for (let i = 0; i < samples.length; i++) {
@@ -974,16 +1055,44 @@ export function aggregateProfile(profile, window = null) {
     if (PROFILE_META.has(k)) { meta[k] = (meta[k] || 0) + dur; continue; }
     self.set(k, (self.get(k) || 0) + dur);
     count.set(k, (count.get(k) || 0) + 1);
+    nodeSelf.set(samples[i], (nodeSelf.get(samples[i]) || 0) + dur);
     for (const sk of stackKeys(samples[i])) total.set(sk, (total.get(sk) || 0) + dur);
   }
-  const functions = [...total.keys()].map((k) => ({ key: k, selfMs: (self.get(k) || 0) / 1000, totalMs: total.get(k) / 1000, samples: count.get(k) || 0 }));
+  // V8's per-line ticks (positionTicks) split a node's self time over the lines of its function, 1-based
+  // lines of the bundle. They cover the whole profile, so a window gets none; a node's self time is spread
+  // over its lines in proportion to their ticks.
+  const lines = new Map();
+  if (!window) for (const n of profile.nodes || []) {
+    if (!n.positionTicks || !n.positionTicks.length || !n.hitCount || !nodeSelf.has(n.id)) continue;
+    const k = key(n.id);
+    if (PROFILE_META.has(k)) continue;
+    const perTick = nodeSelf.get(n.id) / n.hitCount;
+    const m = lines.get(k) || new Map();
+    for (const pt of n.positionTicks) m.set(pt.line, (m.get(pt.line) || 0) + pt.ticks * perTick);
+    lines.set(k, m);
+  }
+  const functions = [...total.keys()].map((k) => ({ key: k, selfMs: (self.get(k) || 0) / 1000, totalMs: total.get(k) / 1000, samples: count.get(k) || 0, cf: cfOf.get(k),
+    ...(lines.has(k) ? { lines: [...lines.get(k)].map(([line, us]) => ({ line, ms: us / 1000 })).sort((a, b) => b.ms - a.ms) } : {}) }));
   return { durationMs: ((profile.endTime || 0) - (profile.startTime || 0)) / 1000, sampledMs: sampledUs / 1000, samples: inWindow,
     meta: Object.fromEntries(Object.entries(meta).map(([k, v]) => [k, v / 1000])), functions };
 }
 
 const bySelf = (fns) => [...fns].sort((a, b) => b.selfMs - a.selfMs || b.totalMs - a.totalMs || a.key.localeCompare(b.key));
 const byTotal = (fns) => [...fns].sort((a, b) => b.totalMs - a.totalMs || b.selfMs - a.selfMs || a.key.localeCompare(b.key));
-const roundFn = (f) => ({ key: f.key, selfMs: round1(f.selfMs), totalMs: round1(f.totalMs), samples: f.samples });
+const HOT_LINES = 4, HOT_LINE_SHARE = 0.05;
+const roundFn = (locate, withLines = false) => (f) => {
+  const src = locate ? locate(f.cf) : null;
+  const row = { key: f.key, selfMs: round1(f.selfMs), totalMs: round1(f.totalMs), samples: f.samples, ...(src ? { src } : {}) };
+  if (withLines && f.lines && f.selfMs > 0 && f.cf && f.cf.url) {
+    // The lines of the function that hold its self time (the 1-based bundle line, its share, its source). A
+    // builtin's ticks name its call sites' lines with no file to read them in, so those stay unlisted.
+    row.lines = f.lines.filter((l) => l.ms / f.selfMs >= HOT_LINE_SHARE).slice(0, HOT_LINES).map((l) => {
+      const at = locate && f.cf ? locate({ ...f.cf, lineNumber: l.line - 1, columnNumber: 0 }) : null;
+      return { line: l.line, ms: round1(l.ms), share: Math.round((l.ms / f.selfMs) * 100) / 100, ...(at ? { src: at } : {}) };
+    });
+  }
+  return row;
+};
 
 /** Sum aggregates from several runs (iterations) by function key. */
 export function mergeAggregates(aggs) {
@@ -992,17 +1101,27 @@ export function mergeAggregates(aggs) {
   for (const a of aggs) {
     durationMs += a.durationMs; sampledMs += a.sampledMs; samples += a.samples;
     for (const [k, v] of Object.entries(a.meta)) meta[k] = (meta[k] || 0) + v;
-    for (const f of a.functions) { const m = fns.get(f.key) || { key: f.key, selfMs: 0, totalMs: 0, samples: 0 }; m.selfMs += f.selfMs; m.totalMs += f.totalMs; m.samples += f.samples; fns.set(f.key, m); }
+    for (const f of a.functions) {
+      const m = fns.get(f.key) || { key: f.key, selfMs: 0, totalMs: 0, samples: 0, cf: f.cf };
+      m.selfMs += f.selfMs; m.totalMs += f.totalMs; m.samples += f.samples;
+      if (f.lines) { const ln = new Map((m.lines || []).map((l) => [l.line, l.ms])); for (const l of f.lines) ln.set(l.line, (ln.get(l.line) || 0) + l.ms); m.lines = [...ln].map(([line, ms]) => ({ line, ms })).sort((a, b) => b.ms - a.ms); }
+      fns.set(f.key, m);
+    }
   }
   return { durationMs, sampledMs, samples, meta, functions: [...fns.values()] };
 }
 
-/** Rank an aggregate: the top functions by self time and by total time, the bookkeeping totals beside. */
-export function rankProfile(agg, top) {
+/** Rank an aggregate: the top functions by self time and by total time, the bookkeeping totals beside;
+ *  `locate` (sourceLocator) adds each function's source position when the dist carries maps. */
+export function rankProfile(agg, top, locate = null) {
+  const r = roundFn(locate), rl = roundFn(locate, true);
+  const self = bySelf(agg.functions);
+  const hot = Math.min(top, HOT_FUNCTIONS);
   return { durationMs: round1(agg.durationMs), sampledMs: round1(agg.sampledMs), samples: agg.samples, functions: agg.functions.length,
     meta: Object.fromEntries(Object.entries(agg.meta).map(([k, v]) => [k, round1(v)])),
-    topSelf: bySelf(agg.functions).slice(0, top).map(roundFn), topTotal: byTotal(agg.functions).slice(0, top).map(roundFn) };
+    topSelf: [...self.slice(0, hot).map(rl), ...self.slice(hot, top).map(r)], topTotal: byTotal(agg.functions).slice(0, top).map(r) };
 }
+const HOT_FUNCTIONS = 5;   // the top self-time functions whose lines are shown
 
 /** The frames worth their own window: the first content frame and the largest frame of every type
  *  except keepalives. Windows cover the synchronous handler (t0 to t0 + handler), the part of a frame's
@@ -1016,23 +1135,28 @@ function profileWindows(perFrame, firstIdx) {
   return picks;
 }
 
-function profileReport(runs, firstIdx, files) {
+function profileReport(runs, firstIdx, files, sourceMapDir) {
+  const locate = sourceMapDir ? sourceLocator(sourceMapDir) : null;
   const profiled = runs.filter((r) => r.profiling && r.profiling.profile);
-  const overall = rankProfile(mergeAggregates(profiled.map((r) => aggregateProfile(r.profiling.profile))), TOP_OVERALL);
+  const handlerWindows = (r) => r.perFrame.filter((f) => f.t0 != null && f.handlerMs != null && f.handlerMs >= 0).map((f) => [f.t0, f.t0 + f.handlerMs]);
+  const aligned = profiled.map((r) => ({ r, al: refineAlignment(r.profiling.profile, r.profiling.p0, r.profiling.alignMs, handlerWindows(r)) }));
+  const overall = rankProfile(mergeAggregates(profiled.map((r) => aggregateProfile(r.profiling.profile))), TOP_OVERALL, locate);
   const windows = [];
   for (const { label, f } of profileWindows(runs[0].perFrame, firstIdx)) {
     const aggs = [];
-    for (const r of profiled) {
+    for (const { r, al } of aligned) {
       const pf = r.perFrame[f.i];
       if (!pf || pf.t0 == null || pf.handlerMs == null || pf.handlerMs < 0) continue;
-      const { profile, p0 } = r.profiling;
-      const toUs = (ms) => profile.startTime + (ms - p0) * 1000;
+      const { profile } = r.profiling;
+      const toUs = (ms) => profile.startTime + (ms - al.p0) * 1000;
       aggs.push(aggregateProfile(profile, [toUs(pf.t0), toUs(pf.t0 + pf.handlerMs)]));
     }
     if (!aggs.length) continue;
-    windows.push({ label, index: f.i, type: f.type, bytes: f.bytes, handlerMs: round1(f.handlerMs), ...rankProfile(mergeAggregates(aggs), TOP_WINDOW) });
+    windows.push({ label, index: f.i, type: f.type, bytes: f.bytes, handlerMs: round1(f.handlerMs), ...rankProfile(mergeAggregates(aggs), TOP_WINDOW, locate) });
   }
-  return { files, samplingIntervalUs: PROFILE_INTERVAL_US, alignMs: round1(Math.max(...profiled.map((r) => r.profiling.alignMs))), ...overall, windows };
+  const insides = aligned.map(({ al }) => al.inside).filter((x) => x != null);
+  return { files, samplingIntervalUs: PROFILE_INTERVAL_US, alignMs: round1(Math.max(...aligned.map(({ al }) => al.alignMs))),
+    wrapperSamplesInHandlers: insides.length ? round1(Math.min(...insides) * 100) / 100 : null, sourceMaps: !!locate, ...overall, windows };
 }
 
 /** Write each profiled iteration's .cpuprofile (Chrome DevTools loads it); with several iterations the
@@ -1051,16 +1175,20 @@ function writeProfiles(out, runs) {
   return files;
 }
 
-const fmtFn = (f) => `${fmtMs(f.selfMs).padStart(9)} ${fmtMs(f.totalMs).padStart(9)} ${String(f.samples).padStart(7)}  ${f.key}`;
+const fmtFn = (f) => `${fmtMs(f.selfMs).padStart(9)} ${fmtMs(f.totalMs).padStart(9)} ${String(f.samples).padStart(7)}  ${f.key}${f.src ? `  ${f.src}` : ""}`;
 const fmtMeta = (meta) => Object.entries(meta).map(([k, v]) => `${k} ${fmtMs(v)} ms`).join(", ") || "none";
 
 export function renderProfile(cp) {
   const out = [];
-  out.push(`cpu profile: ${cp.samples} samples over ${fmtMs(cp.durationMs)} ms at ${cp.samplingIntervalUs} us, ${cp.functions} functions; bookkeeping: ${fmtMeta(cp.meta)}; page-to-profile clock alignment ±${fmtMs(cp.alignMs)} ms`);
+  out.push(`cpu profile: ${cp.samples} samples over ${fmtMs(cp.durationMs)} ms at ${cp.samplingIntervalUs} us, ${cp.functions} functions; bookkeeping: ${fmtMeta(cp.meta)}`);
+  out.push(`  page-to-profile clock alignment ±${fmtMs(cp.alignMs)} ms${cp.wrapperSamplesInHandlers != null ? ` (${Math.round(cp.wrapperSamplesInHandlers * 100)}% of the message handler's samples fall inside the frames' handler windows)` : ""}${cp.sourceMaps ? "; source positions from the dist's .map files" : ""}`);
   for (const f of cp.files || []) out.push(`  written: ${f} (load it in Chrome DevTools, Performance panel)`);
-  const head = `${"self ms".padStart(9)} ${"total ms".padStart(9)} ${"samples".padStart(7)}  url:function:line`;
-  out.push(`  top ${cp.topSelf.length} by self time`, `  ${head}`);
-  for (const f of cp.topSelf) out.push(`  ${fmtFn(f)}`);
+  const head = `${"self ms".padStart(9)} ${"total ms".padStart(9)} ${"samples".padStart(7)}  url:function:line${cp.sourceMaps ? "  source:line" : ""}`;
+  out.push(`  top ${cp.topSelf.length} by self time${cp.topSelf.some((f) => f.lines) ? " (under a function, the lines that hold its self time: share, ms, bundle line, source)" : ""}`, `  ${head}`);
+  for (const f of cp.topSelf) {
+    out.push(`  ${fmtFn(f)}`);
+    for (const l of f.lines || []) out.push(`  ${" ".repeat(28)}${String(Math.round(l.share * 100)).padStart(3)}%  ${fmtMs(l.ms).padStart(7)} ms  line ${l.line}${l.src ? `  ${l.src}` : ""}`);
+  }
   out.push(`  top ${cp.topTotal.length} by total time`, `  ${head}`);
   for (const f of cp.topTotal) out.push(`  ${fmtFn(f)}`);
   for (const w of cp.windows || []) {
