@@ -7,6 +7,7 @@ event-triggered (the death transition; a boot catch-up sweep), once per stamp ep
 for restart cuts (the resume machinery owns those), and its why is a recognized procedural block.
 SYNTHETIC fixtures only (placeholder UUIDs, invented text)."""
 import contextlib
+import inspect
 import io
 import json
 import os
@@ -458,11 +459,20 @@ class DeadWaitOneObserver(_HermeticDeadWait):
         self.assertTrue(self._blocked(), "the pusher's own pass still completed its conversion")
 
     def test_the_setautonudge_call_site_skips_the_sweep(self):
-        # the ownership rule holds at the ONE other call site, pinned the way
-        # test_wake_goal_routes_its_dormant_branch_here pins its wiring
-        src = open(os.path.join(BIN, "romp-kernel")).read()
-        self.assertIn("_auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)",
-                      src)
+        # the ownership rule holds at every WS call site (setAutoNudge and setCompactSuggest),
+        # pinned the way test_wake_goal_routes_its_dormant_branch_here pins its wiring. The
+        # setAutoNudge arm is sliced out and checked on its own: a whole-source substring match
+        # stayed green while that arm's tick was missing, satisfied by setCompactSuggest's line
+        # (#846 inserted the new arm between the setter and its tick, re-parenting the tick).
+        src = inspect.getsource(km.Handler._dispatch_ws)
+        arm = src[src.index('"setAutoNudge"'):src.index('"setCompactSuggest"')]
+        self.assertIn("_auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)", arm,
+                      "setAutoNudge's own arm re-ticks, and skips the sweep")
+        calls = src.count("_auto_nudge_tick(int(time.time())")
+        self.assertGreaterEqual(calls, 2, "both WS arms re-tick")
+        self.assertEqual(calls, src.count("_auto_nudge_tick(int(time.time()), _tmux_sessions(), "
+                                          "run_dead_wait=False)"),
+                         "no WS call site runs the one-observer sweep")
 
 
 if __name__ == "__main__":
