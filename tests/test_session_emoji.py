@@ -434,8 +434,9 @@ class EmojiRoute(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.names = Path(self.tmp) / "names"
         self.names.mkdir()
+        # getattr: a kernel without the forwarder must fail at the forwarding assertion, not here in setUp
         self._saved = (km.NAMES, km.jd.STATE, km._tmux_sessions, km._live_names, km._mark_views_dirty,
-                       km._host_for_sid, km._remote_forward_status, km._demand_redial)
+                       km._host_for_sid, getattr(km, "_remote_forward_status", None), km._demand_redial)
         km.NAMES = self.names
         km.jd.STATE = Path(self.tmp) / "state"
         km._tmux_sessions = lambda: {}
