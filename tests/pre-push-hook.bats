@@ -24,7 +24,10 @@
 ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 HOOK="$ROMP_DIR/.githooks/pre-push"
 
+load git-hermetic
+
 setup() {
+    git_hermetic
     TEST_DIR="$(mktemp -d)"
     REPO="$TEST_DIR/repo"
     mkdir -p "$REPO"
