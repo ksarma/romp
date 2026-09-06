@@ -4,6 +4,8 @@
 # (romp-manager-ensure.sh) calls it so romp usage brings up the supervisor.
 # It must be idempotent (no second manager) and non-blocking (spawns detached).
 
+load tmux-private
+
 setup() {
     TEST_DIR="$(mktemp -d)"
     MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
@@ -11,6 +13,26 @@ setup() {
     # romp session's tool shell inherits from the live service) — a test must never start a real scope
     # on the live user manager, so the switch is floored off (the kernel and manager both honour it).
     export ROMP_CLI_SCOPE=0
+    # Every test here starts a REAL manager, and startManager() runs `tmux start-server` before it does
+    # anything else. Two layers keep that off the machine's tmux server (tests/tmux-private.bash has the
+    # 2026-09-06 incident this file caused): a recording fake tmux on PATH for the WHOLE file (the
+    # detached manager that `ensure` spawns inherits PATH too), and a socket directory private to the
+    # test, for any tmux call that reaches the real binary. The fake appends each call's argv to
+    # FAKE_TMUX_CALLS and writes the socket directory it was handed to FAKE_TMUX_ENV.
+    BIN="$TEST_DIR/bin"; mkdir -p "$BIN"
+    export FAKE_TMUX_CALLS="$TEST_DIR/tmux-calls" FAKE_TMUX_ENV="$TEST_DIR/tmux-env"
+    cat > "$BIN/tmux" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_TMUX_CALLS"
+{
+    printf 'TMUX_TMPDIR=%s\n' "${TMUX_TMPDIR-}"
+    if [ -d "${TMUX_TMPDIR:-/nonexistent}" ]; then echo 'TMUX_TMPDIR_IS_DIR=1'; else echo 'TMUX_TMPDIR_IS_DIR=0'; fi
+} > "$FAKE_TMUX_ENV"
+exit 0
+FAKE
+    chmod +x "$BIN/tmux"
+    export PATH="$BIN:$PATH"
+    tmux_private_socket_dir "$TEST_DIR"
     # Fake kernel launcher: stay alive without binding a real port (we assert on the
     # manager's control endpoint, not a live kernel).
     FAKE="$TEST_DIR/fake-serve"
@@ -23,6 +45,7 @@ teardown() {
     # Graceful stop, then reap the detached manager (it is orphaned, not our child).
     curl -fsS -X POST "http://127.0.0.1:${CPORT:-0}/stop" >/dev/null 2>&1 || true
     [[ -n "${MGR_PID:-}" ]] && kill "$MGR_PID" 2>/dev/null || true
+    tmux_private_kill            # before the rm: a server the real tmux started must not outlive the test
     rm -rf "$TEST_DIR"
 }
 
@@ -60,30 +83,85 @@ teardown() {
 @test "manager bootstraps a tmux server (launchd-rooted) with exit-empty off" {
     command -v node >/dev/null 2>&1 || skip "node not available"
 
-    # Fake tmux on PATH that records its args — so we assert WHAT the manager asks of tmux at startup,
-    # without touching the real tmux server. (The fix: a launchd-rooted server so new sessions don't
+    # setup()'s fake tmux records its args, so we assert WHAT the manager asks of tmux at startup
+    # without touching a real tmux server. (The fix: a launchd-rooted server so new sessions don't
     # inherit a terminal's TCC identity → the "VS Code wants to access" prompt.)
-    BIN="$TEST_DIR/bin"; mkdir -p "$BIN"
-    CALLS="$TEST_DIR/tmux-calls"
-    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\nexit 0\n' "$CALLS" > "$BIN/tmux"
-    chmod +x "$BIN/tmux"
-
+    #
     # Run `up` directly on a UNIQUE port (so it doesn't no-op against the other test's manager); the
     # manager calls startTmuxServer() at startup, before it ever binds the control port. Unique
     # across FILES too, not just this one: this test sat on 7571 — romp-manager-origin.bats's
     # control port — and a manager SIGTERM'd there outlives the kill by ~800ms (shutdownAll's
     # exit grace), so a combined bats run could find it still holding the port, and `up` then
     # exited "already running" without ever calling tmux.
-    env PATH="$BIN:$PATH" ROMP_MANAGER_PORT=7573 ROMP_SERVE_PORT=7574 ROMP_SERVE_BIN="$FAKE" node "$MGR" up >/dev/null 2>&1 &
+    env ROMP_MANAGER_PORT=7573 ROMP_SERVE_PORT=7574 ROMP_SERVE_BIN="$FAKE" node "$MGR" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
-    for i in $(seq 1 50); do [ -f "$CALLS" ] && break; sleep 0.1; done
+    for i in $(seq 1 50); do [ -f "$FAKE_TMUX_CALLS" ] && break; sleep 0.1; done
     kill "$MGR_PID" 2>/dev/null || true
 
     # startManager() → startTmuxServer() ran our fake tmux with start-server + exit-empty off.
-    [ -f "$CALLS" ]
-    grep -q "start-server" "$CALLS"
-    grep -q "exit-empty off" "$CALLS"
+    [ -f "$FAKE_TMUX_CALLS" ]
+    grep -q "start-server" "$FAKE_TMUX_CALLS"
+    grep -q "exit-empty off" "$FAKE_TMUX_CALLS"
+}
+
+@test "the manager's tmux call is handed a socket directory private to the test, and it already exists" {
+    command -v node >/dev/null 2>&1 || skip "node not available"
+    command -v curl >/dev/null 2>&1 || skip "curl not available"
+
+    # The 2026-09-06 incident, on the path that caused it: `ensure` spawns a DETACHED manager, whose
+    # `tmux start-server` ran on the machine's default socket. The manager inherits the test's
+    # environment, so the fake tmux records the socket directory it was handed. It must be the test's
+    # own, and it must EXIST at that moment: tmux 3.4 silently uses the default socket directory when
+    # TMUX_TMPDIR names a missing one, so an export without the mkdir isolates nothing.
+    CPORT=7593 MPORT=7594            # teardown's /stop reaps the detached manager on this port
+    run env ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKE" node "$MGR" ensure
+    [ "$status" -eq 0 ]
+    local i
+    for i in $(seq 1 50); do [ -s "$FAKE_TMUX_ENV" ] && break; sleep 0.1; done
+    [ -s "$FAKE_TMUX_ENV" ]
+    grep -qxF "TMUX_TMPDIR=$TEST_DIR/tmux" "$FAKE_TMUX_ENV"
+    grep -qxF "TMUX_TMPDIR_IS_DIR=1" "$FAKE_TMUX_ENV"
+}
+
+@test "with the real tmux, the server the manager starts lives inside the test directory" {
+    command -v node >/dev/null 2>&1 || skip "node not available"
+    command -v curl >/dev/null 2>&1 || skip "curl not available"
+    # The fake tmux leaves PATH for this test alone: the machine's tmux takes the manager's call, and the
+    # private socket directory is the ONLY thing between that call and the machine's default server.
+    local path="${PATH#"$BIN:"}"
+    PATH="$path" command -v tmux >/dev/null 2>&1 || skip "tmux not available"
+
+    # Refuse to run a real tmux unless the isolation is in place: a regression in setup() must fail
+    # here, not reproduce the incident on the machine's server.
+    [[ "$TMUX_TMPDIR" == "$TEST_DIR/"* ]]
+    [ -d "$TMUX_TMPDIR" ]
+
+    env PATH="$path" ROMP_MANAGER_PORT=7595 ROMP_SERVE_PORT=7596 ROMP_SERVE_BIN="$FAKE" \
+        node "$MGR" up >/dev/null 2>&1 &
+    MGR_PID=$!
+    # startManager() runs tmux before it binds the control port, so a live port means the call is done.
+    local i
+    for i in $(seq 1 50); do curl -fsS "http://127.0.0.1:7595/status" >/dev/null 2>&1 && break; sleep 0.1; done
+    kill "$MGR_PID" 2>/dev/null || true
+
+    # tmux places the socket at $TMUX_TMPDIR/tmux-<uid>/default: under the test directory, nowhere else.
+    local sock="$TMUX_TMPDIR/tmux-$(id -u)/default"
+    [ -S "$sock" ]
+    [ "$(ls -A "$TMUX_TMPDIR")" = "tmux-$(id -u)" ]
+    [ ! -e "$TEST_DIR/default" ]
+    # A live server answers on it, set up the way the manager asked (exit-empty off is what keeps an
+    # empty server alive). -S names the socket, so this reaches no other server, and the tmux is the
+    # machine's, found past the fake (which answers anything with exit 0 and no output).
+    local tmux; tmux="$(tmux_private_real_tmux)"
+    run "$tmux" -S "$sock" show -g exit-empty
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"exit-empty off"* ]]
+    # The teardown kill reaches that server too (the first run of this isolation leaked one: PATH
+    # handed kill-server to the fake). After it, nothing answers on the socket.
+    tmux_private_kill
+    run "$tmux" -S "$sock" show -g exit-empty
+    [ "$status" -ne 0 ]
 }
 
 @test "a leaked \$TMUX never reaches the manager or its kernels" {

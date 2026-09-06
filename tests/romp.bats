@@ -3,6 +3,8 @@
 # Resolve path to the romp script under test
 ROMP_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp"
 
+load tmux-private
+
 setup() {
     TEST_DIR="$(mktemp -d)"
     WORK_DIR="$TEST_DIR/myproject"
@@ -78,6 +80,11 @@ MOCK
     _stub_claude "2.1.226"
 
     export PATH="$MOCK_DIR:$PATH"
+    # Two tests below start a REAL bin/romp-manager, whose startup runs `tmux start-server`, and `romp
+    # new -t` runs `tmux new-session`: the mock above takes both, and the private socket directory keeps
+    # any call that reaches the real binary off the machine's tmux server (tests/tmux-private.bash has
+    # the 2026-09-06 incident).
+    tmux_private_socket_dir "$TEST_DIR"
     unset TMUX            # default: outside tmux → attach-session branch
     unset ROMP_SID        # default: outside a romp session — `romp new` names no parent (tests export it on purpose)
     # bin/romp-manager starts its tmux server in a transient systemd scope under ROMP_SUPERVISED (which a
@@ -97,6 +104,7 @@ teardown() {
     # Tests that launch a background romp-manager record its pid in MGR_PID so we
     # always reap it (and its child kernels), even if an assertion aborted the test.
     [[ -n "${MGR_PID:-}" ]] && kill "$MGR_PID" 2>/dev/null
+    tmux_private_kill            # before the rm: a server the real tmux started must not outlive the test
     rm -rf "$TEST_DIR"
 }
 
