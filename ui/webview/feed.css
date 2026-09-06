@@ -1631,20 +1631,30 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-del { border-bottom: 2px solid var(--fc-author, var(--accent)); cursor: pointer; user-select: none; -webkit-user-select: none; }
 .fc-del::before { content: attr(data-fc-text); text-decoration: line-through; color: var(--dim);
   background: color-mix(in srgb, var(--err) 9%, transparent); }
-/* the author's chip beside a change in Raw (the plan's UX: the `▍web` after the marked text, "each with the author's
-   session chip in the session's color"): generated content on the LAST element painted for a change (data-fc-chip, set
-   by paintChangesRaw), so, like the struck label and the row number, it is no node and never enters a selection or a
-   walk. A pill at the card chip's size (.fc-chip: 0.72em, 600, --radius-pill), in the mark's own author colour as a
-   wash and a hairline under the surface's ink: the mark carries the session's background alone (--fc-author), and a
-   dark or a light session colour as INK would fail against one theme. inline-block so the pill has a box to cap and
-   clip; middle, not baseline, because a box that clips its overflow puts its baseline on its bottom edge. Rendered
-   marks carry no chip (the plan gives the chip to Raw). One selector, on the attribute the painter alone sets. */
-[data-fc-chip]::after { content: attr(data-fc-chip); display: inline-block; vertical-align: middle;
-  margin-left: 4px; padding: 0 6px; border-radius: var(--radius-pill); font-size: 0.72em; font-weight: 600; line-height: 1.3;
-  color: var(--fg); background: color-mix(in srgb, var(--fc-author, var(--accent)) 22%, transparent);
+/* ── end file comments panel ── */
+/* ── the change marks' author chip (Slice 2), OUTSIDE the panel block on purpose ── the plan's UX: the `▍web` after
+   the marked text in Raw, "each with the author's session chip in the session's color". Generated content on the LAST
+   element painted for a change (data-fc-chip, set by paintChangesRaw), so, like the struck label and the row number,
+   it is no node and never enters a selection or a walk. The pill's dress hangs on the marks' own classes with
+   `content: none`; the painter's attribute alone turns it on. Two reasons the rule is shaped and placed this way:
+   - The sheets' cascade resolvers (styles-fc-computed-sizes.test.ts over the panel block, styles-fileview-err-sizes.test.ts
+     over the whole sheet) read class and pseudo-element selectors, not attribute ones, so a font-size rule on
+     `[data-fc-chip]::after` aborted both. The size sits on the class selectors; the attribute rule sets content only.
+   - The panel block speaks panel em, and this chain does not: it runs through .fileview-pre's ABSOLUTE 12px (the code
+     face), where 0.72em is 8.64px, not the 9.36px the card chip (.fc-chip: 0.72em of the panel's inherited base,
+     var(--fs)) wears beside it. Labels match labels (ui/CLAUDE.md), so the size is written against var(--fs), as the
+     composer's buttons are: the card chip's 0.72 of the same base, whatever the code face is.
+   Weight, pill radius and clipping are the card chip's. The wash and the hairline are the mark's own author colour
+   (--fc-author, set inline per mark; the accent when no session matches) under the surface's ink: the mark carries the
+   session's background alone, and a dark or a light session colour as INK would fail against one theme. inline-block so
+   the pill has a box to cap and clip; middle, not baseline, because a box that clips its overflow puts its baseline on
+   its bottom edge. Rendered marks carry no chip (the plan gives the chip to Raw). */
+.fc-ins::after, .fc-del::after { content: none; display: inline-block; vertical-align: middle;
+  margin-left: 4px; padding: 0 6px; border-radius: var(--radius-pill); font-size: calc(0.72 * var(--fs)); font-weight: 600;
+  line-height: 1.3; color: var(--fg); background: color-mix(in srgb, var(--fc-author, var(--accent)) 22%, transparent);
   box-shadow: inset 0 0 0 1px var(--fc-author, var(--accent)); max-width: 10em; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
-/* ── end file comments panel ── */
+.fc-ins[data-fc-chip]::after, .fc-del[data-fc-chip]::after { content: attr(data-fc-chip); }
 
 /* ── the viewer's image + PDF bodies (a .png used to open as line-numbered mojibake). The <img>
    wears the lightbox image's own treatment (.romp-lightbox-img: capped, object-fit contain, the

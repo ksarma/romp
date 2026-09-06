@@ -6,12 +6,14 @@
 // drew it — the tint and the underline showed, the session's name did not (anchor-map-change-marks.test.ts pins
 // the attribute alone, and a bare attribute renders nothing in any engine).
 //
-// Two legs. The source leg reads both sheets (the feed page loads only feed.css) and pins the rule: it reads the
-// attribute anchor-map sets, on the classes anchor-map paints, at the card chip's size, in the mark's own author
-// colour. The browser leg paints changes with the REAL painter over the viewer's own Raw rows under headless
-// Chromium and reads what the engine draws: the chip's text, its colour, the width it takes, that it enters no
-// selection and grows no row, and that unpaint leaves no residue. It skips LOUDLY without a playwright browser
-// (CI installs none), the waiting-pane-browser.test.ts idiom.
+// Two legs. The source leg reads both sheets (the feed page loads only feed.css) and pins WHAT the chip draws: the
+// attribute anchor-map sets, on the classes anchor-map paints, in the mark's own author colour under the surface's
+// ink. The rule's shape, its place after the panel block and its size are styles-fc-inline-chip.test.ts's: the dress
+// hangs on the marks' classes with `content: none`, the attribute rule turns the content on. The browser leg paints
+// changes with the REAL painter over the viewer's own Raw rows under headless Chromium and reads what the engine
+// draws: the chip's text, its colour, the width it takes, that it enters no selection and grows no row, and that
+// unpaint leaves no residue. It skips LOUDLY without a playwright browser (CI installs none), the
+// waiting-pane-browser.test.ts idiom.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -26,18 +28,20 @@ const MAP = read("anchor-map.ts");
 const VIEW = read("file-view.ts");
 const SHEETS = [["styles.css", read("styles.css")], ["feed.css", read("feed.css")]] as const;
 
-function panelBlock(css: string, sheet: string): string {
-  const a = css.indexOf("/* ── file comments panel (plans/file-review.md Slice 1; file-comments.ts)");
-  const b = css.indexOf("/* ── end file comments panel ── */");
-  assert.ok(a >= 0 && b > a, sheet + ": the block and its end marker");
-  return css.slice(a, b);
-}
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
+/** the panel block (its header to its end marker) and the tail of the sheet after the marker, comments stripped */
+function split(css: string, sheet: string): { block: string; tail: string } {
+  const a = css.indexOf("/* ── file comments panel (plans/file-review.md Slice 1; file-comments.ts)");
+  const marker = "/* ── end file comments panel ── */";
+  const b = css.indexOf(marker);
+  assert.ok(a >= 0 && b > a, sheet + ": the block and its end marker");
+  return { block: stripComments(css.slice(a, b)), tail: stripComments(css.slice(b + marker.length)) };
+}
 /** the one rule whose prelude is `head` (the text up to `{`), body only */
-function ruleBody(block: string, head: string, sheet: string): string {
-  const at = block.indexOf(head + " {");
+function ruleBody(css: string, head: string, sheet: string): string {
+  const at = css.indexOf(head + " {");
   assert.ok(at >= 0, sheet + ": a rule " + JSON.stringify(head));
-  return block.slice(at + head.length + 2, block.indexOf("}", at));
+  return css.slice(at + head.length + 2, css.indexOf("}", at));
 }
 const decl = (body: string, prop: string): string | null => {
   const m = new RegExp("(?:^|;)\\s*" + prop.replace(/-/g, "\\-") + ":\\s*([^;]+)").exec(body);
@@ -60,34 +64,32 @@ test("the painter puts the chip label on a change's last Raw element, as an attr
   assert.deepEqual(RAW_CLASSES, { del: "fc-del", ins: "fc-ins" });
 });
 
-test("both sheets draw the chip: a ::after on the painter's attribute, at the card chip's size, in the author colour", () => {
+test("both sheets draw the chip: the marks' ::after reads the painter's attribute, in the author colour under the surface's ink", () => {
   for (const [sheet, css] of SHEETS) {
-    const block = stripComments(panelBlock(css, sheet));
-    // one selector on the attribute alone: the painter sets it on nothing but its own marks (the first test), and the
-    // sheets' size resolvers take one selector per font-size rule
-    const head = `[${CHIP_ATTR}]::after`;
-    const body = ruleBody(block, head, sheet);
-    assert.equal(decl(body, "content"), `attr(${CHIP_ATTR})`, sheet + ": the label is generated content — no node enters a row");
-    // the card chip's size and weight (ui/CLAUDE.md: labels match labels) — read from .fc-chip, not restated
+    const { block, tail } = split(css, sheet);
+    // the dress on the marks' own classes, the content switched on by the attribute the painter alone sets
+    // (styles-fc-inline-chip.test.ts pins the pair's shape, place and size; here, what they draw)
+    const dress = ruleBody(tail, `.${RAW_CLASSES.ins}::after, .${RAW_CLASSES.del}::after`, sheet);
+    const sw = ruleBody(tail, `.${RAW_CLASSES.ins}[${CHIP_ATTR}]::after, .${RAW_CLASSES.del}[${CHIP_ATTR}]::after`, sheet);
+    assert.equal(decl(sw, "content"), `attr(${CHIP_ATTR})`, sheet + ": the label is generated content — no node enters a row");
+    assert.equal(decl(dress, "content"), "none", sheet + ": an unchipped mark draws nothing");
+    // the card chip's weight and pill (ui/CLAUDE.md: labels match labels) — read from .fc-chip, not restated
     const card = ruleBody(block, ".fc-chip", sheet);
-    assert.equal(decl(body, "font-size"), decl(card, "font-size"), sheet + ": the inline chip wears the card chip's size");
-    assert.equal(decl(body, "font-weight"), decl(card, "font-weight"), sheet + ": and its weight");
-    assert.equal(decl(body, "border-radius"), "var(--radius-pill)", sheet + ": a pill through the token");
+    assert.equal(decl(dress, "font-weight"), decl(card, "font-weight"), sheet + ": the card chip's weight");
+    assert.equal(decl(dress, "border-radius"), "var(--radius-pill)", sheet + ": a pill through the token");
     // the session's colour is the mark's own --fc-author, with the mark's own fallback (anchor-map.test.ts pins the
     // underline as `var(--fc-author, var(--accent))`): chip and underline can never disagree about the author
     const author = "var(--fc-author, var(--accent))";
-    assert.ok(decl(body, "background")!.includes(author), sheet + ": the wash mixes the author colour: " + decl(body, "background"));
-    assert.ok(decl(body, "box-shadow")!.includes(author), sheet + ": the hairline is the author colour: " + decl(body, "box-shadow"));
-    assert.equal(decl(body, "color"), "var(--fg)", sheet + ": the ink is the surface's — a session colour as ink fails against one theme");
+    assert.ok(decl(dress, "background")!.includes(author), sheet + ": the wash mixes the author colour: " + decl(dress, "background"));
+    assert.ok(decl(dress, "box-shadow")!.includes(author), sheet + ": the hairline is the author colour: " + decl(dress, "box-shadow"));
+    assert.equal(decl(dress, "color"), "var(--fg)", sheet + ": the ink is the surface's — a session colour as ink fails against one theme");
     // a box that clips its overflow puts its baseline on its bottom edge; middle keeps the pill on the x-height
-    assert.equal(decl(body, "display"), "inline-block", sheet);
-    assert.equal(decl(body, "overflow"), "hidden", sheet);
-    assert.equal(decl(body, "vertical-align"), "middle", sheet + ": middle, not baseline, on a clipping inline-block");
-    assert.equal(decl(body, "white-space"), "nowrap", sheet + ": a two-word session name stays one chip");
-    // no OTHER rule in the sheet gives these marks an ::after that would fight it
-    const preludes = [...stripComments(css).matchAll(/([^{};]+)\{/g)].map((m) => m[1].trim());
-    const afters = preludes.filter((p) => p.includes("::after") && (/fc-(ins|del)/.test(p) || p.includes(CHIP_ATTR)));
-    assert.deepEqual(afters, [head], sheet + ": the marks' one ::after");
+    assert.equal(decl(dress, "display"), "inline-block", sheet);
+    assert.equal(decl(dress, "overflow"), "hidden", sheet);
+    assert.equal(decl(dress, "vertical-align"), "middle", sheet + ": middle, not baseline, on a clipping inline-block");
+    assert.equal(decl(dress, "white-space"), "nowrap", sheet + ": a two-word session name stays one chip");
+    // the panel block itself dresses no chip: the block speaks panel em and its resolver reads no attribute selector
+    assert.ok(!block.includes(CHIP_ATTR), sheet + ": the panel block names no " + CHIP_ATTR);
   }
 });
 
@@ -178,7 +180,7 @@ for (const [sheet, css] of SHEETS) {
           plainContent: plain.map((el) => after(el).content),
           dark, light, widths, selection,
           heightsBefore, heightsAfter: rows.map((el) => el.getBoundingClientRect().height),
-          rowFont: getComputedStyle(rows[0]).fontSize,
+          rowFont: getComputedStyle(rows[0]).fontSize, baseFont: getComputedStyle(document.body).fontSize,
         };
         (window as any).__fc.unpaintChanges(code);
         const residue = [...code.querySelectorAll("*")].filter((el) => after(el).content !== "none").length;
@@ -197,7 +199,10 @@ for (const [sheet, css] of SHEETS) {
       assert.deepEqual(r.plainContent, ["none", "none"], "the insertion's first-row slice and the substitution's point draw no chip");
       for (const c of chips) {
         assert.equal(c.display, "inline-block", String(c.id));
-        assert.equal(c.fontSize, String(Math.round(parseFloat(r.rowFont) * 0.72 * 100) / 100) + "px", c.id + ": the card chip's 0.72em of the row's font");
+        // the card chip's 0.72 of the PAGE base (calc(0.72 * var(--fs))), not of the 12px code face the mark sits in —
+        // labels match labels (ui/CLAUDE.md); styles-fc-inline-chip.test.ts reads the two chips side by side
+        assert.equal(c.fontSize, String(Math.round(parseFloat(r.baseFont) * 0.72 * 100) / 100) + "px", c.id + ": the card chip's 0.72 of the page base " + r.baseFont);
+        assert.notEqual(r.baseFont, r.rowFont, "the probe's code face differs from the page base, so the two readings are distinguishable");
       }
       // the session's colour: web's own; the accent for an author with no live match, as the mark's underline does
       assert.ok(chips[0].shadow.includes(WEB_COLOR) && chips[2].shadow.includes(WEB_COLOR), "web's chips wear web's colour: " + chips[0].shadow);
