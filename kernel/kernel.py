@@ -208,7 +208,12 @@ class _PerfStats:
                                    under "other"). A deduped frame was built and compared, not sent
       goals                        loads, saves, writes: judge.load_goals calls, save_goals calls,
                                    and the saves that reached the disk (a byte-identical republish
-                                   is a save without a write)
+                                   is a save without a write); disk_hits / disk_misses / disk_seeds:
+                                   the no-op check's disk-side memo (identity matched; file read and
+                                   parsed, or attempted; entry filled from a publish's own temp);
+                                   scans / scan_hits /
+                                   scan_parses: judge_failure_scan's per-store memo (calls, stores
+                                   served from the memo, stores read and parsed)
       judge                        passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
@@ -217,6 +222,14 @@ class _PerfStats:
                                    chain_memo {hit, miss, populate, bypass}: the write-moment chain
                                    memo's counters (judge.chain_memo_stats), so its hit rate is
                                    read from the live kernel rather than assumed
+      memos                        one entry per memo the kernel keeps, each a flat dict of counters:
+                                   goals_snap (the judge pass's stat-keyed goal-store snapshot, see
+                                   _begin_goals_pass) -> hit / miss (stores served from the memo vs
+                                   decoded, summed over passes), fail (versions that did not
+                                   decode), evict (entries dropped for files gone from the
+                                   directory), punch (snapshot entries copied for a user gesture),
+                                   and the gauges entries / bytes (memoized paths and their summed
+                                   file size)
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -361,10 +374,15 @@ class _PerfStats:
             goals = jd.goal_io_stats()
         except Exception:
             goals = {}
+        try:
+            memos = {"goals_snap": _goals_memo_report()}
+        except Exception:
+            memos = {}
         now = time.time()
         return {"now": now, "since": since, "uptime_s": now - _STARTED, "log": _PERF,
                 "process": _process_stats(), "pusher": pusher, "stages_ms": stages,
-                "builds": builds, "sends": sends, "goals": goals, "judge": judge, "http": http}
+                "builds": builds, "sends": sends, "goals": goals, "judge": judge, "http": http,
+                "memos": memos}
 
 
 _PERF_STATS = _PerfStats()
@@ -4286,16 +4304,23 @@ def _paste_landed_texts(text):
     check keyed on the raw bytes alone falsely reopened it at every boot. Both forms stay exact
     matches, never substrings: same whole body = the same answer delivered, the check's own
     contract. The raw form stays in the set — a path the CLI never rewrote (no image read fired)
-    submits as typed."""
-    forms = {text}
+    submits as typed.
+
+    Every form is a KEY under sb.echo_text_key (outer whitespace stripped), because the set is
+    compared against _atom_user_texts, which yields keys: the CLI records user text verbatim, edge
+    whitespace included, and the kernel keys it stripped, so a form built from the raw text never
+    matched a record of a text sent with a trailing newline — a delivered answer read as lost and
+    the ask reopened at every boot (2026-09-06 review, round 4: one key on every side)."""
+    key = sb.echo_text_key(text)
+    forms = {key}
     seen = [0]
 
     def _img(m):
         seen[0] += 1
         return m.group(0).replace(m.group(1), "[Image #%d]" % seen[0])
-    rewritten = _IMG_PATH_RE.sub(_img, text or "")
+    rewritten = _IMG_PATH_RE.sub(_img, key)
     if seen[0]:
-        forms.add(rewritten)
+        forms.add(sb.echo_text_key(rewritten))
     return forms
 
 
@@ -10819,12 +10844,15 @@ def _comments_frame(sid, tmux=None):
                 # LOST — a reconnect with it in flight; the popover shows "never delivered") owes nothing.
                 user_atoms = [a for tr in turns for a in (tr.get("atoms") or []) if a.get("type") == "user"]
                 def _landed(e):
-                    et = (e.get("_echo_text") or "").strip()
+                    et = sb.echo_text_key(e.get("_echo_text"))
                     since = float(e.get("t") or 0)                     # the send's own stamp: the record the CLI writes for
                     return any(et in _atom_user_texts(a) for a in user_atoms if float(a.get("t") or 0) >= since)   # it is at or after it
                 floor = _human_turn_floor({"turns": turns}) if turns else 0
-                held = [a for a in live if (a.get("_echo_text") or "").strip() and not a.get("command")
-                        and not a.get("dropped") and not _landed(a) and not _echo_overtaken(a, floor)]
+                # `_landed` on the atom: the backend's boot/spawn scan read the landing off the transcript
+                # itself (sdk_backend._mark_dropped_echoes) — delivered, so nothing is held for it
+                held = [a for a in live if sb.echo_text_key(a.get("_echo_text")) and not a.get("command")
+                        and not a.get("dropped") and not a.get("_landed") and not _landed(a)
+                        and not _echo_overtaken(a, floor)]
                 queued = max(queued, len(held))
         # the newest record the projection shows (or the transcript holds): the client's "did the transcript
         # move?" datum, independent of the 80-event / 40-message caps on the shipped projections
@@ -20241,12 +20269,23 @@ def _split_reminders(text):
     return " ".join("".join(out).split()), [r for r in reminders if r]
 
 
-_IMG_PATH_RE = re.compile(r"(?:^|[\s'\"`(])((?:~/|/)[^\s'\"`()]+\.(?:png|jpe?g|gif|webp|bmp|svg))\b", re.I)
+# The extension set is the CLI's, not romp's: the composer paste hook's one image-path test,
+# `/\.(png|jpe?g|gif|webp)$/i` (Claude Code 2.1.261 bundle) — the paths it reads and rewrites to
+# "[Image #N]" before the submit. No bmp, no svg: the wider set this carried until 2026-09-06 claimed
+# extractions the CLI never performs (a `.svg` send waited for a rewrite that never came). Twin of
+# sdk_backend._IMG_PATH_RE; tests/test_kernel_fed_echo_absorbed.py pins both to that set. Its readers
+# are the ones that WAIT ON or READ BACK the CLI's rewrite: _injected_img_paths (the tmux pre-Enter
+# wait) and _paste_landed_texts (the rewritten form a delivered paste wears). The bare-path PREVIEW in
+# _user_images is romp's own feature and reads _PREVIEW_IMG_RE (beside _IMG_MIME) instead — it never
+# claims a CLI extraction, so it is not bound to the CLI's set.
+_IMG_PATH_RE = re.compile(r"(?:^|[\s'\"`(])((?:~/|/)[^\s'\"`()]+\.(?:png|jpe?g|gif|webp))\b", re.I)
 def _user_images(blocks, text, human):
     """A user turn's images. Inline base64 → a data: URL; an image
     source path → "path:<abs>" (the webview hydrates it via imgRequest); and — the common case — a bare
     image PATH typed or dragged into the composer arrives as PLAIN TEXT, so scan a human turn's text for
-    absolute / ~ paths with a known image extension. Capped at 4."""
+    absolute / ~ paths with an extension the imgRequest route can serve (_PREVIEW_IMG_RE, built from
+    _IMG_MIME's keys — bmp and svg included; on an SDK session every image path lands as text, so this
+    scan is the only way a referenced picture gets shown). Capped at 4."""
     imgs = []
     for b in (blocks or []):
         if isinstance(b, dict) and b.get("type") == "image":
@@ -20256,7 +20295,7 @@ def _user_images(blocks, text, human):
             elif s.get("path"):
                 imgs.append({"src": "path:" + s["path"], "path": s["path"]})
     if human and not imgs:                            # a bare image path typed/dragged in → plain text
-        for m in _IMG_PATH_RE.finditer(text or ""):
+        for m in _PREVIEW_IMG_RE.finditer(text or ""):
             p = m.group(1)
             if not any(im.get("path") == p for im in imgs):
                 imgs.append({"src": "path:" + p, "path": p})
@@ -20837,7 +20876,49 @@ _judge_gen = [0]                                 # bumped each producer pass →
 _goals_snap = [None]                             # {sid: store} while a judge pass is mid-flight, else None
 _goals_snap_at = [0.0]                           # when that snapshot's file reads STARTED (see _feed_goals)
 _goals_snap_done = {}                            # sid → the user-write mark already punched onto THIS snapshot
+_goals_snap_owned = set()                        # sids whose snapshot entry is THIS pass's private copy (copy-on-punch)
 _goals_snap_lock = threading.Lock()
+# STAT-KEYED STORE MEMO (2026-09-06, performance plan B5). The snapshot used to json.loads EVERY
+# goals/<fsid>.json at the start of every pass — 72 files of up to 1.3 MB, about 3% of the kernel's
+# interpreter time, most of the producer thread's cost — although a pass changes only a few of them.
+# Every writer publishes by rename (save_goals), so the bytes under an inode never change once it is at
+# its path. The memo keeps the parsed object per path under (st_ino, st_mtime_ns, st_size); a pass
+# stats every file, decodes only the ones whose key moved, and builds the snapshot from memo
+# REFERENCES. Consequence: a snapshot entry is shared with later passes, so nothing may mutate it —
+# _feed_goals copies an entry before punching a user gesture onto it (the _apply_rewind_hold idiom),
+# and build_feed only reads. A version that fails to decode is remembered under its key too, so a
+# corrupt store is decoded (and reported) once per file version rather than once per pass; its sid
+# stays out of the snapshot and the feed reads it live. Entries for paths gone from the directory are
+# evicted at the next pass.
+# WHAT THE KEY RESTS ON: st_mtime_ns moving between publishes, not the inode. Inode numbers recycle
+# (on ext4, consecutive tmp+rename publishes of one path alternate between two numbers, so the third
+# version can sit on the first's inode), and equal sizes are common (a digit bump, a same-length
+# status word). On Linux 6.13+ (multigrain timestamps) the move is guaranteed: the pass's own stat
+# marks the inode as queried, so the next publish gets a fine-grained stamp. On a coarse-timestamp
+# kernel, two equal-size publishes of one store inside one clock tick after the pass's stat reproduce
+# the memoized key and pin the earlier parse until the store's next publish — a known blind spot; the
+# byte compare on a stat hit in plan C1 closes it. Superseded by that shared read-only store cache
+# (plan C1) when it lands.
+_goals_memo = [{}]                               # path → ((st_ino, st_mtime_ns, st_size), parsed store | _GOALS_MEMO_BAD)
+_GOALS_MEMO_BAD = object()                       # a file version that did not decode: no snapshot entry, no retry until it changes
+_goals_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0, "punch": 0}   # observability + tests (/perf memos)
+
+
+def _goals_memo_decode(data):
+    """The memo's one decode: a raw parse of the file's bytes, exactly what the snapshot always held
+    (no _guard_nodes, no replay — those are load_goals' business). A module function so tests count
+    decodes here rather than by patching json.loads."""
+    return json.loads(data)
+
+
+def _goals_memo_report():
+    """The memo's counters plus its current occupancy, for /perf: `entries` memoized paths and `bytes`
+    their summed on-disk size (a proxy for the parsed objects' footprint; plan D3)."""
+    memo = _goals_memo[0]
+    out = dict(_goals_memo_stats)
+    out["entries"] = len(memo)
+    out["bytes"] = sum(k[2] for k, v in memo.values() if v is not _GOALS_MEMO_BAD)
+    return out
 # A USER gesture (card reply, Move to Working, resolve) must NEVER wait out a pass (the user 2026-07-21).
 # The snapshot above exists to hide half-applied JUDGE writes; it was also hiding the user's own, because
 # optimistic_followup writes the LIVE store while the feed reads the frozen copy. A reply landing
@@ -20852,27 +20933,74 @@ def _note_user_goal_write(sid):
     _user_goal_write[str(sid)] = time.time()
 
 def _begin_goals_pass():
-    """Capture the PRE-pass goal stores so build_feed serves a pass-boundary-consistent view for the pass."""
-    at = time.time()          # stamped BEFORE the reads: a write racing this loop must count as AFTER them,
-    snap = {}                 # so it gets replayed onto the snapshot rather than lost to the read order
+    """Capture the PRE-pass goal stores so build_feed serves a pass-boundary-consistent view for the pass.
+
+    Stat-keyed (see the memo note above): each store is decoded only when its (ino, mtime_ns, size)
+    moved since the last pass; an unchanged one is served as the memoized object. The key is taken by
+    fstat on the fd the bytes are read from, so key and content are the same file version: a rename
+    landing between the listing's stat and the open is read whole from the new inode and keyed as
+    such. Any race the other way (content newer than its key) only costs one extra decode next pass;
+    it can never pin a stale parse, because the next stat sees a moved key. The one way a stale parse
+    CAN pin is the coarse-timestamp blind spot in the memo note above (equal size, recycled inode, same
+    clock tick); on a multigrain-timestamp kernel it does not occur."""
+    # ui/webview/feed-move-ack.test.ts pins the next line's comment text ("stamped BEFORE the reads").
+    at = time.time()          # stamped BEFORE the reads and the stats that gate them: a write racing this loop
+    snap = {}                 # must count as AFTER them, so it is replayed onto the snapshot, not lost to the read order
+    prev = _goals_memo[0]
+    memo = {}
+    hit = miss = fail = 0
     try:
-        for p in jd.GOALDIR.glob("*.json"):
-            try:
-                snap[p.stem] = json.loads(p.read_text())
-            except Exception:
-                pass
-    except Exception:
-        pass
+        entries = [e for e in os.scandir(jd.GOALDIR) if e.name.endswith(".json") and e.is_file()]
+    except OSError:
+        entries = []
+    for ent in entries:
+        path, sid = ent.path, ent.name[:-5]
+        key = None
+        try:
+            st = ent.stat()
+            key = (st.st_ino, st.st_mtime_ns, st.st_size)
+            old = prev.get(path)
+            if old is not None and old[0] == key:
+                hit += 1                                   # same file version → the memoized parse (or its
+                memo[path] = old                           # remembered decode failure) stands
+                if old[1] is not _GOALS_MEMO_BAD:
+                    snap[sid] = old[1]
+                continue
+            with open(path, "rb") as fh:
+                st = os.fstat(fh.fileno())
+                key = (st.st_ino, st.st_mtime_ns, st.st_size)
+                data = fh.read()
+            store = _goals_memo_decode(data)
+        except FileNotFoundError:
+            continue                                       # gone between the listing and the read: no store
+        except Exception as e:                             # unreadable or undecodable: out of the snapshot (the
+            fail += 1                                      # feed reads it live, as before), said once per version
+            if key is not None:
+                memo[path] = (key, _GOALS_MEMO_BAD)
+            sys.stderr.write("goals-pass: %s: %s: %s (not in the pass snapshot; served live until the file changes)\n"
+                             % (ent.name, type(e).__name__, e))
+            continue
+        miss += 1
+        memo[path] = (key, store)
+        snap[sid] = store
+    _goals_memo[0] = memo
+    _goals_memo_stats["hit"] += hit
+    _goals_memo_stats["miss"] += miss
+    _goals_memo_stats["fail"] += fail
+    _goals_memo_stats["evict"] += len(prev.keys() - memo.keys())
     with _goals_snap_lock:
         _goals_snap[0] = snap
         _goals_snap_at[0] = at
         _goals_snap_done.clear()
+        _goals_snap_owned.clear()
 
 def _end_goals_pass():
-    """Pass over — drop the snapshot so reads go live again (post-pass results + any user writes show now)."""
+    """Pass over — drop the snapshot so reads go live again (post-pass results + any user writes show now).
+    The memo keeps its parsed stores: they are the next pass's cache hits."""
     with _goals_snap_lock:
         _goals_snap[0] = None
         _goals_snap_done.clear()
+        _goals_snap_owned.clear()
 
 def _feed_goals(sid):
     """Goal store for the FEED, frozen at the pre-pass snapshot while a judge pass is mid-flight (so a card
@@ -20891,6 +21019,14 @@ def _feed_goals(sid):
         if snap is not None and sid in snap:
             store, mark = snap[sid], _user_goal_write.get(str(sid), 0.0)
             if mark >= _goals_snap_at[0] and _goals_snap_done.get(sid) != mark:
+                if sid not in _goals_snap_owned:
+                    # COPY-ON-PUNCH: the entry is the memo's object, shared with every later pass that
+                    # finds the file unchanged, so the replay and rollup below must land on a copy of it
+                    # (the _apply_rewind_hold idiom). Once per pass per sid: a second gesture in the
+                    # same pass punches the copy this one made.
+                    store = snap[sid] = json.loads(json.dumps(store))
+                    _goals_snap_owned.add(sid)
+                    _goals_memo_stats["punch"] += 1
                 try:
                     jd._replay_overrides(sid, store)   # the reopen/move/resolve/unclear event, applied by the judge's own code
                     jd.rollup_status(store, False)     # …and the card's column follows it (the user just acted → working)
@@ -23267,13 +23403,15 @@ def _claudemd_docs(cwd):
 
 
 def _atom_user_text(a):
-    """The plain text of a user atom (for deduping the optimistic input echo against the transcript)."""
+    """The plain text of a user atom (for deduping the optimistic input echo against the transcript), keyed
+    by sb.echo_text_key — the ONE rule the SDK backend's by-text prune and its landing scan share with the
+    keys built here (2026-09-06: the scan matched a collapsed text the prune's raw comparison never could)."""
     if a.get("type") != "user":
         return None
     c = (a.get("message") or {}).get("content")
     if isinstance(c, list):
-        return " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text").strip() or None
-    return (c.strip() if isinstance(c, str) else None) or None
+        return sb.echo_text_key(" ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")) or None
+    return sb.echo_text_key(c) or None
 
 
 def _atom_user_texts(a):
@@ -23297,7 +23435,7 @@ def _atom_user_texts(a):
     if isinstance(c, list):
         for b in c:
             if isinstance(b, dict) and b.get("type") == "text":
-                t = (b.get("text") or "").strip()
+                t = sb.echo_text_key(b.get("text") or "")
                 if t and t != joined:
                     out.append(t)
     return tuple(out)
@@ -23324,12 +23462,20 @@ def _tmux_echo_atoms(sid):
     return list(_tmux_echo.get(sid, {}).values())
 
 def _tmux_echo_prune(sid, tx_uuids, tx_texts):
-    """Drop an echo once the transcript has its real user atom (by uuid or text); pop the sid when empty."""
+    """Drop an echo once the transcript has its real user atom (by uuid or text); pop the sid when empty.
+    The text side compares under sb.echo_text_key — `tx_texts` are the keys _atom_user_texts built (outer
+    whitespace stripped), and the echo stores the send's text verbatim, so a raw comparison never matched a
+    trailing-newline send (`romp send` passes its argument verbatim): the delivered echo stayed, hidden by
+    the display dedup, and the settle then marked it `dropped` once a later human turn landed — a "never
+    delivered" bubble for a message the transcript holds (2026-09-06 review, round 4)."""
     d = _tmux_echo.get(sid)
     if not d:
         return
-    for k in [k for k, a in d.items()
-              if a.get("uuid") in tx_uuids or (a.get("_echo_text") and a["_echo_text"] in tx_texts)]:
+
+    def _landed(a):
+        et = sb.echo_text_key(a.get("_echo_text"))
+        return a.get("uuid") in tx_uuids or (et and et in tx_texts)
+    for k in [k for k, a in d.items() if _landed(a)]:
         d.pop(k, None)
     if not d:
         _tmux_echo.pop(sid, None)
@@ -23337,8 +23483,9 @@ def _tmux_echo_prune(sid, tx_uuids, tx_texts):
 
 def _human_turn_floor(session):
     """The newest GENUINE-HUMAN user atom's timestamp in the parsed session, or 0. The one event that says
-    "the transcript has moved past anything typed before this": read by the SDK's echo floor
-    (sdk_backend.prune_live), by the tmux echo's settle below, and by the queued fold.
+    "the transcript has moved past anything typed before this": read by sdk_backend.prune_live (to retire
+    stale command-feedback atoms — since 2026-09-06 it floors no echo), by the tmux echo's settle below,
+    and by the queued fold.
 
     EXCLUDES the interrupt record (the user 2026-07-07): it authors 'human' but is a STOP event, not a
     message that landed and processed the echo. When a just-sent message hadn't hit disk yet, the
@@ -23368,11 +23515,14 @@ def _tmux_echo_settle(sid, human_floor, still_queued=()):
 
     Marking, NOT pruning: a tmux echo is the only record of a send the pane dropped, and that loss must
     stay on screen — the whole reason the echo outlives a later turn (see TmuxBackend.prune_live). The one
-    exception mirrors the SDK's own floor: a PATH-BEARING echo can fail the text match STRUCTURALLY,
-    because the transcript extracts image paths out of the user text, so that flavor is retired the way
-    sdk_backend.prune_live retires it rather than labelled a loss it may not be. With the SDK module
-    unavailable the predicate is simply unavailable too, and marking (the visible, reversible outcome)
-    covers every echo.
+    exception is an IMAGE-PATH echo: a tmux send is a paste into the composer, whose paste hook reads a
+    pasted image path and rewrites the token to "[Image #N]" (sdk_backend._IMG_PATH_RE names the hook's
+    extension set), so the echo's text can fail the match STRUCTURALLY and "overtaken" is not evidence of
+    loss — that flavor is retired rather than labelled a loss it may not be. The predicate is borrowed
+    from the SDK module (sdk_backend._path_bearing, kept for this reader: the SDK route itself floors no
+    echo since 2026-09-06, because stream-json input never reaches the hook). With that module
+    unavailable the predicate is unavailable too, and marking (the visible, reversible outcome) covers
+    every echo.
 
     STANDS DOWN for an echo whose text the queue ledger still lists as pending (`still_queued`,
     2026-08-27): the floor is a per-SESSION clock, so an OLDER queued sibling delivering raises it past
@@ -23485,9 +23635,13 @@ def _merge_live_atoms(session, sid, shown_texts=()):
                 tx_text_t[t] = max(tx_text_t.get(t, 0), float(a.get("t") or 0))
     human_floor = _human_turn_floor(session)
     be.prune_live(sid, tx_uuids, tx_text_t, human_floor)
-    hide = tx_texts | {t.strip() for t in shown_texts if t}    # transcript dups + already-shown queued msgs
+    hide = tx_texts | {sb.echo_text_key(t) for t in shown_texts if t}    # transcript dups + already-shown queued msgs
+    # `live` was snapshotted before the prune, so each of prune_live's three exits has its paint-side twin
+    # here: by uuid (tx_uuids), by text (hide), and the recorded landing (`_landed`: the backend's boot/spawn
+    # scan read the record off the transcript — the prune just retired it, and painting it once more would
+    # show a delivered message as a pending bubble for one build)
     fresh = [a for a in live if a.get("uuid") not in tx_uuids
-             and not (a.get("_echo_text") and a["_echo_text"].strip() in hide)]
+             and not (a.get("_echo_text") and (a.get("_landed") or sb.echo_text_key(a["_echo_text"]) in hide))]
     if not fresh:
         return session
     # Reopen the turn ONLY for genuine live ASSISTANT work (a streaming reply), never for a lone input echo.
@@ -23837,7 +23991,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
         tx_user = {t for turn in parsed["turns"] for a in turn["atoms"] for t in _atom_user_texts(a)}
         echo_floor = _human_turn_floor(parsed)
         for a in be.live_atoms(sid):
-            et = (a.get("_echo_text") or "").strip()
+            et = sb.echo_text_key(a.get("_echo_text"))
             if et and et not in already and et not in tx_user and not _echo_overtaken(a, echo_floor):
                 queued = queued + [et]; already.add(et)
     session = parsed if path_override else _merge_live_atoms(parsed, sid, shown_texts=queued)
@@ -24157,6 +24311,18 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                         if prompt or reminders or imgs:
                             ev = {"kind": "user", "md": prompt, "uuid": a.get("uuid"), "ts": ts,
                                   "human": author == "human" or bool(imgs), "reminders": reminders}
+                            if a.get("absorbed"):
+                                # A mid-turn splice (event_model._absorbed): the CLI queued this send
+                                # behind the running turn and took it at a later tool boundary, so the
+                                # atom sits at its SEND time, above the steps that ran while it waited.
+                                # The client marks it ("joined mid-turn") and, when the landing retires
+                                # a pending bubble that sat at the tail, leaves a cue where the bubble
+                                # was — the user 2026-09-05 watched a message vanish from the bottom
+                                # and reappear higher up with no explanation. `landedAt`: when the CLI
+                                # took it (the attachment's file-order predecessor; `ts` is the send).
+                                ev["absorbed"] = True
+                                if a.get("landedT"):
+                                    ev["landedAt"] = int(a["landedT"])
                             sp = _space_paths(prompt, sid, a.get("uuid"))
                             if sp:
                                 ev["spacePaths"] = sp   # backticked filenames WITH spaces, filesystem-verified → whole-span links
@@ -25419,6 +25585,10 @@ def _compact_goal_stores():
     hasn't changed since the last sweep (no new clears, no judge write), so the steady state is just stats."""
     import glob
     moved = 0
+    try:
+        jd._disk_memo_evict_absent()                   # save_goals' disk-side memo: drop removed stores' entries
+    except Exception:
+        pass
     try:
         paths = glob.glob(str(jd.GOALDIR / "*.json"))
     except Exception:
@@ -31624,6 +31794,16 @@ def _tell_stale_gesture(client):
 #      hydrated and OS drops did nothing — the user 2026-06-16) ----
 _IMG_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp", ".svg": "image/svg+xml"}
+# The bare-path PREVIEW scan's extension set (_user_images): exactly the extensions this route can
+# serve, derived from _IMG_MIME so the two cannot drift — a path the scan proposed but _img_data_url
+# refused would leave a chip with no picture. Same path shape as _IMG_PATH_RE (absolute or ~-rooted,
+# delimited), but NOT that regex: _IMG_PATH_RE is the CLI paste hook's set, read by the code that waits
+# on or reads back the CLI's "[Image #N]" rewrite, and the preview claims no such extraction. Until
+# 2026-09-06 both readers shared one regex; narrowing it to the CLI's set for the extraction readers
+# would have silently dropped svg/bmp previews, so the preview got its own.
+_PREVIEW_IMG_RE = re.compile(
+    r"(?:^|[\s'\"`(])((?:~/|/)[^\s'\"`()]+\.(?:%s))\b"
+    % "|".join(re.escape(k[1:]) for k in sorted(_IMG_MIME)), re.I)
 _IMG_MAX_BYTES = 8_000_000
 _img_cache = {}                                  # "path:mtime:size" → dataURL | None
 

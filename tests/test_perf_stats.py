@@ -44,7 +44,7 @@ SID = "11111111-2222-3333-4444-555555555555"
 # and node ids collide across test modules under the shared placeholder (CLAUDE.md, goal-store fixtures).
 GOAL_SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
 TOP_KEYS = {"now", "since", "uptime_s", "log", "process", "pusher", "stages_ms", "builds", "sends",
-            "goals", "judge", "http"}
+            "goals", "judge", "http", "memos"}
 
 
 def _burn_cpu(seconds):
@@ -112,8 +112,15 @@ class Collector(unittest.TestCase):
         self.assertIn("cpu_ms_workers", snap["judge"])
         self.assertEqual(set(snap["judge"]["chain_memo"]), {"hit", "miss", "populate", "bypass"},
                          "read through jd.chain_memo_stats: the write-moment chain memo's counters")
-        self.assertEqual(set(snap["goals"]), {"loads", "saves", "writes", "scans", "scan_hits", "scan_parses"},
+        self.assertEqual(set(snap["goals"]), {"loads", "saves", "writes", "scans", "scan_hits", "scan_parses",
+                                              "disk_hits", "disk_misses", "disk_seeds"},
                          "read through jd.goal_io_stats")
+        self.assertEqual(set(snap["memos"]), {"goals_snap"}, "one block per memo the kernel keeps (plan D4)")
+        self.assertEqual(set(snap["memos"]["goals_snap"]),
+                         {"hit", "miss", "fail", "evict", "punch", "entries", "bytes"},
+                         "the judge pass's goal-store memo: counters plus its occupancy")
+        for k, v in snap["memos"]["goals_snap"].items():
+            self.assertIsInstance(v, int, k)
         for k in ("rss_kb", "threads", "cpu_s", "pid"):
             self.assertIn(k, snap["process"])
         self.assertGreater(snap["process"]["threads"], 0)
@@ -317,6 +324,21 @@ class GoalIoCounters(unittest.TestCase):
         self.assertEqual(after2["saves"], after["saves"] + 1)
         self.assertEqual(after2["writes"], after["writes"], "the no-op republish skip is visible as saves without writes")
         self.assertEqual(km._PERF_STATS.snapshot()["goals"], after2, "the kernel's snapshot carries the judge counters")
+        # the no-op check's disk-side memo: the first publish seeded it from its own temp, so the check
+        # above was a hit; a foreign rewrite of the file is a miss
+        self.assertEqual(after2["disk_seeds"], before["disk_seeds"] + 1)
+        self.assertEqual(after2["disk_hits"], before["disk_hits"] + 1)
+        self.assertEqual(after2["disk_misses"], before["disk_misses"])
+        p = self.jd.GOALDIR / (GOAL_SID + ".json")
+        tmp = p.with_suffix(".json.foreign")
+        tmp.write_text(p.read_text())
+        st = os.stat(p)
+        os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+        os.replace(tmp, p)
+        self.jd.save_goals(GOAL_SID, store)
+        after3 = self.jd.goal_io_stats()
+        self.assertEqual(after3["disk_misses"], after2["disk_misses"] + 1, "a new file identity is parsed once")
+        self.assertEqual(after3["writes"], after2["writes"], "same content under a new identity: still no write")
 
     def test_the_getter_returns_a_copy(self):
         d = self.jd.goal_io_stats()

@@ -44,6 +44,21 @@ and the caption says the branch is not on origin yet. That check reads the local
 ref, so after a branch is deleted on GitHub the link looks normal until `git fetch --prune`
 has refreshed it.
 
+**Sending while the session is working.** The session takes your message at its next
+step, and the chat places it at the time you sent it, above the steps that were already
+running: the bubble says "joined mid-turn", and where it had been waiting at the bottom a
+note says when the session took it (to the minute), with a link that jumps to it.
+
+**While a message is on its way.** A message you have sent shows as a dashed bubble
+marked "sending…" until the session records it, however long that takes; the bubble
+never gives up on its own. If the connection drops before romp has confirmed it received
+the message, the bubble reads "not confirmed"; it returns to "sending…" once romp
+confirms, and clears when the message lands. ✕ puts the text back in the composer to
+send again. Each bubble reports its own state, so one dropped message and one still on
+its way read "not confirmed · sending…", and ✕ acts on the bubble you press it on.
+Sending the same text twice shows two bubbles; romp confirms them one at a time, as it
+receives each copy, and each clears when its own copy lands.
+
 **Tags and groups.** A tag is a named, colored set of sessions; a session can be in
 several. Right-click a tab and open **Tags** to add or remove them. Tags filter every
 surface (the tag button in the strip narrows the tabs to the tags you pick), and they group

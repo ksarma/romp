@@ -1132,7 +1132,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `scan_parses` count the give-up scan behind the judge-failure notice: calls,
   stores served from its per-store memo, and stores read and parsed (or
   attempted) because they were new, changed, or failed to parse on the
-  previous call.
+  previous call. `disk_hits`, `disk_misses` and `disk_seeds` count the memo
+  behind the no-op save check: the file's identity matched and it was not
+  parsed, it was read and parsed (or attempted), or the entry was filled from
+  the publish's own write.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the workers' share is `cpu_ms_workers`), and
@@ -1142,6 +1145,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   built one, a populate stored one (a build that failed is a miss with no
   populate), and a bypass built without memoizing because an input file could
   not be stat'd.
+- `memos`: one block per memo the kernel keeps, each a flat map of counters.
+  `goals_snap` is the judge pass's goal-store snapshot, which re-reads a store
+  only when its file changed: `hit` and `miss` (stores served from memory
+  against decoded, summed over passes), `fail` (file versions that did not
+  decode), `evict` (entries dropped for files gone from the directory), `punch`
+  (entries copied so a user gesture could be applied to them), and the gauges
+  `entries` and `bytes` (memoized files and their summed size).
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
@@ -1155,6 +1165,13 @@ goes where the manager's stderr goes: under systemd, `journalctl --user -u
 romp-manager -f | grep romp-perf`; under launchd (macOS), `tail -f
 ~/.local/state/romp/manager.log | grep romp-perf`. Setting `ROMP_PERF=1` in the
 kernel's environment still turns it on at start.
+
+These counters describe the kernel process only. `tools/ui-bench.mjs` measures
+the browser's side: it replays a recorded or synthetic frame stream into a
+headless Chromium and reports per-frame main-thread time, long animation
+frames, JavaScript heap, and DOM size, and with `--cpu-profile` the functions
+inside the bundles that took the time. See "Measuring dashboard pane
+performance" in `CONTRIBUTING.md`.
 
 ## Browser-side performance telemetry
 
