@@ -958,6 +958,47 @@ class LegacyTagsStampedOnFirstRead(_Wire):
         self.assertLessEqual(v3["tags"][0]["mtime"], v3["at"])
 
 
+class SeqFloorOutlivesTheCacheEntry(_Wire):
+    """Round 5 of the 2026-09-05 review: a store read as missing forgets its cache entry (rightly: a
+    file that then appears must not be judged against a store that no longer exists), and with it
+    forgot the seq floor — so a file restored from an older copy was served under its old seq, and
+    every dashboard holding a higher one ignored it until the next kernel write. The floor is kept
+    apart from the entry now (_VIEWS_SEQ_FLOOR): the restored file is re-stamped past it, as written,
+    and every write orders past it."""
+
+    def test_a_store_deleted_and_recreated_with_an_older_seq_is_restamped_past_the_floor(self):
+        served = self.seed()
+        s1 = served["seq"]
+        p = km._views_path()
+        content = json.loads(p.read_text())
+        p.unlink()
+        self.assertEqual(km._timeline_views()["tags"], [], "read as missing: the cache entry is forgotten")
+        self.assertNotIn(str(p), km._flags_cache)
+        self.assertGreaterEqual(km._VIEWS_SEQ_FLOOR[0], s1, "…the floor is not")
+        restored = json.loads(json.dumps(content))
+        restored["seq"] = s1 - 5                                       # a restore from an older copy
+        km._atomic_write(p, json.dumps(restored))
+        v = km._timeline_views()
+        self.assertGreater(v["seq"], s1, "re-stamped past the last served seq: a dashboard holding s1 adopts it")
+        self.assertEqual([t["name"] for t in v["tags"]], ["web"], "kept as written: nothing served to judge it against")
+        self.assertEqual(json.loads(p.read_text())["seq"], v["seq"], "…and the file carries the new seq")
+        self.assertEqual(self.notices, [], "ordering a file is not a refusal")
+        # a restored file at or past the floor is left alone
+        p.unlink()
+        self.assertEqual(km._timeline_views()["tags"], [])
+        ahead = json.loads(json.dumps(content))
+        ahead["seq"] = v["seq"] + 100
+        km._atomic_write(p, json.dumps(ahead))
+        before = p.read_bytes()
+        self.assertEqual(km._timeline_views()["seq"], v["seq"] + 100)
+        self.assertEqual(p.read_bytes(), before, "byte-identical")
+        # a write after a delete orders past the floor too, not just past the (empty) previous blob
+        p.unlink()
+        self.assertEqual(km._timeline_views()["tags"], [])
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": {"active": "all", "tags": []}})
+        self.assertGreater(a["seq"], v["seq"] + 100)
+
+
 class ForeignWriteReStamped(_Wire):
     """A write to timeline-views.json OUTSIDE the kernel (round 3 of the 2026-09-05 review): the
     timeline's Electron branch writes the file itself with the seq it holds, so a panel holding an
@@ -1203,7 +1244,8 @@ class ForeignWriteJudged(_Wire):
         self.assertIn('"web"', text)
         self.assertIn('"api" (re-creation)', text, "…naming each tag")
         # no served blob: a store read as missing forgets what was served, and a file that then
-        # appears is ordered as written — nothing to judge it against
+        # appears is kept as written — nothing to judge it against — but ORDERED past the last
+        # served seq, which outlives the entry (round 5; SeqFloorOutlivesTheCacheEntry)
         p.unlink()
         self.assertEqual(km._timeline_views()["tags"], [])
         recreated = json.loads(json.dumps(foreign))
@@ -1211,7 +1253,7 @@ class ForeignWriteJudged(_Wire):
         km._atomic_write(p, json.dumps(recreated))
         v2 = km._timeline_views()
         self.assertEqual(sorted(t["name"] for t in v2["tags"]), ["api", "docs", "web"], "kept as written")
-        self.assertEqual(v2["seq"], 5)
+        self.assertGreater(v2["seq"], v["seq"], "re-stamped past the last served seq")
         self.assertEqual(len(self.notices), 1, "no second notice")
 
 

@@ -424,7 +424,10 @@ through the stale-writer guard, then re-stamps it past that seq: a tag deleted
 since is not brought back (an unknown tag carrying an mtime existed in a store
 once; one without is the writer's own create and lands), a member added since
 is kept, and each refusal is reported through the sync notice. With nothing
-served, the file is ordered as written. A kernel write also refreshes the read
+served, the file is ordered as written: the highest seq the kernel has served
+or written outlives the read cache's entry (a store read as missing forgets the
+entry), so a file restored from an older copy is still re-stamped past it, and
+every write orders past it. A kernel write also refreshes the read
 cache with the blob it wrote, so the ack's blob is never a stale cache hit. The
 hidden-to-archived migration works on a copy of the file, so the tag it fills
 is stamped and a pre-migration copy cannot strip it. When the re-stamp write
