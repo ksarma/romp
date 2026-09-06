@@ -87,14 +87,22 @@ CLI_SCOPE_PROBE_TIMEOUT = 10.0
 #     from `systemctl --user show`, and applies nothing; the only sign is that memory.max is absent from
 #     the cgroup. `cut -d: -f3` is the cgroup v2 path (one `0::` line); on the legacy hierarchy the path
 #     is garbage and the test fails, which is the right verdict there (an unprivileged manager gets no
-#     controllers on it);
+#     controllers on it). The command prints one of two markers (CLI_SCOPE_MEMORY_PROBE_MARKS) and exits
+#     0 either way, so the verdict rides stdout and systemd-run's exit status says one thing only: whether
+#     the scope ran (it exits with the command's status when it did, and non-zero on its own when it did
+#     not). Keyed on the exit status alone, a scope that failed to start — a bus fault moments after the
+#     property probe's scope had started — read as "no controller" for the kernel's whole life (round-2
+#     finding, 2026-09-06);
 #   * a throwaway child writing the adjustment to ITS OWN oom_score_adj. A value below the floor this
 #     process inherited (the user manager's own oom_score_adj; 100 on a typical machine) fails with EACCES for
 #     the wrapper too, which is spawned from here with the same floor. The kernel's own value is untouched.
-CLI_SCOPE_MEMORY_PROBE_CMD = ["sh", "-c", 'test -e "/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.max"']
+CLI_SCOPE_MEMORY_PROBE_CMD = ["sh", "-c", 'test -e "/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.max" '
+                                          '&& echo has-memory-max || echo no-memory-max']
+CLI_SCOPE_MEMORY_PROBE_MARKS = {"has-memory-max": True, "no-memory-max": False}   # what it prints → delegated
 CLI_SCOPE_ADJ_PROBE_CMD = ["sh", "-c", 'echo "$1" > /proc/self/oom_score_adj', "sh"]   # + the value
-# What every line bin/romp-cli-scope writes to stderr starts with. The wrapper writes only when the
-# CLI did NOT get its scope, and the line's second word says which of its two messages it is:
+# What every line bin/romp-cli-scope writes to stderr starts with. The wrapper writes only when something
+# it was asked for did not happen — the scope itself, or one of the limits on it — and the line's second
+# word says which of its three messages it is:
 #   CLI_SCOPE_FALLBACK_PREFIX — the pre-flight scope failed and it ran the CLI directly. The CLI starts,
 #     so no launch failure ever drains the stderr tail; SdkSession._on_cli_stderr logs the line the
 #     moment it arrives and the backend counts it (_note_cli_scope_fallback). launch_failure_text drops
@@ -176,44 +184,57 @@ def _cli_scope_props(in_force: dict) -> list[str]:
     return words
 
 
-def _cli_scope_probe(run, argv) -> tuple:
+def _cli_scope_probe(run, argv, stdout=False) -> tuple:
     """One boot probe: (returncode or None when `run` raised, the first line of stderr or the
-    exception's text). Bounded like the scope verdict's probe; never raises."""
+    exception's text, the first line of stdout — read only with `stdout`, which the controller check
+    sets for its marker; "" otherwise). Bounded like the scope verdict's probe; never raises."""
     try:
-        r = run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=CLI_SCOPE_PROBE_TIMEOUT)
+        r = run(argv, stdout=subprocess.PIPE if stdout else subprocess.DEVNULL, stderr=subprocess.PIPE,
+                timeout=CLI_SCOPE_PROBE_TIMEOUT)
     except Exception as e:      # timeout, a missing binary, anything else
-        return None, str(e)
-    err = r.stderr or b""
-    err = err.decode("utf-8", "replace") if isinstance(err, bytes) else str(err)
-    err = err.strip()
-    return r.returncode, err.split("\n", 1)[0].strip() if err else ""
+        return None, str(e), ""
+
+    def first(raw) -> str:
+        raw = raw or b""
+        text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+        text = text.strip()
+        return text.split("\n", 1)[0].strip() if text else ""
+    return r.returncode, first(r.stderr), first(r.stdout) if stdout else ""
 
 
-def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None]:
+def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None, bool]:
     """The boot probe behind cli_scope_limits: does THIS box take the values the syntax passed? Each
     of the wrapper's own steps, run once here so a refusal that would otherwise repeat on every launch
     (one `ignored:` line and one problem each, while the boot log and /api-health called the value in
     force) is settled once, lands in `rejected`, and goes down to the wrapper empty:
       * the memory properties, on a probe scope (`systemd-run … -p … -- true`), with the wrapper's own
         retry chain: a failure is retried bare, a bare pass is followed by one more try with the
-        properties, and only that second failure rejects them, quoting the deciding failure. A bare
-        failure too means the bus is away (the scope verdict is moments old): nothing is settled, one
-        plain line says so, and the wrapper reports per launch (its fallback line);
+        properties, and only that second failure rejects them, quoting the deciding failure. Two
+        outcomes settle nothing: a bare failure too (the bus is away; the scope verdict is moments old),
+        and a second try that does not answer (a raise: the 10 s bound, an OSError). One plain line each
+        says so, the values stand as read, and the wrapper reports per launch — its fallback line, or
+        its `ignored:` line if the properties turn out to be refused;
       * the memory controller, inside a probe scope carrying the properties (CLI_SCOPE_MEMORY_PROBE_CMD),
         since systemd accepts the properties from a user manager without the controller and applies
-        nothing. A missing memory.max there is a problem line; the values stay in `in_force` (they are
-        set, and systemd holds them) and the verdict rides /api-health as memoryControllerDelegated;
+        nothing. The verdict is the marker the command prints (CLI_SCOPE_MEMORY_PROBE_MARKS): no
+        memory.max is a problem line, the values stay in `in_force` (they are set, and systemd holds
+        them) and the verdict rides /api-health as memoryControllerDelegated. A non-zero exit means the
+        scope never ran, and no answer means none; each gets one retry, then leaves the check UNSETTLED,
+        as a problem line: the wrapper does not make this check, so nothing reports it per launch, and an
+        unknown here would otherwise stay silent for the kernel's life;
       * the adjustment, written by a throwaway child (CLI_SCOPE_ADJ_PROBE_CMD): a failed write is the
-        floor (a value below the user manager's own oom_score_adj), and rejects it.
-    Returns (rejected: variable → value, memory_delegated: True/False, None when not settled). `run` is
-    subprocess.run or a stand-in; `log`, when given, takes (message, problem=bool)."""
-    rejected, delegated = {}, None
+        floor (a value below the user manager's own oom_score_adj), and rejects it; no answer settles
+        nothing (a plain line; the wrapper reports per launch).
+    Returns (rejected: variable → value, memory_delegated: True/False, None when not settled, settled:
+    False when a check that was due did not answer, so the caller never calls the values in force).
+    `run` is subprocess.run or a stand-in; `log`, when given, takes (message, problem=bool)."""
+    rejected, delegated, settled = {}, None, True
     props = _cli_scope_props(in_force)
     if props:
         base = CLI_SCOPE_PROBE[:-2]
-        rc, err = _cli_scope_probe(run, base + props + ["--", "true"])
+        rc, err, _out = _cli_scope_probe(run, base + props + ["--", "true"])
         if rc != 0:
-            bare_rc, bare_err = _cli_scope_probe(run, CLI_SCOPE_PROBE)
+            bare_rc, bare_err, _out = _cli_scope_probe(run, CLI_SCOPE_PROBE)
             if bare_rc != 0:
                 rc = None
                 if log:
@@ -221,8 +242,16 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None]
                         "with them failed (%s) and so did one without (%s); the values stand as read, and the "
                         "wrapper reports each launch" % (err or "no detail", bare_err or "no detail"))
             else:
-                rc, err = _cli_scope_probe(run, base + props + ["--", "true"])
-        if rc is not None and rc != 0:
+                first_err = err
+                rc, err, _out = _cli_scope_probe(run, base + props + ["--", "true"])
+                if rc is None and log:
+                    log("cli scope: the per-session memory limits could not be settled at start — a probe scope "
+                        "with them failed (%s), one without passed, and the retry with them did not answer (%s); "
+                        "the values stand as read, and the wrapper reports each launch"
+                        % (first_err or "no detail", err or "no detail"))
+        if rc is None:
+            settled = False
+        elif rc != 0:
             for var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
                 if key in CLI_SCOPE_MEMORY_PROPS and key in in_force:
                     rejected[var] = in_force[key]
@@ -231,23 +260,36 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None]
                 log("cli scope: systemd-run rejected the per-session memory limits (%s: %s) — not applied; "
                     "sessions run in their scopes without them%s" % (" ".join(props), err or "no detail", hint),
                     problem=True)
-        elif rc == 0:
-            d_rc, d_err = _cli_scope_probe(run, base + props + ["--"] + CLI_SCOPE_MEMORY_PROBE_CMD)
-            if d_rc is None:
-                if log:
-                    log("cli scope: the memory-controller check could not run (%s); whether the memory limits "
-                        "apply is unknown" % (d_err or "no detail"))
-            else:
-                delegated = d_rc == 0
+        else:
+            d_argv = base + props + ["--"] + CLI_SCOPE_MEMORY_PROBE_CMD
+            d_rc, d_err, d_out = _cli_scope_probe(run, d_argv, stdout=True)
+            if d_rc != 0:   # None too: a scope that did not run, or a probe that did not answer, gets one retry
+                d_rc, d_err, d_out = _cli_scope_probe(run, d_argv, stdout=True)
+            if d_rc == 0 and d_out in CLI_SCOPE_MEMORY_PROBE_MARKS:
+                delegated = CLI_SCOPE_MEMORY_PROBE_MARKS[d_out]
                 if not delegated and log:
                     log("cli scope: the memory controller is not delegated to the systemd user manager — systemd "
                         "accepts the memory limits (%s) and applies nothing; a probe scope had no memory.max in "
                         "its cgroup. `systemctl show user@$(id -u).service -p DelegateControllers` should list "
                         "memory" % " ".join(props), problem=True)
+            else:
+                settled = False
+                if log:
+                    if d_rc is None:
+                        why = "its probe did not answer (%s), on a retry" % (d_err or "no detail")
+                    elif d_rc != 0:
+                        why = ("its probe scope did not start (%s), on a retry, moments after one with the same "
+                               "properties did" % (d_err or "no detail"))
+                    else:
+                        why = "its probe printed %r where has-memory-max or no-memory-max was expected" % d_out
+                    log("cli scope: the memory-controller check could not be settled — %s; whether the memory "
+                        "limits (%s) apply is unknown until the next kernel start, and the values stand as read"
+                        % (why, " ".join(props)), problem=True)
     adj = in_force.get("oomScoreAdj")
     if adj is not None:
-        a_rc, a_err = _cli_scope_probe(run, CLI_SCOPE_ADJ_PROBE_CMD + [adj])
+        a_rc, a_err, _out = _cli_scope_probe(run, CLI_SCOPE_ADJ_PROBE_CMD + [adj])
         if a_rc is None:
+            settled = False
             if log:
                 log("cli scope: the oom_score_adj check could not run (%s); ROMP_CLI_SCOPE_OOM_SCORE_ADJ=%s stands "
                     "as read, and the wrapper reports each launch" % (a_err or "no detail", adj))
@@ -258,7 +300,7 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None]
                     "the systemd user manager's own oom_score_adj (the floor every process under it inherits; "
                     "100 on a typical machine) needs a privilege it does not have — not applied; sessions run in their "
                     "scopes without it" % adj, problem=True)
-    return rejected, delegated
+    return rejected, delegated, settled
 
 
 def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[dict, dict, bool | None]:
@@ -273,7 +315,9 @@ def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[d
     adjustment below the inherited floor. `memory_delegated` is that probe's verdict on the memory
     controller (True/False), None when it did not run or could not be settled. `log`, when given, takes
     (message, problem=bool); the in-force line comes last, after every refusal, and with `scope_on`
-    false says the limits apply to nothing, since no scope is started for them to apply to. Without
+    false says the limits apply to nothing, since no scope is started for them to apply to. When a
+    check that was due at the boot probe did not answer, that last line says the limits are set but not
+    settled, never that they are in force (the line before it says which check, and why). Without
     `run` the check is the syntax alone, so the rules are testable on any OS."""
     env = os.environ if environ is None else environ
     in_force, rejected = {}, {}
@@ -288,9 +332,9 @@ def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[d
             if log:
                 log("cli scope: %s=%r is not %s — not applied; sessions run in their scopes without that "
                     "limit" % (var, v, rule), problem=True)
-    delegated = None
+    delegated, settled = None, True
     if in_force and scope_on and run is not None:
-        refused, delegated = _cli_scope_settle(in_force, run, log)
+        refused, delegated, settled = _cli_scope_settle(in_force, run, log)
         for var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
             if var in refused:
                 rejected[var] = in_force.pop(key)
@@ -299,6 +343,9 @@ def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[d
         if not scope_on:
             log("cli scope: per-session limits are set (%s) but the scopes are off, so they apply to nothing"
                 % listed)
+        elif not settled:
+            log("cli scope: per-session limits set — %s; not settled at start (the line above says why), so whether "
+                "they apply is not known" % listed)
         elif delegated is False:
             log("cli scope: per-session limits set — %s; the memory limits among them apply to nothing until "
                 "the memory controller is delegated to the user manager" % listed)
@@ -7387,7 +7434,8 @@ class SdkBackend:
         # — null when unset, refused, or when the scopes are off (nothing is started for a limit to apply
         # to); `rejected` names the variables whose values were refused, by their rule or by this box at
         # the boot probe; `memoryControllerDelegated` is the boot probe's verdict on the memory controller
-        # (null when no memory limit is set, the scopes are off, or it could not be settled); `limitsIgnored`
+        # (null when no memory limit is set, the scopes are off, or it could not be settled — so null beside a
+        # memory limit shown, with the scopes on, means a check at the kernel's start did not answer); `limitsIgnored`
         # counts the wrapper's `ignored:` lines since boot (_note_cli_scope_ignored) — lines, not launches.
         with self._lock:
             n, at, ign = self.cli_scope_fallbacks, self.cli_scope_fallback_at, self.cli_scope_ignored

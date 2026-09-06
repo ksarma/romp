@@ -416,7 +416,7 @@ SH
 
 @test "the size rule: digits with one optional K/M/G/T suffix, or infinity; nothing else" {
     local good=(16G 8192M 1024 0 1T 5K infinity 016M)
-    local bad=(16g abc "16 G" 16GB 1.5G -1 G 50% Infinity 16GG " 16G" 1_000 K16 0x10)
+    local bad=(16g abc "16 G" 16GB 1.5G -1 G 50% Infinity 16GG " 16G" 1_000 K16 0x10 16E 16P "1G 512M")
     local v
     for v in "${good[@]}"; do
         rm -f "$FAKE_CALLS"

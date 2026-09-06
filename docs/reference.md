@@ -481,8 +481,13 @@ the next manager restart. Four variables in the service environment
   note on `OOMScoreAdjust=` at the end of this section).
 
 Sizes are an integer with an optional `K`, `M`, `G` or `T` suffix (powers of
-1024, as systemd reads them) or `infinity`. The adjustment takes no leading
-zero: Linux reads `0400` as octal. A value that fails its rule is dropped and
+1024, as systemd reads them) or `infinity`. That is narrower than systemd's own
+syntax: the other forms `systemd.resource-control(5)` takes for `MemoryMax=` are
+refused here as not a size, and so is a lowercase suffix. So `50%` (a share of
+the machine's memory), `1.5G`, `16 G`, `16E`, `16P`, `1G 512M` and `16g` are all
+dropped, with the problem line described below, and never reach systemd; write
+`16G`. The adjustment takes no leading zero: Linux reads `0400` as octal. A
+value that fails its rule is dropped and
 reported, and the session still starts in its scope with the other limits. The
 kernel checks the rules once at its start: a value it refuses is a problem line
 (a kernel log entry that the dashboard's error center also shows) naming the
@@ -504,7 +509,10 @@ steps once at its start: it starts a probe scope carrying the memory properties,
 and has a throwaway child write the adjustment to its own `oom_score_adj`. A
 refusal there is a problem line at the kernel's start, joins `cliScope.rejected`
 in `/api-health`, and reaches the wrapper as an empty variable, so no launch
-repeats it. The wrapper keeps the same guard on every launch. Its pre-flight
+repeats it. A probe that does not answer (the user bus away at that moment)
+settles nothing: the kernel says so in its log, hands the values down as read,
+reports them as set but not settled rather than in force, and the wrapper's
+per-launch report is what applies. The wrapper keeps the same guard on every launch. Its pre-flight
 scope carries the properties. If that fails, it retries bare; if the bare scope
 starts, it tries once more with the properties, and only that second failure
 drops them, for that launch, with one `ignored:` line quoting the failure that
@@ -530,7 +538,10 @@ hierarchy, a kernel booted with the controller off, and a container whose cgroup
 subtree lacks it. The kernel checks for this at its start, inside the probe
 scope above: the scope's cgroup has a `memory.max` file when, and only when, the
 controller is there. A missing one is a problem line at the kernel's start, and
-`/api-health` carries the verdict as `cliScope.memoryControllerDelegated`. To
+`/api-health` carries the verdict as `cliScope.memoryControllerDelegated`. When
+the check itself does not answer (its probe scope fails to start twice, or does
+not finish), that is a problem line too, and the verdict stays `null`: whether
+the limits apply is then unknown until the next kernel start. To
 check a live session, run from a shell inside it: `cat /sys/fs/cgroup$(cut -d:
 -f3 /proc/self/cgroup)/memory.max` prints the limit in bytes, `max` when none
 applies, and fails when the controller is not there.
@@ -713,7 +724,9 @@ and `key:managed` name sources whose material the kernel never holds.
     probe scope carrying the memory properties had a `memory.max` file in its
     cgroup: `true`, `false` (systemd holds the sizes above and applies nothing;
     also a problem line), or `null` when no memory limit is set, the scopes are
-    off, or the check could not be settled.
+    off, or the check could not be settled. A `null` beside a memory limit shown,
+    with `on: true`, is that last case: a check at the kernel's start did not
+    answer, and the boot log says which.
   - `limitsIgnored`, wrapper `romp-cli-scope: ignored: …` lines since boot (each
     also a problem line, `cli scope: session <name> (<sid8>) started its CLI
     without a per-session limit — <line>`). It counts lines, not launches: one
