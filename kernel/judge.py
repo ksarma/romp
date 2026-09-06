@@ -13,7 +13,7 @@ CLI:
   romp-judge --once               # one caption pass over the live fleet (writes captions/)
   romp-judge --test <transcript>  # caption one transcript's recent units, print them (no write)
 """
-import contextlib, json, os, re, secrets, shutil, signal, stat, sys, time, subprocess, threading
+import contextlib, hashlib, json, os, re, secrets, shutil, signal, stat, sys, time, subprocess, threading
 from pathlib import Path
 from importlib.machinery import SourceFileLoader
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -166,6 +166,9 @@ def _rebind_state(path):
     _namefp_memo.clear()    # names-entry content is memoized per SID against same-second mtimes — across a
     #                         rebind that collides and serves the OLD root's project dir (found 2026-07-27:
     #                         the second test in a run discovered nothing, its fleet resolved into an rm'd tmpdir)
+    with _DISK_CONTENT_LOCK:
+        _DISK_CONTENT.clear()   # save_goals' disk-side memo is keyed on full store paths, so an old root's
+    #                         entries could never hit under the new one; cleared anyway so a rebind starts empty
     # (the override journal needs no rebinding: _overrides_dir() derives from GOALDIR at call time, so
     #  ANY isolation style — _rebind_state OR a bare GOALDIR reassignment — scopes it automatically)
 
@@ -2963,7 +2966,8 @@ def _guard_nodes(store):
 # How often the stores are read and written is the first question when the kernel is busy: every
 # judge stage, the feed build and the nudge tick load stores, so the load rate says whether a change
 # added a pass over every session. Plain counters, one lock, no formatting on the path.
-_GOAL_IO = {"loads": 0, "saves": 0, "writes": 0, "scans": 0, "scan_hits": 0, "scan_parses": 0}
+_GOAL_IO = {"loads": 0, "saves": 0, "writes": 0, "scans": 0, "scan_hits": 0, "scan_parses": 0,
+            "disk_hits": 0, "disk_misses": 0, "disk_seeds": 0}
 _GOAL_IO_LOCK = threading.Lock()
 
 
@@ -2974,11 +2978,14 @@ def _goal_io_bump(key, n=1):
 
 def goal_io_stats():
     """A copy of the goal-store I/O counters: load_goals calls (`loads`), save_goals calls (`saves`),
-    and the saves that wrote a file (`writes`; save_goals skips a byte-identical republish), plus the
-    give-up scan's memo counters (judge_failure_scan): calls (`scans`), stores served from the memo
+    and the saves that wrote a file (`writes`; save_goals skips a byte-identical republish), plus two
+    memos' counters. The give-up scan's (judge_failure_scan): calls (`scans`), stores served from the memo
     (`scan_hits`) and stores read and parsed, or attempted, because they were new, changed, or failed
-    to parse on the previous call (`scan_parses`). The counters stay private to this module; readers
-    get a copy."""
+    to parse on the previous call (`scan_parses`). The no-op save check's disk side (save_goals): the
+    file's identity matched and no parse ran (`disk_hits`), the file was read and parsed, or attempted
+    (`disk_misses`),
+    entries filled from a publish's own temp file (`disk_seeds`). The counters stay private to this
+    module; readers get a copy."""
     with _GOAL_IO_LOCK:
         return dict(_GOAL_IO)
 
@@ -3007,9 +3014,25 @@ def load_goals(fsid):
 
 
 def _disk_rev(fsid):
-    """The revision currently published on disk (0 when absent/unreadable)."""
+    """The revision the file holds NOW (0 when absent or unreadable), from a fresh read. save_goals' CAS
+    compares its base against this, and the answer must be the file's, never the memo's: the memo's identity
+    can, in one rare interleaving, sit on a file it does not describe (see _DISK_CONTENT). The no-op check
+    can afford that (it skips a publish of content the file once held); the CAS cannot. Served from the memo,
+    it passed a writer with a stale base and let it write over the events published since (found in review
+    2026-09-06). Reads through _disk_read, so a test can count the read."""
+    path_s = str(GOALDIR / (fsid + ".json"))
     try:
-        return int((json.loads((GOALDIR / (fsid + ".json")).read_text()) or {}).get("rev") or 0)
+        fd = os.open(path_s, os.O_RDONLY)
+    except OSError:
+        return 0
+    try:
+        data = _disk_read(fd, path_s)
+    except OSError:
+        return 0
+    finally:
+        os.close(fd)
+    try:
+        return int((json.loads(data) or {}).get("rev") or 0)
     except Exception:
         return 0
 
@@ -3403,18 +3426,153 @@ def _store_content(store):
     return json.dumps({k: v for k, v in store.items() if k not in _NONCONTENT_KEYS}, sort_keys=True)
 
 
-def _matches_disk(fsid, store):
+def _content_hash(canon):
+    """sha1 of a canonical content string. The disk-side memo keeps this instead of the string: a store's
+    canonical form is about the size of its file, and the memo holds one entry per store."""
+    return hashlib.sha1(canon.encode("utf-8")).hexdigest()
+
+
+def _own_hash(store):
+    """The content hash of the store a writer holds, or None when it does not serialize (the publish then
+    raises on its own terms, as it always did; a no-op check must never swallow a publish it merely failed
+    to understand)."""
+    try:
+        return _content_hash(_store_content(store))
+    except (TypeError, ValueError):
+        return None
+
+
+# ── the disk side of the no-op check, memoized by file identity (2026-09-06) ─────────────────────────
+# save_goals asks "does the file already hold exactly this content?" on every save, and most saves are
+# no-ops (a pass ends with a rollup + save whether or not it placed anything). Before this the check
+# re-read and re-parsed the file and serialized BOTH sides with sort_keys on every save, then the CAS
+# parsed the file again for its revision: about 3% of the kernel's interpreter time on the judge
+# threads, about 20 ms per save of the largest store.
+#
+# The memo maps a store's PATH to ((st_ino, st_mtime_ns, st_size), sha1 of the canonical disk content).
+# Every publish is a rename of a fresh temp, so a changed file is a different inode with its own stamps:
+# while the identity still matches, the file still holds the memoized content and the check is one open +
+# fstat plus one serialization of the in-memory side. Keyed on the full path string because tests rebind
+# GOALDIR, and a bare reassignment must not be served the other root's entry.
+#
+# The identity and the bytes come from the SAME open descriptor (open, fstat, read from the fd): a stat
+# by path followed by a read by path could pair the old file's stamps with a concurrent publisher's
+# bytes. An entry is therefore always a true fact about a file that existed, and a wrong answer needs a
+# different file with the same inode number, size and nanosecond mtime. A rename of a fresh temp cannot
+# produce that for the file it replaces (the temp's inode is allocated while the old one is still
+# linked). Two cases remain: a same-size rewrite in place within one mtime tick, which nothing here does
+# (save_goals' rename is the only writer), and a freed inode number handed to a later temp of the same
+# size within the same tick: three publishes of one store inside one timestamp tick, where a rebase can
+# keep the size because it keeps the in-memory node's text and only unions logs. The memo therefore
+# serves the NO-OP CHECK ONLY. A false match there skips a publish whose content the file already held
+# once and every later publisher rebased over, so nothing of ours is lost. It holds no revision and the
+# CAS never reads it: until review (2026-09-06) _disk_rev was served from the entry too, and in that
+# interleaving a writer whose base equalled the stale revision passed the CAS without rebasing and wrote
+# over the events published since. The CAS reads the file (_disk_rev).
+#
+# Filled lazily (the first check after a foreign publish parses once) and by the publisher itself
+# (_disk_seed: the temp file's identity, which the rename keeps). Entries for absent files go at the
+# kernel's compaction sweep (_disk_memo_evict_absent); a stat or parse failure drops the entry and the
+# caller publishes as before.
+_DISK_CONTENT = {}
+_DISK_CONTENT_LOCK = threading.Lock()
+
+
+def _disk_forget(path_s):
+    with _DISK_CONTENT_LOCK:
+        _DISK_CONTENT.pop(path_s, None)
+
+
+def _disk_read(fd, path_s):
+    """The whole store from an already-open descriptor. The one place the memo reads a store file, so a
+    test can count reads by store path; `path_s` is only for that filter."""
+    chunks = []
+    while True:
+        b = os.read(fd, 1 << 20)
+        if not b:
+            return b"".join(chunks)
+        chunks.append(b)
+
+
+def _disk_ident(fd):
+    """The identity of an OPEN store, (inode, mtime_ns, size), from the descriptor: the identity of the file
+    whose bytes _disk_read returns, whatever is linked at the path by then. Its own seam so a test can land
+    a publish between the open and this stat."""
+    st = os.fstat(fd)
+    return (st.st_ino, st.st_mtime_ns, st.st_size)
+
+
+def _disk_entry(fsid):
+    """The published store's ((ino, mtime_ns, size), content hash): from the memo when the file's identity
+    still matches, else from one read and parse. None when the file is absent or unreadable; the entry is
+    dropped then, and the caller publishes as it always did."""
+    path_s = str(GOALDIR / (fsid + ".json"))
+    try:
+        fd = os.open(path_s, os.O_RDONLY)
+    except OSError:
+        _disk_forget(path_s)
+        return None
+    try:
+        ident = _disk_ident(fd)
+        with _DISK_CONTENT_LOCK:
+            ent = _DISK_CONTENT.get(path_s)
+        if ent is not None and ent[0] == ident:
+            _goal_io_bump("disk_hits")
+            return ent
+        data = _disk_read(fd, path_s)
+    except OSError:
+        _disk_forget(path_s)
+        return None
+    finally:
+        os.close(fd)
+    _goal_io_bump("disk_misses")
+    try:
+        canon = _store_content(json.loads(data))
+    except Exception:
+        _disk_forget(path_s)                         # not a store: no fact to remember
+        return None
+    ent = (ident, _content_hash(canon))
+    with _DISK_CONTENT_LOCK:
+        _DISK_CONTENT[path_s] = ent
+    return ent
+
+
+def _disk_seed(path, tmp, canon_hash):
+    """Memoize a publish's own content under the identity its TEMP file carries, before the rename. A
+    rename keeps the inode, size and mtime, so the temp's stat is the destination's afterwards, and the
+    temp is ours alone. Never stat the destination after the rename: a concurrent publisher's file could
+    be captured there and paired with our content."""
+    try:
+        st = os.stat(tmp)
+    except OSError:
+        return
+    _goal_io_bump("disk_seeds")
+    with _DISK_CONTENT_LOCK:
+        _DISK_CONTENT[str(path)] = ((st.st_ino, st.st_mtime_ns, st.st_size), canon_hash)
+
+
+def _disk_memo_evict_absent():
+    """Drop memo entries whose store file is gone (a removed session). The kernel's compaction sweep calls
+    this at its start; the memo otherwise holds one small entry per store ever saved."""
+    with _DISK_CONTENT_LOCK:
+        gone = [k for k in _DISK_CONTENT if not os.path.exists(k)]
+        for k in gone:
+            del _DISK_CONTENT[k]
+    return len(gone)
+
+
+def _matches_disk(fsid, store, mine=None):
     """True when publishing `store` would write back exactly what the file already holds (see save_goals).
     Anything unreadable, absent or unserializable answers False, so the real write still happens and still
-    raises on its own terms — a no-op check must never swallow a publish it merely failed to understand."""
-    try:
-        disk = json.loads((GOALDIR / (fsid + ".json")).read_text())
-    except Exception:
+    raises on its own terms — a no-op check must never swallow a publish it merely failed to understand.
+    `mine` is the store's own content hash when the caller already has it (save_goals reuses it to seed
+    the memo after its write)."""
+    ent = _disk_entry(fsid)
+    if ent is None:
         return False                                 # no file yet (a create), or unreadable → publish
-    try:
-        return _store_content(disk) == _store_content(store)
-    except (TypeError, ValueError):
-        return False
+    if mine is None:
+        mine = _own_hash(store)
+    return mine is not None and ent[1] == mine
 
 
 def save_goals(fsid, store):
@@ -3439,25 +3597,36 @@ def save_goals(fsid, store):
     stats"), and a no-op republish moved every mtime every pass, so the sweep re-processed the whole live
     fleet forever. Skipping is safe precisely BECAUSE nothing changed: we have no events to contribute, so
     declining to publish can neither lose our work nor clobber a concurrent writer's. `rev` does not advance
-    on a no-op, which is the honest reading of a counter that means "publications"."""
+    on a no-op, which is the honest reading of a counter that means "publications".
+
+    The disk side of that check is memoized by file identity (_disk_entry), so a no-op save costs one
+    serialization of our own store, not a parse of the file, and the write seeds the entry for the next check
+    when no rebase changed what we wrote. The CAS below reads the file's revision from the file (_disk_rev),
+    never from the memo, so a real publish parses once, for the CAS."""
     _goal_io_bump("saves")
     GOALDIR.mkdir(parents=True, exist_ok=True)
-    if "_baseRev" in store and _matches_disk(fsid, store):
+    mine = _own_hash(store) if "_baseRev" in store else None
+    if mine is not None and _matches_disk(fsid, store, mine):
         return                                       # nothing of ours to publish → leave the file (and its
     base = store.pop("_baseRev", None)               # mtime) alone.  transient: never serialized
+    rebased = False
     if base is not None:
+        disk = 0
         for _ in range(4):                           # a busy store settles in a pass or two
             disk = _disk_rev(fsid)
             if disk == base:
                 break                                # nobody published since we loaded → ours is current
             _rebase_onto_disk(fsid, store)           # fold their events in, then re-check
+            rebased = True
             base = disk
-        store["rev"] = _disk_rev(fsid) + 1
+        store["rev"] = disk + 1                      # the revision the loop settled on; no second parse
     else:
         store["rev"] = int(store.get("rev") or 0) + 1
     _goal_io_bump("writes")
     tmp = _publish_tmp(GOALDIR, fsid)
     tmp.write_text(json.dumps(store))
+    if mine is not None and not rebased:             # a rebase changed the content `mine` describes
+        _disk_seed(GOALDIR / (fsid + ".json"), tmp, mine)
     tmp.rename(GOALDIR / (fsid + ".json"))            # atomic publish
 
 
