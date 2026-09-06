@@ -370,12 +370,14 @@ def _other_file(path, indent=0, alias=False):
     on Linux or the plist's EnvironmentVariables on macOS (bin/romp-service writes the variable there
     when the installing shell's path is not the default: _service_env_override), the profile a
     shell-wrapped ExecStart sources, or the shell that ran `romp up`. The lines name the variable, this
-    shell's path and those places, then the remedy for each direction: if found, run this command with
-    the same value, or change it there and restart the manager (`romp-service install` from a shell
-    with the wanted path rewrites the unit's or the plist's line; a `romp up` shell starts again with
-    the path); if not found, the kernel reads the default path, so unset the variable in this shell or
-    install from this shell. The restart itself, the reload a unit, drop-in or plist line takes first
-    and the install's cost are _restart_block's, which every hint renders once after its causes. Never
+    shell's path and those places, under either name the kernel's resolver reads (ROMP_SERVICE_ENV_FILE
+    or its alias ROMP_SERVICE_ENV: a drop-in, a profile or the `romp up` shell can carry either), then
+    the remedy for each direction: if found, run this command with the same value, or change it there
+    and restart the manager (`romp-service install` from a shell with the wanted path rewrites the
+    unit's or the plist's line; a `romp up` shell starts again with the path); if not found, the kernel
+    reads the default path, so unset the variable in this shell or install from this shell. The restart
+    itself, the reload a unit, drop-in or plist line takes first and the install's cost are
+    _restart_block's, which every hint renders once after its causes. Never
     a value. Unindented; the caller's lead-in ends with "another service.env:", and `indent` is the
     width of the pad the caller prints before each line. The path is the one part not written here,
     and it can be any length: when it would carry its sentence past WIDTH columns, pad included, the
@@ -398,14 +400,15 @@ def _other_file(path, indent=0, alias=False):
     return (
         "the kernel and this shell each resolve the service.env path from ROMP_SERVICE_ENV_FILE",
     ) + where + (
-        "Look for it where the kernel's environment comes from: the unit's Environment= and its",
-        "drop-ins (Linux) or the plist's EnvironmentVariables (macOS), where `romp-service",
-        "install` writes it when the installing shell's path is not the default (and rewrites",
-        "it from a shell with the wanted path); the profile a shell-wrapped ExecStart sources;",
-        "or the shell that ran `romp up` (start it again with the path). If found, run this",
-        "command with the same value, or change it there and restart the manager (below). If",
-        "not found, the kernel reads the default path: unset the variable in this shell, or",
-        "point the kernel at this file with `romp-service install` from this shell.",
+        "Look for it where the kernel's environment comes from, under ROMP_SERVICE_ENV_FILE or",
+        "its alias ROMP_SERVICE_ENV: the unit's Environment= and its drop-ins (Linux) or the",
+        "plist's EnvironmentVariables (macOS), where `romp-service install` writes it when the",
+        "installing shell's path is not the default (and rewrites it from a shell with the",
+        "wanted path); the profile a shell-wrapped ExecStart sources; or the shell that ran",
+        "`romp up` (start it again with the path). If found, run this command with the same",
+        "value, or change it there and restart the manager (below). If not found, the kernel",
+        "reads the default path: unset the variable in this shell, or point the kernel at this",
+        "file with `romp-service install` from this shell.",
     )
 
 

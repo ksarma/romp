@@ -542,21 +542,21 @@ finds the kernel in command mode under a shell that reads no line, it cannot
 tell which place still carries it, so its `MISMATCH` lists each with its
 remedy: `service.env` as the manager loaded it; the unit, a drop-in, or the
 profile a shell-wrapped `ExecStart` sources; another `service.env`, when the
-kernel's environment sets `ROMP_SERVICE_ENV_FILE` to a file other than the one
-this shell reads, or leaves it unset where this shell sets it (the installer
-writes the line into the unit or the plist when the installing shell's path is
-not the default; a drop-in, a sourced profile or the shell that ran `romp up`
-can set it too; look for it there, then run `romp keyswap` with the same
-variable, or change it where it is and restart the manager; when it is
-nowhere, the kernel reads the default path, so unset the variable in your
-shell or install from that shell); a `service.env` line removed since the kernel
-started; and the shell that ran `romp up`. The restart per platform, the
-reload a unit, drop-in or plist line takes first and what the install does
-(it rewrites the unit or the plist, so a line added to either by hand is gone
-and a drop-in stays) close the report once, after the places. The same
-other-file cause is named under a kernel in file mode when the file this
-shell reads carries the line, since `romp refresh` reaches only the file the
-kernel reads.
+kernel's environment sets `ROMP_SERVICE_ENV_FILE`, or its alias
+`ROMP_SERVICE_ENV`, to a file other than the one this shell reads, or sets
+neither where this shell sets one (the installer writes the line into the unit
+or the plist when the installing shell's path is not the default; a drop-in, a
+sourced profile or the shell that ran `romp up` can set either name too; look
+for both there, then run `romp keyswap` with the same variable, or change it
+where it is and restart the manager; when neither is anywhere, the kernel
+reads the default path, so unset the variable in your shell or install from
+that shell); a `service.env` line removed since the kernel started; and the
+shell that ran `romp up`. The restart per platform, the reload a unit, drop-in
+or plist line takes first and what the install does (it rewrites the unit or
+the plist, so a line added to either by hand is gone and a drop-in stays)
+close the report once, after the places. The same other-file cause is named
+under a kernel in file mode when the file this shell reads carries the line,
+since `romp refresh` reaches only the file the kernel reads.
 
 The kernel checks the configuration once at boot and logs one line per
 finding, names and fingerprints only. When the first run succeeds the line is
@@ -721,14 +721,14 @@ so the report lists the places, each with its remedy:
   definition, then restart (the commands are under [Two things still need a
   restart](#two-things-still-need-a-restart))
 - another `service.env`, when the kernel's environment names a different file
-  through `ROMP_SERVICE_ENV_FILE` (the installer's line in the unit or the
-  plist, a drop-in, a profile, or the shell that ran `romp up`), or names none
-  where your shell does: run `romp keyswap` with the same variable (unset,
-  when the kernel has none), or change it where the kernel gets it and restart
-  the manager (`romp-service install` from a shell with the wanted path
-  rewrites the unit's or the plist's line and drops a line added to either by
-  hand; a drop-in survives it and takes the reload under [Two things still
-  need a restart](#two-things-still-need-a-restart))
+  through `ROMP_SERVICE_ENV_FILE` or its alias `ROMP_SERVICE_ENV` (the
+  installer's line in the unit or the plist, a drop-in, a profile, or the shell
+  that ran `romp up`), or names none where your shell does: run `romp keyswap`
+  with the same variable (unset, when the kernel has none), or change it where
+  the kernel gets it and restart the manager (`romp-service install` from a
+  shell with the wanted path rewrites the unit's or the plist's line and drops
+  a line added to either by hand; a drop-in survives it and takes the reload
+  under [Two things still need a restart](#two-things-still-need-a-restart))
 - `service.env`, edited since the kernel read it at its start: `romp refresh`
 - the shell that ran `romp up`, which exported the line: start it again from a
   shell without the line

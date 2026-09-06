@@ -74,20 +74,25 @@ SID = "11111111-2222-3333-4444-555555555501"
 # word, each with its own indent. Pinned here so a rewording of one hint that leaves the others behind fails.
 # The remedy is given in BOTH directions: the variable found where the kernel's environment comes from, and
 # found nowhere (the kernel reads the default path; an install from before the installer wrote the line).
+# The search names both spellings the kernel's resolver reads, ROMP_SERVICE_ENV_FILE and its alias
+# ROMP_SERVICE_ENV (kernel/keysource.py, service_env_path), since a drop-in, a profile or the `romp up`
+# shell can carry either; before, it named the primary alone, and a kernel whose path came from the alias
+# was searched for under the wrong name (review find, 2026-09-06).
 # The path line is the one line the CLI renders two ways: inline while its sentence fits WIDTH under the
 # hint's indent, else the sentence stops at "reads" and the path follows whole on a line of its own
 # (other_file_lines mirrors the rule, so a long temp directory changes nothing asserted here).
 OTHER_FILE = (
     "the kernel and this shell each resolve the service.env path from ROMP_SERVICE_ENV_FILE",
     "in their own environment; this shell reads %s.",
-    "Look for it where the kernel's environment comes from: the unit's Environment= and its",
-    "drop-ins (Linux) or the plist's EnvironmentVariables (macOS), where `romp-service",
-    "install` writes it when the installing shell's path is not the default (and rewrites",
-    "it from a shell with the wanted path); the profile a shell-wrapped ExecStart sources;",
-    "or the shell that ran `romp up` (start it again with the path). If found, run this",
-    "command with the same value, or change it there and restart the manager (below). If",
-    "not found, the kernel reads the default path: unset the variable in this shell, or",
-    "point the kernel at this file with `romp-service install` from this shell.",
+    "Look for it where the kernel's environment comes from, under ROMP_SERVICE_ENV_FILE or",
+    "its alias ROMP_SERVICE_ENV: the unit's Environment= and its drop-ins (Linux) or the",
+    "plist's EnvironmentVariables (macOS), where `romp-service install` writes it when the",
+    "installing shell's path is not the default (and rewrites it from a shell with the",
+    "wanted path); the profile a shell-wrapped ExecStart sources; or the shell that ran",
+    "`romp up` (start it again with the path). If found, run this command with the same",
+    "value, or change it there and restart the manager (below). If not found, the kernel",
+    "reads the default path: unset the variable in this shell, or point the kernel at this",
+    "file with `romp-service install` from this shell.",
 )
 
 # The restart-and-reload block (cli/keyswap.py, _restart_block) the same three hints render ONCE each, after
@@ -583,14 +588,17 @@ class NamedSwapRefused(_Env):
         for gone in ("installed with", "does not carry", "re-run", "then restart the manager)", "wherever its"):
             self.assertNotIn(gone, out, gone)
         block = other_file_block(self.path, "")
-        for fact in ("ROMP_SERVICE_ENV_FILE", self.path, "the unit's Environment= and its", "drop-ins (Linux)",
-                     "plist's EnvironmentVariables (macOS)", "where `romp-service\ninstall` writes it",
-                     "(and rewrites\nit from a shell with the wanted path)", "the profile a shell-wrapped ExecStart sources",
-                     "the shell that ran `romp up` (start it again with the path)",
-                     "If found, run this\ncommand with the same value, or change it there and restart the manager (below).",
-                     "If\nnot found, the kernel reads the default path: unset the variable in this shell, or\n"
-                     "point the kernel at this file with `romp-service install` from this shell."):
+        for fact in ("ROMP_SERVICE_ENV_FILE", self.path, "under ROMP_SERVICE_ENV_FILE or\nits alias ROMP_SERVICE_ENV:",
+                     "the unit's Environment= and its", "drop-ins (Linux)", "plist's EnvironmentVariables (macOS)",
+                     "where `romp-service install` writes it when the\ninstalling shell's path is not the default",
+                     "(and rewrites it from a shell with the\nwanted path)", "the profile a shell-wrapped ExecStart sources",
+                     "the shell that ran\n`romp up` (start it again with the path)",
+                     "If found, run this command with the same\nvalue, or change it there and restart the manager (below).",
+                     "If not found, the kernel\nreads the default path: unset the variable in this shell, or point the "
+                     "kernel at this\nfile with `romp-service install` from this shell."):
             self.assertIn(fact, block, fact)
+        self.assertEqual(block.count("ROMP_SERVICE_ENV_FILE"), 2, "the resolver's line and the search")
+        self.assertEqual(block.count("alias ROMP_SERVICE_ENV"), 1, "the search names the alias the kernel also reads")
         mechanics = restart_block("")
         for fact in ("`systemctl --user restart romp-manager` (Linux)", "`launchctl\nkickstart -k gui/$(id -u)/com.romp.manager` (macOS)",
                      "a unit or drop-in edit takes\n`systemctl --user daemon-reload` first", "A plist edit takes `romp-service install`\ninstead",
@@ -739,8 +747,8 @@ class HelpAndDocsAgree(unittest.TestCase):
          "line of your own belongs in\n`service.env` or a drop-in.",
          "A line added to the unit by hand takes effect at the next manager restart (`systemctl --user restart "
          "romp-manager`)."),
-        ("rewrites the unit's or the plist's line and drops a line added to either by\n  hand; a drop-in survives it "
-         "and takes the reload under [Two things still\n  need a restart](#two-things-still-need-a-restart))",
+        ("rewrites the unit's or the plist's line and drops\n  a line added to either by hand; a drop-in survives it "
+         "and takes the reload\n  under [Two things still need a restart](#two-things-still-need-a-restart))",
          "rewrites the unit's or the plist's line; a line added to either by hand takes effect at the next manager "
          "restart)"),
     )
