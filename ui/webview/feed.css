@@ -1397,9 +1397,22 @@ body.fileview-open { overflow: hidden; }
 .fileview-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 /* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
 a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
-/* an author `display` beats the UA's [hidden] rule — without this the anchor shows hrefless
-   before the kernel ever answers */
-a.fileview-btn[hidden] { display: none; }
+/* the GitHub action is one unit: the control and, when the kernel gave one, its reason as a caption
+   beside it — visible without hover (touch has none, and a disabled button takes no focus), and whole:
+   it wraps inside a bounded width rather than truncating, because nothing in the unit takes a tap,
+   click or focus that could finish a cut sentence; same size as the buttons it annotates, ragged edge
+   away from the control it precedes. Hidden until the kernel answers: an author `display` beats the
+   UA's [hidden] rule, so the hide is spelled out. */
+.fileview-gh { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.fileview-gh[hidden] { display: none; }
+.fileview-gh-why { font-size: 0.82em; line-height: 1.25; color: var(--dim); max-width: 18em; text-align: right; }
+/* no link: a real disabled button, greyed, hover inert — never hidden (an absent button read as
+   "broken" when the file was simply not committed yet, 2026-09-05) */
+.fileview-gh .fileview-btn:disabled { opacity: 0.55; cursor: default; }
+.fileview-gh .fileview-btn:disabled:hover { border-color: var(--card-border); color: var(--fg); background: transparent; }
+.fileview-gh .fileview-btn:disabled:active { transform: none; }
+/* a link whose branch is not on origin yet: dashed, the caption carries the note */
+a.fileview-gh-note { border-style: dashed; }
 .fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* gutter + code as two columns of ONE scroller: the numbers stay put horizontally against long lines,
    and because they are a sibling element a selection of the code copies without dragging them along */
