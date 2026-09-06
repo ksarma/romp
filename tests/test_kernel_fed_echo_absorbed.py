@@ -394,6 +394,69 @@ class OneTextRuleAcrossKernelAndBackend(unittest.TestCase):
         self.assertIn(key, self.w.be._live.get(SID, {}))
         self.assertEqual(self._texts(merged).count(FED), 1, "the echo itself is shown, once")
 
+    def test_the_user_todo_landed_check_builds_its_forms_from_the_same_key(self):
+        # _user_todo_answer_lost compares _paste_landed_texts against _atom_user_texts' keys; every form
+        # is a key itself (round 4 — a raw form never matched a record of a trailing-newline send)
+        k = km.sb.echo_text_key
+        for text in (" Re: Need the form — see /tmp/notes-api/form.png \n", "Re: plain — yes.\n", " a  b "):
+            forms = km._paste_landed_texts(text)
+            self.assertIn(k(text), forms)
+            for f in forms:
+                self.assertEqual(f, k(f), "every form is already a key: %r" % f)
+        self.assertEqual(km._paste_landed_texts(" Re: Need the form — see /tmp/notes-api/form.png \n"),
+                         {"Re: Need the form — see /tmp/notes-api/form.png", "Re: Need the form — see [Image #1]"})
+
+
+class TmuxEchoPrunesUnderTheOneKey(unittest.TestCase):
+    """The tmux route's by-text prune (_tmux_echo_prune) is a fourth reader of the key, and until round 4 of
+    the 2026-09-06 review it compared the echo's RAW text against the kernel's stripped keys: a tmux send
+    with a trailing newline (`romp send` passes its argument verbatim; the CLI records it verbatim) was
+    never pruned by text once it landed. The display dedup hid the echo behind the record, so nothing
+    showed — until a later human turn landed and the settle marked the still-resident echo `dropped`: a
+    "never delivered" bubble, with restore and dismiss, for a message the transcript holds."""
+
+    def setUp(self):
+        self._saved = km._sdk
+        km._sdk = lambda: None                 # the tmux route: no SDK backend owns the sid
+        km._tmux_echo.clear()
+
+    def tearDown(self):
+        km._sdk = self._saved
+        km._tmux_echo.clear()
+
+    @staticmethod
+    def _session(atoms):
+        return {"turns": [{"id": "t", "trigger": None, "t": T0, "end": T0, "ended": True, "atoms": atoms}]}
+
+    @staticmethod
+    def _human(text, uid, t):
+        return {"type": "user", "uuid": uid, "author": "human", "t": t,
+                "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
+
+    def _echo(self, text, sent_at):
+        km._tmux_echo_add(SID, text)
+        atom = next(a for a in km._tmux_echo[SID].values() if a.get("_echo_text") == text)
+        atom["t"] = sent_at
+        return atom
+
+    def test_a_trailing_newline_tmux_echo_is_pruned_when_its_text_lands(self):
+        text = "rename this to fetch_notes\n"
+        echo = self._echo(text, T0 + 10)
+        # the record holds the text verbatim; a later human turn has landed since
+        merged = km._merge_live_atoms(self._session([self._human(text, "u1", T0 + 12),
+                                                     self._human("and the tests", "u2", T0 + 500)]), SID)
+        self.assertNotIn(SID, km._tmux_echo, "the echo's key and the record's key agree: pruned by text")
+        self.assertFalse(echo.get("dropped"), "a delivered send is never marked never-delivered")
+        texts = [t for turn in merged["turns"] for a in turn["atoms"] for t in km._atom_user_texts(a)]
+        self.assertEqual(texts.count(km.sb.echo_text_key(text)), 1, "shown once: the record")
+
+    def test_an_unlanded_tmux_echo_still_survives(self):
+        # the control: the record carries a different text, so the echo stays (and is overtaken → dropped)
+        echo = self._echo("this Enter dropped at the prompt\n", T0 + 10)
+        km._merge_live_atoms(self._session([self._human("and the tests", "u2", T0 + 500)]), SID)
+        self.assertIn(SID, km._tmux_echo)
+        self.assertTrue(echo.get("dropped"))
+
 
 class ImagePathPredicateTwins(unittest.TestCase):
     """The extension set is the CLI's, not romp's. SOURCE OF TRUTH: the installed Claude Code bundle

@@ -1238,6 +1238,17 @@ class LostAnswerReopens(_StoreSandbox):
         km._user_todo_answer_lost(SID, tid, body, wait=True)
         self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered")
 
+    def test_an_edge_whitespace_answer_reads_as_landed(self):
+        # the CLI records user text verbatim, edge whitespace included, and _atom_user_texts keys it
+        # under echo_text_key (strip). A match set built from the raw text never met such a key, so a
+        # delivered answer whose send carried a trailing newline was reopened at every boot
+        # (2026-09-06 review, round 4): the landed check's forms start from the same key
+        tid, body = self._stamped()
+        self._land(body + "\n")
+        km._user_todo_answer_lost(SID, tid, body + "\n", wait=True)
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered",
+                         "one key on both sides — delivered, the stamp stands")
+
     def test_the_loss_path_never_lifts_a_dismiss(self):
         tid = km._add_user_todo(SID, "Need the staging port")
         km._resolve_user_todo(SID, tid, "dismissed")

@@ -4255,16 +4255,23 @@ def _paste_landed_texts(text):
     check keyed on the raw bytes alone falsely reopened it at every boot. Both forms stay exact
     matches, never substrings: same whole body = the same answer delivered, the check's own
     contract. The raw form stays in the set — a path the CLI never rewrote (no image read fired)
-    submits as typed."""
-    forms = {text}
+    submits as typed.
+
+    Every form is a KEY under sb.echo_text_key (outer whitespace stripped), because the set is
+    compared against _atom_user_texts, which yields keys: the CLI records user text verbatim, edge
+    whitespace included, and the kernel keys it stripped, so a form built from the raw text never
+    matched a record of a text sent with a trailing newline — a delivered answer read as lost and
+    the ask reopened at every boot (2026-09-06 review, round 4: one key on every side)."""
+    key = sb.echo_text_key(text)
+    forms = {key}
     seen = [0]
 
     def _img(m):
         seen[0] += 1
         return m.group(0).replace(m.group(1), "[Image #%d]" % seen[0])
-    rewritten = _IMG_PATH_RE.sub(_img, text or "")
+    rewritten = _IMG_PATH_RE.sub(_img, key)
     if seen[0]:
-        forms.add(rewritten)
+        forms.add(sb.echo_text_key(rewritten))
     return forms
 
 
@@ -23250,12 +23257,20 @@ def _tmux_echo_atoms(sid):
     return list(_tmux_echo.get(sid, {}).values())
 
 def _tmux_echo_prune(sid, tx_uuids, tx_texts):
-    """Drop an echo once the transcript has its real user atom (by uuid or text); pop the sid when empty."""
+    """Drop an echo once the transcript has its real user atom (by uuid or text); pop the sid when empty.
+    The text side compares under sb.echo_text_key — `tx_texts` are the keys _atom_user_texts built (outer
+    whitespace stripped), and the echo stores the send's text verbatim, so a raw comparison never matched a
+    trailing-newline send (`romp send` passes its argument verbatim): the delivered echo stayed, hidden by
+    the display dedup, and the settle then marked it `dropped` once a later human turn landed — a "never
+    delivered" bubble for a message the transcript holds (2026-09-06 review, round 4)."""
     d = _tmux_echo.get(sid)
     if not d:
         return
-    for k in [k for k, a in d.items()
-              if a.get("uuid") in tx_uuids or (a.get("_echo_text") and a["_echo_text"] in tx_texts)]:
+
+    def _landed(a):
+        et = sb.echo_text_key(a.get("_echo_text"))
+        return a.get("uuid") in tx_uuids or (et and et in tx_texts)
+    for k in [k for k, a in d.items() if _landed(a)]:
         d.pop(k, None)
     if not d:
         _tmux_echo.pop(sid, None)

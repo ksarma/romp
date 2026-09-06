@@ -11,7 +11,8 @@
 // event; (6) the lost verdict shares the anchor; (7) exact text, one landing per send; (8) a connection
 // drop repaints once; (9) the bare label is per bubble; (10) the kernel's own copy clears "not confirmed".
 // Round 3 of that review: (11) receipt is attributed per send, like landings; (12) the ✕ removes the
-// bubble's own entry; (13) a stamp taken late reads the events' own times.
+// bubble's own entry; (13) a stamp taken late reads the events' own times. Round 4: (14) a late stamp
+// presumes the frame's newest queued copy of its text is its own (the queued bubble carries no stamp).
 // The decisions are executed through send-pending.ts; the DOM half is pinned in render.ts/styles.css.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -449,6 +450,65 @@ test("a send pressed against no frame (a placeholder tab): the first frame's cop
   const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
   assert.match(KERNEL, /t = a\.get\("t"\); ts = iso\(t\) if t else None/);
   assert.match(KERNEL, /def iso\(t\):\s*\n\s*"""Epoch → the ISO-8601 UTC/);
+});
+
+test("a late stamp presumes the first frame's newest queued copy of the text is this send's own (busy and held queues)", () => {
+  const isoAt = (s: number) => new Date(s * 1000).toISOString();
+  const pressMs = T0 + 250;
+  const S = Math.floor(pressMs / 1000);
+  const late = (): PendingSend => ({ ...newPending(TEXT, undefined, pressMs), late: true });
+  const step: TailEvent = { kind: "assistant", md: "…", uuid: "a1", ts: isoAt(S - 2) };
+  // the queued bubble carries no stamp: a busy session's queue (the CLI holds the text) and a held one
+  // (an account limit; the kernel holds it, for hours) look the same to the stamp
+  for (const q of [{ kind: "queued", texts: [{ md: TEXT }] }, { kind: "queued", texts: [{ md: TEXT }], held: { reason: "limit" } }] as TailEvent[]) {
+    const list = [late()];
+    let r = reconcilePending([step, q], list);
+    assert.equal(list[0].at?.queued, 0, "the frame's one copy is presumed this press's, not background");
+    assert.equal(r.inject.length, 0, "the kernel's copy covers our bubble for the whole wait: no double bubble beside it");
+    assert.equal(list[0].received, true);
+    // every later push, the same copy keeps covering it — the entry never sat uncovered until the CLI took it
+    r = reconcilePending([step, q], list);
+    assert.equal(r.inject.length, 0);
+    // …and when the CLI takes the text, the landing ends the bubble (a tmux route: no echo in between)
+    r = reconcilePending([step, { kind: "user", md: TEXT, uuid: "u1", ts: isoAt(S + 40) }], list);
+    assert.deepEqual(r.landed.map((l) => l.idx), [1]);
+  }
+  // an older identical copy queued BEFORE the press sits at the head: the newest copy is ours, the older
+  // one is background, so a second frame with a third copy would prove nothing about this send
+  const list = [late()];
+  reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }, { md: TEXT }] }], list);
+  assert.equal(list[0].at?.queued, 1);
+  // the frame was built before the kernel received the send: no copy yet, none presumed; the copy that
+  // follows covers it, exactly as at a press-time stamp
+  const early = [late()];
+  let r = reconcilePending([step], early);
+  assert.deepEqual(early[0].at, { after: "a1", seen: [], queued: 0 });
+  assert.equal(r.inject.length, 1);
+  r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }] }], early);
+  assert.equal(r.inject.length, 0);
+  assert.equal(early[0].received, true);
+  // two identical sends pressed against the same placeholder frame own one copy EACH — and when the frame
+  // lists only one of them (the kernel had not received the second), the second waits for its own
+  const pair = [late(), late()];
+  r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }, { md: TEXT }] }], pair);
+  assert.deepEqual(pair.map((p) => p.at?.queued), [0, 0]);
+  assert.equal(r.inject.length, 0, "both copies are the pair's: neither bubble doubles");
+  const pair2 = [late(), late()];
+  r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }] }], pair2);
+  assert.deepEqual(pair2.map((p) => p.at?.queued), [0, 0], "fewer copies than presses: the count floors at zero");
+  assert.equal(r.inject.length, 1, "one copy covers one send; the other waits for its own");
+  r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }, { md: TEXT }] }], pair2);
+  assert.equal(r.inject.length, 0);
+  // a press-time stamp presumes nothing: its frame predates the press, so every listed copy is background
+  const prompt = press([step, { kind: "queued", texts: [{ md: TEXT }] }], TEXT);
+  assert.equal(prompt[0].at?.queued, 1);
+  // the ✕ on the kernel's copy (which names no entry) drops the one it covers — ours — so cancelling the
+  // queued send leaves no orphan bubble behind
+  const covered = [late()];
+  reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }] }], covered);
+  const mine = covered[0];
+  assert.equal(dropPending(covered, TEXT), mine);
+  assert.equal(covered.length, 0);
 });
 
 // ── (2) the absorbed header and the mid-turn cue ─────────────────────────────────────────────────

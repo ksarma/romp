@@ -144,7 +144,22 @@ const eventSecond = (e: TailEvent): number | null => {
  *  bubble sat beside the kernel's echo, or a landed send's bubble never ended (2026-09-06 review, round
  *  3). So a late stamp reads the events' own stamps: an event the kernel stamped at or after the press's
  *  second is not before the send — neither the anchor nor background. Events with no stamp keep the
- *  press-time reading.
+ *  press-time reading, with ONE exception, the queued bubble (below).
+ *
+ *  THE QUEUED PRESUMPTION (round 4): the kernel's queued bubble carries no stamp at all — its texts are
+ *  the queue's bodies and positions — so a late stamp cannot read which of its copies predate the press.
+ *  A late entry therefore PRESUMES the newest `own` copies of its text in the frame (one per identical
+ *  send pressed against the same placeholder frame; the caller counts them) are this press's own, not
+ *  background: the press just happened, and a copy of the same text that appeared with the first frame
+ *  is the one the kernel added at its receipt. Without this, a send into a busy or held session whose
+ *  first frame already listed it recorded that copy as background, so the entry never got a position
+ *  until the CLI took the text: our bubble sat beside the kernel's copy for the whole wait, and its ✕
+ *  would have cancelled the real queued send by body. The presumption's cost, stated: when the kernel had
+ *  NOT yet received the send as the frame was built and an older identical message sits in the queue (a
+ *  held queue keeps one for hours), that older copy is read as this send's — receipt is presumed, and a
+ *  send lost on its way to the kernel hides behind the older copy until the queue moves. That case needs
+ *  the same text queued twice around a page load; the double bubble it trades against needed only a send
+ *  into a queue. A stamp on each queued text would make the reading exact and remove the presumption.
  *
  *  THE CLOCK ASSUMPTION, stated once: the press is the client's clock (ms); the events wear the kernel
  *  host's clock in whole seconds — the echo atom is stamped `int(time.time())` at the kernel's receipt
@@ -157,7 +172,7 @@ const eventSecond = (e: TailEvent): number | null => {
  *  is confined to the late stamp because that is the only stamp that can meet the send's own records,
  *  and because at a press-time stamp it could only misfire (an identical message that landed within
  *  the press's second would read as this send's). */
-export function stampBase(events: TailEvent[], p: PendingSend): SendBase {
+export function stampBase(events: TailEvent[], p: PendingSend, own: number = p.late ? 1 : 0): SendBase {
   const pressS = p.late ? Math.floor(p.ts / 1000) : Infinity;
   const beforeSend = (e: TailEvent): boolean => { const s = eventSecond(e); return s === null || s < pressS; };
   let after: string | null = null;
@@ -169,7 +184,10 @@ export function stampBase(events: TailEvent[], p: PendingSend): SendBase {
     if (e.kind !== "user" || !e.uuid || isOptimisticUuid(e.uuid) || !beforeSend(e)) continue;
     if (landedIn(e, p) || lostIn(e, p) || provisionalIn(e, p)) seen.push(e.uuid);
   }
-  return { after, seen, queued };
+  // the queued presumption (above): a late stamp's newest `own` copies are this press's, so the count of
+  // background copies stops short of them — at zero when the frame lists fewer than presumed (the kernel
+  // had not received every press yet; the copies still to come cover those entries in order)
+  return { after, seen, queued: Math.max(0, queued - (p.late ? own : 0)) };
 }
 
 /** The first index AFTER the send's anchor — or 0 when there is no anchor, or when the anchor has left the
@@ -211,8 +229,12 @@ export function reconcilePending(events: TailEvent[], list: PendingSend[]): Reco
   // older identical message, an old echo, an undismissed never-delivered bubble — not this send. Only
   // what appears after the anchor, beyond that set, is this send's (the user 2026-08-09, who watched
   // resends vanish in the call that created them; the 2026-09-06 review, which watched a resend of a
-  // never-delivered message retired as lost by the old verdict).
-  for (const p of list) if (!p.at) p.at = stampBase(events, p);
+  // never-delivered message retired as lost by the old verdict). Late entries stamped against this frame
+  // each presume ONE of its queued copies of their text is their own (stampBase's queued presumption), so
+  // identical sends pressed against the same placeholder frame own as many copies as there were presses.
+  const lateOwn = new Map<string, number>();
+  for (const p of list) if (!p.at && p.late) lateOwn.set(p.text, (lateOwn.get(p.text) || 0) + 1);
+  for (const p of list) if (!p.at) p.at = stampBase(events, p, p.late ? lateOwn.get(p.text) || 1 : 0);
   const r: Reconciled = { keep: [], inject: [], landed: [], lost: [] };
   const claimed = new Set<number>();                   // landing indices taken by an earlier entry THIS push
   const takenCopies = new Map<string, Set<number>>();  // text → queued-copy positions taken by an earlier entry THIS push
