@@ -47,6 +47,13 @@ Code, so this is where most of it lands:
 - `romp-postal.mcp.json`, the MCP config that gives sessions their mailbox.
 - `romp-session-prompt.md`, appended to a session's system prompt.
 - The `romp-postal` skill, into `~/.claude/skills/`.
+- The agent-side tooling for file comments and tracked changes: the four
+  `track-*` commands and the `track-guard.mjs` hook in `~/.claude/hooks/`, the
+  guard registered as a `PreToolUse` hook on `Write|Edit|MultiEdit`, and the
+  `tracked-changes` skill in `~/.claude/skills/`. These come from
+  `vendor/track-changents/`, a pinned copy of track-changents kept in the clone;
+  fixes to it are patches, listed in that directory's README and offered back to
+  its author.
 
 **Running afterwards.** A login service, a launchd agent in
 `~/Library/LaunchAgents` on macOS or a systemd `--user` unit on Linux. It runs

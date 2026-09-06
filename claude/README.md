@@ -16,3 +16,9 @@ place by `install.sh`):
 Skills live in this repo (not `~/.claude/skills/` directly) so a skill and the
 tool it documents change in the same commit; the installer creates the
 symlinks.
+
+One more skill is installed from outside this directory: `tracked-changes`, the
+guide to the file-comment and tracked-change commands, linked from
+`vendor/track-changents/skill/` — the pinned copy of track-changents that also
+supplies those commands and the guard hook. Fixes to it are patches under
+`vendor/track-changents/patches/`, offered back to its author.
