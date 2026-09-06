@@ -12222,6 +12222,66 @@ def _refuse_drive(client, op, sid, msg):
         pass
 
 
+# The todo Reply's refusal texts (userTodoAnswer), shared with Send to session (_file_comments_send_op)
+# through _deliver_todo_reply below. The ended and undelivered texts are the same for both; the
+# switch-off and settled texts differ, because the todo's Reply sends nothing in those two cases while
+# Send to session sends the message anyway and only skips the stamp.
+_USER_TODO_SETTLED_WARN = ("That request was already settled — nothing was sent. If the session still "
+                           "needs your answer, send it as a normal message.")
+_USER_TODO_ENDED_WARN = ("That session has ended, so the answer can't reach it — nothing was sent and "
+                         "the request is still listed. Revive the session to answer it.")
+_USER_TODO_UNDELIVERED_WARN = ("Couldn't deliver that answer — the session didn't take it. The request "
+                               "is still listed; try again, or send it as a normal message.")
+_SENT_UNSTAMPED_WARN = {
+    "off": ("The message was sent, but the request was not marked answered: user todos are turned off "
+            "on this machine. Turn them on in the gear to answer or dismiss it."),
+    "settled": ("The message was sent, but that request was already settled (answered, dismissed or "
+                "withdrawn), so nothing was marked."),
+}
+
+
+def _deliver_todo_reply(be, sid, body, tid=None, must_stamp=True):
+    """Deliver `body` to `sid` as a message from the person the agent works for, optionally as the
+    answer to user todo `tid` — the ONE delivery path the todo's Reply (userTodoAnswer, must_stamp
+    True) and the file viewer's Send to session (fileCommentsSend, must_stamp False;
+    plans/file-review.md) both take, so the gates and the stamp moment are decided once.
+
+    Returns (got, warning). `got` is None when nothing was sent (`warning` says why), else
+    _send_or_park's own verdict: "parked" (the op carries the todo id and stamps when it drains,
+    _deliver_send_batch), truthy (sent now; stamped HERE when a todo is being answered), falsy (the
+    backend refused — the caller is loud, nothing is stamped). `warning` also rides a SENT message
+    when the todo could not be stamped (must_stamp False only): the switch is off, or the todo was
+    already settled.
+
+    The gates, in the todo Reply's order: the user-todos switch first (_open_user_todos answers []
+    while OFF, so a stale row would otherwise read as "already settled"); the todo still open; the
+    session not ENDED (_user_todo_session_ended — a dead pane's send is fire-and-forget, the answer
+    would vanish while the stamp read 'answered', so refuse BEFORE the send, todo left open,
+    whatever must_stamp says). With must_stamp True the first two refuse: the Reply exists to
+    stamp. With must_stamp False the message is worth sending without a stamp — the comments are
+    the point, the stamp a convenience — so it goes, nothing is stamped, and the warning names why.
+    A `tid` of None skips the todo gates altogether (still never into an ended session). The stamp
+    keys on DELIVERY (docs/adr/0001): a tmux send returns its NONCE, so the stamp's stand-down is
+    bound to THIS send's refusal verdict; an SDK send returns a plain bool."""
+    warning, stamp_tid = None, (str(tid) if tid else None)
+    if stamp_tid:
+        block = None
+        if not _user_todos_on():
+            block = "off"
+        elif not any(x["id"] == stamp_tid for x in _open_user_todos(sid)):
+            block = "settled"
+        if block and must_stamp:
+            return None, (_USER_TODOS_OFF_WARN if block == "off" else _USER_TODO_SETTLED_WARN)
+        if block:
+            warning, stamp_tid = _SENT_UNSTAMPED_WARN[block], None
+    if _user_todo_session_ended(sid):
+        return None, _USER_TODO_ENDED_WARN
+    got = _send_or_park(be, sid, body, echo="human" if be is _TMUX else None, user_todo=stamp_tid)
+    if got != "parked" and got and stamp_tid:
+        _stamp_user_todo_answered(sid, stamp_tid, body, nonce=got if isinstance(got, str) else None)
+    return got, warning
+
+
 def _drive(msg, client):
     """Route a per-session DRIVE op — send / interrupt / compact / ask picker / model·effort·mode / rename /
     end / follow-up — to whichever backend OWNS the sid (Sessions.backend_for(sid)), and return True. UI /
@@ -12520,46 +12580,22 @@ def _drive(msg, client):
         # the silent-loss class the object exists to stop. So: sent now → stamp now (truthy
         # backend send only); parked → the op carries the todo id and stamps when it drains
         # (_deliver_send_batch); recalled/dropped → never stamped, the ask still stands.
+        # The gates and the stamp live in _deliver_todo_reply (shared with the file viewer's Send to
+        # session since plans/file-review.md), in strict mode: the switch OFF or a settled row (the
+        # agent withdrew it, or a second dashboard answered first) REFUSES with nothing sent — a
+        # silent no-op would read as an answer that reached the session — and so does an ENDED
+        # session (a dead pane's send is fire-and-forget; the answer would vanish while the stamp
+        # read 'answered'; the ask still stands and a revive makes it answerable again). A parked
+        # send stamps when it drains; a truthy send is stamped inside the helper; a refused send
+        # (an unrevivable SDK session) is loud and leaves the todo open.
         tid = str(msg["todoId"])
         hit = next((x for x in _open_user_todos(sid) if x["id"] == tid), None)
-        if not _user_todos_on():
-            # The feature switch (the user 2026-09-03) — checked FIRST: the gated read above answers
-            # [] while OFF, so without this the click read as "already settled", which is not what
-            # happened. A dashboard can still show a row it was handed before the switch flipped.
-            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_OFF_WARN}))
-        elif hit is None:
-            # LOUD: the row the user clicked was stale (the agent withdrew it, or a second dashboard
-            # answered first) — a silent no-op would read as an answer that reached the session.
-            client["send"](json.dumps({"type": "warn",
-                                       "text": "That request was already settled — nothing was sent. "
-                                               "If the session still needs your answer, send it as a "
-                                               "normal message."}))
-        elif _user_todo_session_ended(sid):
-            # REFUSE loudly instead of sending into the void: a dead tmux session's pane no longer
-            # exists and its backend send is fire-and-forget — the answer would vanish while the
-            # stamp read 'answered'. The todo stays open (the ask still stands); reviving the
-            # session makes it answerable again.
-            client["send"](json.dumps({"type": "warn",
-                                       "text": "That session has ended, so the answer can't reach it — "
-                                               "nothing was sent and the request is still listed. "
-                                               "Revive the session to answer it."}))
-        else:
-            body = _user_todo_answer_body(hit["text"], str(msg["text"]))
-            got = _send_or_park(be, sid, body, echo="human" if be is _TMUX else None, user_todo=tid)
-            if got == "parked":
-                pass                                  # stamps when the park drains into a real send
-            elif got:
-                # a tmux send returns its NONCE — the pending mark's identity — so the stamp's
-                # stand-down is bound to THIS send's refusal verdict, never a stale flag from an
-                # earlier send (round 4, 2026-08-27); an SDK send returns a plain bool
-                _stamp_user_todo_answered(sid, tid, body,
-                                          nonce=got if isinstance(got, str) else None)
-            else:
-                # the backend refused the send (an unrevivable SDK session) — be loud, leave it open
-                client["send"](json.dumps({"type": "warn",
-                                           "text": "Couldn't deliver that answer — the session didn't "
-                                                   "take it. The request is still listed; try again, "
-                                                   "or send it as a normal message."}))
+        body = _user_todo_answer_body(hit["text"], str(msg["text"])) if hit else None
+        got, warning = _deliver_todo_reply(be, sid, body, tid, must_stamp=True)
+        if got is None:
+            client["send"](json.dumps({"type": "warn", "text": warning}))
+        elif got != "parked" and not got:
+            client["send"](json.dumps({"type": "warn", "text": _USER_TODO_UNDELIVERED_WARN}))
         _push_soon()
     elif t == "userTodoDismiss" and msg.get("todoId"):
         # the user clears a USER TODO without a reply — for moot and stale items; nothing reaches
@@ -31219,6 +31255,341 @@ def _edit_trace(path, sid):
         sys.stderr.write("edit-trace to %s failed: %s\n" % (target, ex))
 
 
+# ---- FILE COMMENTS (plans/file-review.md, Slice 1). The viewer's comments panel keeps a person's
+#      comments on a file, and a session's tracked changes, in the track-changents sidecar beside the
+#      file (<root>/.trackchanges/), and hands everything unsent to the owning session as ONE message.
+#      The kernel never parses the sidecar: one node host script (tools/file-comments-host.mjs, over
+#      the vendored store-io and engine) performs every verb as one load-mutate-write on the owning
+#      kernel's disk. The kernel is the door — path resolution, the file-editing consent, the node
+#      probe, a bounded subprocess with the request on stdin — plus the message builder and the
+#      todo-answering delivery. Two WS ops in _dispatch_ws beside saveFile: fileComments (the disk
+#      verbs) and fileCommentsSend (the message); saveFile itself appends a direct edit to the log.
+_FILE_COMMENTS_HOST = ROOT / "tools" / "file-comments-host.mjs"   # tests point this at a stub
+_FILE_COMMENTS_TIMEOUT = 10                                        # seconds: one verb is one load-mutate-write
+_AGENT_TOOLING_PROBE = "~/.claude/hooks/track-reply.mjs"           # linked by install.sh from the vendored copy
+_TRACKCHANGES_DIR = ".trackchanges"                                # the sidecar directory, one per project root
+_EDIT_DIFF_MAX_LINES, _EDIT_DIFF_MAX_BYTES = 200, 16 * 1024       # the comments log's cap on a direct edit's diff
+
+
+def _file_comments_node():
+    """The node binary the host script runs under, resolved on THIS process's PATH (the service unit
+    bakes the installing shell's PATH — bin/romp-service), or None: the `no-node` verdict."""
+    return shutil.which("node")
+
+
+def _agent_tooling_present():
+    """Are the agent-side CLIs linked on this machine? The session answers a comment with
+    ~/.claude/hooks/track-reply.mjs, so that one file is the probe (install.sh links it)."""
+    return os.path.isfile(os.path.expanduser(_AGENT_TOOLING_PROBE))
+
+
+def _file_comments_verdict():
+    """The panel's per-kernel verdict, on the authenticated /defaults payload (never /version, which
+    is served before authorization): "ok"; "no-node" (the host script cannot run here, so the
+    Comments action never appears); "agent-tooling-absent" (comments work, but a session on this
+    machine cannot reply until install.sh has linked the CLIs into ~/.claude/hooks)."""
+    if not _file_comments_node():
+        return "no-node"
+    if not _agent_tooling_present():
+        return "agent-tooling-absent"
+    return "ok"
+
+
+def _file_comments_host_env():
+    """The host script's environment: the kernel's, minus TRACKCHANGES_ROOT. That variable overrides
+    every file's root discovery for the CLIs (track-changents survey item A8), and a kernel that
+    inherited it from some shell would write every project's comments into one stranger's folder."""
+    env = dict(os.environ)
+    env.pop("TRACKCHANGES_ROOT", None)
+    return env
+
+
+def _file_comments_tail(s, n=400):
+    """A bounded stderr tail for a failure text — the last lines, never a whole traceback."""
+    s = (s.decode("utf-8", "replace") if isinstance(s, bytes) else str(s or "")).strip()
+    return (": " + s[-n:]) if s else ""
+
+
+def _file_comments_call(path, verb, args=None, fence=None):
+    """Run the host script for ONE verb on an already-resolved absolute `path`. Returns
+    (reply, None) on an ok:true answer, else (None, (code, error)) — the host's own refusal
+    (`ok:false`, exit 0, its code and error), or the kernel's `no-node` / `host-error` (a non-zero
+    exit, the deadline, no JSON on stdout, or node itself failing to start) with the stderr tail.
+    argv is a list and the request rides stdin: no shell, nothing of the request in a command line."""
+    node = _file_comments_node()
+    if not node:
+        return None, ("no-node", "cannot open the comments for %s: node is not installed on this machine, "
+                                 "and the comments helper runs under it" % _tilde(path))
+    req = {"verb": verb, "path": path, "args": args if isinstance(args, dict) else {},
+           "fence": fence if isinstance(fence, dict) else None}
+    try:
+        r = subprocess.run([node, str(_FILE_COMMENTS_HOST)], input=json.dumps(req), capture_output=True,
+                           text=True, timeout=_FILE_COMMENTS_TIMEOUT, env=_file_comments_host_env(),
+                           cwd=str(ROOT))
+    except subprocess.TimeoutExpired as ex:
+        return None, ("host-error", "the comments helper did not answer within %s s for %s%s"
+                      % (_FILE_COMMENTS_TIMEOUT, _tilde(path), _file_comments_tail(ex.stderr)))
+    except OSError as ex:
+        return None, ("host-error", "could not run the comments helper for %s: %s"
+                      % (_tilde(path), getattr(ex, "strerror", None) or ex))
+    if r.returncode != 0:
+        return None, ("host-error", "the comments helper failed for %s (exit %d)%s"
+                      % (_tilde(path), r.returncode, _file_comments_tail(r.stderr)))
+    try:
+        out = json.loads((r.stdout or "").strip())
+        if not isinstance(out, dict):
+            raise ValueError("not a JSON object")
+    except ValueError:
+        return None, ("host-error", "the comments helper answered with something other than one JSON "
+                                    "object for %s%s" % (_tilde(path), _file_comments_tail(r.stderr or r.stdout)))
+    if not out.get("ok"):
+        return None, (str(out.get("code") or "host-error"),
+                      str(out.get("error") or "the comments helper refused %s without saying why" % _tilde(path)))
+    return out, None
+
+
+def _file_comments_op(msg):
+    """The fileComments WS op → its reply dict: fileCommentsResult (every host success field, plus
+    reqId and verb) or fileCommentsFailed {reqId, verb, code, error}. Order, each refusal naming the
+    tilde-collapsed path: resolve the path (`unreadable` when it cannot become absolute); refuse every
+    MUTATING verb (all but `status`) while the file-editing consent is off — BEFORE any content check,
+    the same wall _save_file stands behind, and the same phrase the viewer's regex matches, so the
+    panel runs the consent-then-retry branch Save uses; `no-node` when node is absent (status too:
+    the panel hides the action on it); then the host script."""
+    rid, verb = msg.get("reqId"), str(msg.get("verb") or "")
+
+    def fail(code, error):
+        return {"type": "fileCommentsFailed", "reqId": rid, "verb": verb, "code": code, "error": error}
+    raw = msg.get("path")
+    p = _resolve_open_path(str(raw), msg.get("sid") or None) if isinstance(raw, str) and raw else ""
+    if not p or not os.path.isabs(p):
+        return fail("unreadable", "cannot open the comments for %s: not an absolute path (no session cwd "
+                                  "to resolve against)" % _tilde(p or str(raw or "")))
+    p = os.path.normpath(p)
+    if verb != "status" and not _file_editing_on():
+        return fail("editing-off", "cannot write the comments for %s: dashboard file editing is off on this "
+                                   "machine — the viewer's Edit button asks to turn it on" % _tilde(p))
+    if not _file_comments_node():
+        return fail("no-node", "cannot open the comments for %s: node is not installed on this machine, "
+                               "and the comments helper runs under it" % _tilde(p))
+    out, err = _file_comments_call(p, verb, msg.get("args"), msg.get("fence"))
+    if err:
+        return fail(*err)
+    rep = {k: v for k, v in out.items() if k != "ok"}
+    rep.update({"type": "fileCommentsResult", "reqId": rid, "verb": verb})
+    return rep
+
+
+def _file_comments_message(path, comments, accepted, rejected, tracked, is_text):
+    """The message Send to session hands the owning session: the [obsidian-diff] shape the vendored
+    skill handles, in the person's voice (tests/test_injected_voice.py renders it). `comments` are
+    {id, desc, body}: `desc` is the client's complete parenthetical phrase without parentheses
+    (on "<passage>", on this file, on the region at …); `body` is the comment's unsent turns
+    verbatim. The path and every request-supplied string are marker-neutralized. The second
+    "To respond" bullet depends on the file: track-edit for a TRACKED text file, edit-normally for
+    an untracked one, regenerate-with-normal-writes for an image or PDF (track-edit would destroy
+    it). The accepted/rejected line appears only when there was a decision. The closing sentence
+    is the loop's return signal: the session asks for another look the way it asked for this one.
+    The webview's preview builder produces this text byte for byte, so change both or neither."""
+    ap = _neutralize_romp_markers(str(path or ""))
+    n = len(comments)
+    lines = ["[obsidian-diff] I left %d comment%s on %s." % (n, "" if n == 1 else "s", ap), ""]
+    for c in comments:
+        lines.append("Comment %s (%s):" % (_neutralize_romp_markers(str(c.get("id") or "")),
+                                           _neutralize_romp_markers(str(c.get("desc") or ""))))
+        lines.append(_neutralize_romp_markers(str(c.get("body") or "")))
+        lines.append("")
+    if (accepted or 0) + (rejected or 0) > 0:
+        lines.append("I accepted %d of your changes and rejected %d." % (accepted or 0, rejected or 0))
+        lines.append("")
+    lines.append("To respond:")
+    lines.append("  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file %s --thread <id> "
+                 "--note \"<your reply>\"" % ap)
+    if not is_text:
+        lines.append("  • to revise it:       regenerate the file with normal writes; never run track-edit on it")
+    elif tracked:
+        lines.append("  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file %s --thread <id> "
+                     "--old \"<exact text>\" --new \"<replacement>\"" % ap)
+    else:
+        lines.append("  • to revise the text: edit the file normally, then say what you changed with the "
+                     "reply command above")
+    lines.append("")
+    lines.append("When you have addressed these, ask me for another look the same way you asked for this one,")
+    lines.append("naming the file.")
+    return "\n".join(lines) + "\n"
+
+
+def _file_comments_send_op(msg):
+    """The fileCommentsSend WS op → fileCommentsSent {reqId, queued, warning?, logWarning?} or
+    fileCommentsSendFailed {reqId, error}. Builds the message, delivers it through
+    _deliver_todo_reply (the todo Reply's own gates and stamp moment, in its lenient mode: the
+    comments are the point and the stamp a convenience, so a switched-off or settled todo sends
+    with a warning, while an ended session refuses and sends nothing), then appends the `send`
+    entry to the comments log through the host script — after a sent or queued verdict only,
+    never after a refusal. A failed append is a warning on the reply, never a failed send: the
+    message is already in the session. Handled in _dispatch_ws, not _drive (the frame carries
+    `sid`, not `id`), so the op checks _kernel_knows itself. The comments are on disk before any
+    send, so a refusal loses nothing."""
+    rid = msg.get("reqId")
+
+    def fail(error):
+        return {"type": "fileCommentsSendFailed", "reqId": rid, "error": error}
+    sid = str(msg.get("sid") or "")
+    if not sid or not _kernel_knows(sid):
+        return fail("nothing was sent: this kernel has no session with id %s (on a board showing more than "
+                    "one machine, the pane addressed the wrong kernel)" % (sid or "(none)"))
+    raw = msg.get("path")
+    p = _resolve_open_path(str(raw), sid) if isinstance(raw, str) and raw else ""
+    if not p or not os.path.isabs(p):
+        return fail("nothing was sent: cannot resolve %s to an absolute path" % _tilde(p or str(raw or "")))
+    p = os.path.normpath(p)
+    rc = msg.get("comments") or []
+    if not isinstance(rc, list) or not all(isinstance(c, dict) for c in rc):
+        return fail("nothing was sent: the request's comments were not a list")
+    comments = [{"id": str(c.get("id") or ""), "desc": str(c.get("desc") or ""), "body": str(c.get("body") or "")}
+                for c in rc]
+    try:
+        accepted, rejected = int(msg.get("accepted") or 0), int(msg.get("rejected") or 0)
+    except (TypeError, ValueError):
+        return fail("nothing was sent: the accepted/rejected counts were not numbers")
+    if not comments and accepted + rejected == 0:
+        return fail("nothing to send: %s has no unsent comments or decisions" % _tilde(p))
+    body = _file_comments_message(p, comments, accepted, rejected, bool(msg.get("tracked")), _is_text_path(p))
+    tid = str(msg["todoId"]) if msg.get("todoId") else None
+    got, warning = _deliver_todo_reply(Sessions.backend_for(sid), sid, body, tid, must_stamp=False)
+    if got is None:
+        return fail(warning)
+    if got != "parked" and not got:
+        return fail("Couldn't deliver the message — the session didn't take it. Your comments are saved with "
+                    "the file; try again, or send them as a normal message.")
+    queued = got == "parked"
+    if tid:
+        _push_soon()                                   # a stamp (or a parked answer) changes the board
+    rep = {"type": "fileCommentsSent", "reqId": rid, "queued": queued}
+    if warning:
+        rep["warning"] = warning
+    entry = {"sid": sid, "comments": [{"id": c["id"], "desc": _neutralize_romp_markers(c["desc"]),
+                                       "body": _neutralize_romp_markers(c["body"])} for c in comments],
+             "accepted": accepted, "rejected": rejected, "queued": queued, "watermark": msg.get("watermark")}
+    name = _name_of(sid)
+    if name:
+        entry["sessionName"] = name
+    if not _file_editing_on():
+        # the comments log is a file in the user's project: every write to disk stands behind the one
+        # file-editing consent (decision 5); the message itself is not a disk write and has gone
+        err = (None, "dashboard file editing is off on this machine — the viewer's Edit button asks to turn it on")
+    else:
+        out, err = _file_comments_call(p, "log-send", entry)
+    if err:
+        rep["logWarning"] = ("the message went to the session, but the comments log for %s was not updated: %s"
+                             % (_tilde(p), err[1]))
+    return rep
+
+
+def _file_comments_reply(client, msg, op, fail_type):
+    """Run one file-comments op on its own thread and answer the SENDING socket — the fileGitLink
+    shape: the host script is a node subprocess with a deadline, and the recv loop must not wait
+    on it. An exception inside the op still answers (the saveFile lesson: a handler that raises
+    sends nothing and the client hangs), as a host-error carrying the exception's text."""
+    def _run(c=client, m=msg):
+        try:
+            rep = op(m)
+        except Exception as ex:
+            rep = {"type": fail_type, "reqId": m.get("reqId"), "verb": str(m.get("verb") or ""),
+                   "code": "host-error", "error": "the comments request failed inside the kernel: %s" % ex}
+            sys.stderr.write("file-comments %s failed: %s\n" % (m.get("type"), traceback.format_exc()))
+        _reply(c, rep)
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _under_trackchanges(p):
+    """Is `p` inside a .trackchanges/ directory? The sidecar, the config and the log themselves are
+    files the viewer can open and edit; an edit to them is never logged (the log would record itself)."""
+    return _TRACKCHANGES_DIR in os.path.normpath(p).split(os.sep)[:-1]
+
+
+def _trackchanges_above(p):
+    """Does any directory at or above `p`'s own hold a .trackchanges/? A NECESSARY condition for the
+    file to have a sidecar, a comments log or a config.json entry (they all live in the .trackchanges/
+    of the file's root, which is an ancestor), decided in the kernel so an ordinary save on an
+    untracked tree spawns no node process. False means nothing to log; True means ask the host,
+    which decides (a .trackchanges/ higher up than the file's own root logs nothing)."""
+    d = os.path.dirname(os.path.normpath(p))
+    for _ in range(64):
+        if os.path.isdir(os.path.join(d, _TRACKCHANGES_DIR)):
+            return True
+        parent = os.path.dirname(d)
+        if parent == d:
+            return False
+        d = parent
+    return False
+
+
+def _edit_diff(old, new, name):
+    """A zero-context unified diff of a direct edit for the comments log, capped at
+    _EDIT_DIFF_MAX_LINES lines or _EDIT_DIFF_MAX_BYTES bytes → (diff, truncated)."""
+    import difflib
+    out, size, truncated = [], 0, False
+    for ln in difflib.unified_diff(old.splitlines(True), new.splitlines(True),
+                                   fromfile="a/" + name, tofile="b/" + name, n=0):
+        if not ln.endswith("\n"):
+            ln += "\n"
+        b = len(ln.encode("utf-8"))
+        if len(out) >= _EDIT_DIFF_MAX_LINES or size + b > _EDIT_DIFF_MAX_BYTES:
+            truncated = True
+            break
+        out.append(ln)
+        size += b
+    return "".join(out), truncated
+
+
+def _edit_log_before(raw, sid):
+    """What the comments log needs from a file BEFORE a save replaces it — {path, bytes, ns} — or None
+    when this save is not one the log records: a path inside .trackchanges/ itself, a tree with no
+    .trackchanges/ anywhere above (no sidecar, log or config entry can exist for it), or no node to
+    run the host script. A file that cannot be read returns {path, error} so a save that then lands
+    anyway (a race) says on its reply why the log is silent. Read through the realpath, as the save
+    writes. Called ahead of _save_file so its 2-tuple contract is untouched."""
+    try:
+        p = os.path.normpath(_resolve_open_path(str(raw or ""), sid))
+        if (not os.path.isabs(p) or _under_trackchanges(p) or not _trackchanges_above(p)
+                or not _file_comments_node()):
+            return None
+    except Exception:
+        return None
+    try:
+        wp = os.path.realpath(p)
+        st = os.stat(wp)
+        with open(wp, "rb") as f:
+            data = f.read()
+        return {"path": p, "bytes": data, "ns": st.st_mtime_ns}
+    except OSError as ex:
+        return {"path": p, "error": getattr(ex, "strerror", None) or str(ex)}
+
+
+def _edit_log_after(pre, content, new_ns):
+    """After a successful save: append the `edit` entry through the host script's log-edit verb →
+    (logged, warning). `pre` is _edit_log_before's answer (None: not a logged save, quietly false).
+    The host decides whether the file has a sidecar, a log or a tracked flag — log-edit never creates
+    one — and answers logged:true|false. A failed append is reported, never a failed save."""
+    if pre is None:
+        return False, None
+    p = pre["path"]
+    if pre.get("error"):
+        return False, ("saved, but not written to the comments log: %s could not be read before the save (%s)"
+                       % (_tilde(p), pre["error"]))
+    prior = pre["bytes"]
+    new = content if isinstance(content, str) else ""
+    diff, truncated = _edit_diff(prior.decode("utf-8", "replace"), new, os.path.basename(p))
+    summary = {"mtimeBeforeNs": str(pre["ns"]), "mtimeAfterNs": str(new_ns),
+               "bytesBefore": len(prior), "bytesAfter": len(new.encode("utf-8")),
+               "diff": diff, "truncated": truncated}
+    out, err = _file_comments_call(p, "log-edit", {"summary": summary})
+    if err:
+        return False, "saved, but not written to the comments log for %s: %s" % (_tilde(p), err[1])
+    return bool(out.get("logged")), None
+
+
 def _git_out(args, cwd, timeout=5, env=None):
     """One read-only git query → stripped stdout, or None on any failure (no repo, no git, timeout).
     List argv, never a shell; quiet — an absent repo is a normal answer here, not an error. `env`
@@ -37569,8 +37940,11 @@ class Handler(BaseHTTPRequestHandler):
                 # behind the gate, rather than disappearing: dropping it from /version alone left the
                 # field rendering blank while the kernel held a real path. The new-session picker
                 # gets the same value on the sessionList socket message; the gear has no socket.
+                # `fileComments` is the comments panel's per-kernel verdict (plans/file-review.md):
+                # ok / no-node / agent-tooling-absent — here and not on /version for the same reason.
                 return self._send(200, json.dumps({"defaultDir": _tilde(_default_create_dir()),
-                                                   "nativeDialogs": _native_dialogs()}),
+                                                   "nativeDialogs": _native_dialogs(),
+                                                   "fileComments": _file_comments_verdict()}),
                                   "application/json", cache="no-cache")
             if p == "/handoff":
                 # Mint a one-time code for a browser we are about to open (see _mint_handoff). The
@@ -40002,15 +40376,26 @@ class Handler(BaseHTTPRequestHandler):
             # session-OWNING kernel like listDir, so a remote session's file saves on ITS machine.
             # The reply is the ACK the client's Save button waits on; a refusal (the mtime conflict
             # above all) rides back verbatim for the viewer to present — never a silent drop.
+            # The comments log (plans/file-review.md, decision 33): a direct edit to a file that has a
+            # sidecar, a log or a tracked flag is appended through the host script's log-edit verb
+            # AFTER the save lands and BEFORE the ack, so the reply's `logged` is true and the panel's
+            # Log is current when the viewer hears the save. The prior bytes are read ahead of the
+            # save (the replace destroys them) rather than through _save_file's return, whose 2-tuple
+            # many call sites unpack. Synchronous on purpose: the ack carries the verdict.
+            pre = _edit_log_before(msg.get("path"), msg.get("sid") or None)
             mt, err = _save_file(msg.get("path"), msg.get("sid") or None,
                                  msg.get("content"), msg.get("baseMtimeNs"))
             if err:
                 _reply(client, {"type": "fileSaveFailed", "reqId": msg.get("reqId"), "error": err})
             else:
+                logged, lwarn = _edit_log_after(pre, msg.get("content"), mt)
                 # mtimeNs travels as a STRING: ~1.7e18 exceeds JS's safe-integer range, so a JSON
                 # number would round in the browser and every next save would falsely conflict
-                _reply(client, {"type": "fileSaved", "reqId": msg.get("reqId"),
-                                "path": str(msg.get("path") or ""), "mtimeNs": str(mt)})
+                rep = {"type": "fileSaved", "reqId": msg.get("reqId"),
+                       "path": str(msg.get("path") or ""), "mtimeNs": str(mt), "logged": logged}
+                if lwarn:
+                    rep["logWarning"] = lwarn          # a failed append is reported, never a failed save
+                _reply(client, rep)
                 _edit_trace(msg.get("path"), msg.get("sid") or None)   # the owning session is TOLD (never edited under silently)
         elif msg and msg.get("type") == "fileGitLink":
             # The viewer's GitHub link (the user 2026-08-15), asked lazily per open. Answered by the
@@ -40025,6 +40410,20 @@ class Handler(BaseHTTPRequestHandler):
                 url, reason = _file_github_link(m.get("path"), m.get("sid") or None)
                 _reply(c, {"type": "fileGitLink", "reqId": m.get("reqId"), "url": url, "reason": reason})
             threading.Thread(target=_gl, daemon=True).start()
+        elif msg and msg.get("type") == "fileComments":
+            # The viewer's comments panel (plans/file-review.md): ONE sidecar verb on the owning
+            # kernel's disk — status, set-tracked, comment, reply, resolve, and the log verbs — run by
+            # the node host script and answered on the sending socket with the client's reqId. Routed
+            # by sid like saveFile (federation strips the host prefix), so a remote session's file is
+            # answered by the kernel that holds its disk. Threaded like fileGitLink: the host script
+            # is a subprocess with a 10 s deadline, and the recv loop must not wait on it.
+            _file_comments_reply(client, msg, _file_comments_op, "fileCommentsFailed")
+        elif msg and msg.get("type") == "fileCommentsSend":
+            # Send to session: the file's unsent comments and decisions as ONE message in the person's
+            # voice, optionally answering the user todo the file was opened from. Not a _drive op (the
+            # frame carries `sid`, not `id`), so the op checks _kernel_knows itself. Threaded for the
+            # comments-log append that follows the send — another host-script call.
+            _file_comments_reply(client, msg, _file_comments_send_op, "fileCommentsSendFailed")
         elif msg and msg.get("type") == "browseDir":
             tgt = str(msg.get("target") or "picker")          # which dir field to fill: the new-session picker or the gear
             if not _native_dialogs():

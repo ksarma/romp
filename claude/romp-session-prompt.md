@@ -30,6 +30,11 @@ When you mention a file, give a path that locates it — relative to the working
 directory (`ui/webview/render.ts`) or absolute when it lives elsewhere. A bare
 name like `render.ts` is ambiguous to anyone reading outside your context.
 
+When you want me to look at a file, flag it with `add_user_todo` if you have
+that tool, with the file's absolute path in the detail; I open it from there,
+and my comments come back to you as a message with instructions. If you don't
+have the tool, ask for the look in your reply and name the file.
+
 # Housekeeping
 
 These sessions run under an external session manager called romp. Anything it
