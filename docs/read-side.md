@@ -258,8 +258,23 @@ built from the served MIME table (`_IMG_MIME`, svg and bmp included), so a previ
 never proposed for a file the image route cannot serve. If the CLI dies holding the
 message, the echo is flagged `undelivered` and the chat offers copy-to-composer and
 dismiss. A kernel restart does not re-run a mid-turn send: the boot duplicate guard
-(`_text_landed`) reads the `queued_command` attachment too, so a landed send is
-neither re-queued nor flagged as undelivered. The client keeps its own pending
+(`_text_landed`) reads the `queued_command` attachment too, and it scans from the
+transcript's byte size at the moment of the send (recorded on the echo as `_echo_off`
+with the file id `_echo_fsid`, mirrored in the registry as `off` and `fsid`) to the end
+of the file, so a landed send is neither re-queued nor flagged as undelivered however
+much the session wrote afterwards. A mark from another file (a /clear or a fork
+since), a mark past the end of the file, or an echo with no mark reads the whole file.
+The guard used to read a fixed 2 MB tail, which suits the lost verdict and not the
+landed one: an attachment further back read as never landed, and the resumed CLI ran
+the send again. The found verdict is recorded on the echo (`_landed`), and
+`prune_live` and the chat merge retire the echo on it without a text match, so a found
+echo always has an exit and a later boot never re-scans it. Every by-text comparison
+of an echo against a record, the guard's scan, `prune_live`'s retire and the kernel's
+`_atom_user_texts` and its folds, uses one key, `echo_text_key` in
+`session_backend.py` (outer whitespace stripped, nothing else). The scan used to
+collapse inner whitespace while the prune compared raw text against stripped keys, so
+a send with a trailing newline was found, hence neither re-fed nor flagged, and yet
+never pruned or dismissable. The client keeps its own pending
 bubble (dashed, "sending…") from the press until the kernel's payload accounts for
 the text (`ui/webview/send-pending.ts`). At the press the bubble is anchored to the
 last stable kernel event, and the user events that already carry its text are
@@ -270,13 +285,27 @@ a hundred events above the tail still ends it. One landing ends one bubble: two
 identical sends in flight end in send order, and a landing of "test the continue
 button" leaves a pending "test" alone. The `undelivered` verdict ends the bubble on
 the same terms, so resending a never-delivered message is not ended by the old
-bubble's verdict. The kernel's echo or queued bubble hides ours for that push and,
-once seen after the press, proves the kernel holds the send. The bubble has no
-lifetime. A connection drop relabels it "not confirmed" until the kernel's own copy
-appears or the message lands; the label is per bubble, so a group holding one dropped
-send and one in flight reads "not confirmed · sending…", and the chat repaints only
-when a bubble's state changed (a redial loop while the kernel is down repaints
-nothing). An absorbed atom sits at its send time, above the steps that were already
+bubble's verdict. The kernel's echo atom or queued copy is attributed per send, as a
+landing is: the k-th copy of the text after the anchor (an echo no earlier bubble
+claimed, or a queued copy beyond the count the press saw) hides the k-th bubble with
+that text for that push and proves the kernel received that one send. A claimed echo
+is background for every later bubble with the text, so one echo confirms one send.
+Identical texts carry no identity of their own, so which copy is whose goes by send
+order, as it does for landings. The bubble has no lifetime. A connection drop relabels
+it "not confirmed" until a copy attributed to it appears or the message lands. The
+label is per bubble, so a group holding one dropped send and one in flight reads "not
+confirmed · sending…". ✕ removes the bubble it sits on: the entry's press time rides
+the button as `data-qts`, and `dropPending` removes that entry rather than the first
+entry with the same text. The chat repaints only when a bubble's state changed (a
+redial loop while the kernel is down repaints nothing). A send pressed while its tab
+is still a placeholder, with no resident frame, is stamped at the first frame instead.
+That stamp reads the events' own kernel stamps: only an event stamped before the
+press's second is the anchor or background, so the frame's copy of this send (its
+echo, or its landed atom when the CLI was idle) is read as the send's own and not as
+an older message. The comparison assumes that the client's clock and the kernel
+host's agree to the second; `stampBase` states the assumption. A press-time stamp
+reads no stamp, since its frame predates the press. An
+absorbed atom sits at its send time, above the steps that were already
 running, so its event carries `absorbed` and `landedAt`, the time the CLI took it:
 the repaired timestamp of the attachment's file-order predecessor (the boundary
 record the splice waited for), clamped to the send time when it would be earlier.

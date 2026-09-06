@@ -55,8 +55,9 @@ never gives up on its own. If the connection drops before romp has confirmed it 
 the message, the bubble reads "not confirmed"; it returns to "sending…" once romp
 confirms, and clears when the message lands. ✕ puts the text back in the composer to
 send again. Each bubble reports its own state, so one dropped message and one still on
-its way read "not confirmed · sending…". Sending the same text twice shows two bubbles,
-and each clears when its own copy lands.
+its way read "not confirmed · sending…", and ✕ acts on the bubble you press it on.
+Sending the same text twice shows two bubbles; romp confirms them one at a time, as it
+receives each copy, and each clears when its own copy lands.
 
 **Tags and groups.** A tag is a named, colored set of sessions; a session can be in
 several. Right-click a tab and open **Tags** to add or remove them. Tags filter every
