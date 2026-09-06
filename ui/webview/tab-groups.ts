@@ -15,6 +15,7 @@
 // event), a same-window CustomEvent reaches the writer. Pure and DOM-free (the tab-order.ts
 // pattern) so the rule executes in node tests; render.ts paints it.
 import { SessionViews, TagUnion, viewTags } from "./session-views";
+import { hostOf } from "./host-prefix";
 
 export const TABGROUPS_KEY = "romp:tabgroups";
 export const TABGROUPS_EVENT = "romp-tabgroups";
@@ -52,6 +53,9 @@ export interface TabGroupsState {
   collapsed: string[];  // sections the user folded
   expanded: string[];   // default-folded sections the user opened
   pinned: PinnedRef[];  // members shown under their folded section
+  /** the name each renamed tag's pins were last carried to, by tag id — followTagRenames' once-per-
+   *  browser memory; absent until a rename was followed */
+  followed?: Record<string, string>;
 }
 
 /** The section a union makes, as pins are matched and written against it. */
@@ -118,7 +122,14 @@ export function parseTabGroups(raw: string | null | undefined, unions: readonly 
       }
       return out;
     };
-    return { on: o.on !== false, collapsed: strs(o.collapsed), expanded: strs(o.expanded), pinned: pins(o.pinned) };
+    const names = (x: unknown): Record<string, string> | undefined => {
+      if (!x || typeof x !== "object" || Array.isArray(x)) return undefined;
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(x as Record<string, unknown>)) if (typeof v === "string") out[k] = v;
+      return Object.keys(out).length ? out : undefined;
+    };
+    const followed = names(o.followed);
+    return { on: o.on !== false, collapsed: strs(o.collapsed), expanded: strs(o.expanded), pinned: pins(o.pinned), ...(followed ? { followed } : {}) };
   } catch {
     return fresh();
   }
@@ -136,7 +147,9 @@ export function readTabGroups(unions: readonly TagUnion[] = []): TabGroupsState 
  *  window gets the same news through a CustomEvent (one notification path, two deliveries). */
 export function writeTabGroups(st: TabGroupsState): void {
   try {
-    localStorage.setItem(TABGROUPS_KEY, JSON.stringify({ on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned: st.pinned }));
+    const blob: Record<string, unknown> = { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned: st.pinned };
+    if (st.followed && Object.keys(st.followed).length) blob.followed = st.followed;
+    localStorage.setItem(TABGROUPS_KEY, JSON.stringify(blob));
   } catch {
     /* quota / private mode → this preference just doesn't outlive the page */
   }
@@ -164,7 +177,7 @@ export function setSectionCollapsed(st: TabGroupsState, name: string, folded: bo
   const expanded = st.expanded.filter((n) => n !== name);
   if (folded) { if (!DEFAULT_COLLAPSED.has(name)) collapsed.push(name); }
   else if (DEFAULT_COLLAPSED.has(name)) expanded.push(name);
-  return { on: st.on, collapsed, expanded, pinned: st.pinned };
+  return { ...st, collapsed, expanded };
 }
 
 export function toggleSectionCollapsed(st: TabGroupsState, name: string): TabGroupsState {
@@ -201,24 +214,39 @@ export function isPinned(st: TabGroupsState, sec: SectionRef, sid: string): bool
 export function setPinned(st: TabGroupsState, sec: SectionRef, sid: string, on: boolean): TabGroupsState {
   const pinned = st.pinned.filter((p) => !(p.sid === sid && pinNames(sec, p)));
   if (on && sec.name !== null) pinned.push(pinEntry(sec, sid));
-  return { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned };
+  return { ...st, pinned };
 }
 
 export function togglePinned(st: TabGroupsState, sec: SectionRef, sid: string): TabGroupsState {
   return setPinned(st, sec, sid, !isPinned(st, sec, sid));
 }
 
-/** Drop the pins nothing can render any more, judged PER ENTRY: the session is still among the tabs
- *  the strip knows, and some union the entry names (by its name, or by its id as a local id) still
+/** Drop the pins nothing can render any more, judged PER ENTRY — and only where the entry's session
+ *  CAN be judged from this page. An entry is JUDGED when its session's fate is knowable here: the sid is
+ *  a tab the strip knows, or it is local (the page's own kernel lists every local session), or its host
+ *  is in `hosts` — the remote hosts attached with the tunnel up. Judged, it stands only while the
+ *  session is a known tab and some union the entry names (by its name, or by its id as a local id)
  *  holds the session — so the store does not keep an entry for every tag ever deleted, session ever
- *  closed, or member moved out. On the WRITE path only (the pin row's click): a prune there moves
- *  nothing on screen, where a prune per render could act on a transient frame (a views blob
- *  mid-write, a host's tags not yet arrived) and put a tab away with no gesture. Returns `st` itself
- *  when nothing is dropped. */
-export function prunePinned(st: TabGroupsState, unions: readonly TagUnion[], knownIds: ReadonlySet<string>): TabGroupsState {
-  const pinned = st.pinned.filter((p) => knownIds.has(p.sid)
-    && unions.some((u) => (u.name === p.name || (p.id !== undefined && u.localId === p.id)) && u.members.includes(p.sid)));
-  return pinned.length === st.pinned.length ? st : { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned };
+ *  closed, or member moved out. NOT judged — a sid whose host is detached or down — it stands
+ *  untouched: the host's sessions left the strip with the host (a detach dismisses every one; a page
+ *  loaded during an outage never had them) and its tags left the blob or stand cached, none of which is
+ *  a session's end. The entries wait for the host to report, and the next pin write after that judges
+ *  them for real (round 5 of the 2026-09-06 review: a pin click while a host was detached dropped every
+ *  pin on its sessions, and they folded away on the reattach with no gesture on them).
+ *  On the WRITE path only (the pin row's click): a prune there moves nothing on screen, where a prune
+ *  per render could act on a transient frame (a views blob mid-write, a reattached host's tags one
+ *  supervisor pass behind its tabs) and put a tab away with no gesture. Returns `st` itself when
+ *  nothing is dropped.
+ *
+ *  THE LIMIT: a LOCAL tab pinned under a section that only a remote host's tag made (the host tagged
+ *  one of ours) is judged on that host's detach — the sid is local, and the entry names the section by
+ *  name alone, a remote tag's id and so its host never being stored — and dropped, since no union of
+ *  the name holds it; the user sets the pin again after the reattach. */
+export function prunePinned(st: TabGroupsState, unions: readonly TagUnion[], knownIds: ReadonlySet<string>, hosts: ReadonlySet<string>): TabGroupsState {
+  const judged = (sid: string) => { const h = hostOf(sid); return knownIds.has(sid) || h === "" || hosts.has(h); };
+  const pinned = st.pinned.filter((p) => !judged(p.sid) || (knownIds.has(p.sid)
+    && unions.some((u) => (u.name === p.name || (p.id !== undefined && u.localId === p.id)) && u.members.includes(p.sid))));
+  return pinned.length === st.pinned.length ? st : { ...st, pinned };
 }
 
 /** A tag that kept its id and changed its name between two views blobs: `local` for one of this
@@ -248,37 +276,63 @@ export function tagRenames(prev: SessionViews | null | undefined, next: SessionV
 /** Carry the pins across the tags a blob renamed (tagRenames), so a pinned tab stays pinned to its
  *  group through the group's rename — the name a pin stores is the section's displayed name, and a
  *  rename changes it. An entry FOLLOWS a rename when it carries the renamed tag's id, or carries the
- *  old name with no id and the renamed tag holds its tab (a remote-only pin, made before a local tag
- *  of the name existed; the other same-named tags' pins are not this tag's to move). It is rewritten
- *  to the new name, with the tag's id when the tag is local — so the next rename finds it by id even
- *  from a client with no previous blob. Where the rename SPLITS the section — a same-named tag on the
- *  other side still holds the tab, so the tab's home after the rename is whichever half tagOrder
- *  puts first (the kernel leaves tagOrder alone on a rename, so an old name once dragged into place
- *  keeps it and the renamed local tag falls behind) — an entry for the old-name half stays beside
- *  the rewritten one: the tab is pinned in both halves, and the prune drops the half that stops
- *  holding it. `unions` are the NEXT blob's. Exact duplicates collapse. Returns `st` itself when no
- *  entry changed.
+ *  old name and the renamed tag holds its tab: for an entry with no id (a remote-only pin, made before
+ *  a local tag of the name existed), any such tag's rename; for an entry with a local id, a REMOTE
+ *  tag's — its own tag's rename reaches it by id, and two local tags never share a name. The other
+ *  same-named tags' pins are not this tag's to move. EVERY matching rename is followed, one entry per:
+ *  the new name, with the tag's id when the tag is local — so the next rename finds it by id even from
+ *  a client with no previous blob. Where a rename SPLITS the section — a same-named tag on the other
+ *  side still holds the tab, so the tab's home after the rename is whichever half tagOrder puts first
+ *  (the kernel leaves tagOrder alone on a rename, so an old name once dragged into place keeps it and
+ *  the renamed tag falls behind) — the half the tab did not move to keeps its entry beside the new
+ *  one, whichever side renamed: a local rename keeps the old-name half while the remote tag holds the
+ *  tab, a remote rename adds its new-name half while the local tag holds the tab under the old. The
+ *  tab is pinned in both halves, and the prune drops the half that stops holding it. `unions` are the
+ *  NEXT blob's. Exact duplicates collapse.
+ *
+ *  ONCE PER BROWSER: the store remembers, by tag id, the name each renamed tag's pins were last carried
+ *  to (`followed`), and a rename to that name is already followed. Every pane of the browser computes
+ *  renames against ITS OWN held blob, so a pane adopting a frame late (a background tab whose socket
+ *  redialed, a stale base coalescing several frames) computes the rename the first pane followed and,
+ *  following it again, would undo what the user did in between — a pin turned off after the split —
+ *  or split a pin made after the rename; the rename was the event, and it was acted on (round 5 of the
+ *  2026-09-06 review). The memory is the RENAME's, not a frame's: a remote host's rename rides the
+ *  local blob (remoteTags, the kernel's cached read of the host) with no change to the blob's write
+ *  seq, so no seq could name it; and a tag renamed back and then forth again is followed each time,
+ *  each being to a name the memory does not hold for it. Every rename the frame carries is remembered,
+ *  matched or not, and the memory is pruned to the tags the blob still has. Returns `st` itself when
+ *  every rename is already followed — the late pane writes nothing and notifies no one.
  *
  *  THE LIMIT: a remote-only pin has no id, so a rename of the remote tag that happens while no client
  *  of this browser is watching (the page closed, the blob's first frame after it) leaves the entry
  *  under the old name, where it matches nothing until the user pins the tab again. A local tag's pin
  *  carries the id and has no such gap. */
 export function followTagRenames(st: TabGroupsState, renames: readonly TagRename[], unions: readonly TagUnion[]): TabGroupsState {
-  if (!renames.length || !st.pinned.length) return st;
+  const fresh = renames.filter((r) => !(st.followed && st.followed[r.id] === r.to));
+  if (!fresh.length) return st;
+  const matches = (p: PinnedRef, x: TagRename) => (p.id !== undefined && x.id === p.id)
+    || ((p.id === undefined || !x.local) && x.from === p.name && x.members.includes(p.sid));
   const out: PinnedRef[] = [];
   const seen = new Set<string>();
   const put = (p: PinnedRef) => { const k = `${p.sid} ${p.name} ${p.id ?? ""}`; if (!seen.has(k)) { seen.add(k); out.push(p); } };
   for (const p of st.pinned) {
-    const r = renames.find((x) => (p.id !== undefined ? x.id === p.id : x.from === p.name && x.members.includes(p.sid)));
-    if (!r) { put(p); continue; }
-    put(r.local ? { sid: p.sid, name: r.to, id: r.id } : { sid: p.sid, name: r.to });
-    const rest = unions.find((u) => u.name === r.from && u.members.includes(p.sid));
-    if (rest) put(pinEntry(sectionRef(rest), p.sid));
+    const rs = fresh.filter((x) => matches(p, x));
+    if (!rs.length) { put(p); continue; }
+    // the entry MOVES with its own tag's rename (by id) or, id-less, with any it matches; a remote rename
+    // matched by name against a local-id entry adds the remote half and leaves the entry, whose local
+    // tag still holds the tab under its own name
+    if (p.id !== undefined && !rs.some((r) => r.id === p.id)) put(p);
+    for (const r of rs) put(r.local ? { sid: p.sid, name: r.to, id: r.id } : { sid: p.sid, name: r.to });
+    for (const from of new Set(rs.map((r) => r.from))) {
+      const rest = unions.find((u) => u.name === from && u.members.includes(p.sid));
+      if (rest) put(pinEntry(sectionRef(rest), p.sid));
+    }
   }
-  // by value: a second pane that adopts the same frame after the first has written finds the entries
-  // already carried, and must not write (and notify) again
-  const same = out.length === st.pinned.length && out.every((p, i) => p.sid === st.pinned[i].sid && p.name === st.pinned[i].name && p.id === st.pinned[i].id);
-  return same ? st : { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned: out };
+  const live = new Set(unions.flatMap((u) => u.ids));
+  const followed: Record<string, string> = {};
+  for (const [id, name] of Object.entries(st.followed || {})) if (live.has(id)) followed[id] = name;
+  for (const r of fresh) followed[r.id] = r.to;
+  return { ...st, pinned: out, followed };
 }
 
 /** The words a section header wears — its count, its tooltip and its accessible name — pure so the copy

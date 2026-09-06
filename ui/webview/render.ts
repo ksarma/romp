@@ -739,6 +739,18 @@ let collapsedTabIds = new Set<string>();
 /** Every tab the strip knows — the kernel's order plus any pushed tab not yet in it (a placeholder):
  *  the "does this session still exist" of the pin prune (tab-groups.ts prunePinned). */
 function knownTabIds(): Set<string> { return new Set<string>([...order, ...tabMeta.keys()]); }
+/** The remote hosts whose sessions the strip CAN know right now — attached with the tunnel up, from the
+ *  federation router's published lists: the prune's "this entry can be judged" (tab-groups.ts
+ *  prunePinned). A detached host's sessions left `order` with it (closeRemote's hostDrop dismissals) and
+ *  a down host's never arrived on a page loaded during the outage; neither is a session's end, so their
+ *  pins stand until the host reports. Empty where no router runs (a single-kernel page): every sid is
+ *  local there, and local sids are always judged. */
+function reachableHosts(): Set<string> {
+  const fed = (window as any).__rompFed;
+  const hosts: string[] = (fed && typeof fed.hosts === "function" ? fed.hosts() : []) || [];
+  const down = new Set<string>((fed && typeof fed.down === "function" ? fed.down() : []) || []);
+  return new Set(hosts.filter((h) => !down.has(h)));
+}
 /** The tab-groups store as a WRITE reads it: with the current unions, so an entry in the store's earlier
  *  shape is migrated faithfully before it is written back (tab-groups.ts parseTabGroups). A read that
  *  only looks at `.on` needs none. */
@@ -5804,9 +5816,11 @@ function showTabMenu(e: MouseEvent, id: string) {
         // section's entry alone, so the row's copy — "while <home> is folded" — is the whole truth.
         // Only while the strip is sectioned and the session has a home tag — there is no fold to show
         // through otherwise. The row wears the home tag's chip and the menus' ✓ when on; the write
-        // prunes the pins of tags and sessions that are gone (this is the one write path, and a prune
-        // here moves nothing on screen), notifies (TABGROUPS_EVENT), and the strip re-renders, the
-        // fold's own path.
+        // prunes the pins of tags and sessions that are gone — judging only entries whose session this
+        // page can know about: a known tab, a local sid, or one on a host that is attached and up
+        // (reachableHosts); a detached or down host's pins wait for it — (this is the one write path,
+        // and a prune here moves nothing on screen), notifies (TABGROUPS_EVENT), and the strip
+        // re-renders, the fold's own path.
         if (home) {
           const sec = sectionRef(home);
           const on = isPinned(tabGroups(), sec, id);
@@ -5819,7 +5833,7 @@ function showTabMenu(e: MouseEvent, id: string) {
           sb2.textContent = on ? `stays on the strip while ${home.name} is folded` : `keep this tab on the strip while ${home.name} is folded`;
           bodyE.appendChild(sb2);
           row.appendChild(bodyE);
-          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(prunePinned(togglePinned(tabGroups(), sec, id), unionFor(), knownTabIds())); build(); });
+          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(prunePinned(togglePinned(tabGroups(), sec, id), unionFor(), knownTabIds(), reachableHosts())); build(); });
           sub.appendChild(row);
         }
         if (holding().length || others.length) sub.appendChild(el("div", "ctx-sep"));
