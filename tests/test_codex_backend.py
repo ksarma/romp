@@ -862,9 +862,12 @@ class Lifecycle(unittest.TestCase):
         sid = be.spawn("web", "/TESTDIR")
         self.assertTrue(be.kill(sid))       # child backends load it without starting queue workers
         code = r'''
-import sys
-from importlib.machinery import SourceFileLoader
-cb = SourceFileLoader("codex_child", sys.argv[1]).load_module()
+import importlib.util, os, sys
+# the repo's file-path importer, by path: a child process has no tests/ on sys.path (romp_load is the
+# test modules' door to the same helper)
+_spec = importlib.util.spec_from_file_location("romp_loadsource", os.path.join(os.path.dirname(sys.argv[1]), "loadsource.py"))
+_ls = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_ls)
+cb = _ls.load_source("codex_child", sys.argv[1])
 be = cb.CodexBackend(sys.argv[2], client_factory=lambda: None, log=lambda message: None)
 s = be._session(sys.argv[3])
 for i in range(20):
