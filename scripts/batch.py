@@ -2043,7 +2043,8 @@ def main(argv=None):
                                    "finish. Never squash or rebase: that would leave every member open." % MAIN)
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("--auto", action="store_true",
-                   help="arm auto-merge instead (lands when the required checks pass; needs a ruleset or branch protection on %s)" % MAIN)
+                   help="arm auto-merge instead (lands when the required checks pass; needs the repository's \"Allow auto-merge\" "
+                        "setting and a ruleset or branch protection on %s)" % MAIN)
     p.add_argument("--no-notify", action="store_true", help=HELP_NO_NOTIFY + " (passed on to finish)")
     p.add_argument("--no-fetch", action="store_true", help=HELP_NO_FETCH)
     p.set_defaults(func=cmd_land)

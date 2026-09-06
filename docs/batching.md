@@ -15,11 +15,12 @@ also runs on every push to main).
 ## If you open a PR
 
 1. Base it on main. If it depends on an open PR you own, base it on that branch and put
-   `Depends-on: #N` on one of the first lines of the body, so the batcher orders it. Do not open a
-   PR against another session's branch. Do not merge a PR into another PR's branch. If a PR's base
-   branch belongs to a PR that has already merged, retarget it before anything else:
-   `gh pr edit N --base main`. `scripts/land.sh` refuses any base but main (a merged PR's branch,
-   an open PR's branch, a branch with no PR).
+   `Depends-on: #N` on one of the body's first 20 lines, outside fenced code (one PR per line, or
+   `#N, #M` on one line), so the batcher orders it. Do not open a PR against another session's
+   branch. Do not merge a PR into another PR's branch. If a PR's base branch belongs to a PR that
+   has already merged, retarget it before anything else: `gh pr edit N --base main`.
+   `scripts/land.sh` refuses any base but main (a merged PR's branch, an open PR's branch, a branch
+   with no PR).
 2. Give it one tier label: `fix`, `tests-only`, `feature`, or `major-feature`
    (`gh pr edit N --add-label fix`). A `major-feature` PR is discussed before it joins a batch; a
    `hold` label keeps a PR out of the next batch.
@@ -47,8 +48,8 @@ Auto-merge (`gh pr merge --auto`) needs two things: the repository's "Allow auto
 (`gh api repos/{owner}/{repo} --jq .allow_auto_merge`; off on this fork today, and turning it on is
 your call: `gh repo edit --enable-auto-merge`) and required rules on main, a ruleset rule or branch
 protection. Without the setting GitHub rejects it; without the rules it merges at once and protects
-nothing. `scripts/land.sh --auto` reads both and refuses, naming the one that is missing; it never
-adds `--auto` on its own.
+nothing. `scripts/land.sh --auto` and `scripts/batch.py land --auto` read both and refuse, naming
+the one that is missing; neither adds `--auto` on its own.
 
 Per batch, in order:
 
@@ -88,12 +89,22 @@ subject; `verify` refuses the branch otherwise.
 
 1. `scripts/batch.py plan`: every ready PR, dependencies first, then by number. `plan --labeled`
    takes only PRs labeled `land`. Message the authors of missing trailers once.
-2. `scripts/batch.py assemble <name>`. A conflicting member is held back and its owner told. To
-   resolve a small conflict instead, `assemble <name> --resolve N`, resolve per hunk in the batch
-   worktree, `git add` the files, then `assemble <name> --continue --reviewed '<who, verdict>'`.
+2. `scripts/batch.py assemble <name>`. A conflicting member is held back and its owner told; the
+   comment names what it conflicts with: origin/main when the member conflicts with main on its
+   own, otherwise the earlier members whose diffs touch the same files (or the batch, when none
+   does). To resolve a small conflict instead, `assemble <name> --resolve N`, resolve per hunk in
+   the batch worktree, `git add` the files, then
+   `assemble <name> --continue --reviewed '<who, verdict>'`. A resolution may change only the files
+   that conflicted (plus entry files under `upstream/` when UPSTREAM.md was one of them):
+   `--continue` refuses a staged change to any other path, naming the path and the `git restore`
+   command that puts the merge's own content back; move such a change into a separate `batch:`
+   commit after the merge instead. A member whose head is already in the batch (reachable through
+   an earlier member's head) gets no merge commit of its own; it is recorded as contained, lands
+   with the batch, and the body lists it as such under "Read these first" and in its table row.
 3. Run the full sweep at the batch head (pytest, bats, `npm test`, `npm run typecheck`); re-run the
    known-flake modules alone before calling anything red.
-4. `scripts/batch.py verify <name> --sweep '<the counts>'`.
+4. `scripts/batch.py verify <name> --sweep '<the counts>'`. If an earlier `assemble` died part-way,
+   `verify` fails with "assembly incomplete"; run `assemble` again first.
 5. `git push -u origin batch/<name>` (after a rebuild, `git push --force-with-lease origin
    batch/<name>`; `pull` pushes that way itself). If the pre-push hook refuses the push: it scans
    each pushed commit's tree, so a batch tip that inherits a pre-scrub string trips it although the
@@ -105,12 +116,18 @@ subject; `verify` refuses the branch otherwise.
    `scripts/batch.py assemble <name> --repin N` (re-reads that head and rebuilds the branch;
    `--repin all` re-reads every member), then repeat steps 3 to 5. Without the re-pin, `verify`
    fails on the moved head.
-7. When main moves and the batch PR reads behind or conflicting, run `git merge origin/main` in
-   the batch worktree (`../romp-batch-<name>`; `verify` allows a merge of main on the chain), then
-   repeat steps 3 to 5.
+7. When main moves and the batch PR reads behind or conflicting, run
+   `scripts/batch.py assemble <name> --merge-main`: it merges origin/main into the assembled batch
+   in its worktree (`../romp-batch-<name>`) instead of rebuilding. A clean merge is recorded. A
+   conflict stops with exit 3, as `--resolve` does: resolve per hunk, `git add` the files, then
+   `assemble <name> --continue --reviewed '<who, verdict>'` records it (or `--abort` drops the
+   merge), and the body lists the merge under "Read these first" and in the conflict resolutions
+   block. Then repeat steps 3 to 5.
 8. On the maintainer's word: `scripts/batch.py land <name>`. It verifies again, merges with a merge
-   commit, and runs `finish`. If the maintainer clicked the button, run
-   `scripts/batch.py finish <name>` alone.
+   commit, and runs `finish`. `land --auto` arms auto-merge instead: it needs the repository's
+   "Allow auto-merge" setting and rules on main (a ruleset or branch protection), reads both before
+   it retargets anything, and refuses naming the one that is missing; run `finish` once the PR
+   lands. If the maintainer clicked the button, run `scripts/batch.py finish <name>` alone.
 
 ## Checked on the first batch
 
