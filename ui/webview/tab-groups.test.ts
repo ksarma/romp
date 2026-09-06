@@ -352,14 +352,14 @@ test("the section chrome is a LABEL's (the user 2026-09-06): the surface's sub-l
   assert.match(CSS, /\.tab-group-count \{ opacity: 0\.7; \}/, "the count inherits the header's size — no em nested inside an em");
   assert.match(CSS, /\.tab-group-name \{ font-weight: 600; \}/);
   assert.match(CSS, /\.tab-group-swatch \{ flex: 0 0 auto; width: 3px; height: 12px; border-radius: 1px; background: var\(--dim\); \}/,
-    "the tag's colour as a short bar — a 7px dot beside a name is a session pip");
+    "the tag's color as a short bar — a 7px dot beside a name is a session pip");
   assert.doesNotMatch(CSS, /\.tab-group-dot/, "the dot is gone");
   const sizes = new Set(Array.from(CSS.matchAll(/\n\.tab-group-[^{\n]*\{[^}]*font-size: ([^;]+);/g)).map((m) => m[1]));
   assert.deepEqual([...sizes], ["0.82em"], "one font-size across every section rule (the flag's glyph keeps the tab glyph's own class)");
   assert.match(CSS, /\.tab-group-sep \{ flex: 0 0 auto; box-sizing: border-box; width: 13px; padding: 8px 6px;/, "a 1px line inside 6px gutters (padding, so its rect is its footprint)");
 });
 
-test("the header's structure and gestures read as a label: chevron (flips with the fold) → colour bar → name → count; a keyboard button; hover/focus say fold, never open; tokens only (the user 2026-09-06)", () => {
+test("the header's structure and gestures read as a label: chevron (flips with the fold) → color bar → name → count; a keyboard button; hover/focus say fold, never open; tokens only (the user 2026-09-06)", () => {
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
   const at = (t: string) => { const i = head.indexOf(t); assert.ok(i >= 0, "present: " + t); return i; };
   assert.ok(at('el("span", "tab-group-caret")') < at('el("span", "tab-group-swatch")')
@@ -369,7 +369,7 @@ test("the header's structure and gestures read as a label: chevron (flips with t
   assert.match(CSS, /\.tab-group-head:not\(\.collapsed\) \.tab-group-caret \{ transform: rotate\(90deg\); \}/,
     "the fold state flips it — the sheet's fold-caret idiom, a CSS transition, no timer");
   assert.match(CSS, /\.tab-group-caret \{[^}]*transition: transform 0\.12s ease;/);
-  assert.match(head, /if \(sec\.color\) swatch\.style\.background = sec\.color;/, "the tag's colour from the views store");
+  assert.match(head, /if \(sec\.color\) swatch\.style\.background = sec\.color;/, "the tag's color from the views store");
   // none of a tab's affordances
   assert.ok(!head.includes("tab-close") && !head.includes("tabStateClass(") && !head.includes("tab-dot") && !head.includes("tabCtxGauge("),
     "no close, no state class of its own, no tab pip, no gauge");
@@ -396,7 +396,7 @@ test("the header's structure and gestures read as a label: chevron (flips with t
   assert.ok(rules.length >= 15, "the section rules were found: " + rules.length);
   for (const [, sel, body] of rules) {
     if (sel.trim() === ".tab-group-pip.retrying") continue;   // the one literal: the tab's own amber, checked equal below
-    assert.doesNotMatch(body.replace(/var\([^)]*\)/g, "V"), /#[0-9a-fA-F]{3,8}\b|rgba?\(/, "a raw colour in " + sel.trim());
+    assert.doesNotMatch(body.replace(/var\([^)]*\)/g, "V"), /#[0-9a-fA-F]{3,8}\b|rgba?\(/, "a raw color in " + sel.trim());
   }
   assert.equal(CSS.match(/\.tab-group-pip\.retrying \{ background: (#[0-9a-fA-F]{6}); \}/)![1], CSS.match(/\.tab\.tab-retrying \{ --state: (#[0-9a-fA-F]{6}); \}/)![1],
     "the pip's retrying amber IS the tab's (a status literal the sheet keeps raw on the tab too)");

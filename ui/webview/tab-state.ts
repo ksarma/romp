@@ -67,7 +67,7 @@ const PIP_CLASSES: Record<SectionPip, readonly string[]> = {
 
 export interface TabMemberLike { name?: string; status?: TabStateLike | null }
 
-/** The members whose own tab wears the pip's colour — the sessions its tooltip names, in strip order. */
+/** The members whose own tab wears the pip's color — the sessions its tooltip names, in strip order. */
 export function sectionPipMembers(kind: SectionPip, members: ReadonlyArray<TabMemberLike | null | undefined>): string[] {
   const names: string[] = [];
   for (const m of members) if (m && PIP_CLASSES[kind].includes(tabStateClass(m.status))) names.push(String(m.name || "").trim() || "(unnamed)");

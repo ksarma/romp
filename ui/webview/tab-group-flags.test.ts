@@ -153,7 +153,7 @@ test("the flag wears the tab glyph's class and the header's count size; the butt
     "the count only when more than one, at the header's own count size (no new font-size)");
   assert.doesNotMatch(FOLDED, /tab-dot/, "pips encode turn state; the kernel's mobile scrape keys on them");
   assert.match(CSS, /\.tab-group-flag \{[^}]*color: var\(--fg\);[^}]*\}/, "the prose tone: a step above the header's dim label, in every theme");
-  assert.match(CSS, /\.tab-group-flag \.tab-usertodo \{ color: inherit; \}/, "the glyph follows: its soft white was chosen for a coloured chip, and a header has none");
+  assert.match(CSS, /\.tab-group-flag \.tab-usertodo \{ color: inherit; \}/, "the glyph follows: its soft white was chosen for a colored chip, and a header has none");
   assert.match(CSS, /\.tab-group-flag:focus-visible \{ outline: 1px solid var\(--accent\); outline-offset: 1px; \}/, "focus chrome is the accent, keyboard only");
   assert.match(CSS, /\.tab-group-flag:hover \{ background: var\(--accent-wash\); \}/, "the accent wash — the one action hover (button-vocab), themed");
   assert.doesNotMatch(CSS.match(/\.tab-group-flag \{[^}]*\}/)![0], /font-size/, "no new font-size: the glyph and count keep their own");

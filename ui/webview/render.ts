@@ -4722,11 +4722,11 @@ function releaseTabStrip(): void {
 }
 
 // A SECTION HEADER for the tab strip (tab groups on tags, the user 2026-09-04). It reads as a LABEL,
-// not a session (the user 2026-09-06): a disclosure chevron that flips with the fold, the tag's colour
+// not a session (the user 2026-09-06): a disclosure chevron that flips with the fold, the tag's color
 // as a short bar, the name in the strip's small letter-spaced label style, and the member count — the
 // folded-away count while folded. None of a tab's own affordances: no close, no state class, no dot of
 // its own. Folded, it carries two MEMBER-derived marks after the count, small, so a fold hides no
-// "needs you": the summary pip (tab-state.ts's rule, the tab's own colours) and the user-todo flag. It
+// "needs you": the summary pip (tab-state.ts's rule, the tab's own colors) and the user-todo flag. It
 // carries data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip
 // rebuilds on every push), is a button to the keyboard too (Enter or Space fold and open; the chevron
 // says which), and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted

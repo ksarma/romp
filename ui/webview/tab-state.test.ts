@@ -40,7 +40,7 @@ test("executed: sectionPip — a folded header's pip is red ONLY for a member th
   assert.match(SECTION_PIP_TITLE.working, /working/);
 });
 
-test("executed: the pip's tooltip names the sessions whose own tab wears its colour (the user 2026-09-06)", () => {
+test("executed: the pip's tooltip names the sessions whose own tab wears its color (the user 2026-09-06)", () => {
   const members = [
     { name: "web", status: { state: "working" } },
     { name: "api", status: { state: "needsInput" } },

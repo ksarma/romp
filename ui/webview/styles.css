@@ -442,10 +442,10 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
    and the kernel's mobile scrape keys on the pip classes. */
 /* TAB SECTIONS — groups are tags (the user 2026-09-04): one header per home tag in the strip, the
    untagged trail behind a plain separator. A header reads as a LABEL, not a session (the user
-   2026-09-06): a disclosure chevron that flips with the fold, the tag's colour as a short bar, the name
+   2026-09-06): a disclosure chevron that flips with the fold, the tag's color as a short bar, the name
    small and letter-spaced, and the member count (the folded-away count while folded). No state class,
    no close, no pip of its own — none of a tab's dress; folded, two small MEMBER-derived marks follow the
-   count (the state pip below and the user-todo flag), and hover/focus brighten the label and colour the chevron
+   count (the state pip below and the user-todo flag), and hover/focus brighten the label and color the chevron
    in the accent (a fold cue), never a row wash (a "select me" cue). The header is focusable (Enter or
    Space fold), drags to reorder the groups (tagOrder), and the header under a dragged group wears the
    accent insertion cue. 0.82em is the surface's sub-line size (the menus' sub-lines) — labels match
@@ -466,13 +466,13 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
    the flip, no timer) */
 .tab-group-caret { display: inline-block; flex: 0 0 auto; width: 0.9em; text-align: center; transition: transform 0.12s ease; }
 .tab-group-head:not(.collapsed) .tab-group-caret { transform: rotate(90deg); }
-/* the tag's colour as a short bar, not a dot: a dot beside a name is a session pip */
+/* the tag's color as a short bar, not a dot: a dot beside a name is a session pip */
 .tab-group-swatch { flex: 0 0 auto; width: 3px; height: 12px; border-radius: 1px; background: var(--dim); }
 .tab-group-name { font-weight: 600; }
 .tab-group-count { opacity: 0.7; }
 /* the folded header's member-state pip (after the count, small — subordinate to the label): the tab's
-   status colours by the tab's own rule (tab-state.ts) — working gold, blocked/waiting red, retrying the
-   tab's own amber (#e67e22, the status literal .tab.tab-retrying keeps raw; status colours keep their
+   status colors by the tab's own rule (tab-state.ts) — working gold, blocked/waiting red, retrying the
+   tab's own amber (#e67e22, the status literal .tab.tab-retrying keeps raw; status colors keep their
    meaning). Not the header's own status: the header wears no state class. */
 .tab-group-pip { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--st-working-bg); }
 .tab-group-pip.blocked { background: var(--st-blocked-bg); }
@@ -481,7 +481,7 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
    fold. The glyph is the tab's own (.tab-usertodo — same mark, same 10px) and the count, when more than
    one member has one, wears the header's text size (font: inherit). A real button — focusable, Enter
    opens the group — with the accent wash on hover (the one action hover). It wears the prose tone, a
-   step above the header's dim label in every theme (the tab glyph's soft white sits on a coloured chip;
+   step above the header's dim label in every theme (the tab glyph's soft white sits on a colored chip;
    a header has no chip under it), and the ring is the accent, keyboard focus only. */
 .tab-group-flag { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 3px; margin: 0; padding: 1px 3px;
   border: 0; border-radius: 3px; background: none; color: var(--fg); font: inherit; line-height: 1; cursor: pointer; }
