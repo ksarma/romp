@@ -1587,7 +1587,7 @@ def last_state_record(state_dir: Path, sid: str) -> dict:
 
 
 def last_state_value(state_dir: Path, sid: str) -> str:
-    """The latest STATE record's value ('' if none) — last_state_record's value."""
+    """The latest STATE record's value ('' if none): last_state_record's value."""
     rec = last_state_record(state_dir, sid)
     return str(rec["state"]) if rec else ""
 

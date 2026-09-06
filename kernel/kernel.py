@@ -17979,7 +17979,7 @@ def _update_remote(host):
         # RESTART the kernel THROUGH THE MANAGER (the user 2026-07-04: the manager is romp's durable supervisor —
         # "there is never an invisible orphan" — so a restart should keep/leave the remote MANAGER-owned, not
         # launch a bare romp-serve). Kill the kernel, then `romp-manager ensure` (the idempotent supervised
-        # start; this apply and _restart_remote_kernel's are its only callers — no hook runs it): if a manager
+        # start; this apply and _restart_remote_kernel's are its only callers, no hook runs it): if a manager
         # already supervises this host it respawns the kernel on the new code; if this host was only
         # ATTACH-bootstrapped (bare kernel, no manager) ensure STARTS the manager, which spawns a SUPERVISED
         # kernel — UPGRADING the orphan to properly managed. ensure needs node; if it can't run (or the port
