@@ -786,7 +786,7 @@ class LimitsOnTheBackend(_Backend):
         self.assertTrue(any("not settled" in m and "memoryMax=16G" in m for m in lines), lines)
         self.assertFalse(any("in force" in m for m in lines), lines)
         self.assertEqual([p["text"] for p in be.problems() if p["text"].startswith("cli scope:")], [],
-                         "plain lines: the wrapper reports each launch")
+                         "plain lines: the wrapper reports on each launch")
         snap = be.api_health_snapshot()["cliScope"]
         self.assertEqual((snap["on"], snap["memoryMax"], snap["rejected"], snap["memoryControllerDelegated"]),
                          (True, "16G", [], None))
@@ -967,7 +967,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
     def test_a_deciding_probe_that_does_not_answer_settles_nothing_and_says_so(self):
         # the chain's THIRD probe (with the properties, after a bare pass) raises — the 10 s bound, an
         # OSError: one refusal and one non-answer decide nothing. As with a bare failure, one plain line
-        # says so, quoting both, the values stand as read (the wrapper reports each launch: its
+        # says so, quoting both, the values stand as read (the wrapper reports on each launch: its
         # `ignored:` line if the properties are refused, its fallback line if the bus is away), and the
         # last line does not claim the limits are in force. Before this, the None path logged nothing
         # and the boot log said "in force" (round-2 finding, 2026-09-06).
@@ -984,7 +984,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertIn("could not be settled", rows[0][0])
         self.assertIn("timed out after 10 seconds", rows[0][0], "the non-answer, quoted")
         self.assertIn("Connection timed out", rows[0][0], "and the one refusal")
-        self.assertIn("wrapper reports each launch", rows[0][0])
+        self.assertIn("wrapper reports on each launch", rows[0][0])
         self.assertNotIn("in force", rows[1][0])
         self.assertIn("not settled", rows[1][0])
 
@@ -1007,7 +1007,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertEqual([p for _m, p in rows], [True, False])
         m = rows[0][0]
         self.assertIn("memory-controller check", m)
-        self.assertIn("did not start", m)
+        self.assertIn("twice failed to start", m)
         self.assertIn("Connection timed out", m, "systemd's own words")
         self.assertNotIn("not delegated", m)
         self.assertNotIn("DelegateControllers", m)

@@ -240,14 +240,14 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
                 if log:
                     log("cli scope: the per-session memory limits could not be settled at start — a probe scope "
                         "with them failed (%s) and so did one without (%s); the values stand as read, and the "
-                        "wrapper reports each launch" % (err or "no detail", bare_err or "no detail"))
+                        "wrapper reports on each launch" % (err or "no detail", bare_err or "no detail"))
             else:
                 first_err = err
                 rc, err, _out = _cli_scope_probe(run, base + props + ["--", "true"])
                 if rc is None and log:
                     log("cli scope: the per-session memory limits could not be settled at start — a probe scope "
                         "with them failed (%s), one without passed, and the retry with them did not answer (%s); "
-                        "the values stand as read, and the wrapper reports each launch"
+                        "the values stand as read, and the wrapper reports on each launch"
                         % (first_err or "no detail", err or "no detail"))
         if rc is None:
             settled = False
@@ -278,8 +278,8 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
                     if d_rc is None:
                         why = "its probe did not answer (%s), on a retry" % (d_err or "no detail")
                     elif d_rc != 0:
-                        why = ("its probe scope did not start (%s), on a retry, moments after one with the same "
-                               "properties did" % (d_err or "no detail"))
+                        why = ("its probe scope twice failed to start (%s), moments after one with the same "
+                               "properties started" % (d_err or "no detail"))
                     else:
                         why = "its probe printed %r where has-memory-max or no-memory-max was expected" % d_out
                     log("cli scope: the memory-controller check could not be settled — %s; whether the memory "
@@ -292,7 +292,7 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
             settled = False
             if log:
                 log("cli scope: the oom_score_adj check could not run (%s); ROMP_CLI_SCOPE_OOM_SCORE_ADJ=%s stands "
-                    "as read, and the wrapper reports each launch" % (a_err or "no detail", adj))
+                    "as read, and the wrapper reports on each launch" % (a_err or "no detail", adj))
         elif a_rc != 0:
             rejected["ROMP_CLI_SCOPE_OOM_SCORE_ADJ"] = adj
             if log:
@@ -344,8 +344,8 @@ def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[d
             log("cli scope: per-session limits are set (%s) but the scopes are off, so they apply to nothing"
                 % listed)
         elif not settled:
-            log("cli scope: per-session limits set — %s; not settled at start (the line above says why), so whether "
-                "they apply is not known" % listed)
+            log("cli scope: per-session limits set — %s; not settled at start (the reason is logged above), so whether "
+                "they apply is unknown" % listed)
         elif delegated is False:
             log("cli scope: per-session limits set — %s; the memory limits among them apply to nothing until "
                 "the memory controller is delegated to the user manager" % listed)

@@ -485,7 +485,7 @@ Sizes are an integer with an optional `K`, `M`, `G` or `T` suffix (powers of
 syntax: the other forms `systemd.resource-control(5)` takes for `MemoryMax=` are
 refused here as not a size, and so is a lowercase suffix. So `50%` (a share of
 the machine's memory), `1.5G`, `16 G`, `16E`, `16P`, `1G 512M` and `16g` are all
-dropped, with the problem line described below, and never reach systemd; write
+dropped before they reach systemd, with the problem line described below; write
 `16G`. The adjustment takes no leading zero: Linux reads `0400` as octal. A
 value that fails its rule is dropped and
 reported, and the session still starts in its scope with the other limits. The
@@ -510,9 +510,10 @@ and has a throwaway child write the adjustment to its own `oom_score_adj`. A
 refusal there is a problem line at the kernel's start, joins `cliScope.rejected`
 in `/api-health`, and reaches the wrapper as an empty variable, so no launch
 repeats it. A probe that does not answer (the user bus away at that moment)
-settles nothing: the kernel says so in its log, hands the values down as read,
-reports them as set but not settled rather than in force, and the wrapper's
-per-launch report is what applies. The wrapper keeps the same guard on every launch. Its pre-flight
+settles nothing: the kernel says so in its log (a plain line, not a problem),
+hands the values down as read, and reports them as set but not settled rather
+than in force; whether they apply is then known from the wrapper's report on
+each launch. The wrapper keeps the same guard on every launch. Its pre-flight
 scope carries the properties. If that fails, it retries bare; if the bare scope
 starts, it tries once more with the properties, and only that second failure
 drops them, for that launch, with one `ignored:` line quoting the failure that
