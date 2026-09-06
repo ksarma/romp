@@ -894,16 +894,16 @@ MODEL_PICKS_FILE_NAME = "model-picks.json"   # {family: full-id} — a viewer pr
 _model_picks_lock = threading.Lock()   # its read-modify-writes run on the WS-handler, producer AND SDK-loop threads
 _learned_announced = set()   # ids already announced on stderr as outside the catalog (once per process)
 # The learned-version scan runs on the pickers' hot paths — every /models read (one per picker open and per
-# models frame), every pick (_note_model_pick → _version_family falls through to it for any value the
-# catalog does not list, the bare alias a family click sends included), the typed /model vouch, the judge
-# tier setters and the SDK loop's refusal hook — and re-opening and JSON-parsing every reg per call was the
-# cost. The file is the truth, so the key is exactly what changes when the file does: (mtime_ns, size,
-# inode), the key list_regs' _REG_CACHE uses (write_reg's os.replace mints a new inode, so a same-size
-# same-instant rewrite still misses). Only the one reported string is cached, never the derived rows: the
-# derivation must run against the LIVE catalog snapshot every call (a catalog that catches up drops the
-# mark; _note_unknown_model must see each sighting). Unlocked on purpose: dict get/set/pop are atomic, two
-# threads racing on a changed file both parse it and store equal tuples, and holding _catalog_lock around
-# file I/O would stall the catalog refresh thread.
+# models frame), every pick (_note_model_pick → _version_family falls through to it for any version-shaped
+# value the catalog does not list), the typed /model vouch, the judge tier setters and the SDK loop's
+# refusal hook — and re-opening and JSON-parsing every reg per call was the cost. The file is the truth,
+# so the key is exactly what changes when the file does: (mtime_ns, size, inode), the key list_regs'
+# _REG_CACHE uses (write_reg's os.replace mints a new inode, so a same-size same-instant rewrite still
+# misses). Only the one reported string is cached, never the derived rows: the derivation must run against
+# the LIVE catalog snapshot every call (a catalog that catches up drops the mark; _note_unknown_model must
+# see each sighting). Unlocked on purpose: dict get/set/pop are atomic, two threads racing on a changed
+# file both parse it and store equal tuples, and holding _catalog_lock around file I/O would stall the
+# catalog refresh thread.
 _learned_reg_cache = {}   # str(path) -> ((mtime_ns, size, ino), liveModelId or "") — see _reported_model_ids
 # Bumps on every pick-memory change and every catalog growth; rides the models frame (_models_changed) AND
 # the /models payload, so a picker can drop a response older than one it has applied. Seeded from the clock
@@ -1338,12 +1338,16 @@ def _version_family(value, learned=None):
     """The family a VERSION id belongs to — a catalog id (the seed table, or one the Models API fetch
     added to it), or one a session's CLI has reported (learned) — and '' for anything else: a family
     alias, 'default', a never-seen id. This is what makes a value a pin the pick memory may record;
-    read at CALL time, so an id the catalog learned after boot is a pin from that moment on."""
+    read at CALL time, so an id the catalog learned after boot is a pin from that moment on. A value
+    that is not even version-shaped is answered before the reg scan: a learned row's value is always
+    a first-party version id, so the bare alias every family click sends can match none."""
     v = str(value or "")
     with _catalog_lock:
         fam = _VERSION_FAMILY.get(v)
     if fam:
         return fam
+    if not _model_id_parts(v):                   # an alias, 'default', a typo: no learned row can equal it
+        return ""
     for f, vs in (_learned_versions() if learned is None else learned).items():
         if any(x["value"] == v for x in vs):
             return f

@@ -504,6 +504,20 @@ class LearnedVersions(_ModelsServer):
             km._learned_versions()
         self.assertEqual(reads, ["broken.json"], "the retry is the ONLY re-read: every parsed reg, dict or not, is warm")
 
+    def test_a_bare_family_alias_never_scans_the_regs(self):
+        # every bare family click sends the alias ('fable'); _note_model_pick asks _version_family
+        # whether that is a pin, and an alias is never a catalog id — so the lookup fell through to
+        # the reg scan on every click. A learned row's value is always a first-party VERSION id, so a
+        # value _model_id_parts rejects can match none: answered before the scan.
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        with mock.patch.object(km, "_learned_versions", wraps=km._learned_versions) as scan:
+            self.assertEqual(km._version_family("fable"), "")
+            self.assertEqual(km._version_family("default"), "")
+            self.assertEqual(km._version_family("total-nonsense"), "")
+            self.assertEqual(scan.call_count, 0, "no version shape → no scan")
+            self.assertEqual(km._version_family("claude-opus-5-1"), "opus", "a version-shaped value still consults the regs")
+            self.assertEqual(scan.call_count, 1)
+
 
 class AliasMigration(unittest.TestCase):
     """One-time boot pass, mirroring the CLI's own 2.1.257 `migration_fable5_to_fable_alias`: a stored
