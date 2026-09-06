@@ -1787,7 +1787,7 @@ class TimelinePanel {
     if (Math.abs(px - tp.applied) < LIVE_MIN_PX) return true;   // the sub-pixel guard: nothing visible to write yet
     tp.applied = px;
     tp.g.setAttribute('transform', 'translate(' + (-px) + ' 0)');
-    for (const r of tp.riders) r.el.setAttribute(r.attr, r.base + px);
+    for (const r of tp.riders) { if (r.fn) r.fn(px); else r.el.setAttribute(r.attr, Math.max(r.min || 0, r.base + px)); }   // the build's floor applies to the grown extent, so the frame matches a full draw
     for (const e of tp.edge) {   // an anchored glyph whose anchor crossed the left edge: hidden, as a full draw culls it (inWin) — and hidden takes no pointer
       const out = e.x - px < tp.left;
       if (out !== !!e.out) { e.out = out; if (out) e.el.setAttribute('visibility', 'hidden'); else e.el.removeAttribute('visibility'); }
@@ -4359,7 +4359,7 @@ class TimelinePanel {
     // tick hides each once its anchor crosses the edge, where a full draw would have culled it. Nothing is
     // painted over the gutter either way.
     const plot = el('g', { 'data-tl-plot': '1' });
-    const riders = [];          // {el, attr, base}: the live-edge riders — an open bar's/span's/run's width (or x2) is base + the drift
+    const riders = [];          // {el, attr, base, min} or {el, fn}: the live-edge riders — an open bar's/span's/run's width (or x2) is max(min, base + the drift), base the UN-clamped extent so the floor applies to the grown value; fn re-derives a placement the build centred
     const edge = [];            // {el, x}: glyphs anchored within the drift cap of the plot's left edge — the tick hides one once its anchor crosses the edge (_tickTranslate), the event a full draw culls it on
     let liveRiders = false;     // a message glyph or a pending prompt drawn AT the live edge — a path the translate cannot express; the tick then keeps its full draw
     // Pan: the window's RIGHT edge is `now` minus the offset slider; the actual live `now` (nowS)
@@ -4663,7 +4663,7 @@ class TimelinePanel {
         // (same ask before & after), so it does NOT split the work — it's an overlay (candy-stripe
         // below). Only a new ASK (typed/queued/absorbed/drain) starts a new period. The bar's color
         // also backs the candy-stripe.
-        const bx = x(a), bw = Math.max(2, x(b) - x(a)), eh = BAR_H + 5;
+        const bx = x(a), bwRaw = x(b) - x(a), bw = Math.max(2, bwRaw), eh = BAR_H + 5;
         // Cross-hover focus on this work period — a DAG journey event (card hover) or the single event
         // hovered in the feed modal — draws EXACTLY like the native bar hover below: the bar itself
         // grown to eh and fully opaque, in its own color. No white outline (the user 2026-07-17).
@@ -4686,7 +4686,7 @@ class TimelinePanel {
         // The prompt dot keeps the prompt-line uuid.
         hit.addEventListener('click', () => { this._select(s.id); this.openChat(t.tid || this._laneTid(s), workAnchorOf(t), false, false, t.start); });
         plot.appendChild(hit);
-        if (liveEdge) riders.push({ el: bar, attr: 'width', base: bw }, { el: hit, attr: 'width', base: bw });
+        if (liveEdge) riders.push({ el: bar, attr: 'width', base: bwRaw, min: 2 }, { el: hit, attr: 'width', base: bwRaw, min: 2 });   // the un-clamped extent with the 2 px floor: a just-opened bar grows as a full draw would draw it
       });
       // AWAITING a background task while the main thread is idle (the user 2026-07-13): a full-thickness
       // segment (BAR_H, the work-bar reference) in the lane color from the last work period's end to the
@@ -4764,7 +4764,7 @@ class TimelinePanel {
         sh.addEventListener('mouseleave', () => { grow(BAR_H); this.hideTip(); });
         sh.addEventListener('click', () => { this._select(s.id); this.openChat(this._laneTid(s), null, true); });
         plot.appendChild(sh);
-        if (open && edgeLive) riders.push({ el: back, attr: 'width', base: Math.max(2, bx1 - bx0) }, { el: stripe, attr: 'width', base: Math.max(2, x(sb) - x(sa)) }, { el: sh, attr: 'width', base: Math.max(2, bx1 - bx0) });
+        if (open && edgeLive) riders.push({ el: back, attr: 'width', base: bx1 - bx0, min: 2 }, { el: stripe, attr: 'width', base: x(sb) - x(sa), min: 2 }, { el: sh, attr: 'width', base: bx1 - bx0, min: 2 });
       }
       // CONTEXT COMPACTING (LIVE) → cyan cross-hatch over the session color for every span the session
       // sat compacting (PreCompact→PostCompact from the state log), plus the current open one if it's
@@ -4776,7 +4776,7 @@ class TimelinePanel {
         const open = span[1] == null || span[1] >= data.now - 2;   // still compacting: to the live edge (see the awaiting loop)
         const a0 = span[0], b0 = open ? Math.max(nowS, a0) : span[1];
         const sa = Math.max(a0, t0), sb = Math.min(b0, t1); if (sb <= sa) continue;
-        const eh = BAR_H + 5, cx = x(sa), cw = Math.max(2, x(sb) - x(sa));
+        const eh = BAR_H + 5, cx = x(sa), cwRaw = x(sb) - x(sa), cw = Math.max(2, cwRaw);
         const cback = el('rect', { x: cx, y: y - BAR_H / 2, width: cw, height: BAR_H, rx: 2, fill: s.color, opacity: 0.9 });
         plot.appendChild(cback);
         const chx = el('rect', { x: cx, y: y - BAR_H / 2, width: cw, height: BAR_H, rx: 2, fill: 'url(#vault-compact-hatch)' });
@@ -4791,7 +4791,7 @@ class TimelinePanel {
         ch.addEventListener('mouseleave', () => { cgrow(BAR_H); this.hideTip(); });
         ch.addEventListener('click', () => { this._select(s.id); this.openChat(this._laneTid(s), null, true); });
         plot.appendChild(ch);
-        if (open && edgeLive) riders.push({ el: cback, attr: 'width', base: cw }, { el: chx, attr: 'width', base: cw }, { el: ch, attr: 'width', base: cw });
+        if (open && edgeLive) riders.push({ el: cback, attr: 'width', base: cwRaw, min: 2 }, { el: chx, attr: 'width', base: cwRaw, min: 2 }, { el: ch, attr: 'width', base: cwRaw, min: 2 });
       }
       // CONTEXT COMPACTION → a cyan cross-hatch SPAN over the session color (same figure-ground as the
       // awaiting candy-cane: identity color behind, texture in front). The span runs from compaction
@@ -5521,9 +5521,10 @@ class TimelinePanel {
         for (const b of blocks) {
           // an OPEN run (still in flight) has no recv yet — grow its bar to the live edge so it appears WHEN
           // it starts and advances with the axis, instead of popping in (back-dated) only once it ends.
-          let bx1 = x(b.start), bx2 = x(b.open ? Math.max(b.end, nowS) : b.end);
+          const rx1 = x(b.start), rx2 = x(b.open ? Math.max(b.end, nowS) : b.end);   // the run's own extent; a narrow one draws centred at JMARK_MINW
+          let bx1 = rx1, bx2 = rx2;
           if (bx2 - bx1 < JMARK_MINW) { const c = (bx1 + bx2) / 2; bx1 = c - JMARK_MINW / 2; bx2 = c + JMARK_MINW / 2; }
-          b._x1 = bx1; b._x2 = bx2;
+          b._x1 = bx1; b._x2 = bx2; b._rx1 = rx1; b._rw = rx2 - rx1;
           let lane = laneEnds.findIndex((endX) => bx1 >= endX);
           if (lane === -1) { lane = laneEnds.length; laneEnds.push(bx2); } else laneEnds[lane] = bx2;
           b._lane = lane;
@@ -5560,7 +5561,13 @@ class TimelinePanel {
           hit.addEventListener('mousemove', (e) => this.moveTip(e));
           hit.addEventListener('mouseleave', () => this.hideTip());
           plot.appendChild(hit);
-          if (b.open && edgeLive) riders.push({ el: r, attr: 'width', base: x2 - x1 }, { el: hit, attr: 'width', base: (x2 - x1) + 4 });   // an open run grows to the live edge
+          if (b.open && edgeLive) {   // an open run grows to the live edge: the rider re-derives the full draw's placement from the un-centred extent, so the centring goes once the run is wider than JMARK_MINW
+            const rx1 = b._rx1, rw = b._rw;
+            riders.push({ el: r, base: rw, x0: rx1, fn: (px) => {
+              const w = rw + px, narrow = w < JMARK_MINW, ax = narrow ? rx1 + (w - JMARK_MINW) / 2 : rx1, aw = narrow ? JMARK_MINW : w;
+              r.setAttribute('x', ax); r.setAttribute('width', aw); hit.setAttribute('x', ax - 2); hit.setAttribute('width', aw + 4);
+            } });
+          }
         }
       });
       // (auto-nudge ⚡ marks were removed from the judge band entirely — the user 2026-06-23. An auto-nudge

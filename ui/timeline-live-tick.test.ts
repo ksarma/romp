@@ -226,3 +226,39 @@ test("a glyph anchored near the left edge hides once its anchor crosses it (wher
   assert.ok(edgeDot.getAttribute("visibility") === "hidden" || paintedLeft(edgeDot) >= batRight, "its painted left edge never reaches the battery");
   assert.equal(farDot.getAttribute("visibility"), undefined, "a dot inside the window stays");
 });
+
+test("a rider's floor applies to the grown extent: a just-opened bar grows as a full draw draws it, and a narrow judging run stays centred only until it is wider than JMARK_MINW", () => {
+  const data = liveData();
+  data.turns[SID1] = [turn("a", NOW - 300, NOW - 100), turn("b", NOW, NOW, { open: true })];   // opened this instant: drawn at the 2 px floor
+  data.judging = [{ sid: SID1, judge: "closer", t: NOW, t1: NOW, open: true, kind: "k", text: "" }];
+  const getItem = g.localStorage.getItem;
+  g.localStorage.getItem = (k: string) => (k === "romp:settings" ? JSON.stringify({ showTriageJudges: true }) : null);
+  const panel: any = new TimelinePanel(makeNode("div"));
+  panel._lockNow = true; panel._pinned = true; panel._winSec = 600; panel.fitted = true;
+  try { panel.update(data); } finally { g.localStorage.getItem = getItem; }
+  const tp = panel._tickPlot;
+  assert.ok(tp, "the handle exists");
+  const bar = tp.riders.find((r: any) => r.el.tag === "rect" && r.attr === "width" && r.el._attrs.fill === "#7aa2f7");
+  assert.ok(bar && bar.min === 2 && bar.base >= 0 && bar.base < 0.1, "the open bar's rider carries its un-clamped extent and the floor: " + JSON.stringify({ base: bar && bar.base, min: bar && bar.min }));
+  assert.equal(widthOf(bar.el), 2, "drawn at the floor");
+  const run = tp.riders.find((r: any) => r.el._attrs["data-judge"] === "closer");
+  assert.ok(run && run.fn && run.base >= 0 && run.base < 0.1, "the open run's rider re-derives its placement from the un-centred extent");
+  assert.equal(widthOf(run.el), 6, "drawn centred at JMARK_MINW");
+  assert.ok(Math.abs(run.el._attrs.x - (run.x0 + (run.base - 6) / 2)) < 1e-9, "the build's centring");
+  // a drift under the floor: the bar stays at 2 px (a full draw would also draw max(2, 1.2)); the run stays centred and its centre moves by half the drift
+  advance(panel, 1.2 / tp.k);
+  panel._tickLive();
+  assert.ok(tp.applied > 1 && tp.applied < 1.3, "applied " + tp.applied);
+  assert.equal(widthOf(bar.el), 2, "the floor holds: not 2 + the drift");
+  assert.equal(widthOf(run.el), 6, "still narrower than JMARK_MINW: still centred");
+  assert.ok(Math.abs(run.el._attrs.x - (run.x0 + (run.base + tp.applied - 6) / 2)) < 1e-9, "centred on the grown extent, as a full draw places it");
+  // past the floor: the true extent, as a full draw would draw it, and the run's centring is gone
+  advance(panel, 7 / tp.k);
+  panel._tickLive();
+  assert.ok(tp.applied > 6.5 && tp.applied < 7.1 && tp.applied < tp.maxDrift, "applied " + tp.applied);
+  assert.ok(Math.abs(widthOf(bar.el) - (bar.base + tp.applied)) < 1e-9, "the un-clamped extent plus the drift: " + widthOf(bar.el));
+  assert.ok(widthOf(bar.el) < 2 + tp.applied - 1.5, "not the floor plus the drift");
+  assert.ok(Math.abs(run.el._attrs.x - run.x0) < 1e-9 && Math.abs(widthOf(run.el) - (run.base + tp.applied)) < 1e-9, "the run starts at its own x and spans to the edge");
+  const hit = tp.riders.find((r: any) => r.el === run.el);
+  assert.ok(hit, "one rider carries both the run and its hit");
+});
