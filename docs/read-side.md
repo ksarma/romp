@@ -420,10 +420,11 @@ rows for the tags `edited` names (or the summary row when it counts one), then
 the rest, joined with "; " (a nameless row is its reason alone) up to 1000
 characters, then "and N more"; without `edited` the rows appear in the judge's
 order. The rows carry every reason in full and are never reordered; a client
-composes the same shape from them when the line is absent. Until round 9 of
-the 2026-09-05 review the line followed the judge's order, which lists the
-quiet rows first, so when those filled the line the bound cut the one row
-that made `ok` false. The loud notice gives the
+composes the same shape from them, in their order, when the line is absent.
+Until round 9 of the 2026-09-05 review the line followed the judge's order,
+which lists the quiet rows (kept copies of tags the poster did not edit)
+first, so when those filled the line the bound cut the one row that made `ok`
+false and the line named only tags the poster never edited. The loud notice gives the
 count of refused tags and lists each with its cause. A remote tag's rendered name is on the
 same stored basis (clamped, then stripped; "tag" when empty) as the lens and
 order entries, so a padded name a remote kernel serves raw reads as the name a
@@ -481,10 +482,10 @@ create-refusal pass and never files a refusal worded as a dashboard's. What the
 cap leaves out is named once per file state, in a sync notice worded as a fact
 about the file, whether or not the stamp's write lands. The count holds when
 readers race: a reader that waited for the file lock re-checks the read cache
-under it and serves the blob the first reader judged and cached, so two readers
-that start with the cache empty and both fail the write (a full disk) file the
-notice once. Until round 9 of the 2026-09-05 review each judged the file, each
-failed the write, and each filed it. The notice is a
+under it and serves the blob the first reader judged and cached, so when two
+readers that start with the cache empty race on a full disk, the notice is
+filed once. Until round 9 of the 2026-09-05 review each judged the file, failed
+the write and filed it. The notice is a
 template that puts the cause and the count first and the dropped tags after.
 It opens "the views file held N tags, over the store's 32-tag cap; no dashboard
 wrote this." When the stamp was written it continues "K tags were dropped when
@@ -510,8 +511,9 @@ foreign file's, and none for the re-stamp's, whose head ends at "kept." One tag
 reads "its changes to 1 tag were not applied". Each label carries its cause:
 "(stale copy)", "(deletion)", "(re-creation)", "(unread)", "(name collision)"
 or "(over the cap)". The quiet stderr line for kept tags the client did not
-edit carries the same labels, "(differing copy)" included; until round 9 of
-the 2026-09-05 review that label carried no cause. Both notices bound their lists to fit the 240 characters
+edit carries the same kind of label on every tag, "(differing copy)" among
+them; until round 9 of the 2026-09-05 review a kept differing copy was the one
+entry on it without a cause. Both notices bound their lists to fit the 240 characters
 the dashboard's bell shows, under the 300 the kernel serves (`SYNC_NOTICE_FIT`,
 `_notice_list`): as many entries as fit, then "and M more" for the rest, and
 when not even the first fits, the head alone, which carries the count. Until
@@ -563,10 +565,11 @@ frame. It adopts the blob its gate kept when that blob's seq equals `viewsSeq`
 and discards the kept blob otherwise. When nothing kept matches, a numeric
 `viewsSeq` is remembered as the seq the kernel announced for its current store:
 one slot per store, overwritten by each caps frame and cleared by the client's
-next adoption that changes the held blob: a blob at a seq other than the held
-one, a blob without a seq, or a blob at the announced seq even when that is
-the held seq. A re-arrival of the blob the client already holds, at the same
-seq, is not new information and leaves the slot standing. A later blob whose seq equals the announced seq is
+next adoption that changes the held blob. An adoption counts as changing it
+when the blob arrives at a seq other than the held one, without a seq, or at
+the announced seq itself; a re-arrival of the blob the client already holds,
+at the same seq, is otherwise not new information and leaves the slot
+standing. A later blob whose seq equals the announced seq is
 adopted even below the held one, because the kernel said at connect which store
 it holds and a blob carrying that seq is that store, not a stale frame. Null
 and a missing field announce nothing; a frame without the field still adopts
@@ -594,15 +597,16 @@ and remember by the same rule. A store that adopted on the caps frame re-emits
 before it hands the frame on: a pane sees the local blob only through those
 re-emits, so the restored blob must meet the pane's own gate, and be turned
 away there, before the pane's caps door adopts it. A pane fills the same
-announced slot from the same frame. Every merged re-emit between that frame
-and the pusher's next one (a remote host's push or lanes payload, a `closed`
-frame, a view-order storage event, a host drop) hands the pane the router's
-stored blob at the pane's own held seq; that re-arrival leaves the pane's slot
-standing, so when the router adopts the pusher's frame at the announced seq
-and re-emits it, the pane adopts it by the same rule. Until round 9 of the
-2026-09-05 review the slot cleared on any adoption: a re-emit in that window
-cleared the pane's slot, the pane turned the restored store away while the
-router carried it, and the two diverged until the next write.
+announced slot from the same frame. The router re-emits on a remote host's
+push or lanes payload, a `closed` frame, a view-order storage event and a host
+drop; every merged re-emit between that frame and the pusher's next one hands
+the pane the router's stored blob at the pane's own held seq, and that
+re-arrival leaves the pane's slot standing, so when the router adopts the
+pusher's frame at the announced seq and re-emits it, the pane adopts it by the
+same rule. Until round 9 of the
+2026-09-05 review any adoption cleared the slot, so a re-emit in that window
+cleared the pane's; the pane turned the restored store away while the router
+held it, and the two diverged until the next write.
 
 The Outline pane's tag filter posts its lens the same way: the frame copy it
 holds with only the outline lens changed, with a `writeId` and `edited: []`, so
