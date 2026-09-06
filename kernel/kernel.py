@@ -893,6 +893,18 @@ _VERSION_FAMILY = {v["value"]: fam for fam, vs in MODEL_VERSIONS.items() for v i
 MODEL_PICKS_FILE_NAME = "model-picks.json"   # {family: full-id} — a viewer pref all surfaces read, like colormap
 _model_picks_lock = threading.Lock()   # its read-modify-writes run on the WS-handler, producer AND SDK-loop threads
 _learned_announced = set()   # ids already announced on stderr as outside the catalog (once per process)
+# The learned-version scan runs on the pickers' hot paths — every /models read (one per picker open and per
+# models frame), every pick (_note_model_pick → _version_family falls through to it for any version-shaped
+# value the catalog does not list), the typed /model vouch, the judge tier setters and the SDK loop's
+# refusal hook — and re-opening and JSON-parsing every reg per call was the cost. The file is the truth,
+# so the key is exactly what changes when the file does: (mtime_ns, size, inode), the key list_regs'
+# _REG_CACHE uses (write_reg's os.replace mints a new inode, so a same-size same-instant rewrite still
+# misses). Only the one reported string is cached, never the derived rows: the derivation must run against
+# the LIVE catalog snapshot every call (a catalog that catches up drops the mark; _note_unknown_model must
+# see each sighting). Unlocked on purpose: dict get/set/pop are atomic, two threads racing on a changed
+# file both parse it and store equal tuples, and holding _catalog_lock around file I/O would stall the
+# catalog refresh thread.
+_learned_reg_cache = {}   # str(path) -> ((mtime_ns, size, ino), liveModelId or "") — see _reported_model_ids
 # Bumps on every pick-memory change and every catalog growth; rides the models frame (_models_changed) AND
 # the /models payload, so a picker can drop a response older than one it has applied. Seeded from the clock
 # rather than 0: the counter is per process, and a kernel restart must never hand a page that kept its
@@ -1221,6 +1233,46 @@ def _model_id_label(value):
     return "%s %d" % (fam.capitalize(), maj) + (".%d" % minor if minor else "")
 
 
+def _reported_model_ids():
+    """[liveModelId, …] across every reg under STATE/sdk (the same files _thread_reg reads), in reg-name
+    order, re-parsing only a reg whose file changed since it was last parsed (_learned_reg_cache, keyed
+    on the file's content-stat). Unreadable, non-JSON and non-dict regs and regs with no liveModelId
+    contribute nothing — exactly what the uncached scan skipped; a failed read or parse is not cached,
+    so the next call retries it, and a reg that vanished leaves the cache on the next scan."""
+    try:
+        entries = sorted(os.scandir(jd.STATE / "sdk"), key=lambda e: e.name)   # the glob was sorted: same order
+    except OSError:                              # a missing sdk/ dir included — no regs yet
+        return []
+    out, seen = [], set()
+    for de in entries:
+        if not de.name.endswith(".json"):        # write_reg's <sid>.json.<pid>.<hex>.tmp never counted
+            continue
+        seen.add(de.path)
+        try:
+            st = de.stat()
+        except OSError:
+            continue
+        key = (st.st_mtime_ns, st.st_size, st.st_ino)
+        hit = _learned_reg_cache.get(de.path)
+        if hit is not None and hit[0] == key:
+            mid = hit[1]
+        else:
+            try:
+                reg = json.loads(Path(de.path).read_text())
+            except (OSError, ValueError):
+                _learned_reg_cache.pop(de.path, None)
+                continue
+            mid = reg.get("liveModelId") if isinstance(reg, dict) else None
+            mid = mid if isinstance(mid, str) else ""
+            _learned_reg_cache[de.path] = (key, mid)
+        if mid:
+            out.append(mid)
+    for p in list(_learned_reg_cache):           # deleted regs leave the cache
+        if p not in seen:
+            _learned_reg_cache.pop(p, None)
+    return out
+
+
 def _learned_versions():
     """{family: [{"value", "label", "learned": True}, …]} — every model id a session's CLI has actually
     REPORTED (reg.liveModelId, persisted by the SDK backend's _learn_model from the init / assistant
@@ -1231,24 +1283,16 @@ def _learned_versions():
     kernel life, spent only when it actually starts), so the catalog catches up and the row's mark
     drops. A dated snapshot of a known version shares its label and adds nothing (the dateless alias
     covers it); provider-prefixed and synthetic ids are not the shape the pickers send and are
-    skipped. Reads the same reg files _thread_reg does. A first sighting is announced once on stderr —
-    and the pickers mark the row — so an unlisted model is LOUD, never a silent gap behind a stale
-    menu (the fail-loudly rule)."""
+    skipped. The reg scan re-parses a reg only when its file changed (_reported_model_ids); the
+    derivation against the catalog runs every call, so a catalog that catches up drops the mark at
+    once. A first sighting is announced once on stderr — and the pickers mark the row — so an
+    unlisted model is LOUD, never a silent gap behind a stale menu (the fail-loudly rule)."""
     out = {}
     fams = {c["value"] for c in MODEL_CHOICES}
     with _catalog_lock:                          # the catalog is rebuilt in place on its own thread
         known = set(_VERSION_FAMILY)
         labels = {fam: {v["label"].lower() for v in vs} for fam, vs in MODEL_VERSIONS.items()}
-    try:
-        regs = sorted((jd.STATE / "sdk").glob("*.json"))
-    except OSError:
-        return out
-    for p in regs:
-        try:
-            reg = json.loads(p.read_text())
-        except (OSError, ValueError):
-            continue
-        mid = reg.get("liveModelId") if isinstance(reg, dict) else None
+    for mid in _reported_model_ids():
         parts = _model_id_parts(mid)
         if not parts or parts[0] not in fams:
             continue
@@ -1294,12 +1338,16 @@ def _version_family(value, learned=None):
     """The family a VERSION id belongs to — a catalog id (the seed table, or one the Models API fetch
     added to it), or one a session's CLI has reported (learned) — and '' for anything else: a family
     alias, 'default', a never-seen id. This is what makes a value a pin the pick memory may record;
-    read at CALL time, so an id the catalog learned after boot is a pin from that moment on."""
+    read at CALL time, so an id the catalog learned after boot is a pin from that moment on. A value
+    that is not even version-shaped is answered before the reg scan: a learned row's value is always
+    a first-party version id, so the bare alias every family click sends can match none."""
     v = str(value or "")
     with _catalog_lock:
         fam = _VERSION_FAMILY.get(v)
     if fam:
         return fam
+    if not _model_id_parts(v):                   # an alias, 'default', a typo: no learned row can equal it
+        return ""
     for f, vs in (_learned_versions() if learned is None else learned).items():
         if any(x["value"] == v for x in vs):
             return f

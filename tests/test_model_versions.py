@@ -429,6 +429,95 @@ class LearnedVersions(_ModelsServer):
         self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
         self.assertEqual(km._model_picks(), {"opus": "claude-opus-5-1", "sonnet": "claude-sonnet-4-6"})
 
+    def _replace_reg(self, sid, **fields):
+        # the SDK backend's write_reg shape — tmp + os.replace, a NEW inode per write. A test that
+        # REWRITES a reg uses this, not _reg: an in-place write_text keeps the inode, and a same-size
+        # rewrite inside one timestamp tick would leave (mtime_ns, size, ino) unchanged
+        d = jd.STATE / "sdk"
+        tmp = d / (sid + ".json.tmp")
+        tmp.write_text(json.dumps({"sid": sid, "name": "web", "cwd": "/tmp", "alive": True, **fields}))
+        os.replace(tmp, d / (sid + ".json"))
+
+    @contextlib.contextmanager
+    def _counting_reg_reads(self):
+        """The reg files under STATE/sdk the kernel READS while held — only those: the /models route
+        also reads the pick store, the CLI-block file and the catalog cache, so an unfiltered counter
+        is never zero."""
+        reads, real, sdk = [], Path.read_text, str(jd.STATE / "sdk") + os.sep
+
+        def read_text(p, *a, **k):
+            if str(p).startswith(sdk):
+                reads.append(p.name)
+            return real(p, *a, **k)
+        with mock.patch.object(Path, "read_text", read_text):
+            yield reads
+
+    def test_a_warm_scan_re_reads_no_reg_whose_file_is_unchanged(self):
+        # THE COST: the scan runs on the pickers' hot paths — every /models read (one per picker open
+        # and per models frame), every pick via _version_family, the SDK loop's refusal hook — and
+        # re-opened and JSON-parsed every reg per call. A reg whose file has not changed is parsed once.
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        self._reg("11111111-2222-3333-4444-555555555502", liveModelId="claude-sonnet-5-1")
+        self._reg("11111111-2222-3333-4444-555555555503", liveModelId="claude-haiku-5")
+        first = km._learned_versions()
+        self.assertEqual(sorted(first), ["haiku", "opus", "sonnet"])
+        with self._counting_reg_reads() as reads:
+            second = km._learned_versions()
+        self.assertEqual(reads, [], "nothing changed → nothing re-read")
+        self.assertEqual(second, first)
+
+    def test_a_changed_or_new_reg_is_seen_and_a_deleted_one_drops_on_the_next_call(self):
+        # the file is the truth, so the cache keys on exactly what changes when the file does —
+        # (mtime_ns, size, inode), the key list_regs' _REG_CACHE uses; write_reg's os.replace mints
+        # a new inode per write, so a rewrite is never mistaken for the file it replaced
+        sid1, sid2 = "11111111-2222-3333-4444-555555555501", "11111111-2222-3333-4444-555555555502"
+        self._reg(sid1, liveModelId="claude-opus-5-1")
+        self.assertEqual([v["value"] for v in km._learned_versions()["opus"]], ["claude-opus-5-1"])
+        self._replace_reg(sid1, liveModelId="claude-opus-5-2")          # the session's CLI moved on
+        self.assertEqual([v["value"] for v in km._learned_versions()["opus"]], ["claude-opus-5-2"],
+                         "rewritten → re-read, the old id gone with the old file")
+        self._reg(sid2, liveModelId="claude-sonnet-5-1")                 # a new session
+        learned = km._learned_versions()
+        self.assertEqual([v["value"] for v in learned["sonnet"]], ["claude-sonnet-5-1"], "new → seen")
+        self.assertEqual([v["value"] for v in learned["opus"]], ["claude-opus-5-2"])
+        (jd.STATE / "sdk" / (sid1 + ".json")).unlink()                    # the session is gone
+        self.assertNotIn("opus", km._learned_versions(), "deleted → dropped")
+        self.assertNotIn(str(jd.STATE / "sdk" / (sid1 + ".json")), km._learned_reg_cache, "…and its entry with it")
+
+    def test_a_garbled_or_non_dict_reg_is_skipped_and_a_failed_parse_is_retried(self):
+        # exactly what the uncached scan skipped: a file json.loads cannot parse, a JSON value that
+        # is not a dict, a dict with no liveModelId — each contributes nothing and the good reg still
+        # lands. A failed read or parse is NOT cached (the next call retries it, so a healed file gets
+        # its turn); a parsed non-dict is (its answer cannot change until the file does)
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        self._reg("11111111-2222-3333-4444-555555555502")                 # no liveModelId yet
+        d = jd.STATE / "sdk"
+        (d / "broken.json").write_text("{not json")
+        (d / "list.json").write_text("[]")
+        learned = km._learned_versions()
+        self.assertEqual({f: [v["value"] for v in vs] for f, vs in learned.items()}, {"opus": ["claude-opus-5-1"]})
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["versions"][0]["value"], "claude-opus-5-1",
+                         "the route still answers, learned row included")
+        self.assertNotIn(str(d / "broken.json"), km._learned_reg_cache, "a failed parse is not cached")
+        with self._counting_reg_reads() as reads:
+            km._learned_versions()
+        self.assertEqual(reads, ["broken.json"], "the retry is the ONLY re-read: every parsed reg, dict or not, is warm")
+
+    def test_a_bare_family_alias_never_scans_the_regs(self):
+        # every bare family click sends the alias ('fable'); _note_model_pick asks _version_family
+        # whether that is a pin, and an alias is never a catalog id — so the lookup fell through to
+        # the reg scan on every click. A learned row's value is always a first-party VERSION id, so a
+        # value _model_id_parts rejects can match none: answered before the scan.
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        with mock.patch.object(km, "_learned_versions", wraps=km._learned_versions) as scan:
+            self.assertEqual(km._version_family("fable"), "")
+            self.assertEqual(km._version_family("default"), "")
+            self.assertEqual(km._version_family("total-nonsense"), "")
+            self.assertEqual(scan.call_count, 0, "no version shape → no scan")
+            self.assertEqual(km._version_family("claude-opus-5-1"), "opus", "a version-shaped value still consults the regs")
+            self.assertEqual(scan.call_count, 1)
+
 
 class AliasMigration(unittest.TestCase):
     """One-time boot pass, mirroring the CLI's own 2.1.257 `migration_fable5_to_fable_alias`: a stored
