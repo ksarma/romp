@@ -8,16 +8,21 @@ one predicate each — about 168 of 455 loads per pass. Pinned here:
 
 - one load_goals per distinct sid per pass across the recipient scan, the per-ref done check,
   _ref_goal and the sender loop; the same object serves the recipient scan and the sender loop;
-- one publish per dirty sender (rev advances by exactly one for two refs), the CAS discipline intact
-  under a kernel-side write between two refs, and a failed publish leaving no base-less object behind;
+- one publish per dirty sender (rev advances by exactly one for two refs) carrying the rollup over
+  every verdict it holds, the CAS discipline intact under a kernel-side write between two refs, a
+  failed publish leaving the file untouched for the retry, and an absent sender's publish settled (or
+  not) by _presumed_closed;
 - the absent-store memo: an unchanged store is evaluated once across both sweeps and across passes; a
   changed goals file, a changed override journal and a changed archive each re-evaluate; the identity
-  is taken before the read; the key is the full path; entries for vanished stores are evicted; the one
-  documented exception (same-size in-place rewrite with the mtime put back) is pinned as such.
+  is taken before the read, in the sweep's own read and in run_propagate's; the key is the full path;
+  entries for vanished stores are evicted; a load that FELL BACK (`_unread`: the store file or the
+  journal did not read) is answered but never memoized; the one documented exception (same-size
+  in-place rewrite with the mtime put back) is pinned as such.
 
 SYNTHETIC fixtures only. Private synthetic sids: load_goals replays the per-sid override journal, and
 node ids collide across test modules under the shared placeholder (CLAUDE.md, goal-store fixtures);
 every test runs under its own _rebind_state root, so its journal and memo entries die with it."""
+import errno
 import json
 import os
 import shutil
@@ -185,8 +190,16 @@ class LoadOncePerPass(World):
         self.assertEqual(counts[SENDER], 2)
         self.assertEqual(_rev(SENDER), r0 + 1, "two verdicts, one publish")
         self.assertEqual(self._io()[2], w0 + 1, "exactly one write")
-        snd = jd.load_goals(SENDER)["nodes"]
+        got = jd.load_goals(SENDER)
+        snd = got["nodes"]
         self.assertTrue(snd[SENDER + ":t1"]["nodeComplete"] and snd[SENDER + ":t2"]["nodeComplete"])
+        # the one publish carried the rollup over BOTH verdicts: the saved status is exactly what a
+        # fresh rollup of the saved store derives (a rollup run only after the first ref would have
+        # published t2 still working)
+        saved = dict(got["status"])
+        self.assertEqual(saved, {SENDER + ":t1": "completed", SENDER + ":t2": "completed"})
+        jd.rollup_status(got, False)
+        self.assertEqual(got["status"], saved)
 
     def test_two_refs_to_one_tracker_record_one_done_event(self):
         # The second ref reads the flag record_verdict materialized on the shared object: no
@@ -243,8 +256,11 @@ class LoadOncePerPass(World):
     def test_a_failed_publish_drops_the_object_and_the_next_pass_retries_from_a_fresh_load(self):
         # An ABSENT sender with a quiet tracker whose reply has arrived: the sweep memoizes the
         # store's flags from the unmutated read, the sender loop marks the tracker done, and the
-        # publish raises. The memo still says "open tracker" for the unchanged file, so the next
-        # pass loads it fresh (no base-less leftover) and publishes with the revision advancing once.
+        # publish raises. Pinned: the memo describes the FILE, not the failed object (still "open
+        # tracker", and a hit, since the file never changed), and the retry publishes once. That a
+        # saved object leaves `loaded` is pinned by test_two_dirty_refs_to_one_sender_publish_once
+        # (the sender loop's fresh load after the recipient loop's publish); a new pass starts with
+        # an empty dict either way, so the failed publish's pop is not observable from here.
         self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, MID, quiet=True)]})
         self._reply(RECIP, DEAD, T + 500)
         r0, orig_save = _rev(DEAD), jd.save_goals
@@ -271,6 +287,33 @@ class LoadOncePerPass(World):
         self.assertTrue(jd.load_goals(DEAD)["nodes"][DEAD + ":t1"]["nodeComplete"])
         n, counts, _o = self._counting(lambda: jd.run_propagate(now=T + 901))
         self.assertEqual((n, counts[DEAD]), (0, 1), "identity moved: one miss, and no sender-loop load")
+
+    def test_an_absent_senders_single_publish_carries_the_settled_rollup(self):
+        # The deferred publish carries the rollup the sender loop ran with _presumed_closed. With the
+        # tracker as the store's focus (lastNode), only a closed session settles it. Nothing knows the
+        # sid and no remote-sids mirror exists: closedness cannot be determined, so the saved status
+        # stays working (done, confirming). Once the bus has spoken (an empty mirror: no live session
+        # anywhere answers to the sid), the same shape saves completed.
+        def _focused_tracker(sid, mid):
+            t1 = _tracker(sid, 1, RECIP, mid, quiet=True)
+            st = _store(sid, {t1["id"]: t1})
+            st["lastNode"] = t1["id"]
+            jd.rollup_status(st, False)
+            jd.save_goals(sid, st)
+            self._reply(RECIP, sid, T + 500, mid="reply-" + mid)
+        _focused_tracker(DEAD2, MID2)
+        self.assertEqual(jd.run_propagate(now=T + 900), 1)
+        got = jd.load_goals(DEAD2)
+        self.assertTrue(got["nodes"][DEAD2 + ":t1"]["nodeComplete"])
+        self.assertEqual(got["status"][DEAD2 + ":t1"], "working", "no mirror: not determinable, not settled")
+        self.assertIn(DEAD2 + ":t1", got.get("confirming") or [])
+        _focused_tracker(DEAD, MID)
+        (jd.STATE / "remote-sids").write_text("")
+        self.assertEqual(jd.run_propagate(now=T + 901), 1)
+        got = jd.load_goals(DEAD)
+        self.assertTrue(got["nodes"][DEAD + ":t1"]["nodeComplete"])
+        self.assertEqual(got["status"][DEAD + ":t1"], "completed", "the bus knows no such live session: settled")
+        self.assertNotIn(DEAD + ":t1", got.get("confirming") or [])
 
 
 class AbsentStoreMemo(World):
@@ -374,6 +417,43 @@ class AbsentStoreMemo(World):
         self.assertEqual(self._io()[:2], (h, m + 1), "the stale-identity entry misses; it is never served")
         self.assertEqual(jd._absent_store_flags(DEAD2), (True, False))
         self.assertEqual(self._io()[:2], (h + 1, m + 1))
+
+    def test_run_propagates_own_read_takes_the_identity_before_the_read_too(self):
+        # The recipient loop's _get reads an absent sender (a complete recipient goal refs a tracker
+        # of its that is already done) and leaves the object for the sweep, which memoizes it under
+        # the identity _get took. A publish landing between _get's stat and its read must pair the
+        # OLD identity with the old content, one extra miss next pass; stat AFTER the read would
+        # memoize the post-publish identity against pre-publish flags and serve it as a hit.
+        self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, MID, done=True)]})
+        g5 = _complete(RECIP, 5, origin={"peer": DEAD, "goalId": DEAD + ":t1", "msgId": MID})
+        self._publish(RECIP, {g5["id"]: g5})
+        p, k0 = str(jd.GOALDIR / (DEAD + ".json")), jd._store_identity(DEAD)
+        orig, fired = jd.load_goals, []
+
+        def publish_under_the_read(fsid):
+            st = orig(fsid)                             # the pre-publish content
+            if fsid == DEAD and not fired:
+                fired.append(1)
+                new = orig(DEAD)
+                new["nodes"][DEAD + ":t2"] = _tracker(DEAD, 2, RECIP, MID2, quiet=True)
+                jd.rollup_status(new, False)
+                jd.save_goals(DEAD, new)                # the identity moves while the read is in flight
+            return st
+        jd.load_goals = publish_under_the_read
+        try:
+            self.assertEqual(jd.run_propagate(now=T + 900), 0, "the ref's tracker was already done")
+        finally:
+            jd.load_goals = orig
+        self.assertEqual(fired, [1], "_get, not the sweep, performed the read")
+        k1 = jd._store_identity(DEAD)
+        self.assertNotEqual(k1, k0)
+        self.assertEqual(jd._ABSENT_FLAGS[p], (k0, (False, True)),
+                         "memoized under the identity taken BEFORE the read, with the content that read saw")
+        h, m, _w = self._io()
+        n, counts, _o = self._counting(lambda: jd.run_propagate(now=T + 901))
+        self.assertEqual((n, counts[DEAD]), (0, 1))
+        self.assertEqual(self._io()[:2], (h, m + 1), "the stale-identity entry misses; it is never served")
+        self.assertEqual(jd._ABSENT_FLAGS[p], (k1, (True, True)), "re-evaluated on the published content")
 
     def test_a_dead_sender_that_gains_a_tracker_is_swept_the_next_pass(self):
         self._plain(DEAD)
@@ -489,6 +569,79 @@ class AbsentStoreMemo(World):
             jd.load_goals = orig
         self.assertNotIn(str(jd.GOALDIR / (DEAD + ".json")), jd._ABSENT_FLAGS)
         self.assertEqual(jd._absent_store_flags(DEAD), (False, False), "retried on the next call")
+
+    # ---- a load that FELL BACK is no better than one that raised ----
+    def _read_fails_once(self, target):
+        """Patch Path.read_text so the first read of `target` raises OSError and every later read is
+        real (the awaiting-lift gate's tests use the same shape). load_goals swallows a store-file
+        failure into a fresh EMPTY store; _replay_overrides logs and skips the journal; both mark
+        the object `_unread`. Returns the counter of raised reads."""
+        real = Path.read_text
+        state = {"fired": 0}
+
+        def flaky(p, *a, **k):
+            if p == target and not state["fired"]:
+                state["fired"] += 1
+                raise OSError(errno.EMFILE, "synthetic: too many open files")
+            return real(p, *a, **k)
+        Path.read_text = flaky
+        self.addCleanup(setattr, Path, "read_text", real)
+        return state
+
+    def test_a_swallowed_store_read_failure_is_answered_but_not_memoized(self):
+        # load_goals does not raise on a store file it cannot read: it answers a fresh empty store,
+        # marked `_unread`. That store's (False, False) serves this pass (the sweeps skip the store,
+        # as they always did) but no entry is written: nothing on disk changes before the next read
+        # succeeds, so an entry would be a hit saying "nothing open" for a store holding an open
+        # tracker, until its next write. (The raise above is the other shape; the memo must cover both.)
+        self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, MID, quiet=True)]})
+        p, k0 = str(jd.GOALDIR / (DEAD + ".json")), jd._store_identity(DEAD)
+        state = self._read_fails_once(jd.GOALDIR / (DEAD + ".json"))
+        h, m, _w = self._io()
+        self.assertEqual(jd._absent_store_flags(DEAD), (False, False), "the fallback's answer, this pass only")
+        self.assertEqual(state["fired"], 1)
+        self.assertNotIn(p, jd._ABSENT_FLAGS, "an unread store is never memoized")
+        self.assertEqual(jd._store_identity(DEAD), k0, "nothing on disk moved: the key alone could not tell")
+        self.assertEqual(jd._absent_store_flags(DEAD), (True, False), "the next call re-reads the file")
+        self.assertEqual(self._io()[:2], (h, m + 2), "two misses, no stale hit")
+        self.assertEqual(jd._ABSENT_FLAGS[p], (k0, (True, False)))
+
+    def test_a_skipped_journal_replay_is_answered_but_not_memoized(self):
+        # The store file reads; the override journal does not. _replay_overrides logs, skips it and
+        # marks the object `_unread`, so the un-replayed store still shows a tracker the user
+        # resolved. That answer serves this pass only; the next call replays and re-evaluates. An
+        # entry would have pinned the un-resolved tracker: the journal's identity does not move when
+        # it becomes readable again.
+        self._publish(DEAD2, {t["id"]: t for t in [_tracker(DEAD2, 1, RECIP, MID, quiet=True)]})
+        jd.append_override(DEAD2, DEAD2 + ":t1", "resolve", T + 200)
+        self.assertEqual(jd._owed_distill_flag(jd.load_goals(DEAD2)), True, "replayed: the resolve closed the tracker")
+        p, k0 = str(jd.GOALDIR / (DEAD2 + ".json")), jd._store_identity(DEAD2)
+        state = self._read_fails_once(jd._overrides_dir() / (DEAD2 + ".jsonl"))
+        h, m, _w = self._io()
+        self.assertEqual(jd._absent_store_flags(DEAD2), (True, False), "un-replayed: this pass only")
+        self.assertEqual(state["fired"], 1)
+        self.assertNotIn(p, jd._ABSENT_FLAGS, "a store whose journal was skipped is never memoized")
+        self.assertEqual(jd._store_identity(DEAD2), k0)
+        self.assertEqual(jd._absent_store_flags(DEAD2), (False, True), "the next call replays the journal")
+        self.assertEqual(self._io()[:2], (h, m + 2), "two misses, no stale hit")
+        self.assertEqual(jd._ABSENT_FLAGS[p], (k0, (False, True)))
+
+    def test_run_propagate_does_not_memoize_a_sender_whose_read_fell_back(self):
+        # The same mark through run_propagate's own read: a complete recipient goal refs an absent
+        # sender's open tracker; _get reads the sender (the store file fails once: an empty `_unread`
+        # object with no tracker to mark) and leaves it for the sweep, which must not memoize it. The
+        # next pass reads the real file and completes the tracker.
+        self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, MID)]})
+        g5 = _complete(RECIP, 5, origin={"peer": DEAD, "goalId": DEAD + ":t1", "msgId": MID})
+        self._publish(RECIP, {g5["id"]: g5})
+        p = str(jd.GOALDIR / (DEAD + ".json"))
+        state = self._read_fails_once(jd.GOALDIR / (DEAD + ".json"))
+        self.assertEqual(jd.run_propagate(now=T + 900), 0, "the fallback holds no tracker to complete")
+        self.assertEqual(state["fired"], 1)
+        self.assertNotIn(p, jd._ABSENT_FLAGS)
+        self.assertFalse(jd.load_goals(DEAD)["nodes"][DEAD + ":t1"]["nodeComplete"])
+        self.assertEqual(jd.run_propagate(now=T + 901), 1, "the next pass reads the file and completes it")
+        self.assertTrue(jd.load_goals(DEAD)["nodes"][DEAD + ":t1"]["nodeComplete"])
 
     def test_rebind_clears_the_memo(self):
         self._plain(DEAD)
