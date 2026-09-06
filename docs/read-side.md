@@ -244,12 +244,22 @@ retires on an event, never a timer.** The kernel keeps an input echo (a syntheti
 user atom in the backend's live store, mirrored to the registry so a restart cannot
 lose it) from `send()` until the transcript carries the same text. For a message fed
 into a running turn that record is the `queued_command` attachment the CLI writes
-when it splices the message in at its next tool boundary, and until then no floor
-retires the echo: the session has fed the text (`SdkSession.fed_texts`) and the CLI
-holds it. The one echo a later human record may retire on its own is an image-path
-echo, because the CLI rewrites the path to `[Image #N]` and the text can never
-match. If the CLI dies holding the message, the echo is flagged `undelivered` and
-the chat offers copy-to-composer and dismiss. The client keeps its own pending
+when it splices the message in at its next tool boundary. On the SDK route no floor
+retires an echo: it retires only when its text lands in a record stamped at or after
+the send (a user record or that attachment), or when the CLI dies holding it
+(`dropped`). The CLI extracts no image paths on the stream-json route (its only
+image-path test belongs to the interactive composer's paste handler), so an image
+path in an SDK send lands as typed and the echo's text matches. `_path_bearing` and
+the extension set it tests (png, jpe?g, gif, webp, case-insensitive: the CLI bundle's
+single image-path test, pinned equal between kernel and backend) remain for the tmux
+settle path only, where the paste hook does run and rewrites the path to
+`[Image #N]`. The chat's own image previews (`_user_images`) use a separate set,
+built from the served MIME table (`_IMG_MIME`, svg and bmp included), so a preview is
+never proposed for a file the image route cannot serve. If the CLI dies holding the
+message, the echo is flagged `undelivered` and the chat offers copy-to-composer and
+dismiss. A kernel restart does not re-run a mid-turn send: the boot duplicate guard
+(`_text_landed`) reads the `queued_command` attachment too, so a landed send is
+neither re-queued nor flagged as undelivered. The client keeps its own pending
 bubble (dashed, "sending…") from the press until the kernel's payload accounts for
 the text (`ui/webview/send-pending.ts`). At the press the bubble is anchored to the
 last stable kernel event, and the user events that already carry its text are
@@ -267,8 +277,14 @@ appears or the message lands; the label is per bubble, so a group holding one dr
 send and one in flight reads "not confirmed · sending…", and the chat repaints only
 when a bubble's state changed (a redial loop while the kernel is down repaints
 nothing). An absorbed atom sits at its send time, above the steps that were already
-running, so its event carries `absorbed` and `landedAt` (the boundary the CLI took it
-at): the bubble wears "joined mid-turn", and when the landing retired a pending
+running, so its event carries `absorbed` and `landedAt`, the time the CLI took it:
+the repaired timestamp of the attachment's file-order predecessor (the boundary
+record the splice waited for), clamped to the send time when it would be earlier.
+`landedT` is never before `t`, with no tolerance window: real transcripts invert only
+by clock granularity, and anything larger is a shape the CLI does not write. Each
+clamp is counted as `landedT-clamp` in the event model's assembly stats, served
+beside `ts-repair` in the version route's `parse` dict. The chat shows the time to
+the minute. The bubble wears "joined mid-turn", and when the landing retired a pending
 bubble at the tail, a cue stays where the bubble was ("delivered into the running
 turn at HH:MM", with a jump) until jump or ✕. The cue hangs under the last event the
 chat draws in its current mode; compact mode hides thinking, so a thinking record at

@@ -40,7 +40,7 @@ file from: a chip with the session's name, in the same color as its tab.
 **Sending while the session is working.** The session takes your message at its next
 step, and the chat places it at the time you sent it, above the steps that were already
 running: the bubble says "joined mid-turn", and where it had been waiting at the bottom a
-note says when the session took it, with a link that jumps to it.
+note says when the session took it (to the minute), with a link that jumps to it.
 
 **While a message is on its way.** A message you have sent shows as a dashed bubble
 marked "sending…" until the session records it, however long that takes; the bubble
