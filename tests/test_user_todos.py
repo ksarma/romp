@@ -2549,7 +2549,7 @@ class EscalationFloorPredicate(_StoreSandbox):
             mock.patch.object(km, "_backend_queued", lambda s: queued),
             mock.patch.object(km, "_backend_rewind_pending", lambda s: rewind),
             mock.patch.object(km, "_compacting_now", lambda s: compacting),
-            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="": interrupted),
+            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="", **k: interrupted),
             mock.patch.dict(km._pending_ops, pending_ops or {}, clear=True),
         ]
         for p in patches:
@@ -3168,7 +3168,7 @@ class NudgeStandsDownForOpenTodos(_StoreSandbox):
             mock.patch.object(jd, "parsed_session",
                               lambda sid, paths, now: {"turns": list(self.TURNS)}),
             mock.patch.object(km, "_session_working", lambda turns: False),
-            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="": False),
+            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="", **k: False),
             mock.patch.object(km, "_backend_queued", lambda s: False),
             mock.patch.object(km, "_backend_rewind_pending", lambda s: False),
             mock.patch.object(km, "_last_state", lambda s: ("waiting", 0)),
