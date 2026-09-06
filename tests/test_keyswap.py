@@ -721,7 +721,9 @@ class KeyswapCli(_EnvFile):
         self.assertIn("MISMATCH", said)
         self.assertIn("sha256:deadbeefcafe", said)
         self.assertIn("reads another service.env:", said)
-        self.assertIn("this shell reads %s." % self.path, said, "the other-file cause names this shell's path")
+        # flattened: a path too long for its sentence is rendered on a line of its own (cli._other_file), and
+        # a temp directory's length is the environment's, not this test's
+        self.assertIn("this shell reads %s." % self.path, " ".join(said.split()), "the other-file cause names this shell's path")
         self.assertNotIn("installed with another env-file path", said, "one direction of the cause; the general form replaced it")
         self.posted.clear()
         cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
