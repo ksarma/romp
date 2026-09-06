@@ -32,9 +32,34 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
+from importlib.machinery import SourceFileLoader
+from types import SimpleNamespace
 
 SID = "aaaaaaaa-1111-4222-8333-444444444444"
 CODEWORD = "PLUM-FORTY-TWO"
+
+# Hermetic state BEFORE the load below: the state-isolation ratchet (tests/test_state_isolation_order.py)
+# counts every in-process load as state-touching, and only pytest runs conftest's floor. The module
+# loaded here reads no state; the two lines are the ratchet's price and change nothing for the child
+# (its config dir is the hermetic CLAUDE_CONFIG_DIR, and the SDK venv is found under HOME).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+
+# The child below runs the user's own apiKeyHelper and a real CLI, so its stdout and stderr can carry
+# a credential (a helper that echoes, a CLI that prints its headers on a failure). What a failure
+# renders of them is scrubbed with the suite's credential-shaped token list first (the same list
+# tests/conftest.py's report hook applies, loaded by path so this file also works outside pytest),
+# and capped: the last CHILD_OUTPUT_CAP characters of each stream.
+_cp = SourceFileLoader("romp_tests_credential_patterns_live", os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                                                        "credential_patterns.py")).load_module()
+CHILD_OUTPUT_CAP = 1500
+
+
+def _child_output(r):
+    """The text a failed run shows of the child's two streams: scrubbed, then the tail of each."""
+    return "child failed:\n%s\n%s" % (_cp.scrub(r.stdout or "")[-CHILD_OUTPUT_CAP:],
+                                        _cp.scrub(r.stderr or "")[-CHILD_OUTPUT_CAP:])
 
 CHILD = r'''
 import asyncio, glob, json, os, sys
@@ -112,8 +137,11 @@ def _user_api_key_helper(config_dir=None):
     """The `apiKeyHelper` command from the user's own Claude Code settings ("" when there is none): the
     hermetic config dir borrows the COMMAND, so the child authenticates exactly the way the user's real
     sessions do. Never a key — keys live in the vault and in process environment only, and this test
-    writes none to disk. `config_dir` defaults to $CLAUDE_CONFIG_DIR, else ~/.claude."""
-    d = config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    writes none to disk. `config_dir` defaults to the user's real config dir: under pytest the suite's
+    conftest floors $CLAUDE_CONFIG_DIR to an empty dir and saves the real location in
+    $ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, so that is read first; else $CLAUDE_CONFIG_DIR, else ~/.claude."""
+    d = (config_dir or os.environ.get("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR") or os.environ.get("CLAUDE_CONFIG_DIR")
+         or os.path.expanduser("~/.claude"))
     try:
         with open(os.path.join(d, "settings.json")) as f:
             v = json.load(f).get("apiKeyHelper")
@@ -172,6 +200,32 @@ class UserApiKeyHelper(unittest.TestCase):
             shutil.rmtree(td, ignore_errors=True)
 
 
+class ChildOutputScrub(unittest.TestCase):
+    """What a failed live run renders of the child's output: credential-shaped tokens scrubbed (the
+    child ran the user's real apiKeyHelper), each stream capped. Not opt-in: this runs everywhere."""
+
+    def test_a_fabricated_token_is_scrubbed_and_each_stream_is_capped(self):
+        tok = "sk-" + "ant-" + "api03-" + uuid.uuid4().hex + uuid.uuid4().hex        # assembled, never a literal
+        out = "starting\n" + "x" * 3000 + "\nkey=" + tok + "\n"
+        err = "y" * 2000 + "\nAuthorization: Bearer " + tok
+        text = _child_output(SimpleNamespace(stdout=out, stderr=err))
+        self.assertFalse(tok in text, "the token is gone from both streams")
+        self.assertEqual(text.count(_cp.REDACTED), 2)
+        self.assertTrue(text.startswith("child failed:\n"))
+        self.assertLessEqual(len(text), len("child failed:\n\n") + 2 * CHILD_OUTPUT_CAP)
+        self.assertEqual(CHILD_OUTPUT_CAP, 1500)
+        self.assertFalse("starting" in text, "the head of a long stream is what the cap drops")
+        self.assertTrue(text.endswith("Bearer " + _cp.REDACTED), "the tail of stderr is what is kept")
+        # scrubbed BEFORE the cut: a token straddling the cut can leave no half of itself behind
+        text = _child_output(SimpleNamespace(stdout="z" * (CHILD_OUTPUT_CAP - 10) + "key=" + tok, stderr=""))
+        self.assertFalse(tok[-20:] in text)
+        self.assertTrue(_cp.REDACTED in text)
+        # ordinary text stays: the codeword, a path, a fingerprint, an empty stream
+        plain = _child_output(SimpleNamespace(stdout="the codeword is %s at /tmp/romp-move-live-x/a\nsha256:1a2b3c1a2b3c" % CODEWORD,
+                                              stderr=None))
+        self.assertEqual(plain, "child failed:\nthe codeword is %s at /tmp/romp-move-live-x/a\nsha256:1a2b3c1a2b3c\n" % CODEWORD)
+
+
 @unittest.skipIf(_skip_reason(), _skip_reason())
 class LiveSetCwd(unittest.TestCase):
     def test_set_cwd_relocates_and_the_conversation_survives(self):
@@ -194,7 +248,7 @@ class LiveSetCwd(unittest.TestCase):
                 f.write(CHILD)
             r = subprocess.run([_sdk_python(), child, cfg, a, b, cli, SID, CODEWORD, spath],
                                capture_output=True, text=True, timeout=300, env=env, cwd=td)
-            self.assertEqual(r.returncode, 0, "child failed:\n%s\n%s" % (r.stdout[-2000:], r.stderr[-4000:]))
+            self.assertEqual(r.returncode, 0, _child_output(r))
             res = json.loads(r.stdout.strip().splitlines()[-1])
             self.assertTrue(res["has_sender"], "the SDK still exposes _send_control_request")
             mv = res["move"]

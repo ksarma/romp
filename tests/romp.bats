@@ -1974,6 +1974,71 @@ _keyswap_files() {
     grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"
 }
 
+# Command mode (ROMP_CREDENTIAL_COMMAND set; kernel/envsource.py): the same dispatcher, the same
+# cli/keyswap.py, against a fake credential command in the test dir whose set depends on $1. The
+# values are assembled at run time (no credential-shaped literal in this file), and the point of the
+# assertions is again that none of them is ever printed.
+_keyswap_command_mode() {
+    export ROMP_KERNEL_PORT=1                                 # no kernel answers there
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/no-such-service.env"
+    KS_HP="romp-test-fixture-hp-$RANDOM$RANDOM$RANDOM"
+    KS_LP="romp-test-fixture-lp-$RANDOM$RANDOM$RANDOM"
+    cat > "$TEST_DIR/cred.sh" <<EOF
+#!/bin/sh
+case "\$1" in
+  hp) echo "ANTHROPIC_API_KEY=$KS_HP" ;;
+  lp) echo "ANTHROPIC_API_KEY=$KS_LP" ;;
+esac
+echo "ROLE_TOKEN=romp-test-fixture-role-$RANDOM"
+EOF
+    chmod 700 "$TEST_DIR/cred.sh"
+    export ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\""
+    export ROMP_CREDENTIAL_SELECTOR_FILE="$TEST_DIR/selector"
+    export ROMP_CREDENTIAL_NAMES=hp,lp
+    export CLAUDE_CONFIG_DIR="$TEST_DIR/claude"               # no settings.json: no apiKeyHelper
+    printf 'hp\n' > "$ROMP_CREDENTIAL_SELECTOR_FILE"
+}
+
+@test "keyswap (command mode): the bare report names the source, the selector and fingerprints, never a value" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _keyswap_command_mode
+    run run_romp keyswap
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"key source  command (ROMP_CREDENTIAL_COMMAND is set)"* ]]
+    [[ "$output" == *"candidates  hp <- selected, lp"* ]]
+    [[ "$output" == *"live key    sha256:"* ]]
+    [[ "$output" == *"kernel      not running"* ]]
+    [[ "$output" != *"refused"* ]]
+    [[ "$output" != *"fixture"* ]]                            # never a value on a surface
+    [ "$(cat "$ROMP_CREDENTIAL_SELECTOR_FILE")" = "hp" ]      # a report writes nothing
+}
+
+@test "keyswap (command mode): a declared name writes the selector; an undeclared one is refused, unechoed" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _keyswap_command_mode
+    run run_romp keyswap lp
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"selector    hp -> lp"* ]]
+    [[ "$output" == *"live key    sha256:"* ]]
+    [[ "$output" == *"(was sha256:"* ]]
+    [[ "$output" != *"fixture"* ]]
+    [ "$(cat "$ROMP_CREDENTIAL_SELECTOR_FILE")" = "lp" ]
+    run run_romp keyswap nosuch
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"not declared in ROMP_CREDENTIAL_NAMES"* ]]
+    [[ "$output" != *"nosuch"* ]]                             # an undeclared name is never echoed
+    [[ "$output" != *"does not write API keys to files"* ]]   # not the file-mode refusal
+    [ "$(cat "$ROMP_CREDENTIAL_SELECTOR_FILE")" = "lp" ]      # untouched by the refusal
+}
+
+@test "keyswap: help names the whole form (name, --refresh, the cycle)" {
+    run run_romp -h
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"romp keyswap [<name>] [--refresh] [--cycle <session,…>|--cycle-all]"* ]]
+}
+
 @test "keyswap: help names it (the presence-checked command list)" {
     run run_romp -h
     [ "$status" -eq 0 ]
