@@ -25,8 +25,8 @@ setup() {
     # tests that want them set them explicitly.
     unset ROMP_SERVE_PORT ROMP_KERNEL_PORT ROMP_POSTAL_PORT ROMP_MANAGER_PORT ROMP_STATE_DIR CLAUDE_CONFIG_DIR ROMP_TMUX_SOCKET
     # The env-file path is baked (and, when non-default, exported) into the unit too; a developer shell
-    # that carries either variable must not leak it into the default-install assertions below.
-    unset ROMP_SERVICE_ENV_FILE XDG_CONFIG_HOME
+    # that carries any of these must not leak it into the default-install assertions below.
+    unset ROMP_SERVICE_ENV_FILE ROMP_SERVICE_ENV XDG_CONFIG_HOME
 }
 
 teardown() { rm -rf "$TEST_DIR"; }
@@ -347,6 +347,43 @@ EOF2
     ROMP_OS_OVERRIDE=Darwin run "$SVC" install
     [ "$status" -eq 0 ]
     run grep -q "ROMP_SERVICE_ENV_FILE" "$plist"
+    [ "$status" -ne 0 ]
+}
+
+@test "install from a shell that set only the alias ROMP_SERVICE_ENV carries the path as ROMP_SERVICE_ENV_FILE; the primary wins when both are set" {
+    # kernel/keysource.py resolves the env file from ROMP_SERVICE_ENV_FILE, else its alias ROMP_SERVICE_ENV, so
+    # `romp keyswap` in a shell that set only the alias reads that file and, on a MISMATCH, sends the operator
+    # to `romp-service install` from this shell. The installer read the primary alone: that install wrote no
+    # override line and the kernel kept the default path with the remedy done (review find, 2026-09-06). Both
+    # names now resolve here as they do there, and the line written is always the primary, which
+    # bin/romp-node-launch and the kernel read.
+    export ROMP_SERVICE_ENV="$TEST_DIR/alias dir/service.env"
+    mkdir -p "$TEST_DIR/alias dir"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" install
+    [ "$status" -eq 0 ]
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
+    grep -Fq 'Environment="ROMP_SERVICE_ENV_FILE='"$TEST_DIR"'/alias dir/service.env"' "$unit"
+    grep -Fq 'EnvironmentFile=-'"$TEST_DIR"'/alias dir/service.env' "$unit"
+    run grep -q 'ROMP_SERVICE_ENV=' "$unit"
+    [ "$status" -ne 0 ]                     # the primary name is written, never the alias
+    ROMP_OS_OVERRIDE=Darwin run "$SVC" install
+    [ "$status" -eq 0 ]
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist"
+    grep -Fq '<key>ROMP_SERVICE_ENV_FILE</key><string>'"$TEST_DIR"'/alias dir/service.env</string>' "$plist"
+    run grep -q 'ROMP_SERVICE_ENV<' "$plist"
+    [ "$status" -ne 0 ]
+    # both set: the primary wins, the order kernel/keysource.py reads them in
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/primary/service.env"
+    mkdir -p "$TEST_DIR/primary"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" install
+    [ "$status" -eq 0 ]
+    grep -Fq 'Environment="ROMP_SERVICE_ENV_FILE='"$TEST_DIR"'/primary/service.env"' "$unit"
+    run grep -Fq "alias dir" "$unit"
+    [ "$status" -ne 0 ]
+    ROMP_OS_OVERRIDE=Darwin run "$SVC" install
+    [ "$status" -eq 0 ]
+    grep -Fq '<key>ROMP_SERVICE_ENV_FILE</key><string>'"$TEST_DIR"'/primary/service.env</string>' "$plist"
+    run grep -Fq "alias dir" "$plist"
     [ "$status" -ne 0 ]
 }
 

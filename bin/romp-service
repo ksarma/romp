@@ -61,8 +61,13 @@ UNIT="$SYSTEMD_DIR/romp-manager.service"
 # command, which the kernel runs per launch and whose output it injects
 # (kernel/envsource.py; docs/reference.md, "Installing without keys on disk").
 # Values are read fresh on every manager (re)start, so changing one never needs
-# a reinstall. ROMP_SERVICE_ENV_FILE overrides the path (tests).
-SERVICE_ENV_FILE="${ROMP_SERVICE_ENV_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/service.env}"
+# a reinstall. ROMP_SERVICE_ENV_FILE overrides the path (tests); ROMP_SERVICE_ENV is
+# the alias kernel/keysource.py accepts after it, resolved the same way here so an
+# install from a shell that set only the alias carries the path across
+# (_service_env_override writes the primary name, which the launcher and the kernel
+# read). Reading the primary alone made `romp keyswap`'s "install from this shell"
+# remedy write no override line from such a shell (review find, 2026-09-06).
+SERVICE_ENV_FILE="${ROMP_SERVICE_ENV_FILE:-${ROMP_SERVICE_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/service.env}}"
 
 # The instance-scoping env: the variables that say WHICH romp this service supervises.
 # A second OS user on one machine (a kernel handed to another person) shares the machine's
@@ -99,7 +104,8 @@ _instance_env_block() {
 }
 
 # The kernel resolves the env file's path from ITS OWN environment (kernel/keysource.py reads
-# ROMP_SERVICE_ENV_FILE, else ${XDG_CONFIG_HOME:-~/.config}/romp/service.env) — and the service gets
+# ROMP_SERVICE_ENV_FILE, else the alias ROMP_SERVICE_ENV, else ${XDG_CONFIG_HOME:-~/.config}/romp/service.env)
+# — and the service gets
 # neither variable from the installing shell. So a non-default path baked into EnvironmentFile= below
 # would be read by systemd/launchd and NOT by the kernel's live key read: `romp keyswap` would rewrite
 # a file the kernel never looks at (review find, 2026-09-04). Carry the resolved path across whenever
