@@ -87,6 +87,10 @@ MOCK
     # (tests/tmux-private.bash has the 2026-09-06 incident).
     tmux_private_socket_dir "$TEST_DIR"
     unset TMUX            # default: outside tmux → attach-session branch
+    # bin/romp-manager starts its tmux server in a transient systemd scope under ROMP_SUPERVISED (which a
+    # romp session's tool shell inherits from the live service) — a test must never start a real scope
+    # on the live user manager, so the switch is floored off (the kernel and manager both honour it).
+    export ROMP_CLI_SCOPE=0
     # Hermetic HOME: bin/romp probes $HOME/.claude/romp-postal.mcp.json (would
     # nondeterministically append --mcp-config on a dev machine) and writes the
     # names map under XDG_STATE_HOME (was polluting the REAL state dir).
