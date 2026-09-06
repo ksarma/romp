@@ -601,6 +601,28 @@ class EditedBoundsTheWrite(_Wire):
         self.assertEqual(self.notices, [], "the normal lens path: nothing said")
         self.assertGreater(a["seq"], store["seq"], "the write moved the store")
 
+    def test_a_lens_write_cannot_store_a_dangling_active_it_is_validated_against_the_tags_that_stand(self):
+        """Round 6 of the 2026-09-05 review: the normalizer validated `active` against the POSTED
+        blob's tags, so a copy whose active named a tag deleted elsewhere wrote that id to disk under
+        an empty `edited` (the store's tags stood; the blob's active did not point at any of them).
+        Served as "all" by every read's re-normalization, but stored wrong. Validated against what
+        stands now — and the lens, order and active fields still land whole, last writer wins."""
+        served = self.seed()
+        d, err = km._edit_tag("docs", add=[SID2])                           # a second tag…
+        self.assertIsNone(err)
+        stale = json.loads(json.dumps(km._views_client()))
+        self.assertIsNone(km._edit_tag(tid=d["id"], delete=True)[1])       # …deleted elsewhere after the copy was taken
+        stale["active"] = d["id"]                                          # the copy still selects it
+        stale["actives"] = {"timeline": {"tags": ["docs"]}, "chat": {"all": True}, "outline": {"all": True}}
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale, "edited": []})
+        self.assertEqual((a["ok"], a["refused"]), (True, []))
+        on_disk = json.loads(km._views_path().read_text())
+        self.assertEqual(on_disk["active"], "all", "no dangling id on disk: the active named no tag that stands")
+        self.assertEqual([t["id"] for t in on_disk["tags"]], ["gA"], "the store's tags stood")
+        self.assertEqual(on_disk["actives"]["timeline"], {"tags": ["docs"]},
+                         "the lens lands whole, unknown name and all (it may exist on a linked kernel): last writer wins")
+        self.assertEqual(self.notices, [])
+
     def test_a_write_naming_its_edited_tags_changes_those_only(self):
         self.seed()
         c = self.post({"type": "tagEdit", "writeId": "w1", "edit": {"op": "create", "name": "api", "color": "#54B204"}})

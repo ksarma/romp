@@ -374,6 +374,18 @@ The kernel's own dashboard notice follows the same rule: a kept tag the client
 edited is a lost edit and raises a dashboard notice; a kept tag it did not edit
 is one stderr line and nothing on the dashboard. A write without `edited` (an
 older client) is judged whole by the stamps, as before.
+The lens, order and active fields are not judged under any value of `edited`:
+the write's copies land whole, with no comparison of its `seq` or `at` to the
+store's, so across dashboards the last writer wins for them. They are display
+preferences a user sets by gesture, not tag data, and a surface's lens should
+read as the last gesture made on it. The cost is stated here rather than
+hidden: a dashboard whose adopted base predates another dashboard's lens
+change carries the older lenses for the other surfaces along with its own
+change and writes them back, so the other dashboard's filter reverts on its
+next frame. Tightening this would mean naming the surfaces a write changed,
+the way `edited` names tags. The one check made is on `active`: it is
+validated against the tags that stand after the write, so a stale copy whose
+active names a tag deleted since stores "all", not a dangling id.
 `edited` also settles a case the guard could not judge before: a tag absent
 from the store. Named in `edited`, it is a create (the no-capability path's
 client-minted `g…` id) and lands; not named, it is a stale copy re-creating a

@@ -3058,6 +3058,15 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
         rows.append({"tid": t["id"], "name": t.get("name"),
                      "reason": "the views blob caps at %d tags, so it was not created" % _VIEWS_MAX_TAGS})
     v["tags"] = stands
+    # `active` is validated against the tags that STAND, not the blob's (round 6 of the 2026-09-05
+    # review): the normalizer checked it against the posted set, so a stale copy whose active named
+    # a tag deleted since — kept out above, or standing aside for the store's set under an empty
+    # `edited` — stored a dangling id; every read re-normalized it to "all", so nothing showed, but
+    # the file was wrong. The lens, order and active fields themselves are the write's to set, whole
+    # and unjudged (last writer wins across dashboards; docs/read-side.md states the trade).
+    act = v.get("active") or "all"
+    if act not in ("all", "untagged") and ":" not in act and not any(t["id"] == act for t in stands):
+        v["active"] = "all"
     # The refusal's two audiences: a kept tag the poster EDITED is a lost edit — stderr plus a red
     # dashboard notice (the user 2026-08-31's silent loss, never again silent). A kept tag the
     # poster did not edit (`edited` names the ones it did) is a stale copy of an untouched tag,
