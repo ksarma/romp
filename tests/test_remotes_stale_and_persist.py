@@ -111,6 +111,39 @@ class SupervisorStatePersists(unittest.TestCase):
             km._remotes["TESTHOST"]["last_ok"] = 1785272930.0
         self.assertFalse(km._remotes_save_if_changed())
 
+    def test_a_views_poll_stamp_alone_does_not_rewrite_the_file(self):
+        # _poll_remote_views restamps _views_at on every real read — once a minute per up host. Counted, it
+        # rewrote the token file every minute forever, the churn _NOT_SAVED's usage entry names, by the
+        # other poll (round 8 of the 2026-09-06 tab-groups review).
+        with km._remotes_lock:
+            km._remotes["TESTHOST"]["_views_at"] = 1785272930.0
+        self.assertFalse(km._remotes_save_if_changed())
+        self.assertIn("_views_at", km._NOT_SAVED)
+
+    def test_a_changed_views_reading_reaches_disk_without_its_stamp_and_survives_a_boot(self):
+        # `views` IS persisted, on purpose: _views_client serves every cached reading, status aside, so a
+        # down host's tags keep excluding from the untagged view across a kernel restart — _remotes_load
+        # keeps the key, and the loaded row starts down with no stamp, so the boot's first poll re-reads.
+        reading = {"tags": [{"id": "g100", "name": "web", "color": "", "members": ["s1"]}]}
+        with km._remotes_lock:
+            km._remotes["TESTHOST"]["views"] = reading
+            km._remotes["TESTHOST"]["_views_at"] = 1785272930.0
+        self.assertTrue(km._remotes_save_if_changed(), "a changed reading is a change")
+        row = self._disk()[0]
+        self.assertEqual(row["views"], reading)
+        self.assertNotIn("_views_at", row)
+        self.assertNotIn("views", km._NOT_SAVED)
+        with km._remotes_lock:
+            km._remotes.clear()
+        km._remotes_load()
+        with km._remotes_lock:
+            r = km._remotes["TESTHOST"]
+            self.assertEqual(r["views"], reading)
+            self.assertEqual(r["status"], "down")
+            self.assertNotIn("_views_at", r)
+        served = [t for t in km._views_client().get("remoteTags") or [] if t.get("host") == "TESTHOST"]
+        self.assertEqual([t["name"] for t in served], ["web"], "the down host's cached tags are in the union after the boot")
+
     def test_a_status_change_reaches_disk(self):
         # THE BUG: this is the drop the file used to miss entirely.
         with km._remotes_lock:

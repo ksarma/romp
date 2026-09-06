@@ -3677,9 +3677,7 @@ def _forward_tag_edit(host, body):
     # owner's store, and try an inline refresh now (best-effort — the poll loop is the backstop)
     r.pop("_views_at", None)
     try:
-        rv = _poll_remote_views(r)
-        if rv is not None:
-            r["views"] = rv
+        _cache_remote_views(r, _poll_remote_views(r))   # the one store of a reading (a change marks dirty; None stores nothing)
     except Exception:
         pass
     return ans, None
@@ -3802,7 +3800,11 @@ def _apply_pending_tag_edits(r):
         _tunnel_log(host, "pending-tag-edits", note="views unreadable — retrying next pass",
                     pending=len(rows))
         return 0
-    r["views"] = rv
+    # the reading lands as the supervisor's does: a CHANGED one marks the views dirty and wakes the pusher
+    # whatever the rows below decide. Stored bare, a change seen only here went unmarked (round 8 of the
+    # 2026-09-06 tab-groups review): with rows pending and every forward failing nothing retires, and
+    # this re-read stamps the poll gate, so the pass's own poll serves the cache and never sees it.
+    _cache_remote_views(r, rv)
     by_name = {}                                 # keyed on the name basis: the host's raw name may be padded
     for t in (rv.get("tags") or []):
         if isinstance(t, dict):
@@ -16011,6 +16013,11 @@ _remotes_saved_sig = None   # signature of the last blob written — lets the su
 _NOT_SAVED = ("proc",       # the live Popen
               "usage",      # a remote's rate-limit snapshot: re-polled a minute after any boot, and
               "_usage_at",  # persisting it would rewrite this 0600 credential file every minute forever
+              "_views_at",  # the /views poll's stamp, restamped once a minute per up host (REMOTE_VIEWS_EVERY):
+              #               saved, it was the same minute-forever rewrite, ~1440 a day per host (round 8 of the
+              #               2026-09-06 tab-groups review). `views` ITSELF stays: _remotes_load keeps it and
+              #               _views_client serves every cached reading, status aside, so a down host's tags
+              #               survive a kernel restart; the boot's first poll re-reads, the gate unstamped
               "misses",     # the poll run counters: they describe THIS connection, and a fresh boot
               "ok_polls")   # dials from scratch, so carrying them across would judge a link that is gone
 
@@ -16526,10 +16533,12 @@ def _poll_remote_views(r):
 
 
 def _cache_remote_views(r, rviews):
-    """The supervisor's store of a pass's /views reading on the host's row — and the pusher's WAKE when
-    the reading CHANGED. A remote host's tags reach a pane only on the local views blob (_views_client,
-    riding the pusher's tabOrder frame and the cached feed and timeline builds), while its tabs reach
-    the pane over the relay within a /tunnels poll of the row coming up. Stored silently, a reattached
+    """The ONE store of a host's /views reading on its row — the supervisor's pass, the pending-edit
+    apply's fresh read, a landed edit's inline refresh (a test scans the module for any other) — and
+    the pusher's WAKE when the reading CHANGED. A remote host's tags reach a pane only on the local
+    views blob (_views_client, riding the pusher's tabOrder frame and the cached feed and timeline
+    builds), while its tabs reach the pane over the relay within a /tunnels poll of the row coming
+    up. Stored silently, a reattached
     host's tags followed its tabs by whatever the pusher's cycle had left (20-40 s on a loaded box), and
     on a quiet box the feed's and timeline's cached builds served the blob without them until some
     signature moved — and a tab-strip pin written in that window judged the host's sessions as tabs no

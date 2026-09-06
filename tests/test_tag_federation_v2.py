@@ -192,6 +192,36 @@ class LateApply(unittest.TestCase):
         self.assertEqual(self.forwarded, [])
         self.assertEqual(len(km._pending_tag_rows()), 1)
 
+    def test_a_changed_reading_marks_the_views_dirty_with_nothing_retired(self):
+        """Round 8 of the 2026-09-06 tab-groups review: the apply's fresh read stored the reading BARE, and
+        _mark_views_dirty fired only when a row retired. With rows pending and every forward failing, the
+        apply's re-read is the pass's only real read (it stamps the poll gate, so the supervisor's own poll
+        serves the cache), so a change seen there reached the feed and timeline a cache bucket late and
+        woke no one. The reading goes through _cache_remote_views now: a change marks and wakes, an
+        equal re-read does neither."""
+        self._rule({"delete": True})
+        dirty = km._views_dirty[0]
+        km._views_dirty[0] = 0.0
+        km._pusher_wake.clear()
+        try:
+            km._remote_forward = lambda r, path, body: None          # the transport fails, pass after pass
+            changed = [_remote_tag("g100", "web"), _remote_tag("g200", "api")]   # another tag appeared there
+            self._host_answers(changed)
+            self.assertEqual(km._apply_pending_tag_edits(self.r), 0)
+            self.assertEqual(len(km._pending_tag_rows()), 1, "nothing retired: the only path that used to mark")
+            self.assertEqual(self.r["views"], {"tags": changed}, "the fresh reading is cached")
+            self.assertGreater(km._views_dirty[0], 0.0, "…and marked dirty: the cached feed and timeline builds rebuild past it")
+            self.assertTrue(km._pusher_wake.is_set(), "…and the pusher is woken")
+            km._views_dirty[0] = 0.0
+            km._pusher_wake.clear()
+            self._host_answers(list(changed))                         # the next pass: equal content, a new object
+            self.assertEqual(km._apply_pending_tag_edits(self.r), 0)
+            self.assertEqual(km._views_dirty[0], 0.0, "an unchanged re-read is not news")
+            self.assertFalse(km._pusher_wake.is_set())
+        finally:
+            km._views_dirty[0] = dirty
+            km._pusher_wake.clear()
+
 
 class MtimeStamp(unittest.TestCase):
     """The v2 per-tag mtime: stamped at the store's ONE write door, only when the tag changed."""
@@ -289,11 +319,22 @@ class SupervisorViewsCache(unittest.TestCase):
         self.assertEqual(km._views_dirty[0], 0.0)
         self.assertFalse(km._pusher_wake.is_set())
 
-    def test_the_supervisor_stores_its_reading_through_the_cache(self):
+    def test_every_store_of_a_reading_goes_through_the_cache(self):
+        """Round 8: round 7 routed the supervisor's own store through the helper and this test read the
+        supervisor's source alone, while _apply_pending_tag_edits (called from the same pass) and
+        _forward_tag_edit still stored bare. The WHOLE module is scanned: the one `["views"] =` is the
+        helper's own, and every reader of a host's /views calls it."""
         import inspect
-        src = inspect.getsource(km._tunnel_supervisor)
-        self.assertIn("_cache_remote_views(r, rviews)", src)
-        self.assertNotIn('r["views"] = rviews', src, "no bare store: the wake rides the store")
+        import re
+        store = re.compile(r"""\[["']views["']\]\s*=(?!=)""")
+        src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
+        helper = inspect.getsource(km._cache_remote_views)
+        self.assertEqual(len(store.findall(helper)), 1, "the helper stores once")
+        self.assertEqual(len(store.findall(src)), 1,
+                         "a bare r[\"views\"] = … outside _cache_remote_views: route it through the helper")
+        self.assertNotRegex(src, r"""(setdefault|update)\(\s*\{?\s*["']views["']""", "no store by another spelling")
+        for fn in (km._tunnel_supervisor, km._apply_pending_tag_edits, km._forward_tag_edit):
+            self.assertIn("_cache_remote_views(r, ", inspect.getsource(fn), fn.__name__)
 
 
 if __name__ == "__main__":
