@@ -5557,9 +5557,13 @@ function renderTabs() {
   // ends the view: renderSnapshot clears snapView and hides the host, and the pane goes back to the
   // active session's transcript HERE (showActive, which re-enables the composer), because no other
   // caller follows a push with showActive (the 2026-09-06 review: the pane stayed blank, the box disabled).
+  // A row that held focus is hidden with the host, so focus goes to the active tab, as after the user's own
+  // Escape (snapshotHoldsFocus, read before renderSnapshot hides it); the event is the push whose plan dropped
+  // the section.
   const shown = snapView;
+  const held = shown ? snapshotHoldsFocus() : false;
   if (snapView) renderSnapshot();
-  if (shown && !snapView) showActive();
+  if (shown && !snapView) { showActive(); if (held) focusActiveTab(); }
   // Hiding the LAST visible session must also blank its transcript: a strip with no tabs cannot sit
   // over a hidden session's live chat (the ghost would show exactly what the hide asked to put away).
   // Restored the moment anything is visible again — the placeholder owns the empty state meanwhile.
@@ -10175,17 +10179,33 @@ function hideSnapshot(): void {
   if (host) host.style.display = "none";
   snapModel = null;
 }
+/** Whether keyboard focus is on the snapshot (a row a keyboard user Tabbed or arrowed onto). THE EXIT HANDS
+ *  FOCUS ON (the round-3 review): leaving the view hides the host (hideSnapshot, display none), and hiding the
+ *  focused element drops focus to body (the browser's focus fixup); nothing put it anywhere, so the user's
+ *  Escape left them on body, arrows and Enter dead until a click. The round-2 rule keeps focus across rows
+ *  that change INSIDE the list, not across the view going away, and renderTabs' own refocus reads the strip,
+ *  which the host (under #content) is not in. So each exit reads this BEFORE its hide, since after it
+ *  activeElement is already body, and when it was on the snapshot hands focus to the active tab once the
+ *  transcript is back: where the composer's own Escape puts it, and a row pick (tab mode: arrows switch
+ *  sessions, Enter drops into the message box). Focus anywhere else is left alone. */
+function snapshotHoldsFocus(): boolean {
+  const host = document.getElementById("tab-snapshot");
+  return !!host && !!document.activeElement && host.contains(document.activeElement);
+}
 /** Back to the active session's transcript without picking a session (the 2026-09-06 review: a header click
  *  swapped the pane, and only a pick swapped it back). Two gestures land here: Escape while the snapshot
  *  shows (below), and a click on the header whose snapshot the pane shows when the section is open and holds
  *  the tab being read (show-transcript: the click that put the section in the pane, undone). Nothing about
  *  "active" moves: renderTabs drops the header's snap-shown mark, showActive puts the transcript back and
- *  re-enables the composer. */
+ *  re-enables the composer. A row that held focus is hidden with the host, so focus goes to the active tab
+ *  (snapshotHoldsFocus, read before the hide); the event is the user's Escape, or the header's second click. */
 function leaveSnapshot(): void {
   if (!snapView) return;
+  const held = snapshotHoldsFocus();
   snapView = null;
   renderTabs();
   showActive();
+  if (held) focusActiveTab();
 }
 // ESCAPE LEAVES THE SNAPSHOT, and yields to every layer that owns its own Escape: two phases on the window
 // (tab-snapshot-view.ts installSnapshotEscape). Armed at capture, while this page's layers are still on the

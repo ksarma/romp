@@ -3,8 +3,9 @@
 // protects the view: the section gone from the strip puts the transcript back; Escape and a second header
 // click are the way back; a press on a row survives a rebuild; a remote row's host prefix is quiet metadata;
 // a pick that lands on a still-loading tab hands the composer to the loading state; the client's Ledger type
-// declares the field the now line reads. Source pins on render.ts (no jsdom here; the tab-groups.test.ts
-// harness) plus executed checks on the pure modules. The notes-api demo world, synthetic ids, TESTHOST.
+// declares the field the now line reads; an exit from a focused row hands focus to the active tab. Source pins
+// on render.ts (no jsdom here; the tab-groups.test.ts harness) plus executed checks on the pure modules. The
+// notes-api demo world, synthetic ids, TESTHOST.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -38,7 +39,7 @@ test("the section gone from the strip while its snapshot shows puts the transcri
   // placeholder, until the user happened to click a tab. The absence from the plan is the event; the same
   // renderTabs answers it with showActive, which re-enables the composer.
   assert.match(TABS, /collapsedTabIds = plan\.folded;\s*\n\s*lastStripItems = plan\.items;/, "the plan renderSnapshot reads is the one just rendered");
-  assert.match(TABS, /const shown = snapView;\s*\n\s*if \(snapView\) renderSnapshot\(\);\s*\n\s*if \(shown && !snapView\) showActive\(\);/,
+  assert.match(TABS, /const shown = snapView;\s*\n\s*const held = shown \? snapshotHoldsFocus\(\) : false;\s*\n\s*if \(snapView\) renderSnapshot\(\);\s*\n\s*if \(shown && !snapView\) \{ showActive\(\); if \(held\) focusActiveTab\(\); \}/,
     "renderSnapshot clears snapView when the section is not in the plan; the transcript comes back in the same render");
   assert.match(SNAP, /if \(!head\) \{ snapView = null; hideSnapshot\(\); return false; \}/, "the section's absence is the event");
   assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? sessions\.get\(activeId\) : null;/, "showActive's transcript path hides the host…");
@@ -56,7 +57,7 @@ test("the section gone from the strip while its snapshot shows puts the transcri
 test("the way back (review findings 6 and 12): Escape leaves the snapshot when no layer owns it; the open, shown header of the section holding the active tab offers the transcript on its second click", () => {
   // every header click set snapView and only a session pick cleared it: a mis-click on a header cost the
   // transcript and two more gestures. The click-to-snapshot is the user's ask and stays; these are the exits.
-  assert.match(SNAP, /function leaveSnapshot\(\): void \{\s*\n\s*if \(!snapView\) return;\s*\n\s*snapView = null;\s*\n\s*renderTabs\(\);\s*\n\s*showActive\(\);\s*\n\}/,
+  assert.match(SNAP, /function leaveSnapshot\(\): void \{\s*\n\s*if \(!snapView\) return;\s*\n\s*const held = snapshotHoldsFocus\(\);\s*\n\s*snapView = null;\s*\n\s*renderTabs\(\);\s*\n\s*showActive\(\);\s*\n\s*if \(held\) focusActiveTab\(\);\s*\n\}/,
     "one exit: snapView cleared, the header's mark dropped by the strip render, the transcript and the live composer back through showActive");
   // Escape: two phases on the window (tab-snapshot-view.ts installSnapshotEscape, executed in its own test): armed at
   // capture, so this page's layers that own their own Escape are still on the page to be seen and yielded to;
@@ -197,4 +198,35 @@ test("snapshot rows update in place, keyed by session id, so the row a keyboard 
   assert.match(fill, /const nowEl = el\("span", "snap-now"\); nowEl\.textContent = r\.loading \? "opening…" : r\.now; btn\.appendChild\(nowEl\);/, "the parts as before");
   // the sheet: the focus ring is on the button, the node that stands
   assert.match(CSS, /\.snap-row:focus-visible \{ outline: 1px solid var\(--accent\); outline-offset: -1px; \}/);
+});
+
+test("leaving the snapshot from a focused row hands focus to the active tab, not body (round 3)", () => {
+  // Escape (or the header's second click) with focus on a row: leaveSnapshot, showActive, hideSnapshot set the
+  // host display:none with the focused row inside it, the browser's focus fixup dropped focus to body, and
+  // nothing put it anywhere: arrows and Enter dead until a click. The strip's per-push path did the same: the
+  // section gone, renderSnapshot hid the host, showActive put the transcript back, focus on body. The round-2
+  // rule keeps focus across rows that change INSIDE the list, not across the view going away, and renderTabs'
+  // own refocus reads the strip (bar.contains), which the host, under #content, is not in. Each exit now reads
+  // where focus is BEFORE its hide (after it, activeElement is already body) and, when it was on the snapshot,
+  // hands it to the active tab once the transcript is back: where the composer's own Escape puts it, and a row
+  // pick. Focus anywhere else (the header a click landed on, the strip, nothing) is left alone.
+  assert.match(RENDER, /if \(activeId && composerEdits\.has\(activeId\)\) \{ cancelComposerEdit\(activeId\); return; \}\s*\n\s*focusActiveTab\(\);\s*\n\s*return;/,
+    "the composer's Escape hands focus to the active tab: the convention the exit matches");
+  assert.match(SNAP, /setActive\(id\); focusActiveTab\(\);/, "a row pick lands there too");
+  assert.match(SNAP, /function snapshotHoldsFocus\(\): boolean \{\s*\n\s*const host = document\.getElementById\("tab-snapshot"\);\s*\n\s*return !!host && !!document\.activeElement && host\.contains\(document\.activeElement\);\s*\n\}/,
+    "the probe: focus anywhere under the host, by containment (a row button today; whatever the host holds); false with no host or no focus");
+  assert.match(TABS, /const refocusTab = bar\.contains\(document\.activeElement\);/, "the strip's own refocus reads the strip only, so the host's rows were nobody's");
+  assert.match(SNAP, /content\.appendChild\(host\);/, "the host hangs off #content, not the strip");
+  // the user's Escape or the header's second click: read, hide (renderTabs drops the mark, showActive hides the
+  // host and puts the transcript back), then the hand-off, guarded by what was read
+  const leave = SNAP.slice(SNAP.indexOf("function leaveSnapshot(): void {"), SNAP.indexOf("// ESCAPE LEAVES THE SNAPSHOT"));
+  assert.match(leave, /const held = snapshotHoldsFocus\(\);\s*\n\s*snapView = null;\s*\n\s*renderTabs\(\);\s*\n\s*showActive\(\);\s*\n\s*if \(held\) focusActiveTab\(\);/, "read before the hide; the hand-off after showActive, only when focus was on the snapshot");
+  assert.equal(leave.indexOf("snapshotHoldsFocus()") < leave.indexOf("showActive()"), true, "the read precedes the hide (after it, activeElement is body and the read would say no)");
+  // the push whose plan dropped the section (renderTabs): the read before renderSnapshot, whose section-gone path
+  // hides the host; the hand-off only when the view was in fact left (renderSnapshot cleared snapView)
+  const gone = TABS.slice(TABS.indexOf("const shown = snapView;"), TABS.indexOf("// Hiding the LAST visible session"));
+  assert.match(gone, /const held = shown \? snapshotHoldsFocus\(\) : false;\s*\n\s*if \(snapView\) renderSnapshot\(\);\s*\n\s*if \(shown && !snapView\) \{ showActive\(\); if \(held\) focusActiveTab\(\); \}/,
+    "read before renderSnapshot; the hand-off after showActive, only on the section-gone path, only when focus was on the snapshot");
+  assert.equal(RENDER.match(/(?<!function )snapshotHoldsFocus\(\)/g)?.length, 2, "two exits, both read it; no other caller");
+  assert.equal(RENDER.split("if (held) focusActiveTab();").length - 1, 2, "and both hand focus on the same way");
 });
