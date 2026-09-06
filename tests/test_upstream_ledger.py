@@ -516,6 +516,25 @@ class Render(unittest.TestCase):
         self.assertLessEqual(len(notes), 201)
         self.assertEqual(notes, "N" * 150 + "…")
 
+    def test_title_and_where_cells_are_cut_like_notes_and_the_link_survives_the_cut(self):
+        long_title = "Long title " + "[bracket] " * 30   # the cut can strip a closing bracket; the link must not break
+        (self.d / "2026-09-06-long.md").write_text(_entry("2026-09-06-long.md", title=long_title, where="W" * 300), encoding="utf-8")
+        entries, got = L.load_entries(self.d)
+        self.assertEqual(got, [])
+        row = next(r for r in L.render(entries).split("\n") if "2026-09-06-long.md" in r)
+        title, where = L.row_cells(row)[:2]
+        self.assertTrue(title.endswith("… ([entry](upstream/2026-09-06-long.md))"), title)
+        self.assertLessEqual(len(title), 201 + len(" ([entry](upstream/2026-09-06-long.md))"))
+        self.assertEqual(where, "W" * 200 + "…")
+        self.assertEqual(problems(_tables(L.render(entries))[0]), [])
+
+    def test_a_cut_never_lands_inside_a_code_span(self):
+        text = "word " * 38 + "`a long code span that the cut would otherwise split in two` tail"
+        got = L.cut(text)
+        self.assertTrue(got.endswith("…"))
+        self.assertEqual(got.count("`") % 2, 0, got)
+        self.assertLess(len(got), 201)
+
     def test_every_title_links_to_a_file_that_exists(self):
         links = re.findall(r"\]\(upstream/([^)]+)\)", self.rendered)
         self.assertEqual(len(links), len(self.entries))

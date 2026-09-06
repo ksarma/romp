@@ -38,8 +38,8 @@ Commands (stdlib only):
 """
 import argparse
 import json
-import os
 import re
+import signal
 import subprocess
 import sys
 from collections import Counter
@@ -61,7 +61,7 @@ STATUSES = OPEN + SIDE + TERMINAL
 DIR = "upstream"
 FRONT = "UPSTREAM.md"
 TITLE_PREFIX = 60     # two versions of one entry agree on how the title starts
-NOTES_CUT = 200       # the rendered Notes cell
+NOTES_CUT = 200       # the rendered title, Where and Notes cells; the link carries the reader to the full text
 FILENAME = re.compile(r"^(\d{4}-\d{2}-\d{2})-([a-z0-9-]{3,60})\.md$")
 SLUG = re.compile(r"^[a-z0-9-]{3,60}$")
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -270,12 +270,16 @@ def escape_cell(text):
 
 
 def cut(text, limit=NOTES_CUT):
+    """The first `limit` characters, ending on a word boundary and never inside a code span (an
+    unbalanced backtick would let the next cell's backtick pair with it and swallow a separator)."""
     if len(text) <= limit:
         return text
     head = text[:limit]
     sp = head.rfind(" ")
     if sp > limit // 2:
         head = head[:sp]
+    if head.count("`") % 2:
+        head = head[:head.rfind("`")]
     return head.rstrip() + "…"
 
 
@@ -304,9 +308,9 @@ def status_cell(e):
 
 
 def title_cell(e, link_base=""):
-    title = e.get("title")
+    title = cut(e.get("title"))
     target = f"{link_base}{DIR}/{e.name}"
-    if "[" in title or "]" in title:
+    if "[" in title or "]" in title:   # brackets inside link text break the link; link beside the title instead
         return f"{escape_cell(title)} ([entry]({target}))"
     return f"[{escape_cell(title)}]({target})"
 
@@ -316,7 +320,7 @@ def table(entries, link_base=""):
     for e in entries:
         rows.append("| " + " | ".join([
             title_cell(e, link_base),
-            escape_cell(e.get("where")),
+            escape_cell(cut(e.get("where"))),
             escape_cell(status_cell(e)),
             escape_cell(cut(e.notes)),
         ]) + " |")
@@ -681,6 +685,8 @@ def main(argv=None):
     p.add_argument("--row", default=None, help="one table row's text")
 
     a = ap.parse_args(argv)
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # `render | head` ends quietly
     root = Path(a.root) if a.root else Path(__file__).resolve().parents[1]
     entries_dir = root / DIR
 
