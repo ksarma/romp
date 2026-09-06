@@ -373,12 +373,12 @@ class SkeletonFromCache(unittest.TestCase):
         # it: a DEAD lane's blocked badge. A live lane's load was never read; the full build still loads for
         # every lane (its seams and judging marks read the store).
         loads = []
-        o_ts, o_lg = km._timeline_sessions, km.jd.load_goals
+        o_ts, o_lg = km._timeline_sessions, km.jd.load_goals_shared
         km.build_timeline = self.saved[0]
         km._timeline_sessions = lambda now, tmux, live_only=False: [
             {"sid": "D", "name": "d", "path": "/no/such/transcript-d"},
             {"sid": "L", "name": "l", "path": "/no/such/transcript-l"}]
-        km.jd.load_goals = lambda sid: (loads.append(sid), {"status": {"g1": "blocked"}} if sid == "D" else {"status": {}})[1]
+        km.jd.load_goals_shared = lambda sid: (loads.append(sid), {"status": {"g1": "blocked"}} if sid == "D" else {"status": {}})[1]
         live = {"L": {"state": "waiting", "since": 0, "model": "", "effort": "", "context": None,
                       "compactPct": None, "color": None, "mode": ""}}
         try:
@@ -389,7 +389,7 @@ class SkeletonFromCache(unittest.TestCase):
             km.build_timeline(1000, live, with_bars=True)
             self.assertEqual(sorted(loads), ["D", "L"], "the full build keeps its load for every lane")
         finally:
-            km._timeline_sessions, km.jd.load_goals = o_ts, o_lg
+            km._timeline_sessions, km.jd.load_goals_shared = o_ts, o_lg
 
     def test_a_steady_push_of_an_unchanged_timeline_sends_no_bars_and_a_rebuilt_one_sends_a_slotted_delta(self):
         """The pusher hands _send_slot the same bars object while the cached timeline's identity holds (_bars_wire),
