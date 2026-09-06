@@ -532,10 +532,13 @@ def derive(what, where, status_cell, notes):
 
 
 def added_date(root, row, fallback=None):
-    """The author date of the first commit whose diff introduced the row's first 60 characters."""
+    """(date, how): the author date of the first commit whose diff introduced the row's first 60
+    characters, with how="git"; or today's date and the reason when no commit did. `-m` diffs a
+    merge against each parent, so a row first written while resolving a merge is found: without it
+    three of the 113 migrated rows matched nothing and fell back to today() unreported (2026-09-06)."""
     prefix = row.strip()[:60]
     try:
-        out = subprocess.run(["git", "-C", str(root), "log", "--format=%as", "--reverse", "-S" + prefix, "--", FRONT],
+        out = subprocess.run(["git", "-C", str(root), "log", "--format=%as", "--reverse", "-m", "-S" + prefix, "--", FRONT],
                              capture_output=True, text=True, check=False).stdout.split()
     except OSError:
         out = []
@@ -551,7 +554,7 @@ def import_rows(rows, dir_path, root, report):
     existing, _ = load_entries(dir_path)
     by_prefix = {e.get("title")[:TITLE_PREFIX]: e for e in existing}
     taken = {p.name for p in dir_path.glob("*.md")}
-    unmatched, disagree, written = [], [], []
+    unmatched, disagree, guessed, written = [], [], [], []
     for i, (line_no, row) in enumerate(rows, 1):
         cells = row_cells(row)
         if len(cells) != 4:
@@ -561,13 +564,17 @@ def import_rows(rows, dir_path, root, report):
         header, body, plan_status = derive(what, where, status_cell, notes)
         prev = by_prefix.get(what[:TITLE_PREFIX])
         kept = ""
+        tail = []
         if prev is not None:
             header["added"] = prev.get("added")
             path = prev.path
             if not header["status"] and prev.get("status"):
                 header["status"] = kept = prev.get("status")
         else:
-            header["added"], _how = added_date(root, row)
+            header["added"], how = added_date(root, row)
+            if how != "git":
+                tail.append(f"added = {how}")
+                guessed.append(i)
             slug = slugify(what)
             name = f"{header['added']}-{slug}.md"
             k = 2
@@ -579,7 +586,6 @@ def import_rows(rows, dir_path, root, report):
         path.write_text(format_entry(header, body), encoding="utf-8")
         written.append(path)
         shown = status_cell[:60].replace('"', "'")
-        tail = []
         if not header["status"]:
             tail.append("SET BY HAND")
             unmatched.append(i)
@@ -593,7 +599,7 @@ def import_rows(rows, dir_path, root, report):
         report.append(f'{i:04d}: "{shown}" -> {header["status"] or "(none)"}'
                       + (f" [{facts}]" if facts else "") + (f" ({'; '.join(tail)})" if tail else "")
                       + f" {DIR}/{path.name}")
-    return written, unmatched, disagree
+    return written, unmatched, disagree, guessed
 
 
 def round_trip(rows, dir_path):
@@ -623,12 +629,15 @@ def import_file(front_path, dir_path, root):
     text = front_path.read_text(encoding="utf-8")
     rows = table_rows(text)
     report = [f"import: {len(rows)} rows from {front_path} into {dir_path}/", ""]
-    written, unmatched, disagree = import_rows(rows, dir_path, root, report)
+    written, unmatched, disagree, guessed = import_rows(rows, dir_path, root, report)
     report.append("")
     report.append(f"{len(written)} files written; {len(unmatched)} rows matched no status keyword"
                   + (": " + ", ".join(f"{i:04d}" for i in unmatched) + " (set by hand: blank on a first run, kept on a re-run)" if unmatched else ""))
     if disagree:
         report.append(f"{len(disagree)} rows where the plan's keyword order would differ: " + ", ".join(f"{i:04d}" for i in disagree))
+    if guessed:
+        report.append(f"{len(guessed)} rows whose first commit the pickaxe could not find (added = today; set the date by hand): "
+                      + ", ".join(f"{i:04d}" for i in guessed))
     report.append("")
     lines, ok = round_trip(rows, dir_path)
     report += lines
@@ -639,7 +648,7 @@ def import_file(front_path, dir_path, root):
 def import_row(row, dir_path, root):
     rows = [(0, row)]
     report = []
-    written, unmatched, _ = import_rows(rows, dir_path, root, report)
+    written, unmatched, _, _ = import_rows(rows, dir_path, root, report)
     if not written:
         raise SystemExit("\n".join(report))
     lines, ok = round_trip(rows, dir_path)

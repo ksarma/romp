@@ -26,10 +26,13 @@ tree last:
    synthetic row into an entry that parses and round-trips its cells;
 7. the real tree: `check()` over `upstream/` and UPSTREAM.md returns no problems.
 """
+import contextlib
 import importlib.util
+import io
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -660,7 +663,7 @@ class SetAndImport(unittest.TestCase):
     def test_a_row_with_no_status_keyword_leaves_status_blank_and_says_set_by_hand(self):
         row = "| Thing | `x.py` | **keep as-is — deliberate** | Notes. |"
         report = []
-        written, unmatched, _ = L.import_rows([(1, row)], self.d, self.d, report)
+        written, unmatched, _, _ = L.import_rows([(1, row)], self.d, self.d, report)
         self.assertEqual(unmatched, [1])
         self.assertIn("SET BY HAND", report[0])
         _, got = L.parse_entry(written[0].name, written[0].read_text(encoding="utf-8"))
@@ -676,6 +679,65 @@ class SetAndImport(unittest.TestCase):
             L.new_entry(self.d, "romp-perf", "again", "x", added="2026-09-06")
         with self.assertRaises(SystemExit):
             L.new_entry(self.d, "Romp_Perf", "t", "x", added="2026-09-06")
+
+
+def _git(repo, *args, date=None, check=True):
+    """git in a throwaway repository: no user or system config, a fixed identity, an optional fixed date."""
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+    if date:
+        env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = date
+    return subprocess.run(["git", "-C", str(repo), *args], check=check, capture_output=True, text=True, env=env)
+
+
+class AddedDate(unittest.TestCase):
+    """`added` is the author date of the first commit whose diff introduced the row; a row first
+    written while resolving a merge is found too (`-m`), and a row no commit introduced says so."""
+
+    ROW_D = "| Fourth thing, written in the merge | `d.py` | candidate | Notes. |"
+
+    def _repo(self):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        front = d / "UPSTREAM.md"
+        _git(d, "init", "-q", "-b", "main")
+
+        def commit(rows, msg, date):
+            front.write_text(_doc(rows), encoding="utf-8")
+            _git(d, "add", "UPSTREAM.md")
+            _git(d, "commit", "-q", "-m", msg, date=date)
+
+        commit([ROW_A], "a", "2026-01-10T12:00:00+00:00")
+        _git(d, "checkout", "-q", "-b", "side")
+        commit([ROW_A, ROW_B], "b", "2026-01-11T12:00:00+00:00")
+        _git(d, "checkout", "-q", "main")
+        third = ROW_A.replace("A thing", "Third thing")
+        commit([ROW_A, third], "c", "2026-01-12T12:00:00+00:00")
+        _git(d, "merge", "--no-commit", "--no-ff", "side", check=False)   # conflicts on the appended rows
+        commit([ROW_A, ROW_B, third, self.ROW_D], "merge, and a row written only in the resolution", "2026-01-15T12:00:00+00:00")
+        return d
+
+    def test_a_plain_commit_a_merge_resolution_and_a_row_git_never_saw(self):
+        d = self._repo()
+        self.assertEqual(L.added_date(d, ROW_A), ("2026-01-10", "git"))
+        self.assertEqual(L.added_date(d, ROW_B), ("2026-01-11", "git"))
+        self.assertEqual(L.added_date(d, self.ROW_D), ("2026-01-15", "git"))   # the pickaxe needs -m for this one
+        when, how = L.added_date(d, "| Never committed | `n.py` | candidate | Notes. |")
+        self.assertEqual(when, L.today())
+        self.assertIn("no commit introduced this row", how)
+
+    def test_the_derivation_line_and_the_summary_say_when_the_date_was_guessed(self):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        (d / "UPSTREAM.md").write_text(_doc([ROW_A, ROW_B]), encoding="utf-8")
+        report, ok = L.import_file(d / "UPSTREAM.md", d / "upstream", d)   # d is not a repository: no commit introduced anything
+        self.assertTrue(ok, report)
+        lines = [l for l in report if l.startswith("000")]
+        self.assertEqual(len(lines), 2)
+        for l in lines:
+            self.assertIn("added = today (no commit introduced this row)", l)
+        self.assertIn("2 rows whose first commit the pickaxe could not find (added = today; set the date by hand): 0001, 0002", report)
 
 
 class RealTree(unittest.TestCase):
