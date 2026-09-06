@@ -110,7 +110,8 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["judge"]["ms_mean"], 0.0, "no passes: the mean is 0, not a division error")
         self.assertIn("cpu_ms_sum", snap["judge"])
         self.assertIn("cpu_ms_workers", snap["judge"])
-        self.assertEqual(set(snap["goals"]), {"loads", "saves", "writes"}, "read through jd.goal_io_stats")
+        self.assertEqual(set(snap["goals"]), {"loads", "saves", "writes", "scans", "scan_hits", "scan_parses"},
+                         "read through jd.goal_io_stats")
         for k in ("rss_kb", "threads", "cpu_s", "pid"):
             self.assertIn(k, snap["process"])
         self.assertGreater(snap["process"]["threads"], 0)

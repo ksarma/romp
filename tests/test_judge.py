@@ -6321,6 +6321,109 @@ class Distiller(unittest.TestCase):
             jd._judge_run = saved
 
 
+class JudgeFailureScanMemo(unittest.TestCase):
+    """judge_failure_scan's per-store memo (perf plan B9, 2026-09-06). The kernel asks for the give-up
+    count on every timeline build once any store is saved, and the scan used to parse EVERY store each
+    time. Now a store is parsed only when its file identity (inode, mtime_ns, size) changed. What makes
+    that sound is st_mtime_ns strictly increasing across publishes of one path; the inode alone does not,
+    because tmp+rename recycles inode numbers on the second publish (measured on ext4), so the inode
+    distinguishes one publish only. Linux 6.13+ multigrain timestamps guarantee the mtime ordering (the
+    scan's own stat marks the prior inode as queried); a coarse-timestamp kernel has a one-tick aliasing
+    window, smaller than the one-second window of kernel.py's _jf_cache gate. Raw stores under PRIVATE
+    synthetic sids (CLAUDE.md, goal-store fixtures); nothing here goes through load_goals, and the scan
+    must not either (it counts raw file content)."""
+
+    A = "b9b9b9b9-0000-4000-8000-00000000000a"
+    B = "b9b9b9b9-0000-4000-8000-00000000000b"
+    C = "b9b9b9b9-0000-4000-8000-00000000000c"
+
+    def setUp(self):
+        self.td = Path(tempfile.mkdtemp())
+        self.saved_state = jd.STATE
+        self.saved = (jd._jf_store_memo, jd._jf_cause_memo, jd._giveup_cause, jd._failed_nodes, jd.load_goals)
+        jd._rebind_state(self.td)
+        jd._jf_store_memo, jd._jf_cause_memo = {}, (None, None)
+        self.parses, self.causes = [], []
+        real = jd._failed_nodes
+        jd._failed_nodes = lambda store: (self.parses.append(1), real(store))[1]      # one call per parsed store
+        jd._giveup_cause = lambda: (self.causes.append(1), ("the summarizer kept hitting errors or timeouts", False))[1]
+        jd.load_goals = lambda *a, **k: self.fail("the scan counts raw file content, never a load_goals-replayed store")
+
+    def tearDown(self):
+        jd._jf_store_memo, jd._jf_cause_memo, jd._giveup_cause, jd._failed_nodes, jd.load_goals = self.saved
+        jd._rebind_state(self.saved_state)
+        shutil.rmtree(self.td, ignore_errors=True)
+
+    def _store(self, sid, failed, mt=T0 + 10):
+        nid = sid + ":g1"
+        nd = {"id": nid, "text": "Ship the notes-api tests", "parentId": None, "nodeComplete": True,
+              "blocked": False, "cleared": False, "trail": [], "t": T0, "mt": mt, "summary": ""}
+        if failed:
+            nd["warns"] = [{"kind": "summary-failed", "t": T0 + 20, "msg": "the summary gave up"}]
+        jd.save_goals(sid, {"rompUuid": sid, "seq": 1, "placementsV": jd.PLACEMENTS_V, "placements": {},
+                            "status": {nid: "completed"}, "nodes": {nid: nd}})
+
+    def _path(self, sid):
+        return str(jd.GOALDIR / (sid + ".json"))
+
+    def test_parses_each_store_once_until_its_file_changes(self):
+        self._store(self.A, failed=True); self._store(self.B, failed=False); self._store(self.C, failed=False)
+        io0 = jd.goal_io_stats()
+        self.assertEqual(jd.judge_failure_scan()["count"], 1)
+        self.assertEqual(len(self.parses), 3, "the first call parses every store")
+        self.assertEqual(jd.judge_failure_scan()["count"], 1)
+        self.assertEqual(len(self.parses), 3, "no store changed: nothing is parsed")
+        self._store(self.B, failed=False, mt=T0 + 500)         # one store republished: a new mtime_ns
+        self.assertEqual(jd.judge_failure_scan()["count"], 1)
+        self.assertEqual(len(self.parses), 4, "only the changed store is parsed")
+        io1 = jd.goal_io_stats()
+        self.assertEqual((io1["scans"] - io0["scans"], io1["scan_hits"] - io0["scan_hits"],
+                          io1["scan_parses"] - io0["scan_parses"]), (3, 5, 4),
+                         "the counters see three calls, 0+3+2 memo hits and 3+0+1 parses")
+
+    def test_the_count_clears_when_the_warn_clears(self):
+        self._store(self.A, failed=True)
+        self.assertEqual(jd.judge_failure_scan()["count"], 1)
+        self._store(self.A, failed=False)                       # a landed summary drops the warn
+        self.assertIsNone(jd.judge_failure_scan(), "the rewritten store is re-read and the count clears")
+        self._store(self.A, failed=True)
+        self.assertEqual(jd.judge_failure_scan()["count"], 1, "and a fresh give-up counts again")
+
+    def test_a_deleted_store_drops_from_the_sum(self):
+        self._store(self.A, failed=True); self._store(self.B, failed=True)
+        self.assertEqual(jd.judge_failure_scan()["count"], 2)
+        os.unlink(self._path(self.B))
+        self.assertEqual(jd.judge_failure_scan()["count"], 1)
+        self.assertNotIn(self._path(self.B), jd._jf_store_memo, "the memo is rebuilt from the glob, so the deleted store is gone")
+        self.assertEqual(len(self.parses), 2, "the surviving store was not re-parsed")
+
+    def test_the_cause_is_named_once_per_store_change(self):
+        self._store(self.A, failed=True); self._store(self.C, failed=False)
+        first = jd.judge_failure_scan()
+        self.assertEqual(jd.judge_failure_scan(), first)
+        self.assertEqual(len(self.causes), 1, "no store changed: the cause is not recomputed, so count|cause holds")
+        self._store(self.C, failed=False, mt=T0 + 500)         # any store's change re-names the cause
+        self.assertEqual(jd.judge_failure_scan()["count"], 1)
+        self.assertEqual(len(self.causes), 2)
+
+    def test_an_unparseable_store_counts_nothing_and_is_retried(self):
+        self._store(self.A, failed=True)
+        Path(self._path(self.B)).write_bytes(b"{not a store")
+        io0 = jd.goal_io_stats()
+        self.assertEqual(jd.judge_failure_scan()["count"], 1)
+        self.assertEqual(jd.judge_failure_scan()["count"], 1)
+        self.assertNotIn(self._path(self.B), jd._jf_store_memo, "a parse failure is not memoized")
+        self.assertEqual(jd.goal_io_stats()["scan_parses"] - io0["scan_parses"], 3,
+                         "the broken store is retried on every call (1 + 1), the good one parsed once")
+        self._store(self.B, failed=True)                        # repaired and republished: a new mtime_ns, read like any change
+        self.assertEqual(jd.judge_failure_scan()["count"], 2)
+
+    def test_the_scan_returns_none_when_no_store_is_failing(self):
+        self._store(self.A, failed=False)
+        self.assertIsNone(jd.judge_failure_scan())
+        self.assertEqual(self.causes, [], "no give-up: the cause is never asked for")
+
+
 class RunTriage(unittest.TestCase):
     """run_triage is the TRIAGE-tier sequence as one unit (so the kernel can run it parallel to the
     always-on index tier): plan → close → courier → group → distill, in that order."""
