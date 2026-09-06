@@ -28828,10 +28828,12 @@ def _bucket_start(key):
     None for anything else. The EARLIEST instant that formats to the key: on the DST fall-back day one
     local hour key names two clock hours (01:00 daylight, then 01:00 standard), and the recorder folds
     both into the one bucket, so the bucket starts at the first of them. mktime with tm_isdst=-1 leaves
-    that choice to the C library (glibc picks the first; POSIX does not say), so both isdst arms are
-    tried and the smallest one that round-trips through strftime wins — a key naming a spring-forward
-    gap (no instant formats to it) falls back to the library's normalized answer, and a zone without DST
-    keeps the one arm that round-trips."""
+    that choice to the C library, and glibc answers with whichever UTC offset its PREVIOUS mktime call
+    resolved (POSIX does not say), so the pick depends on call order — an earlier standard-time
+    conversion anywhere in the process makes the repeated hour come back as its SECOND clock hour. So
+    both isdst arms are tried and the smallest one that round-trips through strftime wins — a key naming
+    a spring-forward gap (no instant formats to it) falls back to the library's normalized answer, and a
+    zone without DST keeps the one arm that round-trips."""
     fmt = "%Y-%m-%dT%H" if "T" in key else "%Y-%m-%d"
     try:
         st = time.strptime(key, fmt)
@@ -28862,19 +28864,27 @@ def _analytics_edges(now, window):
     to the same local key, and a caller summing the ledger per key would add that bucket twice where the
     rail's set counts it once (the bucket holds both hours' turns; summed once it is right, and t0 still
     marks the oldest bucket's first instant, so the period covers every hour between). Date keys cannot
-    repeat by construction."""
+    repeat by construction.
+
+    t0 IS `_bucket_start(keys[-1])` — the first instant that formats to the oldest key — in both
+    branches, never arithmetic from the current hour or midnight. `this_hour - n*3600` assumed every
+    bucket spans 3600 s and that mktime's isdst=-1 names the repeated hour's first clock hour; neither
+    holds on the fall-back day (the repeated hour's bucket spans two clock hours, glibc's answer depends
+    on its previous call), so a 1h view at 02:30 standard time, and the 24h view the next day, cut the
+    transcript and judge rows at the second 01:00 while the ledger summed the whole bucket — one hour of
+    session dollars with no tokens or judges against it (2026-09-06). The same happened to midnight in a
+    zone whose fall-back crosses it, and a zone with a 30-minute shift put t0 half an hour off every
+    time the window crossed a transition. The oldest key is a strftime of a real instant, so it always
+    names one."""
     if window <= (_SERIES_HOURS - 1) * 3600:
         n = -(-int(window) // 3600)
         keys = list(dict.fromkeys(time.strftime("%Y-%m-%dT%H", time.localtime(now - i * 3600))
                                   for i in range(n + 1)))
-        lt = time.localtime(now)
-        this_hour = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, lt.tm_hour, 0, 0, 0, 0, -1))
-        return "hours", keys, this_hour - n * 3600
+        return "hours", keys, _bucket_start(keys[-1])
     n = -(-int(window) // 86400)
     today = datetime.fromtimestamp(now).date()
     keys = [(today - timedelta(days=i)).isoformat() for i in range(n + 1)]
-    first = today - timedelta(days=n)
-    return "days", keys, time.mktime((first.year, first.month, first.day, 0, 0, 0, 0, 0, -1))
+    return "days", keys, _bucket_start(keys[-1])
 
 
 def _spend_ledger_window(now, window, keyed_only=False):

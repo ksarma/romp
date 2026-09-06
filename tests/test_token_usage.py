@@ -628,6 +628,150 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
         self.assertNotIn("sinceDate", led, "an hour edge is an instant, rendered in the browser's own clock")
         self.assertAlmostEqual(led["estBefore"], 1000 * 5e-6, places=9, msg="the 00:30 row alone; neither 01:30 row is re-priced")
 
+    # ── t0 is the oldest bucket's FIRST instant, in every zone, whatever mktime did last ──────────────
+    # The round-3 tests above open the view at 03:30 EST, where the current hour and the oldest key are
+    # both unambiguous; there `this_hour - n*3600` and `_bucket_start(keys[-1])` agree. They part when the
+    # oldest bucket IS the repeated hour (it spans two clock hours, so hour arithmetic lands on its second
+    # 01:00), when midnight repeats (a zone whose fall-back crosses it), and in a 30-minute-shift zone.
+
+    def _edges_start_at_the_oldest_buckets_first_instant(self, now, window):
+        """_analytics_edges for (now, window), checked against the rule: t0 is the earliest instant that
+        formats to the oldest key — it formats to it, the second before it does not — and for hour
+        buckets it lies at or before now - window (the period covers the window asked for)."""
+        kind, keys, t0 = km._analytics_edges(now, window)
+        fmt = "%Y-%m-%dT%H" if kind == "hours" else "%Y-%m-%d"
+        self.assertEqual(t0, km._bucket_start(keys[-1]), "t0 is the oldest bucket's start, per _bucket_start")
+        self.assertEqual(time.strftime(fmt, time.localtime(t0)), keys[-1], "t0 lies in the oldest bucket")
+        self.assertNotEqual(time.strftime(fmt, time.localtime(t0 - 1)), keys[-1], "and is its FIRST instant")
+        if kind == "hours":
+            self.assertLessEqual(t0, now - window, "the period covers the whole window asked for")
+        return kind, keys, t0
+
+    def test_t0_is_the_first_0100_when_the_oldest_bucket_is_the_repeated_hour(self):
+        """1h at 02:30 EST on the fall-back day, 24h the next day, 7d a week on: the oldest key is the T01
+        bucket, which holds 01:00 EDT AND 01:00 EST. Its start is the first of them; hour arithmetic from
+        the current (unambiguous) hour gave the second, one hour late, whatever mktime did before."""
+        for label, now, window in (("1h @ 02:30 EST Nov 1", calendar.timegm((2026, 11, 1, 7, 30, 0)), 3600),
+                                   ("24h @ 01:30 EST Nov 2", calendar.timegm((2026, 11, 2, 6, 30, 0)), 86400),
+                                   ("7d @ 01:30 EST Nov 8", calendar.timegm((2026, 11, 8, 6, 30, 0)), 7 * 86400)):
+            with self.subTest(label):
+                kind, keys, t0 = self._edges_start_at_the_oldest_buckets_first_instant(now, window)
+                self.assertEqual((kind, keys[-1]), ("hours", "2026-11-01T01"))
+                self.assertEqual(t0, self.FIRST_0100, "%s: the daylight 01:00, not the standard one" % label)
+
+    def test_t0_does_not_depend_on_what_the_c_library_resolved_last(self):
+        """Inside the repeated hour the current hour itself is ambiguous, and glibc's mktime(isdst=-1)
+        answers with whichever offset its previous call resolved — so the old t0 moved with unrelated
+        conversions elsewhere in the process (a _bucket_start call in the previous build was enough).
+        Prime the library each way before asking; the answer must not move."""
+        cases = ((calendar.timegm((2026, 11, 1, 5, 30, 0)), ["2026-11-01T01", "2026-11-01T00"],
+                  calendar.timegm((2026, 11, 1, 4, 0, 0))),                    # 01:30 EDT: T01 + T00, from 00:00 EDT
+                 (calendar.timegm((2026, 11, 1, 6, 30, 0)), ["2026-11-01T01"],
+                  self.FIRST_0100))                                            # 01:30 EST: both 01 hours, one key
+        for isdst in (0, 1, 0):
+            time.mktime((2026, 11, 1, 1, 0, 0, 0, 0, isdst))                   # the library's last resolution
+            for now, want_keys, want_t0 in cases:
+                with self.subTest(isdst=isdst, now=time.strftime("%H:%M %Z", time.localtime(now))):
+                    kind, keys, t0 = self._edges_start_at_the_oldest_buckets_first_instant(now, 3600)
+                    self.assertEqual(keys, want_keys)
+                    self.assertEqual(t0, want_t0)
+
+    def test_the_1h_view_after_the_repeated_hour_counts_the_rows_its_ledger_figure_holds(self):
+        """02:30 EST Nov 1, 1h: the ledger sums T02 and the whole T01 bucket (both 01:00 hours' turns).
+        Cut at the second 01:00, the transcript and judge figures missed the daylight hour: three turns
+        of session dollars against two rows of tokens and two judge calls. Every figure now starts at
+        the first 01:00, and the 00 hour stays out."""
+        now = calendar.timegm((2026, 11, 1, 7, 30, 0))                     # 02:30 EST
+        (jd.STATE / "spend.json").write_text(json.dumps({"hours": {
+            "2026-11-01T00": {"usd": 50.0, "turns": 1}, "2026-11-01T01": {"usd": 2.0, "turns": 2},
+            "2026-11-01T02": {"usd": 1.0, "turns": 1}}, "days": {}}))
+        rows = [self.FIRST_0100 + 1800, self.SECOND_0100 + 1800, now - 900]  # 01:30 EDT, 01:30 EST, 02:15 EST
+        p1 = pathlib.Path(self.td.name) / "s1.jsonl"
+        p1.write_text("".join(_asst({"input_tokens": 1000, "output_tokens": 0}, iso(t), model="claude-opus-4-8") + "\n"
+                              for t in rows + [self.FIRST_0100 - 1800]))     # 00:30 EDT: the hour before the period
+        jd.discover = lambda now, window=None, forks=True: [("fs1", p1, "a1", "s1")]
+        (jd.STATE / "judge-usage.jsonl").write_text("".join(
+            json.dumps({"t": t, "judge": "captioner", "tier": "index", "in": 10, "out": 4, "cost": 1.0, "ms": 5}) + "\n"
+            for t in rows) + json.dumps({"t": self.FIRST_0100 - 1800, "judge": "captioner", "tier": "index",
+                                         "in": 10, "out": 4, "cost": 100.0, "ms": 5}) + "\n")
+        a = km._token_analytics(now, 3600)
+        self.assertEqual((a["from"], a["buckets"]), (self.FIRST_0100, "hours"))
+        led = a["sessions"]["ledger"]
+        self.assertEqual((led["usd"], led["turns"]), (3.0, 3), "T01 whole plus T02; T00 is out")
+        self.assertNotIn("since", led, "the ledger predates the period")
+        self.assertEqual(a["sessions"]["in"], 3000, "one row per ledger turn: the 01:30 EDT row counts, the 00:30 row does not")
+        self.assertEqual((a["judges"]["total"]["calls"], a["judges"]["total"]["cost"]), (3, 3.0), "the same three hours of judges")
+
+    def test_the_24h_view_the_next_day_starts_at_the_fall_back_days_first_0100(self):
+        """01:30 EST Nov 2, 24h: 25 keys back to the T01 bucket of Nov 1. The ledger's five turns are
+        matched by five transcript rows only if the period starts at 01:00 EDT; at 01:00 EST the 01:30
+        EDT row fell out, and the modal compared 24 hours of ledger dollars with 23 hours of tokens."""
+        now = calendar.timegm((2026, 11, 2, 6, 30, 0))                     # 01:30 EST Nov 2
+        (jd.STATE / "spend.json").write_text(json.dumps({"hours": {
+            "2026-10-31T23": {"usd": 50.0, "turns": 1}, "2026-11-01T00": {"usd": 50.0, "turns": 1},
+            "2026-11-01T01": {"usd": 2.0, "turns": 2}, "2026-11-01T02": {"usd": 1.0, "turns": 1},
+            "2026-11-01T03": {"usd": 1.0, "turns": 1}, "2026-11-02T01": {"usd": 1.0, "turns": 1}}, "days": {}}))
+        rows = [self.FIRST_0100 + 1800, self.SECOND_0100 + 1800, self.SECOND_0100 + 5400,
+                self.SECOND_0100 + 9000, now - 900]                        # 01:30 EDT, 01:30 / 02:30 / 03:30 EST, 01:15 EST Nov 2
+        p1 = pathlib.Path(self.td.name) / "s1.jsonl"
+        p1.write_text("".join(_asst({"input_tokens": 1000, "output_tokens": 0}, iso(t), model="claude-opus-4-8") + "\n"
+                              for t in rows + [self.FIRST_0100 - 1800]))     # 00:30 EDT Nov 1: out
+        jd.discover = lambda now, window=None, forks=True: [("fs1", p1, "a1", "s1")]
+        a = km._token_analytics(now, 86400)
+        kind, keys, t0 = km._analytics_edges(now, 86400)
+        self.assertEqual((len(keys), keys[-1]), (25, "2026-11-01T01"))
+        self.assertEqual((a["from"], t0), (self.FIRST_0100, self.FIRST_0100))
+        led = a["sessions"]["ledger"]
+        self.assertEqual((led["usd"], led["turns"]), (5.0, 5), "T01 (both hours) through Nov 2 T01; T00 and Oct 31 are out")
+        self.assertEqual(a["sessions"]["in"], 5000, "five rows for five ledger turns")
+
+    def test_a_days_period_starts_at_the_first_midnight_where_the_fall_back_repeats_it(self):
+        """A zone whose fall-back crosses midnight (Cuba: 01:00 CDT -> 00:00 CST on Nov 1, 2026) has two
+        midnights on the oldest date; the day bucket holds both hours, and the period starts at the first.
+        mktime(isdst=-1) for that midnight follows the library's previous call, so prime it each way."""
+        os.environ["TZ"] = "America/Havana"
+        time.tzset()
+        first_midnight = calendar.timegm((2026, 11, 1, 4, 0, 0))            # 00:00 CDT
+        second_midnight = calendar.timegm((2026, 11, 1, 5, 0, 0))           # 00:00 CST
+        self.assertEqual(km._bucket_start("2026-11-01"), first_midnight)
+        now = calendar.timegm((2026, 12, 1, 17, 0, 0))                     # noon CST, Dec 1
+        for isdst in (0, 1):
+            time.mktime((2026, 11, 1, 0, 0, 0, 0, 0, isdst))
+            with self.subTest(isdst=isdst):
+                kind, keys, t0 = self._edges_start_at_the_oldest_buckets_first_instant(now, 30 * 86400)
+                self.assertEqual((kind, len(keys), keys[-1]), ("days", 31, "2026-11-01"))
+                self.assertEqual(t0, first_midnight)
+        # end to end: the ledger's Nov 1 bucket holds both midnight hours' turns; the rows must match it
+        (jd.STATE / "spend.json").write_text(json.dumps({"days": {
+            "2026-10-31": {"usd": 50.0, "turns": 1}, "2026-11-01": {"usd": 2.0, "turns": 2},
+            "2026-12-01": {"usd": 1.0, "turns": 1}}, "hours": {}}))
+        rows = [first_midnight + 1800, second_midnight + 1800, now - 3600]  # 00:30 CDT, 00:30 CST, 11:00 Dec 1
+        p1 = pathlib.Path(self.td.name) / "s1.jsonl"
+        p1.write_text("".join(_asst({"input_tokens": 1000, "output_tokens": 0}, iso(t), model="claude-opus-4-8") + "\n"
+                              for t in rows + [first_midnight - 1800]))       # 23:30 CDT Oct 31: out
+        jd.discover = lambda now, window=None, forks=True: [("fs1", p1, "a1", "s1")]
+        a = km._token_analytics(now, 30 * 86400)
+        self.assertEqual((a["from"], a["fromDate"], a["buckets"]), (first_midnight, "2026-11-01", "days"))
+        self.assertEqual((a["sessions"]["ledger"]["usd"], a["sessions"]["ledger"]["turns"]), (3.0, 3))
+        self.assertEqual(a["sessions"]["in"], 3000, "the 00:30 CDT row is in the period, the Oct 31 row is not")
+
+    def test_a_thirty_minute_shift_keeps_t0_on_the_oldest_buckets_first_instant(self):
+        """Lord Howe Island shifts by 30 minutes (+10:30 <-> +11), so `now - n*3600` and the bucket
+        edges drift apart by half an hour across either transition, and the repeated half hour (01:30 to
+        02:00 on the fall-back day) shares the T01 key with the daylight hour before it. Smoke check: the
+        rule holds across both transitions and in a plain winter hour."""
+        os.environ["TZ"] = "Australia/Lord_Howe"
+        time.tzset()
+        for label, now, window in (("24h across the October spring-forward", calendar.timegm((2026, 10, 4, 1, 0, 0)), 86400),
+                                   ("24h across the April fall-back", calendar.timegm((2026, 4, 5, 1, 30, 0)), 86400),
+                                   ("1h after the repeated half hour", calendar.timegm((2026, 4, 4, 15, 45, 0)), 3600),
+                                   ("1h in July", calendar.timegm((2026, 7, 1, 1, 45, 0)), 3600)):
+            with self.subTest(label):
+                kind, keys, t0 = self._edges_start_at_the_oldest_buckets_first_instant(now, window)
+                self.assertEqual(kind, "hours")
+        self.assertEqual(km._bucket_start("2026-04-05T01"), calendar.timegm((2026, 4, 4, 14, 0, 0)),
+                         "01:00 at +11 — the first instant of a bucket that spans 90 minutes")
+
 
 class CostWeighting(unittest.TestCase):
     """The cost-weighted analytics: SESSIONS priced tokens × _model_prices (defaults < remote feed <
