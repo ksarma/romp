@@ -169,6 +169,12 @@ CLI_SCOPE_LIMITS = (
 # The systemd property each memory key becomes on the scope (the wrapper's own mapping; the adjustment
 # is a /proc write, not a property).
 CLI_SCOPE_MEMORY_PROPS = {"memoryMax": "MemoryMax", "memoryHigh": "MemoryHigh", "memorySwapMax": "MemorySwapMax"}
+# The boot probe's checks (_cli_scope_settle), as /api-health names the ones that settled nothing
+# (cliScope.unsettled) and as the boot line words them: the memory properties on a probe scope, the
+# memory controller inside one, the adjustment write in a throwaway child.
+CLI_SCOPE_CHECKS = ("memoryLimits", "memoryController", "oomScoreAdj")
+CLI_SCOPE_CHECK_NAMES = {"memoryLimits": "memory-limits probe", "memoryController": "memory-controller check",
+                         "oomScoreAdj": "oom_score_adj check"}
 
 
 def _cli_scope_props(in_force: dict) -> list[str]:
@@ -202,7 +208,26 @@ def _cli_scope_probe(run, argv, stdout=False) -> tuple:
     return r.returncode, first(r.stderr), first(r.stdout) if stdout else ""
 
 
-def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None, bool]:
+def _cli_scope_attempt(rc, err: str) -> tuple[str, str]:
+    """One controller-probe attempt that gave no verdict, as (kind, what happened) for the problem line.
+    Kinds: "no-answer" — `run` raised (the 10 s bound, an OSError); "no-start" — a non-zero exit with
+    systemd-run's stderr text, which is how it reports a scope it could not start; "no-marker" — the
+    scope started and its command did not print a marker: killed by a signal (subprocess reports it as
+    a negative status; a memory limit too small for `sh` does this), or a non-zero exit with nothing on
+    stderr (systemd-run always says when it cannot start a scope, so silence means it did). The text
+    quotes the status and any stderr, so the line names what happened, not a guess at it."""
+    if rc is None:
+        return "no-answer", "did not answer (%s)" % (err or "no detail")
+    if rc < 0:
+        return "no-marker", ("was killed by signal %d in its scope before it printed a marker%s"
+                             % (-rc, (" (stderr: %s)" % err) if err else ""))
+    if err:
+        return "no-start", "failed to start its scope (%s)" % err
+    return "no-marker", ("exited %d with no marker and nothing on stderr — the scope started (systemd-run says "
+                         "when one cannot) and its command did not finish the check" % rc)
+
+
+def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None, list]:
     """The boot probe behind cli_scope_limits: does THIS box take the values the syntax passed? Each
     of the wrapper's own steps, run once here so a refusal that would otherwise repeat on every launch
     (one `ignored:` line and one problem each, while the boot log and /api-health called the value in
@@ -218,17 +243,20 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
         since systemd accepts the properties from a user manager without the controller and applies
         nothing. The verdict is the marker the command prints (CLI_SCOPE_MEMORY_PROBE_MARKS): no
         memory.max is a problem line, the values stay in `in_force` (they are set, and systemd holds
-        them) and the verdict rides /api-health as memoryControllerDelegated. A non-zero exit means the
-        scope never ran, and no answer means none; each gets one retry, then leaves the check UNSETTLED,
-        as a problem line: the wrapper does not make this check, so nothing reports it per launch, and an
-        unknown here would otherwise stay silent for the kernel's life;
+        them) and the verdict rides /api-health as memoryControllerDelegated. Anything but a marker on
+        exit 0 gets one retry; a second such attempt leaves the check UNSETTLED, as a problem line that
+        says what each attempt did (_cli_scope_attempt: a start refusal quoting systemd, a non-answer,
+        a scope that ran without printing a marker): the wrapper does not make this check, so nothing
+        reports it per launch, and an unknown here would otherwise stay silent for the kernel's life;
       * the adjustment, written by a throwaway child (CLI_SCOPE_ADJ_PROBE_CMD): a failed write is the
         floor (a value below the user manager's own oom_score_adj), and rejects it; no answer settles
         nothing (a plain line; the wrapper reports per launch).
-    Returns (rejected: variable → value, memory_delegated: True/False, None when not settled, settled:
-    False when a check that was due did not answer, so the caller never calls the values in force).
-    `run` is subprocess.run or a stand-in; `log`, when given, takes (message, problem=bool)."""
-    rejected, delegated, settled = {}, None, True
+    Returns (rejected: variable → value, memory_delegated: True/False, None when not settled, unsettled:
+    the checks that were due and settled nothing, named as CLI_SCOPE_CHECKS — empty when every due check
+    answered; the caller words its boot line and /api-health's `unsettled` from it, so no value whose
+    check did not answer is ever called in force). `run` is subprocess.run or a stand-in; `log`, when
+    given, takes (message, problem=bool)."""
+    rejected, delegated, unsettled = {}, None, []
     props = _cli_scope_props(in_force)
     if props:
         base = CLI_SCOPE_PROBE[:-2]
@@ -250,7 +278,7 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
                         "the values stand as read, and the wrapper reports on each launch"
                         % (first_err or "no detail", err or "no detail"))
         if rc is None:
-            settled = False
+            unsettled.append("memoryLimits")
         elif rc != 0:
             for var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
                 if key in CLI_SCOPE_MEMORY_PROPS and key in in_force:
@@ -263,7 +291,9 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
         else:
             d_argv = base + props + ["--"] + CLI_SCOPE_MEMORY_PROBE_CMD
             d_rc, d_err, d_out = _cli_scope_probe(run, d_argv, stdout=True)
+            first = None    # the first attempt, kept when it gave no verdict, so the line can say what it did
             if d_rc != 0:   # None too: a scope that did not run, or a probe that did not answer, gets one retry
+                first = _cli_scope_attempt(d_rc, d_err)
                 d_rc, d_err, d_out = _cli_scope_probe(run, d_argv, stdout=True)
             if d_rc == 0 and d_out in CLI_SCOPE_MEMORY_PROBE_MARKS:
                 delegated = CLI_SCOPE_MEMORY_PROBE_MARKS[d_out]
@@ -273,15 +303,18 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
                         "its cgroup. `systemctl show user@$(id -u).service -p DelegateControllers` should list "
                         "memory" % " ".join(props), problem=True)
             else:
-                settled = False
+                unsettled.append("memoryController")
                 if log:
-                    if d_rc is None:
-                        why = "its probe did not answer (%s), on a retry" % (d_err or "no detail")
-                    elif d_rc != 0:
-                        why = ("its probe scope twice failed to start (%s), moments after one with the same "
-                               "properties started" % (d_err or "no detail"))
-                    else:
+                    if d_rc == 0:
                         why = "its probe printed %r where has-memory-max or no-memory-max was expected" % d_out
+                        if first:
+                            why += ", after a first try that %s" % first[1]
+                    else:   # a retry happened (the first attempt gave no verdict), and it gave none either
+                        kind, what = _cli_scope_attempt(d_rc, d_err)
+                        why = ("its probe %s, and again on the retry" % what if what == first[1]
+                               else "its probe %s, and the retry %s" % (first[1], what))
+                        if "no-start" in (first[0], kind):
+                            why += ", moments after one with the same properties started"
                     log("cli scope: the memory-controller check could not be settled — %s; whether the memory "
                         "limits (%s) apply is unknown until the next kernel start, and the values stand as read"
                         % (why, " ".join(props)), problem=True)
@@ -289,7 +322,7 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
     if adj is not None:
         a_rc, a_err, _out = _cli_scope_probe(run, CLI_SCOPE_ADJ_PROBE_CMD + [adj])
         if a_rc is None:
-            settled = False
+            unsettled.append("oomScoreAdj")
             if log:
                 log("cli scope: the oom_score_adj check could not run (%s); ROMP_CLI_SCOPE_OOM_SCORE_ADJ=%s stands "
                     "as read, and the wrapper reports on each launch" % (a_err or "no detail", adj))
@@ -300,25 +333,60 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
                     "the systemd user manager's own oom_score_adj (the floor every process under it inherits; "
                     "100 on a typical machine) needs a privilege it does not have — not applied; sessions run in their "
                     "scopes without it" % adj, problem=True)
-    return rejected, delegated, settled
+    return rejected, delegated, unsettled
 
 
-def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[dict, dict, bool | None]:
-    """The per-session limits (CLI_SCOPE_LIMITS) from `environ` (the manager's environment): a triple
-    (in_force, rejected, memory_delegated). `in_force` maps each set variable's /api-health key to its
-    value, as the string the wrapper receives; `rejected` maps each variable whose value is refused to
-    that value — such a variable is handed to the wrapper EMPTY (so a bad value in the manager's
-    environment never reaches it) and is logged once, as a problem naming the variable and the reason.
-    An unset or empty variable is neither. Two kinds of refusal: a value that fails its rule (the
+def _cli_scope_boot_line(in_force: dict, delegated, unsettled: list) -> str:
+    """The one boot line's body: every value in force under its own verdict, so the line is true of
+    each value — `in force`; set but applied to nothing until the memory controller is delegated (the
+    memory limits, on a user manager without it); set but not settled, naming the check that settled
+    nothing (its own line, above, says why). The memory limits share one verdict (the property probe
+    and the controller check take them together) and the adjustment has its own check, so the line has
+    at most two clauses; values with the same verdict share one, memory limits first, and a box that
+    takes everything reads `memoryMax=16G memorySwapMax=0 oomScoreAdj=500 in force`."""
+    def verdict(checks, not_delegated):
+        for check in checks:
+            if check in unsettled:
+                return ("set but not settled (the %s settled nothing at start, as logged above)"
+                        % CLI_SCOPE_CHECK_NAMES[check])
+        if not_delegated:
+            return "set but applied to nothing until the memory controller is delegated to the user manager"
+        return "in force"
+    clauses = []    # [verdict, [key=value, …]] in CLI_SCOPE_LIMITS order
+    for _var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
+        if key not in in_force:
+            continue
+        if key in CLI_SCOPE_MEMORY_PROPS:
+            v = verdict(("memoryLimits", "memoryController"), delegated is False)
+        else:
+            v = verdict(("oomScoreAdj",), False)
+        word = "%s=%s" % (key, in_force[key])
+        if clauses and clauses[-1][0] == v:
+            clauses[-1][1].append(word)
+        else:
+            clauses.append([v, [word]])
+    return "; ".join("%s %s" % (" ".join(words), v) for v, words in clauses)
+
+
+def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[dict, dict, bool | None, list]:
+    """The per-session limits (CLI_SCOPE_LIMITS) from `environ` (the manager's environment): a 4-tuple
+    (in_force, rejected, memory_delegated, unsettled). `in_force` maps each set variable's /api-health
+    key to its value, as the string the wrapper receives; `rejected` maps each variable whose value is
+    refused to that value — such a variable is handed to the wrapper EMPTY (so a bad value in the
+    manager's environment never reaches it) and is logged once, as a problem naming the variable and the
+    reason. An unset or empty variable is neither. Two kinds of refusal: a value that fails its rule (the
     syntax; pure, checked on every OS), and — with `run` given (subprocess.run or a stand-in) and the
     scopes on — a value this box refuses (_cli_scope_settle): memory properties systemd rejects, an
     adjustment below the inherited floor. `memory_delegated` is that probe's verdict on the memory
-    controller (True/False), None when it did not run or could not be settled. `log`, when given, takes
-    (message, problem=bool); the in-force line comes last, after every refusal, and with `scope_on`
-    false says the limits apply to nothing, since no scope is started for them to apply to. When a
-    check that was due at the boot probe did not answer, that last line says the limits are set but not
-    settled, never that they are in force (the line before it says which check, and why). Without
-    `run` the check is the syntax alone, so the rules are testable on any OS."""
+    controller (True/False), None when it did not run or could not be settled; `unsettled` names the
+    probe's checks that were due and settled nothing (CLI_SCOPE_CHECKS; empty when every due check
+    answered, and when none was due). `log`, when given, takes (message, problem=bool); the boot line
+    comes last, after every refusal: with `scope_on` false it says the limits apply to nothing, since no
+    scope is started for them to apply to; otherwise it lists each value in force under its own verdict
+    (_cli_scope_boot_line) — in force, applied to nothing until the controller is delegated, or set but
+    not settled by a named check — so a value whose check did not answer is never called in force, and
+    a value whose check did answer is never called unknown. Without `run` the check is the syntax alone,
+    so the rules are testable on any OS."""
     env = os.environ if environ is None else environ
     in_force, rejected = {}, {}
     for var, key, ok, rule, _typ in CLI_SCOPE_LIMITS:
@@ -332,27 +400,20 @@ def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[d
             if log:
                 log("cli scope: %s=%r is not %s — not applied; sessions run in their scopes without that "
                     "limit" % (var, v, rule), problem=True)
-    delegated, settled = None, True
+    delegated, unsettled = None, []
     if in_force and scope_on and run is not None:
-        refused, delegated, settled = _cli_scope_settle(in_force, run, log)
+        refused, delegated, unsettled = _cli_scope_settle(in_force, run, log)
         for var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
             if var in refused:
                 rejected[var] = in_force.pop(key)
     if in_force and log:
-        listed = " ".join("%s=%s" % (k, v) for k, v in in_force.items())
         if not scope_on:
+            listed = " ".join("%s=%s" % (k, v) for k, v in in_force.items())
             log("cli scope: per-session limits are set (%s) but the scopes are off, so they apply to nothing"
                 % listed)
-        elif not settled:
-            log("cli scope: per-session limits set — %s; not settled at start (the reason is logged above), so whether "
-                "they apply is unknown" % listed)
-        elif delegated is False:
-            log("cli scope: per-session limits set — %s; the memory limits among them apply to nothing until "
-                "the memory controller is delegated to the user manager" % listed)
         else:
-            log("cli scope: per-session limits in force — %s" % listed)
-    return in_force, rejected, delegated
-
+            log("cli scope: per-session limits — %s" % _cli_scope_boot_line(in_force, delegated, unsettled))
+    return in_force, rejected, delegated, unsettled
 
 def cli_scope_wrapper() -> str:
     """The wrapper's absolute path: the repo's bin/, located the same way _bin_on_path_env finds it."""
@@ -6292,12 +6353,13 @@ class SdkBackend:
         # The per-session limits (cli_scope_limits): the values the wrapper applies, keyed as /api-health
         # reports them; the variables refused (each logged once, as a problem, in there) — by their rule,
         # or by this box, which the boot probe settles once here (subprocess.run, with the scopes on) so
-        # the wrapper does not report the same refusal on every launch; and the probe's verdict on the
-        # memory controller (None when it did not run). Read once per backend, like the verdict; _options
+        # the wrapper does not report the same refusal on every launch; the probe's verdict on the memory
+        # controller (None when it did not run); and the probe's checks that settled nothing
+        # (CLI_SCOPE_CHECKS; /api-health's `unsettled`). Read once per backend, like the verdict; _options
         # hands them down at every connect. `cli_scope_ignored` counts the wrapper's `ignored:` lines
         # since boot (_note_cli_scope_ignored).
-        self.cli_scope_limits, self.cli_scope_rejected, self.cli_scope_memory_delegated = cli_scope_limits(
-            log=self._log, scope_on=self.cli_scope, run=subprocess.run)
+        (self.cli_scope_limits, self.cli_scope_rejected, self.cli_scope_memory_delegated,
+         self.cli_scope_unsettled) = cli_scope_limits(log=self._log, scope_on=self.cli_scope, run=subprocess.run)
         self.cli_scope_ignored = 0
         self._heal_attempts: dict[str, int] = {}  # sid -> crash-resume attempts since its last COMPLETED turn
         #                                           (bounds _heal_cut_session to one resume per cut; a completed
@@ -7434,15 +7496,19 @@ class SdkBackend:
         # — null when unset, refused, or when the scopes are off (nothing is started for a limit to apply
         # to); `rejected` names the variables whose values were refused, by their rule or by this box at
         # the boot probe; `memoryControllerDelegated` is the boot probe's verdict on the memory controller
-        # (null when no memory limit is set, the scopes are off, or it could not be settled — so null beside a
-        # memory limit shown, with the scopes on, means a check at the kernel's start did not answer); `limitsIgnored`
-        # counts the wrapper's `ignored:` lines since boot (_note_cli_scope_ignored) — lines, not launches.
+        # (null when no memory limit is set, the scopes are off, or it could not be settled); `unsettled`
+        # names the boot probe's checks that settled nothing (CLI_SCOPE_CHECKS: memoryLimits,
+        # memoryController, oomScoreAdj), so a value shown here whose check did not answer is marked as
+        # such — without it an unsettled adjustment read exactly like a settled one (round-3 finding,
+        # 2026-09-06); empty when every due check answered, or none was due; `limitsIgnored` counts the
+        # wrapper's `ignored:` lines since boot (_note_cli_scope_ignored) — lines, not launches.
         with self._lock:
             n, at, ign = self.cli_scope_fallbacks, self.cli_scope_fallback_at, self.cli_scope_ignored
         out["cliScope"] = {"on": bool(self.cli_scope), "fallbacks": n,
                            "lastFallbackAt": int(at) if at else None,
                            "limitsIgnored": ign, "rejected": sorted(self.cli_scope_rejected),
-                           "memoryControllerDelegated": self.cli_scope_memory_delegated if self.cli_scope else None}
+                           "memoryControllerDelegated": self.cli_scope_memory_delegated if self.cli_scope else None,
+                           "unsettled": list(self.cli_scope_unsettled) if self.cli_scope else []}
         for _var, key, _ok, _rule, typ in CLI_SCOPE_LIMITS:
             v = self.cli_scope_limits.get(key) if self.cli_scope else None
             out["cliScope"][key] = typ(v) if v is not None else None

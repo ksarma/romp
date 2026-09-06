@@ -25,8 +25,10 @@ ROMP_CLI_SCOPE=0 for every backend construction):
     scope (its verdict a marker the command prints, so a scope that never started is unsettled, not
     "no controller"), the adjustment write in a throwaway child — what each refuses lands in
     `rejected`, the controller verdict rides /api-health as memoryControllerDelegated, a check that
-    does not answer settles nothing and the boot line never calls unsettled values in force, and no
-    probe runs with the scopes off, without a runner, or for a limit that is not set.
+    does not answer settles nothing and the boot line lists each value under its own verdict (never an
+    unsettled value as in force, never a settled one as unknown), /api-health names the unsettled checks,
+    and no probe runs with the scopes off, without a runner, or for a limit that is not set; every cell
+    of that table is pinned in SettleTable.
 Synthetic fixtures only: placeholder sid, /bin/true as the CLI.
 """
 import json
@@ -396,7 +398,7 @@ class FallbackNotice(_Backend):
     def test_the_snapshot_reports_the_verdict_and_the_fallbacks(self):
         self.assertEqual(self.be.api_health_snapshot()["cliScope"],
                          {"on": False, "fallbacks": 0, "lastFallbackAt": None, "limitsIgnored": 0, "rejected": [],
-                          "memoryControllerDelegated": None,
+                          "memoryControllerDelegated": None, "unsettled": [],
                           "memoryMax": None, "memoryHigh": None, "memorySwapMax": None, "oomScoreAdj": None},
                          "the test floor: off, nothing fell back, no limits, no probe")
         self._capture()
@@ -442,7 +444,8 @@ class FallbackNotice(_Backend):
 # and hands down is refused at launch (or the reverse: never reported at boot, refused per launch).
 SIZE_OK = ["16G", "8192M", "1024", "0", "1T", "5K", "infinity", "016M", "12345678901234567890"]
 SIZE_BAD = ["16g", "abc", "16 G", "16GB", "1.5G", "-1", "G", "50%", "Infinity", "16GG", " 16G", "16G\n",
-            "1_000", "infinity ", "K16", "0x10", "16E", "16P", "1G 512M",      # systemd's own forms the docs name
+            "1_000", "infinity ", "K16", "0x10", "16P", "1G 512M",      # forms systemd takes, which the docs name
+            "16E",                            # an E suffix: not in the rule (and 16E is past systemd's own range too)
             "\u0663M", "\uff11\uff10M"]   # other scripts' digits: not [0-9]
 ADJ_OK = ["500", "-1000", "0", "1000", "-1", "-0", "999"]
 ADJ_BAD = ["1001", "-1001", "+5", "5x", "--5", "-", "1e3", "5 ", "10000", "-10000", "abc", "5\n", "1 000",
@@ -481,15 +484,15 @@ class LimitRules(unittest.TestCase):
 
     def test_nothing_set_is_nothing(self):
         rows, log = self._log()
-        self.assertEqual(sb.cli_scope_limits({}, log=log), ({}, {}, None))
-        self.assertEqual(sb.cli_scope_limits({v: "" for v in LIMIT_VARS}, log=log), ({}, {}, None),
+        self.assertEqual(sb.cli_scope_limits({}, log=log), ({}, {}, None, []))
+        self.assertEqual(sb.cli_scope_limits({v: "" for v in LIMIT_VARS}, log=log), ({}, {}, None, []),
                          "empty is unset — what the kernel sends down for a refused one")
         self.assertEqual(rows, [])
 
     def test_every_valid_size_is_in_force_under_its_api_key(self):
         for v in SIZE_OK:
             env = {"ROMP_CLI_SCOPE_MEMORY_MAX": v, "ROMP_CLI_SCOPE_MEMORY_HIGH": v, "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX": v}
-            in_force, rejected, delegated = sb.cli_scope_limits(env)
+            in_force, rejected, delegated, unsettled = sb.cli_scope_limits(env)
             self.assertEqual(in_force, {"memoryMax": v, "memoryHigh": v, "memorySwapMax": v}, v)
             self.assertIsNone(delegated, "no runner, no probe")
             self.assertEqual(rejected, {}, v)
@@ -497,7 +500,7 @@ class LimitRules(unittest.TestCase):
     def test_every_bad_size_is_refused_and_logged_as_a_problem_naming_the_variable_and_the_rule(self):
         for v in SIZE_BAD:
             rows, log = self._log()
-            in_force, rejected, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_HIGH": v}, log=log)
+            in_force, rejected, _, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_HIGH": v}, log=log)
             self.assertEqual(in_force, {}, v)
             self.assertEqual(rejected, {"ROMP_CLI_SCOPE_MEMORY_HIGH": v}, v)
             self.assertEqual(len(rows), 1, (v, rows))
@@ -510,18 +513,18 @@ class LimitRules(unittest.TestCase):
 
     def test_the_adjustment_rule(self):
         for v in ADJ_OK:
-            in_force, rejected, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": v})
+            in_force, rejected, _, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": v})
             self.assertEqual((in_force, rejected), ({"oomScoreAdj": v}, {}), v)
         for v in ADJ_BAD:
             rows, log = self._log()
-            in_force, rejected, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": v}, log=log)
+            in_force, rejected, _, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": v}, log=log)
             self.assertEqual((in_force, rejected), ({}, {"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": v}), v)
             self.assertIn("-1000..1000", rows[0][0], v)
             self.assertIn("no leading zero", rows[0][0], v)
 
     def test_a_refused_value_leaves_the_others_in_force(self):
         rows, log = self._log()
-        in_force, rejected, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "abc", "ROMP_CLI_SCOPE_MEMORY_HIGH": "12G",
+        in_force, rejected, _, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "abc", "ROMP_CLI_SCOPE_MEMORY_HIGH": "12G",
                                                      "ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"}, log=log)
         self.assertEqual(in_force, {"memoryHigh": "12G", "oomScoreAdj": "500"})
         self.assertEqual(rejected, {"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"})
@@ -532,7 +535,7 @@ class LimitRules(unittest.TestCase):
 
     def test_with_the_scopes_off_the_in_force_line_says_the_limits_apply_to_nothing(self):
         rows, log = self._log()
-        in_force, _, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "16G"}, log=log, scope_on=False)
+        in_force, _, _, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "16G"}, log=log, scope_on=False)
         self.assertEqual(in_force, {"memoryMax": "16G"}, "still read, for the report")
         self.assertEqual(len(rows), 1)
         self.assertFalse(rows[0][1], "not a problem: a setting, idle")
@@ -672,7 +675,15 @@ class LimitsOnTheBackend(_Backend):
         self.assertEqual(snap["rejected"], ["ROMP_CLI_SCOPE_MEMORY_SWAP_MAX"])
         self.assertEqual(snap["limitsIgnored"], 0)
         self.assertIsNone(snap["memoryControllerDelegated"], "not settled (no probe ran on this backend)")
+        self.assertEqual(snap["unsettled"], [], "nothing was due, so nothing is unsettled")
         json.dumps(snap)
+        # an unsettled check rides by name: the one field that tells a set value whose check did not
+        # answer from a settled one (oomScoreAdj 500 beside memoryControllerDelegated true reads as settled
+        # otherwise; round-3 finding, 2026-09-06)
+        self.be.cli_scope_unsettled = ["oomScoreAdj"]
+        snap = self.be.api_health_snapshot()["cliScope"]
+        self.assertEqual((snap["oomScoreAdj"], snap["unsettled"]), (500, ["oomScoreAdj"]))
+        self.assertIsNot(snap["unsettled"], self.be.cli_scope_unsettled, "a copy: the snapshot is serialized, not the backend's list")
         # the boot probe's verdict on the memory controller rides as it was settled, either way
         for verdict in (True, False):
             self.be.cli_scope_memory_delegated = verdict
@@ -686,6 +697,7 @@ class LimitsOnTheBackend(_Backend):
         for key in ("memoryMax", "memoryHigh", "memorySwapMax", "oomScoreAdj", "memoryControllerDelegated"):
             self.assertIsNone(snap[key], key)
         self.assertEqual(snap["rejected"], ["ROMP_CLI_SCOPE_MEMORY_SWAP_MAX"])
+        self.assertEqual(snap["unsettled"], [], "off: no check was due")
 
     def test_the_ignored_line_is_logged_at_once_and_counted_apart_from_the_fallbacks(self):
         problems = []
@@ -744,11 +756,12 @@ class LimitsOnTheBackend(_Backend):
         self.assertEqual(be.cli_scope_limits, {"memoryMax": "16G"})
         self.assertEqual(be.cli_scope_rejected, {"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "0"})
         self.assertIs(be.cli_scope_memory_delegated, False)
+        self.assertEqual(be.cli_scope_unsettled, [], "every due check answered")
         problems = [m for m in self.logged if m.startswith("cli scope:") and ("not delegated" in m or "cannot be written" in m)]
         self.assertEqual(len(problems), 2, self.logged)
         snap = be.api_health_snapshot()["cliScope"]
-        self.assertEqual((snap["memoryMax"], snap["oomScoreAdj"], snap["rejected"], snap["memoryControllerDelegated"]),
-                         ("16G", None, ["ROMP_CLI_SCOPE_OOM_SCORE_ADJ"], False))
+        self.assertEqual((snap["memoryMax"], snap["oomScoreAdj"], snap["rejected"], snap["memoryControllerDelegated"], snap["unsettled"]),
+                         ("16G", None, ["ROMP_CLI_SCOPE_OOM_SCORE_ADJ"], False, []))
         # and _options hands the refused adjustment down empty, the size as itself, the unset two not at all
         sess = sb.SdkSession(be, {"sid": SID, "name": "web", "cwd": self.d, "mode": "acceptEdits"})
         env = be._options(sess, dict)["env"]
@@ -779,8 +792,8 @@ class LimitsOnTheBackend(_Backend):
             if real_before is not None:
                 os.environ["ROMP_CLI_REAL"] = real_before
         self.assertEqual([c[0] for c in runs.calls], ["systemd-run"] * 3, runs.calls)
-        self.assertEqual((be.cli_scope_limits, be.cli_scope_rejected, be.cli_scope_memory_delegated),
-                         ({"memoryMax": "16G"}, {}, None))
+        self.assertEqual((be.cli_scope_limits, be.cli_scope_rejected, be.cli_scope_memory_delegated, be.cli_scope_unsettled),
+                         ({"memoryMax": "16G"}, {}, None, ["memoryLimits"]))
         lines = [m for m in self.logged if m.startswith("cli scope:")]
         self.assertTrue(any("could not be settled" in m and "timed out after 10 seconds" in m for m in lines), lines)
         self.assertTrue(any("not settled" in m and "memoryMax=16G" in m for m in lines), lines)
@@ -788,8 +801,8 @@ class LimitsOnTheBackend(_Backend):
         self.assertEqual([p["text"] for p in be.problems() if p["text"].startswith("cli scope:")], [],
                          "plain lines: the wrapper reports on each launch")
         snap = be.api_health_snapshot()["cliScope"]
-        self.assertEqual((snap["on"], snap["memoryMax"], snap["rejected"], snap["memoryControllerDelegated"]),
-                         (True, "16G", [], None))
+        self.assertEqual((snap["on"], snap["memoryMax"], snap["rejected"], snap["memoryControllerDelegated"], snap["unsettled"]),
+                         (True, "16G", [], None, ["memoryLimits"]), "and `unsettled` names the check, so null is not the only sign")
         env = be._options(sb.SdkSession(be, {"sid": SID, "name": "web", "cwd": self.d, "mode": "acceptEdits"}), dict)["env"]
         self.assertEqual(env["ROMP_CLI_SCOPE_MEMORY_MAX"], "16G", "handed down as read")
 
@@ -856,7 +869,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
     def test_a_box_that_takes_everything_probes_three_times_and_refuses_nothing(self):
         rows, log = self._log()
         runs = _Runs((0, b""), HAS, (0, b""))
-        in_force, rejected, delegated = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, DELEGATION_PROBE, ADJ_PROBE])
         self.assertEqual(in_force, {"memoryMax": "16G", "memorySwapMax": "0", "oomScoreAdj": "500"})
         self.assertEqual(rejected, {})
@@ -899,7 +912,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         runs = _Runs((1, b"Failed to connect to bus: Connection timed out\n"),
                      (0, b""),
                      (1, b"Failed to start transient scope unit: Unknown assignment: OOMPolicy=continue\nmore\n"))
-        in_force, rejected, delegated = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, PROBE, PROPS_PROBE, ADJ_PROBE], "no controller check for a rejected scope")
         self.assertEqual(in_force, {"oomScoreAdj": "500"}, "the adjustment stands: it is no systemd property")
         self.assertEqual(rejected, {"ROMP_CLI_SCOPE_MEMORY_MAX": "16G", "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX": "0"})
@@ -912,7 +925,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertNotIn("Connection timed out", m, "not the first, which passed on retry")
         self.assertNotIn("more", m.split("Unknown assignment")[1][:40], "systemd-run's first stderr line only")
         self.assertIn("systemd 253", m, "the likely cause, so the fix is in the line")
-        self.assertIn("in force — oomScoreAdj=500", rows[1][0])
+        self.assertEqual(rows[1][0], "cli scope: per-session limits — oomScoreAdj=500 in force")
 
     def test_a_rejection_that_does_not_name_oompolicy_gets_no_systemd_253_hint(self):
         # a size the rule passes and systemd refuses (out of range): the line quotes systemd and adds
@@ -921,7 +934,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         runs = _Runs((1, b"Failed to parse MemoryMax=99999999999999999999T: Numerical result out of range\n"),
                      (0, b""),
                      (1, b"Failed to parse MemoryMax=99999999999999999999T: Numerical result out of range\n"))
-        _in_force, rejected, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "99999999999999999999T"}, log=log, run=runs)
+        _in_force, rejected, _, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "99999999999999999999T"}, log=log, run=runs)
         self.assertEqual(rejected, {"ROMP_CLI_SCOPE_MEMORY_MAX": "99999999999999999999T"})
         self.assertIn("Numerical result out of range", rows[0][0])
         self.assertNotIn("253", rows[0][0])
@@ -929,7 +942,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
     def test_a_passing_fault_on_the_first_try_costs_nothing(self):
         rows, log = self._log()
         runs = _Runs((1, b"Failed to connect to bus: Connection timed out\n"), (0, b""), (0, b""), HAS, (0, b""))
-        in_force, rejected, delegated = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, PROBE, PROPS_PROBE, DELEGATION_PROBE, ADJ_PROBE])
         self.assertEqual(rejected, {})
         self.assertEqual(len(in_force), 3)
@@ -940,7 +953,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         rows, log = self._log()
         runs = _Runs(subprocess.TimeoutExpired(PROPS_PROBE, 10), (0, b""),
                      (1, b"Failed to start transient scope unit: Unknown assignment: OOMPolicy=continue\n"))
-        in_force, rejected, _ = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        in_force, rejected, _, _ = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, PROBE, PROPS_PROBE, ADJ_PROBE])
         self.assertEqual(sorted(rejected), ["ROMP_CLI_SCOPE_MEMORY_MAX", "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX"])
         self.assertIn("Unknown assignment", rows[0][0])
@@ -952,7 +965,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         rows, log = self._log()
         runs = _Runs((1, b"Failed to connect to bus: No such file or directory\n"),
                      (1, b"Failed to connect to bus: No such file or directory\n"))
-        in_force, rejected, delegated = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, PROBE, ADJ_PROBE])
         self.assertEqual(rejected, {})
         self.assertEqual(len(in_force), 3)
@@ -960,9 +973,10 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertEqual([p for _m, p in rows], [False, False])
         self.assertIn("could not be settled", rows[0][0])
         self.assertIn("No such file or directory", rows[0][0])
-        self.assertNotIn("in force", rows[1][0])
-        self.assertIn("not settled", rows[1][0])
-        self.assertIn("memoryMax=16G memorySwapMax=0 oomScoreAdj=500", rows[1][0], "the values, as read")
+        self.assertEqual(rows[1][0], "cli scope: per-session limits — memoryMax=16G memorySwapMax=0 set but not settled "
+                                     "(the memory-limits probe settled nothing at start, as logged above); oomScoreAdj=500 in force",
+                         "the values as read, each under its own verdict: the adjustment's check did answer")
+        self.assertEqual(unsettled, ["memoryLimits"])
 
     def test_a_deciding_probe_that_does_not_answer_settles_nothing_and_says_so(self):
         # the chain's THIRD probe (with the properties, after a bare pass) raises — the 10 s bound, an
@@ -974,7 +988,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         rows, log = self._log()
         runs = _Runs((1, b"Failed to connect to bus: Connection timed out\n"), (0, b""),
                      subprocess.TimeoutExpired(PROPS_PROBE, 10), (0, b""))
-        in_force, rejected, delegated = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, PROBE, PROPS_PROBE, ADJ_PROBE],
                          "no controller check: no scope with the properties is known to start")
         self.assertEqual(rejected, {})
@@ -985,8 +999,9 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertIn("timed out after 10 seconds", rows[0][0], "the non-answer, quoted")
         self.assertIn("Connection timed out", rows[0][0], "and the one refusal")
         self.assertIn("wrapper reports on each launch", rows[0][0])
-        self.assertNotIn("in force", rows[1][0])
-        self.assertIn("not settled", rows[1][0])
+        self.assertIn("memoryMax=16G memorySwapMax=0 set but not settled (the memory-limits probe settled nothing", rows[1][0])
+        self.assertIn("; oomScoreAdj=500 in force", rows[1][0])
+        self.assertEqual(unsettled, ["memoryLimits"])
 
     def test_a_controller_probe_scope_that_never_starts_is_unsettled_not_undelegated(self):
         # systemd-run exits 1 both when the scope ran and the file was absent and when the scope never
@@ -999,7 +1014,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         rows, log = self._log()
         fault = (1, b"Failed to start transient scope unit: Connection timed out\n")
         runs = _Runs((0, b""), fault, fault, (0, b""))
-        in_force, rejected, delegated = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, DELEGATION_PROBE, DELEGATION_PROBE, ADJ_PROBE], "one retry")
         self.assertEqual(rejected, {})
         self.assertEqual(len(in_force), 3)
@@ -1007,18 +1022,20 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertEqual([p for _m, p in rows], [True, False])
         m = rows[0][0]
         self.assertIn("memory-controller check", m)
-        self.assertIn("twice failed to start", m)
-        self.assertIn("Connection timed out", m, "systemd's own words")
+        self.assertIn("its probe failed to start its scope (Failed to start transient scope unit: Connection timed out), "
+                      "and again on the retry, moments after one with the same properties started", m, "systemd's own words, both tries")
         self.assertNotIn("not delegated", m)
         self.assertNotIn("DelegateControllers", m)
-        self.assertNotIn("in force", rows[1][0])
+        self.assertIn("memoryMax=16G memorySwapMax=0 set but not settled (the memory-controller check settled nothing", rows[1][0])
+        self.assertIn("; oomScoreAdj=500 in force", rows[1][0])
+        self.assertEqual(unsettled, ["memoryController"])
 
     def test_the_controller_verdict_is_the_marker_not_the_exit_status(self):
         # both markers come back with exit 0; only the text differs
         for answer, verdict in ((HAS, True), (NO, False)):
             rows, log = self._log()
             runs = _Runs((0, b""), answer, (0, b""))
-            _in_force, rejected, delegated = sb.cli_scope_limits(BOTH, log=log, run=runs)
+            _in_force, rejected, delegated, _unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
             self.assertEqual(runs.calls, [PROPS_PROBE, DELEGATION_PROBE, ADJ_PROBE])
             self.assertEqual(rejected, {})
             self.assertIs(delegated, verdict, answer)
@@ -1027,7 +1044,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
     def test_a_passing_fault_on_the_controller_probe_costs_nothing(self):
         rows, log = self._log()
         runs = _Runs((0, b""), (1, b"Failed to start transient scope unit: Connection timed out\n"), HAS, (0, b""))
-        in_force, rejected, delegated = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, DELEGATION_PROBE, DELEGATION_PROBE, ADJ_PROBE])
         self.assertEqual((rejected, len(in_force), delegated), ({}, 3, True))
         self.assertEqual([p for _m, p in rows], [False])
@@ -1039,7 +1056,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         rows, log = self._log()
         odd = (0, b"", b"Running scope as unit: run-r1.scope\n")
         runs = _Runs((0, b""), odd, (0, b""))
-        _in_force, rejected, delegated = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        _in_force, rejected, delegated, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, DELEGATION_PROBE, ADJ_PROBE])
         self.assertEqual(rejected, {})
         self.assertIsNone(delegated)
@@ -1047,7 +1064,9 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertIn("could not be settled", rows[0][0])
         self.assertIn("'Running scope as unit: run-r1.scope'", rows[0][0], "what it printed, quoted")
         self.assertIn("has-memory-max or no-memory-max", rows[0][0])
-        self.assertNotIn("in force", rows[1][0])
+        self.assertNotIn("after a first try", rows[0][0], "no retry, so no first try to report")
+        self.assertIn("memoryMax=16G memorySwapMax=0 set but not settled (the memory-controller check settled nothing", rows[1][0])
+        self.assertEqual(unsettled, ["memoryController"])
 
     def test_a_user_manager_without_the_memory_controller_is_a_problem_and_a_false_verdict(self):
         # systemd took the properties (the first probe passed), and the probe scope's cgroup has no
@@ -1055,7 +1074,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         # the in-force line says they apply to nothing, and the problem line names the check to run
         rows, log = self._log()
         runs = _Runs((0, b""), NO, (0, b""))
-        in_force, rejected, delegated = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, DELEGATION_PROBE, ADJ_PROBE])
         self.assertEqual(rejected, {})
         self.assertEqual(len(in_force), 3)
@@ -1064,8 +1083,10 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertIn("memory controller is not delegated", rows[0][0])
         self.assertIn("applies nothing", rows[0][0])
         self.assertIn("DelegateControllers", rows[0][0])
-        self.assertIn("apply to nothing until the memory controller is delegated", rows[1][0])
-        self.assertNotIn("in force", rows[1][0])
+        self.assertEqual(rows[1][0], "cli scope: per-session limits — memoryMax=16G memorySwapMax=0 set but applied to nothing "
+                                     "until the memory controller is delegated to the user manager; oomScoreAdj=500 in force",
+                         "the memory limits' verdict and the adjustment's, each its own")
+        self.assertEqual(unsettled, [])
 
     def test_a_controller_check_that_never_answers_is_unsettled_and_a_problem(self):
         # a raise, twice (the retry the scope-start failure gets too): the verdict is null, and the line
@@ -1073,7 +1094,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         # nothing reports this one again until the next kernel start
         rows, log = self._log()
         runs = _Runs((0, b""), OSError("boom"), OSError("boom"), (0, b""))
-        _in_force, rejected, delegated = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        _in_force, rejected, delegated, _unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, DELEGATION_PROBE, DELEGATION_PROBE, ADJ_PROBE])
         self.assertEqual(rejected, {})
         self.assertIsNone(delegated)
@@ -1082,12 +1103,15 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertIn("did not answer", rows[0][0])
         self.assertIn("boom", rows[0][0])
         self.assertIn("until the next kernel start", rows[0][0])
-        self.assertNotIn("in force", rows[1][0])
+        self.assertIn("its probe did not answer (boom), and again on the retry;", rows[0][0])
+        self.assertNotIn("failed to start", rows[0][0], "a raise is not a start failure")
+        self.assertIn("memoryMax=16G memorySwapMax=0 set but not settled (the memory-controller check settled nothing", rows[1][0])
+        self.assertIn("; oomScoreAdj=500 in force", rows[1][0])
 
     def test_an_adjustment_below_the_floor_lands_in_rejected_and_the_memory_limits_stand(self):
         rows, log = self._log()
         runs = _Runs((0, b""), HAS, (1, b"sh: 1: cannot create /proc/self/oom_score_adj: Permission denied\n"))
-        in_force, rejected, delegated = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(runs.calls, [PROPS_PROBE, DELEGATION_PROBE, ADJ_PROBE])
         self.assertEqual(in_force, {"memoryMax": "16G", "memorySwapMax": "0"})
         self.assertEqual(rejected, {"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"})
@@ -1098,30 +1122,33 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertIn("user manager's own oom_score_adj", m, "the floor, named")
         self.assertIn("privilege", m)
         self.assertIn("without it", m)
-        self.assertIn("in force — memoryMax=16G memorySwapMax=0", rows[1][0])
+        self.assertEqual(rows[1][0], "cli scope: per-session limits — memoryMax=16G memorySwapMax=0 in force")
 
     def test_an_adjustment_check_that_cannot_run_leaves_the_value_standing(self):
         rows, log = self._log()
         runs = _Runs((0, b""), HAS, OSError("no sh"))
-        in_force, rejected, _ = sb.cli_scope_limits(BOTH, log=log, run=runs)
+        in_force, rejected, _, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
         self.assertEqual(rejected, {})
         self.assertEqual(in_force["oomScoreAdj"], "500")
         self.assertEqual([p for _m, p in rows], [False, False])
         self.assertIn("oom_score_adj check could not run", rows[0][0])
         self.assertIn("no sh", rows[0][0])
-        self.assertNotIn("in force", rows[1][0], "one check did not answer, so nothing is called in force")
-        self.assertIn("not settled", rows[1][0])
+        # the memory limits' checks answered and the adjustment's did not: the boot line says so of each,
+        # never that whether ALL of them apply is unknown (round-3 finding, 2026-09-06)
+        self.assertEqual(rows[1][0], "cli scope: per-session limits — memoryMax=16G memorySwapMax=0 in force; oomScoreAdj=500 "
+                                     "set but not settled (the oom_score_adj check settled nothing at start, as logged above)")
+        self.assertEqual(unsettled, ["oomScoreAdj"])
 
     def test_the_adjustment_alone_probes_only_the_write(self):
         rows, log = self._log()
         runs = _Runs()
-        in_force, rejected, delegated = sb.cli_scope_limits({"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"}, log=log, run=runs)
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits({"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"}, log=log, run=runs)
         self.assertEqual(runs.calls, [ADJ_PROBE], "no scope is started for a limit that is no property")
         self.assertEqual((in_force, rejected, delegated), ({"oomScoreAdj": "500"}, {}, None))
 
     def test_a_memory_limit_alone_probes_no_write(self):
         runs = _Runs((0, b""), HAS)
-        in_force, rejected, delegated = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_HIGH": "12G"}, run=runs)
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_HIGH": "12G"}, run=runs)
         self.assertEqual(runs.calls, [PROBE[:-2] + ["-p", "MemoryHigh=12G", "-p", "OOMPolicy=continue", "--", "true"],
                                       PROBE[:-2] + ["-p", "MemoryHigh=12G", "-p", "OOMPolicy=continue", "--"] + sb.CLI_SCOPE_MEMORY_PROBE_CMD])
         self.assertEqual((in_force, rejected, delegated), ({"memoryHigh": "12G"}, {}, True))
@@ -1131,14 +1158,14 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertEqual(sb.cli_scope_limits(BOTH)[2], None)
         self.assertEqual(sb.cli_scope_limits(BOTH, run=runs, scope_on=False)[2], None)
         self.assertEqual(sb.cli_scope_limits({}, run=runs)[2], None)
-        self.assertEqual(sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"}, run=runs), ({}, {"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"}, None),
+        self.assertEqual(sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"}, run=runs), ({}, {"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"}, None, []),
                          "a value its rule refused never reaches a probe")
         self.assertEqual(runs.calls, [])
 
     def test_a_rule_refusal_and_a_box_refusal_share_rejected(self):
         rows, log = self._log()
         runs = _Runs((0, b""), HAS, (1, b"Permission denied\n"))
-        in_force, rejected, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "16G", "ROMP_CLI_SCOPE_MEMORY_HIGH": "lots",
+        in_force, rejected, _, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "16G", "ROMP_CLI_SCOPE_MEMORY_HIGH": "lots",
                                                      "ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "0"}, log=log, run=runs)
         self.assertEqual(in_force, {"memoryMax": "16G"})
         self.assertEqual(rejected, {"ROMP_CLI_SCOPE_MEMORY_HIGH": "lots", "ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "0"})
@@ -1172,6 +1199,275 @@ class LimitsSettledAtBoot(unittest.TestCase):
             self.assertEqual((rc, err, out), (0, "", ""), "the inherited value itself is always writable; stdout unread")
             with open("/proc/self/oom_score_adj") as f:
                 self.assertEqual(int(f.read().strip()), cur)
+
+
+# ---- every cell of the boot probe's table (2026-09-06, round-4 fixes) ----
+
+FAULT = (1, b"Failed to start transient scope unit: Connection timed out\n")
+FAULT_B = (1, b"Failed to start transient scope unit: Transport endpoint is not connected\n")
+BUS_GONE = (1, b"Failed to connect to bus: No such file or directory\n")
+REJECT = (1, b"Failed to start transient scope unit: Unknown assignment: OOMPolicy=continue\n")
+KILLED = (-9, b"")           # subprocess reports a child killed by a signal as -N: the scope started, its sh was killed
+KILLED_SAID = (-9, b"sh: killed\n")
+SILENT = (1, b"")            # a non-zero exit with nothing on stderr: not systemd-run's, which always says when it cannot start
+ODD = (0, b"", b"Running scope as unit: run-r1.scope\n")
+STDERR_MARK = (0, b"has-memory-max\n", b"")   # the marker on the wrong stream: no verdict
+ADJ_DENIED = (1, b"sh: 1: cannot create /proc/self/oom_score_adj: Permission denied\n")
+OK = (0, b"")
+TIMEOUT = lambda: subprocess.TimeoutExpired(PROBE, 10)    # str(): "Command '[…]' timed out after 10 seconds"
+RAISE = lambda text: (lambda: OSError(text))
+TIMED_OUT = "timed out after 10 seconds"
+P, B, D, A = PROPS_PROBE, PROBE, DELEGATION_PROBE, ADJ_PROBE
+MEM = {"memoryMax": "16G", "memorySwapMax": "0"}
+ALL3 = dict(MEM, oomScoreAdj="500")
+MEM_REJECTED = {"ROMP_CLI_SCOPE_MEMORY_MAX": "16G", "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX": "0"}
+ADJ_REJECTED = {"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"}
+# the boot line's clauses (each value under its own verdict; _cli_scope_boot_line)
+MEM_IN_FORCE = "memoryMax=16G memorySwapMax=0 in force"
+ADJ_IN_FORCE = "oomScoreAdj=500 in force"
+ALL_IN_FORCE = "memoryMax=16G memorySwapMax=0 oomScoreAdj=500 in force"
+MEM_NOT_DELEGATED = ("memoryMax=16G memorySwapMax=0 set but applied to nothing until the memory controller is "
+                     "delegated to the user manager")
+MEM_UNSETTLED_LIMITS = ("memoryMax=16G memorySwapMax=0 set but not settled (the memory-limits probe settled nothing at "
+                        "start, as logged above)")
+MEM_UNSETTLED_CONTROLLER = ("memoryMax=16G memorySwapMax=0 set but not settled (the memory-controller check settled "
+                            "nothing at start, as logged above)")
+ADJ_UNSETTLED = "oomScoreAdj=500 set but not settled (the oom_score_adj check settled nothing at start, as logged above)"
+# the problem/plain lines before the boot line: (problem?, substrings present, substrings absent)
+NOT_DELEGATED_LINE = (True, ["memory controller is not delegated", "applies nothing", "DelegateControllers"], [])
+LIMITS_UNSETTLED_LINE = lambda *quoted: (False, ["per-session memory limits could not be settled", "wrapper reports on each launch"] + list(quoted), [])
+CONTROLLER_UNSETTLED_LINE = lambda present, absent=(): (True, ["memory-controller check could not be settled", "until the next kernel start"] + list(present),
+                                                       ["not delegated", "DelegateControllers"] + list(absent))
+ADJ_UNSETTLED_LINE = lambda *quoted: (False, ["oom_score_adj check could not run", "ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500 stands as read"] + list(quoted), [])
+MEM_REJECTED_LINE = (True, ["rejected the per-session memory limits", "Unknown assignment", "systemd 253"], ["Connection timed out"])
+ADJ_REJECTED_LINE = (True, ["ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500 cannot be written", "privilege"], [])
+MOMENTS = ", moments after one with the same properties started"
+FAULT_TEXT = "failed to start its scope (Failed to start transient scope unit: Connection timed out)"
+FAULT_B_TEXT = "failed to start its scope (Failed to start transient scope unit: Transport endpoint is not connected)"
+KILLED_TEXT = "was killed by signal 9 in its scope before it printed a marker"
+SILENT_TEXT = ("exited 1 with no marker and nothing on stderr — the scope started (systemd-run says when one cannot) "
+               "and its command did not finish the check")
+
+
+def _cell(name, script, calls, in_force, rejected, delegated, unsettled, lines, boot, health, env=None):
+    """One row: the probes' answers in order → (argvs run, values handed down, rejected, delegated,
+    unsettled, the lines before the boot line, the boot line's body or None, the /api-health fields)."""
+    return dict(name=name, script=script, calls=calls, in_force=in_force, rejected=rejected, delegated=delegated,
+                unsettled=unsettled, lines=lines, boot=boot, health=health, env=BOTH if env is None else env)
+
+
+def _health(memoryMax="16G", memorySwapMax="0", oomScoreAdj=500, rejected=(), delegated=None, unsettled=()):
+    return {"memoryMax": memoryMax, "memorySwapMax": memorySwapMax, "oomScoreAdj": oomScoreAdj,
+            "rejected": sorted(rejected), "memoryControllerDelegated": delegated, "unsettled": list(unsettled)}
+
+
+SETTLE_TABLE = [
+    # -- the property chain: P (with the properties), then B (bare) on a failure, then P again on a bare pass
+    _cell("P ok, controller has, adj ok: everything in force",
+          [OK, HAS, OK], [P, D, A], ALL3, {}, True, [], [], ALL_IN_FORCE, _health(delegated=True)),
+    _cell("P fail, B fail: the memory limits unsettled, quoting both; the adjustment in force",
+          [BUS_GONE, BUS_GONE, OK], [P, B, A], ALL3, {}, None, ["memoryLimits"],
+          [LIMITS_UNSETTLED_LINE("No such file or directory")],
+          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
+    _cell("P raise, B raise: both exception texts quoted",
+          [TIMEOUT, RAISE("bus gone"), OK], [P, B, A], ALL3, {}, None, ["memoryLimits"],
+          [LIMITS_UNSETTLED_LINE(TIMED_OUT, "bus gone")],
+          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
+    _cell("P fail, B raise",
+          [BUS_GONE, TIMEOUT, OK], [P, B, A], ALL3, {}, None, ["memoryLimits"],
+          [LIMITS_UNSETTLED_LINE("No such file or directory", TIMED_OUT)],
+          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
+    _cell("P raise, B fail",
+          [TIMEOUT, BUS_GONE, OK], [P, B, A], ALL3, {}, None, ["memoryLimits"],
+          [LIMITS_UNSETTLED_LINE(TIMED_OUT, "No such file or directory")],
+          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
+    _cell("P fail, B ok, P fail: the memory limits rejected on the deciding failure",
+          [FAULT, OK, REJECT, OK], [P, B, P, A], {"oomScoreAdj": "500"}, MEM_REJECTED, None, [],
+          [MEM_REJECTED_LINE], ADJ_IN_FORCE, _health(None, None, 500, MEM_REJECTED)),
+    _cell("P raise, B ok, P raise: two exception texts, the first as first_err",
+          [TIMEOUT, OK, RAISE("boom"), OK], [P, B, P, A], ALL3, {}, None, ["memoryLimits"],
+          [LIMITS_UNSETTLED_LINE(TIMED_OUT, "boom", "did not answer")],
+          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
+    _cell("P fail, B ok, P raise: the refusal and the non-answer both quoted",
+          [FAULT, OK, TIMEOUT, OK], [P, B, P, A], ALL3, {}, None, ["memoryLimits"],
+          [LIMITS_UNSETTLED_LINE("Connection timed out", TIMED_OUT)],
+          MEM_UNSETTLED_LIMITS + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryLimits"])),
+    _cell("P raise, B ok, P ok: a passing fault, then the controller check",
+          [TIMEOUT, OK, OK, HAS, OK], [P, B, P, D, A], ALL3, {}, True, [], [], ALL_IN_FORCE, _health(delegated=True)),
+    _cell("P fail, B ok, P ok, controller no: not delegated after a passing fault",
+          [FAULT, OK, OK, NO, OK], [P, B, P, D, A], ALL3, {}, False, [], [NOT_DELEGATED_LINE],
+          MEM_NOT_DELEGATED + "; " + ADJ_IN_FORCE, _health(delegated=False)),
+    # -- the controller check: one retry for anything but a marker on exit 0
+    _cell("controller no: a false verdict, the memory limits applied to nothing, the adjustment in force",
+          [OK, NO, OK], [P, D, A], ALL3, {}, False, [], [NOT_DELEGATED_LINE],
+          MEM_NOT_DELEGATED + "; " + ADJ_IN_FORCE, _health(delegated=False)),
+    _cell("controller fault, then has: a passing fault costs nothing",
+          [OK, FAULT, HAS, OK], [P, D, D, A], ALL3, {}, True, [], [], ALL_IN_FORCE, _health(delegated=True)),
+    _cell("controller raise, then has: the raise branch of the one-retry rule recovers too",
+          [OK, RAISE("boom"), HAS, OK], [P, D, D, A], ALL3, {}, True, [], [], ALL_IN_FORCE, _health(delegated=True)),
+    _cell("controller killed, then has",
+          [OK, KILLED, HAS, OK], [P, D, D, A], ALL3, {}, True, [], [], ALL_IN_FORCE, _health(delegated=True)),
+    _cell("controller fault, fault: two start failures, one text",
+          [OK, FAULT, FAULT, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE(["its probe " + FAULT_TEXT + ", and again on the retry" + MOMENTS + ";"], ["did not answer"])],
+          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
+    _cell("controller fault A, fault B: two start failures, both texts",
+          [OK, FAULT, FAULT_B, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE(["its probe " + FAULT_TEXT + ", and the retry " + FAULT_B_TEXT + MOMENTS + ";"], ["again on the retry"])],
+          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
+    _cell("controller raise, raise: two non-answers",
+          [OK, RAISE("boom"), RAISE("boom"), OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE(["its probe did not answer (boom), and again on the retry;"], ["failed to start", "moments after"])],
+          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
+    _cell("controller raise, then fault: a non-answer then a start failure (never 'twice failed to start')",
+          [OK, TIMEOUT, FAULT, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE(["its probe did not answer (Command ", TIMED_OUT + "), and the retry " + FAULT_TEXT + MOMENTS + ";"],
+                                     ["again on the retry", "twice"])],
+          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
+    _cell("controller fault, then raise: a start failure then a non-answer (systemd's text kept)",
+          [OK, FAULT, TIMEOUT, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE(["its probe " + FAULT_TEXT + ", and the retry did not answer (Command ", TIMED_OUT + ")" + MOMENTS + ";"],
+                                     ["again on the retry"])],
+          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
+    _cell("controller killed, killed: a scope that ran and had its command killed, twice (not a start failure)",
+          [OK, KILLED, KILLED, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE(["its probe " + KILLED_TEXT + ", and again on the retry;"], ["failed to start", "moments after", "did not answer", "stderr:"])],
+          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
+    _cell("controller exit 1 with nothing on stderr, twice: ran without a marker, the status quoted",
+          [OK, SILENT, SILENT, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE(["its probe " + SILENT_TEXT + ", and again on the retry;"], ["failed to start", "moments after", "no detail"])],
+          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
+    _cell("controller killed with stderr, then fault: the signal, its stderr, and systemd's refusal",
+          [OK, KILLED_SAID, FAULT, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE(["its probe " + KILLED_TEXT + " (stderr: sh: killed), and the retry " + FAULT_TEXT + MOMENTS + ";"], [])],
+          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
+    _cell("controller exit 0 with neither marker: no retry, what it printed quoted",
+          [OK, ODD, OK], [P, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE(["its probe printed 'Running scope as unit: run-r1.scope' where has-memory-max or no-memory-max was expected;"],
+                                     ["after a first try"])],
+          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
+    _cell("controller marker on stderr only, exit 0: unsettled, not accepted (stdout is the contract)",
+          [OK, STDERR_MARK, OK], [P, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE(["its probe printed '' where has-memory-max or no-memory-max was expected;"], [])],
+          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
+    _cell("controller fault, then exit 0 with neither marker: the odd print, and the first try named",
+          [OK, FAULT, ODD, OK], [P, D, D, A], ALL3, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE(["its probe printed 'Running scope as unit: run-r1.scope' where has-memory-max or no-memory-max was expected, "
+                                      "after a first try that " + FAULT_TEXT + ";"], [])],
+          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_IN_FORCE, _health(unsettled=["memoryController"])),
+    # -- the adjustment write
+    _cell("adj denied: rejected, the memory limits in force",
+          [OK, HAS, ADJ_DENIED], [P, D, A], MEM, ADJ_REJECTED, True, [], [ADJ_REJECTED_LINE],
+          MEM_IN_FORCE, _health(oomScoreAdj=None, rejected=ADJ_REJECTED, delegated=True)),
+    _cell("adj raise: the adjustment unsettled beside memory limits in force (never 'whether they apply is unknown')",
+          [OK, HAS, RAISE("no sh")], [P, D, A], ALL3, {}, True, ["oomScoreAdj"], [ADJ_UNSETTLED_LINE("no sh")],
+          MEM_IN_FORCE + "; " + ADJ_UNSETTLED, _health(delegated=True, unsettled=["oomScoreAdj"])),
+    _cell("controller no, adj raise: the not-delegated verdict keeps its clause beside the unsettled adjustment",
+          [OK, NO, TIMEOUT], [P, D, A], ALL3, {}, False, ["oomScoreAdj"], [NOT_DELEGATED_LINE, ADJ_UNSETTLED_LINE(TIMED_OUT)],
+          MEM_NOT_DELEGATED + "; " + ADJ_UNSETTLED, _health(delegated=False, unsettled=["oomScoreAdj"])),
+    _cell("controller fault, fault, adj raise: two checks unsettled, both named",
+          [OK, FAULT, FAULT, RAISE("boom")], [P, D, D, A], ALL3, {}, None, ["memoryController", "oomScoreAdj"],
+          [CONTROLLER_UNSETTLED_LINE([FAULT_TEXT]), ADJ_UNSETTLED_LINE("boom")],
+          MEM_UNSETTLED_CONTROLLER + "; " + ADJ_UNSETTLED, _health(unsettled=["memoryController", "oomScoreAdj"])),
+    _cell("P fail, B fail, adj raise: the chain and the adjustment unsettled",
+          [BUS_GONE, BUS_GONE, RAISE("boom")], [P, B, A], ALL3, {}, None, ["memoryLimits", "oomScoreAdj"],
+          [LIMITS_UNSETTLED_LINE(), ADJ_UNSETTLED_LINE("boom")],
+          MEM_UNSETTLED_LIMITS + "; " + ADJ_UNSETTLED, _health(unsettled=["memoryLimits", "oomScoreAdj"])),
+    _cell("memory rejected, adj raise: only the adjustment is left, and it is not settled",
+          [FAULT, OK, REJECT, RAISE("boom")], [P, B, P, A], {"oomScoreAdj": "500"}, MEM_REJECTED, None, ["oomScoreAdj"],
+          [MEM_REJECTED_LINE, ADJ_UNSETTLED_LINE("boom")], ADJ_UNSETTLED,
+          _health(None, None, 500, MEM_REJECTED, unsettled=["oomScoreAdj"])),
+    _cell("everything rejected: no boot line (each rejection is its own problem line)",
+          [FAULT, OK, REJECT, ADJ_DENIED], [P, B, P, A], {}, dict(MEM_REJECTED, **ADJ_REJECTED), None, [],
+          [MEM_REJECTED_LINE, ADJ_REJECTED_LINE], None, _health(None, None, None, dict(MEM_REJECTED, **ADJ_REJECTED))),
+    _cell("the adjustment alone, its check raising: one clause, not settled",
+          [RAISE("boom")], [A], {"oomScoreAdj": "500"}, {}, None, ["oomScoreAdj"], [ADJ_UNSETTLED_LINE("boom")],
+          ADJ_UNSETTLED, _health(None, None, 500, unsettled=["oomScoreAdj"]), env={"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"}),
+    _cell("one memory limit alone, controller raise then fault: one clause, not settled, no adjustment",
+          [OK, TIMEOUT, FAULT], [PROBE[:-2] + ["-p", "MemoryMax=16G", "-p", "OOMPolicy=continue", "--", "true"]]
+          + [PROBE[:-2] + ["-p", "MemoryMax=16G", "-p", "OOMPolicy=continue", "--"] + sb.CLI_SCOPE_MEMORY_PROBE_CMD] * 2,
+          {"memoryMax": "16G"}, {}, None, ["memoryController"],
+          [CONTROLLER_UNSETTLED_LINE(["its probe did not answer (Command ", "), and the retry " + FAULT_TEXT + MOMENTS + ";"], [])],
+          "memoryMax=16G set but not settled (the memory-controller check settled nothing at start, as logged above)",
+          _health(memorySwapMax=None, oomScoreAdj=None, unsettled=["memoryController"]), env={"ROMP_CLI_SCOPE_MEMORY_MAX": "16G"}),
+]
+
+
+class SettleTable(_Backend):
+    """Every cell of the boot probe's table, pinned as one row each (SETTLE_TABLE): the probes' answers
+    → the argvs run, the values handed down, `rejected`, the controller verdict, `unsettled`, every log
+    line's kind and quoted text, the exact boot line, and the /api-health fields. The round-3 review
+    found the wording keyed on the controller retry alone (a raise then a start failure read as two
+    start failures; a start failure then a raise lost systemd's text), the boot line calling settled
+    values unknown when only the adjustment check did not answer, /api-health with no field for that,
+    and several cells unpinned (a recovered retry after a raise; a marker on stderr; the mixed pairs;
+    two exception texts in the chain) — so a later edit could move a cell without a test noticing."""
+
+    def test_every_cell(self):
+        seen = set()
+        for row in SETTLE_TABLE:
+            self.assertNotIn(row["name"], seen, "one row per cell")
+            seen.add(row["name"])
+            with self.subTest(row["name"]):
+                logged = []
+                runs = _Runs(*[item() if callable(item) else item for item in row["script"]])
+                in_force, rejected, delegated, unsettled = sb.cli_scope_limits(
+                    row["env"], log=lambda m, problem=False: logged.append((m, bool(problem))), run=runs)
+                self.assertEqual(runs.calls, row["calls"])
+                self.assertEqual(runs.script, [], "every scripted answer was consumed")
+                self.assertEqual(in_force, row["in_force"])
+                self.assertEqual(rejected, row["rejected"])
+                self.assertIs(delegated, row["delegated"])
+                self.assertEqual(unsettled, row["unsettled"])
+                for check in unsettled:
+                    self.assertIn(check, sb.CLI_SCOPE_CHECKS)
+                lines = logged[:-1] if row["boot"] is not None else logged
+                self.assertEqual(len(lines), len(row["lines"]), logged)
+                for (m, p), (problem, present, absent) in zip(lines, row["lines"]):
+                    self.assertIs(p, problem, m)
+                    self.assertTrue(m.startswith("cli scope: "), m)
+                    for text in present:
+                        self.assertIn(text, m)
+                    for text in absent:
+                        self.assertNotIn(text, m)
+                if row["boot"] is None:
+                    self.assertFalse(any("per-session limits" in m for m, _p in logged), logged)
+                else:
+                    self.assertEqual(logged[-1], ("cli scope: per-session limits — " + row["boot"], False))
+                    # the line is true of each value: one whose check did not answer is never "in force",
+                    # and one whose check answered is never "not settled"
+                    for clause in row["boot"].split("; "):
+                        words, verdict = clause.split(" in force") if " in force" in clause else clause.split(" set but ")
+                        for word in words.split():
+                            key = word.split("=")[0]
+                            check_unsettled = (("memoryLimits" in unsettled or "memoryController" in unsettled)
+                                               if key in sb.CLI_SCOPE_MEMORY_PROPS else "oomScoreAdj" in unsettled)
+                            self.assertEqual("not settled" in clause, check_unsettled, clause)
+                # /api-health carries the same state, `unsettled` included
+                self.be.cli_scope = True
+                self.be.cli_scope_limits, self.be.cli_scope_rejected = in_force, rejected
+                self.be.cli_scope_memory_delegated, self.be.cli_scope_unsettled = delegated, unsettled
+                snap = self.be.api_health_snapshot()["cliScope"]
+                self.assertEqual({k: snap[k] for k in row["health"]}, row["health"])
+                json.dumps(snap)
+
+    def test_the_table_covers_every_check_and_every_attempt_kind(self):
+        # the names /api-health can carry all occur, and each way a controller attempt can give no
+        # verdict (_cli_scope_attempt) is pinned in some cell
+        named = {c for row in SETTLE_TABLE for c in row["unsettled"]}
+        self.assertEqual(named, set(sb.CLI_SCOPE_CHECKS))
+        self.assertEqual(set(sb.CLI_SCOPE_CHECK_NAMES), set(sb.CLI_SCOPE_CHECKS))
+        self.assertEqual(sb._cli_scope_attempt(None, "boom"), ("no-answer", "did not answer (boom)"))
+        self.assertEqual(sb._cli_scope_attempt(None, ""), ("no-answer", "did not answer (no detail)"))
+        self.assertEqual(sb._cli_scope_attempt(1, "Failed to start transient scope unit: x"),
+                         ("no-start", "failed to start its scope (Failed to start transient scope unit: x)"))
+        self.assertEqual(sb._cli_scope_attempt(-9, ""), ("no-marker", KILLED_TEXT))
+        self.assertEqual(sb._cli_scope_attempt(-15, "sh: terminated"),
+                         ("no-marker", "was killed by signal 15 in its scope before it printed a marker (stderr: sh: terminated)"))
+        self.assertEqual(sb._cli_scope_attempt(1, ""), ("no-marker", SILENT_TEXT))
+        texts = " ".join(text for row in SETTLE_TABLE for _p, present, _a in row["lines"] for text in present)
+        for kind_text in (FAULT_TEXT, KILLED_TEXT, SILENT_TEXT, "did not answer (boom)"):
+            self.assertIn(kind_text, texts)
 
 
 if __name__ == "__main__":

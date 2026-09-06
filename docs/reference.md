@@ -481,22 +481,24 @@ the next manager restart. Four variables in the service environment
   note on `OOMScoreAdjust=` at the end of this section).
 
 Sizes are an integer with an optional `K`, `M`, `G` or `T` suffix (powers of
-1024, as systemd reads them) or `infinity`. That is narrower than systemd's own
-syntax: the other forms `systemd.resource-control(5)` takes for `MemoryMax=` are
-refused here as not a size, and so is a lowercase suffix. So `50%` (a share of
-the machine's memory), `1.5G`, `16 G`, `16E`, `16P`, `1G 512M` and `16g` are all
-dropped before they reach systemd, with the problem line described below; write
-`16G`. The adjustment takes no leading zero: Linux reads `0400` as octal. A
-value that fails its rule is dropped and
-reported, and the session still starts in its scope with the other limits. The
-kernel checks the rules once at its start: a value it refuses is a problem line
-(a kernel log entry that the dashboard's error center also shows) naming the
-variable and the rule, and the wrapper receives that variable empty, so the
-value is applied nowhere. The wrapper checks the same rule on every launch and
-reports a value it refuses on stderr as `romp-cli-scope: ignored: …`, which the
-kernel logs as a problem naming the session; on a launch the kernel drove, an
-`ignored:` line naming a rule means the value reached the wrapper some other
-way.
+1024, as systemd reads them) or `infinity`. The rule is narrower than systemd's
+own size syntax: systemd takes `50%` (a share of the machine's memory), `1.5G`,
+`16 G`, `16P` and `1G 512M` for `MemoryMax=`, and the rule refuses them all as
+not a size, along with a lowercase suffix (`16g`). Each is dropped before it
+reaches systemd, with the problem line described below; write `16G`. The
+adjustment takes no leading zero: Linux reads `0400` as octal. A value that
+fails its rule is dropped and reported, and the session still starts in its
+scope with the other limits. The kernel checks the rules once at its start: a
+value it refuses is a problem line (a kernel log entry that the dashboard's
+error center also shows) naming the variable and the rule, and the wrapper
+receives that variable empty, so the value is applied nowhere. The probe at the
+kernel's start, described below, catches a value that passes the rule but that
+systemd refuses (a size past its range; `OOMPolicy=` on a scope before systemd
+253) and reports it the same way, quoting systemd.
+The wrapper checks the same rule on every launch and reports a value it refuses
+on stderr as `romp-cli-scope: ignored: …`, which the kernel logs as a problem
+naming the session; on a launch the kernel drove, an `ignored:` line naming a
+rule means the value reached the wrapper some other way.
 
 The rules are syntax, and two kinds of value that pass them can still be refused
 by the machine: a memory property this systemd does not take on a scope
@@ -510,10 +512,13 @@ and has a throwaway child write the adjustment to its own `oom_score_adj`. A
 refusal there is a problem line at the kernel's start, joins `cliScope.rejected`
 in `/api-health`, and reaches the wrapper as an empty variable, so no launch
 repeats it. A probe that does not answer (the user bus away at that moment)
-settles nothing: the kernel says so in its log (a plain line, not a problem),
-hands the values down as read, and reports them as set but not settled rather
-than in force; whether they apply is then known from the wrapper's report on
-each launch. The wrapper keeps the same guard on every launch. Its pre-flight
+settles nothing. The kernel says so in its log (a plain line, not a problem),
+hands the values down as read, and lists them in its boot line as set but not
+settled, naming the check; the values whose checks did answer keep their own
+verdict in the same line, so an unanswered check for one value never makes
+another unknown. `cliScope.unsettled` in `/api-health` names the check too.
+Whether the values apply is then known from the wrapper's report on each
+launch. The wrapper keeps the same guard on every launch. Its pre-flight
 scope carries the properties. If that fails, it retries bare; if the bare scope
 starts, it tries once more with the properties, and only that second failure
 drops them, for that launch, with one `ignored:` line quoting the failure that
@@ -540,9 +545,11 @@ subtree lacks it. The kernel checks for this at its start, inside the probe
 scope above: the scope's cgroup has a `memory.max` file when, and only when, the
 controller is there. A missing one is a problem line at the kernel's start, and
 `/api-health` carries the verdict as `cliScope.memoryControllerDelegated`. When
-the check itself does not answer (its probe scope fails to start twice, or does
-not finish), that is a problem line too, and the verdict stays `null`: whether
-the limits apply is then unknown until the next kernel start. To
+the check itself does not answer (its probe scope fails to start twice, does
+not finish, or runs without printing its marker), that is a problem line too,
+saying what each of its two tries did and quoting systemd's refusal or the exit
+status; the verdict stays `null`, and `cliScope.unsettled` names the check.
+Whether the memory limits apply is then unknown until the next kernel start. To
 check a live session, run from a shell inside it: `cat /sys/fs/cgroup$(cut -d:
 -f3 /proc/self/cgroup)/memory.max` prints the limit in bytes, `max` when none
 applies, and fails when the controller is not there.
@@ -727,7 +734,19 @@ and `key:managed` name sources whose material the kernel never holds.
     also a problem line), or `null` when no memory limit is set, the scopes are
     off, or the check could not be settled. A `null` beside a memory limit shown,
     with `on: true`, is that last case: a check at the kernel's start did not
-    answer, and the boot log says which.
+    answer, and `unsettled` says which.
+  - `unsettled`, the names of the kernel's start-time checks that were due and
+    settled nothing: `memoryLimits` (the probe scope carrying the memory
+    properties did not answer, or failed both with and without them),
+    `memoryController` (the check inside it gave no marker), `oomScoreAdj` (the
+    throwaway child's write did not answer). Empty when every due check
+    answered, and when none was due (the scopes off, no limit set). A value
+    listed above whose check is named here is set and handed to the wrapper as
+    read, and whether it applies is not known at the kernel's start; the other
+    fields cannot show this (`oomScoreAdj` present, `rejected` empty and
+    `memoryControllerDelegated` `true` read the same whether the adjustment's
+    check answered or not). Each named check is also a line in the boot log
+    saying why.
   - `limitsIgnored`, wrapper `romp-cli-scope: ignored: …` lines since boot (each
     also a problem line, `cli scope: session <name> (<sid8>) started its CLI
     without a per-session limit — <line>`). It counts lines, not launches: one
