@@ -16,6 +16,9 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+// the real federation router, for the test that drives this panel behind it; its module-tail bootstrap runs only
+// with a window AND a document defined at import time, and this file defines its fake DOM after its imports
+import { FederationManager } from "./webview/federation";
 
 function makeNode(tag: string): any {
   const n: any = {
@@ -373,6 +376,35 @@ test("executed: lens and order edits keep the whole-blob post, now with a writeI
   assert.equal(panel._tagEditErr, null, "nothing the user did was refused, so nothing is said");
 });
 
+// ROUND 9 (the round-8 refuters' coverage gap): the door bounds a whole-blob write's refusal rows to 64 plus ONE
+// nameless summary row whose reason counts the rest (`more`, `moreEdited`). The chat pane's rendering of that row is
+// pinned in views-writes.test.ts (ackOutcome); the dialog's is here, on the real panel: the kernel's bounded `error`
+// line when it comes, the rows' reasons joined without it, and a nameless row alone as its reason — never a name read
+// off a row that has none, and never an exception before the notice is set and the dialog repainted.
+test("executed: a refusal's nameless summary row renders in the dialog as its reason alone — with the kernel's error line, without it, and as the only row", () => {
+  const panel = drawnPanel();
+  const bound = 'a write is read to 64 tags; "qa" lay past that bound and was not read, so the stored copy was kept';
+  const more = "3 more entries past the 64-tag read bound were not read (1 of them this write edited)";
+  const summary = { reason: more, more: 3, moreEdited: 1 };
+  panel._viewsDialog = makeNode("div"); let rebuilt = 0; panel._viewsDialogBuild = () => rebuilt++;
+  // the kernel's shape: the bounded `error` names each refused tag once; the rows carry the summary
+  panel._setLens({ tagOrder: ["web"] });
+  panel.viewsAck({ type: "viewsAck", writeId: posted[0].writeId, ok: false, refused: [{ tid: "g9", name: "qa", reason: bound }, summary], error: '"qa": ' + bound + "; " + more, views: copy(S0) });
+  assert.deepEqual(panel._tagEditErr, { host: "", name: "qa", error: '"qa": ' + bound + "; " + more }, "the kernel's line stands; the summary row adds no name");
+  assert.equal(rebuilt, 1, "the open dialog repaints with it");
+  // no `error` line: the rows' reasons, joined — the nameless row's after the named one's
+  panel._setLens({ tagOrder: ["web"] });
+  panel.viewsAck({ type: "viewsAck", writeId: posted[1].writeId, ok: false, refused: [{ tid: "g9", name: "qa", reason: bound }, summary], views: copy(S0) });
+  assert.deepEqual(panel._tagEditErr, { host: "", name: "qa", error: bound + "; " + more });
+  // the nameless row alone: its reason, and no name
+  panel._setLens({ tagOrder: ["web"] });
+  panel.viewsAck({ type: "viewsAck", writeId: posted[2].writeId, ok: false, refused: [summary], views: copy(S0) });
+  assert.deepEqual(panel._tagEditErr, { host: "", name: "", error: more });
+  assert.equal(panel._pendingViews, null, "each refusal reverted its write");
+  assert.deepEqual(panel._viewsWrites, []);
+  assert.equal(rebuilt, 3);
+});
+
 // ── ORDERING (the 2026-09-05 review, findings 1/8/19): the store's write sequence decides which blob is
 // newer, never the order the socket delivered them in. The pusher builds frames from a warmed cache that
 // can predate a write whose ack already arrived; federation re-emits stored blobs; a net-zero burst leaves
@@ -604,6 +636,158 @@ test("executed: a caps frame whose connect push served no views blob (viewsSeq n
     panel.setCaps({ type: "caps", caps: ["tagEdit"] });                    // even a field-less frame now: the kept blob was let go
     assert.equal(panel._views.seq, 1000);
   } finally { console.warn = cw; }
+});
+
+// ROUND 8 of the 2026-09-05 review: the caps frame's viewsSeq is also the kernel's ANNOUNCEMENT of its current
+// store (the served blob's seq, or the store's current seq when the connect push carried no views frame; null
+// only when the kernel has no store at all). A restart over a store restored from an older copy, met by a
+// reconnect whose push carried no blob (a chat page's sentinel cycle sends no tabOrder), kept nothing for round
+// 7's rule to match: the pusher's next frame — the restored store, under its old seq — was turned away, and no
+// second caps frame comes. The announced seq is remembered in one slot until the next adoption that changes the
+// held blob (round 9), and a later
+// blob carrying exactly that seq is adopted below the held one.
+test("executed: a sentinel-cycle reconnect over a restored store — the caps frame announces the store's seq with nothing kept, the pusher's next frame at that seq is adopted below the held one, another lower seq is still turned away, and the slot clears on the adoption", () => {
+  const panel = drawnPanel();
+  const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
+  try {
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 900 });   // the connect push carried no views blob; the restored store's current seq is 900
+    assert.equal(panel._views.seq, 1000, "nothing kept, nothing adopted on the frame itself");
+    assert.equal(panel._announcedViewsSeq, 900, "…but the announced seq is remembered");
+    frame(panel, Object.assign(copy(S0), { seq: 899 }));
+    assert.equal(panel._views.seq, 1000, "a frame at another lower seq is a stale frame: turned away");
+    assert.equal(panel._announcedViewsSeq, 900, "…and the slot stands");
+    const restored = copy(S0); restored.seq = 900; restored.tags[0].name = "site";
+    frame(panel, restored);                            // the pusher's next cycle: the restored store under its old seq
+    assert.equal(panel._views.seq, 900, "the announced seq IS the store the kernel said it holds: adopted below the held one");
+    assert.equal(panel._curViews().tags[0].name, "site", "the page shows the restored store");
+    assert.equal(panel._announcedViewsSeq, null, "the slot cleared on the adoption");
+    assert.equal(panel._rejectedViews, null, "…and so did the kept blob");
+    frame(panel, Object.assign(copy(S0), { seq: 899 }));
+    assert.equal(panel._views.seq, 900, "the store's own order gates again from the adopted seq");
+    assert.equal(panel._tagEditErr, null, "nothing was in flight: nothing is said");
+  } finally { console.warn = cw; }
+});
+
+test("executed: the announced slot clears on an adoption that changes the held blob — a write landing before the announced blob arrives stamps the store past it, and that blob is then the stale frame it looks like; a caps frame that adopts its kept blob leaves no slot; viewsSeq null and a missing field announce nothing", () => {
+  const panel = drawnPanel();
+  const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
+  try {
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 900 });
+    assert.equal(panel._announcedViewsSeq, 900);
+    const written = copy(S0); written.seq = 1100; written.tags[0].name = "notes";   // another dashboard's write on the restored store: a write's seq is seeded from the clock, past everything a page holds
+    frame(panel, written);
+    assert.equal(panel._views.seq, 1100, "adopted by the ordinary rule…");
+    assert.equal(panel._announcedViewsSeq, null, "…and the slot cleared with it");
+    frame(panel, Object.assign(copy(S0), { seq: 900 }));   // the pusher's frame built before that write
+    assert.equal(panel._views.seq, 1100, "the announced seq is no longer a door: the store moved past it");
+    assert.equal(panel._curViews().tags[0].name, "notes");
+    // the caps frame that adopts its kept blob (round 7's case) leaves no slot either
+    const restored = copy(S0); restored.seq = 800;
+    frame(panel, restored);
+    assert.equal(panel._views.seq, 1100);
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 800 });
+    assert.equal(panel._views.seq, 800, "the kept blob is what the frame names: adopted");
+    assert.equal(panel._announcedViewsSeq, null, "nothing left to remember");
+    // null — the kernel has no store at all — announces nothing, and an earlier announcement does not outlive the frame
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 700 });
+    assert.equal(panel._announcedViewsSeq, 700);
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: null });
+    assert.equal(panel._announcedViewsSeq, null, "null announces nothing");
+    frame(panel, Object.assign(copy(S0), { seq: 700 }));
+    assert.equal(panel._views.seq, 800, "…so a blob at the seq an earlier frame named is turned away");
+    // a frame without the field (a kernel from before it) announces nothing either
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 600 });
+    assert.equal(panel._announcedViewsSeq, 600);
+    panel.setCaps({ type: "caps", caps: ["tagEdit"] });
+    assert.equal(panel._announcedViewsSeq, null);
+    frame(panel, Object.assign(copy(S0), { seq: 600 }));
+    assert.equal(panel._views.seq, 800);
+  } finally { console.warn = cw; }
+});
+
+// ROUND 9 of the 2026-09-05 review: the slot is cleared only by an adoption that CHANGES the held blob. In the browser
+// dashboard this pane sees the local blob only through the federation router's merged lanes payload, which replays the
+// router's stored blob on every re-emit (a remote host's lanes, a view-order storage event, a host drop) — a re-arrival
+// of the blob this pane already holds, at its own seq. Round 8's clear on ANY adoption spent the slot on that
+// re-arrival, and the restored store the router adopted and re-emitted next at the announced seq was turned away here:
+// router 900, pane 1000, silently, until the next write. Executed on the real panel frame by frame, then on the real
+// panel behind the real router (ui/webview/federation.ts) fed the same sequence.
+test("executed: a re-arrival of the held blob leaves the announced slot standing, and the restored store at the announced seq is still adopted after it; the announced seq itself, a newer blob, and a seq-less blob clear it", () => {
+  const panel = drawnPanel();
+  const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
+  try {
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 900 });
+    assert.equal(panel._announcedViewsSeq, 900);
+    frame(panel, S0);                                  // the router's re-emit of its stored blob: what this pane already holds
+    assert.equal(panel._views.seq, 1000);
+    assert.equal(panel._announcedViewsSeq, 900, "no new information: the slot stands");
+    frame(panel, S0);
+    assert.equal(panel._announcedViewsSeq, 900, "…however often it arrives");
+    assert.equal(warned.length, 0, "nothing was turned away");
+    const restored = copy(S0); restored.seq = 900; restored.tags[0].name = "site";
+    frame(panel, restored);
+    assert.equal(panel._views.seq, 900, "the restored store, at the announced seq, is adopted below the held one");
+    assert.equal(panel._curViews().tags[0].name, "site");
+    assert.equal(panel._announcedViewsSeq, null, "the adoption changed the held blob: the slot is spent");
+    // the announced seq arriving at the held seq spends the slot too: the announced store has arrived
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 900 });
+    assert.equal(panel._announcedViewsSeq, 900);
+    frame(panel, restored);
+    assert.equal(panel._announcedViewsSeq, null);
+    // a newer blob clears it, as in round 8
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 850 });
+    frame(panel, restored);                            // held again: the slot stands
+    assert.equal(panel._announcedViewsSeq, 850);
+    frame(panel, Object.assign(copy(S0), { seq: 1100 }));
+    assert.equal(panel._announcedViewsSeq, null, "a newer write moved the store: cleared");
+    frame(panel, Object.assign(copy(S0), { seq: 850 }));
+    assert.equal(panel._views.seq, 1100, "…and the seq once announced is the stale frame it looks like");
+    // a seq-less blob (a kernel from before the stamp) changes the held one too
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 840 });
+    const legacy = copy(S0); delete legacy.seq;
+    frame(panel, legacy);
+    assert.equal(panel._announcedViewsSeq, null);
+  } finally { console.warn = cw; }
+});
+
+test("executed: behind the real federation router, a re-emit between the caps frame and the pusher's frame — a remote host's lanes payload, a view-order re-emit — does not cost this pane the restored store", () => {
+  const remoteLanes = { type: "data", data: { sessions: [{ id: SID2, name: "api" }], turns: {}, messages: [], judging: [], now, views: { active: "all", tags: [], seq: 5 } } };
+  const betweens: [string, (fm: any) => void][] = [
+    ["a remote host's lanes payload", (fm) => fm.inbound("TESTHOST", remoteLanes)],
+    ["a view-order re-emit", (fm) => fm.emitMergedTimeline(false)],
+  ];
+  for (const [what, between] of betweens) {
+    const panel = new TimelinePanel(makeNode("div"));
+    const fm: any = new FederationManager();
+    // the router's window is this global: hand its merged frames to the panel the way the page's boot glue does
+    g.dispatchEvent = (ev: any) => {
+      const m = ev && ev.data; if (!m) return;
+      if (m.type === "data" && m.data) panel.update(m.data);
+      else if (m.type === "caps") panel.setCaps(m);
+    };
+    const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
+    try {
+      const lanes = (v: any) => ({ type: "data", data: { now, sessions: [sess(SID1, "web", "#f7768e")], turns: {}, messages: [], judging: [], views: copy(v), palette: PALETTE.slice() } });
+      fm.inbound("", lanes(S0));
+      fm.inbound("", { type: "caps", caps: ["tagEdit"], viewsSeq: 1000 });
+      assert.equal(panel._views.seq, 1000, what + ": the load");
+      fm.inbound("TESTHOST", remoteLanes);                                    // a remote host federated in
+      assert.equal(panel._views.seq, 1000);
+      fm.inbound("", { type: "caps", caps: ["tagEdit"], viewsSeq: 900 });   // the restart over a restored store, met on a sentinel cycle
+      assert.equal(panel._announcedViewsSeq, 900, what + ": the slot is filled from the frame the router hands on");
+      between(fm);                                                            // the router replays its stored blob — this pane's own held one
+      assert.equal(panel._views.seq, 1000);
+      assert.equal(panel._announcedViewsSeq, 900, what + ": the re-arrival leaves the slot");
+      const restored = copy(S0); restored.seq = 900; restored.tags[0].name = "site";
+      fm.inbound("", lanes(restored));                                        // the pusher's next frame: the router adopts through its slot and re-emits
+      assert.equal(panel._views.seq, 900, what + ": the pane adopts the restored store from the router's re-emit");
+      assert.equal(panel._curViews().tags[0].name, "site");
+      assert.equal(panel._announcedViewsSeq, null);
+      between(fm);
+      assert.equal(panel._views.seq, 900, what + ": and holds it through the next re-emit");
+      assert.equal(warned.length, 0, what + ": nothing was ever turned away");
+    } finally { console.warn = cw; delete g.dispatchEvent; }
+  }
 });
 
 test("executed: a caps frame without viewsSeq (a kernel from before the field) adopts the kept blob outright — the round-6 rule", () => {

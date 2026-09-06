@@ -6,6 +6,8 @@
 # kill the user's kernels. Server-side clients (the kernel's Restart proxy, the
 # `romp on` CLI) send no Origin and must keep working.
 
+load tmux-private
+
 setup() {
     TEST_DIR="$(mktemp -d)"
     MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
@@ -13,6 +15,15 @@ setup() {
     # romp session's tool shell inherits from the live service) — a test must never start a real scope
     # on the live user manager, so the switch is floored off (the kernel and manager both honour it).
     export ROMP_CLI_SCOPE=0
+    # The manager under test is REAL, and startManager() runs `tmux start-server` before it binds the
+    # control port: a call this file has no interest in, which must still never reach the machine's
+    # tmux server (tests/tmux-private.bash has the 2026-09-06 incident). A no-op tmux on PATH absorbs
+    # it; the private socket directory catches any call that reaches the real binary anyway.
+    BIN="$TEST_DIR/bin"; mkdir -p "$BIN"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/tmux"
+    chmod +x "$BIN/tmux"
+    export PATH="$BIN:$PATH"
+    tmux_private_socket_dir "$TEST_DIR"
     # Fake kernel launcher: stays alive without binding a real port.
     FAKE="$TEST_DIR/fake-serve"
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$FAKE"
@@ -22,6 +33,7 @@ setup() {
 
 teardown() {
     [[ -n "${MGR_PID:-}" ]] && kill "$MGR_PID" 2>/dev/null || true
+    tmux_private_kill            # before the rm: a server the real tmux started must not outlive the test
     rm -rf "$TEST_DIR"
 }
 

@@ -14,7 +14,7 @@
 import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder, pruneViewOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
 import { applyFeedDelta } from "./feed-delta";
-import { adoptViews, capsAdopts } from "./views-writes";
+import { adoptViews, capsAdopts, announcedSeq, announcedAfter } from "./views-writes";
 import { hostOf, bareId } from "./host-prefix";
 
 export const SEP = ":";
@@ -667,6 +667,8 @@ export class FederationManager {
   private localViews: any = null;   // the LOCAL kernel's session-views blob, carried on merged tabOrder re-emits
   private localViewsRejected: any = null;   // the last LOCAL tabOrder blob the seq gate turned away since it last adopted one — the caps frame adopts it (inbound)
   private tlViewsRejected: any = null;      // the same for the LOCAL lanes payload's blob (perHostTl[LOCAL].views)
+  private localViewsAnnounced: number | null = null;   // the seq the last LOCAL caps frame announced as the kernel's current store when the tabOrder store adopted no kept blob — a LATER blob at exactly that seq is adopted below the stored one (announcedSeq); cleared by the next adoption that changes the stored blob (announcedAfter)
+  private tlViewsAnnounced: number | null = null;      // the same for the lanes payload's store
   private perHostSids: Record<string, Set<string>> = {};
   private perHostFeed: Record<string, any> = {}; // last feed snapshot per host — merged so they don't clobber
   private perHostFeedAt: Record<string, number> = {}; // host -> local ms its snapshot ARRIVED (feed or the delta that updated it): the merged frame's clock anchor (mergeHostFeeds `nowAt`), so a re-emit anchors exactly as the arrival did
@@ -771,18 +773,28 @@ export class FederationManager {
     // the push and this frame carries a seq the frame does not name and is discarded. A store that adopted
     // RE-EMITS before the caps frame is handed on: the panes see the local blob only through these re-emits
     // (a rejected push reached them wearing the stored blob), so the restored blob must meet their own gate
-    // — and be turned away there — before their caps door adopts it. Nothing is re-emitted otherwise.
+    // — and be turned away there — before their caps door adopts it. Nothing is re-emitted otherwise. When a
+    // store kept nothing the frame names (the connect push carried no blob for it — a sentinel cycle sends no
+    // tabOrder), the frame's viewsSeq is remembered as the kernel's announced store for that store, and the
+    // later blob carrying exactly that seq is adopted below the stored one on arrival (round 8 of the review;
+    // announcedSeq): one slot per store, overwritten by each local caps frame, cleared by the next adoption
+    // that CHANGES the stored blob and never by a re-arrival of the blob already stored (round 9; announcedAfter);
+    // null (no store at all) and a missing field announce nothing. The panes hold the same slot from the same
+    // frame, handed on below; the merged re-emits between that frame and the pusher's next one (a remote host's
+    // push, a `closed` frame, a storage event, a host drop) hand them the STORED blob at their own held seq,
+    // which leaves their slot standing by the same rule, so the re-emit of that later adoption meets an open
+    // door there too.
     if (m && m.type === "caps") {
       if (capsAdopts(this.localViewsRejected, m.viewsSeq)) {
-        this.localViews = this.localViewsRejected;
+        this.localViews = this.localViewsRejected; this.localViewsAnnounced = null;
         this.emitMergedOrder();
-      }
+      } else this.localViewsAnnounced = announcedSeq(m.viewsSeq);
       this.localViewsRejected = null;
       const tl = this.perHostTl[LOCAL];
       if (tl && capsAdopts(this.tlViewsRejected, m.viewsSeq)) {
-        this.perHostTl[LOCAL] = { ...tl, views: this.tlViewsRejected };
+        this.perHostTl[LOCAL] = { ...tl, views: this.tlViewsRejected }; this.tlViewsAnnounced = null;
         this.emitMergedTimeline(false);
-      }
+      } else this.tlViewsAnnounced = announcedSeq(m.viewsSeq);
       this.tlViewsRejected = null;
     }
     // A kernel's `closed` frame is ITS OWN report that the session is gone — the one other writer allowed
@@ -814,9 +826,10 @@ export class FederationManager {
       // dashboard's chat never learned the views at all. Kept ONLY when its write sequence is at
       // least the stored one (2026-09-05): the re-emit below replays this copy on every merged order,
       // and a frame the kernel built before a write must not roll the replayed blob back behind an
-      // ack the pane already adopted. The last blob turned away is kept for the caps frame (above).
+      // ack the pane already adopted. The last blob turned away is kept for the caps frame (above), and a
+      // blob at the seq the last caps frame announced is adopted below the stored one (round 8).
       if (host === LOCAL && m.views && typeof m.views === "object") {
-        if (adoptViews(this.localViews, m.views)) { this.localViews = m.views; this.localViewsRejected = null; }
+        if (adoptViews(this.localViews, m.views, this.localViewsAnnounced)) { this.localViewsAnnounced = announcedAfter(this.localViews, m.views, this.localViewsAnnounced); this.localViews = m.views; this.localViewsRejected = null; }
         else this.localViewsRejected = m.views;
       }
       this.ensureHost(host);
@@ -855,14 +868,15 @@ export class FederationManager {
     if (m && m.type === "data" && m.data && typeof m.data === "object") {
       // the LOCAL lanes payload carries the views blob the merged re-emit replays: a payload whose blob
       // has a LOWER write sequence than the stored one keeps the stored blob (its lanes still land) —
-      // the same rule the tabOrder store applies above (2026-09-05), and the same keep of the last blob
-      // turned away, for the caps frame
+      // the same rule the tabOrder store applies above (2026-09-05), the same keep of the last blob
+      // turned away, for the caps frame, the same door for the blob at the announced seq (round 8), and the same
+      // slot rule on adoption (round 9: a re-arrival of the stored blob leaves the slot)
       const held = host === LOCAL ? this.perHostTl[LOCAL] : null;
-      if (held && held.views && m.data.views && !adoptViews(held.views, m.data.views)) {
+      if (held && held.views && m.data.views && !adoptViews(held.views, m.data.views, this.tlViewsAnnounced)) {
         this.perHostTl[host] = { ...m.data, views: held.views }; this.tlViewsRejected = m.data.views;
       } else {
         this.perHostTl[host] = m.data;
-        if (host === LOCAL && m.data.views) this.tlViewsRejected = null;
+        if (host === LOCAL && m.data.views) { this.tlViewsRejected = null; this.tlViewsAnnounced = announcedAfter(held && held.views, m.data.views, this.tlViewsAnnounced); }
       }
       this.ensureHost(host);
       this.emitMergedTimeline(false);

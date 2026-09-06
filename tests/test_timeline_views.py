@@ -226,6 +226,29 @@ class TimelineViews(unittest.TestCase):
         km._flags_cache.clear()
         self.assertEqual(km._timeline_views()["tags"], [], "minted only when hidden entries exist")
 
+    def test_a_padded_archived_tag_is_found_on_the_stored_basis_so_the_hidden_entries_migrate_into_it(self):
+        # round 8 of the 2026-09-05 review: the lookup compared the file's RAW spelling, so a legacy
+        # store holding "archived " (a padded twin from before the name basis) missed it, a second
+        # archived tag was minted, the door's collision pass refused that one, and the hidden entries
+        # migrated into nothing — the hide intent lost under a "name collision" notice
+        raw = {"active": "all", "hidden": ["s7"], "tags": [{"id": "g9", "name": "archived ", "color": "#123456", "members": []}]}
+        (jd.STATE / "timeline-views.json").write_text(json.dumps(raw))
+        km._flags_cache.clear()
+        notices = []
+        saved = km._sync_notice
+        km._sync_notice = lambda text, ok=True: notices.append((text, ok))
+        try:
+            v = km._timeline_views()
+        finally:
+            km._sync_notice = saved
+        self.assertEqual([(t["id"], t["name"]) for t in v["tags"]], [("g9", "archived")],
+                         "one archived tag, the file's own, read on the stored basis")
+        self.assertEqual(v["tags"][0]["members"], [{"host": "", "sid": "s7"}], "the hidden entry migrated into it")
+        self.assertEqual(notices, [], "a migration that fits is a stamp, not a refusal")
+        on_disk = json.loads((jd.STATE / "timeline-views.json").read_text())
+        self.assertNotIn("hidden", on_disk)
+        self.assertEqual(len(on_disk["tags"]), 1)
+
     def test_ws_op_persists_via_normalizer(self):
         # the handler body is _set_timeline_views + _mark_views_dirty; pin the setter's normalization
         km._set_timeline_views({"active": "g9", "hidden": ["x"], "tags": []})

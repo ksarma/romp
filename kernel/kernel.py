@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from importlib.machinery import SourceFileLoader
@@ -134,6 +134,287 @@ def _perf_slot(key):
         return str(key)
     except Exception:
         return "?"
+
+
+def _set_perf_log(on):
+    """Turn the `romp-perf` stderr log on or off while the kernel runs (POST /perf {"log": bool}; `romp
+    perf log on|off`). ROMP_PERF still seeds the value at import. Before this the only way to turn the
+    log on was a restart with the variable set, and on a machine whose sessions run inside this kernel
+    a restart cuts every open turn. `_perf` keeps reading the module global, so the off path costs what
+    it always did: one name lookup and a return."""
+    global _PERF
+    _PERF = bool(on)
+    return _PERF
+
+
+def _process_stats():
+    """rss_kb, thread count, CPU seconds and pid for the /perf snapshot. VmRSS from /proc is the CURRENT
+    resident size; where /proc is absent (macOS) ru_maxrss is the PEAK, in bytes there, so it is scaled
+    to KB and the field is still called rss_kb."""
+    rss = 0
+    try:
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    rss = int(line.split()[1])
+                    break
+    except Exception:
+        try:
+            import resource
+            r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            rss = int(r // 1024) if sys.platform == "darwin" else int(r)
+        except Exception:
+            rss = 0
+    return {"rss_kb": rss, "threads": threading.active_count(), "cpu_s": time.process_time(),
+            "pid": os.getpid()}
+
+
+class _PerfStats:
+    """Always-on counters behind GET /perf (`romp perf`): where the kernel's threads spend their time,
+    kept cheap enough to leave running. Every writer takes the lock and does a few dict operations;
+    none formats, serializes or reads a clock on the caller's behalf (callers pass time.monotonic()
+    deltas in seconds). snapshot() does the only real work, the percentiles and the process reads,
+    once per HTTP request on the handler's thread.
+
+    The ROMP_PERF log answers "what happened on that one push"; these answer "what is the kernel doing
+    per second" and let two snapshots N seconds apart give rates, which is how an optimization is
+    checked against the live kernel after a restart without attaching a profiler.
+
+    snapshot() shape — every value a plain number or a flat dict of numbers; `ms` fields are
+    milliseconds of wall time, `*_s` seconds:
+      now, since, uptime_s, log    clock; when the counters started (a restart resets them); seconds
+                                   since the process started; whether the romp-perf stderr log is on
+      process                      rss_kb, threads, cpu_s (time.process_time), pid
+      pusher                       cycles (one per _pusher_cycle), wakes (every _pusher_wake.set()
+                                   call; a burst coalesces into one cycle), wakes_event /
+                                   wakes_backstop (how the loop's wait ended: flag set, or the 0.5 s
+                                   timeout), cycle_ms_sum / cycle_ms_max (since start) /
+                                   cycle_ms_last, cycle_cpu_ms_sum (the pusher thread's own CPU,
+                                   time.thread_time, so a forked tmux read is excluded), and
+                                   cycle_ms_p50 / cycle_ms_p90 / cycle_ms_ring_max / ring_n from a
+                                   ring of the last RING cycle durations
+      stages_ms                    jobs: the cycle's tick jobs outside _push_all; push: _push_all as
+                                   the cycle calls it; push.chat (the tab strip, the build_session
+                                   loop and the chat sends), push.feed (the view signature,
+                                   _cached_feed and the ledgers attach), push.timeline (the skeleton
+                                   and _cached_timeline), push.send (the feed/bars serialization and
+                                   sends). The push.* stages are measured inside _push for EVERY
+                                   caller, connect pushes on handler threads included, so their sum
+                                   can exceed `push`
+      builds                       chat / feed / timeline -> {cached, built, ms}: served from the
+                                   build cache vs rebuilt, and the rebuild time
+      sends                        full / delta / deduped -> {slot: {count, bytes}} per dedup-slot
+                                   name (chat, feed, bars, taborder, ...; at most SLOTS names, the rest
+                                   under "other"). A deduped frame was built and compared, not sent
+      goals                        loads, saves, writes: judge.load_goals calls, save_goals calls,
+                                   and the saves that reached the disk (a byte-identical republish
+                                   is a save without a write)
+      judge                        passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
+                                   a pass is a join over the tier threads, so this is mostly model
+                                   latency), cpu_ms_sum (CPU: the two tier threads' own time, from
+                                   _run_tier, plus every per-session worker the tiers run in
+                                   judge.py's thread pools; the split rides as cpu_ms_workers)
+      http                         "METHOD /path" -> {count, ms}, the query string stripped and the
+                                   path normalized by _perf_http_key (/dist/*, /media/*,
+                                   /remote/*/…), at most HTTP_PATHS keys with the rest folded into
+                                   "other" (so a scanner cannot grow it, and a static file or a host
+                                   name never takes a slot or appears in the output). A WebSocket
+                                   upgrade (a path ending in /ws) is counted when it ARRIVES and adds
+                                   no ms: its handler returns when the socket closes, which is a
+                                   connection's lifetime, not a request's."""
+    RING = 256
+    HTTP_PATHS = 64
+    SLOTS = 32
+    STAGES = ("jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send")
+    BUILDS = ("chat", "feed", "timeline")
+    SEND_KINDS = ("full", "delta", "deduped")
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.reset()
+
+    def reset(self):
+        with self.lock:
+            self.since = time.time()
+            self.pusher = {"cycles": 0, "wakes": 0, "wakes_event": 0, "wakes_backstop": 0,
+                           "cycle_ms_sum": 0.0, "cycle_ms_max": 0.0, "cycle_ms_last": 0.0,
+                           "cycle_cpu_ms_sum": 0.0}
+            self.ring = collections.deque(maxlen=self.RING)
+            self.stages = {k: 0.0 for k in self.STAGES}
+            self.builds = {k: {"cached": 0, "built": 0, "ms": 0.0} for k in self.BUILDS}
+            self.sends = {k: {} for k in self.SEND_KINDS}
+            self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0}
+            self.http = {}
+
+    # ── writers (hot paths) ──
+    def wake(self):
+        with self.lock:
+            self.pusher["wakes"] += 1
+
+    def wake_kind(self, by_event):
+        with self.lock:
+            self.pusher["wakes_event" if by_event else "wakes_backstop"] += 1
+
+    def cycle(self, dt, cpu_dt=0.0):
+        """dt: the cycle's wall seconds; cpu_dt: the pusher thread's own CPU seconds over it."""
+        ms = dt * 1000.0
+        with self.lock:
+            p = self.pusher
+            p["cycles"] += 1
+            p["cycle_ms_sum"] += ms
+            p["cycle_ms_last"] = ms
+            p["cycle_cpu_ms_sum"] += cpu_dt * 1000.0
+            if ms > p["cycle_ms_max"]:
+                p["cycle_ms_max"] = ms
+            self.ring.append(ms)
+
+    def stage(self, name, dt):
+        with self.lock:
+            self.stages[name] = self.stages.get(name, 0.0) + dt * 1000.0
+
+    def build(self, kind, cached, dt=0.0):
+        with self.lock:
+            b = self.builds[kind]
+            if cached:
+                b["cached"] += 1
+            else:
+                b["built"] += 1
+                b["ms"] += dt * 1000.0
+
+    def send(self, key, kind, nbytes):
+        slot = key[0] if isinstance(key, tuple) else key
+        with self.lock:
+            d = self.sends[kind]
+            e = d.get(slot)
+            if e is None:
+                if len(d) >= self.SLOTS:
+                    slot = "other"
+                    e = d.get(slot)
+                if e is None:
+                    e = d[slot] = [0, 0]
+            e[0] += 1
+            e[1] += nbytes
+
+    def judge_pass(self, dt):
+        ms = dt * 1000.0
+        with self.lock:
+            j = self.judge
+            j["passes"] += 1
+            j["ms_sum"] += ms
+            j["ms_last"] = ms
+
+    def judge_cpu(self, cpu_dt):
+        """A judge tier thread's own CPU seconds for one tier run (_run_tier)."""
+        with self.lock:
+            self.judge["cpu_ms_sum"] += cpu_dt * 1000.0
+
+    def http_request(self, path, dt):
+        """dt None: count the request, add no time (the WebSocket upgrade case)."""
+        with self.lock:
+            e = self.http.get(path)
+            if e is None:
+                if len(self.http) >= self.HTTP_PATHS:
+                    path = "other"
+                    e = self.http.get(path)
+                if e is None:
+                    e = self.http[path] = [0, 0.0]
+            e[0] += 1
+            if dt is not None:
+                e[1] += dt * 1000.0
+
+    # ── the reader ──
+    @staticmethod
+    def _pct(sorted_ms, q):
+        n = len(sorted_ms)
+        return sorted_ms[min(n - 1, int(q * n))] if n else 0.0
+
+    def snapshot(self):
+        with self.lock:
+            ring = sorted(self.ring)
+            pusher = dict(self.pusher)
+            stages = dict(self.stages)
+            builds = {k: dict(v) for k, v in self.builds.items()}
+            sends = {k: {sl: {"count": e[0], "bytes": e[1]} for sl, e in d.items()}
+                     for k, d in self.sends.items()}
+            judge = dict(self.judge)
+            http = {pth: {"count": e[0], "ms": e[1]} for pth, e in self.http.items()}
+            since = self.since
+        pusher["ring_n"] = len(ring)
+        pusher["cycle_ms_p50"] = self._pct(ring, 0.5)
+        pusher["cycle_ms_p90"] = self._pct(ring, 0.9)
+        pusher["cycle_ms_ring_max"] = ring[-1] if ring else 0.0
+        judge["ms_mean"] = (judge["ms_sum"] / judge["passes"]) if judge["passes"] else 0.0
+        try:
+            workers = float(jd.judge_worker_cpu_ms())
+        except Exception:
+            workers = 0.0
+        judge["cpu_ms_workers"] = workers
+        judge["cpu_ms_sum"] += workers                     # tier threads + their pool workers
+        try:
+            goals = jd.goal_io_stats()
+        except Exception:
+            goals = {}
+        now = time.time()
+        return {"now": now, "since": since, "uptime_s": now - _STARTED, "log": _PERF,
+                "process": _process_stats(), "pusher": pusher, "stages_ms": stages,
+                "builds": builds, "sends": sends, "goals": goals, "judge": judge, "http": http}
+
+
+_PERF_STATS = _PerfStats()
+
+
+class _CountedEvent(threading.Event):
+    """A threading.Event whose set() also counts in _PERF_STATS: the pusher's wake. Counting at the
+    event keeps every existing call site as it is, including the bound-method callbacks
+    (`push=_pusher_wake.set`) the backends hold and the tests that pin `_pusher_wake.set()` in the
+    source."""
+
+    def set(self):
+        _PERF_STATS.wake()
+        super().set()
+
+
+def _perf_http_key(method, path):
+    """The `http` counter key for one request: "METHOD /path" with the query string gone and the
+    high-cardinality families collapsed — /dist/* and /media/* (the bundles, fonts, icons and source
+    maps a dashboard loads: dozens of names that would otherwise fill the HTTP_PATHS slots before a
+    script's first /sessions call) and /remote/<host>/… (a host name per attached kernel; a tailnet
+    host name is not something `romp perf` should print). The route table's fixed paths stay as they
+    are, so GET /perf and POST /perf are separate rows."""
+    if path.startswith("/dist/"):
+        path = "/dist/*"
+    elif path.startswith("/media/"):
+        path = "/media/*"
+    elif path.startswith("/remote/"):
+        rest = path[len("/remote/"):]
+        i = rest.find("/")
+        path = "/remote/*" + (rest[i:] if i >= 0 else "")
+    return (method + " " + path) if method else path
+
+
+def _perf_http_timed(fn):
+    """Wrap a Handler.do_* method: count the request and its wall ms in _PERF_STATS under
+    _perf_http_key(method, path). A WebSocket upgrade (a path ending in /ws) is counted when it arrives
+    and not timed: its do_GET returns when the socket closes, so a count taken then would lag by the
+    connection's lifetime and its duration would not be a request's. functools.wraps keeps
+    inspect.getsource on the real route table, which the auth tests read."""
+    @functools.wraps(fn)
+    def timed(self):
+        try:
+            path = str(getattr(self, "path", "") or "").split("?", 1)[0]
+            key = _perf_http_key(str(getattr(self, "command", "") or ""), path)
+            is_ws = path.endswith("/ws")
+        except Exception:
+            key, is_ws = "other", False
+        if is_ws:
+            _PERF_STATS.http_request(key, None)
+            return fn(self)
+        t0 = time.monotonic()
+        try:
+            return fn(self)
+        finally:
+            _PERF_STATS.http_request(key, time.monotonic() - t0)
+    return timed
 
 
 # ── host-suspend (laptop sleep) awareness ─────────────────────────────────────────────────────────
@@ -2674,6 +2955,16 @@ def _views_cache_put(p, key, d):
         pass
 
 
+def _views_lost_notice(note, members):
+    """The reader's file-fact notice — a views file over the cap, read under it (_timeline_views): one
+    stderr line carrying the notice and every dropped tag's members, and the sync notice, red."""
+    sys.stderr.write("romp-kernel: %s [%s]\n" % (note, members))
+    try:
+        _sync_notice(note, ok=False)
+    except Exception:
+        pass
+
+
 def _timeline_views():
     p = _views_path()
     try:
@@ -2723,6 +3014,16 @@ def _timeline_views():
                 return _norm_timeline_views({})
             if (st2.st_mtime_ns, st2.st_size) != key:
                 return _timeline_views()
+            hit2 = _flags_cache.get(str(p))
+            if hit2 is not None and hit2[0] == key:
+                # The same file state, served and cached by a reader that held the lock while this one
+                # waited (round 9 of the 2026-09-05 review): the failed-write path below caches the
+                # served blob under the file's UNCHANGED key — a write that never reached its replace
+                # leaves the stat alone — so the re-check above could not tell that read had happened,
+                # and two cold readers racing on a full disk each judged the file, each failed the
+                # write, and each filed the file-fact notice. The check the function opens with, run
+                # again under the lock; it serves nothing that check would not.
+                return hit2[1]
             try:
                 floor = int(hit[1].get("seq") or 0) if hit is not None else 0
             except (TypeError, ValueError):
@@ -2747,34 +3048,38 @@ def _timeline_views():
                 d2, base=base, seq_floor=floor,
                 foreign="a stale write to the views file from outside the kernel" if judge else None,
                 writer=None if judge else "the views file's re-stamp on read")
+            names, members, fact = [], "", ""
+            if lost:
+                # No dashboard wrote this — the file itself was over the cap (an edit outside the
+                # kernel, or a kernel from before the cap that held 32 tags plus hidden entries,
+                # which the migration's archived tag then puts over). Said once, as a fact about the
+                # file, whether or not the stamp below lands (round 8 of the 2026-09-05 review: it
+                # was said only after a successful write, so an unwritable store served the capped
+                # blob in silence and the next RMW write, built from that cache, made the drop
+                # permanent with nothing ever said). Cause and count first, the dropped tags after,
+                # as many as fit the served notice (_notice_list — the same review found the cause
+                # clause LAST, after one entry per tag, cut away by the dashboard's bell on any drop
+                # of two or more); stderr lists every dropped tag with its members.
+                held = len(d2["tags"]) + len(lost)
+                names = ['"%s" (%d member%s)' % (nm, n, "" if n == 1 else "s") for _i, nm, n in lost]
+                fact = ("the views file held %d tags, over the store's %d-tag cap; no dashboard wrote this."
+                        % (held, _VIEWS_MAX_TAGS))
+                ids = set(i for i, _nm, _n in lost)
+                raw = [g for g in (d2raw.get("tags") or []) if isinstance(g, dict)
+                       and isinstance(g.get("id"), str) and g["id"][:64] in ids]
+                members = "; ".join('"%s": %s' % (_tag_name_basis(g.get("name")) or "tag",
+                                                   ", ".join(_member_str(m) for m in
+                                                             (_member_pair(x) for x in (g.get("members") or []))
+                                                             if m) or "no members")
+                                    for g in raw)
             try:
                 _write_timeline_views(judged)
                 sys.stderr.write("romp-kernel: views store re-stamped on read: %s\n" % why)
                 if lost:
-                    # No dashboard wrote this — the file itself was over the cap (an edit outside the
-                    # kernel, or a kernel from before the cap that held 32 tags plus hidden entries,
-                    # which the migration's archived tag then puts over). The drop is permanent once
-                    # the stamp is written, so it is said once, here, with the member count of each
-                    # tag dropped; stderr also lists the members.
-                    held = len(d2["tags"]) + len(lost)
-                    names = ", ".join('"%s" (%d member%s)' % (nm, n, "" if n == 1 else "s") for _i, nm, n in lost)
-                    note = ("the views file held %d tags, over the store's %d-tag cap: %s %s dropped when the "
-                            "file was re-stamped on read (%s). No dashboard wrote this: the file itself was "
-                            "over the cap." % (held, _VIEWS_MAX_TAGS, names,
-                                               "was" if len(lost) == 1 else "were", why))
-                    ids = set(i for i, _nm, _n in lost)
-                    raw = [g for g in (d2raw.get("tags") or []) if isinstance(g, dict)
-                           and isinstance(g.get("id"), str) and g["id"][:64] in ids]
-                    members = "; ".join('"%s": %s' % (_tag_name_basis(g.get("name")) or "tag",
-                                                       ", ".join(_member_str(m) for m in
-                                                                 (_member_pair(x) for x in (g.get("members") or []))
-                                                                 if m) or "no members")
-                                        for g in raw)
-                    sys.stderr.write("romp-kernel: %s [%s]\n" % (note, members))
-                    try:
-                        _sync_notice(note, ok=False)
-                    except Exception:
-                        pass
+                    # the drop is permanent once the stamp is written
+                    _views_lost_notice(_notice_list(
+                        "%s %d tag%s dropped when it was re-stamped on read (%s)"
+                        % (fact, len(lost), " was" if len(lost) == 1 else "s were", why), ": ", names), members)
             except OSError as e:
                 # The state dir is unwritable or full: a READ must still answer (every frame builds
                 # on it), so a blob is served and cached under the file's key — the next read is a
@@ -2795,8 +3100,21 @@ def _timeline_views():
                     _VIEWS_RESTAMP_ERR[0] = kind
                     sys.stderr.write("romp-kernel: views store could not be re-stamped on read (%s) — "
                                      "serving %s: %s: %s\n"
-                                     % (why, "the judged blob, unwritten" if judge else "the file as read, unstamped",
+                                     % (why, "the judged blob, unwritten" if judge
+                                        else "the file as read, under the cap, unstamped",
                                         type(e).__name__, e))
+                if lost:
+                    # The file still holds the excess and the served blob does not, and the next
+                    # write that lands (a RMW built from this cache) persists the served blob: the
+                    # drop becomes permanent THEN, unless the file is brought under the cap first.
+                    # Named now, once per file state (the cache entry below keeps every further read
+                    # a hit, and a reader that raced this one to the lock finds it there), with that
+                    # consequence in the notice.
+                    _views_lost_notice(_notice_list(
+                        "%s Its re-stamp could not be written — %d tag%s not served and %s lost at the next "
+                        "write unless the file is brought under the cap first"
+                        % (fact, len(lost), " is" if len(lost) == 1 else "s are",
+                           "is" if len(lost) == 1 else "are"), ": ", names), members)
                 d = _norm_timeline_views(json.loads(json.dumps(judged)) if judge else d2)
                 _views_cache_put(p, key, d)
                 return d
@@ -2870,7 +3188,11 @@ def _views_restamp(d, hit):
         d2 = json.loads(json.dumps(d))                     # a parsed file: the round trip is a deep copy
         raw = d2.get("tags") if isinstance(d2.get("tags"), list) else (d2.get("groups") if isinstance(d2.get("groups"), list) else [])
         tags = [t for t in raw if isinstance(t, dict)]
-        arch = next((t for t in tags if t.get("name") == "archived"), None)
+        # on the STORED basis (round 8 of the 2026-09-05 review): the file's raw spelling can be padded
+        # ("archived "), which the normalizer reads as "archived" — compared raw, the lookup missed it,
+        # a second archived tag was minted, the door's collision pass refused that one, and the hidden
+        # entries migrated into nothing
+        arch = next((t for t in tags if _tag_name_basis(t.get("name")) == "archived"), None)
         if arch is None:
             arch = {"id": "archived", "name": "archived", "color": "#6b7280", "members": []}   # muted slate — never a status color
             tags = tags + [arch]
@@ -3054,14 +3376,19 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
         if not same and ed is not None and t["id"] not in ed:
             # A differing copy of a tag this write did not claim to edit (round 5): the change is
             # not the client's, whatever the stamps say — the same-second race the empty list
-            # closes above would otherwise land it here too. The store's copy stands, quietly.
-            refused.append(('"%s"' % pt.get("name"), t["id"]))
+            # closes above would otherwise land it here too. The store's copy stands, quietly, under
+            # a label that carries its cause like every other (round 9 of the 2026-09-05 review: this
+            # was the one bare label, beside "(deletion)" and "(unread)" on the quiet stderr line).
+            refused.append(('"%s" (differing copy)' % pt.get("name"), t["id"]))
             rows.append({"tid": t["id"], "name": pt.get("name"),
                          "reason": "your copy of it differs from the store's and this write did not edit it, "
                                    "so the store's copy was kept"})
             kept.append(json.loads(json.dumps(pt)))
         elif not same and pt.get("mtime") and int(pt["mtime"]) > ev:
-            refused.append(('"%s"' % pt.get("name"), t["id"]))
+            # the label carries its cause like every other (round 8 of the 2026-09-05 review): the
+            # loud notice no longer spells the causes out — it puts the count and the remedy first and
+            # the labels after, as many as fit the served text, so each label must say why on its own
+            refused.append(('"%s" (stale copy)' % pt.get("name"), t["id"]))
             # the reason names no tag: the ack composes '"<name>": <reason>' once (_ack_views_write),
             # so a toast or notice never says the name twice (the 2026-09-05 review)
             rows.append({"tid": t["id"], "name": pt.get("name"),
@@ -3070,17 +3397,32 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
             kept.append(json.loads(json.dumps(pt)))       # the store's newer truth stands
         else:
             kept.append(t)
-    for tid, nm, _n in ([] if lens_only else unread):
+    more, more_ed = 0, 0
+    for k, (tid, nm, _n) in enumerate([] if lens_only else unread):
         # PAST THE DOOR'S BOUND (round 7 of the 2026-09-05 review): an entry the normalizer's slice
         # left unread is neither a create nor a deletion — it was not read. A store tag whose copy
         # fell past the bound is KEPT (its absence from `incoming` would have read as a deletion
         # below); anything else is not created. Each gets a row, so a client whose `edited` names
         # only ids past the bound is acked not-ok with the reason, where it was acked ok with a
         # blob missing its own creates. Rows only, never stored — the bound stands.
+        # ROWS ARE BOUNDED to `bound` of them (round 8 of the 2026-09-05 review): the rows, the loud
+        # notice and the ack's `error` were O(N) in the posted array, so a 100k-entry post (a client
+        # bug, or any page holding the socket) drew a ~22 MB ack that overran WS_QUEUE_BYTES and
+        # dropped the poster's own socket before the ack was queued. Every unread store tag is still
+        # kept, however far past the bound its copy sat (at most the store's 32); past the first
+        # `bound` unread entries the rest are ONE summary row carrying their count and how many of
+        # them `edited` names (`moreEdited`), which the door's ok rule reads — a client whose own
+        # create sits past both bounds is still acked not ok.
         pt = prev.get(tid)
         if pt is not None:
             incoming.add(tid)
             kept.append(json.loads(json.dumps(pt)))
+        if k >= bound:
+            more += 1
+            if ed is not None and tid in ed:
+                more_ed += 1
+            continue
+        if pt is not None:
             refused.append(('"%s" (unread)' % pt.get("name"), tid))
             rows.append({"tid": tid, "name": pt.get("name"),
                          "reason": "a write is read to %d tags and its copy was past that bound, "
@@ -3090,6 +3432,13 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
             rows.append({"tid": tid, "name": nm,
                          "reason": "a write is read to %d tags and it was past that bound, "
                                    "so it was not created" % bound})
+    if more:
+        # the reason is self-contained (round 10 of the 2026-09-05 review): since round 9 this row can
+        # LEAD the ack's error line, where a continuation clause ("and N more ... past that bound")
+        # continued nothing and named a bound the reader had not been told
+        rows.append({"reason": "%d more entries past the %d-tag read bound were not read%s"
+                               % (more, bound, (" (%d of them this write edited)" % more_ed) if more_ed else ""),
+                     "more": more, "moreEdited": more_ed})
     for tid, pt in prev.items():
         if tid in incoming:
             continue
@@ -3190,24 +3539,35 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     # RMW callers, the reader's re-stamp) every refusal reads as loud, as before.
     loud = sorted(set(lb for lb, tid in refused if ed is None or tid in ed))
     quiet = sorted(set(lb for lb, tid in refused if ed is not None and tid not in ed))
-    if loud:
-        # the sentence names the writer: a foreign file's panel, the reader's own re-stamp (`writer`,
-        # nothing to reload — no dashboard wrote it), else a dashboard
+    # the summary row's entries (past the row bound, never labelled) fall on the same two sides
+    loud_more = more if ed is None else more_ed
+    quiet_more = 0 if ed is None else more - more_ed
+    loud_n = len(set(tid for lb, tid in refused if ed is None or tid in ed)) + loud_more
+    if loud_n:
+        # The sentence names the writer — a foreign file's panel, the reader's own re-stamp (`writer`,
+        # nothing to reload: no dashboard wrote it), else a dashboard — and puts the count and the
+        # remedy FIRST, the refused tags after, as many as fit the served notice (_notice_list). Round
+        # 8 of the 2026-09-05 review: the remedy sat last, after one label per tag and a clause
+        # spelling out every cause, and the dashboard's bell cut it away; each label now carries its
+        # own cause instead, and the ack's rows carry the reasons in full.
         remedy = ("reload the panel that wrote it to resync" if foreign
                   else None if writer else "reload that dashboard to resync")
-        why = ("%s was partially refused: its copy of %s was not applied — each predates a newer edit, "
-               "takes a name another tag holds, would put the store over its %d-tag cap, or was past the "
-               "%d tags a write is read to (the store's state was kept%s)"
-               % (foreign or writer or "a stale dashboard write", ", ".join(loud), _VIEWS_MAX_TAGS, bound,
-                  ("; " + remedy) if remedy else ""))
+        why = _notice_list("%s was partially refused: its changes to %d tag%s were not applied and the store's "
+                           "state was kept%s."
+                           % (foreign or writer or "a stale dashboard write", loud_n, "" if loud_n == 1 else "s",
+                              ("; " + remedy) if remedy else ""),
+                           " Refused: ", loud, extra=loud_more)
         sys.stderr.write("romp-kernel: %s\n" % why)
         try:
             _sync_notice(why, ok=False)
         except Exception:
             pass
-    if quiet:
-        sys.stderr.write("romp-kernel: kept the store's copy of %s over a dashboard's stale copy of it "
-                         "(a tag that dashboard did not edit; the ack carries the newer state)\n" % ", ".join(quiet))
+    if quiet or quiet_more:
+        quiet_n = len(set(tid for lb, tid in refused if ed is not None and tid not in ed)) + quiet_more
+        sys.stderr.write("romp-kernel: %s\n" % _notice_list(
+            "kept the store's copy of %d tag%s over a dashboard's stale copy (tags that dashboard did not edit; "
+            "the ack carries the newer state)" % (quiet_n, "" if quiet_n == 1 else "s"),
+            ": ", quiet, extra=quiet_more, cap=2000))
     for t in v["tags"]:
         pt = prev.get(t["id"])
         if pt is None or (pt.get("name"), pt.get("color"), pt.get("members")) != \
@@ -3808,15 +4168,27 @@ def _apply_tag_edit(e):
     return err is None, err, info
 
 
-def _ack_views_write(client, kind, write_id, ok, error=None, refused=None, info=None):
+_ACK_ERROR_CAP = 1000   # the ack's one-line `error`: the rows carry every reason in full; this is the toast's copy
+
+
+def _refusal_is_the_posters(row, edited):
+    """Whether a refusal row is the POSTER'S OWN: a tag `edited` names, or the past-the-bound summary
+    row counting one (`moreEdited`). The door's `ok` rule and the ack's one-line `error` read the rows
+    by this one predicate — `ok` is false when any row is the poster's, and the line names those first."""
+    return row.get("tid") in edited or bool(row.get("moreEdited"))
+
+
+def _ack_views_write(client, kind, write_id, ok, error=None, refused=None, info=None, edited=None):
     """Answer a dashboard's views write ON ITS OWN SOCKET: {type: kind, writeId, ok, views, seq,
     error?, refused?, tid?, name?}. `views` is the post-write client blob (stamped), which the poster
     adopts as its new base — clearing its optimistic copy on this event rather than on a frame
     count — and reverts to when ok is false. `refused` (the whole-blob path) lists the tags the
     stale-writer guard kept the store's copy of, each with its reason; `error` is the one-line form
     of either. `info` (a targeted edit) names the tag the edit touched — a create's caller learns the
-    kernel-minted `tid` and `name` here and opens its rename input on that id. A dead socket is the
-    client's problem, never the write's: the edit landed before this runs."""
+    kernel-minted `tid` and `name` here and opens its rename input on that id. `edited` is the
+    write's own list (the whole-blob path): it orders the not-ok `error`, the poster's own refusals
+    first. A dead socket is the client's problem, never the write's: the edit landed before this
+    runs."""
     if not client or not callable(client.get("send")):
         return
     views = _views_client()
@@ -3835,7 +4207,21 @@ def _ack_views_write(client, kind, write_id, ok, error=None, refused=None, info=
         # then its name-free reason. An ok ack with refusals listed (stale copies of tags the client
         # did not edit) carries no `error` — there is nothing to tell the user.
         if not ok:
-            error = error or "; ".join('"%s": %s' % (r.get("name") or "?", r.get("reason") or "refused") for r in refused)
+            # bounded (round 8 of the 2026-09-05 review — it was one entry per row, O(N) in the posted
+            # array); a row without a name (the past-the-bound summary) is its reason alone.
+            # THE POSTER'S OWN ROWS FIRST (round 9 of the same review): the judge appends the quiet rows
+            # (copies of tags the poster did not edit, acked ok on their own) before the cap pass, so
+            # in judge order the bound cut the one row that made `ok` false — a refused create behind
+            # eight quiet rows — and the toast named only refusals the user never made. With `edited`,
+            # the rows it names (or the summary row counting one, _refusal_is_the_posters) lead, in
+            # judge order among themselves, and the quiet rows follow as far as the cap allows; with
+            # none of the poster's among them, or no `edited` (every row is loud), judge order stands.
+            mine, rest = [], []
+            for r in refused:
+                (mine if edited is not None and _refusal_is_the_posters(r, edited) else rest).append(r)
+            error = error or _notice_list("", "", [(('"%s": ' % r["name"]) if r.get("name") else "")
+                                                    + (r.get("reason") or "refused") for r in mine + rest],
+                                          cap=_ACK_ERROR_CAP, joiner="; ") or "refused"
     if error:
         ack["error"] = str(error)
     try:
@@ -16800,6 +17186,32 @@ def _sync_notice_rows(limit=20, cap=300):
              "text": r["text"][:cap], "ok": bool(r["ok"])} for r in rows]
 
 
+# A notice built to this length reaches the user whole: the dashboard's bell shows a sync notice cut
+# at 240 characters (ui/webview/badge-mirror.ts), under the 300 _sync_notice_rows serves. A notice
+# that names a list puts its point first and bounds the list to fit (_notice_list) — round 8 of the
+# 2026-09-05 review found the views re-stamp's cause clause LAST, after one entry per dropped tag,
+# so with two or more dropped the served text never reached it.
+SYNC_NOTICE_FIT = 240
+
+
+def _notice_list(head, sep, items, extra=0, cap=SYNC_NOTICE_FIT, joiner=", "):
+    """`head`, then `sep` and as many of `items` (joined by `joiner`) as keep the whole text within
+    `cap`, then " and N more" for the items left unnamed plus `extra` — things the caller counted but
+    never listed. When not even the first item fits, `head` alone: a head carries its own count, so
+    the point of the notice is never what gets cut."""
+    out, named = head, 0
+    for i, it in enumerate(items):
+        cand = out + (sep if i == 0 else joiner) + it
+        rest = len(items) - i - 1 + extra
+        if len(cand) + (len(" and %d more" % rest) if rest else 0) > cap:
+            break
+        out, named = cand, i + 1
+    rest = len(items) - named + extra
+    if named and rest:
+        out += " and %d more" % rest
+    return out
+
+
 def _auto_push_remote(host):
     """Run ONE automatic update of `host` in the background, publishing phase as it goes. Never called for a
     non-fast-forward (see _is_fast_forward). Failures are kept VISIBLE on the row rather than swallowed
@@ -21141,8 +21553,7 @@ def _fold_tasks(session):
                     # `subject`; its result is an agent id, not "Task #N") is not a to-do checklist item.
                     # Folding it as a pending task gave a session that only launched background agents a
                     # phantom open task, which tripped the card's "can't read the task store" error the
-                    # moment the store was unresolvable (the user 2026-09-03, personality-1's overnight
-                    # pipeline). Only a checklist create (it carries a `subject`) folds; the background
+                    # moment the store was unresolvable (the user 2026-09-03, a session whose only Task calls were background-agent launches). Only a checklist create (it carries a `subject`) folds; the background
                     # task has its own rendering (bgTasks / TaskStop).
                     if not str(inp.get("subject") or "").strip() and ("prompt" in inp or "agent_hint" in inp):
                         continue
@@ -30619,7 +31030,8 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
             frame["coll"][name] = entry; changed = True
     if not changed:
         if now - st.get("at", 0) < _DEDUP_REPOST_S:    # unchanged: nothing to send (the repost keeps the fade alive)
-            return
+            _PERF_STATS.send(key, "deduped", len(pre))   # built and compared, not sent — the same fact
+            return                                         # _send_client's dedup records for a whole-frame client
     s = json.dumps(frame, default=str)
     if len(s) >= _DELTA_MAX_FRACTION * len(pre):       # not worth a delta → the full frame, rebased
         states.pop(ftype, None)
@@ -30627,6 +31039,7 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
         _send_slot(c, ftype, payload, pre, sig)
         return
     _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0, delta=1)
+    _PERF_STATS.send(key, "delta", len(s))
     try:
         c["send"](s)
     except Exception:
@@ -30639,7 +31052,7 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
     c.setdefault("sent", {})[key] = (sig, now)          # the dedup slot follows, so a later full send dedups honestly
 
 
-def _send_client(c, key, msg, pre=None, sig=None):
+def _send_client(c, key, msg, pre=None, sig=None, kind="full"):
     """Send a payload to ONE client only if it differs from what that client last received (per-client
     dedup, key = the slot e.g. ("chat", sid)) — so the periodic push re-sends nothing when unchanged.
     `pre` is the already-serialized msg (json.dumps(msg)) when the caller has it cached — passing it lets
@@ -30657,6 +31070,9 @@ def _send_client(c, key, msg, pre=None, sig=None):
     and the only visible symptom is this dedup never hitting. Finding the last one took a hand-written
     WebSocket client; the log makes the next one obvious.
 
+    `kind` is the /perf sends class the frame is counted under when it goes: "full" (the default: a
+    whole frame) or "delta" for a caller whose frame is a suffix or a diff (_send_chat's chatTail).
+
     Returns whether a frame went out (False: deduped, or the client is dead)."""
     s = pre if pre is not None else json.dumps(msg)
     sig = sig if sig is not None else _dedup_sig(msg, s)
@@ -30673,9 +31089,11 @@ def _send_client(c, key, msg, pre=None, sig=None):
         now = time.time()
         if prev is not None and prev[0] == sig and (now - prev[1]) < _DEDUP_REPOST_S:
             _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=1)
+            _PERF_STATS.send(key, "deduped", len(s))
             return False
         c["sent"][key] = (sig, now)
         _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0)
+        _PERF_STATS.send(key, kind, len(s))
         return _client_send(c, s, key)                # enqueue only (never blocks): the lock is held for microseconds
 
 
@@ -30726,7 +31144,7 @@ def _send_chat_locked(c, m, ms, change_from, led_changed):
                 "userTodos": m.get("userTodos") or []}
         if led_changed:                               # the TOC only changed on a judge pass → usually omitted
             tail["ledger"] = m.get("ledger")
-        _send_client(c, ("chat", sid), tail)
+        _send_client(c, ("chat", sid), tail, kind="delta")   # the chat's delta form, for /perf's sends split
         st[sid] = (pc[0], pc[1])                       # same tail base, now caught up through `total`
         return ms
     head_from = max(0, total - WIRE_TAIL)
@@ -30793,12 +31211,15 @@ KERNEL_WS_CAPS = ("tagEdit",)
 # tabOrder frame's for a chat page, the timeline skeleton's (`data.views`), the feed frame's — read from
 # the frames that push enqueued (_VIEWS_SERVED, captured in _send_client on the handler's thread), never
 # from a fresh cache read, so a write landing between the push and this frame cannot skew it; the highest
-# when the push carried more than one; null when it carried none (a sentinel cycle sends no tabOrder). A
-# client that kept a blob its seq gate turned away adopts it on this frame only when the kept blob's seq
-# equals viewsSeq: the restore case (the store's seq fell behind what the page holds, and the connect push
-# IS the kept blob), and never a pusher-thread frame built before a concurrent write and enqueued between
-# the connect push and this frame — its seq is older than the connect push's, so it does not match, and
-# the next pusher cycle carries the newer blob.
+# when the push carried more than one. When the push carried NONE (a chat page on a sentinel cycle gets no
+# tabOrder frame) it is the store's current seq at caps time — the seq the next push serves (round 8 of
+# the same review); null only when there is no store at all, which has no seq. A client that kept a blob
+# its seq gate turned away adopts it on this frame only when the kept blob's seq equals viewsSeq — the
+# restore case (the store's seq fell behind what the page holds, and the connect push IS the kept blob) —
+# and adopts a LATER frame whose seq equals viewsSeq even when that is below the seq it holds (the same
+# restore, met on a sentinel cycle); never a pusher-thread frame built before a concurrent write and
+# enqueued between the connect push and this frame — its seq is older than the connect push's, so it does
+# not match, and the next pusher cycle carries the newer blob.
 
 _VIEWS_SERVED = threading.local()   # .seqs: a list while the ready handler captures its connect push, else absent/None
 
@@ -30823,7 +31244,8 @@ def _send_caps(client, views_seq=None):
     """The caps frame, on the client's own socket: {type: "caps", caps, viewsSeq} (the comment on
     KERNEL_WS_CAPS has the field). Sent AFTER the ready handler's pushes: the shim clears its stale banner
     on the first non-keepalive frame after a reconnect, which must stay the resync frame itself and not
-    this one. `views_seq` is the seq of the views blob those pushes served, None when they served none."""
+    this one. `views_seq` is the seq of the views blob those pushes served, else the store's current seq
+    (the comment on KERNEL_WS_CAPS), None only with no store."""
     try:
         client["send"](json.dumps({"type": "caps", "caps": list(KERNEL_WS_CAPS),
                                    "viewsSeq": views_seq if isinstance(views_seq, int) else None}))
@@ -30966,9 +31388,11 @@ def _send_feed_locked(c, feed, ms, sig, parts):
         c["efeed"] = parts if (parts[1] is not None or prev[1] is None) else (parts[0], prev[1], parts[2], parts[3])
         if s is None:
             _perf("send", slot="feed", bytes=len(ms), deduped=1)
+            _PERF_STATS.send("feed", "deduped", len(ms))
             return
         c.setdefault("sent", {})[("feed",)] = (sig, time.time())   # the dedup slot stays truthful either way
         _perf("send", slot="feedDelta", bytes=len(s), deduped=0)
+        _PERF_STATS.send("feed", "delta", len(s))
         _client_send(c, s, ("feed",))
         return
     _send_client(c, ("feed",), feed, pre=ms, sig=sig)
@@ -31662,14 +32086,52 @@ def _edit_trace(path, sid):
         sys.stderr.write("edit-trace to %s failed: %s\n" % (target, ex))
 
 
-def _git_out(args, cwd, timeout=5):
+def _git_out(args, cwd, timeout=5, env=None):
     """One read-only git query → stripped stdout, or None on any failure (no repo, no git, timeout).
-    List argv, never a shell; quiet — an absent repo is a normal answer here, not an error."""
+    List argv, never a shell; quiet — an absent repo is a normal answer here, not an error. `env`
+    replaces the child's environment when given (the one network query below forbids a prompt)."""
     try:
-        r = subprocess.run(["git", "-C", cwd] + args, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(["git", "-C", cwd] + args, capture_output=True, text=True, timeout=timeout,
+                           env=env)
         return r.stdout.strip() if r.returncode == 0 else None
     except (OSError, subprocess.SubprocessError):
         return None
+
+
+def _git_net_out(args, cwd, timeout, env):
+    """_git_out for the one query that leaves the machine (ls-remote): git runs in its OWN session, and
+    the deadline kills the whole process group. subprocess.run's timeout kill reaches its direct child
+    alone, and the ssh git had spawned sat in its TCP connect for minutes after the viewer had already
+    been told "could not check" (reproduced 2026-09-05). A fresh session also has no controlling
+    terminal, so an ssh that wants a passphrase fails instead of waiting for one. Same shape as
+    envsource.run_command; not shared, because that module is the env source's and this is a git call."""
+    try:
+        p = subprocess.Popen(["git", "-C", cwd] + args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True, start_new_session=True, env=env)
+    except OSError:
+        return None
+    try:
+        out, _ = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)         # start_new_session: the child's pid is its pgid
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            p.communicate(timeout=5)
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
+        return None
+    except (OSError, subprocess.SubprocessError):
+        try:
+            p.kill()
+        except Exception:
+            pass
+        return None
+    return out.strip() if p.returncode == 0 else None
 
 
 # origin remote → the https://github.com/<owner>/<repo> base, for the spellings git actually writes:
@@ -31681,20 +32143,93 @@ _GITHUB_REMOTE = re.compile(
     r"([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
 
 
-def _file_github_url(raw, sid):
-    """The GitHub web URL for a viewed file, or "" when there is none to give (the user 2026-08-15:
-    the viewer links to the file on GitHub when it is tracked there). Answered by the kernel that
-    OWNS the file — git on ITS disk is the authoritative source — and lazily, per viewer open, never
-    on the /file byte path (thumbnails must not pay three subprocesses each).
+# The no-link verdicts, as the viewer shows them (the user 2026-09-05, who could not tell "not
+# committed yet" from "the link is broken" when the button simply never appeared). Plain phrases,
+# a fixed set: the viewer puts one in the disabled button's tooltip verbatim.
+GH_NO_REPO = "not in a git repository"
+GH_UNTRACKED = "not committed (untracked file)"
+GH_NO_COMMITS = "not committed (no commits yet)"
+GH_NO_ORIGIN = "no origin remote"
+GH_NOT_GITHUB = "the origin remote is not on GitHub"
+# ...and the two notes a link can carry anyway: the branch is real but GitHub has not seen it
+GH_NOT_ON_ORIGIN = "branch %s is not on origin"
+GH_ORIGIN_UNCHECKED = "could not check whether branch %s is on origin"
+GH_LS_REMOTE_S = 3          # the viewer is waiting on this reply; a remote that has not answered by then is "unchecked"
 
-    "" is a VERDICT, not an error: an untracked file, a non-repo path, or a non-GitHub origin all
-    honestly have no link, and the viewer simply never shows the button. The ref is the current
-    branch (what a human expects to read on GitHub), or the commit sha when HEAD is detached; a
-    branch that was never pushed 404s on GitHub's end, which is the truthful outcome for a file
-    that is not there yet."""
+
+# ls-remote's answers, memoized per (repo top, branch) — EVENT-keyed, no expiry: an answer holds until
+# the free local check (the tracking ref) changes its verdict, which is the event a push or fetch
+# produces. A never-pushed branch otherwise paid a network round trip on every viewer open, with as
+# many in flight as opens (2026-09-05). Only answers are kept (True/False); "did not answer" is asked
+# again next time. _ORIGIN_INFLIGHT dedupes concurrent askers of one key: they wait on the leader's
+# Event and share its answer, whatever it is, instead of each paying the timeout in turn.
+_ORIGIN_MEMO = {}                       # (top, ref) -> bool
+_ORIGIN_INFLIGHT = {}                   # (top, ref) -> [threading.Event, answer]
+_ORIGIN_LOCK = threading.Lock()
+
+
+def _origin_has_branch(top, ref):
+    """Whether origin carries branch `ref`: True / False / None (unknown — origin did not answer in
+    time, or refused). The local tracking ref answers first and for free (`refs/remotes/origin/<ref>`
+    exists once the branch has been pushed or fetched); only its absence pays one `ls-remote` — a
+    worktree branch never pushed has no tracking ref, and that is the case the note exists for — and
+    only ONCE per (repo, branch): the answer is memoized until the tracking ref appears, which a push
+    from the session writes, so the free check sees the change and the memo entry is dropped (its
+    disappearance later, a `fetch --prune` after a deletion on GitHub, asks origin afresh). The check
+    trusts the local tracking ref: a branch deleted on GitHub keeps reading as present until a prune.
+    The query gets a short timeout and no terminal prompt: the viewer must never hang on it. The
+    pattern is the full ref and the answer is matched on it exactly, because ls-remote patterns match
+    a ref's TAIL (`main` would also match `refs/heads/x/main`)."""
+    key = (top, ref)
+    if _git_out(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/" + ref], top):
+        with _ORIGIN_LOCK:
+            _ORIGIN_MEMO.pop(key, None)         # the free check answers now; its verdict changing re-asks
+        return True
+    with _ORIGIN_LOCK:
+        if key in _ORIGIN_MEMO:
+            return _ORIGIN_MEMO[key]
+        flight = _ORIGIN_INFLIGHT.get(key)
+        leader = flight is None
+        if leader:
+            flight = _ORIGIN_INFLIGHT[key] = [threading.Event(), None]
+    if not leader:
+        flight[0].wait()                        # the leader's finally always sets it
+        return flight[1]
+    on = None
+    try:
+        full = "refs/heads/" + ref
+        out = _git_net_out(["ls-remote", "--heads", "origin", full], top, timeout=GH_LS_REMOTE_S,
+                           env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+        if out is not None:
+            on = any(line.split("\t")[-1] == full for line in out.splitlines())
+    finally:
+        with _ORIGIN_LOCK:
+            if on is not None:
+                _ORIGIN_MEMO[key] = on
+            _ORIGIN_INFLIGHT.pop(key, None)
+        flight[1] = on
+        flight[0].set()
+    return on
+
+
+def _file_github_link(raw, sid, check_origin=True):
+    """(url, reason) for a viewed file: the GitHub web URL when there is one to give, and otherwise
+    WHY there is none (the user 2026-08-15: the viewer links to the file on GitHub when it is tracked
+    there; the user 2026-09-05: when it cannot, it must say so). Answered by the kernel that OWNS the
+    file — git on ITS disk is the authoritative source — and lazily, per viewer open, never on the
+    /file byte path (thumbnails must not pay the git subprocesses).
+
+    An empty url is a VERDICT, not an error, and the reason names it: an untracked file, a non-repo
+    path, a repo with no origin, or a non-GitHub origin all honestly have no link (GH_NO_REPO /
+    GH_UNTRACKED / GH_NO_COMMITS / GH_NO_ORIGIN / GH_NOT_GITHUB — a fixed set of plain phrases the
+    viewer shows verbatim). The ref is the current
+    branch (what a human expects to read on GitHub), or the commit sha when HEAD is detached. A
+    branch that was never pushed 404s on GitHub's end, so with check_origin the url still comes back
+    (it is the right one, once pushed) but carries GH_NOT_ON_ORIGIN as its reason — or
+    GH_ORIGIN_UNCHECKED when origin did not answer in time; a detached sha is never checked."""
     p = _resolve_open_path(str(raw or ""), sid)
     if not os.path.isabs(p):
-        return ""
+        return "", GH_NO_REPO                       # a relative path with no base can be placed in no repo
     # realpath, not normpath (two executed repros): a lexical '..' collapse built a URL for a
     # DIFFERENT file than the bytes the viewer shows when the '..' followed a symlink — a wrong link,
     # strictly worse than none — and a symlinked path PREFIX made relpath escape the PHYSICAL toplevel
@@ -31703,29 +32238,49 @@ def _file_github_url(raw, sid):
     d = os.path.dirname(p)
     top = _git_out(["rev-parse", "--show-toplevel"], d)
     if not top:
-        return ""
+        return "", GH_NO_REPO
     rel = os.path.relpath(p, top)
     if rel == ".." or rel.startswith(".." + os.sep):
-        return ""                                   # escaped the repo — NOT a name-prefix test: a root
+        return "", GH_NO_REPO                       # escaped the repo — NOT a name-prefix test: a root
     #                                                 file literally named ..cfg is inside and links fine
     if _git_out(["ls-files", "--error-unmatch", "--", rel], top) is None:
-        return ""                                   # exists but untracked — no link to a thing not there
+        return "", GH_UNTRACKED                     # exists but untracked — no link to a thing not there
     remote = _git_out(["remote", "get-url", "origin"], top)
-    m = _GITHUB_REMOTE.match(remote or "")
+    if remote is None:
+        return "", GH_NO_ORIGIN                     # no remote by that name: a different fact from a
+    #                                                 non-GitHub one, and a different fix
+    m = _GITHUB_REMOTE.match(remote)
     if not m:
-        return ""
-    ref = _git_out(["rev-parse", "--abbrev-ref", "HEAD"], top)
-    if not ref:
-        return ""
-    if ref == "HEAD":                               # detached — the sha is the only honest ref
-        ref = _git_out(["rev-parse", "HEAD"], top) or ""
-        if not ref:
-            return ""
-    return "https://github.com/%s/%s/blob/%s/%s" % (
+        return "", GH_NOT_GITHUB
+    sha = _git_out(["rev-parse", "--verify", "--quiet", "HEAD"], top)
+    if not sha:
+        return "", GH_NO_COMMITS                    # staged into an unborn branch: in the index, on no commit
+    # `branch --show-current` (git >= 2.22), NOT `rev-parse --abbrev-ref HEAD`: the latter spells a
+    # branch that shares its name with a tag as `heads/<branch>` to disambiguate, which GitHub 404s and
+    # which named a branch nobody has ("branch heads/main is not on origin") — reproduced 2026-09-05.
+    # Empty when HEAD is detached, and then the sha is the only honest ref.
+    branch = _git_out(["branch", "--show-current"], top) or None
+    ref = branch or sha
+    url = "https://github.com/%s/%s/blob/%s/%s" % (
         # safe="/" keeps a slashed branch name (feat/x) literal — the form GitHub's own UI writes;
         # GitHub resolves the ref/path ambiguity by longest match, exactly as it does for its users
         m.group(1), m.group(2), quote(ref, safe="/"),
         "/".join(quote(seg) for seg in rel.split(os.sep)))
+    reason = ""
+    if check_origin and branch:
+        on = _origin_has_branch(top, branch)
+        if on is False:
+            reason = GH_NOT_ON_ORIGIN % branch
+        elif on is None:
+            reason = GH_ORIGIN_UNCHECKED % branch
+    return url, reason
+
+
+def _file_github_url(raw, sid):
+    """The GitHub web URL for a viewed file, or "" when there is none — _file_github_link's url
+    alone, without the origin check (no network query for a caller that wants only the address).
+    Kept for callers that predate the reason; the viewer's op uses _file_github_link."""
+    return _file_github_link(raw, sid, check_origin=False)[0]
 
 
 # Inline-code spans that name an EXISTING file despite containing spaces (the user 2026-08-04: a note
@@ -32294,6 +32849,7 @@ def _push(targets, connect=False, tmux=None):
         # The FEED's per-session Fleet ledger slice still rides along, attached AFTER the builds (want_chat —
         # we do NOT build all sessions just for a feed/fleet push: the user 2026-06-24 slow-load regression).
         chat_sessions = []
+        _t_stage = time.monotonic()                      # /perf stage clock: chat, then feed, then timeline
         if want_chat or want_fleet:   # the fleet needs every session's ledger slice (built below, attached to feed)
             # TABS-FIRST (the user 2026-06-26): ship name+color per tab so the client can paint the WHOLE strip
             # as placeholders up front (no tab popping in one-by-one as each build_session lands). The full
@@ -32325,6 +32881,7 @@ def _push(targets, connect=False, tmux=None):
                 if not is_active and hit is not None and sig is not None and hit[0] == sig:
                     m, ms = hit[1], hit[2]               # unchanged background tab → reuse, no reshape/serialize
                     _perf("chatbuild", sid=str(s["sid"])[:8], cached=1, ms=0, active=int(is_active))
+                    _PERF_STATS.build("chat", True)
                 else:
                     _t0 = time.monotonic()
                     m = build_session(s["sid"], now, chat_tmux)
@@ -32338,12 +32895,15 @@ def _push(targets, connect=False, tmux=None):
                     # The ACTIVE tab skips the cache above by design, so this build is what the watched
                     # session pays on every single push. If chat ever feels slow again, this number and
                     # the deduped= on the matching send say which half is at fault.
-                    _perf("chatbuild", sid=str(s["sid"])[:8], cached=0, active=int(is_active),
-                          ms=round((time.monotonic() - _t0) * 1000, 1),
-                          events=(len(m.get("events") or []) if m else 0),
-                          fold=_chat_fold_last_info().get("fold", 0), k=_chat_fold_last_info().get("k", 0),
-                          prefix=_chat_fold_last_info().get("prefix", 0),   # events reused from the sealed prefix
-                          why=_chat_fold_last_info().get("why", ""))         # the demote reason on a full build
+                    _dt = time.monotonic() - _t0
+                    _PERF_STATS.build("chat", False, _dt)
+                    if _PERF:                            # the keyword values below cost lookups; skip them when off
+                        _perf("chatbuild", sid=str(s["sid"])[:8], cached=0, active=int(is_active),
+                              ms=round(_dt * 1000, 1),
+                              events=(len(m.get("events") or []) if m else 0),
+                              fold=_chat_fold_last_info().get("fold", 0), k=_chat_fold_last_info().get("k", 0),
+                              prefix=_chat_fold_last_info().get("prefix", 0),   # events reused from the sealed prefix
+                              why=_chat_fold_last_info().get("why", ""))         # the demote reason on a full build
                 if not m:
                     continue
                 _note_chat_divergence(s["sid"], m.get("name") or "",
@@ -32404,6 +32964,8 @@ def _push(targets, connect=False, tmux=None):
                 if fr:
                     for c in chat_clients:
                         _send_client(c, ("comments", s["sid"]), fr)
+        _PERF_STATS.stage("push.chat", time.monotonic() - _t_stage)
+        _t_stage = time.monotonic()
         fsig = _fleet_view_sig(now, tmux) if (want_feed or want_tl) else None
         feed_src = _cached_feed(now, tmux, fsig, connect) if want_feed else None
         feed = feed_src
@@ -32438,6 +33000,8 @@ def _push(targets, connect=False, tmux=None):
         # LIVE-FIRST (the user 2026-06-26): the very first paint after a kernel start reads NO dead session — it
         # builds live sessions only (lanes + bars) so the main UI is up at once; the producer warms the full
         # build (live + dead-within-12h) and the next pusher push folds the dead lanes in, in the background.
+        _PERF_STATS.stage("push.feed", time.monotonic() - _t_stage)
+        _t_stage = time.monotonic()
         timeline = None
         tl_warming = False
         if want_tl:
@@ -32453,6 +33017,7 @@ def _push(targets, connect=False, tmux=None):
                 #                                                     "no activity"; a later warmed push (tl_warming False) settles it (the user 2026-07-03)
             else:
                 timeline = _cached_timeline(now, tmux, fsig, connect)
+        _PERF_STATS.stage("push.timeline", time.monotonic() - _t_stage)
     except Exception:
         sys.stderr.write("push build: %s\n" % traceback.format_exc())
         return
@@ -32468,6 +33033,7 @@ def _push(targets, connect=False, tmux=None):
     # moved — dict == is C-speed and allocation-free, far cheaper than re-serializing).
     global _feed_wire, _bars_wire
     feed_ms = feed_sig = feed_parts = bars = bars_ms = bars_sig = None
+    _t_stage = time.monotonic()
     for c in targets:
         if c["app"] in ("feed", "fleet", "waiting"):   # the feed pane, the Fleet view AND the Waiting-on-you pane ride the feed payload (Fleet reads feed.ledgers; waiting reads feed.userTodoRows)
             if feed_ms is None:
@@ -32499,6 +33065,7 @@ def _push(targets, connect=False, tmux=None):
                     bars_sig = _dedup_sig(bars, bars_ms)
                     _bars_wire = (timeline, tl_warming, bars, bars_ms, bars_sig)
             _send_slot(c, "bars", bars, bars_ms, bars_sig)
+    _PERF_STATS.stage("push.send", time.monotonic() - _t_stage)
     with _clients_lock:
         _clients[:] = [c for c in _clients if c.get("alive", True)]
 
@@ -32639,7 +33206,7 @@ _producer_wake = threading.Event()
 # Same idea for the CHAT PUSHER: the SDK live-tail (and any caller) sets this to push the chat NOW
 # instead of waiting out the 4s poll — the SDK stream leads the transcript on disk, so an immediate push
 # of the in-memory live atoms makes messages appear instantly. 4s stays as the backstop.
-_pusher_wake = threading.Event()
+_pusher_wake = _CountedEvent()      # a threading.Event; set() also counts the wake for /perf
 # The last kernel-side OPTIMISTIC mutation (a parked-op chip, a follow-up card reopen, a model-pending
 # stamp, an interrupt click): state that lives in MEMORY or a goal store, which NO file-mtime signature
 # sees. _cached_feed/_cached_timeline must rebuild past this mark — even inside REBUILD_MIN_S and even on
@@ -32838,10 +33405,13 @@ def _cached_feed(now, tmux, sig, connect=False):
     # so back-to-back starts must not shrink its window.
     dirty = not connect and _views_dirty[0] > e[3]        # connect still serves the warmed build (never rebuilds)
     if e[1] is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
+        _PERF_STATS.build("feed", True)
         return e[1]
     bid = _next_feed_build_id()          # claimed BEFORE the read, so an ack issued during this build outranks it
     started = time.time()                # …and the dirty floor for the NEXT check: mutations after this
+    _t0 = time.monotonic()
     feed = build_feed(now, tmux)         # instant may be invisible to the build below → must rebuild
+    _PERF_STATS.build("feed", False, time.monotonic() - _t0)
     feed["buildId"] = bid
     _built_feed[:] = [sig, feed, time.time(), started]
     _badge = _needs_you_count(feed)
@@ -33370,20 +33940,28 @@ def _cached_timeline(now, tmux, sig, connect=False):
     e = _built_timeline
     dirty = not connect and _views_dirty[0] > e[3]        # start-keyed, same as _cached_feed above
     if e[1] is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
+        _PERF_STATS.build("timeline", True)
         return e[1]
     started = time.time()
+    _t0 = time.monotonic()
     tl = build_timeline(now, tmux)
+    _PERF_STATS.build("timeline", False, time.monotonic() - _t0)
     _built_timeline[:] = [sig, tl, time.time(), started]
     return tl
 
 
 def _run_tier(fn):
     """Run one judge tier (run_index / run_triage) in its own thread, logging a crash instead of letting
-    the thread die silently (the per-session futures inside already swallow + log their own errors)."""
+    the thread die silently (the per-session futures inside already swallow + log their own errors).
+    The thread's own CPU over the run goes to /perf's judge.cpu_ms_sum; the per-session workers the
+    tier runs in judge.py's pools account for theirs there (judge_worker_cpu_ms)."""
+    _c0 = time.thread_time()
     try:
         fn()
     except Exception:
         sys.stderr.write("producer tier: %s\n" % traceback.format_exc())
+    finally:
+        _PERF_STATS.judge_cpu(time.thread_time() - _c0)
 
 
 def _producer():
@@ -33396,6 +33974,7 @@ def _producer():
         _prev_wall, _prev_mono = _nw, _nm
         _producer_wake.clear()   # consume; a /tick arriving DURING this pass re-sets it → we run again (no lost wake)
         _own_frame = False       # set once the pass frame opens; the finally below can then never leak it
+        _t_pass = time.monotonic()
         try:
             # Two tiers, run in PARALLEL (the user 2026-06-17) — they share no store and triage never
             # reads the captioner's output, so the only cost of overlap is each tier parsing a transcript
@@ -33456,6 +34035,7 @@ def _producer():
         finally:
             _end_goals_pass()      # safety net: never leave a pass's snapshot stuck if the pass raised mid-flight
             jd.end_pass_frame(_own_frame)   # …nor the evidence frame (idempotent with the normal-path end above)
+            _PERF_STATS.judge_pass(time.monotonic() - _t_pass)
         # Event-driven: wake the instant a hook pokes /tick (turn ended / prompt landed / postal msg)
         # instead of waiting out the backstop. The 3s is only a BACKSTOP — for changes we don't get poked
         # for (e.g. a segment closing mid-turn) and a safety net if a poke is ever missed. A pass is cheap
@@ -33478,6 +34058,8 @@ def _pusher_cycle():
     design; they now all receive the same one, taken once at cycle start. The jobs tolerate the
     few-hundred-ms staleness by construction — they always saw a snapshot aged by however many jobs
     ran before them."""
+    _t_cycle = time.monotonic()
+    _c_cycle = time.thread_time()           # this thread's CPU: the wall above includes the tmux fork and lock waits
     with _clients_lock:
         any_client = bool(_clients)
     now = int(time.time())
@@ -33498,9 +34080,12 @@ def _pusher_cycle():
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
+        _PERF_STATS.cycle(time.monotonic() - _t_cycle, time.thread_time() - _c_cycle)
 
 
 def _pusher_cycle_jobs(now, tmux, any_client):
+    _t_jobs = time.monotonic()            # /perf: this function minus the _push_all below is the `jobs` stage
+    _t_push = 0.0
     try:                                  # the drain's gates read the CACHED parse: re-parse the parked sids'
         _refresh_parked_parses(now)       # moved transcripts first, so a stranded hook row can be overruled by
     except Exception:                     # what the transcript says (headless, nobody else fills the cache)
@@ -33510,7 +34095,12 @@ def _pusher_cycle_jobs(now, tmux, any_client):
     except Exception:                     # FIRST, so a delivered op's echo / retired chip rides this push;
         sys.stderr.write("pending-ops: %s\n" % traceback.format_exc())   # never behind a judge pass (2026-09-03)
     if any_client:
-        _push_all(tmux=tmux)
+        _t_push = time.monotonic()
+        try:
+            _push_all(tmux=tmux)
+        finally:
+            _t_push = time.monotonic() - _t_push
+            _PERF_STATS.stage("push", _t_push)
     else:
         try:                              # belt like every sibling job below: this is the ONLY bare
             #                               _tab_list_tmux call site (_push and _push_session_now catch for
@@ -33582,6 +34172,7 @@ def _pusher_cycle_jobs(now, tmux, any_client):
         _clear_done_working_notes(now, tmux)
     except Exception:
         sys.stderr.write("clear-working-notes: %s\n" % traceback.format_exc())
+    _PERF_STATS.stage("jobs", (time.monotonic() - _t_jobs) - _t_push)
 
 
 def _pusher():
@@ -33591,8 +34182,9 @@ def _pusher():
         # poll, so tmux sessions — which have no per-message event for mid-turn streaming — still refresh
         # responsively as the model generates, instead of waiting out a multi-second tick (the user 2026-06-22).
         # Cheap when nothing changed: _parse is cached and _send_client dedups, so a no-change poll sends nothing.
-        _pusher_wake.wait(0.5)
+        _woke = _pusher_wake.wait(0.5)    # True: the flag was set (an event); False: the backstop timed out
         _pusher_wake.clear()
+        _PERF_STATS.wake_kind(_woke)
 
 
 # ───────────────────────── HTTP / page serving ─────────────────────────
@@ -37676,6 +38268,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
                 remaining -= len(chunk)
 
+    @_perf_http_timed
     def do_OPTIONS(self):
         """CORS preflight. The strip's tunnel actions POST JSON (Content-Type:
         application/json is not a 'simple' request, so the webview's browser asks
@@ -37695,6 +38288,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Max-Age", "86400")
         self.end_headers()
 
+    @_perf_http_timed
     def do_HEAD(self):
         # HEAD exists for ONE route: /file (the preview existence probe). Without this the base handler
         # 501s every HEAD, which the client would read as "gone" and hide a live chip.
@@ -37725,6 +38319,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+    @_perf_http_timed
     def do_GET(self):
         u = urlparse(self.path)
         p = u.path
@@ -37817,6 +38412,8 @@ class Handler(BaseHTTPRequestHandler):
                 if (q.get("threads") or [""])[0] == "1":       # opt-in: comment-thread rows for the postal
                     rows = rows + _thread_rows()               # bus (the user 2026-08-22); every existing
                 return self._send(200, json.dumps(rows), "application/json", cache="no-cache")   # consumer unchanged
+            if p == "/perf":                                  # the kernel's performance counters (`romp perf`); shape: _PerfStats
+                return self._send(200, json.dumps(_PERF_STATS.snapshot()), "application/json", cache="no-cache")
             if p == "/commands":                              # slash-command list for the composer's "/" autocomplete (SDK get_server_info, per-cwd cached)
                 sid = (q.get("sid") or [""])[0]
                 cmds, warming = _commands_for_cwd(_cwd_of(sid) if sid else "")
@@ -38184,6 +38781,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+    @_perf_http_timed
     def do_POST(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
@@ -38394,6 +38992,21 @@ class Handler(BaseHTTPRequestHandler):
                 _producer_wake.set()
                 _pusher_wake.set()
                 return self._send(200, json.dumps({"ok": True, "woke": True}), "application/json")
+            if u.path == "/perf":
+                # The runtime switch for the romp-perf stderr log: {"log": true|false} (`romp perf log
+                # on|off`). The log used to need ROMP_PERF in the process environment at start, so turning
+                # it on meant a kernel restart, which cuts every open turn on a machine whose sessions run
+                # inside this kernel. The counters GET /perf serves are always on and need no switch.
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = None
+                if not isinstance(b, dict) or not isinstance(b.get("log"), bool):
+                    return self._send(400, json.dumps({"ok": False, "error": 'body must be {"log": true|false}'}),
+                                      "application/json")
+                _set_perf_log(b["log"])
+                sys.stderr.write("romp-perf: log %s (POST /perf)\n" % ("on" if _PERF else "off"))
+                return self._send(200, json.dumps({"ok": True, "log": _PERF}), "application/json")
             if u.path == "/send":
                 # Human→agent input channel — the SAME delivery the chat composer's WS
                 # sendMessage uses, exposed as a one-shot POST so an external local tool (the
@@ -39630,8 +40243,21 @@ class Handler(BaseHTTPRequestHandler):
             # What this kernel can do for the page (KERNEL_WS_CAPS), after the pushes above and on every
             # `ready` — so a reconnected socket learns them again, and a page whose views writes were
             # in flight across the drop learns, by this frame, that their answers may never come. It
-            # carries the seq of the views blob those pushes served (viewsSeq), read above.
-            _send_caps(client, views_seq=(max(seqs) if seqs else None))
+            # carries the seq of the views blob those pushes served (viewsSeq), read above — or, when
+            # they served none (a chat page on a sentinel cycle gets no tabOrder frame), the STORE's
+            # current seq, the seq the next push serves (round 8 of the 2026-09-05 review: with null
+            # here nothing re-armed a page's gate after a restart over a restored older store, and it
+            # rejected every later push under the old seq until the next write). Null only when there
+            # is no store at all — a fresh install, or a legacy store whose first stamp could not be
+            # written — which has no seq.
+            if seqs:
+                views_seq = max(seqs)
+            else:
+                try:
+                    views_seq = _timeline_views().get("seq")
+                except Exception:
+                    views_seq = None
+            _send_caps(client, views_seq=views_seq)
             # The tab order rides the connect push (chat clients, through the _tab_list_tmux collapse
             # guard). This handler used to send a SECOND tabOrder built from a raw _tmux_sessions() read,
             # bypassing that guard — and the client treats an omitted id as an authoritative teardown
@@ -39673,13 +40299,16 @@ class Handler(BaseHTTPRequestHandler):
             # without a notice (the 2026-09-05 review: a lens change from a dashboard that had slept
             # through another's tag edit toasted a refusal for a tag the user never edited). A write
             # without `edited` (an older client) keeps the strict reading: any refusal, ok false.
+            edited = msg.get("edited")
+            edited = [x for x in edited if isinstance(x, str)] if isinstance(edited, list) else None
             try:
-                edited = msg.get("edited")
-                edited = [x for x in edited if isinstance(x, str)] if isinstance(edited, list) else None
                 with _views_lock:
                     refused = _set_timeline_views(msg["views"], edited=edited)   # the setter files the notice by the same rule
                 if edited is not None:
-                    ok = not any(r.get("tid") in edited for r in refused)
+                    # …or the past-the-bound summary row counts an edited id among the entries it
+                    # stands for (`moreEdited`, round 8 of the 2026-09-05 review); the ack orders its
+                    # one-line `error` by the same predicate
+                    ok = not any(_refusal_is_the_posters(r, edited) for r in refused)
                 else:
                     ok = not refused
                 err = None
@@ -39687,7 +40316,7 @@ class Handler(BaseHTTPRequestHandler):
                 sys.stderr.write("setTimelineViews: %s\n" % traceback.format_exc())
                 refused, ok, err = [], False, "the write failed on the kernel: %s" % (str(e) or type(e).__name__)
             _mark_views_dirty()
-            _ack_views_write(client, "viewsAck", msg.get("writeId"), ok, error=err, refused=refused or [])
+            _ack_views_write(client, "viewsAck", msg.get("writeId"), ok, error=err, refused=refused or [], edited=edited)
         elif msg and msg.get("type") == "tagEdit":
             # a dashboard's tag gesture — {writeId, edit: {op, tid, …}}: create / rename / recolor /
             # addMember / removeMember / delete, by the tag's stored id — as a TARGETED edit through
@@ -40320,11 +40949,13 @@ class Handler(BaseHTTPRequestHandler):
             # kernel that OWNS the file — git on ITS disk is the authority, and a remote page's WS
             # already terminates on the owning kernel (the /remote/<host>/ws splice), so no relay
             # clause is needed; sid only resolves a relative path against that session's cwd. reqId
-            # is echoed for the stale-drop; an empty url is the no-link verdict and the viewer just
-            # never shows the button. Threaded: three git subprocesses must not block the recv loop.
+            # is echoed for the stale-drop; an empty url is the no-link verdict and `reason` says why,
+            # so the viewer shows the button disabled with the reason instead of hiding it (the user
+            # 2026-09-05); a url whose branch is not on origin carries the note in `reason` too.
+            # Threaded: the git subprocesses (and one possible ls-remote) must not block the recv loop.
             def _gl(c=client, m=msg):
-                _reply(c, {"type": "fileGitLink", "reqId": m.get("reqId"),
-                           "url": _file_github_url(m.get("path"), m.get("sid") or None)})
+                url, reason = _file_github_link(m.get("path"), m.get("sid") or None)
+                _reply(c, {"type": "fileGitLink", "reqId": m.get("reqId"), "url": url, "reason": reason})
             threading.Thread(target=_gl, daemon=True).start()
         elif msg and msg.get("type") == "browseDir":
             tgt = str(msg.get("target") or "picker")          # which dir field to fill: the new-session picker or the gear
