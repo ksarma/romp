@@ -16,7 +16,11 @@
 //     thumbnail move to the NEW <img>, and Save posts the region;
 //   • a rectangle on a LINKED figure (`[![alt](fig.png)](url)`, which mdBlock gives target=_blank): its click, Enter and
 //     the handed-on press open the card and cancel the anchor's activation — no new tab; the file's own markup wearing
-//     the same data-act is left alone.
+//     the same data-act is left alone;
+//   • the same figure under the CHAT pane's document-level link handler (render.ts), which opens every absolute `a[href]`
+//     at the capture phase, before the delegate root: it asks the panel's registry (panelMark) and leaves the panel's
+//     marks — the rectangle, its chip, the overlay a press was handed on from — to the panel, while the file's own link
+//     still opens; before, the tab opened and no card did.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import type { FileViewActionCtx } from "./file-view";
@@ -645,5 +649,66 @@ test("a rectangle on a linked figure opens its card and cancels the link's activ
     assert.equal(h.q('.fc-card[data-id="zz"]'), null, "and nothing was acted on");
     assert.deepEqual(seen, [true, true, true, false]);
   } finally { doc.removeEventListener("click", atDoc); }
+  h.dispose();
+});
+
+// ── the chat pane's link handler over a linked figure ──────────────────────────────────────────────
+
+test("under the chat pane's capture-phase link handler, a rectangle on a linked figure still opens its card and opens no tab — the handler asks panelMark; the author's own link inside the file still opens", async () => {
+  const h = await harness({ kind: "rendered", html: LINKED_HTML, src: LINKED });
+  const isMark = (e: E): boolean => h.fc.panelMark(e as unknown as Element);
+  const before = h.q(".fileview-md img")!;
+  assert.equal(isMark(before), false, "a picture no panel has touched is the file's own");
+  const linked = await embeddedOn(LINKED, "![Figure](figure.png)");
+  await h.ok(figureStatus([linked]));
+  const img = h.q(".fileview-md img")!;
+  const rect = h.q('.fc-region[data-id="' + RID + '"]')!;
+  const chip = rect.querySelector(".fc-region-chip")!;
+  const overlay = overlayOf(img);
+  assert.equal(isMark(rect), true, "the rectangle is the panel's");
+  assert.equal(isMark(chip), true, "…and so is a press on its chip, through the rectangle");
+  assert.equal(isMark(overlay), true, "the overlay the browser's own click lands on after a handed-on press");
+  assert.equal(isMark(img), false, "the picture itself is not a mark until an embed-line comment frames it");
+  // render.ts's handler, as it stands: every absolute a[href] is opened at the capture phase and the event ends there —
+  // unless the panel's registry says the target is the panel's
+  const opened: string[] = [];
+  const chat = (ev: Ev) => {
+    const a = (ev.target as E).closest("a[href]");
+    if (!a) return;
+    if (isMark(ev.target as E)) return;
+    const href = a.getAttribute("href") || "";
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) return;
+    ev.preventDefault(); ev.stopPropagation();
+    opened.push(href);
+  };
+  doc.addEventListener("click", chat, true);
+  try {
+    // 1. the panel closed: the browser's own click on the rectangle
+    const ev1 = rect.dispatch("click");
+    assert.deepEqual(opened, [], "no tab");
+    assert.ok(h.q('.fc-card.open[data-id="' + RID + '"]'), "the card opened: the click reached the delegate root");
+    assert.equal(ev1.defaultPrevented, true, "the panel cancelled the anchor");
+    await h.ok(figureStatus([linked]));
+    // 2. the panel open: the press begins on the chip, the overlay hands the click on, then the browser's own click lands
+    //    on the overlay
+    const rect2 = h.q('.fc-region[data-id="' + RID + '"]')!;
+    const chip2 = rect2.querySelector(".fc-region-chip")!;
+    assert.equal(overlayOf(img).classList.contains("fc-overlay-off"), false, "armed");
+    h.click('.fc-card.open .fc-card-head');                       // collapse it, so the hand-on has something to open
+    assert.equal(h.q('.fc-card.open[data-id="' + RID + '"]'), null);
+    chip2.dispatch("pointerdown", { clientX: 160, clientY: 250, pointerId: 9, button: 0 });
+    overlayOf(img).dispatch("pointerup", { clientX: 160, clientY: 250, pointerId: 9 });
+    assert.ok(h.q('.fc-card.open[data-id="' + RID + '"]'), "the handed-on click opened the card");
+    const own = overlayOf(img).dispatch("click");
+    assert.equal(own.defaultPrevented, true, "the browser's own click is swallowed by the layer");
+    assert.deepEqual(opened, [], "neither click opened a tab");
+    // 3. the file's own link, and the author's span wearing the panel's data-act inside it: the chat handler's, as before
+    const theirs = h.q('span[data-act="fcopen"][data-id="zz"]')!;
+    assert.equal(isMark(theirs), false, "the file's markup, whatever it wears");
+    const ev3 = theirs.dispatch("click");
+    assert.deepEqual(opened, ["https://example.invalid/more"], "the author's link opens in a tab");
+    assert.equal(ev3.defaultPrevented, true, "…and the anchor's own activation is cancelled by that handler");
+    assert.equal(h.q('.fc-card[data-id="zz"]'), null, "nothing of the panel's was acted on");
+  } finally { doc.removeEventListener("click", chat); }
   h.dispose();
 });

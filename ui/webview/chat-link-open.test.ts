@@ -27,6 +27,22 @@ test("VS Code webview still routes the link to the host (openExternal)", () => {
   assert.match(HANDLER, /vscodeApi\.postMessage\(\{ type: "openLink", href \}\)/);
 });
 
+// A control the file-comments panel paints INTO a linked figure in the viewer (a region's rectangle, the overlay a
+// press is handed on from, a framed picture) is the panel's activation: its delegate opens the card and cancels the
+// anchor. This handler runs first, at the capture phase, and used to open the tab instead (twice with the panel open)
+// while no card opened (the 2026-09-06 review of Slice 3). It now asks the panel's registry (panelMark, exact: the
+// elements the panel made, never a class or data-act the file's own markup may wear) before it touches the event.
+// file-comments-regions-review-3.test.ts drives the panel under a copy of this handler; this pins the handler's side.
+test("a click on a file-comments mark inside a linked figure is left to the panel: panelMark is asked before preventDefault", () => {
+  assert.match(RENDER, /^import \{ panelMark \} from "\.\/file-comments";$/m, "the registry is the panel's own export");
+  assert.match(HANDLER, /if \(panelMark\(e\.target as Element \| null\)\) return;/);
+  const ask = HANDLER.indexOf("panelMark(");
+  const cancel = HANDLER.indexOf("e.preventDefault()");
+  const scheme = HANDLER.indexOf("/^[a-z][a-z0-9+.-]*:/i.test(href)");
+  assert.ok(ask > -1 && cancel > -1 && ask < cancel, "the panel's marks are excused before the event is cancelled");
+  assert.ok(scheme > -1 && ask < scheme, "…and before the href is even read: whatever the link, the mark is the panel's");
+});
+
 test("the web path is checked before the vscode path (web origin wins)", () => {
   const web = HANDLER.indexOf("window.open(href");
   const code = HANDLER.indexOf('type: "openLink"');

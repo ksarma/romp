@@ -461,6 +461,24 @@ export function rawTarget(src: string, r: MapRefusal & { selText: string }): Sou
 
 let reqSeq = 0;
 
+// ── the panel's marks, for listeners that never see a panel ─────────────────────────────────────────
+// Every element a panel paints into the file's body — a highlight, a change mark, a picture frame, a rectangle, and
+// the overlay the rectangles sit on — is registered here beside the panel's own `marks` (owns), so a document-level
+// listener that knows nothing of panels can tell a panel's activation from the file's markup. The chat pane's link
+// handler (render.ts) is that listener: it opens every absolute `a[href]` in a new tab at the CAPTURE phase, before the
+// delegate root and before the overlay swallows the click after a press it handed on, so a rectangle on a LINKED figure
+// (`[![alt](fig.png)](url)`, which mdBlock renders as <a><img></a>) opened the tab there instead of its card — twice with
+// the panel open, once for the click the layer handed on and once for the browser's own — while the feed and Files
+// panes, which have no such handler, opened the card (the 2026-09-06 review). A registry, not a class name: the
+// sanitizer keeps `class` and `data-*` on the file's own markup, so neither proves the panel made an element (owns).
+const PANEL_MARKS = new WeakSet<Element>();
+/** Whether `t`, or an element above it, is a mark some panel painted: a rectangle's chip counts through its rectangle,
+ *  a press on the overlay through the overlay. False for the file's own markup, whatever it wears. */
+export function panelMark(t: Element | null): boolean {
+  for (let x: Element | null = t; x; x = x.parentElement) if (PANEL_MARKS.has(x)) return true;
+  return false;
+}
+
 class Panel {
   status: Status | null = null;
   statusRefusal: { code: string; error: string } | null = null;   // why there is no status, when the kernel refused one
@@ -655,6 +673,8 @@ class Panel {
   owns(x: Element): boolean {
     return (this.root !== null && this.root.contains(x)) || this.marks.has(x);
   }
+  /** Remember an element this panel painted into the body — for owns, and for the document's listeners (panelMark). */
+  private mark(x: Element): void { this.marks.add(x); PANEL_MARKS.add(x); }
   /** The handlers, each routed only for an element the panel owns. The delegate helper has already flashed
    *  the element by then (a cosmetic pulse); nothing else happens for the file's markup. */
   private own(acts: Record<string, ActionHandler>): Record<string, ActionHandler> {
@@ -1231,10 +1251,10 @@ class Panel {
         painted = !!out && out.length > 0;
         // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
         // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup
-        for (const m of out || []) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open the comment on this passage"; this.marks.add(m); }
+        for (const m of out || []) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open the comment on this passage"; this.mark(m); }
         if (!painted && rendered && !card.target) {    // an embed line renders no text: the frame goes on its picture — unless the comment is a region, whose rectangle (paintRegions) is the mark
           const img = imgForRange(root, src, loc.range, this.ctx.path);
-          if (img) { frameImage(img, cls, { act: "fcopen", id: card.id }); this.marks.add(img); painted = true; }
+          if (img) { frameImage(img, cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }
         }
       }
       this.located.set(card.id, { ...loc, painted });
@@ -1283,7 +1303,7 @@ class Panel {
       marks = paintChangesRaw(root, src, changes, stylesFor);
       for (const m of marks) { const id = (m as HTMLElement).dataset.id; if (id) this.paintedChanges.add(id); }
     }
-    for (const m of marks) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open this change"; this.marks.add(m); }
+    for (const m of marks) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open this change"; this.mark(m); }
   }
   private paintPresel(root: Element, src: string, rendered: boolean): void {
     const c = this.composer;
@@ -1420,12 +1440,13 @@ class Panel {
           onPress: () => { this.float.hidden = true; this.imageTarget = null; },   // what hideFloatOnDown does for a mousedown the overlay cancels
         });
         this.regionLayers.set(img, layer);
+        this.mark(layer.overlay);                      // the browser's own click after a handed-on press lands here (panelMark)
       }
       layer.setActive(active);
       const key = JSON.stringify([marks, pending, replacing]);
       if (this.paintedKey.get(layer) === key) continue;   // nothing new for this picture: its rectangles stand (paintedKey)
       this.paintedKey.set(layer, key);
-      for (const r of layer.paint(per.get(img) || [], pending, replacing)) this.marks.add(r);
+      for (const r of layer.paint(per.get(img) || [], pending, replacing)) this.mark(r);
     }
     this.refocusBody(keep);
   }
