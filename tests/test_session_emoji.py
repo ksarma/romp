@@ -8,11 +8,14 @@ test_color_route.py pattern)."""
 import inspect
 import json
 import os
+import socket
 import tempfile
 import threading
+import time
+import types
 import unittest
 import urllib.request
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -46,13 +49,17 @@ KISS = "\U0001F9D1\U0001F3FB‍❤️‍\U0001F48B‍\U0001F9D1\U0001F3FC"   # t
 COPYRIGHT_EMOJI = "©️"                     # ©️
 SMILEY_EMOJI = "☺️"                        # ☺️
 HAIR = "\U0001F9D1‍\U0001F9B0"                  # 🧑‍🦰 a hair component after a joiner
+POINT_TONE = "\u261D\U0001F3FD"                     # ☝🏽 a TEXT-default modifier base with a tone (no selector: UTS #51's form)
+SCOTLAND = "\U0001F3F4\U000E0067\U000E0062\U000E0073\U000E0063\U000E0074\U000E007F"   # 🏴󠁧󠁢󠁳󠁣󠁴󠁿 the other tag flag
+TAGS_GB = "\U000E0067\U000E0062\U000E007F"          # a well-formed tag run + cancel, minus its base
 
 
 class Validator(unittest.TestCase):
     """The one validator: exactly one emoji as a person picks it, nothing textual, empty clears."""
 
     ACCEPTED = [MOON, THUMBS_TONE, FAMILY, HEART_FIRE, HEART_FIRE_MIN, KEYCAP, KEYCAP_MIN, FLAG, ENGLAND,
-                KISS, COPYRIGHT_EMOJI, SMILEY_EMOJI, HAIR,
+                KISS, COPYRIGHT_EMOJI, SMILEY_EMOJI, HAIR, POINT_TONE, SCOTLAND,
+                MOON + "‍" + MOON + "‍" + MOON + "‍" + MOON,   # four joined moons: well-formed, RGI unknown to the tables
                 "✅",              # ✅ an emoji-presentation code point in the Dingbats block
                 "⌚",              # ⌚ emoji presentation in Misc Technical
                 "\U0001FAE9",          # 🫩 Unicode 16.0's newest block row
@@ -81,6 +88,15 @@ class Validator(unittest.TestCase):
         ("\x01", "not an emoji"),
         ("\U0001F600" * 13, "too long"),                  # 52 bytes: over the cap before any parse
         ("\U0001F6D8", "not an emoji"),                   # an unassigned code point inside an emoji block
+        # UTS #51, as far as the property tables reach (review 2026-09-06): a tone only on a modifier
+        # base and right after it, tags only on the black flag, at most four parts to a ZWJ sequence
+        (MOON + "\U0001F3FD", "does not take a skin tone"),          # a tone on a moon: two glyphs
+        ("\U0001F680\U0001F3FD", "does not take a skin tone"),      # a tone on a rocket
+        ("\U0001F44D\uFE0F\U0001F3FD", "no emoji selector"),       # VS16 between base and tone
+        ("\U0001F600" + TAGS_GB, "black flag"),                      # a tag run on a grin
+        ("\u2764" + TAGS_GB, "black flag"),                          # a tag run on a text-default heart
+        ("‍".join(["\U0001F600"] * 7), "at most 4 parts"),         # seven joined grins, 46 bytes, under the cap
+        ("‍".join([MOON] * 5), "at most 4 parts"),
     ]
 
     def test_accepted_table(self):
@@ -98,9 +114,53 @@ class Validator(unittest.TestCase):
                 self.assertNotIn("\n", err, "one line")
 
     def test_empty_and_whitespace_clear(self):
-        for s in ("", " ", "\t", "\n", None, 7):
+        for s in ("", " ", "\t", "\n"):
             with self.subTest(s=repr(s)):
                 self.assertEqual(km._emoji_check(s), ("", None))
+
+    def test_a_non_string_is_refused_never_a_clear(self):
+        # a present-but-null key (json.dumps(None), a JS null), a number, a list: none of them can mean
+        # "clear" — only "" does — so the validator names the type instead of coercing (review 2026-09-06)
+        for v, kind in ((None, "null"), (7, "a number"), (7.5, "a number"), (True, "a boolean"),
+                        (["x"], "a list"), ({"a": 1}, "an object")):
+            with self.subTest(v=repr(v)):
+                stored, err = km._emoji_check(v)
+                self.assertEqual(stored, "")
+                self.assertIn("must be text", err or "")
+                self.assertIn(kind, err or "")
+
+    def test_an_unpaired_surrogate_is_a_refusal_not_an_exception(self):
+        # json.loads('"\\ud83c"') is a str holding a lone surrogate; strict UTF-8 refuses to encode it,
+        # and the validator's byte cap encodes — unguarded, POST /emoji answered 500 with a traceback
+        for s in ("\ud83c", "\udcf0\udc9f", MOON + "\ud83c", " \ud83cx"):
+            with self.subTest(s=s.encode("unicode_escape").decode()):
+                stored, err = km._emoji_check(s)
+                self.assertEqual(stored, "")
+                self.assertIn("not valid text", err)
+                self.assertIn("unpaired surrogate", err)
+                self.assertRegex(err, r"U\+D[89A-F][0-9A-F]{2}", "the reason names the surrogate code point")
+                self.assertNotIn("\n", err)
+                err.encode("utf-8")   # the reason itself is sendable
+
+    def test_a_stray_invisible_character_is_named_not_the_emoji(self):
+        # a valid emoji plus one invisible neighbor used to be refused as `not an emoji: "😀"` — the
+        # visible part quoted as the culprit; the reason now names the stray code point
+        grin = "\U0001F600"
+        for s, stray in ((grin + "\uFE0E", "U+FE0E"),          # a text-presentation selector (a paste from a document)
+                         (grin + "\uFE0F\uFE0F", "U+FE0F"),    # a doubled emoji selector
+                         ("\u2764\uFE0F\uFE0F", "U+FE0F"),   # the red heart with a doubled selector
+                         (grin + "\u200B", "U+200B"),          # a zero-width space
+                         (grin + "\x00", "U+0000"),            # a NUL (reachable through JSON)
+                         ("\u200D" + grin, "U+200D"),          # a leading joiner
+                         ("\uFEFF" + grin, "U+FEFF")):         # a BOM
+            with self.subTest(s=s.encode("unicode_escape").decode()):
+                stored, err = km._emoji_check(s)
+                self.assertEqual(stored, "")
+                self.assertIn("invisible character", err)
+                self.assertIn(stray, err, "the stray is named by code point")
+                self.assertNotIn("not an emoji", err, "the emoji the user typed is not the culprit")
+                self.assertIn("remove it", err)
+        self.assertIn("not an emoji", km._emoji_check(grin + "x")[1], "visible junk is still visible junk")
 
     def test_surrounding_whitespace_is_trimmed_not_refused(self):
         self.assertEqual(km._emoji_check(" " + MOON + "\n"), (MOON, None))
@@ -156,11 +216,61 @@ class Store(unittest.TestCase):
                          "a cleared record is byte-identical to the four-field shape")
         self.assertEqual(km._name_emoji(SID), "")
 
-    def test_a_short_record_is_padded_not_misaligned(self):
-        (self.names / SID).write_text("web\t/proj/TESTHOST/app\n")      # a pre-color record: two fields
-        self.assertTrue(km._set_session_emoji(SID, MOON))
-        self.assertEqual(self._line().rstrip("\n").split("\t"), ["web", "/proj/TESTHOST/app", "", "", MOON])
-        self.assertEqual(km._identity_of(SID), ("", ""))
+    def test_a_colorless_record_gets_a_color_before_its_emoji(self):
+        # the contract (review 2026-09-06): a FIVE-field record always carries all four identity fields —
+        # `name\tcwd\t\t\t<emoji>` is a shape bash's IFS-tab reads folded into bg=<emoji>. A record with
+        # no color (a pre-color two-field entry, a Codex launch-error entry) is colored the way a launch
+        # would color it, through the kernel's own picker, before the fifth field is added.
+        picked = []
+        saved = km._pick_identity_color
+        km._pick_identity_color = lambda: (picked.append(1), ("#1EA1EB", "white"))[1]
+        try:
+            (self.names / SID).write_text("web\t/proj/TESTHOST/app\n")      # a pre-color record: two fields
+            self.assertTrue(km._set_session_emoji(SID, MOON))
+            self.assertEqual(self._line().rstrip("\n").split("\t"), ["web", "/proj/TESTHOST/app", "#1EA1EB", "white", MOON])
+            self.assertEqual(km._identity_of(SID), ("#1EA1EB", "white"))
+            self.assertEqual(len(picked), 1)
+            (self.names / SID2).write_text("api\t/proj/TESTHOST/svc\t\t\n")   # a Codex launch-error record
+            self.assertTrue(km._set_session_emoji(SID2, FLAG))
+            self.assertEqual(self._line(SID2).rstrip("\n").split("\t"), ["api", "/proj/TESTHOST/svc", "#1EA1EB", "white", FLAG])
+            # a colored record keeps its color; a clear on a colorless record picks none
+            self.assertTrue(km._set_session_emoji(SID2, ""))
+            (self.names / SID).write_text("web\t/proj/TESTHOST/app\n")
+            self.assertTrue(km._set_session_emoji(SID, ""))
+            self.assertEqual(self._line().rstrip("\n").split("\t"), ["web", "/proj/TESTHOST/app", "", ""])
+            self.assertEqual(len(picked), 2, "the picker runs only when an emoji lands on a colorless record")
+        finally:
+            km._pick_identity_color = saved
+
+    def test_a_rename_racing_an_emoji_set_loses_neither(self):
+        # four kernel writers read-edit-publish names/<sid> on independent threads; without one lock the
+        # loser's whole-line write erased the winner's field (a rename undone by set_emoji, or the emoji
+        # gone). Force the interleave: the rename's publish is held open while the emoji set starts.
+        (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
+        real_write = km._atomic_write
+        renaming = threading.Event()
+        rename_thread = []
+
+        def slow_write(path, text, mode=None):
+            if threading.get_ident() in rename_thread:
+                renaming.set()          # the emoji set starts NOW, inside the rename's span
+                time.sleep(0.3)
+            return real_write(path, text, mode)
+
+        km._atomic_write = slow_write
+        try:
+            def rename():
+                rename_thread.append(threading.get_ident())
+                km._set_name(SID, "api")
+            t1 = threading.Thread(target=rename)
+            t2 = threading.Thread(target=lambda: (renaming.wait(5), km._set_session_emoji(SID, MOON)))
+            t1.start(); t2.start(); t1.join(10); t2.join(10)
+        finally:
+            km._atomic_write = real_write
+        self.assertTrue(renaming.is_set(), "the interleave was forced")
+        self.assertEqual(self._line().rstrip("\n").split("\t"), ["api", "/proj/TESTHOST/app", "#1EA1EB", "white", MOON],
+                         "both writes survive: the second waited for the first's span to close")
+        self.assertIsInstance(km._NAMES_LOCK, type(threading.RLock()))
 
     def test_missing_record_is_false(self):
         self.assertFalse(km._set_session_emoji(SID2, MOON))
@@ -227,9 +337,23 @@ class BackendWritersCarryTheField(unittest.TestCase):
                          "an explicit empty string clears")
 
     def test_codex_write_name_carries_an_existing_emoji(self):
-        src = Path(os.path.join(os.path.dirname(HERE), "kernel", "codex_backend.py")).read_text()
-        self.assertIn('emoji = old[4] if len(old) > 4 else ""', src)
-        self.assertIn('("\\t" + emoji) if emoji else ""', src)
+        import sys
+        cb = sys.modules.get("romp_codex_backend") or SourceFileLoader(
+            "romp_codex_backend_emoji", os.path.join(os.path.dirname(HERE), "kernel", "codex_backend.py")).load_module()
+        tmp = Path(tempfile.mkdtemp())
+        be = cb.CodexBackend(tmp, client_factory=lambda: None, log=lambda m: None)
+        (tmp / "names").mkdir(exist_ok=True)
+        (tmp / "names" / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\t" + MOON + "\n")
+        s = cb._Session(SID, "thread-1111", "api", "/proj/TESTHOST/app")
+        be._write_name(s)                                  # a rename's rewrite: colors from the record
+        self.assertEqual((tmp / "names" / SID).read_text(), "api\t/proj/TESTHOST/app\t#1EA1EB\twhite\t" + MOON + "\n")
+        be._write_name(s, "#54B204", "black")              # a recolor's rewrite
+        self.assertEqual((tmp / "names" / SID).read_text(), "api\t/proj/TESTHOST/app\t#54B204\tblack\t" + MOON + "\n")
+        (tmp / "names" / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
+        be._write_name(s)
+        self.assertEqual((tmp / "names" / SID).read_text(), "api\t/proj/TESTHOST/app\t#1EA1EB\twhite\n",
+                         "a record without an emoji keeps four fields")
+        self.assertEqual(sorted(f.name for f in (tmp / "names").iterdir()), [SID], "no staging file leaks")
 
 
 class Frames(unittest.TestCase):
@@ -280,7 +404,7 @@ class EmojiRoute(unittest.TestCase):
         self.names = Path(self.tmp) / "names"
         self.names.mkdir()
         self._saved = (km.NAMES, km.jd.STATE, km._tmux_sessions, km._live_names, km._mark_views_dirty,
-                       km._host_for_sid, km._remote_forward)
+                       km._host_for_sid, km._remote_forward_status, km._demand_redial)
         km.NAMES = self.names
         km.jd.STATE = Path(self.tmp) / "state"
         km._tmux_sessions = lambda: {}
@@ -288,10 +412,12 @@ class EmojiRoute(unittest.TestCase):
         km._host_for_sid = lambda sid: None
         self.dirty = []
         km._mark_views_dirty = lambda: self.dirty.append(1)
+        self.redials = []
+        km._demand_redial = lambda host, kind: self.redials.append((host, kind))
 
     def tearDown(self):
         (km.NAMES, km.jd.STATE, km._tmux_sessions, km._live_names, km._mark_views_dirty,
-         km._host_for_sid, km._remote_forward) = self._saved
+         km._host_for_sid, km._remote_forward_status, km._demand_redial) = self._saved
 
     def _post(self, body):
         # km.TOKEN, not os.environ (test_color_route.py has the collection-order story)
@@ -358,15 +484,125 @@ class EmojiRoute(unittest.TestCase):
     def test_a_remote_sid_forwards_to_its_own_kernel_and_relays_the_verdict(self):
         forwarded = []
         km._host_for_sid = lambda sid: {"host": "gpu1", "local_port": 1, "token": "t"} if sid == SID2 else None
-        km._remote_forward = lambda r, path, body: (forwarded.append((r["host"], path, body)),
-                                                   {"ok": False, "error": "one emoji only"})[1]
+        km._remote_forward_status = lambda r, path, body: (forwarded.append((r["host"], path, body)),
+                                                          (200, {"ok": False, "error": "one emoji only"}))[1]
         st, r = self._post({"target": SID2, "emoji": MOON})
         self.assertEqual(forwarded, [("gpu1", "/emoji", {"target": SID2, "emoji": MOON})])
         self.assertEqual(r, {"ok": False, "error": "one emoji only"}, "the remote's own verdict rides back")
-        km._remote_forward = lambda r, path, body: None
+        km._remote_forward_status = lambda r, path, body: (0, None)
         st, r = self._post({"target": SID2, "emoji": MOON})
         self.assertFalse(r.get("ok"))
         self.assertIn("did not answer", r.get("error") or "")
+        self.assertIn("gpu1", r.get("error") or "", "the message names the host, like its /send and /end siblings")
+
+    def test_an_older_remote_kernel_without_the_route_is_named_as_version_skew(self):
+        # a remote on a release before this route answers POST /emoji with do_POST's 404 fallthrough: it
+        # ANSWERED, so "did not answer" sent the user to check a healthy tunnel (review 2026-09-06). The
+        # REAL forward runs here against a fake old remote; only the remotes map is stubbed.
+        seen = []
+
+        class OldRemote(BaseHTTPRequestHandler):
+            def do_POST(self):
+                seen.append((self.path, self.rfile.read(int(self.headers.get("Content-Length") or 0))))
+                body = b"not found"
+                self.send_response(404); self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        old = ThreadingHTTPServer(("127.0.0.1", 0), OldRemote)
+        threading.Thread(target=old.serve_forever, daemon=True).start()
+        try:
+            km._host_for_sid = lambda sid: {"host": "gpu1", "local_port": old.server_address[1], "token": "t"} if sid == SID2 else None
+            st, r = self._post({"target": SID2, "emoji": MOON})
+        finally:
+            old.shutdown()
+        self.assertEqual(st, 200)
+        self.assertFalse(r.get("ok"))
+        self.assertIn("predates tab emoji", r.get("error") or "")
+        self.assertIn("gpu1", r.get("error") or "")
+        self.assertNotIn("did not answer", r.get("error") or "")
+        self.assertEqual([p for p, _ in seen], ["/emoji?token=t"], "the old kernel received the call")
+        self.assertEqual(json.loads(seen[0][1]), {"target": SID2, "emoji": MOON})
+        self.assertEqual(self.redials, [], "an answer is never a tunnel fault")
+        # a DEAD port is the other case, and stays the other message — with a redial demanded
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); dead_port = s.getsockname()[1]; s.close()
+        km._host_for_sid = lambda sid: {"host": "gpu1", "local_port": dead_port, "token": "t"} if sid == SID2 else None
+        st, r = self._post({"target": SID2, "emoji": MOON})
+        self.assertIn("did not answer", r.get("error") or "")
+        self.assertIn("gpu1", r.get("error") or "")
+        self.assertEqual(self.redials, [("gpu1", "refused")])
+
+    def test_a_non_string_emoji_is_a_400_never_a_clear(self):
+        # a present-but-null key is a malformed body; before this it cleared and answered ok (review)
+        (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\t" + MOON + "\n")
+        for v in (None, 5, ["x"], {"a": 1}, True):
+            with self.subTest(v=repr(v)):
+                st, r = self._post({"target": "web", "emoji": v})
+                self.assertEqual(st, 400)
+                self.assertFalse(r.get("ok"))
+                self.assertIn("must be a string", r.get("error") or "")
+        self.assertEqual(km._name_emoji(SID), MOON, "nothing changed")
+        self.assertFalse(self.dirty)
+
+    def test_an_unpaired_surrogate_is_a_refusal_with_a_reason_not_a_500(self):
+        (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\t" + MOON + "\n")
+        st, r = self._post({"target": "web", "emoji": "\ud83c"})   # json.dumps escapes it as \ud83c
+        self.assertEqual(st, 200)
+        self.assertEqual(r.get("ok"), False)
+        self.assertIn("unpaired surrogate", r.get("error") or "")
+        self.assertEqual(km._name_emoji(SID), MOON, "the old value stands")
+        self.assertFalse(self.dirty)
+
+
+class WsOp(unittest.TestCase):
+    """The tab menu's setSessionEmoji op: every refusal is a warn the dialog can show — never silence."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.names = Path(self.tmp) / "names"
+        self.names.mkdir()
+        self._saved = (km.NAMES, km.jd.STATE, km._mark_views_dirty)
+        km.NAMES = self.names
+        km.jd.STATE = Path(self.tmp) / "state"
+        self.dirty = []
+        km._mark_views_dirty = lambda: self.dirty.append(1)
+        self.sent = []
+        self.client = {"send": lambda frame: self.sent.append(json.loads(frame))}
+
+    def tearDown(self):
+        km.NAMES, km.jd.STATE, km._mark_views_dirty = self._saved
+
+    def _op(self, emoji):
+        km.Handler._dispatch_ws(types.SimpleNamespace(), {"type": "setSessionEmoji", "id": SID, "emoji": emoji}, self.client)
+
+    def test_a_valid_emoji_is_confirmed_and_a_refusal_is_a_warn(self):
+        (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
+        self._op(MOON)
+        self.assertEqual(self.sent, [{"type": "emojiSet", "id": SID, "emoji": MOON}])
+        self.assertEqual(km._name_emoji(SID), MOON)
+        self.assertEqual(len(self.dirty), 1)
+        self._op("moon")
+        self.assertEqual(self.sent[-1]["type"], "warn")
+        self.assertIn("not an emoji", self.sent[-1]["text"])
+
+    def test_an_unpaired_surrogate_and_a_non_string_each_warn_instead_of_dropping_the_reply(self):
+        # both used to raise inside the op (a UnicodeEncodeError) or coerce to a clear; the dialog had
+        # already closed as the click's acknowledgement, so the user saw nothing happen and no reason
+        (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\t" + MOON + "\n")
+        self._op("\ud83c")
+        self.assertEqual(len(self.sent), 1, "exactly one frame came back")
+        self.assertEqual(self.sent[0]["type"], "warn")
+        self.assertIn("unpaired surrogate", self.sent[0]["text"])
+        for v in (None, 7, ["x"]):
+            with self.subTest(v=repr(v)):
+                self.sent.clear()
+                self._op(v)
+                self.assertEqual([f["type"] for f in self.sent], ["warn"])
+                self.assertIn("must be text", self.sent[0]["text"])
+        self.assertEqual(km._name_emoji(SID), MOON, "nothing was cleared")
+        self.assertFalse(self.dirty)
 
 
 if __name__ == "__main__":
