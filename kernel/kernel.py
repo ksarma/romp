@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from importlib.machinery import SourceFileLoader
@@ -134,6 +134,239 @@ def _perf_slot(key):
         return str(key)
     except Exception:
         return "?"
+
+
+def _set_perf_log(on):
+    """Turn the `romp-perf` stderr log on or off while the kernel runs (POST /perf {"log": bool}; `romp
+    perf log on|off`). ROMP_PERF still seeds the value at import. Before this the only way to turn the
+    log on was a restart with the variable set, and on a machine whose sessions run inside this kernel
+    a restart cuts every open turn. `_perf` keeps reading the module global, so the off path costs what
+    it always did: one name lookup and a return."""
+    global _PERF
+    _PERF = bool(on)
+    return _PERF
+
+
+def _process_stats():
+    """rss_kb, thread count, CPU seconds and pid for the /perf snapshot. VmRSS from /proc is the CURRENT
+    resident size; where /proc is absent (macOS) ru_maxrss is the PEAK, in bytes there, so it is scaled
+    to KB and the field is still called rss_kb."""
+    rss = 0
+    try:
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    rss = int(line.split()[1])
+                    break
+    except Exception:
+        try:
+            import resource
+            r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            rss = int(r // 1024) if sys.platform == "darwin" else int(r)
+        except Exception:
+            rss = 0
+    return {"rss_kb": rss, "threads": threading.active_count(), "cpu_s": time.process_time(),
+            "pid": os.getpid()}
+
+
+class _PerfStats:
+    """Always-on counters behind GET /perf (`romp perf`): where the kernel's threads spend their time,
+    kept cheap enough to leave running. Every writer takes the lock and does a few dict operations;
+    none formats, serializes or reads a clock on the caller's behalf (callers pass time.monotonic()
+    deltas in seconds). snapshot() does the only real work, the percentiles and the process reads,
+    once per HTTP request on the handler's thread.
+
+    The ROMP_PERF log answers "what happened on that one push"; these answer "what is the kernel doing
+    per second" and let two snapshots N seconds apart give rates, which is how an optimization is
+    checked against the live kernel after a restart without attaching a profiler.
+
+    snapshot() shape — every value a plain number or a flat dict of numbers; `ms` fields are
+    milliseconds of wall time, `*_s` seconds:
+      now, since, uptime_s, log    clock; when the counters started (a restart resets them); seconds
+                                   since the process started; whether the romp-perf stderr log is on
+      process                      rss_kb, threads, cpu_s (time.process_time), pid
+      pusher                       cycles (one per _pusher_cycle), wakes (every _pusher_wake.set()
+                                   call; a burst coalesces into one cycle), wakes_event /
+                                   wakes_backstop (how the loop's wait ended: flag set, or the 0.5 s
+                                   timeout), cycle_ms_sum / cycle_ms_max / cycle_ms_last, and
+                                   cycle_ms_p50 / cycle_ms_p90 / ring_n from a ring of the last RING
+                                   cycle durations
+      stages_ms                    jobs: the cycle's tick jobs outside _push_all; push: _push_all as
+                                   the cycle calls it; push.chat (the tab strip, the build_session
+                                   loop and the chat sends), push.feed (the view signature,
+                                   _cached_feed and the ledgers attach), push.timeline (the skeleton
+                                   and _cached_timeline), push.send (the feed/bars serialization and
+                                   sends). The push.* stages are measured inside _push for EVERY
+                                   caller, connect pushes on handler threads included, so their sum
+                                   can exceed `push`
+      builds                       chat / feed / timeline -> {cached, built, ms}: served from the
+                                   build cache vs rebuilt, and the rebuild time
+      sends                        full / delta / deduped -> {slot: {count, bytes}} per dedup-slot
+                                   name (chat, feed, bars, taborder, ...; at most SLOTS names, the rest
+                                   under "other"). A deduped frame was built and compared, not sent
+      goals                        loads, saves, writes: judge.load_goals calls, save_goals calls,
+                                   and the saves that reached the disk (a byte-identical republish
+                                   is a save without a write)
+      judge                        passes (one per _producer pass), ms_sum, ms_last, ms_mean
+      http                         path -> {count, ms}, the query string stripped, at most HTTP_PATHS
+                                   paths with the rest folded into "other" (so a scanner cannot grow
+                                   it). A WebSocket upgrade counts but adds no ms: its handler
+                                   returns when the socket closes, which is a connection's lifetime,
+                                   not a request's."""
+    RING = 256
+    HTTP_PATHS = 64
+    SLOTS = 32
+    STAGES = ("jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send")
+    BUILDS = ("chat", "feed", "timeline")
+    SEND_KINDS = ("full", "delta", "deduped")
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.reset()
+
+    def reset(self):
+        with self.lock:
+            self.since = time.time()
+            self.pusher = {"cycles": 0, "wakes": 0, "wakes_event": 0, "wakes_backstop": 0,
+                           "cycle_ms_sum": 0.0, "cycle_ms_max": 0.0, "cycle_ms_last": 0.0}
+            self.ring = collections.deque(maxlen=self.RING)
+            self.stages = {k: 0.0 for k in self.STAGES}
+            self.builds = {k: {"cached": 0, "built": 0, "ms": 0.0} for k in self.BUILDS}
+            self.sends = {k: {} for k in self.SEND_KINDS}
+            self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0}
+            self.http = {}
+
+    # ── writers (hot paths) ──
+    def wake(self):
+        with self.lock:
+            self.pusher["wakes"] += 1
+
+    def wake_kind(self, by_event):
+        with self.lock:
+            self.pusher["wakes_event" if by_event else "wakes_backstop"] += 1
+
+    def cycle(self, dt):
+        ms = dt * 1000.0
+        with self.lock:
+            p = self.pusher
+            p["cycles"] += 1
+            p["cycle_ms_sum"] += ms
+            p["cycle_ms_last"] = ms
+            if ms > p["cycle_ms_max"]:
+                p["cycle_ms_max"] = ms
+            self.ring.append(ms)
+
+    def stage(self, name, dt):
+        with self.lock:
+            self.stages[name] = self.stages.get(name, 0.0) + dt * 1000.0
+
+    def build(self, kind, cached, dt=0.0):
+        with self.lock:
+            b = self.builds[kind]
+            if cached:
+                b["cached"] += 1
+            else:
+                b["built"] += 1
+                b["ms"] += dt * 1000.0
+
+    def send(self, key, kind, nbytes):
+        slot = key[0] if isinstance(key, tuple) else key
+        with self.lock:
+            d = self.sends[kind]
+            e = d.get(slot)
+            if e is None:
+                if len(d) >= self.SLOTS:
+                    slot = "other"
+                    e = d.get(slot)
+                if e is None:
+                    e = d[slot] = [0, 0]
+            e[0] += 1
+            e[1] += nbytes
+
+    def judge_pass(self, dt):
+        ms = dt * 1000.0
+        with self.lock:
+            j = self.judge
+            j["passes"] += 1
+            j["ms_sum"] += ms
+            j["ms_last"] = ms
+
+    def http_request(self, path, dt):
+        """dt None: count the request, add no time (the WebSocket upgrade case)."""
+        with self.lock:
+            e = self.http.get(path)
+            if e is None:
+                if len(self.http) >= self.HTTP_PATHS:
+                    path = "other"
+                    e = self.http.get(path)
+                if e is None:
+                    e = self.http[path] = [0, 0.0]
+            e[0] += 1
+            if dt is not None:
+                e[1] += dt * 1000.0
+
+    # ── the reader ──
+    @staticmethod
+    def _pct(sorted_ms, q):
+        n = len(sorted_ms)
+        return sorted_ms[min(n - 1, int(q * n))] if n else 0.0
+
+    def snapshot(self):
+        with self.lock:
+            ring = sorted(self.ring)
+            pusher = dict(self.pusher)
+            stages = dict(self.stages)
+            builds = {k: dict(v) for k, v in self.builds.items()}
+            sends = {k: {sl: {"count": e[0], "bytes": e[1]} for sl, e in d.items()}
+                     for k, d in self.sends.items()}
+            judge = dict(self.judge)
+            http = {pth: {"count": e[0], "ms": e[1]} for pth, e in self.http.items()}
+            since = self.since
+        pusher["ring_n"] = len(ring)
+        pusher["cycle_ms_p50"] = self._pct(ring, 0.5)
+        pusher["cycle_ms_p90"] = self._pct(ring, 0.9)
+        judge["ms_mean"] = (judge["ms_sum"] / judge["passes"]) if judge["passes"] else 0.0
+        try:
+            goals = jd.goal_io_stats()
+        except Exception:
+            goals = {}
+        now = time.time()
+        return {"now": now, "since": since, "uptime_s": now - _STARTED, "log": _PERF,
+                "process": _process_stats(), "pusher": pusher, "stages_ms": stages,
+                "builds": builds, "sends": sends, "goals": goals, "judge": judge, "http": http}
+
+
+_PERF_STATS = _PerfStats()
+
+
+class _CountedEvent(threading.Event):
+    """A threading.Event whose set() also counts in _PERF_STATS: the pusher's wake. Counting at the
+    event keeps every existing call site as it is, including the bound-method callbacks
+    (`push=_pusher_wake.set`) the backends hold and the tests that pin `_pusher_wake.set()` in the
+    source."""
+
+    def set(self):
+        _PERF_STATS.wake()
+        super().set()
+
+
+def _perf_http_timed(fn):
+    """Wrap a Handler.do_* method: count the request and its wall ms in _PERF_STATS under its path, the
+    query string stripped. A WebSocket upgrade (a path ending in /ws) is counted and not timed: its
+    do_GET returns when the socket closes. functools.wraps keeps inspect.getsource on the real route
+    table, which the auth tests read."""
+    @functools.wraps(fn)
+    def timed(self):
+        t0 = time.monotonic()
+        try:
+            return fn(self)
+        finally:
+            try:
+                path = str(getattr(self, "path", "") or "").split("?", 1)[0]
+                _PERF_STATS.http_request(path, None if path.endswith("/ws") else time.monotonic() - t0)
+            except Exception:
+                pass
+    return timed
 
 
 # ── host-suspend (laptop sleep) awareness ─────────────────────────────────────────────────────────
@@ -29882,6 +30115,7 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
         _send_slot(c, ftype, payload, pre, sig)
         return
     _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0, delta=1)
+    _PERF_STATS.send(key, "delta", len(s))
     try:
         c["send"](s)
     except Exception:
@@ -29920,9 +30154,11 @@ def _send_client(c, key, msg, pre=None, sig=None):
         now = time.time()
         if prev is not None and prev[0] == sig and (now - prev[1]) < _DEDUP_REPOST_S:
             _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=1)
+            _PERF_STATS.send(key, "deduped", len(s))
             return False
         c["sent"][key] = (sig, now)
         _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0)
+        _PERF_STATS.send(key, "full", len(s))
         return _client_send(c, s, key)                # enqueue only (never blocks): the lock is held for microseconds
 
 
@@ -30131,9 +30367,11 @@ def _send_feed_locked(c, feed, ms, sig, parts):
         c["efeed"] = parts if (parts[1] is not None or prev[1] is None) else (parts[0], prev[1], parts[2], parts[3])
         if s is None:
             _perf("send", slot="feed", bytes=len(ms), deduped=1)
+            _PERF_STATS.send("feed", "deduped", len(ms))
             return
         c.setdefault("sent", {})[("feed",)] = (sig, time.time())   # the dedup slot stays truthful either way
         _perf("send", slot="feedDelta", bytes=len(s), deduped=0)
+        _PERF_STATS.send("feed", "delta", len(s))
         _client_send(c, s, ("feed",))
         return
     _send_client(c, ("feed",), feed, pre=ms, sig=sig)
@@ -31590,6 +31828,7 @@ def _push(targets, connect=False, tmux=None):
         # The FEED's per-session Fleet ledger slice still rides along, attached AFTER the builds (want_chat —
         # we do NOT build all sessions just for a feed/fleet push: the user 2026-06-24 slow-load regression).
         chat_sessions = []
+        _t_stage = time.monotonic()                      # /perf stage clock: chat, then feed, then timeline
         if want_chat or want_fleet:   # the fleet needs every session's ledger slice (built below, attached to feed)
             # TABS-FIRST (the user 2026-06-26): ship name+color per tab so the client can paint the WHOLE strip
             # as placeholders up front (no tab popping in one-by-one as each build_session lands). The full
@@ -31621,6 +31860,7 @@ def _push(targets, connect=False, tmux=None):
                 if not is_active and hit is not None and sig is not None and hit[0] == sig:
                     m, ms = hit[1], hit[2]               # unchanged background tab → reuse, no reshape/serialize
                     _perf("chatbuild", sid=str(s["sid"])[:8], cached=1, ms=0, active=int(is_active))
+                    _PERF_STATS.build("chat", True)
                 else:
                     _t0 = time.monotonic()
                     m = build_session(s["sid"], now, chat_tmux)
@@ -31634,12 +31874,15 @@ def _push(targets, connect=False, tmux=None):
                     # The ACTIVE tab skips the cache above by design, so this build is what the watched
                     # session pays on every single push. If chat ever feels slow again, this number and
                     # the deduped= on the matching send say which half is at fault.
-                    _perf("chatbuild", sid=str(s["sid"])[:8], cached=0, active=int(is_active),
-                          ms=round((time.monotonic() - _t0) * 1000, 1),
-                          events=(len(m.get("events") or []) if m else 0),
-                          fold=_chat_fold_last_info().get("fold", 0), k=_chat_fold_last_info().get("k", 0),
-                          prefix=_chat_fold_last_info().get("prefix", 0),   # events reused from the sealed prefix
-                          why=_chat_fold_last_info().get("why", ""))         # the demote reason on a full build
+                    _dt = time.monotonic() - _t0
+                    _PERF_STATS.build("chat", False, _dt)
+                    if _PERF:                            # the keyword values below cost lookups; skip them when off
+                        _perf("chatbuild", sid=str(s["sid"])[:8], cached=0, active=int(is_active),
+                              ms=round(_dt * 1000, 1),
+                              events=(len(m.get("events") or []) if m else 0),
+                              fold=_chat_fold_last_info().get("fold", 0), k=_chat_fold_last_info().get("k", 0),
+                              prefix=_chat_fold_last_info().get("prefix", 0),   # events reused from the sealed prefix
+                              why=_chat_fold_last_info().get("why", ""))         # the demote reason on a full build
                 if not m:
                     continue
                 _note_chat_divergence(s["sid"], m.get("name") or "",
@@ -31700,6 +31943,8 @@ def _push(targets, connect=False, tmux=None):
                 if fr:
                     for c in chat_clients:
                         _send_client(c, ("comments", s["sid"]), fr)
+        _PERF_STATS.stage("push.chat", time.monotonic() - _t_stage)
+        _t_stage = time.monotonic()
         fsig = _fleet_view_sig(now, tmux) if (want_feed or want_tl) else None
         feed_src = _cached_feed(now, tmux, fsig, connect) if want_feed else None
         feed = feed_src
@@ -31734,6 +31979,8 @@ def _push(targets, connect=False, tmux=None):
         # LIVE-FIRST (the user 2026-06-26): the very first paint after a kernel start reads NO dead session — it
         # builds live sessions only (lanes + bars) so the main UI is up at once; the producer warms the full
         # build (live + dead-within-12h) and the next pusher push folds the dead lanes in, in the background.
+        _PERF_STATS.stage("push.feed", time.monotonic() - _t_stage)
+        _t_stage = time.monotonic()
         timeline = None
         tl_warming = False
         if want_tl:
@@ -31749,6 +31996,7 @@ def _push(targets, connect=False, tmux=None):
                 #                                                     "no activity"; a later warmed push (tl_warming False) settles it (the user 2026-07-03)
             else:
                 timeline = _cached_timeline(now, tmux, fsig, connect)
+        _PERF_STATS.stage("push.timeline", time.monotonic() - _t_stage)
     except Exception:
         sys.stderr.write("push build: %s\n" % traceback.format_exc())
         return
@@ -31764,6 +32012,7 @@ def _push(targets, connect=False, tmux=None):
     # moved — dict == is C-speed and allocation-free, far cheaper than re-serializing).
     global _feed_wire, _bars_wire
     feed_ms = feed_sig = feed_parts = bars = bars_ms = bars_sig = None
+    _t_stage = time.monotonic()
     for c in targets:
         if c["app"] in ("feed", "fleet", "waiting"):   # the feed pane, the Fleet view AND the Waiting-on-you pane ride the feed payload (Fleet reads feed.ledgers; waiting reads feed.userTodoRows)
             if feed_ms is None:
@@ -31795,6 +32044,7 @@ def _push(targets, connect=False, tmux=None):
                     bars_sig = _dedup_sig(bars, bars_ms)
                     _bars_wire = (timeline, tl_warming, bars, bars_ms, bars_sig)
             _send_slot(c, "bars", bars, bars_ms, bars_sig)
+    _PERF_STATS.stage("push.send", time.monotonic() - _t_stage)
     with _clients_lock:
         _clients[:] = [c for c in _clients if c.get("alive", True)]
 
@@ -31935,7 +32185,7 @@ _producer_wake = threading.Event()
 # Same idea for the CHAT PUSHER: the SDK live-tail (and any caller) sets this to push the chat NOW
 # instead of waiting out the 4s poll — the SDK stream leads the transcript on disk, so an immediate push
 # of the in-memory live atoms makes messages appear instantly. 4s stays as the backstop.
-_pusher_wake = threading.Event()
+_pusher_wake = _CountedEvent()      # a threading.Event; set() also counts the wake for /perf
 # The last kernel-side OPTIMISTIC mutation (a parked-op chip, a follow-up card reopen, a model-pending
 # stamp, an interrupt click): state that lives in MEMORY or a goal store, which NO file-mtime signature
 # sees. _cached_feed/_cached_timeline must rebuild past this mark — even inside REBUILD_MIN_S and even on
@@ -32134,10 +32384,13 @@ def _cached_feed(now, tmux, sig, connect=False):
     # so back-to-back starts must not shrink its window.
     dirty = not connect and _views_dirty[0] > e[3]        # connect still serves the warmed build (never rebuilds)
     if e[1] is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
+        _PERF_STATS.build("feed", True)
         return e[1]
     bid = _next_feed_build_id()          # claimed BEFORE the read, so an ack issued during this build outranks it
     started = time.time()                # …and the dirty floor for the NEXT check: mutations after this
+    _t0 = time.monotonic()
     feed = build_feed(now, tmux)         # instant may be invisible to the build below → must rebuild
+    _PERF_STATS.build("feed", False, time.monotonic() - _t0)
     feed["buildId"] = bid
     _built_feed[:] = [sig, feed, time.time(), started]
     _badge = _needs_you_count(feed)
@@ -32666,9 +32919,12 @@ def _cached_timeline(now, tmux, sig, connect=False):
     e = _built_timeline
     dirty = not connect and _views_dirty[0] > e[3]        # start-keyed, same as _cached_feed above
     if e[1] is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
+        _PERF_STATS.build("timeline", True)
         return e[1]
     started = time.time()
+    _t0 = time.monotonic()
     tl = build_timeline(now, tmux)
+    _PERF_STATS.build("timeline", False, time.monotonic() - _t0)
     _built_timeline[:] = [sig, tl, time.time(), started]
     return tl
 
@@ -32692,6 +32948,7 @@ def _producer():
         _prev_wall, _prev_mono = _nw, _nm
         _producer_wake.clear()   # consume; a /tick arriving DURING this pass re-sets it → we run again (no lost wake)
         _own_frame = False       # set once the pass frame opens; the finally below can then never leak it
+        _t_pass = time.monotonic()
         try:
             # Two tiers, run in PARALLEL (the user 2026-06-17) — they share no store and triage never
             # reads the captioner's output, so the only cost of overlap is each tier parsing a transcript
@@ -32752,6 +33009,7 @@ def _producer():
         finally:
             _end_goals_pass()      # safety net: never leave a pass's snapshot stuck if the pass raised mid-flight
             jd.end_pass_frame(_own_frame)   # …nor the evidence frame (idempotent with the normal-path end above)
+            _PERF_STATS.judge_pass(time.monotonic() - _t_pass)
         # Event-driven: wake the instant a hook pokes /tick (turn ended / prompt landed / postal msg)
         # instead of waiting out the backstop. The 3s is only a BACKSTOP — for changes we don't get poked
         # for (e.g. a segment closing mid-turn) and a safety net if a poke is ever missed. A pass is cheap
@@ -32774,6 +33032,7 @@ def _pusher_cycle():
     design; they now all receive the same one, taken once at cycle start. The jobs tolerate the
     few-hundred-ms staleness by construction — they always saw a snapshot aged by however many jobs
     ran before them."""
+    _t_cycle = time.monotonic()
     with _clients_lock:
         any_client = bool(_clients)
     now = int(time.time())
@@ -32794,9 +33053,12 @@ def _pusher_cycle():
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
+        _PERF_STATS.cycle(time.monotonic() - _t_cycle)
 
 
 def _pusher_cycle_jobs(now, tmux, any_client):
+    _t_jobs = time.monotonic()            # /perf: this function minus the _push_all below is the `jobs` stage
+    _t_push = 0.0
     try:                                  # the drain's gates read the CACHED parse: re-parse the parked sids'
         _refresh_parked_parses(now)       # moved transcripts first, so a stranded hook row can be overruled by
     except Exception:                     # what the transcript says (headless, nobody else fills the cache)
@@ -32806,7 +33068,12 @@ def _pusher_cycle_jobs(now, tmux, any_client):
     except Exception:                     # FIRST, so a delivered op's echo / retired chip rides this push;
         sys.stderr.write("pending-ops: %s\n" % traceback.format_exc())   # never behind a judge pass (2026-09-03)
     if any_client:
-        _push_all(tmux=tmux)
+        _t_push = time.monotonic()
+        try:
+            _push_all(tmux=tmux)
+        finally:
+            _t_push = time.monotonic() - _t_push
+            _PERF_STATS.stage("push", _t_push)
     else:
         try:                              # belt like every sibling job below: this is the ONLY bare
             #                               _tab_list_tmux call site (_push and _push_session_now catch for
@@ -32878,6 +33145,7 @@ def _pusher_cycle_jobs(now, tmux, any_client):
         _clear_done_working_notes(now, tmux)
     except Exception:
         sys.stderr.write("clear-working-notes: %s\n" % traceback.format_exc())
+    _PERF_STATS.stage("jobs", (time.monotonic() - _t_jobs) - _t_push)
 
 
 def _pusher():
@@ -32887,8 +33155,9 @@ def _pusher():
         # poll, so tmux sessions — which have no per-message event for mid-turn streaming — still refresh
         # responsively as the model generates, instead of waiting out a multi-second tick (the user 2026-06-22).
         # Cheap when nothing changed: _parse is cached and _send_client dedups, so a no-change poll sends nothing.
-        _pusher_wake.wait(0.5)
+        _woke = _pusher_wake.wait(0.5)    # True: the flag was set (an event); False: the backstop timed out
         _pusher_wake.clear()
+        _PERF_STATS.wake_kind(_woke)
 
 
 # ───────────────────────── HTTP / page serving ─────────────────────────
@@ -37017,6 +37286,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+    @_perf_http_timed
     def do_GET(self):
         u = urlparse(self.path)
         p = u.path
@@ -37109,6 +37379,8 @@ class Handler(BaseHTTPRequestHandler):
                 if (q.get("threads") or [""])[0] == "1":       # opt-in: comment-thread rows for the postal
                     rows = rows + _thread_rows()               # bus (the user 2026-08-22); every existing
                 return self._send(200, json.dumps(rows), "application/json", cache="no-cache")   # consumer unchanged
+            if p == "/perf":                                  # the kernel's performance counters (`romp perf`); shape: _PerfStats
+                return self._send(200, json.dumps(_PERF_STATS.snapshot()), "application/json", cache="no-cache")
             if p == "/commands":                              # slash-command list for the composer's "/" autocomplete (SDK get_server_info, per-cwd cached)
                 sid = (q.get("sid") or [""])[0]
                 cmds, warming = _commands_for_cwd(_cwd_of(sid) if sid else "")
@@ -37476,6 +37748,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+    @_perf_http_timed
     def do_POST(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
@@ -37686,6 +37959,21 @@ class Handler(BaseHTTPRequestHandler):
                 _producer_wake.set()
                 _pusher_wake.set()
                 return self._send(200, json.dumps({"ok": True, "woke": True}), "application/json")
+            if u.path == "/perf":
+                # The runtime switch for the romp-perf stderr log: {"log": true|false} (`romp perf log
+                # on|off`). The log used to need ROMP_PERF in the process environment at start, so turning
+                # it on meant a kernel restart, which cuts every open turn on a machine whose sessions run
+                # inside this kernel. The counters GET /perf serves are always on and need no switch.
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = None
+                if not isinstance(b, dict) or not isinstance(b.get("log"), bool):
+                    return self._send(400, json.dumps({"ok": False, "error": 'body must be {"log": true|false}'}),
+                                      "application/json")
+                _set_perf_log(b["log"])
+                sys.stderr.write("romp-perf: log %s (POST /perf)\n" % ("on" if _PERF else "off"))
+                return self._send(200, json.dumps({"ok": True, "log": _PERF}), "application/json")
             if u.path == "/send":
                 # Human→agent input channel — the SAME delivery the chat composer's WS
                 # sendMessage uses, exposed as a one-shot POST so an external local tool (the
