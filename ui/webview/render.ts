@@ -1014,7 +1014,7 @@ let landTrail: string[] = [];
 // count is NOT len − winStart + spacer: a unit may own more than one node (the day
 // divider that opens a new day precedes its turn), so anything mapping DOM back to
 // units reads data-unit off the node rather than counting children.
-interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; }
+interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; working?: boolean; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner)
 const views = new Map<string, View>();
 
 // Pending pickers (AskUserQuestion / tool-permission) keyed by session id. These
@@ -9761,6 +9761,11 @@ function syncViewInner(id: string, atBottom?: boolean): View {
     return v;
   }
   const working = s.status.state === "working" || s.status.state === "compacting";
+  // The footer on the current turn's last reply reads the session's working state (on once idle, off while
+  // it works), and a status-only tail changes that with no event change — the no-op fast path below would
+  // leave the footer as it was. So the state is remembered per view, and a flip patches the footer there.
+  const workFlip = v.working != null && v.working !== working;
+  v.working = working;
   const items = displayItems(s);   // units: one per event (normal) or one folded compactDisplay item (compact)
   const total = items.length;
   const len = s.events.length;
@@ -9778,6 +9783,12 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   // WITHOUT this, every showActive() re-built the trailing window (markdown + highlight.js) — the big-session
   // switch lag (the user 2026-06-25). A REAL change lowers v.rendered (delta-send sets it to the change index;
   // an append grows len past it) or sets v.stale, so this never skips an actual update.
+  // …except the "worked …" footer on a status-only tail: nothing re-rendered, and the footer follows the flip.
+  // (The patch marks the view stale when the reply's unit is not addressable — a folded run — so the fast
+  // path stands down and the window path below re-renders it.)
+  if (workFlip && v.rendered === len && !v.stale && v.el.childNodes.length > 0) {
+    patchWorkedFooters(v, s, len, working, settings.compact ? items : null);
+  }
   if (v.rendered === len && !v.stale && v.el.childNodes.length > 0) return v;
   const wasAtTail = (v.winEnd ?? total) >= (v.unitTotal ?? total);   // window was covering the OLD end
   // An in-place change (tool-group toggle, off-screen update) OR compact mode → re-render the CURRENT window
@@ -9832,15 +9843,24 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   return v;
 }
 
-// The "worked …" footer is the one render on a turn that depends on LATER events: it appears once the turn
-// is complete (a genuine prompt landed after its last reply) or the session is idle. With the tail rendered
-// exactly from `from`, the two events that complete a turn — a status-only tail (empty suffix, the session
-// went idle) and a human prompt landing — leave that reply BEFORE `from`, so its footer is patched here by
-// unit (worked-footer.ts names the reply and the seconds). A footer comes OFF the same way when the session
-// goes back to work on the same turn (a nudge, a postal push). applyForkSpots homes a turn's fork spot inside
-// its elapsed row when the turn has one, so the spot moves with the footer either way.
-function patchWorkedFooters(v: View, s: Session, from: number, working: boolean): void {
-  for (const { unit, secs } of workedFooterPlan(s.events, from, v.winStart ?? 0, working, eventEpoch)) {
+// The "worked …" footer is the one render on a turn that depends on LATER events and on the session's state:
+// it appears once the turn is complete (a genuine prompt landed after its last reply) or the session is idle.
+// With the tail rendered exactly from `from`, the events that change a reply's footer leave that reply BEFORE
+// `from` — a human prompt landing completes its turn, a later reply in the same turn demotes it — and a
+// status-only tail (empty suffix: the session went idle, or back to work on the same turn after a nudge or a
+// postal push) changes it with no event at all, which syncViewInner's fast path hands here with from = len.
+// worked-footer.ts names the reply and the seconds; the footer goes on or comes off by unit. applyForkSpots
+// homes a turn's fork spot inside its elapsed row when the turn has one, so the spot moves with the footer
+// either way. `items` is compact mode's unit list: there a unit is a display item (a folded run, or one event),
+// so the window's start maps to its first event and the reply's event index back to the unit whose node carries
+// it; a reply folded into a run has no node of its own, and the view goes stale for the window path instead.
+function patchWorkedFooters(v: View, s: Session, from: number, working: boolean, items: DisplayItem[] | null = null): void {
+  const winStart = v.winStart ?? 0;
+  const winEv = items ? (items[winStart] ? itemFirstEvent(items[winStart]) : s.events.length) : winStart;
+  const unitOfEvent = (i: number): number => items ? items.findIndex((it) => it.kind === "event" && it.index === i) : i;
+  for (const { unit: ev, secs } of workedFooterPlan(s.events, from, winEv, working, eventEpoch)) {
+    const unit = unitOfEvent(ev);
+    if (unit < 0) { v.stale = true; continue; }
     const node = v.el.querySelector(`:scope > [data-unit="${unit}"]:not(.day-divider)`) as HTMLElement | null;
     if (!node) continue;
     const have = node.querySelector(":scope > .turn-elapsed") as HTMLElement | null;
