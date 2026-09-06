@@ -13,9 +13,11 @@ const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 
 test("render() captures rects BEFORE the reconcile and flies changed cards AFTER", () => {
   // capture must precede the column reconciles…
-  assert.match(FEED, /const flipFirst = captureCardRects\(cols\);[\s\S]*?reconcileCol\(cols\.asks/);
+  // …over the columns whose planned key sequence differs from the DOM's (feed-card-gate.ts sameKeySeq): a
+  // column where nothing enters, leaves or changes place has nothing that can glide, so its rects go unread
+  assert.match(FEED, /const flipCols = FLY_COLS\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\[k\]\), buckets\[k\]\.map\(\(e\) => entryKey\(e, cols\[k\]\)\)\)\);\n\s*const flipFirst = captureCardRects\(cols, flipCols\);[\s\S]*?reconcileCol\(cols\.asks/);
   // …and the fly runs after the DOM (and scroll) settle (the identity-alias step sits just before it)
-  assert.match(FEED, /list\.scrollTop = prevScroll;[\s\S]*?\/\/ FLIP step 2[\s\S]*?flyColumnChanges\(flipFirst, cols\);/);
+  assert.match(FEED, /list\.scrollTop = prevScroll;[\s\S]*?\/\/ FLIP step 2[\s\S]*?flyColumnChanges\(flipFirst, cols, flipCols\);/);
 });
 
 test("FLIP-across-identity: a new-key card aliases to its predecessor's rect so it slides, not pops", () => {
@@ -39,8 +41,14 @@ test("flyColumnChanges FLIPs any moved card (not new cards / non-movers); only c
   // staying in the same column NO LONGER aborts — an in-column shifter must glide too (the user 2026-06-29)
   assert.doesNotMatch(FEED, /prev\.col === colEl\.id\) continue/);
   // a column-crosser gets the back layer; an in-column shifter glides in normal flow
-  assert.match(FEED, /const crossed = prev\.col !== colEl\.id;/);
+  assert.match(FEED, /moves\.push\(\{ c, dx, dy, crossed: prev\.col !== colEl\.id \}\);/);
   assert.match(FEED, /if \(crossed\) c\.classList\.add\("fitem-flying"\);/);
+  // every Last rect is READ before any transform is WRITTEN: a transform write dirties layout, so the old
+  // per-card read/write interleave forced a layout per shifted card (about 60 per delta, measured)
+  const fly = FEED.slice(FEED.indexOf("function flyColumnChanges("), FEED.indexOf("// ── Absorb:"));
+  assert.ok(fly.indexOf("// READ phase") < fly.indexOf("getBoundingClientRect") && fly.indexOf("getBoundingClientRect") < fly.indexOf("// WRITE phase") && fly.indexOf("// WRITE phase") < fly.indexOf("c.style.transform ="),
+    "reads, then writes");
+  assert.equal((fly.match(/getBoundingClientRect/g) || []).length, 1, "one read per card, all in the read phase");
 });
 
 test("FLIP: invert to the old spot instantly, then release with a transition (two rAFs)", () => {

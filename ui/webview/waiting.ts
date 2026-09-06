@@ -20,7 +20,7 @@ import { delegate } from "./actions";
 import { applyTheme } from "./theme";
 import { loadSettings, installSettingsSync, onExternalSettingsChange } from "./settings";
 import { hostNameNodes } from "./host-prefix";
-import { liveNow, stampAge, refreshAges } from "./feed-age";
+import { liveNow, liveRefresher, stampAge, refreshAges } from "./feed-age";
 import { ageColorReadable } from "./age-color";
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
 import { perfFrameHandler } from "./perf-telemetry";
@@ -369,10 +369,17 @@ onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
 })();
 
 // keep every "Xm ago" honest between frames: a quiet board sends a delta client nothing, so the ages
-// move on the local clock's deltas (feed-age.ts), on the feed's own cadence
-setInterval(() => {
+// move on the local clock's deltas (feed-age.ts), on the feed's own cadence. paintAge writes only the
+// labels whose text changed; a pane nobody can see (a hidden tab, or the zero viewport of an iframe the
+// shell has display:none'd — this pane is hidden by default on desktop) skips the pass and catches up
+// once when shown (liveRefresher, the Outline pane's pattern).
+const paneHidden = () => document.hidden || window.innerWidth === 0 || window.innerHeight === 0;
+const live = liveRefresher({ hidden: paneHidden, pass: () => {
   refreshAges(document.querySelectorAll<HTMLElement>("[data-age-t]"), nowSec(), relAge, ageColorReadable);
-}, 15000);
+} });
+setInterval(live.tick, 15000);
+document.addEventListener("visibilitychange", live.catchUp);
+window.addEventListener("resize", live.catchUp);
 
 render();
 vscodeApi?.postMessage({ type: "ready" });   // the kernel serves the cached feed frame at once (the ready handshake)

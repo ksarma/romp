@@ -5,9 +5,12 @@
 //
 // Rendering is KEYED + INCREMENTAL: cards are kept alive across the host's live
 // pushes and updated in place — never torn down — so hovering one doesn't flicker
-// when the fleet streams new deliverables in.
+// when the sessions stream new deliverables in. And since 2026-09-06 a kept card is
+// REPAINTED only when its inputs changed (feed-card-gate.ts): the kernel re-sent it,
+// a board-level input it reads moved, a gesture touched it, or the 15 s live pass
+// aged it. Its column and order are re-applied on every render regardless.
 import { distillText, distillInputs, applyDistillLine, distillPending, distillStaleNote } from "./distiller-line";
-import { spinFor, KIND_WORD, kindWord, waitedSuffix } from "./spin-caption";
+import { spinFor, KIND_WORD, kindWord } from "./spin-caption";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { searchMatches, searchSids } from "./feed-search";
 import { TagLens, lensAll, lensLabel, lensVisible, lensUnions } from "./tag-lens";
@@ -18,7 +21,8 @@ import { hostNameNodes, hostPartsNodes, hostIsDown, hostDownNote, hostOf } from 
 import { extHoverMatches } from "./card-key";
 import { provenanceRows, provenanceGroupRows, rootStart, type ProvFmt, type ProvRow } from "./provenance";
 import { ageColorReadable, ageRgb } from "./age-color";
-import { liveNow, refreshAges, stampAge } from "./feed-age";
+import { liveNow, liveRefresher, refreshAges, stampAge } from "./feed-age";
+import { cardInputsKey, cardNeedsUpdate, sameKeySeq, type GateEnv } from "./feed-card-gate";
 import { badgeNotices, clearBoundaryNotices, sdkProblemNotices, syncNotices,
   type ClearNoticeRow, type SdkNoticeRow, type SyncNoticeRow } from "./badge-mirror";
 import { initStrip } from "./strip";
@@ -424,6 +428,16 @@ const TINT_ALPHA = 0.22;
 // re-applies it, so the fade keeps moving on a quiet board.
 function cardTint(ageSecs: number): string { const [r, g, b] = ageRgb(ageSecs); return `rgba(${r}, ${g}, ${b}, ${TINT_ALPHA})`; }
 function ageTint(ageSecs: number): string { return "rgb(" + ageRgb(ageSecs).join(",") + ")"; }
+// The ONE writer of a card's wash, for the render and the 15 s live pass alike (2026-09-06): the string
+// is compared against the last one written (a shadow on the element — the CSSOM read-back re-serialises
+// it) and written only on change, so a pass over a quiet board rewrites the few cards whose ramp step
+// moved and leaves the rest untouched.
+function applyTint(card: HTMLElement, ageSecs: number): void {
+  const s = cardTint(ageSecs);
+  if ((card as any)._tint === s) return;
+  (card as any)._tint = s;
+  card.style.background = s;
+}
 
 // Session identity colours are 6-digit hex; split one into [r,g,b] channels. The card border colour is
 // CSS-driven from these channels (--card-r/g/b) so the outline is a PLAIN rgba (not color-mix(), which a
@@ -469,9 +483,19 @@ onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
 // Card-display prefs read straight from the shared 'romp:settings' (the kernel's ⛭ gear writes it; same
 // document as this feed bundle). Default ON. These gate the CARDS only — the modal always shows everything
 // (the user 2026-06-17). `!== false` so a missing key defaults to shown.
-function feedPrefs(): { newestFirst: boolean; collapsed: boolean; grouped: boolean; stacked: boolean } {
+// Memoised on the RAW settings string (2026-09-06): called per card per render and per live pass, and each
+// call parsed the blob. The raw string is the truth, so the memo is exact and needs no invalidation. The
+// `colormap` rides along for the per-card update gate: a colormap change must repaint every tint at once.
+type FeedPrefs = { newestFirst: boolean; collapsed: boolean; grouped: boolean; stacked: boolean; colormap: string };
+const PREFS_DEFAULT: FeedPrefs = { newestFirst: false, collapsed: false, grouped: true, stacked: false, colormap: "aurora" };
+let prefsRaw: string | null | undefined;
+let prefsMemo: FeedPrefs = PREFS_DEFAULT;
+function feedPrefs(): FeedPrefs {
+  let raw: string | null = null;
+  try { raw = localStorage.getItem("romp:settings"); } catch { return PREFS_DEFAULT; }
+  if (raw === prefsRaw) return prefsMemo;
   try {
-    const s = JSON.parse(localStorage.getItem("romp:settings") || "{}");
+    const s = JSON.parse(raw || "{}");
     // newestFirst + collapsed default OFF (=== true): the feed's natural order is oldest-first, and cards
     // arrive with their summary open (the user 2026-07-07). collapsed is the DEFAULT section state new cards
     // inherit — a per-card expand overrides just that card without turning the mode off. (Sub-goals is now one
@@ -479,9 +503,11 @@ function feedPrefs(): { newestFirst: boolean; collapsed: boolean; grouped: boole
     // grouped (the user 2026-07-13): each column groups its cards by SESSION (tab/lane order), a session-name
     // header on the backdrop between runs, the per-card name dropped — the compact by-session read.
     // Default ON (!== false, same day): grouping is the feed's normal reading mode; the toggle opts OUT.
-    return { newestFirst: s.newestFirst === true, collapsed: s.collapsed === true, grouped: s.grouped !== false,
-             stacked: s.stacked === true };
-  } catch { return { newestFirst: false, collapsed: false, grouped: true, stacked: false }; }
+    prefsMemo = { newestFirst: s.newestFirst === true, collapsed: s.collapsed === true, grouped: s.grouped !== false,
+                  stacked: s.stacked === true, colormap: String(s.colormap || "aurora").toLowerCase() };
+  } catch { prefsMemo = PREFS_DEFAULT; }
+  prefsRaw = raw;
+  return prefsMemo;
 }
 // The kernel's session order (session-order.json — the SAME order the chat tabs + timeline lanes hold; the
 // user 2026-07-13: grouped-mode sessions must match it). Rides every feed push; federation concatenates
@@ -569,6 +595,11 @@ function setFeedSearch(q: string): void {
 // same pair settings sync rides): the browser's same-origin iframes hear the localStorage write
 // (`storage` fires cross-document), and VS Code's extension fans {colorSync} to its other panels.
 // Apply it to every copy this pane holds and re-render; the kernel's own re-broadcast reconciles.
+// IN PLACE, deliberately (2026-09-06): these objects are federation's held frame, so the write lands in
+// the cache too and a re-emit before the kernel's own rebuild keeps the new colour (copies in this
+// pane's list alone would hand the old colour back on the next merged emission). The per-card update
+// gate cannot see an in-place write through object identity, so the colour rides the card key instead
+// (feed-card-gate.ts cardInputsKey).
 function applyColorEcho(sid: string, bg: string): void {
   if (!sid || !bg) return;
   const color = { bg, fg: "#ffffff" };   // fg fixed white, matching the kernel's _name_color
@@ -680,6 +711,8 @@ let canUndoClear = false;   // host: cleared.jsonl has rows → the UndoClear bu
 // node) can't slide it and it would pop. We map the new card back to its predecessor's old rect so it slides
 // from there instead of appearing from nowhere. Rebuilt every render.
 let prevItemKey = new Map<string, string>();
+// Counts renders: the per-card update gate's key for a quarantine card carries it, so those cards never skip.
+let renderSeq = 0;
 
 function el(tag: string, cls?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -832,6 +865,22 @@ function relAge(sec: number): string {
   return `${Math.round(s / 86400)}d ago`;
 }
 
+// A RUNNING duration as its own stamped element (feed-age.ts fmt "dur"; 2026-09-06): "42m" / "1h 5m" since
+// an event time, repainted by the 15 s live pass like every other age. Every elapsed label on a card renders
+// through here — the awaiting box, the Awaiting-task pill, the waiting-on chip, the working narration —
+// because the per-card update gate repaints a card only when its inputs change, and a duration baked into
+// a caption string would freeze on a card the kernel has no reason to re-send (a long wait whose record
+// does not change). On the kernel's clock (nowSec), like every other age here; these read Date.now() before.
+function durSpan(since: number): HTMLElement {
+  const d = el("span", "fask-dur");
+  stampAge(d, since, "dur", false, nowSec(), relAge, ageTint);
+  return d;
+}
+/** waitedSuffix's live twin: [" · ", <duration>] for a known start, [] otherwise — no since, no duration, never a guess. */
+function durNodes(since: number | null | undefined): (string | HTMLElement)[] {
+  return since && since > 0 ? [" · ", durSpan(since)] : [];
+}
+
 function dayLabel(t: number, now: number): string {
   const d = new Date(t * 1000);
   const ymd = (x: Date) => `${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`;
@@ -891,7 +940,7 @@ function cardBellSvg(off: boolean): string {
     + '<path d="M6.6 11.6 A1.5 1.5 0 0 0 9.4 11.6"/>' + slash + "</svg>";
 }
 
-function cardNotifyOn(it: AskItem): boolean {
+function cardNotifyOn(it: { itemId: string; notify?: boolean | null }): boolean {
   return pendingNotify.has(it.itemId) ? !!pendingNotify.get(it.itemId) : !!it.notify;
 }
 
@@ -1562,10 +1611,10 @@ function applySections(a: any, it: AskItem, distillShown: boolean): void {
   const kw = KIND_WORD[awKind] || "task";
   // the wait's elapsed time rides the pill exactly as it rides the awaiting box and the working
   // narration — a stuck wait must be glanceable everywhere the state shows (the user 2026-08-23)
-  const pillWaited = waitedSuffix(it.awaiting && it.awaiting.since, Date.now() / 1000);
-  (a._taskLbl as HTMLElement).textContent =
+  (a._taskLbl as HTMLElement).replaceChildren(
     (taskList.length === 1 ? "Awaiting " + (awKind ? kindWord(awKind, 1) : kw)
-                           : "Awaiting " + taskList.length + " " + (awKind ? kindWord(awKind, taskList.length) : kw + "s")) + pillWaited;   // one number-agreeing vocabulary (T225)
+                           : "Awaiting " + taskList.length + " " + (awKind ? kindWord(awKind, taskList.length) : kw + "s")),   // one number-agreeing vocabulary (T225)
+    ...durNodes(it.awaiting && it.awaiting.since));   // the waited time, live (durSpan)
   taskBtn.classList.toggle("on", choice === "tasks");
   taskBtn.setAttribute("aria-pressed", choice === "tasks" ? "true" : "false");
   taskBtn.title = choice === "tasks" ? "hide the tasks" : "show the tasks";
@@ -1693,7 +1742,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // hasn't classified the in-progress turn yet. No Clear/Nudge (nothing to curate), no auto-line, no tree.
   card.style.opacity = it.provisional ? ".62" : "";
   a._title.style.fontStyle = it.provisional ? "italic" : "";
-  card.style.background = cardTint(nowSec() - it.t);
+  applyTint(card, nowSec() - it.t);
   // GHOST prompt: a provisional placeholder gets a dashed outline so it reads as not-yet-real (the user
   // 2026-06-19), distinct from the solid recency-tinted border of a real card. Reset to solid when the
   // planner replaces it with the classified card.
@@ -1713,7 +1762,9 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
     card.style.borderWidth = "";
     // outline the card in ITS session's identity colour (the user 2026-07-15) — CSS paints it at 0.5α at rest
     // and bolds the SAME colour on hover/pin. Fall back to the recency-tint channels for the rare colourless
-    // session so the border never voids to transparent.
+    // session so the border never voids to transparent. (That fallback ages only when the card next
+    // repaints — the update gate skips an unchanged card, and the live pass moves tints and labels, not
+    // border channels; the ramp step of a border is not worth a pass of its own.)
     setCardChannels(card, (it.color && hexToRgb(it.color.bg)) || ageRgb(nowSec() - it.t));
   }
   // a re-check card dims slightly (between a normal card and a provisional ghost) so it reads as "handled, pending"
@@ -1880,10 +1931,10 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
     a._waitOn.append(woPre, woName);
     // elapsed since the unanswered ask went out (kernel _wait_for_graph's since) — the same readout the
     // working narration and awaiting box wear, so a wait stuck for hours is glanceable (the user 2026-08-23)
-    const woWaited = waitedSuffix(wo.since, Date.now() / 1000);
-    if (woWaited) {
-      const woDur = el("span", "fask-waiton-dur"); woDur.textContent = woWaited;
-      a._waitOn.append(woDur);
+    const woDur = durNodes(wo.since);
+    if (woDur.length) {
+      const woWrap = el("span", "fask-waiton-dur"); woWrap.append(...woDur);
+      a._waitOn.append(woWrap);
     }
     a._waitOn.title = wo.inCycle
       ? "MUTUAL WAIT — this session and " + wo.name + " are each waiting on the other (a deadlock); auto-nudge surfaces it instead of nudging"
@@ -1913,7 +1964,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // The card is not left mute in that window: the Working displacement only happens under recheck/rejudging,
   // and both raise the "Analyzing…" swirl below, which says the judge is looking at it again.
   const spin = spinFor(it, distillPending(dCompleted, dBlocked, it.summary, it.blockSummary, !!it.blocked),
-                       dCompleted, Date.now() / 1000);
+                       dCompleted, nowSec());
   const spinCaption = spin.caption, spinTip = spin.tip, awaitingBg = spin.awaitingBg;
   a._awaitSpin.style.display = spinCaption ? "" : "none";
   // The AWAITING case gets a rounded box (its distinct read); the swirl spins in every case now —
@@ -1942,8 +1993,9 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
         }
         a._awaitWhy.appendChild(nm);
       });
-      a._awaitWhy.append(waitedSuffix(it.awaiting && it.awaiting.since, Date.now() / 1000));
-    } else a._awaitWhy.textContent = spinCaption;
+      a._awaitWhy.append(...durNodes(it.awaiting && it.awaiting.since));
+    } else if (spin.dur) a._awaitWhy.replaceChildren(spin.dur.text, durSpan(spin.dur.since));   // the caption's running duration, live
+    else a._awaitWhy.textContent = spinCaption;
     a._awaitSpin.title = spinTip || spinCaption;
     // HONEST fallback (the user 2026-08-26): a peer-kind wait with no named session says WHY the
     // name is missing, instead of presenting "peer" as a style — identity is only truly unknowable
@@ -2040,13 +2092,13 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
     if (stampOk || anchOk) {
       const dle = a._distill as HTMLElement;
       dle.textContent = "";
-      const nowS = Date.now() / 1000;
+      const nowS = nowSec();
       paras.forEach((p, i) => {
         const para = el("div", "fask-para");
         para.textContent = p;
         if (stampOk && i < bp!.length) {
           const age = el("span", "fask-para-age");
-          age.textContent = relAge(nowS - (bp![i].since || nowS));
+          stampAge(age, bp![i].since || nowS, "plain", false, nowS, relAge, ageTint);   // stamped: the live pass moves it
           para.append(" ", age);
         }
         // T220 first: the paragraph's own citation, with its located span riding the landing
@@ -2512,7 +2564,7 @@ function updateGroupCard(card: HTMLElement, g: AskGroup) {
   const eff = hoverAskId ?? pinnedAskId;
   card.className = "fitem ask fgroup" + (g.live ? " live" : " dead")
     + (fkey === eff ? " focused" : "") + (fkey === pinnedAskId ? " pinned" : "");
-  card.style.background = cardTint(nowSec() - g.t);
+  applyTint(card, nowSec() - g.t);
   // outline in the group's session identity colour (the user 2026-07-15) — CSS: 0.5α rest, bolded on hover/pin
   setCardChannels(card, (g.color && hexToRgb(g.color.bg)) || ageRgb(nowSec() - g.t));
   a._title.textContent = g.title;
@@ -3459,6 +3511,10 @@ function makeUndoClearBtn(): HTMLElement {
       for (const it of batch) {
         pendingCleared.delete(it.itemId);
         pendingRestored.set(it.itemId, it);                                  // stay sticky until the kernel push carries it
+        // a card still inside its 180 ms collapse keeps its element AND its object, so the per-card update
+        // gate would leave `.dismissing` on it and the collapse timer would then remove the restored card:
+        // the Undo gesture is the event that takes the class off (2026-09-06)
+        askEls.get(it.itemId)?.classList.remove("dismissing");
         if (!asks.some((a) => a.itemId === it.itemId)) asks.push(it);        // show it NOW
       }
       render();
@@ -4134,7 +4190,18 @@ function dressHeaderIfLast(card: HTMLElement, sid: string): void {
   startSessHeadExit(key, head);
 }
 
-function reconcileCol(listEl: HTMLElement, entries: Entry[], globalDesired: Set<string>) {
+// The render key each entry kind wears in the DOM (data-key): the reconcile's identity, and the FLIP gate's
+// unit of comparison (a column whose planned key sequence equals its current one moved nothing).
+function entryKey(e: Entry, listEl: HTMLElement): string {
+  return e.kind === "ask" ? "a:" + e.ask.itemId : e.kind === "group" ? "g:" + e.group.turnId : "s:" + listEl.id + ":" + e.sid;
+}
+function childKeys(listEl: HTMLElement): string[] {
+  const out: string[] = [];
+  for (const c of Array.from(listEl.children) as HTMLElement[]) if (c.dataset.key) out.push(c.dataset.key);
+  return out;
+}
+
+function reconcileCol(listEl: HTMLElement, entries: Entry[], globalDesired: Set<string>, gate: GateEnv) {
   const existing = new Map<string, HTMLElement>();
   for (const c of Array.from(listEl.children) as HTMLElement[]) {
     const k = c.dataset.key;
@@ -4148,7 +4215,14 @@ function reconcileCol(listEl: HTMLElement, entries: Entry[], globalDesired: Set<
       key = "a:" + e.ask.itemId;
       card = askEls.get(e.ask.itemId) || makeAskCard(e.ask);
       askEls.set(e.ask.itemId, card);
-      updateAskCard(card, e.ask);
+      // THE UPDATE GATE (feed-card-gate.ts, 2026-09-06): repaint only a card the kernel re-sent (a new
+      // object — the delta path keeps an unchanged card's object by reference) or whose board-level
+      // inputs changed (the key). Everything below — placement, the insertBefore order walk, the
+      // cross-column removal — stays unconditional, so a card whose column or sort changed still moves.
+      // The key is stored only after updateAskCard returns: a throw mid-update leaves the card retried
+      // on the next change instead of aborting every later render.
+      const ik = cardInputsKey(e.ask, gate);
+      if (cardNeedsUpdate(card as any, e.ask, ik)) { updateAskCard(card, e.ask); (card as any)._ik = ik; }
     } else if (e.kind === "sess") {
       // grouped-mode session header — keyed per (column, sid): one session can head a run in EVERY column
       key = "s:" + listEl.id + ":" + e.sid;
@@ -4186,11 +4260,21 @@ function reconcileCol(listEl: HTMLElement, entries: Entry[], globalDesired: Set<
 // move, then after it, offset the card back to where it was and transition that offset to zero so it glides to
 // its new home. The flying card sits in the BACK layer (position:relative; z-index:-1 → behind sibling cards
 // but above the column background) so it never flies OVER other content. Respects prefers-reduced-motion.
+//
+// Both passes run only over the columns where something MOVES (2026-09-06): render() compares each column's
+// planned key sequence with its current children's (feed-card-gate.ts sameKeySeq) and hands the differing
+// columns in as `which`. The event is "a card's column or order changed"; a column whose sequence is
+// unchanged has nothing that can glide, so its rects go unread. And the Last pass reads EVERY rect before
+// writing ANY transform: a transform write creates a paint layer and dirties layout, so the old per-card
+// read/write interleave forced about 60 layouts per delta (measured) on top of the one the frame needs.
+// Cards below a card whose HEIGHT changed used to glide in place as a side effect of reading every column;
+// they snap now — that glide keyed on no event.
 type FlipState = { rect: DOMRect; col: string };
-const FLY_COLS: ("asks" | "needsInput" | "completed")[] = ["asks", "needsInput", "completed"];
-function captureCardRects(cols: ReturnType<typeof ensureCols>): Map<string, FlipState> {
+type FlyCol = "asks" | "needsInput" | "completed";
+const FLY_COLS: FlyCol[] = ["asks", "needsInput", "completed"];
+function captureCardRects(cols: ReturnType<typeof ensureCols>, which: readonly FlyCol[]): Map<string, FlipState> {
   const m = new Map<string, FlipState>();
-  for (const key of FLY_COLS) {
+  for (const key of which) {
     const colEl = cols[key];
     for (const c of Array.from(colEl.children) as HTMLElement[]) {
       if (c.dataset.key) m.set(c.dataset.key, { rect: c.getBoundingClientRect(), col: colEl.id });
@@ -4198,10 +4282,12 @@ function captureCardRects(cols: ReturnType<typeof ensureCols>): Map<string, Flip
   }
   return m;
 }
-function flyColumnChanges(first: Map<string, FlipState>, cols: ReturnType<typeof ensureCols>): void {
+function flyColumnChanges(first: Map<string, FlipState>, cols: ReturnType<typeof ensureCols>, which: readonly FlyCol[]): void {
   if (!first.size) return;
   try { if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return; } catch { /* no matchMedia */ }
-  for (const key of FLY_COLS) {
+  // READ phase: every Last rect, before a single write
+  const moves: { c: HTMLElement; dx: number; dy: number; crossed: boolean }[] = [];
+  for (const key of which) {
     const colEl = cols[key];
     for (const c of Array.from(colEl.children) as HTMLElement[]) {
       const k = c.dataset.key; if (!k) continue;
@@ -4214,24 +4300,27 @@ function flyColumnChanges(first: Map<string, FlipState>, cols: ReturnType<typeof
       // layer (z-index:-1 → behind the other cards, so it never sails over them); a card that STAYED in its
       // column but shifted — because the card that left it vacated a slot — glides IN PLACE in normal flow, so
       // the remaining cards reflow smoothly to their new spots instead of snapping there in a discrete jump.
-      const crossed = prev.col !== colEl.id;
-      if (crossed) c.classList.add("fitem-flying");
-      // Invert: jump the card back to its old spot, instantly.
-      c.style.transition = "none";
-      c.style.transform = `translate(${dx}px, ${dy}px)`;
-      // Play: next frame, release the offset with a transition → it glides to its new home.
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        c.style.transition = "transform .42s cubic-bezier(.22, .61, .36, 1)";
-        c.style.transform = "translate(0, 0)";
-      }));
-      const done = (ev: TransitionEvent) => {
-        if (ev.propertyName !== "transform") return;
-        c.removeEventListener("transitionend", done);
-        if (crossed) c.classList.remove("fitem-flying");
-        c.style.transition = ""; c.style.transform = "";   // back to normal flow + stacking
-      };
-      c.addEventListener("transitionend", done);
+      moves.push({ c, dx, dy, crossed: prev.col !== colEl.id });
     }
+  }
+  // WRITE phase
+  for (const { c, dx, dy, crossed } of moves) {
+    if (crossed) c.classList.add("fitem-flying");
+    // Invert: jump the card back to its old spot, instantly.
+    c.style.transition = "none";
+    c.style.transform = `translate(${dx}px, ${dy}px)`;
+    // Play: next frame, release the offset with a transition → it glides to its new home.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      c.style.transition = "transform .42s cubic-bezier(.22, .61, .36, 1)";
+      c.style.transform = "translate(0, 0)";
+    }));
+    const done = (ev: TransitionEvent) => {
+      if (ev.propertyName !== "transform") return;
+      c.removeEventListener("transitionend", done);
+      if (crossed) c.classList.remove("fitem-flying");
+      c.style.transition = ""; c.style.transform = "";   // back to normal flow + stacking
+    };
+    c.addEventListener("transitionend", done);
   }
 }
 
@@ -4584,13 +4673,31 @@ function render() {
   }
 
   // FLIP step 1 (the user 2026-06-27): record every visible card's position + column BEFORE the reconcile, so
-  // a card that changes column can FLY from its old spot to the new one instead of teleporting.
-  const flipFirst = captureCardRects(cols);
+  // a card that changes column can FLY from its old spot to the new one instead of teleporting — in the
+  // columns where something moves (see the FLIP block): a column whose planned key sequence equals its
+  // current one has no card entering, leaving or changing place. A quiet delta reads no rects at all.
+  const flipCols = FLY_COLS.filter((k) => !sameKeySeq(childKeys(cols[k]), buckets[k].map((e) => entryKey(e, cols[k]))));
+  const flipFirst = captureCardRects(cols, flipCols);
 
+  // The per-card update gate's inputs, resolved ONCE for this render (feed-card-gate.ts cardInputsKey):
+  // everything updateAskCard reads outside the ask object. Where the delta cost went before the gate, on
+  // the recorded 810-card board (tools/ui-bench.mjs, a 542 KB delta with 58 changed cards, 775 ms in the
+  // handler): about 55% the forced layout of the whole invalidated tree at `list.scrollTop = prevScroll`
+  // below, about 20% the 810 updateAskCard calls, about 10% the FLIP rect passes, about 10% the parse.
+  // Skipping the unchanged cards shrinks the dirty set that layout processes as well as the JS, so the
+  // per-delta cost now scales with the cards the kernel re-sent (during activity, every card of every
+  // working session per rebuild), not with the board.
+  const gprefs = feedPrefs();
+  const gate: GateEnv = {
+    dot: dotFor, working: (n) => workingSet.has(n), userTodos: userTodosMap,
+    focusId: hoverAskId ?? pinnedAskId, pinnedId: pinnedAskId, notifyOn: cardNotifyOn,
+    prefs: { grouped: gprefs.grouped, collapsed: gprefs.collapsed, colormap: gprefs.colormap },
+    hostDown: hostIsDown, selfHost: feedSelfHost, seq: ++renderSeq,
+  };
   const desired = new Set<string>();
-  reconcileCol(cols.asks, buckets.asks, desired);
-  reconcileCol(cols.needsInput, buckets.needsInput, desired);
-  reconcileCol(cols.completed, buckets.completed, desired);
+  reconcileCol(cols.asks, buckets.asks, desired, gate);
+  reconcileCol(cols.needsInput, buckets.needsInput, desired, gate);
+  reconcileCol(cols.completed, buckets.completed, desired, gate);
   // the count chip shows the number only when there ARE cards; an empty column shows nothing — not "0"
   // (the user 2026-06-25). Empty string collapses the chip (it has no padding/background of its own).
   const setCount = (elc: HTMLElement, n: number) => { elc.textContent = n ? String(n) : ""; elc.style.display = n ? "" : "none"; };
@@ -4693,7 +4800,7 @@ function render() {
     if (prevKey && prevKey !== curKey && flipFirst.has(prevKey)) flipFirst.set(curKey, flipFirst.get(prevKey)!);
   }
   // FLIP step 2: any card whose column changed flies from its recorded spot to the new one (in the back layer).
-  flyColumnChanges(flipFirst, cols);
+  flyColumnChanges(flipFirst, cols, flipCols);
   prevItemKey = curItemKey;   // remember this render's identity map for the next FLIP-across-identity
   renderModal();   // keep the ⛶ full-screen tree (if open) in sync with this push
   applyExtHover(); // reconcile/renderModal may have rebuilt nodes — re-apply the rail-dot outlines (cards AND modal rows)
@@ -5463,23 +5570,48 @@ function revealCards(keys: Set<string>) {
   }
 }
 
-// Keep every "Xm ago" AND the recency wash honest between host pushes. The host no longer reposts for the
-// fade (2026-09-02): the tint is computed here from each card's own `t` on the live clock (nowSec), so an
-// unchanged board costs nothing on the wire and the fade still moves — on ask cards, group cards, the
-// sub-goal rows and an open modal alike (every age-bearing element is stamped, feed-age.ts), not only the
-// ask cards (the 2026-09-03 review found group cards and the modal frozen on a quiet board).
-setInterval(() => {
+// ── the 15 s LIVE PASS ────────────────────────────────────────────────────────────────────────────
+// Keep every "Xm ago", every running duration AND the recency wash honest between host pushes. The host no
+// longer reposts for the fade (2026-09-02): the tint is computed here from each card's own `t` on the live
+// clock (nowSec), so an unchanged board costs nothing on the wire and the fade still moves — on ask cards,
+// group cards, the sub-goal rows and an open modal alike (every age-bearing element is stamped,
+// feed-age.ts), not only the ask cards (the 2026-09-03 review found group cards and the modal frozen on a
+// quiet board). Since the per-card update gate (feed-card-gate.ts) repaints a card only when its inputs
+// change, this pass is what moves time on every card the kernel does not re-send.
+//
+// The pass WRITES ONLY WHAT CHANGED (2026-09-06). Writing every label and tint every 15 s cost 69-119 ms of
+// style and layout per tick on an 800-card board (measured with tools/ui-bench.mjs) for the 2-13 labels
+// whose minute actually rolled over: in a document that has ever created a MutationObserver — gear.js
+// does at boot — Blink treats an identical textContent write as a real Text-node replacement (feed-age.ts
+// has the mechanism, and paintAge the compare). Tints compare against the last string written (applyTint).
+// A pane nobody can see skips the pass and catches up once when shown (liveRefresher, the Outline
+// pane's pattern): a hidden tab (document.hidden), or a pane the shell has display:none'd — a zero
+// viewport, since document.hidden stays false for it.
+function livePass(): void {
   const now = nowSec();
   for (const card of askEls.values()) {
     const it = (card as any)._it as AskItem | undefined;
-    if (it) card.style.background = cardTint(now - it.t);
+    if (!it) continue;
+    applyTint(card, now - it.t);
+    // the latched Continue's hover title names how long ago it was sent (contTitle, T150): a title, so it
+    // cannot be stamped — refreshed here for the few latched buttons, compare-then-write like the rest
+    const cont = (card as any)._cont as HTMLButtonElement | undefined;
+    if (cont && cont.disabled) {
+      const ct = contTitle(true, "a continue", it.followupAt);
+      if (cont.title !== ct) cont.title = ct;
+    }
   }
   for (const card of groupEls.values()) {
     const g = (card as any)._g as AskGroup | undefined;
-    if (g) card.style.background = cardTint(now - g.t);
+    if (g) applyTint(card, now - g.t);
   }
   refreshAges(document.querySelectorAll<HTMLElement>("[data-age-t]"), now, relAge, ageTint);
-}, 15000);
+}
+const paneHidden = () => document.hidden || window.innerWidth === 0 || window.innerHeight === 0;
+const live = liveRefresher({ hidden: paneHidden, pass: livePass });
+setInterval(live.tick, 15000);
+document.addEventListener("visibilitychange", live.catchUp);
+window.addEventListener("resize", live.catchUp);
 
 initFileView((m) => vscodeApi?.postMessage(m));   // the file browser opens the viewer in this pane (and saves ride the poster)
 // …and how the viewer names the session a file was opened from: this pane's session list (the same tab
