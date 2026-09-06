@@ -15,22 +15,39 @@ record and two booleans. Every line it returns carries NAMES and fingerprints on
     names dropped.
   BothModes — ROMP_EXPECTED_AUTH=key with nothing to inject and no apiKeyHelper rings in command
     mode only (file mode's boot log stays upstream's; its inits report the mismatch).
-  Floors — conftest points ROMP_SYSTEMD_DIR, ROMP_LAUNCHD_DIR and CLAUDE_CONFIG_DIR at empty dirs.
+  Floors — conftest points ROMP_SYSTEMD_DIR, ROMP_LAUNCHD_DIR and CLAUDE_CONFIG_DIR at empty dirs, and
+    ROMP_SERVICE_ENV_FILE (both spellings) at a path that does not exist.
+  PureOnItsInputs — a hypothetical environ takes its mode from the inputs handed in (its own line, else
+    the env-file TEXT), never from the env file this process is configured from: a decoy service.env at
+    the default location under a private HOME is not read (2026-09-06).
   UnitParsing — Environment= lines and plist pairs (names only), ExecStart shapes and drop-in
     overrides, the paths _unit_texts reads (bin/romp-service's variables).
   NoValueAnywhere — with fixture values in every input, the verdict's JSON carries none.
   BootAndHealth — the backend runs the verdict once at construction, logs its lines (the problem
     ring for the flagged ones), and api_health_snapshot()["keySource"] carries the documented fields;
-    in file mode with nothing declared, no "key source:" line is logged at all.
+    in file mode with nothing declared, no "key source:" line is logged at all. A credential command
+    that fails is ONE problem line per failure episode whichever path first runs it — the judges' and
+    the catalog's wire (credential_set), a judge's key read (work_api_key), the status report, the
+    api-health snapshot, the key cycle — and a later success followed by another failure is a second
+    (2026-09-06; before this only the connect, boot and refresh paths said anything). The boot is one
+    line per fact: the verdict's line (with the run's detail) is the boot's report of a failure and the
+    noter says nothing for it then or for the same failure on the next path (before, two problem lines
+    about one failure). The noter orders records by envsource's `attempt`: an older run's record noted
+    after a newer one's is ignored, so a thread held between take() and the note cannot say a stale
+    failure after the recovery or a stale recovery during a failure. A backend's own readers note on
+    that backend; the module-level readers note through the last constructed one, held weakly, so a
+    dropped backend is released and receives nothing.
 
 Synthetic throughout: values are "romp-test-fixture-" + a uuid assembled at run time; the fake
 command is a script in a temp dir; paths are temp paths.
 """
+import gc
 import json
 import os
 import tempfile
 import unittest
 import uuid
+import weakref
 from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -306,6 +323,73 @@ class Floors(unittest.TestCase):
         self.assertTrue(os.environ.get("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR"),
                         "the one live test that borrows the user's helper command has a way to the real location")
 
+    def test_the_env_file_is_floored_to_a_path_that_does_not_exist(self):
+        # both spellings keysource accepts, one path, absent — so every read is the "no file" case and no
+        # test resolves this machine's service.env (its default lives under HOME)
+        default = os.path.realpath(os.path.join(os.path.expanduser("~"), ".config", "romp", "service.env"))
+        for var in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"):
+            p = os.environ.get(var) or ""
+            self.assertTrue(p, "%s is not floored" % var)
+            self.assertFalse(os.path.exists(p), "%s points at a file that exists" % var)
+            self.assertNotEqual(os.path.realpath(p), default, "%s points at this machine's default env file" % var)
+        self.assertEqual(os.environ["ROMP_SERVICE_ENV_FILE"], os.environ["ROMP_SERVICE_ENV"])
+        self.assertEqual(ks.service_env_path(), os.environ["ROMP_SERVICE_ENV_FILE"])
+        self.assertEqual(es.command(), "", "no file: no command line read from one")
+
+
+class PureOnItsInputs(unittest.TestCase):
+    """key_source_verdict on a HYPOTHETICAL environ decides its mode from the inputs it is handed — the
+    environ's own ROMP_CREDENTIAL_COMMAND, else the line in `service_env_text` — and never from the env
+    file this process is configured from. envsource's readers keep the process's file as their fallback
+    whatever environ they are given (`es.command({})` is the file's line alone: keyswap's probe for a
+    line set in the file rather than the shell), so the verdict does not route a hypothetical through
+    them. Proven against a decoy: a service.env at the DEFAULT location under a private HOME, the
+    conftest floor lifted for the test, so the decoy is exactly the file this process would read."""
+
+    VARS = ("HOME", "XDG_CONFIG_HOME", "ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV", "ROMP_CREDENTIAL_COMMAND")
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self._before = {v: os.environ.get(v) for v in self.VARS}
+        es._reset()
+
+    def tearDown(self):
+        for v, was in self._before.items():
+            if was is None:
+                os.environ.pop(v, None)
+            else:
+                os.environ[v] = was
+        es._reset()
+
+    def test_a_decoy_env_file_at_the_default_location_is_not_read_for_a_hypothetical_environ(self):
+        os.environ["HOME"] = self.d
+        for v in self.VARS[1:]:
+            os.environ.pop(v, None)
+        decoy = os.path.join(self.d, ".config", "romp", "service.env")
+        os.makedirs(os.path.dirname(decoy))
+        with open(decoy, "w") as fh:
+            fh.write('ROMP_PERF=1\nROMP_CREDENTIAL_COMMAND=decoy-command "$1"\n')
+        es._reset()
+        # the setup, proven: the decoy IS the file this process resolves and reads
+        self.assertEqual(ks.service_env_path(), decoy)
+        self.assertEqual(es.command(), 'decoy-command "$1"', "the process's own read takes the file's line")
+        self.assertEqual(es.command({}), 'decoy-command "$1"',
+                         "an explicit environ replaces the environment, not the file: the file-only probe keyswap uses")
+        # the property: a hypothetical environ is file mode — the decoy was not consulted
+        v = verdict({})
+        self.assertEqual(v["mode"], "file")
+        self.assertIsNone(v["lastRun"])
+        self.assertEqual(verdict({"ROMP_EXPECTED_AUTH": "key"})["mode"], "file")
+        self.assertEqual(verdict({"ROMP_CREDENTIAL_COMMAND": "  "})["mode"], "file", "blank is unset")
+        # the inputs decide: the environ's own line, else the env-file TEXT handed in — the boot's rule
+        self.assertEqual(verdict(CMD, snapshot=ok_snap())["mode"], "command")
+        self.assertEqual(verdict({}, service_env_text='ROMP_PERF=1\nROMP_CREDENTIAL_COMMAND="x $1"\n',
+                                 snapshot=ok_snap())["mode"], "command", "the file's TEXT is an input; the line in it selects")
+        self.assertEqual(verdict({}, service_env_text="ROMP_CREDENTIAL_COMMAND=\n")["mode"], "file",
+                         "an empty assignment is no command, as in the file itself")
+        # the process's own environment (None) keeps the boot's read: its file decides
+        self.assertEqual(sb.key_source_verdict(None, snapshot=ok_snap())["mode"], "command")
+
 
 class UnitParsing(unittest.TestCase):
     def test_environment_lines_and_plist_pairs_names_only(self):
@@ -520,6 +604,259 @@ class BootAndHealth(unittest.TestCase):
         self.assertEqual(be.key_source, {"mode": "command", "lines": []})
         self.assertTrue(any("boot verdict failed" in p["text"] for p in be.problems()))
         self.assertEqual(be.api_health_snapshot()["keySource"]["mode"], "command")
+
+    # -- a failed run is one problem line per episode, whichever path first runs the command -------------
+
+    def failing(self, code):
+        """The configured command now exits `code` (its stderr is a fixed line: a byte count, never quoted)."""
+        with open(os.path.join(self.d, "cmd.sh"), "w") as fh:
+            fh.write("#!/bin/sh\necho 'the store is unreachable' >&2\nexit %d\n" % code)
+
+    def failed_lines(self, be):
+        return [p["text"] for p in be.problems() if p["text"].startswith("credential command: failed")]
+
+    def boot_ok(self):
+        """A backend booted on a WORKING command (one run, no failure said), and the store then broken: the
+        refusal a judge call reports (credential_invalidate, the judges' wire) makes the cached set stale,
+        so the next reader — whichever path — runs the command and meets the failure first."""
+        self.v = fixture_value()
+        self.command({"ANTHROPIC_LP_API_KEY": self.v})
+        be = self.construct()
+        self.assertEqual(es._runs, 1)
+        self.assertEqual(self.failed_lines(be), [])
+        self.failing(3)
+        self.assertTrue(sb.credential_invalidate("HTTP 401 on a judge call"))
+        self.assertEqual(es._runs, 1, "invalidation runs nothing by itself")
+        return be
+
+    def test_a_failure_first_seen_through_the_judges_and_catalogs_wire_is_one_problem_line_per_episode(self):
+        be = self.boot_ok()
+        vals = sb.credential_set()                       # jd._ENV_SET_FN: a judge envelope, the catalog fetch
+        self.assertEqual(es._runs, 2, "the stale set is re-read: the command ran, on this path")
+        self.assertEqual(vals, {"ANTHROPIC_LP_API_KEY": self.v}, "a failed run stands on the previous set")
+        lines = self.failed_lines(be)
+        self.assertEqual(len(lines), 1, be.problems())
+        self.assertIn("exited 3", lines[0])
+        self.assertIn("last successful run (sha256:%s)" % es.set_fingerprint(vals), lines[0])
+        # the same failure again, on every path that reads the set: no second line
+        sb.credential_set()
+        sb.credential_set()
+        self.assertEqual(es._runs, 4, "one run per caller after a failure — and one line for all of them")
+        self.assertEqual(sb.work_api_key(), "", "a judge's key read: the set carries no ANTHROPIC_API_KEY")
+        st = be.key_source_status()
+        self.assertIn("exited 3", st["err"])
+        health = be.api_health_snapshot()["keySource"]["lastRun"]
+        self.assertFalse(health["ok"])
+        self.assertTrue(health["stale"])
+        self.assertGreaterEqual(es._runs, 7)
+        self.assertEqual(len(self.failed_lines(be)), 1, "the episode is one line however many paths met it")
+        # the recovery ends the episode: an info line, not a problem
+        self.command({"ANTHROPIC_LP_API_KEY": self.v})
+        self.assertEqual(sb.credential_set(), {"ANTHROPIC_LP_API_KEY": self.v})
+        self.assertEqual(len([m for m in self.logged if m.startswith("credential command: succeeded again")]), 1)
+        self.assertEqual(len(self.failed_lines(be)), 1)
+        # a later failure is a second episode: a second line. The served call re-arms the once-per-credential
+        # refusal path (jd._ENV_OK_FN), the next refusal invalidates, the next read meets the new failure
+        self.assertTrue(sb.credential_auth_ok(""))
+        self.assertTrue(sb.credential_invalidate("HTTP 401 on a judge call"))
+        self.failing(4)
+        sb.credential_set()
+        lines = self.failed_lines(be)
+        self.assertEqual(len(lines), 2, be.problems())
+        self.assertIn("exited 4", lines[1])
+        sb.credential_set()
+        self.assertEqual(len(self.failed_lines(be)), 2)
+        blob = json.dumps(be.problems()) + "\n".join(self.logged)
+        self.assertNotIn(self.v, blob)
+        self.assertNotIn("the store is unreachable", blob, "the command's stderr is a byte count, never quoted")
+
+    def test_a_failure_first_seen_by_the_status_report_or_the_health_snapshot_is_said_once(self):
+        be = self.boot_ok()
+        be.key_source_status()
+        self.assertEqual(es._runs, 2)
+        self.assertEqual(len(self.failed_lines(be)), 1)
+        be.api_health_snapshot()
+        be.key_source_status()
+        self.assertEqual(len(self.failed_lines(be)), 1)
+
+    def test_a_failure_first_seen_by_the_key_cycle_is_said_once(self):
+        be = self.boot_ok()
+        sid = "11111111-2222-3333-4444-000000000021"
+        reg = {"sid": sid, "name": "web", "cwd": "/tmp", "auth": "login"}
+        sb.write_reg(be.state_dir, sid, reg)                 # owned; a live session object, no CLI
+        s = sb.SdkSession(be, reg)
+        s.auth_live = "login"
+        s._launched_set_fp = ""                              # launched with no role variables: the cycle has a reason
+        reconnects = []
+        s.request_reconnect = lambda defer=True: reconnects.append(defer)
+        be.sessions[sid] = s
+        self.assertEqual(be.cycle_key(sid), "cycling")
+        self.assertEqual(reconnects, [False])
+        self.assertEqual(es._runs, 2, "one read of the set for the whole compare")
+        self.assertEqual(len(self.failed_lines(be)), 1, be.problems())
+        self.assertEqual(be.cycle_key(sid), "cycling")
+        self.assertEqual(len(self.failed_lines(be)), 1)
+
+    # -- the boot is one line per fact; the noter orders records; a backend's own readers note on it --------
+
+    def about_failure(self, be):
+        """Every problem line about the command having failed, whichever mechanism wrote it."""
+        return [p["text"] for p in be.problems() if "credential command" in p["text"] and "failed" in p["text"]]
+
+    def test_a_boot_on_a_failing_command_is_one_problem_line_and_the_episode_is_primed(self):
+        # the verdict's line carries the run's detail (duration, stderr bytes); it is the boot's one report,
+        # and the noter, handed the record as reported, says nothing at boot and nothing for the same
+        # failure on the next path. Before: the noter's line and the verdict's, two entries for one failure.
+        self.command({"A_TOKEN": fixture_value()})
+        self.failing(3)
+        be = self.construct()
+        self.assertEqual(es._runs, 1, "one run at boot: the record itself answers whether a key is injected")
+        about = self.about_failure(be)
+        self.assertEqual(len(about), 1, be.problems())
+        self.assertTrue(about[0].startswith("key source: the credential command failed — exited 3 after "), about[0])
+        self.assertIn("nothing injected", about[0])
+        self.assertEqual(self.failed_lines(be), [], "the noter's line is not a second entry")
+        self.assertEqual(be.key_source["sessionKeyPath"], "login")
+        self.assertEqual(be.key_source["lastRun"]["ok"], False)
+        # the same failure met next on the judges' wire, the status report and a connect: no more entries
+        sb.credential_set()
+        be.key_source_status()
+        be._work_key_and_source()
+        self.assertGreaterEqual(es._runs, 4, "each caller after a failed run re-runs")
+        self.assertEqual(len(self.about_failure(be)), 1)
+        # the recovery ends the episode the boot opened
+        v = fixture_value()
+        self.command({"A_TOKEN": v})
+        self.assertEqual(sb.credential_set(), {"A_TOKEN": v})
+        self.assertEqual(len([m for m in self.logged if m.startswith("credential command: succeeded again")]), 1)
+        # a failure of another kind after it is a new episode: the noter's one line
+        es.invalidate("the store breaks again")
+        self.failing(4)
+        sb.credential_set()
+        lines = self.failed_lines(be)
+        self.assertEqual(len(lines), 1, be.problems())
+        self.assertIn("exited 4", lines[0])
+        self.assertEqual(len(self.about_failure(be)), 2, "the boot's and the new episode's")
+        self.assertNotIn("the store is unreachable", json.dumps(be.problems()) + "\n".join(self.logged))
+
+    def test_a_working_boot_reports_the_set_once_and_the_noter_speaks_only_on_a_change(self):
+        v = fixture_value()
+        self.command({"ANTHROPIC_LP_API_KEY": v, "ROMP_SID": "x"})
+        be = self.construct()
+        fp = es.set_fingerprint({"ANTHROPIC_LP_API_KEY": v})
+        set_lines = [m for m in self.logged if "sha256:%s" % fp in m]
+        self.assertEqual(len(set_lines), 1, self.logged)
+        self.assertTrue(set_lines[0].startswith("key source: command"), set_lines[0])
+        dropped = [p["text"] for p in be.problems() if "(ROMP_SID)" in p["text"]]
+        self.assertEqual(len(dropped), 1, be.problems())
+        self.assertTrue(dropped[0].startswith("key source:"), dropped[0])
+        self.assertEqual([m for m in self.logged if m.startswith("credential command:")], [],
+                         "the noter says nothing at boot: the verdict's lines are the report")
+        # the same set on every later path is nothing; another set is the noter's change line, once
+        sb.credential_set()
+        be.key_source_status()
+        be.api_health_snapshot()
+        self.assertEqual([m for m in self.logged if m.startswith("credential command:")], [])
+        w = fixture_value()
+        self.command({"ANTHROPIC_LP_API_KEY": w, "ROMP_SID": "x"})
+        es.invalidate("a rotation")
+        sb.credential_set()
+        change = [m for m in self.logged if m.startswith("credential command: sessions now launch with the set")]
+        self.assertEqual(len(change), 1, self.logged)
+        self.assertIn("sha256:%s" % es.set_fingerprint({"ANTHROPIC_LP_API_KEY": w}), change[0])
+        self.assertEqual(len([p["text"] for p in be.problems() if "(ROMP_SID)" in p["text"]]), 1,
+                         "the same dropped list, primed at boot, is not said again")
+        self.assertNotIn(v, "\n".join(self.logged))
+        self.assertNotIn(w, "\n".join(self.logged))
+
+    def test_a_record_from_an_older_run_noted_after_a_newer_ones_is_ignored(self):
+        # envsource releases its lock when take() returns, before the record reaches the noter, so a thread
+        # held between the two hands over a record an intervening run has superseded. The noter orders
+        # records by their `attempt`: an older one is ignored, an equal one (callers coalesced on one run)
+        # is not. Two threads' interleaving, replayed sequentially with the records they would hold.
+        be = self.boot_ok()                                   # a working boot; the command now exits 3, the set stale
+        older, _vals = es.take()                              # thread A: the failed run's record, not yet noted
+        self.assertFalse(older["ok"])
+        self.command({"ANTHROPIC_LP_API_KEY": self.v})
+        newer, _vals = es.take()                              # thread B: the store is back, its run succeeds…
+        self.assertTrue(newer["ok"])
+        self.assertGreater(newer["attempt"], older["attempt"])
+        be._note_credential_set(newer)                        # …and is noted first
+        be._note_credential_set(older)                        # thread A resumes with its stale record
+        self.assertEqual(self.failed_lines(be), [], "a failure that predates the recovery is not said after it")
+        self.assertEqual([m for m in self.logged if m.startswith("credential command: succeeded again")], [])
+        self.assertEqual(be._cred_noted_attempt, newer["attempt"])
+        # the guard was not poisoned by the stale record: the next real failure of that kind IS said
+        es.invalidate("the store breaks again")
+        self.failing(3)
+        sb.credential_set()
+        self.assertEqual(len(self.failed_lines(be)), 1, be.problems())
+        # the other order: a good record from before a failure, noted after it, is not a recovery
+        self.command({"ANTHROPIC_LP_API_KEY": self.v})
+        good, _vals = es.take()                               # thread A: the recovery's record, not yet noted
+        self.assertTrue(good["ok"])
+        es.invalidate("and breaks once more")
+        self.failing(3)
+        bad, _vals = es.take()                                # thread B: the failure, noted first
+        be._note_credential_set(bad)
+        be._note_credential_set(good)
+        self.assertEqual([m for m in self.logged if m.startswith("credential command: succeeded again")], [],
+                         "a recovery that predates the failure is not said during it")
+        self.assertEqual(be._cred_err_said, "exited 3", "the episode stands")
+        sb.credential_set()                                   # the same failure again: still the one line
+        self.assertEqual(len(self.failed_lines(be)), 1, be.problems())
+        # the rule is on the ordinal alone: a record with the SAME ordinal is processed (a copy of the
+        # newest record carrying one more fact is said), an older one is dropped whole
+        self.command({"ANTHROPIC_LP_API_KEY": self.v})
+        rec, _vals = es.take()
+        be._note_credential_set(rec)
+        self.assertEqual(len([m for m in self.logged if m.startswith("credential command: succeeded again")]), 1)
+        be._note_credential_set(dict(rec, dropped=["ROMP_X"]))
+        be._note_credential_set(dict(older, dropped=["ROMP_Y"]))
+        said = [p["text"] for p in be.problems() if "ROMP_* variable" in p["text"]]
+        self.assertEqual(len(said), 1, be.problems())
+        self.assertIn("(ROMP_X)", said[0])
+
+    def test_a_backends_own_readers_note_on_it_and_a_dropped_backend_receives_no_notes(self):
+        # the kernel constructs one backend per process; a test process constructs several. The module-level
+        # readers (no backend in hand) note through the LAST constructed; a backend's own readers note on
+        # that backend, whichever was constructed last; and the registration is weak, so a dropped backend
+        # is released and receives nothing (a strong reference kept it alive until the next construction).
+        self.v = fixture_value()
+        self.command({"ANTHROPIC_LP_API_KEY": self.v})
+        b1 = self.construct()
+        b2 = self.construct()
+        self.assertEqual(es._runs, 1, "the second boot reads the cached record")
+        self.assertIs(sb._credential_noter().__self__, b2, "last constructed: the module-level readers' noter")
+        self.failing(3)
+        es.invalidate("the store is unreachable")
+        b1.key_source_status()                                # b1's own reader meets the failure first
+        self.assertEqual(es._runs, 2)
+        self.assertEqual(len(self.failed_lines(b1)), 1, "said in the ring of the backend whose reader ran the command")
+        self.assertEqual(self.failed_lines(b2), [], "not in the last constructed backend's ring")
+        b1.api_health_snapshot()
+        b1._work_key_and_source()
+        self.assertEqual(len(self.failed_lines(b1)), 1, "one episode, one line, across b1's own paths")
+        sb.credential_set()                                   # a module-level reader: the registered backend notes
+        self.assertEqual(len(self.failed_lines(b2)), 1, b2.problems())
+        self.assertEqual(len(self.failed_lines(b1)), 1)
+        ref = weakref.ref(b2)
+        del b2
+        gc.collect()
+        self.assertIsNone(ref(), "the registration does not keep a dropped backend alive")
+        self.assertIsNone(sb._credential_noter(), "a dropped backend is not the noter")
+        es.invalidate("again")
+        self.failing(4)
+        runs = es._runs
+        vals = sb.credential_set()                            # runs, noted by no one: no live registrant, no error
+        self.assertEqual(es._runs, runs + 1)
+        self.assertEqual(vals, {"ANTHROPIC_LP_API_KEY": self.v}, "the previous set stands")
+        self.assertEqual(len(self.failed_lines(b1)), 1, "b1 is not registered and none of its own readers ran")
+        self.assertFalse(any("exited 4" in t for t in self.failed_lines(b1)))
+        b3 = self.construct()                                 # the next backend's boot verdict reports what it meets
+        self.assertIs(sb._credential_noter().__self__, b3)
+        self.assertTrue(any("exited 4" in t for t in self.about_failure(b3)), b3.problems())
+        self.assertNotIn(self.v, json.dumps(b1.problems()) + json.dumps(b3.problems()) + "\n".join(self.logged))
 
 
 if __name__ == "__main__":

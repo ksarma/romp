@@ -37,15 +37,23 @@ What these pin, in the order the module is used:
     gets a fresh fingerprint and an unchanged one keeps its entry; and an entry is never written
     over a newer one, so a late connect's older run cannot hide a refusal on the current output.
   NothingLeaks — no fixture value in any status field or reason, whatever the command does with it.
+  Floor — conftest's floor: the three command variables absent and the selector file pointed at a
+    path that does not exist, at import and per test; this module's own import leaves the selector
+    floored; a module that pops it at import fails collection loudly.
 
 Synthetic throughout: every value is "romp-test-fixture-" + a uuid, assembled at run time (no
 credential-shaped literal in the file); fake commands are scripts written into a temp dir; a temp
-CLAUDE_CONFIG_DIR carries the fake settings.json. conftest pops the four variables before every
-test; the classes below set what they need in setUp and restore the world after.
+CLAUDE_CONFIG_DIR carries the fake settings.json. conftest pops the three command variables and
+floors the selector file before every test; this module does the same at import (a pop there would
+undo conftest's floor for every module collected after it); the classes below set what they need in
+setUp and restore the world after.
 """
 import json
 import os
+import shutil
 import stat
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -60,9 +68,13 @@ os.environ.pop("ROMP_STATE_DIR", None)
 _NO_ENV = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
 os.environ["ROMP_SERVICE_ENV_FILE"] = _NO_ENV
 os.environ["ROMP_SERVICE_ENV"] = _NO_ENV
-for _v in ("ROMP_CREDENTIAL_COMMAND", "ROMP_CREDENTIAL_SELECTOR_FILE",
-           "ROMP_CREDENTIAL_NAMES", "ROMP_CREDENTIAL_TIMEOUT_S"):
+for _v in ("ROMP_CREDENTIAL_COMMAND", "ROMP_CREDENTIAL_NAMES", "ROMP_CREDENTIAL_TIMEOUT_S"):
     os.environ.pop(_v, None)
+# The selector file is FLOORED, never popped (conftest's rule): absent means the default under HOME, and
+# a pop here ran during collection, leaving that default in force for every module collected after this
+# one. A path under this module's own state root that is never created, as conftest floors it.
+os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-credential-selector")
+_SELECTOR_AT_IMPORT = os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"]   # what this import left for the modules after it
 
 es = SourceFileLoader("romp_envsource", os.path.join(ROOT, "kernel", "envsource.py")).load_module()
 ks = es._keysrc
@@ -1439,12 +1451,97 @@ class NothingLeaks(_Lab):
 
 
 class Floor(unittest.TestCase):
-    """conftest's import-time and per-test floor: no test starts with a credential command configured."""
+    """conftest's import-time and per-test floor: no test starts with a credential command configured, and
+    none reads the selector file under the real HOME — ROMP_CREDENTIAL_SELECTOR_FILE is floored to a path
+    that does not exist (2026-09-06; popped before, which meant the default under HOME). The import-time
+    half holds only if no module undoes it during collection: this module's own import leaves the floor
+    in place (it popped the variable until 2026-09-06), and conftest refuses a collection that ends
+    without the floor, naming the fix."""
 
-    def test_the_four_variables_are_absent_at_test_start(self):
-        for v in es.CONFIG_VARS:
+    REAL_DEFAULT = os.path.realpath(os.path.join(os.path.expanduser("~"), ".config", "romp", "credential-selector"))
+
+    def test_this_modules_import_left_the_selector_floored(self):
+        self.assertTrue(_SELECTOR_AT_IMPORT, "this module's import left %s absent" % es.SELECTOR_FILE_VAR)
+        self.assertFalse(os.path.exists(_SELECTOR_AT_IMPORT), "the floor this module left points at a file that exists")
+        self.assertNotEqual(os.path.realpath(_SELECTOR_AT_IMPORT), self.REAL_DEFAULT)
+
+    def test_a_module_that_pops_the_selector_variable_at_import_fails_collection_loudly(self):
+        # conftest's pytest_collection_finish, in a subprocess against a copy of conftest: a module whose top
+        # level pops the variable (collection runs it) is refused with the fix named; one that floors it
+        # to a path that does not exist, as this module does, collects.
+        d = tempfile.mkdtemp()
+        try:
+            for name in ("conftest.py", "credential_patterns.py"):
+                shutil.copy(os.path.join(HERE, name), os.path.join(d, name))
+            with open(os.path.join(d, "test_popper.py"), "w") as fh:
+                fh.write("import os\nos.environ.pop('ROMP_CREDENTIAL_SELECTOR_FILE', None)\n\n\n"
+                         "def test_nothing():\n    pass\n")
+            with open(os.path.join(d, "test_floorer.py"), "w") as fh:
+                fh.write("import os\nos.environ['ROMP_CREDENTIAL_SELECTOR_FILE'] = os.path.join(%r, 'no-such-selector')\n\n\n"
+                         "def test_nothing():\n    pass\n" % d)
+
+            def collect(module):
+                r = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
+                                    "--rootdir", d, module], cwd=d, capture_output=True, text=True, timeout=180)
+                return r.returncode, r.stdout + r.stderr
+
+            rc, out = collect("test_popper.py")
+            self.assertNotEqual(rc, 0, out[-800:])
+            self.assertIn("ROMP_CREDENTIAL_SELECTOR_FILE is absent after collection", out, out[-800:])
+            self.assertIn("path that does not exist", out, "the refusal names the fix")
+            rc, out = collect("test_floorer.py")
+            self.assertEqual(rc, 0, out[-800:])
+            self.assertIn("1 test collected", out, out[-800:])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_the_command_names_and_timeout_are_absent_at_test_start(self):
+        for v in (es.COMMAND_VAR, es.NAMES_VAR, es.TIMEOUT_VAR):
             self.assertFalse(v in os.environ, v)
         self.assertFalse(es.configured())
+
+    def test_the_selector_file_is_floored_to_a_path_that_does_not_exist(self):
+        p = os.environ.get(es.SELECTOR_FILE_VAR) or ""
+        self.assertTrue(p, "%s is not floored" % es.SELECTOR_FILE_VAR)
+        self.assertFalse(os.path.exists(p), "the floor points at a file that exists")
+        self.assertEqual(es.selector_path(), p)
+        self.assertNotEqual(os.path.realpath(p), self.REAL_DEFAULT, "the floor is this machine's default selector file")
+        self.assertEqual(es.read_selector(), ("", ""), "no file: no selector and no error, an empty `$1`")
+        self.assertEqual(es._selector_ident()[1], "absent")
+
+    def test_a_decoy_selector_at_the_default_location_under_a_private_home_is_not_read(self):
+        # a command-mode test that sets its fake command and forgets the selector variable: the floor,
+        # not the default under HOME, is what the run reads — proven against a decoy at that default
+        d = tempfile.mkdtemp()
+        before = {v: os.environ.get(v) for v in ("HOME", "XDG_CONFIG_HOME", es.COMMAND_VAR, es.NAMES_VAR)}
+        try:
+            os.environ["HOME"] = d
+            os.environ.pop("XDG_CONFIG_HOME", None)
+            decoy = os.path.join(d, ".config", "romp", "credential-selector")
+            os.makedirs(os.path.dirname(decoy))
+            with open(decoy, "w") as fh:
+                fh.write("hp\n")
+            self.assertEqual(os.path.join(os.path.expanduser("~"), ".config", "romp", "credential-selector"), decoy,
+                             "the decoy is at the default location for this process")
+            self.assertEqual(es.selector_path(), os.environ[es.SELECTOR_FILE_VAR], "the floor names the file, not the default")
+            self.assertEqual(es.read_selector(), ("", ""))
+            script = os.path.join(d, "cmd.sh")
+            with open(script, "w") as fh:
+                fh.write("#!/bin/sh\necho 'A_TOKEN=%s'\n" % fixture_value())
+            os.chmod(script, 0o700)
+            os.environ[es.COMMAND_VAR] = script + ' "$1"'
+            os.environ[es.NAMES_VAR] = "hp"
+            es._reset()
+            snap = es.current()
+            self.assertTrue(snap["ok"])
+            self.assertEqual((snap["selector"], snap["selectorNote"]), ("", ""), "the decoy's token was not read as `$1`")
+        finally:
+            for v, was in before.items():
+                if was is None:
+                    os.environ.pop(v, None)
+                else:
+                    os.environ[v] = was
+            es._reset()
 
 
 if __name__ == "__main__":

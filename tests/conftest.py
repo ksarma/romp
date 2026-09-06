@@ -118,22 +118,50 @@ def _no_cli_scope():
 # No test may run the REAL credential command (2026-09-05): kernel/envsource.py runs
 # ROMP_CREDENTIAL_COMMAND — an installation's secret-store command — at backend construction and on every
 # stale read, and a self-hosted romp's tool shells inherit the manager's environment, variable
-# included. Popped, so every test starts in file mode with no command, no selector file, no names
-# and the default timeout; a test that exercises the command source writes its own fake script and
-# sets the variables in setUp (which runs after this fixture). Import-time for collection, per-test
-# re-assert below, on the same reasoning as the manager-port floor. The env-file floor above already
-# keeps the same four lines from being read out of the real service.env.
-_CREDENTIAL_VARS = ("ROMP_CREDENTIAL_COMMAND", "ROMP_CREDENTIAL_SELECTOR_FILE",
-                    "ROMP_CREDENTIAL_NAMES", "ROMP_CREDENTIAL_TIMEOUT_S")
+# included. Popped, so every test starts in file mode with no command, no names and the default
+# timeout; a test that exercises the command source writes its own fake script and sets the
+# variables in setUp (which runs after this fixture). Import-time for collection, per-test re-assert
+# below, on the same reasoning as the manager-port floor. The env-file floor above already keeps the
+# same lines from being read out of the real service.env.
+_CREDENTIAL_VARS = ("ROMP_CREDENTIAL_COMMAND", "ROMP_CREDENTIAL_NAMES", "ROMP_CREDENTIAL_TIMEOUT_S")
 for _v in _CREDENTIAL_VARS:
     os.environ.pop(_v, None)
+
+# ...and no test may read the REAL selector file (2026-09-06): envsource.selector_path defaults to
+# ${XDG_CONFIG_HOME:-~/.config}/romp/credential-selector, so a command-mode test that wrote its fake
+# command and forgot this variable read this machine's mode file — its token as `$1`, its stat
+# identity in the cache key — and passed or failed on what the box had selected. FLOORED to a path
+# under the state root that is never created, not popped like the three above: an absent variable is
+# the one unsafe state here, since absent means the default. The "no selector" case is the result —
+# read_selector() answers ("", ""), the command runs with an empty `$1` — exactly as on a box that
+# never ran `romp keyswap <name>`. A test that needs a selector points the variable at a temp path in
+# setUp, which runs after the fixture; tests/test_envsource.py's Floor class pins this.
+_NO_SELECTOR = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-credential-selector")
+os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = _NO_SELECTOR
 
 
 @pytest.fixture(autouse=True)
 def _no_credential_command():
     for var in _CREDENTIAL_VARS:
         os.environ.pop(var, None)
+    os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = _NO_SELECTOR
     yield
+
+
+def pytest_collection_finish(session):
+    """The import-time half of the selector floor, checked where it can fail: collection runs every test
+    module's top level after the floor above, and a module that pops ROMP_CREDENTIAL_SELECTOR_FILE there
+    (or points it at a file that exists) undoes the floor for every module collected after it — a
+    later module reading the selector at import would read the developer's own mode file, the read the
+    floor exists to prevent, before any per-test re-assert runs. Refused here, naming the fix, rather
+    than left to pass on what the box has selected (2026-09-06: tests/test_envsource.py popped it at
+    import, from before the floor existed). tests/test_envsource.py's Floor class pins this."""
+    p = os.environ.get("ROMP_CREDENTIAL_SELECTOR_FILE") or ""
+    if not p or os.path.exists(p):
+        raise pytest.UsageError(
+            "ROMP_CREDENTIAL_SELECTOR_FILE is %s after collection: a test module popped it, or pointed it at a "
+            "real file, at import. Floor it at module level to a path that does not exist, as tests/conftest.py "
+            "and tests/test_envsource.py do." % ("absent" if not p else "a path that exists (%s)" % p))
 
 
 # No test may read the REAL service unit, launchd plist or Claude Code settings (2026-09-05):

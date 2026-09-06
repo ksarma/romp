@@ -31,6 +31,7 @@ import threading
 import time
 import traceback
 import uuid
+import weakref
 from collections import deque
 from pathlib import Path
 
@@ -2832,10 +2833,11 @@ def work_api_key() -> str:
     outright: a key line in the env file and the startup claim are IGNORED there (the boot verdict
     says so once, naming the file or the variable), because a stray copy silently becoming the
     injected key is the wrong-account failure the mode exists to prevent. The startup pop still
-    happens first, for the same one-claimer reason."""
+    happens first, for the same one-claimer reason. The read is _noted_take's: a run that fails here
+    (a judge's key-billed call reads the key this way) is said once, like one on a connect."""
     startup = startup_api_key()      # ALWAYS first: the pop must happen even when the file answers
     if _envsrc.configured():
-        return _envsrc.injection().get(_envsrc.KEY_VAR, "")
+        return _noted_take()[1].get(_envsrc.KEY_VAR, "")
     live = _keysrc.read_key()
     _check_key_file_agrees(startup, live)
     return live or startup
@@ -2847,12 +2849,63 @@ def key_source_mode() -> str:
     return "command" if _envsrc.configured() else "file"
 
 
+_CREDENTIAL_NOTER = None   # a WEAK reference to the last constructed backend's _note_credential_set: where
+                           # the module-level readers (no backend in hand) say a credential-command run.
+                           # The kernel builds ONE backend per process and never rebuilds it, so "last
+                           # constructed" is the live one there; a test process constructs several, and
+                           # each backend's own readers (_cred_take) note on that backend, not on this.
+                           # Weak, so a backend that is dropped is released — a strong reference kept a
+                           # test's earlier backend alive until the next construction — and a dropped
+                           # backend receives nothing.
+
+
+def _register_credential_noter(fn) -> None:
+    """Register `fn` (a backend's bound _note_credential_set) as the module-level readers' noter,
+    replacing whatever was registered: last constructed wins (see _CREDENTIAL_NOTER)."""
+    global _CREDENTIAL_NOTER
+    try:
+        _CREDENTIAL_NOTER = weakref.WeakMethod(fn)
+    except TypeError:                      # a plain function (a test's stand-in): held as it is
+        _CREDENTIAL_NOTER = lambda: fn
+
+
+def _credential_noter():
+    """The registered noter, or None when none was registered or its backend has been dropped."""
+    ref = _CREDENTIAL_NOTER
+    return ref() if ref is not None else None
+
+
+def _noted_take() -> tuple:
+    """(record, values) from ONE read of the command source (envsource.take), the record routed through
+    the registered backend's noter (SdkBackend._note_credential_set), so a run that FAILED here is a
+    problem line, once per failure episode, exactly as one on a connect is. The module-level readers go
+    through this — work_api_key for a judge's key-billed call, credential_set for the judges' environment
+    and the catalog fetch. Before it they read envsource.injection(), the values alone, and a credential
+    command that broke between two connects (the secret store gone away, then a refusal that
+    invalidated the set) failed silently on every judge call and every catalog fetch until the next
+    session connect, visible only as api-health's keySource.lastRun (2026-09-06). With no backend
+    constructed yet (the catalog's boot fetch can race construction; a standalone import) or the
+    registered one dropped, the read is plain, and the boot verdict says the first run's outcome when
+    a backend is built. The record reaches the noter after envsource's lock is released, so it can be
+    older than one another thread noted meanwhile; the noter orders records (its `attempt` watermark)
+    rather than this reader holding the lock across a log write. The `values` half is under
+    injection()'s rule: nothing may log, store or send it."""
+    snap, vals = _envsrc.take()
+    noter = _credential_noter()
+    if noter is not None:
+        noter(snap)
+    return snap, vals
+
+
 def credential_set() -> dict:
     """The command source's current set — THE value-bearing seam for the callers outside this module
     that merge it into a CHILD's environment: the judges' subprocess env (kernel/judge.py, wired as
     jd._ENV_SET_FN) and the catalog fetch's header (kernel _models_api_credential). {} in file mode.
-    Nothing calling this may log, store or send what it gets."""
-    return _envsrc.injection()
+    Nothing calling this may log, store or send what it gets. The read is _noted_take's: a failed run
+    here is said once, like one on a connect."""
+    if not _envsrc.configured():
+        return {}
+    return _noted_take()[1]
 
 
 def credential_invalidate(reason: str = "") -> bool:
@@ -3144,7 +3197,13 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
     backend, at construction, from inputs the caller hands in (the process environment, the env
     file's text, the unit/drop-in/plist texts, the apiKeyHelper command from settings.json, the
     command source's value-free first-run record, two booleans). Pure on those inputs, so the truth
-    table is testable on any OS without a unit, a command or a key.
+    table is testable on any OS without a unit, a command or a key — the mode included: for the process's
+    own environment (None) it is the pinned verdict (envsource.configured), which read the env file at
+    boot; for an EXPLICIT environ it is that environ's ROMP_CREDENTIAL_COMMAND, else the line in the
+    `service_env_text` handed in — the same rule, on the inputs alone. Before this a hypothetical environ
+    went through envsource.configured, whose env-file fallback is the file THIS PROCESS is configured
+    from (keysource.service_env_path, off os.environ), so a check meant to be pure could take its mode
+    from a file the caller never passed (2026-09-06).
 
     Returns {"mode": "file"|"command", "selector", "sessionKeyPath": "injected"|"helper"|"login",
     "expectedAuth", "helperConfigured", "execStartShell", "credentialNamesFound": {"serviceEnv",
@@ -3166,7 +3225,14 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
     every session init already reports the declared-vs-live mismatch, and the boot log stays
     upstream's)."""
     env = os.environ if environ is None else environ
-    mode = "command" if _envsrc.configured(env) else "file"
+    if environ is None or environ is os.environ:
+        mode = "command" if _envsrc.configured(env) else "file"
+    else:
+        # a hypothetical environ: its own line, else the line in the env-file text the caller handed in —
+        # never the file this process names (envsource's fallback reads that one, for the process)
+        cmd = ((env.get(_envsrc.COMMAND_VAR) or "").strip()
+               or (_envsrc.parse_lines(service_env_text)[0].get(_envsrc.COMMAND_VAR) or "").strip())
+        mode = "command" if cmd else "file"
     exp = _expected_auth_of(env)
     snap = dict(snapshot or {})
     lines: list = []
@@ -6404,6 +6470,14 @@ class SdkBackend:
         self._cred_dropped_said = ()              # the ROMP_* names last said dropped (change-only)
         self._cred_dropped_auth_said = ()         # the CLI-auth names last said dropped (change-only)
         self._cred_timeout_said = None            # the ROMP_CREDENTIAL_TIMEOUT_S problem last said (change-only)
+        self._cred_noted_attempt = -1             # the `attempt` of the record last noted: an older record is ignored
+        self._cred_note_lock = threading.Lock()   # the noter runs on session, judge and catalog threads at once
+        # The module-level readers (work_api_key for a judge's key-billed call, credential_set for the
+        # judges' environment and the catalog fetch) say a failed run through THIS backend's noter: one
+        # episode guard for every path that can run the command (_noted_take). The kernel constructs one
+        # backend per process, so the last one registered is the live one; the reference is weak, so a
+        # backend a test drops is released and notes nothing (_CREDENTIAL_NOTER).
+        _register_credential_noter(self._note_credential_set)
         self.key_source = self._boot_key_source_verdict()
         # The /api-health aggregator (one ring, one lock; see ApiHealth). Fed from _on_message on each
         # session's thread, read by the kernel's route; the salt is minted lazily at the first label.
@@ -6517,7 +6591,7 @@ class SdkBackend:
     def key_source_mode(self) -> str:
         return key_source_mode()
 
-    def credential_fingerprint(self, snap=None) -> tuple:
+    def credential_fingerprint(self, snap=None, values=None) -> tuple:
         """(fingerprint, kind) of the credential a session launched NOW would bill: in command mode
         the set's ANTHROPIC_API_KEY ("key"), else the configured apiKeyHelper's output ("helper" —
         run and hashed inside envsource, the bytes never seen here), else ("", "login") when no
@@ -6525,24 +6599,49 @@ class SdkBackend:
         not a failure) or ("", "") when a configured helper could not be fingerprinted; in file mode
         the file's or the startup key ("key"). The value cycle_key converges sessions on, and what
         the kernel's /keycycle answer carries as keyFp and keyKind. `snap` is a record the caller
-        already took, so one operation reads the set once."""
+        already took and `values` the set beside it (_cred_take's pair), so one operation reads the
+        set once and the helper runs in that set's environment rather than reading it again — which
+        on a failing command is another run. With no record the read happens here, noted."""
         if _envsrc.configured():
-            snap = snap if snap is not None else _envsrc.current()
+            if snap is None:
+                snap, values = self._cred_take()
             if snap.get("hasKey"):
                 return snap.get("keyFp") or "", "key"
             if not _envsrc.helper_command():
                 return "", "login"                # no key in the set, no helper: the machine login bills
-            fp, _reason = _envsrc.helper_fingerprint()
+            fp, _reason = self._helper_fingerprint(snap, values)
             return fp, ("helper" if fp else "")
         fp = _keysrc.fingerprint(self.work_key)
         return fp, ("key" if fp else "")
 
-    def role_fingerprint(self) -> str:
+    def _cred_take(self) -> tuple:
+        """(record, values) from ONE read of the command source, the record said through THIS backend's
+        noter: the instance half of _noted_take, for the readers that hold a backend — the status report,
+        the api-health snapshot and the key cycle. Every path that can run the command reads through one
+        of the two, so a failed run is one problem line per episode wherever it is first seen. On the
+        backend itself, not the registered noter: with two backends in one process (tests) the
+        registered one is the last constructed, and this backend's own report belongs in its own ring."""
+        snap, vals = _envsrc.take()
+        self._note_credential_set(snap)
+        return snap, vals
+
+    @staticmethod
+    def _helper_fingerprint(snap, values) -> tuple:
+        """envsource.helper_fingerprint on the set a caller already took (its values, generation and set
+        identity), so the helper runs in that set's environment and no second read of the command
+        source happens; with no values in hand, the module reads the current set itself."""
+        if values is None:
+            return _envsrc.helper_fingerprint()
+        return _envsrc.helper_fingerprint(values=values, generation=(snap or {}).get("generation"),
+                                          set_seq=(snap or {}).get("setSeq"))
+
+    def role_fingerprint(self, values=None) -> str:
         """The fingerprint of the ROLE VARIABLES a launch would inject now — the command source's set
-        minus ANTHROPIC_API_KEY; "" in file mode or for an empty set."""
+        minus ANTHROPIC_API_KEY; "" in file mode or for an empty set. `values` is a set the caller
+        already took (_cred_take's values half); None reads it here, noted."""
         if not _envsrc.configured():
             return ""
-        vals = _envsrc.injection()
+        vals = dict(values) if values is not None else self._cred_take()[1]
         vals.pop(_envsrc.KEY_VAR, None)
         return _envsrc.set_fingerprint(vals)
 
@@ -6569,7 +6668,7 @@ class SdkBackend:
                 src = "read from %s" % _keysrc.service_env_path()
             self._log("work key: sessions now launch on the key sha256:%s (%s)" % (fp, src))
 
-    def _note_credential_set(self, snap: dict) -> None:
+    def _note_credential_set(self, snap: dict, *, reported: bool = False) -> None:
         """Log what the command source is handing launches, change-only, from its value-free record:
         the set's fingerprint and names when they change; ONE problem line per failure episode (a
         new KIND of failure is new information; the same kind again is not), and the recovery; the
@@ -6577,12 +6676,43 @@ class SdkBackend:
         record's `reasonKey`, the failure's kind (the exit code, a timeout, what the output lacked):
         the full `reason` carries the run's duration and stderr byte count, which differ at every run
         of the same failure, so a guard on it said the same failure again per run. That per-run
-        detail stays in the record, which api-health's lastRun reports."""
+        detail stays in the record, which api-health's lastRun reports.
+
+        Every path that can run the command reports through here — the connect (_work_key_and_source),
+        the operator's refresh, the status report, the api-health snapshot and the key cycle
+        (_cred_take), and through _noted_take the judges' environment and the catalog fetch
+        (credential_set) and a judge's key-billed call (work_api_key). One guard, so a failure first
+        seen on any of them is one line, and the same failure seen next on another path is none; a run
+        that succeeds ends the episode wherever it happens. The boot verdict is the one path that
+        reports the record ITSELF (its lines carry the per-run detail — duration, stderr bytes — the
+        lines here leave out) and then hands it here with `reported`: the guards are set from the
+        record and nothing is said, so the boot is one line per fact and the next path that meets the
+        same facts is silent, as after any note. Serialised: the paths run on session, judge and
+        catalog threads at once, and two threads seeing one new failure must not both say it.
+
+        Ordered: a record is noted only when it is at least as new as the last one noted, by its
+        `attempt` (envsource's ordinal of the run or refusal that produced it; callers that coalesced
+        on one run share it, so an equal ordinal is noted and only an older one is ignored). envsource
+        releases its lock when take() returns, before the record reaches here, so a thread can be held
+        between the two while another thread's run succeeds and is noted first; without the order the
+        held thread said a stale failure after the recovery, and that failure's kind then held the
+        guard against the next real failure of the same kind — a writer whose evidence predates the
+        diary stands down. A record without the field (a hand-built one) is noted unordered."""
+        with self._cred_note_lock:
+            self._note_credential_set_locked(snap, reported)
+
+    def _note_credential_set_locked(self, snap: dict, reported: bool = False) -> None:
+        attempt = snap.get("attempt")
+        if attempt is not None:
+            if attempt < self._cred_noted_attempt:
+                return                        # an older run's record: the log already holds a newer one
+            self._cred_noted_attempt = attempt
+        say = (lambda *a, **k: None) if reported else self._log
         if snap.get("ok") is False:
             reason = snap.get("reasonKey") or snap.get("reason") or "no reason recorded"
             if reason != self._cred_err_said:
                 self._cred_err_said = reason
-                self._log("credential command: failed — %s. %s" % (
+                say("credential command: failed — %s. %s" % (
                     reason,
                     "Sessions launch on the set from its last successful run (sha256:%s) until a run succeeds."
                     % (snap.get("setFp") or "") if snap.get("stale") else
@@ -6593,34 +6723,42 @@ class SdkBackend:
             return
         if self._cred_err_said is not None:
             self._cred_err_said = None
-            self._log("credential command: succeeded again — the set is sha256:%s" % (snap.get("setFp") or ""))
+            say("credential command: succeeded again — the set is sha256:%s" % (snap.get("setFp") or ""))
         fp = snap.get("setFp") or ""
         if fp != self._cred_fp_said:
             self._cred_fp_said = fp
             names = list(snap.get("names") or [])
-            self._log("credential command: sessions now launch with the set sha256:%s (%d name%s: %s); %s"
-                      % (fp, len(names), "" if len(names) == 1 else "s", ", ".join(names),
-                         ("key sha256:%s" % snap.get("keyFp")) if snap.get("hasKey")
-                         else "no ANTHROPIC_API_KEY in it — the apiKeyHelper or the login bills"))
+            say("credential command: sessions now launch with the set sha256:%s (%d name%s: %s); %s"
+                % (fp, len(names), "" if len(names) == 1 else "s", ", ".join(names),
+                   ("key sha256:%s" % snap.get("keyFp")) if snap.get("hasKey")
+                   else "no ANTHROPIC_API_KEY in it — the apiKeyHelper or the login bills"))
         dropped = tuple(snap.get("dropped") or ())
         if dropped and dropped != self._cred_dropped_said:
             self._cred_dropped_said = dropped
-            self._log("credential command: dropped %d ROMP_* variable%s it printed (%s) — romp owns those names"
-                      % (len(dropped), "" if len(dropped) == 1 else "s", ", ".join(dropped)), problem=True)
+            say("credential command: dropped %d ROMP_* variable%s it printed (%s) — romp owns those names"
+                % (len(dropped), "" if len(dropped) == 1 else "s", ", ".join(dropped)), problem=True)
         dropped_auth = tuple(snap.get("droppedAuth") or ())
         if dropped_auth and dropped_auth != self._cred_dropped_auth_said:
             self._cred_dropped_auth_said = dropped_auth
-            self._log("credential command: dropped %s it printed — %s the CLI reads as its own authentication or "
-                      "endpoint; the key rides ANTHROPIC_API_KEY alone"
-                      % (", ".join(dropped_auth), "a name" if len(dropped_auth) == 1 else "names"), problem=True)
+            say("credential command: dropped %s it printed — %s the CLI reads as its own authentication or "
+                "endpoint; the key rides ANTHROPIC_API_KEY alone"
+                % (", ".join(dropped_auth), "a name" if len(dropped_auth) == 1 else "names"), problem=True)
         tmo = snap.get("timeoutProblem") or ""
         if tmo and tmo != self._cred_timeout_said:
             self._cred_timeout_said = tmo
-            self._log("credential command: " + tmo, problem=True)
+            say("credential command: " + tmo, problem=True)
 
     def _boot_key_source_verdict(self) -> dict:
         """key_source_verdict on the real inputs, its lines logged. Never raises: a verdict that cannot
-        be taken is a logged problem, and the backend still constructs."""
+        be taken is a logged problem, and the backend still constructs. In command mode the record it
+        describes is the command's FIRST run, and its lines are the boot's ONE report of that record:
+        the noter takes the record as `reported` (guards set, nothing said) once the lines are logged,
+        so the next path that meets the same facts is silent, and a verdict that could not be taken
+        leaves the record unsaid for the next path to say. Before this the noter spoke first and the
+        verdict again, two problem lines about one failure at boot (2026-09-06). Whether a key is
+        injected is the record's own `hasKey`, so the boot describes one record from one read — the
+        live work_key read is a second read, which on a failing command was a second run."""
+        snap = None
         try:
             env_text = ""
             try:
@@ -6629,17 +6767,21 @@ class SdkBackend:
             except OSError:
                 pass
             snap = _envsrc.status() if _envsrc.configured() else None
-            if snap is not None:
-                self._note_credential_set(snap)
+            if snap is not None and self._work_key_pin is None:
+                work_key_present = bool(snap.get("hasKey"))
+            else:
+                work_key_present = bool(self.work_key)
             v = key_source_verdict(service_env_text=env_text, unit_texts=_unit_texts(),
                                    helper_command=_envsrc.helper_command(), snapshot=snap,
-                                   work_key_present=bool(self.work_key),
+                                   work_key_present=work_key_present,
                                    startup_key_present=bool(startup_api_key()))
         except Exception as e:
             self._log("key source: the boot verdict failed — %s" % e, problem=True)
             return {"mode": key_source_mode(), "lines": []}
         for ln in v.get("lines") or []:
             self._log(ln["text"], problem=ln["problem"])
+        if snap is not None:
+            self._note_credential_set(snap, reported=True)
         return v
 
     def _launched_histogram(self) -> dict:
@@ -6663,8 +6805,8 @@ class SdkBackend:
         configured: the machine login bills, nothing to fingerprint, no error), err (why there is
         no fingerprint or the last run failed; "" when fine), setFp and selector (command mode),
         launched (the histogram)."""
-        snap = _envsrc.current() if _envsrc.configured() else None
-        fp, kind = self.credential_fingerprint(snap)
+        snap, vals = self._cred_take() if _envsrc.configured() else (None, None)
+        fp, kind = self.credential_fingerprint(snap, vals)
         out = {"source": key_source_mode(), "fp": fp, "fpKind": kind, "err": "", "setFp": "",
                "selector": "", "launched": self._launched_histogram()}
         if snap is not None:
@@ -6673,7 +6815,7 @@ class SdkBackend:
             if snap.get("ok") is False:
                 out["err"] = snap.get("reason") or "the credential command failed"
             elif not snap.get("hasKey") and not fp and kind != "login":
-                out["err"] = _envsrc.helper_fingerprint()[1]      # a configured helper that gave no fingerprint
+                out["err"] = self._helper_fingerprint(snap, vals)[1]   # a configured helper that gave no fingerprint
         return out
 
     def refresh_key_source(self) -> dict:
@@ -6783,8 +6925,9 @@ class SdkBackend:
                 return "current"
             why = "to pick up the current work key (sha256:%s)" % fp
         else:
-            cur_fp, kind = self.credential_fingerprint()
-            cur_role = self.role_fingerprint()
+            snap, vals = self._cred_take()            # ONE read of the set for the whole compare, noted
+            cur_fp, kind = self.credential_fingerprint(snap, vals)
+            cur_role = self.role_fingerprint(vals)
             stamped_role = getattr(s, "_launched_set_fp", None) or ""
             helper_billed = (not keyed) and getattr(s, "auth_live", "") == "key"
             if not keyed and not helper_billed and not cur_role and not stamped_role:
@@ -6798,7 +6941,7 @@ class SdkBackend:
                 # the helper's own fingerprint, whatever the set carries: this session was launched
                 # without the set's key (a login pick, or no key in the set) and its CLI found one
                 # through the helper — _options stamped the helper's output, so that is the compare
-                hfp, hreason = _envsrc.helper_fingerprint()
+                hfp, hreason = self._helper_fingerprint(snap, vals)
                 if hfp:
                     if stamped_key != hfp:
                         reasons.append("the apiKeyHelper now prints sha256:%s (launched on sha256:%s)"
@@ -7790,8 +7933,8 @@ class SdkBackend:
         # fingerprint and which live sessions launched on which. Never a value.
         ksrc = {k: v for k, v in (self.key_source or {}).items() if k != "lines"}
         try:
-            snap = _envsrc.current() if _envsrc.configured() else None
-            fp, kind = self.credential_fingerprint(snap)
+            snap, vals = self._cred_take() if _envsrc.configured() else (None, None)
+            fp, kind = self.credential_fingerprint(snap, vals)
         except Exception:
             snap, fp, kind = None, "", ""
         ksrc["fingerprint"], ksrc["fingerprintKind"] = fp, kind
