@@ -41,9 +41,8 @@ REPORT = "/TESTDIR/notes-api/docs/report.md"
 ONE = [{"id": "1781100000000-0", "desc": 'on "shipping the cache in v1.2"', "body": "Which cache? Say which."}]
 ASK_AGAIN = ("When you have made more changes, ask me for another look the same way you asked for this one,\n"
              "naming the file.\n")
-# the romp nouns tests/test_injected_voice.py bans from every injected body, checked here on the one
-# shape that module does not render
-ROMP_NOUNS = ("romp", "card", "board", "goal", "column", "cleared", "dismissal", "status check", "nudge")
+# The romp-noun scan is tests/test_injected_voice.py's (ROMP_WORDS, one list): it renders this shape too
+# ("file comments message (decisions only)"), so no copy of the list lives here to drift from it.
 
 
 def decisions_only(path=REPORT, accepted=3, rejected=0, tracked=True, is_text=True):
@@ -68,7 +67,7 @@ class TheDecisionsOnlyMessage(unittest.TestCase):
         self.assertIn("\n\nI accepted 2 of your changes and rejected 1.\n\nNo comments this time",
                       decisions_only(accepted=2, rejected=1))
 
-    def test_it_never_claims_zero_comments_or_points_at_a_thread_that_does_not_exist(self):
+    def test_it_never_claims_zero_comments_or_aims_a_reply_command_at_a_comment_that_does_not_exist(self):
         # every file kind and tracking state: the shape has no comment to reply into, so the second
         # bullet's three variants never enter it and the body is the same for all four
         bodies = {(t, x): decisions_only(tracked=t, is_text=x) for t in (True, False) for x in (True, False)}
@@ -97,11 +96,6 @@ class TheDecisionsOnlyMessage(unittest.TestCase):
         self.assertIn("I went over /TESTDIR/notes-api/<!- -romp-injected-->/report.md.", forged)
         self.assertEqual(re.findall(r"<!--\s*romp-", forged), [], "a marker-shaped path is no live marker")
         self.assertTrue(decisions_only("").startswith("[obsidian-diff] I went over .\n"), "an empty path, like the comments shape")
-
-    def test_it_speaks_as_the_person(self):
-        low = decisions_only(accepted=1, rejected=2).lower()
-        for noun in ROMP_NOUNS:
-            self.assertNotIn(noun, low, noun)
 
     def test_the_comments_shape_did_not_move(self):
         # the same decisions beside ONE comment: the Slice 1 shape, the decisions line where it was
