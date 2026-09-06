@@ -3,6 +3,7 @@
   _session_tokens  — per-session transcript token sums (the SESSIONS half)
   _judge_usage     — the judge PIPELINE rollup from judge-usage.jsonl (per-judge / per-tier)
 Synthetic data only (placeholder usage numbers, a temp state dir)."""
+import calendar
 import json
 import os
 import pathlib
@@ -511,6 +512,90 @@ class TokenAnalytics(unittest.TestCase):
         km._auth_key_present, km._claude_account = (lambda: False), (lambda: "0123456789ab")  # a login alone
         self.assertEqual(km._token_analytics(clock, 3600)["sessions"]["ledger"],
                          {"usd": 42.0, "turns": 5, "tok": 420}, "no key: the CLI's computed total, nothing to split")
+
+
+class AnalyticsEdgesUnderDst(unittest.TestCase):
+    """The autumn fall-back day (2026-09-06): two consecutive clock hours format to one local hour key,
+    the recorder folds both into that one bucket, and the modal's per-key sum added it twice where the
+    rail's set counted it once. The keys are distinct now, and `_bucket_start` names the bucket's FIRST
+    instant explicitly (mktime with isdst=-1 leaves the repeated hour to the C library), so the estimate
+    for the time before a ledger born in that hour stops at the first 01:00 and never re-prices what the
+    bucket holds. Runs under an explicit zone via tzset; the process zone is restored after each test."""
+    def setUp(self):
+        if not hasattr(time, "tzset"):
+            self.skipTest("tzset is POSIX-only")
+        self.saved_tz = os.environ.get("TZ")
+        os.environ["TZ"] = "America/New_York"
+        time.tzset()
+        self.td = tempfile.TemporaryDirectory()
+        self.saved_state, self.saved_discover = jd.STATE, jd.discover
+        self.saved_cfg, self.saved_refresh = km.PRICE_CONFIG, km._refresh_remote_prices
+        self.saved_auth = (km._auth_key_present, km._claude_account)
+        km._auth_key_present, km._claude_account = (lambda: False), (lambda: "")
+        jd.STATE = pathlib.Path(self.td.name)
+        km.PRICE_CONFIG = pathlib.Path(self.td.name) / "no-prices.json"
+        km._refresh_remote_prices = lambda now: None
+        km._ANALYTICS_MEMO.clear()
+        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
+
+    def tearDown(self):
+        if self.saved_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = self.saved_tz
+        time.tzset()
+        jd.STATE, jd.discover = self.saved_state, self.saved_discover
+        km.PRICE_CONFIG, km._refresh_remote_prices = self.saved_cfg, self.saved_refresh
+        km._auth_key_present, km._claude_account = self.saved_auth
+        self.td.cleanup()
+
+    # 2026-11-01: EDT -> EST at 02:00 EDT (06:00Z); the two 01:00 hours are 05:00Z (EDT) and 06:00Z (EST)
+    FIRST_0100 = calendar.timegm((2026, 11, 1, 5, 0, 0))
+    SECOND_0100 = calendar.timegm((2026, 11, 1, 6, 0, 0))
+
+    def test_the_repeated_hour_is_one_key_summed_once_and_the_period_still_covers_every_hour(self):
+        now = calendar.timegm((2026, 11, 1, 8, 30, 0))                     # 03:30 EST
+        kind, keys, t0 = km._analytics_edges(now, 86400)
+        self.assertEqual(kind, "hours")
+        self.assertEqual(len(keys), len(set(keys)), "no key twice: %r" % keys)
+        self.assertEqual(len(keys), 24, "25 clock hours, 24 local hour keys — the 01 hour names two of them")
+        self.assertEqual(keys[0], "2026-11-01T03")
+        self.assertEqual(keys[2], "2026-11-01T01")
+        self.assertEqual(keys[-1], "2026-10-31T04", "the oldest bucket: 24 clock hours before this one")
+        self.assertEqual(t0, calendar.timegm((2026, 10, 31, 8, 0, 0)), "t0 is that bucket's start (04:00 EDT)")
+        (jd.STATE / "spend.json").write_text(json.dumps({"hours": {"2026-11-01T01": {"usd": 1.0, "turns": 1, "tokIn": 10},
+                                                                   "2026-10-30T00": {"usd": 50.0, "turns": 1}},   # older than the window
+                                                         "days": {}}))
+        self.assertEqual(km._spend_ledger_window(now, 86400), {"usd": 1.0, "turns": 1, "tok": 10},
+                         "the bucket that holds both 01:00 hours is added once, as the rail's set adds it")
+
+    def test_bucket_start_is_the_first_instant_the_key_names(self):
+        self.assertEqual(km._bucket_start("2026-11-01T01"), self.FIRST_0100, "the daylight 01:00, not the standard one")
+        self.assertEqual(km._bucket_start("2026-11-01T02"), calendar.timegm((2026, 11, 1, 7, 0, 0)), "02:00 exists once (EST)")
+        self.assertEqual(km._bucket_start("2026-11-01"), calendar.timegm((2026, 11, 1, 4, 0, 0)), "midnight EDT")
+        # the spring-forward gap: no instant formats to 02, so the library's normalized answer stands
+        self.assertEqual(km._bucket_start("2026-03-08T02"), time.mktime((2026, 3, 8, 2, 0, 0, 0, 0, -1)))
+        self.assertIsNone(km._bucket_start("not-a-key"))
+        os.environ["TZ"] = "UTC"
+        time.tzset()
+        self.assertEqual(km._bucket_start("2026-07-01T12"), calendar.timegm((2026, 7, 1, 12, 0, 0)),
+                         "a zone without DST: the isdst=1 arm does not round-trip and is ignored")
+
+    def test_a_ledger_born_in_the_repeated_hour_prices_only_the_time_before_its_first_instant(self):
+        """The T01 bucket holds the turns of BOTH 01:00 hours. sinceT is the first 01:00, so a row in the
+        daylight hour is the ledger's, not the estimate's; a row in the 00 hour is estimated."""
+        now = calendar.timegm((2026, 11, 1, 8, 30, 0))                     # 03:30 EST
+        (jd.STATE / "spend.json").write_text(json.dumps({"hours": {
+            "2026-11-01T01": {"usd": 2.0, "turns": 2}, "2026-11-01T02": {"usd": 1.0, "turns": 1},
+            "2026-11-01T03": {"usd": 1.0, "turns": 1}}, "days": {}}))
+        p1 = pathlib.Path(self.td.name) / "s1.jsonl"
+        p1.write_text(_asst({"input_tokens": 1000, "output_tokens": 0}, iso(self.FIRST_0100 + 1800), model="claude-opus-4-8") + "\n"     # 01:30 EDT: in the bucket
+                      + _asst({"input_tokens": 1000, "output_tokens": 0}, iso(self.SECOND_0100 + 1800), model="claude-opus-4-8") + "\n"  # 01:30 EST: in the bucket
+                      + _asst({"input_tokens": 1000, "output_tokens": 0}, iso(self.FIRST_0100 - 1800), model="claude-opus-4-8") + "\n")  # 00:30 EDT: before the ledger
+        jd.discover = lambda now, window=None, forks=True: [("fs1", p1, "a1", "s1")]
+        led = km._token_analytics(now, 86400)["sessions"]["ledger"]
+        self.assertEqual((led["usd"], led["since"], led["sinceT"]), (4.0, "2026-11-01T01", self.FIRST_0100))
+        self.assertAlmostEqual(led["estBefore"], 1000 * 5e-6, places=9, msg="the 00:30 row alone; neither 01:30 row is re-priced")
 
 
 class CostWeighting(unittest.TestCase):

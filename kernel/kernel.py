@@ -28542,9 +28542,22 @@ _ANALYTICS_MEMO = {}   # window -> {"t": epoch, "jkey": judge-usage cache size, 
 
 def _bucket_start(key):
     """Epoch start of a ledger bucket key — a local hour (`%Y-%m-%dT%H`) or a local date (`%Y-%m-%d`);
-    None for anything else."""
+    None for anything else. The EARLIEST instant that formats to the key: on the DST fall-back day one
+    local hour key names two clock hours (01:00 daylight, then 01:00 standard), and the recorder folds
+    both into the one bucket, so the bucket starts at the first of them. mktime with tm_isdst=-1 leaves
+    that choice to the C library (glibc picks the first; POSIX does not say), so both isdst arms are
+    tried and the smallest one that round-trips through strftime wins — a key naming a spring-forward
+    gap (no instant formats to it) falls back to the library's normalized answer, and a zone without DST
+    keeps the one arm that round-trips."""
+    fmt = "%Y-%m-%dT%H" if "T" in key else "%Y-%m-%d"
     try:
-        return time.mktime(time.strptime(key, "%Y-%m-%dT%H" if "T" in key else "%Y-%m-%d"))
+        st = time.strptime(key, fmt)
+        found = []
+        for isdst in (1, 0):
+            t = time.mktime(st[:8] + (isdst,))
+            if time.strftime(fmt, time.localtime(t)) == key:
+                found.append(t)
+        return min(found) if found else time.mktime(st)
     except (TypeError, ValueError, OverflowError):
         return None
 
@@ -28560,10 +28573,17 @@ def _analytics_edges(now, window):
     now - window, so a 1h view opened at :59 divided 60 minutes of judge dollars by 120 minutes of
     session dollars. So `1h` covers 60 to 120 minutes, `24h` 24 to 25 hours and `30d` 30 to 31 local
     dates — the rail's `1 hour` / `1 day` / `1 month` read the same way — and the modal says where the
-    period starts (`from` in the payload) rather than promising an exact hour."""
+    period starts (`from` in the payload) rather than promising an exact hour.
+
+    The hour keys are DISTINCT (order kept): on the DST fall-back day two consecutive clock hours format
+    to the same local key, and a caller summing the ledger per key would add that bucket twice where the
+    rail's set counts it once (the bucket holds both hours' turns; summed once it is right, and t0 still
+    marks the oldest bucket's first instant, so the period covers every hour between). Date keys cannot
+    repeat by construction."""
     if window <= (_SERIES_HOURS - 1) * 3600:
         n = -(-int(window) // 3600)
-        keys = [time.strftime("%Y-%m-%dT%H", time.localtime(now - i * 3600)) for i in range(n + 1)]
+        keys = list(dict.fromkeys(time.strftime("%Y-%m-%dT%H", time.localtime(now - i * 3600))
+                                  for i in range(n + 1)))
         lt = time.localtime(now)
         this_hour = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, lt.tm_hour, 0, 0, 0, 0, -1))
         return "hours", keys, this_hour - n * 3600
