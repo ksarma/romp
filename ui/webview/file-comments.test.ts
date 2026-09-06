@@ -657,8 +657,8 @@ test("the send sequence: build from the current status, set-tracked when asked, 
   const send = SRC.split("async doSend(): Promise<void> {")[1].split("\n  }\n")[0];
   const at = (s: string) => { const i = send.indexOf(s); assert.ok(i >= 0, s); return i; };
   assert.ok(at("const parts: SendParts = sendParts(s);") < at('await this.mutate("set-tracked", { on: true, scope: "file" }, "send")'), "the message is built first");
-  assert.ok(at("if (!r) return;") < at("await this.requestSend(msg)"), "a refused toggle aborts before the send");
-  assert.ok(at("tracked = !!r.trackedBy;") < at("await this.requestSend(msg)"), "tracked is the post-toggle verdict");
+  assert.ok(at("if (!r) return;") < at("await this.sendOnce(msg, false)"), "a refused toggle aborts before the send");
+  assert.ok(at("tracked = !!r.trackedBy;") < at("await this.sendOnce(msg, false)"), "tracked is the post-toggle verdict");
   assert.match(send, /this\.sentNote = reply\.queued \? "Queued for " \+ who : "Sent to " \+ who \+ " at " \+ clock\(Date\.now\(\)\);/);
   assert.match(send, /if \(reply\.warning\) this\.errors\.set\("send", \{ text: reply\.warning, reload: false, warn: true \}\);/, "sent but nothing stamped: the kernel's own reason shows");
   assert.match(SRC, /warning: \[str\(m\.warning\), str\(m\.logWarning\)\]\.filter\(Boolean\)\.join\(" "\) \|\| undefined/,
@@ -672,6 +672,14 @@ test("the send sequence: build from the current status, set-tracked when asked, 
   assert.match(SRC, /sendOpts = \{ todo: true, track: true \};/, "both checked by default (decision 8)");
   assert.match(SRC, /const abs = this\.filePath\(\);\n\s*if \(abs === null\)[^\n]*\n\s*else cf\.appendChild\(el\("pre", "fc-msg", buildSendMessage\(\{ absPath: abs, comments: parts\.comments, accepted: parts\.accepted, rejected: parts\.rejected, tracked, media \}\)\)\);/,
     "the preview is the same builder the tests pin against the kernel's literal, fed the path the kernel will name (filePath), never a relative or ~ spelling");
+  // the send's editing-off refusal takes the branch every mutating verb takes (mutateOnce): the kernel refuses
+  // a send while file editing is off because the send's log entry is a disk write, and the refusal text carries
+  // the phrase the consent helper matches — so the panel re-offers the consent and sends once more on yes
+  assert.match(send, /const reply = await this\.sendOnce\(msg, false\);/, "doSend sends through the retrying helper");
+  const once = SRC.split("private async sendOnce(")[1].split("\n  }\n")[0];
+  assert.match(once, /try \{ return await this\.requestSend\(msg\); \}/);
+  assert.match(once, /if \(!retried && e\.code === "editing-off" && await this\.ctx\.ensureEditingAllowed\(e\.error\)\) return this\.sendOnce\(msg, true\);/, "consent (naming the machine), then ONE retry");
+  assert.match(once, /throw err;/, "a no, or a second refusal, reaches doSend's error row verbatim");
 });
 
 test("every mutating verb: consent first, a fence from the current status, one retry on editing-off (re-consent) or a moved fence (fresh status), then the refusal verbatim with Reload", () => {

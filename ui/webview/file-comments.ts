@@ -1013,7 +1013,7 @@ class Panel {
         accepted: parts.accepted, rejected: parts.rejected, watermark: parts.watermark,
       };
       if (answerTodo) msg.todoId = this.ctx.todoId;
-      const reply = await this.requestSend(msg);
+      const reply = await this.sendOnce(msg, false);
       this.markOverlapped();                           // the send appended to the comments log: a status out meanwhile may predate it
       // the latch is the STAMP, not the attempt: a send the kernel warned it could not mark (user todos off,
       // the todo already settled) leaves the checkbox, so the todo is answerable from here once the switch
@@ -1027,6 +1027,20 @@ class Panel {
     } catch (err) {
       this.errors.set("send", { text: (err as { error: string }).error, reload: false });
     } finally { this.sending = false; this.render(); }
+  }
+
+  /** The send itself, with the one retry every editing-off refusal gets (mutateOnce's branch): the kernel
+   *  refuses a send while file editing is off, because the send's log entry is a disk write and a send the
+   *  log cannot record would be offered again (kernel: _file_comments_send_op). The refusal's text carries
+   *  the phrase the consent helper matches, so the panel re-offers the consent naming the machine and, on
+   *  yes, sends once more; a no, or a second refusal, is the caller's error row. */
+  private async sendOnce(msg: Record<string, unknown>, retried: boolean): Promise<{ queued: boolean; warning?: string; todoStamped: boolean }> {
+    try { return await this.requestSend(msg); }
+    catch (err) {
+      const e = err as { code: string; error: string };
+      if (!retried && e.code === "editing-off" && await this.ctx.ensureEditingAllowed(e.error)) return this.sendOnce(msg, true);
+      throw err;
+    }
   }
 
   // ── render ─────────────────────────────────────────────────────────────────────────────────────

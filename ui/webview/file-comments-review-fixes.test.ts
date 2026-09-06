@@ -585,3 +585,60 @@ test("a status refusal over a showing status disables Send until a fresh status 
   assert.equal(aside.querySelector('[data-act="fcsend"]')!.disabled, false, "a fresh status re-enables Send");
   assert.equal(aside.querySelector(".fc-send .fc-note"), null);
 });
+
+// ── a send refused editing-off re-offers the consent and retries once ──────────────────────────────
+
+test("a send the kernel refuses editing-off runs the consent-then-retry branch every mutating verb runs; a declined consent shows the refusal and sends nothing more", async (t: TestContext) => {
+  // The kernel refuses fileCommentsSend while file editing is off: the send's log entry is a disk write, and a
+  // send the log cannot record would be offered again. Its refusal text carries the phrase the consent helper
+  // matches, so the panel re-offers the consent (naming the machine) and, on yes, sends the same message once more.
+  const w = world(); t.after(() => w.close());
+  const asked: string[] = [];
+  let consent = true;
+  w.ctx.ensureEditingAllowed = async (refusal?: string) => { asked.push(refusal ?? "(first consent)"); return consent; };
+  const { aside } = await openPanel(w);
+  const REFUSAL = "nothing was sent: the send would not be recorded in the comments log for ~/notes-api/docs/report.md while dashboard file editing is off on this machine — the viewer's Edit button asks to turn it on";
+  aside.querySelector('[data-act="fcsend"]')!.click();
+  aside.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
+  const s1 = lastOf(w, "fileCommentsSend");
+  assert.ok(s1, "the first send went out");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSendFailed", reqId: s1.reqId, code: "editing-off", error: REFUSAL } })); await flush();
+  assert.deepEqual(asked, [REFUSAL], "the consent is re-offered with the kernel's own text, the way mutateOnce does it");
+  const s2 = lastOf(w, "fileCommentsSend");
+  assert.notEqual(s2.reqId, s1.reqId, "a yes sends once more");
+  assert.deepEqual({ ...s2, reqId: 0 }, { ...s1, reqId: 0 }, "the same message");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSent", reqId: s2.reqId, queued: false } })); await flush();
+  answer(w, status({ unsent: { comments: [], replies: [], accepted: 0, rejected: 0, watermark: T0 } })); await flush();
+  assert.match(aside.querySelector(".fc-sent")!.textContent, /^Sent to api at /);
+  assert.equal(aside.querySelector(".fc-send .fc-err"), null, "no error row after the retry succeeded");
+  // a second refusal after the yes is the error row, not a loop
+  w.close();
+  const w2 = world(); t.after(() => w2.close());
+  asked.length = 0;
+  w2.ctx.ensureEditingAllowed = async (refusal?: string) => { asked.push(refusal ?? "(first consent)"); return true; };
+  const p2 = await openPanel(w2);
+  p2.aside.querySelector('[data-act="fcsend"]')!.click();
+  p2.aside.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
+  const t1 = lastOf(w2, "fileCommentsSend");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSendFailed", reqId: t1.reqId, code: "editing-off", error: REFUSAL } })); await flush();
+  const t2 = lastOf(w2, "fileCommentsSend");
+  assert.notEqual(t2.reqId, t1.reqId);
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSendFailed", reqId: t2.reqId, code: "editing-off", error: REFUSAL } })); await flush();
+  assert.equal(asked.length, 1, "one consent per click: the second refusal is not re-offered");
+  assert.equal(lastOf(w2, "fileCommentsSend").reqId, t2.reqId, "and nothing more went out");
+  assert.match(p2.aside.querySelector(".fc-send .fc-err")!.textContent, /^nothing was sent: the send would not be recorded/);
+  // a declined consent: the refusal shows, nothing more is sent
+  w2.close();
+  const w3 = world(); t.after(() => w3.close());
+  consent = false; asked.length = 0;
+  w3.ctx.ensureEditingAllowed = async (refusal?: string) => { asked.push(refusal ?? "(first consent)"); return consent; };
+  const p3 = await openPanel(w3);
+  p3.aside.querySelector('[data-act="fcsend"]')!.click();
+  p3.aside.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
+  const u1 = lastOf(w3, "fileCommentsSend");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSendFailed", reqId: u1.reqId, code: "editing-off", error: REFUSAL } })); await flush();
+  assert.deepEqual(asked, [REFUSAL]);
+  assert.equal(lastOf(w3, "fileCommentsSend").reqId, u1.reqId, "a no sends nothing more");
+  assert.match(p3.aside.querySelector(".fc-send .fc-err")!.textContent, /^nothing was sent: the send would not be recorded/);
+  assert.equal(p3.aside.querySelector('[data-act="fcsend"]')!.disabled, false, "Send is back for another try");
+});

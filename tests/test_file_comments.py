@@ -819,15 +819,25 @@ class TheSendOp(_SendWorld):
         self.assertIn("EACCES", r["logWarning"])
         self.assertEqual(self.todo()["resolved"]["kind"], "answered", "the send and its stamp stand")
 
-    def test_the_log_append_sits_behind_the_editing_consent(self):
-        # the comments log is a file in the user's project: every write to disk stands behind the
-        # one consent (decision 5). The message itself is not a disk write and still goes.
+    def test_the_send_sits_behind_the_editing_consent(self):
+        # The comments log is a file in the user's project: every write to disk stands behind the one
+        # consent (decision 5), and the send IS a disk write — its `send` entry is the log's only record
+        # of what went, and the unsent list is derived from that log. The first build sent the message
+        # and skipped the append: the session got it, the todo was stamped, the log stayed empty, and
+        # the next click sent the identical message again. So the gate is checked once, ahead of
+        # delivery: nothing sent, nothing stamped, no host call. The refusal carries the phrase the
+        # viewer's consent helper matches, so the panel re-offers the consent and retries. A person
+        # cannot have comments to send without having consented earlier, so this only follows a
+        # revocation (the review, 2026-09-06).
         km._set_file_editing(False)
         r = self.send()
-        self.assertEqual(r["type"], "fileCommentsSent")
-        self.assertIn("file editing is off", r["logWarning"])
+        self.assertEqual(r["type"], "fileCommentsSendFailed")
+        self.assertEqual(r["code"], "editing-off")
+        self.assertIn("file editing is off", r["error"])
+        self.assertIn("nothing was sent", r["error"])
+        self.assertEqual(self.injected, [], "no _send_or_park: the message did not go")
+        self.assertNotIn("resolved", self.todo(), "nothing stamped")
         self.assertIsNone(self.seen(), "no host call without consent")
-        self.assertEqual(len(self.injected), 1)
 
     def test_no_node_still_sends_and_warns_about_the_log(self):
         real = km.shutil.which

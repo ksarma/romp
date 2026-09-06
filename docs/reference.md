@@ -333,8 +333,10 @@ file needs `node`: the kernel runs a small node helper for every read and
 write of a file's comments, and without it the viewer shows no Comments
 action. For the session to reply, `install.sh` must have linked the comment
 tools into `~/.claude/hooks` on that machine. Writing a comment also stands
-behind the **File editing** consent, like any dashboard write to a file. The
-gear reports a machine that is missing node or the comment tools.
+behind the **File editing** consent, like any dashboard write to a file, and so
+does **Send to session**: the send is recorded in the comments log, so with the
+consent off it is refused and the panel offers the consent and sends again on
+yes. The gear reports a machine that is missing node or the comment tools.
 
 ### Ports
 

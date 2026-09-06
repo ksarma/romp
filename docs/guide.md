@@ -187,7 +187,8 @@ While the panel is open it checks the file, its comments, and the project's trac
 every few seconds, so a reply the session writes appears without a reload and a file the
 session rewrote is shown as it is now. The first comment, like the first save, asks once
 whether the dashboard may write files on that machine; the same switch, **File editing** in
-the gear, turns it off again. The **Log** at the foot of the panel is the comments log: what
+the gear, turns it off again, and while it is off a send is refused too (it writes the log)
+and asks for the consent back. The **Log** at the foot of the panel is the comments log: what
 was sent and when, tracking turned on or off, and your direct edits to the file, kept beside
 the comments in the same folder so git keeps it when the project does. Whether
 `.trackchanges/` is committed is the project's call; a `.gitignore` line keeps it out.
