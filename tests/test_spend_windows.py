@@ -6,6 +6,7 @@ read lower. Now `month` is a rolling 30 local days over the days ledger, and the
 lives under its own honest key, `monthToDate`, which carries the month budget. A ledger younger than
 30 days marks the rolling window with its `since` date rather than reading as a silently short window.
 Frozen clock, synthetic ledger, local-time bucket keys built the recorder's own way."""
+import calendar
 import json
 import os
 import tempfile
@@ -42,8 +43,8 @@ class SpendWindows(unittest.TestCase):
         # freeze the module's clock: time() answers FROZEN; every formatter stays the real one, fed
         # explicit struct_times by the implementation (a bare strftime() would read the wall clock)
         frozen = types.SimpleNamespace(time=lambda: FROZEN, strftime=time.strftime, localtime=time.localtime,
-                                       gmtime=time.gmtime, mktime=time.mktime, sleep=time.sleep,
-                                       monotonic=time.monotonic, time_ns=time.time_ns)
+                                       gmtime=time.gmtime, mktime=time.mktime, strptime=time.strptime,
+                                       sleep=time.sleep, monotonic=time.monotonic, time_ns=time.time_ns)
         km.time = frozen
 
     def tearDown(self):
@@ -140,6 +141,30 @@ class RollingMonthAcrossDst(SpendWindows):
             else:
                 os.environ["TZ"] = old
             time.tzset()
+
+    def test_the_hour_windows_hold_every_bucket_across_a_thirty_minute_shift(self):
+        """The hour twin of the date skip: `now - i*3600` sampled once an hour and stepped over any bucket
+        shorter than an hour. Lord Howe Island springs forward by 30 minutes (02:00 +10:30 -> 02:30 +11 on
+        2026-10-04), so the T02 bucket is the half hour 02:30-02:59, and a 1h reading at 03:15 sampled T03
+        and T01 only — the T02 turn was in no window. The keys are walked bucket by bucket now: $1 in every
+        bucket the recorder would key in the span, $1000 in the bucket before it, and the sum is the count."""
+        def run():
+            def keys_in(now, secs):
+                return {time.strftime("%Y-%m-%dT%H", time.localtime(t)) for t in range(int(now - secs), int(now) + 1, 60)}
+            out = {}
+            for label, now, secs, win in (("1h at 03:15 +11", calendar.timegm((2026, 10, 3, 16, 15, 0)), 3600, "hour"),
+                                          ("24h at 12:10 +11", calendar.timegm((2026, 10, 4, 1, 10, 0)), 86400, "day")):
+                km.time.time = lambda now=now: now
+                keys = keys_in(now, secs)
+                self.assertIn("2026-10-04T02", keys, label)
+                hours = {k: self._bucket(1.0) for k in keys}
+                hours[time.strftime("%Y-%m-%dT%H", time.localtime(now - secs - 3600))] = self._bucket(1000.0)
+                self._ledger({}, hours)
+                out[label] = (km._spend_windows()[win]["usd"], len(keys))
+            return out
+        out = self._with_tz("Australia/Lord_Howe", run)
+        self.assertEqual(out["1h at 03:15 +11"], (3.0, 3), "T03, the half-hour T02 and T01 — three buckets in 105 minutes")
+        self.assertEqual(out["24h at 12:10 +11"], (26.0, 26), "25 clock hours over 26 buckets; the bucket before the span stays out")
 
     def test_the_window_holds_31_consecutive_local_dates_inside_a_dst_hour(self):
         def run():

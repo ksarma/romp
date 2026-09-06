@@ -27603,11 +27603,17 @@ _SERIES_HOURS = 192          # 8 days of hourly points — covers the 7-day hove
 
 
 def _series_index(hour_key, h0):
-    """spend.json/usage-history.json hour keys ("%Y-%m-%dT%H", localtime) → dense-array index, or None."""
-    try:
-        return int(time.mktime(time.strptime(hour_key, "%Y-%m-%dT%H")) // 3600) - h0
-    except Exception:
+    """spend.json/usage-history.json hour keys ("%Y-%m-%dT%H", localtime) → dense-array index, or None.
+    The slot is the epoch-hour of the bucket's FIRST instant (_bucket_start), the modal's rule for the same
+    key. mktime(strptime(key)) carried isdst=-1, and for the fall-back day's repeated hour glibc resolves
+    that to whichever offset its PREVIOUS mktime call used — so the T01 bucket landed in one of two adjacent
+    slots depending on what the process converted last, and the hover's bar for that hour moved between
+    builds with no new turn behind it (2026-09-06). The bucket holds both clock hours' turns; its slot is
+    the first of them and the second stays an honest zero, as the modal's period edges read it."""
+    if not isinstance(hour_key, str) or "T" not in hour_key:
         return None
+    st = _bucket_start(hour_key)
+    return None if st is None else int(st // 3600) - h0
 
 
 def _spend_series(keyed_only=False, now=None):
@@ -27633,7 +27639,7 @@ def _spend_series(keyed_only=False, now=None):
             continue
         if keyed_only:
             e = e.get("key") if isinstance(e.get("key"), dict) else {}
-        usd[i] = round(float((e or {}).get("usd") or 0), 4)
+        usd[i] = round(usd[i] + float((e or {}).get("usd") or 0), 4)   # add: buckets a mid-hour transition splits share a slot
     return {"h0": h0, "usd": usd}
 
 
@@ -27718,8 +27724,17 @@ def _spend_windows(keyed_only=False, now=None):
 
     now = time.time() if now is None else now
 
+    # the hour buckets of the longest rolling window, walked once run by run (_hour_buckets_back); every
+    # shorter window is a prefix of the same walk, cut by the walker's own rule (_hour_window) — the keys
+    # the analytics modal sums (_analytics_edges), so the rail cell and the modal's ledger figure agree.
+    # `now - i*3600` sampled once an hour and could not see a bucket shorter than an hour: a 30-minute
+    # spring-forward (Lord Howe Island) leaves a half-hour bucket between two samples, and its turns fell
+    # out of the hour/day/week sums while the modal, cut at the oldest bucket's first instant, counted
+    # their transcript rows (2026-09-06). Walked once because _usage() rebuilds this on every call.
+    walked = _hour_buckets_back(now, 7 * 24 * 3600)
+
     def _rolling(hrs):
-        keys = {time.strftime("%Y-%m-%dT%H", time.localtime(now - i * 3600)) for i in range(hrs + 1)}
+        keys = set(_hour_window(now, hrs * 3600, walked)[0])
         return _sum((k, v) for k, v in hours.items() if k in keys)
 
     def _rolling_days(n):
@@ -28822,6 +28837,66 @@ def _session_cost(path, t0, prices):
 _ANALYTICS_MEMO = {}   # window -> {"t": epoch, "jkey": judge-usage cache size, "resp": the payload}
 
 
+_HOUR_KEY = "%Y-%m-%dT%H"
+_DATE_KEY = "%Y-%m-%d"
+
+
+def _key_fields(key):
+    """(year, month, day, hour, fmt) for a ledger bucket key — a local hour (`%Y-%m-%dT%H`) or a local date
+    (`%Y-%m-%d`, hour 0) — or None for anything else. A slice parse, not strptime: strptime costs 7 µs and
+    _series_index places 192 keys on every usage build."""
+    try:
+        if len(key) == 13 and key[4] == "-" and key[7] == "-" and key[10] == "T":
+            f = int(key[:4]), int(key[5:7]), int(key[8:10]), int(key[11:13]), _HOUR_KEY
+        elif len(key) == 10 and key[4] == "-" and key[7] == "-":
+            f = int(key[:4]), int(key[5:7]), int(key[8:10]), 0, _DATE_KEY
+        else:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return f if 1 <= f[1] <= 12 and 1 <= f[2] <= 31 and 0 <= f[3] <= 23 else None
+
+
+def _run_start(t, key, fmt, lt=None):
+    """The first instant of the RUN of instants that share `key` and reach t (t formats to key; `lt` is
+    its localtime if the caller has it). The top of t's clock hour — or date — at t's own UTC offset,
+    unless that top names another key (the offset changed between it and t): then the run starts where the
+    key first appears, found by bisection (a zone changes offset at most once in any hour, so the key is
+    absent then present across (top, t]). Where the second before the run still carries the key — a
+    fall-back replays the clock hour, so the daylight 01:00 and the standard 01:00 are one two-hour run —
+    the run extends through that stretch by the same rule. Three or four localtime/strftime calls on the
+    common path; the bisection (about a dozen more) only on the hour a transition falls in."""
+    return _run_start_and_prev(t, key, fmt, lt)[0]
+
+
+def _run_start_and_prev(t, key, fmt, lt=None):
+    """_run_start, plus the localtime and key of the second before the run — the walker's next step,
+    which the search computed anyway."""
+    t = int(t)
+    hourly = fmt == _HOUR_KEY
+
+    def top(u, lt):
+        s = u - lt.tm_min * 60 - lt.tm_sec - (0 if hourly else lt.tm_hour * 3600)
+        if time.strftime(fmt, time.localtime(s)) == key:
+            return s
+        lo, hi = s, u                        # key absent at lo, present at hi: its first instant is in (lo, hi]
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            if time.strftime(fmt, time.localtime(mid)) == key:
+                hi = mid
+            else:
+                lo = mid
+        return hi
+
+    s = top(t, lt if lt is not None else time.localtime(t))
+    while True:
+        prev = time.localtime(s - 1)
+        prev_key = time.strftime(fmt, prev)
+        if prev_key != key:
+            return s, prev, prev_key
+        s = top(s - 1, prev)
+
+
 def _bucket_start(key):
     """Epoch start of a ledger bucket key — a local hour (`%Y-%m-%dT%H`) or a local date (`%Y-%m-%d`);
     None for anything else. The EARLIEST instant that formats to the key: on the DST fall-back day one
@@ -28829,27 +28904,121 @@ def _bucket_start(key):
     both into the one bucket, so the bucket starts at the first of them. mktime with tm_isdst=-1 leaves
     that choice to the C library, and glibc answers with whichever UTC offset its PREVIOUS mktime call
     resolved (POSIX does not say), so the pick depends on call order — an earlier standard-time
-    conversion anywhere in the process makes the repeated hour come back as its SECOND clock hour. So
-    both isdst arms are tried and the smallest one that round-trips through strftime wins — a key naming
-    a spring-forward gap (no instant formats to it) falls back to the library's normalized answer, and a
-    zone without DST keeps the one arm that round-trips."""
-    fmt = "%Y-%m-%dT%H" if "T" in key else "%Y-%m-%d"
-    try:
-        st = time.strptime(key, fmt)
-        found = []
-        for isdst in (1, 0):
-            t = time.mktime(st[:8] + (isdst,))
-            if time.strftime(fmt, time.localtime(t)) == key:
-                found.append(t)
-        return min(found) if found else time.mktime(st)
-    except (TypeError, ValueError, OverflowError):
+    conversion anywhere in the process makes the repeated hour come back as its SECOND clock hour. So the
+    library's pick for the hour's first second — or its last, where no HH:00 exists (the Chatham Islands
+    spring forward at 02:45, so their T03 is 03:45-03:59) — is only the way IN to the bucket: the answer
+    is the start of the run of instants around it (_run_start), which walks back through a replayed hour
+    whichever clock hour the library chose. Where the UTC offset changed in the hour before that start,
+    the key may own an earlier, separate run (a fall-back that replays a PARTIAL hour leaves T02's daylight
+    instants, T03's, then T02's standard ones): then both isdst arms are tried and the earliest run wins.
+    That is the only place the arms are used — a mktime hint the zone cannot satisfy sends glibc searching
+    (30 µs in UTC, 140 µs in Tokyo), and _series_index places 192 keys per usage build. A key naming a
+    spring-forward gap (no instant formats to it) falls back to the library's normalized answer."""
+    f = _key_fields(key)
+    if f is None:
         return None
+    y, m, d, h, fmt = f
+    edges = ((h, 0, 0), (h, 59, 59) if fmt == _HOUR_KEY else (23, 59, 59))
+    try:
+        found = None
+        for hms in edges:
+            t = time.mktime((y, m, d) + hms + (0, 0, -1))
+            if time.strftime(fmt, time.localtime(t)) == key:
+                found = _run_start(t, key, fmt)
+                break
+        if found is not None and time.localtime(found).tm_gmtoff == time.localtime(found - 3600).tm_gmtoff:
+            return found
+        starts = [] if found is None else [found]
+        for hms in edges:
+            for isdst in (1, 0):
+                t = time.mktime((y, m, d) + hms + (0, 0, isdst))
+                if time.strftime(fmt, time.localtime(t)) == key:
+                    starts.append(_run_start(t, key, fmt))
+            if starts:
+                break
+        if not starts:
+            return time.mktime((y, m, d, h, 0, 0, 0, 0, -1))
+        return min(starts)
+    except (OverflowError, ValueError, OSError):
+        return None
+
+
+def _hour_buckets_back(now, secs):
+    """[(key, start)] for every RUN of hour-keyed instants that intersects [now - secs, now], newest first,
+    with each run's first instant — the keys the recorder (sdk_backend._record_spend) gives the turns of
+    that span. Walked run by run: the run of `now`, then the run of the second before its start, and so
+    on until a run starts at or before now - secs. The walk follows the buckets as they lie, whatever
+    their length: the fall-back day's repeated hour is one two-hour run (one key), a spring-forward gap is
+    no run, and a 30-minute shift's half-hour bucket is one run like any other. Sampling `now - i*3600`
+    once an hour (the rule until 2026-09-06) could not see a bucket shorter than its stride: on Lord Howe
+    Island's spring-forward day the samples stepped from T03 to T01 over the half-hour T02, so that
+    bucket's turns were in no window while the period, cut at the oldest bucket's first instant, covered
+    their instants. A key can appear twice: where a fall-back replays a PARTIAL hour (the Chatham
+    Islands, 03:45 -> 02:45) the T02 bucket's instants come in two runs with T03's first run between
+    them — _hour_window folds that."""
+    cut = now - secs
+    t = int(now)                  # bucket edges are whole seconds; the bucket of floor(now) is now's bucket
+    lt = time.localtime(t)
+    key = time.strftime(_HOUR_KEY, lt)
+    out = []
+    while True:
+        start, prev_lt, prev_key = _run_start_and_prev(t, key, _HOUR_KEY, lt)
+        if start > t:             # cannot happen (a run starts at or before the instant naming it); keep the walk finite if it ever does
+            start, prev_lt = t, time.localtime(t - 1)
+            prev_key = time.strftime(_HOUR_KEY, prev_lt)
+        out.append((key, start))
+        if start <= cut:
+            return out
+        t, lt, key = start - 1, prev_lt, prev_key
+
+
+def _hour_window(now, secs, walked=None):
+    """(keys, t0) for a rolling hour window [now - secs, now] over the hour ledger: the bucket keys the
+    window sums — every key with an instant in the span (_hour_buckets_back), newest first, each once —
+    and t0, the earliest instant any of them names, so the ledger's whole-bucket sum and a cut of the
+    transcript and judge rows at t0 count the same turns. In every zone whose buckets are contiguous
+    runs (every DST rule that changes the clock on the hour, and the 30-minute Lord Howe shift) the keys
+    are the walked runs and t0 the oldest run's start. Where a fall-back replays a partial hour (the
+    Chatham Islands) a key's instants form two runs with another key's run between them, so a key in the
+    span can name instants BEFORE the oldest run's start; the whole-bucket sum holds those turns, so t0
+    reaches back to the earliest first instant among the keys and every key with an instant in [t0, now]
+    joins, until nothing widens. That closure costs a _bucket_start per key, so it runs only when the
+    window shows one of the two shapes a split key takes: a key walked twice (both runs in the span), or
+    an oldest run that does not start at its key's first instant (the earlier run lies before the span —
+    the replayed partial hour, or the full hour after it, whose key also owns the partial hour before the
+    change). A window whose oldest run is later than that holds no split key. One _bucket_start on the
+    common path. `walked` lets the rail pass one long walk for its several windows — each is a prefix of
+    the same walk, cut by the walker's own rule."""
+    if walked is None:
+        walked = _hour_buckets_back(now, secs)
+    cut = now - secs
+    runs = []
+    for k, st in walked:
+        runs.append((k, st))
+        if st <= cut:
+            break
+    keys = list(dict.fromkeys(k for k, _st in runs))
+    t0 = runs[-1][1]
+    if len(keys) == len(runs) and _bucket_start(keys[-1]) == t0:
+        return keys, t0
+    while True:
+        first = min((s for s in (_bucket_start(k) for k in keys) if s is not None), default=t0)
+        if first >= t0:
+            return keys, t0
+        t0 = first
+        keys = list(dict.fromkeys(k for k, _st in _hour_buckets_back(now, now - t0)))
+
+
+def _hour_keys_back(now, secs):
+    """The keys of _hour_window(now, secs) — every hour bucket with an instant in [now - secs, now],
+    newest first, each once."""
+    return _hour_window(now, secs)[0]
 
 
 def _analytics_edges(now, window):
     """The analytics window's edges, by the RAIL's own bucket rule so the modal's ledger figure IS the rail
-    cell's: `window` seconds rounded up to n whole hour buckets plus the current one (this hour and the n
-    before it) while the 8-day hour ledger covers it, else n whole local dates plus today. Returns
+    cell's: `window` seconds rounded up to n whole hours, and every hour bucket with an instant in those n
+    hours plus this one, while the 8-day hour ledger covers it, else n whole local dates plus today. Returns
     (kind, keys, t0): kind "hours"|"days", the bucket keys newest first, and t0 — the epoch start of the
     oldest bucket. t0 is the ONE cut every figure in the modal takes (the ledger sum, the transcript rows,
     the judge rows), so the 'judges = N% of session cost' line compares like-for-like. Before this
@@ -28859,14 +29028,20 @@ def _analytics_edges(now, window):
     dates — the rail's `1 hour` / `1 day` / `1 month` read the same way — and the modal says where the
     period starts (`from` in the payload) rather than promising an exact hour.
 
-    The hour keys are DISTINCT (order kept): on the DST fall-back day two consecutive clock hours format
-    to the same local key, and a caller summing the ledger per key would add that bucket twice where the
-    rail's set counts it once (the bucket holds both hours' turns; summed once it is right, and t0 still
-    marks the oldest bucket's first instant, so the period covers every hour between). Date keys cannot
-    repeat by construction.
+    The hour keys are every bucket with an instant in [now - n hours, now], walked run by run
+    (_hour_window), newest first, each once — the keys the rail sums (_spend_windows._rolling), so the
+    modal's ledger figure IS the rail cell's. Walked, not sampled: `now - i*3600` once an hour hit the
+    fall-back day's two-hour bucket twice (a caller summing per key added it where the rail's set counted
+    it once; the bucket holds both hours' turns, so once is right) and could not see a bucket shorter than
+    an hour at all — on Lord Howe Island's 30-minute spring-forward the samples stepped over the half-hour
+    T02 bucket, so its turns were in no ledger figure while t0, the oldest bucket's first instant, put
+    their transcript and judge rows in the period (2026-09-06). Date keys cannot repeat or hide by
+    construction.
 
-    t0 IS `_bucket_start(keys[-1])` — the first instant that formats to the oldest key — in both
-    branches, never arithmetic from the current hour or midnight. `this_hour - n*3600` assumed every
+    t0 is the earliest instant any key in the window names — `_bucket_start(keys[-1])`, the oldest
+    bucket's first instant, wherever buckets are contiguous (see _hour_window for the one zone where a
+    newer key reaches further back) — in both branches, never arithmetic from the current hour or
+    midnight. `this_hour - n*3600` assumed every
     bucket spans 3600 s and that mktime's isdst=-1 names the repeated hour's first clock hour; neither
     holds on the fall-back day (the repeated hour's bucket spans two clock hours, glibc's answer depends
     on its previous call), so a 1h view at 02:30 standard time, and the 24h view the next day, cut the
@@ -28877,9 +29052,8 @@ def _analytics_edges(now, window):
     names one."""
     if window <= (_SERIES_HOURS - 1) * 3600:
         n = -(-int(window) // 3600)
-        keys = list(dict.fromkeys(time.strftime("%Y-%m-%dT%H", time.localtime(now - i * 3600))
-                                  for i in range(n + 1)))
-        return "hours", keys, _bucket_start(keys[-1])
+        keys, t0 = _hour_window(now, n * 3600)
+        return "hours", keys, t0
     n = -(-int(window) // 86400)
     today = datetime.fromtimestamp(now).date()
     keys = [(today - timedelta(days=i)).isoformat() for i in range(n + 1)]
