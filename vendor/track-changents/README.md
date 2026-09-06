@@ -46,7 +46,9 @@ Behaviour tests for the offered-back patches, run as an agent would run the CLIs
 ## Re-vendoring
 
 1. Check out the new upstream commit and copy the files listed above over this directory.
-2. Recompute `PIN.json` from those pristine files and update the commit in it and here.
+2. Recompute `PIN.json` from those pristine files, exactly as they are at that commit, and update
+   the commit in it and here. Where a checkout is present the drift test reads that commit's own
+   blobs and compares them with the hashes, so a pin minted from a dirty working tree is caught.
 3. Re-apply `patches/*.patch` in order (`git apply --directory=vendor/track-changents` from the
    repo root, or `git apply` from this directory). A patch upstream has since taken can be
    deleted; renumber the rest.
@@ -56,4 +58,5 @@ Behaviour tests for the offered-back patches, run as an agent would run the CLIs
 The drift test fails when a vendored file differs from pin-plus-patches, when a patch no longer
 applies, and, where a track-changents checkout is present on the machine
 (`$TRACKCHANGENTS_CHECKOUT`, else `~/code/track-changents`), when that checkout is behind the
-pin.
+pin or when `PIN.json`'s hashes are not the pinned commit's own blobs (the commit was bumped
+without re-hashing, or the pin was minted from a working tree that was not exactly that commit).
