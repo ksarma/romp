@@ -868,6 +868,18 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertIn("systemd 253", m, "the likely cause, so the fix is in the line")
         self.assertIn("in force — oomScoreAdj=500", rows[1][0])
 
+    def test_a_rejection_that_does_not_name_oompolicy_gets_no_systemd_253_hint(self):
+        # a size the rule passes and systemd refuses (out of range): the line quotes systemd and adds
+        # nothing about scope OOMPolicy= support, which is not the cause
+        rows, log = self._log()
+        runs = _Runs((1, b"Failed to parse MemoryMax=99999999999999999999T: Numerical result out of range\n"),
+                     (0, b""),
+                     (1, b"Failed to parse MemoryMax=99999999999999999999T: Numerical result out of range\n"))
+        _in_force, rejected, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "99999999999999999999T"}, log=log, run=runs)
+        self.assertEqual(rejected, {"ROMP_CLI_SCOPE_MEMORY_MAX": "99999999999999999999T"})
+        self.assertIn("Numerical result out of range", rows[0][0])
+        self.assertNotIn("253", rows[0][0])
+
     def test_a_passing_fault_on_the_first_try_costs_nothing(self):
         rows, log = self._log()
         runs = _Runs((1, b"Failed to connect to bus: Connection timed out\n"), (0, b""), (0, b""), (0, b""), (0, b""))

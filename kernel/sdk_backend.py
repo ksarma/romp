@@ -227,9 +227,10 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None]
                 if key in CLI_SCOPE_MEMORY_PROPS and key in in_force:
                     rejected[var] = in_force[key]
             if log:
+                hint = " (OOMPolicy= on scopes needs systemd 253)" if "OOMPolicy" in err else ""
                 log("cli scope: systemd-run rejected the per-session memory limits (%s: %s) — not applied; "
-                    "sessions run in their scopes without them (OOMPolicy= on scopes needs systemd 253)"
-                    % (" ".join(props), err or "no detail"), problem=True)
+                    "sessions run in their scopes without them%s" % (" ".join(props), err or "no detail", hint),
+                    problem=True)
         elif rc == 0:
             d_rc, d_err = _cli_scope_probe(run, base + props + ["--"] + CLI_SCOPE_MEMORY_PROBE_CMD)
             if d_rc is None:
