@@ -79,6 +79,19 @@ MOCK
     # modern version; per-test override via _stub_claude.
     _stub_claude "2.1.226"
 
+    # Hermetic postal service (2026-09-06): on every resume bin/romp double-forks
+    # `romp-postal-service picker-check` and returns without waiting for it. The real
+    # service mints a serve-token under $HOME/.local/state/romp when none exists, and did
+    # so after teardown had removed TEST_DIR, so the tree came back with that one file in
+    # it: four to six per run of this file. bin/romp puts its own directory first on PATH,
+    # so a stand-in here cannot shadow the real one through PATH; it reaches bin/romp
+    # through the ROMP_POSTAL_BIN seam, which the picker-check honours like `mail` and
+    # `refresh`. A no-op: the tests that assert on the service's calls overwrite it with
+    # a recording mock.
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_DIR/romp-postal-service"
+    chmod +x "$MOCK_DIR/romp-postal-service"
+    export ROMP_POSTAL_BIN="$MOCK_DIR/romp-postal-service"
+
     export PATH="$MOCK_DIR:$PATH"
     # Two tests below start a REAL bin/romp-manager, whose startup runs `tmux start-server`, and `romp
     # new -t` runs `tmux new-session`: the mock above takes both, and the private socket directory keeps
@@ -1001,6 +1014,26 @@ MOCK
     [[ "$output" == *"(detached)"* ]]
     run grep -q 'tmux attach-session' "$MOCK_LOG"
     [ "$status" -ne 0 ]
+}
+
+@test "resume: the background picker-check goes through ROMP_POSTAL_BIN, and the stand-in writes nothing" {
+    # bin/romp double-forks `romp-postal-service picker-check` on a resume and returns at once;
+    # the real service mints ~/.local/state/romp/serve-token when none exists, and did so after
+    # teardown had removed TEST_DIR, re-creating it. bin/romp's own directory leads PATH, so the
+    # seam is the only way a test can stand in for the service. The setup() stand-in leaves the
+    # state dir alone; a recording one for this test shows the resume path reaching the seam —
+    # the call is detached, so the check waits (bounded) for its record instead of racing it.
+    [ "$ROMP_POSTAL_BIN" = "$MOCK_DIR/romp-postal-service" ]
+    run "$ROMP_POSTAL_BIN" picker-check --name myproject --id abc123-uuid
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ ! -e "$HOME/.local/state/romp" ]
+
+    printf '#!/usr/bin/env bash\necho "postal $*" >> "%s"\n' "$TEST_DIR/postal.log" > "$MOCK_DIR/romp-postal-service"
+    run run_romp resume abc123-uuid
+    [ "$status" -eq 0 ]
+    local i; for i in $(seq 1 50); do [ -s "$TEST_DIR/postal.log" ] && break; sleep 0.1; done
+    grep -q '^postal picker-check --name myproject --id abc123-uuid$' "$TEST_DIR/postal.log"
 }
 
 # ─── Misc ────────────────────────────────────────────────────────────
@@ -1939,6 +1972,71 @@ _keyswap_files() {
     [[ "$output" != *"already swapped"* ]]                    # nothing is ever swapped here
     [[ "$output" != *"sk-ant-TEST"* ]]
     grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"
+}
+
+# Command mode (ROMP_CREDENTIAL_COMMAND set; kernel/envsource.py): the same dispatcher, the same
+# cli/keyswap.py, against a fake credential command in the test dir whose set depends on $1. The
+# values are assembled at run time (no credential-shaped literal in this file), and the point of the
+# assertions is again that none of them is ever printed.
+_keyswap_command_mode() {
+    export ROMP_KERNEL_PORT=1                                 # no kernel answers there
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/no-such-service.env"
+    KS_HP="romp-test-fixture-hp-$RANDOM$RANDOM$RANDOM"
+    KS_LP="romp-test-fixture-lp-$RANDOM$RANDOM$RANDOM"
+    cat > "$TEST_DIR/cred.sh" <<EOF
+#!/bin/sh
+case "\$1" in
+  hp) echo "ANTHROPIC_API_KEY=$KS_HP" ;;
+  lp) echo "ANTHROPIC_API_KEY=$KS_LP" ;;
+esac
+echo "ROLE_TOKEN=romp-test-fixture-role-$RANDOM"
+EOF
+    chmod 700 "$TEST_DIR/cred.sh"
+    export ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\""
+    export ROMP_CREDENTIAL_SELECTOR_FILE="$TEST_DIR/selector"
+    export ROMP_CREDENTIAL_NAMES=hp,lp
+    export CLAUDE_CONFIG_DIR="$TEST_DIR/claude"               # no settings.json: no apiKeyHelper
+    printf 'hp\n' > "$ROMP_CREDENTIAL_SELECTOR_FILE"
+}
+
+@test "keyswap (command mode): the bare report names the source, the selector and fingerprints, never a value" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _keyswap_command_mode
+    run run_romp keyswap
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"key source  command (ROMP_CREDENTIAL_COMMAND is set)"* ]]
+    [[ "$output" == *"candidates  hp <- selected, lp"* ]]
+    [[ "$output" == *"live key    sha256:"* ]]
+    [[ "$output" == *"kernel      not running"* ]]
+    [[ "$output" != *"refused"* ]]
+    [[ "$output" != *"fixture"* ]]                            # never a value on a surface
+    [ "$(cat "$ROMP_CREDENTIAL_SELECTOR_FILE")" = "hp" ]      # a report writes nothing
+}
+
+@test "keyswap (command mode): a declared name writes the selector; an undeclared one is refused, unechoed" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _keyswap_command_mode
+    run run_romp keyswap lp
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"selector    hp -> lp"* ]]
+    [[ "$output" == *"live key    sha256:"* ]]
+    [[ "$output" == *"(was sha256:"* ]]
+    [[ "$output" != *"fixture"* ]]
+    [ "$(cat "$ROMP_CREDENTIAL_SELECTOR_FILE")" = "lp" ]
+    run run_romp keyswap nosuch
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"not declared in ROMP_CREDENTIAL_NAMES"* ]]
+    [[ "$output" != *"nosuch"* ]]                             # an undeclared name is never echoed
+    [[ "$output" != *"does not write API keys to files"* ]]   # not the file-mode refusal
+    [ "$(cat "$ROMP_CREDENTIAL_SELECTOR_FILE")" = "lp" ]      # untouched by the refusal
+}
+
+@test "keyswap: help names the whole form (name, --refresh, the cycle)" {
+    run run_romp -h
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"romp keyswap [<name>] [--refresh] [--cycle <session,…>|--cycle-all]"* ]]
 }
 
 @test "keyswap: help names it (the presence-checked command list)" {
