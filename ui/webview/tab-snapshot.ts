@@ -7,14 +7,16 @@
 //
 // PURE: the model is a function from what the chat client already holds per session — the session
 // frame (name, emoji, color, status, userTodos, the events tail) and its ledger (the same summary /
-// current task / recent tops the tab hover tip and the Outline pane render, plus the postal working
-// note the kernel puts on the ledger) — to plain rows, with NO clock in it: the last-activity time is
+// current task / recent tops the tab hover tip and the Outline pane render, plus two fields the kernel
+// puts on the ledger for this view: the postal working note, and whether the feed files one of the
+// session's cards under needs-you) — to plain rows, with NO clock in it: the last-activity time is
 // an epoch the renderer formats, so a push that changed nothing yields the SAME object (snapshotModel
 // returns `prev`) and the renderer rebuilds nothing — the rule that views move only on new
 // information, applied to a list that is rebuilt from every push. render.ts paints it; the shapes
 // below are the minimal "Like" views of render.ts's types (the tab-state.ts idiom), so the rule runs
 // in node tests without a DOM.
 import { tabStateClass, type TabStateLike } from "./tab-state";
+import { stripInline } from "./docreview";
 
 export interface SnapStatusLike extends TabStateLike { sinceEpoch?: number | null }
 export interface SnapEventLike { kind?: string; md?: string; text?: string; ts?: string; t?: number }
@@ -25,6 +27,10 @@ export interface SnapSessionLike {
 }
 export interface SnapLedgerLike {
   summary?: string | null; workingNote?: string | null;
+  /** the feed's verdict, from the kernel's last feed build: true when one of this session's cards is filed
+   *  under needs-you there (the column the feed's Blocked list is), false when none is, null when no feed
+   *  has been built since the kernel started (the first push cycle) */
+  needsInput?: boolean | null;
   tree?: ReadonlyArray<{ text?: string; current?: boolean }> | null;
   recent?: ReadonlyArray<{ text?: string; t?: number }> | null;
 }
@@ -44,15 +50,23 @@ export interface SnapRow {
   pip: SnapPip;
   /** the state in words — the row's spoken label and its title; "" for idle/ready */
   state: string;
-  /** on YOU: blocked on an API error only you can clear, a live permission or picker prompt, or an open
-   *  user todo — the tab's alarm-red cases and its ⚑ */
+  /** on YOU, by the feed's rule: a card of this session filed under needs-you in the kernel's last feed
+   *  build (the same column the feed's Blocked list shows: a question the agent asked and stopped on, a
+   *  live prompt, an API error only you can clear); plus the tab's own alarm-red cases, which the feed
+   *  build can trail by one push, and an open user todo, the tab's ⚑ */
   needsYou: boolean;
   /** waiting on something that is not you: dispatched background work */
   waiting: boolean;
   todos: number;
-  /** what it is doing now, in the user's terms: the working note, else the current task, else the
-   *  ledger summary, else the most recent top task; "" when nothing is known */
+  /** what it is doing now, in the user's terms: the judges' current task, else the archiver's headline,
+   *  else the most recent top task; "" when nothing is known */
   now: string;
+  /** the session's own note of what it is working on (the postal working note: its claim to a branch and
+   *  files, written for peer sessions), one line; "" when it has published none. A quieter second line of
+   *  the row, under the now line, never in its place.
+   *  TODO(styling): render.ts paints this as a second line with class "snap-note"; styles.css gives it the
+   *  header's 0.82em and a dimmer color. */
+  note: string;
   /** when it last did anything (epoch s): the newest event in the tail, else the state's start */
   lastT: number | null;
   /** the last assistant message, for the hover */
@@ -78,11 +92,12 @@ function eventEpoch(ev: SnapEventLike): number | null {
   return null;
 }
 
-/** THE now line: the session's own claim first (the postal working note — what it says it owns), then
- *  the judges' current task, then the archiver's headline, then the most recent top task. */
+/** THE now line, in the user's terms: the judges' current task, then the archiver's headline, then the
+ *  most recent top task. The working note is NOT a rung here (review 2026-09-06): it is the session's
+ *  claim to a branch and files, written for peer sessions, so it rides the row as its own line (noteLine)
+ *  and never stands in for what the session is accomplishing. */
 export function nowLine(lg: SnapLedgerLike | null | undefined): string {
   if (!lg) return "";
-  if (lg.workingNote && oneLine(lg.workingNote, NOW_MAX)) return oneLine(lg.workingNote, NOW_MAX);
   const cur = (lg.tree || []).find((n) => n.current && oneLine(n.text, NOW_MAX));
   if (cur) return oneLine(cur.text, NOW_MAX);
   if (lg.summary && oneLine(lg.summary, NOW_MAX)) return oneLine(lg.summary, NOW_MAX);
@@ -90,20 +105,36 @@ export function nowLine(lg: SnapLedgerLike | null | undefined): string {
   return r ? oneLine(r.text, NOW_MAX) : "";
 }
 
+/** The row's second line: the postal working note, one line, "" when none. */
+export function noteLine(lg: SnapLedgerLike | null | undefined): string {
+  return lg ? oneLine(lg.workingNote, NOW_MAX) : "";
+}
+
 /** The newest event's time, else the state's start. The tail is in transcript order, so the walk is
- *  from the end; an event with no time (a live-stream atom) is skipped, not zero. */
+ *  from the end; an event with no time (a live-stream atom) is skipped, not zero. sinceEpoch is in
+ *  MILLISECONDS everywhere (the kernel's since_ms, the client's own Date.now() placeholders), while the
+ *  row's lastT is epoch SECONDS like the event times: passing it through unconverted read as a time
+ *  far in the future and every empty-tail row said "0s ago" (review 2026-09-06). */
 export function lastActivity(s: SnapSessionLike): number | null {
   const evs = s.events || [];
   for (let i = evs.length - 1; i >= 0; i--) { const t = eventEpoch(evs[i]); if (t) return t; }
-  return s.status?.sinceEpoch ? Math.floor(s.status.sinceEpoch) : null;
+  return s.status?.sinceEpoch ? Math.floor(s.status.sinceEpoch / 1000) : null;
 }
 
-/** The last assistant message in the tail, one line, for the hover. */
+/** A markdown message as plain words on one line, for a title attribute (a native tooltip renders text,
+ *  so the source's markers would show as typed): fence lines go, each remaining line loses its block and
+ *  inline markers (docreview.ts stripInline, the file viewer's rule), then the lines join with spaces. */
+export function plainText(md: string, max: number): string {
+  const lines = md.replace(/\r\n?/g, "\n").split("\n").filter((l) => !/^\s*(```|~~~)/.test(l));
+  return oneLine(lines.map(stripInline).join(" "), max);
+}
+
+/** The last assistant message in the tail, one line of plain text, for the hover. */
 export function lastMessage(s: SnapSessionLike): string {
   const evs = s.events || [];
   for (let i = evs.length - 1; i >= 0; i--) {
     const e = evs[i];
-    if (e.kind === "assistant") { const t = oneLine(e.md ?? e.text, MSG_MAX); if (t) return t; }
+    if (e.kind === "assistant") { const t = plainText(String(e.md ?? e.text ?? ""), MSG_MAX); if (t) return t; }
   }
   return "";
 }
@@ -125,20 +156,32 @@ export function rowState(st: SnapStatusLike | null | undefined): { pip: SnapPip;
   return { pip: "", state: "", needsYou: false, waiting: false, closed: false };
 }
 
+/** The state word for a session the feed files under needs-you while the tab's own rule sees nothing (an
+ *  idle session that asked a question and stopped, the common case): the feed's word, so the two panes
+ *  agree on the one word the repo defines strictly. */
+export const FEED_BLOCK_STATE = "needs you — stopped until you answer";
+
 export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, lg: SnapLedgerLike | null | undefined): SnapRow {
   const st = rowState(s?.status);
   const todos = Array.isArray(s?.userTodos) ? s!.userTodos!.length : 0;
+  // NEEDS YOU is the feed's call (review 2026-09-06): the tab's rule (tab-state.ts) knows only the live
+  // states the chip carries (a permission or picker prompt, an on-you API error), so a judge-filed block
+  // on a session that went idle after asking showed a plain idle row here while the feed showed a red
+  // card. lg.needsInput is that column, per session, from the kernel's last feed build (build_session);
+  // the tab's own cases stay as a floor because the feed build trails the chip by one push.
+  const feedBlock = lg?.needsInput === true;
   return {
     id,
     name: String(s?.name || "").trim() || "(unnamed)",
     emoji: s?.emoji || "",
     color: s?.color && s.color.bg && s.color.fg ? { bg: s.color.bg, fg: s.color.fg } : null,
     pip: s ? st.pip : "unknown",
-    state: st.state,
-    needsYou: st.needsYou || todos > 0,
+    state: st.state || (feedBlock && !st.closed ? FEED_BLOCK_STATE : ""),
+    needsYou: feedBlock || st.needsYou || todos > 0,
     waiting: st.waiting,
     todos,
     now: nowLine(lg),
+    note: noteLine(lg),
     lastT: s ? lastActivity(s) : null,
     lastMsg: s ? lastMessage(s) : "",
     closed: st.closed,
@@ -149,6 +192,7 @@ export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, l
 const sameRow = (a: SnapRow, b: SnapRow): boolean =>
   a.id === b.id && a.name === b.name && a.emoji === b.emoji && a.pip === b.pip && a.state === b.state
   && a.needsYou === b.needsYou && a.waiting === b.waiting && a.todos === b.todos && a.now === b.now
+  && a.note === b.note
   && a.lastT === b.lastT && a.lastMsg === b.lastMsg && a.closed === b.closed && a.loading === b.loading
   && (a.color === b.color || (!!a.color && !!b.color && a.color.bg === b.color.bg && a.color.fg === b.color.fg));
 
@@ -173,13 +217,14 @@ export function snapshotHeading(name: string, n: number): { count: string; label
   return { count, label: `${name}: ${count}; click one to open it` };
 }
 
-/** A row's spoken label — name, state, what it needs, what it is doing — and its hover title. */
+/** A row's spoken label — name, state, what it needs, what it is doing, its own note — and its hover title. */
 export function rowWords(r: SnapRow): { label: string; title: string } {
   const parts = [r.name];
   if (r.loading) parts.push("opening");
   else if (r.state) parts.push(r.state);
   if (r.todos) parts.push(`${r.todos} thing${r.todos === 1 ? "" : "s"} it needs from you`);
   if (r.now) parts.push(r.now);
+  if (r.note) parts.push(`its note: ${r.note}`);
   const title = (r.lastMsg ? `Last message: ${r.lastMsg}` : r.loading ? "opening…" : "No messages yet.") + "\nClick to open this session.";
   return { label: parts.join(" — "), title };
 }
