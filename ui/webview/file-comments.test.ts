@@ -1,0 +1,609 @@
+// The viewer's Comments panel (plans/file-review.md, Slice 1): the pure half runs for real (the view
+// model, the unsent count, the Send-to-session message against the kernel's literal, the Log rows, the
+// poll's verdicts); the seam's shared consent helper and the action's mount run against the small DOM
+// stand-in the GitHub link's test uses; what neither can show (the wire shapes, the one delegate root,
+// the string mtime comparison, the sheets) stays pinned at source. Synthetic fixtures only: the notes-api
+// world, placeholder ids, TESTHOST.
+import { test } from "node:test";
+import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import type { FileViewActionCtx } from "./file-view";
+import {
+  type Status, type Hunk, type StoreComment, unsentCount, actionLabel, describeComment, sendParts, buildSendMessage,
+  cardModel, logRowText, pollBaseline, headVerdict, pollTargets, mtimeMoved, editBlockedReason, lineStartOffset, folderOf, ABSENT,
+} from "./file-comments-model";
+
+const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
+const SRC = web("file-comments.ts");
+const MODEL = web("file-comments-model.ts");
+const VIEW = web("file-view.ts");
+const GEAR = web("gear.js");
+const CHAT_CSS = web("styles.css");
+const FEED_CSS = web("feed.css");
+const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+const ADR = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "adr", "0002-file-comments-in-the-track-changents-sidecar.md"), "utf8");
+
+// ── fixtures: the notes-api world ──────────────────────────────────────────────────────────────────
+const SID = "11111111-2222-3333-4444-555555555555";   // the api session's stable id (its ROMP_SID, the CLIs' authorId)
+const ABS = "/repo/notes-api/docs/report.md";
+const T0 = 1757145600000;                              // 2026-09-06T08:00:00Z, as the CLIs stamp `ts`
+
+const passage: StoreComment = {
+  id: T0 + "-118", author: "you", ts: T0, body: "Which cache? Say which.",
+  anchor: { quote: "shipping the cache in v1.2", prefix: "We recommend ", suffix: "." }, replies: [], resolved: false,
+};
+const replied: StoreComment = {
+  id: (T0 - 60000) + "-40", author: "you", ts: T0 - 60000, body: "Cut this paragraph; it repeats the summary.",
+  anchor: { quote: "The api session cut p95 latency by 40%", prefix: "## Findings\n", suffix: " and the" },
+  replies: [{ author: "api", authorId: SID, ts: T0 - 30000, body: "Cut it." }, { author: "you", ts: T0 + 5000, body: "Thanks, and drop the chart too." }],
+  resolved: false,
+};
+const whole: StoreComment = { id: T0 + 9000 + "-0", author: "you", ts: T0 + 9000, body: "Add a summary at the top.", replies: [], resolved: false };
+const hunk: Hunk = { id: "h1", author: "api", ts: T0 - 90000, kind: "replace", curFrom: 30, curTo: 33, baseFrom: 30, baseTo: 37, oldText: "reduced", newText: "cut", anchor: null };
+const bound: StoreComment = { id: T0 + 1000 + "-5", author: "you", ts: T0 + 1000, body: "Say cut, not reduced.", suggestionId: "h1", replies: [], resolved: false };
+
+function status(over: Partial<Status> = {}): Status {
+  return {
+    verb: "status", root: "/repo/notes-api", storePath: "/repo/notes-api/.trackchanges/docs%2Freport.md.json",
+    trackedBy: { kind: "file", entry: "docs/report.md" }, agentTooling: "present",
+    fileMtimeNs: "1757145600000000001", storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003",
+    store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage, replied, whole] },
+    hunks: [], log: [],
+    unsent: { comments: [passage.id, whole.id], replies: [{ commentId: replied.id, ts: T0 + 5000 }], accepted: 0, rejected: 0, watermark: T0 - 60000 },
+    ...over,
+  };
+}
+
+// ── the pure half ──────────────────────────────────────────────────────────────────────────────────
+
+test("the unsent count is the comments log's derivation as the status reply carries it — never browser state", () => {
+  assert.equal(unsentCount(status().unsent), 3, "two openings + one reply");
+  assert.equal(unsentCount({ comments: [], replies: [], accepted: 2, rejected: 1, watermark: null }), 3, "decisions count too (Slice 2)");
+  assert.equal(unsentCount(null), 0);
+  assert.equal(unsentCount(undefined), 0);
+});
+
+test("the action-row label is the glance: plain until a sidecar exists, then the counts", () => {
+  assert.equal(actionLabel(null), "Comments");
+  assert.equal(actionLabel(status({ store: null, trackedBy: null })), "Comments");
+  assert.equal(actionLabel(status({ store: null })), "Comments · tracked", "a tracked file with no sidecar says so");
+  assert.equal(actionLabel(status()), "Comments · 3");
+  assert.equal(actionLabel(status({ hunks: [hunk] })), "Comments · 3 · 1 change");
+  assert.equal(actionLabel(status({ hunks: [hunk, { ...hunk, id: "h2" }] })), "Comments · 3 · 2 changes");
+  const resolved = status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [{ ...passage, resolved: true }, whole] } });
+  assert.equal(actionLabel(resolved), "Comments · 1", "resolved comments leave the count");
+});
+
+test("desc is the complete parenthetical without parentheses (contract C2)", () => {
+  assert.equal(describeComment(passage, []), 'on "shipping the cache in v1.2"');
+  const long: StoreComment = { ...passage, anchor: { quote: "a".repeat(41) + "z", prefix: "", suffix: "" } };
+  assert.equal(describeComment(long, []), 'on "' + "a".repeat(40) + '"', "the first 40 characters of the passage");
+  assert.equal(describeComment(bound, [hunk]), 'on your change "reduced" to "cut"');
+  assert.equal(describeComment(bound, []), "on this file", "a bound comment whose change coalesced away falls back honestly");
+  assert.equal(describeComment(whole, []), "on this file");
+  const region: StoreComment = { ...whole, target: { kind: "image", region: { x: 0.12, y: 0.4, w: 0.35, h: 0.2 }, hash: "abc" } };
+  assert.equal(describeComment(region, []), "on the region at 0.12, 0.40, 0.35, 0.20");
+  const page: StoreComment = { ...whole, target: { kind: "pdf", region: { x: 0.12, y: 0.4, w: 0.35, h: 0.2 }, page: 2, hash: "abc" } };
+  assert.equal(describeComment(page, []), "on the region at 0.12, 0.40, 0.35, 0.20 of page 2");
+});
+
+test("sendParts: what one send hands over — openings the log never saw, else only the new replies, oldest first", () => {
+  const p = sendParts(status());
+  assert.deepEqual(p.comments.map((c) => c.id), [replied.id, passage.id, whole.id], "oldest first, by the comment's ts");
+  assert.deepEqual(p.comments[0], { id: replied.id, desc: 'on "The api session cut p95 latency by 40%"', body: "Thanks, and drop the chart too." },
+    "an already-sent opening lists only its new reply — the session's own reply never goes back to it");
+  assert.equal(p.comments[1].body, "Which cache? Say which.");
+  assert.equal(p.comments[2].desc, "on this file");
+  assert.equal(p.watermark, T0 + 9000, "the largest ts among what goes");
+  assert.equal(p.accepted, 0); assert.equal(p.rejected, 0);
+  // an opening AND a later reply on the same comment go together, blank-line joined
+  const both = status({ unsent: { comments: [replied.id], replies: [{ commentId: replied.id, ts: T0 + 5000 }], accepted: 0, rejected: 0, watermark: null } });
+  assert.equal(sendParts(both).comments[0].body, "Cut this paragraph; it repeats the summary.\n\nThanks, and drop the chart too.");
+  // an edit step recorded as a reply has no words and never goes
+  const withEdit = status({
+    store: { v: 3, path: "docs/report.md", suggestions: [], comments: [{ ...replied, replies: [{ author: "api", authorId: SID, ts: T0 + 5000, kind: "edit", oldText: "a", newText: "b" }] }] },
+    unsent: { comments: [], replies: [{ commentId: replied.id, ts: T0 + 5000 }], accepted: 0, rejected: 0, watermark: null },
+  });
+  assert.deepEqual(sendParts(withEdit).comments, []);
+  assert.deepEqual(sendParts(status({ store: null })).comments, [], "no sidecar: nothing to send");
+});
+
+// ── the message: the kernel's builder is tested against THESE literals (contract C3) ──────────────
+const TAIL_TRACKED =
+  "To respond:\n" +
+  "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file " + ABS + " --thread <id> --note \"<your reply>\"\n" +
+  "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + ABS + " --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n" +
+  "\n" +
+  "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
+  "naming the file.\n";
+
+test("the message for ONE comment, tracked, text file — byte for byte", () => {
+  const msg = buildSendMessage({ absPath: ABS, comments: [{ id: "1757145600000-118", desc: 'on "shipping the cache in v1.2"', body: "Which cache? Say which." }],
+    accepted: 0, rejected: 0, tracked: true, media: false });
+  assert.equal(msg,
+    "[obsidian-diff] I left 1 comment on " + ABS + ".\n" +
+    "\n" +
+    "Comment 1757145600000-118 (on \"shipping the cache in v1.2\"):\n" +
+    "Which cache? Say which.\n" +
+    "\n" + TAIL_TRACKED);
+});
+
+test("the message for SEVERAL comments: one blank line between, the plural, no decisions line in Slice 1", () => {
+  const msg = buildSendMessage({ absPath: ABS, comments: [
+    { id: "1757145540000-40", desc: 'on "The api session cut p95 latency by 40%"', body: "Thanks, and drop the chart too." },
+    { id: "1757145600000-118", desc: 'on "shipping the cache in v1.2"', body: "Which cache? Say which." },
+    { id: "1757145609000-0", desc: "on this file", body: "Add a summary at the top.\n\nAnd a date." },
+  ], accepted: 0, rejected: 0, tracked: true, media: false });
+  assert.equal(msg,
+    "[obsidian-diff] I left 3 comments on " + ABS + ".\n" +
+    "\n" +
+    "Comment 1757145540000-40 (on \"The api session cut p95 latency by 40%\"):\n" +
+    "Thanks, and drop the chart too.\n" +
+    "\n" +
+    "Comment 1757145600000-118 (on \"shipping the cache in v1.2\"):\n" +
+    "Which cache? Say which.\n" +
+    "\n" +
+    "Comment 1757145609000-0 (on this file):\n" +
+    "Add a summary at the top.\n\nAnd a date.\n" +
+    "\n" + TAIL_TRACKED);
+});
+
+test("tracked OFF: the second bullet is the edit-normally wording; decisions appear only when any were made", () => {
+  const off = buildSendMessage({ absPath: ABS, comments: [{ id: "1757145600000-118", desc: 'on "shipping the cache in v1.2"', body: "Which cache? Say which." }],
+    accepted: 0, rejected: 0, tracked: false, media: false });
+  assert.equal(off,
+    "[obsidian-diff] I left 1 comment on " + ABS + ".\n" +
+    "\n" +
+    "Comment 1757145600000-118 (on \"shipping the cache in v1.2\"):\n" +
+    "Which cache? Say which.\n" +
+    "\n" +
+    "To respond:\n" +
+    "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file " + ABS + " --thread <id> --note \"<your reply>\"\n" +
+    "  • to revise the text: edit the file normally, then say what you changed with the reply command above\n" +
+    "\n" +
+    "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
+    "naming the file.\n");
+  const decided = buildSendMessage({ absPath: ABS, comments: [{ id: "1757145600000-118", desc: "on this file", body: "Good." }],
+    accepted: 4, rejected: 1, tracked: true, media: false });
+  assert.ok(decided.includes("Good.\n\nI accepted 4 of your changes and rejected 1.\n\nTo respond:\n"), "the decisions line, blank-line framed, before the commands");
+});
+
+test("an image or PDF: the second bullet says to regenerate, never track-edit", () => {
+  const img = "/repo/notes-api/docs/latency.png";
+  const msg = buildSendMessage({ absPath: img, comments: [{ id: "1757145609000-0", desc: "on this file", body: "The y axis needs units." }],
+    accepted: 0, rejected: 0, tracked: true, media: true });
+  assert.equal(msg,
+    "[obsidian-diff] I left 1 comment on " + img + ".\n" +
+    "\n" +
+    "Comment 1757145609000-0 (on this file):\n" +
+    "The y axis needs units.\n" +
+    "\n" +
+    "To respond:\n" +
+    "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file " + img + " --thread <id> --note \"<your reply>\"\n" +
+    "  • to revise it:       regenerate the file with normal writes; never run track-edit on it\n" +
+    "\n" +
+    "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
+    "naming the file.\n");
+});
+
+test("the card model: one card per comment from store + hunks, oldest first, kinds and refs; no card model crosses the wire", () => {
+  const cards = cardModel(status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage, bound, replied, whole] }, hunks: [hunk] }).store, [hunk]);
+  assert.deepEqual(cards.map((c) => c.kind), ["passage", "passage", "change", "file"]);
+  assert.deepEqual(cards.map((c) => c.id), [replied.id, passage.id, bound.id, whole.id]);
+  assert.equal(cards[0].replies.length, 2); assert.equal(cards[0].replies[0].authorId, SID);
+  assert.equal(cards[1].ref, "shipping the cache in v1.2");
+  assert.equal(cards[2].ref, "reduced → cut"); assert.equal(cards[2].hunk?.id, "h1");
+  assert.equal(cards[3].ref, "this file"); assert.equal(cards[3].anchor, null);
+  assert.deepEqual(cardModel(null, []), []);
+  assert.doesNotMatch(SRC, /\.cards\b\s*[:=]/, "the panel derives cards from store + hunks in the reply, never a `cards` field");
+  assert.match(SRC, /cardModel\(this\.status\.store, this\.status\.hunks \|\| \[\]\)/);
+});
+
+test("Log rows: one line per comments-log entry, in the person's terms", () => {
+  const name = (sid: string) => (sid === SID ? "api" : null);
+  assert.equal(logRowText({ ts: "2026-09-06T08:00:00Z", kind: "send", author: "you", sid: SID, comments: [{ id: "a" }, { id: "b" }], accepted: 0, rejected: 0, queued: false }, name), "Sent 2 comments to api");
+  assert.equal(logRowText({ ts: "2026-09-06T08:00:00Z", kind: "send", author: "you", sid: SID, comments: [{ id: "a" }], accepted: 0, rejected: 0, queued: true }, name), "Sent 1 comment to api (queued until the session wakes)");
+  assert.equal(logRowText({ ts: "", kind: "send", author: "you", sid: SID, comments: [], accepted: 4, rejected: 1, queued: false }, name), "Sent 0 comments to api with 4 accepts and 1 reject");
+  assert.equal(logRowText({ ts: "", kind: "send", author: "you", sid: "22222222-3333-4444-5555-666666666666", comments: [] }), "Sent 0 comments to 22222222", "an unknown sid: its first 8 characters");
+  assert.equal(logRowText({ ts: "", kind: "accept", author: "you", ids: ["h1", "h2"] }), "Accepted 2 changes");
+  assert.equal(logRowText({ ts: "", kind: "reject", author: "you", ids: ["h1"] }), "Rejected 1 change");
+  assert.equal(logRowText({ ts: "", kind: "set-tracked", author: "you", on: true, entry: "docs/" }), "Track changes on for docs/");
+  assert.equal(logRowText({ ts: "", kind: "set-tracked", author: "you", on: false, entry: "docs/report.md" }), "Track changes off for docs/report.md");
+  assert.equal(logRowText({ ts: "", kind: "edit", author: "you", summary: { bytesBefore: 1200, bytesAfter: 1180 } }), "Edited the file directly (1200 → 1180 bytes)");
+  assert.equal(logRowText({ ts: "", kind: "edit", author: "you" }), "Edited the file directly");
+  assert.equal(logRowText({ ts: "", kind: "something-new", author: "you" }), "something-new", "an unknown kind still shows, never drops");
+});
+
+test("the poll's state machine: baseline from the reply, 404 = absent, 413/415 stop, and STRING mtime comparison", () => {
+  const b = pollBaseline(status({ storeMtimeNs: null, configMtimeNs: null }));
+  assert.deepEqual(b, { file: "1757145600000000001", store: ABSENT, config: ABSENT }, "a missing sidecar/config is the value 'absent'");
+  assert.deepEqual(headVerdict(200, "1757145600000000009"), { kind: "value", value: "1757145600000000009" });
+  assert.deepEqual(headVerdict(404, null), { kind: "value", value: ABSENT }, "absent → present is a transition like any other");
+  assert.deepEqual(headVerdict(413, null), { kind: "stop", status: 413 });
+  assert.deepEqual(headVerdict(415, null), { kind: "stop", status: 415 });
+  assert.deepEqual(headVerdict(500, null), { kind: "unknown", status: 500 });
+  assert.deepEqual(headVerdict(200, null), { kind: "unknown", status: 200 }, "an old kernel mirroring no mtime is unknown, not a change");
+  // ~1.7e18 exceeds JS's safe integers: as numbers these two writes would compare EQUAL
+  assert.equal(Number("1757145600000000001") === Number("1757145600000000002"), true, "the trap the string rule avoids");
+  assert.equal(mtimeMoved("1757145600000000001", "1757145600000000002"), true);
+  assert.equal(mtimeMoved("1757145600000000001", "1757145600000000001"), false);
+  assert.equal(mtimeMoved(ABSENT, "1757145600000000001"), true);
+  assert.match(MODEL, /return baseline !== seen;/, "the comparison is string inequality");
+  assert.doesNotMatch(SRC + MODEL, /Number\([^)]*[mM]time|parseInt\([^)]*[mM]time|BigInt\(/, "no numeric coercion of an mtime anywhere");
+});
+
+test("the poll's HEAD targets: the file, the sidecar the kernel named, config.json beside the root — never a client-computed sidecar path", () => {
+  const t = pollTargets(status(), ABS);
+  assert.deepEqual(t, { file: ABS, store: "/repo/notes-api/.trackchanges/docs%2Freport.md.json", config: "/repo/notes-api/.trackchanges/config.json" });
+  assert.deepEqual(pollTargets(status({ root: null, storePath: null }), ABS), { file: ABS, store: null, config: null }, "no project root: the file alone");
+  assert.deepEqual(pollTargets(status({ root: "/repo/notes-api/" }), ABS).config, "/repo/notes-api/.trackchanges/config.json");
+  assert.doesNotMatch(SRC + MODEL, /encodeURIComponent\([^)]*\)\s*\+\s*["'`]\.json/, "the sidecar's name is the kernel's to compute");
+  assert.match(MODEL, /store: s\.storePath \|\| null/);
+  assert.match(SRC, /fetch\(fileUrl\(target, this\.ctx\.sid\), \{ method: "HEAD", cache: "no-store" \}\)/, "HEAD over the same host-routed /file route the bytes use");
+  assert.match(SRC, /headVerdict\(r\.status, r\.headers\.get\("X-Romp-Mtime-Ns"\)\)/);
+  assert.match(SRC, /const POLL_MS = 2500;/);
+  assert.match(SRC, /const paneHidden = \(\): boolean => document\.hidden \|\| window\.innerWidth === 0 \|\| window\.innerHeight === 0;/,
+    "a shell-hidden pane has a zero viewport — the fleet pane's gate");
+  assert.match(SRC, /if \(paneHidden\(\)\) \{ this\.tickSkipped = true; return; \}/);
+  assert.match(SRC, /document\.addEventListener\("visibilitychange", this\.catchUp\);\n\s*window\.addEventListener\("resize", this\.catchUp\);/);
+  assert.match(SRC, /this\.base = pollBaseline\(s\);/, "every fileCommentsResult re-baselines the poll — the person's own writes never fire it");
+  assert.match(SRC, /if \(fileMoved\) this\.ctx\.reload\(\);/);
+  assert.match(SRC, /this\.stopped\.add\(target\);/);
+});
+
+test("the Edit refusal while changes are pending (Slice 1 wording), and the small helpers", () => {
+  assert.equal(editBlockedReason([]), null);
+  assert.equal(editBlockedReason([hunk]), "1 change is pending in this file, so Edit is off here: a direct edit would move it. Accept and reject arrive with the next update; the session's own track-edit still works.");
+  assert.match(editBlockedReason([hunk, { ...hunk, id: "h2" }, { ...hunk, id: "h3" }])!, /^3 changes are pending .* would move them\. Accept and reject arrive with the next update; the session's own track-edit still works\.$/);
+  assert.match(SRC, /this\.ctx\.setEditBlocked\(editBlockedReason\(s\.hunks \|\| \[\]\)\);/, "set from every status reply");
+  assert.equal(lineStartOffset("ab\ncd\nef", 0), 0);
+  assert.equal(lineStartOffset("ab\ncd\nef", 1), 3);
+  assert.equal(lineStartOffset("ab\ncd\nef", 2), 6);
+  assert.equal(lineStartOffset("ab\ncd\nef", 9), 8, "past the last line: the end");
+  assert.equal(folderOf(ABS), "/repo/notes-api/docs/");
+  assert.equal(folderOf("report.md"), "/");
+});
+
+// ── the DOM stand-in (the GitHub link test's idiom): the seam's consent helper, and the action's mount ──
+class El {
+  id = ""; title = ""; hidden = false; type = ""; disabled = false; placeholder = ""; value = ""; checked = false;
+  href = ""; target = ""; rel = "";
+  dataset: Record<string, string> = {};
+  style: Record<string, string> = {};
+  childNodes: Array<El | string> = [];
+  parentElement: El | null = null;
+  private attrs = new Map<string, string>();
+  private classes = new Set<string>();
+  classList = {
+    add: (...c: string[]) => { for (const x of c) this.classes.add(x); },
+    remove: (...c: string[]) => { for (const x of c) this.classes.delete(x); },
+    toggle: (c: string, on?: boolean) => { if (on === undefined ? !this.classes.has(c) : on) this.classes.add(c); else this.classes.delete(c); },
+    contains: (c: string) => this.classes.has(c),
+  };
+  constructor(public tagName: string) {}
+  get className(): string { return [...this.classes].join(" "); }
+  set className(v: string) { this.classes = new Set(v.split(/\s+/).filter(Boolean)); }
+  get textContent(): string { return this.childNodes.map((c) => (typeof c === "string" ? c : c.textContent)).join(""); }
+  set textContent(v: string) { this.childNodes = v === "" ? [] : [v]; }
+  appendChild<T extends El>(c: T): T { this.childNodes.push(c); c.parentElement = this; return c; }
+  replaceChildren(...c: Array<El | string>): void { this.childNodes = c; for (const x of c) if (x instanceof El) x.parentElement = this; }
+  remove(): void { /* inert */ }
+  querySelector(): null { return null; }
+  querySelectorAll(): El[] { return []; }
+  setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
+  getAttribute(k: string): string | null { return this.attrs.get(k) ?? null; }
+  addEventListener(): void {}
+  removeEventListener(): void {}
+  focus(): void {}
+  contains(): boolean { return false; }
+}
+const win: any = new EventTarget();
+win.parent = win;
+win.innerWidth = 1200; win.innerHeight = 800;
+(globalThis as any).window = win;
+(globalThis as any).document = {
+  createElement: (tag: string) => new El(tag),
+  createTextNode: (s: string) => s,
+  getElementById: () => null,
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  body: new El("body"),
+  hidden: false,
+};
+const store = new Map<string, string>();
+(globalThis as any).localStorage = {
+  getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+  setItem: (k: string, v: string) => { store.set(k, String(v)); },
+  removeItem: (k: string) => { store.delete(k); },
+};
+const tick = () => new Promise<void>((r) => setImmediate(r));
+
+test("ensureEditingAllowed — first consent: the kernel's live flag, else the one popup; only a yes posts the opt-in", async () => {
+  const fv = await import("./file-view");
+  const posted: any[] = [];
+  fv.initFileView((m) => posted.push(m));
+  let flag = true;
+  (globalThis as any).fetch = async () => ({ json: async () => ({ fileEditing: flag }) });
+  const confirms: string[] = [];
+  let answer = false;
+  win.confirm = (t: string) => { confirms.push(t); return answer; };
+  assert.equal(await fv.ensureEditingAllowed(null), true, "the flag is on: no popup");
+  assert.equal(confirms.length, 0); assert.equal(posted.length, 0);
+  flag = false; answer = false;
+  assert.equal(await fv.ensureEditingAllowed(null), false, "a no changes nothing");
+  assert.equal(confirms.length, 1);
+  assert.match(confirms[0], /^Allow editing files from the dashboard\?\n\n/);
+  assert.match(confirms[0], /Saves and comments write straight to disk on the file's machine/, "the copy stays true for comments (decision 5)");
+  assert.match(confirms[0], /your comments reach it when you send them/, "comments are not traced at once, the send is the notification");
+  assert.equal(posted.length, 0);
+  answer = true;
+  assert.equal(await fv.ensureEditingAllowed(null), true);
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].type, "setFileEditing"); assert.equal(posted[0].enabled, true);
+  assert.equal(typeof posted[0].gt, "number", "gesture-stamped: federation orders applies by it");
+  // /version unreachable: the popup still asks (the kernel-side gate refuses regardless)
+  (globalThis as any).fetch = async () => { throw new Error("down"); };
+  confirms.length = 0;
+  assert.equal(await fv.ensureEditingAllowed(null), true);
+  assert.equal(confirms.length, 1);
+});
+
+test("ensureEditingAllowed — re-consent on the owning kernel's gate refusal, naming the machine; other refusals re-offer nothing", async () => {
+  const fv = await import("./file-view");
+  const posted: any[] = [];
+  fv.initFileView((m) => posted.push(m));
+  (globalThis as any).fetch = async () => { throw new Error("must not be read on the refusal path"); };
+  const confirms: string[] = [];
+  let answer = true;
+  win.confirm = (t: string) => { confirms.push(t); return answer; };
+  const gate = "cannot write the comments for ~/notes-api/docs/report.md: dashboard file editing is off on this machine";
+  assert.equal(await fv.ensureEditingAllowed("TESTHOST:" + SID, gate), true);
+  assert.match(confirms[0], /^Editing is off on “TESTHOST” — it may have connected after you allowed editing here\.\n\nAllow editing files from the dashboard\?/);
+  assert.equal(posted.length, 1); assert.equal(posted[0].type, "setFileEditing");
+  assert.equal(await fv.ensureEditingAllowed(null, gate), true);
+  assert.match(confirms[1], /^Editing is off on this machine\.\n\n/);
+  answer = false;
+  assert.equal(await fv.ensureEditingAllowed(SID, gate), false, "a no: the caller shows the refusal, nothing is posted");
+  assert.equal(posted.length, 2);
+  assert.equal(await fv.ensureEditingAllowed(SID, "~/notes-api/docs/report.md changed on disk since you opened it"), false, "a conflict is not the gate");
+  assert.equal(confirms.length, 3, "…and asks nothing");
+});
+
+function stubCtx(posted: any[], over: Partial<FileViewActionCtx> = {}): FileViewActionCtx {
+  const noop = () => { /* inert */ };
+  const body = new El("div") as unknown as HTMLElement;
+  return {
+    path: ABS, sid: SID, todoId: null,
+    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", media: () => null,
+    identity: () => ({ name: "api", color: null }),
+    onRendered: noop, onSelection: noop, onSaved: noop, onClose: noop,
+    post: (m) => posted.push(m), ensureEditingAllowed: async () => true, setEditBlocked: noop, aside: noop, setMode: noop,
+    scrollToOffset: noop, reload: noop, ...over,
+  };
+}
+
+test("the Comments action mounts hidden, asks `status` with sid, and is revealed by the answer with the glance label", async () => {
+  const fc = await import("./file-comments");
+  const posted: any[] = [];
+  const blocked: Array<string | null> = [];
+  const unit = fc.fileCommentsAction.mount(stubCtx(posted, { setEditBlocked: (r) => { blocked.push(r); } })) as unknown as El;
+  assert.equal(unit.className, "fileview-fc");
+  assert.equal(unit.hidden, true, "hidden until the kernel answers");
+  const b = unit.childNodes[0] as El;
+  assert.equal(b.tagName, "button"); assert.equal(b.textContent, "Comments"); assert.equal(b.type, "button");
+  assert.equal(posted.length, 1);
+  const ask = posted[0];
+  assert.deepEqual(ask, { type: "fileComments", reqId: ask.reqId, sid: SID, path: ABS, verb: "status" }, "the disk op carries sid (federation routes by it)");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: ask.reqId, ...status({ hunks: [hunk] }) } }));
+  await tick();
+  assert.equal(unit.hidden, false, "the answer reveals the action");
+  assert.equal(b.textContent, "Comments · 3 · 1 change");
+  assert.deepEqual(blocked, [editBlockedReason([hunk])], "pending changes block Edit through the seam");
+});
+
+test("a `no-node` refusal keeps the action away for good; a stale reqId lands nowhere", async () => {
+  const fc = await import("./file-comments");
+  const posted: any[] = [];
+  const unit = fc.fileCommentsAction.mount(stubCtx(posted)) as unknown as El;
+  const ask = posted[posted.length - 1];
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: ask.reqId - 1, ...status() } }));
+  await tick();
+  assert.equal(unit.hidden, true, "another open's reply is not this one's answer");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsFailed", reqId: ask.reqId, verb: "status", code: "no-node", error: "node was not found on this kernel's PATH" } }));
+  await tick();
+  assert.equal(unit.hidden, true, "no node on the owning kernel: the action never appears (the gear's row says why)");
+});
+
+// ── what the stand-in cannot show, pinned at source ────────────────────────────────────────────────
+
+test("the registry entry: exported by file-comments.ts, registered in file-view.ts, with no runtime import cycle", () => {
+  assert.match(SRC, /export const fileCommentsAction: FileViewAction = \{\n  id: "file-comments",/);
+  assert.match(VIEW, /import \{ fileCommentsAction \} from "\.\/file-comments";/);
+  assert.match(VIEW, /registerFileViewAction\(githubLinkAction\);\n(?:\/\/[^\n]*\n)*registerFileViewAction\(fileCommentsAction\);/, "second entry, after the GitHub link");
+  assert.doesNotMatch(SRC.replace(/^\s*\/\/.*$/gm, ""), /registerFileViewAction/, "registered by the viewer, not at this module's top level");
+  const fromView = SRC.match(/^import .* from "\.\/file-view";$/gm) || [];
+  assert.deepEqual(fromView, ['import type { FileViewAction, FileViewActionCtx, FileViewIdentity } from "./file-view";'], "types only");
+  // contract C4: the anchor-map API, imported by name
+  assert.match(SRC, /import \{ mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine \} from "\.\/anchor-map";/);
+  assert.doesNotMatch(SRC, /vendor\/track-changents/, "the engine is reached through anchor-map, never twice");
+});
+
+test("both ops carry sid and a client-minted reqId; replies match by reqId; a warn or a socket drop fails what is outstanding", () => {
+  assert.match(SRC, /const msg: Record<string, unknown> = \{ type: "fileComments", reqId, sid: ctx\.sid \|\| undefined, path: ctx\.path, verb \};/);
+  assert.match(SRC, /this\.ctx\.post\(\{ \.\.\.msg, type: "fileCommentsSend", reqId \}\);/);
+  assert.match(SRC, /sid: this\.ctx\.sid, path: this\.ctx\.path, tracked, comments: parts\.comments,\n\s*accepted: parts\.accepted, rejected: parts\.rejected, watermark: parts\.watermark,/);
+  assert.match(SRC, /if \(answerTodo\) msg\.todoId = this\.ctx\.todoId;/);
+  assert.match(SRC, /const answerTodo = !!this\.ctx\.todoId && this\.sendOpts\.todo && !this\.todoAnswered;/, "one send answers the todo; later sends carry none");
+  for (const t of ["fileCommentsResult", "fileCommentsFailed", "fileCommentsSent", "fileCommentsSendFailed"]) assert.ok(SRC.includes('m.type === "' + t + '"'), t);
+  assert.match(SRC, /const p = this\.pending\.get\(Number\(m\.reqId\)\);\n\s*if \(!p\) return;/);
+  assert.match(SRC, /else if \(m\.type === "warn"\) live\.failAll\(/, "a federation warn during an outstanding request is its failure");
+  assert.match(SRC, /window\.addEventListener\("romp:wsdown", \(\) => \{ if \(live\) live\.failAll\(/);
+  assert.doesNotMatch(SRC, /m\.sid === /, "never matched by sid: a remote reply's sid comes back host-prefixed");
+});
+
+test("the send sequence: build from the current status, set-tracked when asked, then send with the post-toggle verdict; a refusal aborts before the send", () => {
+  const send = SRC.split("async doSend(): Promise<void> {")[1].split("\n  }\n")[0];
+  const at = (s: string) => { const i = send.indexOf(s); assert.ok(i >= 0, s); return i; };
+  assert.ok(at("const parts: SendParts = sendParts(s);") < at('await this.mutate("set-tracked", { on: true, scope: "file" }, "send")'), "the message is built first");
+  assert.ok(at("if (!r) return;") < at("await this.requestSend(msg)"), "a refused toggle aborts before the send");
+  assert.ok(at("tracked = !!r.trackedBy;") < at("await this.requestSend(msg)"), "tracked is the post-toggle verdict");
+  assert.match(send, /this\.sentNote = reply\.queued \? "Queued for " \+ who : "Sent to " \+ who \+ " at " \+ clock\(Date\.now\(\)\);/);
+  assert.match(send, /if \(reply\.warning\) this\.errors\.set\("send", \{ text: reply\.warning, reload: false, warn: true \}\);/, "sent but nothing stamped: the kernel's own reason shows");
+  assert.match(SRC, /btn\(this\.sending \? "Sending…" : "Send to session" \+ \(n \? " \(" \+ n \+ "\)" : ""\), "fcsend"\)/, "count = unsent; relabeled while sending");
+  assert.match(SRC, /b\.disabled = !s \|\| !n \|\| this\.sending \|\| !this\.ctx\.sid;/);
+  assert.match(SRC, /if \(this\.ctx\.todoId && !this\.todoAnswered\) opts\.appendChild\(this\.opt\("todo", "answer the todo this file was opened from"\)\);/);
+  assert.match(SRC, /if \(!s\.trackedBy\) opts\.appendChild\(this\.opt\("track", "turn on tracking so the session's edits come back as changes"\)\);/);
+  assert.match(SRC, /sendOpts = \{ todo: true, track: true \};/, "both checked by default (decision 8)");
+  assert.match(SRC, /buildSendMessage\(\{ absPath: this\.ctx\.path, comments: parts\.comments, accepted: parts\.accepted, rejected: parts\.rejected, tracked, media \}\)/, "the preview is the same builder the tests pin against the kernel's literal");
+});
+
+test("every mutating verb: consent first, a fence from the current status, one retry on editing-off (re-consent) or a moved fence (fresh status), then the refusal verbatim with Reload", () => {
+  const mut = SRC.split("async mutate(verb: string, args: Record<string, unknown>, slot: string): Promise<Status | null> {")[1].split("\n  }\n")[0];
+  assert.match(mut, /if \(!\(await this\.ctx\.ensureEditingAllowed\(\)\)\)/, "the first-consent path, per click (never cached)");
+  const once = SRC.split("private async mutateOnce(")[1].split("\n  }\n")[0];
+  assert.match(once, /const fence = \{ storeMtimeNs: s && s\.storeMtimeNs !== null \? s\.storeMtimeNs : "", configMtimeNs: s && s\.configMtimeNs !== null \? s\.configMtimeNs : "" \};/,
+    '"" means the file must not exist yet — two browsers cannot both create it');
+  assert.match(once, /if \(!retried && e\.code === "editing-off"\) \{\n\s*if \(await this\.ctx\.ensureEditingAllowed\(e\.error\)\) return this\.mutateOnce\(verb, args, slot, true\);/);
+  assert.match(once, /\} else if \(!retried && MOVED\.has\(e\.code\)\) \{\n\s*await this\.refresh\(\);\n\s*return this\.mutateOnce\(verb, args, slot, true\);/);
+  assert.match(once, /this\.errors\.set\(slot, \{ text: e\.error, reload: MOVED\.has\(e\.code\) \}\);/, "a second refusal shows verbatim; moved fences offer Reload");
+  assert.match(SRC, /const MOVED = new Set\(\["store-moved", "file-moved", "config-moved"\]\);/);
+  for (const verb of ['"set-tracked", { on: true, scope: "file" }', '"set-tracked", { on: true, scope: "folder" }', '"set-tracked", { on: false, scope: "folder" }',
+    '"set-tracked", { on: false, scope: "file" }', '"reply", { commentId: c.commentId, note }', '"comment", args', '"resolve", { commentId: x.dataset.id!, on: x.dataset.on === "1" }']) {
+    assert.ok(SRC.includes("this.mutate(" + verb), verb + " goes through mutate()");
+  }
+  assert.match(SRC, /args\.anchor = makeAnchor\(src, c\.range\); args\.hintOffset = c\.range\.start;/, "a passage comment carries the engine's anchor and the start offset");
+  assert.match(SRC, /if \(r\) this\.closeComposer\(\);\s*\/\/ a refusal keeps the note where it was typed/);
+});
+
+test("click-safety: ONE delegate() root for every control (the body row, which also holds the highlights), keyed expand state, flash on the direct buttons", () => {
+  assert.equal((SRC.match(/\bdelegate\(/g) || []).length, 1, "one delegate root");
+  assert.match(SRC, /const row = ctx\.body\(\)\.parentElement \|\| ctx\.body\(\);\n\s*delegate\(row, \{/);
+  assert.doesNotMatch(SRC.replace(/^\s*\/\/.*$/gm, ""), /\.onclick\s*=/, "no per-node handlers on rebuilt nodes");
+  assert.match(SRC, /openCards = new Set<string>\(\);/);
+  assert.match(SRC, /const isOpen = this\.openCards\.has\(c\.id\);/);
+  assert.match(SRC, /fccard: \(x\) => \{ const id = x\.dataset\.id!; if \(this\.openCards\.has\(id\)\) this\.openCards\.delete\(id\); else this\.openCards\.add\(id\); this\.render\(\); \}/);
+  assert.match(SRC, /flash\(this\.float\);/); assert.match(SRC, /flash\(this\.button\);/);
+  // the composer's input is never rebuilt, and the aside's own children are placed once per open, so a
+  // poll re-render swaps section CHILDREN only and cannot drop the input's focus mid-word
+  assert.match(SRC, /if \(!box\.contains\(this\.input\)\) box\.replaceChildren\(ref, this\.input, acts, err\);/);
+  assert.match(SRC, /if \(!this\.root\.contains\(head\)\) this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/);
+  assert.equal((SRC.match(/this\.root\.replaceChildren\(/g) || []).length, 1, "the aside's children are never rebuilt elsewhere");
+  // the highlights carry the delegate's action and the comment id; painted through anchor-map, states located / context / detached
+  assert.match(SRC, /paintRendered\(root, src, loc\.range, cls, \{ act: "fcopen", id: card\.id \}\)/);
+  assert.match(SRC, /paintRaw\(root, src, loc\.range, cls, \{ act: "fcopen", id: card\.id \}\)/);
+  assert.match(SRC, /const cls = "fc-hl" \+ \(loc\.state === "context" \? " fc-hl-context" : ""\);/);
+  assert.match(SRC, /if \(c\.anchor && loc && loc\.range && !loc\.painted\) \{\n\s*const rv = btn\("Reveal", "fcreveal"\);/, "an unpainted comment's card never dead-ends");
+  assert.match(SRC, /the wire: ONE window listener for the module/);
+  // waits show the romp loader
+  assert.match(SRC, /const w = el\("div", "fileview-load fc-load"\);\n\s*w\.innerHTML = '<img src="\/media\/romp-swirl-glyph\.svg" alt=""><span>romp<\/span>'/);
+});
+
+test("the floating Comment button rides the seam's selection hook — before the composer gate — and the mapping refusal keeps the note and offers Raw", () => {
+  assert.match(SRC, /ctx\.onSelection\(\(sel\) => this\.onSelection\(sel\)\);/);
+  assert.match(SRC, /if \(!this\.open \|\| this\.ctx\.mode\(\) === "media" \|\| !sel\.rangeCount\) return;/, "with the panel open, on a text view");
+  assert.match(SRC, /for \(const ev of \["mousedown", "touchstart"\]\) this\.float\.addEventListener\(ev, \(e\) => e\.preventDefault\(\)\);/, "the click must not collapse the selection it is about");
+  assert.match(SRC, /const res = this\.ctx\.mode\(\) === "rendered" \? mapRenderedSelection\(sel, root, src\) : mapRawSelection\(sel, root, src\);/);
+  assert.match(SRC, /else this\.composer = \{ kind: "comment", range: null, quote: null, refusal: \{ \.\.\.res, selText \} \};/, "a refusal opens the composer anyway, note intact");
+  const raw = SRC.split("switchToRaw(): void {")[1].split("\n  }\n")[0];
+  assert.match(raw, /this\.ctx\.setMode\("raw"\);/);
+  assert.match(raw, /if \(r\.rawHasQuote && r\.selText\) \{\n\s*const i = src\.indexOf\(r\.selText\);/, "the passage is re-targeted when its text occurs in the source");
+  assert.match(raw, /if \(typeof r\.blockStartLine === "number"\) this\.ctx\.scrollToOffset\(lineStartOffset\(src, r\.blockStartLine\)\);/, "else scrolled to the block's first line");
+  assert.match(SRC, /else if \(e\.key === "Escape"\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); this\.closeComposer\(\); \}/, "Escape in the composer never closes the viewer");
+});
+
+test("the seam in file-view.ts: every member exists, hooks fire where they should, and both exits drain the close hooks", () => {
+  for (const m of ["body(): HTMLElement;", 'mode(): "raw" | "rendered" | "media";', "text(): string | null;", "mtimeNs(): string;",
+    'media(): "image" | "pdf" | "svg" | null;', "identity(): FileViewIdentity | null;", "onRendered(cb: () => void): void;",
+    "onSelection(cb: (sel: Selection) => void): void;", "onSaved(cb: (info: { mtimeNs: string; logged: boolean }) => void): void;",
+    "onClose(cb: () => void): void;", "post(m: Record<string, unknown>): void;", "ensureEditingAllowed(refusal?: string): Promise<boolean>;",
+    "setEditBlocked(reason: string | null): void;", "aside(el: HTMLElement | null): void;", 'setMode(mode: "raw" | "rendered"): void;',
+    "scrollToOffset(n: number): void;", "reload(): void;"]) {
+    assert.ok(VIEW.includes(m), "FileViewActionCtx has " + m);
+  }
+  assert.match(VIEW, /export async function ensureEditingAllowed\(sid: string \| null \| undefined, refusal\?: string\): Promise<boolean> \{/);
+  assert.match(VIEW, /ensureEditingAllowed: \(refusal\) => ensureEditingAllowed\(sid, refusal\),/);
+  // the aside: mounted beside the body in the body row; the viewer owns the two-column CSS
+  assert.match(VIEW, /const main = el\("div", "fileview-main"\);\n\s*const body = el\("div", "fileview-body"\);/);
+  assert.match(VIEW, /main\.appendChild\(body\);/);
+  assert.match(VIEW, /box\.appendChild\(bar\); box\.appendChild\(main\);/);
+  assert.match(VIEW, /if \(node\) \{ node\.classList\.add\("fileview-aside"\); main\.appendChild\(node\); \}/);
+  // hooks: every text paint, the selection before the composer gate, the save ack with `logged`, both exits
+  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 2, "the SVG Source view and the text views both fire onRendered");
+  assert.match(VIEW, /for \(const cb of savedHooks\) \{ try \{ cb\(\{ mtimeNs: mtNs, logged \}\); \}/);
+  assert.equal((VIEW.match(/runCloseHooks\(\);/g) || []).length, 2, "closeFileView AND the replace path");
+  const closeFn = VIEW.split("export function closeFileView")[1].split("/** Show `path`")[0];
+  assert.match(closeFn, /dropMediaUrl\(\);[^\n]*\n\s*runCloseHooks\(\);[^\n]*\n\s*wrap\.remove\(\);/, "hooks drain before the element goes");
+  // Edit refuses in words while blocked — the button stays a button so the reason reaches touch users
+  assert.match(VIEW, /if \(editBlocked\) \{ noteBar\(editBlocked\); return; \}/);
+  assert.match(VIEW, /editBtn\.title = reason \|\| "Edit this file in place";/);
+  // reload re-runs the fetch pipeline, never in edit mode; setMode is markdown-only
+  assert.match(VIEW, /reload: \(\) => \{ if \(!editing\) fetchFile\(\); \},/);
+  assert.match(VIEW, /setMode: \(mode\) => \{ if \(!isMd \|\| editing\) return; fmt\.md = mode; saveFmt\(fmt\); renderBody\(\); \},/);
+  assert.match(VIEW, /const line = \(src\.slice\(0, Math\.max\(0, n\)\)\.match\(\/\\n\/g\) \|\| \[\]\)\.length;/, "one .fv-cl per logical line");
+});
+
+test("the sheets: the panel block is byte-equal in styles.css and feed.css, tokens only, sizes from the ladder", () => {
+  const block = (css: string) => {
+    const a = css.indexOf("/* ── file comments panel (plans/file-review.md Slice 1; file-comments.ts)");
+    const b = css.indexOf("/* ── end file comments panel ── */");
+    assert.ok(a >= 0 && b > a, "the block and its end marker");
+    return css.slice(a, b);
+  };
+  const chat = block(CHAT_CSS);
+  assert.equal(chat, block(FEED_CSS), "the feed page loads only feed.css — the viewer's aside dresses the same there");
+  const body = chat.replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.doesNotMatch(body, /#[0-9a-fA-F]{3,8}\b/, "no bare hex: colours through tokens");
+  assert.doesNotMatch(body, /rgba?\(/, "no bare rgba either — --accent-wash, --overlay-05/10 and color-mix over tokens");
+  assert.doesNotMatch(body, /border-radius: 999px/, "pills through --radius-pill");
+  for (const m of body.match(/font-size: (0\.\d+em)/g) || []) assert.ok(["0.66em", "0.72em", "0.82em", "0.86em"].includes(m.slice(11)), m + " is on the ladder");
+  assert.match(body, /\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; container-type: inline-size; \}/);
+  assert.match(body, /@container \(max-width: 680px\) \{\n\s*\.fileview-main \{ flex-direction: column; \}/, "the narrow fold: the aside drops below the body");
+  assert.match(body, /\.fc-hl \{ background: color-mix\(in srgb, var\(--warn\) 14%, transparent\); box-shadow: inset 0 0 0 1\.5px/, "a ring, not a fill a diff colour would occlude");
+  assert.match(body, /\.fc-toggle\[data-on="1"\] \{ background: var\(--accent\); color: var\(--accent-fg\); border-color: var\(--accent\); \}/);
+  // the body stays the plain overflow block the editor's height: 100% relies on
+  assert.match(CHAT_CSS, /\.fileview-body \{ flex: 1 1 auto; min-height: 0; overflow: auto; \}/);
+});
+
+test("the gear's File comments row reads /defaults.fileComments: the reason for no-node, the install.sh sentence for absent tooling, no invented op", () => {
+  assert.match(GEAR, /<b>File comments<\/b>/);
+  assert.match(GEAR, /<span class=rs-sub id=rs-filecomments>/);
+  assert.match(GEAR, /FILECOMMENTS_SUB\[typeof d\.fileComments === 'string' \? d\.fileComments : 'unknown'\]/);
+  const sub = GEAR.split("var FILECOMMENTS_SUB = {")[1].split("\n};")[0];
+  assert.match(sub, /'no-node': '[^']*node was not found on the kernel\\u2019s PATH[^']*Comments action does not appear[^']*'/, "names the machine's reason");
+  assert.match(sub, /'agent-tooling-absent': '[^']*sessions cannot reply[^']*Run install\.sh on this machine[^']*there is no button for it[^']*'/);
+  assert.match(sub, /this machine/, "the local kernel is the machine /defaults answers for");
+  assert.doesNotMatch(GEAR, /linkTooling|installTooling|fileCommentsLink|runInstall/, "no WS op to run the link step exists — none is invented");
+  // the row sits beside "File links open in"
+  assert.ok(GEAR.indexOf("<b>File links open in</b>") < GEAR.indexOf("<b>File comments</b>") && GEAR.indexOf("<b>File comments</b>") < GEAR.indexOf("<b>Text scheme</b>"));
+});
+
+test("vocabulary and privacy: the person's words, never the format's; no personal identifiers", () => {
+  // CONTEXT.md: file comment / change / tracked file / direct edit / comments log / Send to session — never thread,
+  // suggestion, annotation in UI or docs. The CLI flag `--thread` in the message is the format's own and stays.
+  assert.doesNotMatch(SRC, /\b(thread|suggestion|annotation)s?\b/i);
+  const modelWords = (MODEL.match(/\b(thread|suggestion|annotation)s?\b/gi) || []).filter((w) => !new RegExp("--" + w).test(MODEL));
+  assert.deepEqual([...new Set(MODEL.match(/[^-]\b(thread|annotation)s?\b/gi) || [])], [], "the model's only 'thread' is the --thread flag");
+  void modelWords;
+  const newGuide = GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges"));
+  assert.doesNotMatch(newGuide, /\b(suggestion|annotation)s?\b/i);
+  assert.doesNotMatch(newGuide.replace(/`[^`]*`/g, ""), /\bthreads?\b/i);
+  for (const [name, text] of [["file-comments.ts", SRC], ["file-comments-model.ts", MODEL], ["guide.md Files", newGuide]] as const) {
+    assert.doesNotMatch(text, /fleet/i, name + ": no new fleet identifiers or prose");
+    assert.doesNotMatch(text, /\/home\/[a-z]/, name + ": no absolute home paths");
+  }
+});
+
+test("docs: the guide covers the panel, the poll, the consent, either view and media, the log and its opt-out, and where to look when the action is missing; the ADR is accepted", () => {
+  const flat = (t: string) => t.replace(/\s+/g, " ");   // the guide wraps at 80 columns
+  const files = flat(GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges")));
+  for (const phrase of ["**Comments**", "**Track changes**", "**Send to session**", "Rendered or Raw", "**Comment on this file**", "image or a PDF",
+    ".trackchanges/", "comments log", ".gitignore", "**File comments**", "**File editing**", "every few seconds"]) {
+    assert.ok(files.includes(phrase), "Files section: " + phrase);
+  }
+  const chat = flat(GUIDE.slice(GUIDE.indexOf("### The chat"), GUIDE.indexOf("### The feed")));
+  assert.ok(chat.includes("quote chip"), "chips remain for one-off notes");
+  assert.ok(chat.includes("**Comments**"), "…and point at the panel for anything worth keeping");
+  assert.ok(files.includes("folder a session will write into"), "track the folder before the session writes");
+  assert.match(ADR, /^Status: accepted \(2026-09-06\), with Slice 1 of `plans\/file-review\.md`$/m);
+});

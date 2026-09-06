@@ -14,8 +14,13 @@ const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 
 test("one stacked block, two triggers: the narrow size query OR the forced style query", () => {
   assert.match(CSS, /@container \(max-width: 540px\) or style\(--romp-stack: on\) \{/);
-  const count = (CSS.match(/^@container /gm) || []).length;
-  assert.equal(count, 1, "still exactly one container query — no duplicated stacked rules");
+  // exactly one STACKING query — no duplicated stacked rules. The file viewer's aside (file-comments,
+  // plans/file-review.md Slice 1) folds under its own container query on `.fileview-main`; it names
+  // neither the feed's breakpoint nor --romp-stack, so it cannot drift into a second stacking owner.
+  const stacking = (CSS.match(/^@container \(max-width: 540px\) or style\(--romp-stack: on\)/gm) || []).length;
+  assert.equal(stacking, 1, "still exactly one stacking container query");
+  const others = (CSS.match(/^@container .*$/gm) || []).filter((q) => !q.includes("--romp-stack"));
+  assert.deepEqual(others, ["@container (max-width: 680px) {"], "the only other container query is the viewer aside's fold");
 });
 
 test("stacked sections stretch — every card spans the container, whatever its text (the user 2026-08-24)", () => {

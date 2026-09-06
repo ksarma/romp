@@ -292,7 +292,10 @@ test("the viewer is a singleton MODAL over its pane: ~95% card, dimmed backdrop,
 test("selecting in the viewer seeds the composer's editor chip — the editorSelection shape, path:line label", () => {
   // mouseup posts to our OWN window (the browseFiles precedent — no import cycle with render.ts),
   // and render.ts's existing editorSelection handler owns the chip end to end
-  assert.match(VIEW, /box\.addEventListener\("mouseup", \(\) => \{/);
+  // one handler for the mouse's settle point and the phone's (touchend), since Slice 1 of
+  // plans/file-review.md — the comments panel's floating Comment button rides the same gesture
+  assert.match(VIEW, /const onSelect = \(\) => \{/);
+  assert.match(VIEW, /box\.addEventListener\("mouseup", onSelect\);\n\s*box\.addEventListener\("touchend", onSelect\);/);
   assert.match(VIEW, /seedTarget\.postMessage\(\{ type: "editorSelection", text: picked, sid: sid \|\| undefined, src: quoteSrcLabel\(path, doc, picked\) \}, "\*"\);/);
   // a collapsed or out-of-viewer selection seeds nothing, and CodeMirror selections are edits
   assert.match(VIEW, /if \(!sel \|\| sel\.isCollapsed \|\| !sel\.anchorNode \|\| !box\.contains\(sel\.anchorNode\)\) return;/);
@@ -606,8 +609,13 @@ test("Edit is consent-gated, and the gate is the KERNEL's flag, not the button (
   // no flag → a plain-words popup; only a YES posts the opt-in, and it broadcasts (KERNEL_SETTING)
   // — stamped with the gesture's own time, so a copy queued for a down host and flushed hours
   // later can never outrank a newer pick at the kernel (the store orders applies by gt)
-  assert.match(VIEW, /window\.confirm\(\s*\n?\s*"Allow editing files from the dashboard\?/);
+  // the popup is ensureEditingAllowed's, shared with the comments panel's verbs since Slice 1 of
+  // plans/file-review.md (decision 5: one consent; its copy says saves AND comments write disk)
+  assert.match(VIEW, /const COPY = "Allow editing files from the dashboard\?\\n\\n"/);
+  assert.match(VIEW, /Saves and comments write straight to disk on the file's machine/);
+  assert.match(VIEW, /if \(!window\.confirm\(COPY\)\) return false;/);
   assert.match(VIEW, /post\(\{ type: "setFileEditing", enabled: true, gt: Date\.now\(\) \}\);/);
+  assert.match(VIEW, /void ensureEditingAllowed\(sid\)\.then\(\(ok\) => \{\n\s*if \(!ok\) return;/, "the Edit click asks through the shared helper");
   // the popup's promise of a gear off-switch is real, and the save route refuses server-side
   const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
   assert.ok(GEAR.includes("'setFileEditing'"), "the gear can turn it back off");
@@ -689,12 +697,17 @@ test("a save refused by the OWNING kernel's edit gate re-offers the consent and 
   assert.match(VIEW, /if \(\/file editing is off\/\.test\(err\)\) \{/);
   assert.match(VIEW, /import \{[^}]*\bhostOf\b[^}]*\} from "\.\/host-prefix";/,   // beside the session chip's helpers since 2026-09-03
     "the popup names the refusing machine — the host prefix the viewer's sid already carries");
-  const failedArm = VIEW.split("failed: (err) => {")[1].split("body.prepend(bar2);")[0];
-  assert.ok(failedArm.includes('post({ type: "setFileEditing", enabled: true, gt: Date.now() });'),
-    "a yes re-broadcasts the SAME opt-in the first popup sends — gesture-stamped like it");
-  assert.ok(failedArm.includes("doSave();"), "…and retries the save the refusal interrupted");
-  assert.ok(failedArm.indexOf("setFileEditing") < failedArm.indexOf("doSave();"),
-    "the opt-in rides the socket ahead of the retry");
+  // the arm hands the refusal to ensureEditingAllowed's re-consent path (shared with the comment
+  // verbs since Slice 1) and retries on a yes; the helper re-posts the SAME opt-in the first popup
+  // sends — gesture-stamped like it — before the caller's retry rides the same socket
+  const failedArm = VIEW.split("failed: (err) => {")[1].split("showSaveError(err);\n      },")[0];
+  assert.match(failedArm, /void ensureEditingAllowed\(sid, err\)\.then\(\(ok\) => \{ if \(ok\) doSave\(\); else showSaveError\(err\); \}\);/);
+  const helper = VIEW.split("export async function ensureEditingAllowed(")[1].split("\n}")[0];
+  assert.match(helper, /if \(!\/file editing is off\/\.test\(refusal\)\) return false;/, "only the gate's own text re-offers");
+  assert.match(helper, /"Editing is off on " \+ \(host \? "“" \+ host \+ "”" : "this machine"\)/, "names the refusing machine");
+  assert.equal((helper.match(/post\(\{ type: "setFileEditing", enabled: true, gt: Date\.now\(\) \}\);/g) || []).length, 2,
+    "both paths post the one opt-in");
+  assert.ok(helper.indexOf('post({ type: "setFileEditing"') < helper.indexOf("return true;"), "the opt-in is posted before the caller may retry");
   // the two sides of the text match are pinned TOGETHER so drift fails loudly, and the broadcast
   // route the re-offer relies on is federation's, not a new one
   const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
@@ -776,9 +789,15 @@ test("the quote seed gates off RENDERED media only — the SVG Source view is a 
   assert.equal(seedable(true, false, true, false), false, "the PDF iframe owns its own surface");
   assert.equal(seedable(false, true, false, true), false, "no composer reachable still gates everything off");
   assert.equal(seedable(true, false, false, false), true, "plain text views are untouched");
-  // source: the media arm of the mouseup gate carves out the Source view, sitting AFTER the
-  // no-target gate (whose pin lives in the feed-inert test above)
-  assert.match(VIEW, /if \(!seedTarget\) return;\n(\s*\/\/[^\n]*\n)*\s*if \(\(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\)\) return;/);
+  // source: the media arm of the gesture's gate carves out the Source view. Since Slice 1 of
+  // plans/file-review.md it sits BEFORE the selection read and the seam's selection hooks, and the
+  // no-target (composer) gate comes after the hooks — the hooks are how the comments panel's
+  // floating Comment works in a Files pane with no chat pane anywhere
+  const gesture = VIEW.split("const onSelect = () => {")[1].split("const seedTarget = composerWindow();")[0];
+  assert.match(gesture, /if \(\(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\)\) return;/);
+  assert.ok(gesture.indexOf("!(svgSource && svgText !== null)) return;") < gesture.indexOf("for (const cb of selHooks)"),
+    "media is gated before any hook sees a selection");
+  assert.match(gesture, /for \(const cb of selHooks\) \{ try \{ cb\(sel\); \}/, "the seam's hooks run before the composer gate");
   // anchoring reads the text THE VIEW SHOWS — the Source view's decoded XML, never the text
   // pipeline's null — so a quote on the XML earns its path:line label (viewText, pinned with the
   // fresh-read test above); renderBody's Source arm builds those text nodes through codeBlock
