@@ -239,7 +239,8 @@ test("the cost view shows the CLI's own cost, adds a labelled estimate for the t
   // the kernel serves the ledger beside the estimate at the rail's bucket edges, every figure cut at one start
   assert.match(KERNEL, /def _analytics_edges\(now, window\):/);
   assert.match(KERNEL, /def _spend_ledger_window\(now, window, keyed_only=False\):/);
-  assert.match(KERNEL, /keyed = bool\(_auth_key_present\(\) and _claude_account\(\)\)/, "the rail's mixed-host arm decides the split");
+  assert.match(KERNEL, /if _auth_key_present\(\) and _claude_account\(\):\n\s+ksp = _spend_windows\(keyed_only=True, now=now\)\n\s+keyed = any\(\(ksp\.get\(k\) or \{\}\)\.get\("turns"\) for k in \("day", "week", "month"\)\)/,
+    "the rail's mixed-host arm decides the split, under the rail's own guard: the key has recorded turns");
   assert.match(KERNEL, /led\["estBefore"\] = round\(before, 6\)/);
   assert.match(KERNEL, /s\["ledger"\] = led/);
   assert.match(KERNEL, /"from": t0, "buckets": kind/);

@@ -27396,7 +27396,7 @@ def _spend_pre_fix(key):
     return isinstance(key, str) and key[:10] < SPEND_PRE_FIX_DATE
 
 
-def _spend_windows(keyed_only=False):
+def _spend_windows(keyed_only=False, now=None):
     """API-mode usage windows MIRRORING the subscription bars (the user 2026-08-04, who wanted the two
     auth modes to read identically at a glance): rolling 5h and 7d summed from spend.json's hour
     buckets, month-to-date from its day buckets — each {usd, tok, turns}, plus `budget` where
@@ -27407,7 +27407,9 @@ def _spend_windows(keyed_only=False):
     API key (see _record_spend). That is what the rail's API readout shows beside a login's bars on a
     mixed host: the total would fold login turns' computed costs in — dollars nobody is billed (the
     user 2026-08-08). The no-login machine keeps the total (everything there IS the key, and legacy
-    files predate the split)."""
+    files predate the split). `now` is the clock the windows end at — the wall clock by default; the
+    analytics build passes its own so the modal's keyed guard reads the rail's windows at the modal's
+    instant."""
     try:
         d = json.loads((jd.STATE / "spend.json").read_text())
     except Exception:
@@ -27434,7 +27436,7 @@ def _spend_windows(keyed_only=False):
                     out["tok"] += sum(int(e.get(k) or 0) for k in ("tokIn", "tokOut", "tokCacheR", "tokCacheW"))
         return out
 
-    now = time.time()
+    now = time.time() if now is None else now
 
     def _rolling(hrs):
         keys = {time.strftime("%Y-%m-%dT%H", time.localtime(now - i * 3600)) for i in range(hrs + 1)}
@@ -28658,7 +28660,8 @@ def _token_analytics(now, window):
     exact logged cost; sessions = `cost`, tokens x _model_prices over the whole period (an ESTIMATE),
     plus `ledger` — the CLI's own per-turn cost from the rail's ledger (_spend_ledger_window), which the
     modal shows first. On a host that runs a login beside a key the ledger figure is the KEYED split,
-    the rail's own rule (`ledger.keyed`); with a key alone or no key it is the total. Where the ledger
+    the rail's own rule (`ledger.keyed`), under the rail's own guard — the key has recorded turns in the
+    rail's day/week/month windows; with a key alone, a key never used, or no key it is the total. Where the ledger
     began inside the period, `ledger.estBefore` is the estimate for [from, ledger.sinceT) — the part the
     ledger predates, priced from every session's transcript (the estimate cannot tell a login turn from
     a key turn) — and the modal adds it to the ledger's dollars, each labelled. Cheap: _session_tok_rows
@@ -28673,9 +28676,15 @@ def _token_analytics(now, window):
         return memo["resp"]
     kind, _keys, t0 = _analytics_edges(now, window)
     # the rail's arm for the session dollars: a key beside a login → the keyed split (login turns'
-    # computed cost is billed to no one); a key alone → the total (every turn bills it, and legacy
-    # buckets predate the split); no key → the total, the CLI's computed cost, billed to no one
-    keyed = bool(_auth_key_present() and _claude_account())
+    # computed cost is billed to no one) — but, as on the rail, only once the key has RECORDED turns in
+    # the rail's own windows (a key merely configured beside a login gave a $0.00 Sessions bar with the
+    # keyed footnote while the rail showed no spend at all, 2026-09-06); a key alone → the total (every
+    # turn bills it, and legacy buckets predate the split); no key → the total, the CLI's computed cost,
+    # billed to no one
+    keyed = False
+    if _auth_key_present() and _claude_account():
+        ksp = _spend_windows(keyed_only=True, now=now)
+        keyed = any((ksp.get(k) or {}).get("turns") for k in ("day", "week", "month"))
     led = _spend_ledger_window(now, window, keyed_only=keyed)
     split = led.get("sinceT") if led else None
     prices = _model_prices(now)

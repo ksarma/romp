@@ -513,6 +513,31 @@ class TokenAnalytics(unittest.TestCase):
         self.assertEqual(km._token_analytics(clock, 3600)["sessions"]["ledger"],
                          {"usd": 42.0, "turns": 5, "tok": 420}, "no key: the CLI's computed total, nothing to split")
 
+    def test_a_key_configured_beside_a_login_but_never_used_keeps_the_total_as_the_rail_does(self):
+        """The rail attaches the keyed split only when the keyed windows hold turns (`if any(turns …)`), so
+        a mixed host that never used its key shows no spend cell at all. The modal had no such guard: it
+        showed a $0.00 Sessions bar with the keyed footnote and 'judges = 0% of session cost' against real
+        judge dollars (2026-09-06). Same guard now — the split arms on RECORDED key turns, in the rail's
+        own day/week/month windows, not on a key merely being present."""
+        clock = time.time()   # _spend_windows reads the wall clock; the buckets are keyed on it too
+        hk = lambda n: time.strftime("%Y-%m-%dT%H", time.localtime(clock - n * 3600))
+        dk = lambda n: (datetime.fromtimestamp(clock).date() - timedelta(days=n)).isoformat()
+        (jd.STATE / "spend.json").write_text(json.dumps({
+            "hours": {hk(0): {"usd": 40.0, "turns": 4, "tokIn": 400}, hk(30): {"usd": 3.0, "turns": 1}},   # login turns only
+            "days": {dk(0): {"usd": 40.0, "turns": 4, "tokIn": 400}, dk(1): {"usd": 3.0, "turns": 1}}}))
+        jd.discover = lambda now, window=None, forks=True: []
+        km._auth_key_present, km._claude_account = (lambda: True), (lambda: "0123456789ab")   # a key beside a login…
+        led = km._token_analytics(clock, 3600)["sessions"]["ledger"]
+        self.assertEqual(led, {"usd": 40.0, "turns": 4, "tok": 400}, "…never used: the total, and no `keyed` flag")
+        # one key-billed turn recorded anywhere in the rail's windows arms the split for every period
+        km._ANALYTICS_MEMO.clear()
+        (jd.STATE / "spend.json").write_text(json.dumps({
+            "hours": {hk(0): {"usd": 40.0, "turns": 4, "tokIn": 400}, hk(30): {"usd": 3.0, "turns": 1, "key": {"usd": 3.0, "turns": 1, "tok": 30}}},
+            "days": {dk(0): {"usd": 40.0, "turns": 4, "tokIn": 400}, dk(1): {"usd": 3.0, "turns": 1, "key": {"usd": 3.0, "turns": 1, "tok": 30}}}}))
+        self.assertEqual(km._token_analytics(clock, 3600)["sessions"]["ledger"],
+                         {"usd": 0.0, "turns": 0, "tok": 0, "keyed": True},
+                         "the key is in use on this host: this hour's keyed split is an honest zero, as the rail's `1 hour` row is")
+
 
 class AnalyticsEdgesUnderDst(unittest.TestCase):
     """The autumn fall-back day (2026-09-06): two consecutive clock hours format to one local hour key,
