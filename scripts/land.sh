@@ -86,7 +86,10 @@ merge; the second PR of a pair is checked before the first one lands.
                                    on purpose. When that PR is the other member of the pair no flag
                                    is needed:
                                    the lower PR merges first and the upper one lands on $MAIN once
-                                   GitHub retargets it.
+                                   GitHub retargets it. With --auto, when the lower PR only arms
+                                   (its checks pending), the run stops before the upper PR (exit
+                                   2): its base is still the open branch. A second call lands it
+                                   once the lower PR is in.
                                  - the head of a MERGED PR: the branch is gone or stale and the
                                    merge lands nothing on $MAIN. Retarget: gh pr edit N --base $MAIN.
                                  - a branch no PR has as its head: the same retarget.
@@ -102,11 +105,11 @@ merge; the second PR of a pair is checked before the first one lands.
                                  nothing. A rules or protection read that fails for any reason but
                                  a 404 is refused as unreadable, with gh's error.
 
-Stops (exit 2), after a merge. Each PR is read again right before its own merge, and the run stops
-when that read would have been refused (state, base, mergeability, checks), or when the PR's
-head moved since it was checked (someone pushed); nothing more is merged and the orphan check
-still runs. A PR the first merge already marked merged (its commits were in the first PR's branch)
-is skipped, not failed.
+Stops (exit 2), after a merge call. Each PR is read again right before its own merge, and the run
+stops when that read would have been refused (state, base, mergeability, checks), when the PR's
+head moved since it was checked (someone pushed), or when its base is the branch of a PR --auto
+armed but did not merge; nothing more is merged and the orphan check still runs. A PR the first
+merge already marked merged (its commits were in the first PR's branch) is skipped, not failed.
 
 Branches: never --delete-branch (gh's flag also deletes the local branch, which is checked out in a
 session's worktree here). The remote branch is deleted by the repository setting, or through the
@@ -282,11 +285,14 @@ classify_checks() {
     done <<< "$1"
 }
 
-merged_list=""
-fail() {  # fail <verb> <message>: a refusal before any merge, or a stop after one; exit 2
+merged_list=""; armed_list=""
+fail() {  # fail <verb> <message>: a refusal before any merge call, or a stop after one; exit 2
+    local done=""
     echo "land: $1: $2" >&2
     if [ "$1" = stopped ]; then
-        echo "  ${merged_list# } merged before the stop; nothing more is merged. The orphan check runs next." >&2
+        [ -z "$merged_list" ] || done="${merged_list# } merged"
+        [ -z "$armed_list" ] || done="${done:+$done; }${armed_list# } armed, not merged"
+        echo "  $done before the stop; nothing more is merged. The orphan check runs next." >&2
         "$ORPHANS" || true
     fi
     exit 2
@@ -315,7 +321,18 @@ check_pr() {
             if [ "${merged_in_run[$other]}" = 1 ]; then
                 fail "$verb" "#$n is still based on '$pr_base', the branch of #${prs[$other]}, which merged in this run; GitHub did not retarget it (the branch was not deleted). Retarget it (gh pr edit $n --base $MAIN) and re-run"
             fi
-            note "note: #$n is based on '$pr_base', the branch of #${prs[$other]}, the other PR of this pair: #${prs[$other]} merges first, then #$n lands on $MAIN once GitHub retargets it (the branch is deleted on merge)"
+            # --auto armed the lower PR without merging it (checks pending), so this PR's base is still
+            # that open branch, and a merge now would land its content there, which is what the
+            # --into-open-pr refusal exists to make explicit; the pass-1 note promised main. The chain
+            # cannot be armed either: auto-merge merges into the PR's base at the time, the open branch.
+            # A stop, rather than a refusal of every --auto pair up front: a lower PR whose checks are
+            # green merges at once (gh drops --auto for it) and the chain lands in one call as promised.
+            if [ "${armed_in_run[$other]}" = 1 ]; then
+                fail "$verb" "$(printf '%s\n  %s' \
+                    "#$n is based on '$pr_base', the branch of #${prs[$other]}, which --auto armed but did not merge (it lands when its required checks pass); merging #$n now would put its content on that open branch, not $MAIN." \
+                    "Run scripts/land.sh $n once #${prs[$other]} has merged and GitHub has retargeted it to $MAIN.")"
+            fi
+            note "note: #$n is based on '$pr_base', the branch of #${prs[$other]}, the other PR of this pair: #${prs[$other]} merges first, then #$n lands on $MAIN once GitHub retargets it (the branch is deleted on merge)${auto_flag[0]:+; with --auto, if #${prs[$other]} only arms, the run stops before #$n, which a second call lands once #${prs[$other]} is in}"
         else
             open_base="$("$GH" pr list --state open --head "$pr_base" --json number --jq '.[0].number' 2>/dev/null || true)"
             if [ -n "$open_base" ] && [ "$open_base" != "null" ]; then
@@ -369,11 +386,11 @@ check_pr() {
 
 # Pass 1: read every PR, then check every PR, so a refusal never follows a merge.
 states=(); drafts=(); bases=(); head_refs=(); head_shas=(); mergeables=(); msss=(); rollups=()
-merged_in_run=()
+merged_in_run=(); armed_in_run=()
 for i in "${!prs[@]}"; do
     read_pr "${prs[$i]}"
     stash_pr "$i"
-    merged_in_run[i]=0
+    merged_in_run[i]=0; armed_in_run[i]=0
 done
 for i in "${!prs[@]}"; do
     load_pr "$i"
@@ -414,6 +431,8 @@ for i in "${order[@]}"; do
     after="$("$GH" pr view "$n" --json state --jq .state)"
     if [ "$after" != "MERGED" ]; then
         echo "land: #$n reads $after after the merge call (auto-merge armed: it lands when the required checks pass); nothing more to do for it now"
+        armed_in_run[i]=1
+        armed_list="$armed_list #$n"
         continue
     fi
     merged_in_run[i]=1

@@ -738,6 +738,60 @@ class Pairs(_Base):
         self.assertIn("pr-orphans: clean (2 merged PR(s)", p.stdout)
 
 
+class AutoPairs(_Base):
+    """--auto on a pair whose one member is based on the other's branch: the lower PR merging at once
+    lands the chain; the lower PR only arming stops the run before the upper PR."""
+
+    def setUp(self):
+        super().setUp()
+        fx = self.fx
+        fx.set_gh(repo={"allow_auto_merge": True}, rules=[{"type": "required_status_checks"}])
+        fx.branch("a", {"a.txt": "a\n"})
+        fx.branch("b", {"b.txt": "b\n"}, base="a")
+
+    def test_a_lower_pr_that_only_arms_stops_the_run_before_the_upper_pr_in_either_order(self):
+        """When the lower PR's `gh pr merge --auto` arms rather than merges, the upper PR's base is
+        still the open lower branch. The run used to go on: the upper PR was re-read, its base was the
+        other member's branch and that member had not merged, so the silent-note path merged it into
+        the open branch, against the printed note and without --into-open-pr. It stops instead: nothing
+        else merges, and the upper PR is landed by a second call once the lower one is in."""
+        fx = self.fx
+        fx.pr(201, "a", checks="pending")
+        fx.pr(203, "b", base="a", checks="success")
+        head_a, head_b = fx.bare_rev("a"), fx.bare_rev("b")
+        for order in (("201", "203"), ("203", "201")):
+            p = fx.land("--auto", *order)
+            self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+            self.assertIn("land: stopped: #203 is based on 'a', the branch of #201, which --auto armed but did not merge", p.stderr)
+            self.assertIn("Run scripts/land.sh 203 once #201 has merged", p.stderr)
+            self.assertIn("#201 armed, not merged before the stop; nothing more is merged", p.stderr)
+            self.assertIn("pr-orphans: clean", p.stdout, "the orphan check still ran")
+            gh = fx.gh()
+            self.assertEqual((gh["prs"]["201"]["state"], gh["prs"]["203"]["state"], gh["prs"]["203"]["baseRefName"]), ("OPEN", "OPEN", "a"))
+            self.assertTrue(gh["prs"]["201"].get("autoMerge"), "the lower PR is armed")
+            self.assertEqual((fx.bare_rev("a"), fx.bare_rev("b")), (head_a, head_b), "no branch moved")
+            self.assertIn("#201 merges first, then #203 lands on main once GitHub retargets it", p.stdout)
+            self.assertIn("with --auto, if #201 only arms, the run stops before #203", p.stdout, "the first pass says what a stop would be")
+        self.assertEqual(fx.merges(), [["pr", "merge", "201", "--merge", "--match-head-commit", head_a, "--auto"]] * 2,
+                         "the upper merge was never attempted")
+
+    def test_a_lower_pr_that_merges_at_once_lands_the_chain_and_arms_the_upper_pr_on_main(self):
+        fx = self.fx
+        fx.pr(201, "a", checks="success")
+        fx.pr(203, "b", base="a", checks="pending")
+        head_a, head_b = fx.bare_rev("a"), fx.bare_rev("b")
+        p = fx.land("--auto", "203", "201")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(fx.merges(), [["pr", "merge", "201", "--merge", "--match-head-commit", head_a, "--auto"],
+                                       ["pr", "merge", "203", "--merge", "--match-head-commit", head_b, "--auto"]])
+        gh = fx.gh()
+        self.assertEqual(gh["prs"]["201"]["state"], "MERGED", "green checks: gh merged it at once, --auto or not")
+        self.assertEqual((gh["prs"]["203"]["state"], gh["prs"]["203"]["baseRefName"]), ("OPEN", "main"), "retargeted, then armed against main")
+        self.assertTrue(gh["prs"]["203"].get("autoMerge"))
+        self.assertIn("#203 reads OPEN after the merge call (auto-merge armed", p.stdout)
+        self.assertIn("pr-orphans: clean (1 merged PR(s)", p.stdout)
+
+
 class Help(_Base):
     def test_help_exits_0_and_names_every_refusal(self):
         fx = self.fx
