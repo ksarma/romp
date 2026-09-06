@@ -189,6 +189,12 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                 "/TESTDIR/notes-api/docs/latency.png",
                 [{"id": "1781100000005-0", "desc": "on this file", "body": "The y axis needs units."}],
                 0, 0, True, False),
+            # …and the DECISIONS-ONLY shape (Slice 2): a send carrying an Accept or Reject and no
+            # comments wears its own prose (the file, the decisions line, that nothing needs a reply,
+            # the same closing ask). A distinct body with its own words, so it is rendered here too —
+            # a hand-copied noun list elsewhere would drift from ROMP_WORDS (the review, 2026-09-06)
+            "file comments message (decisions only)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.md", [], 3, 1, True, True),
         }
         # every repeat-nudge variant wears the same voice as the first fire (the user 2026-08-11): the
         # rotation exists so a re-ask doesn't read canned, so a variant that broke the voice rule would
@@ -213,6 +219,20 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                                      "%r speaks romp at the session (%r: %s). Write it as the person "
                                      "it works for asking — see CLAUDE.md, 'Messages we inject into a "
                                      "session'." % (name, word, why))
+
+    def test_the_index_renders_both_shapes_of_the_file_comments_message(self):
+        # the send message has TWO shapes with different prose (kernel _file_comments_message): the
+        # comments shape and the decisions-only shape a send with no comments wears. The index must
+        # render both, or one is scanned only by a copied noun list that ROMP_WORDS cannot update —
+        # the gap the 2026-09-06 review found. Pinned on the shapes' own tell-tales, not their names.
+        bodies = self._bodies()
+        decisions = [n for n, b in bodies.items() if "No comments this time" in b]
+        comments = [n for n, b in bodies.items() if "\nComment " in b and "To respond:" in b]
+        self.assertTrue(decisions, "the decisions-only send is rendered and scanned")
+        self.assertTrue(comments, "the comments send is rendered and scanned")
+        for name in decisions:
+            self.assertNotIn("Comment ", bodies[name], "%r is the decisions-only shape: no comment list" % name)
+            self.assertIn("I accepted", bodies[name], "%r carries the decision it exists to report" % name)
 
     def test_the_command_allowance_is_the_span_not_the_word(self):
         # the T212 allowance must never become a whitelist: bare "romp" in prose, or any other
@@ -312,7 +332,7 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                         "user-todo context block", "edit trace", "reject trace", "reject trace (one change)",
                         "comment-thread merge", "compaction suggestion",
                         "file comments message", "file comments message (untracked, several)",
-                        "file comments message (image)"):
+                        "file comments message (image)", "file comments message (decisions only)"):
                 #        ^ a housekeeping suggestion, not a progress ask — it elicits nothing
                 continue
             text = prose(body).lower()

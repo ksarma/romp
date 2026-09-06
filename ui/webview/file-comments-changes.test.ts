@@ -141,7 +141,11 @@ test("the glance and the counts: 'Comments · N · M changes'; the send's A and 
 });
 
 // The kernel builds the sent text from the same A and R (contract C3); tests/test_file_comments.py pins the same
-// literal shape on its side, and file-comments.test.ts's cross-run feeds both builders the decisions case.
+// literal shape on its side, and file-comments.test.ts's cross-run feeds both builders the decisions case. A send
+// with NO comments (a manual Accept or Reject carried alone) wears the kernel's decisions-only shape instead —
+// no "0 comments" header, no `--thread <id>` command lines with no id to put in them (the round-1 review,
+// 2026-09-06); file-comments-model-change-desc.test.ts pins that shape in full, and tests/test_kernel_file_comments_decisions_send.py
+// on the kernel's side.
 const TAIL = "To respond:\n" +
   "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file " + ABS + " --thread <id> --note \"<your reply>\"\n" +
   "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + ABS + " --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n" +
@@ -162,7 +166,7 @@ test("the preview with decisions, ONE comment: the 'I accepted A of your changes
     "\n" + TAIL);
 });
 
-test("the preview with decisions, SEVERAL comments, and with no comments at all; R alone; the line absent when A + R is zero", () => {
+test("the preview with decisions, SEVERAL comments; no comments at all wears the decisions-only shape (R alone); the line absent when A + R is zero", () => {
   const several = buildSendMessage({ absPath: ABS, comments: [
     { id: "1757145540000-40", desc: 'on "The api session cut p95 latency by 40%"', body: "Thanks, and drop the chart too." },
     { id: "1757145600000-118", desc: 'on "shipping the cache in v1.2"', body: "Which cache? Say which." },
@@ -178,11 +182,17 @@ test("the preview with decisions, SEVERAL comments, and with no comments at all;
     "\n" +
     "I accepted 2 of your changes and rejected 0.\n" +
     "\n" + TAIL);
-  assert.equal(buildSendMessage({ absPath: ABS, comments: [], accepted: 0, rejected: 3, tracked: true }),
-    "[obsidian-diff] I left 0 comments on " + ABS + ".\n" +
+  const alone = buildSendMessage({ absPath: ABS, comments: [], accepted: 0, rejected: 3, tracked: true });
+  assert.equal(alone,
+    "[obsidian-diff] I went over " + ABS + ".\n" +
     "\n" +
     "I accepted 0 of your changes and rejected 3.\n" +
-    "\n" + TAIL, "decisions alone still make a message");
+    "\n" +
+    "No comments this time, so nothing needs a reply.\n" +
+    "When you have made more changes, ask me for another look the same way you asked for this one,\n" +
+    "naming the file.\n", "decisions alone still make a message, in the decisions-only shape");
+  assert.doesNotMatch(alone, /I left 0 comments/, "the retired shape's header is gone");
+  assert.doesNotMatch(alone, /--thread <id>|track-reply|track-edit|To respond:/, "…and its command lines, which had no id to point at");
   assert.doesNotMatch(buildSendMessage({ absPath: ABS, comments: [{ id: "1", desc: "on this file", body: "Good." }], accepted: 0, rejected: 0, tracked: true }), /I accepted/);
 });
 

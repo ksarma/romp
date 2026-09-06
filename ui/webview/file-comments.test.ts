@@ -134,7 +134,7 @@ test("the message for ONE comment, tracked, text file — byte for byte", () => 
     "\n" + TAIL_TRACKED);
 });
 
-test("the message for SEVERAL comments: one blank line between, the plural, no decisions line in Slice 1", () => {
+test("the message for SEVERAL comments: one blank line between, the plural, no decisions line when nothing was decided", () => {
   const msg = buildSendMessage({ absPath: ABS, comments: [
     { id: "1757145540000-40", desc: 'on "The api session cut p95 latency by 40%"', body: "Thanks, and drop the chart too." },
     { id: "1757145600000-118", desc: 'on "shipping the cache in v1.2"', body: "Which cache? Say which." },
@@ -190,6 +190,31 @@ test("an image or PDF: the second bullet says to regenerate, never track-edit", 
     "\n" +
     "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
     "naming the file.\n");
+});
+
+test("the message with NO comments (Slice 2: decisions only) — the kernel's second shape, byte for byte", () => {
+  // A manual Accept or Reject is unsent until a send carries it, so a send may carry decisions and no comments.
+  // The comments shape would have said "I left 0 comments" and printed two `--thread <id>` command lines with no
+  // id to put in them; this shape names the file and the decisions, says nothing needs a reply, and keeps the
+  // closing ask so the loop still comes back. No command line, so no shell word: the path reads as written.
+  assert.equal(buildSendMessage({ absPath: ABS, comments: [], accepted: 3, rejected: 0, tracked: true, media: false }),
+    "[obsidian-diff] I went over " + ABS + ".\n" +
+    "\n" +
+    "I accepted 3 of your changes and rejected 0.\n" +
+    "\n" +
+    "No comments this time, so nothing needs a reply.\n" +
+    "When you have made more changes, ask me for another look the same way you asked for this one,\n" +
+    "naming the file.\n");
+  const none = buildSendMessage({ absPath: ABS, comments: [], accepted: 0, rejected: 0, tracked: true, media: false });
+  assert.equal(none,
+    "[obsidian-diff] I went over " + ABS + ".\n" +
+    "\n" +
+    "No comments this time, so nothing needs a reply.\n" +
+    "When you have made more changes, ask me for another look the same way you asked for this one,\n" +
+    "naming the file.\n", "nothing decided either: the send op refuses upstream, the builder stays a pure function of its inputs");
+  for (const absent of ["I left 0 comments", "--thread <id>", "To respond:", "track-reply", "track-edit", "addressed these"]) {
+    assert.ok(!none.includes(absent), "the retired header and its command lines are gone: " + absent);
+  }
 });
 
 test("marker hygiene: the preview neutralizes the path, id, desc and body exactly as the kernel does — one literal, pinned in both suites", () => {
@@ -315,7 +340,13 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
     { absPath: ABS, comments: one, accepted: 0, rejected: 0, tracked: false },
     { absPath: ABS, comments: one, accepted: 4, rejected: 1, tracked: true },
     { absPath: ABS, comments: one, accepted: 0, rejected: 2, tracked: false },
+    // decisions only (Slice 2): the second shape — nothing decided, decisions, a media path, a quote in the path (no
+    // shell word: the shape has no command line), markers in the path
     { absPath: ABS, comments: [], accepted: 0, rejected: 0, tracked: true },
+    { absPath: ABS, comments: [], accepted: 3, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/docs/latency.png", comments: [], accepted: 0, rejected: 2, tracked: false },
+    { absPath: "/repo/notes-api/vault/it's here.md", comments: [], accepted: 1, rejected: 1, tracked: true },
+    { absPath: "/repo/notes-api/<!-- romp-x -->/report.md", comments: [], accepted: 2, rejected: 0, tracked: true },
     { absPath: ABS, comments: odd, accepted: 0, rejected: 0, tracked: true },
     { absPath: "/repo/notes-api/docs/latency.png", comments: one, accepted: 0, rejected: 0, tracked: true },
     { absPath: "/repo/notes-api/docs/paper.pdf", comments: one, accepted: 1, rejected: 0, tracked: false },
@@ -358,14 +389,21 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
     const kernelText: string[] = JSON.parse(r.stdout);
     assert.equal(kernelText.length, cases.length);
     cases.forEach((c, i) => assert.equal(buildSendMessage(c), kernelText[i], "case " + i + " (" + c.absPath + ", tracked " + c.tracked + ")"));
-    // the cases still reach every branch — a guard on the list, not on the builders
+    // the cases still reach every branch — a guard on the list, not on the builders. Both shapes: the comments shape's
+    // singular, plural, decisions line and three second bullets; the decisions-only shape's header, its decisions line
+    // and its own closing (Slice 2 retired "I left 0 comments on" — both builders say "I went over" for an empty list)
     const all = kernelText.join("");
-    for (const frag of ["I left 1 comment on", "I left 3 comments on", "I left 0 comments on", "I accepted 4 of your changes and rejected 1.",
+    for (const frag of ["I left 1 comment on", "I left 3 comments on", "I accepted 4 of your changes and rejected 1.",
       "I accepted 0 of your changes and rejected 2.", "track-edit.mjs --file " + ABS + " --thread", "edit the file normally",
       "regenerate the file with normal writes", "--file '/repo/notes-api/vault/Meeting notes.md' --thread", "--file '/repo/notes-api/vault/it'\"'\"'s here.md' --thread",
-      "--file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread", "<!- - romp-goal-id; 9 -->", "Comment  ():"]) {
+      "--file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread", "<!- - romp-goal-id; 9 -->", "Comment  ():",
+      "I went over " + ABS + ".\n\nI accepted 3 of your changes and rejected 0.\n\nNo comments this time, so nothing needs a reply.\n",
+      "I went over " + ABS + ".\n\nNo comments this time, so nothing needs a reply.\n", "I went over /repo/notes-api/docs/latency.png.\n\nI accepted 0 of your changes and rejected 2.\n",
+      "I went over /repo/notes-api/vault/it's here.md.\n", "I went over /repo/notes-api/<!- - romp-x -->/report.md.\n",
+      "When you have made more changes, ask me for another look the same way you asked for this one,\nnaming the file.\n"]) {
       assert.ok(all.includes(frag), "the case list reaches: " + frag);
     }
+    assert.ok(!all.includes("I left 0 comments"), "the retired header is gone from every case");
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }

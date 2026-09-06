@@ -48,7 +48,7 @@ import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-
 import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
 import {
   type Status, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, actionLabel, cardModel, changeCards, changeGroups,
-  foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, sendParts, sendCounts, buildSendMessage, unsentCount,
+  foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, buildSendMessage, unsentCount,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   type PollBaseline,
 } from "./file-comments-model";
@@ -225,6 +225,20 @@ function laterNs(a: string | null | undefined, b: string | null | undefined): bo
 export function newerStatus(a: Status, b: Status): boolean {
   return laterNs(a.fileMtimeNs, b.fileMtimeNs) || laterNs(a.storeMtimeNs, b.storeMtimeNs) || laterNs(a.configMtimeNs, b.configMtimeNs);
 }
+/** Did `a` PROVABLY read a later disk than `b` — the question for a SUSPECT reply (applyStatus)? newerStatus lets a
+ *  value beat null, which is right for a sidecar or config seen for the first time; but a suspect reply's value
+ *  against an applied null is as likely a reading from BEFORE the deletion that emptied it: a decision that pruned the
+ *  sidecar (the host's pruneIfClean, after an accept-all or a last accept or reject with no comments left), or one of
+ *  the vendored CLIs deleting it. The clocks cannot tell the two apart, so a clock `b` does not hold claims nothing
+ *  here; the file's clock (never null) and any clock both readings hold decide. A reading dropped this way is not
+ *  lost: absent → present is a transition the poll sees and re-reads. Applied, it would put the decided changes
+ *  back as cards with live buttons over a sidecar the host has deleted. */
+export function provablyNewer(a: Status, b: Status): boolean {
+  const held: Status = { ...a };
+  if (b.storeMtimeNs === null || b.storeMtimeNs === undefined) held.storeMtimeNs = null;
+  if (b.configMtimeNs === null || b.configMtimeNs === undefined) held.configMtimeNs = null;
+  return newerStatus(held, b);
+}
 
 // ── a path the panel prints inline ─────────────────────────────────────────────────────────────────
 // Chromium breaks a line at neither a slash nor anywhere inside an unbroken token, and a flex item's automatic
@@ -353,6 +367,12 @@ class Panel {
   timer: ReturnType<typeof setInterval> | null = null;
   polling = false;
   tickSkipped = false;
+  // the reload the panel asked for after a reject (mutateOnce) is out: the body shows the bytes the reject changed,
+  // with no marks over them, until the fetch lands. The wait wears the loader at the head of the cards (the "bytes"
+  // busy slot, ui/CLAUDE.md), ending on the paint that shows the status's text (paintAll → bytesLanded). The seam
+  // reports no failed fetch — the viewer shows its own error in the body and fires no onRendered — so the loader
+  // has the same backstop a status ask has: after STATUS_DEADLINE_MS it yields to a row with Reload (bytesLate).
+  bytesWait: ReturnType<typeof setTimeout> | null = null;
   // persistent section wrappers: render() swaps each section's CHILDREN, never the aside's own children —
   // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
   // loses focus, so a poll-triggered re-render would drop the input's focus mid-word
@@ -574,13 +594,17 @@ class Panel {
    *  issued after a write's ask but still unanswered when that write's reply landed (`overlapped`,
    *  markOverlapped) — the kernel runs the two concurrently and the host reads the sidecar without a lock,
    *  so the later ask's run can read the disk before the write and answer after it, and its reqId
-   *  alone would have let it land. Either is dropped, unless its own clocks say it read a NEWER disk than what
+   *  alone would have let it land. Either is dropped, unless its own clocks PROVE it read a NEWER disk than what
    *  is showing (its run started late and saw a write the applied reply predates): then it IS new information
-   *  and lands. Clocks alone cannot decide the overlapped case: a sidecar gone is a later reading that reads
-   *  as older (laterNs), and the vendored CLIs do delete sidecars. Returns whether it was applied. */
+   *  and lands. A sidecar the two readings disagree on EXISTING is no proof either way (provablyNewer): a suspect
+   *  reply holding a sidecar mtime while the applied reply holds none may have read the disk before the write that
+   *  pruned it — an accept-all with no comments deletes the sidecar — and applying it brought the decided changes
+   *  back as cards with live Accept and Reject; the reverse, a suspect that saw a deletion the applied reply predates,
+   *  reads as older. Both are the poll's to settle: present ↔ absent is a transition it sees. Returns whether it
+   *  was applied. */
   applyStatus(s: Reply): boolean {
     const suspect = s.reqId < this.appliedReq || s.overlapped === true;
-    if (this.status && suspect && !newerStatus(s, this.status)) return false;
+    if (this.status && suspect && !provablyNewer(s, this.status)) return false;
     this.appliedReq = Math.max(this.appliedReq, s.reqId);
     this.status = s;
     this.statusRefusal = null;
@@ -655,6 +679,7 @@ class Panel {
   }
   dispose(): void {
     this.stopPoll();
+    if (this.bytesWait) { clearTimeout(this.bytesWait); this.bytesWait = null; }
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     this.failAll("the file viewer closed");
@@ -766,6 +791,7 @@ class Panel {
       // the file's bytes changed under the view: re-fetch them (the hunks and anchors in this reply index the NEW
       // text, and the poll will not do it — the reply just re-baselined it). The repaint arrives through onRendered.
       if (FILE_VERBS.has(verb) && r.fileMtimeNs && this.ctx.mtimeNs() && mtimeMoved(this.ctx.mtimeNs(), r.fileMtimeNs)) this.ctx.reload();
+      if (FILE_VERBS.has(verb)) this.awaitBytes(r);    // the loader for that fetch, while the view's text is not the reply's
       return r;
     } catch (err) {
       const e = err as { code: string; error: string };
@@ -788,6 +814,34 @@ class Panel {
       this.errors.set(slot, { text: e.error, reload: MOVED.has(e.code) });
       return null;
     }
+  }
+
+  // ── the bytes a reject changed: the wait for the reload ────────────────────────────────────────
+  /** A file-writing verb's reply just applied and the view was asked to re-fetch: hold the "bytes" slot busy (the
+   *  loader at the head of the cards) until a paint shows the reply's text, or the deadline. Nothing to wait for
+   *  when the view already shows it (the stand-in's synchronous reload, or a reject that changed no bytes). */
+  private awaitBytes(r: Status): void {
+    if (this.textCurrent(r)) return;
+    if (this.bytesWait) clearTimeout(this.bytesWait);
+    this.busy.add("bytes"); this.errors.delete("bytes");
+    this.bytesWait = setTimeout(() => this.bytesLate(), STATUS_DEADLINE_MS);
+    this.render();
+  }
+  /** The paint that shows the status's text (paintAll, from the seam's onRendered): the wait is over. */
+  private bytesLanded(): void {
+    if (!this.bytesWait) return;
+    clearTimeout(this.bytesWait); this.bytesWait = null;
+    this.busy.delete("bytes");
+  }
+  /** The deadline: the fetch neither landed nor told the seam it failed. The loader yields to a row, and its Reload
+   *  re-fetches the bytes and re-asks status (fcreload) — the loader never traps the person (ui/CLAUDE.md). */
+  private bytesLate(): void {
+    this.bytesWait = null;
+    if (!this.busy.has("bytes")) return;
+    this.busy.delete("bytes");
+    this.errors.set("bytes", { text: "The file's new contents have not arrived after " + STATUS_DEADLINE_MS / 1000
+      + " s; the view still shows the text from before your decision, with no change marked on it. Reload to read the file again.", reload: true });
+    this.render();
   }
 
   // ── Track changes ──────────────────────────────────────────────────────────────────────────────
@@ -897,7 +951,7 @@ class Panel {
    *  answering track-edit folds into it and the message names the change ("on your change …"). */
   startChangeReply(id: string): void {
     const c = this.changeView().cards.find((x) => x.id === id);
-    if (!c) return;
+    if (!c || c.detached) return;                      // the host binds a comment to a PENDING change only (no-change otherwise)
     this.openCards.add(c.key);
     this.composer = { kind: "change", changeId: id, ref: c.ref };
     this.errors.delete("composer");
@@ -1002,9 +1056,14 @@ class Panel {
   paintAll(): void {
     this.located = new Map();
     this.paintedChanges = new Set();
+    // a mark of ours holding the keyboard (Enter on it opened the panel, whose colour fetch and status reply both
+    // repaint) is unwrapped below, and a removed element drops the focus to the body; refocus() mends only the
+    // aside's controls, so the mark's own successor takes it back once painted (refocusMark)
+    const held = this.heldMark();
     unpaintChanges(this.ctx.body());                   // before each repaint (D5): the marks are unwrapped, never stacked
     this.unpaint(".fc-hl, .fc-presel");                // a status refresh repaints the SAME body: never wrap twice
     const src = this.ctx.text(); const root = this.contentRoot();
+    if (this.status && this.textCurrent(this.status)) this.bytesLanded();   // the view shows the status's text: a reject's reload has landed
     if (src === null || !root) { this.render(); return; }
     const rendered = this.ctx.mode() === "rendered";
     for (const card of this.cards()) {
@@ -1028,7 +1087,28 @@ class Panel {
     }
     this.paintChanges(root, src, rendered);
     this.paintPresel(root, src, rendered);
+    if (held) this.refocusMark(held);
     this.render();
+  }
+  /** OUR marks (owns) for one subject, in document order: a comment's highlight may span several rows, and a
+   *  substitution paints a deletion point and then its new text, all with the same action and id. */
+  private ownMarks(act: string, id: string): HTMLElement[] {
+    return Array.from(this.ctx.body().querySelectorAll('[data-act="' + act + '"][data-id="' + id + '"]')).filter((m) => this.marks.has(m)) as HTMLElement[];
+  }
+  /** The mark of ours that holds the keyboard, by what it is — its action, its id, and its place among the subject's
+   *  marks — and the element, so a repaint can tell whether it was unwrapped. Null when the focus is anywhere else. */
+  private heldMark(): { act: string; id: string; k: number; at: Element } | null {
+    const a = document.activeElement as HTMLElement | null;
+    if (!a || !this.marks.has(a) || !a.dataset || !a.dataset.act || !a.dataset.id) return null;
+    return { act: a.dataset.act, id: a.dataset.id, k: this.ownMarks(a.dataset.act, a.dataset.id).indexOf(a), at: a };
+  }
+  /** After a repaint: the held mark left the body, so its successor — our mark for the same subject at the same
+   *  place — takes the focus, without scrolling. A mark that stayed (nothing repainted it) keeps it; a subject the
+   *  repaint no longer paints (the change was decided, the comment resolved) leaves the focus where the browser put it. */
+  private refocusMark(held: { act: string; id: string; k: number; at: Element }): void {
+    if (this.ctx.body().contains(held.at)) return;
+    const next = this.ownMarks(held.act, held.id);
+    if (next.length) next[Math.min(Math.max(held.k, 0), next.length - 1)].focus({ preventScroll: true });
   }
   /** The change marks, after the comment highlights (D5): stylesFor hands each mark the author's session colour
    *  from the Slice 1 colour map as `--fc-author` (nothing when unknown: the sheet's neutral). Every painted
@@ -1110,7 +1190,7 @@ class Panel {
   reveal(key: string): void {
     if (key.startsWith("chg:")) {
       const c = this.changeView().cards.find((x) => x.key === key);
-      if (!c) return;
+      if (!c || c.detached) return;                    // a detached change's offset points into a text that has moved on
       this.ctx.setMode("raw");
       this.ctx.scrollToOffset(c.curFrom);
       return;
@@ -1315,7 +1395,21 @@ class Panel {
     const w = el("div", "fileview-load fc-load");
     w.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
       + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
+    w.dataset.slot = slot;                             // so a render can tell which slots already show (strayRows)
     return w;
+  }
+  /** The rows and loaders of slots whose control the list no longer shows: a by-id Accept or Reject refused after the
+   *  refresh removed its card (mutateOnce retries by id, and a change a track-edit coalesced away, or another client
+   *  decided, is refused `no-change`), the foot's after a refresh left nothing pending, a comment card inside a closed
+   *  fold. Rendered where the section was, so a clicked decision is never silent (CLAUDE.md, fail loudly; the plan:
+   *  a second refusal is surfaced verbatim) and the row's ✕ can clear it. `list` is the section built so far. */
+  private strayRows(list: HTMLElement, prefixes: string[]): HTMLElement[] {
+    const shown = new Set(Array.from(list.querySelectorAll("[data-slot]")).map((n) => (n as HTMLElement).dataset.slot));
+    const stray = (slot: string) => prefixes.some((p) => slot === p || slot.startsWith(p)) && !shown.has(slot);
+    const out: HTMLElement[] = [];
+    for (const slot of this.busy) if (stray(slot)) { const w = this.loader(slot); if (w) { out.push(w); shown.add(slot); } }
+    for (const slot of this.errors.keys()) if (stray(slot)) { const r = this.errRow(slot); if (r) { out.push(r); shown.add(slot); } }
+    return out;
   }
   private chip(author: string, authorId: string | null): HTMLElement {
     if (author === "you") return el("span", "fc-chip fc-chip-you", "you");
@@ -1417,17 +1511,27 @@ class Panel {
       else if (this.statusRefusal) list.appendChild(el("div", "fc-empty", "The comments could not be read, so none can be shown or written."));
       return list;
     }
+    // a reject's reload is out: the body shows the bytes it changed, unmarked, until the fetch lands (awaitBytes)
+    for (const n of [this.loader("bytes"), this.errRow("bytes")]) if (n) list.appendChild(n);
     if (!cards.length && !view.cards.length) {
       list.appendChild(el("div", "fc-empty", this.ctx.mode() === "media"
         ? "No comments yet. Comment on this file to leave one."
         : "No comments yet. Select a passage and press Comment, or comment on this file."));
+      for (const n of this.strayRows(list, ["change:", "changes", "card:"])) list.appendChild(n);   // a refusal whose card is gone still shows
       return list;
     }
     // the session's pending changes first: grouped by paragraph, the first GROUP_LIMIT groups shown, the rest
-    // behind one row (moreChangesOpen), then Accept all · Reject all — the plan's Slice 2 surface
+    // behind one row (moreChangesOpen), then Accept all · Reject all — the plan's Slice 2 surface. The detached
+    // changes (kept in the sidecar, not pending) follow in their own group and count toward no decision.
+    const pending = view.cards.filter((c) => !c.detached).length;
     if (view.cards.length) {
       for (const g of view.shown) {
-        if (g.title) { const gh = el("div", "fc-note fc-group", g.title); gh.title = "The paragraph these changes fall in"; list.appendChild(gh); }
+        if (g.title) {
+          const gh = el("div", "fc-note fc-group", g.title);
+          gh.title = g.key === DETACHED_GROUP_KEY ? "The file no longer holds these changes' text; their record stays with the file's comments, and nothing here decides them"
+            : "The paragraph these changes fall in";
+          list.appendChild(gh);
+        }
         for (const c of g.changes) list.appendChild(this.renderChangeCard(c));
       }
       if (view.hiddenChanges) {
@@ -1439,8 +1543,10 @@ class Panel {
         fewer.setAttribute("aria-expanded", "true");
         list.appendChild(fewer);
       }
-      list.appendChild(this.renderChangesFoot(view.cards.length));
+      if (pending) list.appendChild(this.renderChangesFoot(pending));
     }
+    // a decision's row or loader whose card (or the foot) the fresh status no longer shows: where the changes were
+    for (const n of this.strayRows(list, ["change:", "changes"])) list.appendChild(n);
     const open = cards.filter((c) => !c.resolved), done = cards.filter((c) => c.resolved);
     for (const c of open) list.appendChild(this.renderCard(c));
     if (done.length) {
@@ -1448,6 +1554,7 @@ class Panel {
       list.appendChild(fold);
       if (this.resolvedOpen) for (const c of done) list.appendChild(this.renderCard(c));
     }
+    for (const n of this.strayRows(list, ["card:"])) list.appendChild(n);
     return list;
   }
   private renderCard(c: Card): HTMLElement {
@@ -1524,7 +1631,11 @@ class Panel {
    *  when the view shows one), and the buttons — Accept and Reject are the card's reason to exist, so they
    *  never hide behind the expand. Open: the old and new text, and the comments bound to the change with
    *  their turns and their own Reply and Resolve. Reveal on a deletion (never painted in Rendered; a point in
-   *  Raw) and on any change whose mark the view does not show, so the compact card never dead-ends. */
+   *  Raw) and on any change whose mark the view does not show, so the compact card never dead-ends.
+   *  A DETACHED change (the load-time rebase could not place it; the sidecar keeps it, not pending) wears the
+   *  comment cards' detached dress and a tag saying so, and offers no Accept, Reject, Reply or Reveal: the host
+   *  decides pending changes only and refuses each of those `no-change`, and the change's last offset points
+   *  into a text that no longer holds it. Its texts and the comments bound to it are one click down, as ever. */
   private renderChangeCard(c: ChangeCard): HTMLElement {
     const isOpen = this.openCards.has(c.key);
     const painted = this.paintedChanges.has(c.id);
@@ -1535,7 +1646,7 @@ class Panel {
     const s = this.status;
     const inFlux = !!s && !this.textCurrent(s);
     const slot = "change:" + c.id;
-    const card = el("div", "fc-card fc-change" + (isOpen ? " open" : ""));
+    const card = el("div", "fc-card fc-change" + (isOpen ? " open" : "") + (c.detached ? " fc-card-detached" : ""));
     card.dataset.id = c.key; card.dataset.change = c.id; card.dataset.kind = c.kind;
     if (!isOpen) card.dataset.act = "fccard";
     const head = el("div", "fc-card-head");
@@ -1550,7 +1661,11 @@ class Panel {
     }
     head.appendChild(ref);
     const src = this.ctx.text();
-    if (!painted && !inFlux && src !== null && this.ctx.mode() !== "media") {
+    if (c.detached) {
+      const t = el("span", "fc-tag", "detached");
+      t.title = "The file no longer holds this text, so the change cannot be accepted or rejected; its record stays with the file's comments";
+      head.appendChild(t);
+    } else if (!painted && !inFlux && src !== null && this.ctx.mode() !== "media") {
       const t = el("span", "fc-tag", "not shown");
       t.title = this.ctx.mode() === "rendered" && c.kind === "del" ? "The Rendered view cannot show a deletion; Reveal opens it in Raw" : "This view does not show the change; Reveal opens it in Raw";
       head.appendChild(t);
@@ -1562,23 +1677,25 @@ class Panel {
       card.appendChild(this.diffBody(c.oldText, c.newText));
       for (const cm of c.comments) card.appendChild(this.renderHosted(cm));
     }
-    const acts = el("div", "fc-actions");
-    const busy = this.busy.has(slot); const verb = this.busyVerb.get(slot);
-    const ok = btn(busy && verb === "accept" ? "Accepting…" : "Accept", "fcaccept"); ok.dataset.id = c.id; ok.disabled = busy;
-    ok.title = "Keep the text as it is and drop the change";
-    const no = btn(busy && verb === "reject" ? "Rejecting…" : "Reject", "fcreject"); no.dataset.id = c.id; no.disabled = busy;
-    no.title = "Put the old text back in the file";
-    acts.appendChild(ok); acts.appendChild(no);
-    if (!c.comments.length) {   // with a comment on the card, the comment's own Reply is the way to answer it
-      const re = btn("Reply", "fcchangereply"); re.dataset.id = c.id; re.title = "Comment on this change; the session's answer comes back to it";
-      acts.appendChild(re);
+    if (!c.detached) {
+      const acts = el("div", "fc-actions");
+      const busy = this.busy.has(slot); const verb = this.busyVerb.get(slot);
+      const ok = btn(busy && verb === "accept" ? "Accepting…" : "Accept", "fcaccept"); ok.dataset.id = c.id; ok.disabled = busy;
+      ok.title = "Keep the text as it is and drop the change";
+      const no = btn(busy && verb === "reject" ? "Rejecting…" : "Reject", "fcreject"); no.dataset.id = c.id; no.disabled = busy;
+      no.title = "Put the old text back in the file";
+      acts.appendChild(ok); acts.appendChild(no);
+      if (!c.comments.length) {   // with a comment on the card, the comment's own Reply is the way to answer it
+        const re = btn("Reply", "fcchangereply"); re.dataset.id = c.id; re.title = "Comment on this change; the session's answer comes back to it";
+        acts.appendChild(re);
+      }
+      if (c.kind === "del" || !painted) {
+        const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;
+        rv.title = "Show the change in the Raw view" + (src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "");
+        if (c.kind === "del" || !inFlux) acts.appendChild(rv);   // inFlux: an unpainted insertion's Reveal waits for the bytes
+      }
+      card.appendChild(acts);
     }
-    if (c.kind === "del" || !painted) {
-      const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;
-      rv.title = "Show the change in the Raw view" + (src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "");
-      if (c.kind === "del" || !inFlux) acts.appendChild(rv);   // inFlux: an unpainted insertion's Reveal waits for the bytes
-    }
-    card.appendChild(acts);
     for (const n of [this.loader(slot), this.errRow(slot)]) if (n) card.appendChild(n);
     return card;
   }

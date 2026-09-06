@@ -920,22 +920,87 @@ function wrapBetween(root: DNode, s: { t: DText; off: number }, e: { t: DText; o
   return wrapSlices(nodes, a, b, className, data, skipBlockWs);
 }
 
-/** Inline markup a source slice carries that the rendered text does not (for the fallback matcher). */
-function stripMarkup(q: string): string {
-  return q.split("\n").map((ln) => {
-    let l = ln.replace(/^\s{0,3}(?:>\s?)+/, "");
-    l = l.replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, "");
-    l = l.replace(/^\s*#{1,6}\s+/, "").replace(/\s+#+\s*$/, "");
-    if (/^\s*(`{3,}|~{3,})/.test(l)) return "";
-    l = l.replace(/!\[[^\]]*\]\([^)]*\)/g, "");
-    l = l.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]*)\]\[[^\]]*\]/g, "$1");
-    l = l.replace(/<(https?:\/\/[^>]+)>/g, "$1");
-    l = l.replace(/\*\*(.+?)\*\*/g, "$1").replace(/(?<!\w)__(.+?)__(?!\w)/g, "$1").replace(/\*(.+?)\*/g, "$1")
-         .replace(/(?<!\w)_(.+?)_(?!\w)/g, "$1").replace(/~~(.+?)~~/g, "$1");
-    l = l.replace(/`+/g, "").replace(/\\([\\`*_{}[\]()#+\-.!>~|])/g, "$1");
-    return l.replace(/(\s{2,}|\\)$/, "");
-  }).join("\n");
+/** A string and, for each of its characters, the index in the string it was derived from: `text[i]` is
+ *  `origin[map[i]]`, and `map` is strictly increasing. */
+export type Mapped = { text: string; map: number[] };
+/** One markup rule for stripMarkupMapped: every match is dropped, or, with `keep`, replaced by its first
+ *  group, which begins `keep` characters into the match (the opening delimiter's length, so the group's
+ *  characters keep their source indexes). All rules are global; the line-anchored ones match at most once. */
+type MarkupRule = { re: RegExp; keep?: number };
+/** Line-leading constructs the renderer consumes: blockquote markers, list bullets and task boxes, heading
+ *  hashes (leading and closing). */
+const MARKUP_LEAD: MarkupRule[] = [
+  { re: /^\s{0,3}(?:>\s?)+/g },
+  { re: /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/g },
+  { re: /^\s*#{1,6}\s+/g },
+  { re: /\s+#+\s*$/g },
+];
+/** A fence line renders nothing of its own. */
+const MARKUP_FENCE = /^\s*(`{3,}|~{3,})/;
+/** Inline constructs: images (dropped whole), link labels, autolinks, emphasis pairs, code backticks,
+ *  escapes, and a hard break's trailing blanks or backslash. */
+const MARKUP_INLINE: MarkupRule[] = [
+  { re: /!\[[^\]]*\]\([^)]*\)/g },
+  { re: /\[([^\]]*)\]\([^)]*\)/g, keep: 1 },
+  { re: /\[([^\]]*)\]\[[^\]]*\]/g, keep: 1 },
+  { re: /<(https?:\/\/[^>]+)>/g, keep: 1 },
+  { re: /\*\*(.+?)\*\*/g, keep: 2 },
+  { re: /(?<!\w)__(.+?)__(?!\w)/g, keep: 2 },
+  { re: /\*(.+?)\*/g, keep: 1 },
+  { re: /(?<!\w)_(.+?)_(?!\w)/g, keep: 1 },
+  { re: /~~(.+?)~~/g, keep: 2 },
+  { re: /`+/g },
+  { re: /\\([\\`*_{}[\]()#+\-.!>~|])/g, keep: 1 },
+  { re: /(\s{2,}|\\)$/g },
+];
+/** `m` with one rule applied, its map carried through: what String.replace does, keeping every surviving
+ *  character's origin. */
+function applyMarkupRule(m: Mapped, rule: MarkupRule): Mapped {
+  let text = "";
+  const map: number[] = [];
+  const take = (a: number, b: number) => { text += m.text.slice(a, b); for (let i = a; i < b; i++) map.push(m.map[i]); };
+  let last = 0;
+  for (const hit of m.text.matchAll(rule.re)) {
+    const at = hit.index as number;
+    take(last, at);
+    if (rule.keep !== undefined) {
+      const g = hit[1], gs = at + rule.keep;
+      // the group must sit right after the opening delimiter, else the map would lie about its origin
+      if (m.text.slice(gs, gs + g.length) !== g) throw new Error("anchor-map: a markup rule's group is not at its delimiter's length");
+      take(gs, gs + g.length);
+    }
+    last = at + hit[0].length;
+  }
+  take(last, m.text.length);
+  return { text, map };
 }
+
+/**
+ * Inline markup a source slice carries that the rendered text does not (for the fallback matcher), applied
+ * line by line, with every surviving character mapped back to its index in `s`. The text is what
+ * stripMarkup returns; the map is what lets the fallback tell WHICH occurrence of a stripped quote in a
+ * block's source is the one the comment's or change's range covers, when the quote carries markup of its
+ * own (a code span in a table cell, a bold word) and its plain text recurs in the block.
+ */
+export function stripMarkupMapped(s: string): Mapped {
+  let text = "";
+  const map: number[] = [];
+  const lines = s.split("\n");
+  let lineStart = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    if (i > 0) { text += "\n"; map.push(lineStart - 1); }   // the line ending the split consumed
+    let m: Mapped = { text: ln, map: Array.from({ length: ln.length }, (_, j) => lineStart + j) };
+    for (const r of MARKUP_LEAD) m = applyMarkupRule(m, r);
+    if (MARKUP_FENCE.test(m.text)) m = { text: "", map: [] };
+    else for (const r of MARKUP_INLINE) m = applyMarkupRule(m, r);
+    text += m.text;
+    for (const x of m.map) map.push(x);
+    lineStart += ln.length + 1;
+  }
+  return { text, map };
+}
+const stripMarkup = (q: string): string => stripMarkupMapped(q).text;
 
 export function paintRendered(renderedRoot: Element, source: string, range: SourceRange, className: string,
                               data?: Record<string, string>): Element[] | null {
@@ -983,16 +1048,19 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
   const hay = nodes.map((t) => t.data).join("");
   const hits = occurrences(hay, quote);
   if (!hits.length) return null;
-  // Which occurrence: the range's ORDINAL among the scope's own occurrences of its raw text, in the source.
-  // A change's text is short (a word, a number), and a table or a code block repeats such tokens; the first
-  // occurrence would mark an unchanged cell and report it painted, the wrong passage under "Scroll to the
-  // change". The ordinal is exact when the rendering shows the text as many times as the source holds it,
-  // so the counts must agree, else nothing is painted and the change keeps its card (and Reveal).
-  const srcHits = occurrences(source.slice(scopeStart, scopeEnd), raw);
+  // Which occurrence: the range's ORDINAL among the scope's own occurrences of the quote, in the scope's
+  // source stripped the same way (stripMarkupMapped). A change's text is short (a word, a number), and a
+  // table or a code block repeats such tokens; the first occurrence would mark an unchanged cell and report
+  // it painted, the wrong passage under "Scroll to the change". The count is taken over the STRIPPED source,
+  // not the raw slice: a comment's quote may carry markup of its own (`` `GET /notes` `` in a table cell,
+  // `**cache**`) whose plain text recurs in the block, and the raw slice occurs once where the rendering
+  // shows its text twice. The ordinal is exact when the rendering shows the text as many times as the
+  // stripped source holds it, so the counts must agree, else nothing is painted and the comment or change
+  // keeps its card (and Reveal). The range's own occurrence is the one whose characters map back inside it.
+  const scopeSrc = stripMarkupMapped(source.slice(scopeStart, scopeEnd));
+  const srcHits = occurrences(scopeSrc.text, quote);
   if (srcHits.length !== hits.length) return null;
-  let lead = 0;
-  while (lead < raw.length && isWs(raw[lead])) lead++;   // the match starts at the raw text's first non-blank
-  const k = srcHits.findIndex((h) => scopeStart + h.start === range.start + lead);
+  const k = srcHits.findIndex((h) => scopeStart + scopeSrc.map[h.start] >= range.start && scopeStart + scopeSrc.map[h.end - 1] < range.end);
   if (k < 0) return null;
   const hit = hits[k];
   const marks = wrapSlices(nodes, hit.start, hit.end, className, data, skipBlockWs);

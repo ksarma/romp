@@ -688,14 +688,18 @@ class TheMessage(unittest.TestCase):
         self.assertIn("I accepted 0 of your changes and rejected 2.\n",
                       km._file_comments_message(REPORT, ONE, 0, 2, True, True))
         # Slice 2's Send: the accept-pending-changes checkbox adds N to accepted with nothing rejected —
-        # A + R > 0, so the line renders, blank line after (contract C3 / D3), and a decisions-only send
-        # still says "0 comments" above it
+        # A + R > 0, so the line renders, blank line after (contract C3 / D3). With no comments the send
+        # wears the DECISIONS-ONLY shape (the review, 2026-09-06): it never says "I left 0 comments" over
+        # two `--thread <id>` command lines with no thread to name. That shape is pinned byte for byte in
+        # tests/test_kernel_file_comments_decisions_send.py; this checks the line and its blank lines
         body = km._file_comments_message(REPORT, [], 3, 0, True, True)
-        self.assertIn("[obsidian-diff] I left 0 comments on %s.\n"
+        self.assertIn("[obsidian-diff] I went over %s.\n"
                       "\n"
                       "I accepted 3 of your changes and rejected 0.\n"
                       "\n"
-                      "To respond:\n" % REPORT, body)
+                      "No comments this time, so nothing needs a reply.\n" % REPORT, body)
+        self.assertNotIn("0 comments", body)
+        self.assertNotIn("To respond:", body)
         for a, r in ((0, 0), (None, None), (0, None)):
             self.assertNotIn("I accepted", km._file_comments_message(REPORT, ONE, a, r, True, True), (a, r))
 
