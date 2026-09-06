@@ -11,8 +11,8 @@ import * as path from "node:path";
 import { viewTagUnion, type TagUnion } from "./session-views";
 import { sectionTabs, anySectioned, homeTag, parseTabGroups, readTabGroups, writeTabGroups, isSectionCollapsed,
          toggleSectionCollapsed, setSectionCollapsed, planStrip, reorderTagOrder, applyTagOrder, TABGROUPS_KEY,
-         DEFAULT_COLLAPSED, sectionRef, isPinned, setPinned, togglePinned, prunePinned, reachableFrom, tagRenames, followTagRenames, headWords,
-         type TabSection, type SectionRef, type TabGroupsState } from "./tab-groups";
+         DEFAULT_COLLAPSED, sectionRef, isPinned, setPinned, togglePinned, prunePinned, reachableFrom, tagRenames, followTagRenames, followAdoption,
+         sameTagNames, headWords, type TabSection, type SectionRef, type TabGroupsState } from "./tab-groups";
 import { sectionTodoFlag, sectionTodoTitle, sectionPipTitle } from "./tab-state";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
@@ -965,6 +965,143 @@ test("executed: a stale memory is a rename this browser OWES (round 8) — a pan
   assert.deepEqual(withWeb.pinned, [{ sid: "TESTHOST-A:m2", name: "infra" }, { sid: "web", name: "ops", id: "g9" }], "…while g9's own pin is carried, by id");
 });
 
+test("executed: a stale pane's re-adoption of its held blob is NO NEWS (round 9) — followAdoption returns the state untouched when the blob names every tag as the held one does, so a pane whose local socket is dead, re-adopting its stale blob on every router re-emit after a fresher pane carried the pin, neither carries it back nor re-stamps; and the memory's stamp orders the evidence — a blob older than the stamp for a tag's store stands down on that tag, so a late intermediate frame moves nothing, while a newer blob proceeds; the stamp persists, migrates, and drops junk", () => {
+  // host A's t1 (web) holds A:m1, pinned under web; A's own store seq rides each remoteTag row (the kernel's)
+  const t1 = (name: string, seq?: number) => ({ ...rt("TESTHOST-A", "t1", name, ["TESTHOST-A:m1"]), ...(seq !== undefined ? { seq } : {}) });
+  const g8 = { id: "g8", name: "x", color: "#e0af68", members: ["tests"] };
+  const V0 = { active: "all", tags: [g8], remoteTags: [t1("web", 10)], tagOrder: ["web", "api", "ops", "x"], seq: 4 };
+  const V1 = { ...V0, remoteTags: [t1("api", 11)] };   // A renames web → api: pane P watches; pane B's local socket is dead
+  const V2 = { ...V0, remoteTags: [t1("ops", 12)] };   // A renames api → ops
+  const vis = ["TESTHOST-A:m1", "tests", "loose"];
+  const u0 = viewTagUnion(V0), u1 = viewTagUnion(V1);
+  let st = foldAll(parseTabGroups(null), "web", "api", "ops", "x");
+  st = setPinned(st, secOf(u0, "web"), "TESTHOST-A:m1", true);
+  // P adopts V1: the pin is carried to api, and the memory stamped with A's seq
+  const p1 = followAdoption(st, V0, V1);
+  assert.deepEqual([p1.pinned, p1.followed, p1.followedSeq], [[{ sid: "TESTHOST-A:m1", name: "api" }], { "TESTHOST-A:t1": "api" }, { "TESTHOST-A:t1": 11 }]);
+  assert.deepEqual(strip(vis, u1, p1, "loose"), [["#api(folded)", "TESTHOST-A:m1", "#x(folded)", "#null", "loose"], ["tests"]]);
+  // ROUND 9's BUG: B re-adopts V0 — a view-order storage event, a remote host's push, a `closed` frame, a host drop: the
+  // router re-emits its stored blob and an equal seq is admitted — three times. Memory api against blob web read as
+  // the rename B owed, api → web, and each re-adoption carried the pin back and re-stamped; P's strip folded m1 away
+  // until P's next adoption carried it forward: six writes over three rounds, the pin moving each time
+  for (let i = 0; i < 3; i++) assert.equal(followAdoption(p1, V0, V0), p1, `re-adoption ${i + 1}: no write, no move`);
+  assert.equal(followAdoption(p1, V1, V1), p1, "P re-adopting its own blob: the same");
+  assert.equal(followAdoption(p1, V0, V1), p1, "B's socket back, adopting V1: web → api is followed already");
+  assert.equal(sameTagNames(V0, V0) && sameTagNames(V0, { ...V0, seq: 9, tagOrder: ["x"] }) && !sameTagNames(V0, V1) && !sameTagNames(V0, { ...V0, remoteTags: [] }), true,
+    "the names: the same ids under the same names, whatever else the blob changed; a rename, or a host gone, is news");
+  // the two halves apart — (a) the name check alone, on blobs with no seq anywhere (an older kernel and an older host)
+  const B0 = { active: "all", tags: [g8], remoteTags: [t1("web")], tagOrder: V0.tagOrder }, B1 = { ...B0, remoteTags: [t1("api")] };
+  const q1 = followAdoption(st, B0, B1);
+  assert.deepEqual([q1.pinned, q1.followed, q1.followedSeq], [[{ sid: "TESTHOST-A:m1", name: "api" }], { "TESTHOST-A:t1": "api" }, undefined], "no seq: no stamp");
+  assert.equal(followAdoption(q1, B0, B0), q1, "the re-adoption is caught by the names alone");
+  assert.deepEqual(followTagRenames(q1, [], viewTagUnion(B0), B0).pinned, [{ sid: "TESTHOST-A:m1", name: "web" }],
+    "(the check run on it regardless, with nothing to order by, carries the pin back — the round-8 behavior the name check now guards)");
+  // (b) the stamp alone: the check run on B's stale blob stands down on t1, A's seq 10 being older than the stamp 11
+  assert.equal(followTagRenames(p1, [], u0, V0), p1, "B's blob is older than the memory's evidence for t1: nothing follows, nothing is owed, nothing is re-stamped");
+  // the late INTERMEDIATE frame — the same class with no re-emit: P is on V2 (memory ops @12); B, held V0, adopts V1
+  const p2 = followAdoption(p1, V1, V2);
+  assert.deepEqual([p2.pinned, p2.followed, p2.followedSeq], [[{ sid: "TESTHOST-A:m1", name: "ops" }], { "TESTHOST-A:t1": "ops" }, { "TESTHOST-A:t1": 12 }]);
+  assert.equal(followAdoption(p2, V0, V1), p2, "B's V1 is older than the memory's evidence: web → api is not followed, ops-against-api is no rename owed (before: the pin went to api, P folded m1 away, and B's V2 carried it back)");
+  assert.equal(followAdoption(p2, V1, V2), p2, "B's V2: api → ops is followed already");
+  assert.equal(followAdoption(p2, V0, V2), p2, "or coalesced, web → ops: followed already");
+  // a NEWER blob is news and proceeds: A renames ops → web again (seq 13) while no pane watched (the page closed)
+  const V3 = { ...V0, remoteTags: [t1("web", 13)] };
+  const back = followAdoption(p2, null, V3);
+  assert.deepEqual([back.pinned, back.followed, back.followedSeq], [[{ sid: "TESTHOST-A:m1", name: "web" }], { "TESTHOST-A:t1": "web" }, { "TESTHOST-A:t1": 13 }], "the owed rename is carried and the stamp advances");
+  assert.equal(followAdoption(back, V1, V2), back, "a stale pane's V2 (ops @12) against web @13: stood down, not owed in reverse");
+  assert.equal(followAdoption(back, V2, V3), back, "B catches up: ops → web is followed already");
+  // the stand-down is PER TAG: a stale blob for host A still follows a local rename it carries, and a deleted local tag's
+  // memory still goes on it
+  const W0 = { ...V0, tags: [g8], seq: 20 }, W1 = { ...V0, tags: [{ ...g8, name: "y" }], seq: 21 };
+  const w = followAdoption({ ...p2, followed: { ...p2.followed, g8: "x", g99: "gone" }, followedSeq: { ...p2.followedSeq, g8: 20 } }, W0, W1);
+  assert.deepEqual([w.pinned, w.followed, w.followedSeq], [p2.pinned, { "TESTHOST-A:t1": "ops", g8: "y" }, { "TESTHOST-A:t1": 12, g8: 21 }], "A's tag stands (its blob is older); g8's rename is followed and stamped with the local seq; g99 goes");
+  // the LOCAL face: the flip was invisible (isPinned matches by id) but the memory flapped and the store was written each time
+  const L0 = { active: "all", tags: [{ id: "g1", name: "web", color: "#fff", members: ["m1"] }], tagOrder: ["web", "api", "ops"], seq: 4 };
+  const L1 = { ...L0, tags: [{ ...L0.tags[0], name: "api" }], seq: 5 };
+  const L2 = { ...L0, tags: [{ ...L0.tags[0], name: "ops" }], seq: 6 };
+  const l0 = setPinned(foldAll(parseTabGroups(null), "web", "api", "ops"), secOf(viewTagUnion(L0), "web"), "m1", true);
+  const l1 = followAdoption(l0, L0, L1);
+  assert.deepEqual([l1.pinned, l1.followed, l1.followedSeq], [[{ sid: "m1", name: "api", id: "g1" }], { g1: "api" }, { g1: 5 }], "stamped with the local store's seq");
+  assert.equal(followAdoption(l1, L0, L0), l1, "B re-adopts its stale blob: no write (before: memory api → web, a write per re-emit)");
+  assert.equal(followTagRenames(l1, [], viewTagUnion(L0), L0), l1, "…and the stamp alone stands it down: seq 4 is older than 5");
+  const l2 = followAdoption(l1, L1, L2);
+  assert.equal(followAdoption(l2, L0, L1), l2, "the late intermediate frame: stood down, the pin under ops");
+  assert.equal(followAdoption(l2, L2, { ...L2, tagOrder: ["ops", "api", "web"], seq: 7 }), l2, "a local write that renames nothing bumps the seq and changes no name: no news, no write");
+  // an entry with NO stamp (a store from before it) stands no blob down: the check runs as it did, and the first blob
+  // that moves the entry stamps it — the late-intermediate flap remains for such an entry until then (THE LIMITS)
+  const legacy: TabGroupsState = { on: l1.on, collapsed: l1.collapsed, expanded: l1.expanded, pinned: l1.pinned, followed: l1.followed };
+  const moved = followTagRenames(legacy, [], viewTagUnion(L0), L0);
+  assert.deepEqual([moved.pinned, moved.followed, moved.followedSeq], [[{ sid: "m1", name: "web", id: "g1" }], { g1: "web" }, { g1: 4 }], "unstamped: the older blob is not known to be older, and its carry stamps the entry");
+  assert.equal(followAdoption(legacy, L0, L0), legacy, "…while the same blob re-adopted is caught by the names, stamp or none");
+  // the stamp persists beside the memory, reads back, and junk drops; a store from before it reads as unstamped
+  assert.deepEqual(parseTabGroups('{"followed":{"g1":"api","g2":"x"},"followedSeq":{"g1":5,"g2":0,"g9":3,"z":"7","g3":-1}}').followedSeq, { g1: 5 }, "remembered tags only, positive numbers only");
+  assert.equal(parseTabGroups('{"followed":{"g1":"api"}}').followedSeq, undefined, "a store from before the stamp");
+  assert.equal(parseTabGroups('{"followedSeq":{"g1":5}}').followedSeq, undefined, "a stamp without a memory is nothing");
+  assert.equal("followedSeq" in parseTabGroups('{"followed":{"g1":"api"},"followedSeq":{"g1":0}}'), false, "and an all-zero one is absent, not empty");
+  const store = new Map<string, string>();
+  const g: any = globalThis;
+  const savedLS = g.localStorage;
+  g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
+  try {
+    writeTabGroups(l1);
+    assert.deepEqual(JSON.parse(store.get(TABGROUPS_KEY)!).followedSeq, { g1: 5 });
+    assert.deepEqual(readTabGroups(viewTagUnion(L1)), l1, "round-trips");
+    writeTabGroups(l0);
+    assert.equal("followedSeq" in JSON.parse(store.get(TABGROUPS_KEY)!), false, "not written when there is none");
+  } finally {
+    g.localStorage = savedLS;
+  }
+});
+
+test("executed: the owed rename against a MIXED pin (round 9 coverage) — a pin under a mixed section turned off is re-applied by neither adoption order; the remote half unpinned after a watched split stands through the remote tag's next owed rename with the local-id entry untouched; and a local-id entry whose name went stale is not the pin a watched rename of a NEWER same-named local tag moves (the `!x.local` clause)", () => {
+  const t1 = (name: string) => rt("TESTHOST-A", "t1", name, ["TESTHOST-A:m1"]);
+  const g9 = { id: "g9", name: "api", color: "#fff", members: ["TESTHOST-A:m1"] };
+  const V0 = { active: "all", tags: [g9], remoteTags: [t1("web")], tagOrder: ["api", "web", "ops", "qa"], seq: 4 };
+  const V1 = { ...V0, remoteTags: [t1("api")] }, V2 = { ...V0, remoteTags: [t1("ops")] }, V3 = { ...V0, remoteTags: [t1("qa")] };
+  const u1 = viewTagUnion(V1), u2 = viewTagUnion(V2), u3 = viewTagUnion(V3);
+  // A's web → api joins the local api: the section is mixed, and a pin made there carries g9's id
+  let st = foldAll(parseTabGroups(null), "api", "web", "ops", "qa");
+  st = setPinned(st, secOf(u1, "api"), "TESTHOST-A:m1", true);
+  assert.deepEqual(st.pinned, [{ sid: "TESTHOST-A:m1", name: "api", id: "g9" }]);
+  const st1 = followTagRenames(st, tagRenames(V0, V1), u1);
+  assert.deepEqual(st1.followed, { "TESTHOST-A:t1": "api" });
+  const rB = tagRenames(V0, V2), rP = tagRenames(V1, V2);
+  // the mixed pin turned off; then A renames api → ops (owed for B, watched for P): nothing is re-applied, either order
+  const off = setPinned(st1, secOf(u1, "api"), "TESTHOST-A:m1", false);
+  assert.deepEqual(off.pinned, []);
+  const offB = followTagRenames(off, rB, u2), offP = followTagRenames(off, rP, u2);
+  assert.deepEqual([offB.pinned, offB.followed], [[], { "TESTHOST-A:t1": "ops" }], "B: the memory is re-stamped, no pin appears");
+  assert.equal(followTagRenames(offB, rP, u2), offB, "P stands down");
+  assert.deepEqual([offP.pinned, offP.followed], [[], { "TESTHOST-A:t1": "ops" }]);
+  assert.equal(followTagRenames(offP, rB, u2), offP, "B stands down");
+  // left on, the owed rename splits the pin as the watched one does: the local-id entry stays, the ops half is added
+  const onB = followTagRenames(st1, rB, u2), onP = followTagRenames(st1, rP, u2);
+  assert.deepEqual(onP.pinned, [{ sid: "TESTHOST-A:m1", name: "api", id: "g9" }, { sid: "TESTHOST-A:m1", name: "ops" }]);
+  assert.deepEqual(onB.pinned, onP.pinned, "the owed carry and the watched one agree");
+  // the user unpins the ops half; A then renames ops → qa while the page is closed (owed on reopen): the local-id entry
+  // stands and nothing is re-applied
+  const half = setPinned(onP, secOf(u2, "ops"), "TESTHOST-A:m1", false);
+  assert.deepEqual(half.pinned, [{ sid: "TESTHOST-A:m1", name: "api", id: "g9" }]);
+  const qa = followTagRenames(half, tagRenames(null, V3), u3);
+  assert.deepEqual([qa.pinned, qa.followed], [[{ sid: "TESTHOST-A:m1", name: "api", id: "g9" }], { "TESTHOST-A:t1": "qa" }], "the memory is re-stamped; the pin the user kept is not touched");
+  // `!x.local`: a local-id entry {m1, api, g9} whose name went stale — g9 renamed to ops with no memory of it, so the
+  // reopen frame names no rename and the entry is found by id (prunePinned keeps it) — is not moved by a WATCHED rename
+  // of a NEWER local tag g10 that took the name api and holds m1: two local tags never share a name, so g10's api → qa
+  // is not g9's pin's to follow. Without the clause the entry gained a {m1, qa, g10} half the user never made
+  const L = (a: string, b: string) => ({ active: "all", tags: [{ id: "g9", name: a, color: "#fff", members: ["m1"] }, { id: "g10", name: b, color: "#000", members: ["m1"] }], tagOrder: ["api", "ops", "qa"], seq: 7 });
+  const P0 = { active: "all", tags: [{ id: "g9", name: "api", color: "#fff", members: ["m1"] }], tagOrder: ["api", "ops", "qa"], seq: 5 };
+  const c = setPinned(foldAll(parseTabGroups(null), "api", "ops", "qa"), secOf(viewTagUnion(P0), "api"), "m1", true);
+  const X0 = L("ops", "api");
+  const reopened = followTagRenames(c, tagRenames(null, X0), viewTagUnion(X0));
+  assert.equal(reopened, c, "no memory of g9: the reopen frame moves nothing (THE LIMITS' local face — the id still finds the section)");
+  const pruned = prunePinned(reopened, viewTagUnion(X0), new Set(["m1"]), HOSTS);
+  assert.deepEqual(pruned.pinned, [{ sid: "m1", name: "api", id: "g9" }], "kept: g9 holds m1, found by id");
+  const X1 = L("ops", "qa");
+  assert.deepEqual(tagRenames(X0, X1), [{ id: "g10", from: "api", to: "qa", local: true, members: ["m1"] }]);
+  const w = followTagRenames(pruned, tagRenames(X0, X1), viewTagUnion(X1));
+  assert.deepEqual([w.pinned, w.followed], [[{ sid: "m1", name: "api", id: "g9" }], { g10: "qa" }], "g10's rename is remembered and moves nothing: the entry is g9's");
+});
+
 test("executed: a REMOTE host's rename of a MIXED section — the entry carries the local id, and the remote tag's new name gains a half while the local tag holds the tab under the old, as a local rename keeps the old-name half: pinned under either drag order, and when the new name already sits ahead in tagOrder the tab's home moves on the frame and stays on the strip", () => {
   // local infra (g9) and host A's infra both hold A:m1; the user pins A:m1 under the mixed section
   const A = rt("TESTHOST-A", "t1", "infra", ["TESTHOST-A:m1"]);
@@ -1244,10 +1381,11 @@ test("the toggle is a row in the tab menu's Tags flyout beside the Move-to rows:
   // moves the base, and rewrites the store only when an entry or the memory changed (views-writes.test
   // pins that both adoption paths reach it)
   const adopt = RENDER.slice(RENDER.indexOf("function adoptBase("), RENDER.indexOf("function captureViews("));
-  assert.match(adopt, /const renames = tagRenames\(sessionViews, v\);\s*\n\s*sessionViews = v;\s*\n\s*const unions = viewTagUnion\(v\);\s*\n\s*const st = readTabGroups\(unions\);\s*\n\s*const next = followTagRenames\(st, renames, unions\);\s*\n\s*if \(next !== st\) writeTabGroups\(next\);/,
-    "…and runs the follow on EVERY adoption, renames or none — the memory check needs the blob that names a remembered tag otherwise (round 7)");
+  assert.match(adopt, /const prev = sessionViews;\s*\n\s*sessionViews = v;\s*\n\s*const unions = viewTagUnion\(v\);\s*\n\s*const st = readTabGroups\(unions\);\s*\n\s*const next = followAdoption\(st, prev, v, unions\);\s*\n\s*if \(next !== st\) writeTabGroups\(next\);/,
+    "…and runs the follow on EVERY adoption, renames or none — the memory check needs the blob that names a remembered tag otherwise (round 7) — through followAdoption, with the held blob: a blob that is no news about tag names returns the state untouched (round 9), and the adopted blob carries the seqs the memory is stamped with");
   assert.doesNotMatch(adopt, /if \(!renames\.length\) return;/, "no early return on a frame without renames");
-  assert.equal(RENDER.split("followTagRenames(").length - 1, 1, "one call site: the adoption");
+  assert.equal(RENDER.split("followAdoption(").length - 1, 1, "one call site: the adoption");
+  assert.equal(RENDER.split("followTagRenames(").length - 1, 0, "…and the follow itself is reached only through it");
   // the phone layout's flat strip has no fold to show through: the plan ignores pins there (no-op by construction)
   const p = planStrip(["web", "old1", "old2"], viewTagUnion(VP), setPinned(parseTabGroups(null), ARCH, "old2", true), "web", true);
   assert.deepEqual(p.items, [{ id: "web" }, { id: "old1" }, { id: "old2" }]);

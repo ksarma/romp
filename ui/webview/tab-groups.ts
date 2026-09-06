@@ -14,7 +14,7 @@
 // Notification is view-order.ts's two-path idiom: localStorage reaches other panes (the storage
 // event), a same-window CustomEvent reaches the writer. Pure and DOM-free (the tab-order.ts
 // pattern) so the rule executes in node tests; render.ts paints it.
-import { SessionViews, TagUnion, viewTags } from "./session-views";
+import { SessionViews, TagUnion, viewTags, viewTagUnion } from "./session-views";
 import { hostOf } from "./host-prefix";
 
 export const TABGROUPS_KEY = "romp:tabgroups";
@@ -56,6 +56,12 @@ export interface TabGroupsState {
   /** the name each renamed tag's pins were last carried to, by tag id — followTagRenames' once-per-
    *  browser memory; absent until a rename was followed */
   followed?: Record<string, string>;
+  /** the write seq of each followed tag's STORE when its memory was stamped, by tag id — the local
+   *  blob's `seq` for a local tag, the owning host's own for a remote one (the kernel carries it per
+   *  remoteTag row) — the evidence the memory rests on, which a blob older than it stands down against
+   *  (followTagRenames); absent for an entry stamped from a blob that carried none (a kernel from before
+   *  the stamp, or a store from before it), which no blob is older than */
+  followedSeq?: Record<string, number>;
 }
 
 /** The section a union makes, as pins are matched and written against it. */
@@ -129,7 +135,16 @@ export function parseTabGroups(raw: string | null | undefined, unions: readonly 
       return Object.keys(out).length ? out : undefined;
     };
     const followed = names(o.followed);
-    return { on: o.on !== false, collapsed: strs(o.collapsed), expanded: strs(o.expanded), pinned: pins(o.pinned), ...(followed ? { followed } : {}) };
+    // the stamps ride for remembered tags only, and only positive ones (0 and junk read as none: no blob is older)
+    const seqs = (x: unknown): Record<string, number> | undefined => {
+      if (!followed || !x || typeof x !== "object" || Array.isArray(x)) return undefined;
+      const out: Record<string, number> = {};
+      for (const [k, v] of Object.entries(x as Record<string, unknown>)) if (k in followed && typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = v;
+      return Object.keys(out).length ? out : undefined;
+    };
+    const followedSeq = seqs(o.followedSeq);
+    return { on: o.on !== false, collapsed: strs(o.collapsed), expanded: strs(o.expanded), pinned: pins(o.pinned),
+             ...(followed ? { followed } : {}), ...(followedSeq ? { followedSeq } : {}) };
   } catch {
     return fresh();
   }
@@ -149,6 +164,7 @@ export function writeTabGroups(st: TabGroupsState): void {
   try {
     const blob: Record<string, unknown> = { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned: st.pinned };
     if (st.followed && Object.keys(st.followed).length) blob.followed = st.followed;
+    if (st.followedSeq && Object.keys(st.followedSeq).length) blob.followedSeq = st.followedSeq;
     localStorage.setItem(TABGROUPS_KEY, JSON.stringify(blob));
   } catch {
     /* quota / private mode → this preference just doesn't outlive the page */
@@ -286,6 +302,25 @@ export function reachableFrom(fed: RouterHosts | null | undefined): Set<string> 
  *  kernel's tags (the id a pin may carry), false for a remote host's; `members` what it holds now. */
 export interface TagRename { id: string; from: string; to: string; local: boolean; members: readonly string[] }
 
+/** The (tag id → name) map of a blob's local and remote tags — what a rename is a change of, and what a
+ *  blob that carries no rename leaves as it was. (A blob's hosts are in it too: a remote id is its host's.) */
+export function tagNames(v: SessionViews | null | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!v) return out;
+  for (const t of viewTags(v)) out.set(t.id, t.name || "tag");
+  for (const t of v.remoteTags || []) out.set(t.id, t.name || "tag");
+  return out;
+}
+
+/** Do two blobs name the same tags by the same names — the same ids, local and remote, each under the
+ *  same name? True is "no news about tag names" (followAdoption). */
+export function sameTagNames(a: SessionViews | null | undefined, b: SessionViews | null | undefined): boolean {
+  const x = tagNames(a), y = tagNames(b);
+  if (x.size !== y.size) return false;
+  for (const [id, name] of x) if (y.get(id) !== name) return false;
+  return true;
+}
+
 /** The tags `next` renames relative to `prev` — the previously adopted blob, so a client watching the
  *  stream sees every rename, local or a remote host's, as the frame that carries it arrives. No
  *  previous blob (the page's first frame) → none: a rename that happened while no client watched is
@@ -293,9 +328,7 @@ export interface TagRename { id: string; from: string; to: string; local: boolea
  *  none (followTagRenames states the limit). */
 export function tagRenames(prev: SessionViews | null | undefined, next: SessionViews | null | undefined): TagRename[] {
   if (!prev || !next) return [];
-  const before = new Map<string, string>();
-  for (const t of viewTags(prev)) before.set(t.id, t.name || "tag");
-  for (const t of prev.remoteTags || []) before.set(t.id, t.name || "tag");
+  const before = tagNames(prev);
   const out: TagRename[] = [];
   const see = (id: string, name: string | undefined, local: boolean, members: readonly string[] | undefined) => {
     const from = before.get(id), to = name || "tag";
@@ -357,38 +390,84 @@ export function tagRenames(prev: SessionViews | null | undefined, next: SessionV
  *  followed, the pin still under api and the tab folded away (round 8). The frame's own renames
  *  re-stamp the memory after the check (a rename the frame itself carries from the remembered name is
  *  followed once), so a watched rename away from the remembered name is remembered under its new one.
- *  Returns `st` itself when every rename is already followed and the memory stands — the late pane
- *  writes nothing and notifies no one; a stale entry's drop alone is a write, pins untouched.
+ *  Returns `st` itself when every rename is already followed, or stood down, and the memory stands —
+ *  the late pane writes nothing and notifies no one; a stale entry's drop alone is a write, pins
+ *  untouched.
  *
- *  THE LIMIT: a remote-only pin has no id, so a rename of the remote tag that happens while no client
+ *  THE EVIDENCE ORDER (round 9): each memory entry is stamped with the write seq of its tag's STORE as
+ *  the adopted blob carried it (`followedSeq`) — the blob's own `seq` for a local tag; for a remote
+ *  host's tag the host's own, which the kernel carries on each remoteTag row (a remote rename rides the
+ *  local blob with no change to the local seq, so the host's is the seq that orders it) — and a blob
+ *  whose seq for that store is OLDER than the stamp stands down on the tag: the entry is kept as it is,
+ *  the blob's other name for the tag is not a rename owed, a rename the frame itself carries for the tag
+ *  is not followed, and nothing is re-stamped, because the memory was written from newer evidence than
+ *  the blob is (the writer whose evidence predates the diary stands down). At the stamp's seq or past
+ *  it the blob proceeds. Before this, a pane adopting an intermediate frame late — held V0 (web),
+ *  adopting V1 (api) after another pane had carried the pin on V2 (ops) — read ops against api as the
+ *  rename it owed, carried the pin to api, and its own V2 frame carried it back: a flap on no new
+ *  information; with the stamp, its V1 is older than the memory and moves nothing. `views` is the
+ *  adopted blob, for the local seq; a seq the blob does not carry (no `views`; a kernel or host from
+ *  before the stamp) orders nothing — such a tag is never stood down, its stamp is not stored, and the
+ *  check runs as it did. The re-adoption of the very blob a pane holds is a different case, and
+ *  followAdoption's name check answers it before this runs, seq or none.
+ *
+ *  THE LIMITS: a remote-only pin has no id, so a rename of the remote tag that happens while no client
  *  of this browser is watching (the page closed, the blob's first frame after it) is followed only
  *  through the memory — this browser having followed an earlier rename of the tag, which ties the
  *  pin's name to the tag's id. With no memory of the tag, the entry stays under the old name, where it
  *  matches nothing until the user pins the tab again; the pin set again follows the tag's next rename,
- *  and from then on its unwatched ones too. A local tag's pin carries the id and has no such gap. */
-export function followTagRenames(st: TabGroupsState, renames: readonly TagRename[], unions: readonly TagUnion[]): TabGroupsState {
-  // the memory, checked against the blob FIRST (the doc above): an entry stands while the blob names its
-  // tag by the remembered name, or while it is a remote host's and the blob carries none of that host's
-  // tags; a deleted tag's goes; and one the blob names OTHERWISE is a rename this browser owes — from the
-  // remembered name to the blob's, over the tag's own members — followed with the frame's, unless the
-  // frame itself carries that rename (then it is followed once, as the frame's)
+ *  and from then on its unwatched ones too. A local tag's pin carries the id and has no such gap. A
+ *  memory entry without a stamp — written before the stamp, or from a blob that carried no seq — stands
+ *  no blob down, so the late-intermediate flap above remains possible for that tag until a followed
+ *  rename stamps it. And a store restored to an OLDER copy (a kernel restarted over a restored views
+ *  file serves it under the old seq) is stood down for its tags until its next write, whose seq —
+ *  time-ordered on every kernel — passes the stamp. */
+export function followTagRenames(st: TabGroupsState, renames: readonly TagRename[], unions: readonly TagUnion[], views?: SessionViews | null): TabGroupsState {
+  // the memory, checked against the blob FIRST (the doc above): an entry stands while the blob is older
+  // than its stamp for the tag's store, while the blob names its tag by the remembered name, or while it
+  // is a remote host's and the blob carries none of that host's tags; a deleted tag's goes; and one the
+  // blob names OTHERWISE is a rename this browser owes — from the remembered name to the blob's, over the
+  // tag's own members — followed with the frame's, unless the frame itself carries that rename (then it
+  // is followed once, as the frame's)
   const byId = new Map<string, TagUnion>();
   for (const u of unions) for (const id of u.ids) byId.set(id, u);
   const present = new Set([...byId.keys()].map(hostOf).filter((h) => h !== ""));
+  // the stores' seqs as this blob carries them: the local store's, and each remote host's own off its rows
+  const localSeq = typeof views?.seq === "number" && Number.isFinite(views.seq) ? views.seq : null;
+  const hostSeq = new Map<string, number>();
+  for (const u of unions) for (const t of u.remotes) {
+    const h = t.host || hostOf(t.id);
+    if (h !== "" && typeof t.seq === "number" && Number.isFinite(t.seq)) hostSeq.set(h, t.seq);
+  }
+  const storeSeq = (id: string): number | null => { const h = hostOf(id); return h === "" ? localSeq : (hostSeq.get(h) ?? null); };
+  const stamp = (id: string): number => st.followedSeq?.[id] ?? 0;
+  const older = (id: string): boolean => { const s = storeSeq(id); return s !== null && s < stamp(id); };
   const followed: Record<string, string> = {};
+  const seqs: Record<string, number> = {};
   const owed: TagRename[] = [];
   let stale = false;
   for (const [id, name] of Object.entries(st.followed || {})) {
     const u = byId.get(id), h = hostOf(id);
-    if (u?.name === name || (!u && h !== "" && !present.has(h))) { followed[id] = name; continue; }
+    if (older(id) || u?.name === name || (!u && h !== "" && !present.has(h))) {
+      followed[id] = name;
+      if (stamp(id) > 0) seqs[id] = stamp(id);
+      continue;
+    }
     stale = true;
     if (u && !renames.some((r) => r.id === id && r.from === name)) {
       const lt = u.locals.find((t) => t.id === id), t = lt || u.remotes.find((x) => x.id === id);
       owed.push({ id, from: name, to: u.name, local: lt !== undefined, members: t?.members || [] });
     }
   }
-  const fresh = [...renames.filter((r) => followed[r.id] !== r.to), ...owed];
-  if (!fresh.length) return stale ? { ...st, followed } : st;
+  const fresh = [...renames.filter((r) => followed[r.id] !== r.to && !older(r.id)), ...owed];
+  // the memory as it stands after this check, on `base`: the stamps ride only while some entry has one
+  const remembered = (base: TabGroupsState): TabGroupsState => {
+    const out: TabGroupsState = { ...base, followed };
+    delete out.followedSeq;
+    if (Object.keys(seqs).length) out.followedSeq = seqs;
+    return out;
+  };
+  if (!fresh.length) return stale ? remembered(st) : st;
   const matches = (p: PinnedRef, x: TagRename) => (p.id !== undefined && x.id === p.id)
     || ((p.id === undefined || !x.local) && x.from === p.name && x.members.includes(p.sid));
   const out: PinnedRef[] = [];
@@ -407,8 +486,33 @@ export function followTagRenames(st: TabGroupsState, renames: readonly TagRename
       if (rest) put(pinEntry(sectionRef(rest), p.sid));
     }
   }
-  for (const r of fresh) followed[r.id] = r.to;   // the frame's renames re-stamp the checked memory
-  return { ...st, pinned: out, followed };
+  for (const r of fresh) {   // the frame's renames re-stamp the checked memory, at the tag's store's seq
+    followed[r.id] = r.to;
+    const s = storeSeq(r.id);
+    if (s !== null && s > 0) seqs[r.id] = s; else delete seqs[r.id];
+  }
+  return remembered({ ...st, pinned: out });
+}
+
+/** The follow as the views adoption runs it (render.ts adoptBase, the one base-assignment site): from
+ *  the held blob `prev` to the adopted `next`. A blob that names every tag as the held blob does — the
+ *  same ids, local and remote, each under the same name (sameTagNames) — is NO NEWS about names and
+ *  returns `st` itself: the memory was checked against those very names when the held blob was adopted,
+ *  and what has changed since is the memory, by another pane's hand, from a blob this pane has not seen.
+ *  Such a blob is the held one re-emitted — the federation router re-emits its stored blob on a
+ *  view-order storage event from any pane, a remote host's push, a `closed` frame or a host drop, and a
+ *  pane whose local socket is dead (a background tab's throttled redial, a half-open socket) re-adopts
+ *  it each time, an equal seq being admitted — or a frame that changed something else. Run on it, the
+ *  check read the fresher pane's stamp (memory api, blob web) as the rename this browser owed IN
+ *  REVERSE, carried the pin back over that pane's follow and re-stamped; the fresher pane's next
+ *  adoption carried it forward again: the pin moved twice per trigger on no new information, for as
+ *  long as the stale pane stayed stale (round 9 of the 2026-09-06 review). Every other blob runs the
+ *  frame's renames and the memory check, under the stores' seqs (followTagRenames). `unions` are
+ *  `next`'s, passed when the caller has them. */
+export function followAdoption(st: TabGroupsState, prev: SessionViews | null | undefined, next: SessionViews,
+                               unions: readonly TagUnion[] = viewTagUnion(next)): TabGroupsState {
+  if (prev && sameTagNames(prev, next)) return st;
+  return followTagRenames(st, tagRenames(prev, next), unions, next);
 }
 
 /** The words a section header wears — its count, its tooltip and its accessible name — pure so the copy

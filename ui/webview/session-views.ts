@@ -10,7 +10,11 @@
 // import TS).
 // Pure, split out of render.ts for tests (the time-marker.ts pattern). The kernel emits `tags`;
 // `groups` survives in the type as the pre-rename key an un-updated kernel still pushes.
-export interface SessionTag { id: string; name?: string; color?: string; members?: string[]; host?: string }
+// `host` and `seq` ride a REMOTE tag's row only (remoteTags): the kernel that owns the tag, and that
+// kernel's own views store's write seq at the reading the row was rendered from — the order by which
+// tab-groups.ts followTagRenames judges what a blob says about the tag, since a remote rename rides this
+// kernel's blob with no change to the local `seq`; absent from a host that stamps none.
+export interface SessionTag { id: string; name?: string; color?: string; members?: string[]; host?: string; seq?: number }
 export interface SessionViews {
   active?: string; tags?: SessionTag[]; groups?: SessionTag[];
   hidden?: string[];   // RETIRED 2026-08-24 — read-tolerated on old blobs, ignored everywhere, kernel-dropped

@@ -244,10 +244,10 @@ test("pins: every views arrival in render.ts goes through the ONE seq-gated adop
     "the exact-echo clear and the three-frame yield survive ONLY for a blob without a seq (a kernel that acks nothing); a stamped kernel's frames never clear a write they cannot name");
   assert.equal((cap.match(/>= 3/g) || []).length, 1, "one legacy yield, under the seq-less condition, nowhere else");
   assert.equal((RENDER.match(/(?<!pending)(?<!\w)sessionViews = /g) || []).length, 1,
-    "the base is assigned in exactly one place — adoptBase, which also carries the tab strip's pins across a renamed tag (tab-groups.ts followTagRenames)");
+    "the base is assigned in exactly one place — adoptBase, which also carries the tab strip's pins across a renamed tag (tab-groups.ts followAdoption)");
   const adopt = RENDER.slice(RENDER.indexOf("function adoptBase("), RENDER.indexOf("function captureViews("));
-  assert.match(adopt, /const renames = tagRenames\(sessionViews, v\);\s*\n\s*sessionViews = v;\s*\n\s*const unions = viewTagUnion\(v\);/,
-    "the renames are read against the blob being replaced, and the base moves before any store write (its TABGROUPS_EVENT render reads the new blob)");
+  assert.match(adopt, /const prev = sessionViews;\s*\n\s*sessionViews = v;\s*\n\s*const unions = viewTagUnion\(v\);[\s\S]*followAdoption\(st, prev, v, unions\);\s*\n\s*if \(next !== st\) writeTabGroups\(next\);/,
+    "the held blob is taken before the base moves and the follow reads the renames against it, and the base moves before any store write (its TABGROUPS_EVENT render reads the new blob)");
   assert.equal((RENDER.match(/(?<!function )adoptBase\(/g) || []).length, 2,
     "reached from exactly two places: inside the gate, and the caps frame's adoption of the blob the gate last turned away (rounds 6 and 7)");
   assert.match(RENDER, /if \(adopted && rejectedViews\) adoptBase\(rejectedViews\);/, "…that second one is the reconnect event's adoption and nothing else");

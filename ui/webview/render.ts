@@ -32,7 +32,7 @@ import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned, reachableFrom, headWords,
-         tagRenames, followTagRenames, reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
+         followAdoption, reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
 import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
@@ -555,13 +555,17 @@ function takeViews(v: SessionViews | null | undefined): boolean {
 // name carried to the blob's, the rename this browser owes, and the memory re-stamped (rounds 7 and 8
 // of the 2026-09-06 review: kept, that memory read the tag's next rename to the name as followed;
 // dropped without the carry, a pane two renames stale stamped the last name over a pin the watching
-// pane had left under the middle one).
+// pane had left under the middle one). Through followAdoption (round 9): a blob that names every tag as
+// the held one does is no news about names and moves nothing — a pane whose local socket is dead
+// re-adopts its stale blob on every router re-emit, and the check run on it carried a fresher pane's
+// follow back — and the memory is stamped with each tag's store's write seq, a blob older than the
+// stamp standing down on that tag.
 function adoptBase(v: SessionViews): void {
-  const renames = tagRenames(sessionViews, v);
+  const prev = sessionViews;
   sessionViews = v;
   const unions = viewTagUnion(v);
   const st = readTabGroups(unions);
-  const next = followTagRenames(st, renames, unions);
+  const next = followAdoption(st, prev, v, unions);
   if (next !== st) writeTabGroups(next);
 }
 function captureViews(v: SessionViews | null) {
