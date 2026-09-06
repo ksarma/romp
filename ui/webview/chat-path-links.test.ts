@@ -16,6 +16,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
+const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");   // the matcher lives here since plans/file-review.md Slice 0
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 const VIEW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8");
 
@@ -30,21 +31,23 @@ test("the chat event carries the kernel's pathLinks verdict on user and assistan
 });
 
 test("membership in pathLinks gates the link, and the map's value is the OPEN target", () => {
-  // every existing shape gate stays — the map only ever narrows, never widens
-  assert.match(RENDER, /if \(!isUri && !looksLikeFilePath\(tok\) && !\(inCode && looksLikeBareFileName\(tok\)\)\) continue;/);
-  assert.match(RENDER, /const fixed = !isUri && pathLinks \? pathLinks\[tok\] : undefined;/);
-  assert.match(RENDER, /if \(!isUri && pathLinks && typeof fixed !== "string"\) continue;/);
+  // every existing shape gate stays — the map only ever narrows, never widens (the walk is path-links.ts's;
+  // render.ts threads the event's map through: linkifyPathTokens(root, sid, pathLinks))
+  assert.match(LINKS, /if \(!isUri && !looksLikeFilePath\(tok\) && !\(inCode && looksLikeBareFileName\(tok\)\)\) continue;/);
+  assert.match(LINKS, /const fixed = !isUri && pathLinks \? pathLinks\[tok\] : undefined;/);
+  assert.match(LINKS, /if \(!isUri && pathLinks && typeof fixed !== "string"\) continue;/);
+  assert.match(RENDER, /linkifyPathTokens\(root, sid, pathLinks\)/);
   // the fixed target is what opens (and openPathLink titles it, so hover shows where a fix points);
   // with NO pathLinks key on the event (old kernel, cached payload) the token opens as written
-  assert.match(RENDER, /const open = isUri \? fileUriToPath\(tok\) : \(fixed \?\? tok\);/);
-  assert.match(RENDER, /const link = isUri \? fileUriLink\(tok\) : openPathLink\(tok, open, true, sid\);/);
-  assert.match(RENDER, /frag\.appendChild\(link\);/);
-  assert.match(RENDER, /a\.title = "Open " \+ open;/);
+  assert.match(LINKS, /const open = isUri \? fileUriToPath\(tok\) : \(fixed \?\? tok\);/);
+  assert.match(LINKS, /const link = isUri \? fileUriLink\(tok\) : openPathLink\(tok, open, true, sid\);/);
+  assert.match(LINKS, /frag\.appendChild\(link\);/);
+  assert.match(LINKS, /a\.title = "Open " \+ open;/);
 });
 
 test("file:// URIs are explicit absolute paths — never gated on the map", () => {
   // both guards above test !isUri first, so a file:// token can't be dropped by the map…
-  assert.match(RENDER, /const isUri = \/\^file:\\\/\\\/\/i\.test\(tok\);/);
+  assert.match(LINKS, /const isUri = \/\^file:\\\/\\\/\/i\.test\(tok\);/);
   // …and the kernel never puts file:// tokens in it
   assert.ok(KERNEL.includes('if not t.lower().startswith("file://")'), "kernel skips file:// tokens");
 });
@@ -73,11 +76,11 @@ test("the /file error bodies name the resolved path, and the viewer doesn't repe
 
 // executed: the Python tokenizer (_path_tokens) and CLICKABLE_PATH_RE must agree on what a token IS —
 // the map keys the kernel ships are what this client looks up, so drift silently unlinks. Same fixture
-// runs against the kernel in tests/test_path_links.py. The regex is EXTRACTED from render.ts, so this
+// runs against the kernel in tests/test_path_links.py. The regex is EXTRACTED from path-links.ts, so this
 // pins the real one, not a copy.
 test("tokenizer parity: the client regex over the shared fixture", () => {
-  const m = RENDER.match(/const CLICKABLE_PATH_RE = \/(.*)\/gi;/);
-  assert.ok(m, "CLICKABLE_PATH_RE found in render.ts");
+  const m = LINKS.match(/const CLICKABLE_PATH_RE = \/(.*)\/gi;/);
+  assert.ok(m, "CLICKABLE_PATH_RE found in path-links.ts");
   const fixture = JSON.parse(fs.readFileSync(
     path.resolve(process.cwd(), "..", "tests", "fixtures", "path_token_parity.json"), "utf8"));
   assert.ok(fixture.cases.length >= 10, "the fixture is the parity surface — keep it broad");

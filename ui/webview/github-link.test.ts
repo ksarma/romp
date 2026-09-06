@@ -206,5 +206,5 @@ test("the GitHub link is the action REGISTRY's first entry, not another hand-wir
   assert.match(VIEW, /export const githubLinkAction: FileViewAction = \{\n  id: "github-link",/);
   assert.match(VIEW, /registerFileViewAction\(githubLinkAction\);/);
   // openFileView renders registered actions by WALKING THE TABLE, after the built-ins
-  assert.match(VIEW, /for \(const a of fileViewActions\) \{\n    const n = a\.mount\(\{ path, sid: sid \|\| null \}\);\n    if \(n\) acts\.appendChild\(n\);\n  \}/);
+  assert.match(VIEW, /for \(const a of fileViewActions\) \{\n    const n = a\.mount\(\{ path, sid: sid \|\| null, todoId: opts\?\.todoId \?\? null \}\);\n    if \(n\) acts\.appendChild\(n\);\n  \}/);
 });

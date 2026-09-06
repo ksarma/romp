@@ -26,9 +26,9 @@ const row = (p: string, sid: string | null, name = "web", t = 1): RecentFile =>
 test("the pane hosts the shared viewer and takes the shell's relay WHOLE: its own contract, not the feed's", () => {
   // initFileView's second argument replaces the default relay branch — the feed's viaRelay + ack —
   // for this document; the pane owes the shell no pane restore, it stays up
-  assert.match(SRC, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\), \(m\) => \{\n\s*openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\)\);\n\}\);/);
+  assert.match(SRC, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\), \(m\) => \{\n\s*openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null\);\n\}\);/);
   assert.match(SRC, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\)\);/, "the browser opens here too");
-  assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown \}\) => void\): void \{/);
+  assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void\): void \{/);
   const relayBranch = VIEW.split('if (m.romp === "viewFile"')[1].split("} else if")[0];
   const guard = "if (onRelay) { onRelay(m); return; }";
   // presence first: indexOf's -1 for an ABSENT guard is less than any index, so the ordering check alone
@@ -84,7 +84,8 @@ test("the relay guard, executed: onRelay takes the message and short-circuits th
 test("the session chip resolves from what the relay carried, cached per sid, else the kernel's stub", () => {
   assert.match(SRC, /setFileViewIdentity\(\(id\) => identities\.get\(id\) \?\? hostStub\(id\)\);/);
   const openFn = SRC.split("function openHere(")[1].split("\n}")[0];
-  assert.ok(openFn.indexOf("identities.set(sid, identity);") < openFn.indexOf("openFileView(path, sid)"),
+  assert.ok(openFn.indexOf("identities.set(sid, identity);") >= 0 && openFn.indexOf("openFileView(path, sid, { todoId })") >= 0
+    && openFn.indexOf("identities.set(sid, identity);") < openFn.indexOf("openFileView(path, sid, { todoId })"),
     "the cache is filled BEFORE the open, so the title bar's chip resolves on the first paint");
   assert.match(openFn, /if \(sid && identity\) identities\.set\(sid, identity\);/);
   assert.doesNotMatch(SRC, /sessionsMeta|tabMeta|sessions\.get/, "the pane has no session list of its own");
@@ -92,7 +93,7 @@ test("the session chip resolves from what the relay carried, cached per sid, els
 
 test("recent files: recorded only on a REAL open, painted as re-open rows in the viewer's own dress, click-safe", () => {
   const openFn = SRC.split("function openHere(")[1].split("\n}")[0];
-  assert.match(openFn, /if \(!openFileView\(path, sid\)\) return;\n\s*const known = /, "a dirty-edit veto records nothing");
+  assert.match(openFn, /if \(!openFileView\(path, sid, \{ todoId \}\)\) return;\n\s*const known = /, "a dirty-edit veto records nothing");
   assert.match(openFn, /recent = rememberRecent\(recent, \{ path, sid, identity: known, t: Date\.now\(\) \}\);/);
   assert.match(SRC, /let recent: RecentFile\[\] = parseRecent\(readStore\(\)\);/, "persisted per browser");
   assert.match(SRC, /"No file open"/);
@@ -185,8 +186,12 @@ test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane fo
   assert.deepEqual(pane.toggles, [["files", true]], "the Files pane comes forward; the feed is not touched");
   assert.deepEqual(pane.tabs, [], "DESKTOP: no mobile tab switch — the column is already visible, and show() would only persist a stale romp-mobile-tab");
   assert.equal(pane.from, undefined, "…and nothing to remember");
-  assert.deepEqual(pane.posted["f-files"], [{ romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, identity }]);
+  assert.deepEqual(pane.posted["f-files"], [{ romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, identity, todoId: null }],
+    "a chat click names no todo — the pane sees null, never undefined");
   assert.deepEqual(pane.posted["f-feed"], [], "nothing reaches the feed");
+  // a Waiting-on-you detail link names the todo the path came from (plans/file-review.md Slice 0); forwarded as-is
+  const fromTodo = run({ romp: "viewFile", pane: "pane", path: "docs/design.md", sid: SID, identity, todoId: "t1" });
+  assert.deepEqual(fromTodo.posted["f-files"], [{ romp: "viewFile", path: "docs/design.md", sid: SID, identity, todoId: "t1" }]);
   assert.equal(pane.pend, undefined, "the feed's was-off stash is never armed by the Files route");
   // MOBILE (one tab at a time): the relay brings the Files tab forward and remembers the tab the click came
   // from; the Files pane's viewer close (files.ts posts filesViewerClosed) puts that tab back, once

@@ -9,18 +9,19 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
+const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");   // the matcher lives here since plans/file-review.md Slice 0
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
 test("a bare file:// URL becomes a clickable .file-uri-link that opens the file in the host app", () => {
   assert.match(RENDER, /function linkifyFileUris\(root: HTMLElement, skipThumbs\?: string\[\], spacePaths\?: string\[\],\s*\n\s*pathLinks\?: Record<string, string>, pathPins\?: Record<string, string>, sid\?: string \| null\): void/);
-  assert.match(RENDER, /el\("span", "file-uri-link"\)/);
+  assert.match(LINKS, /el\("span", "file-uri-link"\)/);   // the span is minted in path-links.ts (Slice 0 of plans/file-review.md)
   // clicking is ROUTED by openPath, never a blocked window.open(file://) — a file:// URI is absolute,
   // so it takes the shared openPathLink's no-session-id branch
-  assert.match(RENDER, /function fileUriLink\(uri: string\): HTMLElement \{ return openPathLink\(uri, fileUriToPath\(uri\)\); \}/);
+  assert.match(LINKS, /function fileUriLink\(uri: string\): HTMLElement \{ return openPathLink\(uri, fileUriToPath\(uri\)\); \}/);
   assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null\);/);
-  // the URL is turned into a real filesystem path: scheme stripped, percent-decoded
-  assert.match(RENDER, /\.replace\(\/\^file:/);
-  assert.match(RENDER, /decodeURIComponent\(p\)/);
+  // the URL is turned into a real filesystem path: scheme stripped, percent-decoded (fileUriToPath, path-links.ts)
+  assert.match(LINKS, /\.replace\(\/\^file:/);
+  assert.match(LINKS, /decodeURIComponent\(p\)/);
 });
 
 test("linkify runs on chat message bodies (assistant reply + user bubble + nudge full text) and todo notes — never tool summaries", () => {
@@ -37,9 +38,12 @@ test("linkify runs on chat message bodies (assistant reply + user bubble + nudge
 
 test("linkify works inside INLINE backticks (agents backtick paths), skips only fenced code + existing links, trims trailing punctuation", () => {
   // inline <code> is NOT skipped — a `file://…` path in backticks still linkifies; only fenced <pre> + links are skipped
+  // (the spaced pass in render.ts and the token walk in path-links.ts share the one skip list)
   assert.match(RENDER, /closest\("a, \.file-uri-link, pre"\)/);
   assert.doesNotMatch(RENDER, /closest\("a, \.file-uri-link, code, pre"\)/);
-  assert.match(RENDER, /tok = tok\.slice\(0, tok\.length - trail\[0\]\.length\)/);
+  assert.match(LINKS, /closest\("a, \.file-uri-link, pre"\)/);
+  assert.doesNotMatch(LINKS, /closest\("a, \.file-uri-link, code, pre"\)/);
+  assert.match(LINKS, /tok = tok\.slice\(0, tok\.length - trail\[0\]\.length\)/);
 });
 
 test(".file-uri-link is styled as a wrapping accent link", () => {

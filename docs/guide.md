@@ -117,11 +117,16 @@ One list of every request a session has flagged for you, oldest first, across
 every session and every attached machine: a decision it needs, a credential, a
 pick between two designs. Each row names its session and shows how long the
 request has waited. Reply sends your answer straight into that session, waking
-it if it has gone quiet; Dismiss clears the request without a reply. The pane is
+it if it has gone quiet; Dismiss clears the request without a reply. A file
+path in a request's detail is a link: click it and the file opens in the Files
+pane, which comes forward if it was closed. The pane is
 off by default, like the outline; turn it on from the bottom bar. Sessions flag
 requests only where the gear's **User todos** switch is on, and the switch is
 per machine: while it is off on this one, the pane says so and still lists the
-other machines' requests.
+other machines' requests. The list covers live sessions only. A request from a
+session that has ended stays hidden until you revive the session, so if a
+request you expected is missing, look for an ended session in the session list.
+The file the request named is still on disk.
 
 ### Files
 

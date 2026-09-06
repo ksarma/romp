@@ -34914,8 +34914,11 @@ if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElem
 // A chat file-link click routed to the FILES pane (fileLinkPane "pane", 2026-09-03: the viewer as its own
 // column) posts viewFile up with pane:'pane'; the shell brings that pane forward and forwards the click
 // with the session's identity the chat resolved (name + colour — the pane has no session list to name
-// the file's session by; files.ts caches it for the viewer's chip). The pane STAYS up — nothing to put
-// back — so none of the feed route's was-off / ack / restore machinery below applies to this branch.
+// the file's session by; files.ts caches it for the viewer's chip). The Waiting-on-you pane's detail
+// links post the same message (plans/file-review.md, Slice 0) with todoId — the user todo the path came
+// from — which is forwarded as-is so the viewer can tie its work back to the ask; a chat click carries
+// none and the pane sees null. The pane STAYS up — nothing to put back — so none of the feed route's
+// was-off / ack / restore machinery below applies to this branch.
 if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');
   try{window.__rompPaneToggle&&window.__rompPaneToggle('files',true);}catch(e){}
   // phone (one pane at a time): bring the Files tab forward ONLY in the mobile layout — on desktop the column
@@ -34923,7 +34926,7 @@ if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files
   // remember the tab the click came from, so the viewer's close puts the person back (filesViewerClosed below)
   try{if(window.__rompMobileOn&&window.__rompMobileOn()){var cur=document.body.getAttribute('data-tab')||'chat';
     if(cur!=='files'){window.__rompFilesTabFrom=cur;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
-  try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}}
+  try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null},'*');}catch(e){}}
 // A chat file-link click with the cards-pane preference set (fileLinkPane — gear.js; the user
 // 2026-08-20) posts viewFile up instead of opening in-document; the shell forwards it to the FEED
 // pane, whose initFileView (file-view.ts) opens the viewer there. The GATE lives at the click site

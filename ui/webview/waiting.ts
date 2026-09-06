@@ -24,6 +24,7 @@ import { liveNow, stampAge, refreshAges } from "./feed-age";
 import { ageColorReadable } from "./age-color";
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
 import { perfFrameHandler } from "./perf-telemetry";
+import { linkifyPathTokens } from "./path-links";
 
 type Color = { bg: string; fg: string } | null;
 interface UserTodo { id: string; text: string; createdT: number; detail?: string }
@@ -93,6 +94,31 @@ function dropTodo(sid: string, tid: string): void {
   render();
 }
 
+// ── the detail's file links (plans/file-review.md, Slice 0) ──────────────────────────────────────
+// A file path in a todo's detail is a link: the note names the file the session wants looked at, and the
+// reader reaches it in one click instead of copying the path into a chat. The SAME matcher a chat body
+// gets (path-links.ts), marked with the todo's own session so a relative path resolves against the cwd
+// the note was written from — the kernel's _resolve_open_path, on the /file the viewer fetches. Only
+// when the shell frames this pane: the click goes to the Files pane through the shell's viewFile relay,
+// and a pane opened on its own has nowhere to send it — the detail stays plain text rather than a link
+// that does nothing (ui/CLAUDE.md, every control acknowledges). The matcher binds nothing; the click is
+// the delegate's openpath in the list and one direct delegate in the Reply modal (showReply).
+const framed = window.parent !== window;
+function linkDetailPaths(node: HTMLElement, sid: string): void {
+  if (!framed) return;
+  linkifyPathTokens(node, sid);
+}
+// The click: {romp:"viewFile", pane:"pane"} — the shell's Files-pane branch brings that pane forward and
+// forwards this whole message into it (kernel.py's landing shell; files.ts opens the viewer). The
+// identity is the row's own chip (name + colour — the pane has no session list to name the file's
+// session by; a row with no name sends null and the viewer falls to the kernel's stub); todoId names the
+// ask the file was opened from, so the viewer can tie its work back to it.
+function openTodoPath(path: string, sid: string, todoId: string): void {
+  const r = rows.find((x) => x.sid === sid);
+  const identity = r && r.name ? { name: r.name, color: r.color } : null;
+  try { window.parent.postMessage({ romp: "viewFile", pane: "pane", path, sid, identity, todoId }, "*"); } catch { /* not in the shell */ }
+}
+
 // The kernel's answer to a stale or refused op comes back as {type:"warn"} — the toast the chat shows
 // for the same ops (render.ts warnToast), on the styles.css dress this page links.
 function warnToast(msg: string): void {
@@ -125,7 +151,13 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   const h = el("div", "confirm-title"); h.textContent = "Reply";
   const d = el("div", "confirm-detail ut-reply-quote"); d.textContent = todoText;
   const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
-  if (dd) dd.textContent = todoDetail;
+  if (dd) {
+    dd.textContent = todoDetail;
+    linkDetailPaths(dd, sid);
+    // the modal lives outside #waiting-list and is built once per open, never rebuilt — so it carries
+    // its own delegate for the same act (one listener on the quoted detail; the rows' is on the list)
+    delegate(dd, { openpath: (x) => { const p = x.dataset.path; if (p) openTodoPath(p, sid, todoId); } });
+  }
   const input = document.createElement("textarea");
   input.className = "ut-reply-input"; input.rows = 3;
   input.placeholder = "Your answer — it goes straight to the session…";
@@ -208,6 +240,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   if (hint) {
     const d = el("div", "ut-detail" + (openDetail.has(key) ? " open" : ""));
     d.textContent = w.todo.detail || "";
+    linkDetailPaths(d, w.sid);   // a path in the note opens in the Files pane (the delegate's openpath)
     item.appendChild(d);
   }
   return item;
@@ -342,6 +375,11 @@ onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
       const tid = x.dataset.tid, sid = x.dataset.sid;
       if (!tid || !sid) return;
       showReply(sid, tid, ((x as any)._uttext as string) || "", ((x as any)._utdetail as string) || "");
+    },
+    // a file path in a row's detail (path-links.ts marks it with the todo's sid; the row says which todo)
+    openpath: (x) => {
+      const p = x.dataset.path, sid = x.dataset.sid, tid = x.closest<HTMLElement>(".ut-item")?.dataset.tid;
+      if (p && sid && tid) openTodoPath(p, sid, tid);
     },
     // Dismiss arms then confirms in place (render.ts's utdismiss, lifted): clearing an ask the agent
     // still waits on deserves a second click, but is light enough to skip a modal.
