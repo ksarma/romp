@@ -1,6 +1,7 @@
-// The file-comments panel's PURE half (plans/file-review.md, Slice 1): the view model the panel
-// renders from a `status` reply, the unsent count, the Send-to-session message preview, the Log rows,
-// and the poll's state machine. No DOM, no anchor-map import, no fetch — every function here is a
+// The file-comments panel's PURE half (plans/file-review.md, Slices 1 and 2): the view model the panel
+// renders from a `status` reply — the comment cards, and from Slice 2 the change cards grouped by
+// paragraph — the unsent count, the Send-to-session message preview, the Log rows, and the poll's state
+// machine. No DOM, no anchor-map import, no fetch — every function here is a
 // plain transform over the kernel's reply shapes (the contract sheet's C1/C2), so
 // file-comments.test.ts can run them under node with no stand-in at all. file-comments.ts owns the
 // DOM and the wire; this module owns what the DOM shows.
@@ -24,8 +25,11 @@ export type Store = {
   v: number; id?: string; path: string; suggestions: unknown[]; comments: StoreComment[];
   detached?: unknown[]; fingerprint?: string;
 };
+/** The engine's three change kinds (toHunks): an insertion has the new text at curFrom..curTo and no old
+ *  text; a deletion is a POINT (curFrom === curTo) with its old text; a substitution has both. */
+export type HunkKind = "ins" | "del" | "sub";
 export type Hunk = {
-  id: string; author: string; ts: number; kind: string; curFrom: number; curTo: number;
+  id: string; author: string; ts: number; kind: HunkKind; curFrom: number; curTo: number;
   baseFrom: number; baseTo: number; oldText: string; newText: string; anchor: Anchor | null;
 };
 export type Unsent = { comments: string[]; replies: Array<{ commentId: string; ts: number }>; accepted: number; rejected: number; watermark: number | null };
@@ -59,11 +63,32 @@ export function actionLabel(s: Status | null): string {
 // ── the send parts (C2) ────────────────────────────────────────────────────────────────────────────
 const num = (v: number): string => (Number.isInteger(v) ? String(v) : v.toFixed(2));
 
-/** The parenthetical the kernel prints after "Comment <id>", without parentheses (C2). */
-export function describeComment(c: StoreComment, hunks: Hunk[]): string {
+/** A decision the comments log remembers for change `id`: the accept or reject entry's texts, newest first.
+ *  Accept drops the change from the sidecar, so once decided the log is the only place its old and new text
+ *  survive (the plan's comments log: "a decision survives the change leaving the sidecar"). */
+export function decidedChange(log: LogEntry[] | null | undefined, id: string): { decision: "accepted" | "rejected"; oldText: string; newText: string } | null {
+  for (let i = (log || []).length - 1; i >= 0; i--) {
+    const e = log![i];
+    if (e.kind !== "accept" && e.kind !== "reject" || !Array.isArray(e.changes)) continue;
+    for (const ch of e.changes as Array<Record<string, unknown>>) {
+      if (ch && typeof ch === "object" && ch.id === id) {
+        return { decision: e.kind === "accept" ? "accepted" : "rejected",
+          oldText: typeof ch.oldText === "string" ? ch.oldText : "", newText: typeof ch.newText === "string" ? ch.newText : "" };
+      }
+    }
+  }
+  return null;
+}
+
+/** The parenthetical the kernel prints after "Comment <id>", without parentheses (C2). A comment bound to a
+ *  change describes the change while it is pending, and from the log's accept or reject entry after a decision
+ *  (a manual Accept before the send would otherwise describe it as "on this file"). */
+export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] = []): string {
   if (c.suggestionId) {
     const h = hunks.find((x) => x.id === c.suggestionId);
     if (h) return 'on your change "' + h.oldText + '" to "' + h.newText + '"';
+    const d = decidedChange(log, c.suggestionId);
+    if (d) return 'on your change "' + d.oldText + '" to "' + d.newText + '"';
   }
   if (c.target && c.target.region) {
     const r = c.target.region;
@@ -98,10 +123,17 @@ export function sendParts(s: Status): SendParts {
         if (typeof r.body !== "string") continue;                 // an edit step has no words to send
         if (replyKeys.has(c.id + "\0" + r.ts)) { turns.push(r.body); bump(r.ts); }
       }
-      if (turns.length) out.push({ id: c.id, desc: describeComment(c, s.hunks || []), body: turns.join("\n\n") });
+      if (turns.length) out.push({ id: c.id, desc: describeComment(c, s.hunks || [], s.log || []), body: turns.join("\n\n") });
     }
   }
   return { comments: out, accepted: u.accepted || 0, rejected: u.rejected || 0, watermark };
+}
+
+/** The counts the send carries and the preview prints (D5): what the log says is unsent plus, when the
+ *  confirm's "accept the N pending changes" is checked, the N the send is about to accept — the same A and R
+ *  in both places, so the preview is the sent text. */
+export function sendCounts(parts: SendParts, acceptPending: boolean, pending: number): { accepted: number; rejected: number } {
+  return { accepted: parts.accepted + (acceptPending && pending > 0 ? pending : 0), rejected: parts.rejected };
 }
 
 // ── marker hygiene — the kernel's _neutralize_romp_markers, ported unchanged ───────────────────────
@@ -216,10 +248,18 @@ export function buildSendMessage(o: MessageOpts): string {
 
 // ── the card model ─────────────────────────────────────────────────────────────────────────────────
 export type CardKind = "passage" | "file" | "change" | "region";
+/** One turn under a comment: words (a reply), or a revision — the session's `track-edit --thread` records
+ *  its edit as a reply with no body and the old and new text instead (the VS Code host's weave), and the
+ *  card shows it as a row of its own, in `ts` order among the words. */
+export type CardTurn =
+  | { kind: "msg"; author: string; authorId: string | null; ts: number; body: string }
+  | { kind: "rev"; author: string; authorId: string | null; ts: number; oldText: string; newText: string };
 export type Card = {
   id: string; author: string; authorId: string | null; ts: number; body: string; resolved: boolean;
   kind: CardKind; ref: string; anchor: Anchor | null; hunk: Hunk | null; target: Target | null;
-  replies: Array<{ author: string; authorId: string | null; ts: number; body: string }>;
+  /** for a comment bound to a change the log has decided: which way, so the card can say so */
+  decision: "accepted" | "rejected" | null;
+  replies: CardTurn[];
 };
 
 const oneLine = (s: string, max: number): string => {
@@ -229,25 +269,135 @@ const oneLine = (s: string, max: number): string => {
 
 /** One card per comment, oldest first, from the sidecar and the engine's hunks — no card model
  *  crosses the wire. `ref` is the collapsed card's one-line reference (the quote, the change, the
- *  region, or "this file"); the message's `desc` is describeComment's job, kept separate on purpose. */
-export function cardModel(store: Store | null, hunks: Hunk[]): Card[] {
+ *  region, or "this file"); the message's `desc` is describeComment's job, kept separate on purpose.
+ *  A comment bound to a PENDING change (`hunk` set) is shown on that change's card (changeCards), not in
+ *  the comment list; once the change is decided, `hunk` is null, `decision` says which way from the log,
+ *  and the card stands on its own again with the change's texts as its reference. */
+export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = []): Card[] {
   if (!store) return [];
   return [...store.comments].sort((a, b) => (a.ts || 0) - (b.ts || 0)).map((c) => {
     const hunk = c.suggestionId ? hunks.find((h) => h.id === c.suggestionId) || null : null;
+    const decided = !hunk && c.suggestionId ? decidedChange(log, c.suggestionId) : null;
     const target = c.target && c.target.region ? c.target : null;
     const anchor = c.anchor && typeof c.anchor.quote === "string" ? c.anchor : null;
     let kind: CardKind; let ref: string;
     if (hunk) { kind = "change"; ref = oneLine(hunk.oldText, 30) + " → " + oneLine(hunk.newText, 30); }
+    else if (decided) { kind = "change"; ref = oneLine(decided.oldText, 30) + " → " + oneLine(decided.newText, 30); }
     else if (target) { kind = "region"; ref = describeComment(c, hunks).replace(/^on /, ""); }
     else if (anchor && anchor.quote) { kind = "passage"; ref = oneLine(anchor.quote, 72); }
     else { kind = "file"; ref = "this file"; }
     return {
       id: c.id, author: c.author, authorId: c.authorId || null, ts: c.ts, body: c.body, resolved: !!c.resolved,
-      kind, ref, anchor, hunk, target,
-      replies: (c.replies || []).filter((r) => typeof r.body === "string")
-        .map((r) => ({ author: r.author, authorId: r.authorId || null, ts: r.ts, body: r.body as string })),
+      kind, ref, anchor, hunk, target, decision: decided ? decided.decision : null,
+      replies: (c.replies || []).map((r): CardTurn | null => {
+        if (typeof r.body === "string") return { kind: "msg", author: r.author, authorId: r.authorId || null, ts: r.ts, body: r.body };
+        if (r.kind === "edit") return { kind: "rev", author: r.author, authorId: r.authorId || null, ts: r.ts, oldText: r.oldText || "", newText: r.newText || "" };
+        return null;                                   // neither words nor an edit: nothing to show
+      }).filter((t): t is CardTurn => t !== null).sort((a, b) => (a.ts || 0) - (b.ts || 0)),
     };
   });
+}
+
+// ── the change cards (Slice 2) ──────────────────────────────────────────────────────────────────────
+// One card per pending change (a hunk from the engine's toHunks), ordered by its place in the current text,
+// with the comments bound to it (suggestionId) ON the card, and grouped by the paragraph it falls in — the
+// VS Code host's buildCards idea over the kernel's `store` + `hunks` + the viewer's text, with the buttons
+// that host deliberately lacks added by the panel. Nothing here touches the DOM.
+export type ChangeCard = {
+  /** the expand key and the card's data-id — prefixed so a change id and a comment id can never collide */
+  key: string;
+  id: string; kind: HunkKind; author: string; authorId: string | null; ts: number;
+  curFrom: number; curTo: number; oldText: string; newText: string;
+  /** the collapsed card's one line: `old → new`, `added new`, or `removed old` */
+  ref: string;
+  /** the comments bound to this change, oldest first, each with its turns */
+  comments: Card[];
+};
+export type ChangeGroup = { key: string; title: string; start: number; end: number; changes: ChangeCard[] };
+/** Groups beyond this many collapse behind one "… N more changes" row (D5). */
+export const GROUP_LIMIT = 3;
+
+/** The sidecar record's authorId for change `id` — toHunks drops it, and the session colour map is keyed by it. */
+export function authorIdOf(store: Store | null, id: string): string | null {
+  for (const s of store ? store.suggestions : []) {
+    if (s && typeof s === "object" && (s as { id?: unknown }).id === id) {
+      const a = (s as { authorId?: unknown }).authorId;
+      return typeof a === "string" && a ? a : null;
+    }
+  }
+  return null;
+}
+
+export function changeRef(h: { kind: HunkKind; oldText: string; newText: string }): string {
+  if (h.kind === "ins") return "added " + oneLine(h.newText, 60);
+  if (h.kind === "del") return "removed " + oneLine(h.oldText, 60);
+  return oneLine(h.oldText, 30) + " → " + oneLine(h.newText, 30);
+}
+
+export function changeCards(store: Store | null, hunks: Hunk[], log: LogEntry[] = []): ChangeCard[] {
+  const bound = cardModel(store, hunks, log).filter((c) => c.hunk !== null);
+  return [...hunks].sort((a, b) => a.curFrom - b.curFrom || (a.ts || 0) - (b.ts || 0)).map((h) => ({
+    key: "chg:" + h.id, id: h.id, kind: h.kind, author: h.author, authorId: authorIdOf(store, h.id), ts: h.ts,
+    curFrom: h.curFrom, curTo: h.curTo, oldText: h.oldText, newText: h.newText, ref: changeRef(h),
+    comments: bound.filter((c) => c.hunk!.id === h.id),
+  }));
+}
+
+/** The [start, end) of the paragraph holding `pos`: the maximal run of non-blank lines around it (the display
+ *  planner's own rule, so a group here is the paragraph the other hosts would merge). A blank line is its own
+ *  empty paragraph. */
+export function paragraphAt(text: string, pos: number): { start: number; end: number } {
+  const p = Math.max(0, Math.min(pos, text.length));
+  let start = text.lastIndexOf("\n", p - 1) + 1;
+  const nl = text.indexOf("\n", p);
+  let end = nl === -1 ? text.length : nl;
+  const blank = (a: number, b: number) => /^\s*$/.test(text.slice(a, b));
+  if (blank(start, end)) return { start, end };
+  while (start > 0) {
+    const prevEnd = start - 1;
+    const prevStart = text.lastIndexOf("\n", prevEnd - 1) + 1;
+    if (blank(prevStart, prevEnd)) break;
+    start = prevStart;
+  }
+  while (end < text.length) {
+    const nextStart = end + 1;
+    const nn = text.indexOf("\n", nextStart);
+    const nextEnd = nn === -1 ? text.length : nn;
+    if (nextStart > text.length || blank(nextStart, nextEnd)) break;
+    end = nextEnd;
+  }
+  return { start, end };
+}
+
+/** The change cards grouped by paragraph, in text order; a group is named by its paragraph's first line,
+ *  trimmed to 60 characters, or by its line number when the paragraph is blank (a deletion at an empty
+ *  line). With no text to read (media, or the fetch not landed) every change is one unnamed group. */
+export function changeGroups(cards: ChangeCard[], text: string | null): ChangeGroup[] {
+  if (!cards.length) return [];
+  if (text === null) return [{ key: "all", title: "", start: 0, end: 0, changes: cards }];
+  const out: ChangeGroup[] = [];
+  for (const c of cards) {
+    const pr = paragraphAt(text, c.curFrom);
+    const last = out[out.length - 1];
+    if (last && last.start === pr.start && last.end === pr.end) { last.changes.push(c); continue; }
+    const first = text.slice(pr.start, pr.end).split("\n").map((l) => l.trim()).find((l) => l) || "";
+    const line = (text.slice(0, pr.start).match(/\n/g) || []).length + 1;
+    out.push({ key: pr.start + "-" + pr.end, title: first ? oneLine(first, 60) : "line " + line, start: pr.start, end: pr.end, changes: [c] });
+  }
+  return out;
+}
+
+/** Progressive disclosure over the groups: the first GROUP_LIMIT show; the rest fold behind one row unless
+ *  `expanded`. `hiddenChanges` is the row's N (changes, not groups — the count the person acts on). */
+export function foldGroups(groups: ChangeGroup[], expanded: boolean): { shown: ChangeGroup[]; hidden: ChangeGroup[]; hiddenChanges: number } {
+  if (expanded || groups.length <= GROUP_LIMIT) return { shown: groups, hidden: [], hiddenChanges: 0 };
+  const shown = groups.slice(0, GROUP_LIMIT), hidden = groups.slice(GROUP_LIMIT);
+  return { shown, hidden, hiddenChanges: hidden.reduce((n, g) => n + g.changes.length, 0) };
+}
+
+/** The fold row's text: "… 4 more changes". */
+export function moreChangesLabel(n: number): string {
+  return "… " + plural(n, "more change", "more changes");
 }
 
 // ── the Log section ────────────────────────────────────────────────────────────────────────────────
@@ -318,12 +468,14 @@ export function mtimeMoved(baseline: string, seen: string): boolean {
 }
 
 // ── small helpers the panel and its tests share ────────────────────────────────────────────────────
-/** Why Edit refuses while changes are pending (Slice 1 wording: accept/reject come next; track-edit still works). */
+/** Why Edit refuses while changes are pending: a raw save over pending changes would move their offsets, so
+ *  the person accepts or rejects them first (Slice 2 wording; the session's own track-edit still works). */
 export function editBlockedReason(hunks: Hunk[]): string | null {
   const n = hunks.length;
   if (!n) return null;
   return plural(n, "change is", "changes are") + " pending in this file, so Edit is off here: a direct edit would move "
-    + (n === 1 ? "it" : "them") + ". Accept and reject arrive with the next update; the session's own track-edit still works.";
+    + (n === 1 ? "it" : "them") + ". Accept or reject " + (n === 1 ? "the change" : "the " + n + " changes")
+    + " first; the session's own track-edit still works.";
 }
 
 /** The source offset where 0-based line `line` starts (for the mapping refusal's scroll-to-block offer). */

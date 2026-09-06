@@ -42,7 +42,7 @@ const replied: StoreComment = {
   resolved: false,
 };
 const whole: StoreComment = { id: T0 + 9000 + "-0", author: "you", ts: T0 + 9000, body: "Add a summary at the top.", replies: [], resolved: false };
-const hunk: Hunk = { id: "h1", author: "api", ts: T0 - 90000, kind: "replace", curFrom: 30, curTo: 33, baseFrom: 30, baseTo: 37, oldText: "reduced", newText: "cut", anchor: null };
+const hunk: Hunk = { id: "h1", author: "api", ts: T0 - 90000, kind: "sub", curFrom: 30, curTo: 33, baseFrom: 30, baseTo: 37, oldText: "reduced", newText: "cut", anchor: null };
 const bound: StoreComment = { id: T0 + 1000 + "-5", author: "you", ts: T0 + 1000, body: "Say cut, not reduced.", suggestionId: "h1", replies: [], resolved: false };
 
 function status(over: Partial<Status> = {}): Status {
@@ -381,7 +381,7 @@ test("the card model: one card per comment from store + hunks, oldest first, kin
   assert.equal(cards[3].ref, "this file"); assert.equal(cards[3].anchor, null);
   assert.deepEqual(cardModel(null, []), []);
   assert.doesNotMatch(SRC, /\.cards\b\s*[:=]/, "the panel derives cards from store + hunks in the reply, never a `cards` field");
-  assert.match(SRC, /cardModel\(this\.status\.store, this\.status\.hunks \|\| \[\]\)/);
+  assert.match(SRC, /cardModel\(this\.status\.store, this\.status\.hunks \|\| \[\], this\.status\.log \|\| \[\]\)/, "…and the log, which remembers a decided change's texts");
 });
 
 test("Log rows: one line per comments-log entry, in the person's terms", () => {
@@ -436,10 +436,11 @@ test("the poll's HEAD targets: the file, the sidecar the kernel named, config.js
   assert.match(SRC, /this\.stopped\.add\(target\);/);
 });
 
-test("the Edit refusal while changes are pending (Slice 1 wording), and the small helpers", () => {
+test("the Edit refusal while changes are pending (Slice 2 wording: accept or reject them first), and the small helpers", () => {
   assert.equal(editBlockedReason([]), null);
-  assert.equal(editBlockedReason([hunk]), "1 change is pending in this file, so Edit is off here: a direct edit would move it. Accept and reject arrive with the next update; the session's own track-edit still works.");
-  assert.match(editBlockedReason([hunk, { ...hunk, id: "h2" }, { ...hunk, id: "h3" }])!, /^3 changes are pending .* would move them\. Accept and reject arrive with the next update; the session's own track-edit still works\.$/);
+  assert.equal(editBlockedReason([hunk]), "1 change is pending in this file, so Edit is off here: a direct edit would move it. Accept or reject the change first; the session's own track-edit still works.");
+  assert.equal(editBlockedReason([hunk, { ...hunk, id: "h2" }, { ...hunk, id: "h3" }]), "3 changes are pending in this file, so Edit is off here: a direct edit would move them. Accept or reject the 3 changes first; the session's own track-edit still works.");
+  assert.doesNotMatch(editBlockedReason([hunk])!, /next update|next slice/, "the Slice 1 wording is gone");
   assert.match(SRC, /this\.ctx\.setEditBlocked\(editBlockedReason\(s\.hunks \|\| \[\]\)\);/, "set from every status reply");
   assert.equal(lineStartOffset("ab\ncd\nef", 0), 0);
   assert.equal(lineStartOffset("ab\ncd\nef", 1), 3);
@@ -643,7 +644,8 @@ test("the registry entry: exported by file-comments.ts, registered in file-view.
 test("both ops carry sid and a client-minted reqId; replies match by reqId; a warn or a socket drop fails what is outstanding", () => {
   assert.match(SRC, /const msg: Record<string, unknown> = \{ type: "fileComments", reqId, sid: ctx\.sid \|\| undefined, path: ctx\.path, verb \};/);
   assert.match(SRC, /this\.ctx\.post\(\{ \.\.\.msg, type: "fileCommentsSend", reqId \}\);/);
-  assert.match(SRC, /sid: this\.ctx\.sid, path: this\.ctx\.path, tracked, comments: parts\.comments,\n\s*accepted: parts\.accepted, rejected: parts\.rejected, watermark: parts\.watermark,/);
+  assert.match(SRC, /sid: this\.ctx\.sid, path: this\.ctx\.path, tracked, comments: parts\.comments,\n\s*accepted: counts\.accepted, rejected: counts\.rejected, watermark: parts\.watermark,/,
+    "the counts are sendCounts' — the log's unsent decisions plus the pending changes the confirm's checkbox accepts (Slice 2)");
   assert.match(SRC, /if \(answerTodo\) msg\.todoId = this\.ctx\.todoId;/);
   assert.match(SRC, /const answerTodo = !!this\.ctx\.todoId && this\.sendOpts\.todo && !this\.todoAnswered;/, "one send answers the todo; later sends carry none");
   for (const t of ["fileCommentsResult", "fileCommentsFailed", "fileCommentsSent", "fileCommentsSendFailed"]) assert.ok(SRC.includes('m.type === "' + t + '"'), t);
@@ -669,9 +671,9 @@ test("the send sequence: build from the current status, set-tracked when asked, 
   assert.match(send, /if \(!s \|\| this\.statusRefusal \|\| this\.sending \|\| !this\.ctx\.sid\) return;/, "and doSend refuses the same way, a click never sends over a stale status");
   assert.match(SRC, /if \(this\.ctx\.todoId && !this\.todoAnswered\) opts\.appendChild\(this\.opt\("todo", "answer the todo this file was opened from"\)\);/);
   assert.match(SRC, /if \(!s\.trackedBy\) opts\.appendChild\(this\.opt\("track", "turn on tracking so the session's edits come back as changes"\)\);/);
-  assert.match(SRC, /sendOpts = \{ todo: true, track: true \};/, "both checked by default (decision 8)");
-  assert.match(SRC, /const abs = this\.filePath\(\);\n\s*if \(abs === null\)[^\n]*\n\s*else cf\.appendChild\(el\("pre", "fc-msg", buildSendMessage\(\{ absPath: abs, comments: parts\.comments, accepted: parts\.accepted, rejected: parts\.rejected, tracked, media \}\)\)\);/,
-    "the preview is the same builder the tests pin against the kernel's literal, fed the path the kernel will name (filePath), never a relative or ~ spelling");
+  assert.match(SRC, /sendOpts = \{ todo: true, track: true, accept: true \};/, "all three checked by default (decision 8; the third is Slice 2's accept-pending box)");
+  assert.match(SRC, /const abs = this\.filePath\(\);\n\s*if \(abs === null\)[^\n]*\n\s*else cf\.appendChild\(el\("pre", "fc-msg", buildSendMessage\(\{ absPath: abs, comments: parts\.comments, accepted: counts\.accepted, rejected: counts\.rejected, tracked, media \}\)\)\);/,
+    "the preview is the same builder the tests pin against the kernel's literal, fed the path the kernel will name (filePath), never a relative or ~ spelling, and the send's own A and R");
   // the send's editing-off refusal takes the branch every mutating verb takes (mutateOnce): the kernel refuses
   // a send while file editing is off because the send's log entry is a disk write, and the refusal text carries
   // the phrase the consent helper matches — so the panel re-offers the consent and sends once more on yes
@@ -686,10 +688,12 @@ test("every mutating verb: consent first, a fence from the current status, one r
   const mut = SRC.split("async mutate(verb: string, args: Record<string, unknown>, slot: string): Promise<Status | null> {")[1].split("\n  }\n")[0];
   assert.match(mut, /if \(!\(await this\.ctx\.ensureEditingAllowed\(\)\)\)/, "the first-consent path, per click (never cached)");
   const once = SRC.split("private async mutateOnce(")[1].split("\n  }\n")[0];
-  assert.match(once, /const fence = \{ storeMtimeNs: s && s\.storeMtimeNs !== null \? s\.storeMtimeNs : "", configMtimeNs: s && s\.configMtimeNs !== null \? s\.configMtimeNs : "" \};/,
+  assert.match(once, /const fence: Record<string, string> = \{ storeMtimeNs: s && s\.storeMtimeNs !== null \? s\.storeMtimeNs : "", configMtimeNs: s && s\.configMtimeNs !== null \? s\.configMtimeNs : "" \};/,
     '"" means the file must not exist yet — two browsers cannot both create it');
+  assert.match(once, /if \(FILE_VERBS\.has\(verb\)\) fence\.fileMtimeNs = s \? s\.fileMtimeNs : "";/, "the file-writing verbs (reject, reject-all) also fence on the file's mtime (Slice 2)");
   assert.match(once, /if \(!retried && e\.code === "editing-off"\) \{\n\s*if \(await this\.ctx\.ensureEditingAllowed\(e\.error\)\) return this\.mutateOnce\(verb, args, slot, true\);/);
-  assert.match(once, /\} else if \(!retried && MOVED\.has\(e\.code\)\) \{\n\s*await this\.refresh\(\);\n\s*return this\.mutateOnce\(verb, args, slot, true\);/);
+  assert.match(once, /\} else if \(!retried && MOVED\.has\(e\.code\)\) \{\n\s*await this\.refresh\(\);\n\s*if \(e\.code === "file-moved"\) this\.ctx\.reload\(\);[^\n]*\n\s*return this\.mutateOnce\(verb, args, slot, true\);/,
+    "a moved fence: fresh status (and the file's bytes when the file moved), then one retry");
   assert.match(once, /this\.errors\.set\(slot, \{ text: e\.error, reload: MOVED\.has\(e\.code\) \}\);/, "a second refusal shows verbatim; moved fences offer Reload");
   assert.match(SRC, /const MOVED = new Set\(\["store-moved", "file-moved", "config-moved"\]\);/);
   for (const verb of ['"set-tracked", { on: true, scope: "file" }', '"set-tracked", { on: true, scope: "folder" }', '"set-tracked", { on: false, scope: "folder" }',

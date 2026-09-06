@@ -1,4 +1,4 @@
-// File comments and tracked changes — the viewer's Comments panel (plans/file-review.md, Slice 1).
+// File comments and tracked changes — the viewer's Comments panel (plans/file-review.md, Slices 1 and 2).
 //
 // The person who directs the sessions reads their output as files, and until now a comment on a file
 // left romp: GitHub, a chat quote that scrolled away, or a note typed into the file itself. This panel
@@ -9,6 +9,13 @@
 // Shape (the plan's Shape of the feature):
 //   • The action-row entry is the glance ("Comments · 2 · 5 changes"); the panel is one click; a card
 //     expands on click, keyed by comment id in a set that survives every re-render.
+//   • A session's pending changes (Slice 2) are cards too: one per change, grouped by the paragraph it
+//     falls in, with Accept, Reject, Reply (a comment bound to the change, so the session's answering
+//     track-edit revisions fold into it) and Reveal; the comments bound to a change sit ON its card. Past
+//     three groups the rest fold behind one row. The changes are also marked inline — insertions tinted,
+//     deletions struck at their point in Raw — through anchor-map's change painters (contract D4), and a
+//     click on a mark opens its card. Accept and Reject fence on the sidecar's mtime; Reject, which rewrites
+//     the file, also fences on the file's mtime and then reloads the view, since the bytes changed under it.
 //   • The kernel does the disk work on the OWNING kernel (the `fileComments` op runs a node host
 //     script over the vendored track-changents store); this module renders JSON and never holds a
 //     sidecar it writes back. Both ops carry `sid`, so federation routes a remote session's file to
@@ -37,15 +44,22 @@ import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
 import { hostOf, bareId } from "./host-prefix";
 import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine } from "./anchor-map";
-import type { MapRefusal, SourceRange, Located } from "./anchor-map";
+import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-map";   // the change painters (contract D4)
+import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
 import {
-  type Status, type Card, type SendParts, actionLabel, cardModel, sendParts, buildSendMessage, unsentCount,
+  type Status, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, actionLabel, cardModel, changeCards, changeGroups,
+  foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, sendParts, sendCounts, buildSendMessage, unsentCount,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   type PollBaseline,
 } from "./file-comments-model";
 
 const POLL_MS = 2500;
 const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
+// The verbs that rewrite the FILE, not only the sidecar (reject applies the engine's reverse edits): they
+// fence on the file's mtime as the panel last saw it, so a `track-edit` landing mid-round refuses `file-moved`
+// instead of reverting over it, and after one succeeds the panel reloads the view — the bytes changed under
+// it, and the poll will never notice, since every reply re-baselines it (the plan's own rule).
+const FILE_VERBS = new Set(["reject", "reject-all"]);
 // How long a `status` ask may stay unanswered before the panel says so. A kernel that has the op answers
 // within its own bound: the host script is cut off at 10 s (contract C2, _FILE_COMMENTS_TIMEOUT) and the
 // refusal is sent then, so an ask still open past that plus the relay was never received by a kernel with
@@ -236,7 +250,8 @@ function shrinkable(b: HTMLElement): void {
 // belong to, never over whatever sits at those offsets now. `text` travels with every non-null range.
 type Composer =
   | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; refusal: (MapRefusal & { selText: string }) | null }
-  | { kind: "reply"; commentId: string; ref: string };
+  | { kind: "reply"; commentId: string; ref: string }
+  | { kind: "change"; changeId: string; ref: string };   // a comment bound to a change (comment {suggestionId, note})
 type Err = { text: string; reload: boolean; warn?: boolean };
 
 // ── the wire: ONE window listener for the module, dispatching to the live panel by reqId ───────────
@@ -272,7 +287,7 @@ function ensureListener(): void {
 // The controls that are not <button>s — a card's head, its passage link, a Log row, a painted highlight —
 // and so take Enter and Space here, through the same root the clicks use: a collapsed card is otherwise a
 // dead end for the keyboard (ui/CLAUDE.md, never dead-end a compact view).
-const KEY_ACTS = new Set(["fccard", "fcgoto", "fcopen", "fclogrow"]);
+const KEY_ACTS = new Set(["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow"]);
 
 /** Where a Rendered-view refusal's passage sits in the source, for the switch to Raw. The selection
  *  came from the REFUSED block, so the search starts at that block: a copy of the same words earlier in
@@ -302,9 +317,13 @@ class Panel {
   open = false;
   pending = new Map<number, Pending>();
   appliedReq = 0;                           // the reqId of the newest ask whose reply is showing (applyStatus)
-  openCards = new Set<string>();            // keyed expand state: survives every re-render (ui/CLAUDE.md)
+  openCards = new Set<string>();            // keyed expand state: survives every re-render (ui/CLAUDE.md); a change card's key is "chg:" + its id
   openLog = new Set<string>();              // expanded Log rows, keyed by entry (ts|kind) — the same rule
   logOpen = false;
+  moreChangesOpen = false;                  // the "… N more changes" fold past GROUP_LIMIT groups — the same rule
+  rejectAllConfirm = false;                 // the Reject all confirm row is showing (pane-local, like the folder-off confirm)
+  paintedChanges = new Set<string>();       // the change ids whose marks the current view shows; the rest get Reveal
+  busyVerb = new Map<string, string>();     // slot → the verb in flight, so a card's Accept/Reject relabels itself (ui/CLAUDE.md)
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
   resolvedOpen = false;
   trackChoice = false;                      // the on-toggle's scope row (file / folder) is showing
@@ -314,7 +333,7 @@ class Panel {
   busy = new Set<string>();
   sendConfirm = false;
   sending = false;
-  sendOpts = { todo: true, track: true };   // both checked by default (decision 8)
+  sendOpts = { todo: true, track: true, accept: true };   // all checked by default (decision 8); `accept` is the Slice 2 checkbox
   sentNote: string | null = null;
   todoAnswered = false;                     // one send answers the todo; later sends show no checkbox (seeded from answeredTodos)
   previewOpen = false;
@@ -403,6 +422,16 @@ class Panel {
         fcreply: (x, ev) => { ev.stopPropagation(); this.startReply(x.dataset.id!); },
         fcresolve: (x, ev) => { ev.stopPropagation(); void this.mutate("resolve", { commentId: x.dataset.id!, on: x.dataset.on === "1" }, "card:" + x.dataset.id!); },
         fcresolved: () => { this.resolvedOpen = !this.resolvedOpen; this.render(); },
+        // the changes (Slice 2): a decision per card, both at once in the footer, a reply bound to the change, the fold
+        fcaccept: (x, ev) => { ev.stopPropagation(); void this.mutate("accept", { ids: [x.dataset.id!] }, "change:" + x.dataset.id!); },
+        fcreject: (x, ev) => { ev.stopPropagation(); void this.mutate("reject", { ids: [x.dataset.id!] }, "change:" + x.dataset.id!); },
+        fcacceptall: () => { this.rejectAllConfirm = false; void this.mutate("accept-all", {}, "changes"); },
+        fcrejectall: () => { this.rejectAllConfirm = !this.rejectAllConfirm; this.render(); },   // Reject all rewrites the file: one pane-local confirm
+        fcrejectallgo: () => { this.rejectAllConfirm = false; void this.mutate("reject-all", {}, "changes"); },
+        fcrejectallcancel: () => { this.rejectAllConfirm = false; this.render(); },
+        fcchangereply: (x, ev) => { ev.stopPropagation(); this.startChangeReply(x.dataset.id!); },
+        fcmore: () => { this.moreChangesOpen = !this.moreChangesOpen; this.render(); },
+        fcchange: (x) => { this.openPanel(); this.showCard("chg:" + x.dataset.id!); },   // an inline change mark opens its card
         fcsend: () => { if (this.statusRefusal) return; this.sendConfirm = true; this.sentNote = null; this.render(); },   // renderSend disables the button and says why; the guard holds if a click lands anyway
         fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
         fcsendgo: () => { void this.doSend(); },
@@ -412,13 +441,15 @@ class Panel {
         // Reload re-reads under the row that offered it: the slot wears the loader for the wait (refresh)
         fcreload: (x) => { const slot = x.dataset.slot || "head"; this.errors.delete(slot); this.stopped.clear(); void this.refresh(slot); this.ctx.reload(); },
         fcerrx: (x) => { this.errors.delete(x.dataset.slot || ""); this.render(); },
-        fcopen: (x) => { this.openPanel(); const id = x.dataset.id!; this.openCards.add(id); this.render(); this.scrollCard(id); },
+        fcopen: (x) => { this.openPanel(); this.showCard(this.cardKey(x.dataset.id!)); },
       }),
     });
     row.addEventListener("change", (ev) => {
       const t = ev.target as HTMLInputElement | null;
-      if (!t || t.dataset.opt !== "todo" && t.dataset.opt !== "track" || !this.owns(t)) return;   // a checkbox the file's markup carries flips nothing
-      this.sendOpts[t.dataset.opt as "todo" | "track"] = t.checked;
+      const k = t ? t.dataset.opt : undefined;
+      if (!t || k !== "todo" && k !== "track" && k !== "accept" || !this.owns(t)) return;   // a checkbox the file's markup carries flips nothing
+      this.sendOpts[k] = t.checked;
+      this.render();                                   // the list's counts and the preview follow the boxes (refocus keeps the box focused)
     });
     // a click on a rendered picture offers Comment on its embed line (the plan's Images and PDFs) — the same
     // stable root, a plain tag check rather than a data-act: the markdown's own <img> carries none
@@ -637,7 +668,8 @@ class Panel {
         }
       }
     } catch { /* the chips fall back to their labels */ }
-    this.render();
+    // the change marks carry the author's colour too (paintChanges): repaint when any are up, else just the chips
+    if (this.status && (this.status.hunks || []).length) this.paintAll(); else this.render();
   }
   sessionName(): string {
     const id = this.ctx.identity();
@@ -705,20 +737,24 @@ class Panel {
     // write (the host mints a fresh id per `comment`, so a repeat would land twice); Save disables and
     // relabels itself meanwhile (renderComposer), the slot's loader shows for every other control
     if (this.busy.has(slot)) return null;
-    this.busy.add(slot); this.errors.delete(slot); this.render();
+    this.busy.add(slot); this.busyVerb.set(slot, verb); this.errors.delete(slot); this.render();
     try {
       if (!(await this.requireStatus(slot))) return null;
       if (!(await this.ctx.ensureEditingAllowed())) { this.errors.set(slot, { text: "Nothing written: comments need file editing on.", reload: false }); return null; }
       return await this.mutateOnce(verb, args, slot, false);
-    } finally { this.busy.delete(slot); this.render(); }
+    } finally { this.busy.delete(slot); this.busyVerb.delete(slot); this.render(); }
   }
   private async mutateOnce(verb: string, args: Record<string, unknown>, slot: string, retried: boolean): Promise<Status | null> {
     const s = this.status;
-    const fence = { storeMtimeNs: s && s.storeMtimeNs !== null ? s.storeMtimeNs : "", configMtimeNs: s && s.configMtimeNs !== null ? s.configMtimeNs : "" };
+    const fence: Record<string, string> = { storeMtimeNs: s && s.storeMtimeNs !== null ? s.storeMtimeNs : "", configMtimeNs: s && s.configMtimeNs !== null ? s.configMtimeNs : "" };
+    if (FILE_VERBS.has(verb)) fence.fileMtimeNs = s ? s.fileMtimeNs : "";   // reject rewrites the file: the file's mtime as last seen (FILE_VERBS)
     try {
       const r = await this.request(verb, args, fence);
       this.markOverlapped();                           // the status asks still out may have read the disk before this write
       this.applyStatus(r);
+      // the file's bytes changed under the view: re-fetch them (the hunks and anchors in this reply index the NEW
+      // text, and the poll will not do it — the reply just re-baselined it). The repaint arrives through onRendered.
+      if (FILE_VERBS.has(verb) && r.fileMtimeNs && this.ctx.mtimeNs() && mtimeMoved(this.ctx.mtimeNs(), r.fileMtimeNs)) this.ctx.reload();
       return r;
     } catch (err) {
       const e = err as { code: string; error: string };
@@ -726,6 +762,7 @@ class Panel {
         if (await this.ctx.ensureEditingAllowed(e.error)) return this.mutateOnce(verb, args, slot, true);
       } else if (!retried && MOVED.has(e.code)) {
         await this.refresh();
+        if (e.code === "file-moved") this.ctx.reload();   // the file itself moved under the view: repaint its bytes (the poll's own moved branch)
         return this.mutateOnce(verb, args, slot, true);
       }
       this.errors.set(slot, { text: e.error, reload: MOVED.has(e.code) });
@@ -829,8 +866,20 @@ class Panel {
   startReply(id: string): void {
     const card = this.cards().find((c) => c.id === id);
     if (!card) return;
-    this.openCards.add(id);
+    this.openCards.add(this.cardKey(id));
     this.composer = { kind: "reply", commentId: id, ref: card.ref };
+    this.errors.delete("composer");
+    this.repaintPresel();
+    this.render();
+    this.input.focus();
+  }
+  /** Reply on a change card: a comment bound to the change (comment {suggestionId, note}), so the session's
+   *  answering track-edit folds into it and the message names the change ("on your change …"). */
+  startChangeReply(id: string): void {
+    const c = this.changeView().cards.find((x) => x.id === id);
+    if (!c) return;
+    this.openCards.add(c.key);
+    this.composer = { kind: "change", changeId: id, ref: c.ref };
     this.errors.delete("composer");
     this.repaintPresel();
     this.render();
@@ -880,6 +929,7 @@ class Panel {
     }
     let r: Status | null;
     if (c.kind === "reply") r = await this.mutate("reply", { commentId: c.commentId, note }, "composer");
+    else if (c.kind === "change") r = await this.mutate("comment", { suggestionId: c.changeId, note }, "composer");
     else {
       const args: Record<string, unknown> = { note };
       // the anchor is built over the text the range indexes (the selection's own, or the reload the passage
@@ -893,12 +943,46 @@ class Panel {
   }
 
   // ── highlights ─────────────────────────────────────────────────────────────────────────────────
-  cards(): Card[] { return this.status ? cardModel(this.status.store, this.status.hunks || []) : []; }
+  cards(): Card[] { return this.status ? cardModel(this.status.store, this.status.hunks || [], this.status.log || []) : []; }
+  /** The change cards, their paragraph groups over the current text, and the fold (GROUP_LIMIT). */
+  changeView(): { cards: ChangeCard[]; groups: ChangeGroup[]; shown: ChangeGroup[]; hidden: ChangeGroup[]; hiddenChanges: number } {
+    const s = this.status;
+    const cards = s ? changeCards(s.store, s.hunks || [], s.log || []) : [];
+    const groups = changeGroups(cards, this.ctx.mode() === "media" ? null : this.ctx.text());
+    return { cards, groups, ...foldGroups(groups, this.moreChangesOpen) };
+  }
+  /** The card a comment id opens: the change card hosting it while its change is pending, else its own. */
+  cardKey(commentId: string): string {
+    const c = this.cards().find((x) => x.id === commentId);
+    return c && c.hunk ? "chg:" + c.hunk.id : commentId;
+  }
+  /** Expand and scroll to a card by key — a change card inside the fold unfolds it first. */
+  showCard(key: string): void {
+    if (key.startsWith("chg:")) {
+      const v = this.changeView();
+      if (v.hidden.some((g) => g.changes.some((c) => c.key === key))) this.moreChangesOpen = true;
+    }
+    this.openCards.add(key);
+    this.render();
+    this.scrollCard(key);
+  }
+  /** Whether the view's text is the text the status's offsets index: the hunks are offsets into the file the
+   *  host read, and after a reject (or a session write the poll has seen but the status has not) the two
+   *  differ until the reload lands — painting changes over the other text would mark the wrong passages.
+   *  An empty viewer mtime (the fetch not landed) claims nothing. */
+  private textCurrent(s: Status): boolean {
+    const vm = this.ctx.mtimeNs();
+    return !vm || !s.fileMtimeNs || vm === s.fileMtimeNs;
+  }
   /** Paint every open comment's anchor over the current view: located → the ring; quote gone but its
    *  context found → the text-changed ring; neither → card only, marked detached. Detached is a
-   *  rendering state, never a stored flag. The composer's pending target is painted last. */
+   *  rendering state, never a stored flag. Then the changes (D4/D5): insertions and substitutions tinted
+   *  over the new text, deletions struck at their point in Raw and card-only in Rendered, each mark
+   *  carrying the change's id and the author's session colour. The composer's pending target is painted last. */
   paintAll(): void {
     this.located = new Map();
+    this.paintedChanges = new Set();
+    unpaintChanges(this.ctx.body());                   // before each repaint (D5): the marks are unwrapped, never stacked
     this.unpaint(".fc-hl, .fc-presel");                // a status refresh repaints the SAME body: never wrap twice
     const src = this.ctx.text(); const root = this.contentRoot();
     if (src === null || !root) { this.render(); return; }
@@ -922,8 +1006,33 @@ class Panel {
       }
       this.located.set(card.id, { ...loc, painted });
     }
+    this.paintChanges(root, src, rendered);
     this.paintPresel(root, src, rendered);
     this.render();
+  }
+  /** The change marks, after the comment highlights (D5): stylesFor hands each mark the author's session colour
+   *  from the Slice 1 colour map as `--fc-author` (nothing when unknown: the sheet's neutral). Every painted
+   *  element is a control (it opens the card) and the panel's own (owns), like a comment highlight. */
+  private paintChanges(root: Element, src: string, rendered: boolean): void {
+    const s = this.status;
+    if (!s || !(s.hunks || []).length || !this.textCurrent(s)) return;
+    const store = s.store;
+    const changes: ChangePaint[] = (s.hunks || []).map((h) => ({ id: h.id, kind: h.kind, curFrom: h.curFrom, curTo: h.curTo, oldText: h.oldText, author: h.author }));
+    const stylesFor = (c: ChangePaint): Record<string, string> => {
+      const aid = authorIdOf(store, c.id);
+      const col = aid && this.colors ? this.colors.get(aid) : null;
+      return col && col.color ? { "--fc-author": col.color.bg } : {};
+    };
+    let marks: Element[];
+    if (rendered) {
+      const r = paintChangesRendered(root, src, changes, stylesFor);
+      for (const id of r.painted) this.paintedChanges.add(id);
+      marks = Array.from(root.querySelectorAll('[data-act="fcchange"]'));
+    } else {
+      marks = paintChangesRaw(root, src, changes, stylesFor);
+      for (const m of marks) { const id = (m as HTMLElement).dataset.id; if (id) this.paintedChanges.add(id); }
+    }
+    for (const m of marks) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open this change"; this.marks.add(m); }
   }
   private paintPresel(root: Element, src: string, rendered: boolean): void {
     const c = this.composer;
@@ -960,15 +1069,25 @@ class Panel {
     const loc = locateComment(src, makeAnchor(c.text, c.range), c.range.start);
     if (loc.state === "located" && loc.range) { c.range = loc.range; c.text = src; }
   }
-  goTo(id: string): void {
-    const mark = this.ctx.body().querySelector('.fc-hl[data-id="' + id + '"]');
+  goTo(key: string): void {
+    const mark = key.startsWith("chg:")
+      ? this.ctx.body().querySelector('[data-act="fcchange"][data-id="' + key.slice(4) + '"]')
+      : this.ctx.body().querySelector('.fc-hl[data-id="' + key + '"]');
     if (mark) { mark.scrollIntoView({ block: "center" }); return; }
-    this.reveal(id);
+    this.reveal(key);
   }
-  /** Reveal: switch to Raw and scroll to the comment's located range — for a comment the Rendered
-   *  view could not paint, so the compact card never dead-ends. */
-  reveal(id: string): void {
-    const loc = this.located.get(id);
+  /** Reveal: switch to Raw and scroll to the passage — a comment's located range, or a change's start — for
+   *  a comment or change the Rendered view could not paint (a deletion never is), so the compact card never
+   *  dead-ends. */
+  reveal(key: string): void {
+    if (key.startsWith("chg:")) {
+      const c = this.changeView().cards.find((x) => x.key === key);
+      if (!c) return;
+      this.ctx.setMode("raw");
+      this.ctx.scrollToOffset(c.curFrom);
+      return;
+    }
+    const loc = this.located.get(key);
     if (!loc || !loc.range) return;
     this.ctx.setMode("raw");
     this.ctx.scrollToOffset(loc.range.start);
@@ -992,13 +1111,17 @@ class Panel {
   }
 
   // ── Send to session ────────────────────────────────────────────────────────────────────────────
-  /** Fixed sequence (the plan's UX): the message is built from the CURRENT status, then set-tracked
-   *  when asked, then fileCommentsSend with `tracked` set to the post-toggle verdict; a refusal at any
+  /** Fixed sequence (the plan's UX, D5): the message is built from the CURRENT status FIRST (a bound
+   *  comment's desc needs the change's old and new text, which accept-all removes), then set-tracked when
+   *  asked, then accept-all when asked, then fileCommentsSend with `tracked` set to the post-toggle verdict
+   *  and `accepted` = what the log says is unsent plus the N the accept-all just decided; a refusal at any
    *  step aborts before the send. The comments are already on disk, so a refusal loses nothing. */
   async doSend(): Promise<void> {
     const s = this.status;
     if (!s || this.statusRefusal || this.sending || !this.ctx.sid) return;   // statusRefusal: renderSend says why
     const parts: SendParts = sendParts(s);
+    const pending = (s.hunks || []).length;
+    const acceptAll = this.sendOpts.accept && pending > 0;
     let tracked = !!s.trackedBy;
     this.sending = true; this.errors.delete("send"); this.render();
     try {
@@ -1007,10 +1130,15 @@ class Panel {
         if (!r) return;
         tracked = !!r.trackedBy;
       }
+      if (acceptAll) {
+        const a = await this.mutate("accept-all", {}, "send");
+        if (!a) return;                                // a refused accept-all sends nothing: the message would claim decisions never made
+      }
+      const counts = sendCounts(parts, acceptAll, pending);
       const answerTodo = !!this.ctx.todoId && this.sendOpts.todo && !this.todoAnswered;
       const msg: Record<string, unknown> = {
         sid: this.ctx.sid, path: this.ctx.path, tracked, comments: parts.comments,
-        accepted: parts.accepted, rejected: parts.rejected, watermark: parts.watermark,
+        accepted: counts.accepted, rejected: counts.rejected, watermark: parts.watermark,
       };
       if (answerTodo) msg.todoId = this.ctx.todoId;
       const reply = await this.sendOnce(msg, false);
@@ -1065,11 +1193,14 @@ class Panel {
   // render.ts refocuses the active tab after `#tabs` is rebuilt.
   private focusKey(): { act: string; id?: string; key?: string; slot?: string } | null {
     const a = document.activeElement as HTMLElement | null;
-    if (!a || !this.root || !this.root.contains(a) || !a.dataset || !a.dataset.act) return null;
-    return { act: a.dataset.act, id: a.dataset.id, key: a.dataset.key, slot: a.dataset.slot };
+    if (!a || !this.root || !this.root.contains(a) || !a.dataset) return null;
+    if (a.dataset.act) return { act: a.dataset.act, id: a.dataset.id, key: a.dataset.key, slot: a.dataset.slot };
+    if (a.dataset.opt) return { act: "opt", key: a.dataset.opt };   // a confirm checkbox, re-found by its option
+    return null;
   }
   private refocus(k: { act: string; id?: string; key?: string; slot?: string }): void {
     if (!this.root || this.root.contains(document.activeElement)) return;   // still focused (the input): nothing to mend
+    if (k.act === "opt") { (this.root.querySelector('[data-opt="' + k.key + '"]') as HTMLElement | null)?.focus({ preventScroll: true }); return; }
     for (const n of Array.from(this.root.querySelectorAll("[data-act]")) as HTMLElement[]) {
       const d = n.dataset;
       if (d.act !== k.act || d.id !== k.id || d.key !== k.key || d.slot !== k.slot) continue;
@@ -1155,6 +1286,7 @@ class Panel {
     const ref = this.composerRef;
     ref.replaceChildren();
     if (c.kind === "reply") ref.appendChild(el("span", "fc-note", "Reply on " + c.ref));
+    else if (c.kind === "change") ref.appendChild(el("span", "fc-note", "Reply on the change " + c.ref));
     else if (c.refusal) {
       ref.appendChild(el("span", "fc-note fc-refused", c.refusal.reason));
       const sw = btn("Switch to Raw", "fcraw");
@@ -1184,7 +1316,9 @@ class Panel {
   }
   private renderCards(s: Status | null): HTMLElement {
     const list = el("div", "fc-cards");
-    const cards = this.cards();
+    // a comment bound to a pending change is shown on that change's card; the rest stand on their own
+    const cards = this.cards().filter((c) => c.hunk === null);
+    const view = this.changeView();
     if (!s) {
       // a wait wears the romp loader while a status ask is out (refresh); once the kernel refused, say what
       // follows — the reason and Reload are the head's row. Never a line claiming a read nothing is making.
@@ -1193,11 +1327,29 @@ class Panel {
       else if (this.statusRefusal) list.appendChild(el("div", "fc-empty", "The comments could not be read, so none can be shown or written."));
       return list;
     }
-    if (!cards.length) {
+    if (!cards.length && !view.cards.length) {
       list.appendChild(el("div", "fc-empty", this.ctx.mode() === "media"
         ? "No comments yet. Comment on this file to leave one."
         : "No comments yet. Select a passage and press Comment, or comment on this file."));
       return list;
+    }
+    // the session's pending changes first: grouped by paragraph, the first GROUP_LIMIT groups shown, the rest
+    // behind one row (moreChangesOpen), then Accept all · Reject all — the plan's Slice 2 surface
+    if (view.cards.length) {
+      for (const g of view.shown) {
+        if (g.title) { const gh = el("div", "fc-note fc-group", g.title); gh.title = "The paragraph these changes fall in"; list.appendChild(gh); }
+        for (const c of g.changes) list.appendChild(this.renderChangeCard(c));
+      }
+      if (view.hiddenChanges) {
+        const more = btn(moreChangesLabel(view.hiddenChanges), "fcmore", "fc-sec");
+        more.title = "Show every change"; more.setAttribute("aria-expanded", "false");
+        list.appendChild(more);
+      } else if (this.moreChangesOpen && view.groups.length > GROUP_LIMIT) {
+        const fewer = btn("▾ Fewer changes", "fcmore", "fc-sec");
+        fewer.setAttribute("aria-expanded", "true");
+        list.appendChild(fewer);
+      }
+      list.appendChild(this.renderChangesFoot(view.cards.length));
     }
     const open = cards.filter((c) => !c.resolved), done = cards.filter((c) => c.resolved);
     for (const c of open) list.appendChild(this.renderCard(c));
@@ -1230,25 +1382,14 @@ class Panel {
     head.appendChild(ref);
     if (loc && loc.state === "context") head.appendChild(el("span", "fc-tag", "text changed"));
     if (loc && loc.state === "detached") head.appendChild(el("span", "fc-tag", "detached"));
+    if (c.decision) { const d = el("span", "fc-tag", c.decision); d.title = "You " + c.decision + " the change this comment is on"; head.appendChild(d); }
     if (c.resolved) head.appendChild(el("span", "fc-tag", "resolved"));
     if (c.replies.length && !isOpen) head.appendChild(el("span", "fc-tag fc-count", String(c.replies.length)));
     head.appendChild(el("span", "fc-time", clock(c.ts)));
     card.appendChild(head);
     if (!isOpen) { card.appendChild(el("div", "fc-preview", c.body.replace(/\s+/g, " ").trim())); return card; }
     card.appendChild(el("div", "fc-body", c.body));
-    if (c.replies.length) {
-      const rs = el("div", "fc-replies");
-      for (const r of c.replies) {
-        const row = el("div", "fc-reply" + (r.author === "you" ? " fc-reply-you" : ""));
-        const meta = el("div", "fc-meta");
-        meta.appendChild(this.chip(r.author, r.authorId));
-        meta.appendChild(el("span", "fc-time", clock(r.ts)));
-        row.appendChild(meta);
-        row.appendChild(el("div", "fc-body", r.body));
-        rs.appendChild(row);
-      }
-      card.appendChild(rs);
-    }
+    if (c.replies.length) card.appendChild(this.renderTurns(c.replies));
     const acts = el("div", "fc-actions");
     const reply = btn("Reply", "fcreply"); reply.dataset.id = c.id; acts.appendChild(reply);
     const res = btn(c.resolved ? "Reopen" : "Resolve", "fcresolve"); res.dataset.id = c.id; res.dataset.on = c.resolved ? "0" : "1"; acts.appendChild(res);
@@ -1261,6 +1402,133 @@ class Panel {
     card.appendChild(acts);
     for (const n of [this.loader("card:" + c.id), this.errRow("card:" + c.id)]) if (n) card.appendChild(n);
     return card;
+  }
+  /** The turns under a comment, in `ts` order: words as before; a revision (the session's answering
+   *  track-edit, recorded as a reply with old and new text) as the same row with the texts instead of a body. */
+  private renderTurns(turns: CardTurn[]): HTMLElement {
+    const rs = el("div", "fc-replies");
+    for (const r of turns) {
+      const row = el("div", "fc-reply" + (r.author === "you" ? " fc-reply-you" : ""));
+      const meta = el("div", "fc-meta");
+      meta.appendChild(this.chip(r.author, r.authorId));
+      if (r.kind === "rev") { const t = el("span", "fc-tag", "revised"); t.title = "The session revised the text in answer"; meta.appendChild(t); }
+      meta.appendChild(el("span", "fc-time", clock(r.ts)));
+      row.appendChild(meta);
+      row.appendChild(r.kind === "msg" ? el("div", "fc-body", r.body) : this.diffBody(r.oldText, r.newText));
+      rs.appendChild(row);
+    }
+    return rs;
+  }
+  /** Old and new text as a body: the old struck (<del>), the new marked (<ins>) — the browser's own dress for
+   *  both, so the sheets need no rule for it; either side may be empty (a pure insertion or deletion). */
+  private diffBody(oldText: string, newText: string): HTMLElement {
+    const b = el("div", "fc-body fc-diff");
+    if (oldText) b.appendChild(el("del", "fc-old", oldText));
+    if (oldText && newText) b.appendChild(document.createTextNode(" → "));
+    if (newText) b.appendChild(el("ins", "fc-new", newText));
+    if (!oldText && !newText) b.appendChild(el("span", "fc-note", "(no text)"));
+    return b;
+  }
+  // ── the change cards (Slice 2) ─────────────────────────────────────────────────────────────────
+  /** One card per pending change. Collapsed: the author's chip, the one-line reference (a link to its mark
+   *  when the view shows one), and the buttons — Accept and Reject are the card's reason to exist, so they
+   *  never hide behind the expand. Open: the old and new text, and the comments bound to the change with
+   *  their turns and their own Reply and Resolve. Reveal on a deletion (never painted in Rendered; a point in
+   *  Raw) and on any change whose mark the view does not show, so the compact card never dead-ends. */
+  private renderChangeCard(c: ChangeCard): HTMLElement {
+    const isOpen = this.openCards.has(c.key);
+    const painted = this.paintedChanges.has(c.id);
+    const slot = "change:" + c.id;
+    const card = el("div", "fc-card fc-change" + (isOpen ? " open" : ""));
+    card.dataset.id = c.key; card.dataset.change = c.id; card.dataset.kind = c.kind;
+    if (!isOpen) card.dataset.act = "fccard";
+    const head = el("div", "fc-card-head");
+    head.dataset.id = c.key; head.dataset.act = "fccard";
+    head.tabIndex = 0; head.setAttribute("role", "button"); head.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    head.appendChild(this.chip(c.author, c.authorId));
+    const ref = el("span", "fc-ref", c.ref);
+    ref.title = c.kind === "ins" ? "Added: " + c.newText : c.kind === "del" ? "Removed: " + c.oldText : c.oldText + " → " + c.newText;
+    if (painted) {
+      ref.dataset.act = "fcgoto"; ref.dataset.id = c.key; ref.classList.add("fc-link"); ref.title = "Scroll to the change";
+      ref.tabIndex = 0; ref.setAttribute("role", "button");
+    }
+    head.appendChild(ref);
+    const src = this.ctx.text();
+    if (!painted && src !== null && this.ctx.mode() !== "media") {
+      const t = el("span", "fc-tag", "not shown");
+      t.title = this.ctx.mode() === "rendered" && c.kind === "del" ? "The Rendered view cannot show a deletion; Reveal opens it in Raw" : "This view does not show the change; Reveal opens it in Raw";
+      head.appendChild(t);
+    }
+    if (c.comments.length && !isOpen) head.appendChild(el("span", "fc-tag fc-count", String(c.comments.length)));
+    head.appendChild(el("span", "fc-time", clock(c.ts)));
+    card.appendChild(head);
+    if (isOpen) {
+      card.appendChild(this.diffBody(c.oldText, c.newText));
+      for (const cm of c.comments) card.appendChild(this.renderHosted(cm));
+    }
+    const acts = el("div", "fc-actions");
+    const busy = this.busy.has(slot); const verb = this.busyVerb.get(slot);
+    const ok = btn(busy && verb === "accept" ? "Accepting…" : "Accept", "fcaccept"); ok.dataset.id = c.id; ok.disabled = busy;
+    ok.title = "Keep the text as it is and drop the change";
+    const no = btn(busy && verb === "reject" ? "Rejecting…" : "Reject", "fcreject"); no.dataset.id = c.id; no.disabled = busy;
+    no.title = "Put the old text back in the file";
+    acts.appendChild(ok); acts.appendChild(no);
+    if (!c.comments.length) {   // with a comment on the card, the comment's own Reply is the way to answer it
+      const re = btn("Reply", "fcchangereply"); re.dataset.id = c.id; re.title = "Comment on this change; the session's answer comes back to it";
+      acts.appendChild(re);
+    }
+    if (c.kind === "del" || !painted) {
+      const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;
+      rv.title = "Show the change in the Raw view" + (src !== null ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "");
+      acts.appendChild(rv);
+    }
+    card.appendChild(acts);
+    for (const n of [this.loader(slot), this.errRow(slot)]) if (n) card.appendChild(n);
+    return card;
+  }
+  /** A comment bound to the change, ON its card (the plan's contract): the comment's own words and turns in
+   *  the reply dress, with its Reply and Resolve — the same acts a standalone card has, by the comment's id. */
+  private renderHosted(c: Card): HTMLElement {
+    const box = el("div", "fc-hosted");
+    box.dataset.id = c.id;
+    const row = el("div", "fc-reply" + (c.author === "you" ? " fc-reply-you" : ""));
+    const meta = el("div", "fc-meta");
+    meta.appendChild(this.chip(c.author, c.authorId));
+    if (c.resolved) meta.appendChild(el("span", "fc-tag", "resolved"));
+    meta.appendChild(el("span", "fc-time", clock(c.ts)));
+    row.appendChild(meta);
+    row.appendChild(el("div", "fc-body", c.body));
+    box.appendChild(row);
+    if (c.replies.length) box.appendChild(this.renderTurns(c.replies));
+    const acts = el("div", "fc-actions");
+    const reply = btn("Reply", "fcreply"); reply.dataset.id = c.id; acts.appendChild(reply);
+    const res = btn(c.resolved ? "Reopen" : "Resolve", "fcresolve"); res.dataset.id = c.id; res.dataset.on = c.resolved ? "0" : "1"; acts.appendChild(res);
+    box.appendChild(acts);
+    for (const n of [this.loader("card:" + c.id), this.errRow("card:" + c.id)]) if (n) box.appendChild(n);
+    return box;
+  }
+  /** Accept all · Reject all, while any change is pending. Reject all rewrites the file, so it asks once,
+   *  pane-locally (the folder-off confirm's idiom), naming the count. */
+  private renderChangesFoot(n: number): HTMLElement {
+    const foot = el("div", "fc-foot");
+    const row = el("div", "fc-actions");
+    const busy = this.busy.has("changes"); const verb = this.busyVerb.get("changes");
+    const all = btn(busy && verb === "accept-all" ? "Accepting…" : "Accept all", "fcacceptall"); all.disabled = busy;
+    all.title = "Keep the text as it is and drop every change";
+    const none = btn(busy && verb === "reject-all" ? "Rejecting…" : "Reject all", "fcrejectall"); none.disabled = busy;
+    none.title = "Put the old text back for every change";
+    none.setAttribute("aria-expanded", this.rejectAllConfirm ? "true" : "false");
+    row.appendChild(all); row.appendChild(none);
+    foot.appendChild(row);
+    if (this.rejectAllConfirm) {
+      const ask = el("div", "fc-row fc-choice");
+      ask.appendChild(el("span", "fc-note", "Put the old text back for " + (n === 1 ? "the change" : "all " + n + " changes") + "?"));
+      ask.appendChild(btn("Reject all", "fcrejectallgo"));
+      ask.appendChild(btn("Cancel", "fcrejectallcancel"));
+      foot.appendChild(ask);
+    }
+    for (const x of [this.loader("changes"), this.errRow("changes")]) if (x) foot.appendChild(x);
+    return foot;
   }
   private renderSend(s: Status | null): HTMLElement {
     const box = el("div", "fc-send");
@@ -1284,6 +1552,10 @@ class Panel {
     else if (s && !n && !this.sending && this.cards().length) box.appendChild(el("div", "fc-note", "Nothing unsent: every comment, reply, and decision has gone."));
     if (this.sendConfirm && s && n && !this.sending) {
       const parts = sendParts(s);
+      const pending = (s.hunks || []).length;
+      // the same A and R the send will carry (doSend): the log's unsent decisions plus the pending changes the
+      // checkbox accepts on the way — so the list and the preview show the sent text
+      const counts = sendCounts(parts, this.sendOpts.accept, pending);
       const cf = el("div", "fc-confirm");
       cf.appendChild(el("div", "fc-note", "This goes to " + this.sessionName() + ":"));
       const ul = el("ul", "fc-list");
@@ -1293,11 +1565,12 @@ class Panel {
         li.appendChild(el("span", undefined, c.body.replace(/\s+/g, " ").trim()));
         ul.appendChild(li);
       }
-      if (parts.accepted || parts.rejected) ul.appendChild(el("li", undefined, parts.accepted + " accepted, " + parts.rejected + " rejected"));
+      if (counts.accepted || counts.rejected) ul.appendChild(el("li", undefined, counts.accepted + " accepted, " + counts.rejected + " rejected"));
       cf.appendChild(ul);
       const opts = el("div", "fc-opts");
       if (this.ctx.todoId && !this.todoAnswered) opts.appendChild(this.opt("todo", "answer the todo this file was opened from"));
       if (!s.trackedBy) opts.appendChild(this.opt("track", "turn on tracking so the session's edits come back as changes"));
+      if (pending) opts.appendChild(this.opt("accept", "accept the " + pending + " pending " + (pending === 1 ? "change" : "changes")));
       if (opts.childNodes.length) cf.appendChild(opts);
       const pv = btn((this.previewOpen ? "▾ " : "▸ ") + "The message", "fcpreview", "fc-sec");
       cf.appendChild(pv);
@@ -1308,7 +1581,7 @@ class Panel {
         // todo token or a `~/` link would preview a header and two --file arguments the session never receives
         const abs = this.filePath();
         if (abs === null) cf.appendChild(el("div", "fc-note", "The message names this file by its absolute path, which the kernel resolves from " + this.ctx.path + "; this panel cannot show it."));
-        else cf.appendChild(el("pre", "fc-msg", buildSendMessage({ absPath: abs, comments: parts.comments, accepted: parts.accepted, rejected: parts.rejected, tracked, media })));
+        else cf.appendChild(el("pre", "fc-msg", buildSendMessage({ absPath: abs, comments: parts.comments, accepted: counts.accepted, rejected: counts.rejected, tracked, media })));
       }
       const acts = el("div", "fc-actions");
       acts.appendChild(btn("Send", "fcsendgo", "fileview-btn fc-primary"));
@@ -1320,7 +1593,7 @@ class Panel {
     for (const x of [this.loader("send"), this.errRow("send")]) if (x) box.appendChild(x);
     return box;
   }
-  private opt(key: "todo" | "track", label: string): HTMLElement {
+  private opt(key: "todo" | "track" | "accept", label: string): HTMLElement {
     const l = el("label", "fc-opt");
     const cb = el("input") as HTMLInputElement;
     cb.type = "checkbox"; cb.checked = this.sendOpts[key]; cb.dataset.opt = key;
@@ -1354,7 +1627,7 @@ class Panel {
         row.dataset.act = "fclogrow"; row.dataset.key = key;
         row.setAttribute("role", "button"); row.style.cursor = "pointer";
         row.tabIndex = 0; row.setAttribute("aria-expanded", isOpen ? "true" : "false");   // a Tab stop; Enter/Space through KEY_ACTS
-        row.title = isOpen ? "Hide" : e.kind === "send" ? "Show what was sent" : "Show the edit";
+        row.title = isOpen ? "Hide" : e.kind === "send" ? "Show what was sent" : e.kind === "edit" ? "Show the edit" : "Show the changes";
         (row.childNodes[1] as HTMLElement).textContent = (isOpen ? "▾ " : "▸ ") + logRowText(e, nameOf);
       }
       box.appendChild(row);
@@ -1365,8 +1638,22 @@ class Panel {
   }
   /** What a Log row has underneath, or null when the line IS the whole entry (a tracking toggle). A send
    *  entry holds the comments as they went — each with what it referred to, in the confirm's own list dress;
-   *  an edit entry holds the kernel's diff of the direct edit. */
+   *  an edit entry holds the kernel's diff of the direct edit; an accept or reject entry holds the changes it
+   *  decided, old and new text, which the sidecar has since forgotten. */
   private logDetail(e: { kind: string; [k: string]: unknown }): HTMLElement | null {
+    if ((e.kind === "accept" || e.kind === "reject") && Array.isArray(e.changes) && e.changes.length) {
+      const box = el("div", "fc-log-detail");
+      const ul = el("ul", "fc-list");
+      for (const ch of e.changes as Array<Record<string, unknown>>) {
+        if (!ch || typeof ch !== "object") continue;
+        const li = el("li");
+        const oldText = typeof ch.oldText === "string" ? ch.oldText : "", newText = typeof ch.newText === "string" ? ch.newText : "";
+        li.appendChild(this.diffBody(oldText, newText));
+        ul.appendChild(li);
+      }
+      box.appendChild(ul);
+      return box;
+    }
     if (e.kind === "send" && Array.isArray(e.comments) && e.comments.length) {
       const box = el("div", "fc-log-detail");
       const ul = el("ul", "fc-list");

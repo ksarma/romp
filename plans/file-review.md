@@ -861,6 +861,19 @@ verbs. Reused unchanged: `engine.js` accept/reject (`engine.js:388-419`), `displ
 `planDiffDisplay`; adapted: `applyEditsToText` (12 lines from `obsidian/src/track-rollup.js`).
 Size: ~400 / ~40 / ~120.
 
+The Slice 2 build (2026-09-06), panel side: the card model lives in `file-comments-model.ts`, the
+panel's pure half, beside the Slice 1 comment cards; the paragraph grouping is romp's own pass over
+paragraph ranges (the source split on blank lines), since `planDiffDisplay` merges only a dense
+paragraph and names no paragraph for the changes it passes through. A comment bound to a pending
+change is shown on the change's card and leaves the comment list; once the change is decided, the
+comment's card stands on its own again with the change's texts read from the log's accept or reject
+entry, which is also what `describeComment` falls back to, so a manual Accept before the send keeps
+"on your change …" in the message. Reply on a change card writes `comment {suggestionId, note}`,
+an argument the verb list above does not name. After a reject the panel reloads the view itself:
+every reply re-baselines the poll, so the poll never sees the bytes the reject changed. The new
+elements (`.fc-change`, `.fc-group`, `.fc-hosted`, `.fc-foot`, `.fc-diff`) wear the Slice 1 classes
+beside their own and need no rule of their own to be usable; the sheets are the painter's.
+
 ### Slice 3: region comments on images
 
 User-visible: on a standalone image, or on a figure embedded in a rendered markdown file, the
