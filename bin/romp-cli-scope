@@ -1,0 +1,88 @@
+#!/bin/sh
+# romp-cli-scope — run one session's `claude` CLI inside its own transient systemd scope.
+#
+# WHY: on Linux the manager runs as a systemd user service that relies on systemd's default
+# KillMode=control-group (the unit sets no KillMode line, on purpose: it is what guarantees a wedged
+# kernel or postal bus still holding its port dies on a service restart). Every process the service
+# tree starts lands in the service's cgroup, and that includes each session's CLI, its tool shells,
+# their setsid children and any tmux server a session starts — so a service restart on 2026-09-05
+# (`systemctl --user restart romp-manager`) killed sessions' tmux servers and setsid jobs along with
+# the kernel. Only kernel-only restarts (`romp refresh`), which never touch the service, had left
+# them running. `systemd-run --scope` moves the CLI, and so everything it later spawns, into a scope
+# of its own outside the service cgroup.
+#
+# WHY exec-in-place matters: the kernel's interrupt escalation (find_session_cli in sdk_backend.py)
+# finds the CLI as a DIRECT CHILD of the kernel, and the boot orphan reaper (find_orphan_clis) reads
+# `--input-format stream-json` and the sid from the argv and treats a CLI whose parent is no live
+# romp kernel as orphaned. Both hold only if the CLI ends up with this wrapper's pid, its parent and
+# the argv tail the SDK passed: `exec` here hands our pid to systemd-run, and systemd-run in --scope
+# mode moves itself into the new scope and then execs the command in place, so the CLI keeps the pid
+# the SDK spawned and its parent stays the kernel. (An orphan re-parents to the `systemd --user`
+# subreaper, never to pid 1, scope or no scope — which is why the reaper keys on the parent not
+# being a kernel rather than on ppid 1.)
+#
+# The scope name carries the first 8 characters of the session id, this pid (the pid the CLI will
+# run as) and a start time, so `systemctl --user list-units 'romp-session-*'` doubles as a pid
+# record. systemd refuses a duplicate unit name ("already loaded"), and a previous CLI's scope can
+# outlive that CLI (a tmux server it started keeps the scope loaded), so once pids wrap a pid alone
+# could collide; the time component makes the name unique.
+#
+# Two direct-exec paths, no scope: no ROMP_SID (a process with no session identity is a probe — the
+# SDK's per-connect `claude -v` version check — not a session, and must not get a scope of its own),
+# and a failed pre-flight (`systemd-run … -- true`: the user bus gone, scopes refused), where one
+# stderr line names the reason and the CLI runs directly rather than not at all.
+#
+# Every stderr line this wrapper writes starts with `romp-cli-scope:`, and its second word says which
+# of the two messages it is, so the kernel tells them apart without reading the prose
+# (SdkSession._on_cli_stderr):
+#   `romp-cli-scope: fallback: …` — the failed pre-flight above; the CLI runs directly. The kernel logs
+#     this line the moment it arrives, as a problem naming the session. On this path the CLI starts,
+#     so no launch failure ever drains the stderr tail; without that the line would never have been
+#     read and the boot verdict would keep saying scopes are on. The launch-error card drops these
+#     lines from a failed CLI's stderr tail, since the log already has them.
+#   `romp-cli-scope: refused: …` — ROMP_CLI_REAL unset, exit 127, no CLI at all. The kernel logs no
+#     fallback for it: the launch fails, and the launch-error path reports the line on its own.
+# The rest of the CLI's stderr the kernel only buffers, for a launch that fails.
+#
+# Environment: ROMP_CLI_REAL (required) — the real CLI; ROMP_SID — the session id (kernel-set);
+# ROMP_CLI_SCOPE=0 — run the CLI directly, no scope. Arguments pass through verbatim.
+set -u
+
+if [ -z "${ROMP_CLI_REAL:-}" ]; then
+    echo "romp-cli-scope: refused: ROMP_CLI_REAL is unset or empty; it must name the real claude CLI, and this wrapper does not guess one" >&2
+    exit 127
+fi
+
+sid="${ROMP_SID:-}"
+if [ "${ROMP_CLI_SCOPE:-}" = "0" ] || [ -z "$sid" ] || ! command -v systemd-run >/dev/null 2>&1; then
+    exec "$ROMP_CLI_REAL" "$@"
+fi
+
+# Pre-flight: can this user manager start a scope right now? The kernel probed once at its own start,
+# but the bus can go away later, and a launch that fails outright is worse than one in the wrong cgroup.
+# Bounded to 10 s when `timeout` (coreutils) is on PATH: a bus that accepts the connection and never
+# answers holds systemd-run for its own 90 s default, past the SDK's 60 s initialize timeout, so the
+# fallback below would never engage in the case it exists for. Any non-zero exit, 124 (the bound hit)
+# included, is a failed pre-flight. Without `timeout` the pre-flight runs unbounded, as it did before.
+if command -v timeout >/dev/null 2>&1; then
+    err="$(timeout 10 systemd-run --user --scope --quiet --collect -- true 2>&1)"; rc=$?
+    [ "$rc" -eq 124 ] && err="the pre-flight scope did not finish within 10 s"
+else
+    err="$(systemd-run --user --scope --quiet --collect -- true 2>&1)"; rc=$?
+fi
+if [ "$rc" -ne 0 ]; then
+    nl='
+'
+    err="${err%%"$nl"*}"
+    echo "romp-cli-scope: fallback: systemd-run cannot start a transient scope (${err:-no detail}) — running the CLI directly, outside a scope; a service restart will take its background work down" >&2
+    exec "$ROMP_CLI_REAL" "$@"
+fi
+
+t="$(date +%s%N 2>/dev/null)"
+case "$t" in
+    ''|*[!0-9]*) t="$(date +%s)" ;;    # a date without %N prints the letter; seconds still separate pid reuse in time
+esac
+unit="romp-session-$(printf '%.8s' "$sid")-$$-$t"
+
+exec systemd-run --user --scope --quiet --collect --unit="$unit" \
+    --description="romp session $sid" -- "$ROMP_CLI_REAL" "$@"

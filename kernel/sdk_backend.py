@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -59,6 +60,92 @@ def _bin_on_path_env(environ) -> dict:
     if rbin in cur.split(os.pathsep):
         return {}
     return {"PATH": (rbin + os.pathsep + cur) if cur else rbin}
+
+
+# Per-session transient systemd scopes (Linux, 2026-09-05). Under the systemd user service every
+# process the service tree starts shares the service's cgroup, and the unit relies on systemd's
+# default KillMode=control-group (it sets no KillMode line; a wedged kernel or bus still holding its
+# port must die on a service restart), which empties that cgroup on `systemctl --user restart
+# romp-manager` — each session's CLI, its tool shells, their setsid children and any tmux server a
+# session started included. A service restart on 2026-09-05 killed sessions' tmux servers and setsid
+# jobs along with the kernel; only kernel-only restarts (`romp refresh`), which never touch the
+# service, had left them running. So, when supported, the CLI is spawned through bin/romp-cli-scope,
+# which execs `systemd-run --user --scope` in place: the CLI keeps the spawned pid, parent and argv
+# (find_session_cli still finds it as this kernel's child; find_orphan_clis still reads its argv) but
+# runs in a scope of its own, and everything it later spawns goes with it. What the scopes take away
+# is the cgroup kill as a backstop for the boot reaper: an orphaned CLI now outlives a service
+# restart too, and under `systemd --user` (a child subreaper) it re-parents to the user manager,
+# never to pid 1 — which is why find_orphan_clis keys on "parent is not a live romp kernel", not on
+# ppid 1.
+CLI_SCOPE_PROBE = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--", "true"]
+CLI_SCOPE_PROBE_TIMEOUT = 10.0
+# What every line bin/romp-cli-scope writes to stderr starts with. The wrapper writes only when the
+# CLI did NOT get its scope, and the line's second word says which of its two messages it is:
+#   CLI_SCOPE_FALLBACK_PREFIX — the pre-flight scope failed and it ran the CLI directly. The CLI starts,
+#     so no launch failure ever drains the stderr tail; SdkSession._on_cli_stderr logs the line the
+#     moment it arrives, as a problem (_note_cli_scope_fallback). launch_failure_text drops these lines
+#     from a failed launch's stderr tail, since the log already has them.
+#   CLI_SCOPE_REFUSAL_PREFIX — ROMP_CLI_REAL was unset and it refused (exit 127). No CLI started, so this
+#     is a launch failure on its own, reported by _record_launch_error like any other; it is not a
+#     fallback and is not logged as one.
+CLI_SCOPE_NOTICE_PREFIX = "romp-cli-scope:"
+CLI_SCOPE_FALLBACK_PREFIX = CLI_SCOPE_NOTICE_PREFIX + " fallback:"
+CLI_SCOPE_REFUSAL_PREFIX = CLI_SCOPE_NOTICE_PREFIX + " refused:"
+
+
+def cli_scope_wrapper() -> str:
+    """The wrapper's absolute path: the repo's bin/, located the same way _bin_on_path_env finds it."""
+    return str(Path(__file__).resolve().parent.parent / "bin" / "romp-cli-scope")
+
+
+def cli_scope_supported(environ=None, which=shutil.which, run=subprocess.run, log=None,
+                        platform=None) -> bool:
+    """Whether this backend should spawn CLIs through the scope wrapper. Decided ONCE per backend, at
+    construction, from the process environment and a one-shot probe — never per session, so a flaky
+    probe cannot leave sessions in mixed states. Pure on its inputs (environ/which/run/platform
+    injectable) so the truth table is testable without a real systemd-run, on any OS.
+
+    On when ROMP_CLI_SCOPE=1, or under the supervised service (ROMP_SUPERVISED, what bin/romp-service's
+    unit sets) unless ROMP_CLI_SCOPE=0 — so the default is on under the service and off from a
+    terminal or in tests. Then only on Linux (transient scopes are a systemd feature; the macOS launchd
+    plist sets ROMP_SUPERVISED too, and without this check every kernel start there logged
+    "systemd-run is not on PATH" as if something were missing), only if `systemd-run` is on PATH, and
+    only if a probe scope actually starts (a user manager that cannot start scopes would otherwise
+    fail every session start). `log`, when given, receives the one-line verdict either way."""
+    env = os.environ if environ is None else environ
+    plat = sys.platform if platform is None else platform
+    want = env.get("ROMP_CLI_SCOPE", "")
+    ok, reason = False, ""
+    if want == "1" or (env.get("ROMP_SUPERVISED") and want != "0"):
+        if not plat.startswith("linux"):
+            reason = "not Linux (transient scopes are a systemd feature)"
+        elif not which("systemd-run"):
+            reason = "systemd-run is not on PATH"
+        else:
+            try:
+                r = run(CLI_SCOPE_PROBE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                        timeout=CLI_SCOPE_PROBE_TIMEOUT)
+            except Exception as e:      # timeout, missing binary raced away, anything else
+                reason = "the probe (%s) failed: %s" % (" ".join(CLI_SCOPE_PROBE), e)
+            else:
+                if r.returncode == 0:
+                    ok = True
+                else:
+                    err = (r.stderr or b"")
+                    err = err.decode("utf-8", "replace") if isinstance(err, bytes) else str(err)
+                    reason = "the probe (%s) exited %s%s" % (" ".join(CLI_SCOPE_PROBE), r.returncode,
+                                                             (": " + err.strip()) if err.strip() else "")
+    elif want == "0":
+        reason = "ROMP_CLI_SCOPE=0"
+    else:
+        reason = "not under the supervised service (ROMP_SUPERVISED unset) and ROMP_CLI_SCOPE is not 1"
+    if log:
+        if ok:
+            log("cli scope: on — each session's CLI runs in its own transient systemd scope; a manager "
+                "restart leaves session-spawned tmux/setsid work alive")
+        else:
+            log("cli scope: off — %s" % reason)
+    return ok
 
 
 def pick_identity_color(sid: str, state_dir=None) -> tuple[str, str]:
@@ -1169,19 +1256,34 @@ SDK_STDERR_PLACEHOLDER = "Check stderr output for details"
 STDERR_TAIL_LINES = 40
 
 
+def _without_scope_fallback_notices(text: str) -> str:
+    """`text` less every line of the scope wrapper's fallback notice (CLI_SCOPE_FALLBACK_PREFIX). On a
+    fallback launch that notice is the FIRST line of the CLI's stderr, about 230 characters of it, and
+    _note_cli_scope_fallback logged it the moment it arrived; left in, it led the launch-error card of a
+    CLI that then failed at start and pushed the CLI's own reason past the card's 600-character cut. The
+    wrapper's exit-127 refusal (CLI_SCOPE_REFUSAL_PREFIX) is kept: it IS that launch's reason, and
+    nothing else reports it."""
+    return "\n".join(ln for ln in text.splitlines() if not ln.startswith(CLI_SCOPE_FALLBACK_PREFIX))
+
+
 def launch_failure_text(exc: BaseException, tail: str = "") -> str:
     """The most SPECIFIC human text a failed CLI launch carries. The SDK's ProcessError keeps the CLI's
     own stderr on the exception (the class that actually names the cause); `tail` is what romp captured
     off the child's stderr itself, used when the exception carries only the SDK's placeholder; everything
-    else falls back to the exception's own text. Truncated, since a stderr dump can run long and this
-    lands in a chat card."""
+    else falls back to the exception's own text. The scope wrapper's fallback notice is dropped from
+    every captured stderr part first (_without_scope_fallback_notices: the log already has it, and it
+    crowded the CLI's reason out). Truncated, since a stderr dump can run long and this lands in a chat
+    card."""
     parts = []
     for attr in ("stderr", "stdout"):
         v = getattr(exc, attr, None)
         if isinstance(v, bytes):
             v = v.decode("utf-8", "replace")
-        if isinstance(v, str) and v.strip() and SDK_STDERR_PLACEHOLDER not in v:
-            parts.append(v.strip())
+        if isinstance(v, str) and SDK_STDERR_PLACEHOLDER not in v:
+            v = _without_scope_fallback_notices(v)
+            if v.strip():
+                parts.append(v.strip())
+    tail = _without_scope_fallback_notices(tail)
     if tail.strip():
         parts.append(tail.strip())
     parts.append(("%s: %s" % (type(exc).__name__, exc)).strip())
@@ -1201,20 +1303,29 @@ def is_launch_limit(text: str) -> bool:
 
 
 def task_death_notice(tasks: list, cause: str = "a restart or crash") -> str:
-    """The visible romp notice for BACKGROUND TASKS that died with their claude process. Bg tasks are
-    the CLI's children, so a kernel restart or CLI crash silently kills a session's timers/watchers —
-    and a session idle-waiting on one would wait FOREVER for a completion notification that can never
-    arrive (nimbus's dead campaign watcher, the user 2026-07-11). The notice names what was lost (the
-    task descriptions from the lifecycle stream) so the session can relaunch exactly what still
-    matters. Enqueued by _on_session_gone (CLI died, kernel alive), the boot reconcile (kernel died;
-    read from the reg's bgTasks mirror), and _drop_live_work (a settings switch reconnected the CLI —
-    `cause` names that, so the session is told the truth about why its work vanished)."""
+    """The visible romp notice for BACKGROUND TASKS a session lost when its claude process ended. Bg
+    tasks are the CLI's children, so a kernel restart or CLI crash cuts a session off from its
+    timers/watchers — and a session idle-waiting on one would wait FOREVER for a completion
+    notification that can never arrive (nimbus's dead campaign watcher, the user 2026-07-11). The
+    notice names what was lost (the task descriptions from the lifecycle stream) so the session can
+    relaunch exactly what still matters. Enqueued by _on_session_gone (CLI died, kernel alive), the
+    boot reconcile (kernel died; read from the reg's bgTasks mirror), and _drop_live_work (a settings
+    switch reconnected the CLI; `cause` names that, so the session is told why its work was cut off).
+
+    It says "cut off", not "died" (2026-09-05): under the per-session scopes (cli_scope_supported) a
+    task's tool shell can outlive the CLI — the process may well still be running, and the session
+    that relaunches it without checking runs two. So the ask is to check first. The voice is the person the
+    session works for; the only romp noun is the sanctioned [romp] prefix (test_injected_voice)."""
     n = len(tasks)
     descs = "; ".join(d for d in ((t.get("desc") or "").strip() for t in tasks[:4]) if d)
+    one = n == 1
     return ("<!-- romp-injected --><!-- romp-system -->[romp] %d background task%s this session had "
-            "running died with its claude process (%s)%s. Their completion "
-            "notifications will never arrive — relaunch any that are still needed, or carry on if "
-            "they aren't." % (n, "" if n == 1 else "s", cause, (": " + descs) if descs else ""))
+            "running %s cut off from the session when its claude process ended (%s)%s. "
+            "%s completion notification%s will never arrive. Check whether %s still running before "
+            "relaunching %s; if %s needed, carry on."
+            % (n, "" if one else "s", "was" if one else "were", cause, (": " + descs) if descs else "",
+               "Its" if one else "Their", "" if one else "s", "it is" if one else "each is",
+               "it", "it isn't" if one else "they aren't"))
 
 # The marker only SDK-driven claude CLIs carry (the kernel drives them over stdin); a tmux session's
 # interactive `claude --resume` never has it, so the orphan reap can never touch a tmux CLI.
@@ -3304,11 +3415,26 @@ class SdkSession:
         session would drown the kernel log. The tail is drained where it matters — _record_launch_error
         logs it and puts it on the session's error card.
 
+        One line IS logged at once: the scope wrapper's fallback notice (CLI_SCOPE_FALLBACK_PREFIX, from
+        bin/romp-cli-scope), which says this CLI is running directly, without its transient scope,
+        after the pre-flight scope failed. On that path the CLI starts, so no launch failure ever drains
+        the tail, and until 2026-09-05 the line was never read: the boot verdict kept saying scopes were
+        on while the session's work sat in the service cgroup, where a service restart kills it. So the
+        line goes to the backend's problem log immediately, naming the session
+        (_note_cli_scope_fallback) — as well as being buffered like any other line. The wrapper's other
+        line, the exit-127 refusal (CLI_SCOPE_REFUSAL_PREFIX, ROMP_CLI_REAL unset), is only buffered: no
+        CLI started, so the launch fails and _record_launch_error reports the line from the tail.
+        Logging it here as well reported the one event twice, and the first time as a CLI "started
+        outside a scope" when none had started.
+
         Called from the SDK's stderr reader task; it isolates exceptions per line, but keep it total
         anyway (a raise here would lose the very diagnostics this exists to keep)."""
         try:
             if line and line.strip():
-                self._stderr_tail.append(line.rstrip("\n"))
+                text = line.rstrip("\n")
+                self._stderr_tail.append(text)
+                if text.startswith(CLI_SCOPE_FALLBACK_PREFIX):
+                    self.backend._note_cli_scope_fallback(self, text)
         except Exception:
             pass
 
@@ -4762,6 +4888,19 @@ class SdkBackend:
         if self._sdk_missing and log:
             self._log("claude_agent_sdk is NOT importable — every SDK session will report itself unable to "
                       "start (run bin/romp-sdk-setup). tmux sessions are unaffected.", problem=True)
+        # Per-session transient scopes (see cli_scope_supported): ONE verdict per backend, cached here;
+        # _options reads it at every connect. The probe runs here, never per session.
+        self.cli_scope = cli_scope_supported(log=self._log)
+        if self.cli_scope:
+            # The SDK's per-connect minimum-version check spawns `[cli_path, "-v"]` with the KERNEL's
+            # environment, not options.env (claude_agent_sdk 0.2.132, _check_claude_version), so the
+            # wrapper must find ROMP_CLI_REAL here too — without it the probe exited 127, the SDK
+            # swallowed that, and the version warning was silently off while every connect forked a
+            # probe that failed. One value per backend; the per-session entry in _options stays (the
+            # session's own launch reads it). ROMP_SID is unset for it, so the wrapper runs the probe
+            # directly, unscoped.
+            os.environ["ROMP_CLI_REAL"] = self.claude_bin
+        self._cli_scope_wrapper_logged = False    # the missing-wrapper fallback is reported once per backend
         self._heal_attempts: dict[str, int] = {}  # sid -> crash-resume attempts since its last COMPLETED turn
         #                                           (bounds _heal_cut_session to one resume per cut; a completed
         #                                           turn resets it, so a crash LOOP can't respawn forever)
@@ -5820,6 +5959,17 @@ class SdkBackend:
             rows = list(self._problems)
         return rows[-limit:] if limit else rows
 
+    def _note_cli_scope_fallback(self, sess, text: str) -> None:
+        """The scope wrapper wrote its fallback notice on `sess`'s stderr (SdkSession._on_cli_stderr,
+        CLI_SCOPE_FALLBACK_PREFIX): this CLI is running directly, inside the service cgroup, after the
+        pre-flight scope failed. Logged at once as a problem (the error center shows it; a launch that
+        succeeds never drains the stderr tail, so nothing else would), so a reader of the log can tell
+        that the boot verdict "cli scope: on" stopped holding. The wrapper's exit-127 refusal
+        (CLI_SCOPE_REFUSAL_PREFIX) never reaches here: no CLI started, and the launch-error path
+        reports it."""
+        self._log("cli scope: session %s (%s) started its CLI outside a scope — %s"
+                  % (sess.name, str(sess.sid)[:8], text), problem=True)
+
     def _poke(self):
         if self._poke_cb:
             try:
@@ -5883,6 +6033,21 @@ class SdkBackend:
             effort=("xhigh" if (sess.effort or DEFAULT_EFFORT) == "ultracode" else (sess.effort or DEFAULT_EFFORT)),
             max_buffer_size=SDK_MAX_BUFFER,   # a >1MB stdout message would crash the receive loop → kill any live picker
         )
+        # Per-session transient scope (cli_scope_supported): cli_path becomes the exec-in-place wrapper
+        # and ROMP_CLI_REAL carries the real CLI to it. The SDK spawns `[cli_path, *args]`, and the
+        # wrapper execs systemd-run, which execs the CLI, so the pid and argv the SDK sees ARE the
+        # CLI's. A missing or non-executable wrapper is a packaging bug, reported once and loudly —
+        # the session still starts on the direct path, inside the service cgroup.
+        if self.cli_scope:
+            wrapper = cli_scope_wrapper()
+            if os.access(wrapper, os.X_OK):
+                kw["cli_path"] = wrapper
+                kw["env"]["ROMP_CLI_REAL"] = self.claude_bin
+            elif not self._cli_scope_wrapper_logged:
+                self._cli_scope_wrapper_logged = True
+                self._log("cli scope: the wrapper %s is missing or not executable (a packaging bug) — "
+                          "sessions start with the CLI directly, inside the service cgroup, until it is "
+                          "restored" % wrapper, problem=True)
         # Thinking summaries (the kernel's per-install gear toggle, 2026-09-01). On the SDK's stream-json
         # path the CLI requests NO thinking display: it uses an explicit --thinking-display when given,
         # consults the showThinkingSummaries settings key only when interactive, and forces "omitted" only
