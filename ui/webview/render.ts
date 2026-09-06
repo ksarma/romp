@@ -4735,6 +4735,12 @@ function releaseTabStrip(): void {
 // loose ones never read as one run. `hidden` is what a folded header stands in for — its members less
 // the ones pinned to show through the fold (planStrip) — so its count and its flag read those, never a
 // member whose own tab is on screen; its words (count, title, spoken label) are headWords, pure.
+// To assistive tech (the 2026-09-06 review, checked against a real accessibility tree): the chevron,
+// the color bar and the pip are decoration (aria-hidden — the caret glyph was read aloud before the
+// name), the header's name is an aria-label in words (name and count, plus the pip's phrase when it
+// wears one), so the nested flag's own label no longer runs into it; and the header holding the active
+// tab is a labelled group, not a button — it takes no action and no focus, and "button, expanded"
+// promised both.
 function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string[]): HTMLElement {
   if (sec.name === null) {
     const sep = el("div", "tab-group-sep");
@@ -4756,14 +4762,17 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   const total = sec.ids.length;
   const words = headWords(name, total, hidden.length, collapsed, holdsActive);
   head.title = words.title;
-  // a label the keyboard can fold: Enter or Space go through the same click → delegate path as the
-  // pointer. NOT when they land on the flag button inside the header: a native button activates itself
-  // (its own click → open-group), and cancelling its keydown here clicked the header instead. The active
-  // tab's header has no fold action, so it is not a tab stop — a stop that does nothing is noise in the
-  // tab order.
-  head.setAttribute("role", "button");
-  head.setAttribute("aria-expanded", collapsed ? "false" : "true");
-  if (!holdsActive) {
+  let spoken = words.label;
+  if (holdsActive) {
+    // no fold action and no tab stop (a stop that does nothing is noise in the tab order), so not a
+    // button either: a labelled group, read once, promising nothing
+    head.setAttribute("role", "group");
+  } else {
+    // a label the keyboard can fold: Enter or Space go through the same click → delegate path as the
+    // pointer. NOT when they land on the flag button inside the header: a native button activates
+    // itself (its own click → open-group), and cancelling its keydown here clicked the header instead.
+    head.setAttribute("role", "button");
+    head.setAttribute("aria-expanded", collapsed ? "false" : "true");
     head.tabIndex = 0;
     head.addEventListener("keydown", (e) => {
       if ((e.target as HTMLElement | null)?.closest(".tab-group-flag")) return;
@@ -4772,9 +4781,11 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   }
   const caret = el("span", "tab-group-caret");
   caret.textContent = "▸";                       // turned down by CSS while open (.tab-group-head:not(.collapsed))
+  caret.setAttribute("aria-hidden", "true");
   head.appendChild(caret);
-  const swatch = el("span", "tab-group-swatch");  // the tag's colour as a short bar — a dot beside a name is a session pip
+  const swatch = el("span", "tab-group-swatch");  // the tag's color as a short bar — a dot beside a name is a session pip
   if (sec.color) swatch.style.background = sec.color;
+  swatch.setAttribute("aria-hidden", "true");
   head.appendChild(swatch);
   const label = el("span", "tab-group-name");
   label.textContent = name;
@@ -4793,6 +4804,8 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
     if (kind) {
       const pip = el("span", "tab-group-pip" + (kind === "working" ? "" : " " + kind));
       pip.title = sectionPipTitle(kind, sectionPipMembers(kind, hidden.map((id) => sessions.get(id))));
+      pip.setAttribute("aria-hidden", "true");   // a dot says nothing aloud: its phrase rides the header's label
+      spoken += "; " + pip.title;
       head.appendChild(pip);
     }
     // the USER-TODO flag (the user 2026-09-06): a member tab's ⚑ — "this session flagged something
@@ -4827,6 +4840,7 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
       head.appendChild(b);
     }
   }
+  head.setAttribute("aria-label", spoken);
   head.draggable = true;
   head.addEventListener("dragstart", (e) => {
     draggedGroup = name;

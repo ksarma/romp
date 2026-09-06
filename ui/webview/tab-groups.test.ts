@@ -374,10 +374,9 @@ test("the header's structure and gestures read as a label: chevron (flips with t
   assert.ok(!head.includes("tab-close") && !head.includes("tabStateClass(") && !head.includes("tab-dot") && !head.includes("tabCtxGauge("),
     "no close, no state class of its own, no tab pip, no gauge");
   // keyboard: a button to the keyboard, through the same click → delegate path as the pointer; the active
-  // tab's header (no fold action) is not a tab stop
-  assert.match(head, /head\.setAttribute\("role", "button"\);\s*\n\s*head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);/);
-  assert.match(head, /if \(!holdsActive\) \{\s*\n\s*head\.tabIndex = 0;\s*\n\s*head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n\s*if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}\s*\n\s*\}\);/,
-    "…standing down for the flag button inside it (tab-group-flags.test)");
+  // tab's header (no fold action) is not a tab stop and not a button (the accessibility test below)
+  assert.match(head, /\} else \{[^]*?head\.setAttribute\("role", "button"\);\s*\n\s*head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);\s*\n\s*head\.tabIndex = 0;\s*\n\s*head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n\s*if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}\s*\n\s*\}\);\s*\n\s*\}/,
+    "role, expanded state, tab stop and key handler together, the handler standing down for the flag button inside it (tab-group-flags.test)");
   // a push mid-read must not kick focus off the header: renderTabs re-focuses the same group after the rebuild
   assert.match(RENDER, /const focusedGroup = \(focusedEl\?\.closest\("\.tab-group-head"\) as HTMLElement \| null\)\?\.dataset\.group;\s*\n\s*const focusedFlag = !!focusedEl\?\.classList\.contains\("tab-group-flag"\);\s*\n\s*const refocusTab = bar\.contains\(document\.activeElement\);/,
     "captured before the tab rule (chat-focus-model.test pins that rule's two-line shape)");
@@ -608,4 +607,22 @@ test("executed: a folded section whose EVERY member is pinned stays folded — t
   assert.match(MAKE_HEAD, /n\.textContent = words\.count;/);
   assert.ok(!MAKE_HEAD.includes("hidden.length : total"), "no second count rule beside the pure one");
   assert.match(GUIDE, /when every tab in a section is set to\s+show, the folded header shows the full count and its tooltip says nothing is hidden\./);
+});
+
+test("assistive tech hears a label: decoration is aria-hidden, the header's name is words (name, count, the pip's phrase), and the active section's header is a labelled group — never a button it cannot be", () => {
+  // a real accessibility tree (the 2026-09-06 review) read the folded header as a button named "▸ archived 2
+  // waiting on you — tests flagged … click to open this group" — the caret glyph and the nested flag's
+  // label folded into the name — and the active section's header as "button, expanded" with no focus
+  // and a no-op click
+  assert.match(MAKE_HEAD, /caret\.setAttribute\("aria-hidden", "true"\);/, "the chevron is decoration");
+  assert.match(MAKE_HEAD, /swatch\.setAttribute\("aria-hidden", "true"\);/, "so is the color bar");
+  assert.match(MAKE_HEAD, /pip\.setAttribute\("aria-hidden", "true"\);[^\n]*\n\s*spoken \+= "; " \+ pip\.title;/, "the pip too — its phrase rides the label instead");
+  assert.match(MAKE_HEAD, /let spoken = words\.label;/, "the label starts as headWords' (name and count, in words — executed above)");
+  assert.match(MAKE_HEAD, /head\.setAttribute\("aria-label", spoken\);\s*\n\s*head\.draggable = true;/, "set once, after the pip; an aria-label outranks name-from-content, so the flag's label stays the flag's");
+  assert.ok(!MAKE_HEAD.includes('b.setAttribute("aria-hidden"') && !MAKE_HEAD.includes('label.setAttribute("aria-hidden"'), "the flag is a control and the name is the name: neither hidden");
+  assert.match(MAKE_HEAD, /if \(holdsActive\) \{[^}]*head\.setAttribute\("role", "group"\);\s*\n\s*\} else \{/, "no action, no stop → a labelled group");
+  assert.equal(MAKE_HEAD.split('"aria-expanded"').length - 1, 1, "aria-expanded only where the fold is — inside the foldable branch");
+  assert.equal(MAKE_HEAD.split('"role", "button"').length - 1, 1);
+  assert.ok(MAKE_HEAD.indexOf('"role", "group"') < MAKE_HEAD.indexOf('"role", "button"'), "the active branch first, as the source reads");
+  assert.equal(headWords("archived", 2, 2, true, false).label, "archived, 2 sessions folded");
 });
