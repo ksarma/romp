@@ -2259,6 +2259,102 @@ class RefusalRowsAreBounded(_Wire):
         self.assertEqual(next(r for r in a["refused"] if not r.get("tid"))["moreEdited"], 0, "no `edited`: nothing to count")
 
 
+class AckErrorNamesThePostersRefusalFirst(_Wire):
+    """Round 9 of the 2026-09-05 review: round 8 bounded the ack's one-line `error` at 1000 characters
+    but kept the judge's order, in which the quiet rows (differing copies of tags the poster did not
+    edit, acked ok on their own) precede the cap pass. With eight or more quiet rows the toast named
+    only refusals the user never made and cut the one row that made `ok` false. Now the rows `edited`
+    names — or the summary row counting one — lead, and the quiet rows follow as far as the cap allows;
+    the rows themselves keep the judge's order, and so does the line when the write carries no
+    `edited`."""
+
+    QUIET = "your copy of it differs from the store's and this write did not edit it, so the store's copy was kept"
+    CAP = "the views blob caps at 32 tags, so it was not created"
+
+    def _seed_many(self, n):
+        tags = [{"id": "g%d" % i, "name": "tag-name-%02d" % i, "color": "", "members": []} for i in range(n)]
+        ack = self.post({"type": "setTimelineViews", "writeId": "w0", "views": {"active": "all", "tags": tags}})
+        self.assertEqual((ack["ok"], ack["refused"], len(ack["views"]["tags"])), (True, [], n))
+        return ack["views"]
+
+    def test_the_finders_scenario_a_create_over_the_cap_behind_ten_differing_copies(self):
+        """The store is full; a dashboard that slept through a batch of recolors elsewhere posts its whole
+        blob with its one create as `edited`: ten of its copies differ, and the create is refused by the
+        cap. The rows list the ten quiet refusals then the create's, and the line leads with the create."""
+        served = self._seed_many(km._VIEWS_MAX_TAGS)
+        stale = json.loads(json.dumps(served))
+        for t in stale["tags"][:10]:
+            t["color"] = "#000000"
+        stale["tags"].append({"id": "mine", "name": "mine", "color": "#DD42FF", "members": []})
+        with contextlib.redirect_stderr(io.StringIO()):
+            a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale, "edited": ["mine"]})
+        self.assertFalse(a["ok"], "the poster's own create was refused")
+        self.assertEqual([r["tid"] for r in a["refused"]], ["g%d" % i for i in range(10)] + ["mine"],
+                         "the rows keep the judge's order: the quiet ten, then the cap pass")
+        self.assertEqual(a["refused"][-1]["reason"], self.CAP)
+        self.assertTrue(a["error"].startswith('"mine": %s; "tag-name-00": %s' % (self.CAP, self.QUIET)),
+                        "the line leads with the refusal the user made, then the quiet rows in judge order: " + a["error"])
+        self.assertLessEqual(len(a["error"]), km._ACK_ERROR_CAP)
+        self.assertRegex(a["error"], r" and \d+ more$", "the quiet rows overflow the cap, not the poster's")
+        self.assertEqual(len(self.notices), 1)
+        self.assertIn('"mine" (over the cap)', self.notices[0][0], "the notice agrees with the line")
+        self.assertNotIn("mine", [t["id"] for t in km._timeline_views()["tags"]])
+
+    def test_the_summary_row_counting_the_posters_create_leads_the_line(self):
+        many = [{"id": "g%d" % i, "name": "t%d" % i, "color": "", "members": []} for i in range(10000)]
+        with contextlib.redirect_stderr(io.StringIO()):
+            a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": {"active": "all", "tags": many},
+                           "edited": ["g9999"]})
+        self.assertFalse(a["ok"])
+        summary = next(r for r in a["refused"] if not r.get("tid"))
+        self.assertTrue(a["error"].startswith(summary["reason"] + "; "),
+                        "the row that made ok false leads, nameless as it is: " + a["error"][:200])
+        self.assertIn("(1 of them this write edited)", a["error"])
+        self.assertLessEqual(len(a["error"]), km._ACK_ERROR_CAP)
+
+    def test_without_edited_every_row_is_loud_and_the_line_keeps_the_judges_order(self):
+        served = self._seed_many(km._VIEWS_MAX_TAGS)
+        stale = json.loads(json.dumps(served))
+        time.sleep(1.1)
+        with contextlib.redirect_stderr(io.StringIO()):
+            for i in range(10):
+                self.assertIsNone(km._edit_tag(tid="g%d" % i, color="#DD42FF")[1])     # newer edits elsewhere
+        stale["tags"].append({"id": "mine", "name": "mine", "color": "", "members": []})
+        with contextlib.redirect_stderr(io.StringIO()):
+            a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale})      # an older client
+        self.assertFalse(a["ok"])
+        self.assertEqual([r["tid"] for r in a["refused"]], ["g%d" % i for i in range(10)] + ["mine"])
+        self.assertTrue(a["error"].startswith('"tag-name-00": your copy predates a newer edit'),
+                        "no `edited`: every refusal is the poster's, so the judge's order stands: " + a["error"][:120])
+
+    def test_the_rule_at_the_ack_itself(self):
+        """The ordering rule without the door: the poster's rows (a tid `edited` names, or the summary row
+        with `moreEdited`) first in judge order, then the rest; judge order when `edited` is absent or
+        names none of them; the rows in the ack are never reordered."""
+        quiet = [{"tid": "g%d" % i, "name": "tag-name-%02d" % i, "reason": self.QUIET} for i in range(10)]
+        mine = {"tid": "mine", "name": "mine", "reason": self.CAP}
+        summary = {"reason": "and 5 more entries past that bound were not read (1 of them this write edited)",
+                   "more": 5, "moreEdited": 1}
+
+        def ack(refused, edited):
+            sent = []
+            km._ack_views_write({"send": lambda s: sent.append(json.loads(s))}, "viewsAck", "w", False,
+                                refused=refused, edited=edited)
+            self.assertEqual(sent[0]["refused"], refused, "the rows keep the judge's order")
+            return sent[0]["error"]
+        line = ack(quiet + [mine], ["mine"])
+        self.assertTrue(line.startswith('"mine": %s; "tag-name-00": %s; "tag-name-01"' % (self.CAP, self.QUIET)), line)
+        self.assertRegex(line, r" and \d+ more$")
+        self.assertLessEqual(len(line), km._ACK_ERROR_CAP)
+        line = ack(quiet[:3] + [mine, summary], ["mine"])
+        self.assertTrue(line.startswith('"mine": %s; %s; "tag-name-00"' % (self.CAP, summary["reason"])), line)
+        line = ack(quiet + [summary], ["g9999"])
+        self.assertTrue(line.startswith(summary["reason"] + '; "tag-name-00"'), line)
+        self.assertTrue(ack(quiet + [mine], None).startswith('"tag-name-00"'), "no `edited`: judge order")
+        self.assertTrue(ack(quiet + [mine], ["absent"]).startswith('"tag-name-00"'), "none of the poster's: judge order")
+        self.assertTrue(ack(quiet + [mine], []).startswith('"tag-name-00"'))
+
+
 class SentinelConnectPushCaps(_Wire):
     """Round 8 of the 2026-09-05 review: a chat page's connect push sends no tabOrder frame on a sentinel
     cycle (_tab_list_tmux returned None — a boot-time tmux collapse with nothing to carry), so the caps

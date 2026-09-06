@@ -4168,15 +4168,24 @@ def _apply_tag_edit(e):
 _ACK_ERROR_CAP = 1000   # the ack's one-line `error`: the rows carry every reason in full; this is the toast's copy
 
 
-def _ack_views_write(client, kind, write_id, ok, error=None, refused=None, info=None):
+def _refusal_is_the_posters(row, edited):
+    """Whether a refusal row is the POSTER'S OWN: a tag `edited` names, or the past-the-bound summary
+    row counting one (`moreEdited`). The door's `ok` rule and the ack's one-line `error` read the rows
+    by this one predicate — `ok` is false when any row is the poster's, and the line names those first."""
+    return row.get("tid") in edited or bool(row.get("moreEdited"))
+
+
+def _ack_views_write(client, kind, write_id, ok, error=None, refused=None, info=None, edited=None):
     """Answer a dashboard's views write ON ITS OWN SOCKET: {type: kind, writeId, ok, views, seq,
     error?, refused?, tid?, name?}. `views` is the post-write client blob (stamped), which the poster
     adopts as its new base — clearing its optimistic copy on this event rather than on a frame
     count — and reverts to when ok is false. `refused` (the whole-blob path) lists the tags the
     stale-writer guard kept the store's copy of, each with its reason; `error` is the one-line form
     of either. `info` (a targeted edit) names the tag the edit touched — a create's caller learns the
-    kernel-minted `tid` and `name` here and opens its rename input on that id. A dead socket is the
-    client's problem, never the write's: the edit landed before this runs."""
+    kernel-minted `tid` and `name` here and opens its rename input on that id. `edited` is the
+    write's own list (the whole-blob path): it orders the not-ok `error`, the poster's own refusals
+    first. A dead socket is the client's problem, never the write's: the edit landed before this
+    runs."""
     if not client or not callable(client.get("send")):
         return
     views = _views_client()
@@ -4196,9 +4205,19 @@ def _ack_views_write(client, kind, write_id, ok, error=None, refused=None, info=
         # did not edit) carries no `error` — there is nothing to tell the user.
         if not ok:
             # bounded (round 8 of the 2026-09-05 review — it was one entry per row, O(N) in the posted
-            # array); a row without a name (the past-the-bound summary) is its reason alone
+            # array); a row without a name (the past-the-bound summary) is its reason alone.
+            # THE POSTER'S OWN ROWS FIRST (round 9 of the same review): the judge appends the quiet rows
+            # (copies of tags the poster did not edit, acked ok on their own) before the cap pass, so
+            # in judge order the bound cut the one row that made `ok` false — a refused create behind
+            # eight quiet rows — and the toast named only refusals the user never made. With `edited`,
+            # the rows it names (or the summary row counting one, _refusal_is_the_posters) lead, in
+            # judge order among themselves, and the quiet rows follow as far as the cap allows; with
+            # none of the poster's among them, or no `edited` (every row is loud), judge order stands.
+            mine, rest = [], []
+            for r in refused:
+                (mine if edited is not None and _refusal_is_the_posters(r, edited) else rest).append(r)
             error = error or _notice_list("", "", [(('"%s": ' % r["name"]) if r.get("name") else "")
-                                                    + (r.get("reason") or "refused") for r in refused],
+                                                    + (r.get("reason") or "refused") for r in mine + rest],
                                           cap=_ACK_ERROR_CAP, joiner="; ") or "refused"
     if error:
         ack["error"] = str(error)
@@ -40278,15 +40297,16 @@ class Handler(BaseHTTPRequestHandler):
             # without a notice (the 2026-09-05 review: a lens change from a dashboard that had slept
             # through another's tag edit toasted a refusal for a tag the user never edited). A write
             # without `edited` (an older client) keeps the strict reading: any refusal, ok false.
+            edited = msg.get("edited")
+            edited = [x for x in edited if isinstance(x, str)] if isinstance(edited, list) else None
             try:
-                edited = msg.get("edited")
-                edited = [x for x in edited if isinstance(x, str)] if isinstance(edited, list) else None
                 with _views_lock:
                     refused = _set_timeline_views(msg["views"], edited=edited)   # the setter files the notice by the same rule
                 if edited is not None:
                     # …or the past-the-bound summary row counts an edited id among the entries it
-                    # stands for (`moreEdited`, round 8 of the 2026-09-05 review)
-                    ok = not any(r.get("tid") in edited or r.get("moreEdited") for r in refused)
+                    # stands for (`moreEdited`, round 8 of the 2026-09-05 review); the ack orders its
+                    # one-line `error` by the same predicate
+                    ok = not any(_refusal_is_the_posters(r, edited) for r in refused)
                 else:
                     ok = not refused
                 err = None
@@ -40294,7 +40314,7 @@ class Handler(BaseHTTPRequestHandler):
                 sys.stderr.write("setTimelineViews: %s\n" % traceback.format_exc())
                 refused, ok, err = [], False, "the write failed on the kernel: %s" % (str(e) or type(e).__name__)
             _mark_views_dirty()
-            _ack_views_write(client, "viewsAck", msg.get("writeId"), ok, error=err, refused=refused or [])
+            _ack_views_write(client, "viewsAck", msg.get("writeId"), ok, error=err, refused=refused or [], edited=edited)
         elif msg and msg.get("type") == "tagEdit":
             # a dashboard's tag gesture — {writeId, edit: {op, tid, …}}: create / rename / recolor /
             # addMember / removeMember / delete, by the tag's stored id — as a TARGETED edit through
