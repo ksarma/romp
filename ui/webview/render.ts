@@ -32,7 +32,7 @@ import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned, headWords,
-         reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
+         tagRenames, followTagRenames, reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
 import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
@@ -522,7 +522,7 @@ function effViews(): SessionViews | null { return pendingSessionViews ?? session
 // that push's seq, is the event that adopts it (rounds 6 and 7 of the 2026-09-05 review; capsAdopts).
 function takeViews(v: SessionViews | null | undefined): boolean {
   if (!v) return false;
-  if (adoptViews(sessionViews, v)) { sessionViews = v; rejectedViews = null; return true; }
+  if (adoptViews(sessionViews, v)) { adoptBase(v); rejectedViews = null; return true; }
   rejectedViews = v;
   if (!staleViewsDiagSent) {
     staleViewsDiagSent = true;
@@ -530,6 +530,23 @@ function takeViews(v: SessionViews | null | undefined): boolean {
       data: { held: seqOf(sessionViews), got: seqOf(v) } });
   }
   return false;
+}
+// The base moves to `v` — the ONE assignment of sessionViews, reached from the gate above and from
+// the caps frame's adoption below — and the tab strip's pins follow any tag `v` renames relative to
+// the blob it replaces (tab-groups.ts tagRenames / followTagRenames): a tag that keeps its id under a
+// new name carries its pinned members' entries to that name, so a pinned tab stays pinned to its group
+// through the rename. The store (romp:tabgroups) is rewritten only when an entry changed, and after
+// the base has moved, so the write's TABGROUPS_EVENT render reads the new blob. Renames follow the
+// ADOPTED blob, never the optimistic copy: the kernel's answer is the event, and a refused rename then
+// has nothing to undo here.
+function adoptBase(v: SessionViews): void {
+  const renames = tagRenames(sessionViews, v);
+  sessionViews = v;
+  if (!renames.length) return;
+  const unions = viewTagUnion(v);
+  const st = readTabGroups(unions);
+  const next = followTagRenames(st, renames, unions);
+  if (next !== st) writeTabGroups(next);
 }
 function captureViews(v: SessionViews | null) {
   takeViews(v);
@@ -630,7 +647,7 @@ function postTagEdit(nv: SessionViews, edit: TagEditOp, newId?: string) {
 function onKernelCaps(m: { caps?: unknown; viewsSeq?: unknown }) {
   kernelCaps = new Set(Array.isArray(m.caps) ? m.caps.filter((c): c is string => typeof c === "string") : []);
   const adopted = capsAdopts(rejectedViews, m.viewsSeq);
-  if (adopted) sessionViews = rejectedViews;
+  if (adopted && rejectedViews) adoptBase(rejectedViews);
   rejectedViews = null;
   if (viewsWrites.length) {
     viewsWrites = []; pendingSessionViews = null;
@@ -705,6 +722,10 @@ let collapsedTabIds = new Set<string>();
 /** Every tab the strip knows — the kernel's order plus any pushed tab not yet in it (a placeholder):
  *  the "does this session still exist" of the pin prune (tab-groups.ts prunePinned). */
 function knownTabIds(): Set<string> { return new Set<string>([...order, ...tabMeta.keys()]); }
+/** The tab-groups store as a WRITE reads it: with the current unions, so an entry in the store's earlier
+ *  shape is migrated faithfully before it is written back (tab-groups.ts parseTabGroups). A read that
+ *  only looks at `.on` needs none. */
+function tabGroups() { return readTabGroups(viewTagUnion(effViews())); }
 let draggedGroup: string | null = null;   // a section header mid-drag (reorders tagOrder) — never a tab
 // the tags a create in flight named (openProvisional): the provisional tab sections under its future
 // home from the first paint (planStrip's `pending`), instead of landing loose and jumping on the frame
@@ -5076,7 +5097,8 @@ function renderTabs() {
   // the phone layout (phoneLayout — the kernel page's own media rule) the plan is the flat strip,
   // since the phone's session list is scraped from every rendered tab and has no header to unfold.
   // A create in flight (the provisional tab) sections under the tags its request named.
-  const plan = planStrip(visibleIds, viewTagUnion(effViews()), readTabGroups(), activeId, phoneLayout(),
+  const unions = viewTagUnion(effViews());
+  const plan = planStrip(visibleIds, unions, readTabGroups(unions), activeId, phoneLayout(),
                          provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
   collapsedTabIds = plan.folded;
   for (const item of plan.items) {
@@ -5255,7 +5277,7 @@ function renderTabs() {
       // neither here nor on the phone mount below.
       ...(phoneLayout() ? {} : {
         groupToggle: { label: "Group tabs by tag", on: () => readTabGroups().on,
-                       toggle: () => { const st = readTabGroups(); writeTabGroups({ ...st, on: !st.on }); } } }),
+                       toggle: () => { const st = tabGroups(); writeTabGroups({ ...st, on: !st.on }); } } }),
       onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
     });
   });
@@ -5757,18 +5779,20 @@ function showTabMenu(e: MouseEvent, id: string) {
           sub.appendChild(row);
         }
         // SHOW WHEN FOLDED (the user 2026-09-06): keep this tab visible under its folded group. A
-        // per-browser view preference like the fold itself (romp:tabgroups), keyed by the section the
-        // user sees (pinKeys: the local tag's id for a member it holds, the name for a member a remote
-        // host's tag holds, both for one both hold) and the sid, so a move to another group starts
-        // unpinned; off drops the tab's every entry. Only while the strip is sectioned and the session
-        // has a home tag —
-        // there is no fold to show through otherwise. The row wears the home tag's chip and the menus'
-        // ✓ when on; the write prunes the pins of tags and sessions that are gone (this is the one
-        // write path, and a prune here moves nothing on screen), notifies (TABGROUPS_EVENT), and the
-        // strip re-renders, the fold's own path.
+        // per-browser view preference like the fold itself (romp:tabgroups), PER SECTION: one entry per
+        // tab and section, storing the section's name and its local tag's id (tab-groups.ts PinnedRef),
+        // matched under either, so the pin follows the section through a host attaching or detaching,
+        // a same-named tag appearing on the other side, and the local tag's rename (adoptBase carries
+        // the name across). A move to another group starts unpinned there; on and off act on the home
+        // section's entry alone, so the row's copy — "while <home> is folded" — is the whole truth.
+        // Only while the strip is sectioned and the session has a home tag — there is no fold to show
+        // through otherwise. The row wears the home tag's chip and the menus' ✓ when on; the write
+        // prunes the pins of tags and sessions that are gone (this is the one write path, and a prune
+        // here moves nothing on screen), notifies (TABGROUPS_EVENT), and the strip re-renders, the
+        // fold's own path.
         if (home) {
           const sec = sectionRef(home);
-          const on = isPinned(readTabGroups(), sec, id);
+          const on = isPinned(tabGroups(), sec, id);
           sub.appendChild(el("div", "ctx-sep"));
           const row = el("div", "ctx-item ctx-item-toggle ctx-item-pin" + (on ? " current" : ""));
           const chip = el("span", "ctx-tag-dot"); chip.style.background = home.color || "var(--dim)"; row.appendChild(chip);
@@ -5778,7 +5802,7 @@ function showTabMenu(e: MouseEvent, id: string) {
           sb2.textContent = on ? `stays on the strip while ${home.name} is folded` : `keep this tab on the strip while ${home.name} is folded`;
           bodyE.appendChild(sb2);
           row.appendChild(bodyE);
-          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(prunePinned(togglePinned(readTabGroups(), sec, id), unionFor(), knownTabIds())); build(); });
+          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(prunePinned(togglePinned(tabGroups(), sec, id), unionFor(), knownTabIds())); build(); });
           sub.appendChild(row);
         }
         if (holding().length || others.length) sub.appendChild(el("div", "ctx-sep"));
@@ -14873,7 +14897,7 @@ setupSettings();
     // toggle and a sibling pane's alike.
     "toggle-group": (el) => {
       const name = el.dataset.group;
-      if (name) writeTabGroups(setSectionCollapsed(readTabGroups(), name, el.dataset.folded !== "1"));
+      if (name) writeTabGroups(setSectionCollapsed(tabGroups(), name, el.dataset.folded !== "1"));
     },
     // the header of the section holding the ACTIVE tab (makeGroupHead): unfoldable while active, so
     // the click stores nothing — the delegate's flash is the whole acknowledgement
@@ -14883,7 +14907,7 @@ setupSettings();
     // opened the group must still read as "open", not fold it back. Same render path as toggle-group.
     "open-group": (el) => {
       const name = el.dataset.group;
-      if (name) writeTabGroups(setSectionCollapsed(readTabGroups(), name, false));
+      if (name) writeTabGroups(setSectionCollapsed(tabGroups(), name, false));
     },
     close: (el) => {
       const id = el.dataset.id;

@@ -9,9 +9,10 @@
 //
 // Per-browser state, this viewer's like romp:vieworder: whether the strip sections at all (ON by
 // default whenever some tag holds a visible tab; the chat tag-lens menu's "Group tabs by tag" turns
-// it off) and which sections are folded. `archived` starts folded — that tag exists to put sessions
-// away. Notification is view-order.ts's two-path idiom: localStorage reaches other panes (the
-// storage event), a same-window CustomEvent reaches the writer. Pure and DOM-free (the tab-order.ts
+// it off), which sections are folded, and which members show through their section's fold (the
+// tab menu's "Show when folded"). `archived` starts folded — that tag exists to put sessions away.
+// Notification is view-order.ts's two-path idiom: localStorage reaches other panes (the storage
+// event), a same-window CustomEvent reaches the writer. Pure and DOM-free (the tab-order.ts
 // pattern) so the rule executes in node tests; render.ts paints it.
 import { SessionViews, TagUnion, viewTags } from "./session-views";
 
@@ -20,27 +21,31 @@ export const TABGROUPS_EVENT = "romp-tabgroups";
 /** sections that start folded until the user opens them (remembered per browser once toggled) */
 export const DEFAULT_COLLAPSED: ReadonlySet<string> = new Set(["archived"]);
 
-/** One strip section: a tag's name + color and the visible tabs homed in it, plus `key` (sectionKey),
+/** One strip section: a tag's name + color and the visible tabs homed in it, plus `localId` — the
+ *  local tag's stored id when the union has one, null for a union only remote hosts' tags make —
  *  which its pins are matched against beside its name (isPinned). name null = the trailing untagged
- *  section (unlabeled by the user's ruling — a separator, not a header; key ""). */
-export interface TabSection { name: string | null; key: string; color: string; ids: string[] }
+ *  section (unlabeled by the user's ruling — a separator, not a header; localId null). */
+export interface TabSection { name: string | null; localId: string | null; color: string; ids: string[] }
 
-/** A section as a pin is MATCHED against it (isPinned): its stored key and its name. The plan's
- *  TabSection is one. */
-export type SectionMatch = Pick<TabSection, "key" | "name">;
-
-/** A section as a pin is WRITTEN against it (setPinned, pinKeys): the match plus which tag holds each
- *  member — `localMembers`, the ones the local tag holds, and `remoteMembers`, the ones a REMOTE
- *  host's tag holds (a member can be in both) — because the keys a pin is stored under turn on that
- *  (pinKeys). Only sectionRef builds one, from the union: the plan's sections read pins and never
- *  write them, and a TabSection is not one, so a write cannot take a section that does not know
- *  which tag anchors its members. */
-export interface SectionRef extends SectionMatch { localMembers: readonly string[]; remoteMembers: readonly string[] }
+/** A section as a pin is matched and written against it: its name and its local tag's id. The plan's
+ *  TabSection is one; sectionRef builds one from a union (the menu row's home tag). */
+export type SectionRef = Pick<TabSection, "name" | "localId">;
 
 /** A member kept visible under its folded section — the tab menu's "Show when folded" (the user
- *  2026-09-06): `tag` is one of the pinKeys the member was pinned under (a member two tags hold has an
- *  entry per key). A view preference like the fold itself: per browser. */
-export interface PinnedRef { tag: string; sid: string }
+ *  2026-09-06). ONE entry per (tab, section): `sid` the tab, `name` the section's displayed name when
+ *  the pin was made, `id` the local tag's id when the section had one (a remote host's tag id is never
+ *  stored: it is the host's, and a section a remote tag makes is addressed by its name). A view
+ *  preference like the fold itself: per browser.
+ *
+ *  Why both: a section is what the user sees, and it is made by whichever tags share the name — the
+ *  local one, remote hosts' ones, or both together — a set that changes under the pin with no gesture
+ *  on the tab (a host attaches or detaches, a same-named tag appears on the other side, the local one
+ *  is renamed or deleted). Three rounds of the branch's review (2026-09-06) found the same defect in
+ *  every scheme that derived ONE key from the holders at click time: the tab folded away when the set
+ *  later changed. Storing the name AND the local id, and matching under either, follows the section
+ *  through every such change; the id follows the local tag's rename, the name follows the remote
+ *  tag's hold. */
+export interface PinnedRef { sid: string; name: string; id?: string }
 
 export interface TabGroupsState {
   on: boolean;          // the sectioned strip (default true)
@@ -49,54 +54,9 @@ export interface TabGroupsState {
   pinned: PinnedRef[];  // members shown under their folded section
 }
 
-/** A section's key: the local tag's stored id when there is one (stable across a rename), else the
- *  union's NAME. Never a remote host's tag id — that is the host's, and the kernel lists remote tags
- *  host by host, so the first one changed when a host detached or a local tag of the name appeared,
- *  re-keying the section and unpinning its members with nothing on screen to say why (the 2026-09-06
- *  review). A pin on a member the LOCAL tag holds is stored under this key; a pin on a member held
- *  only through a remote host's tag is stored under the name (pinKey). */
-export function sectionKey(u: TagUnion): string {
-  return u.localId || u.name;
-}
-
-/** The union's members held through a REMOTE host's tag — deduped across its remote tags; a member the
- *  local tag also holds is listed too (localMembers says so, and pinKeys gives it both keys). */
-function remoteMembers(u: TagUnion): string[] {
-  const out: string[] = [];
-  for (const rt of u.remotes) for (const m of (rt.members || [])) if (!out.includes(m)) out.push(m);
-  return out;
-}
-
+/** The section a union makes, as pins are matched and written against it. */
 export function sectionRef(u: TagUnion): SectionRef {
-  return { key: sectionKey(u), name: u.name, localMembers: u.localMembers, remoteMembers: remoteMembers(u) };
-}
-
-/** The keys ONE pin is stored under — a pin follows the section the user sees, whichever host's tag
- *  anchors the member in it: the section's key (the local tag's id) for a member the local tag holds,
- *  the union's NAME for a member held only through a remote host's tag, and BOTH for a member the two
- *  hold together. A mixed union — a local tag beside a same-named remote tag — keys by the local id,
- *  and a remote member's pin stored under it died with the local tag: deleted, the member's section
- *  was the remote-only one, keyed by the name; renamed, the local members followed the new name while
- *  the remote member stayed in the old-name section — in both, the member folded away with no gesture
- *  on it (round 2 of the 2026-09-06 review). Its section is what the remote tag's name says, so the
- *  name is its key. A member both tags hold has two possible homes after a local rename — the renamed
- *  local tag, or the old-name section the remote tag still makes — and tagOrder decides between them
- *  (the local one by default: a rename leaves tagOrder alone, and local unions sort first), so it
- *  carries both keys and matches under either (round 3). NOT the sid's host prefix: the tab menu adds
- *  a remote tab to a union with a local tag as that LOCAL tag's (host-prefixed) member (render.ts
- *  applyUnionEdit), and that member's section is the local tag's, id and renames and all. */
-export function pinKeys(sec: SectionRef, sid: string): string[] {
-  const name = sec.name ?? sec.key;
-  if (!sec.remoteMembers.includes(sid)) return [sec.key];
-  if (!sec.localMembers.includes(sid) || name === sec.key) return [name];
-  return [sec.key, name];
-}
-
-/** Does a stored pin name this section? Its stored key OR its name: a pin made while the section was
- *  remote-only (stored under the name) keeps matching once a local tag of that name exists and the key
- *  is its id; a pin under a local id keeps matching across the tag's renames. */
-function pinNames(sec: SectionMatch, tag: string): boolean {
-  return tag === sec.key || tag === sec.name;
+  return { name: u.name, localId: u.localId };
 }
 
 /** THE home-tag rule: the first union (they arrive in tagOrder) holding the id, or null. */
@@ -114,12 +74,12 @@ export function sectionTabs(visibleIds: readonly string[], unions: readonly TagU
     const home = homeTag(id, unions);
     if (!home) { loose.push(id); continue; }
     let s = byName.get(home.name);
-    if (!s) { s = { name: home.name, key: sectionKey(home), color: home.color || "", ids: [] }; byName.set(home.name, s); }
+    if (!s) { s = { name: home.name, localId: home.localId, color: home.color || "", ids: [] }; byName.set(home.name, s); }
     s.ids.push(id);
   }
   const out: TabSection[] = [];
   for (const u of unions) { const s = byName.get(u.name); if (s && !out.includes(s)) out.push(s); }
-  if (loose.length) out.push({ name: null, key: "", color: "", ids: loose });
+  if (loose.length) out.push({ name: null, localId: null, color: "", ids: loose });
   return out;
 }
 
@@ -132,26 +92,41 @@ export function anySectioned(visibleIds: readonly string[], unions: readonly Tag
 const fresh = (): TabGroupsState => ({ on: true, collapsed: [], expanded: [], pinned: [] });
 
 /** A stored blob; anything malformed reads as the default rather than throwing (view-order's rule:
- *  a corrupt entry may cost you a preference, never the dashboard). */
-export function parseTabGroups(raw: string | null | undefined): TabGroupsState {
+ *  a corrupt entry may cost you a preference, never the dashboard). `unions` — the current tag
+ *  unions — serve the one migration: an entry in the branch's earlier shape, `{tag, sid}` with `tag`
+ *  a local tag's id or a union's name, becomes `{sid, id: tag, name: <that union's name>}` when `tag`
+ *  is a current local id, else `{sid, name: tag}` (a name, or a deleted tag's id — the prune drops the
+ *  latter on the next pin write, as before). Readers that write back pass the unions they have, so a
+ *  migration is faithful; a read before the first views frame sees none and would keep such an
+ *  entry's id as a name — nothing writes the store before a sectioned strip has rendered, and that
+ *  needs a frame. */
+export function parseTabGroups(raw: string | null | undefined, unions: readonly TagUnion[] = []): TabGroupsState {
   if (!raw) return fresh();
   try {
     const o = JSON.parse(raw);
     if (!o || typeof o !== "object" || Array.isArray(o)) return fresh();
     const strs = (xs: unknown) => (Array.isArray(xs) ? xs.filter((x): x is string => typeof x === "string") : []);
-    const pins = (xs: unknown): PinnedRef[] => (Array.isArray(xs)
-      ? xs.filter((x) => !!x && typeof x === "object" && typeof x.tag === "string" && typeof x.sid === "string")
-          .map((x) => ({ tag: x.tag as string, sid: x.sid as string }))
-      : []);
+    const pins = (xs: unknown): PinnedRef[] => {
+      if (!Array.isArray(xs)) return [];
+      const out: PinnedRef[] = [];
+      for (const x of xs) {
+        if (!x || typeof x !== "object" || typeof x.sid !== "string") continue;
+        if (typeof x.name === "string") { out.push(typeof x.id === "string" ? { sid: x.sid, name: x.name, id: x.id } : { sid: x.sid, name: x.name }); continue; }
+        if (typeof x.tag !== "string") continue;
+        const u = unions.find((g) => g.localId === x.tag);
+        out.push(u ? { sid: x.sid, name: u.name, id: x.tag } : { sid: x.sid, name: x.tag });
+      }
+      return out;
+    };
     return { on: o.on !== false, collapsed: strs(o.collapsed), expanded: strs(o.expanded), pinned: pins(o.pinned) };
   } catch {
     return fresh();
   }
 }
 
-export function readTabGroups(): TabGroupsState {
+export function readTabGroups(unions: readonly TagUnion[] = []): TabGroupsState {
   try {
-    return parseTabGroups(localStorage.getItem(TABGROUPS_KEY));
+    return parseTabGroups(localStorage.getItem(TABGROUPS_KEY), unions);
   } catch {
     return fresh();   // private mode / blocked storage → the defaults, every time
   }
@@ -196,23 +171,36 @@ export function toggleSectionCollapsed(st: TabGroupsState, name: string): TabGro
   return setSectionCollapsed(st, name, !isSectionCollapsed(st, name));
 }
 
-/** Is this member kept visible under its folded section? A pin for the sid under the section's key or
- *  its name — see pinKeys and PinnedRef. */
-export function isPinned(st: TabGroupsState, sec: SectionMatch, sid: string): boolean {
-  return st.pinned.some((p) => p.sid === sid && pinNames(sec, p.tag));
+/** Does an entry name this section? Its name, OR its id when the section has a local tag. The
+ *  untagged trail has no fold, so nothing names it. */
+function pinNames(sec: SectionRef, p: PinnedRef): boolean {
+  return sec.name !== null && (p.name === sec.name || (p.id !== undefined && p.id === sec.localId));
 }
 
-/** Set a member's pin EXPLICITLY (the fold's own idiom: the menu row passes the state it rendered). A
- *  write is the TAB's one preference and replaces every entry the sid has: on stores it under the
- *  section's pinKeys; off leaves none. The tab menu offers one toggle per tab — "Show when folded", in
- *  the section that is its home — so off means "through no fold": an entry made under a section that
- *  is no longer the tab's home (a rename split the mixed section, a drag reordered the holders) is not
- *  one the user could see or clear any other way, and left standing it showed the tab through that
- *  section's fold the next time it became the home, after the last gesture on the tab was off (round 3
- *  of the 2026-09-06 review). */
+/** The entry a pin on `sid` in this section stores: the section's name, and its local tag's id when
+ *  it has one. */
+function pinEntry(sec: SectionRef, sid: string): PinnedRef {
+  const name = sec.name ?? "";
+  return sec.localId ? { sid, name, id: sec.localId } : { sid, name };
+}
+
+/** Is this member kept visible under its folded section? An entry for the sid naming the section by
+ *  its name or its local id — see PinnedRef. */
+export function isPinned(st: TabGroupsState, sec: SectionRef, sid: string): boolean {
+  return st.pinned.some((p) => p.sid === sid && pinNames(sec, p));
+}
+
+/** Set a member's pin EXPLICITLY (the fold's own idiom: the menu row passes the state it rendered).
+ *  A write is PER SECTION: on adds, or replaces, the tab's entry for the section that is its home now
+ *  (the entries naming it by name or by id collapse into one), and off removes exactly those. Entries
+ *  the tab holds for OTHER sections stand either way — the menu row is offered in the home section
+ *  alone, its copy speaks of that section ("while <name> is folded"), and a pin the user set under a
+ *  section that a drag or a rename later makes the home again is theirs until they clear it there
+ *  (round 4 of the 2026-09-06 review: an on that replaced every entry silently dropped a pin set
+ *  under another section, and the row's copy had promised a per-section preference). */
 export function setPinned(st: TabGroupsState, sec: SectionRef, sid: string, on: boolean): TabGroupsState {
-  const pinned = st.pinned.filter((p) => p.sid !== sid);
-  if (on) for (const tag of pinKeys(sec, sid)) pinned.push({ tag, sid });
+  const pinned = st.pinned.filter((p) => !(p.sid === sid && pinNames(sec, p)));
+  if (on && sec.name !== null) pinned.push(pinEntry(sec, sid));
   return { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned };
 }
 
@@ -220,19 +208,77 @@ export function togglePinned(st: TabGroupsState, sec: SectionRef, sid: string): 
   return setPinned(st, sec, sid, !isPinned(st, sec, sid));
 }
 
-/** Drop the pins nothing can render any more, judged PER PIN: the session is still among the tabs the
- *  strip knows, and it is still a member of some union the pin's tag names (by local id or by name) —
- *  so the store does not keep an entry for every tag ever deleted, session ever closed, or member
- *  moved out. Judging the tag and the session apart kept a dead entry alive (round 2 of the 2026-09-06
- *  review): a remote member's pin under a mixed union's local id, after the local tag's rename — the
- *  id still named a union (the renamed one), just not one holding the member. On the WRITE path only
- *  (the pin row's click): a prune there moves nothing on screen, where a prune per render could act
- *  on a transient frame (a views blob mid-write, a host's tags not yet arrived) and put a tab away
- *  with no gesture. Returns `st` itself when nothing is dropped. */
+/** Drop the pins nothing can render any more, judged PER ENTRY: the session is still among the tabs
+ *  the strip knows, and some union the entry names (by its name, or by its id as a local id) still
+ *  holds the session — so the store does not keep an entry for every tag ever deleted, session ever
+ *  closed, or member moved out. On the WRITE path only (the pin row's click): a prune there moves
+ *  nothing on screen, where a prune per render could act on a transient frame (a views blob
+ *  mid-write, a host's tags not yet arrived) and put a tab away with no gesture. Returns `st` itself
+ *  when nothing is dropped. */
 export function prunePinned(st: TabGroupsState, unions: readonly TagUnion[], knownIds: ReadonlySet<string>): TabGroupsState {
   const pinned = st.pinned.filter((p) => knownIds.has(p.sid)
-    && unions.some((u) => (u.localId === p.tag || u.name === p.tag) && u.members.includes(p.sid)));
+    && unions.some((u) => (u.name === p.name || (p.id !== undefined && u.localId === p.id)) && u.members.includes(p.sid)));
   return pinned.length === st.pinned.length ? st : { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned };
+}
+
+/** A tag that kept its id and changed its name between two views blobs: `local` for one of this
+ *  kernel's tags (the id a pin may carry), false for a remote host's; `members` what it holds now. */
+export interface TagRename { id: string; from: string; to: string; local: boolean; members: readonly string[] }
+
+/** The tags `next` renames relative to `prev` — the previously adopted blob, so a client watching the
+ *  stream sees every rename, local or a remote host's, as the frame that carries it arrives. No
+ *  previous blob (the page's first frame) → none: a rename that happened while no client watched is
+ *  matched by id where an id was stored (isPinned), and is missed for a remote-only pin, which has
+ *  none (followTagRenames states the limit). */
+export function tagRenames(prev: SessionViews | null | undefined, next: SessionViews | null | undefined): TagRename[] {
+  if (!prev || !next) return [];
+  const before = new Map<string, string>();
+  for (const t of viewTags(prev)) before.set(t.id, t.name || "tag");
+  for (const t of prev.remoteTags || []) before.set(t.id, t.name || "tag");
+  const out: TagRename[] = [];
+  const see = (id: string, name: string | undefined, local: boolean, members: readonly string[] | undefined) => {
+    const from = before.get(id), to = name || "tag";
+    if (from !== undefined && from !== to) out.push({ id, from, to, local, members: members || [] });
+  };
+  for (const t of viewTags(next)) see(t.id, t.name, true, t.members);
+  for (const t of next.remoteTags || []) see(t.id, t.name, false, t.members);
+  return out;
+}
+
+/** Carry the pins across the tags a blob renamed (tagRenames), so a pinned tab stays pinned to its
+ *  group through the group's rename — the name a pin stores is the section's displayed name, and a
+ *  rename changes it. An entry FOLLOWS a rename when it carries the renamed tag's id, or carries the
+ *  old name with no id and the renamed tag holds its tab (a remote-only pin, made before a local tag
+ *  of the name existed; the other same-named tags' pins are not this tag's to move). It is rewritten
+ *  to the new name, with the tag's id when the tag is local — so the next rename finds it by id even
+ *  from a client with no previous blob. Where the rename SPLITS the section — a same-named tag on the
+ *  other side still holds the tab, so the tab's home after the rename is whichever half tagOrder
+ *  puts first (the kernel leaves tagOrder alone on a rename, so an old name once dragged into place
+ *  keeps it and the renamed local tag falls behind) — an entry for the old-name half stays beside
+ *  the rewritten one: the tab is pinned in both halves, and the prune drops the half that stops
+ *  holding it. `unions` are the NEXT blob's. Exact duplicates collapse. Returns `st` itself when no
+ *  entry changed.
+ *
+ *  THE LIMIT: a remote-only pin has no id, so a rename of the remote tag that happens while no client
+ *  of this browser is watching (the page closed, the blob's first frame after it) leaves the entry
+ *  under the old name, where it matches nothing until the user pins the tab again. A local tag's pin
+ *  carries the id and has no such gap. */
+export function followTagRenames(st: TabGroupsState, renames: readonly TagRename[], unions: readonly TagUnion[]): TabGroupsState {
+  if (!renames.length || !st.pinned.length) return st;
+  const out: PinnedRef[] = [];
+  const seen = new Set<string>();
+  const put = (p: PinnedRef) => { const k = `${p.sid} ${p.name} ${p.id ?? ""}`; if (!seen.has(k)) { seen.add(k); out.push(p); } };
+  for (const p of st.pinned) {
+    const r = renames.find((x) => (p.id !== undefined ? x.id === p.id : x.from === p.name && x.members.includes(p.sid)));
+    if (!r) { put(p); continue; }
+    put(r.local ? { sid: p.sid, name: r.to, id: r.id } : { sid: p.sid, name: r.to });
+    const rest = unions.find((u) => u.name === r.from && u.members.includes(p.sid));
+    if (rest) put(pinEntry(sectionRef(rest), p.sid));
+  }
+  // by value: a second pane that adopts the same frame after the first has written finds the entries
+  // already carried, and must not write (and notify) again
+  const same = out.length === st.pinned.length && out.every((p, i) => p.sid === st.pinned[i].sid && p.name === st.pinned[i].name && p.id === st.pinned[i].id);
+  return same ? st : { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned: out };
 }
 
 /** The words a section header wears — its count, its tooltip and its accessible name — pure so the copy

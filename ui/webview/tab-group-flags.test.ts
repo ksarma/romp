@@ -112,7 +112,7 @@ test("the flag never appears twice for one section: one construction, inside the
 test("expanding via the flag: its own data-act opens the group explicitly (never a toggle), on the stable #tabs delegate, one render path", () => {
   assert.match(FOLDED, /b\.dataset\.act = "open-group";/);
   assert.match(FOLDED, /b\.dataset\.group = name;/);
-  assert.match(HANDLER, /const name = el\.dataset\.group;\s*\n\s*if \(name\) writeTabGroups\(setSectionCollapsed\(readTabGroups\(\), name, false\)\);/,
+  assert.match(HANDLER, /const name = el\.dataset\.group;\s*\n\s*if \(name\) writeTabGroups\(setSectionCollapsed\(tabGroups\(\), name, false\)\);/,
     "an explicit OPEN: a press landing after a sibling pane already opened the group must not fold it back");
   assert.doesNotMatch(HANDLER, /toggleSectionCollapsed|renderTabs\(\)/, "no toggle, and the TABGROUPS_EVENT listener renders — not the handler");
   // executed: the write the handler makes opens a folded section, and is idempotent on an open one
@@ -180,7 +180,7 @@ test("executed + pinned: BOTH member-derived marks ride a folded header — the 
   assert.deepEqual(sectionTodoFlag(arch.hidden.map((id) => sessions.get(id))), { count: 1, names: ["old1"] }, "…and the flag for the other, side by side");
   // pin tests (the waiting one): its state leaves the pip; the flag is unchanged
   const pinned = setSectionCollapsed(st, "archived", true);
-  const pinnedSt = { ...pinned, pinned: [{ tag: "g4", sid: "tests" }] };
+  const pinnedSt = { ...pinned, pinned: [{ sid: "tests", name: "archived", id: "g4" }] };
   const unions2 = viewTagUnion({ ...V, tags: [...V.tags.slice(0, 1), { id: "g4", name: "archived", color: "#6b7280", members: ["tests", "old1"] }] });
   const arch2 = heads(planStrip(["web", "tests", "old1"], unions2, pinnedSt, "web", false).items).find((h) => h.head.name === "archived")!;
   assert.deepEqual(arch2.hidden, ["old1"], "the pinned member is on the strip");

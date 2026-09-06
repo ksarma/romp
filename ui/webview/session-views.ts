@@ -40,10 +40,7 @@ export interface SessionViews {
 // kernel's ack replaces (views-writes.ts isPlaceholderId) — it renders, and takes no gesture: an
 // op addressed by that id would be refused as a tag that does not exist (round 4 of the
 // 2026-09-05 review). Every builder of an action on a union checks it.
-// `localMembers`: what the LOCAL tag's own row holds ([] with no local tag) — `members` merges every
-// holder, so it cannot say whether a member a remote tag holds is also the local tag's (the tab strip's
-// pin keys turn on that: tab-groups.ts pinKeys).
-export interface TagUnion { name: string; color: string; members: string[]; ids: string[]; localId: string | null; localMembers: string[]; remotes: SessionTag[]; pending?: boolean }
+export interface TagUnion { name: string; color: string; members: string[]; ids: string[]; localId: string | null; remotes: SessionTag[]; pending?: boolean }
 export function viewTagUnion(views: SessionViews | null | undefined): TagUnion[] {
   // byName is null-prototype: a user-typed tag NAME can be "constructor"/"toString", which a
   // plain {} resolves through the prototype chain (the lookup returned a Function and the
@@ -51,15 +48,15 @@ export function viewTagUnion(views: SessionViews | null | undefined): TagUnion[]
   const out: TagUnion[] = [], byName: Record<string, TagUnion> = Object.create(null);
   for (const t of viewTags(views)) {
     const key = t.name || "tag";
-    const g = byName[key] || (byName[key] = { name: key, color: "", members: [], ids: [], localId: null, localMembers: [], remotes: [] });
-    if (!g.localId) { g.localId = t.id; g.localMembers = (t.members || []).slice(); g.color = t.color || g.color; if (/^pending-/.test(t.id)) g.pending = true; }
+    const g = byName[key] || (byName[key] = { name: key, color: "", members: [], ids: [], localId: null, remotes: [] });
+    if (!g.localId) { g.localId = t.id; g.color = t.color || g.color; if (/^pending-/.test(t.id)) g.pending = true; }
     g.ids.push(t.id);
     for (const m of (t.members || [])) if (!g.members.includes(m)) g.members.push(m);
     if (!out.includes(g)) out.push(g);
   }
   for (const rt of (views?.remoteTags || [])) {
     const key = rt.name || "tag";
-    const g = byName[key] || (byName[key] = { name: key, color: "", members: [], ids: [], localId: null, localMembers: [], remotes: [] });
+    const g = byName[key] || (byName[key] = { name: key, color: "", members: [], ids: [], localId: null, remotes: [] });
     if (!g.localId && !g.color) g.color = rt.color || "";
     g.ids.push(rt.id);
     g.remotes.push(rt);
