@@ -237,7 +237,7 @@ MOCK
     [[ "$output" == *"comment thread"* ]]
     [[ "$output" != *"already running"* ]]
     grep '/send' "$MOCK_LOG" | grep -q '"id": "66666666-7777-8888-9999-000000000000"'
-    ! grep '/send' "$MOCK_LOG" | grep -q '"name": "web-comment-1"'
+    [ "$(grep '/send' "$MOCK_LOG" | grep -c '"name": "web-comment-1"')" -eq 0 ]
 }
 
 @test "fork: POST /fork with parent, new name and optional --at cut" {
@@ -1020,7 +1020,8 @@ MOCK
     run run_romp new -t myproject
     [ "$status" -eq 0 ]
     grep -qE 'tmux respawn-pane -k -t myproject exec ROMP_SID=\S+ ROMP_SESSION_NAME="myproject" claude' "$MOCK_LOG"
-    ! grep -qE 'send-keys.*exec (ROMP_SID=\S+ ROMP_SESSION_NAME="[^"]*" )?claude' "$MOCK_LOG"
+    run grep -qE 'send-keys.*exec (ROMP_SID=\S+ ROMP_SESSION_NAME="[^"]*" )?claude' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "old tmux without copy-mode-position-style still launches claude (no set -e abort)" {
@@ -1039,7 +1040,8 @@ MOCK
     # Default hermetic HOME has no romp-session-prompt.md, so the -f guard skips it.
     run run_romp new -t myproject
     [ "$status" -eq 0 ]
-    ! grep -q -- '--append-system-prompt' "$MOCK_LOG"
+    run grep -q -- '--append-system-prompt' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "append-system-prompt: appended (deferred \$(cat ...)) when the prompt is installed" {
@@ -1112,7 +1114,8 @@ MOCK
     grep -F 'bind -n C-c' "$MOCK_LOG"    | grep -qF 'romp-interrupt-reset #{q:session_name}'
     grep -F 'bind -n Escape' "$MOCK_LOG" | grep -qF 'romp-interrupt-reset #{q:session_name}'
     # the unquoted (injectable) form must be gone
-    ! grep -qF 'romp-interrupt-reset #{session_name}' "$MOCK_LOG"
+    run grep -qF 'romp-interrupt-reset #{session_name}' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "resume: a session id with shell metacharacters is refused before any launch" {
@@ -1191,7 +1194,8 @@ MOCK
     [[ "$output" != *"retired"* ]]
     grep -q 'tmux new-session -d -s web' "$MOCK_LOG"
     grep -qE 'tmux respawn-pane -k -t web exec ROMP_SID=abc123-uuid ROMP_SESSION_NAME="web" claude --resume abc123-uuid --name "web"' "$MOCK_LOG"
-    ! grep -q 'tmux attach-session' "$MOCK_LOG"
+    run grep -q 'tmux attach-session' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "resume: explicit session id resumes that conversation" {
@@ -1250,7 +1254,8 @@ MOCK
     [ "$status" -eq 0 ]
     [[ "$output" != *"retired"* ]]
     grep -q 'tmux new-session -d -s oldk' "$MOCK_LOG"
-    ! grep -q 'tmux attach-session' "$MOCK_LOG"
+    run grep -q 'tmux attach-session' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "new: usage errors are loud — missing name, two names, dangling -d" {
@@ -1402,7 +1407,8 @@ MOCK
     run run_romp status
     [ "$status" -eq 0 ]
     grep -q 'romp-manager called: status' "$MOCK_LOG"
-    ! grep -q 'romp-postal-service called' "$MOCK_LOG"   # status does not touch the bus
+    run grep -q 'romp-postal-service called' "$MOCK_LOG"
+    [ "$status" -ne 0 ]   # status does not touch the bus
 }
 
 @test "refresh appends a caller-attribution line to restart-audit.jsonl before restarting" {
@@ -1470,7 +1476,8 @@ MOCK
     run run_romp up restart main
     [ "$status" -eq 0 ]
     grep -q 'romp-manager called: up' "$MOCK_LOG"   # starts the manager; trailing words are NOT forwarded
-    ! grep -q 'restart' "$MOCK_LOG"
+    run grep -q 'restart' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "'on', 'serve', 'down', 'launch', 'open' are unknown commands: loud exit 2, no session" {
@@ -1573,7 +1580,8 @@ MOCK
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage:"* ]]
     [[ "$output" == *"romp new"* ]]
-    ! grep -q 'tmux new-session' "$MOCK_LOG"
+    run grep -q 'tmux new-session' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "help, -h and --help all print usage" {
@@ -1744,7 +1752,8 @@ _resume_rows_fn() {   # writes the extracted function to $1
     run run_romp resume abc123-uuid
     [ "$status" -eq 0 ]
     grep -q 'tmux new-session -d -s scratchpad' "$MOCK_LOG"
-    ! grep -qE 'tmux new-session -d -s home( |$| -)' "$MOCK_LOG"
+    run grep -qE 'tmux new-session -d -s home( |$| -)' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "ROMPHOME: a launch from a normal project dir is unaffected" {
