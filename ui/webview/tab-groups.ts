@@ -340,38 +340,54 @@ export function tagRenames(prev: SessionViews | null | undefined, next: SessionV
  *  detach pops the host's cached read (a DOWN host's stays), and a reattach's tabs can run ahead of it
  *  (prunePinned's limits) — since the blob cannot say whether the tag is gone or the host is, and a
  *  rename followed in that window would otherwise erase the memory of the host's renames, for a stale
- *  pane to re-apply one after the reattach (round 6 of the 2026-09-06 review). Every other entry goes:
- *  a local id the store lacks or a remote id its host lists without (a deleted tag), and a tag the
- *  blob names by ANOTHER name — renamed on while no client watched (the page closed; the host
- *  detached), so the memory is of a home its pins have left, and kept it would read the tag's next
- *  rename to that name as already followed: a remote tag renamed web → api (followed), back to web
- *  while its host was detached, and to api again after the user pinned the tab under web kept the pin
- *  under web, and the tab folded away with no gesture on it (round 7). The frame's own renames re-stamp
- *  the memory after the check, so a watched rename away from the remembered name is remembered under
- *  its new one. Returns `st` itself when every rename is already followed and the memory stands — the
- *  late pane writes nothing and notifies no one; a stale entry's drop alone is a write, pins untouched.
+ *  pane to re-apply one after the reattach (round 6 of the 2026-09-06 review). A deleted tag's entry
+ *  goes: a local id the store lacks, or a remote id its host lists without. And a tag the blob names by
+ *  ANOTHER name was renamed on while no client watched (the page closed; the host detached; a pane's
+ *  socket dead across two renames), and its entry is a rename this browser OWES: the memory says where
+ *  the tag's pins were left, the blob where the tag is now, so the pins under the remembered name are
+ *  carried to the blob's name in this adoption, as a watched rename's are — the tag's own members
+ *  deciding (`locals` / `remotes` on the union: the merge would reach a same-named tag's tabs) — and the
+ *  memory is re-stamped. Kept as it was, the memory read the tag's next rename to the remembered name
+ *  as already followed: a remote tag renamed web → api (followed), back to web while its host was
+ *  detached, and to api again after the user pinned the tab under web kept the pin under web, and the
+ *  tab folded away with no gesture on it (round 7). Dropped without the carry, it left the pin where
+ *  the late pane could not find it: a pane whose held blob predated two renames (web → api, watched by
+ *  another pane, which carried the pin to api; then api → ops) computed the coalesced web → ops,
+ *  matched nothing under web, and stamped ops — and the watching pane's api → ops then read as already
+ *  followed, the pin still under api and the tab folded away (round 8). The frame's own renames
+ *  re-stamp the memory after the check (a rename the frame itself carries from the remembered name is
+ *  followed once), so a watched rename away from the remembered name is remembered under its new one.
+ *  Returns `st` itself when every rename is already followed and the memory stands — the late pane
+ *  writes nothing and notifies no one; a stale entry's drop alone is a write, pins untouched.
  *
  *  THE LIMIT: a remote-only pin has no id, so a rename of the remote tag that happens while no client
- *  of this browser is watching (the page closed, the blob's first frame after it) leaves the entry
- *  under the old name, where it matches nothing until the user pins the tab again — and the memory of
- *  the tag's last followed rename goes with the first blob that names it otherwise, so the pin set
- *  again follows the tag's next rename. A local tag's pin carries the id and has no such gap. */
+ *  of this browser is watching (the page closed, the blob's first frame after it) is followed only
+ *  through the memory — this browser having followed an earlier rename of the tag, which ties the
+ *  pin's name to the tag's id. With no memory of the tag, the entry stays under the old name, where it
+ *  matches nothing until the user pins the tab again; the pin set again follows the tag's next rename,
+ *  and from then on its unwatched ones too. A local tag's pin carries the id and has no such gap. */
 export function followTagRenames(st: TabGroupsState, renames: readonly TagRename[], unions: readonly TagUnion[]): TabGroupsState {
   // the memory, checked against the blob FIRST (the doc above): an entry stands while the blob names its
   // tag by the remembered name, or while it is a remote host's and the blob carries none of that host's
-  // tags; a deleted tag's goes, and so does one the blob names otherwise — renamed on while no client
-  // watched, and a rename to that name is owed a follow, not already followed
-  const named = new Map<string, string>();
-  for (const u of unions) for (const id of u.ids) named.set(id, u.name);
-  const present = new Set([...named.keys()].map(hostOf).filter((h) => h !== ""));
+  // tags; a deleted tag's goes; and one the blob names OTHERWISE is a rename this browser owes — from the
+  // remembered name to the blob's, over the tag's own members — followed with the frame's, unless the
+  // frame itself carries that rename (then it is followed once, as the frame's)
+  const byId = new Map<string, TagUnion>();
+  for (const u of unions) for (const id of u.ids) byId.set(id, u);
+  const present = new Set([...byId.keys()].map(hostOf).filter((h) => h !== ""));
   const followed: Record<string, string> = {};
+  const owed: TagRename[] = [];
   let stale = false;
   for (const [id, name] of Object.entries(st.followed || {})) {
-    const h = hostOf(id);
-    if (named.get(id) === name || (!named.has(id) && h !== "" && !present.has(h))) followed[id] = name;
-    else stale = true;
+    const u = byId.get(id), h = hostOf(id);
+    if (u?.name === name || (!u && h !== "" && !present.has(h))) { followed[id] = name; continue; }
+    stale = true;
+    if (u && !renames.some((r) => r.id === id && r.from === name)) {
+      const lt = u.locals.find((t) => t.id === id), t = lt || u.remotes.find((x) => x.id === id);
+      owed.push({ id, from: name, to: u.name, local: lt !== undefined, members: t?.members || [] });
+    }
   }
-  const fresh = renames.filter((r) => followed[r.id] !== r.to);
+  const fresh = [...renames.filter((r) => followed[r.id] !== r.to), ...owed];
   if (!fresh.length) return stale ? { ...st, followed } : st;
   const matches = (p: PinnedRef, x: TagRename) => (p.id !== undefined && x.id === p.id)
     || ((p.id === undefined || !x.local) && x.from === p.name && x.members.includes(p.sid));

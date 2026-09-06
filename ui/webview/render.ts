@@ -551,8 +551,11 @@ function takeViews(v: SessionViews | null | undefined): boolean {
 // ADOPTED blob, never the optimistic copy: the kernel's answer is the event, and a refused rename then
 // has nothing to undo here. The follow runs on EVERY adoption, renames or none: its memory of the name
 // each renamed tag's pins were last carried to is checked against the blob each time, so a tag the blob
-// names otherwise — renamed while no pane of this browser watched — sheds a memory that would have read
-// its next rename to that name as already followed (round 7 of the 2026-09-06 review).
+// names otherwise — renamed while no pane of this browser watched — has the pins under the remembered
+// name carried to the blob's, the rename this browser owes, and the memory re-stamped (rounds 7 and 8
+// of the 2026-09-06 review: kept, that memory read the tag's next rename to the name as followed;
+// dropped without the carry, a pane two renames stale stamped the last name over a pin the watching
+// pane had left under the middle one).
 function adoptBase(v: SessionViews): void {
   const renames = tagRenames(sessionViews, v);
   sessionViews = v;
