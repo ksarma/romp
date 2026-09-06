@@ -2739,12 +2739,17 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None)
     # re-stamp path (_timeline_views) passes the file's own content, since reading it here would
     # find the same un-stamped file and re-enter the reader; `seq_floor` is the last seq that path
     # served, so the re-stamped file orders after it. Every other caller leaves both alone.
-    # `edited` — the WS door's whole-blob path passes the tag ids the posting client CHANGED (a
-    # lens or order write names none); None from every other caller and from an older client. It
-    # classifies a refusal: a kept tag the poster edited is a LOST EDIT (the notice below fires, the
-    # ack is not ok); a kept tag outside it is a stale copy of something the poster never touched —
-    # the store's copy stands, the ack lists it, nothing is said to the user (round 3 of the
-    # 2026-09-05 review: the benign case still filed a red "reload that dashboard" notice).
+    # `edited` — the WS door's whole-blob path passes the tag ids the posting client CHANGED; None
+    # from every other caller and from an older client. It bounds what the write may change (round 5
+    # of the 2026-09-05 review): an EMPTY list is a lens or order write and changes NO tag — the
+    # store's tags stand whole, whatever tags the blob carries, and only its other fields land; a
+    # list of ids may change those tags only, and a differing copy of any other tag is the store's
+    # to keep, quietly (the ack lists it, nothing is said to the user — round 3: the benign case
+    # still filed a red "reload that dashboard" notice); a kept tag the poster DID edit is a LOST
+    # EDIT (the notice below fires, the ack is not ok). Until round 5 the empty list was judged like
+    # any whole blob, by the second-resolution `at` stamp, so a lens write built from a copy taken in
+    # the same second as a targeted edit reverted it (the rename undone, the create deleted, the
+    # member lost) with nothing said.
     # `foreign` — set by the reader's re-stamp of a file written OUTSIDE the kernel whose seq fell
     # behind the last served blob (round 4 of the 2026-09-05 review), as the words the notice uses
     # for the writer. Such a write carries no `edited`, so its unknown tags are judged by the one
@@ -2786,7 +2791,17 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None)
     # door answers the posting dashboard with them (the user 2026-09-05, who lost a batch of
     # renames and assignments the dialog kept re-posting from a refused copy, because the refusal
     # reached stderr and the sync notices but never the client that needed to revert).
-    for t in v["tags"]:
+    lens_only = ed is not None and not ed
+    if lens_only:
+        # A LENS OR ORDER WRITE (round 5 of the 2026-09-05 review): `edited` is an empty list, the
+        # client's word that it changed no tag — so no tag changes. The store's tags stand whole,
+        # mtimes with them, whatever tags the blob carries; the write's other fields (the lenses,
+        # the order, the active) land below. Nothing to judge, nothing to log: this is the normal
+        # lens path. The judged path below is for a write that names the tags it changed, or for a
+        # writer that cannot say (an older client, a file written outside the kernel).
+        kept = [json.loads(json.dumps(pt)) for pt in prev.values()]
+        incoming = set(prev)
+    for t in ([] if lens_only else v["tags"]):
         pt = prev.get(t["id"])
         if pt is None and ((ed is not None and t["id"] not in ed) or (ed is None and foreign and t.get("mtime"))):
             # A tag the store does not have, from a client that says it did not create it: the
@@ -2802,9 +2817,18 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None)
             rows.append({"tid": t["id"], "name": t.get("name"),
                          "reason": "it was deleted after your copy was taken, so it was not re-created"})
             continue
-        if pt and pt.get("mtime") and int(pt["mtime"]) > ev and \
-                (pt.get("name"), pt.get("color"), pt.get("members")) != \
-                (t.get("name"), t.get("color"), t.get("members")):
+        same = pt is None or (pt.get("name"), pt.get("color"), pt.get("members")) == \
+            (t.get("name"), t.get("color"), t.get("members"))
+        if not same and ed is not None and t["id"] not in ed:
+            # A differing copy of a tag this write did not claim to edit (round 5): the change is
+            # not the client's, whatever the stamps say — the same-second race the empty list
+            # closes above would otherwise land it here too. The store's copy stands, quietly.
+            refused.append(('"%s"' % pt.get("name"), t["id"]))
+            rows.append({"tid": t["id"], "name": pt.get("name"),
+                         "reason": "your copy of it differs from the store's and this write did not edit it, "
+                                   "so the store's copy was kept"})
+            kept.append(json.loads(json.dumps(pt)))
+        elif not same and pt.get("mtime") and int(pt["mtime"]) > ev:
             refused.append(('"%s"' % pt.get("name"), t["id"]))
             # the reason names no tag: the ack composes '"<name>": <reason>' once (_ack_views_write),
             # so a toast or notice never says the name twice (the 2026-09-05 review)
@@ -2815,7 +2839,16 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None)
         else:
             kept.append(t)
     for tid, pt in prev.items():
-        if tid not in incoming and pt.get("mtime") and int(pt["mtime"]) > ev:
+        if tid in incoming:
+            continue
+        if ed is not None and tid not in ed:
+            # absent from a write that did not claim to edit it (round 5): not a deletion the
+            # client made, so not one — the store's copy stands, quietly
+            refused.append(('"%s" (deletion)' % pt.get("name"), tid))
+            rows.append({"tid": tid, "name": pt.get("name"),
+                         "reason": "this write did not edit it, so it was not deleted"})
+            kept.append(json.loads(json.dumps(pt)))
+        elif pt.get("mtime") and int(pt["mtime"]) > ev:
             refused.append(('"%s" (deletion)' % pt.get("name"), tid))
             rows.append({"tid": tid, "name": pt.get("name"),
                          "reason": "it was edited after your copy was taken, so it was not deleted"})

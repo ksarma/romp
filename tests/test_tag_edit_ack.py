@@ -339,7 +339,10 @@ class WholeBlobAcks(_Wire):
     def test_a_refusal_on_a_tag_the_client_did_not_edit_is_ok_with_the_refusal_listed(self):
         """Finding 4: a lens change from a dashboard that had slept through another's tag edit was
         acked as a refusal and toasted — for a tag the user never touched. `edited` names the tag
-        ids the write changed; a refusal outside them is a stale copy, not a lost edit."""
+        ids the write changed; a refusal outside them is a stale copy, not a lost edit. Round 5: a
+        lens write (`edited` empty) changes no tag at all, so its stale copy is not even judged —
+        the ack is clean and its blob carries the store's web; a write naming ANOTHER tag as edited
+        still lists the untouched tag's kept copy."""
         served = self.seed()
         stale = json.loads(json.dumps(served))
         time.sleep(1.1)
@@ -347,12 +350,26 @@ class WholeBlobAcks(_Wire):
         stale["actives"] = {"timeline": {"tags": ["web"]}}                # this dashboard changes only its lens…
         stale["tags"][0]["members"] = []                                  # …carrying its stale copy of web
         a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale, "edited": []})
-        self.assertEqual((a["ok"], [r["tid"] for r in a["refused"]]), (True, ["gA"]),
-                         "ok — nothing the user did was refused — with the kept tag listed")
+        self.assertEqual((a["ok"], a["refused"]), (True, []),
+                         "ok, nothing listed: a lens write changes no tag, so there is nothing to refuse")
         self.assertNotIn("error", a, "no one-line refusal to show: there is nothing to tell the user")
         self.assertEqual(a["views"]["actives"]["timeline"], {"tags": ["web"]}, "the lens landed")
         self.assertEqual(sorted(next(t for t in a["views"]["tags"] if t["id"] == "gA")["members"]), sorted([SID1, SID2]),
                          "…and the ack's blob carries the newer web the client adopts")
+        # the same stale copy of web riding a write that edits a DIFFERENT tag: web is kept, listed, ok
+        c0 = self.post({"type": "tagEdit", "writeId": "w1b", "edit": {"op": "create", "name": "api", "color": "#54B204"}})
+        w = json.loads(json.dumps(c0["views"]))                                  # a fresh copy (its `at` is the store's)…
+        next(t for t in w["tags"] if t["id"] == "gA")["members"] = []            # …whose web differs from the store's anyway
+        next(t for t in w["tags"] if t["id"] == c0["tid"])["color"] = "#000000"  # this write recolors api
+        a2 = self.post({"type": "setTimelineViews", "writeId": "w1c", "views": w, "edited": [c0["tid"]]})
+        self.assertEqual((a2["ok"], [r["tid"] for r in a2["refused"]]), (True, ["gA"]),
+                         "ok — nothing the user did was refused — with the kept tag listed")
+        self.assertIn("did not edit it", a2["refused"][0]["reason"])
+        self.assertNotIn("error", a2)
+        self.assertEqual(store_tag("api")["color"], "#000000", "the edited tag landed")
+        self.assertEqual(sorted(m["sid"] for m in store_tag("web")["members"]), sorted([SID1, SID2]),
+                         "the untouched tag was kept, whatever the stamps say (the copy is not stale by them)")
+        self.assertIsNone(km._edit_tag(tid=c0["tid"], delete=True)[1])
         # the same write naming web as EDITED is a lost edit: refused, with the reason
         b = self.post({"type": "setTimelineViews", "writeId": "w2", "views": stale, "edited": ["gA"]})
         self.assertFalse(b["ok"])
@@ -365,7 +382,8 @@ class WholeBlobAcks(_Wire):
         """Round 3 of the 2026-09-05 review: the benign case — a kept tag outside `edited`, acked ok —
         still filed a red "reload that dashboard to resync" notice plus stderr for every kept tag.
         Now the notice follows the ack's verdict: a lost edit is loud; a stale copy of an untouched tag
-        is one quiet stderr line and nothing on the dashboard."""
+        is one quiet stderr line and nothing on the dashboard. Round 5: a lens write (`edited` empty)
+        changes no tag and logs nothing at all — the quiet line is for a write that names other tags."""
         import contextlib
         import io
         served = self.seed()
@@ -377,12 +395,25 @@ class WholeBlobAcks(_Wire):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": stale, "edited": []})
-        self.assertEqual((a["ok"], [r["tid"] for r in a["refused"]]), (True, ["gA"]))
+        self.assertEqual((a["ok"], a["refused"]), (True, []))
+        self.assertEqual(self.notices, [], "nothing the user did was refused, so no notice")
+        self.assertEqual([ln for ln in err.getvalue().splitlines() if ln.strip()], [],
+                         "a lens write is the normal path: nothing is logged")
+        # the same stale web riding a write that edits another tag: one quiet stderr line, no notice
+        c0 = self.post({"type": "tagEdit", "writeId": "w1b", "edit": {"op": "create", "name": "api", "color": "#54B204"}})
+        w = json.loads(json.dumps(c0["views"]))
+        next(t for t in w["tags"] if t["id"] == "gA")["members"] = []
+        next(t for t in w["tags"] if t["id"] == c0["tid"])["color"] = "#000000"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            a2 = self.post({"type": "setTimelineViews", "writeId": "w1c", "views": w, "edited": [c0["tid"]]})
+        self.assertEqual((a2["ok"], [r["tid"] for r in a2["refused"]]), (True, ["gA"]))
         self.assertEqual(self.notices, [], "nothing the user did was refused, so no notice")
         lines = [ln for ln in err.getvalue().splitlines() if ln.strip()]
         self.assertEqual(len(lines), 1, "one quiet stderr line is the whole record")
         self.assertIn('"web"', lines[0])
         self.assertNotIn("reload that dashboard", lines[0])
+        self.assertIsNone(km._edit_tag(tid=c0["tid"], delete=True)[1])
         # the same write naming web as edited: the lost-edit notice, as before
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
@@ -416,7 +447,9 @@ class WholeBlobAcks(_Wire):
         incoming unknown tag was always kept as new. With `edited`, the two creates a whole-blob write
         can carry are distinguishable: a tag the client did not name as edited is something another
         dashboard deleted after the copy was taken, and is kept out; a tag it did name is a genuine
-        create (the legacy path's client-minted id); a write without `edited` keeps the old reading."""
+        create (the legacy path's client-minted id); a write without `edited` keeps the old reading.
+        Round 5: a lens write (`edited` empty) changes no tag, so the deleted tag is not even judged —
+        the re-creation refusal is for a write that names OTHER tags as edited."""
         import contextlib
         import io
         self.seed()
@@ -425,28 +458,45 @@ class WholeBlobAcks(_Wire):
         stale = json.loads(json.dumps(c["views"]))                  # this dashboard's copy: web and api
         self.assertIsNone(km._edit_tag(tid=api_tid, delete=True)[1])   # another dashboard deletes api
         self.assertIsNone(store_tag("api"))
-        # a lens change from the stale copy names no edited tag: api is kept OUT, the write is ok
+        # a lens change from the stale copy changes no tag: api stays deleted, nothing is listed or logged
         stale["actives"] = {"timeline": {"tags": ["web"]}, "chat": {"all": True}, "outline": {"all": True}}
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             a = self.post({"type": "setTimelineViews", "writeId": "w2", "views": stale, "edited": []})
-        self.assertTrue(a["ok"], "nothing the user did was refused")
-        self.assertEqual([(r["tid"], r["name"]) for r in a["refused"]], [(api_tid, "api")])
-        self.assertEqual(a["refused"][0]["reason"], "it was deleted after your copy was taken, so it was not re-created")
+        self.assertEqual((a["ok"], a["refused"]), (True, []), "nothing the user did was refused, and no tag was judged")
         self.assertNotIn("error", a)
         self.assertIsNone(store_tag("api"), "the deleted tag stays deleted")
         self.assertEqual([t["name"] for t in a["views"]["tags"]], ["web"], "…and the ack's blob, which the client adopts, has no api")
         self.assertEqual(a["views"]["actives"]["timeline"], {"tags": ["web"]}, "the lens landed")
         self.assertEqual(self.notices, [], "a stale copy of a deleted tag is not the user's problem")
+        self.assertEqual([ln for ln in err.getvalue().splitlines() if ln.strip()], [], "nothing logged")
+        # the same stale copy riding a write that edits web (a recolor): api is kept OUT with a reason, the write is ok
+        stale_w = json.loads(json.dumps(stale))
+        next(t for t in stale_w["tags"] if t["id"] == "gA")["color"] = "#000000"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            a2 = self.post({"type": "setTimelineViews", "writeId": "w2b", "views": stale_w, "edited": ["gA"]})
+        self.assertTrue(a2["ok"], "nothing the user did was refused")
+        self.assertEqual([(r["tid"], r["name"]) for r in a2["refused"]], [(api_tid, "api")])
+        self.assertEqual(a2["refused"][0]["reason"], "it was deleted after your copy was taken, so it was not re-created")
+        self.assertNotIn("error", a2)
+        self.assertIsNone(store_tag("api"), "the deleted tag stays deleted")
+        self.assertEqual(store_tag("web")["color"], "#000000", "the edited tag landed")
+        self.assertEqual(self.notices, [], "a stale copy of a deleted tag is not the user's problem")
         self.assertEqual(len([ln for ln in err.getvalue().splitlines() if ln.strip()]), 1, "one quiet line")
-        # the same blob naming api as EDITED is a create (the legacy path's client-minted id): it lands
-        b = self.post({"type": "setTimelineViews", "writeId": "w3", "views": stale, "edited": [api_tid]})
+        # the same api, on a copy of the store, named as EDITED: a create (the legacy path's client-minted id), it lands
+        api_row = next(t for t in stale["tags"] if t["id"] == api_tid)
+        fresh = json.loads(json.dumps(km._views_client()))
+        fresh["tags"].append(dict(api_row))
+        b = self.post({"type": "setTimelineViews", "writeId": "w3", "views": fresh, "edited": [api_tid]})
         self.assertEqual((b["ok"], b["refused"]), (True, []))
         self.assertEqual(store_tag("api")["id"], api_tid)
         self.assertTrue(store_tag("api").get("mtime"), "a created tag is stamped like any edit")
         # no `edited` at all (an older client): every unknown tag is new, as before
         self.assertIsNone(km._edit_tag(tid=api_tid, delete=True)[1])
-        d = self.post({"type": "setTimelineViews", "writeId": "w4", "views": stale})
+        fresh = json.loads(json.dumps(km._views_client()))
+        fresh["tags"].append(dict(api_row))
+        d = self.post({"type": "setTimelineViews", "writeId": "w4", "views": fresh})
         self.assertEqual((d["ok"], d["refused"]), (True, []))
         self.assertEqual(store_tag("api")["id"], api_tid, "the old reading stands for a client that cannot say")
 
@@ -510,6 +560,87 @@ class WholeBlobAcks(_Wire):
         self.assertEqual((a2["ok"], [r["name"] for r in a2["refused"]]), (False, ["tag 2"]),
                          "judged stale against the client's OWN previous write — the reported loss")
         self.assertEqual(store_tag("tag 2")["name"], "tag 2")
+
+
+class EditedBoundsTheWrite(_Wire):
+    """Round 5 of the 2026-09-05 review (the HIGH finding): a lens or order write carries `edited: []`
+    and is built from the store's blob the client last adopted, and the door still applied its tag
+    set as a whole-blob replacement judged by the guard's second-resolution stamps — so a targeted
+    edit that landed in the SAME second as that blob's `at` (its mtime equal to the writer's
+    evidence, not newer by the guard's clock) was silently reverted by the next lens change: a rename
+    undone, a create deleted, a member lost. Now `edited` bounds what a write may change: an empty
+    list changes no tag; a list of ids changes those tags only, a differing copy of any other tag
+    kept from the store quietly; no `edited` at all keeps the round-4 legacy reading."""
+
+    def test_the_reproduction_a_same_second_targeted_edit_survives_a_lens_write(self):
+        served = self.seed()                                           # the dashboard's adopted copy: web[SID1]
+        lens = json.loads(json.dumps(served))
+        # three targeted edits from another surface, landing right after the copy was taken
+        self.assertIsNone(km._edit_tag(tid="gA", rename="api")[1])
+        self.assertIsNone(km._edit_tag(tid="gA", add=[SID2])[1])
+        d, err = km._edit_tag("docs", add=[SID3])
+        self.assertIsNone(err)
+        store = km._timeline_views()
+        # the same-second case made exact rather than left to the test's timing: by the guard's clock
+        # the copy's evidence equals the edits' stamps, so nothing about it reads as stale
+        lens["at"] = max(t["mtime"] for t in store["tags"])
+        lens["actives"] = {"timeline": {"tags": ["api"]}, "chat": {"all": True}, "outline": {"all": True}}
+        lens["tagOrder"] = ["docs", "api"]
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": lens, "edited": []})
+        self.assertEqual((a["ok"], a["refused"]), (True, []))
+        self.assertNotIn("error", a)
+        web = next(t for t in km._timeline_views()["tags"] if t["id"] == "gA")
+        self.assertEqual(web["name"], "api", "the rename survives the lens write")
+        self.assertEqual(sorted(m["sid"] for m in web["members"]), sorted([SID1, SID2]), "the member survives")
+        self.assertEqual(store_tag("docs")["id"], d["id"], "the create survives")
+        self.assertEqual(km._timeline_views()["actives"]["timeline"], {"tags": ["api"]}, "the lens landed")
+        self.assertEqual(km._timeline_views()["tagOrder"], ["docs", "api"], "…and the order")
+        self.assertEqual([t["id"] for t in a["views"]["tags"]], [t["id"] for t in store["tags"]],
+                         "the ack's blob is the store's tag set")
+        self.assertEqual(self.notices, [], "the normal lens path: nothing said")
+        self.assertGreater(a["seq"], store["seq"], "the write moved the store")
+
+    def test_a_write_naming_its_edited_tags_changes_those_only(self):
+        self.seed()
+        c = self.post({"type": "tagEdit", "writeId": "w1", "edit": {"op": "create", "name": "api", "color": "#54B204"}})
+        b_tid = c["tid"]
+        w = json.loads(json.dumps(c["views"]))                          # a fresh copy: not stale by any stamp
+        for t in w["tags"]:
+            t["color"] = "#000000"                                       # …recoloring BOTH tags…
+        a = self.post({"type": "setTimelineViews", "writeId": "w2", "views": w, "edited": [b_tid]})   # …claiming only B
+        self.assertEqual((a["ok"], [r["tid"] for r in a["refused"]]), (True, ["gA"]))
+        self.assertNotIn("error", a)
+        self.assertEqual(store_tag("api")["color"], "#000000", "B, the edited tag, is applied")
+        self.assertEqual(store_tag("web")["color"], "#3b82f6", "A is kept from the store, whatever the copy says")
+        self.assertEqual(self.notices, [], "a kept tag outside `edited` is nobody's lost edit: quiet")
+        # a tag omitted by a write that did not edit it is not deleted either
+        w2 = json.loads(json.dumps(a["views"]))
+        w2["tags"] = [t for t in w2["tags"] if t["id"] == b_tid]
+        w2["tags"][0]["color"] = "#DD42FF"
+        a2 = self.post({"type": "setTimelineViews", "writeId": "w3", "views": w2, "edited": [b_tid]})
+        self.assertEqual((a2["ok"], [(r["tid"], r["reason"]) for r in a2["refused"]]),
+                         (True, [("gA", "this write did not edit it, so it was not deleted")]))
+        self.assertEqual(sorted(t["name"] for t in km._timeline_views()["tags"]), ["api", "web"])
+        self.assertEqual(store_tag("api")["color"], "#DD42FF")
+        self.assertEqual(self.notices, [])
+
+    def test_a_write_without_edited_keeps_the_legacy_reading(self):
+        served = self.seed()
+        w = json.loads(json.dumps(served))
+        w["tags"][0]["name"] = "api"                                    # a fresh copy renames web…
+        w["tags"].append({"id": "gnew", "name": "docs", "color": "#DD42FF", "members": [SID2]})   # …and creates docs
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": w})
+        self.assertEqual((a["ok"], a["refused"]), (True, []), "a fresh whole-blob write lands whole, as before")
+        self.assertEqual(store_tag("api")["id"], "gA")
+        self.assertEqual(store_tag("docs")["id"], "gnew")
+        # …and a stale one is judged by the stamps alone, loudly
+        stale = json.loads(json.dumps(served))
+        time.sleep(1.1)
+        self.assertIsNone(km._edit_tag(tid="gA", add=[SID3])[1])
+        b = self.post({"type": "setTimelineViews", "writeId": "w2", "views": stale})
+        self.assertFalse(b["ok"])
+        self.assertIn("gA", [r["tid"] for r in b["refused"]])
+        self.assertTrue(self.notices and not self.notices[0][1], "loud, as before")
 
 
 class WriteSequence(_Wire):
@@ -1000,14 +1131,26 @@ class WholeBlobNameCollisions(_Wire):
         next(t for t in pending["tags"] if t["id"] == api_tid)["name"] = "web"
         pending["actives"] = {"timeline": {"tags": ["web"]}, "chat": {"all": True}, "outline": {"all": True}}
         a = self.post({"type": "setTimelineViews", "writeId": "w3", "views": pending, "edited": []})
-        self.assertTrue(a["ok"], "a lens write: the refused hunk is a tag this write did not claim to edit")
-        self.assertEqual([(x["tid"], x["name"]) for x in a["refused"]], [(api_tid, "api")])
-        self.assertEqual(a["refused"][0]["reason"], 'a tag named "web" already exists, so it was not renamed to it')
+        self.assertEqual((a["ok"], a["refused"]), (True, []),
+                         "a lens write changes no tag (round 5), so the pending rename is not even judged")
         self.assertEqual(sorted(t["name"] for t in km._timeline_views()["tags"]), ["api", "web"], "ONE tag per name")
         self.assertEqual(km._timeline_views()["actives"]["timeline"], {"tags": ["web"]}, "the lens landed")
         self.assertEqual(self.notices, [], "nothing the user did in THIS write was refused")
-        # the same blob naming the tag as edited (an older client's whole-blob rename): refused, loud
-        b = self.post({"type": "setTimelineViews", "writeId": "w4", "views": pending, "edited": [api_tid]})
+        # the same pending copy riding a write that edits web (a recolor): the rename is a tag this
+        # write did not claim to edit — kept as the store has it, listed with the collision's reason
+        pending_w = json.loads(json.dumps(pending))
+        next(t for t in pending_w["tags"] if t["id"] == "gA")["color"] = "#000000"
+        a2 = self.post({"type": "setTimelineViews", "writeId": "w3b", "views": pending_w, "edited": ["gA"]})
+        self.assertTrue(a2["ok"], "the refused hunk is a tag this write did not claim to edit")
+        self.assertEqual([(x["tid"], x["name"]) for x in a2["refused"]], [(api_tid, "api")])
+        self.assertIn("did not edit it", a2["refused"][0]["reason"])
+        self.assertEqual(sorted(t["name"] for t in km._timeline_views()["tags"]), ["api", "web"], "ONE tag per name")
+        self.assertEqual(store_tag("web")["color"], "#000000", "the recolor landed")
+        self.assertEqual(self.notices, [], "nothing the user did in THIS write was refused")
+        # the rename on a copy of the store, naming the tag as edited (an older client's whole-blob rename): refused, loud
+        pending2 = json.loads(json.dumps(km._views_client()))
+        next(t for t in pending2["tags"] if t["id"] == api_tid)["name"] = "web"
+        b = self.post({"type": "setTimelineViews", "writeId": "w4", "views": pending2, "edited": [api_tid]})
         self.assertFalse(b["ok"])
         self.assertEqual(b["error"], '"api": a tag named "web" already exists, so it was not renamed to it')
         self.assertEqual(sorted(t["name"] for t in km._timeline_views()["tags"]), ["api", "web"])

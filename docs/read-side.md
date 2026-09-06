@@ -360,12 +360,20 @@ name, the lowest free "tag N". A move (off one tag, onto another) is one write:
 both halves land or neither does. The kernel answers `tagEditAck` with `ok`, the
 post-write client blob, the tag's `tid` and `name`, or a plain refusal. A lens or
 order change still posts the whole blob (`setTimelineViews`) together with
-`edited`, the tag ids the write changed (none for a lens or order write). The
-guard may keep the store's copy of a stale tag; the kernel answers `viewsAck`
-listing each kept tag with a reason, and `ok` is false only when a kept tag is
-one the client edited. The kernel's own dashboard notice follows the same rule:
-a kept tag the client edited is a lost edit and raises a dashboard notice; a
-kept tag it did not edit is one stderr line and nothing on the dashboard.
+`edited`, the tag ids the write changed (none for a lens or order write).
+`edited` bounds what the write may change. An empty list changes no tag: the
+store's tags stand whatever tags the blob carries, and only the lens, order and
+active fields land, with nothing judged and nothing logged (a lens write built
+from a copy taken in the same second as a targeted edit used to revert that
+edit, since the guard's stamps have one-second resolution). A list of ids may
+change those tags only; a differing copy of any other tag, or its absence, is
+kept from the store and listed in the ack. The guard may also keep the store's
+copy of a stale edited tag; the kernel answers `viewsAck` listing each kept tag
+with a reason, and `ok` is false only when a kept tag is one the client edited.
+The kernel's own dashboard notice follows the same rule: a kept tag the client
+edited is a lost edit and raises a dashboard notice; a kept tag it did not edit
+is one stderr line and nothing on the dashboard. A write without `edited` (an
+older client) is judged whole by the stamps, as before.
 `edited` also settles a case the guard could not judge before: a tag absent
 from the store. Named in `edited`, it is a create (the no-capability path's
 client-minted `g…` id) and lands; not named, it is a stale copy re-creating a
