@@ -521,3 +521,38 @@ test('MEDIA_EXTENSIONS mirrors the kernel\'s _PREVIEW_MIME: the _IMG_MIME keys p
   assert.match(src, /_PREVIEW_MIME = dict\(_IMG_MIME, \*\*\{"\.pdf": "application\/pdf"\}\)/);
   assert.deepEqual(new Set([...exts, 'pdf']), MEDIA_EXTENSIONS);
 });
+
+// ── the src is decoded as the viewer decodes it ─────────────────────
+
+test('an embedded src is decoded before it is resolved, as the viewer decodes it: %20 names a space, a malformed escape reads as written, and the stored src and the embeddedHashes key stay as the embed wrote them', () => {
+  const w = world();
+  fs.writeFileSync(path.join(w.docs, 'figs', 'p95 latency.png'), LATENCY);
+  fs.writeFileSync(path.join(w.docs, 'figs', '100%.png'), ERRORS);
+  fs.writeFileSync(path.join(w.docs, 'figs', 'a%20b.png'), CHART);   // a NAME that holds an escape: the viewer never shows it
+  const md = path.join(w.docs, 'spaced.md');
+  const text = '# Spaced\n\n![p95](figs/p95%20latency.png)\n\n![all](figs/100%.png)\n\n![literal](figs/a%20b.png)\n';
+  fs.writeFileSync(md, text);
+  const st = status(w, md);
+  // Markdown spells the space as %20 and the panel sends the destination as written (E1); the file
+  // the viewer loaded is the one with the space, and that is the one hashed.
+  let a = anchorAt(text, '![p95](figs/p95%20latency.png)', 0);
+  const r = comment(w, md, st, { anchor: a.anchor, hintOffset: a.hintOffset, note: 'Crop to the plot.', target: { kind: 'image', region: REGION, src: 'figs/p95%20latency.png' } });
+  const c = readSidecar(r.storePath).comments[0];
+  assert.equal(c.target.src, 'figs/p95%20latency.png', 'stored as written');
+  assert.equal(c.target.hash, sha256(LATENCY), 'the bytes of the file the viewer showed');
+  assert.deepEqual(r.embeddedHashes, { 'figs/p95%20latency.png': sha256(LATENCY) }, 'keyed as written, so the panel finds it');
+  // A malformed escape is read as written, which is also what the viewer loads.
+  a = anchorAt(text, '![all](figs/100%.png)', 0);
+  const r2 = comment(w, md, r, { anchor: a.anchor, hintOffset: a.hintOffset, note: 'All of it.', target: { kind: 'image', region: REGION, src: 'figs/100%.png' } });
+  assert.equal(readSidecar(r2.storePath).comments[1].target.hash, sha256(ERRORS));
+  assert.deepEqual(r2.embeddedHashes, { 'figs/p95%20latency.png': sha256(LATENCY), 'figs/100%.png': sha256(ERRORS) });
+  // A file whose name literally holds %20 is one the viewer resolves to "a b.png" and never shows, so there
+  // is no figure to draw on; the host reads the same path and refuses instead of hashing a picture nobody saw.
+  a = anchorAt(text, '![literal](figs/a%20b.png)', 0);
+  const bad = refused(w, {
+    verb: 'comment', path: md, fence: fenceFor(r2),
+    args: { anchor: a.anchor, hintOffset: a.hintOffset, note: 'x', target: { kind: 'image', region: REGION, src: 'figs/a%20b.png' } },
+  }, 'unreadable');
+  assert.match(bad.error, /figs\/a b\.png cannot be resolved/);
+  assert.equal(readSidecar(r2.storePath).comments.length, 2);
+});

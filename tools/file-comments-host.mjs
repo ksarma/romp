@@ -533,9 +533,11 @@ export function validateTarget(raw, embedded) {
   return out;
 }
 
-// Where an embedded figure's `src` points: resolved against the commented file's directory as a
-// path — the string exactly as the client sent it; a destination the renderer percent-decoded is
-// the client's to decode before sending — then confirmed by realpath to be INSIDE the project root:
+// Where an embedded figure's `src` points: the destination as the embed writes it, decoded the way
+// the viewer decodes it before loading the figure (decodeURI, so `p95%20latency.png` is the file
+// with the space; a malformed escape is read as written — file-view.ts, rewriteFigureSrcs), so the
+// host hashes the file the person saw; resolved against the commented file's directory as a path,
+// then confirmed by realpath to be INSIDE the project root:
 // never above it, and not through a symlink that leaves it. `rootDir` is the root the file has, or
 // for a loose file the one its first comment is about to create, its own directory (decision 37).
 // Returns the resolved path or throws with the reason; the caller makes that a refusal (comment,
@@ -543,7 +545,9 @@ export function validateTarget(raw, embedded) {
 // hashRegular's check, on the same descriptor it reads.
 export function resolveSrc(ctx, rootDir, src) {
   if (/^[a-z][a-z0-9+.-]*:/i.test(src)) throw new Error(`${src} is a URL, not a file in the project`);
-  const abs = path.resolve(path.dirname(ctx.abs), src);
+  let rel = src;
+  try { rel = decodeURI(src); } catch { /* a malformed escape: the spelling as written, as the viewer reads it */ }
+  const abs = path.resolve(path.dirname(ctx.abs), rel);
   let real;
   try {
     real = fs.realpathSync(abs);
