@@ -7,7 +7,8 @@ Covers the backend half:
     re-seeded from it, so a kernel death can DELAY queued turns but never lose them;
   * last_state_value — the cut-turn discriminator reads the last STATE record through the
     interleaved awaiting overlays (the boot heal itself appends one);
-  * find_orphan_clis — matches only ORPHANED (ppid 1) SDK-driven CLIs (--resume <ours> +
+  * find_orphan_clis — matches only ORPHANED SDK-driven CLIs, i.e. whose parent is no live romp
+    kernel (ppid 1 on macOS; the `systemd --user` subreaper on Linux, 2026-09-05) (--resume <ours> +
     stream-json), never a tmux session's interactive `claude --resume` and never a LIVE CLI still
     parented to a kernel (2026-07-06: a duplicate backend's reconcile reaped live sessions);
   * _boot_reconcile — resumes exactly the cut-turn / queued sessions (a user-interrupted or
@@ -81,14 +82,65 @@ class FindOrphanClis(unittest.TestCase):
         self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [4242])
 
     def test_live_children_are_never_orphans(self):
-        # Same command line as a true orphan, but still parented to a running kernel (ppid != 1):
-        # a LIVE session's CLI. Reaping these was the 2026-07-06 kill storm — a duplicate backend's
-        # reconcile SIGTERM'd freshly-resumed sessions mid-turn (exit 143).
+        # Same command line as a true orphan, but still parented to a running kernel (the kernel's
+        # own line is in the listing): a LIVE session's CLI. Reaping these was the 2026-07-06 kill
+        # storm — a duplicate backend's reconcile SIGTERM'd freshly-resumed sessions mid-turn (exit 143).
         lines = [
+            " 38438 901 /usr/bin/python3.12 /x/romp/bin/romp-kernel",
             " 4242 38438 /x/claude --output-format stream-json --resume %s --input-format stream-json" % self.SID,
             " 4245 1 /x/claude --output-format stream-json --resume %s --input-format stream-json" % self.SID,
         ]
         self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [4245])
+
+    # Orphaned = the parent is not a live romp kernel (2026-09-05). Until then the check was ppid 1,
+    # which is what an orphan gets under launchd — and never under `systemd --user`, whose
+    # PR_SET_CHILD_SUBREAPER re-parents an orphan to the user manager's pid, so the reap had matched
+    # nothing on Linux under the service.
+    def _cli(self, pid, ppid):
+        return " %d %d /x/claude --output-format stream-json --resume=%s --input-format stream-json" % (pid, ppid, self.SID)
+
+    def test_orphan_reparented_to_launchd(self):
+        # macOS: pid 1 is launchd, present in the listing and not a kernel
+        lines = [" 1 0 /sbin/launchd", self._cli(700, 1)]
+        self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [700])
+
+    def test_orphan_reparented_to_the_systemd_user_manager(self):
+        # Linux under the service: the orphan's ppid is the `systemd --user` pid, never 1
+        lines = [" 1 0 /sbin/init", " 901 1 /usr/lib/systemd/systemd --user", self._cli(701, 901)]
+        self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [701])
+
+    def test_orphan_whose_parent_is_absent_from_the_listing(self):
+        # the parent died between the CLI's line and its own (ps is not atomic) — an orphan
+        lines = [self._cli(702, 65000)]
+        self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [702])
+
+    def test_a_live_cli_parented_to_a_romp_kernel_is_never_reaped(self):
+        for kernel in (" 500 901 /usr/bin/python3.12 /x/romp/bin/romp-kernel",
+                       " 500 901 python3 bin/romp-kernel",
+                       " 500 901 python3 kernel/kernel.py",
+                       " 500 901 /usr/bin/python3 /x/romp/kernel/kernel.py"):
+            lines = [" 901 1 /usr/lib/systemd/systemd --user", kernel, self._cli(703, 500)]
+            self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [], kernel)
+
+    def test_a_cli_parented_to_a_different_live_kernel_is_that_kernels(self):
+        # another kernel (an aux port, a second install) owns this CLI — not ours to reap, whatever
+        # sid it carries; the orphan next to it, parented to the user manager, still is
+        lines = [" 901 1 /usr/lib/systemd/systemd --user",
+                 " 600 901 /usr/bin/python3.12 /elsewhere/romp/bin/romp-kernel",
+                 self._cli(704, 600), self._cli(705, 901)]
+        self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [705])
+
+    def test_kernel_match_is_on_argv_tokens_not_substrings(self):
+        self.assertTrue(sb._is_kernel_cmd("/usr/bin/python3.12 /x/romp/bin/romp-kernel"))
+        self.assertTrue(sb._is_kernel_cmd("python3 kernel/kernel.py"))
+        self.assertTrue(sb._is_kernel_cmd("python3 kernel.py"))
+        # a process merely mentioning the kernel is not one: its child would be an orphan
+        self.assertFalse(sb._is_kernel_cmd("tail -f /x/state/romp/romp-kernel.log"))
+        self.assertFalse(sb._is_kernel_cmd("node /x/romp/bin/romp-manager up"))
+        self.assertFalse(sb._is_kernel_cmd("/usr/lib/systemd/systemd --user"))
+        self.assertFalse(sb._is_kernel_cmd("python3 other/kernel.py"))
+        lines = [" 800 1 tail -f /x/state/romp/romp-kernel.log", self._cli(706, 800)]
+        self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [706])
 
     def test_empty_sids_match_nothing(self):
         lines = [" 1 1 claude --resume  --input-format stream-json"]
@@ -242,6 +294,7 @@ class BootReconcile(unittest.TestCase):
         sb.append_state(Path(d), sid, "working")
         ps = ("  555 1 /x/claude --output-format stream-json --resume %s --input-format stream-json\n"
               "  556 1 claude --resume %s --name termsess\n"
+              "  90210 1 /usr/bin/python3 /x/romp/bin/romp-kernel\n"
               "  557 90210 /x/claude --output-format stream-json --resume %s --input-format stream-json\n"
               ) % (sid, sid, sid)
         killed = []
