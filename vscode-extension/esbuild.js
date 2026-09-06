@@ -122,6 +122,69 @@ function testBuild() {
   };
 }
 
+// Every production bundle is built into memory and dist/ is written only once ALL of them have built.
+// esbuild writes each build()'s outputs as that build finishes, so with the extension bundle first and
+// the webview bundle second, a webview failure left dist/extension.js rewritten and every webview
+// bundle old. The common failure is exactly that shape: a merge imports a package this checkout's
+// node_modules predates (pdfjs-dist, 2026-09-06, the first build-required dependency the kernel's
+// in-place rebuild could meet). The kernel's cache token is the newest mtime under dist/, so the
+// half-written dist bumped it: every open dashboard was told a newer build existed and reloaded into
+// the same stale bundles, and the kernel's drift pass then read dist as newer than the sources it had
+// just failed to build. A failed build now leaves dist/ byte-for-byte as it was, so "the rebuild
+// failed" and "dist is older than the sources" stay true together. Watch mode and the test build
+// write directly as before: a dev loop wants each rebuild on disk at once.
+async function buildAll(configs) {
+  const results = [];
+  for (const cfg of configs) results.push(await esbuild.build({ ...cfg, write: false }));
+  const written = [];
+  for (const r of results) {
+    for (const f of r.outputFiles) {
+      fs.mkdirSync(path.dirname(f.path), { recursive: true });
+      fs.writeFileSync(f.path, f.contents);
+      written.push(f.path);
+    }
+  }
+  return written;
+}
+
+// The LAST line on stderr is the one the kernel shows: its in-place rebuild puts the tail of this
+// process's stderr into the notice that tells the person the served UI is stale, and the tail of an
+// esbuild BuildFailure printed whole is its stack through esbuild's own transport (`at Socket.emit`,
+// `errors: [Getter/Setter]`) — no cause, no cure. esbuild has already printed each error with its code
+// frame (logLevel "info"), so this names the cause in one line of at most 300 characters (the kernel's
+// tail) and, for the common cause, the cure: an unresolvable package — a bare specifier or a
+// node_modules/ path that is not a file of this checkout — is a dependency this node_modules lacks,
+// and `npm install` is what fixes it. A relative import or a syntax error gets its text, not that cure.
+// `untouched` names the output dir the atomic write left alone, when that is what failed.
+function failureSummary(e, untouched) {
+  const errors = e && Array.isArray(e.errors) ? e.errors : null;
+  if (!errors) return "esbuild.js: build failed: " + (e && e.message ? e.message : String(e));
+  const n = errors.length;
+  let line = "esbuild.js: build failed with " + n + (n === 1 ? " error" : " errors") +
+             (untouched ? "; " + untouched + " is unchanged" : "") + ".";
+  const unresolved = [];
+  for (const x of errors) {
+    const m = /^Could not resolve "([^"]+)"/.exec(x.text || "");
+    if (m) unresolved.push(m[1]);
+  }
+  const isDep = (spec) => spec.startsWith("node_modules/") ||
+    (!/^[./]/.test(spec) && !path.isAbsolute(spec) && !fs.existsSync(path.resolve(spec.split("/")[0])));
+  if (unresolved.length) {
+    const quote = (s) => JSON.stringify(s.length > 60 ? s.slice(0, 57) + "..." : s);
+    const shown = unresolved.slice(0, 2).map(quote).join(", ") +
+                  (unresolved.length > 2 ? " (+" + (unresolved.length - 2) + " more)" : "");
+    line += unresolved.some(isDep)
+      ? " Unresolved: " + shown + " — not in this checkout's node_modules; run npm install in vscode-extension/ and rebuild."
+      : " Unresolved: " + shown + ".";
+  } else {
+    const x = errors[0];
+    const where = x.location && x.location.file ? " (" + x.location.file + ":" + x.location.line + ")" : "";
+    const text = (x.text || "").length > 120 ? (x.text || "").slice(0, 117) + "..." : (x.text || "");
+    line += " " + text + where;
+  }
+  return line.length > 300 ? line.slice(0, 297) + "..." : line;
+}
+
 async function main() {
   if (tests) {
     // Clean out-tests/ first so a DELETED test source can't leave an orphaned .js behind that `node --test`
@@ -135,12 +198,20 @@ async function main() {
     await Promise.all([a.watch(), b.watch()]);
     console.log("watching…");
   } else {
-    await esbuild.build(extension);
-    await esbuild.build(webview);
+    await buildAll([extension, webview]);
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Exported for src/esbuild-build.test.ts, which drives both against synthetic entries; the build runs
+// only when this file is the script (`node esbuild.js`), never on require.
+module.exports = { buildAll, failureSummary };
+
+if (require.main === module) {
+  main().catch((e) => {
+    // Not an esbuild BuildFailure (an fs error, a bug here): its stack is the diagnosis, and esbuild
+    // printed nothing for it. A BuildFailure's errors are already on stderr with their code frames.
+    if (!(e && Array.isArray(e.errors))) console.error(e);
+    console.error(failureSummary(e, tests || watch ? null : "dist/"));
+    process.exit(1);
+  });
+}

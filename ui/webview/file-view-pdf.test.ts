@@ -2,7 +2,8 @@
 // file-view-seam.test.ts's two-page, resolve-at-once stand-in cannot reach: a document pdf.js opens with NO pages, a
 // render that resolves after the pages were dropped (the panel closed and reopened while it was in flight), a chunk load
 // that settles after the panel closed, an engine too old for pdf.js (refused before the chunk is fetched), the reader's
-// page carried across the pages/frame flip, and the frame kept — not reloaded — when the panel closes over a fallback.
+// page carried across the pages/frame flip, and the frame kept — not reloaded — when the panel opens over a PDF the
+// pages refuse (the round-2 kept-frame rule: the notice goes above the open's own frame) and when it closes again.
 // The DOM stand-in below is the seam test's (ancestry, ids, attributes, events, a small selector engine), copied rather
 // than shared because that module installs its globals and registers its tests at import; keep the two in step. The
 // chunk stand-in here takes a page count and can hold its resolution until a test releases it, which is how the stale
@@ -450,29 +451,42 @@ test("the reader's page survives the flip: the frame the close builds opens at #
   assert.notEqual(again.src, bare, "…at the reload's object URL");
 });
 
-test("the panel closing over the fallback keeps the frame — the document is not reloaded — and drops the notice; a reload rebuilds the frame at the new bytes' URL", async (t) => {
+// The over-cap fallback is the open's OWN frame, kept in place: showPdfPages finds it (shownFrame) and prepends the cap
+// notice to its column instead of building a fresh frame, because a rebuilt iframe reloads the document at page 1 and
+// loses the place the reader had reached (the review, 2026-09-06; file-view-pdf-frame.test.ts covers the open in
+// detail). Round 1 of this test pinned the opposite — a NEW frame under the notice — and went red when round 2
+// changed the fallback; this pins the kept frame at both ends of the panel, so the two files cannot disagree again.
+test("the panel opening over the cap fallback keeps the open's frame under the notice, and closing keeps it and drops the notice — the document is never reloaded; a reload rebuilds the frame at the new bytes' URL", async (t) => {
   disk[BIG] = { bytes: new Uint8Array(26 * 1024 * 1024), type: "application/pdf", mtimeNs: MT };
   t.after(() => { delete disk[BIG]; });
   const { ctx, body } = await open(BIG, t);
   const f0 = frameIn(body)!;
+  const bare = f0.src;
   ctx.aside(panel()); await settle();
   assert.equal(pdf.renders, 0, "over the cap: refused before the chunk");
   const f1 = frameIn(body)!;
-  assert.ok(f1 && f1 !== f0, "the fallback's frame, under the cap notice");
-  assert.ok(noteIn(body), "the notice");
+  assert.equal(f1, f0, "the SAME frame element through the open: the fallback is the frame already showing, not a rebuilt one");
+  assert.equal(f1.src, bare, "…and its src untouched: no navigation, no reload");
+  const note = noteIn(body)!;
+  assert.ok(note, "the notice");
+  assert.equal(note.parentNode, f0.parentNode, "…above the frame, in the frame's own column");
+  assert.equal(body.querySelectorAll("iframe.fileview-frame").length, 1, "one frame in the body: nothing was added beside it");
+  assert.equal(ctx.mediaElement(), f0 as unknown as HTMLElement, "whole-file comments work on the kept frame");
   const before = paints;
   ctx.aside(null);
-  assert.equal(frameIn(body), f1, "the SAME frame element: the browser's viewer keeps the reader's place");
+  assert.equal(frameIn(body), f0, "the SAME frame element after the close: the browser's viewer keeps the reader's place");
+  assert.equal(frameIn(body)!.src, bare, "still no navigation");
   assert.equal(noteIn(body), null, "the notice — about the panel's rendering — is gone with the panel");
-  assert.equal(ctx.mediaElement(), f1 as unknown as HTMLElement);
+  assert.equal(ctx.mediaElement(), f0 as unknown as HTMLElement);
   assert.deepEqual(ctx.pdfPages(), []);
   assert.equal(paints, before + 1, "the panel hears the body change");
   // other bytes: the frame is rebuilt, as every media body is on a reload
   ctx.reload(); await settle();
   const f2 = frameIn(body)!;
-  assert.ok(f2 && f2 !== f1, "a fresh frame at the reload's object URL");
-  assert.notEqual(f2.src, f1.src);
-  assert.equal(body.querySelector(".fileview-pdffall"), null, "the fallback column went with the old frame");
+  assert.ok(f2 && f2 !== f0, "a fresh frame at the reload's object URL");
+  assert.notEqual(f2.src, bare);
+  assert.equal(body.querySelectorAll(".fileview-pdffall").length, 1, "the reload's frame comes in its own column; the old column went with the old frame");
+  assert.equal(body.querySelectorAll("iframe.fileview-frame").length, 1, "…and the old frame is not in the body");
 });
 
 // ── pinned at source: the guards' shape, and the engine check ahead of the fetch ────────────────────

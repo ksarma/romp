@@ -221,26 +221,67 @@ export class RegionLayer {
     o.addEventListener("click", (ev: Event) => { if (this.drew) { this.drew = false; ev.stopPropagation(); ev.preventDefault(); } });
   }
 
-  /** Rebuild the rectangles: one per mark (a control: data-act="fcopen", data-id, a Tab stop), the
+  /** Bring the rectangles up to date: one per mark (a control: data-act="fcopen", data-id, a Tab stop), the
    *  composer's pending region when there is one, and the re-place cue on the overlay. Returns the controls
-   *  so the panel can register them as its own. Called on every paint pass, so nothing is ever stacked. */
+   *  so the panel can register them as its own. Called on every paint pass.
+   *
+   *  Keyed by the comment: a rectangle already up for a mark is UPDATED IN PLACE — its place, its state, its chip
+   *  — never removed and made again. With a PDF this pass runs on every page draw, redraw and width change (the
+   *  chunk's onPage, through the seam's onRendered), and a press on a rectangle is deliberately not captured (arm),
+   *  so a rectangle remade under a held pointer took the click with it: mousedown and mouseup landed on different
+   *  nodes, and no click reached a data-act — a card that took several clicks to open while the pages next to it
+   *  were drawing (ui/CLAUDE.md, click-safe; 2026-09-06). A node that stays also keeps its keyboard focus. A move
+   *  counts as a removal to the browser's click tracking too, so a rectangle that is up is never re-inserted: a new
+   *  mark's rectangle goes in right after the previous mark's, which keeps the marks' order for every rectangle
+   *  painted here without moving one. A rectangle whose mark is gone leaves; the pending region is one node,
+   *  updated the same way; anything else on the overlay but the drag band is removed, so nothing is ever stacked. */
   paint(marks: RegionMark[], pending: Region | null, replacing: boolean): HTMLElement[] {
     const o = this.overlay; const doc = o.ownerDocument;
-    for (const n of Array.from(o.childNodes)) if (n !== this.band) o.removeChild(n);
-    const out: HTMLElement[] = [];
-    for (const m of marks) {
-      const r = mk(doc, "div", "fc-region" + (m.state === "stale" ? " fc-stale" : m.state === "unknown" ? " fc-unknown" : ""));
-      r.setAttribute("style", styleAttr({ ...regionStyle(m.region), ...(m.style || {}) }));
-      r.dataset.act = "fcopen"; r.dataset.id = m.id;
-      r.tabIndex = 0; r.setAttribute("role", "button");
-      const noun = nounFor(this.img);
-      r.title = "Open the comment on this region" + (m.state === "stale" ? " (the " + noun + " changed after it was drawn)" : m.state === "unknown" ? " (whether the " + noun + " changed could not be checked)" : "");
-      const chip = mk(doc, "span", "fc-region-chip");
-      chip.dataset.label = m.label;                      // drawn by the sheet: no text node under the picture
-      r.appendChild(chip);
-      o.appendChild(r); out.push(r);
+    const isRegion = (n: Node): n is HTMLElement => {
+      const cl = (n as HTMLElement).classList;
+      return !!cl && typeof cl.contains === "function" && cl.contains("fc-region");
+    };
+    // what is up: the rectangles by the comment they open, and the pending region; a stray, or a second node for
+    // the same comment, is removed here
+    const have = new Map<string, HTMLElement>();
+    let pend: HTMLElement | null = null;
+    for (const n of Array.from(o.childNodes)) {
+      if (n === this.band) continue;
+      if (isRegion(n)) {
+        if (n.classList.contains("fc-region-pending")) { if (!pend) { pend = n; continue; } }
+        else { const id = n.dataset.id; if (id && !have.has(id)) { have.set(id, n); continue; } }
+      }
+      o.removeChild(n);
     }
-    if (pending) { const p = mk(doc, "div", "fc-region fc-region-pending"); p.setAttribute("style", styleAttr(regionStyle(pending))); o.appendChild(p); }
+    const out: HTMLElement[] = [];
+    const noun = nounFor(this.img);
+    let last: HTMLElement | null = null;                 // the previous mark's rectangle: a new one goes in right after it
+    for (const m of marks) {
+      let r = have.get(m.id);
+      if (r) have.delete(m.id);
+      else {
+        r = mk(doc, "div", "fc-region");
+        r.dataset.act = "fcopen"; r.dataset.id = m.id;
+        r.tabIndex = 0; r.setAttribute("role", "button");
+        r.appendChild(mk(doc, "span", "fc-region-chip"));
+        const kids = o.childNodes;
+        const at = last ? Array.prototype.indexOf.call(kids, last) + 1 : 0;
+        o.insertBefore(r, (kids[at] as Node | undefined) || null);
+      }
+      r.className = "fc-region" + (m.state === "stale" ? " fc-stale" : m.state === "unknown" ? " fc-unknown" : "");
+      r.setAttribute("style", styleAttr({ ...regionStyle(m.region), ...(m.style || {}) }));
+      r.title = "Open the comment on this region" + (m.state === "stale" ? " (the " + noun + " changed after it was drawn)" : m.state === "unknown" ? " (whether the " + noun + " changed could not be checked)" : "");
+      let chip = r.querySelector(".fc-region-chip") as HTMLElement | null;
+      if (!chip) { chip = mk(doc, "span", "fc-region-chip"); r.appendChild(chip); }
+      chip.dataset.label = m.label;                      // drawn by the sheet: no text node under the picture
+      out.push(r); last = r;
+    }
+    for (const gone of have.values()) o.removeChild(gone);   // resolved, or moved to another picture
+    if (pending) {
+      const p = pend || mk(doc, "div", "fc-region fc-region-pending");
+      p.setAttribute("style", styleAttr(regionStyle(pending)));
+      if (!pend) o.appendChild(p);
+    } else if (pend) o.removeChild(pend);
     o.classList.toggle("fc-replacing", replacing);
     return out;
   }

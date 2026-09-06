@@ -19,7 +19,7 @@
 // unchecked count would hold the pane's thread for a minute or exhaust its memory before the first paint. A
 // real document rarely approaches the cap (even a text-only PDF at the byte cap runs to thousands of pages,
 // not millions), and 5,000 shells build in well under a second; over it, the person gets the browser's
-// frame, told why.
+// frame and the refusal's message.
 //
 // THE WORKER: pdf.js parses in a Worker it creates from `GlobalWorkerOptions.workerSrc`. That URL is
 // derived at load from this chunk's OWN <script src> — same directory, same ?v= token — so a rebuilt
@@ -42,6 +42,17 @@
 //   data-page too, CSS width 100%, the page's aspect-ratio too so its box is the page's whether or not a
 //   bitmap is in it). A canvas with no bitmap is 0×0 — from the start, and again after an eviction — so an
 //   overlay reading its backing store as the page's natural size sees "unknown", never a stray default.
+//   A page whose draw is PENDING — asked of the pump, queued behind the draws ahead of it or in flight — with no
+//   bitmap to show meanwhile carries the romp loader over its sheet (div.fileview-load.fileview-pdf-page-load: the
+//   viewer's own loader markup on the viewer's own classes, absolutely positioned over the wrapper, pointer-events
+//   none so the panel's overlay under it still takes the pointer), from the moment the draw is asked until the
+//   bitmap lands, the page fails (the notice takes its place) or the page is evicted; never for a sharpening
+//   redraw, whose scaled bitmap is already on screen, and never on a failed page, whose wait nothing will end.
+//   Before it, an undrawn sheet was a white sheet — indistinguishable from an empty page or a quiet failure for
+//   as long as a heavy page took to draw, and behind the serial pump a page on screen waited on pages off it
+//   with no cue at all (the review, 2026-09-06; ui/CLAUDE.md's loading-state rule). Pending pages are the pages
+//   inside the observer's margin, so a long document animates a few of these, never thousands. The wordmark's
+//   colour is the sheet's to set for the white ground (as .fileview-pdf-page .fileview-err does for the notice).
 //   Pages are drawn width-fit to the root, lazily as they scroll within one height of the SCROLLER — the
 //   nearest ancestor of `container` that scrolls (scrollRootFor; the viewport when none does) is the
 //   IntersectionObserver's root, because a margin on the implicit root never reaches a page clipped by a
@@ -56,7 +67,9 @@
 //   /Count of zero or below reports `pages: 0`, so the caller's page-less path runs and no blank root is
 //   mounted); it rejects for bytes over the cap, a page count over the cap, a missing worker URL, or anything
 //   pdf.js refuses to open (a corrupt file, a password), each with pdf.js's or this module's own message —
-//   and in every one of those cases nothing of this module's is in the container. A LATER page pdf.js cannot read or
+//   and in every one of those cases nothing of this module's is in the container and the Worker pdf.js made for
+//   the attempt is terminated (getDocument starts one per call, and pdf.js's own failure path only rejects, so
+//   without that a refused open held a live Worker per attempt for the tab's life). A LATER page pdf.js cannot read or
 //   draw (a damaged page object) is loud in place: its wrapper keeps the page's extent and shows the
 //   failure (div.fileview-err naming the page and pdf.js's message), its canvas is removed — a page that
 //   will never have a bitmap must not take a region comment, and the panel keys its overlays on the canvas —
@@ -92,13 +105,14 @@
 // same pump, observer and failure paths against it; the browser test loads the built chunk as shipped.
 import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
+import { mediaSrc } from "./media";   // the loader's swirl: the host-injected media base, as every asset URL resolves
 
 /** The default bytes cap: a PDF over this is refused, not rendered (the plan's stated cap). */
 export const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
 
 /** The default page-count cap: a PDF declaring more pages than this is refused once pdf.js has opened it and
  *  before any page shell is built. Bytes do not bound this (see the header): the count comes from the page
- *  tree's /Count, which pdf.js takes on faith once the last page resolves. Every page costs two elements and
+ *  tree's /Count, which pdf.js does not verify beyond resolving the last page. Every page costs two elements and
  *  an observed target up front, built synchronously, so the count is what bounds that work. */
 export const DEFAULT_MAX_PAGES = 5000;
 
@@ -200,6 +214,7 @@ interface Page {
   visible: boolean;              // inside the observer's window (always true without an observer)
   queued: boolean;
   failed: boolean;               // pdf.js could not read or draw it: the notice is in the wrapper, no retry
+  cue: HTMLElement | null;       // the romp loader over the sheet while a draw is pending with no bitmap (cue / uncue)
 }
 
 /** render() over a given pdf.js — the modern build for the shipped chunk (`render` below), the legacy build
@@ -214,8 +229,12 @@ export function makeRender(pdfjsLib: PdfLib) {
     }
     // a copy: pdf.js transfers the buffer it is given to the worker, which would detach the caller's
     const task = pdfjsLib.getDocument({ data: new Uint8Array(bytes.slice(0)) });
-    const doc: PDFDocumentProxy = await task.promise;
-    // the count is the page tree's /Count, which pdf.js takes on faith (the header): over the cap it is refused
+    let doc: PDFDocumentProxy;
+    // a refused open (corrupt bytes, a password) releases the Worker getDocument started for it: pdf.js's failure
+    // path only rejects, and the caller has no handle to release it with, so without this every attempt on such a
+    // file (each opening of the Comments panel renders again) left one more Worker running
+    try { doc = await task.promise; } catch (e) { void task.destroy(); throw e; }
+    // the count is the page tree's /Count, which pdf.js does not verify (the header): over the cap it is refused
     // HERE, before a shell exists or the container is touched, and the document and its worker are released.
     // Below zero (an integer pdf.js accepts) it is no pages, so the caller's page-less path runs, not a blank root.
     const pageCap = opts.maxPages ?? DEFAULT_MAX_PAGES;
@@ -252,7 +271,7 @@ export function makeRender(pdfjsLib: PdfLib) {
                                               // or default-sized band. No bitmap is 0×0, never the element default.
       wrap.appendChild(canvas);
       root.appendChild(wrap);
-      const p: Page = { index: i, wrap, canvas, proxy: null, task: null, drawnAt: 0, visible: false, queued: false, failed: false };
+      const p: Page = { index: i, wrap, canvas, proxy: null, task: null, drawnAt: 0, visible: false, queued: false, failed: false, cue: null };
       pages.push(p);
       byEl.set(wrap, p);
     }
@@ -260,11 +279,35 @@ export function makeRender(pdfjsLib: PdfLib) {
 
     let disposed = false;
     const fitWidth = () => root.clientWidth || 0;
+    // The romp loader over a sheet whose draw is pending and which has no bitmap meanwhile (the header; ui/CLAUDE.md's
+    // loading-state rule): the viewer's own loader markup — swirl, wordmark, three accent dots — on the classes both
+    // sheets style for the viewer's loader, absolutely positioned over the wrapper (whose position: relative anchors
+    // it, as it anchors the panel's overlay). It goes up in want(), the event that asks for the draw — queued behind
+    // the pump or in flight, the sheet is waiting either way — and comes down at the one event that ends the wait:
+    // the bitmap landing (paint), the page failing (fail: the notice takes its place) or the page leaving the margin
+    // (drop: nothing is pending for it any more). A sharpening redraw gets none, its scaled bitmap being on screen,
+    // and a failed page gets none, nothing ever ending that wait. pointer-events: none so the panel's region overlay,
+    // a sibling under it during a redraw, still takes the pointer.
+    const cue = (p: Page) => {
+      if (p.cue || p.drawnAt || p.failed) return;
+      const load = document.createElement("div");
+      load.className = "fileview-load fileview-pdf-page-load";
+      load.style.position = "absolute"; load.style.inset = "0"; load.style.pointerEvents = "none";
+      const swirl = document.createElement("img");
+      swirl.src = mediaSrc("romp-swirl-glyph.svg"); swirl.alt = "";
+      const word = document.createElement("span");
+      word.textContent = "romp";
+      load.appendChild(swirl); load.appendChild(word);
+      for (let i = 0; i < 3; i++) { const dot = document.createElement("i"); dot.className = "fileview-dot"; load.appendChild(dot); }
+      p.wrap.appendChild(load);
+      p.cue = load;
+    };
+    const uncue = (p: Page) => { if (p.cue) { p.cue.remove(); p.cue = null; } };
     // one draw at a time, first asked first drawn: keeps the main thread answering scrolls and bounds
     // the bitmaps in flight
     const queue: Page[] = [];
     let pumping = false;
-    const want = (p: Page) => { if (!p.queued) { p.queued = true; queue.push(p); } void pump(); };
+    const want = (p: Page) => { if (!p.queued) { p.queued = true; queue.push(p); } cue(p); void pump(); };
     async function pump(): Promise<void> {
       if (pumping) return;
       pumping = true;
@@ -287,6 +330,7 @@ export function makeRender(pdfjsLib: PdfLib) {
     const fail = (p: Page, e: unknown) => {
       p.failed = true;
       p.task = null;
+      uncue(p);                                  // the notice takes the loader's place: this wait is over
       const message = String((e && (e as Error).message) || e);
       console.warn("pdf-chunk: page " + p.index + " did not render:", e);
       p.canvas.remove();
@@ -298,10 +342,12 @@ export function makeRender(pdfjsLib: PdfLib) {
     };
     async function paint(p: Page): Promise<void> {
       const proxy = p.proxy || (p.proxy = await doc.getPage(p.index));
-      if (disposed) return;
+      // evicted while getPage was in flight (there was no task for drop to cancel then): no bitmap for a page off
+      // screen. The proxy is kept, so the page draws at once on return.
+      if (disposed || !p.visible) return;
       const base = proxy.getViewport({ scale: 1 });
       const cssW = fitWidth() || base.width;    // an unlaid-out root (0 wide) draws at the page's natural size
-      if (p.drawnAt === cssW) return;           // already sharp at this width
+      if (p.drawnAt === cssW) { uncue(p); return; }   // already sharp at this width (or a 0-wide page: nothing to draw, so nothing to wait for)
       const vp = proxy.getViewport({ scale: cssW / base.width });
       const dpr = backingScale(vp.width, vp.height, typeof window !== "undefined" ? window.devicePixelRatio : 1);
       p.wrap.style.aspectRatio = `${base.width} / ${base.height}`;
@@ -313,12 +359,14 @@ export function makeRender(pdfjsLib: PdfLib) {
       try { await task.promise; } finally { if (p.task === task) p.task = null; }
       if (disposed) return;
       p.drawnAt = cssW;
+      uncue(p);                                  // the bitmap is in: the loader gives way to pixels, before the caller hears of them
       opts.onPage?.({ index: p.index, canvas: p.canvas, width: vp.width, height: vp.height });
     }
     const drop = (p: Page) => {                  // release a far-away page's bitmap; the wrapper keeps its extent
       p.task?.cancel(); p.task = null;
       if (p.canvas.width || p.canvas.height) { p.canvas.width = 0; p.canvas.height = 0; }
       p.drawnAt = 0;
+      uncue(p);                                  // nothing is pending for a page beyond the margin (it is cued again on return)
     };
 
     // lazily as they scroll into view — one height of the SCROLLER as margin, so the next page is ready before
@@ -350,10 +398,11 @@ export function makeRender(pdfjsLib: PdfLib) {
       ro.observe(root);
     }
 
-    // the first page is drawn before resolving, so the caller's loader gives way to pixels, not shells. A
-    // page pdf.js cannot draw rejects render() and leaves NOTHING behind — the caller's fallback (the frame)
+    // the first page is drawn before resolving, so the caller removes its loader over a drawn page, not over
+    // empty shells. A page pdf.js cannot draw rejects render() and leaves NOTHING behind — the caller's fallback (the frame)
     // must not share the container with a stray root or a live worker.
     if (pages.length) {
+      cue(pages[0]);                             // its sheet waits like any other's (a caller's own loader sits above the pages)
       pages[0].visible = true;
       try { await paint(pages[0]); } catch (e) { io?.disconnect(); ro?.disconnect(); void task.destroy(); root.remove(); throw e; }
     }

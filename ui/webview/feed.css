@@ -29,6 +29,11 @@
                        (and the modal's red ⏸-ring) need it defined HERE or var(--err) falls back to gray */
   --warn: #d7a23a;  /* the heads-up amber — mirrors styles.css; ONE amber for "attention, not an error":
                        the toast's left rule, the judge-warnings head (two near-twin hexes before 2026-08-26) */
+  --warn-on-white: #9A6A00;  /* mirrors styles.css: the same heads-up, for text on a surface that is WHITE in every
+                                theme (the viewer's PDF page sheet, .fileview-pdf-page). --warn is tuned for the pane's
+                                ground and reads at 2.3:1 on white; this is the light theme's own amber, 4.7:1 there.
+                                Identical in both theme blocks — white is white. The feed page loads THIS sheet alone
+                                and mounts the same viewer, so the token has to live here too (feed-pdf-page-err.test.ts). */
   --box-border: rgba(255, 255, 255, 0.12);  /* mirrors styles.css — same trap as --err: an undefined var()
                        in a border SHORTHAND voids the whole declaration, so the section-toggle circles and
                        the await-paused outline rendered with NO border at all (the user 2026-07-02) */
@@ -153,6 +158,7 @@ body.theme-light {
   --cmt-hl: #FFDF70;
   --fast: #D45500;
   --warn: #9A6A00;
+  --warn-on-white: #9A6A00;   /* the white sheet's amber is the same in both themes */
   --st-working-bg: #e0b020; --st-working-fg: #332600;   /* status FILLS carry their own fg — same chips, both themes */
   --st-ready-bg: #2b7fb8;   --st-ready-fg: #ffffff;
   --st-awaiting-bg: #c0392b;--st-awaiting-fg: #ffffff;
@@ -1680,6 +1686,12 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-pdf-canvas { display: block; width: 100%; height: auto; }
 .fileview-pdffall { display: flex; flex-direction: column; height: 100%; }
 .fileview-pdffall .fileview-frame { flex: 1 1 auto; min-height: 0; }
+/* a page pdf.js could not draw carries its failure IN the sheet (pdf-chunk.ts fail(): the .fileview-err dress, plus
+   .fileview-pdf-page-err as a hook). The dress's --warn amber is tuned for the pane's ground and sat at 2.3:1 on the
+   white sheet in the dark theme — the one loud error of the PDF view was its faintest text. On the sheet the dress
+   wears the on-white amber, 4.7:1 in every theme (styles-pdf-page-err.test.ts resolves the cascade and the ratio
+   for styles.css; feed-pdf-page-err.test.ts does the same for this sheet and pins the two rules byte-equal). */
+.fileview-pdf-page .fileview-err { color: var(--warn-on-white); }
 
 /* ---------- syntax highlighting (warm, restrained) ----------
    The hljs token palette, mirrored from styles.css (one treatment, two sheets — the .romp-acted

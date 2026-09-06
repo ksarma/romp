@@ -222,8 +222,10 @@ export interface FileViewActionCtx {
   identity(): FileViewIdentity | null;
   /** runs after every paint of the body: a text body at once (open, view switch, reload), a media body once it shows —
    *  an image after its load event (at once when it was already complete), a PDF frame at once (whenShown), a PDF's
-   *  pages once page 1 is drawn and then again after every page the chunk draws (so an overlay can attach to each). A
-   *  Rendered body's figures are in the DOM by then with their own loads still pending. The panel re-runs its paint pass */
+   *  pages once page 1 is drawn and then again after every page the chunk draws (so an overlay can attach to each) and
+   *  after every later page it could not draw (the chunk removes that page's canvas and puts its notice in the shell; the
+   *  overlay leaves with the canvas on this paint, and the card says the page did not render). A Rendered body's figures
+   *  are in the DOM by then with their own loads still pending. The panel re-runs its paint pass */
   onRendered(cb: () => void): void;
   /** runs on mouseup/touchend with a non-collapsed selection inside the body — BEFORE the quote-chip gate, so it works with no chat pane */
   onSelection(cb: (sel: Selection) => void): void;
@@ -943,7 +945,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     return true;
   };
   // The pages body: the romp loader first (the loading-state rule), the chunk's pages once page 1 is drawn, and the
-  // seam's onRendered then and after every page the chunk draws (the overlays attach per page). Every refusal is LOUD
+  // seam's onRendered then, after every page the chunk draws, and after every later page it fails to draw (the overlays
+  // attach per page, and leave with a failed page's canvas on that repaint). Every refusal is LOUD
   // and the same shape: the browser's frame, with a one-line notice above it saying why and that a comment on the
   // whole file still works — bytes over the cap (refused HERE, before a megabyte of renderer is fetched for nothing),
   // an engine too old for the renderer (also before the fetch), a chunk or worker that will not load, a document
@@ -996,6 +999,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         maxBytes: PDF_MAX_BYTES,
         // every draw after the first resolve (a page scrolling in, a redraw at a new width) is a repaint the panel hears
         onPage: () => { if (my === pdfSeq && pdfHandle) fireRendered(); },
+        // …and so is a later page pdf.js refuses (the chunk removes its canvas and shows the failure in its shell): the
+        // panel's overlay on that canvas, armed by the resolve's paint, leaves only on a repaint, and the card's
+        // 'not rendered' tag comes with the same pass. Without this the failed shell kept an armed overlay above its
+        // notice — undraggable, unselectable — until some other page drew or the window resized (the round-3 review).
+        onPageError: () => { if (my === pdfSeq && pdfHandle) fireRendered(); },
       }).then((h) => {
         if (my !== pdfSeq || !wrap.isConnected) { h.dispose(); return; }   // a stale resolution mounts nothing
         // pdf.js opens a page-less document (an empty page tree) and resolves with nothing drawn: an empty root would be

@@ -956,18 +956,55 @@ wraps the POST so the webview needs no serve token. Parked until asked for (deci
 
 ## Security posture
 
-Unchanged in kind, and stated rather than silently widened, as the file-browser plan did for
-saves. `fileComments` is issuable from any authenticated socket, like `saveFile`; every verb that
-writes disk sits behind the same server-side consent gate, checked before any content check; the
-server-side gate is the enforcement and the UI's checks are convenience. The host script runs
-only on the owning kernel, on paths resolved by the kernel, and writes only the sidecar, the
-comments log, `config.json`, and (on reject or save) the commented file. The mtime fences refuse
-and never merge. Both ops route by `sid` to the owning kernel over the existing federation
-splice; nothing new is exempt from `_authorize`, and the panel's verdict rides the authenticated
-`/defaults` payload rather than `/version`. The installer's new step registers a PreToolUse hook
-that runs on every Edit and Write in every Claude Code session on the machine; it exits at once
-in any session romp did not launch (no `ROMP_SID`), and in romp's sessions it is a path check
-that passes untracked files through.
+Stated rather than silently widened, as the file-browser plan did for saves. On the kernel side
+the posture is unchanged in kind. `fileComments` is issuable from any authenticated socket, like
+`saveFile`; every verb that writes disk sits behind the same server-side consent gate, checked
+before any content check; the server-side gate is the enforcement and the UI's checks are
+convenience. The host script runs only on the owning kernel, on paths resolved by the kernel, and
+writes only the sidecar, the comments log, `config.json`, and (on reject or save) the commented
+file. The mtime fences refuse and never merge. Both ops route by `sid` to the owning kernel over
+the existing federation splice; nothing new is exempt from `_authorize`, and the panel's verdict
+rides the authenticated `/defaults` payload rather than `/version`. The installer's new step
+registers a PreToolUse hook that runs on every Edit and Write in every Claude Code session on the
+machine; it exits at once in any session romp did not launch (no `ROMP_SID`), and in romp's
+sessions it is a path check that passes untracked files through.
+
+Slice 4 widens the browser side, and in kind: PDF parsing moves into the dashboard's origin.
+Before it, a PDF in the viewer was an iframe over the bytes, parsed by the browser's own PDF
+viewer in a process of its own, apart from the dashboard's document. While the Comments panel is
+open, the viewer hands the same bytes to pdf.js instead (the `/file` response it already holds,
+fetched with the dashboard's cookie; no second request, no new route, no kernel-side tool, per
+decision 12). pdf.js parses them in a module Worker on the dashboard's origin,
+`/dist/pdf-worker.js`, served behind `_authorize` like every `/dist` asset, and paints each page
+onto a canvas on the main thread, embedded fonts included (through `FontFace`). A PDF is
+untrusted input: sessions download PDFs into the trees the viewer shows, and the person opens
+them. A parser fault that reached script would run on the authenticated origin, where the
+browser's viewer would have contained it. pdf.js is JavaScript, so a malformed file cannot
+corrupt memory as it could in a native parser; a parser bug becomes script on the origin only
+through a sink that executes code or inserts content, and the properties below remove every such
+sink. The dashboard already interprets untrusted files on this origin under the same discipline
+(marked and DOMPurify over markdown, the highlighter over source); a PDF joins that list.
+
+What bounds the widening, each a property to keep across every pdfjs-dist upgrade and every later
+slice, pinned against the code by `ui/webview/file-review-posture.test.ts`:
+
+- **`getDocument` receives `data`, never a URL.** pdf.js issues no request of its own, and the
+  chunk fetches nothing.
+- **No eval path.** The installed pdfjs-dist (6.x) has no `eval`, no `new Function`, and none of
+  the `isEvalSupported` switch of earlier majors, in the main build or the worker. This is a
+  property of the installed version, not of the API: an upgrade re-verifies it before landing and
+  restates it here if the answer changes.
+- **Pixels are the only sink.** The chunk imports pdf.js's core alone, never `pdfjs-dist/web`: no
+  text layer, no annotation layer, no forms, no XFA, no scripting manager, so no PDF content
+  becomes DOM, a form field, a link, or a script. Page painting runs at pdf.js's default,
+  `AnnotationMode.ENABLE`, which draws annotation appearance streams onto the canvas as pixels and
+  nothing else. A later slice that wants selectable text or clickable links on a PDF page widens
+  this list and says so here first.
+- **Two caps, refused by name before any work.** 25 MB of bytes before pdf.js sees one; 5,000
+  pages once the document has opened and before a page shell exists.
+- **The fallback is the old boundary.** A chunk that fails to load, a document pdf.js refuses, or a
+  PDF over either cap gets today's frame, the browser's own viewer, with whole-file comments and a
+  line saying why; the widening never keeps a PDF from opening.
 
 ## Doctrines this respects
 
@@ -1058,7 +1095,9 @@ that passes untracked files through.
   sidecar and whether the guide tells sessions to resolve `.trackchanges/` conflicts by taking the
   branch that holds the newer comments; nothing here changes the plan's shape.
 - **A PDF rendering dependency** (Slice 4). Mitigation: lazy chunk, size cap, frame fallback, and
-  a slice of its own so the rest of the feature never waits on it.
+  a slice of its own so the rest of the feature never waits on it. Its trust boundary, PDF parsing
+  on the dashboard's origin rather than in the browser's viewer, is stated under Security posture
+  with the properties an upgrade or a later slice keeps.
 - **Polling cost.** Two HEAD requests every 2.5 s per open panel. Mitigation: only while the
   panel is open and the tab visible. The poll's state per file is one of absent, present with an
   mtime, or unknown with a status; it starts after the first `status` supplies the sidecar path,
@@ -1101,6 +1140,13 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
 - `ui/webview/user-todo-links.test.ts` rewritten to pin `path-links.ts` and both callers
   (Slice 0); `editor-lazy.test.ts` extended for the typed `track` option (Slice 5) and for the
   PDF chunk staying lazy (Slice 4).
+- `ui/webview/file-review-posture.test.ts` (Slice 4): the Security posture section's PDF
+  statements held against the code, so the section cannot drift from what ships: the section
+  names the boundary; `getDocument` takes `data` only and the chunk fetches nothing; the chunk
+  imports pdf.js's core alone, never `pdfjs-dist/web`, and enables no layer, form, XFA, or
+  scripting option; the installed build has no `eval`, `new Function`, or `isEvalSupported`, and
+  its major is the one the section names; the caps are the section's 25 MB and 5,000 pages; the
+  fallback is the frame; the worker asset is served behind `_authorize`.
 
 ## Docs
 
@@ -1112,7 +1158,11 @@ in place; "Waiting on you" notes the linked path and the ended-session case; "Fi
 either view and on images and PDFs, the comments log and the `.gitignore` opt-out, and where to
 look when the action is missing. `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
-kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`.
+kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
+`SECURITY.md`'s output-sanitization bullet names the PDF renderer (pdf.js parsing on the
+dashboard's origin, in a Worker, with pixels as its only sink, as Security posture states it),
+and the `pdf-chunk.ts` header says the same in a sentence, so a session upgrading pdfjs-dist
+reads the boundary where it edits.
 `claude/romp-session-prompt.md` gains its one sentence. `CONTEXT.md` already carries the
 vocabulary; `docs/adr/0002` records the storage decision. In track-changents (its author): the
 offers back named under Vendoring, and a README "Hosts" row.

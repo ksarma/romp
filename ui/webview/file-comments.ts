@@ -25,7 +25,9 @@
 //     A PDF's pages are read from the chunk's shells (pdfPages): a page with no shell is one the regenerated document
 //     no longer has (pageGone: stale, Re-place on any page); a shell with no canvas is a page pdf.js could not draw
 //     (pageUnrendered: the card says so and reaches the page's own notice, and claims nothing about the file). A
-//     page's crop is kept once cut (crops), so a card keeps its picture after the chunk evicts the page's bitmap.
+//     page's crop is kept once cut (crops), so a card keeps its picture after the chunk evicts the page's bitmap; a
+//     page with no bitmap and nothing kept (pageUndrawn: the chunk draws pages as they near the reader) has, in the
+//     crop's place, a line that says so and scrolls the page in, which draws it and brings the crop.
 //   • The kernel does the disk work on the OWNING kernel (the `fileComments` op runs a node host
 //     script over the vendored track-changents store); this module renders JSON and never holds a
 //     sidecar it writes back. Both ops carry `sid`, so federation routes a remote session's file to
@@ -308,10 +310,18 @@ type Composer =
   | { kind: "replace"; commentId: string; ref: string; src: string | null; page: number | null };
 /** Why a region on a figure cannot be saved: the anchor is the embed line, and the source holds none for this picture. */
 const EMBED_NOT_FOUND = "the line that embeds this image was not found in the source, so a region on it cannot be saved";
-/** The PDF page a picture is (Slice 4): the chunk stamps `data-page` (1-based) on each page's canvas; null for an <img>
- *  or anything without a positive integer there. */
+/** The PDF page an element is (Slice 4): the chunk stamps `data-page` (1-based) on each page's canvas and on the page's
+ *  shell (div.fileview-pdf-page), and ONLY those two carry a page — an <img> never does, whatever its markup says. The
+ *  sanitizer keeps a rendered figure's data-* attributes (owns() relies on that for data-act), so a raw
+ *  `<img src="figure.png" data-page="2">` a session wrote into markdown reached here as page 2 of a PDF: the composer
+ *  named a page, regionTarget dropped the embed's src for kind "pdf", and the host refused the comment for the missing
+ *  src (a region on an embedded figure needs it). Null for anything else, and for a carrier without a positive integer. */
 export function pageOf(el: Element | null | undefined): number | null {
-  const raw = el && (el as HTMLElement).dataset ? (el as HTMLElement).dataset.page : undefined;
+  if (!el) return null;
+  const cl = el.classList;
+  const shell = !!cl && typeof cl.contains === "function" && cl.contains("fileview-pdf-page");
+  if (!isCanvas(el) && !shell) return null;
+  const raw = (el as HTMLElement).dataset ? (el as HTMLElement).dataset.page : undefined;
   const n = raw === undefined || raw === null ? NaN : Number(raw);
   return Number.isInteger(n) && n >= 1 ? n : null;
 }
@@ -1221,6 +1231,17 @@ class Panel {
     const shell = this.pageShellFor(c);
     return !!shell && !isCanvas(shell.querySelector("canvas.fileview-pdf-canvas"));
   }
+  /** Whether a PDF region's page is mounted with its canvas but no bitmap: the chunk draws a page as it nears the reader
+   *  (one scroller height away) and gives a far page's bitmap back, so a page outside that window is a 0×0 canvas —
+   *  before its first draw, and after an eviction. Such a card has no fresh crop to cut (cropFor), and the chunk's only
+   *  API is render(): nothing here can ask for the page. What the card can do is say so where the crop would be and
+   *  reach the page (cropWaitNote); the scroll draws it, and the draw's repaint (the seam's onRendered) brings the crop. */
+  private pageUndrawn(c: Card): boolean {
+    const shell = this.pageShellFor(c);
+    if (!shell) return false;
+    const canvas = shell.querySelector("canvas.fileview-pdf-canvas");
+    return isCanvas(canvas) && !(canvas.width > 0 && canvas.height > 0);
+  }
   /** The author chip a rectangle wears: the label, and the session's colours as `--fc-author` / `--fc-author-fg`
    *  when the colour map knows the author (the sheet's fallback otherwise, and for `you`). */
   private chipFor(author: string, authorId: string | null): { label: string; style?: Record<string, string> } {
@@ -1310,7 +1331,7 @@ class Panel {
    *  click finds it, and a figure the source holds no embed for is refused with the reason, the note kept. */
   onRegionDrawn(img: Pictured, region: Region): void {
     const c = this.composer;
-    const page = pageOf(img);                          // a PDF page's canvas names its page; an <img> has none
+    const page = pageOf(img);                          // a PDF page's canvas names its page; an <img> has none, whatever its markup carries
     if (c && c.kind === "replace") {
       const own = this.replaceTarget(c.commentId);
       // a PDF region may be re-placed on any page (the page rides in the new target); a figure's must stay on its own picture
@@ -1368,9 +1389,9 @@ class Panel {
   }
   /** The card's thumbnail: cut from the picture in view (a page's from its canvas) and, for a PDF page, kept — the
    *  chunk gives a far page's bitmap back (a 0×0 canvas) and takes a failed page's canvas away, and the card then shows
-   *  the crop from the last draw of the same bytes rather than none. No picture and nothing kept: no thumbnail (a page
-   *  never drawn while the panel was open draws in when the reference scrolls it into view, and the crop comes with
-   *  that draw's repaint). A picture still loading re-renders the cards once, on its load. */
+   *  the crop from the last draw of the same bytes rather than none. No picture and nothing kept: no thumbnail — the
+   *  card's crop slot then says the page is not drawn and reaches it (pageUndrawn, cropWaitNote); the scroll draws the
+   *  page, and the crop comes with that draw's repaint. A picture still loading re-renders the cards once, on its load. */
   private cropFor(img: Pictured | null, c: Card): HTMLCanvasElement | null {
     if (!c.target) return null;
     const key = this.cropKey(c);
@@ -1386,6 +1407,18 @@ class Panel {
       img.addEventListener("load", () => { this.cropWait.delete(img); this.render(); }, { once: true });
     }
     return null;
+  }
+  /** What an open card shows in its crop's place while its PDF page has no bitmap (pageUndrawn): one line naming the
+   *  page and the remedy, itself the control that scrolls the page in (fcgoto: the rectangle sits on the undrawn page's
+   *  overlay, placed by percentages of the page's box, so goTo reaches it). The chunk draws the page once it is near,
+   *  and the draw's repaint replaces this line with the crop. A Tab stop, Enter through KEY_ACTS, like the reference. */
+  private cropWaitNote(c: Card): HTMLElement {
+    const page = c.target!.page;
+    const n = el("div", "fc-note fc-link fc-crop-wait", "Page " + page + " is not drawn yet. Go to the page to see this region.");
+    n.dataset.act = "fcgoto"; n.dataset.id = c.id;
+    n.title = "Go to page " + page + "; the picture of this region appears here once the page is drawn";
+    n.tabIndex = 0; n.setAttribute("role", "button");
+    return n;
   }
   goTo(key: string): void {
     const mark = key.startsWith("chg:")
@@ -1761,6 +1794,7 @@ class Panel {
     const picture = c.target ? this.regionImageFor(c) : null;
     const crop = c.target ? this.cropFor(picture, c) : null;   // the region cut from the picture (E5), or a page's kept crop
     if (crop) card.appendChild(crop);
+    else if (c.target && this.pageUndrawn(c)) card.appendChild(this.cropWaitNote(c));   // no bitmap to cut: the slot says so and reaches the page
     card.appendChild(el("div", "fc-body", c.body));
     if (c.replies.length) card.appendChild(this.renderTurns(c.replies));
     const acts = el("div", "fc-actions");
