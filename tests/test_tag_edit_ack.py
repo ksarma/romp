@@ -782,7 +782,8 @@ class Capability(_Wire):
                         "after the pushes: the shim's stale banner clears on the first real frame after a "
                         "reconnect, which must stay the resync frame itself")
         caps = next(m for m in self.sent if m["type"] == "caps")
-        self.assertEqual(caps, {"type": "caps", "caps": ["tagEdit"]})
+        self.assertEqual(caps, {"type": "caps", "caps": ["tagEdit"], "viewsSeq": None},
+                         "the stubbed push served no views blob: viewsSeq is null, the key always present")
         # a RE-SENT ready (the shim, on a reconnected socket) gets the caps again — the event a page
         # with writes in flight across the drop keys on
         n = len(self.sent)
@@ -825,6 +826,92 @@ class Capability(_Wire):
             self.assertIsNone(self.post(None), "an undecodable frame was already reported by the recv loop")
             self.assertIsNone(self.post({"type": ""}))
         self.assertEqual(err.getvalue(), "")
+
+    def _ready(self):
+        self.client["ready"] = False
+        km.Handler._dispatch_ws(self.handler, {"type": "ready"}, self.client)
+        return next(m for m in reversed(self.sent) if m["type"] == "caps")
+
+    def test_the_caps_frame_carries_the_seq_of_the_connect_pushs_own_views_blob_not_a_fresh_read(self):
+        """Round 7 of the 2026-09-05 review: a client that kept the blob its seq gate last turned away
+        adopts it on the caps frame; it must do so only when that blob IS the connect push's (the
+        restore case), so the frame names the connect push's seq — read from the frame the push
+        enqueued, not from the store, which a write between the push and the caps frame moves on."""
+        s0 = self.seed()["seq"]
+
+        def push(c):                                     # the connect push's tabOrder frame, then a write lands before caps
+            km._send_client(c, ("taborder",), {"type": "tabOrder", "order": [], "tabs": [], "views": km._views_client()})
+            self.assertIsNone(km._edit_tag(tid="gA", add=[SID2])[1])
+        self.handler._push_one = push
+        caps = self._ready()
+        s1 = km._views_client()["seq"]
+        self.assertGreater(s1, s0, "the write moved the store on")
+        pushed = next(m for m in self.sent if m["type"] == "tabOrder")
+        self.assertEqual(pushed["views"]["seq"], s0)
+        self.assertEqual(caps["viewsSeq"], s0, "the connect push's blob, not the store's current seq")
+        self.assertEqual([m["type"] for m in self.sent if m["type"] in ("tabOrder", "caps")], ["tabOrder", "caps"])
+
+    def test_a_pusher_thread_frame_enqueued_between_the_push_and_the_caps_is_not_what_the_caps_names(self):
+        """The residual race the client cannot see: a pusher-thread frame built before a concurrent write
+        is enqueued after the handler's connect push and before its caps frame. The client rejects it
+        and keeps it; caps must not name its seq, or the client would adopt a stale blob."""
+        served = self.seed()
+        stale = json.loads(json.dumps(served))           # the pusher's frame, built before the write below
+        self.assertIsNone(km._edit_tag(tid="gA", add=[SID2])[1])
+        s_new = km._views_client()["seq"]
+
+        def push(c):
+            km._send_client(c, ("taborder",), {"type": "tabOrder", "order": [], "tabs": [], "views": km._views_client()})
+            t = threading.Thread(target=lambda: km._send_client(
+                c, ("taborder",), {"type": "tabOrder", "order": ["x"], "tabs": [], "views": stale}))
+            t.start(); t.join()
+        self.handler._push_one = push
+        caps = self._ready()
+        seqs = [m["views"]["seq"] for m in self.sent if m["type"] == "tabOrder"]
+        self.assertEqual(seqs, [s_new, served["seq"]], "the stale frame went out after the connect push's")
+        self.assertEqual(caps["viewsSeq"], s_new, "the caps names the connect push's seq, never the pusher thread's")
+        self.assertNotEqual(caps["viewsSeq"], served["seq"])
+
+    def test_the_timeline_skeletons_nested_views_blob_is_read_and_a_push_without_one_gives_null(self):
+        s0 = self.seed()["seq"]
+        self.handler._push_one = lambda c: km._send_client(
+            c, ("timeline",), {"type": "data", "data": {"sessions": [], "views": km._views_client()}})
+        self.assertEqual(self._ready()["viewsSeq"], s0, "the skeleton carries views under `data`")
+        self.handler._push_one = lambda c: km._send_client(c, ("working",), {"type": "working", "names": []})
+        self.assertIsNone(self._ready()["viewsSeq"], "a push that served no views blob: null")
+        self.assertIsNone(km._views_seq_of({"type": "tabOrder", "views": {"tags": []}}), "a seq-less blob: null")
+        self.assertIsNone(km._views_seq_of({"type": "tabOrder", "views": {"seq": "x"}}))
+        self.assertEqual(km._views_seq_of({"type": "tabOrder", "views": {"seq": 7}}), 7)
+
+    def test_the_real_connect_push_and_the_caps_frame_agree_on_the_seq(self):
+        """End to end through the real _push (the test_tab_meta_push.py stubs): the tabOrder frame the
+        connect push sends a chat page carries the same seq the caps frame that follows it names."""
+        import tempfile as _tf
+        from pathlib import Path as _P
+        s0 = self.seed()["seq"]
+        tmp = _tf.mkdtemp()
+        names = _P(tmp) / "names"
+        names.mkdir()
+        (names / SID1).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
+        saved = (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed)
+        try:
+            km.NAMES = names
+            km._tmux_sessions = lambda: {}
+            km._mark_views_dirty = lambda: None
+            km._chat_tab_sessions = lambda now, tmux: [{"sid": SID1, "name": "web", "path": os.path.join(tmp, "none.jsonl"),
+                                                         "anchor": SID1}]
+            km._cached_feed = lambda *a, **k: None
+            self.client["app"] = "chat"
+            self.client["sent"] = {}
+            caps = self._ready()
+            tab = [m for m in self.sent if m["type"] == "tabOrder"]
+            self.assertEqual(len(tab), 1, "the real connect push sent one tabOrder frame")
+            self.assertEqual(tab[0]["views"]["seq"], s0)
+            self.assertEqual(caps["viewsSeq"], s0)
+            types = [m["type"] for m in self.sent]
+            self.assertLess(types.index("tabOrder"), types.index("caps"))
+        finally:
+            (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed) = saved
 
     def test_the_inline_boot_routes_caps_and_unknown_op_to_the_panel(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()

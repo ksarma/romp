@@ -30660,6 +30660,14 @@ def _send_client(c, key, msg, pre=None, sig=None):
     Returns whether a frame went out (False: deduped, or the client is dead)."""
     s = pre if pre is not None else json.dumps(msg)
     sig = sig if sig is not None else _dedup_sig(msg, s)
+    seqs = getattr(_VIEWS_SERVED, "seqs", None)
+    if seqs is not None:
+        # the ready handler is capturing ITS connect push (the caps frame's viewsSeq, see KERNEL_WS_CAPS):
+        # a frame this thread enqueues, deduped or not — a deduped frame is one the client already holds
+        # byte-for-byte, so its blob is what the client has either way
+        sq = _views_seq_of(msg)
+        if sq is not None:
+            seqs.append(sq)
     with _client_lock(c):    # the dedup dict is shared with the handler thread's `ready`
         prev = c.setdefault("sent", {}).get(key)      # reset (_client_reset_chat_base) — one writer at a time
         now = time.time()
@@ -30780,14 +30788,45 @@ READY_GATE_CAP = "readyGate"
 #             delete / move, by tag id), the `tagEditAck` / `viewsAck` answers on the poster's socket,
 #             and the write sequence (`seq`) on every views blob.
 KERNEL_WS_CAPS = ("tagEdit",)
+# The caps frame: {type: "caps", caps: [...], viewsSeq: int|null}. `viewsSeq` (round 7 of the 2026-09-05
+# review) is the write seq of the views blob the READY HANDLER'S OWN connect push served this client — the
+# tabOrder frame's for a chat page, the timeline skeleton's (`data.views`), the feed frame's — read from
+# the frames that push enqueued (_VIEWS_SERVED, captured in _send_client on the handler's thread), never
+# from a fresh cache read, so a write landing between the push and this frame cannot skew it; the highest
+# when the push carried more than one; null when it carried none (a sentinel cycle sends no tabOrder). A
+# client that kept a blob its seq gate turned away adopts it on this frame only when the kept blob's seq
+# equals viewsSeq: the restore case (the store's seq fell behind what the page holds, and the connect push
+# IS the kept blob), and never a pusher-thread frame built before a concurrent write and enqueued between
+# the connect push and this frame — its seq is older than the connect push's, so it does not match, and
+# the next pusher cycle carries the newer blob.
+
+_VIEWS_SERVED = threading.local()   # .seqs: a list while the ready handler captures its connect push, else absent/None
 
 
-def _send_caps(client):
-    """The caps frame, on the client's own socket. Sent AFTER the ready handler's pushes: the shim clears
-    its stale banner on the first non-keepalive frame after a reconnect, which must stay the resync frame
-    itself and not this one."""
+def _views_seq_of(msg):
+    """The write seq of the views blob a frame carries, or None: `views` rides at the top level of the
+    tabOrder and feed frames and under `data` in the timeline skeleton."""
+    if not isinstance(msg, dict):
+        return None
+    v = msg.get("views")
+    if not isinstance(v, dict) and isinstance(msg.get("data"), dict):
+        v = msg["data"].get("views")
+    if not isinstance(v, dict) or v.get("seq") is None:
+        return None
     try:
-        client["send"](json.dumps({"type": "caps", "caps": list(KERNEL_WS_CAPS)}))
+        return int(v["seq"])
+    except (TypeError, ValueError):
+        return None
+
+
+def _send_caps(client, views_seq=None):
+    """The caps frame, on the client's own socket: {type: "caps", caps, viewsSeq} (the comment on
+    KERNEL_WS_CAPS has the field). Sent AFTER the ready handler's pushes: the shim clears its stale banner
+    on the first non-keepalive frame after a reconnect, which must stay the resync frame itself and not
+    this one. `views_seq` is the seq of the views blob those pushes served, None when they served none."""
+    try:
+        client["send"](json.dumps({"type": "caps", "caps": list(KERNEL_WS_CAPS),
+                                   "viewsSeq": views_seq if isinstance(views_seq, int) else None}))
     except Exception:
         pass
 
@@ -39573,18 +39612,26 @@ class Handler(BaseHTTPRequestHandler):
                 _client_reset_feed_base(client)     # both protocols' bases and the dedup slot, under the slot lock
             client["ready"] = True
             client["readySeen"] = True
-            served = client.get("app") in ("feed", "fleet", "waiting") and _send_feed_now(client)
-            # The connect push serves the pusher-warmed caches for everything else. A feed client that was
-            # just served skips it: the push could add nothing for that pane (its warmed cache IS what was
-            # served), and a feed-only push re-serializes the wire cache ledger-less for the pusher to redo.
-            # The Waiting-on-you pane is a feed client in this sense too: it reads the frame's userTodoRows
-            # and needs no ledgers, so the served frame is all the push could give it.
-            if not (served and client.get("app") in ("feed", "waiting")):
-                self._push_one(client)
+            # Capture the seq of the views blob the pushes below serve — from the frames THIS thread
+            # enqueues, so a pusher-thread frame landing meanwhile is not mistaken for the connect push's
+            # (the caps frame's viewsSeq, see KERNEL_WS_CAPS)
+            _VIEWS_SERVED.seqs = []
+            try:
+                served = client.get("app") in ("feed", "fleet", "waiting") and _send_feed_now(client)
+                # The connect push serves the pusher-warmed caches for everything else. A feed client that was
+                # just served skips it: the push could add nothing for that pane (its warmed cache IS what was
+                # served), and a feed-only push re-serializes the wire cache ledger-less for the pusher to redo.
+                # The Waiting-on-you pane is a feed client in this sense too: it reads the frame's userTodoRows
+                # and needs no ledgers, so the served frame is all the push could give it.
+                if not (served and client.get("app") in ("feed", "waiting")):
+                    self._push_one(client)
+            finally:
+                seqs, _VIEWS_SERVED.seqs = _VIEWS_SERVED.seqs, None
             # What this kernel can do for the page (KERNEL_WS_CAPS), after the pushes above and on every
             # `ready` — so a reconnected socket learns them again, and a page whose views writes were
-            # in flight across the drop learns, by this frame, that their answers may never come.
-            _send_caps(client)
+            # in flight across the drop learns, by this frame, that their answers may never come. It
+            # carries the seq of the views blob those pushes served (viewsSeq), read above.
+            _send_caps(client, views_seq=(max(seqs) if seqs else None))
             # The tab order rides the connect push (chat clients, through the _tab_list_tmux collapse
             # guard). This handler used to send a SECOND tabOrder built from a raw _tmux_sessions() read,
             # bypassing that guard — and the client treats an omitted id as an authoritative teardown
