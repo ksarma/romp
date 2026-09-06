@@ -119,7 +119,11 @@ class Panel {
   timer: ReturnType<typeof setInterval> | null = null;
   polling = false;
   tickSkipped = false;
-  // persistent composer parts: rebuilt CHILDREN would drop the input's focus mid-word on a poll re-render
+  // persistent section wrappers: render() swaps each section's CHILDREN, never the aside's own children —
+  // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
+  // loses focus, so a poll-triggered re-render would drop the input's focus mid-word
+  sections = { head: el("div", "fc-sec-head"), cards: el("div", "fc-sec-cards"), send: el("div", "fc-sec-send"), log: el("div", "fc-sec-log") };
+  // persistent composer parts, for the same reason
   composerBox = el("div", "fc-composer");
   composerRef = el("div", "fc-composer-ref");
   input = el("input", "fc-input") as HTMLInputElement;
@@ -583,8 +587,13 @@ class Panel {
   render(): void {
     if (!this.root || !this.open) return;
     const s = this.status;
+    const { head, cards, send, log } = this.sections;
+    if (!this.root.contains(head)) this.root.replaceChildren(head, this.composerBox, cards, send, log);   // built once per open
+    head.replaceChildren(this.renderHead(s));
     this.renderComposer();
-    this.root.replaceChildren(this.renderHead(s), this.composerBox, this.renderCards(s), this.renderSend(s), this.renderLog(s));
+    cards.replaceChildren(this.renderCards(s));
+    send.replaceChildren(this.renderSend(s));
+    log.replaceChildren(this.renderLog(s));
   }
   private errRow(slot: string): HTMLElement | null {
     const e = this.errors.get(slot);

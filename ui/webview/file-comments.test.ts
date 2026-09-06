@@ -484,8 +484,11 @@ test("click-safety: ONE delegate() root for every control (the body row, which a
   assert.match(SRC, /const isOpen = this\.openCards\.has\(c\.id\);/);
   assert.match(SRC, /fccard: \(x\) => \{ const id = x\.dataset\.id!; if \(this\.openCards\.has\(id\)\) this\.openCards\.delete\(id\); else this\.openCards\.add\(id\); this\.render\(\); \}/);
   assert.match(SRC, /flash\(this\.float\);/); assert.match(SRC, /flash\(this\.button\);/);
-  // the composer's input is never rebuilt, so a poll re-render cannot drop focus mid-word
+  // the composer's input is never rebuilt, and the aside's own children are placed once per open, so a
+  // poll re-render swaps section CHILDREN only and cannot drop the input's focus mid-word
   assert.match(SRC, /if \(!box\.contains\(this\.input\)\) box\.replaceChildren\(ref, this\.input, acts, err\);/);
+  assert.match(SRC, /if \(!this\.root\.contains\(head\)\) this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/);
+  assert.equal((SRC.match(/this\.root\.replaceChildren\(/g) || []).length, 1, "the aside's children are never rebuilt elsewhere");
   // the highlights carry the delegate's action and the comment id; painted through anchor-map, states located / context / detached
   assert.match(SRC, /paintRendered\(root, src, loc\.range, cls, \{ act: "fcopen", id: card\.id \}\)/);
   assert.match(SRC, /paintRaw\(root, src, loc\.range, cls, \{ act: "fcopen", id: card\.id \}\)/);
