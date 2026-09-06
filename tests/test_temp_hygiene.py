@@ -176,36 +176,60 @@ class GitFloor(unittest.TestCase):
         self.assertTrue(_run(["git", "var", "GIT_AUTHOR_IDENT"]).stdout.startswith(IDENT + " "))
         self.assertTrue(_run(["git", "var", "GIT_COMMITTER_IDENT"]).stdout.startswith(IDENT + " "))
 
-    def test_a_global_hooks_path_cannot_reach_a_fixture_commit(self):
-        # A stand-in for the developer's global config: a pre-commit hook that refuses every commit
-        # and leaves a marker, wired in through core.hooksPath. Live first, then floored.
-        with tempfile.TemporaryDirectory() as td:
-            hooks = os.path.join(td, "hooks")
-            os.makedirs(hooks)
-            marker = os.path.join(td, "hook-ran")
-            with open(os.path.join(hooks, "pre-commit"), "w") as f:
-                f.write("#!/bin/sh\necho ran > '%s'\nexit 1\n" % marker)
-            os.chmod(os.path.join(hooks, "pre-commit"), 0o755)
-            cfg = os.path.join(td, "gitconfig")
-            with open(cfg, "w") as f:
-                f.write("[core]\n\thooksPath = %s\n" % hooks)
-            repo = os.path.join(td, "repo")
-            os.makedirs(repo)
-            _run(["git", "init", "-q"], cwd=repo, check=True)
-            with open(os.path.join(repo, "a.txt"), "w") as f:
-                f.write("a\n")
-            _run(["git", "add", "a.txt"], cwd=repo, check=True)
+    def _hostile_repo(self, td):
+        """A stand-in for the developer's configuration: a pre-commit hook that refuses every commit
+        and leaves a marker, a config file wiring it in through core.hooksPath, and a repo with one
+        staged file. Returns (marker, cfg, repo)."""
+        hooks = os.path.join(td, "hooks")
+        os.makedirs(hooks)
+        marker = os.path.join(td, "hook-ran")
+        with open(os.path.join(hooks, "pre-commit"), "w") as f:
+            f.write("#!/bin/sh\necho ran > '%s'\nexit 1\n" % marker)
+        os.chmod(os.path.join(hooks, "pre-commit"), 0o755)
+        cfg = os.path.join(td, "gitconfig")
+        with open(cfg, "w") as f:
+            f.write("[core]\n\thooksPath = %s\n" % hooks)
+        repo = os.path.join(td, "repo")
+        os.makedirs(repo)
+        _run(["git", "init", "-q"], cwd=repo, check=True)
+        with open(os.path.join(repo, "a.txt"), "w") as f:
+            f.write("a\n")
+        _run(["git", "add", "a.txt"], cwd=repo, check=True)
+        return marker, cfg, repo
 
-            live = _run(["git", "commit", "-q", "-m", "seed"], cwd=repo,
-                        env=dict(os.environ, GIT_CONFIG_GLOBAL=cfg))
+    COMMIT = ["git", "commit", "-q", "-m", "seed"]
+
+    def test_a_global_hooks_path_cannot_reach_a_fixture_commit(self):
+        # The hostile config as the GLOBAL file. Live first, then floored (the suite's own env).
+        with tempfile.TemporaryDirectory() as td:
+            marker, cfg, repo = self._hostile_repo(td)
+            live = _run(self.COMMIT, cwd=repo, env=dict(os.environ, GIT_CONFIG_GLOBAL=cfg))
             self.assertNotEqual(live.returncode, 0, "the probe is live: the hook blocks the commit")
             self.assertTrue(os.path.exists(marker))
             os.remove(marker)
 
-            floored = _run(["git", "commit", "-q", "-m", "seed"], cwd=repo)   # the suite's own env
+            floored = _run(self.COMMIT, cwd=repo)
             self.assertEqual(floored.returncode, 0, floored.stderr)
             self.assertFalse(os.path.exists(marker), "no global hook reaches a fixture commit")
             self.assertEqual(_run(["git", "log", "-1", "--format=%an <%ae>"], cwd=repo).stdout.strip(), IDENT)
+
+    def test_a_system_hooks_path_cannot_reach_a_fixture_commit_either(self):
+        # The hostile config as the SYSTEM file: GIT_CONFIG_SYSTEM (git >= 2.32, like GIT_CONFIG_GLOBAL)
+        # is a root-free stand-in for /etc/gitconfig, and GIT_CONFIG_NOSYSTEM=1 is the half of the
+        # floor that hides it — the global probe above says nothing about it. The assertion is the
+        # commit's outcome: `git config --system --list` prints the file under NOSYSTEM too.
+        with tempfile.TemporaryDirectory() as td:
+            marker, cfg, repo = self._hostile_repo(td)
+            live_env = dict(os.environ, GIT_CONFIG_SYSTEM=cfg)
+            live_env.pop("GIT_CONFIG_NOSYSTEM", None)
+            live = _run(self.COMMIT, cwd=repo, env=live_env)
+            self.assertNotEqual(live.returncode, 0, "the probe is live: the system hook blocks the commit")
+            self.assertTrue(os.path.exists(marker))
+            os.remove(marker)
+
+            floored = _run(self.COMMIT, cwd=repo, env=dict(os.environ, GIT_CONFIG_SYSTEM=cfg))
+            self.assertEqual(floored.returncode, 0, floored.stderr)
+            self.assertFalse(os.path.exists(marker), "no system hook reaches a fixture commit")
 
 
 LEAKY_MODULE = textwrap.dedent('''\
