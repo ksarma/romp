@@ -3026,7 +3026,7 @@ def _guard_nodes(store):
 # How often the stores are read and written is the first question when the kernel is busy: every
 # judge stage, the feed build and the nudge tick load stores, so the load rate says whether a change
 # added a pass over every session. Plain counters, one lock, no formatting on the path.
-_GOAL_IO = {"loads": 0, "saves": 0, "writes": 0, "scans": 0, "scan_hits": 0, "scan_parses": 0,
+_GOAL_IO = {"loads": 0, "loads_shared": 0, "saves": 0, "writes": 0, "scans": 0, "scan_hits": 0, "scan_parses": 0,
             "disk_hits": 0, "disk_misses": 0, "disk_seeds": 0, "absent_hits": 0, "absent_misses": 0}
 _GOAL_IO_LOCK = threading.Lock()
 
@@ -3037,9 +3037,11 @@ def _goal_io_bump(key, n=1):
 
 
 def goal_io_stats():
-    """A copy of the goal-store I/O counters: load_goals calls (`loads`), save_goals calls (`saves`),
-    and the saves that wrote a file (`writes`; save_goals skips a byte-identical republish), plus two
-    memos' counters. The give-up scan's (judge_failure_scan): calls (`scans`), stores served from the memo
+    """A copy of the goal-store I/O counters: load_goals calls (`loads`), load_goals_shared calls the
+    shared cache answered — a hit, or a version parsed there (`loads_shared`; the calls it hands to
+    load_goals — no store file, an unreadable journal, the cache off — count under `loads`, so loads +
+    loads_shared is every store read), save_goals calls (`saves`), and the saves that wrote a file
+    (`writes`; save_goals skips a byte-identical republish), plus two memos' counters. The give-up scan's (judge_failure_scan): calls (`scans`), stores served from the memo
     (`scan_hits`) and stores read and parsed, or attempted, because they were new, changed, or failed
     to parse on the previous call (`scan_parses`). The no-op save check's disk side (save_goals): the
     file's identity matched and no parse ran (`disk_hits`), the file was read and parsed, or attempted
@@ -4051,6 +4053,7 @@ def load_goals_shared(fsid):
     if ent is not None and ent[0] == keys:
         if ent[1] == data:
             _shared_bump("hit")
+            _goal_io_bump("loads_shared")            # a store read the cache answered (see goal_io_stats)
             return ent[2] if ent[2] is not _SHARED_BAD else _fresh_store(fsid, unread=True)
         _shared_bump("compare_miss")                 # same identity, other bytes: the blind spot, closed here
     else:
@@ -4065,6 +4068,7 @@ def load_goals_shared(fsid):
         _shared_bump("unreadable_journal")
         _shared_forget(path_s)
         return load_goals(fsid)                      # uncached: its replay files history-unreadable every load
+    _goal_io_bump("loads_shared")                    # from here the read is answered here, not by load_goals
     try:
         store = _guard_nodes(json.loads(data))
     except Exception as e:

@@ -112,7 +112,7 @@ class Collector(unittest.TestCase):
         self.assertIn("cpu_ms_workers", snap["judge"])
         self.assertEqual(set(snap["judge"]["chain_memo"]), {"hit", "miss", "populate", "bypass"},
                          "read through jd.chain_memo_stats: the write-moment chain memo's counters")
-        self.assertEqual(set(snap["goals"]), {"loads", "saves", "writes", "scans", "scan_hits", "scan_parses",
+        self.assertEqual(set(snap["goals"]), {"loads", "loads_shared", "saves", "writes", "scans", "scan_hits", "scan_parses",
                                               "disk_hits", "disk_misses", "disk_seeds",
                                               "absent_hits", "absent_misses"},
                          "read through jd.goal_io_stats")

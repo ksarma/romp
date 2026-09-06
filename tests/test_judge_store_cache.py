@@ -81,6 +81,7 @@ class SharedStoreCache(unittest.TestCase):
     def test_two_loads_of_an_unchanged_store_return_one_object_and_parse_once(self):
         self._seed()
         fills = []
+        io0 = jd.goal_io_stats()
         o_freeze = jd._freeze_store
         jd._freeze_store = lambda store, fsid=None: (fills.append(1), o_freeze(store, fsid))[1]
         try:
@@ -91,6 +92,9 @@ class SharedStoreCache(unittest.TestCase):
         self.assertIs(a, b, "an unchanged file version is one shared object")
         self.assertEqual(len(fills), 1, "one parse for two loads")
         self.assertEqual((self._delta("miss"), self._delta("hit")), (1, 1))
+        io1 = jd.goal_io_stats()
+        self.assertEqual((io1["loads_shared"] - io0["loads_shared"], io1["loads"] - io0["loads"]), (2, 0),
+                         "the miss and the hit both count under loads_shared (/perf goals); load_goals ran for neither")
         self.assertIsInstance(a, jd.FrozenStore)
         self.assertEqual(jd.shared_store_stats()["entries"], 1)
         self.assertEqual(jd.shared_store_stats()["bytes"], os.path.getsize(jd.GOALDIR / (SID + ".json")))
@@ -238,11 +242,15 @@ class SharedStoreCache(unittest.TestCase):
     # ── the degraded inputs ──────────────────────────────────────────────────────────────────────────
 
     def test_an_absent_store_is_the_fresh_store_and_is_not_memoized(self):
+        io0 = jd.goal_io_stats()
         s = jd.load_goals_shared(SID)
         self.assertEqual(type(s), dict, "nothing to share: load_goals' private fresh store")
         self.assertEqual((s["nodes"], s["_baseRev"], s["rompUuid"]), ({}, 0, SID))
         self.assertEqual(self._delta("absent"), 1)
         self.assertEqual(jd.shared_store_stats()["entries"], 0)
+        io1 = jd.goal_io_stats()
+        self.assertEqual((io1["loads"] - io0["loads"], io1["loads_shared"] - io0["loads_shared"]), (1, 0),
+                         "handed to load_goals, which counts it: loads + loads_shared stays one read per call")
 
     def test_a_corrupt_store_is_parsed_once_per_version(self):
         p = self._seed()

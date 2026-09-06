@@ -1434,8 +1434,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 - `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
   was built and compared, then not sent.
-- `goals`: `loads`, `saves`, `writes` on the goal stores. A save that would
-  rewrite identical bytes is a save without a write. `scans`, `scan_hits`,
+- `goals`: `loads`, `loads_shared`, `saves`, `writes` on the goal stores.
+  `loads` counts `load_goals` calls and `loads_shared` the `load_goals_shared`
+  calls the shared read-only cache answered, a hit or a version parsed there;
+  the calls it hands to `load_goals` count under `loads`, so the two together
+  are every store read. A save that would rewrite identical bytes is a save
+  without a write. `scans`, `scan_hits`,
   `scan_parses` count the give-up scan behind the judge-failure notice: calls,
   stores served from its per-store memo, and stores read and parsed (or
   attempted) because they were new, changed, or failed to parse on the
@@ -1461,7 +1465,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   against decoded, summed over passes), `fail` (file versions that did not
   decode), `evict` (entries dropped for files gone from the directory), `punch`
   (entries copied so a user gesture could be applied to them), and the gauges
-  `entries` and `bytes` (memoized files and their summed size).
+  `entries` and `bytes` (memoized files and their summed size). `goals_shared`
+  is the shared read-only goal-store cache the pusher's read-only sites load
+  through: `hit`, `miss` and `compare_miss` (the identity matched and the bytes
+  did not), `refuse` (a fill under a moving archive, served but not
+  published), `dup` (a concurrent fill of the same version published first),
+  `absent`, `corrupt` and `unreadable_journal` (stores handed to the writer's
+  loader or served as a fresh store), `evict` (entries dropped for files gone
+  from the directory), `fallback` (calls served by the writer's loader while
+  the cache is off), `poisoned` (write attempts on a shared view), and the
+  gauges `entries`, `bytes` (the raw store bytes held for the compare) and
+  `off` (1 once a write attempt switched the cache off, until the kernel
+  restarts).
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys

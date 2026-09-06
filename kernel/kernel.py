@@ -206,9 +206,13 @@ class _PerfStats:
       sends                        full / delta / deduped -> {slot: {count, bytes}} per dedup-slot
                                    name (chat, feed, bars, taborder, ...; at most SLOTS names, the rest
                                    under "other"). A deduped frame was built and compared, not sent
-      goals                        loads, saves, writes: judge.load_goals calls, save_goals calls,
-                                   and the saves that reached the disk (a byte-identical republish
-                                   is a save without a write); disk_hits / disk_misses / disk_seeds:
+      goals                        loads, loads_shared, saves, writes: judge.load_goals calls, the
+                                   load_goals_shared calls the shared cache answered (a hit, or a
+                                   version parsed there; the calls it hands to load_goals count
+                                   under loads, so loads + loads_shared is every store read),
+                                   save_goals calls, and the saves that reached the disk (a
+                                   byte-identical republish is a save without a write); disk_hits /
+                                   disk_misses / disk_seeds:
                                    the no-op check's disk-side memo (identity matched; file read and
                                    parsed, or attempted; entry filled from a publish's own temp);
                                    scans / scan_hits /
