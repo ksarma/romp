@@ -109,11 +109,21 @@ _romp_record() {   # <sid> <name> <dir> [bg] [fg] [emoji] — write/replace the 
     # users from reading anything beneath it (the traverse bit is enough).
     # Idempotent; best-effort.
     chmod 700 "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}" 2>/dev/null || true
+    # ATOMIC (review round 3, 2026-09-06): the line goes to a temp file in the same directory and is
+    # moved into place — one rename(2), so no reader ever sees the file empty or half-written. The old
+    # `printf > file` truncated first and wrote second, and the kernel's names writers (a rename from
+    # the tab, a recolor, set_emoji — the first one an agent drives) read the file between the two: a
+    # read in that window published a record with no name and no cwd, and the kernel's own atomic write
+    # then won over this one. This is the ONE shell writer of a names record (_romp_rename_record and
+    # _romp_free_title both come through here). The temp is dot-prefixed: bash globs skip it
+    # (_romp_free_title's loop) and the resume picker's listing does too, so it never shows as a session.
+    local tmp="$ROMP_NAMES_DIR/.$sid.tmp.$$"
     if [[ -n "$emoji" ]]; then
-        printf '%s\t%s\t%s\t%s\t%s\n' "$nm" "$dir" "$bg" "$fg" "$emoji" > "$ROMP_NAMES_DIR/$sid"
+        printf '%s\t%s\t%s\t%s\t%s\n' "$nm" "$dir" "$bg" "$fg" "$emoji" > "$tmp" || { rm -f "$tmp"; return 1; }
     else
-        printf '%s\t%s\t%s\t%s\n' "$nm" "$dir" "$bg" "$fg" > "$ROMP_NAMES_DIR/$sid"
+        printf '%s\t%s\t%s\t%s\n' "$nm" "$dir" "$bg" "$fg" > "$tmp" || { rm -f "$tmp"; return 1; }
     fi
+    mv -f "$tmp" "$ROMP_NAMES_DIR/$sid" || { rm -f "$tmp"; return 1; }
 }
 
 # Read one names entry into _rf=(name dir bg fg emoji) EXACTLY, empty fields kept. Never `IFS=$'\t' read`
@@ -138,7 +148,7 @@ _romp_split_record() {   # <file> — returns 1 when the file is missing or empt
     return 0
 }
 
-_romp_rename_record() {   # <sid> <name> — update name, keep dir + identity color + tab emoji
+_romp_rename_record() {   # <sid> <name> — update name, keep dir + identity color + tab emoji (atomic: via _romp_record)
     local sid="$1" nm="$2"
     [[ -n "$sid" && -f "$ROMP_NAMES_DIR/$sid" ]] || return 0
     _romp_split_record "$ROMP_NAMES_DIR/$sid" || return 0
@@ -1480,9 +1490,10 @@ fi
 # names-registry write, so a dormant session takes it by sid, and the same validator (exactly one
 # emoji, nothing textual) answers every door — the tab menu, the session's own set_emoji tool, and
 # this command — so a refusal prints the kernel's one-line reason. With no argument it READS the
-# current emoji (an empty line when there is none): an id straight from the names registry — the
-# store the kernel's own /sessions field is read from, and the only place a dormant record lives, so
-# the read needs no kernel — and a name off GET /sessions, which lists live sessions only. `--clear`
+# current emoji (an empty line when there is none): an id with a record here straight from the names
+# registry — the store the kernel reads too, and the only place a dormant record lives, so that read
+# needs no kernel — and anything else (a name, an id an attached machine owns) off the kernel's GET
+# /emoji, the read half of the POST, which forwards to the owning kernel the way the POST does. `--clear`
 # is the ONLY clear: an empty or blank positional is
 # a usage error, never a clear (an unset variable in a script must not wipe a label; `romp color`
 # has the same guard).
@@ -1510,21 +1521,33 @@ if [[ "${1:-}" == "emoji" ]]; then
         exit 1
     fi
     if [[ $# -eq 1 ]]; then
-        # READ by name, or by an id with no record here (an attached machine's session): GET /sessions
-        # lists live sessions only, so a dormant session's NAME is not found
-        _resp="$(_romp_token_cfg | curl -sf -m 10 --config - "http://127.0.0.1:$_kport/sessions")" \
+        # READ by name, or by an id with no record here: the kernel's GET /emoji?target=, the read half
+        # of the POST the set form uses — it resolves a live name or a sid, and forwards a sid an
+        # attached machine owns to that machine's kernel. It replaced a GET /sessions lookup, which
+        # lists THIS machine's live sessions only, so an attached machine's session read as 'no session
+        # named' right after a set for the same id had succeeded (review round 3, 2026-09-06). The
+        # status rides -w, not -f: a 404 is a kernel from before the route, which -f folded into 'not
+        # reachable' and sent the user to check a kernel that was up (the `romp perf` precedent).
+        _tq="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1")"
+        _out="$(_romp_token_cfg | curl -s -m 10 --config - -w '\n%{http_code}' "http://127.0.0.1:$_kport/emoji?target=$_tq")" \
             || { echo "romp emoji: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
-        _hit="$(printf '%s' "$_resp" | python3 -c '
+        _code="${_out##*$'\n'}"; _resp="${_out%$'\n'*}"
+        case "$_code" in
+            2??) ;;
+            404)     echo "romp emoji: the kernel on :$_kport predates this command's read route (GET /emoji) — restart romp so the kernel matches this command" >&2; exit 1 ;;
+            401|403) echo "romp emoji: the kernel on :$_kport refused the serve token (HTTP $_code); is ROMP_KERNEL_PORT pointing at another kernel?" >&2; exit 1 ;;
+            *)       echo "romp emoji: the kernel on :$_kport answered HTTP $_code: $_resp" >&2; exit 1 ;;
+        esac
+        _hit="$(python3 -c '
 import json, sys
-rows = json.load(sys.stdin)
-rows = rows.get("sessions", rows) if isinstance(rows, dict) else rows
-for r in rows:
-    if isinstance(r, dict) and (r.get("name") == sys.argv[1] or r.get("id") == sys.argv[1]):
-        print("found\t%s" % (r.get("emoji") or ""))
-        break
-' "$1")"
-        if [[ -z "$_hit" ]]; then
-            echo "romp emoji: no session named \"$1\" (see: romp sessions; a dormant session is read by its id)" >&2
+r = json.loads(sys.argv[1])
+if isinstance(r, dict) and r.get("ok"):
+    print("found\t%s" % (r.get("emoji") or ""))
+else:
+    print("error\t%s" % ((r.get("error") if isinstance(r, dict) else "") or sys.argv[1]))
+' "$_resp" 2>/dev/null || printf 'error\t%s' "$_resp")"
+        if [[ "$_hit" == error* ]]; then
+            echo "romp emoji: ${_hit#error	}" >&2
             exit 1
         fi
         printf '%s\n' "${_hit#found	}"

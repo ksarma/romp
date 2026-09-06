@@ -15,6 +15,7 @@ import time
 import types
 import unicodedata
 import unittest
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
@@ -107,6 +108,16 @@ class Validator(unittest.TestCase):
         (MOON + "\U0001FAE9", "one emoji only"),
         ("\U0001FAE9" + MOON, "one emoji only"),
         ("\uFEFF\U0001FAE9", 'comes before "\U0001FAE9"'),      # the BOM is the stray, not the emoji
+        # round 3 (2026-09-06): the flag and keycap paths name a stray like the generic path does, and a
+        # code point the tables do not know is named by number, not called invisible
+        (FLAG + "\u200B", '"' + FLAG + '" is followed by an invisible character (U+200B) — remove it'),
+        (FLAG + "\uFE0F", "invisible character (U+FE0F)"),
+        ("\U0001F1FA\uFE0F\U0001F1F8", 'sits between the letters of "' + FLAG + '"'),
+        (FLAG + "\U0001F1E6", "one emoji only"),                        # three regional indicators
+        ("1\uFE0F\uFE0F\u20E3", "invisible character (U+FE0F) comes before the keycap mark"),
+        ("1\uFE0E\u20E3", "invisible character (U+FE0E) comes before the keycap mark"),
+        ("\U0001FA8A", "not an emoji: U+1FA8A (not in this kernel's emoji tables)"),
+        (MOON + "\U0001FA8A", "not an emoji: U+1FA8A (not in this kernel's emoji tables)"),
     ]
 
     def test_accepted_table(self):
@@ -171,6 +182,65 @@ class Validator(unittest.TestCase):
                 self.assertNotIn("not an emoji", err, "the emoji the user typed is not the culprit")
                 self.assertIn("remove it", err)
         self.assertIn("not an emoji", km._emoji_check(grin + "x")[1], "visible junk is still visible junk")
+
+    def test_a_stray_after_a_flag_or_before_a_keycap_mark_is_named_too(self):
+        # round 1 named a stray only on the generic element path: the flag branch answered any third code
+        # point 'one emoji only' (the user typed ONE emoji) and the keycap branch said the value lacked the
+        # keycap mark it carried — while docs/reference.md promised the stray's code point (review round
+        # 3, 2026-09-06). The flag path and the element path share one tail rule now.
+        for s, stray in ((FLAG + "\u200B", "U+200B"),            # a zero-width space after a flag (a document copy)
+                         (FLAG + "\uFE0F", "U+FE0F"),            # an emoji selector after a flag
+                         (FLAG + "\uFE0E", "U+FE0E"),            # a text selector after a flag
+                         (FLAG + "\u200B\u200B", "U+200B"),     # two of them: the first is named
+                         ("\U0001F1FA\uFE0F\U0001F1F8", "U+FE0F"),   # a selector BETWEEN the two letters
+                         ("\U0001F1FA\u200B\U0001F1F8", "U+200B"),
+                         ("1\uFE0F\uFE0F\u20E3", "U+FE0F"),   # a doubled selector before the keycap mark
+                         ("1\uFE0E\u20E3", "U+FE0E"),          # a text selector where the emoji selector goes
+                         ("#\uFE0F\u200B\u20E3", "U+200B"),   # a zero-width space before the mark
+                         (KEYCAP + "\u200B", "U+200B")):        # and after a whole keycap: the generic tail
+            with self.subTest(s=s.encode("unicode_escape").decode()):
+                stored, err = km._emoji_check(s)
+                self.assertEqual(stored, "")
+                self.assertIn("invisible character", err)
+                self.assertIn(stray, err, "the stray is named by code point")
+                self.assertIn("remove it", err)
+                self.assertNotIn("one emoji only", err, "the user typed one emoji")
+                self.assertNotIn("carries the keycap mark", err, "the mark is there")
+                self.assertNotIn("not an emoji", err)
+        # what stays as it was: a second emoji after a flag, three letters, half a flag, a bare digit
+        self.assertEqual(km._emoji_check(FLAG + MOON)[1], "one emoji only")
+        self.assertEqual(km._emoji_check(FLAG + "\u200B" + MOON)[1], "one emoji only",
+                         "a stray and then a second emoji: the second emoji is the larger problem")
+        self.assertEqual(km._emoji_check(FLAG + "\U0001F1E6")[1], "one emoji only")
+        self.assertEqual(km._emoji_check("\U0001F1FA")[1], "a flag needs two regional-indicator letters")
+        self.assertEqual(km._emoji_check("\U0001F1FAx")[1], "a flag needs two regional-indicator letters")
+        self.assertIn("carries the keycap mark (U+20E3)", km._emoji_check("3")[1])
+        self.assertIn("carries the keycap mark (U+20E3)", km._emoji_check("3\uFE0F")[1])
+        self.assertEqual(km._emoji_check("1x\u20E3")[1], 'not an emoji: "1x\u20E3"', "visible junk before the mark")
+        self.assertEqual(km._emoji_check(FLAG + "x")[1], 'not an emoji: "' + FLAG + 'x"')
+        # the docs promise it in these words
+        ref = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        self.assertRegex(ref, r"whether it follows a flag, precedes a keycap's mark,\s+or sits beside any other emoji")
+
+    def test_an_unassigned_code_point_is_named_as_outside_the_tables_not_called_invisible(self):
+        # a code point the interpreter's database calls unassigned (category Cn) — an emoji from a release
+        # after the kernel's tables, or one the interpreter has not caught up with — was refused as 'not an
+        # emoji: an invisible character' with the character dropped from the quote, which told the caller
+        # nothing (review round 3, 2026-09-06). It is named by code point, with the reason it is refused.
+        for cp in (0x1FA8A, 0x1F6D8, 0x1FAFF):
+            ch = chr(cp)
+            self.assertEqual(unicodedata.category(ch), "Cn", "U+%04X is unassigned in this interpreter's database" % cp)
+            expect = "not an emoji: U+%04X (not in this kernel's emoji tables)" % cp
+            for s in (ch, MOON + ch, ch + "x", MOON + "\u200D" + ch):
+                with self.subTest(s=s.encode("unicode_escape").decode()):
+                    self.assertEqual(km._emoji_check(s), ("", expect))
+        # a real invisible (a control, a format character) is still one, and a Unicode 16.0 emoji the
+        # interpreter's database may not know is still accepted (round 2's table-first rule)
+        self.assertIn("an invisible character", km._emoji_check("\x01")[1])
+        self.assertIn("invisible character (U+200B)", km._emoji_check(MOON + "\u200B")[1])
+        self.assertEqual(km._emoji_check("\U0001FAE9"), ("\U0001FAE9", None))
+        ref = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        self.assertIn("not an emoji: U+1FA8A (not in this kernel's emoji tables)", ref)
 
     def test_table_code_points_are_never_invisible_whatever_the_interpreters_unicode_database(self):
         # invisible() fell through to str.isprintable(), which follows the Python release's own Unicode
@@ -306,6 +376,93 @@ class Store(unittest.TestCase):
     def test_missing_record_is_false(self):
         self.assertFalse(km._set_session_emoji(SID2, MOON))
         self.assertFalse((self.names / SID2).exists(), "nothing is minted for an unknown session")
+
+    def _quiet_reread(self):
+        # the one re-read pauses _NAMES_REREAD_S; the tests below drive it with no real sleep
+        self.assertGreater(km._NAMES_REREAD_S, 0)
+        self.assertLessEqual(km._NAMES_REREAD_S, 0.25, "a printf's worth of window, not a wait the user notices")
+        saved = km.time.sleep
+        slept = []
+        km.time.sleep = lambda s: slept.append(s)
+        self.addCleanup(setattr, km.time, "sleep", saved)
+        return slept
+
+    def test_a_record_that_reads_with_no_name_is_left_alone_and_reported(self):
+        # bin/romp's `printf > file` truncated the record before it wrote it (atomic since round 3, but an
+        # older copy may still run the tmux hook); a kernel read in that window saw an empty file, padded
+        # it and published `\t\t<bg>\t<fg>\t<emoji>` — and its os.replace won over the hook's bytes, so a
+        # live session lost its name and cwd from the registry (review round 3, 2026-09-06). Every kernel
+        # names writer refuses a record with no name: re-read once, then leave the file EXACTLY as it is
+        # and report the sid — never a silent degrade.
+        import io
+        slept = self._quiet_reread()
+        saved_problems = list(km._SDK_BOOT_PROBLEMS)
+        self.addCleanup(lambda: km._SDK_BOOT_PROBLEMS.__setitem__(slice(None), saved_problems))
+        for raw in ("", "\n", "\t/proj/TESTHOST/app\t#1EA1EB\twhite\n", "\t\t\t\n"):
+            for name, call in (("emoji", lambda: km._set_session_emoji(SID, MOON)),
+                               ("clear", lambda: km._set_session_emoji(SID, "")),
+                               ("color", lambda: km._set_session_color(SID, "#54B204")),
+                               ("name", lambda: km._set_name(SID, "api"))):
+                with self.subTest(raw=raw.encode("unicode_escape").decode(), writer=name):
+                    (self.names / SID).write_text(raw)
+                    del slept[:]
+                    del km._SDK_BOOT_PROBLEMS[:]
+                    err = io.StringIO()
+                    saved_err, km.sys.stderr = km.sys.stderr, err
+                    try:
+                        out = call()
+                    finally:
+                        km.sys.stderr = saved_err
+                    self.assertFalse(out, "nothing was written")
+                    self.assertEqual((self.names / SID).read_text(), raw, "the file is left byte-for-byte as it was")
+                    self.assertEqual(slept, [km._NAMES_REREAD_S], "exactly one re-read, after the short pause")
+                    self.assertIn(SID, err.getvalue(), "the problem line names the sid")
+                    self.assertIn("no name", err.getvalue())
+                    self.assertEqual(len(km._SDK_BOOT_PROBLEMS), 1, "and reaches the dashboard's error center")
+                    self.assertIn(SID, km._SDK_BOOT_PROBLEMS[0]["text"])
+        # the palette remap skips such a record the same way and recolors the rest
+        pb, pf = km.pal.colors("romp"), km.pal.fgs("romp")
+        (self.names / SID).write_text("\t/proj/TESTHOST/app\t%s\t%s\n" % (pb[0], pf[0]))
+        (self.names / SID2).write_text("api\t/proj/TESTHOST/svc\t%s\t%s\n" % (pb[1], pf[1]))
+        saved = (km._send_to_app, km._mark_views_dirty, km._write_palette_mirror)
+        km._send_to_app = lambda *a, **k: None
+        km._mark_views_dirty = lambda: None
+        km._write_palette_mirror = lambda: None
+        err = io.StringIO()
+        saved_err, km.sys.stderr = km.sys.stderr, err
+        try:
+            self.assertTrue(km._set_palette("phase"))
+        finally:
+            km._send_to_app, km._mark_views_dirty, km._write_palette_mirror = saved
+            km.sys.stderr = saved_err
+        self.assertEqual((self.names / SID).read_text(), "\t/proj/TESTHOST/app\t%s\t%s\n" % (pb[0], pf[0]))
+        nb, nf = km.pal.colors("phase"), km.pal.fgs("phase")
+        self.assertEqual(self._line(SID2).rstrip("\n").split("\t"), ["api", "/proj/TESTHOST/svc", nb[1], nf[1]])
+        self.assertIn(SID, err.getvalue())
+
+    def test_the_re_read_catches_a_writer_that_was_mid_write(self):
+        # the window is a printf's worth of time: a record empty on the first read and whole on the second
+        # is a writer caught mid-write, and the edit lands on the whole record — nothing is lost, nothing
+        # is reported
+        import io
+        slept = self._quiet_reread()
+        (self.names / SID).write_text("")
+        real_sleep_hook = km.time.sleep
+        km.time.sleep = lambda s: (slept.append(s), (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n"))
+        err = io.StringIO()
+        saved_err, km.sys.stderr = km.sys.stderr, err
+        try:
+            self.assertTrue(km._set_session_emoji(SID, MOON))
+        finally:
+            km.sys.stderr = saved_err
+            km.time.sleep = real_sleep_hook
+        self.assertEqual(self._line(), "web\t/proj/TESTHOST/app\t#1EA1EB\twhite\t" + MOON + "\n")
+        self.assertEqual(slept, [km._NAMES_REREAD_S])
+        self.assertEqual(err.getvalue(), "", "a caught window is not a problem")
+        # a record with a name but nothing else is a real (if old) record: padded and published as before
+        (self.names / SID).write_text("web\n")
+        self.assertTrue(km._set_name(SID, "api") is None)
+        self.assertEqual(self._line(), "api\t\t\t\n")
 
     def test_no_emoji_reads_as_empty(self):
         (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
@@ -461,6 +618,159 @@ class EmojiRoute(unittest.TestCase):
                 return r.status, json.loads(r.read().decode())
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read().decode() or "{}")
+
+    def _get(self, target=None):
+        url = "http://127.0.0.1:%d/emoji" % self.port
+        if target is not None:
+            url += "?target=" + urllib.parse.quote(target, safe="")
+        req = urllib.request.Request(url, headers={"X-Romp-Token": km.TOKEN})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read().decode() or "{}")
+
+    def test_a_refused_write_on_a_record_with_no_name_says_so_not_no_record(self):
+        # the store refuses a record that reads with no name (Store tests); the door's answer names THAT,
+        # not "no names record" — the record exists and the user should try again, not go looking for it
+        (self.names / SID).write_text("")
+        saved = km.time.sleep
+        km.time.sleep = lambda s: None
+        try:
+            st, r = self._post({"target": "web", "emoji": MOON})
+        finally:
+            km.time.sleep = saved
+        self.assertFalse(r.get("ok"))
+        self.assertIn("reads with no name", r.get("error") or "")
+        self.assertIn("try again", r.get("error") or "")
+        self.assertNotIn("no names record", r.get("error") or "")
+        self.assertEqual((self.names / SID).read_text(), "", "untouched")
+        self.assertFalse(self.dirty)
+
+    def test_get_reads_a_live_name_a_dormant_sid_and_an_empty_value(self):
+        # GET /emoji?target= is the read half of the POST (round 3, 2026-09-06): `romp emoji <session>`
+        # asked GET /sessions, which lists THIS machine's live sessions only
+        (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\t" + MOON + "\n")
+        (self.names / SID2).write_text("worker\t/proj/TESTHOST/svc\t#1EA1EB\twhite\n")
+        st, r = self._get("web")
+        self.assertEqual((st, r), (200, {"ok": True, "id": SID, "emoji": MOON}))
+        st, r = self._get(SID)
+        self.assertEqual(r, {"ok": True, "id": SID, "emoji": MOON}, "a live session by id too")
+        st, r = self._get(SID2)
+        self.assertEqual(r, {"ok": True, "id": SID2, "emoji": ""}, 'a dormant session by id; "" when none')
+        self.assertFalse(self.dirty, "a read repaints nothing")
+        # the value read is the value the POST stored, byte for byte, through the same file
+        self._post({"target": SID2, "emoji": " " + FLAG + " "})
+        self.assertEqual(self._get(SID2)[1], {"ok": True, "id": SID2, "emoji": FLAG})
+
+    def test_get_is_loud_for_an_unknown_name_a_recordless_sid_and_no_target(self):
+        st, r = self._get("ghost")
+        self.assertEqual(st, 200)
+        self.assertEqual(r, {"ok": False, "error": 'no live session named "ghost" (a dormant one is read by its id)'})
+        st, r = self._get(SID2)
+        self.assertEqual(r, {"ok": False, "error": "no names record for that session — is it known to this kernel?"})
+        st, r = self._get()
+        self.assertEqual(st, 400)
+        self.assertEqual(r, {"ok": False, "error": "target required"})
+        st, r = self._get("   ")
+        self.assertEqual(st, 400, "blank is no target")
+        # and it is behind the token like every other read of session state
+        req = urllib.request.Request("http://127.0.0.1:%d/emoji?target=web" % self.port)
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(cm.exception.code, 403)
+
+    def test_get_for_a_remote_sid_forwards_the_read_to_its_own_kernel(self):
+        # the POST forwards a sid an attached host owns; the read must too, or `romp emoji <id>` reads
+        # 'no session named' for a session it just labeled (review round 3, 2026-09-06)
+        forwarded = []
+        km._host_for_sid = lambda sid: {"host": "gpu1", "local_port": 1, "token": "t"} if sid == SID2 else None
+        km._remote_forward_status = lambda r, path, body, method="POST": (
+            forwarded.append((r["host"], path, body, method)), (200, {"ok": True, "id": SID2, "emoji": MOON}))[1]
+        st, r = self._get(SID2)
+        self.assertEqual(forwarded, [("gpu1", "/emoji?target=" + SID2, None, "GET")], "a GET, the target in the query, no body")
+        self.assertEqual(r, {"ok": True, "id": SID2, "emoji": MOON}, "the remote's own answer rides back")
+        self.assertFalse((self.names / SID2).exists(), "nothing is read or minted locally")
+        km._remote_forward_status = lambda r, path, body, method="POST": (0, None)
+        st, r = self._get(SID2)
+        self.assertEqual(r, {"ok": False, "error": "the session's own kernel (gpu1) did not answer"})
+
+    def test_get_against_an_older_remote_kernel_is_version_skew_and_the_real_forward_carries_the_token(self):
+        # the REAL forwarder against a fake old remote: its do_GET has no /emoji and answers 404 — an
+        # answer, so version skew, no redial; the token joins the query with &, after the target
+        seen = []
+
+        class OldRemote(BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.path)
+                body = b"not found"
+                self.send_response(404); self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        old = ThreadingHTTPServer(("127.0.0.1", 0), OldRemote)
+        threading.Thread(target=old.serve_forever, daemon=True).start()
+        try:
+            km._host_for_sid = lambda sid: {"host": "gpu1", "local_port": old.server_address[1], "token": "t&t"} if sid == SID2 else None
+            st, r = self._get(SID2)
+        finally:
+            old.shutdown()
+        self.assertEqual(st, 200)
+        self.assertEqual(r, {"ok": False, "error": "that host's kernel (gpu1) predates tab emoji — update romp there and restart it"})
+        self.assertEqual(seen, ["/emoji?target=%s&token=t%%26t" % SID2], "the old kernel received the GET, token quoted")
+        self.assertEqual(self.redials, [], "an answer is never a tunnel fault")
+        # a NEW remote answering the read: the real forward parses its JSON
+        class NewRemote(BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.path)
+                body = json.dumps({"ok": True, "id": SID2, "emoji": FLAG}).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        new = ThreadingHTTPServer(("127.0.0.1", 0), NewRemote)
+        threading.Thread(target=new.serve_forever, daemon=True).start()
+        try:
+            km._host_for_sid = lambda sid: {"host": "gpu1", "local_port": new.server_address[1], "token": "t"} if sid == SID2 else None
+            st, r = self._get(SID2)
+        finally:
+            new.shutdown()
+        self.assertEqual(r, {"ok": True, "id": SID2, "emoji": FLAG})
+        # a dead port is the other message, with the redial demanded
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); dead_port = s.getsockname()[1]; s.close()
+        km._host_for_sid = lambda sid: {"host": "gpu1", "local_port": dead_port, "token": "t"} if sid == SID2 else None
+        st, r = self._get(SID2)
+        self.assertEqual(r, {"ok": False, "error": "the session's own kernel (gpu1) did not answer"})
+        self.assertEqual(self.redials, [("gpu1", "refused")])
+
+    def test_the_forwarder_keeps_a_non_json_200_as_an_answer_not_a_tunnel_fault(self):
+        # a 200 whose body is not JSON (a kernel serving a page for an unknown GET) is an answer: status
+        # 200, no parsed body, and no redial — the tunnel is fine
+        class HtmlRemote(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = b"<html>not json</html>"
+                self.send_response(200); self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+            def do_POST(self):
+                self.do_GET()
+
+            def log_message(self, *a):
+                pass
+
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), HtmlRemote)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            r = {"host": "gpu1", "local_port": srv.server_address[1], "token": "t"}
+            self.assertEqual(km._remote_forward_status(r, "/emoji?target=x", None, method="GET"), (200, None))
+            self.assertEqual(km._remote_forward_status(r, "/emoji", {"target": "x", "emoji": ""}), (200, None))
+        finally:
+            srv.shutdown()
+        self.assertEqual(self.redials, [])
 
     def test_live_name_sets_the_fifth_field_and_marks_views_dirty(self):
         (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
@@ -635,6 +945,23 @@ class WsOp(unittest.TestCase):
                 self.assertIn("must be text", self.sent[0]["text"])
         self.assertEqual(km._name_emoji(SID), MOON, "nothing was cleared")
         self.assertFalse(self.dirty)
+
+    def test_a_record_with_no_name_warns_that_it_is_being_rewritten_not_that_it_is_missing(self):
+        (self.names / SID).write_text("")
+        saved = km.time.sleep
+        km.time.sleep = lambda s: None
+        try:
+            self._op(MOON)
+        finally:
+            km.time.sleep = saved
+        self.assertEqual([f["type"] for f in self.sent], ["warn"])
+        self.assertIn("reads with no name", self.sent[0]["text"])
+        self.assertNotIn("no names record", self.sent[0]["text"])
+        self.assertEqual((self.names / SID).read_text(), "")
+        self.assertFalse(self.dirty)
+        self.sent.clear()
+        km.Handler._dispatch_ws(types.SimpleNamespace(), {"type": "setSessionEmoji", "id": SID2, "emoji": MOON}, self.client)
+        self.assertIn("no names record", self.sent[-1]["text"], "a missing record keeps its own words")
 
 
 if __name__ == "__main__":

@@ -483,16 +483,23 @@ MOCK
     grep '/emoji' "$MOCK_LOG" | grep -q '"emoji": *""'
 }
 
-@test "emoji: a refusal prints the kernel's reason; a bare name reads the current one off /sessions; usage and no-token are loud" {
+@test "emoji: a refusal prints the kernel's reason; a bare name reads the current one off GET /emoji; usage and no-token are loud" {
     touch "$MOCK_LOG"
     export ROMP_SERVE_TOKEN=testtok
+    # the read form asks GET /emoji?target= (the read half of the POST — review round 3, 2026-09-06; it
+    # asked GET /sessions, which lists this machine's live sessions only) and reads the status off -w
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
 echo "curl $*" >> "$MOCK_LOG"
 [[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
-url=""; for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
-if [[ "$url" == */sessions ]]; then
-  echo '{"sessions": [{"id": "11111111-2222-3333-4444-555555555555", "name": "exp-web", "emoji": "🌙", "bg": "#1EA1EB", "fg": "white"}, {"id": "22222222-3333-4444-5555-666666666666", "name": "exp-api", "emoji": "", "bg": "", "fg": ""}]}'
+url=""; wfmt=0; for a in "$@"; do [[ "$a" == http* ]] && url="$a"; [[ "$a" == "-w" ]] && wfmt=1; done
+if [[ "$url" == */emoji?target=* ]]; then
+  case "${url##*target=}" in
+    exp-web) printf '{"ok": true, "id": "11111111-2222-3333-4444-555555555555", "emoji": "🌙"}' ;;
+    exp-api) printf '{"ok": true, "id": "22222222-3333-4444-5555-666666666666", "emoji": ""}' ;;
+    *)       printf '{"ok": false, "error": "no live session named \\"%s\\" (a dormant one is read by its id)"}' "${url##*target=}" ;;
+  esac
+  [[ $wfmt -eq 1 ]] && printf '\n200'
   exit 0
 fi
 echo '{"ok": false, "error": "one emoji only"}'
@@ -506,12 +513,14 @@ MOCK
     run run_romp emoji exp-web
     [ "$status" -eq 0 ]
     [ "$output" = "🌙" ]
+    grep -q 'curl -s -m 10 --config - -w .*/emoji?target=exp-web' "$MOCK_LOG"   # a GET (no -X POST, no -d), the target in the query
     run run_romp emoji exp-api
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     run run_romp emoji ghost
     [ "$status" -eq 1 ]
-    [[ "$output" == *'no session named "ghost"'* ]]
+    [[ "$output" == *'no live session named "ghost"'* ]]
+    [[ "$output" == *"read by its id"* ]]
     run run_romp emoji
     [ "$status" -eq 2 ]
     [[ "$output" == *"usage: romp emoji"* ]]
@@ -523,7 +532,11 @@ MOCK
     run run_romp emoji exp-web '🌙'
     [ "$status" -eq 1 ]
     [[ "$output" == *"kernel isn't running"* ]]
-    [ "$(grep -c '/emoji' "$MOCK_LOG")" -eq 1 ]
+    run run_romp emoji exp-web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel isn't running"* ]]
+    [ "$(grep -c 'POST .*/emoji' "$MOCK_LOG")" -eq 1 ]         # the one refused set; no call without a token
+    [ "$(grep -c '/emoji?target=' "$MOCK_LOG")" -eq 3 ]        # the three reads
 }
 
 @test "names map: the tab emoji (5th field) survives the rename hook's rewrite; an entry without one keeps four fields" {
@@ -589,16 +602,24 @@ MOCK
 }
 
 @test "emoji: a dormant session is read by id from the names registry; a dormant name is not found, and says so" {
-    # GET /sessions lists LIVE sessions only, and no kernel route lists dormant records — so the read form
-    # falls back to the names entry for a sid (the store the set form labels), and a name can only mean a
-    # live session (review, 2026-09-06)
+    # a name can only mean a LIVE session (the kernel's GET /emoji resolves it against the live set), and
+    # no route lists dormant records — so the read form answers a sid with a record here from the names
+    # entry itself (the store the set form labels) before it asks anything (review, 2026-09-06)
     touch "$MOCK_LOG"
     export ROMP_SERVE_TOKEN=testtok
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
 echo "curl $*" >> "$MOCK_LOG"
 [[ " $* " == *" --config - "* ]] && cat >/dev/null
-echo '{"sessions": [{"id": "11111111-2222-3333-4444-555555555555", "name": "exp-web", "emoji": "", "bg": "#1EA1EB", "fg": "white"}]}'
+url=""; wfmt=0; for a in "$@"; do [[ "$a" == http* ]] && url="$a"; [[ "$a" == "-w" ]] && wfmt=1; done
+t="${url##*target=}"
+if [[ "$t" =~ ^[0-9a-f-]{36}$ ]]; then
+  printf '{"ok": false, "error": "no names record for that session — is it known to this kernel?"}'
+else
+  printf '{"ok": false, "error": "no live session named \\"%s\\" (a dormant one is read by its id)"}' "$t"
+fi
+[[ $wfmt -eq 1 ]] && printf '\n200'
+exit 0
 MOCK
     chmod +x "$MOCK_DIR/curl"
     ndir="$XDG_STATE_HOME/romp/names"
@@ -617,11 +638,59 @@ MOCK
     [ -z "$output" ]
     run run_romp emoji worker
     [ "$status" -eq 1 ]
-    [[ "$output" == *'no session named "worker"'* ]]
+    [[ "$output" == *'no live session named "worker"'* ]]
     [[ "$output" == *"read by its id"* ]]
     run run_romp emoji 55555555-6666-7777-8888-999999999999
     [ "$status" -eq 1 ]
-    [[ "$output" == *"no session named"* ]]
+    [[ "$output" == *"no names record for that session"* ]]
+    [ "$(grep -c '/emoji?target=' "$MOCK_LOG")" -eq 2 ]   # the three registry reads dialed nothing
+}
+
+@test "emoji: a session an attached machine owns is read by id through the kernel's GET /emoji, which forwards like the set" {
+    # the read form asked GET /sessions, which lists THIS machine's live sessions only, so a sid an
+    # attached host owns read as 'no session named …' right after `romp emoji <sid> 🌙` had set it through
+    # the POST's forward (review round 3, 2026-09-06). GET /emoji?target= resolves and forwards the way
+    # the POST does; the CLI prints its answer — the emoji, or the kernel's one-line error — and reads
+    # the HTTP status off -w, so a kernel from before the route is named, not called unreachable.
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+[[ " $* " == *" --config - "* ]] && cat >/dev/null
+wfmt=0; for a in "$@"; do [[ "$a" == "-w" ]] && wfmt=1; done
+printf '%s' "${MOCK_GET_BODY-}"
+[[ $wfmt -eq 1 ]] && printf '\n%s' "${MOCK_GET_CODE:-200}"
+exit 0
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    rid=66666666-7777-8888-9999-000000000000            # no record under this machine's names dir
+    export MOCK_GET_BODY='{"ok": true, "id": "66666666-7777-8888-9999-000000000000", "emoji": "🌙"}'
+    run run_romp emoji "$rid"
+    [ "$status" -eq 0 ]
+    [ "$output" = "🌙" ]
+    grep -q "/emoji?target=$rid" "$MOCK_LOG"
+    [ "$(grep -c 'sessions' "$MOCK_LOG")" -eq 0 ]       # never the live list
+    # the owning kernel's own words come back through the hub, whatever they are
+    export MOCK_GET_BODY='{"ok": false, "error": "that host'"'"'s kernel (gpu1) predates tab emoji — update romp there and restart it"}'
+    run run_romp emoji "$rid"
+    [ "$status" -eq 1 ]
+    [ "$output" = "romp emoji: that host's kernel (gpu1) predates tab emoji — update romp there and restart it" ]
+    export MOCK_GET_BODY='{"ok": false, "error": "the session'"'"'s own kernel (gpu1) did not answer"}'
+    run run_romp emoji "$rid"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"did not answer"* ]]
+    # THIS kernel from before the route: a 404 names the skew instead of 'not reachable'
+    export MOCK_GET_BODY='not found' MOCK_GET_CODE=404
+    run run_romp emoji "$rid"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"predates this command's read route"* ]]
+    [[ "$output" != *"not reachable"* ]]
+    export MOCK_GET_BODY='forbidden' MOCK_GET_CODE=403
+    run run_romp emoji "$rid"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refused the serve token (HTTP 403)"* ]]
+    unset MOCK_GET_BODY MOCK_GET_CODE
 }
 
 @test "emoji: an id is read from the names registry with no kernel running; a name or an unknown id still needs the kernel" {
@@ -714,6 +783,42 @@ MOCK
     [ "$(awk -F'\t' '{print $2}' <<<"$rec")" = "$WORK_DIR" ]
     [ -z "$(awk -F'\t' '{print $3 $4}' <<<"$rec")" ]
     [ "$(awk -F'\t' '{print $5}' <<<"$rec")" = "🚀" ]
+}
+
+@test "names map: the record writer is atomic — a temp moved into place, and a reader racing the rename hook never sees an empty record" {
+    # _romp_record (launch, the rename hook, the title-freeing rewrite) wrote with `printf > file`: truncate,
+    # then write. The kernel's names writers read the file between those two steps and published a record
+    # with no name and no cwd over it, and the kernel's atomic write won (review round 3, 2026-09-06). The
+    # rule: write a temp in the same directory, mv it into place — pinned at the source (no redirect into
+    # the record's path, one temp name, one mv) and exercised: a reader polling the record while the hook
+    # rewrites it must never find it empty, and no temp may be left behind.
+    [ "$(grep -c '> "\$ROMP_NAMES_DIR/\$sid"' "$ROMP_SCRIPT")" -eq 0 ]
+    grep -q 'local tmp="\$ROMP_NAMES_DIR/\.\$sid\.tmp\.\$\$"' "$ROMP_SCRIPT"
+    grep -q 'mv -f "\$tmp" "\$ROMP_NAMES_DIR/\$sid"' "$ROMP_SCRIPT"
+    [ "$(grep -c '> "\$tmp"' "$ROMP_SCRIPT")" -eq 2 ]     # the five-field and the four-field printf, nothing else
+    cat > "$MOCK_DIR/tmux" << 'MOCK'
+#!/usr/bin/env bash
+if [[ "$1" == "show" && "$5" == "@romp-session-id" ]]; then echo 11111111-2222-3333-4444-555555555555; fi
+exit 0
+MOCK
+    chmod +x "$MOCK_DIR/tmux"
+    ndir="$XDG_STATE_HOME/romp/names"
+    mkdir -p "$ndir"
+    f="$ndir/11111111-2222-3333-4444-555555555555"
+    printf 'exp-web\t%s\t#1EA1EB\twhite\t🌙\n' "$WORK_DIR" > "$f"
+    # the writer: the rename hook, 40 times over; the reader: as many looks as fit meanwhile
+    ( for i in $(seq 1 40); do "$ROMP_SCRIPT" _renamed exp-web >/dev/null 2>&1; done ) &
+    wpid=$!
+    empty=0; reads=0
+    while kill -0 "$wpid" 2>/dev/null; do
+        reads=$((reads + 1))
+        [ -s "$f" ] || empty=$((empty + 1))
+    done
+    wait "$wpid"
+    [ "$reads" -gt 100 ]
+    [ "$empty" -eq 0 ]
+    [ "$(cat "$f")" = "$(printf 'exp-web\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
+    [ "$(ls -A "$ndir" | grep -vc '^11111111-2222-3333-4444-555555555555$')" -eq 0 ]   # no temp left behind
 }
 
 @test "names map: the rename hook reads a colorless record with an emoji tab-exactly" {
