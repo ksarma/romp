@@ -11761,7 +11761,7 @@ def _thread_messages(tsid, cut_uuid, floor_t=0):
     # romp's own injections are not the user's words: anything wearing the `<!-- romp-` marker
     # (nudges, notices) plus the boot reconcile's continuation text (marker-less by design) must
     # not render as a 'you' bubble in the popover
-    boot_nudge = getattr(sys.modules.get("romp_sdk_backend"), "BOOT_RESUME_NUDGE", None)
+    is_nudge = getattr(sys.modules.get("romp_sdk_backend"), "is_resume_nudge", None) or (lambda t: False)
     while u is not None and hops < 500000:
         if u == cut_uuid:
             break                                   # copied history starts here — the parent's, not the thread's
@@ -11778,7 +11778,7 @@ def _thread_messages(tsid, cut_uuid, floor_t=0):
                                                     # with one — the event model's own anchored test; prose that merely
                                                     # quotes a tag is the user's message): the CLI's bookkeeping, not
                                                     # something the user SAID — it must not owe a reply (T237 review)
-            if txt and txt != boot_nudge and not (r.get("type") == "user" and "<!-- romp-" in txt):
+            if txt and not is_nudge(txt) and not (r.get("type") == "user" and "<!-- romp-" in txt):
                 rows.append({"who": "you" if r.get("type") == "user" else "agent",
                              "text": txt[:4000],
                              "t": int(em.parse_z(r.get("timestamp")) or 0)})
@@ -16167,7 +16167,10 @@ def _start_remote_kernel(host):
     ssh shell often lacks the user's PATH additions), then conventional clone locations. romp-serve
     itself picks the right python (its pick_python) and self-builds stale UI bundles, so a plain
     clone is enough. Returns (started, detail) — detail names everything the probe tried when romp
-    isn't installed there. KEEP the source order IN SYNC with _discover_remote_clone."""
+    isn't installed there. A host stopped by `romp down` (its down-by-romp marker in the state root) is
+    NOT booted: a bare kernel there would serve under a marker that says down and no manager would own
+    it (review find, 2026-09-06); (False, why) names `romp up` on that host as the way to start it.
+    KEEP the source order IN SYNC with _discover_remote_clone."""
     cmd = ('S=""; SR="${ROMP_REPO_ROOT:-$(cat "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/repo-root" 2>/dev/null)}"; '
            'if [ -n "$SR" ] && [ -x "$SR/bin/romp-serve" ]; then S="$SR/bin/romp-serve"; fi; '
            'if [ -z "$S" ]; then S="$(command -v romp-serve || bash -lc "command -v romp-serve" 2>/dev/null || true)"; fi; '
@@ -16175,12 +16178,16 @@ def _start_remote_kernel(host):
            'if [ -x "$d/bin/romp-serve" ]; then S="$d/bin/romp-serve"; break; fi; done; fi; '
            'if [ -z "$S" ]; then echo NOROMP; exit 0; fi; '
            'LOGDIR="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; mkdir -p "$LOGDIR"; '
+           'if [ -f "$LOGDIR/down-by-romp" ]; then echo DOWN; exit 0; fi; '
            'nohup "$S" >>"$LOGDIR/kernel.log" 2>&1 </dev/null & echo "STARTED:$S"')
     try:
         r = subprocess.run([SSH_BIN] + _SSH_OPTS + ["--", host, cmd], capture_output=True, text=True, timeout=25)
         out = (r.stdout or "").strip()
         if "STARTED" in out:
             return True, out.partition(":")[2]
+        if out == "DOWN":
+            return False, ("romp is stopped on %s by romp down; not starting it (romp up there starts it)"
+                           % host)
         if "NOROMP" in out:
             return False, ("romp not installed on %s — no repo-root state file (a kernel that has "
                            "run there writes one; ROMP_REPO_ROOT on that machine also works), no "
@@ -17971,12 +17978,19 @@ def _update_remote(host):
         'NEW="$(git -C "$R" rev-parse --short HEAD)"; '
         # RESTART the kernel THROUGH THE MANAGER (the user 2026-07-04: the manager is romp's durable supervisor —
         # "there is never an invisible orphan" — so a restart should keep/leave the remote MANAGER-owned, not
-        # launch a bare romp-serve). Kill the kernel, then `romp-manager ensure` (the SAME idempotent auto-start
-        # the SessionStart hook uses): if a manager already supervises this host it respawns the kernel on the new
-        # code; if this host was only ATTACH-bootstrapped (bare kernel, no manager) ensure STARTS the manager,
-        # which spawns a SUPERVISED kernel — UPGRADING the orphan to properly managed. ensure needs node; if it
-        # can't run (or the port never returns) we relaunch romp-serve bare as a last resort so the host isn't
-        # left dead. The port poll confirms whichever path brought it back.
+        # launch a bare romp-serve). Kill the kernel, then `romp-manager ensure` (the idempotent supervised
+        # start; this apply and _restart_remote_kernel's are its only callers — no hook runs it): if a manager
+        # already supervises this host it respawns the kernel on the new code; if this host was only
+        # ATTACH-bootstrapped (bare kernel, no manager) ensure STARTS the manager, which spawns a SUPERVISED
+        # kernel — UPGRADING the orphan to properly managed. ensure needs node; if it can't run (or the port
+        # never returns) we relaunch romp-serve bare as a last resort so the host isn't left dead. The port
+        # poll confirms whichever path brought it back.
+        # A host stopped by `romp down` (its down-by-romp marker in the state root, and no manager owning
+        # the kernel) is left stopped: ensure refuses on the marker, so the immediate path below would boot
+        # the bare fallback while `romp status` there still said down (review find, 2026-09-06). The code
+        # is synced and nothing is killed or started; SYNCED:<sha>:DOWN says so, and `romp up` there boots
+        # the new code. The OWNED check comes first: a manager running beside a marker was started some
+        # way that did not clear it, and its kernel gets the normal quiet restart.
         'if [ ! -x "$R/bin/romp-serve" ]; then echo "NOLAUNCH:$NEW"; exit 0; fi; '
         # NEVER AN ANONYMOUS SIGTERM (T238, the T121 rule): a restart-audit row lands BEFORE whichever
         # restart happens, so the far kernel's cut row carries WHO and WHY (the p2p update, from this
@@ -17997,6 +18011,8 @@ def _update_remote(host):
         'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
         '\'reason\':\'from %s to %s\',\'when\':\'quiet\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
         'if "$R/bin/romp-manager" restart-all --quiet >>"$LOGDIR/update.log" 2>&1; then echo "SYNCED:$NEW:QUIET"; exit 0; fi; fi; '
+        # stopped on purpose (see above): synced, nothing restarted
+        'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN"; exit 0; fi; '
         # LAST RESORT (no owning manager answering on this host): the immediate path below — audit row,
         # kill, then `ensure` upgrades the host to a supervised kernel.
         'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
@@ -18065,6 +18081,10 @@ def _update_remote(host):
         if mode == "FALLBACK":
             return True, ("synced to %s + restarting now (no manager owns that kernel there — an "
                           "immediate restart)" % short)
+        if mode == "DOWN":
+            _unexpect()                           # nothing restarts: the host stays stopped on purpose
+            return True, ("synced to %s; %s is stopped by romp down, so nothing was restarted there "
+                          "(romp up on it starts the new code)" % (short, host))
         return True, "synced to %s + restarting" % short
     _unexpect()                                   # nothing restarted: DIVERGED / RESETFAIL / NOLAUNCH / error
     if tag == "DIVERGED":
@@ -18284,7 +18304,10 @@ def _restart_remote_kernel(host):
     to push but the process still has to come back on the new build of ITS own code. Same shape as
     _update_remote's step 3 (manager `ensure` so the restart stays supervised, the `romp-kern[e]l`
     self-match guard so pkill can't kill the apply shell, setsid so an ssh drop can't leave the host with
-    no kernel at all), minus every git step. Returns (ok, detail)."""
+    no kernel at all), minus every git step. A host stopped by `romp down` (its marker present) is not
+    restarted: ensure would refuse and the bare fallback would boot an unsupervised kernel under a
+    marker that says down (review find, 2026-09-06); the detail says so and names `romp up` there.
+    Returns (ok, detail); a `romp down` host is (False, why), since the restart asked for did not run."""
     with _remotes_lock:
         r = dict(_remotes.get(host) or {})
     if r.get("checkin_peer"):
@@ -18296,6 +18319,7 @@ def _restart_remote_kernel(host):
     apply_cmd = (
         'LOGDIR="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; mkdir -p "$LOGDIR"; R=%s; '
         'if [ ! -x "$R/bin/romp-serve" ]; then echo NOLAUNCH; exit 0; fi; '
+        'if [ -f "$LOGDIR/down-by-romp" ]; then echo DOWN; exit 0; fi; '
         # never an anonymous SIGTERM (T238): the far kernel's cut row names this explicit restart
         'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'remote-restart\','
         '\'reason\':\'requested from %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
@@ -18329,6 +18353,8 @@ def _restart_remote_kernel(host):
             rr.pop("restartExpected", None)
     if out == "NOLAUNCH":
         return False, "found no romp/romp-serve launcher to restart the kernel"
+    if out == "DOWN":
+        return False, "%s is stopped by romp down; not restarting it (romp up there starts it)" % host
     return False, (_ssh_err(a.stderr) or out or "remote restart failed").strip()[:180]
 
 
@@ -18524,8 +18550,11 @@ DOWN_WAIT_DEFAULT_S = 5.0     # the CLI's default `--wait`; a turn boundary in t
 DOWN_WAIT_MAX_S = 600.0       # a cap on the request, so a typo cannot hold a handler thread for an hour
 DOWN_HOLD_GRACE_S = 30.0      # the hold outlives the wait by this much: the supervisor stop lands on a
 #                               still-quiet kernel, and if no stop comes the lease lapses on its own
-GOING_DOWN_REFUSAL = ("the kernel is going down (romp down) — start it again with `romp up` "
-                      "before creating sessions")
+# The refusal both create doors give. Its reader can be an AGENT (`romp new` inside a session prints
+# a 4xx body's error verbatim), and an agent told to run `romp up` would do so and undo a stop the
+# user made on purpose (review find, 2026-09-06). So it states the fact and hands over no command:
+# the person who stopped the kernel knows how to start it.
+GOING_DOWN_REFUSAL = "the kernel is being stopped on purpose; a new session cannot start right now"
 
 
 def _going_down():
