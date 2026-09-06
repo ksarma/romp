@@ -41,10 +41,12 @@ function readStore(): string | null { try { return localStorage.getItem(RECENT_K
 function writeStore(): void { try { localStorage.setItem(RECENT_KEY, JSON.stringify(recent)); } catch { /* storage may be denied */ } }
 
 /** Open `path` here: cache the identity so the chip resolves, open the shared viewer, and record the file
- *  as recent only when the open really happened (a dirty-edit veto keeps the previous viewer up). */
-function openHere(path: string, sid: string | null, identity: FileViewIdentity | null): void {
+ *  as recent only when the open really happened (a dirty-edit veto keeps the previous viewer up).
+ *  `todoId` is the user todo a Waiting-on-you detail link opened it from (the relay carries it; the recent
+ *  list does not — a re-open is no longer that todo). */
+function openHere(path: string, sid: string | null, identity: FileViewIdentity | null, todoId: string | null = null): void {
   if (sid && identity) identities.set(sid, identity);
-  if (!openFileView(path, sid)) return;
+  if (!openFileView(path, sid, { todoId })) return;
   const known = identity ?? (sid ? identities.get(sid) ?? null : null);
   recent = rememberRecent(recent, { path, sid, identity: known, t: Date.now() });
   writeStore();
@@ -100,7 +102,7 @@ setFileViewIdentity((id) => identities.get(id) ?? hostStub(id));
 // the shared viewer, with this pane's own relay contract (see the header); saves and the GitHub link ride
 // this socket's poster, and the file browser (a viewer dir-link, or its own rows) opens here too
 initFileView((m) => vscodeApi?.postMessage(m), (m) => {
-  openHere(m.path, typeof m.sid === "string" ? m.sid : null, asIdentity(m.identity));
+  openHere(m.path, typeof m.sid === "string" ? m.sid : null, asIdentity(m.identity), typeof m.todoId === "string" ? m.todoId : null);
 });
 initFileBrowse((m) => vscodeApi?.postMessage(m));
 

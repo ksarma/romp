@@ -1,5 +1,5 @@
 {
-  "note": "Shared tokenizer-parity fixture: the kernel's _path_tokens (Python port of CLICKABLE_PATH_RE, trailing punctuation stripped, deduped) and the client regex extracted from render.ts must produce EXACTLY these tokens for each text. Tokens here are pre-gate: prose like and/or is a TOKEN on both sides (the shape gates and the pathLinks map are what keep it prose). pd.DataFram pins the {1,8} extension cap behaving identically. Synthetic paths only.",
+  "note": "Shared tokenizer-parity fixture: the kernel's _path_tokens (Python port of CLICKABLE_PATH_RE, trailing punctuation stripped, deduped) and the client regex extracted from ui/webview/path-links.ts must produce EXACTLY these tokens for each text. Tokens here are pre-gate: prose like and/or is a TOKEN on both sides (the shape gates and the pathLinks map are what keep it prose). pd.DataFram pins the {1,8} extension cap behaving identically. Synthetic paths only.",
   "cases": [
     { "text": "see design/foo.md for details", "tokens": ["design/foo.md"] },
     { "text": "the fix is in ui/webview/render.ts and kernel/kernel.py.", "tokens": ["ui/webview/render.ts", "kernel/kernel.py"] },

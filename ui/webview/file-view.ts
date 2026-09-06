@@ -184,7 +184,9 @@ let viaRelay = false;
 // open and returns the action's element for the row (or null to sit this file out); an action that
 // answers asynchronously (the GitHub link's kernel ask) mounts hidden and reveals itself when its
 // reply lands. Ordering is registration order, after the built-ins.
-export interface FileViewActionCtx { path: string; sid: string | null; }
+// `todoId`: the user todo the file was opened FROM, when it was (the Waiting-on-you pane's detail link,
+// plans/file-review.md Slice 0) — so an action can tie its work back to the todo; absent for every other open.
+export interface FileViewActionCtx { path: string; sid: string | null; todoId?: string | null; }
 export interface FileViewAction { id: string; mount: (ctx: FileViewActionCtx) => HTMLElement | null; }
 const fileViewActions: FileViewAction[] = [];
 export function registerFileViewAction(a: FileViewAction): void {
@@ -308,7 +310,7 @@ export function closeFileView(): void {
  *  viewer, whose provenance the caller must not touch (initFileView's relay branch keys viaRelay
  *  and the shell's viewFileOpened ack on this verdict — a vetoed relay must neither re-tag the
  *  survivor as relay-opened nor arm a restore for an open that never happened). */
-export function openFileView(path: string, sid?: string | null): boolean {
+export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null }): boolean {
   // The replace path bypasses closeFileView, so it needs the same dirty ask: opening file B over an
   // edited-but-unsaved file A must not silently eat A's buffer.
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;
@@ -486,7 +488,7 @@ export function openFileView(path: string, sid?: string | null): boolean {
   // Registered actions render after the built-ins — the registry walk is the ONE place row
   // conventions live (see registerFileViewAction above). The GitHub link mounts here.
   for (const a of fileViewActions) {
-    const n = a.mount({ path, sid: sid || null });
+    const n = a.mount({ path, sid: sid || null, todoId: opts?.todoId ?? null });
     if (n) acts.appendChild(n);
   }
 
@@ -770,7 +772,7 @@ export function openFileView(path: string, sid?: string | null): boolean {
           re.addEventListener("click", () => {
             if (!confirmDiscard()) return;
             dirty = false;                      // confirmed once — the replace guard must not ask twice
-            openFileView(path, sid);
+            openFileView(path, sid, opts);      // the same provenance (todoId) — a reload is still that open
           });
           bar2.appendChild(re);
         }
@@ -1012,7 +1014,7 @@ function pdfBlock(objUrl: string, path: string): HTMLElement {
  *  Files pane, 2026-09-03: it caches the identity the relay carries, keeps its recent list, and
  *  owes the shell no pane restore, since the pane stays up). */
 export function initFileView(poster: (m: Record<string, unknown>) => void,
-                             onRelay?: (m: { path: string; sid?: unknown; identity?: unknown }) => void): void {
+                             onRelay?: (m: { path: string; sid?: unknown; identity?: unknown; todoId?: unknown }) => void): void {
   post = poster;
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
