@@ -544,10 +544,13 @@ finds the kernel in command mode under a shell that reads no line, it cannot
 tell which place still carries it, so its `MISMATCH` lists each with its
 remedy: `service.env` as the manager loaded it; the unit, a drop-in, or the
 profile a shell-wrapped `ExecStart` sources; another `service.env`, when the
-installer carried a non-default `ROMP_SERVICE_ENV_FILE` into the unit or plist
-and this shell reads a different file (run `romp keyswap` with the same
-variable, or check the unit); a `service.env` line removed since the kernel
-started; and the shell that ran `romp up`. The same other-file cause is named
+kernel's environment sets `ROMP_SERVICE_ENV_FILE` to a file other than the one
+this shell reads (the installer writes the line into the unit or the plist for
+a non-default path; a drop-in, a sourced profile or the shell that ran `romp
+up` can set it too; run `romp keyswap` with the same variable, or look for it
+in the unit and its drop-ins on Linux, the plist on macOS); a `service.env`
+line removed since the kernel started; and the shell that ran `romp up`. The
+same other-file cause is named
 under a kernel in file mode when the file this shell reads carries the line,
 since `romp refresh` reaches only the file the kernel reads.
 
@@ -714,7 +717,9 @@ so the report lists the places, each with its remedy:
   definition, then restart (the commands are under [Two things still need a
   restart](#two-things-still-need-a-restart))
 - another `service.env`, when the kernel's environment names a different file
-  through `ROMP_SERVICE_ENV_FILE`: run `romp keyswap` with the same variable
+  through `ROMP_SERVICE_ENV_FILE` (the installer's line in the unit or the
+  plist, a drop-in, a profile, or the shell that ran `romp up`): run `romp
+  keyswap` with the same variable
 - `service.env`, edited since the kernel read it at its start: `romp refresh`
 - the shell that ran `romp up`, which exported the line: start it again from a
   shell without the line
