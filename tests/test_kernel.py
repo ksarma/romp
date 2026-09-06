@@ -390,7 +390,7 @@ class ViewBuilder(unittest.TestCase):
     def test_fold_ignores_background_agent_taskcreate(self):
         # A background-agent TaskCreate (the Task tool's {agent_hint, prompt} shape, no subject; its
         # result is an agent id, not "Task #N") is NOT a to-do checklist item. Folding it as a pending
-        # task gave personality-1's overnight-pipeline session a phantom open task, which tripped the
+        # task gave a background-agent-only session a phantom open task, which tripped the
         # card's "can't read the task store" error whenever the store was unresolvable (the user
         # 2026-09-03). Only a checklist create (a `subject`) folds.
         def _tu(name, inp, rid=None):
@@ -403,8 +403,8 @@ class ViewBuilder(unittest.TestCase):
         # a session that ONLY launched background agents → no checklist at all
         bg = {"turns": [{"atoms": [
             _asst(_tu("TaskCreate", {"agent_hint": "overnight pipeline", "prompt": "run the thing"}, "a1")),
-            _tr("a1", "Started background task b00hae0h5"),
-            _asst(_tu("TaskStop", {"taskId": "b00hae0h5"})),
+            _tr("a1", "Started background task cafef00d1"),
+            _asst(_tu("TaskStop", {"taskId": "cafef00d1"})),
         ]}]}
         self.assertIsNone(km._fold_tasks(bg), "background-agent tasks are not a to-do checklist")
         # a mixed session keeps the real checklist item and drops the background one
