@@ -606,6 +606,72 @@ test("executed: a caps frame whose connect push served no views blob (viewsSeq n
   } finally { console.warn = cw; }
 });
 
+// ROUND 8 of the 2026-09-05 review: the caps frame's viewsSeq is also the kernel's ANNOUNCEMENT of its current
+// store (the served blob's seq, or the store's current seq when the connect push carried no views frame; null
+// only when the kernel has no store at all). A restart over a store restored from an older copy, met by a
+// reconnect whose push carried no blob (a chat page's sentinel cycle sends no tabOrder), kept nothing for round
+// 7's rule to match: the pusher's next frame — the restored store, under its old seq — was turned away, and no
+// second caps frame comes. The announced seq is remembered in one slot until the next adoption, and a later
+// blob carrying exactly that seq is adopted below the held one.
+test("executed: a sentinel-cycle reconnect over a restored store — the caps frame announces the store's seq with nothing kept, the pusher's next frame at that seq is adopted below the held one, another lower seq is still turned away, and the slot clears on the adoption", () => {
+  const panel = drawnPanel();
+  const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
+  try {
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 900 });   // the connect push carried no views blob; the restored store's current seq is 900
+    assert.equal(panel._views.seq, 1000, "nothing kept, nothing adopted on the frame itself");
+    assert.equal(panel._announcedViewsSeq, 900, "…but the announced seq is remembered");
+    frame(panel, Object.assign(copy(S0), { seq: 899 }));
+    assert.equal(panel._views.seq, 1000, "a frame at another lower seq is a stale frame: turned away");
+    assert.equal(panel._announcedViewsSeq, 900, "…and the slot stands");
+    const restored = copy(S0); restored.seq = 900; restored.tags[0].name = "site";
+    frame(panel, restored);                            // the pusher's next cycle: the restored store under its old seq
+    assert.equal(panel._views.seq, 900, "the announced seq IS the store the kernel said it holds: adopted below the held one");
+    assert.equal(panel._curViews().tags[0].name, "site", "the page shows the restored store");
+    assert.equal(panel._announcedViewsSeq, null, "the slot cleared on the adoption");
+    assert.equal(panel._rejectedViews, null, "…and so did the kept blob");
+    frame(panel, Object.assign(copy(S0), { seq: 899 }));
+    assert.equal(panel._views.seq, 900, "the store's own order gates again from the adopted seq");
+    assert.equal(panel._tagEditErr, null, "nothing was in flight: nothing is said");
+  } finally { console.warn = cw; }
+});
+
+test("executed: the announced slot clears on ANY adoption — a write landing before the announced blob arrives stamps the store past it, and that blob is then the stale frame it looks like; a caps frame that adopts its kept blob leaves no slot; viewsSeq null and a missing field announce nothing", () => {
+  const panel = drawnPanel();
+  const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
+  try {
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 900 });
+    assert.equal(panel._announcedViewsSeq, 900);
+    const written = copy(S0); written.seq = 1100; written.tags[0].name = "notes";   // another dashboard's write on the restored store: a write's seq is seeded from the clock, past everything a page holds
+    frame(panel, written);
+    assert.equal(panel._views.seq, 1100, "adopted by the ordinary rule…");
+    assert.equal(panel._announcedViewsSeq, null, "…and the slot cleared with it");
+    frame(panel, Object.assign(copy(S0), { seq: 900 }));   // the pusher's frame built before that write
+    assert.equal(panel._views.seq, 1100, "the announced seq is no longer a door: the store moved past it");
+    assert.equal(panel._curViews().tags[0].name, "notes");
+    // the caps frame that adopts its kept blob (round 7's case) leaves no slot either
+    const restored = copy(S0); restored.seq = 800;
+    frame(panel, restored);
+    assert.equal(panel._views.seq, 1100);
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 800 });
+    assert.equal(panel._views.seq, 800, "the kept blob is what the frame names: adopted");
+    assert.equal(panel._announcedViewsSeq, null, "nothing left to remember");
+    // null — the kernel has no store at all — announces nothing, and an earlier announcement does not outlive the frame
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 700 });
+    assert.equal(panel._announcedViewsSeq, 700);
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: null });
+    assert.equal(panel._announcedViewsSeq, null, "null announces nothing");
+    frame(panel, Object.assign(copy(S0), { seq: 700 }));
+    assert.equal(panel._views.seq, 800, "…so a blob at the seq an earlier frame named is turned away");
+    // a frame without the field (a kernel from before it) announces nothing either
+    panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 600 });
+    assert.equal(panel._announcedViewsSeq, 600);
+    panel.setCaps({ type: "caps", caps: ["tagEdit"] });
+    assert.equal(panel._announcedViewsSeq, null);
+    frame(panel, Object.assign(copy(S0), { seq: 600 }));
+    assert.equal(panel._views.seq, 800);
+  } finally { console.warn = cw; }
+});
+
 test("executed: a caps frame without viewsSeq (a kernel from before the field) adopts the kept blob outright — the round-6 rule", () => {
   const panel = drawnPanel();
   const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };

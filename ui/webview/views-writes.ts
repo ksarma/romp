@@ -51,14 +51,18 @@ export function seqOf(v: SessionViews | null | undefined): number | null {
 }
 
 /** Whether an incoming blob may replace the held one: yes when its seq is at least the held seq, or
- *  when either side carries no seq (a kernel from before the stamp, or nothing held yet). The order
- *  the socket delivered them in decides nothing — the pusher builds frames from a warmed cache that
- *  can predate a write whose ack already arrived, and federation re-emits stored blobs; the seq is
- *  the store's own order, so an older blob is ignored wherever it turns up. */
-export function adoptViews(held: SessionViews | null | undefined, incoming: SessionViews | null | undefined): boolean {
+ *  when either side carries no seq (a kernel from before the stamp, or nothing held yet), or when its
+ *  seq is the one the kernel ANNOUNCED as its current store at connect (`announced`: the slot the
+ *  caller fills from the caps frame through announcedSeq, one per store, cleared on the next
+ *  adoption) — a blob carrying that seq IS the announced store, not a stale frame, however far below
+ *  the held seq it sits (round 8 of the 2026-09-05 review). The order the socket delivered them in
+ *  decides nothing — the pusher builds frames from a warmed cache that can predate a write whose ack
+ *  already arrived, and federation re-emits stored blobs; the seq is the store's own order, so an
+ *  older blob is ignored wherever it turns up. */
+export function adoptViews(held: SessionViews | null | undefined, incoming: SessionViews | null | undefined, announced: number | null = null): boolean {
   if (!incoming) return false;
   const h = seqOf(held), i = seqOf(incoming);
-  return h === null || i === null || i >= h;
+  return h === null || i === null || i >= h || (typeof announced === "number" && i === announced);
 }
 
 /** Whether the kernel's `caps` frame — the reconnect event — adopts the blob the gate last REJECTED
@@ -74,11 +78,30 @@ export function adoptViews(held: SessionViews | null | undefined, incoming: Sess
  *  pusher frame built before a concurrent write and enqueued between the push and the caps frame is
  *  kept too, but its seq is older than the push's, so it never matches and is discarded — the gate
  *  stands, and the next pusher cycle carries the newer blob. A frame without the field adopts the
- *  kept blob outright, the round-6 rule. Nothing kept: nothing to adopt, whatever the frame says. */
+ *  kept blob outright, the round-6 rule. Nothing kept: nothing to adopt, whatever the frame says —
+ *  but the frame's viewsSeq is then the kernel's announcement of its current store, which the caller
+ *  remembers (announcedSeq) for the blob that carries it later. */
 export function capsAdopts(rejected: SessionViews | null | undefined, served: unknown): boolean {
   if (!rejected) return false;
   if (served === undefined) return true;
   return typeof served === "number" && Number.isFinite(served) && seqOf(rejected) === served;
+}
+
+/** The seq the caps frame ANNOUNCES as the kernel's current views store, for the client to remember
+ *  when the frame adopted no kept blob (round 8 of the 2026-09-05 review): its `viewsSeq` when that
+ *  is a number — the seq of the views blob the connect push served, or the store's current seq when
+ *  the push carried no views frame (a chat page's sentinel cycle sends no tabOrder) — and null when
+ *  it is null (the kernel has no store at all) or the frame has no such field (a kernel from before
+ *  it). The caller keeps it in ONE slot per store, overwritten by each caps frame and cleared on the
+ *  next adoption of any blob, and hands it to adoptViews as `announced`, so a LATER blob carrying
+ *  exactly that seq is adopted even below the held one. Without it, a restart over a store restored
+ *  from an older copy met by a sentinel-cycle reconnect left nothing kept for capsAdopts to match:
+ *  the pusher's next frame (the restored store, under its old seq) was turned away, and no second
+ *  caps frame comes. The clear on adoption is what keeps the slot honest: a write that lands first
+ *  stamps the store past what was announced, and a frame at the announced seq is then the stale
+ *  frame it looks like. */
+export function announcedSeq(served: unknown): number | null {
+  return typeof served === "number" && Number.isFinite(served) ? served : null;
 }
 
 /** the fields a lens or order write sets — the whole-blob write's only content of its own: the

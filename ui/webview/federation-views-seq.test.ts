@@ -152,6 +152,68 @@ test("a caps frame whose push served no views blob (viewsSeq null) adopts nothin
   });
 });
 
+// ROUND 8: the caps frame's viewsSeq is also the kernel's announcement of its current store (the served blob's seq, or
+// the store's current seq when the connect push carried no views frame; null only when the kernel has no store at
+// all). A reconnect whose push carried no blob (a chat page's sentinel cycle sends no tabOrder) keeps nothing for
+// round 7's rule to match; each replayed store remembers the announced seq in one slot until its next adoption, and
+// the later blob at exactly that seq — the pusher's next frame after a restart over a store restored from an older
+// copy — is adopted below the stored one.
+test("the local caps frame's viewsSeq is remembered when a store kept nothing it names: the LATER blob at that seq is adopted below the stored one, another lower seq is turned away, the slot clears on any adoption, and null, a missing field and a remote's frame announce nothing", () => {
+  withManager((fm, emitted) => {
+    fm.inbound("", order(views(1000)));
+    fm.inbound("", lanes(views(1000)));
+    let n = emitted.length;
+    fm.inbound("", { type: "caps", caps: ["tagEdit"], viewsSeq: 900 });   // the sentinel cycle's push carried no blob; the restored store's current seq is 900
+    assert.deepEqual(typesOf(emitted.slice(n)), ["caps"], "nothing kept: nothing adopted, nothing re-emitted on the frame itself");
+    fm.inbound("", order(views(899)));
+    fm.inbound("", lanes(views(899)));
+    assert.equal(lastOf(emitted, "tabOrder").views.seq, 1000, "a frame at another lower seq is a stale frame: turned away");
+    assert.equal(lastOf(emitted, "data").data.views.seq, 1000);
+    fm.inbound("", order(views(900, "untagged")));     // the pusher's next cycle: the restored store under its old seq
+    fm.inbound("", lanes(views(900, "untagged")));
+    const o = lastOf(emitted, "tabOrder"), d = lastOf(emitted, "data");
+    assert.equal(o.views.seq, 900, "the announced seq IS the store the kernel said it holds: adopted below the stored one, and the merged order carries it");
+    assert.equal(o.views.active, "untagged");
+    assert.equal(d.data.views.seq, 900, "…and so does the lanes payload");
+    assert.deepEqual(d.data.sessions.map((s: any) => s.id), [U]);
+    fm.inbound("", order(views(899)));
+    fm.inbound("", lanes(views(899)));
+    assert.equal(lastOf(emitted, "tabOrder").views.seq, 900, "the store's own order gates again from the adopted seq");
+    assert.equal(lastOf(emitted, "data").data.views.seq, 900);
+    fm.emitMergedOrder(); fm.emitMergedTimeline(false);
+    assert.equal(lastOf(emitted, "tabOrder").views.seq, 900, "a synthetic re-emit replays the adopted store");
+    assert.equal(lastOf(emitted, "data").data.views.seq, 900);
+    // the slot clears on ANY adoption: a write landing before the announced blob arrives stamps the store past it
+    fm.inbound("", { type: "caps", caps: ["tagEdit"], viewsSeq: 800 });
+    fm.inbound("", order(views(1100)));
+    fm.inbound("", lanes(views(1100)));
+    fm.inbound("", order(views(800)));                 // the pusher's frame built before that write
+    fm.inbound("", lanes(views(800)));
+    assert.equal(lastOf(emitted, "tabOrder").views.seq, 1100, "the announced seq is no longer a door once the store moved past it");
+    assert.equal(lastOf(emitted, "data").data.views.seq, 1100);
+    // null (the kernel has no store at all) announces nothing, and an earlier announcement does not outlive the frame
+    fm.inbound("", { type: "caps", caps: ["tagEdit"], viewsSeq: 700 });
+    fm.inbound("", { type: "caps", caps: ["tagEdit"], viewsSeq: null });
+    fm.inbound("", order(views(700)));
+    fm.inbound("", lanes(views(700)));
+    assert.equal(lastOf(emitted, "tabOrder").views.seq, 1100);
+    assert.equal(lastOf(emitted, "data").data.views.seq, 1100);
+    // a frame without the field (a kernel from before it) announces nothing either
+    fm.inbound("", { type: "caps", caps: ["tagEdit"], viewsSeq: 650 });
+    fm.inbound("", { type: "caps", caps: ["tagEdit"] });
+    fm.inbound("", order(views(650)));
+    fm.inbound("", lanes(views(650)));
+    assert.equal(lastOf(emitted, "tabOrder").views.seq, 1100);
+    assert.equal(lastOf(emitted, "data").data.views.seq, 1100);
+    // a REMOTE kernel's caps frame announces nothing here: the panes' stores are the local kernel's
+    fm.inbound("TESTHOST", { type: "caps", caps: ["tagEdit"], viewsSeq: 600 });
+    fm.inbound("", order(views(600)));
+    fm.inbound("", lanes(views(600)));
+    assert.equal(lastOf(emitted, "tabOrder").views.seq, 1100);
+    assert.equal(lastOf(emitted, "data").data.views.seq, 1100);
+  });
+});
+
 test("…and across lanes payloads: an older LOCAL data frame keeps the stored views while its lanes still land", () => {
   withManager((fm, emitted) => {
     const lanes = (ids: string[], now: number, v: any) => ({ type: "data", data: { sessions: ids.map((id) => ({ id, name: id.slice(0, 4) })), turns: {}, messages: [], judging: [], now, views: v } });
