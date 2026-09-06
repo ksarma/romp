@@ -406,7 +406,7 @@ test("the header's structure and gestures read as a label: chevron (flips with t
   // keyboard: a button to the keyboard, through the same click → delegate path as the pointer — every
   // named header, the one holding the tab being read too (it folds; aria-current marks it — the
   // accessibility test below)
-  assert.match(head, /head\.setAttribute\("role", "button"\);\s*\n\s*head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(holdsActive\) head\.setAttribute\("aria-current", "true"\);\s*\n\s*head\.tabIndex = 0;\s*\n\s*head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n/,
+  assert.match(head, /head\.setAttribute\("role", "button"\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!back\) head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(holdsActive\) head\.setAttribute\("aria-current", "true"\);\s*\n\s*head\.tabIndex = 0;\s*\n\s*head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n/,
     "role, expanded state, tab stop and key handler together, the handler standing down for the flag button inside it (tab-group-flags.test)");
   assert.match(head, /if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}\s*\n\s*\}\);/,
     "Enter and Space press the header (the stand-in's own keys come first; the test below)");
@@ -1629,7 +1629,10 @@ test("the folded-away active tab's header answers a tab's keys (the 2026-09-06 r
 
 test("executed: the words of the way back: the open header whose snapshot the pane shows, holding the tab being read, offers the transcript, not a fold", () => {
   assert.equal(headWords("infra", 3, 0, false, true, true).title, "infra — 3 sessions; holds the tab you are reading; click to go back to the transcript; drag to reorder the groups");
-  assert.equal(headWords("infra", 3, 0, false, true, true).label, "infra, 3 sessions, holds the tab you are reading", "the spoken label is unchanged: the action is the title's");
+  // the spoken label names the action too (round 2): a screen reader heard "button, expanded, infra, 3 sessions,
+  // holds the tab you are reading", pressed, and got no fold and no word about what happened; the title is mouse-only
+  assert.equal(headWords("infra", 3, 0, false, true, true).label, "infra, 3 sessions, holds the tab you are reading; back to the transcript", "the spoken label says what the press does");
+  assert.equal(headWords("infra", 3, 0, false, true, false).label, "infra, 3 sessions, holds the tab you are reading", "the ordinary open header's label is as before");
   assert.deepEqual(headWords("infra", 3, 0, false, true, false), headWords("infra", 3, 0, false, true), "the default is the ordinary open header");
   assert.equal(headWords("infra", 3, 3, true, true, true).title, headWords("infra", 3, 3, true, true).title, "a folded header never offers it: the click opens the section (render.ts derives `back` from open + shown + holds the active tab)");
 });

@@ -72,7 +72,11 @@ test("the way back (review findings 6 and 12): Escape leaves the snapshot when n
   // the header: the act derived from the rendered state (open + shown + holds the active tab), like the fold's data-folded
   assert.match(HEAD, /head\.dataset\.act = "toggle-group";\s*\n\s*head\.dataset\.folded = collapsed \? "1" : "0";\s*\n\s*if \(snapView === name\) head\.classList\.add\("snap-shown"\);/, "every header folds and shows the section…");
   assert.match(HEAD, /const back = snapView === name && !collapsed && holdsActive;\s*\n\s*if \(back\) head\.dataset\.act = "show-transcript";/, "…except the one whose click is being undone");
-  assert.match(HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back\);/, "the title says which click this is (tab-groups.test.ts executes the words)");
+  assert.match(HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back\);/, "the title and the spoken label say which click this is (tab-groups.test.ts executes the words)");
+  // to assistive tech the way-back header is a plain button, not a disclosure (round 2): it announced "expanded"
+  // and pressing it folded nothing, so aria-expanded is left off in that state; the label (headWords) names the action
+  assert.match(HEAD, /if \(!back\) head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);/, "no aria-expanded on the header whose press puts the transcript back");
+  assert.equal(HEAD.split('"aria-expanded"').length - 1, 1, "and nowhere else is it set on a header");
   assert.match(DELEGATE, /"show-transcript": \(\) => leaveSnapshot\(\),/, "the delegate's handler, on the stable #tabs root like toggle-group");
   assert.match(DELEGATE, /"toggle-group": \(el\) => \{\s*\n\s*const name = el\.dataset\.group;\s*\n\s*if \(!name\) return;\s*\n\s*snapView = name;/, "toggle-group itself is unchanged: a header click shows the section (the user's ask)");
   // a folded header holding the active tab is never `back`: the fold is the rendered state the click acts on

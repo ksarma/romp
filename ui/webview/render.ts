@@ -4967,7 +4967,9 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   // pointer. NOT when they land on the flag button inside the header: a native button activates
   // itself (its own click → open-group), and cancelling its keydown here clicked the header instead.
   head.setAttribute("role", "button");
-  head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  // not a disclosure while its press puts the transcript back (`back`): "expanded" promised a fold that press
+  // never does (the round-2 review), so the state is left off and the label (headWords) names the action instead
+  if (!back) head.setAttribute("aria-expanded", collapsed ? "false" : "true");
   // the header holding the tab being read says so to assistive tech as well as by its mark (the
   // name in the prose tone, accent-underlined) — the tab itself may be folded out of the tree
   if (holdsActive) head.setAttribute("aria-current", "true");

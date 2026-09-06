@@ -578,9 +578,12 @@ export function headWords(name: string, total: number, hidden: number, folded: b
   const here = holdsActive ? ", holds the tab you are reading" : "";
   if (!folded) {
     // `back`: the pane is showing this section's snapshot, the section is open and holds the tab being read
-    // (the click puts that transcript back, render.ts show-transcript), so the title says so, not "fold"
+    // (the click puts that transcript back, render.ts show-transcript), so the title says so, not "fold",
+    // and the spoken label names the action too: render.ts drops the header's aria-expanded in that state
+    // (the press folds nothing), so without the phrase a screen reader had a plain button with no word
+    // about what it does (the round-2 review)
     const click = back ? "click to go back to the transcript" : "click to fold this group and see its sessions at a glance";
-    return { count: String(total), label: `${name}, ${n(total)}${here}`,
+    return { count: String(total), label: `${name}, ${n(total)}${here}${back ? "; back to the transcript" : ""}`,
              title: `${name} — ${n(total)}${reading}; ${click}; drag to reorder the groups` };
   }
   if (hidden === 0) {
