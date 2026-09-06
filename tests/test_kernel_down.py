@@ -19,6 +19,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from pathlib import Path
 from http.server import ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 
@@ -210,6 +211,18 @@ class DownRoute(unittest.TestCase):
                                headers={"X-Romp-Token": km.TOKEN})
         self.assertNotEqual(status, 503, "after the cancel the door is whatever it was before")
 
+    def test_the_refusal_states_the_fact_and_hands_over_no_command(self):
+        # `romp new` inside a session prints a 4xx body's error verbatim, so the reader can be an
+        # AGENT; told to run `romp up` it would, and undo a stop the user made on purpose (review
+        # find, 2026-09-06). The text says what is happening and instructs nobody.
+        text = km.GOING_DOWN_REFUSAL
+        self.assertIn("on purpose", text)
+        self.assertIn("cannot start", text)
+        for cmd in ("romp up", "romp down", "romp-service", "systemctl", "launchctl", "start it"):
+            self.assertNotIn(cmd, text, "no command for the reader to run: %r" % cmd)
+        self.assertNotIn("\u2014", text, "no em dashes in text a session can read")
+        self.assertNotIn("fleet", text)
+
     def test_going_down_reads_the_global_and_never_builds_a_backend(self):
         km._sdk_backend = None
         self.assertFalse(km._going_down())
@@ -236,6 +249,156 @@ class DownRoute(unittest.TestCase):
         status, body = self._down({"cancel": True})
         self.assertEqual(status, 200)
         self.assertEqual(body, {"ok": True, "canceled": True})
+
+
+class QuiesceLease(unittest.TestCase):
+    """The quiesce on the REAL SdkBackend, where the route's fake above cannot reach: the lease's wake
+    timer, and the resume notice a turn cut by `romp down` gets at the next start."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sb = SourceFileLoader("romp_sdk_backend_down", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+
+    def _backend(self, d=None):
+        return self.sb.SdkBackend(d or tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
+
+    def test_a_deploy_poll_inside_a_quiesce_keeps_a_wake_at_the_quiesce_lapse(self):
+        # refresh_drain_hold extended the hold (max) but re-armed the wake timer at its own 12.5s,
+        # so the only wake fired under a still-held lease and nothing fired when the longer quiesce
+        # lapsed: with no stop following (the CLI died between /down and the service call) held
+        # fresh turns waited for an unrelated event (review find, 2026-09-06)
+        be = self._backend()
+        be.DRAIN_HOLD_TTL = 0.2
+        wakes = []
+        t0 = time.monotonic()
+        be._wake_all_inputs = lambda: wakes.append(round(time.monotonic() - t0, 2))
+        be.quiesce(1.0)
+        be.refresh_drain_hold()                      # the parked poll lands inside the quiesce
+        self.assertGreater(be._drain_hold_until, time.time() + 0.8, "the hold is still the quiesce's")
+        self.assertGreater(be._drain_wake_timer.interval, 1.0,
+                           "the re-armed wake covers the hold it just extended, not the 0.7s lease")
+        time.sleep(1.8)
+        self.assertFalse(be.drain_holding(), "the quiesce lapsed on its own")
+        self.assertTrue(any(w >= 1.0 for w in wakes), "a wake fired at or after the lapse: %r" % (wakes,))
+
+    def test_a_plain_deploy_poll_still_wakes_after_its_own_lease(self):
+        be = self._backend()
+        be.DRAIN_HOLD_TTL = 0.2
+        be.refresh_drain_hold()
+        self.assertAlmostEqual(be._drain_wake_timer.interval, 0.7, places=1,
+                               msg="no quiesce: the wake is the lease TTL plus the half-second, as before")
+        be._drain_wake_timer.cancel()
+
+    # ── the resume notice after `romp down` + a later start ──────────────────
+    def _cut_session(self, d, sid, working_t):
+        sb = self.sb
+        sb.write_reg(Path(d), sid, {"sid": sid, "name": "web", "cwd": "/tmp", "alive": True, "lastSid": sid})
+        sb.append_state(Path(d), sid, "working", t=working_t)
+
+    def _audit(self, d, t, action, **extra):
+        row = {"t": t, "action": action}
+        row.update(extra)
+        with open(os.path.join(d, "restart-audit.jsonl"), "a") as f:
+            f.write(json.dumps(row) + "\n")
+
+    def _reconcile(self, d, be, sid):
+        from unittest import mock
+        be._ensure = lambda sid, on_boot_settled=None: on_boot_settled and on_boot_settled()
+        with mock.patch.object(self.sb.subprocess, "run", return_value=mock.Mock(stdout="")):
+            be._boot_reconcile([self.sb.read_reg(Path(d), sid)])
+        return self.sb.read_reg(Path(d), sid).get("queue")
+
+    def test_a_turn_romp_down_cut_hears_the_stop_and_the_gap(self):
+        # `romp down` files {t, action: down} on restart-audit.jsonl before the stop; at the next
+        # start the turn it cut is resumed with the stop and start times, not a bare "restarted"
+        # that reads as a gap of seconds (review find, 2026-09-06)
+        sb = self.sb
+        d = tempfile.mkdtemp()
+        sid = "11111111-2222-3333-4444-000000000001"
+        now = int(time.time())
+        self._cut_session(d, sid, working_t=now - 4 * 3600 - 240)     # the turn began before the stop
+        self._audit(d, now - 4 * 3600, "down", cmd="romp down")
+        q = self._reconcile(d, self._backend(d), sid)
+        self.assertEqual(len(q), 1)
+        self.assertTrue(q[0].startswith(sb._RESUME_NUDGE_LEAD), "the lead sentence is the restart notice's")
+        self.assertIn("The stop was on purpose: romp down at ", q[0])
+        self.assertIn("started again at ", q[0])
+        self.assertIn("(4 h later)", q[0])
+        self.assertIn("before relying on it", q[0])
+        self.assertTrue(q[0].endswith(sb._RESUME_NUDGE_REST), "the disarm and the continue instruction follow")
+        self.assertTrue(sb.is_resume_nudge(q[0]))
+        self.assertNotIn("\u2014", q[0])
+        self.assertTrue(q[0].startswith("<!-- romp-injected --><!-- romp-system -->[romp] "),
+                        "a [romp] notice, the sanctioned family")
+
+    def test_a_down_older_than_the_cut_turn_is_someone_elses_stop(self):
+        # `romp down` Friday, `romp up` Monday (that boot said so), then a crash respawn: the newest
+        # audit row is still the Friday `down`, but the turn it would explain began after it
+        d = tempfile.mkdtemp()
+        sid = "11111111-2222-3333-4444-000000000002"
+        now = int(time.time())
+        self._audit(d, now - 3 * 86400, "down", cmd="romp down")
+        self._cut_session(d, sid, working_t=now - 600)
+        q = self._reconcile(d, self._backend(d), sid)
+        self.assertEqual(q, [self.sb.BOOT_RESUME_NUDGE], "the plain restart notice: this cut was not the down")
+
+    def test_a_refresh_or_no_row_keeps_the_plain_notice(self):
+        d = tempfile.mkdtemp()
+        sid = "11111111-2222-3333-4444-000000000003"
+        now = int(time.time())
+        self._cut_session(d, sid, working_t=now - 100)
+        self.assertEqual(self._reconcile(d, self._backend(d), sid), [self.sb.BOOT_RESUME_NUDGE],
+                         "no audit row (a crash respawn): the notice as before")
+        d2 = tempfile.mkdtemp()
+        self._cut_session(d2, sid, working_t=now - 100)
+        self._audit(d2, now - 3600, "down", cmd="romp down")
+        self._audit(d2, now - 50, "refresh")               # the newest row is the refresh that cut this
+        self.assertEqual(self._reconcile(d2, self._backend(d2), sid), [self.sb.BOOT_RESUME_NUDGE])
+
+    def test_the_down_notice_names_dates_across_days_and_the_constant_is_unchanged(self):
+        sb = self.sb
+        stop = int(time.mktime((2026, 9, 4, 17, 12, 0, 0, 0, -1)))
+        start = int(time.mktime((2026, 9, 7, 9, 3, 0, 0, 0, -1)))
+        text = sb.down_resume_nudge(stop, start)
+        self.assertIn("romp down at 2026-09-04 17:12, started again at 2026-09-07 09:03 (2 d 15 h later)", text)
+        same = sb.down_resume_nudge(stop, stop + 3 * 3600 + 38 * 60)
+        self.assertIn("romp down at 17:12, started again at 20:50 (3 h 38 min later)", same)
+        self.assertIn("(under a minute later)", sb.down_resume_nudge(stop, stop + 5))
+        self.assertIn("(12 min later)", sb.down_resume_nudge(stop, stop + 12 * 60 + 3))
+        # the plain constant is byte-identical to its pre-split text (the fixtures and the popover
+        # match on it), and the kernel's restart signature is a substring of both variants
+        self.assertEqual(sb.BOOT_RESUME_NUDGE, (
+            "<!-- romp-injected --><!-- romp-system -->[romp] The romp kernel restarted and cut this session's "
+            "in-flight turn; the session has been resumed with its history intact. If the conversation tail "
+            "shows '[Request interrupted by user]', that record came from this cut, not from the user: nobody "
+            "asked you to stop. Re-read the tail of the conversation and pick the work back up where it "
+            "stopped, without asking whether to continue. Any messages queued before the restart follow "
+            "this one."))
+        self.assertIn(km.INTR_RESTART_SIG, text)
+        self.assertTrue(sb.is_resume_nudge(sb.BOOT_RESUME_NUDGE) and sb.is_resume_nudge(text)
+                        and sb.is_resume_nudge(sb.CRASH_RESUME_NUDGE))
+        self.assertFalse(sb.is_resume_nudge("a user's own message") or sb.is_resume_nudge(None))
+
+    def test_newest_down_stop_reads_the_last_row_only(self):
+        sb = self.sb
+        d = tempfile.mkdtemp()
+        self.assertIsNone(sb.newest_down_stop(Path(d)), "no file")
+        self._audit(d, 1000, "down")
+        self.assertEqual(sb.newest_down_stop(Path(d)), 1000)
+        self._audit(d, 2000, "p2p-update", reason="from TESTHOST")
+        self.assertIsNone(sb.newest_down_stop(Path(d)), "a later restart of another kind hides the down")
+        with open(os.path.join(d, "restart-audit.jsonl"), "a") as f:
+            f.write("not json\n")
+        self.assertIsNone(sb.newest_down_stop(Path(d)), "a corrupt tail is nothing, never a raise")
+
+    def test_the_thread_popover_and_the_wake_reorder_match_every_nudge(self):
+        # two readers compared the queue head / the transcript text to BOOT_RESUME_NUDGE by
+        # equality; the down variant must be treated the same, so both go through is_resume_nudge
+        ksrc = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
+        self.assertIn('getattr(sys.modules.get("romp_sdk_backend"), "is_resume_nudge", None)', ksrc)
+        self.assertNotIn('"BOOT_RESUME_NUDGE", None)', ksrc, "no exact-text lookup remains in the kernel")
+        ssrc = open(os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py")).read()
+        self.assertIn("head = rest[:1] if rest and is_resume_nudge(rest[0]) else []", ssrc)
 
 
 if __name__ == "__main__":

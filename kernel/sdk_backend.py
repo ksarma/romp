@@ -1564,9 +1564,9 @@ def last_state(state_dir: Path, sid: str) -> dict:
         return {}
 
 
-def last_state_value(state_dir: Path, sid: str) -> str:
-    """The latest STATE record's value in states/<sid>.jsonl, skipping the interleaved awaiting
-    OVERLAY records ('' if none). last_state() returns the literal last LINE — which can be an
+def last_state_record(state_dir: Path, sid: str) -> dict:
+    """The latest STATE record in states/<sid>.jsonl ({t, state}), skipping the interleaved awaiting
+    OVERLAY records ({} if none). last_state() returns the literal last LINE — which can be an
     overlay (the boot heal itself appends awaiting:false) — so anything keying on the state tail
     (the boot reconcile's cut-turn detector) must read through the overlays, not the last line."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
@@ -1580,10 +1580,16 @@ def last_state_value(state_dir: Path, sid: str) -> str:
             except ValueError:
                 continue
             if isinstance(rec, dict) and "state" in rec:
-                return str(rec["state"])
+                return rec
     except OSError:
         pass
-    return ""
+    return {}
+
+
+def last_state_value(state_dir: Path, sid: str) -> str:
+    """The latest STATE record's value ('' if none) — last_state_record's value."""
+    rec = last_state_record(state_dir, sid)
+    return str(rec["state"]) if rec else ""
 
 
 def last_awaiting(state_dir: Path, sid: str) -> bool | None:
@@ -2540,13 +2546,79 @@ def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
 # session in six answered this notice by standing down and awaiting direction instead of resuming. Naming the record verbatim and disowning it is what
 # lets "pick the work back up" win. Lockstep: kernel INTR_RESTART_SIG/INTR_CRASH_SIG match on these
 # texts (test_kernel_interrupt_machine_cut), so the leading sentences must keep their phrases.
-BOOT_RESUME_NUDGE = (
+_RESUME_NUDGE_LEAD = (
     "<!-- romp-injected --><!-- romp-system -->[romp] The romp kernel restarted and cut this session's "
-    "in-flight turn; the session has been resumed with its history intact. If the conversation tail "
+    "in-flight turn; the session has been resumed with its history intact.")
+_RESUME_NUDGE_REST = (
+    " If the conversation tail "
     "shows '[Request interrupted by user]', that record came from this cut, not from the user: nobody "
     "asked you to stop. Re-read the tail of the conversation and pick the work back up where it "
     "stopped, without asking whether to continue. Any messages queued before the restart follow "
     "this one.")
+BOOT_RESUME_NUDGE = _RESUME_NUDGE_LEAD + _RESUME_NUDGE_REST
+
+
+def _clock_pair(stop_t: int, start_t: int) -> tuple[str, str]:
+    """Both times as HH:MM when the stop and the start fell on the same local day, else both with
+    their date (the form `romp status` uses for an older marker)."""
+    same_day = time.strftime("%Y-%m-%d", time.localtime(stop_t)) == time.strftime("%Y-%m-%d", time.localtime(start_t))
+    fmt = "%H:%M" if same_day else "%Y-%m-%d %H:%M"
+    return time.strftime(fmt, time.localtime(stop_t)), time.strftime(fmt, time.localtime(start_t))
+
+
+def _gap_text(seconds: int) -> str:
+    """A gap as the reader would say it: 'under a minute', '12 min', '3 h 38 min', '2 d 4 h'."""
+    s = max(0, int(seconds))
+    if s < 60:
+        return "under a minute"
+    m, h, d = s // 60, s // 3600, s // 86400
+    if h < 1:
+        return "%d min" % m
+    if d < 1:
+        return "%d h %d min" % (h, m % 60) if m % 60 else "%d h" % h
+    return "%d d %d h" % (d, h % 24) if h % 24 else "%d d" % d
+
+
+def down_resume_nudge(stop_t: int, start_t: int) -> str:
+    """BOOT_RESUME_NUDGE for a turn that `romp down` cut (2026-09-06): the same lead sentence (the
+    kernel's INTR_RESTART_SIG lockstep, and is_resume_nudge's prefix), then the stop and the start
+    named with their times, because a model resumed hours or days later otherwise reads the cut as
+    a restart seconds long and trusts shell state, running jobs and remote work it last saw before
+    the gap. A `[romp]` notice about romp's own act, so it may name romp and the command."""
+    stop_s, start_s = _clock_pair(int(stop_t), int(start_t))
+    return (_RESUME_NUDGE_LEAD
+            + " The stop was on purpose: romp down at %s, started again at %s (%s later). Check anything "
+              "you were running or watching before relying on it." % (stop_s, start_s, _gap_text(int(start_t) - int(stop_t)))
+            + _RESUME_NUDGE_REST)
+
+
+def is_resume_nudge(text) -> bool:
+    """Whether a queue entry is a boot-reconcile continuation nudge: BOOT_RESUME_NUDGE, its `romp
+    down` variant (down_resume_nudge, which shares the lead), or the crash one. Readers that keep the
+    nudge at the head of a queue, or hide it from a 'you' bubble, match on this, never on equality
+    with one constant."""
+    return isinstance(text, str) and (text == CRASH_RESUME_NUDGE or text.startswith(_RESUME_NUDGE_LEAD))
+
+
+def newest_down_stop(state_dir: Path) -> int | None:
+    """The time of the `romp down` that stopped the previous kernel, when the newest restart-audit
+    row is one (`romp down` files {t, action: 'down'} there before the supervisor stop; the marker it
+    also leaves is cleared by the deliberate start, so at boot the row is what remains). None when
+    the newest row is anything else: a refresh, a p2p update, or no row at all (a crash respawn).
+    The caller still checks the row is newer than the cut turn's own state stamp, so a `down` from
+    days ago cannot be blamed for a later crash's cut."""
+    try:
+        for line in _lines_from_end(Path(state_dir) / "restart-audit.jsonl"):
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            if isinstance(rec, dict) and rec.get("action") == "down" and isinstance(rec.get("t"), int):
+                return rec["t"]
+            return None
+    except (OSError, ValueError):
+        pass
+    return None
 
 # T214: the restart also killed a QUESTION the session had up — the ask future lived only in the
 # old process, so the user's answer (often flushed by the reconnecting page) had nowhere to land,
@@ -7996,6 +8068,8 @@ class SdkBackend:
                     self._log("boot reconcile: orphan reap failed: %s" % traceback.format_exc())
             resumed, restored, notified = 0, 0, 0
             to_start: list[str] = []   # sids to spawn — collected first, spawned STAGGERED below
+            boot_t = int(time.time())
+            down_t = newest_down_stop(self.state_dir)   # the previous kernel was stopped by `romp down`?
             for r in alive:
                 # Per-session isolation: one session's hiccup (a reg-write race with the outgoing
                 # kernel, a corrupt state file) must not abort the sweep and strand the REST —
@@ -8042,7 +8116,13 @@ class SdkBackend:
                     # record read as the user's Esc (INTERRUPT_BLOCK_WHY) and nothing ever resumed
                     # the session. "permission"/"picker" stay excluded: those turns were already
                     # waiting on the user, so blocked-on-you is the truth there.
-                    cut = last_state_value(self.state_dir, sid) in ("working", "retrying", "compacting")
+                    tail = last_state_record(self.state_dir, sid)
+                    cut = str(tail.get("state") or "") in ("working", "retrying", "compacting")
+                    # a turn `romp down` cut hears so, with the stop and start times (the `down` audit
+                    # row must postdate the turn's own state stamp: an older row belongs to an
+                    # earlier stop, and this boot is a crash respawn or a refresh)
+                    stop_t = down_t if (cut and down_t is not None and down_t >= int(tail.get("t") or 0)) else None
+                    nudge = down_resume_nudge(stop_t, boot_t) if stop_t is not None else BOOT_RESUME_NUDGE
                     # bg tasks the dead kernel's CLI took with it (the reg mirror, _on_task_event):
                     # the session must HEAR about them or it waits forever on a dead timer/watcher.
                     dead_tasks = [t for t in (r.get("bgTasks") or []) if isinstance(t, dict)]
@@ -8052,7 +8132,7 @@ class SdkBackend:
                     # Prepend to the PERSISTED queue (not enqueue()) so it is fed FIRST, before the
                     # restored backlog, and survives even a death mid-reconcile. Order: the resume
                     # nudge (continuation context), then the task-death notice.
-                    prepend = ([BOOT_RESUME_NUDGE] if cut else []) \
+                    prepend = ([nudge] if cut else []) \
                             + ([ASK_DIED_NOTICE] if ask_died else []) \
                             + ([task_death_notice(dead_tasks)] if dead_tasks else [])
                     if prepend or dead_tasks:
@@ -8408,7 +8488,11 @@ class SdkBackend:
                 self._drain_hold_since = now
                 self._drain_hold_rang = False
             t = self._drain_wake_timer
-            self._drain_wake_timer = threading.Timer(self.DRAIN_HOLD_TTL + 0.5, self._wake_all_inputs)
+            # the wake fires when the HOLD lapses, whichever lease set it: inside a `romp down`
+            # quiesce the hold is the longer going-down one, and a 12.5s timer here would fire
+            # under a still-held lease and then never again, leaving held fresh turns waiting on an
+            # unrelated event once the quiesce lapsed with no stop (review find, 2026-09-06)
+            self._drain_wake_timer = threading.Timer(self._drain_hold_until - now + 0.5, self._wake_all_inputs)
             self._drain_wake_timer.daemon = True
             nt = self._drain_wake_timer
         if t is not None:
@@ -9558,7 +9642,7 @@ class SdkBackend:
                         # a resume nudge at the head stays there — continuation context first, then
                         # the notices, the sweep's order; the crash resume prepends one before it
                         # calls here
-                        head = rest[:1] if rest and rest[0] in (BOOT_RESUME_NUDGE, CRASH_RESUME_NUDGE) else []
+                        head = rest[:1] if rest and is_resume_nudge(rest[0]) else []
                         cur["queue"] = head + notices + rest[len(head):]
                         cur["bgTasks"] = []                # reported — never re-notify for the same deaths
                         cur["pendingAsk"] = False          # asked once per death
