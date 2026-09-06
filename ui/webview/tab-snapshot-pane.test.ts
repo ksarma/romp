@@ -116,9 +116,17 @@ test("a pick that lands on a still-loading tab hands the composer to the loading
   assert.match(SHOW, /if \(ta\) \{ ta\.disabled = true; ta\.placeholder = "Pick a session above to write to it"; \}/, "the snapshot's own disable stands while the snapshot shows");
 });
 
-test("the client's Ledger type declares workingNote, the field the snapshot's now line reads (review finding 15)", () => {
-  assert.match(RENDER, /^interface Ledger \{ summary: string; tree\?: LedgerTreeNode\[\]; current\?: \{ t\?: number \} \| null; recent\?: LedgerRecent\[\]; workingNote\?: string; \}/m,
+test("the client's Ledger type declares the two fields the snapshot reads off the ledger: workingNote (the note line) and needsInput (the feed's needs-you word) (review finding 15; round 2)", () => {
+  // round 1 added workingNote and its comment said the note fed the now line; the note is the row's second
+  // line now, and needsInput (the kernel's build_session puts the feed's verdict on the ledger) had no
+  // declared source on the client, so a read of ledgers.get(id)!.needsInput failed typecheck for a field
+  // every ledger carries. Both optional: a remote host's older kernel sends neither.
+  assert.match(RENDER, /^interface Ledger \{ summary: string; tree\?: LedgerTreeNode\[\]; current\?: \{ t\?: number \} \| null; recent\?: LedgerRecent\[\]; workingNote\?: string; needsInput\?: boolean \| null; \}/m,
     "optional on the wire: a remote host's older kernel sends none");
+  const line = RENDER.split("\n").find((l) => l.startsWith("interface Ledger {")) || "";
+  assert.match(line, /workingNote: the session's postal working note[^\n]*the snapshot row's second line/, "the comment says where the note goes now (the row's second line, not the now line)");
+  assert.match(line, /needsInput: the feed's needs-you verdict/, "…and names the second field's source");
+  assert.doesNotMatch(line, /now line/, "the stale 'now line' claim is gone");
   assert.match(RENDER, /snapshotModel\(head\.head, \(id\) => sessions\.get\(id\) \?\? null, \(id\) => ledgers\.get\(id\) \?\? null, snapModel\)/, "the ledger the model reads is the client's Ledger");
 });
 
