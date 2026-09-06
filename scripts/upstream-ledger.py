@@ -226,6 +226,18 @@ def duplicate_problems(entries):
     return out
 
 
+def duplicate_of(dir_path, entry):
+    """The entry under dir_path, other than `entry`'s own file, whose title shares its first 60
+    characters, or None. `new` and `set title` refuse on a hit, so the moment a candidate is written
+    twice is the moment it is caught, not the later `check`."""
+    dir_path = Path(dir_path)
+    if not dir_path.is_dir():
+        return None
+    existing, _ = load_entries(dir_path)
+    head = entry.get("title")[:TITLE_PREFIX]
+    return next((e for e in existing if e.name != entry.name and e.get("title")[:TITLE_PREFIX] == head), None)
+
+
 def is_row(line):
     s = line.rstrip()
     return s.startswith("|") and s.endswith("|") and len(s) >= 2
@@ -403,9 +415,13 @@ def new_entry(dir_path, slug, title, where, status="candidate", pr="", tier="", 
         raise SystemExit(f"{path} exists; pick another slug or edit that file")
     header = {"title": title.strip(), "status": status, "where": where.strip(), "added": added,
               "pr": str(pr) if pr else "", "tier": tier or "", "offered": "", "closed": ""}
-    _, problems = parse_entry(path.name, format_entry(header, notes))
+    entry, problems = parse_entry(path.name, format_entry(header, notes))
     if problems:
         raise SystemExit("\n".join(problems))
+    dup = duplicate_of(dir_path, entry)
+    if dup is not None:
+        raise SystemExit(f"{DIR}/{dup.name} already carries this title (the first {TITLE_PREFIX} characters agree); "
+                         f"edit that entry (`set {dup.slug} <key> <value>`) or give this one a distinct title")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(format_entry(header, notes), encoding="utf-8")
     return path
@@ -451,9 +467,14 @@ def set_key(path, key, value):
     if not done:
         out.append(new_line)
     new_text = "---\n" + "\n".join(out) + "\n---\n" + body
-    _, problems = parse_entry(path.name, new_text)
+    entry, problems = parse_entry(path.name, new_text)
     if problems:
         raise SystemExit("\n".join(problems))
+    if key == "title":
+        dup = duplicate_of(path.parent, entry)
+        if dup is not None:
+            raise SystemExit(f"{DIR}/{dup.name} already carries this title (the first {TITLE_PREFIX} characters agree); "
+                             "one entry in two versions? edit that one, or give this one a distinct title")
     path.write_text(new_text, encoding="utf-8")
     return path
 

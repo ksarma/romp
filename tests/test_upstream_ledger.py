@@ -781,6 +781,21 @@ class SetAndImport(unittest.TestCase):
         _, got = L.parse_entry(written[0].name, written[0].read_text(encoding="utf-8"))
         self.assertEqual(got, [f"{written[0].name}: required key `status` is blank"])
 
+    def test_new_and_set_title_refuse_a_title_an_entry_already_carries(self):
+        t = "The tags dialog's edits are targeted ops with acked writes, so a late pane cannot revert them"
+        L.new_entry(self.d, "tags-dialog", t, "`ui/webview/tags.ts`", added="2026-09-05")
+        with self.assertRaises(SystemExit) as cm:
+            L.new_entry(self.d, "tags-again", t + " (rewritten)", "`ui/webview/tags.ts`", added="2026-09-06")
+        self.assertIn("upstream/2026-09-05-tags-dialog.md already carries this title", str(cm.exception))
+        self.assertIn("`set tags-dialog <key> <value>`", str(cm.exception))
+        self.assertFalse((self.d / "2026-09-06-tags-again.md").exists())
+        with self.assertRaises(SystemExit) as cm:
+            L.set_key(self.path, "title", t + " (second version)")
+        self.assertIn("upstream/2026-09-05-tags-dialog.md already carries this title", str(cm.exception))
+        self.assertEqual(self.path.read_text(encoding="utf-8"), _entry(body=self.body))   # nothing written
+        L.set_key(self.d / "2026-09-05-tags-dialog.md", "title", t + " (its own retitle)")   # an entry may retitle itself
+        L.new_entry(self.d, "feed-repaint", "The feed pane repaints on every push, twice a second", "x", added="2026-09-06")   # merely alike passes
+
     def test_list_refuses_an_unknown_status_naming_the_vocabulary(self):
         (self.d / "upstream").mkdir()
         (self.d / "upstream" / "2026-09-06-alpha.md").write_text(_entry(status="approved"), encoding="utf-8")
