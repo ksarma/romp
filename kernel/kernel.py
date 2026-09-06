@@ -2424,12 +2424,15 @@ def _ordered_alive(now, tmux):
 _VIEWS_MAX_TAGS = 32
 _VIEWS_MAX_NAME = 40
 _views_lock = threading.Lock()   # read-modify-write on the views blob from handler threads (_comments_lock precedent)
-# The store's FILE write and the cache refresh behind it, and the reader's re-stamp of a file it
-# found changed under it (_timeline_views) — serialized together, so a re-stamp is judged against
-# the file as it is at that moment and can never land over an edit written in between. Re-entrant:
-# the reader's re-stamp goes through _set_timeline_views, which takes it again. Readers never take
-# _views_lock (a plain Lock a locked writer already holds when it reads), so the order is always
-# _views_lock → _views_file_lock and nothing waits the other way.
+# The store's write door — judgment AND file write, as one step (_set_timeline_views) — and the
+# reader's re-stamp of a file it found changed under it (_timeline_views), serialized together, so
+# a re-stamp is judged against the file as it is at that moment and can never land over an edit
+# written in between, and no writer's blob, judged against the store before a re-stamp, lands over
+# the re-stamp (round 6 of the 2026-09-05 review: the door judged outside this lock and took it for
+# the write alone). Re-entrant: the judge's own read of the store may re-stamp the file, taking it
+# again on the same thread. Readers never take _views_lock (a plain Lock a locked writer already
+# holds when it reads), so the order is always _views_lock → _views_file_lock and nothing waits
+# the other way.
 _views_file_lock = threading.RLock()
 
 
@@ -2831,9 +2834,16 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None)
     what stands (_write_timeline_views). Returns the refused rows. The judgment is a separate step
     (round 5 of the 2026-09-05 review) so the reader's re-stamp can serve the JUDGED blob when the
     write itself fails: serving the file as read served, cached, and let the next write persist, the
-    foreign copy the judgment had refused."""
-    v, rows = _judge_timeline_views(blob, base=base, seq_floor=seq_floor, edited=edited, foreign=foreign)
-    _write_timeline_views(v)
+    foreign copy the judgment had refused. Both steps run under _views_file_lock (round 6 of the
+    2026-09-05 review): the reader's re-stamp holds that lock across its own judge and write, but this
+    door took it for the write alone, so a re-stamp landing between the judge here and the write here
+    was written over by a blob judged against the pre-re-stamp store — the foreign write's lens
+    change and its creates gone, under a seq no higher than the re-stamp's (both computed from the
+    same base), with no refusal filed. The lock is re-entrant, and every caller holding _views_lock
+    takes it first, so the documented order stands."""
+    with _views_file_lock:
+        v, rows = _judge_timeline_views(blob, base=base, seq_floor=seq_floor, edited=edited, foreign=foreign)
+        _write_timeline_views(v)
     return rows
 
 

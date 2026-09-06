@@ -23,6 +23,7 @@ Synthetic sids only."""
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from importlib.machinery import SourceFileLoader
@@ -1418,6 +1419,67 @@ class WholeBlobNameCollisions(_Wire):
             {"id": "g2", "name": "api", "members": []}]})
         self.assertEqual([t["id"] for t in v["tags"]], ["g1", "g2"])
         self.assertEqual([m["sid"] for m in v["tags"][0]["members"]], [SID1], "the first entry is the one kept")
+
+
+class SetterJudgesUnderTheFileLock(_Wire):
+    """Round 6 of the 2026-09-05 review: the reader's re-stamp of a file written outside the kernel
+    holds _views_file_lock across its judge and write, but the write door judged first and took the
+    lock for the write alone. A re-stamp landing in between was written over by a blob judged
+    against the pre-re-stamp store: the foreign write's lens change and its creates gone, under a
+    seq no higher than the re-stamp's (both computed from the same base), no refusal anywhere, and
+    every dashboard that had adopted the re-stamp's seq ignoring the store until the next write.
+    The door holds the lock across both steps now, so a re-stamp waits for the write to finish."""
+
+    def test_a_re_stamp_cannot_land_between_a_writers_judge_and_its_write(self):
+        s0 = self.seed()["seq"]
+        real = km._judge_timeline_views
+        in_judge, release, paused = threading.Event(), threading.Event(), [False]
+
+        def slow(blob, base=None, seq_floor=0, edited=None, foreign=None):
+            out = real(blob, base=base, seq_floor=seq_floor, edited=edited, foreign=foreign)
+            if base is None and foreign is None and not paused[0]:       # the writer's own judgment, once
+                paused[0] = True
+                in_judge.set()
+                release.wait(5)
+            return out
+        km._judge_timeline_views = slow
+        try:
+            w_blob = json.loads(json.dumps(km._timeline_views()))
+            w_blob["tags"][0]["color"] = "#DD42FF"                          # a recolor, as _edit_tag writes it
+
+            def writer():
+                with km._views_lock:                                      # the RMW writers hold this one
+                    km._set_timeline_views(w_blob)
+            w = threading.Thread(target=writer)
+            w.start()
+            self.assertTrue(in_judge.wait(5), "the writer is inside its judgment")
+            # a panel writes the file itself meanwhile, from an older copy: its lens change and a create
+            p = km._views_path()
+            foreign = json.loads(p.read_text())
+            foreign["seq"] = s0 - 1
+            foreign["actives"] = {"timeline": {"tags": ["web"]}, "chat": {"all": True}, "outline": {"all": True}}
+            foreign["tags"].append({"id": "gP", "name": "panel", "color": "", "members": []})
+            km._atomic_write(p, json.dumps(foreign))
+            served = []
+            r = threading.Thread(target=lambda: served.append(km._timeline_views()))   # any frame build
+            r.start()
+            r.join(0.5)
+            self.assertTrue(r.is_alive(), "the reader's re-stamp waits on the lock the writer holds across judge and write")
+            release.set()
+            w.join(5)
+            r.join(5)
+            self.assertFalse(w.is_alive() or r.is_alive())
+        finally:
+            km._judge_timeline_views = real
+            release.set()
+        final = km._timeline_views()
+        self.assertEqual(final["tags"][0]["color"], "#DD42FF", "the writer's edit stands")
+        self.assertGreater(final["seq"], s0)
+        self.assertEqual(served[0], final, "what the reader served IS the store: nothing it handed out carries a seq the store fell behind")
+        self.assertEqual(json.loads(p.read_text())["seq"], final["seq"])
+        # (the panel's own file write was replaced by the writer's atomic write before it was judged, as any
+        # file write racing a kernel write is; the point here is the order — the reader can no longer hand
+        # out a blob the very next kernel write lands behind)
 
 
 class CapNeverDropsAKeptStoreTag(_Wire):
