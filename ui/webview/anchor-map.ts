@@ -1144,10 +1144,17 @@ export type ChangePaint = {
 
 /** The struck label of a deletion: the old text with the line endings the rows themselves show (the HTML
  *  parser turns a CR into an LF), capped at 80 characters with an ellipsis when cut; the card carries the
- *  whole text. */
+ *  whole text. A text with no visible character — a removed blank line, `track-edit --old $'\n\n' --new ''` —
+ *  would hand the sheet's `::before` a string of line feeds and nothing to draw: the point sat there with a
+ *  2px underline and no glyph, and the row grew by a blank visual line (the review, 2026-09-06). Such a
+ *  label shows one ¶ per line ending instead, the mark a text editor draws for the same thing; spaces and
+ *  tabs keep their own width and are left as they are. A label with any visible character keeps its line
+ *  endings: the rows below show what was removed as it read. */
 export const DEL_LABEL_MAX = 80;
+export const PILCROW = "¶";
 export function deletionLabel(oldText: string): string {
-  const t = oldText.replace(/\r\n?/g, "\n");
+  let t = oldText.replace(/\r\n?/g, "\n");
+  if (!/\S/.test(t)) t = t.replace(/\n/g, PILCROW);
   if (t.length <= DEL_LABEL_MAX) return t;
   let cut = DEL_LABEL_MAX - 1;
   if (/[\uD800-\uDBFF]/.test(t[cut - 1])) cut--;   // never split a surrogate pair

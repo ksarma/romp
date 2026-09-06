@@ -16,7 +16,7 @@ import { marked } from "marked";
 import {
   mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered,
   rawOffsetToLine, rawRowForOffset, type SelLike, type MapResult, type SourceRange,
-  paintRawPoint, paintChangesRaw, paintChangesRendered, unpaintChanges, deletionLabel, DEL_LABEL_MAX, type ChangePaint,
+  paintRawPoint, paintChangesRaw, paintChangesRendered, unpaintChanges, deletionLabel, DEL_LABEL_MAX, PILCROW, type ChangePaint,
 } from "./anchor-map";
 // @ts-ignore -- untyped CommonJS module (see anchor-map.ts)
 import engine from "../../vendor/track-changents/engine.js";
@@ -1280,6 +1280,16 @@ test("change marks: offsets that do not index the viewer's text are left to the 
 test("deletionLabel and the inline styles: the cap, the ellipsis, line endings as the rows show them, a surrogate pair kept whole; a style value that could end the declaration is dropped", () => {
   assert.equal(deletionLabel("reduced"), "reduced");
   assert.equal(deletionLabel("a\r\nb\rc\nd"), "a\nb\nc\nd");
+  // a label with no visible character would draw nothing (the sheet's ::before is handed line feeds): one ¶ per
+  // ending, so a removed blank line has a struck glyph on its own row; spaces and tabs have width and stay; a label
+  // with any visible character keeps its endings
+  assert.equal(deletionLabel("\n"), PILCROW, "one removed line ending");
+  assert.equal(deletionLabel("\n\n"), PILCROW + PILCROW, "a removed blank line: the two endings around it");
+  assert.equal(deletionLabel("\r\n\r\n"), PILCROW + PILCROW, "CRLF endings, one glyph each");
+  assert.equal(deletionLabel(" \n\t"), " " + PILCROW + "\t", "spaces and tabs keep their own width");
+  assert.equal(deletionLabel("  "), "  ", "spaces alone are visible as they are");
+  assert.equal(deletionLabel("ends.\n\nPara"), "ends.\n\nPara", "a visible character: the endings stay, as the rows show them");
+  assert.equal(deletionLabel("\n".repeat(100)), PILCROW.repeat(79) + "…", "the cap applies to the glyphs");
   assert.equal(deletionLabel("x".repeat(80)), "x".repeat(80));
   const long = deletionLabel("y".repeat(81));
   assert.equal(long.length, 80);
@@ -1295,6 +1305,15 @@ test("deletionLabel and the inline styles: the cap, the ellipsis, line endings a
   ], (c): Record<string, string> => (c.id === "s1" ? { "--fc-author": "red; background: url(x)", color: "rgb(1, 2, 3)" } : { "not a name!": "red", "--fc-author": "#abc" })) as unknown as FakeElement[];
   assert.equal(marks[0].getAttribute("style"), "color: rgb(1, 2, 3);", "the unsafe value is dropped, the sound one kept");
   assert.equal(marks[1].getAttribute("style"), "--fc-author: #abc;");
+  // painted: a removed blank line (the sidecar records `del` with oldText "\n\n" for track-edit --old $'\n\n' --new '')
+  // is a point whose label the sheet can draw, on the row the offset falls in, with no text node added
+  const two = "one\ntwo\n";
+  const built = buildRaw(two, "notes.txt");
+  const before = allText(built.code, null).length;
+  const [p] = paintChangesRaw(El(built.code), two, [{ id: "d0", kind: "del", curFrom: 4, curTo: 4, oldText: "\n\n", author: "web", newText: "" }], () => ({})) as unknown as FakeElement[];
+  assert.ok(p, "the point is painted");
+  assert.equal(p.getAttribute("data-fc-text"), PILCROW + PILCROW, "the label is two glyphs, not two line feeds");
+  assert.equal(allText(built.code, null).length, before, "no text node entered a row");
 });
 
 test("unpaintChanges walks elements only: a text node's children are never read (the panel tests' stand-in gives a Text none)", () => {
