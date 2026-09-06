@@ -6,6 +6,7 @@
 import { installDomHelpers, dispatchFrame, bridgeFunctions } from "./timeline-boot";
 import { installSettingsSync, loadSettings, onExternalSettingsChange } from "./settings";
 import { applyTheme } from "./theme";
+import { installPerfTelemetry } from "./perf-telemetry";
 
 // CJS view module — esbuild inlines it into this bundle at build time.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -13,6 +14,8 @@ const { TimelinePanel } = require("../romp-timeline-view.js");
 
 const api = (window as any).acquireVsCodeApi();
 const post = (m: Record<string, unknown>) => api.postMessage(m);
+// the pane's performance collector: the view times its own update/applyBars through window.__rompPerf
+installPerfTelemetry("timeline", { post });
 
 installDomHelpers(HTMLElement.prototype);
 Object.assign(window, bridgeFunctions(post));

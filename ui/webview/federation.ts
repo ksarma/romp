@@ -15,6 +15,7 @@ import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
 import { applyFeedDelta } from "./feed-delta";
 import { hostOf, bareId } from "./host-prefix";
+import { installPerfTelemetry } from "./perf-telemetry";
 
 export const SEP = ":";
 export const LOCAL = ""; // the local kernel's host key — no prefix, so the single-kernel path is untouched
@@ -669,6 +670,10 @@ export class FederationManager {
   start(): void {
     const w = window as any;
     this.app = w.__rompApp || "chat";
+    // the page's performance collector (perf-telemetry.ts), published as window.__rompPerf: the pane bundle
+    // installs its own on load, but the kernel-served timeline page has no bundle beyond this one, and its
+    // view (ui/romp-timeline-view.js, inlined raw) reaches the collector through the window slot
+    installPerfTelemetry(this.app);
     w.__rompFed = {
       inbound: (h: string, m: any) => this.inbound(h, m),
       outbound: (m: any) => this.outbound(m),
