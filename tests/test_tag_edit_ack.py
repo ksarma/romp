@@ -1720,6 +1720,99 @@ class PastTheDoorBoundNothingVanishesSilently(_Wire):
         self.assertEqual(self.notices, [])
 
 
+class ReaderRestampKeepsTheDiskCap(_Wire):
+    """Round 7 of the 2026-09-05 review: the reader's first-read stamp and the hidden migration judged
+    the file's own content through the door, which since round 6 reads its blob under twice the cap
+    while the base is normalized under the cap — so a file holding more than 32 tags had its excess
+    (the migration's appended "archived" tag first) judged as creates and refused by the cap pass,
+    under a red notice worded as a stale DASHBOARD write ("reload that dashboard to resync"), on a
+    read, blaming a dashboard that wrote nothing. The re-stamp now reads the file under the disk cap,
+    as every read does, and what the cap leaves out is named in a notice as a fact about the file."""
+
+    def _file(self, n, **extra):
+        tags = [{"id": "t%d" % i, "name": "t%d" % i, "color": "", "members": [{"host": "", "sid": "s%d" % i}]}
+                for i in range(n)]
+        d = dict({"active": "all", "tags": tags}, **extra)
+        km._views_path().write_text(json.dumps(d))
+        return d
+
+    def test_a_seq_less_40_tag_file_with_hidden_entries_migrates_stamps_and_names_the_drop_as_a_file_fact(self):
+        p = km._views_path()
+        self._file(40, hidden=[SID3])
+        v = km._timeline_views()
+        self.assertEqual(len(v["tags"]), km._VIEWS_MAX_TAGS, "served under the cap, as every read")
+        self.assertIsInstance(v.get("seq"), int, "stamped")
+        on_disk = json.loads(p.read_text())
+        self.assertNotIn("hidden", on_disk, "the migration landed: the hidden key is consumed")
+        self.assertEqual(len(on_disk["tags"]), km._VIEWS_MAX_TAGS)
+        self.assertTrue(all(t.get("mtime") for t in on_disk["tags"]))
+        self.assertEqual(len(self.notices), 1, "one notice: the file fact")
+        text, ok = self.notices[0]
+        self.assertFalse(ok)
+        self.assertIn("the views file held 41 tags, over the store's 32-tag cap", text)
+        for nm in ("t32", "t39"):
+            self.assertIn('"%s" (1 member)' % nm, text)
+        self.assertIn('"archived" (1 member)', text, "the migrated hidden entry is named as what was dropped")
+        self.assertIn("No dashboard wrote this", text)
+        self.assertNotIn("dashboard write", text)
+        self.assertNotIn("reload", text)
+        self.assertNotIn("refused", text)
+        # idempotent: a cold second read writes nothing and says nothing more
+        before = p.read_bytes()
+        km._flags_cache.clear()
+        km._timeline_views()
+        self.assertEqual(p.read_bytes(), before)
+        self.assertEqual(len(self.notices), 1)
+
+    def test_a_full_store_with_hidden_entries_the_kernel_once_wrote_loses_only_the_archived_tag_and_says_so(self):
+        # kernel-producible: the cap and the hidden field were born together (2026-08-18), hidden retired 08-24
+        p = km._views_path()
+        self._file(km._VIEWS_MAX_TAGS, hidden=[SID2, SID3], seq=7)
+        v = km._timeline_views()
+        self.assertEqual([t["id"] for t in v["tags"]], ["t%d" % i for i in range(32)], "every real tag stands")
+        self.assertIsNone(store_tag("archived"))
+        self.assertNotIn("hidden", json.loads(p.read_text()))
+        self.assertEqual(len(self.notices), 1)
+        text, ok = self.notices[0]
+        self.assertFalse(ok)
+        self.assertIn('"archived" (2 members) was dropped', text)
+        self.assertIn("hidden entries migrated into the archived tag", text)
+        self.assertNotIn("dashboard write", text)
+
+    def test_a_31_tag_file_with_hidden_entries_fits_and_nothing_is_said(self):
+        self._file(km._VIEWS_MAX_TAGS - 1, hidden=[SID3])
+        v = km._timeline_views()
+        self.assertEqual([m["sid"] for m in store_tag("archived")["members"]], [SID3])
+        self.assertEqual(len(v["tags"]), km._VIEWS_MAX_TAGS)
+        self.assertEqual(self.notices, [], "the migration fits: a stamp is not a refusal")
+
+    def test_a_seq_less_file_over_the_cap_is_stamped_under_the_cap_and_the_drop_is_a_file_fact(self):
+        p = km._views_path()
+        self._file(40, at=1000)
+        v = km._timeline_views()
+        self.assertEqual(len(v["tags"]), 32)
+        self.assertEqual(len(json.loads(p.read_text())["tags"]), 32)
+        self.assertEqual(len(self.notices), 1)
+        text, ok = self.notices[0]
+        self.assertFalse(ok)
+        self.assertIn("the views file held 40 tags", text)
+        self.assertIn("a store from before the write sequence, stamped once", text)
+        self.assertNotIn("partially refused", text)
+        self.assertNotIn("dashboard", text.replace("No dashboard wrote this", ""))
+
+    def test_the_judges_loud_notice_names_the_writer_and_offers_a_reload_only_to_a_dashboard(self):
+        self.seed()
+        self.assertIsNone(km._edit_tag(tid="gA", add=[SID2])[1])            # newer state in the store
+        stale = {"active": "all", "at": 1, "tags": [dict(WEB, mtime=1)]}    # a copy predating it
+        km._judge_timeline_views(json.loads(json.dumps(stale)), writer="the views file's re-stamp on read")
+        self.assertEqual(len(self.notices), 1)
+        self.assertTrue(self.notices[0][0].startswith("the views file's re-stamp on read was partially refused"))
+        self.assertNotIn("reload", self.notices[0][0], "no dashboard wrote it: nothing to reload")
+        km._judge_timeline_views(json.loads(json.dumps(stale)))
+        self.assertTrue(self.notices[1][0].startswith("a stale dashboard write was partially refused"))
+        self.assertIn("reload that dashboard to resync", self.notices[1][0])
+
+
 class WebBootWiring(unittest.TestCase):
     """The kernel-served timeline page: the inline _TIMELINE_BOOT twin of timeline-boot.ts exposes
     the targeted-edit bridge and routes both acks to the panel (timeline-boot.test.ts pins the two

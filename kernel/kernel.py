@@ -2729,12 +2729,52 @@ def _timeline_views():
                 floor = 0
             floor = max(floor, _views_seq_floor(p))
             base = hit[1] if (judge and hit is not None) else _norm_timeline_views(d)
+            lost = []
+            if not judge:
+                # The file's OWN content, under the DISK cap (round 7 of the 2026-09-05 review): the
+                # migration and the first stamp are reads, not writes, and the door's wider read
+                # bound is for a dashboard's posted creates — read through it, a file holding more
+                # than the cap had its excess (the migration's appended "archived" tag first) judged
+                # as creates and refused by the cap pass, under a notice blaming a stale dashboard
+                # write. The normalizer bounds every read to the cap, so the file's tags past it were
+                # never served; the stamp writes what every read served, as it did before the door
+                # bound — and what the cap leaves out is NAMED (`lost`, below), as a fact about the
+                # file, where until now it was dropped with nothing said.
+                d2n = _norm_timeline_views(d2)
+                lost = _views_unread(d2, d2n["tags"])
+                d2raw, d2 = d2, d2n
             judged, _rows = _judge_timeline_views(
                 d2, base=base, seq_floor=floor,
-                foreign="a stale write to the views file from outside the kernel" if judge else None)
+                foreign="a stale write to the views file from outside the kernel" if judge else None,
+                writer=None if judge else "the views file's re-stamp on read")
             try:
                 _write_timeline_views(judged)
                 sys.stderr.write("romp-kernel: views store re-stamped on read: %s\n" % why)
+                if lost:
+                    # No dashboard wrote this — the file itself was over the cap (an edit outside the
+                    # kernel, or a kernel from before the cap that held 32 tags plus hidden entries,
+                    # which the migration's archived tag then puts over). The drop is permanent once
+                    # the stamp is written, so it is said once, here, with the member count of each
+                    # tag dropped; stderr also lists the members.
+                    held = len(d2["tags"]) + len(lost)
+                    names = ", ".join('"%s" (%d member%s)' % (nm, n, "" if n == 1 else "s") for _i, nm, n in lost)
+                    note = ("the views file held %d tags, over the store's %d-tag cap: %s %s dropped when the "
+                            "file was re-stamped on read (%s). No dashboard wrote this: the file itself was "
+                            "over the cap." % (held, _VIEWS_MAX_TAGS, names,
+                                               "was" if len(lost) == 1 else "were", why))
+                    ids = set(i for i, _nm, _n in lost)
+                    raw = [g for g in (d2raw.get("tags") or []) if isinstance(g, dict)
+                           and isinstance(g.get("id"), str) and g["id"][:64] in ids]
+                    members = "; ".join('"%s": %s' % (_tag_name_basis(g.get("name")) or "tag",
+                                                       ", ".join(_member_str(m) for m in
+                                                                 (_member_pair(x) for x in (g.get("members") or []))
+                                                                 if m) or "no members")
+                                        for g in raw)
+                    sys.stderr.write("romp-kernel: %s [%s]\n" % (note, members))
+                    try:
+                        _sync_notice(note, ok=False)
+                    except Exception:
+                        pass
             except OSError as e:
                 # The state dir is unwritable or full: a READ must still answer (every frame builds
                 # on it), so a blob is served and cached under the file's key — the next read is a
@@ -2795,7 +2835,10 @@ def _views_restamp(d, hit):
       the user's intent record and keeping them out of the untagged view. They WILL show under
       All: nothing can hide from All post-retirement — that is All's meaning now, and the feed's
       needs-you machinery carries anything that matters. Minted only when hidden entries exist;
-      idempotent (the write drops the hidden key, so the next read has nothing to migrate).
+      idempotent (the write drops the hidden key, so the next read has nothing to migrate). The
+      archived tag is appended LAST, so a store already at the cap loses it to the disk cap when
+      the reader stamps the file — named in the reader's notice as a fact about the file (round 7
+      of the 2026-09-05 review), never dropped in silence.
     - A STORE WITHOUT A WRITE SEQUENCE (every install upgrading to the 2026-09-05 stamp): served
       seq-less, it would leave every client on the null rule — adopt anything — until the first
       write, so the seq gate could not protect that first write against a frame the pusher built
@@ -2892,7 +2935,7 @@ def _write_timeline_views(v):
     _VIEWS_RESTAMP_ERR[0] = None      # the store is writable again: a later failure logs afresh
 
 
-def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None):
+def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None, writer=None):
     # The write door's judgment, without the write: returns (blob-to-store, refused rows). The blob
     # carries every stamp a write puts on it (per-tag mtimes, `at`, `seq`) so the caller stores it
     # as is — or, when it cannot (the reader's re-stamp of an unwritable store), serves it as is.
@@ -2925,6 +2968,12 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     # mark only the kernel puts on a tag: an mtime. A tag the store lacks that carries one existed
     # in a store once — the writer's copy of a tag deleted since — and is not re-created; one
     # without is the writer's own create (a client-minted row) and lands.
+    # `writer` — the words the loud notice below uses for the writer when it is not a dashboard and
+    # not a foreign file: the reader's re-stamp of the file's own content (round 7 of the 2026-09-05
+    # review — its refusals, when the cap pass fired on a file over the cap, were filed as "a stale
+    # dashboard write ... reload that dashboard", on a read, blaming a dashboard that wrote nothing).
+    # Separate from `foreign` on purpose: `foreign` is also the judging mode for unknown tags above,
+    # and a re-stamp under it would refuse every freshly stamped tag as a re-creation.
     # Read under a wider bound than the store's cap (twice it: a client holds at most the store's 32
     # plus its own creates), so a posted 33rd tag reaches the cap pass below and is refused with a
     # reason — the normalizer's own slice dropped it before the judge saw it. Whatever the blob
@@ -3142,11 +3191,15 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     loud = sorted(set(lb for lb, tid in refused if ed is None or tid in ed))
     quiet = sorted(set(lb for lb, tid in refused if ed is not None and tid not in ed))
     if loud:
+        # the sentence names the writer: a foreign file's panel, the reader's own re-stamp (`writer`,
+        # nothing to reload — no dashboard wrote it), else a dashboard
+        remedy = ("reload the panel that wrote it to resync" if foreign
+                  else None if writer else "reload that dashboard to resync")
         why = ("%s was partially refused: its copy of %s was not applied — each predates a newer edit, "
                "takes a name another tag holds, would put the store over its %d-tag cap, or was past the "
-               "%d tags a write is read to (the store's state was kept; %s)"
-               % (foreign or "a stale dashboard write", ", ".join(loud), _VIEWS_MAX_TAGS, bound,
-                  "reload the panel that wrote it to resync" if foreign else "reload that dashboard to resync"))
+               "%d tags a write is read to (the store's state was kept%s)"
+               % (foreign or writer or "a stale dashboard write", ", ".join(loud), _VIEWS_MAX_TAGS, bound,
+                  ("; " + remedy) if remedy else ""))
         sys.stderr.write("romp-kernel: %s\n" % why)
         try:
             _sync_notice(why, ok=False)
