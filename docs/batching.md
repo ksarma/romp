@@ -62,9 +62,10 @@ Per batch, in order:
 
 1. Open the batch PR and read the first block: what was verified, at which SHA, provenance clean.
    If it is missing or says anything but green, stop and tell the batcher.
-2. Read "Read these first". For a conflict resolution, expand the combined diff: that is the only
-   code no one else has reviewed. For a kernel-touching or unlabeled member, open the member PR
-   only if its row does not answer your question.
+2. Read "Read these first". For a conflict resolution, expand the diff from the clean merge: that
+   is the only code no one else has reviewed. When one side was taken outright, the line says
+   whose version. For a kernel-touching or unlabeled member, open the member PR only if its row
+   does not answer your question.
 3. Skim the members table. A row saying "not stated" is a session that skipped the trailer; pull it
    or accept it.
 4. Read "Upstream entries this batch adds or changes". Prune or promote later by editing `status:`
