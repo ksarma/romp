@@ -35,7 +35,12 @@ SID = "11111111-2222-3333-4444-555555555555"
 SID2 = "11111111-2222-3333-4444-565656565656"   # a second session: the per-sid misses the discover memo removes
 
 
-class OneSnapshotPerCycle(unittest.TestCase):
+class _CycleFixture(unittest.TestCase):
+    """The shared world for the cycle tests: a hermetic state root, two sessions on disk (transcripts,
+    names, live rows), the kernel globals the tests replace saved and restored, and every scope slot
+    cleared after each test. No tests of its own: the concrete classes below derive from it, so each
+    test is collected once."""
+
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         td = Path(self.td.name)
@@ -83,6 +88,10 @@ class OneSnapshotPerCycle(unittest.TestCase):
         km._compact_clicked.clear()
         self.td.cleanup()
 
+
+class OneSnapshotPerCycle(_CycleFixture):
+    """One liveness snapshot per cycle, handed to every job (the module docstring's fix)."""
+
     def test_one_cycle_reads_liveness_once_however_deep_the_call(self):
         # count REAL liveness reads (Sessions.live — the tmux fork + reg sweep), not the delegator:
         # inside the cycle's scope every _tmux_sessions() call, at any depth of the build stack,
@@ -121,7 +130,7 @@ class OneSnapshotPerCycle(unittest.TestCase):
         self.assertEqual(reads, [], "a provided snapshot is enough — no fresh liveness reads")
 
 
-class OneDiscoverPerCycle(OneSnapshotPerCycle):
+class OneDiscoverPerCycle(_CycleFixture):
     """perf batch 2 P3 (2026-09-06): the cycle's discover rows are memoized on the scope, so the tick
     jobs' _alive_sessions calls, the _path_of misses under _compacting_now and the builders share ONE
     _sessions sweep per (window, forks) key — one fingerprint through _sessions — with or without a
@@ -227,7 +236,7 @@ class OneDiscoverPerCycle(OneSnapshotPerCycle):
         self.assertEqual(fps, d["miss"], "the 48h sweep still ran once")
 
 
-class TickReadsTheRowsPath(OneSnapshotPerCycle):
+class TickReadsTheRowsPath(_CycleFixture):
     """perf batch 2 P3 (2026-09-06): _interrupt_block_tick and the user-todo floor hand _compacting_now
     the row's own path and live meta. Beyond the saved _path_of sweep, this is a behaviour change for a
     LIVE session idle longer than 48h: _path_of searched only the 48h set and answered None, so the gate
