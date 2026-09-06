@@ -429,7 +429,16 @@ an upgrade (a store that does not exist is left alone: its first write starts
 past whatever a client holds). The same first read gives every tag the file
 holds an mtime (the file's `at`, else the time of the stamp), and the
 hidden-to-archived migration does the same for the tags it carries over, so
-every stored tag carries the mark that tells it from a client's own create. A
+every stored tag carries the mark that tells it from a client's own create.
+That stamp is the file's last write time, not each tag's own (a legacy store
+recorded no per-tag time, so there is nothing truer to use), and it has a
+one-time cost: a whole-blob writer whose copy predates the store's last
+pre-upgrade write is refused on any legacy tag it edits, even one that write
+never touched, because the guard compares the tag's mtime to the writer's
+evidence. The refusal is loud, the client adopts the ack's blob, and its next
+write carries the new `at`, so it happens once per stale copy; a copy taken
+at that last write lands (the comparison is strict). Targeted edits read the
+store first and are never affected. A
 file written outside the kernel (the
 timeline's Electron branch writes `timeline-views.json` itself, with the seq it
 holds) can carry a seq behind the last one served. By its own seq the writer
