@@ -18511,6 +18511,32 @@ def _mark_boot(kind):
         pass
 
 
+# ── going down (`romp down`, 2026-09-06) ─────────────────────────────────────────
+# `romp down` stops this kernel through its supervisor (the login service, or the manager's /stop
+# when nothing supervises it), and asks the kernel to QUIESCE first via POST /down: hold new turn
+# starts, refuse new session creates, and wait a bounded time for the turns in flight to reach a
+# turn boundary — so the SIGTERM that follows cuts as little as possible. The kernel never exits
+# from that route: under the manager a kernel exit is a crash to respawn, so the stop has to come
+# top-down through the supervisor, and the route only makes the moment quiet. What the stop then
+# cuts resumes at the next start exactly as after `romp refresh` (the boot reconcile reads the
+# 'working' state tail, never anything written here).
+DOWN_WAIT_DEFAULT_S = 5.0     # the CLI's default `--wait`; a turn boundary in the next few seconds is caught
+DOWN_WAIT_MAX_S = 600.0       # a cap on the request, so a typo cannot hold a handler thread for an hour
+DOWN_HOLD_GRACE_S = 30.0      # the hold outlives the wait by this much: the supervisor stop lands on a
+#                               still-quiet kernel, and if no stop comes the lease lapses on its own
+GOING_DOWN_REFUSAL = ("the kernel is going down (romp down) — start it again with `romp up` "
+                      "before creating sessions")
+
+
+def _going_down():
+    """True while POST /down's quiesce is in force. Reads the backend GLOBAL, never _sdk(): the
+    route must not construct a backend just to ask whether one is quiescing (the SIGTERM path's
+    rule). Both session-create doors (POST /new, the WS createSession op) refuse on this — a session
+    born now would die with the kernel seconds later, with the create read as a success."""
+    be = _sdk_backend
+    return bool(be) and hasattr(be, "quiescing") and be.quiescing()
+
+
 def _recent_restart_reason(window=90, now=None):
     """The most recent restart-audit action within `window` seconds — joins the cut row to WHO asked
     (deploy refresh, self-update, the rail button…). Best-effort: an anonymous SIGTERM has no row
@@ -40784,6 +40810,46 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, FLEET_REPORT.read_text(), "application/json")
                 except OSError:
                     return self._send(200, json.dumps({"rows": []}), "application/json")
+            if u.path == "/down":
+                # `romp down`'s quiesce (see _going_down): body {"wait": seconds} holds new turn starts
+                # + creates and blocks until the in-flight count reaches 0 or `wait` runs out, then
+                # answers {quiet, busy, inflight[names], waited} so the CLI can say what the stop is
+                # about to cut. {"cancel": true} releases the hold (the stop did not happen). A WRITE
+                # that holds every session's turn starts, so it needs the EXPLICIT serve token
+                # (_write_token_ok) on top of the preamble's _authorize — the /busy?drain=1 rule.
+                # No SDK backend ever built → nothing to hold or wait for: quiet at once.
+                if not self._write_token_ok(q):
+                    return self._send(403, json.dumps({"ok": False, "error":
+                        "forbidden: /down needs the serve token (X-Romp-Token or ?token=)"}), "application/json")
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = None
+                if not isinstance(b, dict):
+                    return self._send(400, json.dumps({"ok": False, "error":
+                        'body must be {"wait": seconds} or {"cancel": true}'}), "application/json")
+                be = _sdk_backend or None
+                if b.get("cancel") is True:
+                    if be is not None and hasattr(be, "cancel_quiesce"):
+                        be.cancel_quiesce()
+                    return self._send(200, json.dumps({"ok": True, "canceled": True}), "application/json")
+                wait = b.get("wait", DOWN_WAIT_DEFAULT_S)
+                if isinstance(wait, bool) or not isinstance(wait, (int, float)) or wait < 0 or wait > DOWN_WAIT_MAX_S:
+                    return self._send(400, json.dumps({"ok": False, "error":
+                        "wait must be a number of seconds in [0, %d]" % int(DOWN_WAIT_MAX_S)}), "application/json")
+                if be is None or not hasattr(be, "quiesce"):
+                    return self._send(200, json.dumps({"ok": True, "quiet": True, "busy": 0,
+                                                       "inflight": [], "waited": 0}), "application/json")
+                be.quiesce(float(wait) + DOWN_HOLD_GRACE_S)
+                t0 = time.monotonic()
+                busy = be.busy_count()
+                while busy and time.monotonic() - t0 < wait:
+                    time.sleep(min(0.25, max(0.01, wait - (time.monotonic() - t0))))
+                    busy = be.busy_count()
+                return self._send(200, json.dumps({
+                    "ok": True, "quiet": busy == 0, "busy": busy,
+                    "inflight": be.inflight_names() if busy else [],
+                    "waited": round(time.monotonic() - t0, 1)}), "application/json")
             if u.path == "/update-dismiss":
                 # the banner's Not-now, PERSISTED (the user 2026-08-31): the dismissal outlives the
                 # page and the kernel — event-keyed, a NEW sha/tag offers again. Body: {"tag": id}.
@@ -41173,6 +41239,9 @@ class Handler(BaseHTTPRequestHandler):
                     b = json.loads(raw_body or b"{}")
                 except Exception:
                     b = {}
+                if _going_down():             # `romp down` in progress: a session born now dies with the kernel
+                    return self._send(503, json.dumps({"ok": False, "error": GOING_DOWN_REFUSAL}),
+                                      "application/json")
                 nm = str((b or {}).get("name") or "").strip()
                 if not nm or not NAME_RE.match(nm):
                     return self._send(400, json.dumps({"ok": False, "error":
@@ -42681,6 +42750,8 @@ class Handler(BaseHTTPRequestHandler):
                         # AFTER the focus so the client sees the running session first.
                         client["send"](json.dumps({"type": "warn", "text":
                             '"%s" is already running; its tags were not changed — use the tab\'s Tags menu' % nm}))
+                elif _going_down():              # `romp down` in progress: the same refusal POST /new gives
+                    client["send"](json.dumps({"type": "warn", "text": GOING_DOWN_REFUSAL}))
                 elif _thread_name_refusal(nm, _thread_names()):   # a thread's name (or unverifiable): never mint a namesake tab (T223)
                     client["send"](json.dumps({"type": "warn", "text": _thread_name_refusal(nm, _thread_names())}))
                 elif msg.get("backend") == "sdk":   # non-tmux: drive via the Agent SDK

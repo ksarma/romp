@@ -7370,6 +7370,7 @@ class SdkBackend:
         self._live_lock = threading.RLock()
         self._rl_lock = threading.Lock()          # serializes usage.json read-merge-write (_record_rate_limit)
         self._drain_hold_until = 0.0              # deploy-drain lease (T121): RUNTIME-ONLY — a fresh boot starts clear by construction
+        self._quiesce_until = 0.0                 # `romp down` going-down hold (quiesce): runtime-only for the same reason
         self._drain_hold_since = 0.0
         self._drain_hold_rang = False
         self._drain_wake_timer = None
@@ -8400,7 +8401,9 @@ class SdkBackend:
         now = time.time()
         with self._lock:
             first = self._drain_hold_until <= now
-            self._drain_hold_until = now + self.DRAIN_HOLD_TTL
+            # never SHORTEN a hold: `romp down`'s quiesce (quiesce below) arms a longer one, and a
+            # deploy poll landing inside it must extend, not cut it back to one lease
+            self._drain_hold_until = max(self._drain_hold_until, now + self.DRAIN_HOLD_TTL)
             if first:
                 self._drain_hold_since = now
                 self._drain_hold_rang = False
@@ -8427,6 +8430,59 @@ class SdkBackend:
         """Whether new turn starts are currently held for a parked deploy restart."""
         with self._lock:
             return self._drain_hold_until > time.time()
+
+    # ── going down (`romp down`, 2026-09-06) ─────────────────────────────────
+    # `romp down` stops this kernel through its supervisor, and before it does it asks the kernel to
+    # QUIESCE (POST /down): hold new turn starts so the in-flight count can only fall, refuse new
+    # session creates (a session born now would die with the kernel seconds later), and give the
+    # turns in flight a bounded wait to reach a turn boundary. The hold rides the SAME lease the
+    # deploy drain uses (drain_holding is the one gate inputs() consults), extended to cover the
+    # wait plus the stop that follows — and it stays a LEASE: if the stop never comes (the CLI died
+    # between /down and the supervisor call), the hold lapses on its own and the kernel carries on.
+    # Runtime-only like the deploy lease: a fresh boot starts clear by construction.
+    def quiesce(self, ttl: float) -> None:
+        """Hold new turn starts and session creates for `ttl` seconds: the kernel is going down."""
+        now = time.time()
+        ttl = max(0.0, float(ttl))
+        with self._lock:
+            self._quiesce_until = now + ttl
+            self._drain_hold_until = max(self._drain_hold_until, now + ttl)
+            t = self._drain_wake_timer
+            self._drain_wake_timer = threading.Timer(ttl + 0.5, self._wake_all_inputs)
+            self._drain_wake_timer.daemon = True
+            nt = self._drain_wake_timer
+            n = sum(1 for s in self.sessions.values() if s.inflight and not s.ended)
+        if t is not None:
+            t.cancel()
+        nt.start()
+        self._log("going down: %d in-flight turn(s); new turn starts and session creates held for up "
+                  "to %ds while they finish (sessions resume with their history at the next start)"
+                  % (n, int(ttl)))
+
+    def quiescing(self) -> bool:
+        """Whether a `romp down` quiesce is in force (the create doors refuse while it is)."""
+        with self._lock:
+            return self._quiesce_until > time.time()
+
+    def cancel_quiesce(self) -> None:
+        """Release the going-down hold early (the stop did not happen): turn starts resume now."""
+        with self._lock:
+            was = self._quiesce_until > time.time()
+            self._quiesce_until = 0.0
+            self._drain_hold_until = 0.0
+            t = self._drain_wake_timer
+            self._drain_wake_timer = None
+        if t is not None:
+            t.cancel()
+        if was:
+            self._log("going down canceled: new turn starts and session creates resume")
+        self._wake_all_inputs()
+
+    def inflight_names(self) -> list:
+        """The names of the sessions with a turn in flight right now (what a stop would cut)."""
+        with self._lock:
+            sessions = list(self.sessions.values())
+        return [s.name for s in sessions if s.inflight and not s.ended]
 
     def _wake_all_inputs(self) -> None:
         """Nudge every session's input generator to re-check its gate — the lease just expired
