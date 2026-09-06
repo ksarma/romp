@@ -709,6 +709,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     offer.addEventListener("click", () => startDownload(dlUrl, offer));
     why.appendChild(offer);
     body.replaceChildren(why);
+    // The pane is a paint of the body like any other, so the seam's hooks hear it: whenShown fires only for a
+    // picture that decoded, and until this line the panel kept the layer it had built over the PREVIOUS picture
+    // when a reload's bytes failed to decode — the overlay stood, armed, over a body with no picture, and the
+    // empty state still named the drag — until some later paint happened to run (the 2026-09-06 review; the
+    // panel's hook disposes a layer whose picture left: mediaElement() is null now).
+    fireRendered();
   };
 
   // Chooses the body for the current prefs and syncs the buttons. The pressed state flips SYNCHRONOUSLY
@@ -1206,8 +1212,9 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
 // browser's viewer owns everything inside it and gives no signal to wait for (the same reason pdfBlock arms no
 // error listener). An <img> counts once it has decoded: at once when it already had (`complete` — a blob the
 // browser still holds), else on its load event. A load that lands after the img left the document fires nothing:
-// a reload replaced it, the decode failed and imgFailed's pane took the body, or the viewer closed — what shows
-// then is something else, and an overlay sized against the old picture would frame nothing anyone sees.
+// a reload replaced it, the decode failed and imgFailed's pane took the body (a paint of its own, which fires the
+// hooks itself), or the viewer closed — what shows then is something else, and an overlay sized against the old
+// picture would frame nothing anyone sees.
 function whenShown(shown: HTMLElement, cb: () => void): void {
   const img = shown.querySelector("img.fileview-img") as HTMLImageElement | null;
   if (!img || img.complete) { cb(); return; }

@@ -712,3 +712,27 @@ test("under the chat pane's capture-phase link handler, a rectangle on a linked 
   } finally { doc.removeEventListener("click", chat); }
   h.dispose();
 });
+
+// ── the picture that would not decode after a reload ───────────────────────────────────────────────
+
+test("a reload whose bytes fail to decode: the viewer's failure pane fires onRendered, the panel takes the old picture's layer down, and the empty state stops naming the drag", async () => {
+  let media: E | null = null;
+  const h = await harness({ mediaElement: () => media as unknown as HTMLElement | null });
+  media = h.media;
+  await h.ok();
+  await h.open();
+  const img = h.media!;
+  assert.ok(overlayOf(img), "the picture wears its layer with the panel open");
+  assert.equal(overlayOf(img).classList.contains("fc-overlay-off"), false, "armed");
+  assert.equal(h.q(".fc-empty")!.textContent, "No comments yet. Drag a rectangle on the image, or comment on this file.", "the empty state names the drag while a picture takes it");
+  // the poll saw the file move and reloaded; the new bytes would not decode: imgFailed's pane takes the body and, being a
+  // paint of the body, fires the seam's onRendered (file-view.ts) — before that line the hook fired only for a picture that
+  // decoded, and the panel kept this layer, armed, over a body with no picture until some later paint
+  const pane = mk("div", "fileview-err"); pane.textContent = "this image failed to decode — it may be mid-write or truncated";
+  h.body.replaceChildren(pane); media = null;
+  for (const cb of h.rendered) cb();
+  assert.equal(h.qa(".fc-imgwrap").length, 0, "the old picture's layer is gone with the picture");
+  assert.equal(h.qa(".fc-overlay").length, 0);
+  assert.equal(h.q(".fc-empty")!.textContent, "No comments yet. Comment on this file to leave one.", "nothing in view takes a drag, so none is named");
+  h.dispose();
+});

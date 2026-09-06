@@ -388,7 +388,7 @@ test("an image body is media: mode() media, media() image, text() null, no Edit;
 
 // ── Slice 3: the media paint, the media element, the rendered figures (plans/file-review.md, Images and PDFs) ──
 
-test("onRendered for an image fires on the img's load, once; mediaElement() is that img until the decode-failure pane replaces it, and a load on the replaced img fires nothing", async (t) => {
+test("onRendered for an image fires on the img's load, once; mediaElement() is that img until the decode-failure pane replaces it, which is a paint of its own; a load on the replaced img fires nothing", async (t) => {
   const { ctx, body } = await open(PLOT, t);
   const img = body.querySelector("img.fileview-img")!;
   assert.equal(ctx.mediaElement(), img as unknown as HTMLElement, "the picture in the body");
@@ -404,14 +404,18 @@ test("onRendered for an image fires on the img's load, once; mediaElement() is t
   assert.ok(body.querySelector(".fileview-err"), "the failure pane is up");
   assert.equal(ctx.mode(), "media", "still a media body to the seam…");
   assert.equal(ctx.mediaElement(), null, "…but no media element: nothing to overlay");
+  assert.equal(paints, 2, "the pane swap is a paint: the panel hears the picture is gone and takes its layer down (a reload whose bytes would not decode left the old picture's overlay standing before)");
+  img.dispatchEvent(new Ev("load"));
+  assert.equal(paints, 2, "a load on the replaced picture still fires nothing");
 });
 
 test("a load that lands after the viewer moved on fires nothing: the decode failed first, or a reload replaced the picture", async (t) => {
   const { ctx, body } = await open(PLOT, t);
   const img = body.querySelector("img.fileview-img")!;
   img.dispatchEvent(new Ev("error"));                      // the pane took the body before the picture ever showed
+  assert.equal(paints, 1, "the failure pane is the paint (imgFailed fires the hooks itself)");
   img.dispatchEvent(new Ev("load"));
-  assert.equal(paints, 0, "a load on the replaced picture is not a paint");
+  assert.equal(paints, 1, "a load on the replaced picture is not a paint");
   disk[PLOT] = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x02]), type: "image/png", mtimeNs: "1757145600000000007" };
   ctx.reload();
   await settle();
@@ -419,9 +423,9 @@ test("a load that lands after the viewer moved on fires nothing: the decode fail
   assert.notEqual(img2, img, "the reload built a new picture");
   assert.equal(ctx.mediaElement(), img2 as unknown as HTMLElement);
   img.dispatchEvent(new Ev("load"));
-  assert.equal(paints, 0, "the old picture's late load: nothing");
+  assert.equal(paints, 1, "the old picture's late load: nothing");
   img2.dispatchEvent(new Ev("load"));
-  assert.equal(paints, 1, "the showing picture's load: the paint");
+  assert.equal(paints, 2, "the showing picture's load: the paint");
 });
 
 test("an img the browser already holds (complete) paints at once, without waiting for a load event", async (t) => {
@@ -701,7 +705,9 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(when, /const img = shown\.querySelector\("img\.fileview-img"\) as HTMLImageElement \| null;/);
   assert.match(when, /if \(!img \|\| img\.complete\) \{ cb\(\); return; \}/, "a frame, or an already-complete img: at once");
   assert.match(when, /img\.addEventListener\("load", \(\) => \{ if \(img\.isConnected\) cb\(\); \}, \{ once: true \}\);/, "else the load event, once, and only for a picture still in the document");
-  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 2, "the SVG Source view and the text views call fireRendered directly; the media arm hands it to whenShown (file-comments.test.ts pins the count)");
+  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 3, "the SVG Source view, the text views and the decode-failure pane call fireRendered directly; the media arm hands it to whenShown (file-comments.test.ts pins a floor)");
+  const failed = VIEW.split("const imgFailed = () => {")[1].split("\n  };\n")[0];
+  assert.match(failed, /body\.replaceChildren\(why\);\n[\s\S]*fireRendered\(\);$/, "the pane swap fires the hooks AFTER the swap, so a hook reading mediaElement() finds none");
   // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify and after the marked-failure fallback
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, path, sid\) : codeBlock\(text, path, true\)\);/, "mdBlock knows the open file's path and sid");
   const mdFn = VIEW.split("function mdBlock(text: string, path: string, sid: string | null | undefined): HTMLElement {")[1].split("\n}\n")[0];
