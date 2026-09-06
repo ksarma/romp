@@ -22588,6 +22588,17 @@ def _chat_build_sig(sess):
     # tail until the file next changes. Cheap: live SDK sessions answer from memory, no I/O.
     _be = _sdk()
     sig.append(_be.pending_cut(sess.get("sid") or "") if _be else "")
+    # The two ledger fields the section snapshot reads that no transcript or states write moves
+    # (review 2026-09-06): the postal working note (working/<sid>; a `romp mail working` from a
+    # shell, a peer's forwarded write and the kernel's own idle+done lift all change it without a
+    # transcript write) and the feed's per-session needs-you verdict (_feed_needs_input, set by the
+    # feed build). Without these a BACKGROUND tab's cached ledger kept the old note until the next
+    # producer pass ended (3 s plus the pass, minutes while judges are calling the model). The note
+    # rides as its text (one small file read, byte-stable while unchanged, the _user_todo_fp shape);
+    # the verdict as its bit. Both now reach a background row at the next push, like every other
+    # ledger field.
+    sig.append(Sessions.working_note(sess.get("sid") or ""))
+    sig.append(_feed_needs_input_of(sess.get("sid") or ""))
     return tuple(sig)
 
 
@@ -26567,10 +26578,24 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     ledger = {"summary": arch.get("headline", ""), "tree": tree[:80],
               "current": current, "recent": recent_tops,
               # the session's own claim of what it is doing (the postal set_working note, the store
-              # list_agents reads) — the chat's section snapshot leads its "now" line with it
-              # (ui/webview/tab-snapshot.ts nowLine; the user 2026-09-06). A muted session keeps it:
-              # the note is the session's statement, not task tracking. "" when none.
-              "workingNote": Sessions.working_note(sid)}
+              # list_agents reads) — the chat's section snapshot shows it as a row's own second line
+              # under the task (ui/webview/tab-snapshot.ts noteLine; the user 2026-09-06). A muted
+              # session keeps it: the note is the session's statement, not task tracking. "" when
+              # none. Read fresh on every build; the chat-build sig folds it too (_chat_build_sig),
+              # so a background tab's cached ledger follows a note write or the idle+done lift at the
+              # next push, like every other field here.
+              "workingNote": Sessions.working_note(sid),
+              # the FEED's needs-you verdict for this session (review 2026-09-06): True when the
+              # kernel's last feed build filed one of its cards under needs_input (the column the
+              # feed's Blocked list is: a judge-filed block, a live prompt, an on-you API error, the
+              # user-todo floor), False when none, None before the first feed build since start. The
+              # snapshot row's "needs you" reads this so the two panes agree; the tab's own chip rule
+              # misses the common case (a session that asked and went idle). Read from the feed build
+              # rather than re-derived: the column's rule lives in build_feed with a dozen inputs. The
+              # feed builds AFTER the chat sessions in a push, so this trails the feed by one push
+              # cycle (the sig fold above brings the change forward on the next one). A muted session
+              # has no cards, so it reads False.
+              "needsInput": _feed_needs_input_of(sid)}
     # work-timer base, in MILLISECONDS (render's elapsedMs does Date.now()ms - sinceEpoch; a seconds
     # value showed ~494,000h — the user's "400,000 hours" bug): the current open turn's start while
     # working, else the last activity; None when unknown (render then shows no timer).
@@ -35158,6 +35183,26 @@ def _producer_sig(browser):
 # reload, an idle tick) reuses the last build instead of rebuilding.
 _built_feed = [None, None, 0.0, 0.0]              # [fleet_sig, payload, built_at, build_started_at]
 _built_timeline = [None, None, 0.0, 0.0]          # [fleet_sig, payload, built_at, build_started_at]
+# The sids the LAST feed build filed under needs_input (review 2026-09-06): the per-session form of the
+# feed's Blocked column, read by build_session's ledger (needsInput) so the chat's section snapshot
+# says "needs you" exactly when the feed does. None until the first feed build since start (a chat
+# client alone makes the push build the feed, so that is one push cycle). Set by _cached_feed on every
+# rebuild, from the same payload the badge and the bells read (_needs_you_count), never re-derived.
+_feed_needs_input = [None]
+
+
+def _needs_input_sids(feed):
+    """The sids with a card in the feed's needs_input column: the filing rule the feed client maps
+    (feed.ts askColumn: it.column == "needs_input"), applied per session. Placeholders count too:
+    the Blocked list shows them."""
+    return frozenset(str(a.get("sid")) for a in (feed.get("asks") or [])
+                     if a.get("column") == "needs_input" and a.get("sid"))
+
+
+def _feed_needs_input_of(sid):
+    """build_session's read: True/False from the last feed build, None before the first one."""
+    sids = _feed_needs_input[0]
+    return None if sids is None else (str(sid) in sids)
 # Wire-form caches for the two heavy shared payloads (the 2026-08-10 CPU fix, round three): the last
 # (source-identity key, serialized bytes, dedup sig) for the feed and the timeline bars, so an unchanged
 # build is never re-serialized cycle after cycle (~357KB + ~1.65MB per cycle measured on a quiet fleet).
@@ -35284,6 +35329,7 @@ def _cached_feed(now, tmux, sig, connect=False):
     _PERF_STATS.build("feed", False, time.monotonic() - _t0)
     feed["buildId"] = bid
     _built_feed[:] = [sig, feed, time.time(), started]
+    _feed_needs_input[0] = _needs_input_sids(feed)        # the per-session needs-you the session ledgers read
     _badge = _needs_you_count(feed)
     _fired = _feed_notifications(feed)                    # armed bells: fresh builds are the transition event
     for _t, _b, _sid in _fired:
