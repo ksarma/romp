@@ -15,15 +15,20 @@ for the assertion nobody wrote that way. Pinned here:
   CredentialPattern: the second net, independent of provenance: credential-shaped tokens by pattern
     (tests/credential_patterns.py) in any report, pytest's own renderings of a failed comparison
     included (the diff's `- <a>` and `+ <a>` lines under the E marker, the quoted operands of an
-    `assert '<a>' == '<b>'`, a --showlocals line `name = '<a>'`).
+    `assert '<a>' == '<b>'`, a --showlocals line `name = '<a>'`, the `+  where '<a>' = f()` and
+    `+  and   '<b>' = g()` lines, the haystack of `assert '<a>' in '<b>'` and unittest's `'<a>' not
+    found in '<b>'`, the elements of a list, tuple or set repr, unittest's `Lists differ:` line, its
+    quoted per-element lines and its diff of a container spread over lines).
   ReportShapes: the hook's work on a report object of each outcome (a failure's longrepr, a skip's
     tuple, a passed test's sections).
   HookEndToEnd: subprocess pytest runs against a copy of the conftest. A test that fails with a probe
     value in its message and on its stdout prints the marker, never the value; the same for a value
     set inside mock.patch.dict and gone before the assertion, a header-shaped value split by
     assertDictEqual, a pattern-shaped token with no provenance, a passed test's captured output
-    under -rA, a collection error, and a failed comparison of two unknown-format tokens under
-    --showlocals (pytest's diff lines, its assert line and the locals all show the marker).
+    under -rA, a collection error, a failed comparison of two unknown-format tokens under
+    --showlocals (pytest's diff lines, its assert line and the locals all show the marker), and the
+    where/and/in/not-found/Lists-differ/Tuples-differ renderings of two such tokens at default
+    verbosity.
 
 Every probe value is synthetic and assembled at run time ("romp-test-fixture-" + a uuid; a
 pattern-shaped probe is a public key prefix joined to uuids), so no literal in this file is a
@@ -295,6 +300,34 @@ class CredentialPattern(_WithConftest):
         sha = hashlib.sha1(b"romp-test-fixture-diff").hexdigest()
         self.assertEqual(red("E         - %s" % sha), "E         - " + R)
 
+    def test_pytests_where_and_in_lines_and_container_reprs_are_value_positions(self):
+        # the second round of renderings a compared token slipped: the `+  where '<a>' = f()` and
+        # `+  and   '<b>' = g()` lines under an assert, the haystack of `assert '<a>' in '<b>'` (unittest's
+        # `'<a>' not found in '<b>'`), the elements of a list, tuple or set repr (unittest's `Lists differ:`
+        # line), unittest's quoted per-element lines, and its diff of a container spread over lines
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        a, b = uuid.uuid4().hex, uuid.uuid4().hex                  # 32 characters each, no known prefix
+        self.assertEqual(red("E        +  where '%s' = f()" % a), "E        +  where '%s' = f()" % R)
+        self.assertEqual(red('E        +  and   "%s" = g()' % b), 'E        +  and   "%s" = g()' % R)
+        self.assertEqual(red("E       AssertionError: assert '%s' in '%s'" % (a, b)),
+                         "E       AssertionError: assert '%s' in '%s'" % (R, R), "both operands")
+        self.assertEqual(red("E       AssertionError: '%s' not found in '%s'" % (a, b)),
+                         "E       AssertionError: '%s' not found in '%s'" % (R, R), "unittest's assertIn line")
+        self.assertEqual(red("E       AssertionError: Lists differ: ['%s', '%s'] != ['%s']" % (a, b, b)),
+                         "E       AssertionError: Lists differ: ['%s', '%s'] != ['%s']" % (R, R, R))
+        self.assertEqual(red("Tuples differ: ('%s',) != ('%s',)" % (a, b)), "Tuples differ: ('%s',) != ('%s',)" % (R, R))
+        self.assertEqual(red("{'%s'}" % a), "{'%s'}" % R, "a set repr")
+        self.assertEqual(red('["%s", "%s"]' % (a, b)), '["%s", "%s"]' % (R, R), "double quotes")
+        self.assertEqual(red("E       '%s'" % a), "E       '%s'" % R, "unittest's First differing element line")
+        self.assertEqual(red("E       - ['%s',\nE       -  '%s']\nE       + ['%s',\nE       +  '%s']" % (a, b, b, a)),
+                         "E       - ['%s',\nE       -  '%s']\nE       + ['%s',\nE       +  '%s']" % (R, R, R, R),
+                         "unittest's diff of a list, one element per line")
+        # what stays: a token among the words of a haystack (nothing marks it as a value), a quoted line
+        # that is more than the token, an element under the floor
+        for text in ("E       AssertionError: assert 'x' in 'the word %s here'" % a, "E       '%s' and more" % a,
+                     "['%s']" % uuid.uuid4().hex[:23], "the word %s alone" % a):
+            self.assertEqual(red(text), text, text[:24])
+
     def test_the_two_nets_are_applied_in_order_and_share_one_pattern_list(self):
         v = probe_value("env")
         tok = patterned_probe()
@@ -446,6 +479,44 @@ class HookEndToEnd(unittest.TestCase):
                 self.assertFalse(v in out, "%s reached the report" % name)
             # the plain assert: two diff lines and two locals; the unittest one: its message and two diff lines
             self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 8, out[-1200:])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_the_where_and_in_and_container_renderings_of_two_tokens_print_the_marker(self):
+        # the renderings the comparison test above does not reach: `where '<a>' = f()` (the operands are
+        # not both str, so there is no diff), `and   '<b>' = g()`, the haystack of `assert '<a>' in '<b>'`,
+        # unittest's `'<a>' not found in '<b>'`, and its `Lists differ:` / `Tuples differ:` blocks (the
+        # container line, the quoted per-element lines, the diff spread over lines). 32-character tokens:
+        # pytest renders each of these in full at default verbosity, so no line depends on the ellipsis rule
+        d = tempfile.mkdtemp()
+        try:
+            _copy_hook(d)
+            probes = {"a": uuid.uuid4().hex, "b": uuid.uuid4().hex}
+            with open(os.path.join(d, "probes.json"), "w") as fh:
+                json.dump(probes, fh)
+            with open(os.path.join(d, "test_probe_forms.py"), "w") as fh:
+                fh.write("import json, os, unittest\n"
+                         "P = json.load(open(os.path.join(os.path.dirname(__file__), 'probes.json')))\n\n"
+                         "def f():\n    return P['a']\n\n"
+                         "def g():\n    return P['b']\n\n"
+                         "def h():\n    return 3\n\n"
+                         "def test_where():\n    assert f() == 3\n\n"
+                         "def test_and():\n    assert h() == g()\n\n"
+                         "def test_in():\n    assert f() in g()\n\n"
+                         "class Cmp(unittest.TestCase):\n"
+                         "    def test_not_found(self):\n        self.assertIn(P['a'], P['b'])\n"
+                         "    def test_lists(self):\n        self.assertEqual([P['a'], P['b']], [P['b'], P['a']])\n"
+                         "    def test_tuple(self):\n        self.assertEqual((P['a'],), (P['b'],))\n")
+            rc, out = self._run(d, "test_probe_forms.py")
+            self.assertNotEqual(rc, 0)
+            self.assertTrue("6 failed" in out, out[-600:])
+            for name, v in probes.items():
+                self.assertFalse(v in out, "%s reached the report" % name)
+                for i in range(0, len(v) - 8 + 1):
+                    self.assertFalse(v[i:i + 8] in out, "a fragment of %s reached the report" % name)
+            # where + its assert line (2), and + its (2), in + where + and (4), not found (2), the lists block
+            # (the container line 4, two element lines, four diff lines), the tuples block (2 + 2 + 2)
+            self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 26, out[-2000:])
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
