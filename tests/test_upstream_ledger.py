@@ -37,6 +37,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+# The ledger script reads no state root, but every test module that loads romp code through a
+# loader isolates the state root first (tests/test_state_isolation_order.py enforces the order).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "upstream-ledger.py"
 
