@@ -5,10 +5,8 @@ process — so counting it as 'running' forever produced the ghost '25 backgroun
 wedged session (nimbus). _scan_bg_tasks stamps each launch with the record's epoch; _bg_tasks filters
 still-running tasks older than reg spawnedAt (stamped by SdkSession._run on every fresh CLI spawn),
 after the cache since spawnedAt changes without the transcript changing. Synthetic fixtures only."""
-import atexit
 import json
 import os
-import shutil
 import tempfile
 import unittest
 from importlib.machinery import SourceFileLoader
@@ -18,7 +16,6 @@ BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
 # Hermetic state BEFORE the loads — they resolve their state root at import time, and only
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
-atexit.register(shutil.rmtree, os.environ["XDG_STATE_HOME"], ignore_errors=True)  # gone at exit, with or without conftest
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
 SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()

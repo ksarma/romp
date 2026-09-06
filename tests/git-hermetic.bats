@@ -3,7 +3,7 @@
 # tests/git-hermetic.bash: after git_hermetic, git reads no global or system config and every
 # commit has an identity, whatever the box is configured with.
 #
-# Skips on git < 2.32 with the same message as tests/test_temp_hygiene.GitFloor: GIT_CONFIG_GLOBAL
+# Skips on git < 2.32 with the same message as tests/test_tempdir_hygiene.GitFloor: GIT_CONFIG_GLOBAL
 # and GIT_CONFIG_SYSTEM arrived in 2.32, so on an older git the config half of the floor is inert
 # (the identity half still holds) and both proofs say so the same way instead of one going red.
 

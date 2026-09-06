@@ -16,7 +16,6 @@ Two audit findings, both pinned here:
 Synthetic transcripts only (invented text, placeholder UUIDs); the git fixtures are throwaway tmp
 repos with fixture identities.
 """
-import atexit
 import json
 import os
 import shutil
@@ -28,7 +27,6 @@ from importlib.machinery import SourceFileLoader
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
-atexit.register(shutil.rmtree, os.environ["XDG_STATE_HOME"], ignore_errors=True)  # gone at exit, with or without conftest
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")

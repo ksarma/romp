@@ -4,9 +4,7 @@ it stays human-authored — blue bubble, judge-filed as the user's reply, no rom
 the chat must not pose the prose as typed. The cont:true send stamps <!-- romp-canned: continue -->
 (comment form, the markers rule), the event build lifts it into canned:"continue" for genuine human
 turns only, and the display strip drops it like every other romp comment. SYNTHETIC fixtures only."""
-import atexit
 import os
-import shutil
 import tempfile
 import unittest
 from importlib.machinery import SourceFileLoader
@@ -18,7 +16,6 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # Hermetic state BEFORE the loads — they resolve their state root at import time, and only
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
-atexit.register(shutil.rmtree, os.environ["XDG_STATE_HOME"], ignore_errors=True)  # gone at exit, with or without conftest
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = SourceFileLoader("romp_kernel_contbubble", os.path.join(BIN, "romp-kernel")).load_module()
 
