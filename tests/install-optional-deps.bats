@@ -321,9 +321,10 @@ EOF
     PATH="$(bare_path)" run "$ROMP_DIR/bin/romp-sdk-setup"
 
     [ "$status" -eq 0 ]
-    ! grep -q "venv-rebuild" "$CALL_LOG"
     [[ "$output" != *"REBUILDING"* ]]
     [[ "$output" == *"python 3.11"* ]]                # the ready line names the venv's own interpreter
+    run grep -q "venv-rebuild" "$CALL_LOG"     # last, and armed: `run` replaces $output, and a bare
+    [ "$status" -ne 0 ]                        # `!` mid-test asserts nothing in bats
 }
 
 @test "romp-sdk-setup: a venv whose interpreter is gone is rebuilt for the fallback pick, loudly" {
