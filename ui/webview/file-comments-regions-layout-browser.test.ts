@@ -54,11 +54,13 @@ ${sheet()}</style></head><body><div class="fileview-body" id="row"><div class="f
 
 type Box = { left: number; top: number; width: number; height: number };
 type Scene = Record<string, Box>;
-const FIGURES = ["plot", "logo", "centered", "half", "badge"];
-const BOXES = [...FIGURES, "p-plot", "p-logo", "p-centered", "p-half", "p-badge", "after"];
+const FIGURES = ["plot", "logo", "centered", "half", "badge", "capped", "halfcap", "spaced", "right"];
+const BOXES = [...FIGURES, "p-plot", "p-logo", "p-centered", "p-half", "p-badge", "p-capped", "p-halfcap", "p-spaced", "p-right", "after"];
 
 /** The README: a full-width plot, a right-aligned logo with prose beside it, a centered block figure, a centered
- *  half-width one, a badge on a text line, and a paragraph after them all. Every picture is 300×150. */
+ *  half-width one, a badge on a text line; then the capped figures the review's fourth round found mis-laid — a
+ *  width="100%" plot centered under a pixel max-width, a half-width one likewise, one with a percentage top margin,
+ *  and a right-aligned one (margin-left: auto) — and a paragraph after them all. Every picture is 300×150. */
 async function mount(page: any): Promise<void> {
   await page.evaluate(async () => {
     const md = document.getElementById("md")!;
@@ -73,6 +75,10 @@ async function mount(page: any): Promise<void> {
       '<p id="p-centered"><img id="centered" style="display:block;margin:0 auto"></p>',
       '<p id="p-half"><img id="half" style="display:block;margin:0 auto" width="50%"></p>',
       '<p id="p-badge">Build: <img id="badge" align="middle" width="60"> passing, on every push.</p>',
+      '<p id="p-capped"><img id="capped" width="100%" style="max-width:300px;display:block;margin:0 auto"></p>',
+      '<p id="p-halfcap"><img id="halfcap" width="50%" style="max-width:200px;display:block;margin:0 auto"></p>',
+      '<p id="p-spaced"><img id="spaced" width="100%" style="max-width:300px;display:block;margin:10% auto 0"></p>',
+      '<p id="p-right"><img id="right" width="50%" style="max-width:200px;display:block;margin:0 0 0 auto"></p>',
       '<p id="after">After the figures.</p>',
     ].join("\n");
     const imgs = Array.from(md.querySelectorAll("img")) as HTMLImageElement[];
@@ -163,6 +169,12 @@ test("in a browser, wrapping every figure of a README leaves the page as the bro
     sameBox(before.half, { left: 170, top: before.half.top, width: 300, height: 150 }, "the half-width block figure: 300px, centered");
     assert.ok(before.badge.top >= before["p-badge"].top - 0.5 && before.badge.top + before.badge.height <= before["p-badge"].top + before["p-badge"].height + 0.5,
       "the badge sits on its text line: badge " + JSON.stringify(before.badge) + " in " + JSON.stringify(before["p-badge"]));
+    sameBox(before.capped, { left: 170, top: before.capped.top, width: 300, height: 150 }, "the capped plot: width=\"100%\" held to max-width 300px and centered by its auto margins");
+    sameBox(before.halfcap, { left: 220, top: before.halfcap.top, width: 200, height: 100 }, "the capped half-width figure: 50% of 600 held to 200px, centered (left 20 + (600 - 200) / 2)");
+    sameBox(before.spaced, { left: 170, top: before.spaced.top, width: 300, height: 150 }, "the spaced plot: centered under its cap like the first");
+    const marginTop = (): Promise<string> => page.evaluate(() => getComputedStyle(document.getElementById("spaced")!).marginTop);
+    assert.equal(await marginTop(), "60px", "margin-top 10% resolves against the 600px paragraph, not against the 300px picture");
+    sameBox(before.right, { left: 420, top: before.right.top, width: 200, height: 100 }, "the right-aligned capped figure: margin-left auto takes the free space (left 20 + 600 - 200)");
     // the control: the wrap as it was, nothing carried — the finding's numbers
     await controlWrap(page, true);
     const control = await measure(page);
@@ -179,10 +191,23 @@ test("in a browser, wrapping every figure of a README leaves the page as the bro
     for (let i = 0; i < FIGURES.length; i++) sameBox(layers[i].overlay, after[FIGURES[i]], "the overlay is the picture: " + FIGURES[i]);
     assert.equal(layers[0].wrapStyle, "width: 100%;", "the plot's wrapper takes the percentage"); assert.equal(layers[0].imgStyle, "width: 100%;", "and the plot fills it");
     assert.equal(layers[1].wrapStyle, "float: right;", "the logo's wrapper takes the float"); assert.equal(layers[1].imgStyle, "float: none;");
-    assert.equal(layers[2].imgStyle, "display:block;margin:0 auto; margin-left: 0; margin-right: 0;", "the author's declarations kept, the layer's after them");
+    assert.equal(layers[2].imgStyle, "display:block;margin:0 auto", "the centered figure gives nothing up: its auto margins stay (they never overflow), and the fit-content wrapper takes a copy");
+    assert.equal(layers[2].wrapStyle, "display: block; width: fit-content; margin-left: auto; margin-right: auto;");
+    assert.equal(layers[3].imgStyle, "display:block;margin:0 auto; width: 100%;", "the half-width figure fills its 50% wrapper; its auto margins stay on it");
+    // the capped figures: the wrapper takes the percentage width and the auto margins, the picture keeps its cap AND its
+    // auto margins — moved off it, the picture sat at the left edge of a wrapper it no longer filled (the review's finding:
+    // capped at left 20 instead of 170, halfcap at 170 instead of 220); the wrapper is not narrowed to the cap, so the
+    // percentage top margin of `spaced` still resolves against the paragraph's width
+    assert.equal(layers[5].wrapStyle, "width: 100%; display: block; margin-left: auto; margin-right: auto;");
+    assert.equal(layers[5].imgStyle, "max-width:300px;display:block;margin:0 auto; width: 100%;", "the cap and the auto margins stand; only the width is filled in");
+    assert.equal(layers[8].wrapStyle, "width: 50%; display: block; margin-left: auto;");
+    assert.equal(layers[8].imgStyle, "max-width:200px;display:block;margin:0 0 0 auto; width: 100%;");
+    assert.equal(await marginTop(), "60px", "margin-top 10% is still 60px of a paragraph-wide wrapper, not 30px of a wrapper narrowed to the cap");
     // dispose: the pictures back, their style attributes as the author wrote them
     const styles = await disposeAll(page);
-    assert.deepEqual(styles, [null, null, "display:block;margin:0 auto", "display:block;margin:0 auto", null], "each picture's style attribute is what the author wrote — or absent, as it was");
+    assert.deepEqual(styles, [null, null, "display:block;margin:0 auto", "display:block;margin:0 auto", null,
+      "max-width:300px;display:block;margin:0 auto", "max-width:200px;display:block;margin:0 auto", "max-width:300px;display:block;margin:10% auto 0", "max-width:200px;display:block;margin:0 0 0 auto"],
+      "each picture's style attribute is what the author wrote — or absent, as it was");
     sameScene(await measure(page), before, "the layers gone");
     assert.equal(await page.evaluate(() => document.querySelectorAll(".fc-imgwrap").length), 0);
     // the closed-panel state a region comment leaves: one figure wrapped, disarmed, with its rectangle — still in place

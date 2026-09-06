@@ -106,11 +106,19 @@ export type CarriedLayout = { wrap: Record<string, string>; img: Record<string, 
  *  float goes to the wrapper (the picture's own is cleared: a float inside a wrapper that hugs it floats nothing). An
  *  inline `display: block` makes the wrapper a block too, sized to its content so auto margins can center it; then,
  *  and whenever a percentage width is carried, the picture's horizontal margins (an author's `margin: 0 auto`, an
- *  hspace) move to the wrapper, since a margin inside a wrapper the picture fills would push it out. Vertical margins
- *  stay on the picture (a block wrapper lets them collapse through, an inline one contains them, as the paragraph
- *  did). A vertical-align other than baseline goes to an inline wrapper, so the wrapper sits on the line as the
- *  picture did. The specified inline value is read first (it may be `auto`, or a percentage), the computed one after
- *  it (an `align` attribute's float, an hspace's pixels). Nothing carried: both records are empty. */
+ *  hspace) go to the wrapper too. A LENGTH (an hspace's pixels) leaves the picture, since inside a wrapper the picture
+ *  fills it would push the picture out; an `auto` margin stays on the picture as well, since auto never overflows (it
+ *  resolves to the free space, or to zero) and the picture does not always fill the wrapper: a `width="100%"` figure
+ *  capped by a pixel `max-width` fills the paragraph-wide wrapper only up to the cap, and with its auto margins moved
+ *  off it sat at the wrapper's left edge while the wrapper's own resolved to zero — a centered plot jumped left the
+ *  moment the panel opened, and a `margin-left: auto` one lost its right edge (the 2026-09-06 review). Auto on both
+ *  centers the wrapper in the paragraph and the picture in the wrapper, whichever is the narrower. The wrapper is not
+ *  narrowed to the cap instead, because a percentage VERTICAL margin on the picture resolves against its containing
+ *  block's width, and that block must stay as wide as the paragraph was. Vertical margins stay on the picture (a block
+ *  wrapper lets them collapse through, an inline one contains them, as the paragraph did). A vertical-align other than
+ *  baseline goes to an inline wrapper, so the wrapper sits on the line as the picture did. The specified inline value
+ *  is read first (it may be `auto`, or a percentage), the computed one after it (an `align` attribute's float, an
+ *  hspace's pixels). Nothing carried: both records are empty. */
 export function carriedLayout(l: ImgLayout): CarriedLayout {
   const wrap: Record<string, string> = {}, img: Record<string, string> = {};
   const inl = l.inline, cs = l.computed;
@@ -127,7 +135,7 @@ export function carriedLayout(l: ImgLayout): CarriedLayout {
     for (const side of ["left", "right"] as const) {
       const k = side === "left" ? "marginLeft" : "marginRight";
       const v = inl[k] || cs[k] || "";
-      if (v && v !== "0px" && v !== "0") { wrap["margin-" + side] = v; img["margin-" + side] = "0"; }
+      if (v && v !== "0px" && v !== "0") { wrap["margin-" + side] = v; if (v !== "auto") img["margin-" + side] = "0"; }
     }
   }
   const va = inl.verticalAlign || cs.verticalAlign || "";

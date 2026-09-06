@@ -261,12 +261,16 @@ test("carriedLayout: a percentage width goes to the wrapper and the picture fill
   assert.deepEqual(carriedLayout({ attrWidth: null, inline: {}, computed: { float: "none" } }), { wrap: {}, img: {} });
   assert.deepEqual(
     carriedLayout({ attrWidth: null, inline: { display: "block", marginLeft: "auto", marginRight: "auto" }, computed: { marginLeft: "150px", marginRight: "150px" } }),
-    { wrap: { display: "block", width: "fit-content", "margin-left": "auto", "margin-right": "auto" }, img: { "margin-left": "0", "margin-right": "0" } },
-    "the centered figure: the SPECIFIED auto, never the computed pixels, so it stays centered when the column changes");
+    { wrap: { display: "block", width: "fit-content", "margin-left": "auto", "margin-right": "auto" }, img: {} },
+    "the centered figure: the SPECIFIED auto, never the computed pixels, so it stays centered when the column changes — and the picture keeps its own auto, which never overflows");
   assert.deepEqual(
     carriedLayout({ attrWidth: "50%", inline: { display: "block", marginLeft: "auto", marginRight: "auto" }, computed: {} }),
-    { wrap: { width: "50%", display: "block", "margin-left": "auto", "margin-right": "auto" }, img: { width: "100%", "margin-left": "0", "margin-right": "0" } },
-    "a percentage width on a block figure: the percentage, not fit-content");
+    { wrap: { width: "50%", display: "block", "margin-left": "auto", "margin-right": "auto" }, img: { width: "100%" } },
+    "a percentage width on a block figure: the percentage, not fit-content; auto stays on the picture too, for the case where a pixel max-width keeps it from filling the wrapper (the layout leg's capped figures)");
+  assert.deepEqual(
+    carriedLayout({ attrWidth: "50%", inline: { display: "block", maxWidth: "200px", marginLeft: "auto" }, computed: { marginRight: "0px" } }),
+    { wrap: { width: "50%", display: "block", "margin-left": "auto" }, img: { width: "100%" } },
+    "a right-aligned capped figure (margin-left: auto, a pixel max-width the wrapper does not take): the picture's auto stands, so it keeps its right edge inside a wrapper it no longer fills");
   assert.deepEqual(
     carriedLayout({ attrWidth: "100%", inline: {}, computed: { marginLeft: "8px", marginRight: "8px" } }),
     { wrap: { width: "100%", "margin-left": "8px", "margin-right": "8px" }, img: { width: "100%", "margin-left": "0", "margin-right": "0" } },
@@ -300,7 +304,7 @@ test("the layer writes the carried layout to the wrapper's style and the picture
   // attribute restored byte for byte on dispose
   const centered = harness({ attrs: { src: "figure.png", width: "50%" }, styleAttr: "display:block;margin:0 auto", style: { display: "block", marginLeft: "auto", marginRight: "auto" }, computed: { marginLeft: "150px", marginRight: "150px" } });
   assert.deepEqual(decls(centered.wrap.getAttribute("style")), { display: "block", width: "50%", "margin-left": "auto", "margin-right": "auto" });
-  assert.equal(centered.img.getAttribute("style"), "display:block;margin:0 auto; width: 100%; margin-left: 0; margin-right: 0;", "appended after the author's declarations, so the later ones win");
+  assert.equal(centered.img.getAttribute("style"), "display:block;margin:0 auto; width: 100%;", "appended after the author's declarations, so the later ones win; the auto margins are not overridden (they stay on the picture too)");
   centered.layer.dispose();
   assert.equal(centered.img.getAttribute("style"), "display:block;margin:0 auto");
   // a badge on its line
