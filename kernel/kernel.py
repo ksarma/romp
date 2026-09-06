@@ -213,7 +213,10 @@ class _PerfStats:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
                                    _run_tier, plus every per-session worker the tiers run in
-                                   judge.py's thread pools; the split rides as cpu_ms_workers)
+                                   judge.py's thread pools; the split rides as cpu_ms_workers),
+                                   chain_memo {hit, miss, populate, bypass}: the write-moment chain
+                                   memo's counters (judge.chain_memo_stats), so its hit rate is
+                                   read from the live kernel rather than assumed
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -350,6 +353,10 @@ class _PerfStats:
             workers = 0.0
         judge["cpu_ms_workers"] = workers
         judge["cpu_ms_sum"] += workers                     # tier threads + their pool workers
+        try:
+            judge["chain_memo"] = jd.chain_memo_stats()
+        except Exception:
+            judge["chain_memo"] = {}
         try:
             goals = jd.goal_io_stats()
         except Exception:
@@ -918,6 +925,30 @@ def _version_info():
             # NO defaultDir or nativeDialogs here: /version is auth-exempt and this payload
             # carries no filesystem paths (see the handler's comment) — both ride the GATED
             # /defaults route instead, where the gear already fetches them.
+
+
+# client-diag.jsonl held rare breadcrumbs (a wsclose, a stale-banner raise) until the pane bundles began posting
+# a performance row per pane per active minute (ui/webview/perf-telemetry.ts, 2026-09-06): about 1 KB each, so
+# an open dashboard adds several MB a day and nothing pruned it. Past this many bytes the file is renamed to
+# client-diag.jsonl.1 (replacing the previous .1) and a new file starts, so at most two files, about 16 MB,
+# are ever kept; `romp perf client` reads both. Checked on every append: one stat, under one lock.
+CLIENT_DIAG_MAX_BYTES = 8 * 1024 * 1024
+_client_diag_lock = threading.Lock()
+
+
+def _client_diag_append(fp, line):
+    """Append one row to client-diag.jsonl, rotating it first once it is at the cap. One lock across the size
+    check, the rename and the write: every pane's socket is its own handler thread, so rows arrive
+    concurrently, and two threads finding the file at the cap at once would both rename, the second moving
+    the file the first had just started over the run the first had just rotated, and that run was gone."""
+    with _client_diag_lock:
+        try:
+            if fp.stat().st_size >= CLIENT_DIAG_MAX_BYTES:
+                os.replace(str(fp), str(fp) + ".1")
+        except OSError:
+            pass   # no file yet (fresh state) or a failed rename: the append below still goes to the current file
+        with open(fp, "a", encoding="utf-8") as f:
+            f.write(line)
 
 
 def _dist_ver():
@@ -30179,7 +30210,18 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
         if c.get("sent", {}).get(key, (None,))[0] == sig:      # it went (or was already held) → rebase
             states[ftype] = {"rev": 0, "rest": rest_sig,
                              "coll": {n: {kk: e[1] for kk, e in ents.items()} for n, (ents, _o) in colls.items()},
-                             "order": {n: list(o) for n, (_e, o) in colls.items()}, "at": now}
+                             "order": {n: list(o) for n, (_e, o) in colls.items()}, "at": now, "parts": parts}
+        return
+    if parts is st.get("parts") and now - st.get("at", 0) < _DEDUP_REPOST_S:
+        # Identity short-circuit (2026-09-06). `parts` is the split of the payload OBJECT (_delta_parts is keyed on
+        # its identity), and st["parts"] is the split the client's held state was last written from or last compared
+        # equal to — the keyed full, the last delta that went, or the unchanged branch below. The same object means
+        # the same entries and the same remainder, so the
+        # per-entry compare below would find nothing and return at its unchanged branch; the builders reuse an
+        # unchanged payload object across cycles (_bars_wire holds the bars by the cached timeline's identity), and
+        # that compare cost about 3.7 ms per timeline client per unchanged cycle. Counted as the same fact the
+        # unchanged branch counts: built, not sent. Past the repost window the loop runs and the repost goes.
+        _PERF_STATS.send(key, "deduped", len(pre))
         return
     frame = {"type": "delta", "slot": ftype, "base": st["rev"], "rev": st["rev"] + 1, "coll": {}}
     changed = False
@@ -30212,6 +30254,13 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
     if not changed:
         if now - st.get("at", 0) < _DEDUP_REPOST_S:    # unchanged: nothing to send (the repost keeps the fade alive)
             _PERF_STATS.send(key, "deduped", len(pre))   # built and compared, not sent — the same fact
+            # Adopt this split as the held one (review find, 2026-09-06): the compare just showed the held entry
+            # strings, key sets, order shape and remainder equal it, so the same object next cycle is an identity
+            # hit rather than another compare. A content-equal rebuild (the view sig's 5 s bucket rebuilds the
+            # timeline on a quiet system; a feed differing only in `now`) would otherwise be re-compared on every
+            # cycle until the repost, and the previous build's split — its whole entry-object graph — would stay
+            # referenced from here meanwhile. `at` stands: the repost timer counts from the last frame that went.
+            st["parts"] = parts
             return                                         # _send_client's dedup records for a whole-frame client
     s = json.dumps(frame, default=str)
     if len(s) >= _DELTA_MAX_FRACTION * len(pre):       # not worth a delta → the full frame, rebased
@@ -30221,12 +30270,9 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
         return
     _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0, delta=1)
     _PERF_STATS.send(key, "delta", len(s))
-    try:
-        c["send"](s)
-    except Exception:
-        c["alive"] = False
-        return
-    st["rev"] += 1; st["rest"] = rest_sig; st["at"] = now
+    if not _client_send(c, s, key):                    # like every other frame: curSlot names the slot for the length
+        return                                         # of the send, a drop is logged with it, and the client is dead
+    st["rev"] += 1; st["rest"] = rest_sig; st["at"] = now; st["parts"] = parts
     for name, (ents, _order) in colls.items():
         st["coll"][name] = {kk: e[1] for kk, e in ents.items()}
         st["order"][name] = next_order[name]
@@ -34007,7 +34053,10 @@ if(!P.createDiv)P.createDiv=function(o){return this.createEl('div',o);};
 if(!P.createSpan)P.createSpan=function(o){return this.createEl('span',o);};})();
 (function(){var api=window.acquireVsCodeApi(),panel=null;
 function post(m){api.postMessage(m);}
-window.addEventListener("message",function(ev){var m=ev.data;if(!m||!panel)return;
+// the frame listener, wrapped like every pane's through the page's performance collector when there is one
+// (ui/webview/perf-telemetry.ts, published on window.__rompPerf by federation.js, which loads before this boot),
+// so each frame's handling is timed by type; without a collector the plain listener
+var onFrame=function(ev){var m=ev.data;if(!m||!panel)return;
 if(m.type==="data")panel.update(m.data);
 else if(m.type==="bars"&&panel.applyBars)panel.applyBars(m);
 else if(m.type==="activeChat"&&panel.setActiveChat)panel.setActiveChat(m.activeChat);
@@ -34018,7 +34067,8 @@ else if(m.type==="hover"&&panel.setHover)panel.setHover(m);
 else if(m.type==="revealEvent"&&panel.revealEvent)panel.revealEvent(m.sid,m.t,m.id);
 else if(m.type==="models"&&panel.refreshModels)panel.refreshModels();
 else if(m.type==="tagEditFailed"&&panel.tagEditFailed)panel.tagEditFailed(m);
-else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);});
+else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);};
+window.addEventListener("message",(window.__rompPerf&&window.__rompPerf.wrapFrameHandler)?window.__rompPerf.wrapFrameHandler(onFrame):onFrame);
 window.__rompTimelineOpenExternal=function(url){try{var u=new URL(url);if(u.protocol==="vscode:"){var q=u.searchParams;
 post({type:"deepLink",session:q.get("session"),anchor:q.get("anchor")||undefined,anchorT:Number(q.get("anchorT"))||undefined,anchorKind:q.get("anchorKind")||undefined,compose:q.get("compose")==="1"});
 if(window.parent!==window)window.parent.postMessage({romp:"reveal",pane:"chat"},"*");return;}}catch(e){}window.open(url,"_blank");};
@@ -39603,8 +39653,9 @@ class Handler(BaseHTTPRequestHandler):
                 rec = {"t": int(time.time()), "wid": str(client.get("wid") or ""),
                        "surface": str(msg.get("surface") or ""), "what": str(msg.get("what") or ""),
                        "data": msg.get("data")}
-                with open(jd.STATE / "client-diag.jsonl", "a", encoding="utf-8") as f:
-                    f.write(json.dumps(rec) + "\n")
+                # past the size cap the file becomes .1 and a new one starts; the check, rename and write are one
+                # locked step, since every pane's socket posts from its own handler thread
+                _client_diag_append(jd.STATE / "client-diag.jsonl", json.dumps(rec) + "\n")
             except OSError:
                 pass
         elif msg and msg.get("type") == "orderAudit":
