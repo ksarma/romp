@@ -305,8 +305,8 @@ test("dragging a header reorders tagOrder through the views path — the store t
   assert.match(RENDER, /draggedGroup = name;/);
   const drop = RENDER.slice(RENDER.indexOf('tabs.addEventListener("drop"'), RENDER.indexOf("tabDragCommitted = true;"));
   assert.match(drop, /if \(draggedGroup\) \{/);
-  assert.match(drop, /postViews\(applyTagOrder\(v, reorderTagOrder\(viewTagUnion\(v\)\.map\(\(u\) => u\.name\), draggedGroup, to\)\)\);/,
-    "the FULL union order, one optimistic blob, setTimelineViews underneath (postViews)");
+  assert.match(drop, /postTagOrder\(reorderTagOrder\(viewTagUnion\(effViews\(\)\)\.map\(\(u\) => u\.name\), draggedGroup, to\)\);/,
+    "the FULL union order as a LENS write: the store's blob plus tagOrder, never the pending copy; setTimelineViews underneath (postTagOrder → postLens)");
   const over = RENDER.slice(RENDER.indexOf('tabs.addEventListener("dragover"'), RENDER.indexOf("if (!draggedId || !dragGeom) return;"));
   assert.match(over, /target\.classList\.add\("drop-target"\)/, "the target section wears the insertion cue");
   assert.doesNotMatch(over, /setTimeout|Date\.now/, "no time-based logic — the drop is the event");

@@ -89,7 +89,13 @@ def _wire(feed):
 
 def _client(caps=("feedDelta",), app="feed"):
     sent = []
-    c = {"app": app, "alive": True, "wid": "w1", "qbytes": 0, "send": sent.append, "caps": set(caps)}
+    # the {type:"caps"} frame the ready handler adds after its pushes (2026-09-05) is dropped here:
+    # these tests count the FEED frames a `ready` serves, and that frame is neither a feed frame nor
+    # a push. test_tag_edit_ack.py (Capability) pins the caps frame and its place in the order.
+    def send(s):
+        if not s.startswith('{"type": "caps"'):
+            sent.append(s)
+    c = {"app": app, "alive": True, "wid": "w1", "qbytes": 0, "send": send, "caps": set(caps)}
     return c, sent
 
 
@@ -536,6 +542,7 @@ class ReadyHandshake(unittest.TestCase):
                         frames.append(json.loads(payload.decode("utf-8")))
             except (socket.timeout, TimeoutError):
                 pass
+            frames = [fr for fr in frames if fr.get("type") != "caps"]   # the ready handler's caps frame: not a feed frame (test_tag_edit_ack.py pins it)
             types = [fr.get("type") for fr in frames]
             self.assertEqual(types.count("feed"), 1, "exactly one full frame per `ready`: %s" % types)
             self.assertIn("_keys", frames[types.index("feed")], "…the keyed one, the slot's base")
@@ -792,6 +799,7 @@ class OutlineDeltaStream(unittest.TestCase):
             except (socket.timeout, TimeoutError):
                 self.fail("no delta carrying the renamed card within 5 s; frames seen: %r"
                           % [(x.get("type"), x.get("buildId")) for x in frames])
+            frames = [x for x in frames if x.get("type") != "caps"]   # the ready handler's caps frame is not a feed frame (test_tag_edit_ack.py pins it)
             self.assertEqual([d["type"] for d in frames], ["feedDelta"] * len(frames), "never another full frame")
             self.assertEqual(d["buildId"], f2["buildId"], "the build the pusher ran (the kernel mints its id at build start)")
             self.assertEqual([a["itemId"] for a in d["asks"]], ["%s:g3" % SID], "the one card that changed, by itemId")
