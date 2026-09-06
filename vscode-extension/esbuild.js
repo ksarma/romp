@@ -55,6 +55,12 @@ const webview = {
     "../ui/webview/editor-chunk.ts",   // CodeMirror editing substrate — ON-DEMAND (file-view loads it by
                                        // script tag on first edit); nothing else may import it, so the
                                        // main bundles stay byte-stable for people who never edit
+    "../ui/webview/pdf-chunk.ts",      // pdf.js page renderer — ON-DEMAND the same way (file-view loads it
+                                       // when a PDF opens); nothing else may import it or pdfjs-dist
+    // pdf.js parses in a Worker it loads from a URL, so the worker ships as its own file. It is emitted as
+    // .js, not .mjs: the kernel's /dist route types by suffix and would serve .mjs as text/plain, which a
+    // module Worker refuses. The chunk derives this file's URL from its own script tag (same dir, same ?v=).
+    { in: "node_modules/pdfjs-dist/build/pdf.worker.mjs", out: "pdf-worker" },
   ],
   nodePaths: [path.join(__dirname, "node_modules")],
   bundle: true,
