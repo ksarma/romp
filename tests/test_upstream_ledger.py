@@ -627,8 +627,14 @@ class SetAndImport(unittest.TestCase):
         self.assertTrue(ok)
         e, got = L.parse_entry(path.name, path.read_text(encoding="utf-8"), path)
         self.assertEqual(got, [])
-        what, where, status, notes = L.row_cells(self.ROW)
+        what, where, status, notes = L.entry_cells(self.ROW)
         self.assertEqual((e.get("title"), e.get("where"), e.status_detail, e.notes), (what, where, status, notes))
+        self.assertEqual(what, "Toggle `on|off` on the tab strip")   # the table's `\\|` is a bare pipe in the file
+        self.assertTrue(notes.endswith("with a `k|v` pair."), notes)
+        self.assertNotIn("\\|", path.read_text(encoding="utf-8"))
+        row = next(r for r in L.render([e]).split("\n") if "tab strip" in r)
+        self.assertEqual(len(L.row_cells(row)), 4, row)   # and the render escapes it again
+        self.assertIn("`on\\|off`", row)
         self.assertEqual(e.get("status"), "offered")
         self.assertEqual(e.get("offered"), "their PR #961")
         self.assertEqual(e.get("tier"), "fix")

@@ -457,6 +457,19 @@ def row_cells(row):
     return [s[a + 1:b].strip() for a, b in zip(idx, idx[1:])]
 
 
+def unescape_cell(cell):
+    """A cell's text as an entry holds it: `\\|` was the table's escape for a pipe and means nothing
+    in a file (inside a code span it would even display the backslash); `escape_cell` puts the
+    escape back at render time. Four migrated cells carried one (2026-09-06)."""
+    return _ESCAPED_PIPE.sub("|", cell)
+
+
+def entry_cells(row):
+    """The four cells of a row as they are written into an entry, or None when the row has not four."""
+    cells = row_cells(row)
+    return [unescape_cell(c) for c in cells] if len(cells) == 4 else None
+
+
 def table_rows(text):
     """[(line_number, row_text)] of the old UPSTREAM.md table: every row under the separator."""
     lines = text.split("\n")
@@ -562,8 +575,8 @@ def body_tail(body):
 
 def existing_entry(dir_path, row):
     """The entry under dir_path whose title shares the row's title prefix, or None."""
-    cells = row_cells(row)
-    if len(cells) != 4:
+    cells = entry_cells(row)
+    if cells is None:
         return None
     existing, _ = load_entries(dir_path)
     head = cells[0][:TITLE_PREFIX]
@@ -588,9 +601,9 @@ def import_rows(rows, dir_path, root, report, mode="force"):
     taken = {p.name for p in dir_path.glob("*.md")}
     unmatched, disagree, guessed, written = [], [], [], []
     for i, (line_no, row) in enumerate(rows, 1):
-        cells = row_cells(row)
-        if len(cells) != 4:
-            report.append(f"{i:04d}: line {line_no}: {len(cells)} cells, expected 4; skipped: {row[:60]!r}")
+        cells = entry_cells(row)
+        if cells is None:
+            report.append(f"{i:04d}: line {line_no}: {len(row_cells(row))} cells, expected 4; skipped: {row[:60]!r}")
             continue
         what, where, status_cell, notes = cells
         header, body, plan_status = derive(what, where, status_cell, notes)
@@ -652,9 +665,9 @@ def round_trip(rows, dir_path, only=None):
     file under dir_path, or just the paths in `only`) must equal the table's."""
     want = Counter()
     for _, row in rows:
-        c = row_cells(row)
-        if len(c) == 4:
-            want[(c[0], c[1], c[2], c[3])] += 1
+        c = entry_cells(row)
+        if c is not None:
+            want[tuple(c)] += 1
     if only is None:
         entries, problems = load_entries(dir_path)
     else:
