@@ -34,7 +34,9 @@ Commands (stdlib only):
     list [--status a,b]          one JSON object per line
     set <slug> <key> <value>     rewrites one header line, leaves the body alone
     import <UPSTREAM.md> <dir>   the migration: one file per table row, re-runnable
-    import --row '<row>'         the straggler fix for a branch that still appended a row
+    import --row '<row>'         the straggler fix for a branch that still appended a row; refuses to
+                                 touch an existing entry unless --replace (keeps its status and the
+                                 lines a person appended) or --force (rewrites it from the row)
 """
 import argparse
 import json
@@ -545,10 +547,40 @@ def added_date(root, row, fallback=None):
     return (out[0], "git") if out else (fallback or today(), "today (no commit introduced this row)")
 
 
-def import_rows(rows, dir_path, root, report):
-    """Write one entry per row into dir_path. Re-runnable: a row whose title prefix already has an
-    entry rewrites that file in place, keeping its filename (so a rename sticks) and, when the cell
-    derives no status, its status (so a hand-set one sticks)."""
+def body_tail(body):
+    """What a person appended to an entry's body: everything after its first paragraph, minus the
+    Status detail line. The importer regenerates the first paragraph and that line from the row;
+    these lines (dated notes, rebase notes) have no row to come from."""
+    lines = body.split("\n")
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    while i < len(lines) and lines[i].strip():
+        i += 1
+    return "\n".join(l for l in lines[i:] if not l.startswith(STATUS_DETAIL)).strip("\n")
+
+
+def existing_entry(dir_path, row):
+    """The entry under dir_path whose title shares the row's title prefix, or None."""
+    cells = row_cells(row)
+    if len(cells) != 4:
+        return None
+    existing, _ = load_entries(dir_path)
+    head = cells[0][:TITLE_PREFIX]
+    return next((e for e in existing if e.get("title")[:TITLE_PREFIX] == head), None)
+
+
+def import_rows(rows, dir_path, root, report, mode="force"):
+    """Write one entry per row into dir_path; returns the row numbers that need attention.
+
+    Re-runnable: a row whose title prefix already has an entry rewrites that file in place, keeping
+    its filename (so a rename sticks), `added`, and every header value the cells derive nothing for
+    (so a hand-set status, tier, offered, closed, pr or supersedes sticks). `mode="force"` is the
+    migration's rule: the row wins wherever it says something and the body is rebuilt from the cells. `mode="replace"` is `import --row
+    --replace`, for a row that is older than the entry: the file's status stands unless it is
+    `candidate` (someone set it), and the lines a person appended to the body come back after the
+    rebuilt first paragraph and Status detail line. Either way the derivation line says the entry
+    was rewritten and what was kept."""
     dir_path = Path(dir_path)
     dir_path.mkdir(parents=True, exist_ok=True)
     existing, _ = load_entries(dir_path)
@@ -570,6 +602,19 @@ def import_rows(rows, dir_path, root, report):
             path = prev.path
             if not header["status"] and prev.get("status"):
                 header["status"] = kept = prev.get("status")
+            for key in OPTIONAL:
+                if not header.get(key) and prev.get(key):
+                    header[key] = prev.get(key)
+            preserved = []
+            if mode == "replace":
+                if prev.get("status") not in ("", "candidate") and header["status"] != prev.get("status"):
+                    header["status"] = prev.get("status")
+                    preserved.append(f"status {prev.get('status')}")
+                appended = body_tail(prev.body)
+                if appended:
+                    body += "\n" + appended + "\n"
+                    preserved.append(f"{appended.count(chr(10)) + 1} appended body lines")
+            tail.append("rewrote the existing entry" + ("; kept its " + " and ".join(preserved) if preserved else ""))
         else:
             header["added"], how = added_date(root, row)
             if how != "git":
@@ -602,14 +647,23 @@ def import_rows(rows, dir_path, root, report):
     return written, unmatched, disagree, guessed
 
 
-def round_trip(rows, dir_path):
-    """The multiset of (title, where, status detail, notes) from the files must equal the table's."""
+def round_trip(rows, dir_path, only=None):
+    """The multiset of (title, where, status detail, notes) read back from the files (every migrated
+    file under dir_path, or just the paths in `only`) must equal the table's."""
     want = Counter()
     for _, row in rows:
         c = row_cells(row)
         if len(c) == 4:
             want[(c[0], c[1], c[2], c[3])] += 1
-    entries, problems = load_entries(dir_path)
+    if only is None:
+        entries, problems = load_entries(dir_path)
+    else:
+        entries, problems = [], []
+        for p in only:
+            e, ps = parse_entry(p.name, p.read_text(encoding="utf-8"), p)
+            problems += ps
+            if e:
+                entries.append(e)
     got = Counter((e.get("title"), e.get("where"), e.status_detail, e.notes) for e in entries if e.status_detail)
     missing = want - got
     extra = got - want
@@ -645,17 +699,36 @@ def import_file(front_path, dir_path, root):
     return report, ok and not blank
 
 
-def import_row(row, dir_path, root):
+def import_row(row, dir_path, root, replace=False, force=False):
+    """The straggler fix: one row into dir_path; (report lines, path, ok). A row whose title already
+    has an entry is refused, naming the file: after the migration an entry can carry what the row
+    does not (a status someone set, an upstream reference, dated body lines), and a stale row must
+    not take it back silently. `replace` rebuilds the header and first paragraph from the row and
+    keeps the entry's status and appended lines; `force` rewrites it whole (the migration's rule).
+    `ok` is False when the written entry does not parse (a Status cell with no keyword leaves
+    `status` blank) or its cells do not round-trip."""
+    dir_path = Path(dir_path)
+    if not (replace or force):
+        prev = existing_entry(dir_path, row)
+        if prev is not None:
+            raise SystemExit(f"{DIR}/{prev.name} already holds this entry (the titles agree on their first {TITLE_PREFIX} "
+                             f"characters); change it with `set {prev.slug} <key> <value>`, or run `import --row --replace` "
+                             "to rebuild its header and first paragraph from the row while keeping its status and appended "
+                             "lines, or `--force` to rewrite it whole")
     rows = [(0, row)]
     report = []
-    written, unmatched, _, _ = import_rows(rows, dir_path, root, report)
+    written, unmatched, _, _ = import_rows(rows, dir_path, root, report, mode="force" if force else "replace")
     if not written:
         raise SystemExit("\n".join(report))
-    lines, ok = round_trip(rows, dir_path)
+    path = written[0]
+    lines, ok = round_trip(rows, dir_path, only=written)
+    _, problems = parse_entry(path.name, path.read_text(encoding="utf-8"), path)   # round_trip printed them
+    if unmatched:
+        lines.append(f"the Status cell matched no keyword: run `set {path.stem[11:]} status <value>` before `check` will pass")
     front = Path(root) / FRONT
     if front.exists() and row.strip() in front.read_text(encoding="utf-8"):
         report.append(f"now delete the row from {FRONT}")
-    return report + lines, written[0]
+    return report + lines, path, ok and not problems
 
 
 # ---------------------------------------------------------------- CLI
@@ -692,6 +765,9 @@ def main(argv=None):
     p.add_argument("source", nargs="?", help="the UPSTREAM.md holding the old table")
     p.add_argument("dir", nargs="?", help="the entry directory")
     p.add_argument("--row", default=None, help="one table row's text")
+    p.add_argument("--replace", action="store_true",
+                   help="with --row: an entry with this title exists; rebuild its header and first paragraph from the row, keeping its status and appended lines")
+    p.add_argument("--force", action="store_true", help="with --row: rewrite an existing entry whole from the row")
 
     a = ap.parse_args(argv)
     if hasattr(signal, "SIGPIPE"):
@@ -730,9 +806,10 @@ def main(argv=None):
         print(set_key(resolve(entries_dir, a.slug), a.key, a.value))
     elif a.cmd == "import":
         if a.row is not None:
-            report, path = import_row(a.row, Path(a.dir) if a.dir else entries_dir, root)
+            report, path, ok = import_row(a.row, Path(a.dir) if a.dir else entries_dir, root, replace=a.replace, force=a.force)
             print("\n".join(report))
             print(path)
+            return 0 if ok else 1
         else:
             if not a.source or not a.dir:
                 ap.error("import needs <UPSTREAM.md> <dir>, or --row '<row text>'")

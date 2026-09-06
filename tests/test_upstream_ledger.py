@@ -623,7 +623,8 @@ class SetAndImport(unittest.TestCase):
            "| **offered** — their PR #961 (2026-09-06), label `fix` | One paragraph of why, with a `k\\|v` pair. |")
 
     def test_import_row_produces_an_entry_that_parses_and_round_trips_its_cells(self):
-        report, path = L.import_row(self.ROW, self.d, self.d)
+        report, path, ok = L.import_row(self.ROW, self.d, self.d)
+        self.assertTrue(ok)
         e, got = L.parse_entry(path.name, path.read_text(encoding="utf-8"), path)
         self.assertEqual(got, [])
         what, where, status, notes = L.row_cells(self.ROW)
@@ -636,19 +637,108 @@ class SetAndImport(unittest.TestCase):
         self.assertTrue(path.name.endswith("-toggle-on-off-on-the-tab-strip.md"), path.name)
         self.assertIn("round-trip: 1 rows, 1 migrated files, diff empty", "\n".join(report))
 
-    def test_import_row_is_re_runnable_keyed_on_the_title(self):
-        _, first = L.import_row(self.ROW, self.d, self.d)
+    def test_import_row_force_is_re_runnable_keyed_on_the_title(self):
+        _, first, _ = L.import_row(self.ROW, self.d, self.d)
         os.rename(first, self.d / (first.name[:10] + "-tab-toggle.md"))   # the plan's step 4: a slug renamed once
         L.set_key(self.d / (first.name[:10] + "-tab-toggle.md"), "status", "merged")
-        _, second = L.import_row(self.ROW, self.d, self.d)
+        report, second, ok = L.import_row(self.ROW, self.d, self.d, force=True)
+        self.assertTrue(ok)
         self.assertEqual(second.name, first.name[:10] + "-tab-toggle.md")
         self.assertEqual(sorted(p.name for p in self.d.glob("*.md")), ["2026-09-06-alpha.md", second.name])
         e, _ = L.parse_entry(second.name, second.read_text(encoding="utf-8"))
-        self.assertEqual(e.get("status"), "offered")   # the cell derives a status, so the cell wins on a re-run
+        self.assertEqual(e.get("status"), "offered")   # the migration's rule: the cell derives a status, so the cell wins
+        self.assertIn("rewrote the existing entry", report[0])
+
+    def test_import_row_refuses_an_existing_entry_and_names_it(self):
+        _, first, _ = L.import_row(self.ROW, self.d, self.d)
+        L.set_key(first, "status", "approved")
+        before = first.read_text(encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            L.import_row(self.ROW.replace("**offered**", "**candidate**"), self.d, self.d)
+        msg = str(cm.exception)
+        self.assertIn(f"upstream/{first.name} already holds this entry", msg)
+        self.assertIn(f"`set {first.stem[11:]} <key> <value>`", msg)
+        self.assertIn("--replace", msg)
+        self.assertEqual(first.read_text(encoding="utf-8"), before)   # nothing written
+
+    def _entry_someone_acted_on(self):
+        """An imported entry the maintainer approved and the upstream session offered, with a dated body line."""
+        _, path, _ = L.import_row(self.ROW.replace("**offered** — their PR #961 (2026-09-06), label `fix`", "**candidate**"), self.d, self.d)
+        L.set_key(path, "status", "approved")
+        L.set_key(path, "offered", "their PR #970")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n2026-09-08: offered as their PR #970 (branch `tabtoggle-offer`).\n")
+        return path
+
+    def test_import_row_replace_keeps_the_set_status_and_the_appended_lines(self):
+        path = self._entry_someone_acted_on()
+        stale = self.ROW.replace("**offered** — their PR #961 (2026-09-06), label `fix`", "**candidate**").replace("One paragraph of why", "A reworded paragraph")
+        report, again, ok = L.import_row(stale, self.d, self.d, replace=True)
+        self.assertTrue(ok, report)
+        self.assertEqual(again, path)
+        e, got = L.parse_entry(path.name, path.read_text(encoding="utf-8"))
+        self.assertEqual(got, [])
+        self.assertEqual(e.get("status"), "approved")            # the row's `candidate` does not take it back
+        self.assertEqual(e.get("offered"), "their PR #970")     # the cell derives none, so the file's stands
+        self.assertTrue(e.notes.startswith("A reworded paragraph"), e.notes)   # the first paragraph is the row's
+        self.assertEqual(e.status_detail, "**candidate**")
+        self.assertIn("\n2026-09-08: offered as their PR #970 (branch `tabtoggle-offer`).\n", e.body)
+        self.assertIn("rewrote the existing entry; kept its status approved and 1 appended body lines", report[0])
+
+    def test_import_row_force_rewrites_the_entry_from_the_row(self):
+        path = self._entry_someone_acted_on()
+        stale = self.ROW.replace("**offered** — their PR #961 (2026-09-06), label `fix`", "**candidate**")
+        _, again, ok = L.import_row(stale, self.d, self.d, force=True)
+        self.assertTrue(ok)
+        e, _ = L.parse_entry(path.name, path.read_text(encoding="utf-8"))
+        self.assertEqual(e.get("status"), "candidate")
+        self.assertNotIn("2026-09-08", e.body)
+
+    def test_a_re_import_keeps_hand_set_header_values_the_cells_do_not_derive(self):
+        row = "| Thing | `x.py` | candidate | Notes. |"
+        _, path, _ = L.import_row(row, self.d, self.d)
+        L.set_key(path, "tier", "tests-only")
+        L.set_key(path, "offered", "their PR #970")
+        L.set_key(path, "supersedes", "2026-09-01-old.md")
+        L.import_row(row, self.d, self.d, force=True)
+        e, _ = L.parse_entry(path.name, path.read_text(encoding="utf-8"))
+        self.assertEqual((e.get("tier"), e.get("offered"), e.get("supersedes")), ("tests-only", "their PR #970", "2026-09-01-old.md"))
+        L.import_row(row.replace("| candidate |", "| **offered** — their PR #971, label `fix` |"), self.d, self.d, force=True)
+        e, _ = L.parse_entry(path.name, path.read_text(encoding="utf-8"))
+        self.assertEqual((e.get("tier"), e.get("offered")), ("fix", "their PR #971"))   # the cells say, so the cells win
+
+    def test_body_tail_is_what_a_person_appended(self):
+        self.assertEqual(L.body_tail("Notes.\n\nStatus detail (migrated from the table): x\n"), "")
+        self.assertEqual(L.body_tail("Notes.\n\nStatus detail (migrated from the table): x\n\n2026-09-08: dated.\nMore.\n"), "2026-09-08: dated.\nMore.")
+        self.assertEqual(L.body_tail("Status detail (migrated from the table): x\n\n2026-09-08: dated.\n"), "2026-09-08: dated.")
+        self.assertEqual(L.body_tail("First.\n\nSecond paragraph.\n"), "Second paragraph.")
+
+    def test_import_row_round_trip_is_scoped_to_the_entry_it_wrote(self):
+        neighbour = "| A migrated neighbour | `n.py` | candidate | Its notes. |"
+        L.import_row(neighbour, self.d, self.d)   # a migrated-shape entry with a Status detail line
+        report, _, ok = L.import_row(self.ROW, self.d, self.d)
+        self.assertTrue(ok)
+        self.assertIn("round-trip: 1 rows, 1 migrated files, diff empty", report)
+        self.assertFalse([l for l in report if "only in the files" in l], report)
+
+    def test_import_row_with_no_status_keyword_is_not_ok_and_the_command_exits_1(self):
+        row = "| Thing | `x.py` | **keep as-is — deliberate** | Notes. |"
+        report, path, ok = L.import_row(row, self.d, self.d)
+        self.assertFalse(ok)
+        self.assertTrue(any("required key `status` is blank" in l for l in report), report)
+        self.assertTrue(any(l.startswith("the Status cell matched no keyword: run `set thing status <value>`") for l in report), report)
+        path.unlink()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = L.main(["--root", str(self.d), "import", "--row", row, str(self.d)])
+        self.assertEqual(rc, 1, out.getvalue())
+        with contextlib.redirect_stdout(out):
+            rc = L.main(["--root", str(self.d), "import", "--row", "| Fine | `x.py` | candidate | Notes. |", str(self.d)])
+        self.assertEqual(rc, 0, out.getvalue())
 
     def test_a_terminal_status_takes_the_first_date_as_closed(self):
         row = "| Thing | `x.py` | ✅ **merged** — their PR #544, 2026-08-22 (merge `782c617a`); came home 2026-08-23 | Notes. |"
-        _, path = L.import_row(row, self.d, self.d)
+        _, path, _ = L.import_row(row, self.d, self.d)
         e, _ = L.parse_entry(path.name, path.read_text(encoding="utf-8"))
         self.assertEqual((e.get("status"), e.get("offered"), e.get("closed")), ("merged", "their PR #544", "2026-08-22"))
 
