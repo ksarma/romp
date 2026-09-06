@@ -876,7 +876,9 @@ class LegacyStoreStampedOnce(_Wire):
             on_disk = json.loads(p.read_text())
             self.assertEqual(on_disk["seq"], v["seq"], "…and the file does too")
             self.assertEqual(on_disk["tags"][0]["members"], [{"host": "", "sid": SID1}], "nothing else changed")
-            self.assertNotIn("mtime", on_disk["tags"][0], "an unchanged tag gets no edit stamp from the migration")
+            self.assertTrue(on_disk["tags"][0].get("mtime"), "every tag is given an mtime by the stamp (round 5): "
+                            "the mark that tells a tag a store once held from a client's own create")
+            self.assertLessEqual(on_disk["tags"][0]["mtime"], on_disk["at"], "a file without `at`: the stamp's own time")
             self.assertEqual(self.notices, [], "a stamp is not a refusal: nothing is said")
             before = p.read_bytes()
             km._flags_cache.clear()                      # a cold cache (a restart): the stamped file is fine as-is
@@ -911,6 +913,49 @@ class LegacyStoreStampedOnce(_Wire):
             self.assertEqual(p.read_text(), "{not json")
         finally:
             restore()
+
+
+class LegacyTagsStampedOnFirstRead(_Wire):
+    """Round 5 of the 2026-09-05 review: the write door stamps an mtime on a tag only when it changes,
+    and the first-read stamp changes nothing, so a tag from before the per-tag stamp never got one —
+    and the foreign-file rule (an unknown tag WITH an mtime existed in a store once and is not
+    re-created; one without is the writer's own create) let a deleted legacy tag come back through
+    a file written outside the kernel. The first-read stamp (and the migration) now give every tag
+    an mtime: the file's `at`, else the time of the stamp."""
+
+    def test_every_legacy_tag_gets_an_mtime_so_a_deleted_one_cannot_come_back_through_a_foreign_file(self):
+        p = km._views_path()
+        legacy = {"active": "all", "at": 1700000000, "tags": [
+            {"id": "gL1", "name": "web", "color": "#3b82f6", "members": [{"host": "", "sid": SID1}]},
+            {"id": "gL2", "name": "api", "color": "#54B204", "members": [{"host": "", "sid": SID2}]}]}
+        p.write_text(json.dumps(legacy))
+        v = km._timeline_views()                                       # the first read: the stamp
+        self.assertEqual([t.get("mtime") for t in v["tags"]], [1700000000, 1700000000], "every tag carries the file's `at`")
+        self.assertEqual([t["mtime"] for t in json.loads(p.read_text())["tags"]], [1700000000, 1700000000], "…on disk too")
+        self.assertEqual(self.notices, [], "a stamp is not a refusal")
+        panel = json.loads(p.read_text())                              # a panel's copy, taken after the stamp
+        time.sleep(1.1)
+        self.assertIsNone(km._edit_tag(tid="gL2", delete=True)[1])    # api deleted since
+        s_served = km._timeline_views()["seq"]
+        foreign = json.loads(json.dumps(panel))                        # the panel writes its copy: seq behind, judged
+        foreign["actives"] = {"timeline": {"tags": ["web"]}, "chat": {"all": True}, "outline": {"all": True}}
+        time.sleep(0.01)
+        km._atomic_write(p, json.dumps(foreign))
+        v2 = km._timeline_views()
+        self.assertGreater(v2["seq"], s_served)
+        self.assertEqual([t["id"] for t in v2["tags"]], ["gL1"],
+                         "the deleted legacy tag does not come back: its mtime says a store once held it")
+        self.assertEqual(v2["actives"]["timeline"], {"tags": ["web"]}, "the panel's lens change lands")
+        self.assertTrue(self.notices and not self.notices[0][1])
+        self.assertIn('"api" (re-creation)', self.notices[0][0])
+        # a legacy file without `at`: the stamp's own time
+        p.unlink()
+        self.assertEqual(km._timeline_views()["tags"], [])
+        p.write_text(json.dumps({"active": "all", "tags": [{"id": "gL3", "name": "docs", "color": "", "members": []}]}))
+        before = int(time.time())
+        v3 = km._timeline_views()
+        self.assertGreaterEqual(v3["tags"][0]["mtime"], before)
+        self.assertLessEqual(v3["tags"][0]["mtime"], v3["at"])
 
 
 class ForeignWriteReStamped(_Wire):
@@ -980,7 +1025,8 @@ class MigrationStampsTheArchivedTag(_Wire):
         arch = next(t for t in v["tags"] if t["name"] == "archived")
         self.assertEqual([m["sid"] for m in arch["members"]], sorted([SID2, SID3]), "the hidden entry joined the existing tag")
         self.assertTrue(arch.get("mtime"), "the migrated tag carries a FRESH edit stamp: its members changed")
-        self.assertNotIn("mtime", next(t for t in v["tags"] if t["id"] == "gA"), "an untouched tag gets none")
+        self.assertTrue(next(t for t in v["tags"] if t["id"] == "gA").get("mtime"),
+                        "an untouched tag is given one too (round 5): every tag a migrated store holds carries an mtime")
         self.assertNotIn("hidden", json.loads(p.read_text()))
         # the pre-migration dashboard posts its whole copy (no `at`, no mtimes): the guard refuses
         # the archived hunk — the migrated members stand — and the ack says so

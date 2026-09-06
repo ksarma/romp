@@ -2679,6 +2679,26 @@ def _timeline_views():
     return d
 
 
+def _views_stamp_legacy_tags(tags, d):
+    """Every tag of a file going through the first-read stamp or the migration is given an mtime if
+    it lacks one — the file's `at` (the last write the store recorded), else now (round 5 of the
+    2026-09-05 review). The mtime is the one mark that tells a tag a store once held from a client's
+    own create in a write the kernel cannot otherwise judge (the `foreign` rule in
+    _judge_timeline_views: an unknown tag carrying one existed in a store and is not re-created). The
+    write door stamps changed tags only, and a first-read stamp changes nothing, so a tag from before
+    the per-tag stamp never got one and, once deleted, could come back through a file written outside
+    the kernel. Mutates and returns `tags` (a copy at every call site)."""
+    try:
+        at = int(d.get("at") or 0)
+    except (TypeError, ValueError):
+        at = 0
+    stamp = at or int(time.time())
+    for t in tags:
+        if isinstance(t, dict) and not t.get("mtime"):
+            t["mtime"] = stamp
+    return tags
+
+
 def _views_restamp(d, hit):
     """Why a views file just read (a parsed dict) must go back through the write door before it is
     served, and the dict to write — or None when it is fine as-is. Each case is one write and then
@@ -2720,14 +2740,20 @@ def _views_restamp(d, hit):
             arch = {"id": "archived", "name": "archived", "color": "#6b7280", "members": []}   # muted slate — never a status color
             tags = tags + [arch]
         arch["members"] = [m for m in (arch.get("members") or []) if m] + hid
-        d2["tags"] = tags; d2.pop("groups", None); d2.pop("hidden", None)
+        d2["tags"] = _views_stamp_legacy_tags(tags, d); d2.pop("groups", None); d2.pop("hidden", None)
         return "hidden entries migrated into the archived tag", d2, False
     try:
         seq = int(d.get("seq") or 0)
     except (TypeError, ValueError):
         seq = 0
     if not seq:
-        return "a store from before the write sequence, stamped once", d, False
+        # a copy, like the migration's: `d` is the diff base, and every tag the file holds is given
+        # an mtime here (_views_stamp_legacy_tags) — the base keeps none, so the stamp is the one
+        # change the setter sees, and it preserves the given mtime on an otherwise unchanged tag
+        d2 = json.loads(json.dumps(d))
+        raw = d2.get("tags") if isinstance(d2.get("tags"), list) else (d2.get("groups") if isinstance(d2.get("groups"), list) else [])
+        d2["tags"] = _views_stamp_legacy_tags([t for t in raw if isinstance(t, dict)], d); d2.pop("groups", None)
+        return "a store from before the write sequence, stamped once", d2, False
     if hit is not None:
         try:
             last = int(hit[1].get("seq") or 0)
@@ -2768,8 +2794,9 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     # (tag federation v2, the user 2026-08-29): a pending edit queued for an unreachable host must
     # be able to tell, at late-apply time, whether the host's copy changed AFTER the user's ruling —
     # a writer whose evidence predates newer information stands down (the cards-move corollary).
-    # The stamp rides /views to every peer for free. Only set when a tag actually changes, so
-    # untouched legacy stores round-trip byte-identical; a client echoing a blob without mtimes
+    # The stamp rides /views to every peer for free. Set when a tag changes — and once for every tag
+    # a legacy store holds, when its first read stamps it (_views_stamp_legacy_tags, round 5 of the
+    # 2026-09-05 review), so every stored tag carries one; a client echoing a blob without mtimes
     # merely resets the field, which reads as "no newer information" — the safe direction.
     # `base` — the previous blob to diff against, when the caller already holds it: the reader's
     # re-stamp path (_timeline_views) passes the file's own content, since reading it here would

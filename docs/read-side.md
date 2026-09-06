@@ -412,7 +412,11 @@ a kernel from before the stamp acks nothing.
 Reader-side rules keep the sequence consistent. A store from before the stamp
 is stamped once on its first read, so the gate protects the first write after
 an upgrade (a store that does not exist is left alone: its first write starts
-past whatever a client holds). A file written outside the kernel (the
+past whatever a client holds). The same first read gives every tag the file
+holds an mtime (the file's `at`, else the time of the stamp), and the
+hidden-to-archived migration does the same for the tags it carries over, so
+every stored tag carries the mark that tells it from a client's own create. A
+file written outside the kernel (the
 timeline's Electron branch writes `timeline-views.json` itself, with the seq it
 holds) can carry a seq behind the last one served. By its own seq the writer
 held an older copy, so the reader judges the file against the last served blob
