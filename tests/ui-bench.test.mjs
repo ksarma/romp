@@ -7,9 +7,9 @@
 // bars slot, contiguous delta revisions, a byte-stable stream), the --record client against a local
 // WebSocket server (the query, the cookie and Origin credential form, the ready handshake and nothing
 // else, the JSONL shape, the early-close and refusal errors), and the CPU-profile fold over a
-// synthetic .cpuprofile. With python3 and a built dist: the Handler subprocess's environment (seen
-// through a stub interpreter that echoes it) and its exit when the node process that started it is
-// SIGKILLed. With a browser as well: a synthetic feed stream and a synthetic timeline stream replayed
+// synthetic .cpuprofile, and the per-user run directory with its dead-owner sweep. With python3 and a
+// built dist: the Handler subprocess's environment (seen through a stub interpreter that echoes it)
+// and its exit when the node process that started it is SIGKILLed. With a browser as well: a synthetic feed stream and a synthetic timeline stream replayed
 // back-to-back into the REAL pages, served by the kernel's own page route and the built bundles, must
 // produce a report with every frame type measured and settled and no console error, uncaught
 // exception or failed resource load; the feed run also writes a CPU profile. Those tests skip, naming
@@ -28,9 +28,10 @@ import { createRequire } from "node:module";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  APPS, DELTA_SEP, REPO, STRIPPED_ENV, aggregateProfile, assertTmpPath, barsKeys, browserAvailability, buildReport, classifyFrame,
-  compareReports, frameKey, loadFrames, mergeAggregates, percentile, rankProfile, recordFrames, refineAlignment, renderCompare, renderProfile,
-  renderReport, replay, sourceLocator, startPageServer, streamSummary, summarize, synthesizeFrames, writeFrames,
+  APPS, DELTA_SEP, REPO, STRIPPED_ENV, aggregateProfile, assertTmpPath, barsKeys, benchRoot, browserAvailability, buildReport, classifyFrame,
+  compareReports, frameKey, launchBrowser, loadFrames, mergeAggregates, percentile, rankProfile, recordFrames, refineAlignment, renderCompare,
+  renderProfile, renderReport, replay, sourceLocator, startPageServer, streamSummary, stripProfileQueries, summarize, sweepDeadRuns,
+  synthesizeFrames, writeFrames,
 } from "../tools/ui-bench.mjs";
 
 const TOOL = path.join(REPO, "tools", "ui-bench.mjs");
@@ -38,6 +39,21 @@ const THIS_FILE = fileURLToPath(import.meta.url);
 const requireExt = createRequire(path.join(REPO, "vscode-extension", "package.json"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const mode = (p) => fs.statSync(p).mode & 0o777;
+const UID = os.userInfo().uid;
+
+/** A stand-in interpreter: announces a port and blocks on stdin the way the Handler's watcher does. */
+function writeStub(dir, name = "python-stub", prelude = "") {
+  const stub = path.join(dir, name);
+  fs.writeFileSync(stub, `#!/bin/sh\n${prelude}echo "PORT 1"\ncat > /dev/null\n`, { mode: 0o755 });
+  return stub;
+}
+/** A directory that passes startPageServer's dist check. */
+function fakeDist(dir) {
+  const dist = path.join(dir, "dist");
+  fs.mkdirSync(dist, { recursive: true });
+  fs.writeFileSync(path.join(dist, "feed.js"), "");
+  return dist;
+}
 
 /** Set environment variables for the duration of `fn`, restoring the previous values after. */
 async function withEnv(vars, fn) {
@@ -527,6 +543,7 @@ test("aggregateProfile attributes each sample's interval as self time to its nod
   // A window on the profile's clock: samples at 1300 and 1400 (both fmt under render under main).
   const w = aggregateProfile(SYNTH_PROFILE, [1250, 1450]);
   assert.ok(w.functions.every((f) => f.lines === undefined), "ticks cover the whole profile, so a window gets no lines");
+  assert.equal(w.durationMs, 0.2, "a window's duration is its own width, not the profile's");
   assert.equal(w.samples, 2);
   assert.equal(w.sampledMs, 0.2);
   assert.deepEqual(w.meta, {});
@@ -556,6 +573,20 @@ test("sourceLocator maps a bundle position to its source through the dist's .map
     assert.equal(locate({ functionName: "g", url: "http://127.0.0.1:1/dist/other.js", lineNumber: 0, columnNumber: 0 }), null, "no map, no position");
     assert.equal(locate({ functionName: "native", url: "", lineNumber: -1 }), null);
     assert.equal(locate(null), null);
+    assert.equal(locate.probe("feed.js"), true);
+    assert.equal(locate.probe("other.js"), false);
+    assert.deepEqual([...locate.loaded], ["feed.js"], "the locator says which maps it loaded");
+    assert.deepEqual([...locate.missing], ["other.js"], "and which it could not");
+    // A bundle whose second line first maps at column 4 (bundled node_modules code does this): a column-0
+    // probe lands on line 1's mapping and the same-line guard refuses it; the per-line probe steps to it.
+    fs.writeFileSync(path.join(tmp, "indent.js.map"), JSON.stringify({ version: 3, sources: ["../src/b.ts"], names: [], mappings: "AAAA;IACA" }));
+    const cfi = { functionName: "f", url: "http://127.0.0.1:1/dist/indent.js?v=1", lineNumber: 1, columnNumber: 0 };
+    assert.equal(locate(cfi), null, "the function-level lookup at column 0 refuses the previous line's mapping");
+    assert.equal(locate.line(cfi, 1), "src/b.ts:2", "the per-line lookup finds the line's first mapping at column 4");
+    assert.equal(locate.line(cfi, 0), "src/b.ts:1");
+    assert.equal(locate.line(cfi, 7), null, "an unmapped line stays unresolved");
+    assert.equal(locate.line({ functionName: "n", url: "", lineNumber: -1 }, 3), null);
+    assert.equal(locate.line({ ...cfi, url: "http://127.0.0.1:1/dist/other.js" }, 1), null);
     const ranked = rankProfile(aggregateProfile(SYNTH_PROFILE), 1, locate);
     assert.equal(ranked.topSelf[0].src, undefined, "a line the map does not cover gets no position");
     const one = rankProfile({ durationMs: 1, sampledMs: 1, samples: 1, meta: {}, functions: [{ key: "feed.js:f:2", selfMs: 1, totalMs: 1, samples: 1, cf: { url: "http://x/dist/feed.js", lineNumber: 1, columnNumber: 0 }, lines: [{ line: 2, ms: 0.9 }, { line: 1, ms: 0.1 }, { line: 7, ms: 0.01 }] }] }, 1, locate);
@@ -574,6 +605,43 @@ test("sourceLocator maps a bundle position to its source through the dist's .map
   }
 });
 
+test("the report claims source positions only for bundles whose maps loaded, and warns about the ones without", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "romp-ui-bench-maps-"));
+  try {
+    const mkRun = () => { const run = fakeRun({ perFrame: [pf(0, "feed", 5000, 40, 90), pf(1, "feedDelta", 300, 4, 20)] }); run.profiling = { profile: SYNTH_PROFILE, p0: 0, alignMs: 1 }; return run; };
+    const build = (sourceMapDir) => buildReport({ app: "feed", framesFile: "f", cpuThrottle: 1, fast: true, iters: 1, browser: "t", runs: [mkRun()], cpuProfileFiles: ["/tmp/x.cpuprofile"], sourceMapDir });
+    const noMaps = path.join(tmp, "nomaps");
+    fs.mkdirSync(noMaps);
+    const r1 = build(noMaps).cpuProfile;
+    assert.equal(r1.sourceMaps, false, "a configured directory is not a loaded map");
+    assert.deepEqual(r1.sourceMapsMissing, ["feed.js"]);
+    assert.deepEqual(r1.sourceMapsLoaded, []);
+    const t1 = renderProfile(r1);
+    assert.match(t1, /warning: no feed\.js\.map beside the served bundle; names and lines are the bundle's own, and a --production build is minified/);
+    assert.doesNotMatch(t1, /source positions from/);
+    assert.doesNotMatch(t1, /source:line/);
+    const withMaps = path.join(tmp, "maps");
+    fs.mkdirSync(withMaps);
+    fs.writeFileSync(path.join(withMaps, "feed.js.map"), JSON.stringify({ version: 3, sources: ["../src/a.ts"], names: [], mappings: "AAAA;AACA" }));
+    const r2 = build(withMaps).cpuProfile;
+    assert.equal(r2.sourceMaps, true);
+    assert.deepEqual(r2.sourceMapsLoaded, ["feed.js"]);
+    assert.deepEqual(r2.sourceMapsMissing, []);
+    const t2 = renderProfile(r2);
+    assert.match(t2, /source positions from feed\.js\.map/);
+    assert.doesNotMatch(t2, /warning:/);
+    assert.equal(r2.alignRefined, false, "this profile has no wrapper samples, so the bracketing estimate stands");
+    assert.equal(r2.alignMs, 1);
+    assert.equal(r2.alignBoundMs, 1);
+    assert.match(t2, /±1\.0 ms \(the bracketing estimate; the refinement did not apply: no handler windows to check against\)/);
+    const first = r2.windows.find((w) => w.label === "first content frame");
+    assert.equal(first.durationMs, 40, "a window's duration is the handler window's width");
+    assert.equal(first.samples, 0, "and this profile has no samples in it");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("refineAlignment recovers the page-to-profile offset from the wrapper's samples", () => {
   // Ten wrapper samples 100 us apart from t=100 us, then ten (program) samples. The true page time of the
   // profile's start is 50 ms, so the handler window is [50.1, 51.05) ms; the bracketing estimate is 3 ms off.
@@ -585,14 +653,68 @@ test("refineAlignment recovers the page-to-profile offset from the wrapper's sam
   };
   const al = refineAlignment(profile, 53, 5, [[50.1, 51.05]]);
   assert.ok(Math.abs(al.p0 - 50) <= 0.13, `refined to ${al.p0}`);
-  assert.equal(al.alignMs, 0.125, "a quarter of the sampling interval");
+  assert.equal(al.alignMs, 0.125, "a single grid point fits: the uncertainty is a quarter of the sampling interval");
   assert.equal(al.inside, 1, "every wrapper sample lands inside a handler window");
+  assert.equal(al.refined, true);
   const none = refineAlignment(profile, 53, 5, []);
-  assert.deepEqual(none, { p0: 53, alignMs: 5, inside: null }, "without windows the estimate stands");
+  assert.deepEqual(none, { p0: 53, alignMs: 5, inside: null, refined: false }, "without windows the estimate stands");
   const noWrapper = refineAlignment({ ...profile, samples: Array(20).fill(4) }, 53, 5, [[50.1, 51.05]]);
-  assert.deepEqual(noWrapper, { p0: 53, alignMs: 5, inside: null }, "without wrapper samples too");
+  assert.deepEqual(noWrapper, { p0: 53, alignMs: 5, inside: null, refined: false }, "without wrapper samples too");
   const far = refineAlignment(profile, 53, 5, [[80, 81]]);
-  assert.ok(far.inside === 0 && far.p0 === 53, "when no offset within the bound helps, the estimate stands and says so");
+  assert.deepEqual(far, { p0: 53, alignMs: 5, inside: 0, refined: false }, "when no offset within the bound fits, the estimate and its bound stand and the result says so");
+  // Two long handler windows with slack at both edges (the shape of a real run: samples every 0.5 ms
+  // from 0.4 ms after each window opens): every offset within the slack scores the same, so the answer
+  // is the plateau's midpoint and half its width is the uncertainty, not the grid step. The true offset
+  // lies within that uncertainty; the data cannot place it more precisely.
+  const wins = [[100, 800], [900, 1760]];
+  const truth = 50;   // the page time of the profile's start
+  const pageTimes = [];
+  for (const [a, b] of wins) for (let x = a + 0.4; x <= b - 0.4 + 1e-9; x += 0.5) pageTimes.push(x);
+  const us = pageTimes.map((x) => Math.round((x - truth) * 1000));
+  const long = { nodes: profile.nodes, startTime: 0, endTime: us[us.length - 1] + 500, samples: us.map(() => 3), timeDeltas: us.map((u, i) => u - (i ? us[i - 1] : 0)) };
+  const pl = refineAlignment(long, truth + 0.7, 2, wins);
+  assert.equal(pl.refined, true);
+  assert.equal(pl.inside, 1);
+  assert.ok(pl.alignMs >= 0.3 && pl.alignMs <= 0.5, `half the plateau's width (about a millisecond of slack), not the grid step: ${pl.alignMs}`);
+  assert.ok(Math.abs(pl.p0 - truth) <= pl.alignMs, `the true offset lies within the reported uncertainty: ${pl.p0} ± ${pl.alignMs}`);
+  assert.ok(Math.abs(pl.p0 - truth) < 0.7, `and the 0.7 ms estimate error was corrected: ${pl.p0}`);
+});
+
+test("aggregateProfile spreads self time over lines by V8's ticks per hit, not per sample, and gives no lines when no hit was recorded", () => {
+  // The real profile has nodes whose hitCount is below their sample count (V8 records ticks with
+  // update_stats off) and nodes with hitCount 0 that were still sampled.
+  const cf = (functionName, lineNumber) => ({ functionName, url: "http://127.0.0.1:1/dist/feed.js", lineNumber, columnNumber: 0 });
+  const prof = {
+    nodes: [
+      { id: 1, callFrame: { functionName: "(root)", url: "", lineNumber: -1 }, children: [2, 3] },
+      { id: 2, callFrame: cf("render", 19), hitCount: 1, positionTicks: [{ line: 20, ticks: 1 }] },   // one tick recorded, two samples landed
+      { id: 3, callFrame: cf("rk", 39), hitCount: 0 },
+    ],
+    startTime: 0, endTime: 400, samples: [2, 2, 3], timeDeltas: [100, 100, 100],
+  };
+  const a = aggregateProfile(prof);
+  const render = a.functions.find((f) => f.key === "feed.js:render:20");
+  assert.equal(render.selfMs, 0.2);
+  assert.deepEqual(render.lines, [{ line: 20, ms: 0.2 }], "the lines sum to the node's self time (a per-sample split would say 0.1)");
+  const rk = a.functions.find((f) => f.key === "feed.js:rk:40");
+  assert.equal(rk.selfMs, 0.1);
+  assert.equal(rk.lines, undefined, "self time but no lines when V8 recorded no hit");
+  const ranked = rankProfile(a, 5);
+  assert.deepEqual(ranked.topSelf[0].lines, [{ line: 20, ms: 0.2, share: 1 }]);
+  assert.equal(ranked.topSelf[1].lines, undefined);
+});
+
+test("stripProfileQueries drops every call frame's URL query before the profile is written", () => {
+  const prof = { nodes: [
+    { id: 1, callFrame: { functionName: "ws.onmessage", url: "http://127.0.0.1:1/feed?token=secret-looking", lineNumber: 135 } },
+    { id: 2, callFrame: { functionName: "render", url: "http://127.0.0.1:1/dist/feed.js?v=3", lineNumber: 19 } },
+    { id: 3, callFrame: { functionName: "(program)", url: "", lineNumber: -1 } },
+  ], startTime: 0, endTime: 1, samples: [1], timeDeltas: [1] };
+  const out = stripProfileQueries(prof);
+  assert.deepEqual(out.nodes.map((n) => n.callFrame.url), ["http://127.0.0.1:1/feed", "http://127.0.0.1:1/dist/feed.js", ""]);
+  assert.doesNotMatch(JSON.stringify(out), /secret-looking|token=/);
+  assert.ok(prof.nodes[0].callFrame.url.includes("token="), "the in-memory profile is untouched");
+  assert.equal(out.samples, prof.samples);
 });
 
 test("aggregateProfile on an empty or window-less profile yields nothing rather than NaN", () => {
@@ -642,13 +764,11 @@ test("startPageServer hands the Handler an isolated environment: a minted token,
   // stdin the way the Handler's watcher thread does. So this needs neither python nor the kernel.
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "romp-ui-bench-env-"));
   try {
-    const stub = path.join(tmp, "python-stub");
-    fs.writeFileSync(stub, `#!/bin/sh\nenv > "$UI_BENCH_STUB_ENV_OUT"\nprintf 'ARGS %s\\n' "$#" >> "$UI_BENCH_STUB_ENV_OUT"\nprintf 'TMPARG %s\\n' "$4" >> "$UI_BENCH_STUB_ENV_OUT"\necho "PORT 1"\ncat > /dev/null\n`, { mode: 0o755 });
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist);
-    fs.writeFileSync(path.join(dist, "feed.js"), "");
+    const stub = writeStub(tmp, "python-stub", `env > "$UI_BENCH_STUB_ENV_OUT"\nprintf 'ARGS %s\\n' "$#" >> "$UI_BENCH_STUB_ENV_OUT"\nprintf 'TMPARG %s\\n' "$4" >> "$UI_BENCH_STUB_ENV_OUT"\n`);
+    const dist = fakeDist(tmp);
     const envOut = path.join(tmp, "env.txt");
-    const planted = { UI_BENCH_STUB_ENV_OUT: envOut, ANTHROPIC_PROBE_FOR_THE_TEST: "must-not-cross", ROMP_CLAUDE_BIN: "/nonexistent/claude", ROMP_MANAGER_PORT: "1", ROMP_MANAGER_PID: "1", ROMP_SUPERVISED: "1", ROMP_POSTAL_PEERS: "1" };
+    const planted = { UI_BENCH_STUB_ENV_OUT: envOut, ANTHROPIC_PROBE_FOR_THE_TEST: "must-not-cross", ROMP_CLAUDE_BIN: "/nonexistent/claude", ROMP_MANAGER_PORT: "1", ROMP_MANAGER_PID: "1", ROMP_SUPERVISED: "1", ROMP_POSTAL_PEERS: "1",
+      ROMP_SERVICE_ENV_FILE: path.join(tmp, "planted-service.env"), ROMP_MODEL_CATALOG: "on" };
     const srv = await withEnv(planted, () => startPageServer({ dist, python: stub }));
     try {
       assert.equal(srv.port, 1);
@@ -659,6 +779,15 @@ test("startPageServer hands the Handler an isolated environment: a minted token,
       assert.equal(env.ROMP_SERVE_TOKEN, srv.token);
       assert.equal(env.ROMP_POSTAL_PEERS, "0", "the Handler never asks the live postal bus for its peers");
       assert.equal(env.ROMP_KERNEL_NO_OPEN, "1");
+      assert.equal(env.ROMP_SERVICE_ENV_FILE, path.join(srv.tmp, "no-service.env"), "the manager's key file is pointed at a path that never exists (the kernel would otherwise read ~/.config/romp/service.env)");
+      assert.equal(env.ROMP_SERVICE_ENV, env.ROMP_SERVICE_ENV_FILE);
+      assert.ok(!fs.existsSync(env.ROMP_SERVICE_ENV_FILE));
+      assert.equal(env.ROMP_MODEL_CATALOG, "off", "no boot fetch of the Models API");
+      assert.equal(env.ROMP_CLAUDE_BIN, "/bin/false", "a binary that runs nothing; removing the variable would resolve the real CLI");
+      assert.equal(path.dirname(srv.tmp), srv.root, "the run directory sits under the per-user parent");
+      assert.equal(path.basename(srv.root), `romp-ui-bench-${UID}`);
+      assert.equal(fs.readFileSync(path.join(srv.tmp, "owner.pid"), "utf8").trim(), String(process.pid), "the run records its owner for the dead-owner sweep");
+      if (process.platform !== "win32") { assert.equal(mode(srv.root), 0o700); assert.equal(mode(srv.tmp), 0o700); }
       assert.equal(env.ROMP_DIST_DIR, dist);
       assert.ok(env.XDG_STATE_HOME.startsWith(srv.tmp + path.sep), "a private state root");
       assert.ok(env.TMUX_TMPDIR.startsWith(srv.tmp + path.sep));
@@ -688,17 +817,82 @@ test("startPageServer cleans up when the interpreter exits before announcing a p
       assert.equal(os.tmpdir(), scratch);
       await assert.rejects(startPageServer({ dist: path.join(tmp, "nodist") }), /no built bundles/);
       assert.deepEqual(fs.readdirSync(scratch), [], "the dist check runs before any directory is created");
-      const dist = path.join(tmp, "dist");
-      fs.mkdirSync(dist);
-      fs.writeFileSync(path.join(dist, "feed.js"), "");
+      const dist = fakeDist(tmp);
       const dying = path.join(tmp, "python-dying");
       fs.writeFileSync(dying, "#!/bin/sh\necho 'ImportError: fake' >&2\nexit 3\n", { mode: 0o755 });
       await assert.rejects(startPageServer({ dist, python: dying }), /exited with 3[\s\S]*ImportError: fake/);
-      assert.deepEqual(fs.readdirSync(scratch), [], "an interpreter that dies before its port leaves no directory behind");
+      const root = path.join(scratch, `romp-ui-bench-${UID}`);
+      assert.deepEqual(fs.readdirSync(scratch), [path.basename(root)], "only the per-user parent is created");
+      assert.deepEqual(fs.readdirSync(root), [], "an interpreter that dies before its port leaves no run directory behind");
+      await assert.rejects(startPageServer({ dist, python: path.join(tmp, "no-such-interpreter") }), /could not start \S*no-such-interpreter: spawn \S*no-such-interpreter ENOENT/);
+      assert.deepEqual(fs.readdirSync(root), [], "nor does one that cannot be spawned (an unhandled 'error' event used to crash the process and leak it)");
     });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test("benchRoot is a private per-user directory, and sweepDeadRuns reclaims the runs whose owner is gone", { timeout: 30_000 }, async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "romp-ui-bench-root-"));
+  const scratch = path.join(tmp, "scratch");
+  fs.mkdirSync(scratch);
+  try {
+    await withEnv({ TMPDIR: scratch }, async () => {
+      const root = benchRoot();
+      assert.equal(root, path.join(scratch, `romp-ui-bench-${UID}`));
+      if (process.platform !== "win32") {
+        assert.equal(mode(root), 0o700);
+        fs.chmodSync(root, 0o755);
+        assert.equal(benchRoot(), root);
+        assert.equal(mode(root), 0o700, "a loosened mode is restored");
+      }
+      const dead = spawnSync(process.execPath, ["-e", "0"]).pid;   // a process that has already exited
+      const mk = (name, pid) => { fs.mkdirSync(path.join(root, name)); if (pid !== undefined) fs.writeFileSync(path.join(root, name, "owner.pid"), `${pid}\n`); };
+      mk("run-dead", dead); mk("run-live", process.pid); mk("run-nopid"); mk("run-garbage", "abc");
+      assert.deepEqual(sweepDeadRuns(root), ["run-dead"]);
+      assert.deepEqual(fs.readdirSync(root).sort(), ["run-garbage", "run-live", "run-nopid"], "a live owner, a missing pid file and an unreadable one are left alone");
+      mk("run-dead2", dead);
+      const logged = [];
+      const srv = await startPageServer({ dist: fakeDist(tmp), python: writeStub(tmp), log: (l) => logged.push(l) });
+      try {
+        assert.ok(!fs.existsSync(path.join(root, "run-dead2")), "a start sweeps the dead runs first");
+        assert.ok(fs.existsSync(path.join(root, "run-live")), "and leaves the live ones");
+        assert.ok(logged.some((l) => /removed 1 run directory left behind by dead runs/.test(l)), logged.join("\n"));
+        assert.equal(path.dirname(srv.tmp), root);
+      } finally {
+        srv.stop();
+      }
+      assert.deepEqual(fs.readdirSync(root).sort(), ["run-garbage", "run-live", "run-nopid"], "stop removed its own run directory");
+      assert.deepEqual(sweepDeadRuns(path.join(tmp, "absent")), [], "a missing root is nothing to sweep");
+      // Something else holding the parent's name is refused, never adopted.
+      const linkBase = path.join(tmp, "linkbase");
+      fs.mkdirSync(path.join(tmp, "elsewhere"));
+      fs.mkdirSync(linkBase);
+      fs.symlinkSync(path.join(tmp, "elsewhere"), path.join(linkBase, `romp-ui-bench-${UID}`));
+      assert.throws(() => benchRoot(linkBase), /not a directory; refusing/);
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("launchBrowser puts Playwright's profile and artifacts directories under the run directory", { ...gate(skipReplay), timeout: 60_000 }, async () => {
+  requireOrSkip(skipReplay);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "romp-ui-bench-browser-"));
+  const srv = await startPageServer({ dist: fakeDist(tmp), python: writeStub(tmp) });
+  const before = process.env.TMPDIR;
+  let browser;
+  try {
+    browser = await launchBrowser({ tmpRoot: srv.tmp });
+    assert.equal(process.env.TMPDIR, before, "TMPDIR is restored once the browser is up");
+    const names = fs.readdirSync(srv.tmp);
+    assert.ok(names.some((n) => n.startsWith("playwright")), `the browser's directories live in the run directory, where stop() and the sweep reach them: ${names.join(", ")}`);
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+    srv.stop();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  assert.ok(!fs.existsSync(srv.tmp), "stop takes the browser's directories with the run's");
 });
 
 test("the Handler subprocess ends and removes its directory when the node process that started it is SIGKILLed", { ...gate(skipServer), timeout: 90_000 }, async () => {
@@ -811,9 +1005,13 @@ for (const app of ["feed", "timeline"]) {
           for (const k of ["nodes", "startTime", "endTime", "samples", "timeDeltas"]) assert.ok(k in raw, `.cpuprofile has ${k}`);
           assert.ok(raw.samples.length > 100, `enough samples (${raw.samples.length})`);
           assert.equal(cp.samplingIntervalUs, 500);
-          assert.ok(cp.alignMs > 0 && cp.alignMs <= 0.2, `clock alignment refined to the sampling grid, got ${cp.alignMs} ms`);
+          assert.equal(cp.alignRefined, true, "the wrapper's samples refined the clock alignment");
+          assert.ok(cp.alignMs > 0 && cp.alignMs <= cp.alignBoundMs, `the refined uncertainty (${cp.alignMs} ms) is within the bracketing bound (${cp.alignBoundMs} ms)`);
           assert.ok(cp.wrapperSamplesInHandlers >= 0.9, `the message handler's samples fall inside the handler windows (${cp.wrapperSamplesInHandlers})`);
           assert.equal(cp.sourceMaps, true);
+          assert.deepEqual(cp.sourceMapsMissing, [], "every profiled bundle had its map beside it");
+          assert.ok(cp.sourceMapsLoaded.includes("feed.js"), cp.sourceMapsLoaded.join(", "));
+          assert.ok(!fs.readFileSync(cpuProfile, "utf8").includes("token="), "the written profile carries no serve token (the page URL's query is dropped from every frame)");
           assert.ok(cp.topSelf.some((f) => /^ui\/webview\/\S+\.ts:\d+$/.test(f.src || "")), `source positions resolved: ${cp.topSelf.slice(0, 5).map((f) => f.src).join(", ")}`);
           assert.ok(cp.topSelf.slice(0, 5).some((f) => f.lines && f.lines.length && f.lines[0].src), `the hottest functions name their lines: ${JSON.stringify(cp.topSelf[0].lines)}`);
           assert.ok(cp.windows.every((w) => w.topSelf.every((f) => !f.lines)), "windows carry no line split");

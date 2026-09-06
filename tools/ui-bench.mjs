@@ -28,11 +28,16 @@
 //      the largest frame of each type: the attribution the long-animation-frame entries cannot give.
 //
 //      Serving design: the REAL kernel HTTP Handler runs in a python3 subprocess under an isolated
-//      environment (private XDG_STATE_HOME and TMUX_TMPDIR; the manager variables, the API keys and
-//      the postal peer bus removed; ROMP_KERNEL_NO_OPEN=1; a serve token minted for the run), the
-//      pattern of tests/test_color_route.py, so the page HTML and the WebSocket shim are the kernel's
-//      own bytes. The subprocess holds a pipe from the parent and exits when it closes, so it cannot
-//      outlive the bench however the bench ends. The shim connects its
+//      environment, the pattern of tests/test_color_route.py with the floors tests/conftest.py applies:
+//      private XDG_STATE_HOME and TMUX_TMPDIR; the manager variables and the API-key variables removed;
+//      the manager's key FILE and the boot model-catalog fetch pointed away (the kernel would otherwise
+//      read ~/.config/romp/service.env and carry its key to the Models API); the Claude binary floored
+//      to /bin/false; the postal peer bus off; ROMP_KERNEL_NO_OPEN=1; a serve token minted for the run.
+//      So the page HTML and the WebSocket shim are the kernel's own bytes. The subprocess holds a pipe
+//      from the parent and exits when it closes, so it cannot outlive the bench however the bench ends.
+//      Its directory, and the browser's profile and artifacts, live under one per-user parent whose
+//      dead-owner entries the next run sweeps: a process-group SIGKILL leaves them until then, nothing
+//      else does. The shim connects its
 //      socket to location.host, so a small Node front server sits in front: it answers /ws itself as
 //      the replay server and proxies every other request (the page, /dist/*, /media/*, the small
 //      JSON routes the bundles fetch) to the kernel Handler. Nothing is rewritten. The live kernel is
@@ -530,7 +535,8 @@ export function synthesizeFrames(app, cards, { seed = 7, now = SYNTH_NOW } = {})
 // The Handler is the kernel's whole route surface (the pages, /ws, the POST routes that spawn and revive
 // sessions), gated by the serve token, so it must not outlive the bench: a daemon thread blocks on stdin,
 // which the parent holds open as a pipe, and when the parent exits, however it exits, the read returns
-// EOF, the thread removes the private state directory and the process ends.
+// EOF, the thread removes the run directory and the process ends. When the whole process group is
+// killed the thread never runs and the directory stays; the next run's dead-owner sweep reclaims it.
 const PAGE_SERVER_PY = `
 import os, shutil, sys, threading
 from http.server import ThreadingHTTPServer
@@ -556,16 +562,57 @@ srv.serve_forever()
 /** The variables the Handler subprocess must not inherit: the manager's (so the kernel module never
  *  believes it is the supervised live kernel), the live kernel's ports and state root, and the API keys
  *  and Claude binary a spawned session would run with (nothing the bench needs reads them). */
-export const STRIPPED_ENV = ["ROMP_MANAGER_PORT", "ROMP_MANAGER_PID", "ROMP_SUPERVISED", "ROMP_STATE_DIR", "ROMP_SERVE_PORT", "ROMP_KERNEL_PORT", "ROMP_PERF", "TMUX", "ROMP_CLAUDE_BIN"];
+export const STRIPPED_ENV = ["ROMP_MANAGER_PORT", "ROMP_MANAGER_PID", "ROMP_SUPERVISED", "ROMP_STATE_DIR", "ROMP_SERVE_PORT", "ROMP_KERNEL_PORT", "ROMP_PERF", "TMUX"];
+
+/** The parent every run of this tool on this machine keeps its state under: <tmp>/romp-ui-bench-<uid>,
+ *  private to the user and refused when something else holds the name. Each run gets a subdirectory
+ *  holding owner.pid, the Handler's XDG_STATE_HOME and TMUX_TMPDIR and, through TMPDIR at launch, the
+ *  browser's profile and artifacts. This small parent is the only directory the tool ever lists. */
+export function benchRoot(base = os.tmpdir()) {
+  const uid = typeof os.userInfo === "function" ? os.userInfo().uid : -1;
+  const root = path.join(base, `romp-ui-bench-${uid}`);
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const st = fs.lstatSync(root);
+  if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`${root} is not a directory; refusing to use it`);
+  if (uid >= 0 && st.uid !== uid) throw new Error(`${root} belongs to uid ${st.uid}; refusing to use it`);
+  if ((st.mode & 0o077) !== 0) fs.chmodSync(root, 0o700);
+  return root;
+}
+
+/** Remove the run directories under `root` whose recorded owner process is gone: what a process-group
+ *  SIGKILL leaves behind (the Handler dies with the group before its rmtree runs; Playwright removes its
+ *  directories from exit hooks a SIGKILL skips). An entry without owner.pid is left alone. Returns the
+ *  names removed. */
+export function sweepDeadRuns(root) {
+  const swept = [];
+  let names = [];
+  try { names = fs.readdirSync(root); } catch { return swept; }
+  for (const name of names) {
+    const dir = path.join(root, name);
+    let pid = NaN;
+    try { pid = Number(fs.readFileSync(path.join(dir, "owner.pid"), "utf8").trim()); } catch { continue; }
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    let alive = true;
+    try { process.kill(pid, 0); } catch (e) { alive = e.code === "EPERM"; }   // EPERM: it exists and is not ours
+    if (alive) continue;
+    try { fs.rmSync(dir, { recursive: true, force: true }); swept.push(name); } catch {}
+  }
+  return swept;
+}
 
 /** Start the kernel Handler subprocess under the isolated environment. Resolves to {port, token, pid,
- *  tmp, stderr, stop}; on a start failure the child is gone and its directory removed before the
- *  rejection. The serve token is minted per run: the Handler is the kernel's whole route surface on a
- *  loopback port any local process can reach, and a token in the source would open it to all of them. */
+ *  tmp, root, stderr, stop}; on a start failure (an interpreter that cannot be spawned, exits before
+ *  its port, or never announces one) the child is gone and its directory removed before the rejection.
+ *  The serve token is minted per run: the Handler is the kernel's whole route surface on a loopback
+ *  port any local process can reach, and a token in the source would open it to all of them. */
 export async function startPageServer({ dist, python = "python3", log = () => {} } = {}) {
   const distDir = dist || path.join(EXT_DIR, "dist");
   if (!fs.existsSync(path.join(distDir, "feed.js"))) throw new Error(`no built bundles at ${distDir} (run: cd vscode-extension && npm run build)`);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "romp-ui-bench-"));
+  const root = benchRoot();
+  const swept = sweepDeadRuns(root);
+  if (swept.length) log(`ui-bench: removed ${swept.length} run director${swept.length === 1 ? "y" : "ies"} left behind by dead runs`);
+  const tmp = fs.mkdtempSync(path.join(root, "run-"));
+  fs.writeFileSync(path.join(tmp, "owner.pid"), `${process.pid}\n`);
   const token = crypto.randomBytes(18).toString("base64url");
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("ANTHROPIC_") || STRIPPED_ENV.includes(k)) delete env[k];
@@ -575,6 +622,14 @@ export async function startPageServer({ dist, python = "python3", log = () => {}
   fs.mkdirSync(env.TMUX_TMPDIR, { recursive: true });
   env.ROMP_KERNEL_NO_OPEN = "1";
   env.ROMP_POSTAL_PEERS = "0";   // the feed page polls /tunnels, which otherwise asks the LIVE postal bus for its peers
+  // The floors tests/conftest.py applies, for the same reasons. The kernel's live API key is the manager's
+  // env FILE (kernel/keysource.py falls back to ~/.config/romp/service.env when these two are unset), the
+  // boot model-catalog fetch would carry that key to the Models API from the first /sessions request a
+  // pane makes, and a missing ROMP_CLAUDE_BIN resolves to the real CLI, so it is set to a binary that runs
+  // nothing rather than removed.
+  env.ROMP_SERVICE_ENV_FILE = env.ROMP_SERVICE_ENV = path.join(tmp, "no-service.env");   // never created
+  env.ROMP_MODEL_CATALOG = "off";
+  env.ROMP_CLAUDE_BIN = "/bin/false";
   env.ROMP_SERVE_TOKEN = token;
   env.ROMP_DIST_DIR = distDir;
   const child = spawn(python, ["-c", PAGE_SERVER_PY, REPO, tmp], { env, stdio: ["pipe", "pipe", "pipe"] });
@@ -590,6 +645,9 @@ export async function startPageServer({ dist, python = "python3", log = () => {}
   const port = await new Promise((resolve, reject) => {
     let buf = "";
     const timer = setTimeout(() => { stop("SIGKILL"); reject(new Error(`the kernel page server did not start within 60s\n${stderr}`)); }, 60_000);
+    // An interpreter that cannot be spawned (ENOENT) emits 'error' and never 'exit'; unhandled, that is an
+    // uncaught exception thrown from a tick outside the promise chain, and the directory stays behind.
+    child.on("error", (e) => { clearTimeout(timer); try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} reject(new Error(`could not start ${python}: ${e.message}`)); });
     child.stdout.on("data", (c) => {
       buf += c;
       const m = /PORT (\d+)/.exec(buf);
@@ -597,7 +655,7 @@ export async function startPageServer({ dist, python = "python3", log = () => {}
     });
     child.on("exit", (code) => { clearTimeout(timer); try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} reject(new Error(`the kernel page server exited with ${code}\n${stderr}`)); });
   });
-  return { port, token, pid: child.pid, tmp, stderr: () => stderr, stop: () => stop() };
+  return { port, token, pid: child.pid, tmp, root, stderr: () => stderr, stop: () => stop() };
 }
 
 /** The front server: /ws is ours (the replay socket), everything else proxies to the kernel Handler. */
@@ -712,13 +770,23 @@ export function browserAvailability() {
   return { ok: false, why: "no Chromium: run `cd vscode-extension && npx playwright install chromium`, or install Google Chrome" };
 }
 
-async function launchBrowser() {
+/** Launch headless Chromium. Playwright creates the browser's profile and its artifacts directory with
+ *  mkdtemp under os.tmpdir(), which follows TMPDIR, and removes them only from exit hooks a SIGKILL
+ *  skips; with TMPDIR pointed at the run directory for the launch, both land inside it, where stop() and
+ *  the next run's dead-owner sweep reach them. The browser process inherits the same TMPDIR. */
+export async function launchBrowser({ tmpRoot } = {}) {
   const avail = browserAvailability();
   if (!avail.ok) throw new Error(avail.why);
   const { chromium } = requireExt("playwright");
-  if (avail.how === "playwright chromium") return chromium.launch({ headless: true });
-  try { return await chromium.launch({ headless: true, channel: avail.channel }); }
-  catch { return chromium.launch({ headless: true, executablePath: avail.exe }); }
+  const saved = process.env.TMPDIR;
+  if (tmpRoot) process.env.TMPDIR = tmpRoot;
+  try {
+    if (avail.how === "playwright chromium") return await chromium.launch({ headless: true });
+    try { return await chromium.launch({ headless: true, channel: avail.channel }); }
+    catch { return await chromium.launch({ headless: true, executablePath: avail.exe }); }
+  } finally {
+    if (tmpRoot) { if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved; }
+  }
 }
 
 async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, token, cpuProfile = false, log }) {
@@ -912,7 +980,7 @@ export async function replay({ app, framesFile, cpuThrottle = 1, iters = 1, fast
   process.once("SIGTERM", onSignal);
   try {
     front = await startFront({ pagePort: pageServer.port });
-    browser = await launchBrowser();
+    browser = await launchBrowser({ tmpRoot: pageServer.tmp });
     const runs = [];
     for (let i = 0; i < iters; i++) {
       log(`ui-bench: replaying ${frames.length} frames into app=${app} (${fast ? "back-to-back" : "recorded pacing"}, cpu x${cpuThrottle})${iters > 1 ? ` iteration ${i + 1}/${iters}` : ""}`);
@@ -959,15 +1027,17 @@ export function frameKey(cf) {
  *  when the source lies inside it) or null when there is no map or no mapping. */
 export function sourceLocator(distDir) {
   const maps = new Map();
+  const loaded = new Set(), missing = new Set();
   const load = (base) => {
     if (maps.has(base)) return maps.get(base);
     let m = null;
     const file = path.join(distDir, base + ".map");
     try { m = { sm: new SourceMap(JSON.parse(fs.readFileSync(file, "utf8"))), dir: path.dirname(file) }; } catch { m = null; }
     maps.set(base, m);
+    (m ? loaded : missing).add(base);
     return m;
   };
-  return (cf) => {
+  const locate = (cf) => {
     if (!cf || !cf.url || cf.lineNumber == null || cf.lineNumber < 0) return null;
     const m = load(path.basename(cf.url.split("?")[0]));
     if (!m) return null;
@@ -980,14 +1050,30 @@ export function sourceLocator(distDir) {
     const shown = rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : e.originalSource.replace(/^(\.\.\/)+/, "");
     return `${shown}:${e.originalLine + 1}`;
   };
+  /** The source of a 0-based bundle LINE's first mapping, for V8's per-line ticks. A line's first mapping
+   *  can start at its indentation column (bundled node_modules code does this), where a column-0 probe
+   *  lands on the previous line and the same-line guard refuses it; so the columns are stepped until a
+   *  mapping on the line answers. */
+  locate.line = (cf, line) => {
+    if (!cf || !cf.url || line == null || line < 0 || !load(path.basename(cf.url.split("?")[0]))) return null;
+    for (let c = 0; c < 256; c++) { const r = locate({ ...cf, lineNumber: line, columnNumber: c }); if (r) return r; }
+    return null;
+  };
+  /** Whether a bundle's map is beside it (loads it). */
+  locate.probe = (base) => !!load(base);
+  locate.loaded = loaded;
+  locate.missing = missing;
+  return locate;
 }
 
 /** Pin the page-to-profile clock offset with the profile's own evidence. Every sample whose stack holds
- *  the bench's onmessage wrapper was taken inside some frame's handler window, so the offset that puts
- *  the most of them inside the windows is the right one; the bracketing reads of performance.now() only
- *  bound it. A grid search over ±bound ms at a quarter of the sampling interval. `windows` are [t0, t1]
- *  in page ms. Returns {p0, alignMs, inside}: the refined page time of the profile's startTime, the grid
- *  step as the remaining uncertainty, and the fraction of wrapper samples the offset places inside. */
+ *  the bench's onmessage wrapper was taken inside some frame's handler window, so the offsets that put
+ *  the most of them inside the windows hold the right one; the bracketing reads of performance.now()
+ *  only bound it. A grid search over ±bound ms at a quarter of the sampling interval; the offsets that
+ *  tie for the maximum form a plateau, and the answer is its midpoint with half its width (at least one
+ *  grid step) as the uncertainty. When even the best offset places under half the wrapper's samples
+ *  inside, the evidence does not fit the windows and the bracketing estimate is returned unchanged.
+ *  `windows` are [t0, t1] in page ms. Returns {p0, alignMs, inside, refined}. */
 export function refineAlignment(profile, p0, bound, windows) {
   const nodes = new Map(), parent = new Map(), wrapped = new Map();
   for (const n of profile.nodes || []) { nodes.set(n.id, n); for (const c of n.children || []) parent.set(c, n.id); }
@@ -1006,7 +1092,7 @@ export function refineAlignment(profile, p0, bound, windows) {
   let t = profile.startTime || 0;
   for (let i = 0; i < samples.length; i++) { t += deltas[i] || 0; if (underWrapper(samples[i])) xs.push((t - (profile.startTime || 0)) / 1000 + p0); }
   const sorted = windows.filter((w) => w[1] > w[0]).sort((a, b) => a[0] - b[0]);
-  if (!xs.length || !sorted.length) return { p0, alignMs: bound, inside: null };
+  if (!xs.length || !sorted.length) return { p0, alignMs: bound, inside: null, refined: false };
   const inside = (x) => {
     let lo = 0, hi = sorted.length - 1;
     while (lo <= hi) { const mid = (lo + hi) >> 1; if (sorted[mid][0] <= x) lo = mid + 1; else hi = mid - 1; }
@@ -1014,13 +1100,18 @@ export function refineAlignment(profile, p0, bound, windows) {
   };
   const step = PROFILE_INTERVAL_US / 1000 / 4;
   const span = Math.max(bound, 1);
-  let best = { d: 0, n: -1 };
-  for (let d = -span; d <= span + 1e-9; d += step) {
+  let bestN = -1;
+  const plateau = [];
+  for (let k = 0, d = -span; d <= span + 1e-9; k++, d = -span + k * step) {
     let n = 0;
     for (const x of xs) if (inside(x + d)) n++;
-    if (n > best.n || (n === best.n && Math.abs(d) < Math.abs(best.d))) best = { d, n };
+    if (n > bestN) { bestN = n; plateau.length = 0; }
+    if (n === bestN) plateau.push(d);
   }
-  return { p0: p0 + best.d, alignMs: step, inside: best.n / xs.length };
+  const share = bestN / xs.length;
+  if (share < 0.5) return { p0, alignMs: bound, inside: share, refined: false };
+  const lo = plateau[0], hi = plateau[plateau.length - 1];
+  return { p0: p0 + (lo + hi) / 2, alignMs: Math.max(step, (hi - lo) / 2), inside: share, refined: true };
 }
 
 /** Fold a V8 .cpuprofile ({nodes, samples, timeDeltas, startTime, endTime}, times in microseconds)
@@ -1073,7 +1164,7 @@ export function aggregateProfile(profile, window = null) {
   }
   const functions = [...total.keys()].map((k) => ({ key: k, selfMs: (self.get(k) || 0) / 1000, totalMs: total.get(k) / 1000, samples: count.get(k) || 0, cf: cfOf.get(k),
     ...(lines.has(k) ? { lines: [...lines.get(k)].map(([line, us]) => ({ line, ms: us / 1000 })).sort((a, b) => b.ms - a.ms) } : {}) }));
-  return { durationMs: ((profile.endTime || 0) - (profile.startTime || 0)) / 1000, sampledMs: sampledUs / 1000, samples: inWindow,
+  return { durationMs: (window ? window[1] - window[0] : (profile.endTime || 0) - (profile.startTime || 0)) / 1000, sampledMs: sampledUs / 1000, samples: inWindow,
     meta: Object.fromEntries(Object.entries(meta).map(([k, v]) => [k, v / 1000])), functions };
 }
 
@@ -1087,7 +1178,7 @@ const roundFn = (locate, withLines = false) => (f) => {
     // The lines of the function that hold its self time (the 1-based bundle line, its share, its source). A
     // builtin's ticks name its call sites' lines with no file to read them in, so those stay unlisted.
     row.lines = f.lines.filter((l) => l.ms / f.selfMs >= HOT_LINE_SHARE).slice(0, HOT_LINES).map((l) => {
-      const at = locate && f.cf ? locate({ ...f.cf, lineNumber: l.line - 1, columnNumber: 0 }) : null;
+      const at = locate && f.cf ? locate.line(f.cf, l.line - 1) : null;
       return { line: l.line, ms: round1(l.ms), share: Math.round((l.ms / f.selfMs) * 100) / 100, ...(at ? { src: at } : {}) };
     });
   }
@@ -1155,8 +1246,21 @@ function profileReport(runs, firstIdx, files, sourceMapDir) {
     windows.push({ label, index: f.i, type: f.type, bytes: f.bytes, handlerMs: round1(f.handlerMs), ...rankProfile(mergeAggregates(aggs), TOP_WINDOW, locate) });
   }
   const insides = aligned.map(({ al }) => al.inside).filter((x) => x != null);
-  return { files, samplingIntervalUs: PROFILE_INTERVAL_US, alignMs: round1(Math.max(...aligned.map(({ al }) => al.alignMs))),
-    wrapperSamplesInHandlers: insides.length ? round1(Math.min(...insides) * 100) / 100 : null, sourceMaps: !!locate, ...overall, windows };
+  // The bundles the profile names (served from /dist/): the source-position claim rests on their maps
+  // having loaded, not on a directory having been configured. A --production dist is minified and has none.
+  const bundles = new Set();
+  for (const r of profiled) for (const n of r.profiling.profile.nodes || []) {
+    const url = n.callFrame && n.callFrame.url;
+    if (!url) continue;
+    try { const u = new URL(url); if (u.pathname.startsWith("/dist/") && u.pathname.endsWith(".js")) bundles.add(path.basename(u.pathname)); } catch {}
+  }
+  const sourceMapsLoaded = [], sourceMapsMissing = [];
+  for (const b of [...bundles].sort()) (locate && locate.probe(b) ? sourceMapsLoaded : sourceMapsMissing).push(b);
+  return { files, samplingIntervalUs: PROFILE_INTERVAL_US,
+    alignMs: round1(Math.max(...aligned.map(({ al }) => al.alignMs))), alignBoundMs: round1(Math.max(...profiled.map((r) => r.profiling.alignMs))),
+    alignRefined: aligned.length > 0 && aligned.every(({ al }) => al.refined),
+    wrapperSamplesInHandlers: insides.length ? round1(Math.min(...insides) * 100) / 100 : null,
+    sourceMaps: sourceMapsLoaded.length > 0, sourceMapsLoaded, sourceMapsMissing, ...overall, windows };
 }
 
 /** Write each profiled iteration's .cpuprofile (Chrome DevTools loads it); with several iterations the
@@ -1169,10 +1273,19 @@ function writeProfiles(out, runs) {
   profiled.forEach((r, i) => {
     const ext = path.extname(abs);
     const file = profiled.length === 1 ? abs : path.join(path.dirname(abs), `${path.basename(abs, ext)}-${i + 1}${ext}`);
-    fs.writeFileSync(file, JSON.stringify(r.profiling.profile));
+    fs.writeFileSync(file, JSON.stringify(stripProfileQueries(r.profiling.profile)));
     files.push(file);
   });
   return files;
+}
+
+/** The profile with every call frame's URL query dropped: V8 records the document URL for the page's inline
+ *  shim, and the page was navigated to /feed?token=<the run's serve token>; the file is meant to be opened
+ *  and shared, so the token never reaches it (frameKey and the locator already drop the query). */
+export function stripProfileQueries(profile) {
+  const nodes = (profile.nodes || []).map((n) => (n.callFrame && typeof n.callFrame.url === "string" && n.callFrame.url.includes("?"))
+    ? { ...n, callFrame: { ...n.callFrame, url: n.callFrame.url.split("?")[0] } } : n);
+  return { ...profile, nodes };
 }
 
 const fmtFn = (f) => `${fmtMs(f.selfMs).padStart(9)} ${fmtMs(f.totalMs).padStart(9)} ${String(f.samples).padStart(7)}  ${f.key}${f.src ? `  ${f.src}` : ""}`;
@@ -1181,7 +1294,9 @@ const fmtMeta = (meta) => Object.entries(meta).map(([k, v]) => `${k} ${fmtMs(v)}
 export function renderProfile(cp) {
   const out = [];
   out.push(`cpu profile: ${cp.samples} samples over ${fmtMs(cp.durationMs)} ms at ${cp.samplingIntervalUs} us, ${cp.functions} functions; bookkeeping: ${fmtMeta(cp.meta)}`);
-  out.push(`  page-to-profile clock alignment ±${fmtMs(cp.alignMs)} ms${cp.wrapperSamplesInHandlers != null ? ` (${Math.round(cp.wrapperSamplesInHandlers * 100)}% of the message handler's samples fall inside the frames' handler windows)` : ""}${cp.sourceMaps ? "; source positions from the dist's .map files" : ""}`);
+  const pct = cp.wrapperSamplesInHandlers != null ? `${Math.round(cp.wrapperSamplesInHandlers * 100)}% of the message handler's samples inside the frames' handler windows` : "no handler windows to check against";
+  out.push(`  page-to-profile clock alignment ±${fmtMs(cp.alignMs)} ms ${cp.alignRefined ? `(refined from the ±${fmtMs(cp.alignBoundMs)} ms bracketing estimate; ${pct})` : `(the bracketing estimate; the refinement did not apply: ${pct})`}${cp.sourceMaps ? `; source positions from ${(cp.sourceMapsLoaded || []).map((b) => b + ".map").join(", ")}` : ""}`);
+  if (cp.sourceMapsMissing && cp.sourceMapsMissing.length) out.push(`  warning: no ${cp.sourceMapsMissing.map((b) => b + ".map").join(", ")} beside the served bundle${cp.sourceMapsMissing.length === 1 ? "" : "s"}; names and lines are the bundle's own, and a --production build is minified (rebuild with node esbuild.js, no --production)`);
   for (const f of cp.files || []) out.push(`  written: ${f} (load it in Chrome DevTools, Performance panel)`);
   const head = `${"self ms".padStart(9)} ${"total ms".padStart(9)} ${"samples".padStart(7)}  url:function:line${cp.sourceMaps ? "  source:line" : ""}`;
   out.push(`  top ${cp.topSelf.length} by self time${cp.topSelf.some((f) => f.lines) ? " (under a function, the lines that hold its self time: share, ms, bundle line, source)" : ""}`, `  ${head}`);

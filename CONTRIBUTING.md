@@ -59,7 +59,8 @@ not the function inside the bundle that did the work; for that, add
 JavaScript with the V8 profiler across the replay, writes a file Chrome
 DevTools loads (Performance panel), and prints the functions with the most self
 and total time as `bundle.js:function:line` with the source position from the
-dist's `.map` files, overall and inside the first content frame and the largest
+dist's `.map` files (a `--production` dist is minified and has none; the report
+says so), overall and inside the first content frame and the largest
 frame of each type; for the hottest functions it also names the lines that hold
 the time (a forced synchronous layout, for instance, shows up as one line of
 one function owning most of its self time). The end-of-run layout, style,
@@ -68,11 +69,16 @@ load and idle timers (the timeline redraws every animation frame while it
 follows the present), and `--compare` shows them without percentages when the
 two runs differ in pacing or length. The numbers come from the real pages: the
 kernel's own HTTP handler serves the HTML, the shim, and the bundles from a
-`python3` subprocess under an isolated environment (the pattern of
-`tests/test_color_route.py`; the manager variables, the API keys and the postal
-peer bus are removed, the serve token is minted for the run, and the subprocess
-exits when the bench does), and a Node front server answers the page's
-WebSocket and proxies everything else to it. The default is no CPU throttling,
+`python3` subprocess under an isolated environment: the pattern of
+`tests/test_color_route.py` with the floors `tests/conftest.py` applies (the
+manager variables and the API-key variables are removed, the manager's key file
+and the boot model-catalog fetch are pointed away, the Claude binary is
+`/bin/false`, the postal peer bus is off, the serve token is minted for the
+run, and the subprocess exits when the bench does). Run state, the browser's
+profile included, lives under one per-user directory in the temp root; a run
+killed with its whole process group leaves its entry there until the next run
+sweeps it. A Node front server answers the page's WebSocket and proxies
+everything else to the subprocess. The default is no CPU throttling,
 a desktop; `--cpu-throttle 4` emulates a machine four times slower. `--iters 3`
 pools three runs. `--fast` sends the frames back-to-back instead of at their
 recorded pacing; settle times then overlap, handler times do not.
