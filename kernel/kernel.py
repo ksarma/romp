@@ -23045,6 +23045,84 @@ def _git_branch(cwd):
     return br
 
 
+_repo_cache = {}          # tree toplevel -> (owner/repo or None, config mtime): the GitHub repo its origin names
+_config_path_cache = {}   # tree toplevel -> the git config file holding its remotes ("" = unresolvable)
+
+
+def _git_config_file(top):
+    """The config file that holds this tree's remotes — the one `git remote set-url` rewrites, so its
+    mtime is the event a remote change produces. .git/config for a plain repo; a WORKTREE's .git is a
+    one-line FILE naming its private gitdir, whose `commondir` file names the shared dir (relative to
+    that gitdir, usually `..`) carrying the one config every worktree reads. Resolved once per tree, as
+    _git_head_file resolves HEAD: the pointers never move for a live tree. '' when there is none."""
+    cp = _config_path_cache.get(top)
+    if cp is not None:
+        return cp
+    cp = ""
+    dotgit = os.path.join(top, ".git")
+    try:
+        if os.path.isdir(dotgit):
+            cp = os.path.join(dotgit, "config")
+        elif os.path.isfile(dotgit):
+            with open(dotgit) as f:
+                line = f.readline().strip()
+            if line.startswith("gitdir:"):
+                gd = line[len("gitdir:"):].strip()
+                if not os.path.isabs(gd):
+                    gd = os.path.normpath(os.path.join(top, gd))
+                common = gd
+                try:
+                    with open(os.path.join(gd, "commondir")) as f:
+                        rel = f.readline().strip()
+                    if rel:
+                        common = rel if os.path.isabs(rel) else os.path.normpath(os.path.join(gd, rel))
+                except OSError:
+                    pass
+                cp = os.path.join(common, "config")
+    except OSError:
+        cp = ""
+    if len(_config_path_cache) > 512:                # bounded, like _tree_cache
+        _config_path_cache.clear()
+    _config_path_cache[top] = cp
+    return cp
+
+
+def _github_repo_of(cwd):
+    """`owner/repo` when the git tree containing `cwd` has an origin remote on GitHub, else None — the
+    repository a session's `#123` / `PR #123` mentions refer to (the user 2026-09-06: PR references in
+    a session's chat, cards and notes should link to the PR page of the repository it works in). The
+    same parser as the file viewer's GitHub link (_GITHUB_REMOTE) reads the same authoritative source,
+    `git remote get-url origin` in the session's tree: one spelling of what counts as GitHub. None is a
+    VERDICT, not an error — no repo, no origin, or an origin elsewhere (GitLab, a self-hosted host)
+    names no GitHub repository, and the clients then link nothing rather than guess one. Memoized per
+    tree on the config file's mtime — `git remote set-url` writes that file, which is the event a
+    remote change produces — so the pusher's per-build call costs a stat, not a fork (the _git_branch
+    discipline; the toplevel itself rides _tree_of's per-directory cache)."""
+    if not cwd:
+        return None
+    top, _ = _tree_of(os.path.expanduser(cwd))
+    if not top:
+        return None
+    mt = None
+    try:
+        cp = _git_config_file(top)
+        if cp:
+            mt = os.path.getmtime(cp)
+    except OSError:
+        pass
+    hit = _repo_cache.get(top)
+    if hit is not None and mt is not None and hit[1] == mt:
+        return hit[0]
+    remote = _git_out(["remote", "get-url", "origin"], top)
+    m = _GITHUB_REMOTE.match(remote) if remote else None
+    repo = "%s/%s" % (m.group(1), m.group(2)) if m else None
+    if mt is not None:
+        if len(_repo_cache) > 512:
+            _repo_cache.clear()
+        _repo_cache[top] = (repo, mt)
+    return repo
+
+
 _EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")   # tools whose file_path proves WHERE work lands
 
 
@@ -24879,6 +24957,11 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
             "gitBranch": sysinfo["gitBranch"],
             # the detected worktree rides top-level for the same windowing reason as gitBranch above
             "workTree": sysinfo["workTree"],
+            # the GitHub repository the session works in (owner/repo, or null): the clients turn `#123`
+            # / `PR #123` mentions in its chat, cards and notes into links to that repository's PR page
+            # (ui/webview/pr-links.ts; the user 2026-09-06). Top-level like gitBranch, so it is never
+            # windowed off the wire; a memoized store-derived value, so the dedup-compared payload holds.
+            "githubRepo": _github_repo_of(scwd),
             "events": events, "status": status, "ledger": ledger,
             # SDK sessions gate the box on the backend's LIVE task set (the CLI's task lifecycle stream —
             # authoritative, terminal-cleared); the spawned_at heuristic remains the tmux/no-snapshot fallback.
@@ -27127,7 +27210,11 @@ def build_feed(now, tmux=None):
             # feed footer's session-filter menu lists precisely the tabs (the user 2026-08-08) — including
             # a session with no cards on the board, which filters to an empty board rather than being
             # unlistable. Federation prefixes sid+name per host and concatenates.
-            "sessions": [{"sid": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])}
+            "sessions": [{"sid": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
+                          # the session's GitHub repository (owner/repo, or null), so a card's `#123`
+                          # links to ITS repository's PR page (the user 2026-09-06) — the derivation
+                          # the chat frame ships, memoized, a fixed value across unchanged builds
+                          "githubRepo": _github_repo_of(_cwd_of(s["sid"]))}
                          for s in _chat_tab_sessions(now, tmux)],
             # /clear boundary settles, newest per session → the bell logs each once (the user 2026-07-27)
             "clearNotices": _boundary_clear_notices(alive),

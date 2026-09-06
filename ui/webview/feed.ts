@@ -7,6 +7,7 @@
 // pushes and updated in place — never torn down — so hovering one doesn't flicker
 // when the fleet streams new deliverables in.
 import { distillText, distillInputs, applyDistillLine, distillPending, distillStaleNote } from "./distiller-line";
+import { linkifyPrRefs, installPrLinkOpener } from "./pr-links";
 import { spinFor, KIND_WORD, kindWord, waitedSuffix } from "./spin-caption";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { searchMatches, searchSids } from "./feed-search";
@@ -444,6 +445,11 @@ function setCardChannels(card: HTMLElement, rgb: [number, number, number]) {
 }
 const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
+// PR links inside cards open the PR and nothing else: capture-phase on the document, so the card's own
+// click (modal / pin) under the link never fires. Web → the viewer's browser; VS Code → the host's
+// openExternal via `openLink` (view-routing.ts). Once, on the stable document (the click-safety rule).
+installPrLinkOpener(document, vscodeApi ? (m) => vscodeApi.postMessage(m) : undefined);
+function linkifyPrRefsIn<T extends HTMLElement>(elm: T, sid: string | undefined): T { linkifyPrRefs(elm, prRepoOf(sid)); return elm; }
 
 // The settings gear (the ⛭ modal + analytics) is part of THIS bundle now —
 // gear.js builds its DOM here and rides our one kernel channel, so both hosts
@@ -489,7 +495,13 @@ let sessionOrder: string[] = [];
 // The chat tab strip's sessions (sid+name+color), riding every feed push: the footer's session-filter
 // menu lists exactly the tabs (the user 2026-08-08) — a session with no cards still appears, and
 // filtering to it shows an empty board. Federation prefixes sid+name per host and concatenates.
-let sessionsMeta: { sid: string; name: string; color: { bg: string; fg: string } | null }[] = [];
+let sessionsMeta: { sid: string; name: string; color: { bg: string; fg: string } | null; githubRepo?: string | null }[] = [];
+// The GitHub repository a card's session works in (owner/repo, or null) — the kernel ships it on the
+// session rows above, derived from the session tree's origin remote; a `#123` in the card's text links
+// to that repository's PR page (pr-links.ts; the user 2026-09-06). Null → the text stays plain.
+function prRepoOf(sid: string | undefined): string | null {
+  return (sid && sessionsMeta.find((s) => s.sid === sid)?.githubRepo) || null;
+}
 // Attached hosts whose CARD payload hasn't merged yet (the user 2026-08-25: sessions land via the
 // faster channels, cards trail with no cue) — the federation merge names them (pendingHosts), the
 // board hints per host, and the hint retires ONLY on the real events: that host's first contribution
@@ -1645,7 +1657,7 @@ function applySections(a: any, it: AskItem, distillShown: boolean): void {
       // branch is collapsed — its tooltip points DOWN to the real ask.
       mark.textContent = s.status === "done" ? "✓" : s.status === "question" ? "⏸" : "";
       if (s.status === "question") mark.title = s.qderived ? "a sub-goal inside is blocked — expand to find it" : "blocked — needs you";
-      const txt = el("span", "fcheck-text"); txt.textContent = s.text;
+      const txt = el("span", "fcheck-text"); txt.textContent = s.text; linkifyPrRefs(txt, prRepoOf(it.sid));
       row.append(tri, mark, txt);
       if (s.cleared) row.appendChild(clearedTag());   // the strike alone doesn't say WHY — see CLEARED_TIP
       if (s.parked && s.parked.n && !s.cleared) row.appendChild(parkedTag(s.parked.n));   // leapfrogged — see parkedTag
@@ -1718,6 +1730,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // a re-check card dims slightly (between a normal card and a provisional ghost) so it reads as "handled, pending"
   if (!it.provisional) card.style.opacity = it.recheck ? ".8" : "";
   a._title.textContent = it.text;
+  linkifyPrRefs(a._title, prRepoOf(it.sid));   // `#123` in the goal text → its PR page (pr-links.ts)
   a._name.replaceChildren(...hostNameNodes(it.name, it.sid));   // remote "host:" prefix = quiet metadata
   if (it.color) a._name.style.color = it.color.bg;
   setWorkDot(a._name, dotFor(it.name));   // working/awaiting dot before the session name
@@ -1998,6 +2011,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // turn off once — the user 2026-06-29). updateAskCard runs every push, so this re-applies on every refresh.
   const distillShown = applyDistillLine(a._distill as HTMLElement, dCompleted, dBlocked,
                    it.summary, it.blockSummary);
+  if (distillShown) linkifyPrRefs(a._distill as HTMLElement, prRepoOf(it.sid));   // the takeaway's `#123` links too
   // A judge-auth card explains itself ON THE CARD FACE (the user 2026-08-12: a message, not just a
   // chip): no decision brief can exist here — the distiller is one of the very judges that are down —
   // so the distill line carries blocked.what instead of sitting empty. applyDistillLine re-runs every
@@ -2261,7 +2275,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
       quarWho(it.blocked.origin || "", it.blocked.frm || "?"),
       Object.assign(el("span", "fq-arrow"), { textContent: "\u2192" }),
       quarWho(toHost, it.blocked.to || it.name || "?", it.color?.bg),
-      Object.assign(el("div", "fq-gist"), { textContent: it.blocked.gist || it.blocked.body || "" }));
+      linkifyPrRefsIn(Object.assign(el("div", "fq-gist"), { textContent: it.blocked.gist || it.blocked.body || "" }), it.sid));
     qBody.title = "click to read the whole message and decide";
     a._qApprove.disabled = false; a._qApprove.textContent = "Approve";
     a._qDeny.disabled = false; a._qDeny.textContent = "Deny";
@@ -2515,6 +2529,7 @@ function updateGroupCard(card: HTMLElement, g: AskGroup) {
   // outline in the group's session identity colour (the user 2026-07-15) — CSS: 0.5α rest, bolded on hover/pin
   setCardChannels(card, (g.color && hexToRgb(g.color.bg)) || ageRgb(nowSec() - g.t));
   a._title.textContent = g.title;
+  linkifyPrRefs(a._title, prRepoOf(g.sid));
   a._name.replaceChildren(...hostNameNodes(g.name, g.sid));
   if (g.color) a._name.style.color = g.color.bg;
   setWorkDot(a._name, dotFor(g.name));   // working/awaiting dot before the session name
@@ -2528,7 +2543,7 @@ function updateGroupCard(card: HTMLElement, g: AskGroup) {
     for (const m of g.members) {
       const line = el("div", "fgroup-member st-" + memberStatus(m));
       const dot = el("span", "fgroup-dot"); dot.textContent = memberMark(m); line.appendChild(dot);
-      const txt = el("span", "fgroup-mtext"); txt.textContent = m.text; line.appendChild(txt);
+      const txt = el("span", "fgroup-mtext"); txt.textContent = m.text; linkifyPrRefs(txt, prRepoOf(m.sid || g.sid)); line.appendChild(txt);
       host.appendChild(line);
     }
   }
@@ -2858,7 +2873,7 @@ function renderTreeNode(box: HTMLElement, it: AskItem, node: AskTreeNode, byId: 
   const mark = el("span", "ftree-mark"); mark.textContent = nodeMark(node); line.appendChild(mark);
   // blocked rolls UP (kernel flatten, the user 2026-07-11): a rolled-up ancestor's ⏸ says the block is below
   if (node.status === "question") mark.title = node.qderived ? "a sub-goal inside is blocked — the ⏸ below is the ask" : "blocked — needs you";
-  const txt = el("span", "ftree-text"); txt.textContent = node.text || "(node)"; line.appendChild(txt);
+  const txt = el("span", "ftree-text"); txt.textContent = node.text || "(node)"; linkifyPrRefs(txt, prRepoOf(it.sid)); line.appendChild(txt);
   if (node.cleared) line.appendChild(clearedTag());   // same one-word story as the card checklist
   if (node.parked && node.parked.n && !node.cleared) line.appendChild(parkedTag(node.parked.n));   // and the parked hint
   // (The node's why/blocked/done rationale hover tooltip was removed 2026-06-27 — just the goal text now.)
@@ -2994,7 +3009,7 @@ function renderTreeNode(box: HTMLElement, it: AskItem, node: AskTreeNode, byId: 
   if (modalBg) {
     const bl = el("div", "ftree-seclabel"); bl.textContent = "background";
     bl.style.paddingLeft = ((depth + 1) * TREE_INDENT_EM) + "em";
-    const bb = el("div", "ftree-summary"); bb.textContent = modalBg;
+    const bb = el("div", "ftree-summary"); bb.textContent = modalBg; linkifyPrRefs(bb, prRepoOf(it.sid));
     bb.style.paddingLeft = ((depth + 1) * TREE_INDENT_EM) + "em";
     const sl = el("div", "ftree-seclabel"); sl.textContent = "summary";
     sl.style.paddingLeft = ((depth + 1) * TREE_INDENT_EM) + "em";
@@ -3004,6 +3019,7 @@ function renderTreeNode(box: HTMLElement, it: AskItem, node: AskTreeNode, byId: 
     const sum = el("div", "ftree-summary");
     sum.style.paddingLeft = ((depth + 1) * TREE_INDENT_EM) + "em";
     sum.textContent = nodeDistill;
+    linkifyPrRefs(sum, prRepoOf(it.sid));
     // parity with the card's distiller line (the user 2026-06-29): the modal summary is also a LINK — clicking
     // it follows to where the node resolved (its work anchor, the SAME target as the node's mark/time zones).
     // Wired on EITHER anchor: goWork itself falls to the prompt anchor when the work one is cold-null, so

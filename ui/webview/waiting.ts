@@ -23,6 +23,7 @@ import { hostNameNodes } from "./host-prefix";
 import { liveNow, stampAge, refreshAges } from "./feed-age";
 import { ageColorReadable } from "./age-color";
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
+import { linkifyPrRefs, installPrLinkOpener } from "./pr-links";
 
 type Color = { bg: string; fg: string } | null;
 interface UserTodo { id: string; text: string; createdT: number; detail?: string }
@@ -31,6 +32,12 @@ interface Waiting { sid: string; name: string; color: Color; todo: UserTodo }
 
 const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
+// A `#123` in an ask links to the PR page of the repository its session works in (pr-links.ts; the user
+// 2026-09-06). The repo per session rides the feed frame's `sessions` rows (owner/repo, or null). The
+// link opens the PR and nothing else: capture-phase on the document, so the row's delegated toggle
+// under it never fires. Web → the viewer's browser; VS Code → the host's openExternal (view-routing.ts).
+let repoBySid = new Map<string, string | null>();
+installPrLinkOpener(document, vscodeApi ? (m) => vscodeApi.postMessage(m) : undefined);
 
 // Whether a frame CARRYING userTodoRows has arrived (the Outline pane's `loaded` idiom): until then the list
 // stays empty and the romp loader holds — a feed push can reach us from a kernel that never built the
@@ -176,6 +183,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   // the one-line ask; detail one click away, and the row SAYS there is more (user-todo-hint.ts)
   const txt = el("span", "ut-text");
   txt.textContent = w.todo.text;
+  linkifyPrRefs(txt, repoBySid.get(w.sid) || null);
   const key = foldKey(w.sid, w.todo.id);
   const hint = utDetailHint(w.todo.detail, openDetail.has(key));
   if (hint) {
@@ -207,6 +215,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   if (hint) {
     const d = el("div", "ut-detail" + (openDetail.has(key) ? " open" : ""));
     d.textContent = w.todo.detail || "";
+    linkifyPrRefs(d, repoBySid.get(w.sid) || null);
     item.appendChild(d);
   }
   return item;
@@ -267,6 +276,9 @@ function applyFrame(m: any): void {
   localOn = typeof m.userTodosOn === "boolean" ? m.userTodosOn : null;
   // "loaded" means the kernel actually BUILT the rows (the key is present, even if []) — not merely
   // that some feed frame arrived. Until then the loader holds (render() bails on !loaded).
+  if (Array.isArray(m.sessions))
+    repoBySid = new Map(m.sessions.filter((s: any) => s && typeof s.sid === "string")
+      .map((s: any) => [s.sid as string, typeof s.githubRepo === "string" ? s.githubRepo : null] as const));
   if (!Array.isArray(m.userTodoRows)) return;
   loaded = true;
   rows = (m.userTodoRows as any[])

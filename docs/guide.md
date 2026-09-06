@@ -43,6 +43,10 @@ in full. A file on a branch that is not on origin keeps its link, drawn with a d
 and the caption says the branch is not on origin yet. That check reads the local tracking
 ref, so after a branch is deleted on GitHub the link looks normal until `git fetch --prune`
 has refreshed it.
+A pull request number in a message, a card, or a note (`#123`, `PR #123`, or
+`owner/repo#123`) links to that pull request on GitHub, in the repository the session's
+directory has as its `origin` remote; when that remote is not on GitHub, the number stays
+plain text.
 
 **Tags and groups.** A tag is a named, colored set of sessions; a session can be in
 several. Right-click a tab and open **Tags** to add or remove them. Tags filter every

@@ -56,6 +56,7 @@ import { mathBlock, mathInline } from "./math";
 import { setTip, pruneTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 import { dragSlotIndex } from "./dragslot";
+import { linkifyPrRefs } from "./pr-links";
 
 for (const [name, lang] of Object.entries({
   bash, sh: bash, shell: bash, python, py: python, javascript, js: javascript,
@@ -254,7 +255,7 @@ interface BgTasks { count: number; tasks: BgTask[]; }
 // kernel ships only the last WIRE_TAIL events (headFrom > 0) to keep startup light; older history streams in
 // on scroll-back (loadOlder → chatHead prepends, lowering headFrom). headFrom 0 = the whole transcript is
 // resident. chatTail's `from` is GLOBAL and mapped through headFrom.
-interface Session { id: string; name: string; color: Color | null; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; userTodos?: UserTodo[]; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; }
+interface Session { id: string; name: string; color: Color | null; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; githubRepo?: string | null; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; userTodos?: UserTodo[]; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; }
 
 const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
@@ -756,7 +757,7 @@ function el(tag: string, cls?: string): HTMLElement {
   return e;
 }
 
-function md(src: string): string {
+function md(src: string, repo: string | null = prRepoFor()): string {
   // Transcript text (user prompts, assistant output, subagent reports, postal
   // bodies) is UNTRUSTED and `marked` emits raw HTML verbatim, so its output
   // must be sanitized before it ever reaches .innerHTML — otherwise a payload
@@ -770,8 +771,35 @@ function md(src: string): string {
     // \sqrt radicals, wide accents, extensible arrows — as inline <svg><path>, and the html-only
     // profile silently ate them: $\sqrt{d}$ rendered as a bare serif "d", the radical gone.
     // DOMPurify's svg profile is still sanitized (no scripts, handlers, or foreignObject).
-    return DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"] });
+    // RETURN_DOM hands back the sanitized <body> instead of its innerHTML — the same nodes, ours to
+    // walk once before the serialization DOMPurify would otherwise have done itself: PR references
+    // in the prose (`#123`, `PR #123`, `owner/repo#123`) become links to the session's repository
+    // (pr-links.ts; the user 2026-09-06). Text inside code, pre or an existing anchor is skipped, so
+    // the sanitizer's verdicts stand and a marked-autolinked GitHub URL is never wrapped twice.
+    const clean = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"], RETURN_DOM: true }) as HTMLElement;   // the sanitized <body>
+    linkifyPrRefs(clean, repo);
+    return clean.innerHTML;
   } catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }
+}
+
+// The GitHub repository (owner/repo, or null) whose pull requests a `#123` in the text being rendered
+// refers to: the OWNING session's — the same rule relative paths follow (renderingOwnerSid), then the
+// session being built, then the active tab. A session the kernel gave no repo links nothing.
+function prRepoFor(sid?: string | null): string | null {
+  const id = sid ?? renderingOwnerSid ?? renderingSid ?? activeId;
+  return (id && sessions.get(id)?.githubRepo) || null;
+}
+
+// A postal body was written by its SENDER, so its `#123` means the sender's repository when that is
+// known: an inbound message names its peer, and when exactly one open session carries that name and a
+// repo, it is that one. Otherwise — an outbound message, an unknown or ambiguous peer, a peer with no
+// repo — the reading session's repository, which peers on the same project share.
+function postalRepoFor(ev: { direction: "in" | "out"; peer: string }): string | null {
+  if (ev.direction === "in" && ev.peer) {
+    const named = Array.from(sessions.values()).filter((s) => s.name === ev.peer && s.githubRepo);
+    if (named.length === 1) return named[0].githubRepo || null;
+  }
+  return prRepoFor();
 }
 
 function highlight(container: HTMLElement, lineNos = true) {
@@ -3005,6 +3033,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       const line = el("div", "ut-line");
       const txt = el("span", "ut-text");
       txt.textContent = t.text;
+      linkifyPrRefs(txt, prRepoFor(renderingSid));   // a `#123` in the ask links to the session's PR (pr-links.ts)
       // progressive disclosure: the one-line version by default, detail one click away — and the row
       // SAYS there is more (the user 2026-09-02): a small "▸ details" hint trails the text when detail
       // exists, nothing when it doesn't, so a bare ask and one with context read differently at a
@@ -3044,6 +3073,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
         // linkifier, with the todo's OWN session resolving relative paths — the note was written
         // from that session's working directory, whichever tab the card is read in
         linkifyFileUris(d, undefined, undefined, undefined, undefined, renderingSid || null);
+        linkifyPrRefs(d, prRepoFor(renderingSid));
         row.appendChild(d);
       }
       card.appendChild(row);
@@ -4099,7 +4129,7 @@ function renderPostalService(ev: Extract<ChatEvent, { kind: "postal-service" }>)
     const sum = el("div", "postal-service-summary");
     const caret = el("span", "postal-service-expand-caret"); caret.textContent = "▸"; sum.appendChild(caret);
     const sumText = el("span", "postal-service-summary-text"); sumText.textContent = summaryText; sum.appendChild(sumText);
-    const full = el("div", "postal-service-full md"); full.innerHTML = md(ev.body); highlight(full);
+    const full = el("div", "postal-service-full md"); full.innerHTML = md(ev.body, postalRepoFor(ev)); highlight(full);
     // KEYED expand (the user 2026-07-25: "it expands for like a second and then collapses again") —
     // the old hand-rolled classList.toggle lived only on this DOM node, and the next kernel push
     // rebuilds the card, silently closing it. Same openFolds mechanism as every other keyed fold;
@@ -4117,7 +4147,7 @@ function renderPostalService(ev: Extract<ChatEvent, { kind: "postal-service" }>)
     body.appendChild(sum);
     body.appendChild(full);
   } else {
-    body.innerHTML = md(ev.body);
+    body.innerHTML = md(ev.body, postalRepoFor(ev));
     highlight(body);
   }
   card.appendChild(body);
@@ -7006,11 +7036,12 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   const box = el("div", "picker-box confirm-box");
   const h = el("div", "confirm-title"); h.textContent = "Reply";
   const d = el("div", "confirm-detail ut-reply-quote"); d.textContent = todoText;
+  linkifyPrRefs(d, prRepoFor(sid));
   // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress — the
   // whole need stays in view while the answer is typed, without opening the fold first; a bare
   // ask adds nothing here
   const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
-  if (dd) { dd.textContent = todoDetail; linkifyFileUris(dd, undefined, undefined, undefined, undefined, sid); }
+  if (dd) { dd.textContent = todoDetail; linkifyFileUris(dd, undefined, undefined, undefined, undefined, sid); linkifyPrRefs(dd, prRepoFor(sid)); }
   const input = document.createElement("textarea");
   input.className = "ut-reply-input"; input.rows = 3;
   input.placeholder = "Your answer — it goes straight to the session…";
@@ -12403,6 +12434,11 @@ function upsert(msg: any) {
     // so the branch used to vanish there. A chatTail delta omits it → keep the last-known via prev.
     gitBranch: msg.gitBranch ?? (prev ? prev.gitBranch : ""),
     workTree: msg.workTree ?? (prev ? prev.workTree : null),
+    // the GitHub repository the session works in (owner/repo, or null) — what its `#123` mentions link
+    // to (pr-links.ts). The "in msg" form, like bgTasks: a null from the kernel is a real value (the
+    // tree lost its origin, or never had one) and must not fall back to a stale prev; a chatTail delta
+    // omits the key and keeps the last-known.
+    githubRepo: ("githubRepo" in msg) ? (msg.githubRepo ?? null) : (prev ? prev.githubRepo : null),
     // A trimmed full send carries headFrom/headTotal; a whole-transcript send omits them (headFrom 0).
     headFrom: msg.headFrom ?? 0,
     headTotal: msg.headTotal ?? ((msg.events || (prev ? prev.events : [])).length),
