@@ -65,6 +65,18 @@ _Avoid_: watched, reviewed
 The person's own edit to a file from the dashboard. Never a change: it lands at once, and the
 session working in that folder is told.
 
+**Comments log**:
+The append-only record kept beside a file's comments of what was sent to a session, what the
+person accepted or rejected, when tracking was turned on or off, and the person's direct edits.
+Where the comments themselves forget a decision, the log remembers it.
+_Avoid_: history (reads as git history), log alone (the chat has logs), ledger
+
+**Send to session**:
+The one gesture that hands a file's unsent comments, replies, and decisions to the session that
+owns the file, as a single message in the person's voice; it may also answer the user todo the
+file was opened from.
+_Avoid_: send review, ping, submit
+
 ### Pre-existing attention vocabulary
 
 **Agent to-do checklist**:
