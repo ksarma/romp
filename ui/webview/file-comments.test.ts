@@ -281,7 +281,7 @@ test("the poll's HEAD targets: the file, the sidecar the kernel named, config.js
   assert.match(SRC, /headVerdict\(r\.status, r\.headers\.get\("X-Romp-Mtime-Ns"\)\)/);
   assert.match(SRC, /const POLL_MS = 2500;/);
   assert.match(SRC, /const paneHidden = \(\): boolean => document\.hidden \|\| window\.innerWidth === 0 \|\| window\.innerHeight === 0;/,
-    "a shell-hidden pane has a zero viewport — the fleet pane's gate");
+    "a shell-hidden pane has a zero viewport — the sessions pane's gate");
   assert.match(SRC, /if \(paneHidden\(\)\) \{ this\.tickSkipped = true; return; \}/);
   assert.match(SRC, /document\.addEventListener\("visibilitychange", this\.catchUp\);\n\s*window\.addEventListener\("resize", this\.catchUp\);/);
   assert.match(SRC, /this\.base = pollBaseline\(s\);/, "every fileCommentsResult re-baselines the poll — the person's own writes never fire it");
@@ -627,7 +627,10 @@ test("vocabulary and privacy: the person's words, never the format's; no persona
   const newGuide = GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges"));
   assert.doesNotMatch(newGuide, /\b(suggestion|annotation)s?\b/i);
   assert.doesNotMatch(newGuide.replace(/`[^`]*`/g, ""), /\bthreads?\b/i);
-  for (const [name, text] of [["file-comments.ts", SRC], ["file-comments-model.ts", MODEL], ["guide.md Files", newGuide]] as const) {
+  // This file is new prose too, and its assertion messages print to the person on failure — so it scans itself,
+  // with the guard's own regex lines set aside (an assertion message here once named the sessions pane by its old word).
+  const SELF = web("file-comments.test.ts").split("\n").filter((l) => !l.includes("/fleet/i")).join("\n");
+  for (const [name, text] of [["file-comments.ts", SRC], ["file-comments-model.ts", MODEL], ["guide.md Files", newGuide], ["file-comments.test.ts", SELF]] as const) {
     assert.doesNotMatch(text, /fleet/i, name + ": no new fleet identifiers or prose");
     assert.doesNotMatch(text, /\/home\/[a-z]/, name + ": no absolute home paths");
   }

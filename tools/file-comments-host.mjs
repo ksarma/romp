@@ -14,11 +14,17 @@
 // load-time rebase that re-places changes after outside edits, anchor location, the write, the
 // comments-log append. The sidecar format is track-changents v3, read and written ONLY through the
 // vendored store-io (never a second implementation of the format); the comments log beside it is
-// romp's own, outside that contract. Two rules the file-review plan fixes and this script keeps:
+// romp's own, outside that contract. Three rules the file-review plan fixes and this script keeps:
 //   * a corrupt or newer-version sidecar is refused, never replaced (loadStoreStatus, not loadStore
 //     or ensureStore, which mint a fresh sidecar over anything they cannot read);
+//   * the same for .trackchanges/config.json: a config that exists but cannot be read (conflict
+//     markers, a half-written file, a newer version) refuses on every verb; it never reads as
+//     "nothing tracked", and set-tracked never rewrites it from that reading (checkConfig);
 //   * a reply or resolve into a comment the live sidecar lacks refuses `no-comment`; this script
 //     never calls reviveThreadFromSuperseded, which overwrites the live sidecar from a park.
+// The file's text is read only when a verb needs it: to rebase an existing sidecar, to place an
+// anchor, to stamp a fingerprint. `status` runs on every viewer open, a file the viewer refuses
+// above 2 MB included, so on a file with no sidecar it stats the file and reads nothing (statFile).
 //
 // Vendored code: vendor/track-changents (MIT, LICENSE beside it).
 
@@ -43,6 +49,9 @@ export const LOG_TAIL = 200;
 // Every human action and log entry is authored `you`, with no authorId (decision 6).
 export const AUTHOR = 'you';
 export const LOG_SUFFIX = '.comments-log.jsonl';
+// config.json's format version: store-io's CONFIG_VERSION (not exported), the one shape this script
+// and the vendored CLIs read and write.
+const CONFIG_VERSION = 2;
 
 // Slice 1 verbs. Slice 2 adds accept, reject, accept-all, reject-all; Slice 5 adds save. The
 // verbs that write the FILE (not only the sidecar) — reject, reject-all, save — also fence on
@@ -289,6 +298,64 @@ export function trackedByFor(root, abs) {
   return { kind: 'inherited', entry: inheritedParent(root, rel) };
 }
 
+// The `untracked` entry that vetoes tracking `rel`, or null — the match engine.isTracked makes,
+// kept so a refusal can name the entry to remove.
+function vetoEntryFor(root, rel) {
+  const p = normEntry(rel);
+  for (const raw of untrackedPaths(root)) {
+    if (typeof raw !== 'string' || !raw) continue;
+    const e = normEntry(raw);
+    if (e.endsWith('/') ? p.startsWith(e) : e === p) return raw;
+  }
+  return null;
+}
+
+// ── the config ──────────────────────────────────────────────────────
+
+// config.json is read the way the sidecar is: saying WHY it cannot be. store-io's readConfig
+// answers null for an unparseable file exactly as for a missing one, so through it alone a
+// conflict-marked or half-written config.json reads as "nothing tracked" — and setTracked, which
+// rewrites the file from that reading, would replace it with a one-entry list, dropping every
+// other tracked entry and the untracked vetoes while the guard already passes raw writes. The
+// sidecar's rule, refused and never replaced, holds for the config too.
+//   absent       no file
+//   corrupt      unparseable, not an object, or a `tracked`/`untracked` that is not an array
+//   unsupported  a `v` above CONFIG_VERSION
+//   unreadable   an I/O error other than ENOENT
+//   ok           readable; a missing `tracked` list means nothing tracked, as store-io reads it
+function configStatus(paths) {
+  let raw;
+  try {
+    raw = fs.readFileSync(paths.configPath, 'utf8');
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? 'absent' : 'unreadable';
+  }
+  let obj;
+  try { obj = JSON.parse(raw); } catch { return 'corrupt'; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return 'corrupt';
+  if (typeof obj.v === 'number' && obj.v > CONFIG_VERSION) return 'unsupported';
+  if (obj.tracked !== undefined && !Array.isArray(obj.tracked)) return 'corrupt';
+  if (obj.untracked !== undefined && !Array.isArray(obj.untracked)) return 'corrupt';
+  return 'ok';
+}
+
+// Every verb under a root calls this before it reads tracking through store-io or writes
+// config.json, so `trackedBy` is never answered from a config that could not be read.
+function refuseConfig(ctx, paths, status) {
+  const cp = tilde(paths.configPath);
+  switch (status) {
+    case 'ok':
+    case 'absent': return;
+    case 'corrupt':
+      throw new Refusal('corrupt', `the tracking list for ${ctx.shown} could not be read: ${cp} is not valid JSON in the expected shape; nothing was changed`);
+    case 'unsupported':
+      throw new Refusal('unsupported-version', `the tracking list for ${ctx.shown} (${cp}) was written by a newer version of the format than this romp reads; nothing was changed`);
+    default:
+      throw new Refusal('unreadable', `cannot read the tracking list for ${ctx.shown} (${cp})`);
+  }
+}
+function checkConfig(ctx, paths) { refuseConfig(ctx, paths, configStatus(paths)); }
+
 // ── the file ────────────────────────────────────────────────────────
 
 // Every file is read as UTF-8 text, images and PDFs included, exactly as the CLIs read it, so
@@ -301,6 +368,24 @@ function readFile(ctx) {
     throw new Refusal('unreadable', `cannot read ${ctx.shown}: ${tildeText(e && e.message ? e.message : String(e))}`);
   }
   return { text, fileMtimeNs: statNs(ctx.abs) };
+}
+
+// The file stat'ed and opened, not read: for the verbs that need no text when no sidecar exists
+// (nothing to rebase, no fingerprint to stamp). `status` runs on every viewer open, so reading
+// the whole file into a V8 string there loaded a 300 MB log for nothing and failed outright
+// above V8's string limit. Refuses exactly what readFile would — a missing path, a directory, a
+// file this process may not open — as `unreadable` with the OS error, so a caller sees no
+// difference but the bytes not moved.
+function statFile(ctx) {
+  let st;
+  try {
+    st = fs.statSync(ctx.abs, { bigint: true });
+    if (!st.isFile()) throw new Error(`${ctx.abs} is not a regular file`);
+    fs.closeSync(fs.openSync(ctx.abs, 'r'));
+  } catch (e) {
+    throw new Refusal('unreadable', `cannot read ${ctx.shown}: ${tildeText(e && e.message ? e.message : String(e))}`);
+  }
+  return { text: null, fileMtimeNs: st.mtimeNs.toString() };
 }
 
 // `too-large`: only verbs that write the file check it, before any write (the kernel's cap).
@@ -354,6 +439,23 @@ function loadOrRefuse(ctx, paths, text) {
     default:
       throw new Refusal('unreadable', `cannot read the comments for ${ctx.shown} (${sp})`);
   }
+}
+
+// The file and its sidecar for the verbs that write neither: the text is read only when a sidecar
+// exists to rebase against (or the caller asked for the baseline, which is the text itself when
+// there is none); otherwise the file is stat'ed. `store` is null when there is no sidecar.
+function loadFile(ctx, paths) {
+  const read = ctx.args.baseline === true || (paths != null && exists(paths.storePath));
+  const file = read ? readFile(ctx) : statFile(ctx);
+  const store = read && paths ? loadOrRefuse(ctx, paths, file.text) : null;
+  return { ...file, store };
+}
+
+// A refusal thrown after the comments log was appended: carry `logged`, and when the entry did
+// land say so in place of "nothing was changed" — the kernel shows this text beside its warning.
+function recordedDespite(e, logged, what) {
+  e.extra = { ...(e.extra || {}), logged };
+  if (logged) e.message = `${e.message.replace(/; nothing was changed$/, '')}; the ${what} was recorded in the comments log`;
 }
 
 // The seed track-comment writes for a file with no sidecar yet (cli/track-comment.mjs).
@@ -500,12 +602,11 @@ function reloadSaved(ctx, paths, text) {
 // ── verbs ───────────────────────────────────────────────────────────
 
 function doStatus(ctx) {
-  const file = readFile(ctx);
   const root = findVaultRoot(ctx.abs);
-  if (!root) return reply(ctx, { root: null, paths: null, store: null, ...file });
+  if (!root) return reply(ctx, { root: null, paths: null, ...loadFile(ctx, null) });
   const paths = pathsFor(root, ctx.abs);
-  const store = loadOrRefuse(ctx, paths, file.text);
-  return reply(ctx, { root, paths, store, ...file });
+  checkConfig(ctx, paths);
+  return reply(ctx, { root, paths, ...loadFile(ctx, paths) });
 }
 
 // comment, reply, resolve: fence on the sidecar, load, mutate, save, report.
@@ -515,6 +616,7 @@ function withSidecar(ctx, create, mutate) {
   let paths = root ? pathsFor(root, ctx.abs) : null;
   requireFence(ctx, 'storeMtimeNs', paths ? statNs(paths.storePath) : null, 'store-moved',
     `the comments for ${ctx.shown}`);
+  if (paths) checkConfig(ctx, paths);
   let store = null;
   if (root) store = loadOrRefuse(ctx, paths, file.text);
   if (!store && !create) {
@@ -579,13 +681,13 @@ function doSetTracked(ctx) {
   const { on, scope } = ctx.args;
   if (typeof on !== 'boolean') throw new BadRequest('set-tracked needs on: true|false');
   if (on && scope !== 'file' && scope !== 'folder') throw new BadRequest('set-tracked needs scope: "file"|"folder"');
-  const file = readFile(ctx);
   let root = findVaultRoot(ctx.abs);
   let paths = root ? pathsFor(root, ctx.abs) : null;
   requireFence(ctx, 'configMtimeNs', paths ? statNs(paths.configPath) : null, 'config-moved',
     `the tracking setting for ${ctx.shown}`);
-  const store = root ? loadOrRefuse(ctx, paths, file.text) : null;
-  if (!root && !on) return reply(ctx, { root: null, paths: null, store: null, ...file });
+  if (paths) checkConfig(ctx, paths);
+  const file = loadFile(ctx, paths);
+  if (!root && !on) return reply(ctx, { root: null, paths: null, ...file });
   if (!root) {
     root = createLandmark(ctx);
     paths = pathsFor(root, ctx.abs);
@@ -593,12 +695,19 @@ function doSetTracked(ctx) {
   let entry;
   let kind;
   if (on) {
+    // The `untracked` veto wins over the list and over inheritance, for the guard and the CLIs as
+    // for trackedByFor; an entry written under it would change nothing but the config, so refuse
+    // and name the entry to remove (the config is the vault owner's, edited by hand).
+    const veto = vetoEntryFor(root, paths.rel);
+    if (veto != null) {
+      throw new Refusal('tracked-vetoed', `${ctx.shown} cannot be tracked while the untracked entry "${veto}" in ${tilde(paths.configPath)} vetoes it — remove that entry there first`);
+    }
     kind = scope;
     entry = scope === 'file' ? paths.rel : folderEntryFor(ctx, paths.rel);
     setTracked(root, entry, true);
   } else {
     const before = trackedByFor(root, ctx.abs);
-    if (!before) return reply(ctx, { root, paths, store, ...file });
+    if (!before) return reply(ctx, { root, paths, ...file });
     if (before.kind === 'inherited') {
       const parent = before.entry ? tilde(path.join(root, before.entry)) : 'a tracked note';
       throw new Refusal('tracked-inherited', `${ctx.shown} is tracked because ${parent} links to it — turn tracking off there instead`);
@@ -608,7 +717,7 @@ function doSetTracked(ctx) {
     setTracked(root, entry, false);
   }
   appendLog(paths.logPath, logEntry('set-tracked', { on, scope: kind, entry }));
-  return reply(ctx, { root, paths, store, ...file });
+  return reply(ctx, { root, paths, ...file });
 }
 
 const EDIT_SUMMARY_KEYS = ['mtimeBeforeNs', 'mtimeAfterNs', 'bytesBefore', 'bytesAfter', 'diff', 'truncated'];
@@ -616,34 +725,38 @@ const EDIT_SUMMARY_KEYS = ['mtimeBeforeNs', 'mtimeAfterNs', 'bytesBefore', 'byte
 // A direct edit from the viewer (decision 33), logged by the kernel's saveFile path after the
 // save: only for a file that already has a sidecar, a comments log, or a tracked flag; never
 // creates a sidecar, a log, or a landmark. The append comes first so the record never depends on
-// the sidecar being readable.
+// the sidecar being readable — nor on the config: a sidecar or a log makes the file the log's
+// business whatever config.json says, and only the tracked flag needs a readable config.
 function doLogEdit(ctx) {
   const summary = ctx.args.summary;
   if (!summary || typeof summary !== 'object' || Array.isArray(summary)) throw new BadRequest('log-edit needs summary: {...}');
   const root = findVaultRoot(ctx.abs);
+  const paths = root ? pathsFor(root, ctx.abs) : null;
   let logged = false;
-  let paths = null;
-  if (root) {
-    paths = pathsFor(root, ctx.abs);
-    if (exists(paths.storePath) || exists(paths.logPath) || isTrackedFile(root, ctx.abs)) {
-      const fields = {};
-      for (const k of EDIT_SUMMARY_KEYS) if (summary[k] !== undefined) fields[k] = summary[k];
-      appendLog(paths.logPath, logEntry('edit', fields));
-      logged = true;
-    }
-  }
   try {
-    const file = readFile(ctx);
-    const store = root ? loadOrRefuse(ctx, paths, file.text) : null;
-    return reply(ctx, { root, paths, store, ...file }, { logged });
+    if (paths) {
+      const cfg = configStatus(paths);
+      if (exists(paths.storePath) || exists(paths.logPath) || (cfg === 'ok' && isTrackedFile(root, ctx.abs))) {
+        const fields = {};
+        for (const k of EDIT_SUMMARY_KEYS) if (summary[k] !== undefined) fields[k] = summary[k];
+        appendLog(paths.logPath, logEntry('edit', fields));
+        logged = true;
+      }
+      refuseConfig(ctx, paths, cfg);
+    }
+    return reply(ctx, { root, paths, ...loadFile(ctx, paths) }, { logged });
   } catch (e) {
-    if (e instanceof Refusal) e.extra = { ...(e.extra || {}), logged };
+    if (e instanceof Refusal) recordedDespite(e, logged, 'edit');
     throw e;
   }
 }
 
 // The send entry the kernel appends after fileCommentsSend replied sent or queued: the message
-// as sent, so the log remembers what went and the unsent derivation moves its watermark.
+// as sent, so the log remembers what went and the unsent derivation moves its watermark. The
+// append comes before the file and sidecar are read: the message has gone, and the log is the
+// only state for what is unsent, so a send left unrecorded would be offered again. The one
+// exception is a file that does not exist under no landmark: nothing on disk names it, so the
+// entry has nothing to mark sent, and no `.trackchanges/` is created beside a ghost.
 function doLogSend(ctx) {
   const a = ctx.args;
   if (typeof a.sid !== 'string' || !a.sid) throw new BadRequest('log-send needs sid');
@@ -655,23 +768,27 @@ function doLogSend(ctx) {
   if (typeof a.queued !== 'boolean') throw new BadRequest('log-send needs queued: true|false');
   if (a.watermark !== null && typeof a.watermark !== 'number') throw new BadRequest('log-send needs watermark: number|null');
   let root = findVaultRoot(ctx.abs);
-  if (!root) root = createLandmark(ctx);
-  const paths = pathsFor(root, ctx.abs);
-  fs.mkdirSync(path.dirname(paths.logPath), { recursive: true });
-  const fields = { sid: a.sid };
-  if (typeof a.sessionName === 'string') fields.sessionName = a.sessionName;
-  fields.comments = a.comments.map((c) => ({ id: c.id, desc: c.desc, body: c.body }));
-  fields.accepted = a.accepted;
-  fields.rejected = a.rejected;
-  fields.queued = a.queued;
-  fields.watermark = a.watermark;
-  appendLog(paths.logPath, logEntry('send', fields));
+  let logged = false;
   try {
-    const file = readFile(ctx);
-    const store = loadOrRefuse(ctx, paths, file.text);
-    return reply(ctx, { root, paths, store, ...file }, { logged: true });
+    if (!root) {
+      statFile(ctx);
+      root = createLandmark(ctx);
+    }
+    const paths = pathsFor(root, ctx.abs);
+    fs.mkdirSync(path.dirname(paths.logPath), { recursive: true });
+    const fields = { sid: a.sid };
+    if (typeof a.sessionName === 'string') fields.sessionName = a.sessionName;
+    fields.comments = a.comments.map((c) => ({ id: c.id, desc: c.desc, body: c.body }));
+    fields.accepted = a.accepted;
+    fields.rejected = a.rejected;
+    fields.queued = a.queued;
+    fields.watermark = a.watermark;
+    appendLog(paths.logPath, logEntry('send', fields));
+    logged = true;
+    checkConfig(ctx, paths);
+    return reply(ctx, { root, paths, ...loadFile(ctx, paths) }, { logged });
   } catch (e) {
-    if (e instanceof Refusal) e.extra = { ...(e.extra || {}), logged: true };
+    if (e instanceof Refusal) recordedDespite(e, logged, 'send');
     throw e;
   }
 }

@@ -12235,9 +12235,34 @@ _USER_TODO_UNDELIVERED_WARN = ("Couldn't deliver that answer — the session did
 _SENT_UNSTAMPED_WARN = {
     "off": ("The message was sent, but the request was not marked answered: user todos are turned off "
             "on this machine. Turn them on in the gear to answer or dismiss it."),
-    "settled": ("The message was sent, but that request was already settled (answered, dismissed or "
-                "withdrawn), so nothing was marked."),
+    # %s NAMES the settled todo (_settled_todo_phrase) — the plan's send op "warns naming the todo"
+    # (plans/file-review.md, fileCommentsSend): a person with two open requests about one file, one of
+    # them answered from another dashboard, reads this line to decide whether the OTHER still needs an
+    # answer, and a bare "that request" cannot tell them which one this was.
+    "settled": "The message was sent, but %s, so nothing was marked.",
 }
+
+# How a settled todo's clearing reads in that warning, by the stamp's kind (_resolve_user_todo:
+# answered / dismissed / withdrawn — the last is the agent's own withdraw_user_todo).
+_SETTLED_TODO_HOW = {"answered": "was already answered", "dismissed": "was already dismissed",
+                     "withdrawn": "was already withdrawn by the agent"}
+
+
+def _settled_todo_phrase(sid, tid):
+    """The clause naming a settled todo for _SENT_UNSTAMPED_WARN["settled"]: its own short line in
+    quotes and how it was cleared, read from the store — a stamped row keeps its text until the
+    resolved-history cap (_USER_TODO_RESOLVED_KEEP) or a dead session's prune removes it, so the
+    common case names the request outright. An id with no row at all (evicted, pruned, or a client
+    holding an id this session never filed) falls back to the id: the line still says WHICH request
+    it meant, never a bare "that request". Callers reach this only with the switch ON (the gate
+    order in _deliver_todo_reply), so an empty store here is not the switch."""
+    row = next((t for t in _user_todos().get(sid) or []
+                if isinstance(t, dict) and str(t.get("id") or "") == tid), None)
+    if row is None:
+        return "the request it was meant to answer (%s) was already settled and is no longer listed" % tid
+    text = str(row.get("text") or "").strip() or "(untitled)"
+    how = _SETTLED_TODO_HOW.get(str((row.get("resolved") or {}).get("kind") or ""), "was already settled")
+    return "the request “%s” %s" % (text, how)
 
 
 def _deliver_todo_reply(be, sid, body, tid=None, must_stamp=True):
@@ -12259,7 +12284,9 @@ def _deliver_todo_reply(be, sid, body, tid=None, must_stamp=True):
     would vanish while the stamp read 'answered', so refuse BEFORE the send, todo left open,
     whatever must_stamp says). With must_stamp True the first two refuse: the Reply exists to
     stamp. With must_stamp False the message is worth sending without a stamp — the comments are
-    the point, the stamp a convenience — so it goes, nothing is stamped, and the warning names why.
+    the point, the stamp a convenience — so it goes, nothing is stamped, and the warning names why:
+    the switch, or the settled todo itself by its text and how it was cleared (_settled_todo_phrase;
+    the plan asks for the todo's name, because two requests about one file must stay tellable apart).
     A `tid` of None skips the todo gates altogether (still never into an ended session). The stamp
     keys on DELIVERY (docs/adr/0001): a tmux send returns its NONCE, so the stamp's stand-down is
     bound to THIS send's refusal verdict; an SDK send returns a plain bool."""
@@ -12273,7 +12300,9 @@ def _deliver_todo_reply(be, sid, body, tid=None, must_stamp=True):
         if block and must_stamp:
             return None, (_USER_TODOS_OFF_WARN if block == "off" else _USER_TODO_SETTLED_WARN)
         if block:
-            warning, stamp_tid = _SENT_UNSTAMPED_WARN[block], None
+            warning = (_SENT_UNSTAMPED_WARN["off"] if block == "off"
+                       else _SENT_UNSTAMPED_WARN["settled"] % _settled_todo_phrase(sid, stamp_tid))
+            stamp_tid = None
     if _user_todo_session_ended(sid):
         return None, _USER_TODO_ENDED_WARN
     got = _send_or_park(be, sid, body, echo="human" if be is _TMUX else None, user_todo=stamp_tid)
@@ -31098,7 +31127,7 @@ def _httpdate(t):
     return formatdate(t, usegmt=True)
 
 
-def _save_file(raw, sid, content, base_mtime_ns):
+def _save_file(raw, sid, content, base_mtime_ns, prior=None):
     """The viewer's raw-mode SAVE (the file browser's slice 2, the user 2026-08-14): write `content`
     over an existing text file, atomically, refusing when the disk moved on. Returns (mtime_ns, None)
     on success, (None, error) on refusal — every refusal names the resolved path (fail loudly).
@@ -31115,7 +31144,17 @@ def _save_file(raw, sid, content, base_mtime_ns):
     silently rewrote every non-ASCII byte (review, executed repro), so the save refuses instead.
     A symlinked path writes THROUGH the link (realpath) — os.replace on the link itself destroyed it
     while the viewer showed and guarded the target. The write is temp-file + os.replace in the same
-    directory, mode preserved — a full disk or a kill mid-write leaves the original intact."""
+    directory, mode preserved — a full disk or a kill mid-write leaves the original intact.
+
+    `prior`, when a dict, receives the file as it was the instant before the replace ({"bytes", "ns"}),
+    filled from the read this function already makes for its UTF-8 check and ONLY once every refusal
+    above has been passed and the mtime fence has held: the comments log's edit entry needs the old
+    text (plans/file-review.md, decision 33), and a caller that read it for itself ahead of this
+    function read whatever a frame named — a multi-GB blob under a tracked tree, with the consent off —
+    before the save refused (the review, 2026-09-06). The on-disk size is checked for the same reason:
+    the viewer never loads a file past _TEXT_MAX_BYTES (/file answers 413), so a bigger one is not the
+    text anyone edited, and refusing on the stat keeps it out of memory. The 2-tuple return is
+    unchanged for every caller."""
     p = _resolve_open_path(str(raw or ""), sid)
     if not os.path.isabs(p):
         return None, "cannot save %s: not an absolute path (no session cwd to resolve against)" % _tilde(p)
@@ -31152,6 +31191,9 @@ def _save_file(raw, sid, content, base_mtime_ns):
         if st.st_mtime_ns != base_ns:
             return None, ("%s changed on disk since you opened it — reload before editing "
                           "(someone else, likely an agent, wrote it)" % _tilde(p))
+        if st.st_size > _TEXT_MAX_BYTES:
+            return None, ("cannot save %s: the file on disk is %s, past the %s text cap the viewer loads"
+                          % (_tilde(p), _human_bytes(st.st_size), _human_bytes(_TEXT_MAX_BYTES)))
         with open(wp, "rb") as f:
             cur = f.read()
         try:
@@ -31159,6 +31201,8 @@ def _save_file(raw, sid, content, base_mtime_ns):
         except UnicodeError:
             return None, ("cannot save %s: the file is not UTF-8 on disk — saving would silently "
                           "re-encode bytes you never touched" % _tilde(p))
+        if prior is not None:
+            prior["bytes"], prior["ns"] = cur, st.st_mtime_ns   # the text this save replaces, for the comments log
         d = os.path.dirname(wp)
         fd, tmp = tempfile.mkstemp(prefix=".romp-save-", dir=d)
         try:
@@ -31269,6 +31313,9 @@ _FILE_COMMENTS_TIMEOUT = 10                                        # seconds: on
 _AGENT_TOOLING_PROBE = "~/.claude/hooks/track-reply.mjs"           # linked by install.sh from the vendored copy
 _TRACKCHANGES_DIR = ".trackchanges"                                # the sidecar directory, one per project root
 _EDIT_DIFF_MAX_LINES, _EDIT_DIFF_MAX_BYTES = 200, 16 * 1024       # the comments log's cap on a direct edit's diff
+_FILE_COMMENTS_KERNEL_VERBS = frozenset(("log-edit", "log-send"))   # the kernel's own follow-ups (after a save, after a
+#   send), never a client's request: the log is the record of what happened, so only the code that made it happen appends
+_SEND_WATERMARK_SKEW_MS = 60 * 60 * 1000                           # how far past this clock a send's watermark may sit
 
 
 def _file_comments_node():
@@ -31312,10 +31359,16 @@ def _file_comments_tail(s, n=400):
 
 def _file_comments_call(path, verb, args=None, fence=None):
     """Run the host script for ONE verb on an already-resolved absolute `path`. Returns
-    (reply, None) on an ok:true answer, else (None, (code, error)) — the host's own refusal
-    (`ok:false`, exit 0, its code and error), or the kernel's `no-node` / `host-error` (a non-zero
-    exit, the deadline, no JSON on stdout, or node itself failing to start) with the stderr tail.
-    argv is a list and the request rides stdin: no shell, nothing of the request in a command line."""
+    (reply, None) on an ok:true answer; (refusal, (code, error)) on the host's own refusal (`ok:false`,
+    exit 0), where `refusal` is the host's whole answer — a verb can do part of its work before it
+    refuses, and says so beside the code: log-edit and log-send append their entry FIRST and answer
+    `logged: true` when a corrupt or newer sidecar then stopped the read that fills the status fields,
+    so a caller that reports on the log reads `logged` off the refusal instead of inferring it from the
+    code (the review, 2026-09-06: every refusal was reported as an entry never written); and
+    (None, (code, error)) for the kernel's own `no-node` / `host-error` (a non-zero exit, the deadline,
+    no JSON on stdout, or node itself failing to start) with the stderr tail. Every caller tests `err`
+    first. argv is a list and the request rides stdin: no shell, nothing of the request in a command
+    line."""
     node = _file_comments_node()
     if not node:
         return None, ("no-node", "cannot open the comments for %s: node is not installed on this machine, "
@@ -31343,8 +31396,8 @@ def _file_comments_call(path, verb, args=None, fence=None):
         return None, ("host-error", "the comments helper answered with something other than one JSON "
                                     "object for %s%s" % (_tilde(path), _file_comments_tail(r.stderr or r.stdout)))
     if not out.get("ok"):
-        return None, (str(out.get("code") or "host-error"),
-                      str(out.get("error") or "the comments helper refused %s without saying why" % _tilde(path)))
+        return out, (str(out.get("code") or "host-error"),
+                     str(out.get("error") or "the comments helper refused %s without saying why" % _tilde(path)))
     return out, None
 
 
@@ -31354,8 +31407,11 @@ def _file_comments_op(msg):
     tilde-collapsed path: resolve the path (`unreadable` when it cannot become absolute); refuse every
     MUTATING verb (all but `status`) while the file-editing consent is off — BEFORE any content check,
     the same wall _save_file stands behind, and the same phrase the viewer's regex matches, so the
-    panel runs the consent-then-retry branch Save uses; `no-node` when node is absent (status too:
-    the panel hides the action on it); then the host script."""
+    panel runs the consent-then-retry branch Save uses; `kernel-only` for log-edit and log-send, the
+    entries the kernel appends itself after a save and after a send — the host would take them from
+    anyone, and one client-minted send entry with a far-future watermark would hide every later comment
+    from the unsent derivation for the rest of the file's life (the review, 2026-09-06); `no-node` when
+    node is absent (status too: the panel hides the action on it); then the host script."""
     rid, verb = msg.get("reqId"), str(msg.get("verb") or "")
 
     def fail(code, error):
@@ -31369,6 +31425,9 @@ def _file_comments_op(msg):
     if verb != "status" and not _file_editing_on():
         return fail("editing-off", "cannot write the comments for %s: dashboard file editing is off on this "
                                    "machine — the viewer's Edit button asks to turn it on" % _tilde(p))
+    if verb in _FILE_COMMENTS_KERNEL_VERBS:
+        return fail("kernel-only", "cannot run %s on the comments for %s: the kernel appends that entry itself, "
+                                   "after a save or a send — it is not a request a client makes" % (verb, _tilde(p)))
     if not _file_comments_node():
         return fail("no-node", "cannot open the comments for %s: node is not installed on this machine, "
                                "and the comments helper runs under it" % _tilde(p))
@@ -31380,18 +31439,33 @@ def _file_comments_op(msg):
     return rep
 
 
+def _sh_word(s):
+    """`s` as ONE word on a POSIX command line — shlex.quote, restated here because the webview's
+    preview builder (ui/webview/file-comments-model.ts, buildSendMessage) must port it byte for byte:
+    an empty string is ''; a word made only of [A-Za-z0-9_@%+=:,./-] passes through unchanged, so an
+    ordinary path reads as the plan's own `--file <absPath>`; anything else is wrapped in single
+    quotes, each single quote inside it written as '"'"'. Single quotes keep a space from splitting
+    the word and leave $, backticks and ; inert — the double quotes the vendored guard's twin line
+    uses do not — and the session runs these lines as written (the review, 2026-09-06: a note named
+    `Meeting notes.md` failed with "No tracking store for …/Meeting", and a name carrying `;` ran
+    what followed it)."""
+    return shlex.quote(str(s))
+
+
 def _file_comments_message(path, comments, accepted, rejected, tracked, is_text):
     """The message Send to session hands the owning session: the [obsidian-diff] shape the vendored
     skill handles, in the person's voice (tests/test_injected_voice.py renders it). `comments` are
     {id, desc, body}: `desc` is the client's complete parenthetical phrase without parentheses
     (on "<passage>", on this file, on the region at …); `body` is the comment's unsent turns
-    verbatim. The path and every request-supplied string are marker-neutralized. The second
+    verbatim. The path and every request-supplied string are marker-neutralized; on the two command
+    lines the path is then one shell word (_sh_word), in the prose it stays plain. The second
     "To respond" bullet depends on the file: track-edit for a TRACKED text file, edit-normally for
     an untracked one, regenerate-with-normal-writes for an image or PDF (track-edit would destroy
     it). The accepted/rejected line appears only when there was a decision. The closing sentence
     is the loop's return signal: the session asks for another look the way it asked for this one.
     The webview's preview builder produces this text byte for byte, so change both or neither."""
     ap = _neutralize_romp_markers(str(path or ""))
+    word = _sh_word(ap)                  # the command lines: what a shell hands the CLI as --file's value
     n = len(comments)
     lines = ["[obsidian-diff] I left %d comment%s on %s." % (n, "" if n == 1 else "s", ap), ""]
     for c in comments:
@@ -31404,12 +31478,12 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
         lines.append("")
     lines.append("To respond:")
     lines.append("  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file %s --thread <id> "
-                 "--note \"<your reply>\"" % ap)
+                 "--note \"<your reply>\"" % word)
     if not is_text:
         lines.append("  • to revise it:       regenerate the file with normal writes; never run track-edit on it")
     elif tracked:
         lines.append("  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file %s --thread <id> "
-                     "--old \"<exact text>\" --new \"<replacement>\"" % ap)
+                     "--old \"<exact text>\" --new \"<replacement>\"" % word)
     else:
         lines.append("  • to revise the text: edit the file normally, then say what you changed with the "
                      "reply command above")
@@ -31417,6 +31491,44 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
     lines.append("When you have addressed these, ask me for another look the same way you asked for this one,")
     lines.append("naming the file.")
     return "\n".join(lines) + "\n"
+
+
+def _send_watermark(value):
+    """A send's `watermark` as the log will record it → (int|None, None), or (None, refusal text). The
+    watermark is the largest `ts` among the comments and replies the message carries, copied from the
+    status the panel built it from, and the log's unsent derivation takes the MAXIMUM over every send
+    entry for the rest of the file's life — so a value no comment could carry would hide every later
+    comment for as long as it stood (the review, 2026-09-06). Two checks the kernel can make on its
+    own. Shape: null, or a non-negative whole number of epoch milliseconds — a decimal string or a
+    whole-valued float is read as that number, the way the op reads its counts; anything else refuses.
+    Clock: a `ts` is stamped on the owning kernel's machine (the host script, the CLIs in the session's
+    own shell), so a real one is never later than the send that carries it; _SEND_WATERMARK_SKEW_MS
+    absorbs a sidecar committed from another machine whose clock ran ahead (.trackchanges/ is
+    committable). The refusal lands BEFORE the message goes: a send whose entry the host would refuse
+    leaves the log without it and the panel offering the same comments again."""
+    if value is None:
+        return None, None
+    n = None
+    if isinstance(value, bool):
+        n = None
+    elif isinstance(value, int):
+        n = value
+    elif isinstance(value, float):
+        try:
+            n = int(value) if value == int(value) else None
+        except (OverflowError, ValueError):                       # inf, nan
+            n = None
+    elif isinstance(value, str) and re.fullmatch(r"\s*\d+\s*", value):
+        n = int(value)
+    if n is None or n < 0:
+        return None, ("nothing was sent: the watermark must be a comment's timestamp in epoch milliseconds, or "
+                      "null — not %r" % (value,))
+    now_ms = int(time.time() * 1000)
+    if n > now_ms + _SEND_WATERMARK_SKEW_MS:
+        return None, ("nothing was sent: the watermark %d is later than any comment on this machine could be "
+                      "stamped (the clock reads %d) — recorded, it would hide every later comment from the "
+                      "unsent list" % (n, now_ms))
+    return n, None
 
 
 def _file_comments_send_op(msg):
@@ -31454,6 +31566,9 @@ def _file_comments_send_op(msg):
         return fail("nothing was sent: the accepted/rejected counts were not numbers")
     if not comments and accepted + rejected == 0:
         return fail("nothing to send: %s has no unsent comments or decisions" % _tilde(p))
+    watermark, bad = _send_watermark(msg.get("watermark"))
+    if bad:
+        return fail(bad)
     body = _file_comments_message(p, comments, accepted, rejected, bool(msg.get("tracked")), _is_text_path(p))
     tid = str(msg["todoId"]) if msg.get("todoId") else None
     got, warning = _deliver_todo_reply(Sessions.backend_for(sid), sid, body, tid, must_stamp=False)
@@ -31470,17 +31585,29 @@ def _file_comments_send_op(msg):
         rep["warning"] = warning
     entry = {"sid": sid, "comments": [{"id": c["id"], "desc": _neutralize_romp_markers(c["desc"]),
                                        "body": _neutralize_romp_markers(c["body"])} for c in comments],
-             "accepted": accepted, "rejected": rejected, "queued": queued, "watermark": msg.get("watermark")}
+             "accepted": accepted, "rejected": rejected, "queued": queued, "watermark": watermark}
     name = _name_of(sid)
     if name:
+        # The session's display name beside its opaque sid (contract sheet C1; the plan's field list for
+        # the send entry stops at the sid). The panel's Log row reads "Sent N comments to <name>" from
+        # here once the session is renamed or ended and the sid maps to nothing. The same name already
+        # reaches .trackchanges/ as the author label of every reply the session writes (ROMP_SESSION_NAME
+        # in the vendored CLIs), so a committed log widens nothing the sidecar does not.
         entry["sessionName"] = name
     if not _file_editing_on():
         # the comments log is a file in the user's project: every write to disk stands behind the one
         # file-editing consent (decision 5); the message itself is not a disk write and has gone
-        err = (None, "dashboard file editing is off on this machine — the viewer's Edit button asks to turn it on")
+        out, err = None, (None, "dashboard file editing is off on this machine — the viewer's Edit button asks "
+                                "to turn it on")
     else:
         out, err = _file_comments_call(p, "log-send", entry)
-    if err:
+    if err and out and out.get("logged"):
+        # the entry landed before the host refused: log-send appends first, and a corrupt or newer sidecar
+        # stops the read that follows, not the append. The log IS current and the send must not be repeated,
+        # so the warning names what failed instead of claiming the log was not updated
+        rep["logWarning"] = ("the message went to the session and the comments log for %s was updated, but the "
+                             "comments themselves could not be read: %s" % (_tilde(p), err[1]))
+    elif err:
         rep["logWarning"] = ("the message went to the session, but the comments log for %s was not updated: %s"
                              % (_tilde(p), err[1]))
     return rep
@@ -31544,50 +31671,54 @@ def _edit_diff(old, new, name):
 
 
 def _edit_log_before(raw, sid):
-    """What the comments log needs from a file BEFORE a save replaces it — {path, bytes, ns} — or None
-    when this save is not one the log records: a path inside .trackchanges/ itself, a tree with no
-    .trackchanges/ anywhere above (no sidecar, log or config entry can exist for it), or no node to
-    run the host script. A file that cannot be read returns {path, error} so a save that then lands
-    anyway (a race) says on its reply why the log is silent. Read through the realpath, as the save
-    writes. Called ahead of _save_file so its 2-tuple contract is untouched."""
+    """Is this save one the comments log may record? → {path} (the normalized absolute path the
+    log-edit call names) or None: a path inside .trackchanges/ itself, a tree with no .trackchanges/
+    anywhere above (no sidecar, log or config entry can exist for it), or no node to run the host
+    script. Path predicates and a PATH probe only — it opens nothing. The text the save replaces comes
+    out of _save_file's own read (its `prior` argument), made only once every refusal there has been
+    passed: the first build read the whole file HERE, ahead of the consent gate, the text-name check,
+    the size cap and the mtime fence, so a frame naming a multi-GB blob under a tracked tree was read
+    into memory and then refused (the review, 2026-09-06). Called ahead of _save_file so an ordinary
+    save on an untracked tree costs no node process."""
     try:
         p = os.path.normpath(_resolve_open_path(str(raw or ""), sid))
         if (not os.path.isabs(p) or _under_trackchanges(p) or not _trackchanges_above(p)
                 or not _file_comments_node()):
             return None
+        return {"path": p}
     except Exception:
         return None
-    try:
-        wp = os.path.realpath(p)
-        st = os.stat(wp)
-        with open(wp, "rb") as f:
-            data = f.read()
-        return {"path": p, "bytes": data, "ns": st.st_mtime_ns}
-    except OSError as ex:
-        return {"path": p, "error": getattr(ex, "strerror", None) or str(ex)}
 
 
-def _edit_log_after(pre, content, new_ns):
+def _edit_log_after(pre, prior, content, new_ns):
     """After a successful save: append the `edit` entry through the host script's log-edit verb →
-    (logged, warning). `pre` is _edit_log_before's answer (None: not a logged save, quietly false).
-    The host decides whether the file has a sidecar, a log or a tracked flag — log-edit never creates
-    one — and answers logged:true|false. A failed append is reported, never a failed save."""
+    (logged, warning). `pre` is _edit_log_before's answer (None: not a logged save, quietly false);
+    `prior` is the dict _save_file filled with the replaced text and its mtime. The host decides
+    whether the file has a sidecar, a log or a tracked flag — log-edit never creates one — and answers
+    logged:true|false; on a refusal it still says whether the entry landed first (a corrupt sidecar
+    stops the read that follows the append, not the append), and that verdict is honored: the warning
+    then names what failed instead of claiming the log was not written. A failed append is reported,
+    never a failed save."""
     if pre is None:
         return False, None
     p = pre["path"]
-    if pre.get("error"):
-        return False, ("saved, but not written to the comments log: %s could not be read before the save (%s)"
-                       % (_tilde(p), pre["error"]))
-    prior = pre["bytes"]
+    if not isinstance(prior, dict) or "bytes" not in prior:
+        return False, ("saved, but not written to the comments log: %s was not read before the save, so there "
+                       "is no diff to record" % _tilde(p))
+    old = prior["bytes"]
     new = content if isinstance(content, str) else ""
-    diff, truncated = _edit_diff(prior.decode("utf-8", "replace"), new, os.path.basename(p))
-    summary = {"mtimeBeforeNs": str(pre["ns"]), "mtimeAfterNs": str(new_ns),
-               "bytesBefore": len(prior), "bytesAfter": len(new.encode("utf-8")),
+    diff, truncated = _edit_diff(old.decode("utf-8", "replace"), new, os.path.basename(p))
+    summary = {"mtimeBeforeNs": str(prior["ns"]), "mtimeAfterNs": str(new_ns),
+               "bytesBefore": len(old), "bytesAfter": len(new.encode("utf-8")),
                "diff": diff, "truncated": truncated}
     out, err = _file_comments_call(p, "log-edit", {"summary": summary})
+    logged = bool(out and out.get("logged"))
+    if err and logged:
+        return True, ("saved and written to the comments log, but the comments for %s could not be read back: %s"
+                      % (_tilde(p), err[1]))
     if err:
         return False, "saved, but not written to the comments log for %s: %s" % (_tilde(p), err[1])
-    return bool(out.get("logged")), None
+    return logged, None
 
 
 def _git_out(args, cwd, timeout=5, env=None):
@@ -40379,16 +40510,19 @@ class Handler(BaseHTTPRequestHandler):
             # The comments log (plans/file-review.md, decision 33): a direct edit to a file that has a
             # sidecar, a log or a tracked flag is appended through the host script's log-edit verb
             # AFTER the save lands and BEFORE the ack, so the reply's `logged` is true and the panel's
-            # Log is current when the viewer hears the save. The prior bytes are read ahead of the
-            # save (the replace destroys them) rather than through _save_file's return, whose 2-tuple
-            # many call sites unpack. Synchronous on purpose: the ack carries the verdict.
+            # Log is current when the viewer hears the save. _edit_log_before only decides whether the
+            # host is asked (path predicates, no read); the text the save replaces comes out of
+            # _save_file's own read through `prior`, filled once every gate and the mtime fence have
+            # passed, so nothing is read that the save refuses. Synchronous on purpose: the ack carries
+            # the verdict.
             pre = _edit_log_before(msg.get("path"), msg.get("sid") or None)
+            prior = {} if pre else None
             mt, err = _save_file(msg.get("path"), msg.get("sid") or None,
-                                 msg.get("content"), msg.get("baseMtimeNs"))
+                                 msg.get("content"), msg.get("baseMtimeNs"), prior=prior)
             if err:
                 _reply(client, {"type": "fileSaveFailed", "reqId": msg.get("reqId"), "error": err})
             else:
-                logged, lwarn = _edit_log_after(pre, msg.get("content"), mt)
+                logged, lwarn = _edit_log_after(pre, prior, msg.get("content"), mt)
                 # mtimeNs travels as a STRING: ~1.7e18 exceeds JS's safe-integer range, so a JSON
                 # number would round in the browser and every next save would falsely conflict
                 rep = {"type": "fileSaved", "reqId": msg.get("reqId"),

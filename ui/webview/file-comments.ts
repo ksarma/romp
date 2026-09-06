@@ -40,6 +40,111 @@ import {
 
 const POLL_MS = 2500;
 const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
+// One send answers a todo (decision 28): a todo naming several files is answered by the FIRST send, and
+// later sends for its other files show no checkbox. A viewer is built per open, so the memory of which
+// todos THIS page has sent for lives at module level — a second file opened from the same todo, a Reload
+// (which re-opens with the same todoId), or the Reply modal's other link all find it. Another device or
+// document has no view of this set; the kernel's own settled check (plan: the reply warns, nothing is
+// stamped) stays the backstop there.
+const answeredTodos = new Set<string>();
+
+// ── image embeds: the source text behind a rendered <img> ─────────────────────────────────────────
+// A figure in a markdown file is commented on through its embed line (the plan's Images and PDFs): in
+// Rendered view a click on the picture offers Comment, and the anchor is the embed's source text. The
+// mapping walk records no positions for an image (it renders no text), so the embed is found here from
+// the picture's own `src`: every embed form the source can hold, in order, fenced code skipped, matched
+// against the attribute marked emitted (which percent-encodes the destination).
+export type ImageEmbed = { start: number; end: number; dest: string };
+const LABEL = "(?:\\\\.|[^\\[\\]\\\\])*";
+const IMG_INLINE = new RegExp("!\\[(" + LABEL + ")\\]\\([ \\t]*(?:<([^<>\\n]*)>|([^\\s()]*(?:\\([^\\s()]*\\)[^\\s()]*)*))(?:[ \\t]+(?:\"[^\"]*\"|'[^']*'|\\([^()]*\\)))?[ \\t]*\\)", "g");
+const IMG_FULL_REF = new RegExp("!\\[(" + LABEL + ")\\]\\[(" + LABEL + ")\\]", "g");
+const IMG_SHORT_REF = new RegExp("!\\[(" + LABEL + ")\\](?![\\[(])", "g");
+const IMG_HTML = /<img\b[^>]*?\bsrc[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/gi;
+const REF_DEF = /^ {0,3}\[((?:\\.|[^\[\]\\])+)\]:[ \t]*<?([^\s>]+)>?/gm;
+const normLabel = (s: string): string => s.trim().replace(/\s+/g, " ").toLowerCase();
+/** Offsets of the source's fenced code blocks, [start, end): an embed written inside one renders as text. */
+function fencedRanges(src: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  let open: { ch: string; n: number; at: number } | null = null;
+  let at = 0;
+  for (const line of src.split("\n")) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (m) {
+      if (!open) open = { ch: m[1][0], n: m[1].length, at };
+      else if (m[1][0] === open.ch && m[1].length >= open.n && /^\s*$/.test(line.slice(m[0].length))) { out.push([open.at, at + line.length]); open = null; }
+    }
+    at += line.length + 1;
+  }
+  if (open) out.push([open.at, src.length]);
+  return out;
+}
+/** Every image embed in the source, in order: `![alt](dest "title")`, `![alt][ref]` and `![ref]` resolved
+ *  through `[ref]: dest` definitions, and a raw `<img src>` tag. Fenced code is skipped. */
+export function imageEmbeds(src: string): ImageEmbed[] {
+  const fences = fencedRanges(src);
+  const inFence = (i: number): boolean => fences.some(([a, b]) => i >= a && i < b);
+  const defs = new Map<string, string>();
+  let m: RegExpExecArray | null;
+  REF_DEF.lastIndex = 0;
+  while ((m = REF_DEF.exec(src))) if (!inFence(m.index)) defs.set(normLabel(m[1]), m[2]);
+  const out: ImageEmbed[] = [];
+  const push = (start: number, len: number, dest: string | undefined): void => {
+    if (dest !== undefined && !inFence(start)) out.push({ start, end: start + len, dest });
+  };
+  for (const re of [IMG_INLINE, IMG_FULL_REF, IMG_SHORT_REF, IMG_HTML]) re.lastIndex = 0;
+  while ((m = IMG_INLINE.exec(src))) push(m.index, m[0].length, m[2] ?? m[3] ?? "");
+  while ((m = IMG_FULL_REF.exec(src))) push(m.index, m[0].length, defs.get(normLabel(m[2] || m[1])));
+  while ((m = IMG_SHORT_REF.exec(src))) push(m.index, m[0].length, defs.get(normLabel(m[1])));
+  while ((m = IMG_HTML.exec(src))) push(m.index, m[0].length, m[1] ?? m[2] ?? m[3] ?? "");
+  out.sort((a, b) => a.start - b.start);
+  return out.filter((e, i) => !i || e.start >= out[i - 1].end);   // a shortcut form inside a longer one: the longer wins
+}
+/** Whether a source destination is the `src` marked emitted for it (marked percent-encodes; either side may be encoded). */
+export function sameDest(dest: string, src: string): boolean {
+  if (dest === src) return true;
+  try { if (encodeURI(dest).replace(/%25/g, "%") === src) return true; } catch { /* a lone surrogate */ }
+  try { return decodeURI(dest) === decodeURI(src); } catch { return false; }
+}
+const imgsIn = (root: Element): HTMLElement[] => Array.from(root.querySelectorAll("img")) as HTMLElement[];
+/** The embed a rendered picture came from: by destination, and among twins by order. Null when the source holds none. */
+export function embedFor(img: Element, root: Element, src: string): ImageEmbed | null {
+  const want = img.getAttribute("src");
+  if (want === null) return null;
+  const hits = imageEmbeds(src).filter((e) => sameDest(e.dest, want));
+  if (hits.length === 1) return hits[0];
+  if (!hits.length) return null;
+  const k = imgsIn(root).filter((i) => i.getAttribute("src") === want).indexOf(img as HTMLElement);
+  return k >= 0 && k < hits.length ? hits[k] : null;
+}
+/** The rendered picture for an embed's exact source range — the inverse, for painting. */
+export function imgForRange(root: Element, src: string, range: SourceRange): HTMLElement | null {
+  const all = imageEmbeds(src);
+  const e = all.find((x) => x.start === range.start && x.end === range.end);
+  if (!e) return null;
+  const k = all.filter((x) => x.dest === e.dest).indexOf(e);
+  const twins = imgsIn(root).filter((i) => { const s = i.getAttribute("src"); return s !== null && sameDest(e.dest, s); });
+  return twins[k] || null;
+}
+// A framed picture wears the mark classes itself — an <img> has no text to wrap — plus an inline outline,
+// because the sheets' ring is an inset shadow the picture covers. `fc-img` tells unpaint to strip, not unwrap.
+function styleFrame(img: HTMLElement): void {
+  const presel = img.classList.contains("fc-presel");
+  const dashed = !presel && img.classList.contains("fc-hl-context");
+  img.style.outline = "2px " + (dashed ? "dashed" : "solid") + " " + (presel ? "var(--accent)" : "var(--warn)");
+  img.style.outlineOffset = "2px";
+}
+function frameImage(img: HTMLElement, cls: string, data?: Record<string, string>): void {
+  img.classList.add("fc-img", ...cls.split(" ").filter(Boolean));
+  if (data) for (const k of Object.keys(data)) img.dataset[k] = data[k];
+  styleFrame(img);
+}
+function unframeImage(img: HTMLElement, marks: string[]): void {
+  img.classList.remove(...marks);
+  if (img.classList.contains("fc-hl") || img.classList.contains("fc-presel")) { styleFrame(img); return; }
+  img.classList.remove("fc-img", "fc-hl-context");
+  img.style.outline = ""; img.style.outlineOffset = "";
+  delete img.dataset.act; delete img.dataset.id;
+}
 
 function el(tag: string, cls?: string, text?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -66,18 +171,31 @@ const clock = (t: number | string): string => {
 const paneHidden = (): boolean => document.hidden || window.innerWidth === 0 || window.innerHeight === 0;
 
 type Pending = { verb: string; ok: (m: Record<string, unknown>) => void; fail: (e: { code: string; error: string }) => void };
+// A passage comment's `range` indexes `text` — the source the selection was made over, or the reload the
+// passage was re-found in (retargetComposer) — so the anchor is always built over the text the offsets
+// belong to, never over whatever sits at those offsets now. `text` travels with every non-null range.
 type Composer =
-  | { kind: "comment"; range: SourceRange | null; quote: string | null; refusal: (MapRefusal & { selText: string }) | null }
+  | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; refusal: (MapRefusal & { selText: string }) | null }
   | { kind: "reply"; commentId: string; ref: string };
 type Err = { text: string; reload: boolean; warn?: boolean };
 
 // ── the wire: ONE window listener for the module, dispatching to the live panel by reqId ───────────
 // A reply is matched by reqId only — a REMOTE kernel's reply comes back with its sid host-prefixed
-// (federation's prefixInbound), so sid equality would fail there. A federation `warn` carries no reqId
-// and means the owning host is unreachable: while a request is outstanding it is that request's
-// failure (the viewer does the same for saveFile). The shim's own drop event (romp:wsdown) likewise.
+// (federation's prefixInbound), so sid equality would fail there. The one `warn` that means an
+// outstanding request will never be answered is federation's drop notice (dropWarn: "<host> is
+// unreachable (its kernel isn't answering) — “<type>” was not delivered"), and only when it names one
+// of THIS module's ops: the kernel sends `warn` on the same socket for unrelated refusals — a rejected
+// rename, a todo notice — with no reqId, and failing a request on those reported a comment that had
+// succeeded on disk as failed, with the kept note inviting a duplicate. The shim's own drop event
+// (romp:wsdown) fails everything outstanding, as before.
 let live: Panel | null = null;
 let listening = false;
+const DROPPED_OPS = ["fileComments", "fileCommentsSend"];
+/** The warn's text when it is federation's drop of one of this module's requests, else null. */
+export function droppedRequestText(text: unknown): string | null {
+  const t = typeof text === "string" ? text : "";
+  return DROPPED_OPS.some((op) => t.includes("“" + op + "” was not delivered")) ? t : null;
+}
 function ensureListener(): void {
   if (listening) return;
   listening = true;
@@ -86,20 +204,46 @@ function ensureListener(): void {
     if (!m || !live) return;
     if (m.type === "fileCommentsResult" || m.type === "fileCommentsSent") live.settle(m, true);
     else if (m.type === "fileCommentsFailed" || m.type === "fileCommentsSendFailed") live.settle(m, false);
-    else if (m.type === "warn") live.failAll(String(m.text || "the session's host is not answering"));
+    else if (m.type === "warn") live.failAll(droppedRequestText(m.text));
   });
   window.addEventListener("romp:wsdown", () => { if (live) live.failAll("the connection dropped; try again once it returns"); });
+}
+
+// The controls that are not <button>s — a card's head, its passage link, a Log row, a painted highlight —
+// and so take Enter and Space here, through the same root the clicks use: a collapsed card is otherwise a
+// dead end for the keyboard (ui/CLAUDE.md, never dead-end a compact view).
+const KEY_ACTS = new Set(["fccard", "fcgoto", "fcopen", "fclogrow"]);
+
+/** Where a Rendered-view refusal's passage sits in the source, for the switch to Raw. The selection
+ *  came from the REFUSED block, so the search starts at that block: a copy of the same words earlier in
+ *  the file (prose saying "p95" above a table cell "p95") must not win. The text searched for is the
+ *  mapper's own source slice when it has one (`rawRange`, found over the normalized text, so it carries
+ *  the source's tabs and CRLFs where the DOM's selection string has spaces and LFs), else the trimmed
+ *  selection; the mapper's slice stands when neither search hits. Null when the mapper saw no
+ *  occurrence at all (the button then only scrolls to the block). */
+export function rawTarget(src: string, r: MapRefusal & { selText: string }): SourceRange | null {
+  if (!r.rawHasQuote) return null;
+  const rr = r.rawRange && r.rawRange.start >= 0 && r.rawRange.end > r.rawRange.start && r.rawRange.end <= src.length ? r.rawRange : null;
+  const q = rr ? src.slice(rr.start, rr.end) : r.selText.trim();
+  if (!q) return rr;
+  const from = typeof r.blockStartOffset === "number" ? Math.max(0, r.blockStartOffset) : 0;
+  let i = src.indexOf(q, from);
+  if (i < 0) i = src.indexOf(q);
+  return i >= 0 ? { start: i, end: i + q.length } : rr;
 }
 
 let reqSeq = 0;
 
 class Panel {
   status: Status | null = null;
+  statusRefusal: { code: string; error: string } | null = null;   // why there is no status, when the kernel refused one
   root: HTMLElement | null = null;          // the aside, built on first open
   open = false;
   pending = new Map<number, Pending>();
   openCards = new Set<string>();            // keyed expand state: survives every re-render (ui/CLAUDE.md)
+  openLog = new Set<string>();              // expanded Log rows, keyed by entry (ts|kind) — the same rule
   logOpen = false;
+  imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
   resolvedOpen = false;
   trackChoice = false;                      // the on-toggle's scope row (file / folder) is showing
   trackStop = false;                        // the folder-off confirm is showing
@@ -110,7 +254,7 @@ class Panel {
   sending = false;
   sendOpts = { todo: true, track: true };   // both checked by default (decision 8)
   sentNote: string | null = null;
-  todoAnswered = false;                     // one send answers the todo; later sends show no checkbox
+  todoAnswered = false;                     // one send answers the todo; later sends show no checkbox (seeded from answeredTodos)
   previewOpen = false;
   colors: Map<string, FileViewIdentity> | null = null;
   located = new Map<string, Located & { painted: boolean }>();
@@ -131,11 +275,12 @@ class Panel {
   composerErr = el("div");
   float = el("button", "fileview-btn fc-float", "Comment") as HTMLButtonElement;
   catchUp = () => { if (this.tickSkipped) void this.tick(); };
-  hideFloatOnDown = (ev: Event) => { if (ev.target !== this.float) this.float.hidden = true; };
+  hideFloatOnDown = (ev: Event) => { if (ev.target !== this.float) { this.float.hidden = true; this.imageTarget = null; } };
 
   constructor(readonly ctx: FileViewActionCtx, readonly button: HTMLButtonElement, readonly unit: HTMLElement) {
     ensureListener();
     live = this;
+    this.todoAnswered = !!ctx.todoId && answeredTodos.has(ctx.todoId);
     this.input.type = "text";
     this.input.placeholder = "Your note (Enter saves, Esc cancels)";
     this.input.setAttribute("aria-label", "Comment text");
@@ -148,16 +293,24 @@ class Panel {
     this.float.title = "Comment on the selected passage";
     // keep the selection alive across the click: a mousedown elsewhere would collapse it before the click lands
     for (const ev of ["mousedown", "touchstart"]) this.float.addEventListener(ev, (e) => e.preventDefault());
-    this.float.addEventListener("click", () => {
+    const act = () => {
       flash(this.float);
+      const picture = this.imageTarget; this.imageTarget = null;
       const sel = window.getSelection();
       this.float.hidden = true;
-      if (sel && !sel.isCollapsed) this.startComment(sel);
-    });
+      if (picture) this.startImageComment(picture.range);
+      else if (sel && !sel.isCollapsed) this.startComment(sel);
+    };
+    this.float.addEventListener("click", act);
+    // a tap: the touchstart above is cancelled, and a cancelled touch synthesizes no mouse events and no
+    // click (Touch Events, "mouse events"), so on a phone the button acted on nothing. The tap acts here, on
+    // the lift, while the selection is still live; cancelling the touchend too stops any click a browser
+    // would still synthesize from acting a second time.
+    this.float.addEventListener("touchend", (e) => { e.preventDefault(); act(); });
     document.body.appendChild(this.float);
-    document.addEventListener("mousedown", this.hideFloatOnDown, true);
+    for (const ev of ["mousedown", "touchstart"]) document.addEventListener(ev, this.hideFloatOnDown, true);   // a press anywhere else hides it, mouse or finger
     ctx.onSelection((sel) => this.onSelection(sel));
-    ctx.onRendered(() => { this.float.hidden = true; this.paintAll(); });
+    ctx.onRendered(() => { this.float.hidden = true; this.retargetComposer(); this.paintAll(); });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
       if (this.status) void this.refresh();            // the Log gained the edit entry before the reply
@@ -187,6 +340,7 @@ class Panel {
       fcsendgo: () => { void this.doSend(); },
       fcpreview: () => { this.previewOpen = !this.previewOpen; this.render(); },
       fclog: () => { this.logOpen = !this.logOpen; this.render(); },
+      fclogrow: (x) => { const k = x.dataset.key!; if (this.openLog.has(k)) this.openLog.delete(k); else this.openLog.add(k); this.render(); },
       fcreload: (x) => { this.errors.delete(x.dataset.slot || ""); this.stopped.clear(); void this.refresh(); this.ctx.reload(); },
       fcerrx: (x) => { this.errors.delete(x.dataset.slot || ""); this.render(); },
       fcopen: (x) => { this.openPanel(); const id = x.dataset.id!; this.openCards.add(id); this.render(); this.scrollCard(id); },
@@ -195,6 +349,22 @@ class Panel {
       const t = ev.target as HTMLInputElement | null;
       if (!t || t.dataset.opt !== "todo" && t.dataset.opt !== "track") return;
       this.sendOpts[t.dataset.opt as "todo" | "track"] = t.checked;
+    });
+    // a click on a rendered picture offers Comment on its embed line (the plan's Images and PDFs) — the same
+    // stable root, a plain tag check rather than a data-act: the markdown's own <img> carries none
+    row.addEventListener("click", (ev) => {
+      const t = ev.target as HTMLElement | null;
+      if (t && typeof t.tagName === "string" && t.tagName.toUpperCase() === "IMG") this.onImageClick(t);
+    });
+    // Enter or Space on a focused non-button control (KEY_ACTS) is its click, so it lands on the same root
+    row.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const t = ev.target as HTMLElement | null;
+      if (!t || typeof t.tagName !== "string" || t.tagName.toUpperCase() === "BUTTON" || t.tagName.toUpperCase() === "INPUT" || typeof t.closest !== "function") return;
+      const x = t.closest("[data-act]") as HTMLElement | null;
+      if (!x || !KEY_ACTS.has(x.dataset.act || "")) return;
+      ev.preventDefault();
+      x.click();
     });
     this.button.addEventListener("click", () => { flash(this.button); if (this.open) this.closePanel(); else this.openPanel(); });
   }
@@ -215,11 +385,13 @@ class Panel {
    *  the todo switch is off, or the todo was already settled) and `logWarning` (the comments log
    *  append failed, so the Log and the unsent count will not reflect this send). Both are shown; a
    *  send whose record is missing must never look fully done (CLAUDE.md, fail loudly). */
-  requestSend(msg: Record<string, unknown>): Promise<{ queued: boolean; warning?: string }> {
+  requestSend(msg: Record<string, unknown>): Promise<{ queued: boolean; warning?: string; todoStamped: boolean }> {
     const reqId = ++reqSeq;
     const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
     return new Promise((ok, fail) => {
-      this.pending.set(reqId, { verb: "send", ok: (m) => ok({ queued: m.queued === true, warning: [str(m.warning), str(m.logWarning)].filter(Boolean).join(" ") || undefined }), fail });
+      // a SENT reply's `warning` is exclusively the nothing-stamped text (contract C2), so its absence is the stamp
+      this.pending.set(reqId, { verb: "send", ok: (m) => ok({ queued: m.queued === true, warning: [str(m.warning), str(m.logWarning)].filter(Boolean).join(" ") || undefined,
+        todoStamped: !str(m.warning) }), fail });
       this.ctx.post({ ...msg, type: "fileCommentsSend", reqId });
     });
   }
@@ -230,8 +402,9 @@ class Panel {
     if (ok) p.ok(m);
     else p.fail({ code: String(m.code || "failed"), error: String(m.error || "the request failed") });
   }
-  failAll(text: string): void {
-    if (!this.pending.size) return;
+  /** Fail everything outstanding with `text`; null (a warn that was not a drop of ours) leaves it all in flight. */
+  failAll(text: string | null): void {
+    if (text === null || !this.pending.size) return;
     const ps = [...this.pending.values()]; this.pending.clear();
     for (const p of ps) p.fail({ code: "unreachable", error: text });
   }
@@ -242,6 +415,7 @@ class Panel {
   probe(): void {
     this.request("status").then((s) => this.applyStatus(s), (e: { code: string; error: string }) => {
       if (e.code === "no-node") return;
+      this.statusRefusal = e;
       this.unit.hidden = false;
       this.button.title = "Comments: " + e.error;
       this.errors.set("head", { text: e.error, reload: false });
@@ -249,6 +423,7 @@ class Panel {
   }
   applyStatus(s: Status): void {
     this.status = s;
+    this.statusRefusal = null;
     this.base = pollBaseline(s);
     this.unit.hidden = false;
     this.button.textContent = actionLabel(s);
@@ -256,9 +431,32 @@ class Panel {
     this.ctx.setEditBlocked(editBlockedReason(s.hunks || []));
     this.paintAll();                                   // repaints the highlights and renders the panel
   }
+  /** Re-ask status. While the ask is out and no status has ever landed, the cards section shows the romp
+   *  loader (ui/CLAUDE.md: a wait wears the loader, never a line claiming a read); a refusal leaves the
+   *  head's row with Reload, the one way back in — nothing re-asks on its own while status is null. */
   async refresh(): Promise<void> {
+    this.busy.add("status"); this.render();
     try { this.applyStatus(await this.request("status")); }
-    catch (e) { this.errors.set("head", { text: (e as { error: string }).error, reload: false }); this.render(); }
+    catch (err) {
+      const e = err as { code: string; error: string };
+      this.statusRefusal = e;
+      this.errors.set("head", { text: e.error, reload: true });
+    } finally { this.busy.delete("status"); this.render(); }
+  }
+  /** A mutating verb needs a status behind it: the fence comes from there, and `""` for an unknown sidecar
+   *  would claim it must not exist, so the host would refuse `store-moved` — a reason that is not the reason
+   *  (a corrupt sidecar, say). Re-ask first, since the person may have fixed the file since the last answer;
+   *  when the answer is still a refusal, refuse here, under the control that asked, with the host's own text.
+   *  The caller (mutate) holds the slot busy for the whole call, loader included. */
+  private async requireStatus(slot: string): Promise<boolean> {
+    if (this.status) return true;
+    try { this.applyStatus(await this.request("status")); return true; }
+    catch (err) {
+      const e = err as { code: string; error: string };
+      this.statusRefusal = e;
+      this.errors.set(slot, { text: "Nothing written: " + e.error, reload: false });
+      return false;
+    }
   }
 
   // ── open / close ───────────────────────────────────────────────────────────────────────────────
@@ -284,7 +482,7 @@ class Panel {
   dispose(): void {
     this.stopPoll();
     this.float.remove();
-    document.removeEventListener("mousedown", this.hideFloatOnDown, true);
+    for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     this.failAll("the file viewer closed");
     if (live === this) live = null;
   }
@@ -367,10 +565,16 @@ class Panel {
    *  status and retries once by the same args; a second refusal shows verbatim, with Reload when the
    *  store, file, or config moved. Resolves the fresh status, or null when nothing was written. */
   async mutate(verb: string, args: Record<string, unknown>, slot: string): Promise<Status | null> {
-    if (!(await this.ctx.ensureEditingAllowed())) { this.errors.set(slot, { text: "Nothing written: comments need file editing on.", reload: false }); this.render(); return null; }
+    // one write in flight per control: a second Enter or click during the round trip is not a second
+    // write (the host mints a fresh id per `comment`, so a repeat would land twice); Save disables and
+    // relabels itself meanwhile (renderComposer), the slot's loader shows for every other control
+    if (this.busy.has(slot)) return null;
     this.busy.add(slot); this.errors.delete(slot); this.render();
-    try { return await this.mutateOnce(verb, args, slot, false); }
-    finally { this.busy.delete(slot); this.render(); }
+    try {
+      if (!(await this.requireStatus(slot))) return null;
+      if (!(await this.ctx.ensureEditingAllowed())) { this.errors.set(slot, { text: "Nothing written: comments need file editing on.", reload: false }); return null; }
+      return await this.mutateOnce(verb, args, slot, false);
+    } finally { this.busy.delete(slot); this.render(); }
   }
   private async mutateOnce(verb: string, args: Record<string, unknown>, slot: string, retried: boolean): Promise<Status | null> {
     const s = this.status;
@@ -405,12 +609,45 @@ class Panel {
   // ── commenting ─────────────────────────────────────────────────────────────────────────────────
   onSelection(sel: Selection): void {
     if (!this.open || this.ctx.mode() === "media" || !sel.rangeCount) return;
+    // the seam fires for any selection inside the viewer's box, the aside included: a passage is text of the
+    // FILE, so a selection in a card, the Log or the message preview offers nothing (it would only be refused)
+    const body = this.ctx.body();
+    if (!body.contains(sel.anchorNode) || !body.contains(sel.focusNode)) return;
     const rect = sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect();
     if (!rect.width && !rect.height) return;
+    this.imageTarget = null;                           // a text selection replaces a picture as the float's subject
+    this.showFloat(rect);
+  }
+  private showFloat(rect: { right: number; top: number }): void {
     const x = Math.min(Math.max(8, rect.right + 6), window.innerWidth - 90);
     const y = Math.min(Math.max(8, rect.top - 30), window.innerHeight - 34);
     this.float.style.left = x + "px"; this.float.style.top = y + "px";
     this.float.hidden = false;
+  }
+  /** A click on a rendered picture (the plan's Images and PDFs): with the panel open, the float offers
+   *  Comment beside it; the anchor will be the embed's source text. A picture the source holds no embed
+   *  for (an `src` the sanitizer rewrote, say) still gets the offer, and the composer then says why it
+   *  cannot be placed — the offer must not silently do nothing. */
+  onImageClick(img: HTMLElement): void {
+    if (!this.open || this.ctx.mode() !== "rendered") return;
+    const root = this.contentRoot(); const src = this.ctx.text();
+    if (!root || src === null || !root.contains(img)) return;
+    const e = embedFor(img, root, src);
+    this.imageTarget = { range: e ? { start: e.start, end: e.end } : null };
+    this.showFloat(img.getBoundingClientRect());
+  }
+  startImageComment(range: SourceRange | null): void {
+    const src = this.ctx.text();
+    if (src === null) return;
+    this.openPanel();
+    this.composer = range
+      ? { kind: "comment", range, quote: src.slice(range.start, range.end), text: src, refusal: null }
+      : { kind: "comment", range: null, quote: null, refusal: { ok: false, rawHasQuote: false, selText: "",
+          reason: "The line that embeds this image was not found in the source; select it in the Raw view." } };
+    this.errors.delete("composer");
+    this.repaintPresel();
+    this.renderComposer();
+    this.input.focus();
   }
   private contentRoot(): Element | null {
     const mode = this.ctx.mode();
@@ -423,7 +660,7 @@ class Panel {
     const selText = sel.toString();
     const res = this.ctx.mode() === "rendered" ? mapRenderedSelection(sel, root, src) : mapRawSelection(sel, root, src);
     this.openPanel();
-    if (res.ok) this.composer = { kind: "comment", range: res.range, quote: res.quote, refusal: null };
+    if (res.ok) this.composer = { kind: "comment", range: res.range, quote: res.quote, text: src, refusal: null };
     else this.composer = { kind: "comment", range: null, quote: null, refusal: { ...res, selText } };
     this.errors.delete("composer");
     this.repaintPresel();
@@ -455,8 +692,9 @@ class Panel {
     this.renderComposer();
   }
   /** The mapping refused in Rendered: switch to Raw, and when the selected text occurs in the source,
-   *  target that passage (the presel mark shows it); otherwise scroll to the block's first line and
-   *  leave the note waiting for a Raw selection. */
+   *  target that passage — the one in the refused block, not an earlier copy of the same words
+   *  (rawTarget) — so the presel mark shows it; otherwise scroll to the block's first line and leave the
+   *  note waiting for a Raw selection. */
   switchToRaw(): void {
     const c = this.composer;
     if (!c || c.kind !== "comment" || !c.refusal) return;
@@ -464,16 +702,15 @@ class Panel {
     const src = this.ctx.text();
     if (src === null) return;
     const r = c.refusal;
-    if (r.rawHasQuote && r.selText) {
-      const i = src.indexOf(r.selText);
-      if (i >= 0) {
-        c.range = { start: i, end: i + r.selText.length }; c.quote = r.selText; c.refusal = null;
-        this.ctx.scrollToOffset(i);
-        this.repaintPresel();
-        this.renderComposer();
-        this.input.focus();
-        return;
-      }
+    const range = rawTarget(src, r);
+    if (range) {
+      c.range = range; c.quote = src.slice(range.start, range.end); c.text = src; c.refusal = null;
+      this.errors.delete("composer");                  // an Enter pressed under the refusal is answered now
+      this.ctx.scrollToOffset(range.start);
+      this.repaintPresel();
+      this.renderComposer();
+      this.input.focus();
+      return;
     }
     if (typeof r.blockStartLine === "number") this.ctx.scrollToOffset(lineStartOffset(src, r.blockStartLine));
     this.renderComposer();
@@ -482,11 +719,21 @@ class Panel {
     const c = this.composer;
     const note = this.input.value.trim();
     if (!c || !note) return;
+    if (c.kind === "comment" && c.refusal) {
+      // nothing to save TO: the selection could not be placed, and a save here would silently become a
+      // whole-file comment — the passage the person selected lost, and the session told "on this file"
+      this.errors.set("composer", { text: "Nothing saved: select the passage in the Raw view first (Switch to Raw), or Cancel and use Comment on this file for a note on the whole file.", reload: false });
+      this.renderComposer();
+      return;
+    }
     let r: Status | null;
     if (c.kind === "reply") r = await this.mutate("reply", { commentId: c.commentId, note }, "composer");
     else {
       const args: Record<string, unknown> = { note };
-      const src = this.ctx.text();
+      // the anchor is built over the text the range indexes (the selection's own, or the reload the passage
+      // was re-found in), never over whatever sits at those offsets now; the host re-reads the file and
+      // relocates by this anchor and hint, or refuses — a note aimed at one passage never lands on another
+      const src = c.text === undefined ? null : c.text;
       if (c.range && src !== null) { args.anchor = makeAnchor(src, c.range); args.hintOffset = c.range.start; }
       r = await this.mutate("comment", args, "composer");
     }
@@ -513,6 +760,12 @@ class Panel {
         const out = rendered ? paintRendered(root, src, loc.range, cls, { act: "fcopen", id: card.id })
           : paintRaw(root, src, loc.range, cls, { act: "fcopen", id: card.id });
         painted = !!out && out.length > 0;
+        // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS)
+        for (const m of out || []) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open the comment on this passage"; }
+        if (!painted && rendered) {                    // an embed line renders no text: the frame goes on its picture
+          const img = imgForRange(root, src, loc.range);
+          if (img) { frameImage(img, cls, { act: "fcopen", id: card.id }); painted = true; }
+        }
       }
       this.located.set(card.id, { ...loc, painted });
     }
@@ -521,12 +774,17 @@ class Panel {
   }
   private paintPresel(root: Element, src: string, rendered: boolean): void {
     const c = this.composer;
-    if (!c || c.kind !== "comment" || !c.range) return;
-    if (rendered) paintRendered(root, src, c.range, "fc-presel"); else paintRaw(root, src, c.range, "fc-presel");
+    if (!c || c.kind !== "comment" || !c.range || c.text !== src) return;   // the range indexes c.text; over other bytes it would paint the wrong span
+    if (!rendered) { paintRaw(root, src, c.range, "fc-presel"); return; }
+    const out = paintRendered(root, src, c.range, "fc-presel");
+    if (!out || !out.length) { const img = imgForRange(root, src, c.range); if (img) frameImage(img, "fc-presel"); }
   }
-  /** Unwrap painted marks: the text nodes go back in place and the parent is normalized. */
+  /** Unwrap painted marks: the text nodes go back in place and the parent is normalized. A framed
+   *  picture is stripped of its marks instead — unwrapping an <img> would remove the picture. */
   private unpaint(selector: string): void {
+    const marks = selector.split(",").map((s) => s.trim().replace(/^\./, ""));
     for (const n of Array.from(this.ctx.body().querySelectorAll(selector))) {
+      if (n.classList.contains("fc-img")) { unframeImage(n as HTMLElement, marks); continue; }
       const p = n.parentNode; if (!p) continue;
       while (n.firstChild) p.insertBefore(n.firstChild, n);
       p.removeChild(n); p.normalize();
@@ -536,6 +794,18 @@ class Panel {
     this.unpaint(".fc-presel");
     const src = this.ctx.text(); const root = this.contentRoot();
     if (src !== null && root) this.paintPresel(root, src, this.ctx.mode() === "rendered");
+  }
+  /** The body was repainted, possibly over NEW text (the poll saw the file move and reloaded it; Reload;
+   *  a refresh): a pending passage is re-found through the anchor of its own text, so the presel, the
+   *  chip and the hint follow the passage rather than its old offsets — a note typed while the session
+   *  inserts a paragraph above still lands where it was aimed. Not re-found (the passage changed or went):
+   *  the selection-time pair is kept, the chip says so, nothing is painted, and Save hands the host that
+   *  anchor to rule on — it relocates, or refuses and the note stays. */
+  private retargetComposer(): void {
+    const c = this.composer; const src = this.ctx.text();
+    if (!c || c.kind !== "comment" || !c.range || c.text === undefined || src === null || src === c.text) return;
+    const loc = locateComment(src, makeAnchor(c.text, c.range), c.range.start);
+    if (loc.state === "located" && loc.range) { c.range = loc.range; c.text = src; }
   }
   goTo(id: string): void {
     const mark = this.ctx.body().querySelector('.fc-hl[data-id="' + id + '"]');
@@ -577,7 +847,10 @@ class Panel {
       };
       if (answerTodo) msg.todoId = this.ctx.todoId;
       const reply = await this.requestSend(msg);
-      if (answerTodo) this.todoAnswered = true;
+      // the latch is the STAMP, not the attempt: a send the kernel warned it could not mark (user todos off,
+      // the todo already settled) leaves the checkbox, so the todo is answerable from here once the switch
+      // is back on; the settled case re-warns on a later send, honestly, until the kernel says which it was
+      if (answerTodo && reply.todoStamped) { this.todoAnswered = true; answeredTodos.add(this.ctx.todoId!); }
       const who = this.sessionName();
       this.sentNote = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
       if (reply.warning) this.errors.set("send", { text: reply.warning, reload: false, warn: true });
@@ -678,9 +951,19 @@ class Panel {
       q.title = c.quote;
       ref.appendChild(el("span", "fc-note", "On "));
       ref.appendChild(q);
+      if (c.range && c.text !== undefined && c.text !== this.ctx.text()) {   // the file changed and the passage was not re-found in it (retargetComposer)
+        const t = el("span", "fc-tag", "passage changed");
+        t.title = "The file changed and this passage was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
+        ref.appendChild(t);
+      }
     } else ref.appendChild(el("span", "fc-note", "On this file"));
     const acts = this.composerActs;
-    acts.replaceChildren(btn("Save", "fcsave"), btn("Cancel", "fccancel"));
+    const saving = this.busy.has("composer");
+    const save = btn(saving ? "Saving…" : "Save", "fcsave");
+    save.disabled = saving;                            // posts-and-waits: disabled and relabeled for the round trip (ui/CLAUDE.md)
+    this.input.readOnly = saving;                      // what is typed during the round trip would be lost with the note that lands
+    // a refused mapping has nothing to save to — Raw or Cancel; Save would silently write a whole-file comment
+    acts.replaceChildren(...(c.kind === "comment" && c.refusal ? [] : [save]), btn("Cancel", "fccancel"));
     const err = this.composerErr;
     err.replaceChildren(...[this.loader("composer"), this.errRow("composer")].filter((n): n is HTMLElement => !!n));
     if (!box.contains(this.input)) box.replaceChildren(ref, this.input, acts, err);   // built once; the input keeps its focus across renders
@@ -688,7 +971,14 @@ class Panel {
   private renderCards(s: Status | null): HTMLElement {
     const list = el("div", "fc-cards");
     const cards = this.cards();
-    if (!s) { list.appendChild(el("div", "fc-empty", "Reading the file's comments…")); return list; }
+    if (!s) {
+      // a wait wears the romp loader while a status ask is out (refresh); once the kernel refused, say what
+      // follows — the reason and Reload are the head's row. Never a line claiming a read nothing is making.
+      const w = this.loader("status");
+      if (w) list.appendChild(w);
+      else if (this.statusRefusal) list.appendChild(el("div", "fc-empty", "The comments could not be read, so none can be shown or written."));
+      return list;
+    }
     if (!cards.length) {
       list.appendChild(el("div", "fc-empty", this.ctx.mode() === "media"
         ? "No comments yet. Comment on this file to leave one."
@@ -708,12 +998,21 @@ class Panel {
     const isOpen = this.openCards.has(c.id);
     const loc = this.located.get(c.id);
     const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : ""));
-    card.dataset.id = c.id; card.dataset.act = "fccard";
+    card.dataset.id = c.id;
+    // the expand/collapse target: the whole card while collapsed, the HEAD alone once open — the open body
+    // is text to select and copy (the sheet gives it cursor: text), and a click there must not fold the card
+    // away from under the selection. The head is a Tab stop and takes Enter/Space (KEY_ACTS).
+    if (!isOpen) card.dataset.act = "fccard";
     const head = el("div", "fc-card-head");
+    head.dataset.id = c.id; head.dataset.act = "fccard";
+    head.tabIndex = 0; head.setAttribute("role", "button"); head.setAttribute("aria-expanded", isOpen ? "true" : "false");
     head.appendChild(this.chip(c.author, c.authorId));
     const ref = el("span", "fc-ref", c.kind === "passage" ? "“" + c.ref + "”" : c.ref);
     ref.title = c.kind === "passage" ? c.anchor?.quote || c.ref : c.ref;
-    if (c.anchor && loc && loc.painted) { ref.dataset.act = "fcgoto"; ref.dataset.id = c.id; ref.classList.add("fc-link"); ref.title = "Scroll to the passage"; }
+    if (c.anchor && loc && loc.painted) {
+      ref.dataset.act = "fcgoto"; ref.dataset.id = c.id; ref.classList.add("fc-link"); ref.title = "Scroll to the passage";
+      ref.tabIndex = 0; ref.setAttribute("role", "button");
+    }
     head.appendChild(ref);
     if (loc && loc.state === "context") head.appendChild(el("span", "fc-tag", "text changed"));
     if (loc && loc.state === "detached") head.appendChild(el("span", "fc-tag", "detached"));
@@ -757,6 +1056,10 @@ class Panel {
     b.title = !this.ctx.sid ? "No session owns this file; open it from a session's link or todo to send"
       : !n ? "Nothing unsent: every comment, reply, and decision has gone" : "Hand everything unsent to the session as one message";
     box.appendChild(b);
+    // why Send is off, VISIBLE (the GitHub link's caption idiom): a tooltip never reaches touch, and a
+    // disabled button takes no focus. Nothing-unsent is captioned only once there are comments to have sent.
+    if (!this.ctx.sid) box.appendChild(el("div", "fc-note", "No session owns this file; open it from a session's link or todo to send."));
+    else if (s && !n && !this.sending && this.cards().length) box.appendChild(el("div", "fc-note", "Nothing unsent: every comment, reply, and decision has gone."));
     if (this.sendConfirm && s && n && !this.sending) {
       const parts = sendParts(s);
       const cf = el("div", "fc-confirm");
@@ -809,14 +1112,57 @@ class Panel {
       const c = this.colors ? this.colors.get(sid) : null;
       return c ? c.name : null;
     };
+    // one row per entry is the glance; what the entry holds underneath — the bodies a send carried, the diff of
+    // a direct edit — is one click down, keyed so a poll re-render keeps it open (ui/CLAUDE.md: never dead-end)
     for (const e of [...rows].reverse()) {
+      const key = String(e.ts) + "|" + String(e.kind);
+      const detail = this.logDetail(e);
+      const isOpen = !!detail && this.openLog.has(key);
       const row = el("div", "fc-log-row");
       row.appendChild(el("span", "fc-time", clock(e.ts)));
       row.appendChild(el("span", undefined, logRowText(e, nameOf)));
+      if (detail) {
+        // the row becomes a control; the fold glyph joins its text span, so the row stays time + text (the
+        // sheets size it as exactly that) and a re-render keeps it open through openLog
+        row.classList.toggle("open", isOpen);
+        row.dataset.act = "fclogrow"; row.dataset.key = key;
+        row.setAttribute("role", "button"); row.style.cursor = "pointer";
+        row.tabIndex = 0; row.setAttribute("aria-expanded", isOpen ? "true" : "false");   // a Tab stop; Enter/Space through KEY_ACTS
+        row.title = isOpen ? "Hide" : e.kind === "send" ? "Show what was sent" : "Show the edit";
+        (row.childNodes[1] as HTMLElement).textContent = (isOpen ? "▾ " : "▸ ") + logRowText(e, nameOf);
+      }
       box.appendChild(row);
+      if (detail && isOpen) box.appendChild(detail);
     }
     if (s?.logTruncated) box.appendChild(el("div", "fc-note", "Showing the last " + rows.length + " entries."));
     return box;
+  }
+  /** What a Log row has underneath, or null when the line IS the whole entry (a tracking toggle). A send
+   *  entry holds the comments as they went — each with what it referred to, in the confirm's own list dress;
+   *  an edit entry holds the kernel's diff of the direct edit. */
+  private logDetail(e: { kind: string; [k: string]: unknown }): HTMLElement | null {
+    if (e.kind === "send" && Array.isArray(e.comments) && e.comments.length) {
+      const box = el("div", "fc-log-detail");
+      const ul = el("ul", "fc-list");
+      for (const c of e.comments as Array<Record<string, unknown>>) {
+        if (!c || typeof c !== "object") continue;
+        const li = el("li");
+        li.appendChild(el("span", "fc-list-desc", String(c.desc ?? "on this file") + ": "));
+        li.appendChild(el("span", undefined, String(c.body ?? "")));
+        ul.appendChild(li);
+      }
+      box.appendChild(ul);
+      return box;
+    }
+    if (e.kind === "edit") {
+      const f = (e.summary && typeof e.summary === "object" ? e.summary : e) as Record<string, unknown>;
+      if (typeof f.diff !== "string" || !f.diff) return null;
+      const box = el("div", "fc-log-detail");
+      box.appendChild(el("pre", "fc-msg", f.diff));
+      if (f.truncated === true) box.appendChild(el("div", "fc-note", "The diff was cut short; the file holds the rest."));
+      return box;
+    }
+    return null;
   }
 }
 

@@ -7,9 +7,15 @@
 // patches/ fails here, and so does a patch that no longer applies.
 //
 // The checkout half runs only where a track-changents checkout exists ($TRACKCHANGENTS_CHECKOUT,
-// else ~/code/track-changents): it asserts the checkout is AT OR PAST the pin (the pin is an
-// ancestor of its HEAD). It never compares vendored files against the checkout's tree, which
-// by construction differs from a patched copy.
+// else ~/code/track-changents). It asserts two things: the checkout is AT OR PAST the pin (the
+// pin is an ancestor of its HEAD), and PIN.json is HONEST, meaning each hash in it is the sha256
+// of the blob the pinned commit stores at that path, read from the checkout's object store.
+// Without the second check the invariant above rests on PIN.json alone: a pin minted from a
+// dirty working tree, or a PIN.commit bumped without re-hashing, is self-consistent (the
+// reverse-applied patches still reproduce it) while the vendored tree is no longer the pinned
+// commit plus patches, and every offer back is diffed against the wrong base. The checkout half
+// never compares vendored files against the checkout's WORKING TREE, which by construction
+// differs from a patched copy; it reads only the pinned commit's objects.
 //
 // Run: node --test tools/vendor-drift.test.mjs
 import { test } from 'node:test';
@@ -64,6 +70,39 @@ function scratchCopy() {
 
 function hashesOf(root) {
   return Object.fromEntries(walk(root).map((rel) => [rel, sha256(fs.readFileSync(path.join(root, rel)))]));
+}
+
+// Where PIN.json disagrees with the commit it names: every pinned path whose hash is not the
+// sha256 of the blob `commit` stores there, or which `commit` has no file at. Reads the
+// checkout's OBJECTS (`git cat-file blob <commit>:<path>`), never its working tree, so a
+// dirty or moved-on checkout does not change the answer; only a different pin does.
+function pinDisagreements(dir, commit, files) {
+  const out = [];
+  for (const [rel, pinned] of Object.entries(files)) {
+    const r = spawnSync('git', ['-C', dir, 'cat-file', 'blob', `${commit}:${rel}`], { maxBuffer: 64 << 20 });
+    if (r.status !== 0) {
+      out.push(`${rel}: the pinned commit has no such file (${r.stderr.toString().trim()})`);
+      continue;
+    }
+    const actual = sha256(r.stdout);
+    if (actual !== pinned) out.push(`${rel}: PIN.json says ${pinned.slice(0, 12)}…, the pinned commit's blob hashes to ${actual.slice(0, 12)}…`);
+  }
+  return out;
+}
+
+// The local track-changents checkout the checkout half reads, if there is one: skips the
+// calling test when there is none, and fails it when the checkout has never fetched the
+// pinned commit (neither half can judge anything without it).
+function checkoutWithPin(t) {
+  const dir = process.env.TRACKCHANGENTS_CHECKOUT || path.join(os.homedir(), 'code', 'track-changents');
+  const shown = dir.startsWith(os.homedir()) ? `~${dir.slice(os.homedir().length)}` : dir;
+  if (!fs.existsSync(path.join(dir, '.git'))) {
+    t.skip(`no track-changents checkout at ${shown} (set TRACKCHANGENTS_CHECKOUT to point at one)`);
+    return null;
+  }
+  const known = spawnSync('git', ['-C', dir, 'cat-file', '-e', `${PIN.commit}^{commit}`], { encoding: 'utf8' });
+  assert.equal(known.status, 0, `the checkout at ${shown} does not have the pinned commit ${PIN.commit}; fetch it before judging drift`);
+  return { dir, shown };
 }
 
 test('PIN.json names the pinned commit and every vendored file, and nothing else', () => {
@@ -126,14 +165,67 @@ test('reverse-applying the patch series reproduces the pinned files, and applyin
 });
 
 test('a track-changents checkout on this machine, if any, is at or past the pin', (t) => {
-  const dir = process.env.TRACKCHANGENTS_CHECKOUT || path.join(os.homedir(), 'code', 'track-changents');
-  const shown = dir.startsWith(os.homedir()) ? `~${dir.slice(os.homedir().length)}` : dir;
-  if (!fs.existsSync(path.join(dir, '.git'))) {
-    t.skip(`no track-changents checkout at ${shown} (set TRACKCHANGENTS_CHECKOUT to point at one)`);
-    return;
+  const co = checkoutWithPin(t);
+  if (!co) return;
+  const r = spawnSync('git', ['-C', co.dir, 'merge-base', '--is-ancestor', PIN.commit, 'HEAD'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, `the checkout at ${co.shown} is BEHIND the pin ${PIN.commit.slice(0, 7)}: its HEAD does not descend from it`);
+});
+
+test("PIN.json's hashes are the pinned commit's own blobs, where a checkout can show them", (t) => {
+  const co = checkoutWithPin(t);
+  if (!co) return;
+  const bad = pinDisagreements(co.dir, PIN.commit, PIN.files);
+  assert.deepEqual(bad, [], [
+    `PIN.json is not an honest picture of the pinned commit ${PIN.commit.slice(0, 7)} (read from ${co.shown}).`,
+    'Either PIN.commit was bumped without re-hashing, or PIN.json was minted from a working tree that was not',
+    'exactly that commit; re-vendor per vendor/track-changents/README.md so the hashes are of pristine files at',
+    'the pinned commit.',
+    ...bad,
+  ].join('\n'));
+});
+
+// The detector behind the test above, shown to read the commit rather than the working tree, on
+// a synthetic repo so it runs where no track-changents checkout does (CI): a PIN.commit bumped
+// without re-hashing, a pin minted from a dirty working tree, and a pinned path the commit lacks
+// are each reported; an honest pin is not.
+test('the pin-versus-commit check reads the pinned commit, not the working tree, so a bumped or dirty-tree pin is reported', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-vendor-drift-pin-'));
+  const h = (s) => sha256(Buffer.from(s));
+  const commit = (msg) => {
+    git(['add', '-A'], dir);
+    git(['-c', 'user.name=romp-test', '-c', 'user.email=romp-test@example.invalid', '-c', 'commit.gpgsign=false',
+      'commit', '-q', '-m', msg], dir);
+    return git(['rev-parse', 'HEAD'], dir).trim();
+  };
+  try {
+    git(['-c', 'init.defaultBranch=main', 'init', '-q'], dir);
+    fs.mkdirSync(path.join(dir, 'cli'));
+    fs.writeFileSync(path.join(dir, 'engine.js'), 'module.exports = 1;\n');
+    fs.writeFileSync(path.join(dir, 'cli', 'tool.mjs'), 'export const v = 1;\n');
+    const parent = commit('first');
+    fs.writeFileSync(path.join(dir, 'engine.js'), 'module.exports = 2;\n');
+    const pinned = commit('second');
+    // The working tree moves on without a commit; nothing below may notice.
+    fs.writeFileSync(path.join(dir, 'engine.js'), 'module.exports = 3; // uncommitted\n');
+
+    const honest = { 'engine.js': h('module.exports = 2;\n'), 'cli/tool.mjs': h('export const v = 1;\n') };
+    assert.deepEqual(pinDisagreements(dir, pinned, honest), [], 'an honest pin has nothing to report, dirty working tree or not');
+
+    // PIN.commit points at the parent while the hashes are the child's: bumped without re-hashing.
+    const bumped = pinDisagreements(dir, parent, honest);
+    assert.equal(bumped.length, 1, `exactly the file that changed between the commits is reported:\n${bumped.join('\n')}`);
+    assert.match(bumped[0], /^engine\.js: PIN\.json says /);
+
+    // Hashes taken from the dirty working tree instead of the commit.
+    const dirty = pinDisagreements(dir, pinned, { ...honest, 'engine.js': h('module.exports = 3; // uncommitted\n') });
+    assert.equal(dirty.length, 1, `the file whose pin came from the working tree is reported:\n${dirty.join('\n')}`);
+    assert.match(dirty[0], /^engine\.js: PIN\.json says /);
+
+    // A pinned path the commit does not have at all.
+    const missing = pinDisagreements(dir, pinned, { ...honest, 'cli/gone.mjs': h('') });
+    assert.equal(missing.length, 1);
+    assert.match(missing[0], /^cli\/gone\.mjs: the pinned commit has no such file/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
-  const known = spawnSync('git', ['-C', dir, 'cat-file', '-e', `${PIN.commit}^{commit}`], { encoding: 'utf8' });
-  assert.equal(known.status, 0, `the checkout at ${shown} does not have the pinned commit ${PIN.commit}; fetch it before judging drift`);
-  const r = spawnSync('git', ['-C', dir, 'merge-base', '--is-ancestor', PIN.commit, 'HEAD'], { encoding: 'utf8' });
-  assert.equal(r.status, 0, `the checkout at ${shown} is BEHIND the pin ${PIN.commit.slice(0, 7)}: its HEAD does not descend from it`);
 });

@@ -290,6 +290,102 @@ class TheDiskOpOnTheWire(_Wire):
         self.assertIn("kernel bug", r["error"])
 
 
+class SidecarOnlyVerbsTellTheSessionNothing(_Wire):
+    """Consent, trace, routing (plans/file-review.md; decision 7): a verb that touches only the
+    sidecar or the config — set-tracked, comment, reply, resolve, log-edit, and Slice 2's accept —
+    sends the owning session NOTHING. The sent message is the notification; a trace hooked onto every
+    mutating verb would announce each comment the moment it landed. TheDiskOp's world cannot tell:
+    its state root has no names registry, so a trace added to the op finds no live tree containing
+    the file, returns quietly, and the suite stays green. This world ARMS the trace — one live
+    session whose recorded cwd is the notes-api root, the backend's send and _send_or_park both
+    recorded, _edit_trace itself counted — proves the arming with a direct edit through the same
+    dispatcher (a save IS told to the session, as today), then runs the sidecar-only verbs and
+    asserts that nothing reached the session by either door. Through the wire rather than the op
+    alone: saveFile's trace sits in _dispatch_ws after its reply, so a copy of it could land beside
+    the op, in the reply thread, or in the dispatcher, and the op's thread is joined after the
+    answer so a trace fired after the reply is still counted."""
+
+    def setUp(self):
+        super().setUp()
+        self._saved3 = (km._tmux_sessions, km._cwd_of, km.Sessions.__dict__["backend_for"],
+                        km._send_or_park, km._edit_trace)
+        km._tmux_sessions = lambda: {SID: {}}
+        km._cwd_of = lambda s: self.root if s == SID else ""
+        self.reached, self.parked, self.traced = [], [], []
+        world = self
+
+        class _FakeBE:
+            def send(self, sid, text, *a, **k):
+                world.reached.append((sid, text))
+                return True
+        km.Sessions.backend_for = staticmethod(lambda sid: _FakeBE())
+
+        def fake_send_or_park(be, sid, text, echo=None, user_todo=None):
+            self.parked.append((sid, text))
+            return True
+        km._send_or_park = fake_send_or_park
+        real_trace = self._saved3[4]
+
+        def counted_trace(path, sid):
+            self.traced.append((path, sid))
+            return real_trace(path, sid)
+        km._edit_trace = counted_trace
+
+    def tearDown(self):
+        km._tmux_sessions, km._cwd_of, bf, km._send_or_park, km._edit_trace = self._saved3
+        km.Sessions.backend_for = bf
+        super().tearDown()
+
+    def verb(self, verb, args):
+        """One fileComments verb through the dispatcher, the stub answering ok. The op answers from
+        its own thread and may run on past the reply, so that thread is joined before the asserts."""
+        self.stub(reply={"ok": True, "verb": verb})
+        before = set(threading.enumerate())
+        r = self.send({"type": "fileComments", "reqId": 11, "sid": SID, "path": self.fp, "verb": verb,
+                       "args": args, "fence": None if verb == "status" else {"storeMtimeNs": ""}})
+        for t in set(threading.enumerate()) - before:
+            t.join(20)
+        return r
+
+    def test_a_direct_edit_is_told_to_the_session_in_this_world(self):
+        # the control: same world, same file, same dispatcher — the spies see a save's trace, so the
+        # silence in the next test is the policy, not a spy that never armed
+        self.stub(reply={"ok": True, "verb": "log-edit", "logged": True})
+        r = self.send({"type": "saveFile", "sid": SID, "path": self.fp, "reqId": 3, "baseMtimeNs": str(self.ns),
+                       "content": "# Findings\n\nThe api session cut p95 latency by 45%.\n"}, wait=False)
+        self.assertEqual(r["type"], "fileSaved")
+        self.assertEqual(self.traced, [(self.fp, SID)])
+        self.assertEqual([sid for sid, _ in self.reached], [SID])
+        self.assertIn("I just edited", self.reached[0][1])
+        self.assertEqual(self.parked, [], "the trace goes straight to the backend, never through the todo helper")
+
+    def test_the_sidecar_only_verbs_send_nothing_by_either_door(self):
+        self.assertEqual(km._edit_trace_sid(self.fp, SID), SID, "armed: a trace from here WOULD reach the session")
+        verbs = [
+            ("status", {}),
+            ("set-tracked", {"on": True, "scope": "file"}),
+            ("comment", {"anchor": "shipping the cache in v1.2", "note": "Which cache? Say which."}),
+            ("comment", {"note": "Add a summary table at the top."}),
+            ("reply", {"commentId": "1781100000000-0", "note": "Still the wrong cache."}),
+            ("resolve", {"commentId": "1781100000000-0", "on": True}),
+            ("log-edit", {"summary": {"mtimeBeforeNs": str(self.ns), "mtimeAfterNs": str(self.ns), "bytesBefore": 47,
+                                      "bytesAfter": 47, "diff": "", "truncated": False}}),
+            # Slice 2's accept keeps the new text and drops the record: sidecar-only, so it belongs here
+            # (reject changes file bytes and WILL trace — that half of the pair lands with Slice 2). The
+            # kernel is verb-agnostic, so the policy is pinned before the verb exists.
+            ("accept", {"ids": ["1781100000000-1"]}),
+            ("accept-all", {}),
+            ("set-tracked", {"on": False, "scope": "file"}),
+        ]
+        for verb, args in verbs:
+            r = self.verb(verb, args)
+            self.assertEqual(r["type"], "fileCommentsResult", verb)
+            self.assertEqual(self.seen()["request"]["verb"], verb, "the verb ran: the silence is not a refusal")
+        self.assertEqual(self.traced, [], "no edit trace after a sidecar-only verb (decision 7)")
+        self.assertEqual(self.reached, [], "nothing reached the session's backend")
+        self.assertEqual(self.parked, [], "and nothing went through the todo-reply delivery helper")
+
+
 REPORT = "/TESTDIR/notes-api/docs/report.md"
 ONE = [{"id": "1781100000000-0", "desc": 'on "shipping the cache in v1.2"', "body": "Which cache? Say which."}]
 THREE = ONE + [

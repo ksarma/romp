@@ -116,6 +116,11 @@ _link_tc "$_tc/skill" "$HOME/.claude/skills/tracked-changes"
 echo "  Symlinked the tracked-changes tooling (track-edit/comment/reply/config, the guard, the skill) from vendor/track-changents/"
 if [[ -n "$_tc_replaced" ]]; then
     echo "  Replaced links from another track-changents install with romp's vendored copy:$_tc_replaced"
+    # The links now lead into this clone, so romp-uninstall treats them (and the guard's settings.json
+    # entry, whichever installer wrote it) as romp's and removes them; nothing records where they
+    # pointed before. Say so here, at the moment of the takeover, with the one command that undoes it.
+    echo "  romp-uninstall will remove those links and the guard's settings.json entry along with romp's own;"
+    echo "  to get that install back afterwards, re-run its install.sh (the checkout itself is untouched)."
 fi
 
 # Install the git pre-push identifier hook. Symlinked into the SHARED git hooks
@@ -172,6 +177,14 @@ WANT = {  # event -> [(hook script, timeout secs, async)]
     # exits at once in any session romp did not launch (no ROMP_SID in the environment).
     "PreToolUse":       [("track-guard.mjs", 10, False, "Write|Edit|MultiEdit")],
 }
+# Hooks another installer registers too. One of these counts as registered when any entry in the
+# event names its BASENAME: track-changents' own installer writes $HOME/.claude/hooks/track-guard.mjs
+# (an expanded home path), and that entry must not be doubled. Every whitespace token of a command is
+# tried, so a `node <path>` form counts as well; bin/romp-uninstall reads a guard entry the same way.
+# Every other hook is romp's alone and is judged by the exact "~/.claude/hooks/<name>" string this
+# script writes (the string the uninstaller drops): a same-named script registered from some other
+# path is someone else's, and taking it for ours would silently leave romp's hook unregistered.
+SHARED = {"track-guard.mjs"}
 
 try:
     with open(SETTINGS) as f:
@@ -183,15 +196,12 @@ hooks = settings.setdefault("hooks", {})
 added = []
 for event, entries in WANT.items():
     groups = hooks.setdefault(event, [])
-    # Presence is judged by the script's basename, so an entry another installer wrote with an
-    # expanded home path (track-changents' own writes $HOME/.claude/hooks/track-guard.mjs) counts as
-    # registered and is not doubled. Every whitespace token of a command contributes its basename,
-    # so `node <path>` forms count too.
-    registered = {os.path.basename(tok) for g in groups for h in g.get("hooks", [])
-                  for tok in str(h.get("command", "")).split()}
+    commands = [str(h.get("command", "")) for g in groups for h in g.get("hooks", [])]
+    basenames = {os.path.basename(tok) for cmd in commands for tok in cmd.split()}
     for name, timeout, is_async, *rest in entries:
         matcher = rest[0] if rest else None
-        if name in registered:
+        registered = name in basenames if name in SHARED else "~/.claude/hooks/" + name in commands
+        if registered:
             continue
         # The group is chosen by matcher: the matcher-less one for romp's own hooks, the group with
         # exactly this matcher for a matched entry — created only when something is added to it.
