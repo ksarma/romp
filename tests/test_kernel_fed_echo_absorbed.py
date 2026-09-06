@@ -4,18 +4,21 @@ queued_command attachment stamped with the ENQUEUE time — so its atom lands AB
 streamed while it waited. Until that splice the kernel's input echo is the message's only visible
 record, and two things must hold end to end (the 2026-09-05/06 incidents, both read-only audits):
 
-  1. the echo of a FED, unlanded text outlives the genuine-human-turn floor (sdk_backend.prune_live's
-     fed_texts guard) and retires exactly when the absorbed atom's text lands — the kernel's
-     _atom_user_texts reads the queued_command text off the parsed absorbed atom, so the by-text prune
-     fires on it and the message never renders twice;
+  1. the echo of a FED, unlanded text outlives its sibling's landing — no floor retires an SDK echo at
+     all (sdk_backend.prune_live, 2026-09-06: the CLI's image-path extraction is a composer paste-hook
+     behaviour that stream-json input never reaches) — and retires exactly when the absorbed atom's text
+     lands: the kernel's _atom_user_texts reads the queued_command text off the parsed absorbed atom, so
+     the by-text prune fires on it and the message never renders twice;
   2. the chat event for that atom says so (`absorbed`, plus `landedAt`: when the CLI took it — the
      file-order predecessor of the attachment record, since the attachment's own stamp is the send
      time), so the client can mark it and leave a cue where the pending bubble was.
 
-The sdk_backend twin of the image-path predicate is pinned against the kernel's. SYNTHETIC fixtures
-only (a private synthetic sid, the notes-api demo domain)."""
+The sdk_backend twin of the image-path predicate is pinned against the kernel's, and both against the
+CLI paste hook's extension set (ImagePathPredicateTwins names the source). SYNTHETIC fixtures only (a
+private synthetic sid, the notes-api demo domain)."""
 import json
 import os
+import re
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -170,12 +173,15 @@ class FedEchoSurvivesUntilTheSpliceLands(unittest.TestCase):
         self.assertNotIn(SID, self.w.be._live, "the absorbed atom's text landed → the echo retires")
         self.assertEqual(self._texts(merged).count(FED), 1, "never twice: the atom, not the echo")
 
-    def test_an_unfed_image_echo_still_floors(self):
-        # the image-extraction floor is untouched for an echo nobody is holding
+    def test_an_unfed_image_echo_survives_the_floor_too(self):
+        # nobody holds it, nothing landed it: until 2026-09-06 the image-extraction floor retired this
+        # echo the moment the sibling landed — but on this route the CLI never rewrites the path, so the
+        # text WILL land verbatim, and the echo waits for that (or for the dropped marking)
         self.w.write(running_turn())
         key = self.w.echo("compare with /tmp/notes-api/docs/before.png", T0 + 38)
-        km._merge_live_atoms(self.w.parse(), SID)
-        self.assertNotIn(SID, self.w.be._live)
+        merged = km._merge_live_atoms(self.w.parse(), SID)
+        self.assertIn(key, self.w.be._live.get(SID, {}))
+        self.assertEqual(self._texts(merged).count("compare with /tmp/notes-api/docs/before.png"), 1)
 
 
 class AbsorbedAtomCarriesItsLandingTime(unittest.TestCase):
@@ -301,12 +307,37 @@ class ChatEventSaysAbsorbed(unittest.TestCase):
 
 
 class ImagePathPredicateTwins(unittest.TestCase):
+    """The extension set is the CLI's, not romp's. SOURCE OF TRUTH: the installed Claude Code bundle
+    (2.1.261) carries exactly one image-path test, `/\\.(png|jpe?g|gif|webp)$/i`; its callers are the
+    terminal composer's bracketed-paste handler — which reads a pasted path with one of those extensions
+    and rewrites the token to "[Image #N]" (the "Failed to read pasted image file" path) — and two
+    attachment uploaders' isImage. Nothing on the stream-json input path an SDK session uses reaches it,
+    which is why sdk_backend.prune_live floors no echo; the kernel's tmux settle borrows the predicate
+    for the route where the hook does run. When the CLI's set changes, change BOTH twins here: the kernel
+    reads the extraction back (_user_images) and waits for it (_injected_img_paths, _paste_landed_texts),
+    the backend exports the predicate — a drift between them or from the CLI makes an echo the CLI did
+    rewrite persist forever, or one it did not rewrite get retired as an extraction."""
+
+    CLI_SET = "png|jpe?g|gif|webp"
+
     def test_the_backend_regex_is_the_kernels(self):
-        # _user_images reads an extraction back from the transcript with the kernel's set; the backend
-        # decides which echoes may take the floor with the same set — one drift and an echo the CLI did
-        # extract would persist forever, or one it did not would floor away
         self.assertEqual(sb._IMG_PATH_RE.pattern, km._IMG_PATH_RE.pattern)
         self.assertEqual(sb._IMG_PATH_RE.flags, km._IMG_PATH_RE.flags)
+
+    def test_the_set_is_the_cli_paste_hooks(self):
+        for rx in (sb._IMG_PATH_RE, km._IMG_PATH_RE):
+            m = re.search(r"\\\.\(\?:([a-z|?]+)\)", rx.pattern)
+            self.assertIsNotNone(m, rx.pattern)
+            self.assertEqual(m.group(1), self.CLI_SET, "the alternation is the CLI's, verbatim")
+            self.assertTrue(rx.flags & re.IGNORECASE, "the CLI's test is case-insensitive (/i)")
+        for ext in ("png", "PNG", "jpg", "JPEG", "jpeg", "gif", "webp", "WebP"):
+            self.assertTrue(sb._path_bearing("see /tmp/notes-api/docs/shot.%s now" % ext), ext)
+            self.assertEqual(km._injected_img_paths("see /tmp/notes-api/docs/shot.%s now" % ext),
+                             ["/tmp/notes-api/docs/shot.%s" % ext])
+        for ext in ("svg", "bmp", "ico", "avif", "heic", "tiff", "txt", "md"):
+            self.assertFalse(sb._path_bearing("see /tmp/notes-api/docs/shot.%s now" % ext),
+                             "%s: the CLI never rewrites it" % ext)
+            self.assertEqual(km._injected_img_paths("see /tmp/notes-api/docs/shot.%s now" % ext), [])
 
 
 if __name__ == "__main__":
