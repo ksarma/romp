@@ -42,10 +42,15 @@
 // The file's text is read only when a verb needs it: to rebase an existing sidecar, to place an
 // anchor, to stamp a fingerprint. `status` runs on every viewer open, a file the viewer refuses
 // above 2 MB included, so on a file with no sidecar it stats the file and reads nothing (statFile).
-// The verbs that change the FILE (reject, reject-all) fence on its mtime too, refuse a file that is
-// not UTF-8 text (`not-text`) or would exceed the 2 MB cap (`too-large`) before any write, write the
+// The verbs that change the FILE (reject, reject-all, save) fence on its mtime too, refuse a file that
+// is not UTF-8 text (`not-text`) or would exceed the 2 MB cap (`too-large`) before any write, write the
 // sidecar first and the file second, and put the prior sidecar back if the file write fails — the
 // order track-edit uses, so a reader never finds a file whose changes its sidecar does not describe.
+// `save` (Slice 5) is the editor's Save over a file with pending changes: the new text and the
+// change records the editor remapped as the person typed arrive together, every record is checked
+// against the text (`desync` names the first that does not fit), and the sidecar, the file and the
+// comments log (an `edit` entry plus an accept and a reject entry for what was decided in the
+// editor) are written in this one process.
 //
 // Vendored code: vendor/track-changents (MIT, LICENSE beside it).
 
@@ -88,13 +93,13 @@ export const EMBEDDED_HASH_CAP = 200_000_000;
 // and the vendored CLIs read and write.
 const CONFIG_VERSION = 2;
 
-// The verbs through Slice 3 (retarget is Slice 3's re-place gesture); Slice 5 adds save. The verbs
-// that write the FILE (not only the sidecar) — reject, reject-all, and later save — also fence on
-// fileMtimeNs (requireFence with 'file-moved') and check the text (not-text, too-large) before any
-// write; no other verb does.
+// The verbs through Slice 5 (retarget is Slice 3's re-place gesture, save is Slice 5's editor
+// save). The verbs that write the FILE (not only the sidecar) — reject, reject-all, save — also
+// fence on fileMtimeNs (requireFence with 'file-moved') and check the text (not-text, too-large)
+// before any write; no other verb does.
 const VERBS = new Set([
   'status', 'set-tracked', 'comment', 'reply', 'resolve', 'log-edit', 'log-send',
-  'accept', 'accept-all', 'reject', 'reject-all', 'retarget',
+  'accept', 'accept-all', 'reject', 'reject-all', 'retarget', 'save',
 ]);
 
 // ── outcome classes ─────────────────────────────────────────────────
@@ -425,7 +430,8 @@ function openRegular(ctx) {
 // stamp over text the caller never saw. `isText` says whether the bytes ARE UTF-8 text (no NUL
 // byte, no invalid sequence — track-edit's decodeTextOrNull, the same judgement the CLI makes):
 // when they are not, `text` is the lossy decode the fingerprint needs, and the verbs that write
-// the file refuse (`not-text`) rather than write that decode back over the bytes.
+// the file refuse (`not-text`) rather than write that decode back over the bytes. `bytes` is the
+// size on disk, the "before" half of the edit entry a save logs.
 function readFile(ctx) {
   const { fd, st } = openRegular(ctx);
   let buf;
@@ -437,7 +443,7 @@ function readFile(ctx) {
     try { fs.closeSync(fd); } catch { /* ignore */ }
   }
   const strict = decodeTextOrNull(buf);
-  return { text: strict != null ? strict : buf.toString('utf8'), isText: strict != null, fileMtimeNs: st.mtimeNs.toString() };
+  return { text: strict != null ? strict : buf.toString('utf8'), isText: strict != null, fileMtimeNs: st.mtimeNs.toString(), bytes: buf.length };
 }
 
 // The file opened and stat'ed, not read: for the verbs that need no text when no sidecar exists
@@ -635,10 +641,12 @@ export function checkTooLarge(shown, text) {
 // `not-text`: the verbs that write the file refuse a file whose bytes are not UTF-8 text, before
 // any write. Writing back the lossy decode would replace every invalid sequence with U+FFFD and
 // destroy the file; the sidecar-only verbs never write the file, so they take such a file as the
-// CLIs do.
-function checkIsText(shown, file) {
+// CLIs do. `consequence` is the clause after "so": what the verb cannot do and why (reject's by
+// default; save names its own).
+function checkIsText(shown, file, consequence) {
   if (!file.isText) {
-    throw new Refusal('not-text', `${shown} is not UTF-8 text, so a change in it cannot be rejected from the dashboard: writing the file back would rewrite it from a lossy decode and destroy it; nothing was changed`);
+    const what = consequence || 'a change in it cannot be rejected from the dashboard: writing the file back would rewrite it from a lossy decode and destroy it';
+    throw new Refusal('not-text', `${shown} is not UTF-8 text, so ${what}; nothing was changed`);
   }
 }
 
@@ -667,7 +675,7 @@ export function applyEdits(text, edits) {
 // Atomic write of a file's new text, for the verbs that change file bytes (reject, save): a
 // temp file in the same directory whose name does not end in .json (so the other hosts' sidecar
 // scans skip it), written through the realpath (never over a symlink), mode preserved, renamed
-// into place. Returns the new mtime string. Reject writes through it; Slice 5's save will too.
+// into place. Returns the new mtime string. Reject and save write through it.
 export function writeFileAtomic(absPath, text) {
   const real = fs.realpathSync(absPath);
   const st = fs.statSync(real);
@@ -1082,9 +1090,10 @@ function doAccept(ctx, all) {
   return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, file.text), ...file }, { accepted: ids });
 }
 
-// Put the sidecar back as it was before a reject whose file write failed: the prior bytes, or
-// nothing when there were none (a reject always finds a sidecar, so that branch is a guard).
-// Replaced by temp-and-rename like every other sidecar write, with a name no .json scan matches.
+// Put the sidecar back as it was before a reject or a save whose file write failed: the prior
+// bytes, or nothing when there were none (both verbs find a sidecar whenever they write one, so
+// that branch is a guard). Replaced by temp-and-rename like every other sidecar write, with a
+// name no .json scan matches.
 function restoreSidecar(storePath, prior) {
   if (prior == null) { fs.unlinkSync(storePath); return; }
   const tmp = `${storePath}.romp-fc-restore-${process.pid}.tmp`;
@@ -1131,6 +1140,260 @@ function doReject(ctx, all) {
   }
   appendLog(paths.logPath, logEntry('reject', { changes: changesOf(decided) }));
   return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, newText), text: newText, fileMtimeNs }, { rejected: ids });
+}
+
+// ── save (Slice 5) ──────────────────────────────────────────────────
+
+// `content` must be text the file can hold as UTF-8 and the tracking tools will read as text: a
+// lone surrogate (a JSON string can carry one) encodes as U+FFFD, so the file would not hold what
+// the person typed — the kernel's saveFile refuses the same — and a NUL character makes the file
+// one decodeTextOrNull (this script, track-edit) reads as binary from then on.
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+function checkContentText(shown, content) {
+  if (content.includes('\0')) {
+    throw new Refusal('not-text', `cannot save ${shown}: the text contains a NUL character, which would make the file one the tracking tools refuse as not text; nothing was changed`);
+  }
+  if (LONE_SURROGATE_RE.test(content)) {
+    throw new Refusal('not-text', `cannot save ${shown}: the text contains a character UTF-8 cannot encode (a lone surrogate); nothing was changed`);
+  }
+}
+
+// The editor's ledger of decisions, `[{id, oldText, newText}]`, in the shape the accept and reject
+// log entries keep (changesOf). Malformed is a caller bug; so is an id decided twice, or decided
+// AND still among the records being saved (a decision drops its record from the editor's field,
+// and undo takes the decision back with it, so the two never name one id together). `taken`
+// collects the decided ids across both lists for the comment resolve pass.
+function requireDecisions(list, name, submitted, taken) {
+  if (!Array.isArray(list)) throw new BadRequest(`save needs ${name}: an array of {id, oldText, newText}`);
+  const out = [];
+  for (const d of list) {
+    if (!d || typeof d !== 'object' || Array.isArray(d)) throw new BadRequest(`every ${name} entry must be {id, oldText, newText}`);
+    if ((typeof d.id !== 'string' && typeof d.id !== 'number') || d.id === '') throw new BadRequest(`every ${name} entry needs a non-empty id`);
+    if (typeof d.oldText !== 'string' || typeof d.newText !== 'string') throw new BadRequest(`${name} entry ${String(d.id)} needs oldText and newText as strings`);
+    const key = String(d.id);
+    if (taken.has(key)) throw new BadRequest(`change ${key} is decided twice`);
+    if (submitted.has(key)) throw new BadRequest(`change ${key} is ${name} and still among the suggestions being saved`);
+    taken.add(key);
+    out.push({ id: d.id, oldText: d.oldText, newText: d.newText });
+  }
+  return out;
+}
+
+// Every change record the editor holds, checked against `content` the way the engine's load checks
+// a sidecar's records against the file (rebaseSuggestions: the record's newText sits at its offset,
+// and two placed spans never overlap) — but refusing where the engine would detach or relocate: the
+// editor remapped these records through the person's own keystrokes, so one that does not fit is a
+// desync between the editor's text and its field, and saving it would write a sidecar that
+// describes another file. The first record that does not fit is named (`misfit`, in the caller's
+// order; an overlap names the later span in document order); a record that is not even a record,
+// or an id used twice, is a caller bug. The records written are rebuilt from the known fields in
+// recordAgentEdit's shape and key order: `kind` from the texts (the engine's own rule, so a stale
+// kind never disagrees with them), the anchor over `content` at the record's span, as
+// recordAgentEdit builds it — byte-identical for a record the edit did not move, and current for
+// one it split or shifted, which otherwise keeps an anchor describing text no longer around it —
+// and unknown fields dropped. Returned in coalesceOps's order: by offset, the narrower span first.
+export function fitRecords(content, suggestions) {
+  const len = content.length;
+  const seen = new Set();
+  const records = [];
+  for (const s of suggestions) {
+    if (!s || typeof s !== 'object' || Array.isArray(s)) throw new BadRequest('every suggestion must be a change record {id, author, ts, from, newText, oldText, ...}');
+    if ((typeof s.id !== 'string' && typeof s.id !== 'number') || s.id === '') throw new BadRequest('every suggestion needs a non-empty id');
+    const key = String(s.id);
+    if (seen.has(key)) throw new BadRequest(`suggestion id ${key} appears twice`);
+    seen.add(key);
+    const newText = s.newText == null ? '' : s.newText;
+    const oldText = s.oldText == null ? '' : s.oldText;
+    if (typeof newText !== 'string' || typeof oldText !== 'string') return { records: null, misfit: { id: key, why: 'its texts are not strings' } };
+    if (!newText && !oldText) return { records: null, misfit: { id: key, why: 'it neither adds nor removes text' } };
+    if (!Number.isInteger(s.from) || s.from < 0 || s.from > len) {
+      return { records: null, misfit: { id: key, why: `its offset ${JSON.stringify(s.from)} is outside the text (${len} characters)` } };
+    }
+    const to = s.from + newText.length;
+    if (newText && content.slice(s.from, to) !== newText) {
+      return { records: null, misfit: { id: key, why: `the text at ${s.from}..${to} is not the change's text` } };
+    }
+    const rec = { id: s.id, author: typeof s.author === 'string' && s.author ? s.author : 'unknown' };
+    if (typeof s.authorId === 'string' && s.authorId) rec.authorId = s.authorId;
+    rec.ts = typeof s.ts === 'number' && Number.isFinite(s.ts) ? s.ts : 0;
+    rec.kind = engine.kindOf(oldText, newText);
+    rec.from = s.from;
+    rec.newText = newText;
+    rec.oldText = oldText;
+    rec.anchor = engine.makeAnchor(content, s.from, to);
+    records.push(rec);
+  }
+  records.sort((x, y) => x.from - y.from || x.newText.length - y.newText.length);
+  // A zero-width deletion point never overlaps (the engine's rule: it may sit inside another
+  // change's span); two spans do when the later starts before the earlier ends. Without an
+  // overlap so far the spans end in increasing order, so the previous span's end is the furthest.
+  let prev = null;
+  for (const r of records) {
+    if (!r.newText) continue;
+    if (prev && r.from < prev.from + prev.newText.length) {
+      return { records: null, misfit: { id: String(r.id), why: `it overlaps change ${String(prev.id)}` } };
+    }
+    prev = r;
+  }
+  return { records, misfit: null };
+}
+
+// The diff a save logs, in the shape the kernel's saveFile path logs for a direct edit
+// (_edit_log_diff, Python's difflib): `--- a/<name>` and `+++ b/<name>`, then zero-context hunks
+// `@@ -<range> +<range> @@` with the removed lines and then the added ones, every line
+// newline-terminated, capped at EDIT_DIFF_MAX_LINES lines or EDIT_DIFF_MAX_BYTES bytes with
+// `truncated: true` when cut — so the panel's Log reads a save's entry and a direct edit's the
+// same way. Lines are split on '\n' (a CR stays with its line). The common head and tail are
+// trimmed first and the engine's line LCS (lcsOps, the one diff this script has) aligns the rest;
+// past DIFF_CELLS cells the middle is written as one replacement hunk, which the cap cuts anyway
+// — an exact alignment of a wholesale paste is not worth the memory. An identical text yields ''
+// (difflib writes no header when there is no hunk).
+export const EDIT_DIFF_MAX_LINES = 200;
+export const EDIT_DIFF_MAX_BYTES = 16 * 1024;
+const DIFF_CELLS = 4_000_000;
+
+// difflib's _format_range_unified: 1-based; a single line has no count; an empty range names the
+// line before it.
+function rangeUnified(start, length) {
+  let beginning = start + 1;
+  if (length === 1) return String(beginning);
+  if (!length) beginning -= 1;
+  return `${beginning},${length}`;
+}
+
+export function editDiff(oldText, newText, name) {
+  const a = engine.splitLinesKeep(oldText);
+  const b = engine.splitLinesKeep(newText);
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const am = a.slice(head, a.length - tail);
+  const bm = b.slice(head, b.length - tail);
+  const hunks = [];
+  if (am.length || bm.length) {
+    if (am.length * bm.length > DIFF_CELLS) {
+      hunks.push({ aStart: head, del: am, bStart: head, ins: bm });
+    } else {
+      let ai = head;
+      let bj = head;
+      let cur = null;
+      for (const op of engine.lcsOps(am, bm, (x, y) => x === y)) {
+        if (op.type === 'eq') { cur = null; ai++; bj++; continue; }
+        if (!cur) { cur = { aStart: ai, del: [], bStart: bj, ins: [] }; hunks.push(cur); }
+        if (op.type === 'del') { cur.del.push(am[op.ai]); ai++; } else { cur.ins.push(bm[op.bj]); bj++; }
+      }
+    }
+  }
+  if (!hunks.length) return { diff: '', truncated: false };
+  const lines = [`--- a/${name}\n`, `+++ b/${name}\n`];
+  for (const h of hunks) {
+    lines.push(`@@ -${rangeUnified(h.aStart, h.del.length)} +${rangeUnified(h.bStart, h.ins.length)} @@\n`);
+    for (const l of h.del) lines.push(`-${l}`);
+    for (const l of h.ins) lines.push(`+${l}`);
+  }
+  const out = [];
+  let size = 0;
+  let truncated = false;
+  for (let ln of lines) {
+    if (!ln.endsWith('\n')) ln += '\n';
+    const bytes = Buffer.byteLength(ln, 'utf8');
+    if (out.length >= EDIT_DIFF_MAX_LINES || size + bytes > EDIT_DIFF_MAX_BYTES) { truncated = true; break; }
+    out.push(ln);
+    size += bytes;
+  }
+  return { diff: out.join(''), truncated };
+}
+
+// save {content, suggestions, accepted, rejected}: the editor's Save over a file with pending
+// changes (Slice 5). `content` is the whole new text; `suggestions` the change records as the
+// editor's field holds them after the person's typing remapped them (the sidecar's v3 record
+// shape); `accepted` and `rejected` the ledger of what was decided in the editor, each
+// `{id, oldText, newText}`, whose records the field has already dropped (and, for a reject, whose
+// old text the buffer already holds). Fenced on the sidecar AND the file: "" for storeMtimeNs means
+// no sidecar exists, so the editor had nothing to remap and nothing to decide (a non-empty list is
+// then a caller bug), and no sidecar is created — the file and the log are written. Otherwise, in
+// order and with nothing written until every check has passed: the file must be UTF-8 text on disk
+// and `content` text the file can hold (`not-text`), under the cap (`too-large`), and every record
+// must fit `content` (`desync`, naming the first that does not). Then the order track-edit and
+// reject use: the sidecar first (the records, every comment bound by `suggestionId` to a decided
+// change marked resolved and KEPT, the detached ops as they were, the fingerprint over `content`),
+// the file through writeFileAtomic, the prior sidecar bytes put back if the file write fails; then
+// the log (one `edit` entry in the kernel's direct-edit shape, built here from the old and new
+// text, then an `accept` and a `reject` entry for each non-empty list), and pruneIfClean when
+// nothing is pending and no comment or detached op remains — the reply then carries storeMtimeNs
+// null and store null. The reply is the standard status with the new fileMtimeNs and `logged`.
+// A save whose content equals the file and whose records equal the sidecar is still a write: the
+// person pressed Save, so the file is replaced (a new inode, a new mtime), the sidecar is rewritten,
+// and the log gets an edit entry with an empty diff — never a short-circuit, since the kernel sends
+// the same trace saveFile sends and the person expects a saved file.
+// With no root above the file (the client sends save only for a tracked file or one with a
+// sidecar, both of which have a root) the file is written and nothing is created — no landmark,
+// no log, the rule log-edit follows for a plain save — and the reply says `logged: false`.
+function doSave(ctx) {
+  const a = ctx.args;
+  if (typeof a.content !== 'string') throw new BadRequest('save needs content: the whole new text as a string');
+  if (!Array.isArray(a.suggestions)) throw new BadRequest('save needs suggestions: the change records as the editor holds them (an array)');
+  const submitted = new Set();
+  for (const s of a.suggestions) if (s && typeof s === 'object' && s.id != null) submitted.add(String(s.id));
+  const taken = new Set();
+  const accepted = requireDecisions(a.accepted, 'accepted', submitted, taken);
+  const rejected = requireDecisions(a.rejected, 'rejected', submitted, taken);
+  const { file, root, paths, store } = loadForDecision(ctx, true);
+  if (!store) {
+    if (a.suggestions.length) throw new BadRequest('save with no sidecar takes no suggestions: there was nothing to remap');
+    if (accepted.length || rejected.length) throw new BadRequest('save with no sidecar takes no accepted or rejected changes: nothing was pending');
+  }
+  checkIsText(ctx.shown, file, 'it cannot be saved from the dashboard: the text the editor holds is a lossy decode of its bytes, and writing that back would destroy them');
+  checkContentText(ctx.shown, a.content);
+  checkTooLarge(ctx.shown, a.content);
+  const fit = fitRecords(a.content, a.suggestions);
+  if (fit.misfit) {
+    throw new Refusal('desync', `change ${fit.misfit.id} does not fit the text being saved to ${ctx.shown}: ${fit.misfit.why}; nothing was changed — reload and retry`);
+  }
+  let prior = null;
+  if (store) {
+    try { prior = fs.readFileSync(paths.storePath); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+    store.suggestions = fit.records;
+    if (taken.size) {
+      for (const c of store.comments) {
+        if (c && c.suggestionId != null && taken.has(String(c.suggestionId))) c.resolved = true;
+      }
+    }
+    saveStore(root, paths.storePath, store, a.content);
+  }
+  let fileMtimeNs;
+  try {
+    fileMtimeNs = writeFileAtomic(ctx.abs, a.content);
+  } catch (e) {
+    const why = tildeText(e && e.message ? e.message : String(e));
+    let restored = 'nothing was changed';
+    if (store) {
+      restored = 'the comments file was put back as it was and nothing was changed';
+      try { restoreSidecar(paths.storePath, prior); } catch (e2) {
+        restored = `the comments file could not be put back either (${tildeText(e2 && e2.message ? e2.message : String(e2))}) — reload before doing anything else`;
+      }
+    }
+    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${why}; ${restored}`);
+  }
+  let logged = false;
+  if (paths) {
+    fs.mkdirSync(path.dirname(paths.logPath), { recursive: true });
+    const { diff, truncated } = editDiff(file.text, a.content, path.basename(ctx.abs));
+    appendLog(paths.logPath, logEntry('edit', {
+      mtimeBeforeNs: file.fileMtimeNs,
+      mtimeAfterNs: fileMtimeNs,
+      bytesBefore: file.bytes,
+      bytesAfter: Buffer.byteLength(a.content, 'utf8'),
+      diff,
+      truncated,
+    }));
+    if (accepted.length) appendLog(paths.logPath, logEntry('accept', { changes: accepted }));
+    if (rejected.length) appendLog(paths.logPath, logEntry('reject', { changes: rejected }));
+    logged = true;
+  }
+  const after = store ? afterDecision(ctx, paths, store, a.content) : null;
+  return reply(ctx, { root, paths, store: after, text: a.content, fileMtimeNs }, { logged });
 }
 
 // The folder entry that tracks a file's directory: `<dir>/` relative to the root. A file at the
@@ -1316,6 +1579,7 @@ const HANDLERS = {
   reject: (ctx) => doReject(ctx, false),
   'reject-all': (ctx) => doReject(ctx, true),
   retarget: doRetarget,
+  save: doSave,
 };
 
 // One request in, one result object out; throws Refusal or BadRequest (or a program error).
