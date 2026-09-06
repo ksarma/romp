@@ -449,9 +449,10 @@ of that write and as withdrawing the cap. The caps frame is also the reconnect
 signal: writes still in flight when it arrives cannot be answered, so the client
 drops them, reverts the copy, and says so.
 
-The Outline pane's tag filter is the exception: it still posts its lens as a
-whole blob without a `writeId` or `edited`, ignores acks, and settles from the
-next feed frame as before.
+The Outline pane's tag filter posts its lens the same way: the frame copy it
+holds with only the outline lens changed, with a `writeId` and `edited: []`, so
+the kernel applies the lens only. It ignores the ack and settles from the next
+feed frame.
 
 Until 2026-09-05 the dialog posted the whole blob for every edit from its own
 un-echoed copy, so the guard refused a rename typed right after a create against
