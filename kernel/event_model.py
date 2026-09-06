@@ -26,7 +26,7 @@ Auxiliary inputs the file adapter may read (same category as the transcript):
                                transcript lost to an API-errored try; judge parse only)
   timeline/messages.jsonl   -> peer rompUuid for a postal atom (join on the msg id)
 """
-import copy, json, os, re, sys, time, hashlib, threading
+import bisect, copy, json, os, re, sys, time, hashlib, threading
 from datetime import datetime
 from pathlib import Path
 
@@ -886,6 +886,9 @@ class FileAdapter:
                                  #   text (full prompt, markers intact), seq}
         self.leaf_uuid = None
         self._seq = 0            # global read-order counter — continued by assembly folds
+        self._seq_ts = []        # (seq, repaired ts) per uuid-bearing record, in read order — sorted by
+        #                          construction, so _landing_t bisects it for a record's file-order
+        #                          predecessor without a per-lookup scan or a per-fold sort
         self.ts_of = {}          # uuid -> repaired epoch seconds — THE timestamp every consumer
         #                          reads (_chrono, the emit, the boundary splice). A record whose
         #                          stamp does not parse borrows the last good stamp seen in file
@@ -964,6 +967,11 @@ class FileAdapter:
                 else:
                     self._last_ts = ts
                 self.ts_of[u] = ts
+                if t != "attachment":
+                    # an attachment is never a landing WITNESS (a queued_command IS the spliced item,
+                    # stamped with its send time): several sends spliced at one boundary must all
+                    # read that boundary, not each other — see _landing_t
+                    self._seq_ts.append((seq, ts))
                 # parentUuid normally; compact_boundary carries parentUuid:null +
                 # logicalParentUuid:<pre-compaction leaf> — follow that so the active
                 # path survives compaction instead of orphaning every pre-compaction turn.
@@ -1529,9 +1537,29 @@ class FileAdapter:
             #                     PLACEMENTS_V bump).
             "_seq": seq,
         }
+        landed_t = self._landing_t(seq)
+        if landed_t is not None:
+            atom["landedT"] = landed_t   # when the CLI TOOK it (metadata, like `absorbed`; see _landing_t)
         if ROMP_AUTO_RE.search(full):   # an AUTO-nudge → flag it, mirroring the native user-record path
             atom["rompAuto"] = True
         return atom
+
+    def _landing_t(self, seq):
+        """When the CLI TOOK a mid-turn prompt: the repaired stamp of the record written just BEFORE
+        the queued_command attachment in file order. The attachment's own stamp is the ENQUEUE time
+        (the moment the user sent it — where the atom is placed, above the steps that ran while it
+        waited), but the CLI writes the record at the splice, right after the tool boundary it waited
+        for, so that boundary's own record — the file-order predecessor — is the landing moment to
+        within the boundary's latency. The chat's mid-turn cue reads it (kernel `landedAt`): "the
+        session took this at HH:MM" is a different fact from "sent at HH:MM", and the rail already
+        shows the latter. The PREDECESSOR, not the successor, on purpose: it is always ingested when
+        the atom is emitted, so a fold that sees the attachment as the newest record still stamps
+        it — a successor read would find nothing there, and no later fold re-emits the atom (the
+        (ts, text) dedup). Attachment records are skipped as witnesses (a run of splices at one
+        boundary all read that boundary). None only when nothing precedes the attachment in the
+        read. Metadata only: no atom-set or seg-id change, no PLACEMENTS_V bump."""
+        i = bisect.bisect_left(self._seq_ts, (seq,)) - 1
+        return self._seq_ts[i][1] if i >= 0 else None
 
     def _absorbed(self, qatts, kept, st, rompuuid, postal_index):
         """Mid-turn prompts spliced into a running turn. The witness is the queued_command
