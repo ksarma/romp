@@ -88,7 +88,7 @@ class SessionList(unittest.TestCase):
                                          "compacting": False,          # romp compact --wait polls this
                                          "working": "owns feed.ts", "backend": "tmux"})
         self.assertEqual(rows["sid-s"], {"id": "sid-s", "name": "beta", "state": "waiting", "dir": "/work/b",
-                                         "bg": "blue", "fg": "white", "lastSid": "sid-s",
+                                         "bg": "blue", "fg": "white", "emoji": "", "lastSid": "sid-s",
                                          "compacting": False,
                                          "working": "", "backend": "sdk"})
 
