@@ -1,0 +1,4 @@
+route,p50_ms,p95_ms
+GET /notes,40,120
+GET /notes/{id},12,35
+PUT /notes/{id},55,210
