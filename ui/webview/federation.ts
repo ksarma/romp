@@ -674,6 +674,7 @@ export class FederationManager {
   private perHostOrder: Record<string, string[]> = {};
   private perHostTabs: Record<string, any[]> = {};
   private localViews: any = null;   // the LOCAL kernel's session-views blob, carried on merged tabOrder re-emits
+  private localSelfHost = "";       // the LOCAL kernel's own name (its tabOrder frame's selfHost), carried the same way
   private localViewsRejected: any = null;   // the last LOCAL tabOrder blob the seq gate turned away since it last adopted one — the caps frame adopts it (inbound)
   private tlViewsRejected: any = null;      // the same for the LOCAL lanes payload's blob (perHostTl[LOCAL].views)
   private localViewsAnnounced: number | null = null;   // the seq the last LOCAL caps frame announced as the kernel's current store when the tabOrder store adopted no kept blob — a LATER blob at exactly that seq is adopted below the stored one (announcedSeq); cleared by the next adoption that changes the stored blob (announcedAfter)
@@ -863,6 +864,9 @@ export class FederationManager {
         if (adoptViews(this.localViews, m.views, this.localViewsAnnounced)) { this.localViewsAnnounced = announcedAfter(this.localViews, m.views, this.localViewsAnnounced); this.localViews = m.views; this.localViewsRejected = null; }
         else this.localViewsRejected = m.views;
       }
+      // the LOCAL kernel's own name rides its tabOrder frame too (selfHost): the chat reads a postal card's
+      // sender host against it, and a remote kernel's frame names ITSELF, so only the local one is kept
+      if (host === LOCAL && typeof m.selfHost === "string" && m.selfHost) this.localSelfHost = m.selfHost;
       this.ensureHost(host);
       this.absorbHostReport(host, prevOrder, prevTabs);   // a host just reported its sessions → the one
       this.emitMergedOrder(true, host);                   //   moment the stored arrangement may be touched
@@ -1014,7 +1018,7 @@ export class FederationManager {
     const order = mergeHostOrder(this.perHostOrder, this.hostSeq, this.view());
     const tabs = this.hostSeq.flatMap((h) => this.perHostTabs[h] || []);
     this.publishPending();
-    const data: any = { type: "tabOrder", order, tabs, views: this.localViews ?? undefined };
+    const data: any = { type: "tabOrder", order, tabs, views: this.localViews ?? undefined, selfHost: this.localSelfHost || undefined };
     // Provenance for the chat's close backstop (T233): a FRESH emission is driven by one host's own
     // tabOrder push and names that host (`freshHost`) — only ITS ids are that kernel's current word; the
     // other hosts' slices ride along from the store. A SYNTHETIC re-emit (a view-order storage event, a

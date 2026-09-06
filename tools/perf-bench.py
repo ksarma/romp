@@ -113,12 +113,14 @@ error, never a silent skip):
     a Web Push or a badge push are replaced with recorders (they are not builders; the push path
     reaches them from _cached_feed and the pricing table).
   * `subprocess` in every loaded romp module is replaced with a tripwire that raises on any spawn —
-    except the chat build's own read-only local git queries (`git rev-parse`, `git ls-files`), which
-    place path links. Those run and are counted per build. The kernel caches their answers only for
-    a cwd inside a git checkout (on the index and tree mtimes); for any other cwd it re-runs
-    `git ls-files` on EVERY build, so the per-build count beside the build_session rows says how much
-    of a sample is spawn time. `--no-git` answers those queries as failures instead, for a strict
-    zero-exec run.
+    except the kernel's own read-only local git queries: `git rev-parse` and `git ls-files`, which
+    the chat build runs to place path links, and `git remote get-url`, which names the session's
+    GitHub repository for PR links (the pair only — `git remote` also has writing subcommands, and
+    those trip). Those run and are counted per build. The kernel caches their answers only for a cwd
+    inside a git checkout (on the index and tree mtimes, and the config file's mtime for the
+    remote); for any other cwd it re-runs `git ls-files` on EVERY build, so the per-build count
+    beside the build_session rows says how much of a sample is spawn time. `--no-git` answers those
+    queries as failures instead, for a strict zero-exec run.
   * pwd.getpwnam / pwd.getpwuid are wrapped as counters (nss_lookups in the output): the chat build's
     path-link pass calls os.path.expanduser on every path-shaped token, and a `~name/...` token makes
     glibc consult the name service — AF_UNIX connects to nscd and systemd-userdb, local, not network.
@@ -191,7 +193,7 @@ def parse_args(argv):
     ap.add_argument("--json", help="write the machine-readable result here")
     ap.add_argument("--compare", nargs=2, metavar=("A.json", "B.json"), help="print per-benchmark deltas A -> B and exit")
     ap.add_argument("--no-git", action="store_true",
-                    help="answer the chat build's read-only git queries (rev-parse, ls-files) as failures instead of running git")
+                    help="answer the kernel's read-only git queries (rev-parse, ls-files, remote get-url) as failures instead of running git")
     ap.add_argument("--dormant-rows", action="store_true", help="liveness rows exactly as a restarted kernel reports dormant sessions")
     ap.add_argument("--all-regs-live", action="store_true", help="treat regs with alive=false as live too")
     ap.add_argument("--i-know-this-is-live", action="store_true",
@@ -268,33 +270,44 @@ def prepare_env(state, claude_dir, private_dir):
 # ── side-effect tripwires ───────────────────────────────────────────────────────────────────────
 class SubprocessTripwire:
     """Stands in for the `subprocess` module inside the loaded romp modules: constants and helpers pass
-    through; every spawn raises, except the kernel's own read-only local git queries (`git rev-parse`,
-    `git ls-files`), which the chat build runs to place path links. Those are counted. With no_git they
-    are answered as failures (the "no git on this box" shape) instead of run, so a strict zero-exec run
-    is possible without replacing any kernel function."""
+    through; every spawn raises, except the kernel's own read-only local git queries — `git rev-parse`
+    and `git ls-files`, which the chat build runs to place path links, and `git remote get-url`, which
+    names a session's GitHub repository for its PR links (_github_repo_of; the get-url pair only, never
+    `git remote` at large, whose add/set-url/remove forms rewrite config). Those are counted. With no_git
+    they are answered as failures (the "no git on this box" shape) instead of run, so a strict zero-exec
+    run is possible without replacing any kernel function."""
     _SPAWN = ("Popen", "run", "call", "check_call", "check_output", "getoutput", "getstatusoutput")
-    _GIT_READ_ONLY = ("rev-parse", "ls-files")
+    _GIT_READ_ONLY = ("rev-parse", "ls-files")          # single-word queries admitted by their subcommand
+    _GIT_READ_ONLY_PAIRS = (("remote", "get-url"),)      # two-word queries admitted only as the whole pair
 
     def __init__(self, real, log, no_git=False):
         self._real, self._log, self._no_git = real, log, no_git
         self.git_calls = {}
 
     @classmethod
-    def _git_subcommand(cls, argv):
+    def _git_query(cls, argv):
+        """The read-only git query `argv` spells — "rev-parse", "ls-files" or "remote get-url" (the
+        counter's key) — or None for anything else, `git remote set-url` included."""
         if not (isinstance(argv, (list, tuple)) and argv and argv[0] == "git"):
             return None
         i = 1
         while i < len(argv) and argv[i] == "-C":
             i += 2
-        return argv[i] if i < len(argv) else None
+        rest = tuple(argv[i:])
+        if rest and rest[0] in cls._GIT_READ_ONLY:
+            return rest[0]
+        for pair in cls._GIT_READ_ONLY_PAIRS:
+            if rest[:2] == pair:
+                return " ".join(pair)
+        return None
 
     def __getattr__(self, name):
         if name in self._SPAWN:
             def refuse(*a, **k):
                 import traceback
                 argv = a[0] if a else k.get("args")
-                sub = self._git_subcommand(argv)
-                if name == "run" and sub in self._GIT_READ_ONLY:
+                sub = self._git_query(argv)
+                if name == "run" and sub:
                     self.git_calls[sub] = self.git_calls.get(sub, 0) + 1
                     if self._no_git:
                         return self._real.CompletedProcess(argv, 1, "" if k.get("text") else b"", "" if k.get("text") else b"")
