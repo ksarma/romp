@@ -148,6 +148,22 @@ def _no_credential_command():
     yield
 
 
+def pytest_collection_finish(session):
+    """The import-time half of the selector floor, checked where it can fail: collection runs every test
+    module's top level after the floor above, and a module that pops ROMP_CREDENTIAL_SELECTOR_FILE there
+    (or points it at a file that exists) undoes the floor for every module collected after it — a
+    later module reading the selector at import would read the developer's own mode file, the read the
+    floor exists to prevent, before any per-test re-assert runs. Refused here, naming the fix, rather
+    than left to pass on what the box has selected (2026-09-06: tests/test_envsource.py popped it at
+    import, from before the floor existed). tests/test_envsource.py's Floor class pins this."""
+    p = os.environ.get("ROMP_CREDENTIAL_SELECTOR_FILE") or ""
+    if not p or os.path.exists(p):
+        raise pytest.UsageError(
+            "ROMP_CREDENTIAL_SELECTOR_FILE is %s after collection: a test module popped it, or pointed it at a "
+            "real file, at import. Floor it at module level to a path that does not exist, as tests/conftest.py "
+            "and tests/test_envsource.py do." % ("absent" if not p else "a path that exists (%s)" % p))
+
+
 # No test may read the REAL service unit, launchd plist or Claude Code settings (2026-09-05):
 # constructing the SDK backend takes the key-source verdict (sdk_backend.key_source_verdict), which
 # reads the systemd unit and its drop-ins, the launchd plist and $CLAUDE_CONFIG_DIR/settings*.json —
