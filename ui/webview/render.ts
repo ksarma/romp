@@ -34,7 +34,7 @@ import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned, reachableFrom, headWords,
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, type SnapModel, type SnapRow } from "./tab-snapshot";
-import { rowStillOpen } from "./tab-snapshot-view";
+import { rowStillOpen, installSnapshotEscape } from "./tab-snapshot-view";
 import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
@@ -10187,21 +10187,24 @@ function leaveSnapshot(): void {
   renderTabs();
   showActive();
 }
-// ESCAPE LEAVES THE SNAPSHOT, and yields to every layer that owns its own Escape. Capture phase on the
-// window, so it runs while those layers are still on the page to be seen: the menus (the tab menu's closer,
-// registered before this one, runs first and marks the Escape it consumed), the picker and confirm overlays,
-// the pane's panels (closed by the shell's Escape chain), the full-pane surfaces, a comment thread, a
-// citation preview. A typing target keeps its Escape (a rename box, a dialog's field; the composer is
-// disabled under the snapshot). Nothing else claims Escape while the snapshot shows: the transcript is hidden.
-window.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape" || !snapView || e.defaultPrevented) return;
-  if (isTypingTarget(e.target)) return;
-  if (ctxMenuEl || metaMenuEl || citePreviewEl || openCommentKey || document.querySelector(".picker-overlay")) return;
-  if (document.querySelector("#rsettings:not([hidden]), #ra-back:not([hidden]), #rkeys-back")) return;
-  if (document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse") || document.getElementById("romp-lightbox")) return;
-  e.preventDefault();
-  leaveSnapshot();
-}, true);
+// ESCAPE LEAVES THE SNAPSHOT, and yields to every layer that owns its own Escape: two phases on the window
+// (tab-snapshot-view.ts installSnapshotEscape). Armed at capture, while this page's layers are still on the
+// page to be seen: the menus (the tab menu's closer, registered before this one, runs first and marks the
+// Escape it consumed), the picker and confirm overlays, the pane's own panels, the full-pane surfaces, a
+// comment thread, a citation preview; a typing target keeps its Escape (a rename box, a dialog's field; the
+// composer is disabled under the snapshot). Decided at bubble, after the SHELL's Escape chain (on this frame's
+// document at capture, kernel.py _LANDING_ESC_JS) has closed, marked and stopped an Escape aimed at one of its
+// panels, which live in the shell document, out of this page's sight (the log, usage and network panels; the
+// shortcuts dialog holds focus in the shell, so its Escape never reaches this frame). Nothing else claims
+// Escape while the snapshot shows: the transcript is hidden.
+installSnapshotEscape(window, {
+  showing: () => !!snapView,
+  typing: isTypingTarget,
+  layerOpen: () => !!(ctxMenuEl || metaMenuEl || citePreviewEl || openCommentKey || document.querySelector(".picker-overlay"))
+    || !!document.querySelector("#rsettings:not([hidden]), #ra-back:not([hidden])")
+    || !!(document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse") || document.getElementById("romp-lightbox")),
+  leave: leaveSnapshot,
+});
 /** Paint (or refresh) the snapshot of `snapView`. False when that section is not on the strip any more —
  *  snapView is cleared and the caller shows the transcript; the section's absence is the event. */
 function renderSnapshot(): boolean {

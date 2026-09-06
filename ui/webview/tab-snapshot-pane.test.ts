@@ -58,14 +58,19 @@ test("the way back (review findings 6 and 12): Escape leaves the snapshot when n
   // transcript and two more gestures. The click-to-snapshot is the user's ask and stays; these are the exits.
   assert.match(SNAP, /function leaveSnapshot\(\): void \{\s*\n\s*if \(!snapView\) return;\s*\n\s*snapView = null;\s*\n\s*renderTabs\(\);\s*\n\s*showActive\(\);\s*\n\}/,
     "one exit: snapView cleared, the header's mark dropped by the strip render, the transcript and the live composer back through showActive");
-  // Escape: capture phase, so the layers that own their own Escape are still on the page to be seen and yielded to
+  // Escape: two phases on the window (tab-snapshot-view.ts installSnapshotEscape, executed in its own test): armed at
+  // capture, so this page's layers that own their own Escape are still on the page to be seen and yielded to;
+  // decided at bubble, after the shell's Escape chain (document capture in this frame, kernel.py _LANDING_ESC_JS)
+  // has closed and stopped an Escape aimed at one of its panels (the log, usage and network panels live in the
+  // shell document, out of this page's sight; round 2: the one-phase handler swapped the pane on those too)
   const esc = SNAP.slice(SNAP.indexOf("// ESCAPE LEAVES THE SNAPSHOT"), SNAP.indexOf("/** Paint (or refresh) the snapshot"));
-  assert.match(esc, /window\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(e\.key !== "Escape" \|\| !snapView \|\| e\.defaultPrevented\) return;/, "only while the snapshot shows; a consumed Escape is not ours");
-  assert.match(esc, /if \(isTypingTarget\(e\.target\)\) return;/, "a field keeps its Escape");
-  assert.match(esc, /if \(ctxMenuEl \|\| metaMenuEl \|\| citePreviewEl \|\| openCommentKey \|\| document\.querySelector\("\.picker-overlay"\)\) return;/, "menus, a preview, a comment thread, the picker and confirm overlays own theirs");
-  assert.match(esc, /if \(document\.querySelector\("#rsettings:not\(\[hidden\]\), #ra-back:not\(\[hidden\]\), #rkeys-back"\)\) return;/, "the pane's panels (the shell's Escape chain closes them)");
+  assert.match(esc, /installSnapshotEscape\(window, \{\s*\n\s*showing: \(\) => !!snapView,\s*\n\s*typing: isTypingTarget,/, "only while the snapshot shows; a field keeps its Escape");
+  assert.match(esc, /layerOpen: \(\) => !!\(ctxMenuEl \|\| metaMenuEl \|\| citePreviewEl \|\| openCommentKey \|\| document\.querySelector\("\.picker-overlay"\)\)/, "menus, a preview, a comment thread, the picker and confirm overlays own theirs");
+  assert.match(esc, /\|\| !!document\.querySelector\("#rsettings:not\(\[hidden\]\), #ra-back:not\(\[hidden\]\)"\)/, "the pane's own panels");
+  assert.doesNotMatch(esc, /rkeys-back/, "the shortcuts dialog is the shell document's: that selector never matched here (dead), and its Escape never reaches this frame");
   assert.match(esc, /romp-fileview[\s\S]*romp-filebrowse[\s\S]*romp-lightbox/, "the full-pane surfaces");
-  assert.match(esc, /e\.preventDefault\(\);\s*\n\s*leaveSnapshot\(\);\s*\n\}, true\);/, "capture phase, and the Escape is marked taken");
+  assert.match(esc, /leave: leaveSnapshot,\s*\n\}\);/, "one exit");
+  assert.doesNotMatch(esc, /window\.addEventListener/, "no listener of its own: the module owns the two phases");
   // the tab menu's closer runs before it (registered earlier, capture too) and now marks the Escape it consumed
   assert.match(RENDER, /window\.addEventListener\("keydown", \(e\) => \{ if \(e\.key === "Escape" && ctxMenuEl\) \{ dismissTabMenu\(\); e\.preventDefault\(\); \} \}, true\);/,
     "an Escape that closed the tab menu says so, and the snapshot's handler yields to it");
