@@ -26,6 +26,24 @@ The same command updates Romp later. To remove Romp, run `romp uninstall` (add
 This clones Romp to `~/romp` and installs the newest release.
 [What it installs, in detail](architecture.md#what-the-installer-sets-up).
 
+### What the installer links into `~/.claude/`
+
+Everything the installer puts under `~/.claude/` is a symlink back into the clone, so updating
+the clone updates it:
+
+- Romp's own hooks, in `~/.claude/hooks/`, registered in `~/.claude/settings.json` (a merge that
+  leaves your other hooks alone).
+- `romp-postal.mcp.json` (the sessions' mailbox), `romp-session-prompt.md` (appended to a
+  session's system prompt), and the `romp-postal` skill in `~/.claude/skills/`.
+- The agent-side tooling for [file comments and tracked changes](guide.md#files), from the copy of
+  track-changents bundled in the clone (`vendor/track-changents/`): the `track-edit`,
+  `track-comment`, `track-reply` and `track-config` commands and the `track-guard.mjs` hook in
+  `~/.claude/hooks/`, and the `tracked-changes` skill in `~/.claude/skills/`. The guard is
+  registered as a `PreToolUse` hook on `Write|Edit|MultiEdit`; it stops a session from writing a
+  tracked file silently, and it does nothing in a Claude Code session Romp did not start. If you
+  had installed track-changents yourself, the installer re-points those links at the bundled copy,
+  which carries fixes the checkout lacks, and says so.
+
 ### Manual and custom installs
 
 Install this way to keep Romp somewhere other than `~/romp`, or to run the
