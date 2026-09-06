@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// romp-manager — the thin, cross-platform supervisor you launch with `romp on`.
+// romp-manager — the thin, cross-platform supervisor you launch with `romp up` (or the login service).
 //
 // It is the durable OWNER of the romp kernel(s): you start it (foreground, like `jupyter lab`), it
 // spawns each kernel via romp-serve, respawns one if it crashes OR on a restart request, and exposes
@@ -17,10 +17,13 @@
 // v1 supervises one default kernel, 'main', on the standard port.
 //
 // CLI (dispatched from bin/romp's top-level verbs):
-//   romp on        → `up`          run the manager in the foreground (Ctrl+C stops it + its kernels)
+//   romp up        → `up`          run the manager in the foreground (Ctrl+C stops it + its kernels)
 //   romp refresh   → `restart-all` restart EVERY kernel the manager owns (loops the registry)
 //   romp status    → `status`      print the manager + kernel status
-// (`restart [kernel]` (single) and `down`/`/stop` also exist for front ends / SIGINT — no romp verb.)
+//   romp down      → `down`        stop every kernel and exit — the UNSUPERVISED half of `romp down`
+//                                  (under the login service bin/romp stops the service instead, or
+//                                  Restart=always / KeepAlive would respawn us within seconds)
+// (`restart [kernel]` (single) also exists for front ends — no romp verb.)
 
 const http = require('http');
 const { spawn, execFileSync } = require('child_process');
@@ -42,6 +45,15 @@ const KERNEL_PORT = Number(process.env.ROMP_SERVE_PORT) || Number(process.env.RO
 const STATE_ROOT = process.env.ROMP_STATE_DIR ||
   path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state'), 'romp');
 const KERNELS_FILE = path.join(STATE_ROOT, 'kernels.json');
+// `romp down` leaves this marker (bin/romp writes {t, cmd}) so a stopped kernel reads as stopped on
+// purpose. Two consumers here: `ensure` (the SessionStart auto-start) refuses to bring the manager
+// back while it exists — a claude session starting up must not silently undo a deliberate stop —
+// and `up` (a deliberate start: `romp up`, the login service, a hand `systemctl start`) clears it.
+const DOWN_MARKER = path.join(STATE_ROOT, 'down-by-romp');
+function downMarkerHeld(file = DOWN_MARKER) { try { return fs.existsSync(file); } catch (e) { return false; } }
+function clearDownMarker(file = DOWN_MARKER) {
+  try { fs.unlinkSync(file); return true; } catch (e) { return false; }   // absent = nothing to clear
+}
 
 // $TMUX scrub (2026-07-20): a manager launched by hand from INSIDE a tmux session leaks $TMUX to
 // its kernels and their SDK-session children — whose tmux-status hooks then resolve `#S` to
@@ -163,7 +175,7 @@ function idForPort(port) {
 // file at start; on a refresh, a changed stamp means the respawned kernels would inherit stale
 // defaults. Under a supervisor (launchd/systemd both KeepAlive/Restart=always; romp-service bakes
 // ROMP_SUPERVISED=1) the manager exits instead — the supervisor respawns the NEW manager, which
-// brings the kernels up fresh, so the bounce IS the refresh. Foreground (`romp on`) can only warn,
+// brings the kernels up fresh, so the bounce IS the refresh. Foreground (`romp up`) can only warn,
 // loudly, since exiting would leave nothing to respawn it.
 function fileStamp(file) {
   try { const st = fs.statSync(file); return st.mtimeMs + ':' + st.size; } catch (e) { return ''; }
@@ -308,7 +320,7 @@ function restartAllOrSelf() {
     return { self: true, ids };
   }
   if (managerStale()) {
-    log('WARNING: bin/romp-manager changed since this manager started — respawned kernels inherit STALE manager defaults. Restart the manager to load the new one: Ctrl+C + `romp on`, or `romp-service install`.');
+    log('WARNING: bin/romp-manager changed since this manager started — respawned kernels inherit STALE manager defaults. Restart the manager to load the new one: Ctrl+C + `romp up`, or `romp-service install`.');
   }
   return { self: false, ids: restartAll() };
 }
@@ -538,7 +550,7 @@ function shutdownAll(exitCode) {
 function runManager() {
   // Refuse to start a second manager — that would mean two owners fighting over the kernel port.
   probeControl((alive) => {
-    if (alive) { log(`a manager is already running on :${CONTROL_PORT} (use \`romp on status|restart|down\`).`); process.exit(1); }
+    if (alive) { log(`a manager is already running on :${CONTROL_PORT} (use \`romp status\`, \`romp refresh\` or \`romp down\`).`); process.exit(1); }
     startManager();
   });
 }
@@ -611,13 +623,14 @@ function startTmuxServer() {
 }
 
 function startManager() {
+  if (clearDownMarker()) log('cleared the `romp down` marker — this start brings the kernels back');
   startTmuxServer();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || '/', 'http://x');
     const kid = url.searchParams.get('kernel') || 'main';
     const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
     // CSRF / drive-by gate. Legit clients (the kernel's Restart proxy, the
-    // `romp on` CLI) are server-side and send NO Origin header; a browser
+    // `romp` CLI) are server-side and send NO Origin header; a browser
     // cross-site fetch/form POST DOES send an Origin it cannot forge. So reject
     // any request carrying a non-loopback Origin — otherwise a malicious tab
     // could POST /restart-all or /stop and kill the user's kernels.
@@ -681,7 +694,7 @@ function startManager() {
   process.on('SIGTERM', () => shutdownAll(0));
 }
 
-// ── control client (romp on restart|status|down) ───────────────────────────
+// ── control client (romp-manager restart|status|down) ───────────────────────────
 function probeControl(cb) {
   const req = http.get({ host: HOST, port: CONTROL_PORT, path: '/status', timeout: 1200 }, (res) => { res.resume(); cb(res.statusCode === 200); });
   req.on('timeout', () => { req.destroy(); cb(false); });
@@ -697,18 +710,28 @@ function control(method, pathname, kernel, params) {
     res.on('end', () => { try { process.stdout.write(JSON.stringify(JSON.parse(b), null, 2) + '\n'); } catch (e) { process.stdout.write(b + '\n'); } process.exit(res.statusCode < 400 ? 0 : 1); });
   });
   req.on('timeout', () => { req.destroy(); console.error(`romp manager did not respond on :${CONTROL_PORT}`); process.exit(1); });
-  req.on('error', () => { console.error(`romp manager is not running on :${CONTROL_PORT} — start it with \`romp on\`.`); process.exit(1); });
+  req.on('error', () => { console.error(`romp manager is not running on :${CONTROL_PORT} — start it with \`romp up\`.`); process.exit(1); });
   req.end();
 }
 
 // `romp-manager ensure` — idempotent, non-blocking auto-start: if a manager is already
 // up, do nothing; otherwise spawn `up` DETACHED and return immediately. The SessionStart
-// hook calls this so romp usage auto-starts the supervisor (and the kernel) — no `romp on`.
+// hook calls this so romp usage auto-starts the supervisor (and the kernel) — no `romp up`.
 // Race-safe: the detached `up` re-probes and exits cleanly if another session won.
+// A `romp down` marker HOLDS it: auto-start is the one door that would bring a deliberately
+// stopped kernel back without anyone asking (a claude session's SessionStart hook), so it
+// refuses, says why, and exits 0 — the hook is not failing, the kernel is down on purpose.
+// The pure decision is exported for the unit tests; the I/O stays here.
+function ensureDecision({ alive, held }) {
+  if (alive) return 'noop';
+  if (held) return 'held';
+  return 'spawn';
+}
 function ensureUp() {
   probeControl((alive) => {
-    if (alive) return process.exit(0);
-    spawn(process.execPath, [__filename, 'up'], { detached: true, stdio: 'ignore' }).unref();
+    const d = ensureDecision({ alive, held: downMarkerHeld() });
+    if (d === 'held') log('the kernel is down by `romp down` — not auto-starting it; `romp up` brings it back');
+    if (d === 'spawn') spawn(process.execPath, [__filename, 'up'], { detached: true, stdio: 'ignore' }).unref();
     process.exit(0);
   });
 }
@@ -718,7 +741,8 @@ function ensureUp() {
 // file is executed directly, so require()-ing it from a test has no side effects.
 module.exports = { restartGate, quietGate, quietTick, loadSpecs, specEnv, fileStamp,
                    kernelToken, fetchBusy, resetDrainNotices, queueQuietRestart, clearPendingQuiet,
-                   tmuxStartArgv, commandOnPath, TMUX_START_ARGV };
+                   tmuxStartArgv, commandOnPath, TMUX_START_ARGV,
+                   ensureDecision, downMarkerHeld, clearDownMarker, DOWN_MARKER };
 if (require.main === module) {
   const cmd = process.argv[2];
   // `restart-all` (the `romp refresh` deploy path) bounces IMMEDIATELY by default (T160, the user
