@@ -901,30 +901,39 @@ class RenderedMismatches(_Env):
 
     def test_the_boundary_paths_render_within_100_columns_in_every_shape(self):
         # the finding's arithmetic: under the 12-column indent the sentence holds a path of 44 characters and
-        # not 45; under the 14-column one, 42 and not 43. Both boundary paths render every shape within 100
-        # columns, the 44-character one inline where it fits and on its own line where it does not
-        edge = 100 - 12 - len("in their own environment; this shell reads .")
-        self.assertEqual(edge, 44)
-        fits, over = "/" + "p" * 43, "/" + "p" * 44
-        self.assertEqual((len(fits), len(over)), (44, 45))
-        for path in (fits, over):
+        # not 45; under the 14-column one, 42 and not 43. Each edge is rendered from both sides in every shape
+        # that names the path, within 100 columns throughout, and the layout is asserted per shape: inline
+        # where the path fits its indent, on its own line where it does not (the two 12-column shapes and the
+        # 14-column one disagree at 43 and 44). The table is the expectation, not a re-derivation of the rule
+        sentence = len("in their own environment; this shell reads .")
+        self.assertEqual((100 - 12 - sentence, 100 - 14 - sentence), (44, 42))
+        indents = {"file-mode fingerprint": 12, "file-mode kernel, the file carries the line": 12, "command-mode kernel": 14}
+        self.assertEqual(sorted(indents), sorted(self.shared))
+        inline_at = {  # (path length, indent) -> the path stays in its sentence
+            (42, 12): True, (43, 12): True, (44, 12): True, (45, 12): False,
+            (42, 14): True, (43, 14): False, (44, 14): False, (45, 14): False,
+        }
+        inline = "in their own environment; this shell reads %s.\n"
+        own_line = "in their own environment; this shell reads\n%s    %s.\n"
+        for n in (42, 43, 44, 45):
+            path = "/" + "p" * (n - 1)
+            self.assertEqual(len(path), n)
             shapes = render_shapes(self, path)
             self.assertEqual(sorted(shapes), sorted(self.shapes))
             for name, text in shapes.items():
                 for line in text.split("\n"):
                     self.assertLessEqual(len(line), 100, "%s: %r" % (name, line))
                 self.assertEqual(reload_violations(text), [], name)
-            inline = "in their own environment; this shell reads %s.\n" % path
-            own_line = "in their own environment; this shell reads\n%s    %s.\n"
-            for name in ("file-mode fingerprint", "file-mode kernel, the file carries the line"):
-                self.assertIn(other_file_block(path, " " * 12), shapes[name], name)
-                if path == fits:
-                    self.assertIn(inline, shapes[name] + "\n", name + ": 44 characters fit the 12-column indent")
-                else:
-                    self.assertIn(own_line % (" " * 12, path), shapes[name] + "\n", name + ": 45 do not")
-            self.assertIn(other_file_block(path, " " * 14), shapes["command-mode kernel"])
-            self.assertIn(own_line % (" " * 14, path), shapes["command-mode kernel"] + "\n",
-                          "neither fits the 14-column indent")
+            for name, indent in indents.items():
+                pad = " " * indent
+                text = shapes[name] + "\n"
+                self.assertIn(other_file_block(path, pad), shapes[name], name)
+                want, other = (inline % path, own_line % (pad, path)) if inline_at[(n, indent)] else \
+                              (own_line % (pad, path), inline % path)
+                why = "%s: %d characters %s the %d-column indent" % (
+                    name, n, "fit" if inline_at[(n, indent)] else "do not fit", indent)
+                self.assertIn(want, text, why)
+                self.assertNotIn(other, text, why)
 
     def test_the_shared_blocks_render_once_each_and_the_mechanics_never_twice(self):
         of = " ".join(other_file_block(self.path, "").split())
