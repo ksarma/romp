@@ -28,12 +28,17 @@ the standard library. It acts on the clone it lives in (or ROMP_BATCH_REPO), nev
 cwd, so a misnamed cwd cannot make it assemble the wrong repository.
 
 Contracts the tests hold this file to (tests/test_batch_tool.py):
-  - plan orders dependents after their bases and excludes drafts, `major-feature` and `hold`;
+  - plan orders dependents after their bases and excludes drafts, `major-feature` and `hold`; a
+    `Depends-on` cycle excludes its members (and their dependents), not the plan;
   - assemble refuses when any other `batch/*` ref exists on origin;
   - provenance fails on an undeclared commit and passes on a `batch:` commit;
   - every merge on the chain (a member's or origin/main's) equals the clean merge of its parents,
-    or carries a recorded resolution and then differs from it only in the resolution's files;
-  - verify fails when a pinned head moved, and when an assembly did not finish;
+    or carries a recorded resolution and then differs from it only in the resolution's files, which
+    cover every path merge-tree calls conflicted and hold no conflict marker (nor does --continue
+    ever commit one); a stop lists the files rerere replayed along with the ones still unmerged;
+  - a resolution that took one side wholesale says so, in the digest line and above its diff, which
+    runs from the clean merge of the parents to the merge;
+  - verify fails when a pinned head moved, and when an assembly did not finish; so does finish;
   - pull N drops N's dependents, unless N already merged into main;
   - the body stays under GitHub's 65,536-character cap, the members table never cut and the
     details fitted to the budget (entries table, then resolutions, then the log).
@@ -72,9 +77,10 @@ _DEPENDS_ON = re.compile(r"^\s*Depends-on:\s*(.*)$", re.IGNORECASE)
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _PR_TRAILER = re.compile(r"<!--\s*romp-pr:\s*(\{.*?\})\s*-->", re.DOTALL)
 _BATCH_TRAILER = re.compile(r"<!--\s*romp-batch:\s*(\{.*?\})\s*-->", re.DOTALL)
-_CONFLICT_LINE = re.compile(r"^CONFLICT \([^)]*\): Merge conflict in (.+)$", re.MULTILINE)
 _FIRST_BAD = re.compile(r"^([0-9a-f]{40}) is the first '?bad'? commit", re.MULTILINE)  # git 2.43 says bad; 2.4x+ says 'bad'
-_CONFLICT_MARKER = re.compile(r"^\+(?:<{7} |>{7} |={7}$)", re.MULTILINE)
+# A conflict marker line in a file's content. `=======` alone is not one: a Markdown heading underline
+# is a legitimate line of exactly that; the `<<<<<<<`, `|||||||` and `>>>>>>>` lines are not.
+_CONFLICT_MARKER = re.compile(r"^(?:<{7}|>{7}|\|{7})(?: |$)", re.MULTILINE)
 
 
 class Fail(Exception):
@@ -342,7 +348,10 @@ def pick_name(root):
 
 
 def order_members(cands):
-    """Dependencies first, then by number (Kahn's algorithm with a number-ordered frontier)."""
+    """Dependencies first, then by number (Kahn's algorithm with a number-ordered frontier). Returns
+    (order, stuck): `stuck` are the candidates a dependency cycle keeps out of the order, the cycle's
+    own members and everything that depends on them; the caller excludes them with the cycle named
+    and plans the rest."""
     import heapq
     indeg = {n: 0 for n in cands}
     dependents = {n: [] for n in cands}
@@ -361,10 +370,21 @@ def order_members(cands):
             indeg[d] -= 1
             if indeg[d] == 0:
                 heapq.heappush(heap, d)
-    if len(order) != len(cands):
-        cyc = sorted(set(cands) - set(order))
-        raise Fail("dependency cycle among PRs %s" % ", ".join("#%d" % n for n in cyc))
-    return order
+    return order, sorted(set(cands) - set(order))
+
+
+def reaches(cands, a, b):
+    """Whether a's `Depends-on` chain among the candidates reaches b (a == b: a is in a cycle)."""
+    seen, frontier = set(), [d for d in cands[a]["depends_on"] if d in cands]
+    while frontier:
+        d = frontier.pop()
+        if d == b:
+            return True
+        if d in seen:
+            continue
+        seen.add(d)
+        frontier.extend(x for x in cands[d]["depends_on"] if x in cands)
+    return False
 
 
 def predict_conflicts(root, base_sha, ordered, cands):
@@ -461,30 +481,48 @@ def cmd_plan(args):
     # already merged into main: then it is satisfied by the base every batch starts from, and the
     # dependent stays (docs tell authors to leave `Depends-on` in the body; it must not strand them).
     satisfied = {}
-    changed = True
-    while changed:
-        changed = False
-        for n, m in list(cands.items()):
-            for d in list(m["depends_on"]):
-                if d in cands:
-                    continue
-                if d not in excluded:
-                    status = satisfied.get(d) or dependency_status(root, d)
-                    satisfied[d] = status
-                    if status == "satisfied":
-                        m["depends_on"].remove(d)
-                        m.setdefault("depends_on_merged", []).append(d)
+
+    def drop_dependents_of_excluded():
+        changed = True
+        while changed:
+            changed = False
+            for n, m in list(cands.items()):
+                for d in list(m["depends_on"]):
+                    if d in cands:
                         continue
-                why = excluded.get(d) or satisfied.get(d) or "not an open PR"
-                excluded[n] = "depends on #%d (%s)" % (d, why)
-                del cands[n]
-                changed = True
-                break
+                    if d not in excluded:
+                        status = satisfied.get(d) or dependency_status(root, d)
+                        satisfied[d] = status
+                        if status == "satisfied":
+                            m["depends_on"].remove(d)
+                            m.setdefault("depends_on_merged", []).append(d)
+                            continue
+                    why = excluded.get(d) or satisfied.get(d) or "not an open PR"
+                    excluded[n] = "depends on #%d (%s)" % (d, why)
+                    del cands[n]
+                    changed = True
+                    break
+
+    drop_dependents_of_excluded()
     for n, m in cands.items():
         ensure_object(root, m["head"], m["head_ref"])
         mb = git("merge-base", base_sha, m["head"], cwd=root)
         m["touches"] = git("diff", "--name-only", mb, m["head"], cwd=root).split()
-    ordered = order_members(cands)
+    ordered, stuck = order_members(cands)
+    if stuck:
+        # A `Depends-on` cycle (a PR naming itself, two naming each other) is that PR's mistake, not
+        # the batch's: its members are excluded with the cycle named, their dependents with them
+        # (through the fixpoint above), and the rest is planned.
+        cyclic = [n for n in stuck if reaches(cands, n, n)]
+        partners = {n: [k for k in cyclic if k != n and reaches(cands, n, k) and reaches(cands, k, n)] for n in cyclic}
+        for n in cyclic:
+            excluded[n] = ("in a dependency cycle with %s" % ", ".join("#%d" % k for k in partners[n])) if partners[n] \
+                else "depends on itself (Depends-on: #%d)" % n
+            del cands[n]
+        drop_dependents_of_excluded()
+        ordered, stuck = order_members(cands)
+        if stuck:
+            raise Fail("dependency cycle among PRs %s" % ", ".join("#%d" % n for n in stuck))
     predict_conflicts(root, base_sha, ordered, cands)
 
     state = {
@@ -615,9 +653,58 @@ def unmerged_paths(wt):
     return git("diff", "--name-only", "--diff-filter=U", cwd=wt).split()
 
 
-def hunk_count(wt, merge_sha, path):
-    out = _run(["git", "show", "--cc", "--format=", merge_sha, "--", path], cwd=wt, check=False).stdout
-    return sum(1 for l in out.splitlines() if l.startswith("@@@"))
+def resolution_diff(cwd, merge, paths):
+    """The resolution as a diff: from the merge-tree of the merge's parents (conflict markers left in
+    the conflicted files) to the merge, over `paths`. That shows the conflict text turning into the
+    chosen text; a combined diff (`git show --cc`) omits every hunk equal to one parent, so a side
+    taken wholesale rendered as nothing. None when this git cannot compute the merge-tree."""
+    ps = parents_of(merge, cwd)
+    if len(ps) != 2:
+        return None
+    mt, _, _ = merge_tree_of(ps[0], ps[1], cwd)
+    if mt is None:
+        return None
+    return _run(["git", "diff", "--no-color", mt, merge + "^{tree}", "--", *paths], cwd=cwd, check=False).stdout
+
+
+def resolution_hunks(cwd, merge, paths):
+    out = resolution_diff(cwd, merge, paths)
+    return None if out is None else sum(1 for l in out.splitlines() if l.startswith("@@"))
+
+
+def blob_of(rev, path, cwd):
+    return git("rev-parse", "--verify", "--quiet", "%s:%s" % (rev, path), cwd=cwd, check=False) or None
+
+
+def resolution_choices(cwd, merge, paths, label1, label2):
+    """Per path, what the resolution chose when it equals one parent's version: {path: phrase}. label1
+    names the merge's first parent (the batch), label2 the second (a member, or origin/main). A path
+    combined by hand, or one both parents agree on, has no entry."""
+    ps = parents_of(merge, cwd)
+    if len(ps) != 2:
+        return {}
+    out = {}
+    for p in paths:
+        b, b1, b2 = (blob_of(x, p, cwd) for x in (merge, ps[0], ps[1]))
+        if b1 == b2:
+            continue
+        if b == b2:
+            out[p] = ("deleted the file, as %s did" % label2) if b2 is None else \
+                "took %s's version" % label2 + (", which %s deleted" % label1 if b1 is None else "")
+        elif b == b1:
+            out[p] = ("kept the file deleted, as %s had it" % label1) if b1 is None else \
+                "kept %s's version" % label1 + (", which %s deleted" % label2 if b2 is None else "")
+    return out
+
+
+def marker_paths(tree, paths, cwd):
+    """The paths among `paths` whose blob in `tree` (a tree or commit) holds a conflict marker line."""
+    out = []
+    for p in paths:
+        proc = subprocess.run(["git", "cat-file", "-p", "%s:%s" % (tree, p)], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if proc.returncode == 0 and _CONFLICT_MARKER.search(proc.stdout.decode("utf-8", "replace")):
+            out.append(p)
+    return out
 
 
 def hold_back(root, state, m, reason, files=None, against=None, with_members=None, notify=True):
@@ -657,7 +744,7 @@ def conflict_attribution(root, state, m, files):
     A member that conflicts with origin/main by itself is told so (merging main fixes it); otherwise
     the earlier members whose own diff touches the conflicted files are named; failing both, "the
     batch"."""
-    _, kind = merge_tree_of(state["base"], m["head"], root)
+    _, kind, _ = merge_tree_of(state["base"], m["head"], root)
     if kind == "conflicts":
         return remote_main(), []
     members = members_by_n(state)
@@ -675,16 +762,22 @@ def prior_resolution(state, key, files):
 
 
 def commit_resolution(wt, files):
-    """Commit the staged result of a conflicted merge once it passes the subset rule: the result may
-    differ from the merge git makes of the two parents by itself ONLY in the conflicted files (plus
-    upstream/ entries for a row conversion). Anything else staged would land inside the merge commit
-    unseen; the refusal names the paths and the tree that holds the merge's own content for them.
-    Returns (sha, paths that differ from the clean merge)."""
+    """Commit the staged result of a conflicted merge once no conflict marker is staged and it passes
+    the subset rule: the result may differ from the merge git makes of the two parents by itself ONLY
+    in the conflicted files (plus upstream/ entries for a row conversion). Anything else staged would
+    land inside the merge commit unseen; the refusal names the paths and the tree that holds the
+    merge's own content for them. The marker scan reads the conflicted files and every path that
+    differs from that tree: a conflicted file left as merge-tree wrote it does not differ from it.
+    The parents are named by SHA, as verify names them, so the two merge-trees are the same object
+    (the identifiers label the markers). Returns (sha, paths that differ from the clean merge)."""
     index_tree = git("write-tree", cwd=wt)
-    mt, kind = merge_tree_of("HEAD", "MERGE_HEAD", wt)
+    mt, kind, _ = merge_tree_of(git("rev-parse", "HEAD", cwd=wt), git("rev-parse", "MERGE_HEAD", cwd=wt), wt)
     if mt is None:
         raise Fail("this git cannot compare the resolution with the clean merge of its parents (needs git 2.38); the merge is not committed")
     paths = git("diff-tree", "--name-only", "-r", mt, index_tree, cwd=wt).split()
+    marked = marker_paths(index_tree, sorted(set(paths) | set(files)), wt)
+    if marked:
+        raise Fail("a conflict marker is still staged in %s; resolve it, `git add` the file, then run --continue again" % ", ".join(marked))
     stray = stray_resolution_paths(files, paths)
     if stray:
         raise Fail("the staged merge also changes %s, outside the conflicted files (%s). A resolution may change only "
@@ -755,8 +848,14 @@ def merge_member(root, wt, state, m, resolve_set):
         return "merged"
     if not merge_in_progress(wt):
         raise Fail("git merge of #%d failed without a conflict to resolve:\n%s%s" % (n, proc.stdout, proc.stderr))
-    conflicted = sorted(set(_CONFLICT_LINE.findall(proc.stdout + proc.stderr)))
+    # The files that conflicted are what git would conflict on by itself (merge-tree, plumbing) plus
+    # what is unmerged in the index; the difference is what rerere replayed and staged. A stop lists
+    # ALL of them: a replayed file left off the cursor read as a stray change at --continue, and the
+    # restore that refusal advised wrote the conflicted tree's markers into it.
     still = unmerged_paths(wt)
+    _, _, would = merge_tree_of(before, m["head"], wt)
+    conflicted = sorted(set(still) | set(would or []))
+    replayed = sorted(set(conflicted) - set(still))
     resolved = None
     if not still and merge_in_progress(wt):
         # rerere replayed a recorded resolution and staged the result (rerere.autoUpdate). The review
@@ -771,19 +870,29 @@ def merge_member(root, wt, state, m, resolve_set):
         if rows is not None:
             still = unmerged_paths(wt)
             if not still:
-                resolved = {"files": [UPSTREAM_MD], "how": "%d UPSTREAM.md row(s) converted to entries (mechanical)" % rows,
-                            "hunks": None, "review": "mechanical"}
+                how, review = "%d UPSTREAM.md row(s) converted to entries (mechanical)" % rows, "mechanical"
+                if replayed:
+                    prior = prior_resolution(state, str(n), replayed)
+                    how += "; rerere replayed the earlier assembly's resolution in %s" % ", ".join(replayed)
+                    review = prior["review"] if prior else None
+                resolved = {"files": conflicted, "how": how, "hunks": None, "review": review}
+                if replayed:
+                    resolved["replayed_files"] = replayed
     if resolved is not None and not unmerged_paths(wt):
         sha, _ = commit_resolution(wt, resolved["files"])
-        resolved["hunks"] = sum(hunk_count(wt, sha, f) for f in resolved["files"])
+        resolved["hunks"] = resolution_hunks(wt, sha, resolved["files"])
+        resolved["choices"] = resolution_choices(wt, sha, resolved["files"], "the batch", "#%d" % n)
         state["assembly"]["merged"].append({"n": n, "merge": sha, "resolved": resolved})
         log(state, "merged #%d -> %s with %s" % (n, short(sha), resolved["how"]))
         return "merged"
-    files = still or conflicted
+    files = conflicted
     if n in resolve_set:
-        state["assembly"]["cursor"] = {"n": n, "files": files}
-        log(state, "#%d stopped for resolution in %s; resolve per hunk in %s, `git add` the files, then "
-                   "`scripts/batch.py assemble %s --continue [--reviewed '<note>']`" % (n, ", ".join(files), wt, state["name"]))
+        state["assembly"]["cursor"] = {"n": n, "files": files, "replayed": replayed}
+        log(state, "#%d stopped for resolution in %s%s; resolve per hunk in %s, `git add` the files, then "
+                   "`scripts/batch.py assemble %s --continue [--reviewed '<note>']`"
+            % (n, ", ".join(files),
+               (" (rerere replayed %s from the earlier assembly and staged it; the review covers the whole resolution)" % ", ".join(replayed)) if replayed else "",
+               wt, state["name"]))
         return "stopped"
     git("merge", "--abort", cwd=wt)
     against, earlier = conflict_attribution(root, state, m, files)
@@ -811,13 +920,15 @@ def continue_after_resolution(root, wt, state, reviewed):
     still = unmerged_paths(wt)
     if still:
         raise Fail("still unmerged: %s (resolve and `git add` them first)" % ", ".join(still))
-    staged = _run(["git", "diff", "--cached", "--no-color", "--", *cur["files"]], cwd=wt).stdout
-    if _CONFLICT_MARKER.search(staged):
-        raise Fail("a conflict marker is still staged in %s" % ", ".join(cur["files"]))
-    sha, _ = commit_resolution(wt, cur["files"])
-    resolved = {"files": cur["files"], "how": "resolved by the batcher, per hunk",
-                "hunks": sum(hunk_count(wt, sha, f) for f in cur["files"]),
-                "review": reviewed}
+    files, replayed = cur["files"], cur.get("replayed") or []
+    sha, _ = commit_resolution(wt, files)
+    how = "resolved by the batcher, per hunk"
+    if replayed:
+        how += "; rerere replayed the earlier assembly's resolution in %s" % ", ".join(replayed)
+    resolved = {"files": files, "how": how, "hunks": resolution_hunks(wt, sha, files), "review": reviewed,
+                "choices": resolution_choices(wt, sha, files, "the batch", remote_main() if is_main else "#%d" % cur["n"])}
+    if replayed:
+        resolved["replayed_files"] = replayed
     if is_main:
         state["assembly"].setdefault("main_merges", []).append({"merge": sha, "main": cur["main"], "resolved": resolved})
         state["assembly"]["head"] = sha
@@ -825,8 +936,8 @@ def continue_after_resolution(root, wt, state, reviewed):
     else:
         state["assembly"]["merged"].append({"n": cur["n"], "merge": sha, "resolved": resolved})
     state["assembly"]["cursor"] = None
-    log(state, "merged %s -> %s after a hand resolution in %s (%d hunks); review round: %s"
-        % (label, short(sha), ", ".join(cur["files"]), resolved["hunks"], reviewed or "NOT RECORDED"))
+    log(state, "merged %s -> %s after a hand resolution in %s (%s hunks); review round: %s"
+        % (label, short(sha), ", ".join(files), resolved["hunks"], reviewed or "NOT RECORDED"))
     return is_main
 
 
@@ -854,7 +965,7 @@ def merge_main(root, wt, state):
     or into conflict with it catches up without a rebuild (verify allows a merge of main). Clean:
     recorded, and provenance checks it equals the clean merge. Conflict: stops for a hand resolution
     the way --resolve does (main cannot be held back); `--continue --reviewed` commits it under the
-    subset rule and the body shows the combined diff. Returns False when stopped."""
+    subset rule and the body shows the diff from the clean merge. Returns False when stopped."""
     if not state["assembly"].get("head"):
         raise Fail("nothing assembled yet; run assemble first")
     if not (os.path.isdir(wt) and git_ok("rev-parse", "--is-inside-work-tree", cwd=wt)):
@@ -873,13 +984,17 @@ def merge_main(root, wt, state):
     elif not merge_in_progress(wt):
         raise Fail("git merge of %s failed without a conflict to resolve:\n%s%s" % (remote_main(), proc.stdout, proc.stderr))
     else:
-        conflicted = sorted(set(_CONFLICT_LINE.findall(proc.stdout + proc.stderr)))
         still = unmerged_paths(wt)
+        _, _, would = merge_tree_of(git("rev-parse", "HEAD", cwd=wt), main_sha, wt)
+        conflicted = sorted(set(still) | set(would or []))
+        replayed = sorted(set(conflicted) - set(still))
         if still:
-            state["assembly"]["cursor"] = {"n": None, "main": main_sha, "files": still}
-            log(state, "the merge of %s stopped for resolution in %s; resolve per hunk in %s, `git add` the files, then "
+            state["assembly"]["cursor"] = {"n": None, "main": main_sha, "files": conflicted, "replayed": replayed}
+            log(state, "the merge of %s stopped for resolution in %s%s; resolve per hunk in %s, `git add` the files, then "
                        "`scripts/batch.py assemble %s --continue [--reviewed '<note>']` (or --abort)"
-                % (remote_main(), ", ".join(still), wt, state["name"]))
+                % (remote_main(), ", ".join(conflicted),
+                   (" (rerere replayed %s from the earlier assembly and staged it; the review covers the whole resolution)" % ", ".join(replayed)) if replayed else "",
+                   wt, state["name"]))
             save_state(root, state)
             return False
         prior = prior_resolution(state, "main", conflicted)
@@ -887,7 +1002,8 @@ def merge_main(root, wt, state):
                     "how": "rerere replayed the resolution recorded in the earlier assembly" if prior else "rerere replayed a recorded resolution",
                     "review": prior["review"] if prior else None}
         sha, _ = commit_resolution(wt, conflicted)
-        resolved["hunks"] = sum(hunk_count(wt, sha, f) for f in conflicted)
+        resolved["hunks"] = resolution_hunks(wt, sha, conflicted)
+        resolved["choices"] = resolution_choices(wt, sha, conflicted, "the batch", remote_main())
     state["assembly"].setdefault("main_merges", []).append({"merge": sha, "main": main_sha, "resolved": resolved})
     state["assembly"]["head"] = sha
     state["verified"] = None
@@ -1046,24 +1162,34 @@ def is_ancestor(a, b, cwd):
 
 
 def merge_tree_of(p1, p2, cwd):
-    """The tree `git merge-tree --write-tree` produces for p1 and p2: (tree, "clean") or, when the
-    merge conflicts, (tree, "conflicts") with the conflict markers left in the conflicted files.
-    (None, "unsupported") when this git lacks `merge-tree --write-tree` (added in git 2.38)."""
-    proc = _run(["git", "merge-tree", "--write-tree", "--no-messages", p1, p2], cwd=cwd, check=False)
-    words = proc.stdout.split()
-    if proc.returncode in (0, 1) and words:
-        return words[0], "clean" if proc.returncode == 0 else "conflicts"
-    return None, "unsupported"
+    """The tree `git merge-tree --write-tree` produces for p1 and p2, and the paths it reports as
+    conflicted: (tree, "clean", []) or (tree, "conflicts", paths) with the conflict markers left in
+    the conflicted files. (None, "unsupported", None) when this git lacks `merge-tree --write-tree`
+    (added in git 2.38). The markers are labeled with the identifiers given, so two callers get the
+    same tree for the same merge only when both name the parents the same way: pass SHAs."""
+    proc = _run(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", p1, p2], cwd=cwd, check=False)
+    fields = proc.stdout.split("\0")
+    if proc.returncode in (0, 1) and fields and fields[0].strip():
+        if proc.returncode == 0:
+            return fields[0].strip(), "clean", []
+        paths = []
+        for f in fields[1:]:
+            if not f:
+                break
+            paths.append(f)
+        return fields[0].strip(), "conflicts", paths
+    return None, "unsupported", None
 
 
 def paths_off_clean_merge(p1, p2, tree, cwd):
     """The paths in `tree` that differ from what git makes of p1 and p2 by itself: the conflicted
-    files a resolution had to touch, plus anything else a hand put into the merge. (paths, kind)
-    with kind "clean" or "conflicts", or (None, "unsupported")."""
-    mt, kind = merge_tree_of(p1, p2, cwd)
+    files a resolution had to touch, plus anything else a hand put into the merge. (paths, kind,
+    conflicted) with kind "clean" or "conflicts" and the paths merge-tree calls conflicted, or
+    (None, "unsupported", None)."""
+    mt, kind, conflicted = merge_tree_of(p1, p2, cwd)
     if mt is None:
-        return None, kind
-    return git("diff-tree", "--name-only", "-r", mt, tree, cwd=cwd).split(), kind
+        return None, kind, None
+    return git("diff-tree", "--name-only", "-r", mt, tree, cwd=cwd).split(), kind, conflicted
 
 
 def stray_resolution_paths(files, paths):
@@ -1083,28 +1209,43 @@ def check_merge_tree(rec, label, c, p1, p2, root, lines):
     """One first-parent merge against the merge git would make of its parents by itself. Equal: fine.
     Different with a recorded resolution: the differing paths must be the resolution's (the subset
     rule, so a stray staged file cannot ride inside a resolved merge unseen). Different without one:
-    an unrecorded resolution or an edit hidden in the merge. Returns ok."""
+    an unrecorded resolution or an edit hidden in the merge. When the parents' own merge conflicts,
+    every path merge-tree calls conflicted must be covered by the recorded resolution and hold no
+    conflict marker in the merge: a conflicted file kept as merge-tree wrote it (markers, or the
+    modified side of a modify/delete) does not differ from that tree, so the comparison alone would
+    read it as the clean merge. Returns ok."""
     merge_tree = git("rev-parse", c + "^{tree}", cwd=root)
-    paths, kind = paths_off_clean_merge(p1, p2, merge_tree, root)
+    paths, kind, conflicted = paths_off_clean_merge(p1, p2, merge_tree, root)
     if paths is None:
         lines.append("FAIL provenance: this git cannot check %s's merge tree (needs git 2.38)" % label)
         return False
-    if not paths:
+    resolved = (rec or {}).get("resolved")
+    if kind == "conflicts":
+        if not resolved:
+            lines.append("FAIL provenance: %s merge %s resolved a conflict that is not recorded (in %s)"
+                         % (label, short(c), ", ".join(conflicted)))
+            return False
+        uncovered = [p for p in conflicted if p not in resolved["files"]]
+        if uncovered:
+            lines.append("FAIL provenance: %s merge %s resolved a conflict in %s that its recorded resolution (%s) does not cover"
+                         % (label, short(c), ", ".join(uncovered), ", ".join(resolved["files"])))
+            return False
+        marked = marker_paths(merge_tree, conflicted, root)
+        if marked:
+            lines.append("FAIL provenance: %s merge %s carries a conflict marker in %s" % (label, short(c), ", ".join(marked)))
+            return False
+    if not paths and kind == "clean":
         lines.append("ok   provenance: %s merge %s equals the clean merge of its parents" % (label, short(c)))
         return True
-    resolved = (rec or {}).get("resolved")
     if resolved:
         stray = stray_resolution_paths(resolved["files"], paths)
         if stray:
             lines.append("FAIL provenance: %s merge %s changes %s outside its recorded resolution (%s)"
                          % (label, short(c), ", ".join(stray), ", ".join(resolved["files"])))
             return False
-        lines.append("ok   provenance: %s merge carries a recorded resolution (%s) in %s" % (label, resolved["how"], ", ".join(paths)))
+        lines.append("ok   provenance: %s merge carries a recorded resolution (%s) in %s" % (label, resolved["how"], ", ".join(paths or conflicted)))
         return True
-    if kind == "conflicts":
-        lines.append("FAIL provenance: %s merge %s resolved a conflict that is not recorded (in %s)" % (label, short(c), ", ".join(paths)))
-    else:
-        lines.append("FAIL provenance: %s merge %s differs from the clean merge of its parents (undeclared change in %s)" % (label, short(c), ", ".join(paths)))
+    lines.append("FAIL provenance: %s merge %s differs from the clean merge of its parents (undeclared change in %s)" % (label, short(c), ", ".join(paths)))
     return False
 
 
@@ -1310,9 +1451,15 @@ def resolution_reason(resolved):
         "mechanical" if note == "mechanical" else "review round NOT recorded")
     if resolved.get("replayed") and note and note != "mechanical":
         rev = "one review round in the earlier assembly, replayed by rerere: %s" % note
-    hunks = resolved.get("hunks")
-    what = ("%d hunk%s" % (hunks, "" if hunks == 1 else "s")) if hunks is not None else resolved["how"]
-    return "conflict resolved in %s (%s); %s. [combined diff below]" % (", ".join(resolved["files"]), what, rev)
+    hunks, files, choices = resolved.get("hunks"), resolved["files"], resolved.get("choices") or {}
+    # A side taken wholesale is said in words ("took #108's version"); the hunk count alone hid it
+    # (and read 0 when the kept file is what merge-tree left, as in a modify/delete).
+    parts = [("%s: %s" % (f, choices[f])) if len(files) > 1 else choices[f] for f in files if choices.get(f)]
+    if hunks is None and not parts:
+        parts.append(resolved["how"])
+    elif hunks or not parts:
+        parts.append("%d hunk%s" % (hunks, "" if hunks == 1 else "s"))
+    return "conflict resolved in %s (%s); %s. [diff from the clean merge below]" % (", ".join(files), "; ".join(parts), rev)
 
 
 def read_first_reasons(m, resolved, contained_by=None):
@@ -1342,8 +1489,9 @@ def read_first_reasons(m, resolved, contained_by=None):
 
 def gather_body_inputs(root, state):
     """Everything the body needs that comes from git: resolution diffs and the ledger entry table.
-    A resolution's combined diff covers EVERY path that differs from the clean merge of the parents
-    (the recorded files and anything else), so what the maintainer reads is the whole difference."""
+    A resolution's diff runs from the merge-tree of the parents to the merge and covers EVERY path
+    that differs from it (the recorded files and anything else), so what the maintainer reads is the
+    whole difference; per path, whose version was taken when one side won outright."""
     br = branch_of(state["name"])
     members = members_by_n(state)
     resolutions = []
@@ -1364,10 +1512,13 @@ def gather_body_inputs(root, state):
         paths = list(e["resolved"]["files"])
         ps = parents_of(merge, root)
         if len(ps) == 2:
-            off, _ = paths_off_clean_merge(ps[0], ps[1], merge + "^{tree}", root)
+            off, _, _ = paths_off_clean_merge(ps[0], ps[1], merge + "^{tree}", root)
             paths = sorted(set(paths) | set(off or []))
-        out = _run(["git", "show", "--cc", "--format=", "--no-color", merge, "--", *paths], cwd=root, check=False).stdout
-        resolutions.append({"n": n, "merge": merge, "diff": out})
+        out = resolution_diff(root, merge, paths)
+        if out is None:
+            out = "(this git cannot compute the clean merge of the parents; needs git 2.38)"
+        choices = resolution_choices(root, merge, paths, "the batch", ("#%d" % n) if n is not None else remote_main())
+        resolutions.append({"n": n, "merge": merge, "diff": out, "choices": choices})
     entries = []
     if git_ok("rev-parse", "--verify", "--quiet", br, cwd=root):
         mb = git("merge-base", remote_main(), br, cwd=root)
@@ -1412,9 +1563,9 @@ def render_body(state, inputs, cap=BODY_CAP):
     first block, "Read these first", "Held back" and the trailer are never cut. When the body would
     exceed the cap the rest is fitted to the budget in priority order, each block keeping as much as
     fits: the ledger entries table (else a count), then the conflict resolutions (up to
-    RESOLUTION_LINES per merge; the combined diff is what the maintainer reads), then the assembly
-    log (its newest lines). A body still over the cap with all of that gone is refused with the
-    advice to split the batch."""
+    RESOLUTION_LINES per merge; the diff from the clean merge is what the maintainer reads), then the
+    assembly log (its newest lines). A body still over the cap with all of that gone is refused with
+    the advice to split the batch."""
     name = state["name"]
     members = members_by_n(state)
     merged = state["assembly"].get("merged", [])
@@ -1513,7 +1664,10 @@ def render_body(state, inputs, cap=BODY_CAP):
             cut = lines[:min(budget_lines, RESOLUTION_LINES)]
             more = len(lines) - len(cut)
             heading = ("### #%d" % r["n"]) if r.get("n") is not None else "### merge of %s (%s)" % (remote_main(), short(r.get("merge")))
-            parts.append("%s\n\n```diff\n%s\n```%s" % (heading, "\n".join(cut), ("\n(%d more lines)" % more) if more > 0 else ""))
+            notes = "".join("- %s: %s\n" % (p, why) for p, why in sorted((r.get("choices") or {}).items()))
+            block = ("```diff\n%s\n```%s" % ("\n".join(cut), ("\n(%d more lines)" % more) if more > 0 else "")) if lines \
+                else "(no diff: the merge keeps these paths as git left them in the conflicted tree)"
+            parts.append("%s\n\n%s%s%s" % (heading, notes, "\n" if notes else "", block))
         return "\n\n".join(parts) if parts else "(none)"
 
     log_all = state["assembly"].get("log") or []
@@ -1777,16 +1931,25 @@ def cmd_land(args):
 def cmd_finish(args):
     """After the batch PR merged: confirm each member reads MERGED (and tell the ones that do not),
     retarget still-open dependents, delete member branches and the batch branch, run the orphan
-    check, report. Every observation about GitHub's behaviour (did it mark the member merged, did
+    check, report. Every observation about GitHub's behavior (did it mark the member merged, did
     it delete the branch) is recorded the FIRST time finish sees it, before finish changes anything,
     and kept across re-runs: a run that dies half-way and is run again must not attribute its own
-    deletions to GitHub, forget that a member was stacked, or comment on a member twice."""
+    deletions to GitHub, forget that a member was stacked, or comment on a member twice. A state
+    whose last assembly did not finish is refused with the pending members named: its member list is
+    not what the merged branch carried (a rebuild that died after an earlier complete assembly had
+    been pushed), and acting on it would clean up the wrong set."""
     root = repo_root()
     state = load_state(root, args.name)
     fetch(root, args.no_fetch)
     b = find_batch_pr(root, state)
     if not b:
         raise Fail("no batch PR recorded for %s" % args.name)
+    pending = state["assembly"].get("pending") or []
+    if state["assembly"].get("cursor") or pending or not state["assembly"].get("head"):
+        raise Fail("assembly incomplete: %s never merged in the last assembly, so this state does not say which members "
+                   "batch PR #%d carried; finish acts only on a complete assembly. Check the pending member(s) by hand: %s"
+                   % (", ".join("#%d" % n for n in pending) or "the last assembly did not finish, so the members", b,
+                      "; ".join("`gh pr view %d`" % n for n in pending) or "`gh pr view N`"))
     bpr = gh_json("pr", "view", str(b), "--json", "state,mergeCommit,url", cwd=root)
     if bpr.get("state") != "MERGED":
         raise Fail("batch PR #%d is %s, not MERGED; finish runs after the merge" % (b, bpr.get("state")))

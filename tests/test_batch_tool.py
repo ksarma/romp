@@ -379,6 +379,29 @@ class Plan(_Base):
         reasons = {row["n"]: row["reason"] for row in st["excluded"]}
         self.assertEqual(reasons[109], "depends on #300 (closed, not merged)")
 
+    def test_a_dependency_cycle_excludes_its_members_and_plans_the_rest(self):
+        """A `Depends-on:` typo (a PR naming itself, two PRs naming each other) used to abort the whole
+        plan; the PRs in the cycle are excluded with the cycle named, their dependents with them, and
+        the innocent members are planned."""
+        fx = self.fx
+        for br in ("a", "k", "x", "y", "z"):
+            fx.branch(br, {br + ".txt": br + "\n"})
+        fx.pr(101, "a", labels=["fix"], body="Depends-on: #101\n\n" + TRAILER)
+        fx.pr(111, "k", labels=["fix"], body=TRAILER)
+        fx.pr(120, "x", labels=["fix"], body="Depends-on: #121\n\n" + TRAILER)
+        fx.pr(121, "y", labels=["fix"], body="Depends-on: #120\n\n" + TRAILER)
+        fx.pr(125, "z", labels=["fix"], body="Depends-on: #120\n\n" + TRAILER)
+        p = fx.ok("plan", "--name", "b1")
+        st = fx.state("b1")
+        self.assertEqual(st["order"], [111])
+        excluded = {e["n"]: e["reason"] for e in st["excluded"]}
+        self.assertEqual(excluded[101], "depends on itself (Depends-on: #101)")
+        self.assertEqual(excluded[120], "in a dependency cycle with #121")
+        self.assertEqual(excluded[121], "in a dependency cycle with #120")
+        self.assertEqual(excluded[125], "depends on #120 (in a dependency cycle with #121)")
+        self.assertIn("excluded #120: in a dependency cycle with #121", p.stdout)
+        self.assertIn("1 member(s), 4 excluded", p.stdout)
+
     def test_a_reused_base_branch_name_is_an_open_prs_branch_not_the_merged_prs(self):
         """Branch names recur on the fork. A base that is an open PR's head is a dependency even if a
         merged PR once used the name; a base whose branch moved on with no open PR is excluded by
@@ -490,7 +513,7 @@ class Assemble(_Base):
         self.assertEqual(rec["resolved"]["review"], "subagent: fine")
         self.assertEqual(fx.chain("b1"), ["Merge #101: PR 101 on a", "Merge #108: notes: the g version"])
         body = fx.ok("summarize", "b1", "--print-only").stdout
-        self.assertIn("- #108 g: conflict resolved in notes.txt (1 hunk); one review round: subagent: fine. [combined diff below]", body)
+        self.assertIn("- #108 g: conflict resolved in notes.txt (1 hunk); one review round: subagent: fine. [diff from the clean merge below]", body)
         self.assertIn("### #108", body)
         self.assertIn("two-a-g", body, "the combined diff of the resolved merge is in the details")
         p = fx.ok("verify", "b1", "--sweep", "pytest 1 passed")
@@ -681,9 +704,142 @@ class Assemble(_Base):
         self.assertEqual(rec["hunks"], 1)
         self.assertIn("earlier assembly", rec["how"])
         body = fx.gh()["prs"]["900"]["body"]
-        self.assertIn("- #108 g: conflict resolved in notes.txt (1 hunk); one review round in the earlier assembly, replayed by rerere: subagent: fine. [combined diff below].", body)
+        self.assertIn("- #108 g: conflict resolved in notes.txt (1 hunk); one review round in the earlier assembly, replayed by rerere: subagent: fine. [diff from the clean merge below].", body)
         self.assertNotIn("NOT recorded", body)
         self.assertEqual(fx.dev_git("show", "batch/b1:notes.txt"), "one\ntwo-a-g\nthree")
+
+    def test_a_partial_rerere_replay_lists_both_files_and_continue_keeps_the_replayed_content(self):
+        """rerere replays one file's resolution from the earlier assembly while a second file conflicts
+        anew (main moved under the member). The stop must list BOTH files: with only the new one
+        recorded, --continue read the replayed file as a stray change and advised restoring it from
+        the conflicted merge-tree, which wrote conflict markers that the next --continue committed."""
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo-a\nthree\n"})
+        fx.branch("g", {"notes.txt": "one\ntwo-g\nthree\n", "README.md": "# notes-api\n\ng's line\n"})
+        fx.pr(101, "a", labels=["fix"], body=TRAILER)
+        fx.pr(108, "g", title="notes: the g version", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g\nthree\n")
+        fx._git("add", "notes.txt", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "round one")
+        # main edits README.md where #108 does, so the rebuild conflicts there too; rerere replays notes.txt.
+        fx.commit_main({"README.md": "# notes-api\n\nmain's line\n"}, "main moved on")
+        p = fx.run("assemble", "b1", "--resolve", "108")
+        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+        cur = fx.state("b1")["assembly"]["cursor"]
+        self.assertEqual(cur["files"], ["README.md", "notes.txt"], "the replayed file is part of the stop")
+        self.assertEqual(cur["replayed"], ["notes.txt"])
+        self.assertEqual(fx._git("show", ":notes.txt", cwd=wt), "one\ntwo-a-g\nthree", "rerere staged the earlier resolution")
+        self.assertIn("rerere replayed notes.txt", p.stdout)
+        with open(os.path.join(wt, "README.md"), "w") as f:
+            f.write("# notes-api\n\nmain's line\ng's line\n")
+        fx._git("add", "README.md", cwd=wt)
+        p = fx.ok("assemble", "b1", "--continue", "--reviewed", "round two")
+        self.assertEqual(fx.dev_git("show", "batch/b1:notes.txt"), "one\ntwo-a-g\nthree", "the replayed content, no markers")
+        self.assertEqual(fx.dev_git("show", "batch/b1:README.md"), "# notes-api\n\nmain's line\ng's line")
+        rec = [e for e in fx.state("b1")["assembly"]["merged"] if e["n"] == 108][0]["resolved"]
+        self.assertEqual(rec["files"], ["README.md", "notes.txt"])
+        self.assertEqual(rec["replayed_files"], ["notes.txt"])
+        self.assertEqual(rec["review"], "round two")
+        self.assertIn("rerere replayed", rec["how"])
+        p = fx.ok("verify", "b1", "--sweep", "x")
+        self.assertIn("#108 merge carries a recorded resolution", p.stdout)
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        self.assertIn("conflict resolved in README.md, notes.txt", body)
+        self.assertIn("two-a-g", body)
+        self.assertIn("main's line", body)
+
+    def test_continue_never_commits_a_conflict_marker_even_when_the_file_equals_the_conflicted_merge_tree(self):
+        """The marker scan must read the files themselves: a file byte-identical to what merge-tree
+        left for it (markers included) does not differ from that tree, so a scan of the differing
+        paths alone would miss it; and the file as git left it in the worktree, just `git add`ed."""
+        fx = self.fx
+        self.conflict_pair()
+        fx.ok("plan", "--name", "b1")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        wt = fx.wt("b1")
+        head, other = fx._git("rev-parse", "HEAD", cwd=wt), fx._git("rev-parse", "MERGE_HEAD", cwd=wt)
+        mt = fx._git("merge-tree", "--write-tree", "--no-messages", head, other, cwd=wt, check=False).splitlines()[0]
+        marked = fx._git("show", mt + ":notes.txt", cwd=wt) + "\n"
+        self.assertIn("<<<<<<< ", marked)
+        for content in (marked, None):
+            if content is None:
+                fx._git("checkout", "--merge", "--", "notes.txt", cwd=wt)   # the conflict as git wrote it
+            else:
+                with open(os.path.join(wt, "notes.txt"), "w") as f:
+                    f.write(content)
+            fx._git("add", "notes.txt", cwd=wt)
+            p = fx.run("assemble", "b1", "--continue", "--reviewed", "x")
+            self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+            self.assertIn("conflict marker", p.stderr)
+            self.assertIn("notes.txt", p.stderr)
+            self.assertEqual(fx.chain("b1"), ["Merge #101: PR 101 on a"], "nothing was committed")
+            self.assertTrue(os.path.exists(os.path.join(fx.dev, ".git", "worktrees", "romp-batch-b1", "MERGE_HEAD")))
+
+    def test_a_take_theirs_resolution_says_which_side_won_and_shows_the_diff_from_the_clean_merge(self):
+        """`git show --cc` omits hunks equal to one parent, so a resolution that took one side wholesale
+        rendered as '0 hunks' over an empty diff block. The diff is from the merge-tree of the parents
+        to the merge (the conflict text turning into the chosen text), and the line says whose version
+        was taken."""
+        fx = self.fx
+        self.conflict_pair()
+        fx.ok("plan", "--name", "b1")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        wt = fx.wt("b1")
+        fx._git("checkout", "--theirs", "--", "notes.txt", cwd=wt)
+        fx._git("add", "notes.txt", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "took g's side")
+        rec = [e for e in fx.state("b1")["assembly"]["merged"] if e["n"] == 108][0]["resolved"]
+        self.assertEqual(rec["hunks"], 1)
+        self.assertEqual(rec["choices"], {"notes.txt": "took #108's version"})
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        self.assertIn("- #108 g: conflict resolved in notes.txt (took #108's version; 1 hunk); one review round: took g's side. [diff from the clean merge below].", body)
+        self.assertIn("### #108", body)
+        self.assertIn("- notes.txt: took #108's version", body)
+        self.assertIn("-two-a", body, "the diff shows #101's line going out of the conflict block")
+        self.assertIn(" two-g", body)
+        p = fx.ok("verify", "b1", "--sweep", "x")
+        self.assertIn("#108 merge carries a recorded resolution (resolved by the batcher, per hunk) in notes.txt", p.stdout)
+
+    def test_a_modify_delete_resolution_that_keeps_the_file_says_so_and_verify_checks_the_conflicted_path(self):
+        fx = self.fx
+        fx.branch("a", {"notes.txt": None})
+        fx.branch("g", {"notes.txt": "one\ntwo-g\nthree\n"})
+        fx.pr(101, "a", title="notes: drop the file", labels=["fix"], body=TRAILER)
+        fx.pr(108, "g", title="notes: the g version", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        p = fx.run("assemble", "b1", "--resolve", "108")
+        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+        wt = fx.wt("b1")
+        self.assertEqual(fx.state("b1")["assembly"]["cursor"]["files"], ["notes.txt"])
+        fx._git("add", "notes.txt", cwd=wt)    # keep #108's file
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "keep g's file")
+        rec = [e for e in fx.state("b1")["assembly"]["merged"] if e["n"] == 108][0]["resolved"]
+        self.assertEqual(rec["choices"], {"notes.txt": "took #108's version, which the batch deleted"})
+        self.assertEqual(fx.dev_git("show", "batch/b1:notes.txt"), "one\ntwo-g\nthree")
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        self.assertIn("- #108 g: conflict resolved in notes.txt (took #108's version, which the batch deleted); one review round: keep g's file.", body)
+        self.assertIn("- notes.txt: took #108's version, which the batch deleted", body)
+        p = fx.ok("verify", "b1", "--sweep", "x")
+        self.assertIn("ok   provenance: #108 merge carries a recorded resolution (resolved by the batcher, per hunk) in notes.txt", p.stdout)
+        self.assertFalse([l for l in p.stdout.splitlines() if "#108" in l and "equals the clean merge" in l],
+                         "a resolved merge is not reported as the clean merge")
+        # The kept file equals what merge-tree left for it, so it does not differ from that tree; verify
+        # must still see that merge-tree calls it conflicted and demand the recorded resolution cover it.
+        path = os.path.join(fx.dev, ".git", "batch", "b1.json")
+        with open(path) as f:
+            st = json.load(f)
+        [e for e in st["assembly"]["merged"] if e["n"] == 108][0]["resolved"]["files"] = ["README.md"]
+        with open(path, "w") as f:
+            json.dump(st, f)
+        p = fx.run("verify", "b1", "--sweep", "x")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL provenance: #108 merge", p.stdout)
+        self.assertIn("notes.txt", p.stdout)
+        self.assertIn("not cover", p.stdout)
 
     def test_a_member_already_contained_by_an_earlier_member_is_recorded_as_contained(self):
         """Ordering missed a dependency: #101's branch was built on #102's. `git merge` says
@@ -751,7 +907,7 @@ class Assemble(_Base):
         self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
         self.assertIn("stopped for resolution in notes.txt", p.stdout)
         st = fx.state("b1")
-        self.assertEqual(st["assembly"]["cursor"], {"n": None, "main": fx.bare_rev("main"), "files": ["notes.txt"]})
+        self.assertEqual(st["assembly"]["cursor"], {"n": None, "main": fx.bare_rev("main"), "files": ["notes.txt"], "replayed": []})
         p = fx.run("verify", "b1", "--sweep", "x")
         self.assertEqual(p.returncode, 1)
         self.assertIn("the merge of origin/main is still stopped", p.stderr)
@@ -769,7 +925,7 @@ class Assemble(_Base):
         p = fx.ok("verify", "b1", "--sweep", "x")
         self.assertIn("ok   provenance: the origin/main merge carries a recorded resolution (resolved by the batcher, per hunk) in notes.txt", p.stdout)
         body = fx.ok("summarize", "b1", "--print-only").stdout
-        self.assertIn("- merge of origin/main (%s): conflict resolved in notes.txt (1 hunk); one review round: subagent: ok. [combined diff below]." % st["assembly"]["head"][:10], body)
+        self.assertIn("- merge of origin/main (%s): conflict resolved in notes.txt (1 hunk); one review round: subagent: ok. [diff from the clean merge below]." % st["assembly"]["head"][:10], body)
         self.assertIn("### merge of origin/main (%s)" % st["assembly"]["head"][:10], body)
         self.assertIn("two-a-m", body)
 
@@ -909,6 +1065,35 @@ class Verify(_Base):
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         self.assertIn("assembly incomplete: #102 never merged; run assemble again", p.stderr)
         self.assertIsNone(fx.state("b1")["verified"])
+
+    def test_a_resolved_merge_that_equals_the_conflicted_merge_tree_fails_verify_on_its_markers(self):
+        """A resolution amended back to the marker text byte for byte (the labels merge-tree uses)
+        does not differ from the merge-tree of its parents, so the subset rule alone saw 'equals the
+        clean merge'. verify reads the conflicted paths for markers whatever the trees say."""
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo-a\nthree\n"})
+        fx.branch("g", {"notes.txt": "one\ntwo-g\nthree\n"})
+        fx.pr(101, "a", labels=["fix"], body=TRAILER)
+        fx.pr(108, "g", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g\nthree\n")
+        fx._git("add", "notes.txt", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "ok")
+        p1, p2 = fx.dev_git("rev-list", "--parents", "-n1", "batch/b1").split()[1:]
+        mt = fx.dev_git("merge-tree", "--write-tree", "--no-messages", p1, p2, check=False).splitlines()[0]
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write(fx.dev_git("show", mt + ":notes.txt") + "\n")
+        fx._git("add", "notes.txt", cwd=wt)
+        fx._git("commit", "-q", "--amend", "--no-edit", cwd=wt)
+        self.assertEqual(fx.dev_git("rev-parse", "batch/b1^{tree}"), mt, "the merge now IS the conflicted merge-tree")
+        p = fx.run("verify", "b1", "--sweep", "x")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL provenance: #108 merge", p.stdout)
+        self.assertIn("conflict marker", p.stdout)
+        self.assertIn("notes.txt", p.stdout)
 
     def test_a_declared_batch_commit_is_listed_under_read_these_first(self):
         fx = self.fx
@@ -1118,6 +1303,32 @@ class LandAndFinish(_Base):
         self.assertEqual(p.returncode, 1)
         self.assertIn("not MERGED", p.stderr)
 
+    def test_finish_refuses_a_state_whose_last_assembly_did_not_finish_and_names_the_pending_members(self):
+        """A rebuild that died part-way after a complete assembly was pushed and summarized leaves
+        `pending` non-empty; the branch on origin still holds the earlier head, and a maintainer can
+        merge it by hand. finish must not act on the partial member list as if it were the batch."""
+        fx = self.fx
+        self.ready()
+        path = os.path.join(fx.dev, ".git", "batch", "b1.json")
+        with open(path) as f:
+            st = json.load(f)
+        st["assembly"]["merged"] = st["assembly"]["merged"][:1]
+        st["assembly"]["pending"] = [102]
+        st["assembly"]["head"] = None
+        with open(path, "w") as f:
+            json.dump(st, f)
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0)
+        comments_before = fx.gh()["prs"]["102"]["comments"]
+        p = fx.run("finish", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("assembly incomplete: #102 never merged", p.stderr)
+        self.assertIn("#900", p.stderr)
+        self.assertIn("`gh pr view 102`", p.stderr)
+        self.assertNotEqual(fx.bare_rev("a"), "", "no branch was deleted")
+        self.assertNotIn("finished", fx.state("b1"))
+        self.assertEqual(fx.gh()["prs"]["102"]["comments"], comments_before, "no member was told anything")
+        self.assertEqual(fx.calls("pr", "edit"), [], "nothing was retargeted")
+
     def test_bisect_names_the_member(self):
         fx = self.fx
         self.two_members()
@@ -1319,9 +1530,9 @@ class Body(unittest.TestCase):
         self.assertEqual(r(self.member(6, trailer=None), None), ["trailer not stated"])
         self.assertEqual(r(self.member(7, ci="none (was conflicting)"), None), ["own CI: none (was conflicting)"])
         self.assertEqual(r(self.member(8), {"files": ["a.py", "b.py"], "how": "x", "hunks": 3, "review": "one round by a subagent: ok"}),
-                         ["conflict resolved in a.py, b.py (3 hunks); one review round: one round by a subagent: ok. [combined diff below]"])
+                         ["conflict resolved in a.py, b.py (3 hunks); one review round: one round by a subagent: ok. [diff from the clean merge below]"])
         self.assertEqual(r(self.member(9), {"files": ["a.py"], "how": "x", "hunks": 1, "review": None}),
-                         ["conflict resolved in a.py (1 hunk); review round NOT recorded. [combined diff below]"])
+                         ["conflict resolved in a.py (1 hunk); review round NOT recorded. [diff from the clean merge below]"])
         st = self.state([self.member(10, tier=None, trailer=None, touches=("kernel/k.py",))])
         body = batch.render_body(st, {"resolutions": [], "entries": []})
         self.assertIn("- #10 br10: unlabeled; touches kernel/; trailer not stated.", body)
@@ -1380,13 +1591,13 @@ class Body(unittest.TestCase):
         self.assertIn("| #2 | t | fix | 2 |", body)
         self.assertIn("| contained by #1 |", body)
         self.assertIn("- `batch:` commit aaaaaaaaaa by the batcher: batch: hotfix for the integrated tree; 1 file changed, 1 insertion(+); touches hotfix.py.", body)
-        self.assertIn("- merge of origin/main (bbbbbbbbbb): conflict resolved in notes.txt (1 hunk); one review round: subagent: ok. [combined diff below].", body)
+        self.assertIn("- merge of origin/main (bbbbbbbbbb): conflict resolved in notes.txt (1 hunk); one review round: subagent: ok. [diff from the clean merge below].", body)
         self.assertIn("### merge of origin/main (bbbbbbbbbb)", body)
         self.assertIn("++ main merge diff", body)
         replayed = {"files": ["a.py"], "how": "rerere replayed the resolution recorded in the earlier assembly", "hunks": 1,
                     "review": "subagent: fine", "replayed": True}
         self.assertEqual(batch.read_first_reasons(self.member(9), replayed),
-                         ["conflict resolved in a.py (1 hunk); one review round in the earlier assembly, replayed by rerere: subagent: fine. [combined diff below]"])
+                         ["conflict resolved in a.py (1 hunk); one review round in the earlier assembly, replayed by rerere: subagent: fine. [diff from the clean merge below]"])
 
 
 class Helpers(unittest.TestCase):
@@ -1412,9 +1623,10 @@ class Helpers(unittest.TestCase):
 
     def test_ordering_is_dependencies_first_then_by_number(self):
         cands = {5: {"depends_on": [9]}, 9: {"depends_on": []}, 7: {"depends_on": []}, 8: {"depends_on": [5]}}
-        self.assertEqual(batch.order_members(cands), [7, 9, 5, 8])
-        with self.assertRaises(batch.Fail):
-            batch.order_members({1: {"depends_on": [2]}, 2: {"depends_on": [1]}})
+        self.assertEqual(batch.order_members(cands), ([7, 9, 5, 8], []))
+        cyclic = {1: {"depends_on": [2]}, 2: {"depends_on": [1]}, 3: {"depends_on": [1]}, 4: {"depends_on": [4]}, 6: {"depends_on": []}}
+        self.assertEqual(batch.order_members(cyclic), ([6], [1, 2, 3, 4]), "the cycles' members and their dependents are left out, not ordered")
+        self.assertEqual([n for n in (1, 2, 3, 4) if batch.reaches(cyclic, n, n)], [1, 2, 4], "#3 only depends on the cycle")
 
     def test_depends_on_parsing(self):
         d = batch.parse_depends_on
