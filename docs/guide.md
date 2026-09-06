@@ -165,9 +165,10 @@ show it.
 
 **Figures.** On an image, whether it is a file of its own or a figure in a markdown page,
 drag a rectangle to comment on that part of it. The rectangle stays on the picture with the
-author's chip, the card shows that part of the image, and when the image's bytes change the
-comment is shown as stale until you resolve it or place it again. A figure embedded in a
-markdown file, such as `![](plot.png)`, is loaded from the file's own folder, so a relative
+author's chip, and the card shows that part of the image. When the image's bytes change the
+comment is shown as stale until you resolve it, or press **Re-place** and drag the rectangle
+again where it belongs now; the comment keeps its words. A figure embedded in a markdown
+file, such as `![](plot.png)`, is loaded from the file's own folder, so a relative
 path shows in the Rendered view; a web address or a `data:` image is left as written. A
 comment on an embedded figure is stored on its embed line, with the rectangle: the session's
 tools and the other editors place it on that line, and this viewer paints the rectangle on

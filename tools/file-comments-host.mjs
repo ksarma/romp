@@ -6,8 +6,8 @@
 //   stdin   {"verb", "path", "args": {...}, "fence": {...}|null}
 //   stdout  {"ok": true, "verb", "root", "storePath", "trackedBy", "agentTooling", "fileMtimeNs",
 //            "storeMtimeNs", "configMtimeNs", "store", "hunks", "unsent", "log", "logTruncated",
-//            "fileHash" + "fileHashReason" | "embeddedHashes" + "embeddedHashReasons",
-//            "baseline"?, "logged"?, "accepted"?, "rejected"?}
+//            "fileHash" + "fileHashReason" | "embeddedHashes" + "embeddedHashReasons" + "derivedSrcs" +
+//            "derivedSrcReasons", "baseline"?, "logged"?, "accepted"?, "rejected"?}
 //        or {"ok": false, "code", "error"}          — a refusal; exit status 0
 //   crash   a non-zero exit with the reason on stderr  — a malformed request or a program error
 //
@@ -47,7 +47,19 @@
 //     reply carries the current hash to compare against — `fileHash` on a media file,
 //     `embeddedHashes` per src on a text file — with null for "unknown" (unreadable, or past the
 //     size cap), which is never the same as stale, and beside every null the reason
-//     (`fileHashReason`, `embeddedHashReasons`), so the panel can say what could not be checked.
+//     (`fileHashReason`, `embeddedHashReasons`), so the panel can say what could not be checked;
+//   * the contract's own shape — the embed line's anchor plus `{kind, region, hash}` with no `src`,
+//     which the plan describes and another writer can leave — is read, never left "unknown": every
+//     reply names the figure such a comment is on from its anchored passage, located now, when that
+//     passage embeds exactly one figure (passageFigure), carries that src in the store it answers
+//     (`derivedSrcs`, per comment id: a read never rewrites the sidecar, and the reply says where
+//     its store differs from the disk) and hashes it under `embeddedHashes`, so the panel's stale
+//     check and its re-place key on it; when the passage cannot tell (gone, ambiguous, embedding no
+//     figure or several) the reason stands per comment id in `derivedSrcReasons`. A `retarget` on
+//     such a comment whose request names no `src` takes the passage's figure and writes the target
+//     with its src; a passage that cannot tell refuses (`no-figure`, or the anchor's own code),
+//     since that is the disk's state and not a caller bug. A stored src must still be named by the
+//     request, as before: the panel holds it, and a re-place keeps the figure.
 // The file's text is read only when a verb needs it: to rebase an existing sidecar, to place an
 // anchor, to stamp a fingerprint. `status` runs on every viewer open, a file the viewer refuses
 // above 2 MB included, so on a file with no sidecar it stats the file and reads nothing (statFile).
@@ -670,7 +682,9 @@ function fileHashFor(ctx) {
 // shared budget, with the reason under the same src in `reasons` (the reply's embeddedHashReasons:
 // a figure that is gone, one that moved outside the root, and one past the budget are three
 // different situations for the person, and a null alone showed all three as one "unknown").
-// Empty objects when the file has no sidecar or no region comments.
+// Empty objects when the file has no sidecar or no region comments. `store` is the one the reply
+// carries (derivedSrcsFor): a comment in the contract's src-less shape is hashed under the src its
+// passage told, and skipped when it could not — its reason is in derivedSrcReasons.
 function embeddedHashesFor(ctx, rootDir, store) {
   const hashes = new Map();
   const reasons = {};
@@ -844,6 +858,68 @@ function checkEmbedNamesSrc(ctx, text, from, to, src) {
   if (dests.includes(src)) return;
   const named = dests.length ? `embeds ${dests.map((d) => tilde(d)).join(', ')}, not ${tilde(src)}` : `embeds no figure, so nothing there is ${tilde(src)}`;
   throw new Refusal('figure-mismatch', `the passage this comment is anchored to in ${ctx.shown} ${named}; a region on that figure cannot stand on this passage; nothing was changed`);
+}
+
+// The figure an anchored region comment is on when its stored target names no src: the contract's
+// own shape (plans/file-review.md, "The contract": the embed line's anchor plus {kind, region,
+// hash}), which the panel never writes but another writer following the plan can leave. The
+// anchored passage, located now, decides — the reading checkEmbedNamesSrc makes of a src the caller
+// names, with no src to compare: {src} when the passage embeds exactly one distinct destination (a
+// reference-style embed's through its definition, the case the anchor's quote alone cannot answer);
+// else {src: null, code, reason} — the passage gone or ambiguous (locateExact's codes, the anchor
+// unreadable counted with them) or embedding no figure or several (`no-figure`). The reason is a
+// fragment for the person, as the hash reasons are. `embeds` is imageEmbeds(text), read once per
+// reply by the caller.
+function passageFigure(ctx, text, c, embeds) {
+  const id = String(c.id);
+  let anchor;
+  try {
+    anchor = validateAnchor(c.anchor);
+  } catch (e) {
+    return { src: null, code: 'anchor-not-found', reason: `the anchor of comment ${id} in ${ctx.shown} cannot be read (${e.message}), so which figure it is on cannot be told` };
+  }
+  const loc = locateExact(text, anchor, undefined);
+  if (loc.error) return { src: null, code: loc.error, reason: `the passage of comment ${id} could not be placed in ${ctx.shown} (${loc.error}), so which figure it is on cannot be told` };
+  const dests = [...new Set(embeds.filter((e) => e.start < loc.to && e.end > loc.from).map((e) => e.dest))];
+  if (dests.length === 1) return { src: dests[0] };
+  const named = dests.length ? `embeds ${dests.map((d) => tilde(d)).join(', ')}` : 'embeds no figure';
+  return { src: null, code: 'no-figure', reason: `the passage of comment ${id} in ${ctx.shown} ${named}, so which figure it is on cannot be told` };
+}
+
+// Whether a comment's stored target is the contract's src-less shape on an anchored passage: a
+// target object naming no usable src, under an anchor. A standalone image's target (no anchor) and
+// a region another writer left on a text file with no embed line are not — nothing there names a
+// figure by its passage.
+function namesFigureByPassage(c) {
+  return !!(c && c.anchor != null && c.target && typeof c.target === 'object' && !Array.isArray(c.target)
+    && (typeof c.target.src !== 'string' || !c.target.src));
+}
+
+// The store as a reply carries it: every comment in the contract's src-less shape with the src its
+// passage tells (passageFigure), the stored target's keys kept and `src` after them, so the panel
+// keys the stale check and the re-place on it; a comment whose passage cannot tell is left as it
+// is. Which srcs were told this way, and why the rest could not be, go beside the store in the
+// reply (`derivedSrcs`, `derivedSrcReasons`, per comment id): a read never rewrites the sidecar,
+// and the reply says where its store differs from the disk. `text` is the file as the load read
+// it; a store with such a comment and no text is a program error (every verb that loads a sidecar
+// reads the text to rebase it), never a silent "unknown".
+function derivedSrcsFor(ctx, store, text) {
+  const srcs = {};
+  const reasons = {};
+  if (!store || !(store.comments || []).some(namesFigureByPassage)) return { store, srcs, reasons };
+  if (typeof text !== 'string') throw new Error(`a comment on ${ctx.shown} names its figure by its passage, and the file's text was not read`);
+  const embeds = imageEmbeds(text);
+  const comments = store.comments.map((c) => {
+    if (!namesFigureByPassage(c)) return c;
+    const f = passageFigure(ctx, text, c, embeds);
+    if (f.src == null) {
+      reasons[String(c.id)] = f.reason;
+      return c;
+    }
+    srcs[String(c.id)] = f.src;
+    return { ...c, target: { ...c.target, src: f.src } };
+  });
+  return { store: { ...store, comments }, srcs, reasons };
 }
 
 // `too-large`: only verbs that write the file check it, before any write (the kernel's cap).
@@ -1068,7 +1144,7 @@ export function buildComment(text, args, now, suggestions) {
 // ── the reply ───────────────────────────────────────────────────────
 
 function reply(ctx, state, extra) {
-  const { root, paths, store, text, fileMtimeNs } = state;
+  const { root, paths, store: loaded, text, fileMtimeNs } = state;
   let log = [];
   let logTruncated = false;
   let entries = [];
@@ -1079,6 +1155,12 @@ function reply(ctx, state, extra) {
     logTruncated = entries.length > LOG_TAIL;
     log = logTruncated ? entries.slice(entries.length - LOG_TAIL) : entries;
   }
+  // The store the reply carries: on a text file, with the src every comment in the contract's
+  // src-less shape names by its passage (derivedSrcsFor); a media file's comments have no anchor,
+  // so its store goes as loaded.
+  const media = isMediaPath(ctx.abs);
+  const derived = media ? null : derivedSrcsFor(ctx, loaded, text);
+  const store = derived ? derived.store : loaded;
   const out = {
     ok: true,
     verb: ctx.verb,
@@ -1098,9 +1180,11 @@ function reply(ctx, state, extra) {
   // What a region comment's target.hash is compared with, on every reply (each one is the status
   // the panel holds next): a media file's own bytes, or the figures a text file's comments name —
   // and beside every null, why (fileHashReason: a string or null; embeddedHashReasons: one entry per
-  // null src), so the panel can say which figure could not be checked and what stopped it. The
-  // same reasons go to stderr, which the kernel keeps when a call fails.
-  if (isMediaPath(ctx.abs)) {
+  // null src), so the panel can say which figure could not be checked and what stopped it. On a
+  // text file, beside them, which comments name their figure by their passage (derivedSrcs) and
+  // why the rest of that shape could not (derivedSrcReasons), per comment id. The same reasons go
+  // to stderr, which the kernel keeps when a call fails.
+  if (media) {
     const fh = fileHashFor(ctx);
     out.fileHash = fh.hash;
     out.fileHashReason = fh.reason || null;
@@ -1109,7 +1193,9 @@ function reply(ctx, state, extra) {
     const eh = embeddedHashesFor(ctx, root, store);
     out.embeddedHashes = eh.hashes;
     out.embeddedHashReasons = eh.reasons;
-    for (const reason of Object.values(eh.reasons)) process.stderr.write(`file-comments-host: ${reason}\n`);
+    out.derivedSrcs = derived.srcs;
+    out.derivedSrcReasons = derived.reasons;
+    for (const reason of [...Object.values(eh.reasons), ...Object.values(derived.reasons)]) process.stderr.write(`file-comments-host: ${reason}\n`);
   }
   if (ctx.args.baseline === true) out.baseline = engine.baselineOf(text, store ? store.suggestions : []);
   return Object.assign(out, extra || {});
@@ -1203,11 +1289,16 @@ function doComment(ctx) {
 // embedded figure's new target names its src as the old one did — the SAME src, checked: a
 // re-place moves the rectangle, never the figure, and a src that differed would leave the anchor
 // (and so the painted rectangle) on one figure while the stale check followed another. A stored
-// target with an anchor but no src (a shape another writer could leave) takes the new src only
-// when the anchored passage, located now, embeds it. A standalone one's target has none — the
-// anchor decides, as it does for comment. Fenced on the sidecar like every sidecar write; the
-// anchor, id, body and replies stay as they were; nothing is appended to the comments log, since a
-// re-placed rectangle is not a decision.
+// target with an anchor but no src (the contract's own shape, which another writer can leave) is
+// re-placed either way: a request naming a src takes it only when the anchored passage, located
+// now, embeds it; a request naming none — the panel's, when no reply could tell the figure, or a
+// caller following the plan — takes the figure that passage embeds (passageFigure), and a passage
+// that cannot tell refuses with its reason rather than crashing as a caller bug. Either way the
+// target written carries its src. A stored src must be named by the request, as ever: the panel's
+// store view carries it (stored, or told by the passage on a reply), so a request without one is a
+// caller bug. A standalone one's target has none — the anchor decides, as it does for comment.
+// Fenced on the sidecar like every sidecar write; the anchor, id, body and replies stay as they
+// were; nothing is appended to the comments log, since a re-placed rectangle is not a decision.
 function doRetarget(ctx) {
   const id = requireCommentId(ctx.args);
   if (ctx.args.target == null) throw new BadRequest('retarget needs target: {kind, region, page?, src?}');
@@ -1215,10 +1306,20 @@ function doRetarget(ctx) {
     const c = findComment(store, id);
     if (!c) throw new Refusal('no-comment', `comment ${String(id)} is not among the comments for ${ctx.shown} — reload and retry`);
     if (!c.target || typeof c.target !== 'object') throw new BadRequest(`comment ${String(id)} has no region to re-place`);
-    const validated = validateTarget(ctx.args.target, c.anchor != null);
-    if (validated.src != null) {
-      if (c.target.src != null) {
-        if (validated.src !== c.target.src) throw new BadRequest(`retarget keeps the figure: comment ${String(id)} is on ${tilde(c.target.src)}, and target.src names ${tilde(validated.src)}`);
+    const embedded = c.anchor != null;
+    const stored = typeof c.target.src === 'string' && c.target.src ? c.target.src : null;
+    let asked = ctx.args.target;
+    let told = false;   // the src is the passage's own, located and checked in the telling
+    if (embedded && stored == null && asked && typeof asked === 'object' && !Array.isArray(asked) && asked.src == null) {
+      const f = passageFigure(ctx, text, c, imageEmbeds(text));
+      if (f.src == null) throw new Refusal(f.code, `${f.reason}; a re-place needs the figure named in the comment's target (src); nothing was changed`);
+      asked = { ...asked, src: f.src };
+      told = true;
+    }
+    const validated = validateTarget(asked, embedded);
+    if (validated.src != null && !told) {
+      if (stored != null) {
+        if (validated.src !== stored) throw new BadRequest(`retarget keeps the figure: comment ${String(id)} is on ${tilde(stored)}, and target.src names ${tilde(validated.src)}`);
       } else {
         const loc = locateExact(text, validateAnchor(c.anchor), undefined);
         if (loc.error) throw new Refusal(loc.error, `the passage of comment ${String(id)} could not be placed in ${ctx.shown} (${loc.error}), so which figure it embeds cannot be told — reload and retry`);

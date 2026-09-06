@@ -16,6 +16,20 @@ export type Box = { left: number; top: number; width: number; height: number };
 export type Point = { x: number; y: number };
 /** The stored shape: fractions of the image's natural size. */
 export type Region = { x: number; y: number; w: number; h: number };
+const REGION_KEYS = ["x", "y", "w", "h"] as const;
+const isFraction = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+/** Whether a stored value IS a region as the host writes one (validateTarget): an object whose x, y, w and h
+ *  are all finite numbers. A sidecar reaches the panel as it is on disk — store-io hands the comments through
+ *  and the host validates only what it writes — so a hand edit, or a foreign writer of the romp-only `target`
+ *  field, can leave a string, a null or a missing coordinate under `target.region`; a numeric string is not a
+ *  region either, the host refuses one. Gate on this before placing or cropping; the wording below never
+ *  throws on a value that fails it. */
+export function isRegion(v: unknown): v is Region {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const r = v as Record<string, unknown>;
+  return REGION_KEYS.every((k) => isFraction(r[k]));
+}
 export type Staleness = "current" | "stale" | "unknown";
 
 /** The smallest region in either dimension: a drag thinner than 1% of the image is widened to it, so a
@@ -139,13 +153,23 @@ export function cropSize(crop: { sw: number; sh: number }, max: Size): Size {
   return { width: Math.max(1, Math.round(crop.sw * scale)), height: Math.max(1, Math.round(crop.sh * scale)) };
 }
 
-/** Two decimals, always ("0.40", "1.00"): the form the composer shows and the sent message carries (E7). */
-export const fmt2 = (v: number): string => v.toFixed(2);
+/** What a coordinate that is not a finite number prints as, in its own slot: "the region at 0.10, ?, 0.30,
+ *  0.40" says which value is unreadable, so a malformed sidecar shows on ITS card and nowhere else. */
+export const UNREADABLE = "?";
+
+/** Two decimals, always ("0.40", "1.00"): the form the composer shows and the sent message carries (E7). Anything
+ *  that is not a finite number prints as UNREADABLE — shown, never thrown. This used to be a bare `toFixed`, and
+ *  one string coordinate in a sidecar (a hand edit; a foreign writer of the `target` field) threw out of it for
+ *  every render of that file's panel: cardModel words every comment, so nothing rendered and nothing said why. */
+export const fmt2 = (v: unknown): string => (isFraction(v) ? v.toFixed(2) : UNREADABLE);
 
 /** "the region at 0.12, 0.40, 0.35, 0.20", and for a PDF page "… of page 2" — the phrase after "on" in the
- *  message's parenthetical (contract C2/E7) and the card's reference. */
-export function regionDesc(r: Region, page?: number | null): string {
-  const at = "the region at " + [r.x, r.y, r.w, r.h].map(fmt2).join(", ");
+ *  message's parenthetical (contract C2/E7) and the card's reference. Total over whatever the sidecar holds
+ *  (see fmt2): a coordinate that is not a finite number, or a value that is not an object at all, reads as
+ *  UNREADABLE in each slot it fails, and the phrase still composes with the " of page N" / " of <src>" tails. */
+export function regionDesc(r: unknown, page?: number | null): string {
+  const o = r && typeof r === "object" ? (r as Record<string, unknown>) : {};
+  const at = "the region at " + REGION_KEYS.map((k) => fmt2(o[k])).join(", ");
   return page ? at + " of page " + page : at;
 }
 

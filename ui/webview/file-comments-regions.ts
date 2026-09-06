@@ -25,6 +25,13 @@
 // root would drop it. A press that does not move is therefore handed on by the layer: it clicks the control
 // the press began on (handOn), and swallows the browser's own click after it.
 //
+// The wrapper stands in the AUTHOR's flow where the picture stood, so it takes over the picture's own place there
+// (carriedLayout): a percentage width or max-width the author wrote resolves against the paragraph, not against a
+// wrapper that hugs the picture (a width="100%" plot collapsed to its natural width); a float (align="right") applies
+// to the wrapper, so the prose flows beside it as before; an inline display: block with auto margins keeps the figure
+// centered; a vertical-align keeps a badge on its line. The picture's own inline style is snapshotted and put back on
+// dispose, so opening and closing the panel leaves the page as the browser laid it out (the 2026-09-06 review).
+//
 // Nothing here adds a TEXT node under the image: the rendered-markdown mapper aligns each block's text
 // against the source, and a chip's label as a text node would misalign the paragraph holding the figure.
 // The author chip is drawn from `data-label` by the sheet (`content: attr(data-label)`), the way the
@@ -78,6 +85,77 @@ function styleAttr(decls: Record<string, string>): string {
   }
   return out.join("; ") + (out.length ? ";" : "");
 }
+/** A CSS percentage (`50%`, ` 100% `), as the HTML `width` attribute's dimension parse and the CSSOM both yield it;
+ *  null for anything else (a pixel count, a keyword, an empty value). */
+export function pctOf(v: string | null | undefined): string | null {
+  const m = typeof v === "string" ? /^\s*(\d+(?:\.\d+)?|\.\d+)%\s*$/.exec(v) : null;
+  return m ? m[1] + "%" : null;
+}
+/** What the picture's layout reads as before it is wrapped: the `width` attribute, its inline style, its computed style. */
+export type ImgLayout = {
+  attrWidth: string | null;
+  inline: { width?: string; maxWidth?: string; display?: string; float?: string; verticalAlign?: string; marginLeft?: string; marginRight?: string };
+  computed: { float?: string; verticalAlign?: string; marginLeft?: string; marginRight?: string };
+};
+/** The declarations the wrapper takes over from the picture, and the ones the picture gives up in return. */
+export type CarriedLayout = { wrap: Record<string, string>; img: Record<string, string> };
+
+/** The picture's own place in the author's flow, carried onto the wrapper that now stands there (the module header).
+ *  A percentage width or max-width resolves against the containing block, which the wrap changes from the paragraph
+ *  to the wrapper: the wrapper takes the percentage and the picture fills it (100%), else the two would compound. A
+ *  float goes to the wrapper (the picture's own is cleared: a float inside a wrapper that hugs it floats nothing). An
+ *  inline `display: block` makes the wrapper a block too, sized to its content so auto margins can center it; then,
+ *  and whenever a percentage width is carried, the picture's horizontal margins (an author's `margin: 0 auto`, an
+ *  hspace) move to the wrapper, since a margin inside a wrapper the picture fills would push it out. Vertical margins
+ *  stay on the picture (a block wrapper lets them collapse through, an inline one contains them, as the paragraph
+ *  did). A vertical-align other than baseline goes to an inline wrapper, so the wrapper sits on the line as the
+ *  picture did. The specified inline value is read first (it may be `auto`, or a percentage), the computed one after
+ *  it (an `align` attribute's float, an hspace's pixels). Nothing carried: both records are empty. */
+export function carriedLayout(l: ImgLayout): CarriedLayout {
+  const wrap: Record<string, string> = {}, img: Record<string, string> = {};
+  const inl = l.inline, cs = l.computed;
+  const w = inl.width ? pctOf(inl.width) : pctOf(l.attrWidth);
+  if (w !== null) { wrap.width = w; img.width = "100%"; }
+  const mw = pctOf(inl.maxWidth);
+  if (mw !== null) { wrap["max-width"] = mw; img["max-width"] = "100%"; }
+  const f = cs.float || inl.float || "";
+  const floated = f !== "" && f !== "none";
+  if (floated) { wrap.float = f; img.float = "none"; }
+  const block = inl.display === "block";
+  if (block) { wrap.display = "block"; if (w === null) wrap.width = "fit-content"; }
+  if (block || w !== null) {
+    for (const side of ["left", "right"] as const) {
+      const k = side === "left" ? "marginLeft" : "marginRight";
+      const v = inl[k] || cs[k] || "";
+      if (v && v !== "0px" && v !== "0") { wrap["margin-" + side] = v; img["margin-" + side] = "0"; }
+    }
+  }
+  const va = inl.verticalAlign || cs.verticalAlign || "";
+  if (va && va !== "baseline" && !block && !floated) wrap["vertical-align"] = va;
+  return { wrap, img };
+}
+/** The picture's layout as the DOM reports it: the attribute, the inline style (a CSSOM read; a stand-in with no
+ *  `style` object reads as unstyled), and the computed style where the document has one to read. */
+function readImgLayout(img: HTMLImageElement): ImgLayout {
+  const st = (img.style || {}) as unknown as Partial<Record<string, unknown>>;
+  const s = (k: string): string => { const v = st[k]; return typeof v === "string" ? v : ""; };
+  const w = typeof window !== "undefined" ? window : null;
+  let cs: Partial<Record<string, unknown>> = {};
+  if (w && typeof w.getComputedStyle === "function") { try { cs = (w.getComputedStyle(img) || {}) as unknown as Partial<Record<string, unknown>>; } catch { cs = {}; } }
+  const c = (k: string): string => { const v = cs[k]; return typeof v === "string" ? v : ""; };
+  return {
+    attrWidth: img.getAttribute("width"),
+    inline: { width: s("width"), maxWidth: s("maxWidth"), display: s("display"), float: s("cssFloat") || s("float"), verticalAlign: s("verticalAlign"), marginLeft: s("marginLeft"), marginRight: s("marginRight") },
+    computed: { float: c("cssFloat") || c("float"), verticalAlign: c("verticalAlign"), marginLeft: c("marginLeft"), marginRight: c("marginRight") },
+  };
+}
+/** An element's `style` attribute with declarations appended: the later declaration of a property wins, so the
+ *  picture's own `width: 50%` yields to the `width: 100%` written after it, and the rest of what the author wrote
+ *  stands. Text, not CSSOM, as styleAttr. */
+function appendStyle(prior: string | null, add: string): string {
+  const p = prior ? prior.trim().replace(/;+\s*$/, "") : "";
+  return p ? p + "; " + add : add;
+}
 const mk = (doc: Document, tag: string, cls: string): HTMLElement => { const e = doc.createElement(tag); e.className = cls; return e; };
 /** An element's client rect as a plain box. A DOMRect's fields are prototype getters, so a spread of one is an empty
  *  object — and the geometry returns `{ ...rect }` where the box is the element (a picture drawn `fill`, a natural size
@@ -99,19 +177,31 @@ export class RegionLayer {
   private readonly onResize = () => this.place();
   private readonly onLoad = () => this.place();
   private sizer: ResizeObserver | null = null;
+  /** the picture's `style` attribute before the layer touched it (null: none), put back on dispose */
+  private readonly imgStyle: string | null;
+  /** whether the picture's style attribute was written (carriedLayout gave it something to give up) */
+  private readonly carried: boolean;
 
   constructor(readonly img: HTMLImageElement, readonly hooks: LayerHooks) {
     const doc = img.ownerDocument;
     this.wrap = mk(doc, "span", "fc-imgwrap");
     this.overlay = mk(doc, "div", "fc-overlay fc-overlay-off");
+    // the picture's place in the flow, read where the author put it, before the wrapper stands there
+    const carry = carriedLayout(readImgLayout(img));
+    this.imgStyle = img.getAttribute("style");
     const parent = img.parentNode;
     if (parent) parent.insertBefore(this.wrap, img);
     this.wrap.appendChild(img);
     this.wrap.appendChild(this.overlay);
+    const wrapStyle = styleAttr(carry.wrap), imgStyle = styleAttr(carry.img);
+    if (wrapStyle) this.wrap.setAttribute("style", wrapStyle);
+    this.carried = imgStyle !== "";
+    if (this.carried) img.setAttribute("style", appendStyle(this.imgStyle, imgStyle));
     img.addEventListener("load", this.onLoad);
     // the exact event for "the drawn size changed": the aside opening narrows the body with no window resize;
-    // the window's resize stands in where the observer is missing
-    if (typeof ResizeObserver !== "undefined") { this.sizer = new ResizeObserver(() => this.place()); this.sizer.observe(img); }
+    // the window's resize stands in where the observer is missing. The wrapper is observed too: a picture centered
+    // in a block wrapper moves without changing size when the column does
+    if (typeof ResizeObserver !== "undefined") { this.sizer = new ResizeObserver(() => this.place()); this.sizer.observe(img); this.sizer.observe(this.wrap); }
     else window.addEventListener("resize", this.onResize);
     this.arm();
     this.place();
@@ -243,7 +333,11 @@ export class RegionLayer {
    *  rectangle inside another is always above it, so every rectangle can be reached from the mouse wherever no
    *  smaller one covers it; the Tab order follows, outer to inner. Two identical rectangles keep card order, the
    *  later above; the one under it is still a Tab stop and has its card in the panel. The pending region comes
-   *  last, above them all, as before. */
+   *  last, above them all, as before.
+   *
+   *  A paint pass can land mid-drag (a peer's comment arriving, the colour map answering): the rubber band of the
+   *  drag in progress is kept, and put back above everything the pass drew, so the person keeps seeing what they
+   *  are drawing until the release. */
   paint(marks: RegionMark[], pending: Region | null, replacing: boolean): HTMLElement[] {
     const o = this.overlay; const doc = o.ownerDocument;
     for (const n of Array.from(o.childNodes)) if (n !== this.band) o.removeChild(n);
@@ -260,17 +354,19 @@ export class RegionLayer {
       o.appendChild(r); out.push(r);
     }
     if (pending) { const p = mk(doc, "div", "fc-region fc-region-pending"); p.setAttribute("style", styleAttr(regionStyle(pending))); o.appendChild(p); }
+    if (this.band) o.appendChild(this.band);            // a drag in progress: its band stays on top
     o.classList.toggle("fc-replacing", replacing);
     return out;
   }
 
-  /** Take the overlay down and put the picture back where it was. */
+  /** Take the overlay down and put the picture back where it was, with the inline style it had. */
   dispose(): void {
     this.img.removeEventListener("load", this.onLoad);
     if (this.sizer) { this.sizer.disconnect(); this.sizer = null; }
     else window.removeEventListener("resize", this.onResize);
     const parent = this.wrap.parentNode;
     if (parent) { parent.insertBefore(this.img, this.wrap); parent.removeChild(this.wrap); }
+    if (this.carried) { if (this.imgStyle === null) this.img.removeAttribute("style"); else this.img.setAttribute("style", this.imgStyle); }
   }
 }
 

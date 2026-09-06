@@ -93,8 +93,9 @@ const answeredTodos = new Set<string>();
 // A figure in a markdown file is commented on through its embed line (the plan's Images and PDFs): in
 // Rendered view a click on the picture offers Comment, and the anchor is the embed's source text. The
 // mapping walk records no positions for an image (it renders no text), so the embed is found here from
-// the picture's own `src`: every embed form the source can hold, in order, fenced code skipped, matched
-// against the attribute marked emitted (which percent-encodes the destination).
+// the picture's own destination (pictureDest: the authored spelling the viewer kept beside a src it
+// rewrote through /file, else `src` itself): every embed form the source can hold, in order, fenced code
+// skipped, matched against the attribute marked emitted (which percent-encodes the destination).
 export type ImageEmbed = { start: number; end: number; dest: string };
 const LABEL = "(?:\\\\.|[^\\[\\]\\\\])*";
 const IMG_INLINE = new RegExp("!\\[(" + LABEL + ")\\]\\([ \\t]*(?:<([^<>\\n]*)>|([^\\s()]*(?:\\([^\\s()]*\\)[^\\s()]*)*))(?:[ \\t]+(?:\"[^\"]*\"|'[^']*'|\\([^()]*\\)))?[ \\t]*\\)", "g");
@@ -188,25 +189,51 @@ export function srcIsEmbed(src: string, dest: string, filePath: string | null | 
   return p !== null && typeof filePath === "string" && normPath(p) === embedPath(filePath, dest);
 }
 const imgsIn = (root: Element): HTMLElement[] => Array.from(root.querySelectorAll("img")) as HTMLElement[];
-/** The embed a rendered picture came from: by destination, and among twins by order. Null when the source holds none.
- *  `filePath` lets a src the viewer rewrote through /file match its embed (srcIsEmbed). */
-export function embedFor(img: Element, root: Element, src: string, filePath?: string | null): ImageEmbed | null {
-  const want = img.getAttribute("src");
-  if (want === null) return null;
-  const hits = imageEmbeds(src).filter((e) => srcIsEmbed(want, e.dest, filePath));
+/** The destination a rendered picture was written with: the authored attribute the viewer keeps as `data-fv-src` when it
+ *  rewrites `src` through /file (file-view.ts rewriteFigureSrcs), else `src` itself — a picture the viewer left as written.
+ *  Null for a picture with neither. */
+export function pictureDest(img: Element): string | null {
+  const kept = img.getAttribute("data-fv-src");
+  return kept !== null ? kept : img.getAttribute("src");
+}
+/** Whether a rendered picture came from an embed written as `dest`: srcIsEmbed over the picture's own spelling. With the
+ *  authored spelling in hand this is sameDest, so `./fig.png` and `fig.png` — two embeds of ONE file — stay two
+ *  destinations, each with its own picture; the /file-path comparison serves only a rewritten picture that carries no
+ *  authored spelling. The ONE test every reader of the picture↔embed pairing uses (embedFor, imgForRange, the region
+ *  painter's fallbacks), so they cannot disagree about which picture an embed made. */
+export function pictureIsEmbed(img: Element, dest: string, filePath?: string | null): boolean {
+  const s = pictureDest(img);
+  return s !== null && srcIsEmbed(s, dest, filePath);
+}
+/** The embed the picture at `img` came from, given every embed and every picture: the embeds written as the picture's
+ *  destination, and among them, by order — the k-th picture of that destination is its k-th embed. */
+function embedOf(img: HTMLElement, imgs: HTMLElement[], all: ImageEmbed[], filePath?: string | null): ImageEmbed | null {
+  if (pictureDest(img) === null) return null;
+  const hits = all.filter((e) => pictureIsEmbed(img, e.dest, filePath));
   if (hits.length === 1) return hits[0];
   if (!hits.length) return null;
-  const k = imgsIn(root).filter((i) => i.getAttribute("src") === want).indexOf(img as HTMLElement);
+  const k = imgs.filter((i) => pictureIsEmbed(i, hits[0].dest, filePath)).indexOf(img);
   return k >= 0 && k < hits.length ? hits[k] : null;
 }
-/** The rendered picture for an embed's exact source range — the inverse, for painting. */
+/** The embed a rendered picture came from: by destination, and among twins by order. Null when the source holds none.
+ *  `filePath` lets a src the viewer rewrote through /file match its embed (srcIsEmbed) when the picture carries no
+ *  authored spelling (pictureDest). Before the rewrite, the hits were found by path (two spellings of one file matched
+ *  either picture) while the twins were counted by the rewritten `src` (which the two spellings made different): a
+ *  region drawn on the second figure was anchored to the first's embed line, and imgForRange, counting the other way
+ *  round, painted the second embed's rectangle on the first figure (the 2026-09-06 review). Both now pair through
+ *  embedOf, and imgForRange is embedFor's inverse by construction. */
+export function embedFor(img: Element, root: Element, src: string, filePath?: string | null): ImageEmbed | null {
+  return embedOf(img as HTMLElement, imgsIn(root), imageEmbeds(src), filePath);
+}
+/** The rendered picture for an embed's exact source range — the inverse, for painting: the picture whose embedFor is
+ *  that embed. Null when no picture came from it (the range is not an embed's, or the source holds more embeds of the
+ *  destination than the view holds pictures). */
 export function imgForRange(root: Element, src: string, range: SourceRange, filePath?: string | null): HTMLElement | null {
   const all = imageEmbeds(src);
   const e = all.find((x) => x.start === range.start && x.end === range.end);
   if (!e) return null;
-  const k = all.filter((x) => x.dest === e.dest).indexOf(e);
-  const twins = imgsIn(root).filter((i) => { const s = i.getAttribute("src"); return s !== null && srcIsEmbed(s, e.dest, filePath); });
-  return twins[k] || null;
+  const imgs = imgsIn(root);
+  return imgs.find((i) => embedOf(i, imgs, all, filePath) === e) || null;
 }
 // A framed picture wears the mark classes itself — an <img> has no text to wrap — plus an inline outline,
 // because the sheets' ring is an inset shadow the picture covers. `fc-img` tells unpaint to strip, not unwrap.
@@ -551,7 +578,12 @@ class Panel {
         // Reload re-reads under the row that offered it: the slot wears the loader for the wait (refresh)
         fcreload: (x) => { const slot = x.dataset.slot || "head"; this.errors.delete(slot); this.stopped.clear(); void this.refresh(slot); this.ctx.reload(); },
         fcerrx: (x) => { this.errors.delete(x.dataset.slot || ""); this.render(); },
-        fcopen: (x) => { this.openPanel(); this.showCard(this.cardKey(x.dataset.id!)); },
+        // a mark in the file's own markup — a rectangle on a figure, a framed picture — is the panel's control, and its
+        // click is the card's opening, not the activation of whatever the author wrapped the figure in: a linked figure
+        // (`[![p95](figs/p95.png)](url)`, which mdBlock gives target=_blank) opened a new tab on every click, Enter and
+        // handed-on press on a rectangle inside it, since the overlay and its rectangles stand inside the <a>
+        // (the 2026-09-06 review). Cancelling the click ends the anchor's activation; the card opens as before.
+        fcopen: (x, ev) => { ev.preventDefault(); this.openPanel(); this.showCard(this.cardKey(x.dataset.id!)); },
         fcreplace: (x, ev) => { ev.stopPropagation(); this.startReplace(x.dataset.id!); },   // a region comment's Re-place (Slice 3)
       }),
     });
@@ -1277,7 +1309,7 @@ class Panel {
     }
     const dest = c.target.src;
     if (dest) {
-      const hit = imgs.find((i) => { const s = i.getAttribute("src"); return s !== null && srcIsEmbed(s, dest, this.ctx.path); });
+      const hit = imgs.find((i) => pictureIsEmbed(i, dest, this.ctx.path));
       if (hit) return hit;
     }
     return null;
@@ -1309,7 +1341,7 @@ class Panel {
     const c = this.composer;
     if (c && c.kind === "region" && !imgs.includes(c.img)) {
       const again = this.ctx.mode() === "media" ? imgs[0]
-        : c.src ? imgs.find((i) => { const x = i.getAttribute("src"); return x !== null && srcIsEmbed(x, c.src!, this.ctx.path); }) : undefined;
+        : c.src ? imgs.find((i) => pictureIsEmbed(i, c.src!, this.ctx.path)) : undefined;
       if (again) c.img = again;
     }
     const per = new Map<HTMLImageElement, RegionMark[]>();
@@ -1770,8 +1802,13 @@ class Panel {
     head.appendChild(ref);
     // a region (Slice 3): whether the image still has the bytes it was drawn on (E2) — dashed on the picture, a tag here
     const regionSt = c.target ? regionState(c.target, this.status) : "current";
-    if (regionSt === "stale") { const t = el("span", "fc-tag fc-tag-stale", "stale"); t.title = "The image changed after this region was drawn; Re-place it, or resolve it"; head.appendChild(t); }
-    if (regionSt === "unknown" && c.target) { const t = el("span", "fc-tag", "unknown"); t.title = unknownReason(c.target, this.status); head.appendChild(t); }
+    // A RESOLVED region has no staleness left to report: the plan and the guide end "stale" at resolve or re-place, the
+    // picture paints no rectangle for it (paintRegions), and the card offers no Re-place — so the stale tag, whose title
+    // names that button, and the unknown tag and note would point at nothing. Its card wears "resolved" alone (the
+    // 2026-09-06 review, which found a resolved region wearing both).
+    const shownSt = c.resolved ? "current" : regionSt;
+    if (shownSt === "stale") { const t = el("span", "fc-tag fc-tag-stale", "stale"); t.title = "The image changed after this region was drawn; Re-place it, or resolve it"; head.appendChild(t); }
+    if (shownSt === "unknown" && c.target) { const t = el("span", "fc-tag", "unknown"); t.title = unknownReason(c.target, this.status); head.appendChild(t); }
     // a region whose picture this view does not show, with no passage to reveal in its place: a standalone image's region
     // seen in the SVG Source view (the XML). No seam call returns to the picture from here (setMode is the markdown
     // pair only), so the tag names the way back rather than leaving the card a dead end (ui/CLAUDE.md)
@@ -1791,7 +1828,7 @@ class Panel {
     if (picture) { const crop = this.cropFor(picture, c); if (crop) card.appendChild(crop); }   // the region cut from the picture (E5)
     card.appendChild(el("div", "fc-body", c.body));
     // the open card says in words why the region's staleness is unknown (unknownReason): the tag's title never reaches touch
-    if (regionSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status)));
+    if (shownSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status)));
     if (c.replies.length) card.appendChild(this.renderTurns(c.replies));
     const acts = el("div", "fc-actions");
     const reply = btn("Reply", "fcreply"); reply.dataset.id = c.id; acts.appendChild(reply);
