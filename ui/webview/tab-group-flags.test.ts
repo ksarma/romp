@@ -94,7 +94,7 @@ test("executed: federation — a remote host's session counts for its section th
 });
 
 test("the flag never appears twice for one section: one construction, inside the folded block, one append; open headers carry none", () => {
-  assert.equal(RENDER.split('"tab-group-flag"').length - 1, 1, "exactly one place builds it");
+  assert.equal(RENDER.split('b.className = "tab-group-flag";').length - 1, 1, "exactly one place builds it (renderTabs' focus restore only looks one up)");
   assert.equal(FOLDED.split("sectionTodoFlag(").length - 1, 1, "…inside the header's folded-only block");
   assert.equal(FOLDED.split("head.appendChild(b);").length - 1, 1, "appended once");
   assert.equal(HEAD.indexOf("sectionTodoFlag("), FOLDED.indexOf("sectionTodoFlag(") + HEAD.indexOf("if (collapsed) {"),
@@ -124,8 +124,14 @@ test("expanding via the flag: its own data-act opens the group explicitly (never
   assert.match(ui("webview", "actions.ts"), /closest\("\[data-act\]"\)/);
 });
 
-test("click-safe and keyboard: a real button (focusable; Enter and Space click it), the action on the delegate, and a drag guard so a press never reorders", () => {
-  assert.match(FOLDED, /const b = document\.createElement\("button"\);\s*\n\s*b\.type = "button";/, "a native button: focusable, Enter/Space → click → the delegate");
+test("click-safe and keyboard: a real button (focusable; Enter and Space click IT — the header's key handler stands down), the action on the delegate, and a drag guard so a press never reorders", () => {
+  assert.match(FOLDED, /const b = document\.createElement\("button"\);\s*\n\s*b\.type = "button";/, "a native button: focusable, Enter/Space → its own click → the delegate");
+  // the flag is INSIDE the header, whose keydown handler took the bubbling Enter/Space, cancelled the
+  // button's native activation and clicked the header: toggle-group ran, not open-group (the same fold
+  // opened, by luck of the flag riding folded headers only). The handler returns for a key on the flag.
+  assert.match(HEAD, /head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n\s*if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}\s*\n\s*\}\);/,
+    "the guard comes first, before any preventDefault");
+  assert.equal(HEAD.split('addEventListener("keydown"').length - 1, 1, "one key handler on the header, none on the button (native activation is the button's)");
   assert.match(FOLDED, /b\.draggable = true;\s*\n\s*b\.addEventListener\("dragstart", \(e\) => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \}\);/,
     "the flag is the innermost draggable under the pointer, so ITS dragstart fires first: cancelled, and never reaching the header's (draggedGroup stays null)");
   assert.doesNotMatch(FOLDED, /b\.addEventListener\("click"/, "no per-node click handler — the node is rebuilt on every push");
@@ -187,4 +193,15 @@ test("executed + pinned: BOTH member-derived marks ride a folded header — the 
   assert.equal(HEAD.split("sectionPip(").length - 1, 1, "one pip derivation, inside the folded block — open headers carry neither mark");
   assert.match(HEAD, /pip\.title = sectionPipTitle\(kind, sectionPipMembers\(kind, hidden\.map\(\(id\) => sessions\.get\(id\)\)\)\);/, "the pip's tooltip names the sessions, like the flag's");
   assert.match(CSS, /\.tab-group-pip \{ flex: 0 0 auto; width: 6px; height: 6px;/, "small");
+});
+
+test("a push while the flag holds focus puts focus back on the rebuilt FLAG, not its header (source pins; the flag lives inside the header, so closest() names the header from both)", () => {
+  // renderTabs runs on every kernel push and rebuilds the strip; the header re-focus captured
+  // closest(".tab-group-head"), which a focused flag also satisfies, and restored the HEADER — a
+  // keyboard user on the ⚑ was walked back a stop every 0.5–3s, the focus ring and label gone
+  const cap = RENDER.slice(RENDER.indexOf("const focusedEl = document.activeElement"), RENDER.indexOf("bar.replaceChildren();"));
+  assert.match(cap, /const focusedFlag = !!focusedEl\?\.classList\.contains\("tab-group-flag"\);/, "which of the two held focus is remembered");
+  assert.match(RENDER, /\(\(focusedFlag && h\.querySelector<HTMLElement>\("\.tab-group-flag"\)\) \|\| h\)\.focus\(\);/,
+    "the rebuilt header's flag when the flag held it; the header when this push resolved the todo and the header has none");
+  assert.match(RENDER, /const refocusTab = bar\.contains\(document\.activeElement\);\s*\n\s*bar\.replaceChildren\(\);/, "the tab rule's two-line shape stands (chat-focus-model.test)");
 });

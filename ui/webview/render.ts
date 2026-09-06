@@ -4757,13 +4757,18 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   const words = headWords(name, total, hidden.length, collapsed, holdsActive);
   head.title = words.title;
   // a label the keyboard can fold: Enter or Space go through the same click → delegate path as the
-  // pointer. The active tab's header has no fold action, so it is not a tab stop — a stop that does
-  // nothing is noise in the tab order.
+  // pointer. NOT when they land on the flag button inside the header: a native button activates itself
+  // (its own click → open-group), and cancelling its keydown here clicked the header instead. The active
+  // tab's header has no fold action, so it is not a tab stop — a stop that does nothing is noise in the
+  // tab order.
   head.setAttribute("role", "button");
   head.setAttribute("aria-expanded", collapsed ? "false" : "true");
   if (!holdsActive) {
     head.tabIndex = 0;
-    head.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); head.click(); } });
+    head.addEventListener("keydown", (e) => {
+      if ((e.target as HTMLElement | null)?.closest(".tab-group-flag")) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); head.click(); }
+    });
   }
   const caret = el("span", "tab-group-caret");
   caret.textContent = "▸";                       // turned down by CSS while open (.tab-group-head:not(.collapsed))
@@ -4796,7 +4801,8 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
     // resolves the todo clears both. Only a FOLDED header carries it: open, every member tab wears
     // its own glyph, and a second flag over the same need would be noise. A real <button> — focusable,
     // Enter opens the group — with its OWN data-act for the stable #tabs delegate (the nearest data-act
-    // wins, so it never reads as the header's fold click) and its own dragstart guard, so a press that
+    // wins, so a click never reads as the header's fold; the header's key handler stands down for it,
+    // so Enter and Space are the button's own click too) and its own dragstart guard, so a press that
     // wanders never starts the header's group drag (tab-state.ts owns the count and the title). Over
     // the HIDDEN members only: a pinned member's own tab shows its glyph.
     const flag = sectionTodoFlag(hidden.map((id) => sessions.get(id)));
@@ -4987,8 +4993,12 @@ function renderTabs() {
   // the active tab after the rebuild so "tab mode" survives the repaint.
   // A focused section HEADER (a label the keyboard folds; headers live only in this bar) re-focuses by
   // its group name after the rebuild, so a push mid-read does not kick the user from the header onto
-  // the active tab. Captured before the tab rule below, which keeps its pinned two-line shape.
-  const focusedGroup = ((document.activeElement as HTMLElement | null)?.closest(".tab-group-head") as HTMLElement | null)?.dataset.group;
+  // the active tab. The header's ⚑ flag is a button INSIDE it, and closest() names the header from
+  // there too: remember which of the two held focus, so a push does not walk the user from the flag
+  // back onto the header. Captured before the tab rule below, which keeps its pinned two-line shape.
+  const focusedEl = document.activeElement as HTMLElement | null;
+  const focusedGroup = (focusedEl?.closest(".tab-group-head") as HTMLElement | null)?.dataset.group;
+  const focusedFlag = !!focusedEl?.classList.contains("tab-group-flag");
   const refocusTab = bar.contains(document.activeElement);
   bar.replaceChildren();
   // TABS-FIRST (the user 2026-06-26): render the WHOLE strip up front, in `order` — the kernel's order
@@ -5272,7 +5282,10 @@ function renderTabs() {
   // Restore tab-mode focus if a tab held it before this rebuild (see the top of renderTabs).
   if (focusedGroup !== undefined) {
     const h = Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).find((x) => x.dataset.group === focusedGroup);
-    if (h && h.tabIndex >= 0) h.focus(); else focusActiveTab();   // the group is gone, or now holds the active tab (no stop): the old rule
+    // back onto the flag when the flag held it — unless this very push resolved the todo and the rebuilt
+    // header has none, when the header takes it; the group gone, or now holding the active tab (no
+    // stop): the old rule
+    if (h && h.tabIndex >= 0) ((focusedFlag && h.querySelector<HTMLElement>(".tab-group-flag")) || h).focus(); else focusActiveTab();
   } else if (refocusTab) focusActiveTab();
   // The rebuild destroyed every old tab node: a still-up tip's owner is detached and its mouseleave
   // can never fire. Re-show for the tab under the (unmoved) pointer or close — covers every rebuild

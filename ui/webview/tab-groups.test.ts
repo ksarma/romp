@@ -376,11 +376,13 @@ test("the header's structure and gestures read as a label: chevron (flips with t
   // keyboard: a button to the keyboard, through the same click → delegate path as the pointer; the active
   // tab's header (no fold action) is not a tab stop
   assert.match(head, /head\.setAttribute\("role", "button"\);\s*\n\s*head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);/);
-  assert.match(head, /if \(!holdsActive\) \{\s*\n\s*head\.tabIndex = 0;\s*\n\s*head\.addEventListener\("keydown", \(e\) => \{ if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \} \}\);/);
+  assert.match(head, /if \(!holdsActive\) \{\s*\n\s*head\.tabIndex = 0;\s*\n\s*head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n\s*if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}\s*\n\s*\}\);/,
+    "…standing down for the flag button inside it (tab-group-flags.test)");
   // a push mid-read must not kick focus off the header: renderTabs re-focuses the same group after the rebuild
-  assert.match(RENDER, /const focusedGroup = \(\(document\.activeElement as HTMLElement \| null\)\?\.closest\("\.tab-group-head"\) as HTMLElement \| null\)\?\.dataset\.group;\s*\n\s*const refocusTab = bar\.contains\(document\.activeElement\);/,
+  assert.match(RENDER, /const focusedGroup = \(focusedEl\?\.closest\("\.tab-group-head"\) as HTMLElement \| null\)\?\.dataset\.group;\s*\n\s*const focusedFlag = !!focusedEl\?\.classList\.contains\("tab-group-flag"\);\s*\n\s*const refocusTab = bar\.contains\(document\.activeElement\);/,
     "captured before the tab rule (chat-focus-model.test pins that rule's two-line shape)");
-  assert.match(RENDER, /if \(h && h\.tabIndex >= 0\) h\.focus\(\); else focusActiveTab\(\);/, "…falling back to the active tab when the group is gone or now holds it");
+  assert.match(RENDER, /if \(h && h\.tabIndex >= 0\) \(\(focusedFlag && h\.querySelector<HTMLElement>\("\.tab-group-flag"\)\) \|\| h\)\.focus\(\); else focusActiveTab\(\);/,
+    "…falling back to the active tab when the group is gone or now holds it");
   // hover/focus: the label brightens and the chevron takes the accent — no row wash (that reads "select me")
   assert.match(CSS, /\.tab-group-head:hover, \.tab-group-head:focus-visible \{ color: var\(--fg\); \}/);
   assert.match(CSS, /\.tab-group-head:hover \.tab-group-caret, \.tab-group-head:focus-visible \.tab-group-caret \{ color: var\(--accent\); \}/);
