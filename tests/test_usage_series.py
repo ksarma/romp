@@ -110,6 +110,35 @@ class SeriesPayloads(unittest.TestCase):
     def test_empty_stores_return_none(self):
         self.assertIsNone(km._spend_series(now=FIXED))
 
+    def test_a_bucket_the_rule_cannot_place_is_left_out_and_reported_once(self):
+        """A well-formed hour key no instant names in any zone (a Feb 31) — never the recorder's, so a hand
+        edit or a file gone bad. _bucket_start raises for it by design (the fail-loudly rule); the strptime
+        rule before it skipped such a key silently, and for a few hours on 2026-09-06 _spend_series let the
+        raise through: every usage build runs the series, every timeline push runs a usage build, so the push
+        tick logged 'push build:' and sent nothing, to every client, on every tick, for as long as the key
+        stayed in the file. The series leaves the bucket out
+        and says so once, in the error center, naming the key and the file; the other buckets land where
+        they did, and the rule still raises for a caller that asks it directly."""
+        (jd.STATE / "spend.json").write_text(json.dumps({"hours": {
+            _h(): {"usd": 2.5}, _h(3): {"usd": 1.0}, "2099-02-31T05": {"usd": 7.0}}, "days": {}}))
+        km._SDK_BOOT_PROBLEMS.clear()
+        km._LEDGER_UNPLACED.clear()
+        self.addCleanup(km._SDK_BOOT_PROBLEMS.clear)
+        self.addCleanup(km._LEDGER_UNPLACED.clear)
+        with self.assertRaises(ValueError):
+            km._series_index("2099-02-31T05", 0)
+        ss = km._spend_series(now=FIXED)
+        self.assertEqual((ss["usd"][-1], ss["usd"][-4], round(sum(ss["usd"]), 4)), (2.5, 1.0, 3.5),
+                         "the buckets the rule places land in their slots; the one it cannot is nowhere")
+        rows = [r["text"] for r in km._sdk_problem_rows() if "2099-02-31T05" in r["text"]]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn(str(jd.STATE / "spend.json"), rows[0])
+        self.assertIn("hover graph", rows[0])
+        km._spend_series(now=FIXED)
+        km._spend_series(keyed_only=True, now=FIXED)
+        self.assertEqual(len([r for r in km._sdk_problem_rows() if "2099-02-31T05" in r["text"]]), 1,
+                         "once per key, not once per build")
+
 
 class ApiKeyHostReportsSpend(unittest.TestCase):
     """The devbox fix: no usage.json at all + spend.json present + no login → the no-login spend arm
@@ -141,6 +170,22 @@ class ApiKeyHostReportsSpend(unittest.TestCase):
 
     def test_nothing_recorded_still_answers_none(self):
         self.assertIsNone(km._usage(), "a fresh box with neither login nor spend has nothing to show")
+
+    def test_a_bucket_the_rule_cannot_place_does_not_stop_the_usage_build(self):
+        # the push path: _usage() -> _spend_series(); a raise here reached the push tick's catch and the
+        # timeline stopped for every client (2026-09-06). The build finishes with the bucket left out.
+        hour_key = time.strftime("%Y-%m-%dT%H")
+        (jd.STATE / "spend.json").write_text(json.dumps({
+            "hours": {hour_key: {"usd": 3.0, "turns": 2, "tok": 10}, "2099-02-31T05": {"usd": 7.0, "turns": 1}},
+            "days": {time.strftime("%Y-%m-%d"): {"usd": 3.0, "turns": 2, "tok": 10}}}))
+        km._LEDGER_UNPLACED.clear()
+        self.addCleanup(km._LEDGER_UNPLACED.clear)
+        self.addCleanup(km._SDK_BOOT_PROBLEMS.clear)
+        u = km._usage()
+        self.assertTrue(u.get("apiKey"))
+        self.assertEqual(u["spend"]["day"]["usd"], 3.0, "the windows never summed the unplaceable key: it is no walked bucket")
+        i = km._series_index(hour_key, u["spendSeries"]["h0"])
+        self.assertEqual((u["spendSeries"]["usd"][i], round(sum(u["spendSeries"]["usd"]), 4)), (3.0, 3.0))
 
     def test_spend_carries_its_own_freshness_stamp(self):
         # the user 2026-08-24: the windows' "updated 9h 38m ago" (usage.json's t — which nothing

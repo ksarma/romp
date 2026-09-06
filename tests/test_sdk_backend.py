@@ -392,23 +392,24 @@ class LiveTail(unittest.TestCase):
         self.assertIn("blocked = self.inflight > 0 and self._interrupted", src,
                       "inputs() holds queued turns while a turn is interrupted/wedged")
 
-    def test_image_echo_pruned_by_human_floor_when_text_cant_match(self):
-        # The screenshots-piling-up bug (the user 2026-06-25): an image send's echo text is the raw composer
-        # text (an image path), but the transcript extracts the path into an image block, so the echoed path
-        # is NOT in tx_user_texts and the text-prune can never retire it → every screenshot echo accumulates.
-        # The FIFO floor retires it once the transcript's newest genuine-human turn is at/after its send time.
+    def test_image_echo_is_never_floored_it_lands_by_text(self):
+        # The screenshots-piling-up bug (the user 2026-06-25) was the TMUX composer's: its paste hook
+        # rewrites a pasted image path to "[Image #N]", so the echoed path is never in tx_user_texts and a
+        # FIFO floor had to retire the echo once a later genuine-human turn landed. The SDK route never
+        # runs that hook — stream-json input lands the path as typed — so since 2026-09-06 no SDK echo is
+        # floored: an image echo retires when its own text lands (or when the CLI dies holding it, the
+        # dropped marking), exactly like a plain-text one. tests/test_sdk_echo_durability.py has the rest.
         be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
         be._live["s"] = {"echo:img": {"uuid": "echo:img", "t": 100, "_echo_text": "/abs/shot.png"}}
-        be.prune_live("s", set(), set())               # no text/uuid match, no floor → echo persists (the bug)
+        be.prune_live("s", set(), set())               # nothing landed → the echo is the send's only record
         self.assertEqual([a["uuid"] for a in be.live_atoms("s")], ["echo:img"])
-        be.prune_live("s", set(), set(), human_floor=120)   # a later genuine-human turn landed → FIFO-retire it
+        be.prune_live("s", set(), set(), human_floor=120)   # a later genuine-human turn: not a retire here
+        self.assertEqual([a["uuid"] for a in be.live_atoms("s")], ["echo:img"],
+                         "the message may still sit in the CLI's queue; its path will land as typed")
+        be.prune_live("s", set(), {"/abs/shot.png": 130}, human_floor=130)   # its own record lands → retire
         self.assertEqual(be.live_atoms("s"), [])
-        # a not-yet-landed echo (send time AFTER the floor) must survive
-        be._live["s"] = {"echo:new": {"uuid": "echo:new", "t": 200, "_echo_text": "/abs/new.png"}}
-        be.prune_live("s", set(), set(), human_floor=120)
-        self.assertEqual([a["uuid"] for a in be.live_atoms("s")], ["echo:new"])
         # the floor must NOT retire a real stream atom (no _echo_text) — those prune by uuid only
-        be._live["s"]["a9"] = {"uuid": "a9", "t": 50}
+        be._live["s"] = {"a9": {"uuid": "a9", "t": 50}}
         be.prune_live("s", set(), set(), human_floor=300)
         self.assertEqual([a["uuid"] for a in be.live_atoms("s")], ["a9"])
 
@@ -2936,16 +2937,16 @@ class SpendRecord(unittest.TestCase):
         self.assertIn('if o.get("apiKey") or (not _claude_account() and (jd.STATE / "spend.json").exists()):',
                       ksrc, "_usage serves spend on the legacy marker OR a login-less machine with recorded spend")
         self.assertIn('"spend": _spend_windows()', ksrc)
-        self.assertIn("def _spend_windows(keyed_only=False):", ksrc)   # keyed_only: the mixed-host API sum (test_session_auth)
+        self.assertIn("def _spend_windows(keyed_only=False, now=None):", ksrc)   # keyed_only: the mixed-host API sum (test_session_auth)
 
     def test_cumulative_process_totals_fold_as_per_turn_deltas(self):
-        """The CLI's total_cost_usd AND its usage dict are CUMULATIVE per process (the result event
-        carries totalCostUSD beside `usage: this.totalUsage`): folding the raw values re-added the
-        whole session-so-far on every turn, compounding the readouts into fiction — the dollars first
-        (the user 2026-08-08, who did not believe the bottom line), then the tokens (same day, round
-        two: the hover's 5h/7d/month dollars-per-token ratios diverged wildly because each window
-        carried a different inflation factor). Fold deltas for both; reset the watermarks with each
-        new CLI process; treat a shrunken counter as a reset we missed."""
+        """The CLI's total_cost_usd AND its modelUsage counters are CUMULATIVE per process (the result
+        event carries totalCostUSD beside them): folding the raw values re-added the whole
+        session-so-far on every turn, compounding the readouts into fiction — the dollars first (the
+        user 2026-08-08, who did not believe the bottom line), then the tokens (same day, round two:
+        the hover's 5h/7d/month dollars-per-token ratios diverged wildly because each window carried a
+        different inflation factor). Fold deltas for both; reset the watermarks with each new CLI
+        process; treat a shrunken counter as a reset we missed."""
         import asyncio
         sid = "11111111-2222-3333-4444-bbbbbbbbbbbb"
         s = sb.SdkSession(self.be, {"sid": sid, "name": "n", "cwd": "/tmp"})
@@ -2957,7 +2958,7 @@ class SpendRecord(unittest.TestCase):
         def _result(total, tok_in):
             r = _ResultMessage()
             r.total_cost_usd = total
-            r.usage = {"input_tokens": tok_in}
+            r.model_usage = {"m": {"inputTokens": tok_in}}
             return r
         async def run(total, tok_in):
             s._on_message(_result(total, tok_in), _AssistantMessage, _ResultMessage, type("S", (), {}))
@@ -2968,7 +2969,7 @@ class SpendRecord(unittest.TestCase):
         asyncio.run(run(2.5, 140))   # second turn: deltas = 1.5 / 40 tokens, NOT another 2.5 / 140
         d = day()
         self.assertAlmostEqual(d["usd"], 2.5, msg="two turns fold to the process total, never more")
-        self.assertEqual(d["tokIn"], 140, "tokens fold as deltas of the totalUsage counter too")
+        self.assertEqual(d["tokIn"], 140, "tokens fold as deltas of the modelUsage counter too")
         self.assertEqual(d["turns"], 2)
         s._last_cost_total = 0.0     # the connect reset: a fresh CLI process starts at zero…
         s._last_usage_totals = {}    # …on both counters
@@ -2978,6 +2979,388 @@ class SpendRecord(unittest.TestCase):
         asyncio.run(run(0.5, 20))    # a counter BELOW the watermark = a reset we missed → fold it whole
         self.assertAlmostEqual(day()["usd"], 3.8)
         self.assertEqual(day()["tokIn"], 190)
+
+    # ── the token SOURCE (2026-09-05): modelUsage, not the per-turn main-loop `usage` dict ──────────
+    def _spend_session(self, sid="11111111-2222-3333-4444-cccccccccccc"):
+        s = sb.SdkSession(self.be, {"sid": sid, "name": "n", "cwd": "/tmp"})
+        self.be._forward = lambda sess, msg: None
+        self.be._turn_completed = lambda sid: None
+        async def _noop(): pass
+        s._do_refresh_context = _noop
+        s._do_refresh_usage = _noop
+        return s
+
+    @staticmethod
+    def _result(total, usage=None, model_usage=None):
+        r = _ResultMessage()
+        r.total_cost_usd = total
+        r.usage = usage
+        r.model_usage = model_usage
+        return r
+
+    def _feed(self, s, r):
+        import asyncio
+        async def run():
+            s._on_message(r, _AssistantMessage, _ResultMessage, type("S", (), {}))
+            await asyncio.sleep(0)
+        asyncio.run(run())
+
+    def _day(self):
+        return json.loads(self.p.read_text())["days"][self._today()]
+
+    def test_model_usage_summed_across_models_is_the_token_source_and_folds_as_deltas(self):
+        """Claude Code 2.1.261's result `usage` is PER-TURN and MAIN-LOOP-ONLY (its own schema text says
+        to prefer modelUsage for accounting); diffing it as a cumulative counter recorded 6,346 tokens
+        for a turn that used 2.6M. `modelUsage` is the cumulative, subagent-inclusive counter, per
+        model — summed across models per field, it folds as deltas exactly like the dollars."""
+        s = self._spend_session()
+        mu1 = {"claude-fable-5-1": {"inputTokens": 1000, "outputTokens": 200,
+                                    "cacheReadInputTokens": 50000, "cacheCreationInputTokens": 3000,
+                                    "webSearchRequests": 0, "costUSD": 0.9},
+               "claude-haiku-4-5-20251001": {"inputTokens": 500, "outputTokens": 50,
+                                             "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}}
+        self._feed(s, self._result(1.0, usage={"input_tokens": 100, "output_tokens": 20}, model_usage=mu1))
+        d = self._day()
+        self.assertEqual((d["tokIn"], d["tokOut"], d["tokCacheR"], d["tokCacheW"]), (1500, 250, 50000, 3000),
+                         "the first turn folds the whole modelUsage counter, summed across models")
+        mu2 = {"claude-fable-5-1": {"inputTokens": 2500, "outputTokens": 300,
+                                    "cacheReadInputTokens": 90000, "cacheCreationInputTokens": 3000},
+               "claude-haiku-4-5-20251001": {"inputTokens": 500, "outputTokens": 50,
+                                             "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}}
+        self._feed(s, self._result(2.0, usage={"input_tokens": 120, "output_tokens": 30}, model_usage=mu2))
+        d = self._day()
+        self.assertEqual((d["tokIn"], d["tokOut"], d["tokCacheR"], d["tokCacheW"]), (3000, 350, 90000, 3000),
+                         "the second turn folds the modelUsage DELTA (1500 in / 100 out / 40k cache reads)")
+        self.assertNotEqual(d["tokIn"], 220, "the per-turn main-loop usage dict is not what lands")
+        self.assertEqual(d["turns"], 2)
+        self.assertAlmostEqual(d["usd"], 2.0, msg="the dollars fold as before")
+
+    def test_a_shrunken_model_usage_counter_folds_whole(self):
+        s = self._spend_session()
+        self._feed(s, self._result(1.0, model_usage={"m": {"inputTokens": 3000, "outputTokens": 10}}))
+        self._feed(s, self._result(0.2, model_usage={"m": {"inputTokens": 400, "outputTokens": 5}}))   # a
+        #   counter BELOW the watermark = a CLI process we did not see restart → fold it whole, never negative
+        d = self._day()
+        self.assertEqual((d["tokIn"], d["tokOut"]), (3400, 15))
+        self.assertAlmostEqual(d["usd"], 1.2)
+
+    def test_a_paid_result_without_model_usage_lands_the_usage_dict_as_this_turns_figure_and_says_so_once(self):
+        """No modelUsage on a paid result (absent, empty, or a map with no per-model dict): the `usage`
+        dict is THIS TURN's main-loop count on every CLI build we can read, so it lands as the turn's
+        figure — diffing it as a counter recorded only turn-to-turn growth, the under-count this branch
+        fixes, and the fallback reproduced it silently before. Fail loudly instead: ONE problem line per
+        session, not per turn, saying the token columns are main-loop-only; the dollars are untouched."""
+        s = self._spend_session()
+        self._feed(s, self._result(1.0, usage={"input_tokens": 100, "output_tokens": 20}, model_usage=None))
+        self._feed(s, self._result(2.0, usage={"input_tokens": 140, "output_tokens": 25}, model_usage={}))
+        self._feed(s, self._result(3.0, usage={"input_tokens": 150, "output_tokens": 27},
+                                   model_usage={"claude-x": "not a dict"}))
+        d = self._day()
+        self.assertEqual((d["tokIn"], d["tokOut"]), (390, 72), "each per-turn figure lands as is, never diffed")
+        self.assertAlmostEqual(d["usd"], 3.0, msg="the dollars still fold as deltas of the cumulative total")
+        self.assertEqual(len(self.be._problems), 1, "one problem line per session, not one per turn")
+        text = self.be._problems[0]["text"]
+        self.assertIn("per-turn main-loop figures", text)
+        self.assertIn("the CLI emitted no modelUsage", text,
+                      "the field is there (None): the SDK has it, the CLI sent nothing")
+        self.assertNotIn("predates", text)
+        # …and once modelUsage appears it diffs against the SAME per-field watermark, which the per-turn
+        # folds advanced by what they recorded: 5000 - 390 lands, never a double count
+        self._feed(s, self._result(3.5, usage={"input_tokens": 160}, model_usage={"m": {"inputTokens": 5000}}))
+        self.assertEqual(self._day()["tokIn"], 5000)
+        self.assertEqual(len(self.be._problems), 1)
+
+    def test_the_fallback_notice_names_an_sdk_whose_result_message_lacks_the_field(self):
+        """A ResultMessage with no model_usage ATTRIBUTE is a claude-agent-sdk older than 0.1.51 (a
+        dataclass field from there on, None when the CLI sends nothing). The kernel imports whichever
+        copy importlib finds first, so one installed outside the sdkvenv shadows the venv's current
+        SDK; such an SDK also lacks ClaudeAgentOptions.session_id, so fresh sessions die at launch with
+        a logged TypeError while plain resumes connect and take the fallback on every turn with nothing
+        else saying why. The line names that cause and the remedy."""
+        s = self._spend_session()
+        r0 = _ResultMessage()                      # a zero-cost result never reaches the fold (total > 0)
+        r0.total_cost_usd, r0.usage = 0, {"input_tokens": 5}
+        self._feed(s, r0)
+        self.assertEqual(self.be._problems, [])
+        r = _ResultMessage()                       # no model_usage attribute at all
+        r.total_cost_usd, r.usage = 1.0, {"input_tokens": 100, "output_tokens": 20}
+        self._feed(s, r)
+        self.assertEqual((self._day()["tokIn"], self._day()["tokOut"]), (100, 20))
+        self.assertEqual(len(self.be._problems), 1)
+        text = self.be._problems[0]["text"]
+        self.assertIn("predates 0.1.51", text)
+        self.assertIn("outside the sdkvenv", text)
+        self.assertIn("per-turn main-loop figures", text)
+        r2 = _ResultMessage()
+        r2.total_cost_usd, r2.usage = 2.0, {"input_tokens": 100}
+        self._feed(s, r2)
+        self.assertEqual(self._day()["tokIn"], 200)
+        self.assertEqual(len(self.be._problems), 1, "said once")
+
+    def test_the_sdk_cause_is_said_once_per_kernel_life_not_per_session_or_revive(self):
+        """The missing field is the imported SDK's, one for every session this kernel runs, so the line
+        is HOST-level: it names no session and its flag lives on the backend. Per session it filled the
+        error center with one near-identical card per live session (20 resumed sessions on an old SDK,
+        20 cards for one remedy, crowding the ring) and another on every dormant revive, because _ensure
+        builds a fresh SdkSession for a dead thread (2026-09-06)."""
+        web = self._spend_session("11111111-2222-3333-4444-aaaaaaaaaaaa")
+        api = self._spend_session("11111111-2222-3333-4444-bbbbbbbbbbbb")
+        web.name, api.name = "web", "api"
+        def sdk_result(total):
+            r = _ResultMessage()                   # no model_usage attribute: the SDK predates the field
+            r.total_cost_usd, r.usage = total, {"input_tokens": 100, "output_tokens": 20}
+            return r
+        self._feed(web, sdk_result(1.0))
+        self._feed(api, sdk_result(1.0))
+        self.assertEqual(len(self.be._problems), 1, "one card for one host-level remedy")
+        text = self.be._problems[0]["text"]
+        self.assertTrue(text.startswith("spend: every session's token columns"), text)
+        self.assertNotIn("web", text, "a host-level line names no session")
+        self.assertNotIn("api", text)
+        self.assertIn("predates 0.1.51", text)
+        self.assertTrue(self.be._usage_fallback_sdk_noted)
+        self.assertFalse(web._usage_fallback_noted, "the per-session flag is the CLI cause's, untouched")
+        # a dormant revive builds a fresh SdkSession for the same sid: nothing new to say
+        again = self._spend_session("11111111-2222-3333-4444-aaaaaaaaaaaa")
+        self._feed(again, sdk_result(1.0))
+        self.assertEqual(len(self.be._problems), 1)
+        self.assertEqual(self._day()["tokIn"], 300, "every turn's tokens still land")
+
+    def test_the_cli_cause_stays_per_session_and_names_it(self):
+        """A present-but-empty modelUsage is THIS session's CLI's doing on this result and can differ per
+        session, so that line names the session and is said once per session; it never spends the SDK
+        cause's backend flag."""
+        web = self._spend_session("11111111-2222-3333-4444-aaaaaaaaaaaa")
+        api = self._spend_session("11111111-2222-3333-4444-bbbbbbbbbbbb")
+        web.name, api.name = "web", "api"
+        u = {"input_tokens": 100, "output_tokens": 20}
+        self._feed(web, self._result(1.0, usage=u, model_usage=None))
+        self._feed(web, self._result(2.0, usage=u, model_usage={}))
+        self._feed(api, self._result(1.0, usage=u, model_usage=None))
+        texts = [p["text"] for p in self.be._problems]
+        self.assertEqual(len(texts), 2, "one per session, not one per turn")
+        self.assertTrue(texts[0].startswith("spend: web's token columns"), texts[0])
+        self.assertTrue(texts[1].startswith("spend: api's token columns"), texts[1])
+        self.assertFalse(self.be._usage_fallback_sdk_noted, "the CLI cause never spends the SDK's once flag")
+
+    def test_model_usage_totals_and_result_token_totals(self):
+        self.assertIsNone(sb.model_usage_totals(None))
+        self.assertIsNone(sb.model_usage_totals({}))
+        self.assertIsNone(sb.model_usage_totals({"m": 3}))
+        self.assertEqual(sb.model_usage_totals({"a": {"inputTokens": 1, "outputTokens": 2,
+                                                     "cacheReadInputTokens": 3, "cacheCreationInputTokens": 4},
+                                                "b": {"inputTokens": 10, "outputTokens": 20.0}}),
+                         {"input_tokens": 11, "output_tokens": 22, "cache_read_input_tokens": 3,
+                          "cache_creation_input_tokens": 4})
+        r = self._result(1.0, usage={"input_tokens": 7, "cache_read_input_tokens": "x"}, model_usage=None)
+        self.assertEqual(sb.result_token_totals(r), ({"input_tokens": 7, "output_tokens": 0,
+                                                      "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+                                                     False), "the usage dict: a per-turn figure, not a counter")
+        self.assertEqual(sb.result_token_totals(_ResultMessage()),   # a bare double: no counters at all
+                         ({"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
+                           "cache_creation_input_tokens": 0}, False))
+        self.assertEqual(sb.result_token_totals(self._result(1.0, model_usage={"m": {"inputTokens": 3}})),
+                         ({"input_tokens": 3, "output_tokens": 0, "cache_read_input_tokens": 0,
+                           "cache_creation_input_tokens": 0}, True), "modelUsage: the cumulative counter")
+
+    # ── the resume guard (2026-09-05): a CLI that RESTORES its cost counters must not double-count ──
+    _FSID = "22222222-3333-4444-5555-dddddddddddd"
+
+    @staticmethod
+    def _cost_state(total, model_usage, fsid=_FSID):
+        return json.dumps({"type": "cost-state", "sessionId": fsid, "totalCostUSD": total,
+                           "totalAPIDuration": 1, "totalDuration": 2, "startTime": 3,
+                           "modelUsage": model_usage})
+
+    def _resumed_session(self, transcript_lines, sid="11111111-2222-3333-4444-eeeeeeeeeeee"):
+        """A session whose reg says it resumes _FSID, with that transcript on disk under a private
+        CLAUDE_CONFIG_DIR (transcript_path reads the env at call time)."""
+        cfg = tempfile.mkdtemp()
+        self._env = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": cfg})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+        p = Path(sb.transcript_path(self.d, self._FSID))
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("\n".join(transcript_lines) + "\n")
+        s = self._spend_session(sid)
+        s.cwd = self.d
+        s.resume_sid = self._FSID
+        return s
+
+    def test_connect_seeds_the_watermarks_from_the_transcripts_last_cost_state(self):
+        """The CLI's transcript loader files `cost-state` as last-wins and its writer emits totalCostUSD
+        + modelUsage — the two counters the settle diffs. A CLI that restores them reports its first
+        total_cost_usd as the WHOLE session's history plus this turn; zero watermarks would fold that
+        history as one turn. Seeding from the record the CLI restores keeps the first delta honest."""
+        mu_old = {"claude-fable-5-1": {"inputTokens": 400, "outputTokens": 40,
+                                       "cacheReadInputTokens": 9000, "cacheCreationInputTokens": 100}}
+        mu = {"claude-fable-5-1": {"inputTokens": 1000, "outputTokens": 200,
+                                   "cacheReadInputTokens": 50000, "cacheCreationInputTokens": 3000}}
+        s = self._resumed_session([
+            json.dumps({"type": "user", "uuid": "u1", "message": {"role": "user", "content": "hello"}}),
+            self._cost_state(4.0, mu_old),                     # an earlier snapshot — superseded (last-wins)
+            json.dumps({"type": "assistant", "uuid": "a1", "message": {"role": "assistant", "content": []}}),
+            self._cost_state(12.5, mu),
+            json.dumps({"type": "last-prompt", "lastPrompt": "x"}),   # uuid-less trailers after it are fine
+        ])
+        s._seed_spend_watermarks()
+        self.assertEqual(s._last_cost_total, 12.5, "the LAST record's total is the seed")
+        self.assertEqual(s._last_usage_totals, {"input_tokens": 1000, "output_tokens": 200,
+                                                "cache_read_input_tokens": 50000,
+                                                "cache_creation_input_tokens": 3000})
+        self.assertTrue(s._spend_first_result)
+        # the restoring CLI's first result: history + this turn → only THIS turn lands
+        self._feed(s, self._result(13.0, model_usage={"claude-fable-5-1": {
+            "inputTokens": 1500, "outputTokens": 260, "cacheReadInputTokens": 50000,
+            "cacheCreationInputTokens": 3000}}))
+        d = self._day()
+        self.assertAlmostEqual(d["usd"], 0.5)
+        self.assertEqual((d["tokIn"], d["tokOut"], d["tokCacheR"]), (500, 60, 0))
+        self.assertFalse(s._spend_first_result)
+        # a CLI that wrote the record but did NOT restore: its own first total sits below the seed, so
+        # the shrink rule folds it whole — the common case stays right without knowing which CLI it is
+        s._seed_spend_watermarks()
+        self._feed(s, self._result(0.7, model_usage={"claude-fable-5-1": {"inputTokens": 300}}))
+        self.assertAlmostEqual(self._day()["usd"], 1.2)
+        self.assertEqual(self._day()["tokIn"], 800)
+
+    def test_no_cost_state_record_and_no_resume_target_leave_the_watermarks_at_zero(self):
+        s = self._resumed_session([
+            json.dumps({"type": "user", "uuid": "u1", "message": {"role": "user", "content": "hello"}}),
+            json.dumps({"type": "assistant", "uuid": "a1", "message": {"role": "assistant", "content": [],
+                                                                        "usage": {"input_tokens": 5}}}),
+        ])
+        s._last_cost_total, s._last_usage_totals = 9.0, {"input_tokens": 9}   # stale from the old process
+        s._seed_spend_watermarks()
+        self.assertEqual((s._last_cost_total, s._last_usage_totals), (0.0, {}),
+                         "every romp SDK session today: no record → a fresh process starts at zero")
+        s.resume_sid = None
+        s._last_cost_total = 3.0
+        s._seed_spend_watermarks()
+        self.assertEqual((s._last_cost_total, s._last_usage_totals, s._spend_first_result), (0.0, {}, True))
+
+    def test_last_cost_state_reads_backwards_across_chunk_edges_and_takes_the_last_valid_record(self):
+        d = tempfile.mkdtemp()
+        p = Path(d) / "t.jsonl"
+        filler = json.dumps({"type": "user", "uuid": "u", "message": {"role": "user", "content": "x" * 900}})
+        mu = {"m": {"inputTokens": 7, "outputTokens": 3}}
+        # a valid record early in the file, then ~200 KB with no marker: the scan walks several 64 KB
+        # chunks back to it. A later record with an unusable total is skipped, not taken as "none".
+        lines = [filler, self._cost_state(2.25, mu)] + [filler] * 220
+        lines.append(json.dumps({"type": "cost-state", "totalCostUSD": "not a number", "modelUsage": mu}))
+        p.write_text("\n".join(lines) + "\n")
+        self.assertEqual(sb.last_cost_state(str(p)), {"total": 2.25, "tokens": {
+            "input_tokens": 7, "output_tokens": 3, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}})
+        # a record STRADDLING a chunk edge: pad so the record starts 20 bytes before the 64 KB boundary
+        rec = self._cost_state(5.5, mu)
+        pad_line = "x" * ((1 << 16) - 20 - 1)
+        p.write_text(pad_line + "\n" + rec + "\n" + "\n".join([filler] * 80) + "\n")
+        self.assertEqual(sb.last_cost_state(str(p))["total"], 5.5, "a line split by the chunk edge is reassembled")
+        # last-wins: two valid records → the later one; no trailing newline is fine
+        p.write_text(self._cost_state(1.0, mu) + "\n" + self._cost_state(9.0, {}))
+        self.assertEqual(sb.last_cost_state(str(p)), {"total": 9.0, "tokens": {}},
+                         "an empty modelUsage seeds no token watermarks")
+        self.assertIsNone(sb.last_cost_state(str(Path(d) / "missing.jsonl")))
+        p.write_text("")
+        self.assertIsNone(sb.last_cost_state(str(p)))
+        p.write_text(filler + "\n")
+        self.assertIsNone(sb.last_cost_state(str(p)), "no record → None, never a zero seed")
+
+    def test_a_first_result_after_connect_above_the_single_turn_mark_is_recorded_and_traced_as_info(self):
+        """On 2.1.261 a print-mode CLI resumes with its cost counters at zero (a resume neither restores
+        a cost-state record nor arms its writer — probed 2026-09-06), so a first delta above the mark is
+        the turn's own cost: recorded as is and traced in the kernel log, NOT a problem — a problem card
+        for a right figure sent the user to check a ledger that was correct."""
+        lines = []
+        self.be._log_cb = lines.append
+        traced = lambda: [l for l in lines if "first result after connect" in l]
+        s = self._spend_session()
+        s._seed_spend_watermarks()                                    # no resume target → zero watermarks
+        self._feed(s, self._result(5.0, model_usage={"m": {"inputTokens": 10}}))
+        self.assertEqual(traced(), [], "an ordinary first turn says nothing")
+        s._seed_spend_watermarks()                                    # a reconnect
+        self._feed(s, self._result(250.0, model_usage={"m": {"inputTokens": 20}}))
+        self.assertEqual(len(traced()), 1)
+        self.assertIn("250.00", traced()[0])
+        self.assertIn("Recorded as is", traced()[0])
+        self.assertNotIn("restored the session", traced()[0], "names no cause it cannot know")
+        self.assertEqual(self.be._problems, [], "an info line: the figure is right, nothing to act on")
+        self.assertAlmostEqual(self._day()["usd"], 255.0, msg="recorded anyway — the ledger drops nothing")
+        self._feed(s, self._result(251.0, model_usage={"m": {"inputTokens": 30}}))
+        self.assertEqual(len(traced()), 1, "only the FIRST result after a connect is checked")
+        self.assertAlmostEqual(self._day()["usd"], 256.0)
+
+    def test_init_correcting_the_cwd_re_seeds_the_watermarks_before_the_first_result(self):
+        """The connect-time seed reads the transcript under the REGISTRY's cwd; the CLI loads the one
+        under ITS cwd, which init reports (the same keying — transcript_path realpaths the string, so a
+        create-time variant such as a wrong case holds no transcript). Adopting the CLI's cwd re-seeds
+        from the file the CLI opened while no result has settled; never afterwards, because resetting
+        the watermarks mid-process would fold the cumulative counters whole again."""
+        import asyncio
+        class _Sys:
+            def __init__(self, data): self.subtype = "init"; self.data = data
+        mu = {"m": {"inputTokens": 1000, "outputTokens": 200}}
+        s = self._resumed_session([self._cost_state(12.5, mu)])     # the record lives under self.d
+        sb.write_reg(self.d, s.sid, {"sid": s.sid, "name": "n", "cwd": self.d, "alive": True})
+        s.cwd = tempfile.mkdtemp()                                   # the registry's variant: no transcript
+        s._seed_spend_watermarks()
+        self.assertEqual((s._last_cost_total, s._last_usage_totals), (0.0, {}), "nothing under the variant")
+        async def init(cwd):
+            s._on_message(_Sys({"cwd": cwd, "session_id": self._FSID}), _AssistantMessage, _ResultMessage, _Sys)
+            await asyncio.sleep(0)
+        asyncio.run(init(self.d))
+        self.assertEqual(s.cwd, self.d)
+        self.assertEqual(s._last_cost_total, 12.5, "re-seeded from the file under the CLI's cwd")
+        self.assertEqual(s._last_usage_totals["input_tokens"], 1000)
+        self.assertTrue(s._spend_first_result)
+        self._feed(s, self._result(13.0, model_usage={"m": {"inputTokens": 1500, "outputTokens": 260}}))
+        self.assertAlmostEqual(self._day()["usd"], 0.5, msg="the first result folds only this turn")
+        self.assertEqual(self._day()["tokIn"], 500)
+        # a cwd correction AFTER a settle (none is expected; the guard is the point) leaves them alone
+        asyncio.run(init(tempfile.mkdtemp()))
+        self.assertEqual(s._last_cost_total, 13.0, "no re-seed once a result has settled")
+        self._feed(s, self._result(13.2, model_usage={"m": {"inputTokens": 1600, "outputTokens": 260}}))
+        self.assertAlmostEqual(self._day()["usd"], 0.7)
+        self.assertEqual(self._day()["tokIn"], 600)
+
+    def test_an_init_that_lands_a_new_fsid_and_corrects_the_cwd_re_seeds_from_the_file_the_cli_loaded(self):
+        """One init can both land a NEW fsid (a born-as-a-fork copy, or the CLI's adoption gate turning a
+        plain resume into a fork under a fresh id; a --resume-session-at rewind is an in-place branch on
+        the same fsid and never flips it) and correct the cwd. The flip moves resume_sid to the file the
+        CLI will WRITE, which holds no record yet; a CLI that restores its counters took them from the
+        file it LOADED, the old fsid's. The re-seed must read that one (2026-09-06: it read the new fsid's
+        and left a 12.5 seed at zero, so a restoring CLI's first result would have folded whole)."""
+        import asyncio
+        class _Sys:
+            def __init__(self, data): self.subtype = "init"; self.data = data
+        new_fsid = "33333333-4444-5555-6666-ffffffffffff"
+        mu = {"m": {"inputTokens": 1000, "outputTokens": 200}}
+        s = self._resumed_session([self._cost_state(12.5, mu)])     # the OLD fsid's record, under self.d
+        sb.write_reg(self.d, s.sid, {"sid": s.sid, "name": "n", "cwd": self.d, "alive": True, "lastSid": self._FSID})
+        s.cwd = tempfile.mkdtemp()                                   # the registry's variant: no transcript
+        s._seed_spend_watermarks()
+        self.assertEqual(s._last_cost_total, 0.0, "nothing under the variant")
+        async def init(cwd, fsid):
+            s._on_message(_Sys({"cwd": cwd, "session_id": fsid}), _AssistantMessage, _ResultMessage, _Sys)
+            await asyncio.sleep(0)
+        asyncio.run(init(self.d, new_fsid))
+        self.assertEqual((s.cwd, s.resume_sid), (self.d, new_fsid), "cwd adopted, fsid flipped")
+        self.assertEqual(sb.read_reg(self.d, s.sid)["lastSid"], new_fsid)
+        self.assertEqual(s._last_cost_total, 12.5, "re-seeded from the OLD fsid's file under the CLI's cwd")
+        self.assertEqual(s._last_usage_totals["input_tokens"], 1000)
+        self._feed(s, self._result(13.0, model_usage={"m": {"inputTokens": 1500, "outputTokens": 260}}))
+        self.assertAlmostEqual(self._day()["usd"], 0.5, msg="the restoring CLI's first result folds only this turn")
+        self.assertEqual(self._day()["tokIn"], 500)
+        # a flip WITHOUT a cwd correction re-seeds nothing: the connect-time seed read the loaded file already
+        s2 = self._resumed_session([self._cost_state(4.0, mu)], sid="11111111-2222-3333-4444-abababababab")
+        sb.write_reg(self.d, s2.sid, {"sid": s2.sid, "name": "n2", "cwd": self.d, "alive": True, "lastSid": self._FSID})
+        s2._seed_spend_watermarks()
+        self.assertEqual(s2._last_cost_total, 4.0)
+        async def init2():                                            # flips only the fsid; the cwd already matches
+            s2._on_message(_Sys({"cwd": self.d, "session_id": new_fsid}), _AssistantMessage, _ResultMessage, _Sys)
+            await asyncio.sleep(0)
+        asyncio.run(init2())
+        self.assertEqual((s2.resume_sid, s2._last_cost_total), (new_fsid, 4.0), "flipped, seed kept")
 
 
 class RewindFiles(unittest.TestCase):
