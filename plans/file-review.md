@@ -1,7 +1,7 @@
 # Review in the file viewer: tracked changes and anchored comments
 
-**Status: PROPOSED, NOT COMMITTED** (the user's review of 2026-09-05 applied; awaiting final
-approval). Nothing is scheduled and nothing should be built from it unbidden. Once approved, the
+**Status: PROPOSED, NOT COMMITTED** (the user's reviews of 2026-09-05 and 2026-09-06 applied;
+every question ruled; awaiting the user's word to hand it to the implementing session). Nothing is scheduled and nothing should be built from it unbidden. Once approved, the
 implementing romp session builds all six slices in one push in this fork, the header changes to
 the build status, and the `plans/README.md` entry moves out of the proposed list. File and line references describe this
 fork at its 2026-09-05 merge base and the track-changents repo as of the same day; as with every
@@ -26,8 +26,8 @@ the Files pane that shows the agent's pending changes, holds persistent comments
 images, and on PDFs, sends one review message, and accepts or rejects the agent's revisions in
 place. It reaches the loop above with no GitHub visit and no Obsidian, in six independently
 useful slices, and keeps the sidecar byte-compatible so the agent-side tooling works unchanged.
-The user reviewed it on 2026-09-05 and ruled on its open questions; the rulings are recorded
-under Decisions at the end, and the whole slice set is to be built together, the user having
+The user reviewed it on 2026-09-05 and 2026-09-06 and ruled on every question it raised; the
+rulings are recorded under Decisions at the end, none remains open, and the whole slice set is to be built together, the user having
 suggested a dedicated new session for it. The implementing session publishes a working note
 naming the files it owns and lands each slice as one fork PR with an adversarial review pass, as
 the file browser did. A committed review log, added at the user's request, gives git a durable
@@ -254,7 +254,7 @@ clean text with every suggestion rejected (`engine.baselineOf`), is the whole fi
 only when the request asks for it. `trackedBy` is `{kind: "file"|"folder"|"inherited", entry}` or
 null, so the panel can say which `config.json` entry covers the file. `agentTooling` is
 `"present"` or `"absent"` for the agent-side CLIs on the owning kernel; when absent the panel
-works but warns that the session cannot reply until track-changents' `install.sh` has run there.
+works but warns that the session cannot reply until romp's `install.sh` has run on that machine.
 `configMtimeNs` is null
 when `config.json` does not exist; the client sends `""` for null, the same convention as
 `storeMtimeNs`. The browser builds its cards from `store` and `hunks`; no card model crosses the
@@ -299,8 +299,9 @@ the gear already reads reports the review verdict per kernel (`ok`, `no-node`, o
 imports `store-io.mjs`, `engine.js`, and the `addReply` function of `cli/track-reply.mjs` from the
 copy of track-changents vendored into this repo (see Vendoring below), so the kernel side needs no
 track-changents install on the owning kernel. It also reports whether the agent-side tooling is
-installed there, by the presence of `~/.claude/hooks/track-reply.mjs` (placed by track-changents'
-`install.sh`), since the session cannot answer a review without it. It performs each verb as one
+installed there, by the presence of `~/.claude/hooks/track-reply.mjs` (placed by romp's `install.sh` from the
+vendored copy, or by track-changents' own installer), since the session cannot answer a review
+without it. It performs each verb as one
 load-mutate-write in a single process: root discovery, sidecar path, the load-time rebase that
 re-places ops after external edits, anchor location, thread construction, accept and reject
 through the engine, fingerprint, atomic write, prune-when-empty. For `comment` it builds the
@@ -402,10 +403,17 @@ block of `obsidian/src/track-snapshot.js` adapted as described in Slice 5. The h
 the node modules from it, and the review and editor chunks bundle the browser modules from it, so
 the kernel side and the browser side depend on nothing outside this repo. A test fails when a
 checkout of track-changents is present on the machine and its files differ from the vendored
-copy, so drift is seen rather than discovered. The agent-side tooling (the four CLIs, the guard
-hook, the skill) stays a per-machine install of track-changents for now; open question 1 asks
-whether romp should ship and install it too, which the user's plan to offer the whole feature
-upstream argues for.
+copy, so drift is seen rather than discovered. The agent-side tooling is vendored too (the user
+2026-09-06): `cli/track-config.mjs`, `cli/track-edit.mjs`, `cli/track-comment.mjs`,
+`cli/track-reply.mjs`, `cli/cli-args.mjs`, `hooks/track-guard.mjs`, and `skill/SKILL.md`. romp's
+`install.sh` links them into `~/.claude/hooks/` and `~/.claude/skills/tracked-changes` and
+registers the guard as a PreToolUse hook on `Write|Edit|MultiEdit` through the same embedded
+registrar that already registers romp's hooks in `~/.claude/settings.json` (`install.sh:109-167`),
+so a machine that runs romp runs the whole loop with nothing else installed. An existing
+track-changents install, symlinks that point outside romp, is left in place and reported, since
+both are the same code at the pinned commit. The A1 fix, the non-text refusal in the guard and
+`track-edit`, and the skill's batched-ping sentence land in the vendored copy in Slice 1 and are
+offered back to the author.
 
 ### The review log
 
@@ -432,8 +440,8 @@ replaces any browser-held state for what is unsent: the watermark is the largest
 `ts` recorded in the last `send` entry, a `you` comment or reply is unsent when its `ts` is
 later, and accepts and rejects since the last send are counted from the log. A browser crash, a
 second browser, or a fresh machine all see the same answer, which resolves the user's concern
-about a browser-local ledger (decision 10). The log is machine-readable by design; a rendered
-export for reading on GitHub can follow if wanted (open question 2).
+about a browser-local ledger (decision 10). The log is JSON lines by the user's ruling (decision 16); a
+rendered export for reading on GitHub can follow if wanted.
 
 ### Consent, trace, routing
 
@@ -655,7 +663,8 @@ row and panel). The action row itself stays registry-only. `track-review.ts` reg
 - From the viewer: the Review action, for any file under a root (`.git/`, `.obsidian/`, or
   `.trackchanges/`) on a machine whose kernel has node. If Review is missing, the gear's row
   beside "File links open in" names the machine and the reason (`no-node`), and the same row
-  warns when the agent-side tooling is absent; the guide says to look there.
+  warns when the agent-side tooling is not linked and offers to run the link step; the guide says
+  to look there.
 - From the chat: a file link on a tracked file opens the viewer as today; Review is one click
   further.
 - An ended session's todo is hidden from Waiting on you until the session is revived, since the
@@ -714,11 +723,14 @@ text for one and for several threads; a send with `todoId` follows the helper's 
 off, settled, ended, and the send arm's parked, sent, and refused outcomes); the first mutating
 click triggers the consent popup once; the review log gains a `send` entry after each send and
 the unsent count is derived from it; on a live SDK session the guard denies a raw Write on a
-tracked fixture and `track-config` answers.
+tracked fixture and `track-config` answers; romp's installer links the tooling idempotently,
+leaves an existing track-changents install in place, and registers the guard once.
 
 Files: new `ui/webview/track-review.ts` (registration, panel, highlight pass and the two mapping
 walks, Comment button, poll, History, send composer), `vendor/track-changents/` with its pin and
-drift test, `tools/track-review-host.mjs` and its node tests, `tests/test_track_review.py`, `ui/webview/track-review.test.ts`; touched:
+drift test, `install.sh` and `tests/install-sh.bats` (the vendored CLIs, guard, and skill linked
+into `~/.claude/` and the guard registered as a PreToolUse hook through the existing registrar),
+`tools/track-review-host.mjs` and its node tests, `tests/test_track_review.py`, `ui/webview/track-review.test.ts`; touched:
 `kernel/kernel.py` (the two ops, the shared todo-answer helper, the `/defaults` verdict),
 `file-view.ts` (the seam above), `files.ts` (the `/sessions` color map), `gear.js` (the verdict
 row), `styles.css` and `files-pane.css` (about 80 lines adapted from the Obsidian host's
@@ -840,7 +852,9 @@ only on the owning kernel, on paths resolved by the kernel, and writes only the 
 `config.json`, and (on reject or save) the reviewed file. The mtime fences refuse and never
 merge. Both ops route by `sid` to the owning kernel over the existing federation splice; nothing
 new is exempt from `_authorize`, and the review verdict rides the authenticated `/defaults`
-payload rather than `/version`.
+payload rather than `/version`. The installer's new step registers a PreToolUse hook that runs
+on every Edit and Write in every Claude Code session on the machine; it is a path check that
+passes untracked files through, the same hook track-changents' own installer registers.
 
 ## Doctrines this respects
 
@@ -875,9 +889,8 @@ payload rather than `/version`.
   Send review checkbox that turns tracking on, and a guide paragraph saying to track the reports
   folder before an overnight run.
 - **Tracked folders that hold figures.** The guard would send an agent to `track-edit` on an
-  image, which corrupts it. Mitigation: the non-text refusal in the guard and `track-edit` is a
-  dependency before such folders are tracked; until then the guide says to track reports by
-  file, or to keep figures in a sibling folder.
+  image, which corrupts it. Mitigation: the non-text refusal lands in the vendored guard and `track-edit` in Slice 1,
+  before folder tracking ships.
 - **Ended overnight session.** Its todo is hidden from Waiting on you and `_send_or_park` revives
   dormant sessions, not ended ones (`kernel.py:24047-24062, 12227-12234`). Mitigation: the guide
   note above; Send review surfaces the refusal; the review is already on disk.
@@ -896,10 +909,10 @@ payload rather than `/version`.
   the one `track-edit` just recorded. A2: `track-edit` and `track-comment` replace a corrupt or
   newer sidecar with a fresh one. A7: `--thread` can bind a thread to an op id that coalescing
   dropped. A10: `track-edit --thread` failures are silent. The host script avoids A1 and A2 in its
-  own path; A1 in both CLIs is a prerequisite fix before Slice 1 ships, since the agent's replies
-  are the loop's step 8. Skill drift C3 (the skill says `track-edit` refuses stale text; it
-  usually detaches the displaced ops instead) should be corrected so reviewers are not surprised
-  by detached ops.
+  own path; A1 is fixed in both vendored CLIs in Slice 1, since the agent's replies are the loop's step
+  8, and the fix is offered back. Skill drift C3 (the skill says `track-edit` refuses stale text; it
+  usually detaches the displaced ops instead) is corrected in the vendored skill and offered back, so reviewers are not surprised by
+  detached ops.
 - **A PDF rendering dependency** (Slice 4). Mitigation: lazy chunk, size cap, frame fallback, and
   a slice of its own so the rest of the feature never waits on it.
 - **Polling cost.** Two HEAD requests every 2.5 s per open panel. Mitigation: only while the
@@ -936,6 +949,8 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   state), pure tests for the card model, the unsent-ledger derivation, the Raw and Rendered
   mapping walks over the fixtures named in the acceptance criteria, and the ping builder against
   the kernel's text.
+- `tests/install-sh.bats` gains the tooling links, the guard registration, idempotency, and the
+  leave-an-existing-install case (Slice 1).
 - `ui/webview/user-todo-links.test.ts` rewritten to pin `path-links.ts` and both callers
   (Slice 0); `editor-lazy.test.ts` extended for the typed `track` option (Slice 5) and for the
   PDF chunk staying lazy (Slice 4).
@@ -951,7 +966,7 @@ where to look when Review is missing. `docs/reference.md`, under install-time sw
 User todos switch as a prerequisite for the morning loop and the node plus track-changents
 requirement on the owning kernel. In track-changents (its author): README "Hosts" gains romp; the skill's ping paragraph gains
 the batched form. In this repo, `vendor/track-changents/README.md` records the source commit and
-what was adapted.
+what was adapted, and `docs/install.md` names the tooling the installer links into `~/.claude/`.
 
 ## Deliberately not in v1
 
@@ -966,21 +981,20 @@ accept and reject before Slice 5; multi-file review batching (one review per fil
 
 ## Dependencies
 
-On the owning kernel: node on the kernel's PATH; for the session to answer a review, the
-agent-side tooling installed through track-changents' `install.sh` (the CLIs, the guard, and the
-skill under `~/.claude/`), until romp ships them itself (open question 1); the file inside a root
+On the owning kernel: node on the kernel's PATH; the agent-side tooling linked into `~/.claude/`
+by romp's `install.sh` from the vendored copy (decision 15); the file inside a root
 with `.git/`, `.obsidian/`, or `.trackchanges/`; the report's path or folder listed in
 `config.json` before the session writes it; the User todos switch on for the morning todo to
-exist; the file-editing consent given once. On track-changents' author: the A1 fix in both CLIs
-before Slice 1 ships (or the same fix applied in the vendored copy and offered back); the skill
-sentence; the non-text refusal in the guard and `track-edit` before folders holding figures are
-tracked. For Slice 4, the PDF rendering dependency. The `target` field and the review log are
-romp-only and need nothing from the author.
+exist; the file-editing consent given once. Nothing blocks on track-changents' author: the A1 fix, the
+non-text refusal in the guard and `track-edit`, and the batched-ping skill sentence land in the
+vendored copy in Slice 1 and are offered back; the `target` field and the review log are
+romp-only. For Slice 4, the PDF rendering dependency.
 
-## Decisions (the user, 2026-09-05)
+## Decisions (the user, 2026-09-05 and 2026-09-06)
 
-The user reviewed the first full draft on GitHub and ruled on its open questions. Recorded here
-so the document stands on its own, each with the reasoning it was given.
+The user reviewed the first full draft on GitHub, then the revision through the viewer's own
+quote flow, and ruled on every question. Recorded here so the document stands on its own, each
+with the reasoning it was given.
 
 1. **Slice order and cadence.** All six slices are built in one push; the order in Build slices
    is the default landing order, and the implementing session decides staffing, with a dedicated
@@ -1012,27 +1026,22 @@ so the document stands on its own, each with the reasoning it was given.
 14. **The Slice 5 doctrine question.** Yes: a typed, internal `track` option in the editor chunk,
     with the header updated.
 
+15. **Ship the agent-side tooling with romp.** Yes (the user 2026-09-06): the four CLIs, the guard
+    hook, and the skill are vendored with the core and linked by romp's installer, so a machine
+    that runs romp runs the whole loop with nothing else installed; fixes land in the vendored copy
+    and are offered back to the author.
+16. **The review log's shape.** JSON lines in `.trackchanges/` (the user 2026-09-06), rendered by
+    the panel's History section; a markdown export may follow if reading it on GitHub matters.
+
 ## Open questions for the user
 
-Two questions follow from the rulings.
-
-1. **Ship the agent-side tooling with romp?** With the core vendored, only the four CLIs, the
-   guard hook, and the skill still come from a per-machine track-changents install. Should romp
-   vendor those too and have its installer link them into `~/.claude/`, as track-changents'
-   `install.sh` does, so a machine that runs romp can run the whole loop with nothing else
-   installed? Recommended: yes, in Slice 1, since the plan to offer the feature upstream needs
-   the loop to be self-contained; the A1 fix and the non-text refusal then land in the vendored
-   copy and are offered back to the author.
-2. **The review log's shape.** One JSON object per line in `.trackchanges/`, rendered by the
-   panel's History section, or a markdown log beside the report for reading on GitHub?
-   Recommended: the JSON lines file, since it is what the unsent computation reads and it keeps
-   the report's folder clean; a markdown export can be added to the panel later if reading it on
-   GitHub matters.
+None remain. Every question raised by this document or by its reviews has been ruled on; see
+Decisions.
 
 ## Upstream
 
 The user intends to offer the whole feature upstream to romp eventually (the user 2026-09-05).
-The vendoring decision makes the kernel and browser sides self-contained; shipping the agent-side
-tooling with romp (open question 1) would make the loop self-contained too. Until then Slice 0 is
-the one pure romp change and a candidate upstream row on its own; the offer decisions belong to
+The vendoring decision makes the kernel and browser sides self-contained; vendoring the agent-side
+tooling (decision 15) makes the loop self-contained, so the whole feature can be offered as one;
+Slice 0 is also a candidate row on its own; the offer decisions belong to
 the offer flow, not this plan.
