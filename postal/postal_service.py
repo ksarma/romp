@@ -155,24 +155,35 @@ def _self_row():
     return (next((a for a in agents if a.get("id") == sid), None)
             or next((a for a in agents if a.get("lastSid") == sid), None))
 
-def my_id():
+def _self_identity():
+    """(id, name) of THIS session from ONE _self_row() resolution — one GET /sessions, where the
+    `my_name(), my_id()` pair a caller used to write cost two (2026-09-06: with about 30 sessions
+    beating every 30 s the heartbeat was nearly all of the kernel's GET /sessions traffic, and this
+    pair two of the three fetches each beat cost). Both fallbacks kept: no row → the env fsid as the
+    id (mail still routes by id) and the names registry for the name (kernel-down fallback; a
+    comment-thread session withholds its names entry, which is why the row comes first). (None,
+    None) when not in a romp session (no tmux fallback: the bus never shells tmux). Nothing is
+    memoized: a resolution that missed (kernel mid-restart) is retried in full by the next call."""
     row = _self_row()
-    return row["id"] if row else _self_id()
+    sid = row["id"] if row else _self_id()
+    if row and row.get("name"):
+        return sid, row["name"]
+    fsid = _self_id()
+    if not fsid:
+        return sid, None
+    try:
+        return sid, ((NAMES_DIR / fsid).read_text().split("\t")[0].strip() or None)
+    except Exception:
+        return sid, None
+
+def my_id():
+    return _self_identity()[0]
 
 def my_name():
     # The live agent row first (it tracks renames AND survives transcript forks); the names registry as
-    # the kernel-down fallback. None when not in a romp session (no tmux fallback: the bus never shells
-    # tmux).
-    row = _self_row()
-    if row and row.get("name"):
-        return row["name"]
-    sid = _self_id()
-    if not sid:
-        return None
-    try:
-        return (NAMES_DIR / sid).read_text().split("\t")[0].strip() or None
-    except Exception:
-        return None
+    # the kernel-down fallback. A caller that needs BOTH halves calls _self_identity() once instead of
+    # this pair — each of these is a full resolution.
+    return _self_identity()[1]
 
 # ───────────────────────── maildir store ─────────────────────────
 
@@ -719,10 +730,23 @@ def _record_heartbeat(sid, name):
     """Record remote-presence for an incoming heartbeat — but ONLY for a sid the local kernel does NOT already
     own. A local session is already visible via the kernel's /sessions, so recording its heartbeat would leave
     it lingering as a phantom [remote] peer for the TTL after it dies. A genuine REMOTE (federated) session,
-    reaching us over an -R tunnel, is NOT in the local kernel — heartbeats are its only presence signal."""
-    if sid and _safe_id(sid) and sid not in {a["id"] for a in local_agents()}:
-        HEARTBEATS[sid] = (name or "?", time.time())
+    reaching us over an -R tunnel, is NOT in the local kernel — heartbeats are its only presence signal.
+
+    Returns True iff the sid is LOCAL: the bus's own listing ANSWERED and contains it (thread rows
+    included — a comment thread heartbeats under its own row). The /heartbeat route hands that bit
+    back so a local session's MCP can stop heartbeating (2026-09-06: every local beat cost the kernel
+    three GET /sessions for a no-op). An UNANSWERED listing (kernel mid-restart) is False and records
+    the beat exactly as before — the answer is derived from the listing only, never from the
+    client's claim, so a remote session never hears "local" and never stops."""
+    local = False
+    if sid and _safe_id(sid):
+        rows, answered = local_agents_checked(threads=True)
+        if answered and any(a["id"] == sid for a in rows):
+            local = True
+        else:
+            HEARTBEATS[sid] = (name or "?", time.time())
     _write_remote_sids()                           # presence changed → refresh the deadness mirror
+    return local
 
 def present_count():
     return len(all_agents())
@@ -1551,8 +1575,8 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=_wake_when_ready, args=(sid,), daemon=True).start()
             return self._send({"ok": True})
         if u.path == "/heartbeat":
-            _record_heartbeat(data.get("id"), data.get("name", "?"))
-            return self._send({"ok": True})
+            local = _record_heartbeat(data.get("id"), data.get("name", "?"))
+            return self._send({"ok": True, "local": local})
         if u.path == "/quarantine/act":            # human verdict on a held message (approve/deny), from the
             mid = str(data.get("mid") or "")       # blocked card via the kernel; approve delivers, deny drops
             action = str(data.get("action") or "").strip().lower()
@@ -1659,15 +1683,18 @@ def _retry_pending():
     revival); a stale marker (new/ already empty) is reconciled away."""
     if not MAILPENDING.is_dir():
         return
-    live = {a["id"]: a for a in local_agents()}
-    for m in list(MAILPENDING.iterdir()):
-        if not m.is_file():
-            continue
+    markers = [m for m in MAILPENDING.iterdir() if m.is_file()]
+    if not markers:
+        return                                 # nothing pending: no GET /sessions this pass (2026-09-06)
+    live = None                                # fetched once, and only for a marker that still holds mail
+    for m in markers:
         sid = m.name
         newd = MAILROOT / sid / "new"
         if not (newd.is_dir() and any(newd.iterdir())):
             _mark_pending(sid)                 # stale marker -> clear it
             continue
+        if live is None:
+            live = {a["id"]: a for a in local_agents()}
         if sid in live:
             try:
                 _push(sid, live[sid])          # re-attempt; the kernel defers again if still unsafe
@@ -2905,27 +2932,49 @@ def restart():
     return ensure()
 
 def _heartbeat(sid, name):
-    if sid:
-        try:
-            _http("POST", "/heartbeat", {"id": sid, "name": name or "?"})
-        except Exception:
-            pass
+    """POST this session's presence to the bus. Returns the bus's answer ({ok, local}) or None when
+    there was none (bus unreachable, no sid); callers that only want the side effect ignore it."""
+    if not sid:
+        return None
+    try:
+        return _http("POST", "/heartbeat", {"id": sid, "name": name or "?"})
+    except Exception:
+        return None
 
-def _heartbeat_loop():
+def _heartbeat_once():
+    """One beat of _heartbeat_loop: ONE identity resolution (one GET /sessions) and one POST /heartbeat.
+    Returns True iff the bus answered `local: true` — its own answered listing holds this sid, so the
+    kernel already publishes this session's presence and the loop can end. A bus that did not answer,
+    answered without the bit (an older bus), or said local=false (a remote session, or a kernel
+    mid-restart that left the listing unanswered) is False: keep beating. The verdict is never
+    memoized here — a false answer costs one more full iteration, nothing else."""
+    sid, name = _self_identity()
+    if not sid:
+        return False
+    resp = _heartbeat(sid, name)
+    return bool(isinstance(resp, dict) and resp.get("local") is True)
+
+def _heartbeat_loop(interval=None):
     """Keep THIS session present to the bus while it's alive, so an IDLE session that hasn't touched a postal
     tool is still addressable. This is essential for a REMOTE (federated) session: it appears to the laptop's
     bus ONLY via heartbeats over the -R tunnel (a local session is already visible through the kernel's
-    /sessions). Cadence well under HEARTBEAT_TTL. The bus ignores heartbeats from LOCAL sids, so this costs a
-    local session nothing and is the presence mechanism for remote ones. Runs from the stdio MCP server, which
-    lives exactly as long as the Claude session."""
+    /sessions). Cadence well under HEARTBEAT_TTL. Runs from the stdio MCP server, which lives exactly as long
+    as the Claude session.
+
+    The bus ignores heartbeats from LOCAL sids, and since 2026-09-06 says so in its answer: the loop ends
+    on the first `local: true`, because every further beat would be a no-op that cost the kernel GET
+    /sessions calls (about 30 sessions beating every 30 s were 3 requests per second on a saturated
+    kernel). A remote (client-only box) session never hears "local" from the hub's bus and keeps today's
+    per-iteration behavior. `interval` is a test seam; the default is the production cadence."""
+    if interval is None:
+        interval = max(15, HEARTBEAT_TTL // 3)
     while True:
         try:
-            sid = my_id()
-            if sid:
-                _heartbeat(sid, my_name())
+            if _heartbeat_once():
+                return
         except Exception:
             pass
-        time.sleep(max(15, HEARTBEAT_TTL // 3))
+        time.sleep(interval)
 
 # ───────────────────────── stdio MCP server ─────────────────────────
 
@@ -3021,7 +3070,7 @@ def _tools_offered():
     return [t for t in MCP_TOOLS if t["name"] not in USER_TODO_TOOLS]
 
 def _mcp_call(name, args):
-    me, mid = my_name(), my_id()
+    mid, me = _self_identity()               # one GET /sessions for both halves, not one each
     _heartbeat(mid, me)
     if name == "send_message":
         to, body = args.get("to", ""), args.get("body", "")
@@ -3158,7 +3207,8 @@ def mcp():
     ONLY protocol messages; everything else goes to stderr."""
     ensure()
     # Heartbeat presence while this session lives, so an idle REMOTE (federated) session stays addressable
-    # over the -R tunnel even before it uses a postal tool. No-op for local sids (the bus ignores those).
+    # over the -R tunnel even before it uses a postal tool. A LOCAL session's loop ends on the bus's first
+    # `local: true` answer (the bus ignores local beats anyway; see _heartbeat_loop).
     threading.Thread(target=_heartbeat_loop, daemon=True).start()
     out = sys.stdout
 
@@ -3236,7 +3286,7 @@ def cli_send(argv):
         sys.stderr.write("[romp mail] refusing to send an empty message\n"); return 2
     if not ensure():
         sys.stderr.write("[romp mail] %s\n" % _unreachable_hint()); return 1
-    me, mid = my_name(), my_id()
+    mid, me = _self_identity()
     if frm_label:
         me, mid = frm_label, "ext:" + frm_label
     if not mid:
@@ -3280,7 +3330,7 @@ def cli_inbox(peek=False):
 def cli_agents():
     if not ensure():
         sys.stderr.write("[romp mail] %s\n" % _unreachable_hint()); return 1
-    me, mid = my_name(), my_id()
+    mid, me = _self_identity()
     try:
         res = _http("GET", "/agents?me=%s" % urllib.parse.quote(me or ""))
     except BusError as e:

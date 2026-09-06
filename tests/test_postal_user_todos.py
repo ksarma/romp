@@ -74,17 +74,16 @@ class ToolSurface(unittest.TestCase):
 
 class Dispatch(unittest.TestCase):
     def setUp(self):
-        self._saved = (pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat)
+        self._saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
         self.posts = []
         self.canned = {"ok": True, "todoId": "ut-9f2c1a34"}
         pm._kernel_post = lambda path, body, timeout=4.0: (self.posts.append((path, body)) or self.canned)
-        pm.my_name = lambda: "api"
-        pm.my_id = lambda: SID
+        pm._self_identity = lambda: (SID, "api")     # the one resolver every tool call reads (2026-09-06)
         pm._heartbeat = lambda *a, **k: None
         _switch(True)                                # the switch is OFF by default (2026-09-03): these pin ON
 
     def tearDown(self):
-        pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat = self._saved
+        pm._kernel_post, pm._self_identity, pm._heartbeat = self._saved
         _switch(None)
 
     # ── add_user_todo ──────────────────────────────────────────────────────────────────────────
@@ -108,7 +107,7 @@ class Dispatch(unittest.TestCase):
         self.assertEqual(self.posts, [])
 
     def test_register_outside_a_session_is_refused(self):
-        pm.my_id = lambda: ""
+        pm._self_identity = lambda: ("", "api")     # no session id resolved
         out, err = pm._mcp_call("add_user_todo", {"text": "Need the port"})
         self.assertTrue(err)
         self.assertEqual(self.posts, [])
@@ -146,7 +145,7 @@ class Dispatch(unittest.TestCase):
         self.assertEqual(self.posts, [])
 
     def test_withdraw_outside_a_session_is_refused(self):
-        pm.my_id = lambda: ""
+        pm._self_identity = lambda: ("", "api")     # no session id resolved
         out, err = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})
         self.assertTrue(err)
         self.assertEqual(self.posts, [])
@@ -158,17 +157,16 @@ class Switch(unittest.TestCase):
     user-todos.json, which is the todo store) on every tools/list and every call."""
 
     def setUp(self):
-        self._saved = (pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat)
+        self._saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
         self.posts = []
         pm._kernel_post = lambda path, body, timeout=4.0: (self.posts.append((path, body))
                                                            or {"ok": True, "todoId": "ut-9f2c1a34"})
-        pm.my_name = lambda: "api"
-        pm.my_id = lambda: SID
+        pm._self_identity = lambda: (SID, "api")     # the one resolver every tool call reads (2026-09-06)
         pm._heartbeat = lambda *a, **k: None
         _switch(None)
 
     def tearDown(self):
-        pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat = self._saved
+        pm._kernel_post, pm._self_identity, pm._heartbeat = self._saved
         _switch(None)
 
     def test_the_switch_reads_the_kernels_file_not_the_store(self):
