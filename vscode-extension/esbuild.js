@@ -27,6 +27,20 @@ const extension = {
   logLevel: "info",
 };
 
+// One copy of CodeMirror per bundle (2026-09-06). @codemirror/state and @codemirror/commands ship dual builds
+// (dist/index.js for `import`, dist/index.cjs for `require`), and esbuild picks the build by the KIND of each
+// import, so the editor chunk's ESM imports and the vendored track-cm.js's require() calls
+// (vendor/track-changents, CommonJS, bundled unchanged by design) would pull BOTH builds into one bundle.
+// CodeMirror compares state fields and facets by identity, so a field from the second copy is an
+// "Unrecognized extension value" to the first. The alias sends every import of either package, whatever its
+// kind, to the one ESM file. The main bundles import neither package (editor-lazy.test.ts pins that), so their
+// output is unchanged; the test bundle needs the same alias because its tests build states from the chunk's
+// extension set. editor-lazy.test.ts builds the chunk with a metafile and pins the single copy.
+const oneCodeMirror = {
+  "@codemirror/state": path.join(__dirname, "node_modules", "@codemirror", "state", "dist", "index.js"),
+  "@codemirror/commands": path.join(__dirname, "node_modules", "@codemirror", "commands", "dist", "index.js"),
+};
+
 /** @type {import('esbuild').BuildOptions} */
 const webview = {
   // The browser UI sources live in the top-level ui/ dir (consolidated out of
@@ -63,6 +77,7 @@ const webview = {
     { in: "node_modules/pdfjs-dist/build/pdf.worker.mjs", out: "pdf-worker" },
   ],
   nodePaths: [path.join(__dirname, "node_modules")],
+  alias: oneCodeMirror,
   bundle: true,
   format: "iife",
   platform: "browser",
@@ -112,6 +127,7 @@ function testBuild() {
   return {
     entryPoints: entries,
     nodePaths: [path.join(__dirname, "node_modules")],
+    alias: oneCodeMirror,
     bundle: true,
     format: "cjs",
     platform: "node",
@@ -140,7 +156,13 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Run as a script (`node esbuild.js`); a test that require()s this file gets the configs and no build, so it can
+// bundle one entry with the real options (editor-lazy.test.ts counts CodeMirror copies in the chunk's metafile).
+if (require.main === module) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
+
+module.exports = { extension, webview, testBuild, oneCodeMirror };
