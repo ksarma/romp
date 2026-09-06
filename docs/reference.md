@@ -73,7 +73,7 @@ These are for scripting and for agents rather than daily use:
 | `romp compact <session> [--wait] [--timeout <s>]` | Compact a session's context in place (Claude's `/compact`: summarize the history, keep the session's name, id, mailbox, and watches) — the alternative to ending and recreating a long-lived session, and the external hand a session needs since it cannot `/compact` itself mid-turn. Quiet session → compacts now; open turn → queued, fires alone the moment the turn ends (the same safe path the chat's compact button uses). `--wait` blocks until the compaction has started and cleared, polling the kernel's own `compacting` signal on the `/sessions` rows (also the field to point a `romp watch` predicate at for scripted recycling); exits 1 honestly on timeout. A remote session's compaction is requested on its own kernel — `--wait` can't follow it from here and says so |
 | `romp end <session>` | End a session |
 | `romp move <session> <dir>` | Move an SDK session's working directory to `<dir>` (the folder must already exist); the conversation, name, mail and history stay with the session. Quiet session → moves now; open turn → queued, fires when the turn ends. See [Moving a session to another folder](#moving-a-session-to-another-folder) |
-| `romp emoji <session> [<emoji>\|--clear]` | Put one emoji before the session's name on its tab; `--clear` removes it, and an empty argument is a usage error, not a clear; with no argument, print the current one (an empty line when there is none). Exactly one emoji is accepted; a refusal prints the kernel's reason. A live session is named by name or id, a dormant one by id, for setting, clearing and reading alike. See [A session's tab emoji](#a-sessions-tab-emoji) |
+| `romp emoji <session> [<emoji>\|--clear]` | Put one emoji before the session's name on its tab; `--clear` removes it, and an empty argument is a usage error, not a clear; with no argument, print the current one (an empty line when there is none). Exactly one emoji is accepted; a refusal prints the kernel's reason. A live session is named by name or id, a dormant one by id, for setting, clearing and reading alike; a read by id comes from the names registry and works with the kernel stopped. See [A session's tab emoji](#a-sessions-tab-emoji) |
 | `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it |
 | `romp default-dir [PATH]` | The default working directory for new sessions; no argument prints it, `""` clears it |
 | `romp debug [on\|off\|status]` | Judge debug mode, where rejection rows carry the full input and reply |
@@ -176,10 +176,11 @@ which share one validator and one store:
   `{"ok": true, "id", "emoji"}` or `{"ok": false, "error": <one line>}`. The
   `emoji` key must be present and must be a string: a body without it, or with
   a null or a number in it, is a 400, never a clear. A dormant session is set,
-  cleared and read by its id: the write goes to the names registry, and the
-  read form falls back to the registry entry when the id is not live
-  (`GET /sessions` lists live sessions only); a dormant session's name is not
-  found, only its id. A session an attached machine owns is named by id; the kernel
+  cleared and read by its id. The write goes to the names registry through the
+  kernel; a read by id comes from that registry directly, whether or not the
+  kernel is running. A read by name asks `GET /sessions`, which lists live
+  sessions only, so a dormant session's name is not found, only its id. A
+  session an attached machine owns is named by id; the kernel
   forwards the request to that machine's kernel and relays its answer. A remote
   kernel from a release before this route answers `that host's kernel (<host>)
   predates tab emoji`; a dead tunnel answers `the session's own kernel (<host>)

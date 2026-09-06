@@ -1480,9 +1480,10 @@ fi
 # names-registry write, so a dormant session takes it by sid, and the same validator (exactly one
 # emoji, nothing textual) answers every door — the tab menu, the session's own set_emoji tool, and
 # this command — so a refusal prints the kernel's one-line reason. With no argument it READS the
-# current emoji (an empty line when there is none): a live session off GET /sessions, a dormant one
-# by sid straight from the names registry — no kernel route lists dormant records, so this reads the
-# store the way the resume picker does. `--clear` is the ONLY clear: an empty or blank positional is
+# current emoji (an empty line when there is none): an id straight from the names registry — the
+# store the kernel's own /sessions field is read from, and the only place a dormant record lives, so
+# the read needs no kernel — and a name off GET /sessions, which lists live sessions only. `--clear`
+# is the ONLY clear: an empty or blank positional is
 # a usage error, never a clear (an unset variable in a script must not wipe a label; `romp color`
 # has the same guard).
 if [[ "${1:-}" == "emoji" ]]; then
@@ -1494,6 +1495,14 @@ if [[ "${1:-}" == "emoji" ]]; then
         echo "romp emoji: an empty emoji is not a clear — use --clear to remove one" >&2
         echo "$_em_usage" >&2; exit 2
     fi
+    if [[ $# -eq 1 && "$1" =~ ^[0-9a-fA-F-]{32,36}$ && -f "$ROMP_NAMES_DIR/$1" ]] && _romp_split_record "$ROMP_NAMES_DIR/$1"; then
+        # READ by id: straight from the names record — the store the kernel's own GET /sessions `emoji`
+        # field is read from, and the only place a dormant session's record lives — so no kernel is
+        # needed. This read ran only after GET /sessions had missed, so with the kernel down a dormant
+        # id got 'kernel not reachable' though the record held the answer (review round 2, 2026-09-06).
+        printf '%s\n' "${_rf[4]}"
+        exit 0
+    fi
     _tok="$(_romp_token)"
     _kport="${ROMP_KERNEL_PORT:-29855}"
     if [[ -z "$_tok" ]]; then
@@ -1501,6 +1510,8 @@ if [[ "${1:-}" == "emoji" ]]; then
         exit 1
     fi
     if [[ $# -eq 1 ]]; then
+        # READ by name, or by an id with no record here (an attached machine's session): GET /sessions
+        # lists live sessions only, so a dormant session's NAME is not found
         _resp="$(_romp_token_cfg | curl -sf -m 10 --config - "http://127.0.0.1:$_kport/sessions")" \
             || { echo "romp emoji: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
         _hit="$(printf '%s' "$_resp" | python3 -c '
@@ -1513,12 +1524,6 @@ for r in rows:
         break
 ' "$1")"
         if [[ -z "$_hit" ]]; then
-            # not live: a dormant session is read by sid from its names record (the set form labels
-            # one the same way); a NAME can only mean a live session
-            if [[ "$1" =~ ^[0-9a-fA-F-]{32,36}$ && -f "$ROMP_NAMES_DIR/$1" ]] && _romp_split_record "$ROMP_NAMES_DIR/$1"; then
-                printf '%s\n' "${_rf[4]}"
-                exit 0
-            fi
             echo "romp emoji: no session named \"$1\" (see: romp sessions; a dormant session is read by its id)" >&2
             exit 1
         fi
@@ -2968,7 +2973,7 @@ else
     # _romp_split_record for why `IFS=$'\t' read` cannot parse a record with empty color fields.
     bg=""; fg=""; emoji=""
     if [[ -n "$sid" && -f "$ROMP_NAMES_DIR/$sid" ]] && _romp_split_record "$ROMP_NAMES_DIR/$sid"; then
-        bg="${_rf[2]}"; fg="${_rf[3]}"; emoji="${_rf[4]}"
+        bg="${_rf[2]}"; fg="${_rf[3]}"; emoji="${_rf[4]}"   # copied out here: _romp_free_title below re-splits other records into the same _rf
     fi
     if [[ -z "$bg" ]]; then
         # Identity palette — SELECTABLE now (the user 2026-07-12): the ACTIVE set lives in

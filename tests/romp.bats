@@ -611,6 +611,43 @@ MOCK
     [[ "$output" == *"no session named"* ]]
 }
 
+@test "emoji: an id is read from the names registry with no kernel running; a name or an unknown id still needs the kernel" {
+    # the registry is the store the kernel's own /sessions emoji field is read from, and the only place a
+    # dormant record lives, so a read by id needs no kernel. It used to run only after GET /sessions had
+    # missed: with the kernel down a dormant id got 'kernel not reachable' though the record held the
+    # answer, and docs/reference.md promised otherwise (review round 2, 2026-09-06)
+    touch "$MOCK_LOG"
+    unset ROMP_SERVE_TOKEN          # no token file under the hermetic state dir either: no kernel
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+exit 7
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    ndir="$XDG_STATE_HOME/romp/names"
+    mkdir -p "$ndir"
+    printf 'worker\t%s\t#1EA1EB\twhite\t🌙\n' "$WORK_DIR" > "$ndir/22222222-3333-4444-5555-666666666666"
+    printf 'quiet\t%s\t\t\t🚀\n' "$WORK_DIR" > "$ndir/33333333-4444-5555-6666-777777777777"
+    printf 'plain\t%s\t#1EA1EB\twhite\n' "$WORK_DIR" > "$ndir/44444444-5555-6666-7777-888888888888"
+    run run_romp emoji 22222222-3333-4444-5555-666666666666
+    [ "$status" -eq 0 ]
+    [ "$output" = "🌙" ]
+    run run_romp emoji 33333333-4444-5555-6666-777777777777
+    [ "$status" -eq 0 ]
+    [ "$output" = "🚀" ]
+    run run_romp emoji 44444444-5555-6666-7777-888888888888
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    # a name, or an id with no record here, can only be answered by the kernel: loud, not a guess
+    run run_romp emoji worker
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel isn't running"* ]]
+    run run_romp emoji 55555555-6666-7777-8888-999999999999
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel isn't running"* ]]
+    [ "$(grep -c '^curl' "$MOCK_LOG")" -eq 0 ]   # the registry reads never dialed anything
+}
+
 @test "resume: the tab emoji (5th field) survives every tmux resume shape" {
     # the kernel stores a session's tab emoji as the names entry's 5th field; each resume/revive shape
     # rewrites the record and must carry it — before the review (2026-09-06) every one of them read the
