@@ -18640,6 +18640,7 @@ def _fold_tasks(session):
     order, or None if there were none. The webview renders this as a todo card (kind:'todo') and hides the
     raw Task* calls (ACK_TOOLS) — so the kernel emits the folded card and skips the raw tool events."""
     out = {}                                              # tool_use_id → result text (carries 'Task #N')
+    rejected = set()                                      # tool_use_ids whose result came back is_error
     for turn in session["turns"]:
         for a in turn["atoms"]:
             if a.get("type") != "user":
@@ -18648,6 +18649,8 @@ def _fold_tasks(session):
                 if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id"):
                     c = b.get("content")
                     out[b["tool_use_id"]] = c if isinstance(c, str) else json.dumps(c)
+                    if b.get("is_error"):
+                        rejected.add(b["tool_use_id"])
     tasks, order = {}, 0
     for turn in session["turns"]:
         for a in turn["atoms"]:
@@ -18658,6 +18661,18 @@ def _fold_tasks(session):
                     continue
                 inp = b.get("input") or {}
                 if b.get("name") == "TaskCreate":
+                    # A TaskCreate the CLI REJECTED is not a checklist item. A malformed call — no `subject`
+                    # ({agent_hint, prompt}), or a {tasks: [...]} batch — draws a paired tool_result with
+                    # is_error set and an InputValidationError naming the missing field: nothing was created,
+                    # nothing launched, and nothing renders it (the chat skips every raw TaskCreate row).
+                    # Folded as a pending task it gave a session whose only TaskCreate was rejected a phantom
+                    # open item, which tripped the card's "can't read the task store" error the moment the
+                    # store was unresolvable. The skip keys on the result's is_error — the event that says no
+                    # task exists — not on the input's key names, which would miss every other rejected
+                    # shape. A create whose result has not landed yet still folds under its creation-order
+                    # id, as before.
+                    if b.get("id") in rejected:
+                        continue
                     m = re.search(r"Task #(\d+)", out.get(b.get("id"), "") or "")
                     tid = m.group(1) if m else "c%d" % order
                     af = inp.get("activeForm")

@@ -2768,12 +2768,14 @@ def declared_plan(session):
     [{key, text, activeForm, status}] — the FALLBACK behind task_store_plan for a session with no
     live task store, so downstream (the judge's plan-sync) sees a generic 'declared plan' shape
     instead of raw tool calls. Mirrors the kernel's _fold_tasks, with the same blind spots: only the
-    MAIN agent's TaskCreate/TaskUpdate calls, and only those on the transcript's live chain.
+    MAIN agent's TaskCreate/TaskUpdate calls, and only those on the transcript's live chain — and the
+    same skip: a TaskCreate the CLI rejected (its paired tool_result carries is_error) is not a step.
     `key` is the stable `Task #N` id lifted from TaskCreate's
     result text (a creation-order `cN` fallback if the result is unreadable); `status` rides each
     TaskUpdate. Only TaskCreate/TaskUpdate are folded — plain TodoWrite (no durable ids) is not
     used by romp. Empty list if the session declared no plan."""
     results = {}                                           # tool_use_id → result text (carries 'Task #N')
+    rejected = set()                                       # tool_use_ids whose result came back is_error
     for turn in session["turns"]:
         for a in turn["atoms"]:
             if a.get("type") != "user":
@@ -2782,6 +2784,8 @@ def declared_plan(session):
                 if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id"):
                     c = b.get("content")
                     results[b["tool_use_id"]] = c if isinstance(c, str) else json.dumps(c)
+                    if b.get("is_error"):
+                        rejected.add(b["tool_use_id"])
     tasks, order = {}, 0
     for turn in session["turns"]:
         for a in turn["atoms"]:
@@ -2792,6 +2796,13 @@ def declared_plan(session):
                     continue
                 inp = b.get("input") or {}
                 if b.get("name") == "TaskCreate":
+                    # A TaskCreate the CLI rejected (a malformed call — no `subject`, or a {tasks: [...]}
+                    # batch — answered by an is_error tool_result naming the missing field) created no task,
+                    # so it is not a declared step. Folded, it became a keyless item with empty text that
+                    # _sync_declared_plan minted as a standalone open "(declared step)" card no TaskUpdate
+                    # could ever close. Keyed on the result's is_error, as the kernel's fold is.
+                    if b.get("id") in rejected:
+                        continue
                     m = re.search(r"Task #(\d+)", results.get(b.get("id"), "") or "")
                     key = m.group(1) if m else "c%d" % order
                     af = inp.get("activeForm")
