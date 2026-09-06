@@ -213,7 +213,10 @@ class _PerfStats:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
                                    _run_tier, plus every per-session worker the tiers run in
-                                   judge.py's thread pools; the split rides as cpu_ms_workers)
+                                   judge.py's thread pools; the split rides as cpu_ms_workers),
+                                   chain_memo {hit, miss, populate, bypass}: the write-moment chain
+                                   memo's counters (judge.chain_memo_stats), so its hit rate is
+                                   read from the live kernel rather than assumed
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -350,6 +353,10 @@ class _PerfStats:
             workers = 0.0
         judge["cpu_ms_workers"] = workers
         judge["cpu_ms_sum"] += workers                     # tier threads + their pool workers
+        try:
+            judge["chain_memo"] = jd.chain_memo_stats()
+        except Exception:
+            judge["chain_memo"] = {}
         try:
             goals = jd.goal_io_stats()
         except Exception:

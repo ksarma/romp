@@ -988,8 +988,9 @@ print("goals     %.1f loads/s   %.1f saves/s   %.1f writes/s   scan %.1f parses/
       % (dl("goals", "loads") / dt, dl("goals", "saves") / dt, dl("goals", "writes") / dt,
          dl("goals", "scan_parses") / dt, ("%.0f%%" % (100.0 * dl("goals", "scan_hits") / seen)) if seen else "no"))
 jp = dl("judge", "passes")
-print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms"
-      % (jp, jp / dt, g(b, "judge", "ms_last"), ("%.0f" % (dl("judge", "ms_sum") / jp)) if jp else "-"))
+print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   chain memo %d hits / %d misses"
+      % (jp, jp / dt, g(b, "judge", "ms_last"), ("%.0f" % (dl("judge", "ms_sum") / jp)) if jp else "-",
+         dl("judge", "chain_memo", "hit"), dl("judge", "chain_memo", "miss")))
 paths = set(b.get("http") or {}) | set(a.get("http") or {})
 rows = sorted(((dl("http", pth, "count"), dl("http", pth, "ms"), pth) for pth in paths), reverse=True)
 rows = [r for r in rows if r[0]][:6]
