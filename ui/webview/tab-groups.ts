@@ -224,29 +224,57 @@ export function togglePinned(st: TabGroupsState, sec: SectionRef, sid: string): 
 /** Drop the pins nothing can render any more, judged PER ENTRY — and only where the entry's session
  *  CAN be judged from this page. An entry is JUDGED when its session's fate is knowable here: the sid is
  *  a tab the strip knows, or it is local (the page's own kernel lists every local session), or its host
- *  is in `hosts` — the remote hosts attached with the tunnel up. Judged, it stands only while the
- *  session is a known tab and some union the entry names (by its name, or by its id as a local id)
- *  holds the session — so the store does not keep an entry for every tag ever deleted, session ever
- *  closed, or member moved out. NOT judged — a sid whose host is detached or down — it stands
- *  untouched: the host's sessions left the strip with the host (a detach dismisses every one; a page
- *  loaded during an outage never had them) and its tags left the blob or stand cached, none of which is
- *  a session's end. The entries wait for the host to report, and the next pin write after that judges
- *  them for real (round 5 of the 2026-09-06 review: a pin click while a host was detached dropped every
- *  pin on its sessions, and they folded away on the reattach with no gesture on them).
+ *  is in `hosts` — the remote hosts attached with the tunnel up whose tab list has reached this pane
+ *  (reachableFrom). Judged, it stands only while the session is a known tab and some union the entry
+ *  names (by its name, or by its id as a local id) holds the session — so the store does not keep an
+ *  entry for every tag ever deleted, session ever closed, or member moved out. NOT judged — a sid whose
+ *  host is detached, down, or attached and up with its tab list still on its way to this pane — it
+ *  stands untouched: the host's sessions left the strip with the host (a detach dismisses every one; a
+ *  page loaded during an outage never had them) or have not reached it yet, and its tags left the blob
+ *  or stand cached, none of which is a session's end. The entries wait for the host's tabs, and the
+ *  next pin write after that judges them for real
+ *  (round 5 of the 2026-09-06 review: a pin click while a host was detached dropped every pin on its
+ *  sessions, and they folded away on the reattach with no gesture on them; round 6: the same click in
+ *  the seconds between a host's attach or a page load and its tab list's arrival did the same).
  *  On the WRITE path only (the pin row's click): a prune there moves nothing on screen, where a prune
  *  per render could act on a transient frame (a views blob mid-write, a reattached host's tags one
  *  supervisor pass behind its tabs) and put a tab away with no gesture. Returns `st` itself when
  *  nothing is dropped.
  *
- *  THE LIMIT: a LOCAL tab pinned under a section that only a remote host's tag made (the host tagged
+ *  THE LIMITS: a LOCAL tab pinned under a section that only a remote host's tag made (the host tagged
  *  one of ours) is judged on that host's detach — the sid is local, and the entry names the section by
  *  name alone, a remote tag's id and so its host never being stored — and dropped, since no union of
- *  the name holds it; the user sets the pin again after the reattach. */
+ *  the name holds it; the user sets the pin again after the reattach. And a reattached host's tags reach
+ *  the blob in the supervisor pass that marks it up, with its tabs — unless the kernel's first read of
+ *  its /views fails while its /sessions probe answers, when the tags trail the tabs by one pass (15 s at
+ *  most): a pin write in that window sees the host's sessions as known tabs that no union of the pinned
+ *  name holds, and drops its remote-only pins (a mixed pin whose local tag holds the member stands); the
+ *  user sets them again. */
 export function prunePinned(st: TabGroupsState, unions: readonly TagUnion[], knownIds: ReadonlySet<string>, hosts: ReadonlySet<string>): TabGroupsState {
   const judged = (sid: string) => { const h = hostOf(sid); return knownIds.has(sid) || h === "" || hosts.has(h); };
   const pinned = st.pinned.filter((p) => !judged(p.sid) || (knownIds.has(p.sid)
     && unions.some((u) => (u.name === p.name || (p.id !== undefined && u.localId === p.id)) && u.members.includes(p.sid))));
   return pinned.length === st.pinned.length ? st : { ...st, pinned };
+}
+
+/** The lists the federation router publishes on `window.__rompFed` (federation.ts start()) that the pin
+ *  prune reads; any may be absent — a single-kernel page runs no router, an older one lists less. */
+export interface RouterHosts { hosts?: () => string[]; down?: () => string[]; pending?: () => string[] }
+
+/** The remote hosts whose sessions this pane CAN know right now — prunePinned's `hosts`, the "this entry
+ *  can be judged": attached (`hosts`), with the tunnel up (not `down`), and with this pane's own copy of
+ *  their tab list in hand (not `pending` — the router's set of attached hosts whose tabOrder has not
+ *  reached the pane: the seconds after a page load or an attach, or a stretch where the relay socket
+ *  never opens while the kernel's tunnel probe answers). A host in that set is up and lists sessions,
+ *  and none of them is a known tab here yet — judged, every pin on its sessions would drop (round 6 of
+ *  the 2026-09-06 review). A detached host's sessions left the strip with it, and a down host's never
+ *  arrived on a page loaded during the outage; none of this is a session's end, so their pins stand
+ *  until the host's tabs are here. No router → no remote host: every sid is local there, and local sids
+ *  are always judged. */
+export function reachableFrom(fed: RouterHosts | null | undefined): Set<string> {
+  const list = (k: "hosts" | "down" | "pending"): string[] => (fed && typeof fed[k] === "function" ? fed[k]!() : []) || [];
+  const down = new Set(list("down")), pending = new Set(list("pending"));
+  return new Set(list("hosts").filter((h) => !down.has(h) && !pending.has(h)));
 }
 
 /** A tag that kept its id and changed its name between two views blobs: `local` for one of this

@@ -11,7 +11,7 @@ import * as path from "node:path";
 import { viewTagUnion, type TagUnion } from "./session-views";
 import { sectionTabs, anySectioned, homeTag, parseTabGroups, readTabGroups, writeTabGroups, isSectionCollapsed,
          toggleSectionCollapsed, setSectionCollapsed, planStrip, reorderTagOrder, applyTagOrder, TABGROUPS_KEY,
-         DEFAULT_COLLAPSED, sectionRef, isPinned, setPinned, togglePinned, prunePinned, tagRenames, followTagRenames, headWords,
+         DEFAULT_COLLAPSED, sectionRef, isPinned, setPinned, togglePinned, prunePinned, reachableFrom, tagRenames, followTagRenames, headWords,
          type TabSection, type SectionRef, type TabGroupsState } from "./tab-groups";
 import { sectionTodoFlag, sectionTodoTitle, sectionPipTitle } from "./tab-state";
 
@@ -953,7 +953,7 @@ test("executed: prunePinned drops the pins of tags and sessions that no longer e
   assert.ok(!plan.includes("prunePinned") && !plan.includes("followTagRenames"), "the plan never prunes or rewrites");
 });
 
-test("executed: a host DETACHED or DOWN takes its sessions out of the strip's knowledge, and the pin row's prune leaves their entries untouched — remote-only and mixed — so the pins render again when the host reports; a reachable host's closed session and a local one still prune; LIMIT: a local tab's pin under a section only the host's tag made", () => {
+test("executed: a host DETACHED, DOWN, or PENDING (attached and up, its tab list not yet in this pane) takes its sessions out of the strip's knowledge, and the pin row's prune leaves their entries untouched — remote-only and mixed — so the pins render again when the host's tabs arrive; a reachable host's closed session and a local one still prune; LIMIT: a local tab's pin under a section only the host's tag made", () => {
   // host A's infra holds A:m1, as does local infra (g9); A's review holds web (the host tagged one of ours);
   // host B's pool holds B:m1; local qa (g1) holds tests
   const A = rt("TESTHOST-A", "t1", "infra", ["TESTHOST-A:m1"]);
@@ -992,11 +992,32 @@ test("executed: a host DETACHED or DOWN takes its sessions out of the strip's kn
   // a REACHABLE host's session the host reports gone IS judged and goes, as a local closed session does
   assert.deepEqual(prunePinned(st, all, new Set(["tests", "web", "TESTHOST-A:m1", "loose"]), HOSTS).pinned, [{ sid: "TESTHOST-A:m1", name: "infra", id: "g9" }, { sid: "web", name: "review" }], "B:m1 closed on a reachable B");
   assert.deepEqual(prunePinned(st, all, new Set(["tests", "TESTHOST-A:m1", "TESTHOST-B:m1", "loose"]), HOSTS).pinned.map((p) => p.sid), ["TESTHOST-A:m1", "TESTHOST-B:m1"], "web closed: a local sid is always judged");
-  // render.ts: the pin row's write passes the hosts the router publishes as attached, less the down ones
+  // the hosts the pin row's write passes (render.ts reachableHosts → reachableFrom): the router's attached hosts
+  // less the down ones, less the ones whose tab list has not reached THIS pane (its pending set): an attached, up
+  // host in that window lists sessions none of which is a known tab here yet, so judged, every pin on them would
+  // drop (round 6 of the 2026-09-06 review)
+  const lists = { hosts: () => ["TESTHOST-A", "TESTHOST-B", "TESTHOST-C"], down: () => ["TESTHOST-C"], pending: () => ["TESTHOST-B"] };
+  assert.deepEqual([...reachableFrom(lists)], ["TESTHOST-A"], "attached, less down, less pending");
+  assert.deepEqual([...reachableFrom({ hosts: () => ["TESTHOST-A"] })], ["TESTHOST-A"], "a router without the other lists: attached is reachable");
+  assert.deepEqual([...reachableFrom(undefined)], [], "no router (a single-kernel page): no remote host");
+  // the page reloaded with B attached and up; the local tab list landed, B's is a relay hop behind, and the user
+  // toggles tests' pin in that window: B's entry is not judged — B's tabs are not here to judge it by
+  const knownEarly = new Set(["tests", "web", "TESTHOST-A:m1", "loose"]);
+  const early = reachableFrom({ hosts: () => ["TESTHOST-A", "TESTHOST-B"], down: () => [], pending: () => ["TESTHOST-B"] });
+  assert.deepEqual(prunePinned(togglePinned(st, secOf(all, "qa"), "tests"), all, knownEarly, early).pinned.map((p) => p.sid), ["TESTHOST-A:m1", "TESTHOST-B:m1", "web", "tests"], "B:m1's pin waits for B's tabs");
+  assert.deepEqual(prunePinned(togglePinned(st, secOf(all, "qa"), "tests"), all, knownEarly, HOSTS).pinned.map((p) => p.sid), ["TESTHOST-A:m1", "web", "tests"], "(judged by attached-and-up alone, as before round 6, it dropped)");
+  // …and the same window on A's REATTACH, whose entries the detach left standing: A:m1 not yet known, A pending
+  const knownReattach = new Set(["tests", "web", "TESTHOST-B:m1", "loose"]);
+  const reattach = reachableFrom({ hosts: () => ["TESTHOST-A", "TESTHOST-B"], down: () => [], pending: () => ["TESTHOST-A"] });
+  assert.equal(prunePinned(pruned, all, knownReattach, reattach), pruned, "A's entry stands through the handshake");
+  assert.deepEqual(prunePinned(pruned, all, knownReattach, HOSTS).pinned.map((p) => p.sid), ["TESTHOST-B:m1", "tests"], "(judged before its tabs arrived, it dropped — and folded away when they did)");
+  // render.ts reads the router's lists through the helper; federation.ts publishes all three on __rompFed
   const RH = RENDER.slice(RENDER.indexOf("function reachableHosts("), RENDER.indexOf("function tabGroups("));
-  assert.match(RH, /const fed = \(window as any\)\.__rompFed;/);
-  assert.match(RH, /fed\.hosts\(\)/); assert.match(RH, /fed\.down\(\)/);
-  assert.match(RH, /return new Set\(hosts\.filter\(\(h\) => !down\.has\(h\)\)\);/);
+  assert.match(RH, /^function reachableHosts\(\): Set<string> \{ return reachableFrom\(\(window as any\)\.__rompFed\); \}/m);
+  const FED = ui("webview", "federation.ts");
+  assert.match(FED, /hosts: \(\) => this\.hostSeq\.filter\(\(h\) => h !== LOCAL\),/);
+  assert.match(FED, /down: \(\) => \[\.\.\.this\.downHosts\],/);
+  assert.match(FED, /pending: \(\) => this\.pendingFor\(\),/, "the pending set the shell's network panel reads, published for the panes too");
 });
 
 test("executed: the pin persists with the fold state under romp:tabgroups, survives the fold writes, junk entries drop, and the store's earlier shape migrates on read; unpin hides the tab again", () => {
