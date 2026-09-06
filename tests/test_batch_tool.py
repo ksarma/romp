@@ -618,6 +618,37 @@ class Assemble(_Base):
         p = fx.ok("verify", "b1", "--sweep", "x")
         self.assertIn("#108 merge carries a recorded resolution (resolved by the batcher, per hunk) in notes.txt", p.stdout)
 
+    def test_a_stray_staged_path_holding_a_marker_line_is_refused_as_stray_not_as_a_marker(self):
+        """The two refusals at --continue have different advice: a stray path is restored from the
+        merge's own tree, a staged marker is resolved and re-added. The marker scan used to run over
+        every differing path BEFORE the subset rule, so a fixture about conflict markers staged
+        alongside the resolution was refused as 'a conflict marker is still staged', with advice that
+        cannot be followed; the stray refusal comes first, and markers are looked for only in the
+        conflicted files and the paths the subset rule allows."""
+        fx = self.fx
+        self.conflict_pair()
+        fx.ok("plan", "--name", "b1")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g\nthree\n")
+        os.makedirs(os.path.join(wt, "tests", "fixtures"))
+        with open(os.path.join(wt, "tests", "fixtures", "markers.txt"), "w") as f:
+            f.write("<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> theirs\n")
+        fx._git("add", "notes.txt", "tests/fixtures/markers.txt", cwd=wt)
+        p = fx.run("assemble", "b1", "--continue", "--reviewed", "r")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("also changes tests/fixtures/markers.txt, outside the conflicted files (notes.txt)", p.stderr)
+        self.assertNotIn("conflict marker", p.stderr)
+        m = re.search(r"git restore --source=([0-9a-f]{40}) --staged --worktree -- tests/fixtures/markers.txt", p.stderr)
+        self.assertIsNotNone(m, p.stderr)
+        self.assertEqual(fx.chain("b1"), ["Merge #101: PR 101 on a"], "nothing was committed")
+        # The advice works: the tree has no such path, so the restore is a removal from the index.
+        fx._git("rm", "-q", "--cached", "--", "tests/fixtures/markers.txt", cwd=wt)
+        os.remove(os.path.join(wt, "tests", "fixtures", "markers.txt"))
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "r")
+        self.assertEqual(fx.dev_git("show", "batch/b1:notes.txt"), "one\ntwo-a-g\nthree")
+
     def test_verify_catches_a_stray_file_amended_into_a_resolved_merge_and_the_body_shows_it(self):
         fx = self.fx
         self.conflict_pair()

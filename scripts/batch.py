@@ -788,18 +788,17 @@ def commit_resolution(wt, files):
     the subset rule: the result may differ from the merge git makes of the two parents by itself ONLY
     in the conflicted files (plus upstream/ entries for a row conversion). Anything else staged would
     land inside the merge commit unseen; the refusal names the paths and the tree that holds the
-    merge's own content for them. The marker scan reads the conflicted files and every path that
-    differs from that tree: a conflicted file left as merge-tree wrote it does not differ from it.
-    The parents are named by SHA, as verify names them, so the two merge-trees are the same object
-    (the identifiers label the markers). Returns (sha, paths that differ from the clean merge)."""
+    merge's own content for them. The subset rule is checked first: a stray path is a stray path
+    whatever it holds, and the marker refusal's advice (resolve, `git add`) is wrong for one. The
+    marker scan then reads the conflicted files and every path that differs from that tree (all of
+    them allowed by now): a conflicted file left as merge-tree wrote it does not differ from it. The
+    parents are named by SHA, as verify names them, so the two merge-trees are the same object (the
+    identifiers label the markers). Returns (sha, paths that differ from the clean merge)."""
     index_tree = git("write-tree", cwd=wt)
     mt, kind, _ = merge_tree_of(git("rev-parse", "HEAD", cwd=wt), git("rev-parse", "MERGE_HEAD", cwd=wt), wt)
     if mt is None:
         raise Fail("this git cannot compare the resolution with the clean merge of its parents (needs git 2.38); the merge is not committed")
     paths = git("diff-tree", "--name-only", "-r", mt, index_tree, cwd=wt).split()
-    marked = marker_paths(index_tree, sorted(set(paths) | set(files)), wt)
-    if marked:
-        raise Fail("a conflict marker is still staged in %s; resolve it, `git add` the file, then run --continue again" % ", ".join(marked))
     stray = stray_resolution_paths(files, paths)
     if stray:
         raise Fail("the staged merge also changes %s, outside the conflicted files (%s). A resolution may change only "
@@ -807,6 +806,9 @@ def commit_resolution(wt, files):
                    "`git restore --source=%s --staged --worktree -- %s`, or move that change into a separate `batch:` "
                    "commit after the merge; then run --continue again."
                    % (", ".join(stray), ", ".join(files), mt, " ".join(stray)))
+    marked = marker_paths(index_tree, sorted(set(paths) | set(files)), wt)
+    if marked:
+        raise Fail("a conflict marker is still staged in %s; resolve it, `git add` the file, then run --continue again" % ", ".join(marked))
     git("commit", "--quiet", "--no-edit", cwd=wt)
     return git("rev-parse", "HEAD", cwd=wt), paths
 
