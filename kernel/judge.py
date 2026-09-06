@@ -3058,7 +3058,7 @@ def load_goals(fsid):
     (this function's fallback), or the journal exists but could not be read (_replay_overrides' OSError
     path). An ABSENT store file is not marked: the fresh empty store IS what disk holds. Readers that cache
     a load's answer by the files' identity consult the mark before caching: the kernel's awaiting-lift
-    gate (_LIFT_GATE) today; the absent-store memo in a following change."""
+    gate (_LIFT_GATE) and the absent-store predicate memo (_absent_store_flags)."""
     _goal_io_bump("loads")
     try:
         store = _guard_nodes(json.loads((GOALDIR / (fsid + ".json")).read_text()))
@@ -12612,7 +12612,8 @@ def _absent_store_flags(fsid, loaded=None, idents=None):
     """(open_handoff, owed_distill) for a store no discovered session owns, or None when the load
     itself failed (the caller skips the store this pass, as the sweeps always did). Memoized on
     _store_identity; a miss loads once and evaluates both predicates, so the two sweeps of one pass
-    share one load and an unchanged store costs three stats per sweep. `loaded`/`idents` are
+    share one load and an unchanged store costs three stats per sweep. A load that FELL BACK (the
+    store's `_unread` mark, see load_goals) is answered but not memoized. `loaded`/`idents` are
     run_propagate's per-pass dicts: a store this pass already read (identity taken before the read,
     object unmutated — every dirty sender is saved and dropped before the sweep) is evaluated from
     that object instead of read again, and a store read here is left in `loaded` for the sender loop."""
@@ -12636,6 +12637,15 @@ def _absent_store_flags(fsid, loaded=None, idents=None):
             loaded[fsid] = store
             idents[fsid] = key
     flags = (_open_handoff_flag(store), _owed_distill_flag(store))
+    if store.get("_unread"):
+        # The object is NOT what its files say (load_goals: the store file exists but did not read or
+        # parse, so this is the fresh-empty fallback; _replay_overrides: the journal exists but did not
+        # read, so user gestures are missing). Answer this pass from it, as the sweeps always did, but
+        # never memoize: the identity describes files this object does not reflect, and nothing on
+        # disk need change before the next read succeeds (an EMFILE, an EIO), so an entry here would
+        # serve "nothing open, nothing owed" — or an un-resolved tracker — until the store's next
+        # write, which for a dead store may never come.
+        return flags
     with _ABSENT_FLAGS_LOCK:
         _ABSENT_FLAGS[path_s] = (key, flags)
     return flags
