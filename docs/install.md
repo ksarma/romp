@@ -31,6 +31,16 @@ SDK backend's venv must be built with the same interpreter (`romp-sdk-setup`
 reads `ROMP_PYTHON` too). Web Push works on that build: `cryptography`, its soft
 dependency, ships free-threaded wheels, and CI installs it on the 3.14t cell.
 
+Installing another interpreter can move the kernel onto it. `uv python install
+<version>` puts a `python3.X` shim in `~/.local/bin`, which `pick_python`
+searches, so at its next restart the kernel runs the newest version it finds
+while the SDK venv stays built for the old one, and every SDK session then fails
+at import. Install extra interpreters with `uv python install --no-bin <version>`
+and reach them through `uv python find <version>` or a venv, never as a bare
+`python3.X` on `PATH`. The kernel and its SDK venv must share one interpreter, so
+a move to 3.14t goes in this order: set `ROMP_PYTHON`, rebuild the SDK venv on it
+with `bin/romp-sdk-setup`, run the test suite there, then restart.
+
 ## Install
 
 ```bash
