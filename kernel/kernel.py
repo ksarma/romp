@@ -2462,6 +2462,16 @@ def _member_str(m):
 _LENS_SURFACES = ("chat", "timeline", "outline")   # per-surface selections (the user 2026-08-25); the feed's is client-local
 
 
+def _tag_name_basis(n):
+    """The STORED spelling of a tag name — clamped to _VIEWS_MAX_NAME, then stripped (round 5 of the
+    2026-09-05 review gave the tag rows this basis; round 6 gives it to every name-keyed field). A
+    lens entry or an order entry read on any other basis names nothing: a store that already held a
+    padded twin ("web " beside "web") read both rows as "web" on the first post-upgrade read while
+    its lens and order still carried "web ", so the surface filtered to it showed no session and the
+    tag fell to the end of the order. "" for a non-string or an all-whitespace name."""
+    return str(n)[:_VIEWS_MAX_NAME].strip() if isinstance(n, str) else ""
+
+
 def _norm_lens(x, tags):
     """One surface's selection in the shared TagLens shape ({all} | {none?, tags?:[names]} — the
     feed-authored model, manager-sanctioned as the shared shape 2026-08-25). Tag entries are NAMES
@@ -2472,8 +2482,9 @@ def _norm_lens(x, tags):
         return {"all": True}
     names = []
     for n in (x.get("tags") if isinstance(x.get("tags"), list) else []):
-        if isinstance(n, str) and n[:_VIEWS_MAX_NAME] not in names:
-            names.append(n[:_VIEWS_MAX_NAME])
+        nm = _tag_name_basis(n)                  # the stored basis, so the entry names the stored tag
+        if nm and nm not in names:
+            names.append(nm)
     lens = {}
     if x.get("none"):
         lens["none"] = True
@@ -2565,8 +2576,9 @@ def _norm_timeline_views(d):
     # drag. Absent stays absent, so pre-order blobs round-trip byte-identical.
     order = []
     for n in _lst(d.get("tagOrder"))[:_VIEWS_MAX_TAGS * 2]:
-        if isinstance(n, str) and n and n[:_VIEWS_MAX_NAME] not in order:
-            order.append(n[:_VIEWS_MAX_NAME])
+        nm = _tag_name_basis(n)                  # the stored basis, so the entry ranks the stored tag
+        if nm and nm not in order:
+            order.append(nm)
     if order:
         out["tagOrder"] = order
     # `at` — the store's write stamp, served to every client and echoed back with its blob: the

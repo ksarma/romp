@@ -65,6 +65,25 @@ class TagOrderRoundTrip(unittest.TestCase):
         n = km._norm_timeline_views({"tags": [G1], "tagOrder": "pool"})
         self.assertNotIn("tagOrder", n, "a wrong-typed order drops whole, never raises")
 
+    def test_lens_and_order_entries_read_on_the_stored_name_basis(self):
+        """Round 6 of the 2026-09-05 review: tag rows were clamped AND stripped (round 5) while lens
+        and order entries were only clamped, so a store that already held a padded twin ("web "
+        beside "web") read both rows as "web" on its first post-upgrade read while its lens and
+        order still said "web " — the surface filtered to it showed no session, the tag fell to the
+        end of the order. One basis everywhere: cap, then strip; empty after the strip drops."""
+        padded = {"id": "g2", "name": "web ", "color": "", "members": ["s1"]}
+        n = km._norm_timeline_views({"tags": [padded], "tagOrder": ["web ", " pool", "   "],
+                                     "actives": {"timeline": {"tags": ["web "]}, "chat": {"tags": ["  "]},
+                                                 "outline": {"tags": ["x" * 60 + "  "]}}})
+        self.assertEqual(n["tags"][0]["name"], "web")
+        self.assertEqual(n["tagOrder"], ["web", "pool"], "order entries strip like the rows; blanks drop")
+        self.assertEqual(n["actives"]["timeline"], {"tags": ["web"]}, "the lens names the stored tag again")
+        self.assertEqual(n["actives"]["chat"], {"all": True}, "a lens of blanks is no selection: All")
+        self.assertEqual(n["actives"]["outline"], {"tags": ["x" * km._VIEWS_MAX_NAME]}, "cap first, then strip — the row's own order")
+        rendered = {"tags": [{"id": "g2", "name": "web", "members": ["s1"]}]}       # the client shape _lens_visible reads
+        self.assertTrue(km._lens_visible(rendered, n["actives"]["timeline"], "s1"),
+                        "the padded lens admits the tag's member: the two spellings are one name")
+
 
 class TimelineViews(unittest.TestCase):
     def setUp(self):
