@@ -188,3 +188,41 @@ test("an open awaiting span and an open judging run ride the edge too; the lane 
   const rowHit = panel.svg.children.findIndex((c: any) => c.tag === "rect" && c._attrs.fill === "transparent" && c._attrs.x === 0);
   assert.ok(rowHit >= 0 && rowHit < idx, "the plot group paints over the rows' hit rects (a bar must take the hover)");
 });
+
+test("a glyph anchored near the left edge hides once its anchor crosses it (where a full draw culls it), so no dot drifts onto the battery column", () => {
+  // a 10-minute window at 1400 px: about 2 px a second, a 9 px drift cap (the battery column's gap). The closed turn
+  // on api starts 0.6 s inside the left edge: its prompt dot (DOT_R 6) already overhangs the edge by about 5 px at
+  // build time, and translated by the cap it would paint 3-4 px over the battery and take its /compact pointer.
+  const data = liveData();
+  data.turns = { [SID1]: [turn("a", NOW - 300, NOW - 100)], [SID2]: [turn("c", NOW - 599.4, NOW - 500)] };
+  const panel = livePanel(data, 600);
+  const tp = panel._tickPlot, g = panel._geom;
+  const bat = panel.svg.children.find((c: any) => c.tag === "rect" && c._attrs.width === 48 && c._attrs.height === 14 && c._attrs.fill !== "transparent");
+  assert.ok(bat, "the lanes carry a context battery, so the gap left of the plot is COLGAP");
+  const batRight = bat._attrs.x + 48;
+  assert.equal(tp.maxDrift, 9);
+  assert.equal(tp.left, g.ml);
+  const dots = plotOf(panel).children.filter((c: any) => c.tag === "circle");
+  const edgeDot = dots.reduce((a: any, b: any) => (a._attrs.cx < b._attrs.cx ? a : b));
+  const farDot = dots.reduce((a: any, b: any) => (a._attrs.cx > b._attrs.cx ? a : b));
+  const inside = edgeDot._attrs.cx - g.ml;
+  assert.ok(inside > 0 && inside < 2, "the edge dot's anchor sits about 0.6 s inside the plot: " + inside + " px");
+  assert.ok(tp.edge.some((e: any) => e.el === edgeDot), "the build listed it as an edge glyph");
+  assert.ok(!tp.edge.some((e: any) => e.el === farDot), "a dot well inside the window is not listed");
+  const paintedLeft = (dot: any) => dot._attrs.cx - tp.applied - 6;   // the dot's left edge on screen: anchor, less the translate, less DOT_R
+  // a small drift, the anchor still inside the plot: visible, and its overhang still short of the battery
+  advance(panel, inside / 2 / tp.k);
+  let before = created; panel._tickLive();
+  assert.equal(created, before, "no rebuild");
+  assert.ok(tp.applied > 0 && tp.applied < inside, "applied " + tp.applied);
+  assert.equal(edgeDot.getAttribute("visibility"), undefined, "anchor inside: visible");
+  assert.ok(paintedLeft(edgeDot) >= batRight, "and off the battery column");
+  // just under the cap: the anchor has crossed the edge, so the dot is hidden, exactly where a full draw drops it
+  advance(panel, (tp.maxDrift - 0.3) / tp.k);
+  before = created; panel._tickLive();
+  assert.equal(created, before, "still no rebuild: the drift is under the cap");
+  assert.ok(tp.applied > tp.maxDrift - 1 && tp.applied < tp.maxDrift, "applied " + tp.applied);
+  assert.equal(edgeDot.getAttribute("visibility"), "hidden", "the dot whose anchor crossed the edge is hidden (and takes no pointer)");
+  assert.ok(edgeDot.getAttribute("visibility") === "hidden" || paintedLeft(edgeDot) >= batRight, "its painted left edge never reaches the battery");
+  assert.equal(farDot.getAttribute("visibility"), undefined, "a dot inside the window stays");
+});

@@ -1788,6 +1788,10 @@ class TimelinePanel {
     tp.applied = px;
     tp.g.setAttribute('transform', 'translate(' + (-px) + ' 0)');
     for (const r of tp.riders) r.el.setAttribute(r.attr, r.base + px);
+    for (const e of tp.edge) {   // an anchored glyph whose anchor crossed the left edge: hidden, as a full draw culls it (inWin) — and hidden takes no pointer
+      const out = e.x - px < tp.left;
+      if (out !== !!e.out) { e.out = out; if (out) e.el.setAttribute('visibility', 'hidden'); else e.el.removeAttribute('visibility'); }
+    }
     g.cT0 = tp.cT0 + dc; g.t0 = g.decompress(g.cT0); g.t1 = g.decompress(g.cT0 + g.winSec);
     this._holdReal = g.t1;
     this._rehover();
@@ -4350,9 +4354,13 @@ class TimelinePanel {
     // Clipping stays arithmetic (this file has no clipPath; see the stub comment): content the build clamped
     // at the window's left edge pokes into the gutter gap by the drift since that build, which the next frame's
     // rebuild resets — the skeleton the kernel re-sends every 5 s bounds it — and _tickTranslate hands the tick
-    // back to a full draw() before the drift reaches the battery column, so nothing is ever painted over.
+    // back to a full draw() before the drift reaches the battery column. Glyphs are anchored rather than clamped
+    // and overhang their anchor, so the ones anchored within that cap of the edge are listed (`edge`) and the
+    // tick hides each once its anchor crosses the edge, where a full draw would have culled it. Nothing is
+    // painted over the gutter either way.
     const plot = el('g', { 'data-tl-plot': '1' });
     const riders = [];          // {el, attr, base}: the live-edge riders — an open bar's/span's/run's width (or x2) is base + the drift
+    const edge = [];            // {el, x}: glyphs anchored within the drift cap of the plot's left edge — the tick hides one once its anchor crosses the edge (_tickTranslate), the event a full draw culls it on
     let liveRiders = false;     // a message glyph or a pending prompt drawn AT the live edge — a path the translate cannot express; the tick then keeps its full draw
     // Pan: the window's RIGHT edge is `now` minus the offset slider; the actual live `now` (nowS)
     // is separate, so pending events still ride the true now (off-screen to the right when panned back).
@@ -4517,6 +4525,7 @@ class TimelinePanel {
     const chipColX = modelColX + (maxModel > 0 ? Math.ceil(maxModel) + COLGAP : 0);
     const ctxColX = chipColX + (maxChip > 0 ? Math.ceil(maxChip) + COLGAP : 0);
     M.left = ctxColX + (maxCtx > 0 ? Math.ceil(maxCtx) + COLGAP : 4);
+    const maxDrift = Math.max(2, (maxCtx > 0 ? COLGAP : 4) - 1);   // how far the tick may translate the plot before a full draw (_tickPlot, below): the gutter gap left of it, less a pixel
     // (the compacting cue is now a solid teal "compression" rect drawn per-lane below — no shared gradient)
 
     // judging band height: a compact judge row per JUDGES entry, shown only when there's judging
@@ -4543,6 +4552,10 @@ class TimelinePanel {
     // x is LINEAR in compressed time → smooth pan (only zoom rescales). Identity compress = plain linear.
     const x = (t) => M.left + (compress(t) - cT0) / winSec * plotW;
     const laneY = (i) => M.top + i * LANE_GAP + LANE_GAP * 0.5;
+    // A glyph is ANCHORED at its x, not clamped at the edge — a dot overhangs by DOT_R, a comment square by half its
+    // side, a seam or a branch bar by its hit — so the drift cap alone does not keep one anchored just inside the
+    // edge off the battery column: the tick hides each listed glyph once its anchor crosses M.left (`edge`).
+    const nearEdge = (node, ax) => { if (ax - M.left < maxDrift) edge.push({ el: node, x: ax }); return node; };
     this._geom = { ml: M.left, plotW, W, H, top: M.top, t0, t1, cT0, winSec, compress, decompress };
 
     // axis — gridlines + time labels. Ticks at real nice intervals, drawn at their compressed x (evenly
@@ -4561,11 +4574,11 @@ class TimelinePanel {
     placedLabels.push([lockCx - lockHalf, lockCx + lockHalf]);
     for (let tk = Math.ceil(t0 / step) * step; tk <= t1; tk += step) {
       if (inGap(tk)) continue;
-      plot.appendChild(el('line', { x1: x(tk), y1: M.top, x2: x(tk), y2: axisY, stroke: PAL().grid, 'stroke-width': 1 }));
+      nearEdge(plot.appendChild(el('line', { x1: x(tk), y1: M.top, x2: x(tk), y2: axisY, stroke: PAL().grid, 'stroke-width': 1 })), x(tk));
       this._mc.font = '10px ' + this._fontFace();
       const hw = this._mc.measureText(clock(tk)).width / 2;
       if (!placeLabel(x(tk) - hw, x(tk) + hw)) continue;
-      const tx = el('text', { x: x(tk), y: axisY + 14, 'text-anchor': 'middle', fill: 'var(--text-muted)', 'font-size': 10 }); tx.textContent = clock(tk); plot.appendChild(tx);
+      const tx = el('text', { x: x(tk), y: axisY + 14, 'text-anchor': 'middle', fill: 'var(--text-muted)', 'font-size': 10 }); tx.textContent = clock(tk); nearEdge(plot.appendChild(tx), x(tk));
     }
     svg.appendChild(el('line', { x1: x(t1), y1: M.top, x2: x(t1), y2: axisY, stroke: PAL().gridStrong, 'stroke-width': 1 }));
     // broken-axis squiggle(s): one per collapsed gap visible in the window (real edges → compressed x).
@@ -4811,15 +4824,15 @@ class TimelinePanel {
         if (cl.t < t0 || cl.t > t1) continue;
         const sx = x(cl.t), sh = BAR_H + 6;
         for (const dx of [-1.6, 1.6]) {
-          plot.appendChild(el('line', { x1: sx + dx - 2, y1: y + sh / 2, x2: sx + dx + 2, y2: y - sh / 2,
-                                       stroke: '#ffffff', 'stroke-width': 1.2, opacity: 0.55, 'pointer-events': 'none' }));
+          nearEdge(plot.appendChild(el('line', { x1: sx + dx - 2, y1: y + sh / 2, x2: sx + dx + 2, y2: y - sh / 2,
+                                                stroke: '#ffffff', 'stroke-width': 1.2, opacity: 0.55, 'pointer-events': 'none' })), sx);
         }
         const hh = el('rect', { x: sx - 6, y: y - 10, width: 12, height: 20, fill: 'transparent' });
         const html = () => '<div class="r"><span class="chip" style="background:#9cd2ff"></span><span class="who" style="color:' + s.color + '">' + esc(s.name) + '</span><span class="k">cleared</span></div><div class="b">conversation cleared · a fresh one starts here · ' + clock(cl.t) + '</div>';
         hh.addEventListener('mouseenter', (e) => this.showTip(html(), e));
         hh.addEventListener('mousemove', (e) => this.moveTip(e));
         hh.addEventListener('mouseleave', () => this.hideTip());
-        plot.appendChild(hh);
+        nearEdge(plot.appendChild(hh), sx);
       }
       // name left-aligned; status chip in the shared chip column to its right. ENDED or idle >1h
       // (s.faded) → name/chip/ctx blended toward the surface bg to a uniform low luminance (perceptual
@@ -5130,7 +5143,7 @@ class TimelinePanel {
       if (y1 === y2) return;
       const bTop = Math.min(y1, y2), bH = Math.abs(y2 - y1);
       const bbar = el('rect', { x: bx - BAR_H / 2, y: bTop, width: BAR_H, height: bH, rx: BAR_H / 2, fill: s.color, opacity: 0.85 });
-      plot.appendChild(bbar);
+      nearEdge(plot.appendChild(bbar), bx);
       const bhit = el('rect', { x: bx - 9, y: bTop - 4, width: 18, height: bH + 8, fill: 'transparent' });
       bhit.style.cursor = 'pointer';
       const pname = (data.sessions.find((p) => p.id === br.fromId) || {}).name || '';
@@ -5141,7 +5154,7 @@ class TimelinePanel {
       bhit.addEventListener('mousemove', (e) => this.moveTip(e));
       bhit.addEventListener('mouseleave', () => { bbar.setAttribute('opacity', '0.85'); this.hideTip(); });
       bhit.addEventListener('click', () => { this._select(s.id); this.openChat(s.id, br.cut ? 'branch:' + br.cut : '', false, false, br.t); });
-      plot.appendChild(bhit);
+      nearEdge(plot.appendChild(bhit), bx);
     });
 
     // obstacles for routing — at each event's process-start (a pending event rides `now` via execAt/startAt)
@@ -5390,7 +5403,7 @@ class TimelinePanel {
         ? () => { const u0 = msgUI[msgI]; msgSetLight((u0 && u0.hoverSet) || [msgI], false); if (u0) u0.hoverSet = null; c.setAttribute('r', lit ? DOT_R + 2 : DOT_R); this.hideTip(); }
         : () => { c.setAttribute('r', lit ? DOT_R + 2 : DOT_R); if (linkedHl) linkedHl.setAttribute('opacity', lit ? '0.95' : '0'); this.hideTip(); });
       if (onClick) c.addEventListener('click', onClick);
-      plot.appendChild(c);
+      nearEdge(plot.appendChild(c), cx);
       return c;
     };
 
@@ -5442,7 +5455,7 @@ class TimelinePanel {
         dot(dx, y, isRomp ? '#000' : s.color, tip, () => { this._select(s.id); this.openChat(t.tid || s.id, t.uuid, false, false, startAt(t), 'user'); }, null, dotLit(t, dagOrHover));   // romp message → a black dot (the swirl reads on it); prompt-intent → time fallback restricted to user turns
         if (isRomp) {                                    // the romp favicon swirl INSIDE the black dot; pointer-events:none → the dot keeps its hover/click
           const sz = DOT_R * 1.9;
-          plot.appendChild(el('image', { x: dx - sz / 2, y: y - sz / 2, width: sz, height: sz, href: mediaUrl('romp-swirl-glyph.svg'), 'pointer-events': 'none' }));
+          nearEdge(plot.appendChild(el('image', { x: dx - sz / 2, y: y - sz / 2, width: sz, height: sz, href: mediaUrl('romp-swirl-glyph.svg'), 'pointer-events': 'none' })), dx);
         }
       });
     });
@@ -5469,7 +5482,7 @@ class TimelinePanel {
         sq.addEventListener('mousemove', (e) => this.moveTip(e));
         sq.addEventListener('mouseleave', () => { qGrow(0); this.hideTip(); });
         sq.addEventListener('click', () => { this._select(s.id); this.openChat(s.id, c.uuid, false, false, c.t); });
-        plot.appendChild(sq);
+        nearEdge(plot.appendChild(sq), cx);
       });
     });
 
@@ -5558,11 +5571,13 @@ class TimelinePanel {
     // the compressed now the build stood at and the px-per-compressed-second scale. A message glyph riding the
     // live edge leaves it null — the tick then does the full draw it always did. The drift cap is the gutter gap
     // left of the plot (COLGAP past the battery column, 4 px without one): content the build clamped at the
-    // window's left edge may poke that far into the gap before the tick hands back to a full draw.
+    // window's left edge may poke that far into the gap before the tick hands back to a full draw; the glyphs
+    // anchored within the cap of the edge (`edge`, nearEdge) overhang their anchor, and the tick hides each once
+    // its anchor crosses the edge (`left`), so none reaches the battery column either.
     this._tickPlot = liveRiders ? null : {
-      g: plot, riders, cNow, cT0, winSec, k: plotW / winSec, applied: 0,
+      g: plot, riders, edge, left: M.left, cNow, cT0, winSec, k: plotW / winSec, applied: 0,
       trailing: !!(cmap && cmap.gaps.length && cmap.gaps[cmap.gaps.length - 1].trailing),
-      maxDrift: Math.max(2, (maxCtx > 0 ? COLGAP : 4) - 1),
+      maxDrift,
     };
 
     // far-right ⟩⟩ jump-to-now button — only when held back off the live edge (unpinned)
