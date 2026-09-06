@@ -40,14 +40,18 @@ def _registry_row(dirpath, pid, session_id, sock, started_at=1000):
 
 # Where an inbox socket lives (2026-09-06): the run's private temp root — tempfile.gettempdir(),
 # which tests/conftest.py points at a romp-tests-* directory it removes when the run ends — when the
-# socket path fits in sun_path, and the temp dir this process was handed before that redirect only
-# when it would not. sun_path is 108 bytes on Linux and 104 on macOS, NUL included; an xdist
+# socket path fits in sun_path, and the system temp dir the run was handed before that redirect
+# only when it would not. sun_path is 108 bytes on Linux and 104 on macOS, NUL included; an xdist
 # worker's root nested under a macOS TMPDIR puts the socket at 116 bytes
-# (/var/folders/../T/romp-tests-x/romp-tests-x/rompsockx/inbox.sock), the Linux equivalent at 72.
-# conftest records the handed dir as ROMP_TESTS_SYSTEM_TMPDIR (the system temp dir, or the
-# controller's root for a worker); without conftest, gettempdir() already is that dir. Either way
-# close() removes the directory. Before this the dir was pinned to "/tmp" and never removed:
-# the pin bypassed the redirect and every run left three rompsock* directories behind.
+# (/var/folders/../T/romp-tests-x/romp-tests-x/rompsockx/inbox.sock), the Linux equivalent under
+# /tmp at 72 and under a TMPDIR of 60 bytes or more past 108. conftest records the handed dir once
+# per run as ROMP_TESTS_SYSTEM_TMPDIR and a worker inherits the controller's record — not the
+# controller's root, which under such a TMPDIR is itself too deep (recording that had four tests
+# here failing at bind with "AF_UNIX path too long" under -n 2, 2026-09-06); without conftest,
+# gettempdir() already is that dir. A handed dir too deep to hold the socket at all (about 80
+# bytes) fails at bind, loudly, as any AF_UNIX user under it would. Either way close() removes the
+# directory. Before this the dir was pinned to "/tmp" and never removed: the pin bypassed the
+# redirect and every run left three rompsock* directories behind.
 _SUN_PATH_MAX = 104 if sys.platform == "darwin" else 108
 _SOCK_NAME = "inbox.sock"
 
@@ -130,8 +134,13 @@ class InboxDir(unittest.TestCase):
         inbox.close()                                      # a second close is a no-op
 
     def test_a_path_too_long_for_the_private_root_falls_back_to_the_handed_dir(self):
-        handed = tempfile.gettempdir()
-        deep = os.path.join(handed, "d" * 120)             # deep + /rompsockXXXXXXXX/inbox.sock > 108
+        # "Handed" is the run's record, not this process's gettempdir(): in an xdist worker the
+        # latter is the worker's root, nested in the controller's, which under a long TMPDIR is
+        # itself too deep for the socket (122 bytes under a 52-byte TMPDIR, seen under -n 8).
+        handed = os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir()
+        if len(os.fsencode(os.path.join(handed, "rompsock" + "x" * 8, _SOCK_NAME))) >= _SUN_PATH_MAX:
+            self.skipTest("the temp dir this run was handed is itself too deep for sun_path")
+        deep = os.path.join(tempfile.gettempdir(), "d" * 120)   # deep + /rompsockXXXXXXXX/inbox.sock > 108
         os.mkdir(deep)
         self.addCleanup(shutil.rmtree, deep, ignore_errors=True)
         with patch.dict(os.environ, {"ROMP_TESTS_SYSTEM_TMPDIR": handed}), patch.object(tempfile, "tempdir", deep):

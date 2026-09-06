@@ -32,10 +32,14 @@ import pytest
 # no-op on what the other removed; nothing runs after an os._exit (pytest-timeout's thread method
 # ends a hung run that way), so a hang leaves two top-level entries in the system temp dir, this
 # root and that state dir, both under the romp-tests- prefix.
-# The temp dir this process was handed is recorded before the redirect: a test that must leave
+# The system temp dir — the one the RUN was handed, before any redirect — is recorded once, by the
+# first conftest to import: an xdist worker inherits the controller's record along with its TMPDIR
+# (setdefault, not an assignment: a worker's own gettempdir() is the controller's root, and
+# recording that put the worker's fallback one level deeper than a socket path can bear under a
+# long TMPDIR — four socket tests failed at bind under -n 2, 2026-09-06). A test that must leave
 # the root (an AF_UNIX socket path that would not fit sun_path under a nested root) falls back to
 # it, and only to it — a literal system path in a `dir=` would bypass the redirect (one did).
-os.environ["ROMP_TESTS_SYSTEM_TMPDIR"] = tempfile.gettempdir()
+os.environ.setdefault("ROMP_TESTS_SYSTEM_TMPDIR", tempfile.gettempdir())
 _TMP_ROOT = tempfile.mkdtemp(prefix="romp-tests-")
 tempfile.tempdir = _TMP_ROOT
 os.environ["TMPDIR"] = _TMP_ROOT

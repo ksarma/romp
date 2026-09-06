@@ -58,8 +58,9 @@ call a literal directory as `dir=` (or `mktemp` a path under `/tmp`): that
 bypasses the redirect, and the hygiene test reads every test file for the
 shape. The one test that must leave the root — an AF_UNIX socket whose path
 would not fit `sun_path` under a nested root — falls back to
-`ROMP_TESTS_SYSTEM_TMPDIR`, the temp dir conftest recorded before redirecting,
-and removes what it made. A root that cannot be removed at run end (a child
+`ROMP_TESTS_SYSTEM_TMPDIR`, the system temp dir conftest recorded once per run
+before redirecting (an xdist worker inherits the controller's record), and
+removes what it made. A root that cannot be removed at run end (a child
 still writing under it, a 000-mode directory a test left behind) is named on
 stderr: `[tests] not removed at run end: <path>`, instead of the run ending
 green over it. The same conftest gives git no global or system config

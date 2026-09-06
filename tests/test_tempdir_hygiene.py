@@ -109,13 +109,21 @@ class PrivateTempRoot(unittest.TestCase):
         sh = _run(["mktemp", "-d", "-u"])   # -u: name only, nothing created
         self.assertEqual(os.path.dirname(sh.stdout.strip()), root, "a shell's mktemp -d lands in it")
 
-    def test_the_handed_temp_dir_is_recorded_and_is_the_roots_parent(self):
+    def test_the_handed_temp_dir_is_recorded_once_and_the_roots_nest_under_it(self):
         # The one sanctioned way out of the root (tests/test_kernel_socket_deliver._socket_dir, for
-        # a socket path that would not fit sun_path) goes to the dir the run was handed, never to a
-        # literal system path.
+        # a socket path that would not fit sun_path) goes to the dir the RUN was handed, never to a
+        # literal system path. Recorded once: serially the root sits directly in it; in an xdist
+        # worker the worker's root sits inside the controller's and the record is still the dir
+        # above both — a worker that re-recorded its own gettempdir() would name the controller's
+        # root, one level too deep for the socket under a long TMPDIR.
         handed = os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR")
         self.assertTrue(handed, "conftest records the temp dir it replaced")
-        self.assertEqual(os.path.realpath(os.path.dirname(tempfile.gettempdir())), os.path.realpath(handed))
+        handed, root = os.path.realpath(handed), os.path.realpath(tempfile.gettempdir())
+        self.assertFalse(os.path.basename(handed).startswith("romp-tests-"), handed)
+        self.assertEqual(os.path.commonpath([handed, root]), handed, root)
+        between = os.path.relpath(root, handed).split(os.sep)
+        self.assertTrue(all(p.startswith("romp-tests-") for p in between), between)
+        self.assertEqual(len(between), 2 if os.environ.get("PYTEST_XDIST_WORKER") else 1, between)
 
     TEMPFILE_CALLS = ("mkdtemp", "mkstemp", "mktemp", "TemporaryDirectory", "NamedTemporaryFile",
                       "TemporaryFile", "SpooledTemporaryFile")
@@ -168,8 +176,11 @@ class RunEndNotice(unittest.TestCase):
         pkg_dir = conftest._PACKAGE_STATE_DIR
         self.assertEqual(pkg_dir, sys.modules["tests"].STATE_DIR)
         self.assertTrue(os.path.isdir(pkg_dir), pkg_dir)
-        self.assertEqual(os.path.realpath(os.path.dirname(pkg_dir)), os.path.realpath(os.environ["ROMP_TESTS_SYSTEM_TMPDIR"]))
-        self.assertNotEqual(os.path.commonpath([tempfile.gettempdir(), pkg_dir]), tempfile.gettempdir())
+        root = tempfile.gettempdir()
+        # A sibling of the root, not a child: both were minted in the dir this process started with
+        # (the system temp dir, or the controller's root in an xdist worker) before the redirect.
+        self.assertEqual(os.path.realpath(os.path.dirname(pkg_dir)), os.path.realpath(os.path.dirname(root)))
+        self.assertNotEqual(os.path.commonpath([root, pkg_dir]), root)
 
     @unittest.skipIf(os.geteuid() == 0, "root can remove a 000-mode directory")
     def test_a_root_that_survives_removal_is_named_on_stderr(self):
@@ -316,7 +327,8 @@ class RunLeavesNothing(unittest.TestCase):
             f.write(LEAKY_MODULE)
         env = dict(os.environ, TMPDIR=fresh, PYTHONDONTWRITEBYTECODE="1")
         for var in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_CURRENT_TEST",
-            "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT"):
+            "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT",
+            "ROMP_TESTS_SYSTEM_TMPDIR"):        # a fresh run records its own handed dir (conftest setdefaults it)
             env.pop(var, None)
         r = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
                             "-q", *extra, os.path.join(case, "test_leak.py")],
