@@ -203,9 +203,19 @@ export interface FileViewActionCtx {
   mtimeNs(): string;
   /** the kernel's media verdict off the Content-Type: an SVG is shown as an image but is TEXT to the kernel's allowlist */
   media(): "image" | "pdf" | "svg" | null;
+  /** the media element the body shows now: the `<img>` for an image (an SVG shown as an image included), the frame
+   *  for a PDF; null for every text view (the SVG Source view too), while the loader holds the body, and once a
+   *  decode failure's pane has replaced the picture. Read from the body itself, so it is never a stale handle */
+  mediaElement(): HTMLImageElement | HTMLElement | null;
+  /** the figures inside a Rendered markdown body, in document order, as of the latest onRendered; [] in every other
+   *  view. A relative figure's `src` is the kernel's /file URL by then and its authored value rides in `data-fv-src`
+   *  (rewriteFigureSrcs); the figures' own load events are the caller's to await */
+  renderedImages(): HTMLImageElement[];
   /** the session the file was opened from, as the hosting document resolves it (the title-bar chip's source) */
   identity(): FileViewIdentity | null;
-  /** runs after every paint of a TEXT body (open, view switch, reload): the panel re-runs its highlight pass */
+  /** runs after every paint of the body: a text body at once (open, view switch, reload), a media body once it shows —
+   *  an image after its load event (at once when it was already complete), a PDF frame at once (whenShown). A Rendered
+   *  body's figures are in the DOM by then with their own loads still pending. The panel re-runs its paint pass */
   onRendered(cb: () => void): void;
   /** runs on mouseup/touchend with a non-collapsed selection inside the body — BEFORE the quote-chip gate, so it works with no chat pane */
   onSelection(cb: (sel: Selection) => void): void;
@@ -599,6 +609,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     text: () => viewText(),
     mtimeNs: () => mtimeNs,
     media: () => (isPdf ? "pdf" : isSvgImage ? "svg" : isImage ? "image" : null),
+    // both read the LIVE body under the mode gate rather than a handle kept at paint time: a reload swaps the
+    // <img>, imgFailed's pane removes it, and a rendered README may itself carry an <img class="fileview-img">
+    // through the sanitizer — the gate keeps such a figure from ever answering as the media element
+    mediaElement: () => (ctx.mode() === "media" ? body.querySelector("img.fileview-img, iframe.fileview-frame") as HTMLElement | null : null),
+    renderedImages: () => (ctx.mode() === "rendered" ? Array.from(body.querySelectorAll(".fileview-md img")) as HTMLImageElement[] : []),
     identity: () => (sid ? identityOf(sid) : null),
     onRendered: (cb) => { renderHooks.push(cb); },
     onSelection: (cb) => { selHooks.push(cb); },
@@ -727,11 +742,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         fireRendered();                         // a text body: the panel's highlight pass runs on it too
         return;
       }
-      body.replaceChildren(isPdf ? pdfBlock(objUrl, path) : imgBlock(objUrl, path, imgFailed));
+      const shown = isPdf ? pdfBlock(objUrl, path) : imgBlock(objUrl, path, imgFailed);
+      body.replaceChildren(shown);
+      whenShown(shown, fireRendered);         // the seam's onRendered for a media body: once the picture shows (Slice 3)
       return;
     }
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
-    body.replaceChildren(rendered ? mdBlock(text) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+    body.replaceChildren(rendered ? mdBlock(text, path, sid) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
     fireRendered();                             // the seam's onRendered: every text paint, so highlights follow the view
   };
 
@@ -1116,7 +1133,7 @@ function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement 
 // away). The file is arbitrary bytes off a disk and marked emits raw HTML verbatim, so — exactly like the
 // chat's md() in render.ts — the output goes through DOMPurify before it ever reaches .innerHTML: an
 // <img onerror> or a javascript: href in a README must never run in the dashboard.
-function mdBlock(text: string): HTMLElement {
+function mdBlock(text: string, path: string, sid: string | null | undefined): HTMLElement {
   const box = el("div", "fileview-md");
   try {
     const dirty = marked.parse(text) as string;
@@ -1126,6 +1143,9 @@ function mdBlock(text: string): HTMLElement {
   } catch {
     box.textContent = text;                            // a marked bug must never cost the content
   }
+  // Figures: a relative src is re-pointed at the kernel, on the SANITIZED DOM (rewriteFigureSrcs, below) — after
+  // DOMPurify, so it touches only the attributes the sanitizer let stand and never re-parses marked's HTML.
+  rewriteFigureSrcs(box, path.slice(0, path.lastIndexOf("/") + 1), sid);
   // Links open a NEW tab: the viewer lives inside the chat pane's document, and letting a README link
   // navigate it away would silently eat the chat until a reload.
   box.querySelectorAll("a[href]").forEach((a) => {
@@ -1144,6 +1164,47 @@ function mdBlock(text: string): HTMLElement {
     } catch { /* leave plain */ }
   });
   return box;
+}
+
+/** A markdown file's relative figures — `![](plot.png)`, `<img src="figs/a.png">` — name files beside the FILE, and a
+ *  browser resolving them against the page URL (/files, /chat, /feed) 404'd every one; only http(s), data: and other
+ *  absolute URLs ever rendered (plans/file-review.md, Images and PDFs; Slice 3). So each relative `src` in the
+ *  sanitized rendered DOM is re-pointed at the kernel's /file route for `<dir of the open file>/<src>` — fileUrl:
+ *  same-origin, cookie-authed, and a remote session's figure relays through /remote/<host>/file exactly as the file
+ *  itself did. Untouched: a src with a scheme (http:, https:, data:, blob:, …), an absolute path (`/…`, so protocol-
+ *  relative `//…` too), and an empty one. `..` segments and `./` pass through as written: the kernel resolves the path
+ *  and gates it, and a client-side normalization would be a second, weaker opinion on what it serves. marked
+ *  percent-encodes destinations (`six seven.png` renders as `six%20seven.png`), so the attribute is decoded back to a
+ *  path first (decodeURI; a malformed escape is taken as written). The authored attribute value survives as
+ *  `data-fv-src` on every rewritten figure: the panel's embed matching (embedFor / imgForRange in file-comments.ts)
+ *  and a region comment's `src` need the source's own spelling, not a URL. An untouched figure's `src` IS that value,
+ *  and an authored `data-fv-src` on one is dropped so the attribute means one thing: this viewer rewrote this src.
+ *  Runs on the DOM after DOMPurify, never on marked's HTML string — a string rewrite would re-parse attribute syntax
+ *  the sanitizer already settled, and a src the sanitizer removed must stay removed. `dir` carries its trailing
+ *  slash ("" for a bare relative file name, which then resolves against the session's cwd like the file did). */
+export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {
+  root.querySelectorAll("img[src]").forEach((node) => {
+    const img = node as HTMLElement;
+    const src = img.getAttribute("src") || "";
+    if (!src || src.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(src)) { img.removeAttribute("data-fv-src"); return; }
+    let rel = src;
+    try { rel = decodeURI(src); } catch { /* a malformed escape: the spelling as written */ }
+    img.setAttribute("data-fv-src", src);
+    img.setAttribute("src", fileUrl(dir + rel, sid));
+  });
+}
+
+// The media body's "shown" moment, for the seam's onRendered (Slice 3: the region overlay sizes itself against
+// the picture, so it must run once there IS one). A PDF frame counts as shown the moment it is in the body — the
+// browser's viewer owns everything inside it and gives no signal to wait for (the same reason pdfBlock arms no
+// error listener). An <img> counts once it has decoded: at once when it already had (`complete` — a blob the
+// browser still holds), else on its load event. A load that lands after the img left the document fires nothing:
+// a reload replaced it, the decode failed and imgFailed's pane took the body, or the viewer closed — what shows
+// then is something else, and an overlay sized against the old picture would frame nothing anyone sees.
+function whenShown(shown: HTMLElement, cb: () => void): void {
+  const img = shown.querySelector("img.fileview-img") as HTMLImageElement | null;
+  if (!img || img.complete) { cb(); return; }
+  img.addEventListener("load", () => { if (img.isConnected) cb(); }, { once: true });
 }
 
 // The image body: ONE <img> aimed at the object URL — never innerHTML, never an iframe. That is the
