@@ -15,13 +15,17 @@ suite's floors (conftest's ROMP_CLAUDE_BIN=/bin/false) exist to prevent by defau
     SDK venv (~/.local/state/romp/sdkvenv, what bin/romp-sdk-setup builds) — the child runs there, so the
     suite's interpreter needs no SDK,
   * a `claude` binary ($ROMP_MOVE_LIVE_CLAUDE, else PATH), and
-  * Claude Code auth the hermetic config dir can use: ANTHROPIC_API_KEY in the environment, or
+  * Claude Code auth the hermetic config dir can use: ANTHROPIC_API_KEY in the environment; or
     $ROMP_MOVE_LIVE_API_KEY_HELPER — a shell command that prints a key, written into the hermetic
-    settings as their apiKeyHelper (the hermetic dir sees none of the operator's own settings).
+    settings as their apiKeyHelper; or, failing both, the `apiKeyHelper` from the user's OWN Claude
+    Code settings ($CLAUDE_CONFIG_DIR/settings.json, default ~/.claude/settings.json), copied into
+    the hermetic settings as-is (the hermetic dir sees none of the operator's own settings otherwise).
+    Either way the helper COMMAND travels, never a key, and this test writes no key to a file.
 CI has none of these and skips cleanly. Synthetic content throughout (an invented sid, an invented
 codeword, temp folders)."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -103,6 +107,26 @@ def _sdk_python():
     return ""
 
 
+def _user_api_key_helper(config_dir=None):
+    """The `apiKeyHelper` command from the user's own Claude Code settings ("" when there is none): the
+    hermetic config dir borrows the COMMAND, so the child authenticates exactly the way the user's real
+    sessions do. Never a key: this test writes none to disk. `config_dir` defaults to
+    $CLAUDE_CONFIG_DIR, else ~/.claude."""
+    d = config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    try:
+        with open(os.path.join(d, "settings.json")) as f:
+            v = json.load(f).get("apiKeyHelper")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return v.strip() if isinstance(v, str) else ""
+
+
+def _api_key_helper():
+    """The apiKeyHelper command the hermetic settings get when ANTHROPIC_API_KEY is unset: the explicit
+    $ROMP_MOVE_LIVE_API_KEY_HELPER first, else the command borrowed from the user's own settings."""
+    return os.environ.get("ROMP_MOVE_LIVE_API_KEY_HELPER") or _user_api_key_helper()
+
+
 def _skip_reason():
     if os.environ.get("ROMP_MOVE_LIVE") != "1":
         return "live move test is opt-in (ROMP_MOVE_LIVE=1): it bills two model turns against a real CLI"
@@ -110,9 +134,41 @@ def _skip_reason():
         return "no interpreter with claude_agent_sdk (this one, $ROMP_SDK_PYTHON, or ~/.local/state/romp/sdkvenv)"
     if not (os.environ.get("ROMP_MOVE_LIVE_CLAUDE") or shutil.which("claude")):
         return "no `claude` binary ($ROMP_MOVE_LIVE_CLAUDE or PATH)"
-    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ROMP_MOVE_LIVE_API_KEY_HELPER")):
-        return "no Claude Code auth for a hermetic config dir (ANTHROPIC_API_KEY or ROMP_MOVE_LIVE_API_KEY_HELPER)"
+    if not (os.environ.get("ANTHROPIC_API_KEY") or _api_key_helper()):
+        return ("no Claude Code auth for a hermetic config dir (ANTHROPIC_API_KEY in the environment, "
+                "ROMP_MOVE_LIVE_API_KEY_HELPER, or an apiKeyHelper in your Claude Code settings)")
     return ""
+
+
+class UserApiKeyHelper(unittest.TestCase):
+    """The lookup the live test's hermetic settings borrow their apiKeyHelper from: the command string
+    when the user's settings name one; "" for a missing dir, unreadable JSON, or settings without the
+    key — and never a default that reads a key from a file."""
+
+    def test_returns_the_configured_command(self):
+        td = tempfile.mkdtemp(prefix="romp-move-live-cfg-")
+        try:
+            with open(os.path.join(td, "settings.json"), "w") as f:
+                json.dump({"apiKeyHelper": " /opt/example/helper --print "}, f)
+            self.assertEqual(_user_api_key_helper(td), "/opt/example/helper --print")
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_empty_without_a_helper(self):
+        td = tempfile.mkdtemp(prefix="romp-move-live-cfg-")
+        try:
+            self.assertEqual(_user_api_key_helper(os.path.join(td, "absent")), "")
+            with open(os.path.join(td, "settings.json"), "w") as f:
+                f.write("{not json")
+            self.assertEqual(_user_api_key_helper(td), "")
+            with open(os.path.join(td, "settings.json"), "w") as f:
+                json.dump({"permissions": {"defaultMode": "default"}, "apiKeyHelper": 7}, f)
+            self.assertEqual(_user_api_key_helper(td), "")
+            with open(os.path.join(td, "settings.json"), "w") as f:
+                json.dump(["not", "an", "object"], f)
+            self.assertEqual(_user_api_key_helper(td), "")
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
 
 
 @unittest.skipIf(_skip_reason(), _skip_reason())
@@ -127,7 +183,7 @@ class LiveSetCwd(unittest.TestCase):
             env = dict(os.environ)
             env.pop("ROMP_CLAUDE_BIN", None)
             if not env.get("ANTHROPIC_API_KEY"):
-                settings["apiKeyHelper"] = os.environ["ROMP_MOVE_LIVE_API_KEY_HELPER"]
+                settings["apiKeyHelper"] = _api_key_helper()
             spath = os.path.join(cfg, "settings.json")
             with open(spath, "w") as f:
                 json.dump(settings, f)
@@ -153,8 +209,11 @@ class LiveSetCwd(unittest.TestCase):
             self.assertIs(res["same_dir"].get("changed"), False)
             self.assertEqual((res["missing"].get("status"), res["missing"].get("reason")), ("rejected", "not_found"))
             self.assertIn(CODEWORD, res["reply"], "the conversation is remembered after the move")
-            slug_b = "-".join(part for part in os.path.realpath(b).split("/") if part)
-            self.assertEqual(res["files"], [os.path.join("-" + slug_b, SID + ".jsonl")],
+            # The CLI's project slug: every non-alphanumeric character of the realpath becomes '-' (what
+            # sdk_backend.transcript_path mirrors). Joining on '/' alone misses the '.' of a temp root like
+            # ~/.cache and the '_' mkdtemp's suffix alphabet can produce, and fails the run for its path.
+            slug_b = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(b))
+            self.assertEqual(res["files"], [os.path.join(slug_b, SID + ".jsonl")],
                              "the transcript lives under the NEW slug only — moved, never copied")
         finally:
             shutil.rmtree(td, ignore_errors=True)
