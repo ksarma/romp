@@ -167,10 +167,17 @@ show it.
 reject, instead of letting them land silently. Turn it on for the file or for its folder,
 and turn it on for the folder a session will write into *before* it writes: only edits made
 while tracking is on are recorded, and a folder can be tracked before its files exist.
-Accepting and rejecting changes arrive with the next update; until then the viewer's
-**Edit** button refuses while changes are pending, because a direct edit would move them,
-and the session's own track-edit keeps working. A session's tools refuse to rewrite an
-image or a PDF as text, so a tracked folder may hold figures.
+Each change is a card in the panel, grouped by the paragraph it falls in, and is marked in
+the file: an insertion is tinted, and a deletion is struck at its point in the Raw view.
+**Accept** keeps the text as it is and drops the record. **Reject** puts the old text back in
+the file. **Accept all** and **Reject all** decide every change at once; Reject all asks you to
+confirm. A deletion has nothing to mark in the Rendered view, so its card offers **Reveal**,
+which opens the Raw view at the deletion; any change the current view cannot show offers it
+too. Reply on a change's card leaves a comment on the change itself, and the session's answer
+comes back to that card. While changes are pending, the viewer's **Edit** button refuses,
+because a direct edit would move them: accept or reject them first. The session's own
+track-edit keeps working. A session's tools refuse to rewrite an image or a PDF as text, so a
+tracked folder may hold figures.
 
 **Send to session** hands everything unsent to the session that owns the file as one
 message, in your words: the comments and replies you wrote since the last send, each with
@@ -178,7 +185,10 @@ what it refers to and the commands the session needs to answer it. The number on
 is what will go, and the confirm lists it, with the message itself one click away. When the
 file was opened from a request under Waiting on you, a checkbox answers that request with
 the same send; when tracking is off, another turns it on first, so the session's revisions
-come back as changes. Both are checked by default. One send answers a request; a request
+come back as changes. When changes are pending, a third checkbox, **accept the pending
+changes**, accepts them all before the send, so the session's later edits arrive as new
+changes instead of folding into an old one; the message then says how many changes you
+accepted and rejected. All are checked by default. One send answers a request; a request
 that named several files is answered by the first, and later sends show no checkbox. The
 panel then says **Sent to** the session and when, or **Queued for** it when the session has
 gone quiet, in which case the message goes when it wakes.
