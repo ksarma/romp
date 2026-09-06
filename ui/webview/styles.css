@@ -3458,6 +3458,12 @@ body.filebrowse-open { overflow: hidden; }
 /* the way out of a refusal: when the file exists but cannot render (413/415), the kernel's words are
    followed by the Download the view could not be — same button treatment as the title bar's */
 .fileview-err-dl { display: block; margin-top: 10px; }
+/* a button inside the dress (the viewer's Download and Reload file, the comments panel's Reload and ✕) is
+   .fileview-btn's 0.82em OF THE VIEWER, not of the 0.86em row it sits in: em nesting compounds (ui/CLAUDE.md,
+   font sizes), and 0.86 × 0.82 rendered them at 0.705em, smaller than every button beside them. Dividing the
+   dress back out keeps ONE button size; the row's words stay the dress's 0.86em. feed.css carries the same
+   rule — the viewer mounts there too (styles-fileview-err-sizes.test.ts computes both). */
+.fileview-err .fileview-btn { font-size: calc(0.82em / 0.86); }
 /* the romp loader, per the loading-state rule: swirl + wordmark + three pulsing accent dots */
 .fileview-load { display: flex; align-items: center; justify-content: center; gap: 7px;
   padding: 30px 0; color: var(--dim); font-size: 0.86em; }

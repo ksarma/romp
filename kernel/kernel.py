@@ -73,6 +73,7 @@ def _dist_body(fp, accept_encoding):
     return plain, "", tag_plain
 
 UI = ROOT / "ui"                             # the browser UI: timeline view + webview sources (served/built from here)
+#                                              vendor/ (pinned sources the bundles ALSO carry) is UI's sibling: _vendor_tree
 NAMES = jd.STATE / "names"
 PORT = int(os.environ.get("ROMP_KERNEL_PORT", "29855"))   # the manager/extension default; env still overrides. Renumbered from 7433 (the user 2026-07-24), which an LLM had picked — so a twin-prompted project plausibly binds it — and whose nearest IANA neighbour is 7443. 29855 was drawn at random from the ports absent from /etc/services, minus common dev defaults, below the 49152 ephemeral floor.
 BIND = os.environ.get("ROMP_SERVE_HOST", "127.0.0.1")   # loopback only; tailnet/phone reach = `tailscale serve` proxying to loopback (docs/guide.md#from-your-phone). Env override is a test seam, not a user knob.
@@ -5722,19 +5723,34 @@ def _bus_converge():
 _DIST_CONVERGE_TRIED = [0.0]
 
 
+def _vendor_tree():
+    """The checkout's vendor/ tree — pinned third-party sources the browser bundles are ALSO built from
+    (ui/webview/anchor-map.ts imports vendor/track-changents/engine.js into the render, feed and files
+    bundles; plans/file-review.md, Vendoring), so both bundle-staleness scans read it beside ui/.
+    Located as UI's sibling rather than from ROOT so that relocating UI relocates it too: the
+    dist-converge tests build a synthetic checkout by pointing UI, CHAT_VIEW and DIST at a temp dir,
+    and a scan that still read the REAL vendor/ would call a synthetic dist stale whenever the checkout
+    was fresher than it (in CI, always). In production UI is ROOT / "ui", so this is ROOT / "vendor"."""
+    return UI.parent / "vendor"
+
+
 def _dist_src_newest():
-    """Newest mtime across the served bundles' INPUTS (the ui/ tree + the esbuild config) — the exact
-    staleness _rebuild_dist cures. Cheap stat sweep, _dist_ver's twin on the source side."""
+    """Newest mtime across the served bundles' INPUTS (the ui/ tree, the vendor/ tree the webview
+    imports from, and the esbuild config) — the exact staleness _rebuild_dist cures. Cheap stat sweep,
+    _dist_ver's twin on the source side. vendor/ for the same reason _bundle_inputs lists it: the
+    bundles carry vendor/track-changents/engine.js, and a re-vendor that touched nothing under ui/
+    left this check reporting the bundles current (the review, 2026-09-06)."""
     newest = 0.0
     try:
         cfg = CHAT_VIEW / "esbuild.js"
         if cfg.is_file():
             newest = cfg.stat().st_mtime
-        for pth in UI.rglob("*"):
-            if pth.suffix in (".ts", ".js", ".css") and pth.is_file():
-                m = pth.stat().st_mtime
-                if m > newest:
-                    newest = m
+        for tree in (UI, _vendor_tree()):
+            for pth in tree.rglob("*"):
+                if pth.suffix in (".ts", ".js", ".mjs", ".css") and pth.is_file():
+                    m = pth.stat().st_mtime
+                    if m > newest:
+                        newest = m
     except OSError:
         pass
     return newest
@@ -31304,10 +31320,11 @@ def _edit_trace(path, sid):
 #      file (<root>/.trackchanges/), and hands everything unsent to the owning session as ONE message.
 #      The kernel never parses the sidecar: one node host script (tools/file-comments-host.mjs, over
 #      the vendored store-io and engine) performs every verb as one load-mutate-write on the owning
-#      kernel's disk. The kernel is the door — path resolution, the file-editing consent, the node
-#      probe, a bounded subprocess with the request on stdin — plus the message builder and the
-#      todo-answering delivery. Two WS ops in _dispatch_ws beside saveFile: fileComments (the disk
-#      verbs) and fileCommentsSend (the message); saveFile itself appends a direct edit to the log.
+#      kernel's disk. The kernel's part is path resolution (to the real file, _file_comments_path),
+#      the file-editing consent, the node probe, a bounded subprocess with the request on stdin, the
+#      message builder and the todo-answering delivery. Two WS ops in _dispatch_ws beside saveFile:
+#      fileComments (the disk verbs) and fileCommentsSend (the message); saveFile itself appends a
+#      direct edit to the log.
 _FILE_COMMENTS_HOST = ROOT / "tools" / "file-comments-host.mjs"   # tests point this at a stub
 _FILE_COMMENTS_TIMEOUT = 10                                        # seconds: one verb is one load-mutate-write
 _AGENT_TOOLING_PROBE = "~/.claude/hooks/track-reply.mjs"           # linked by install.sh from the vendored copy
@@ -31401,27 +31418,50 @@ def _file_comments_call(path, verb, args=None, fence=None):
     return out, None
 
 
+def _file_comments_path(raw, sid):
+    """The absolute REAL path a comments verb, a send, or the edit log acts on, or "" when `raw` cannot
+    become absolute: _resolve_open_path (~ expanded, a relative path against the session's cwd), then
+    os.path.realpath. The real path and not the spelling, because everything that keys on a file's
+    project root is textual: the vendored store layer's findVaultRoot and storePathFor walk the string
+    they are handed, and so do the guard and the CLIs on the path Claude Code hands them — the
+    session's own spelling, under its cwd. A toggle or a comment issued through a symlinked spelling
+    (an Obsidian vault holding `proj -> /repo/docs`, browsed into from the Files pane, which follows
+    directory links) would otherwise write config.json and the sidecar under the LINK's root, while
+    the guard on the session's Write to /repo/docs/x.md, the CLIs, and a status on the real path all
+    resolve /repo and see nothing: the panel showing the file as tracked while the raw write lands
+    unguarded, and comments made on one spelling invisible from the other (the review, 2026-09-06).
+    _save_file already writes through the realpath, so the edit log now records the edit where the
+    sidecar lives; the message to the session names this path too, so its command lines find the
+    store. What this cannot fix: the guard judges the spelling the session writes through, so a
+    session that itself writes via the link is judged on the link's root (plans/file-review.md,
+    Risks). Every refusal text that names the path names this one, tilde-collapsed."""
+    p = _resolve_open_path(str(raw), sid) if isinstance(raw, str) and raw else ""
+    if not p or not os.path.isabs(p):
+        return ""
+    return os.path.realpath(p)
+
+
 def _file_comments_op(msg):
     """The fileComments WS op → its reply dict: fileCommentsResult (every host success field, plus
     reqId and verb) or fileCommentsFailed {reqId, verb, code, error}. Order, each refusal naming the
-    tilde-collapsed path: resolve the path (`unreadable` when it cannot become absolute); refuse every
-    MUTATING verb (all but `status`) while the file-editing consent is off — BEFORE any content check,
-    the same wall _save_file stands behind, and the same phrase the viewer's regex matches, so the
-    panel runs the consent-then-retry branch Save uses; `kernel-only` for log-edit and log-send, the
-    entries the kernel appends itself after a save and after a send — the host would take them from
-    anyone, and one client-minted send entry with a far-future watermark would hide every later comment
-    from the unsent derivation for the rest of the file's life (the review, 2026-09-06); `no-node` when
-    node is absent (status too: the panel hides the action on it); then the host script."""
+    tilde-collapsed path: resolve the path to the real file (_file_comments_path; `unreadable` when
+    it cannot become absolute); refuse every MUTATING verb (all but `status`) while the file-editing
+    consent is off — BEFORE any content check, the same consent gate _save_file checks, and the same
+    phrase the viewer's regex matches, so the panel runs the consent-then-retry branch Save uses;
+    `kernel-only` for log-edit and log-send, the entries the kernel appends itself after a save and
+    after a send — the host would take them from anyone, and one client-minted send entry with a
+    far-future watermark would hide every later comment from the unsent derivation for the rest of the
+    file's life (the review, 2026-09-06); `no-node` when node is absent (status too: the panel hides
+    the action on it); then the host script."""
     rid, verb = msg.get("reqId"), str(msg.get("verb") or "")
 
     def fail(code, error):
         return {"type": "fileCommentsFailed", "reqId": rid, "verb": verb, "code": code, "error": error}
     raw = msg.get("path")
-    p = _resolve_open_path(str(raw), msg.get("sid") or None) if isinstance(raw, str) and raw else ""
-    if not p or not os.path.isabs(p):
+    p = _file_comments_path(raw, msg.get("sid") or None)
+    if not p:
         return fail("unreadable", "cannot open the comments for %s: not an absolute path (no session cwd "
-                                  "to resolve against)" % _tilde(p or str(raw or "")))
-    p = os.path.normpath(p)
+                                  "to resolve against)" % _tilde(str(raw or "")))
     if verb != "status" and not _file_editing_on():
         return fail("editing-off", "cannot write the comments for %s: dashboard file editing is off on this "
                                    "machine — the viewer's Edit button asks to turn it on" % _tilde(p))
@@ -31551,10 +31591,9 @@ def _file_comments_send_op(msg):
         return fail("nothing was sent: this kernel has no session with id %s (on a board showing more than "
                     "one machine, the pane addressed the wrong kernel)" % (sid or "(none)"))
     raw = msg.get("path")
-    p = _resolve_open_path(str(raw), sid) if isinstance(raw, str) and raw else ""
-    if not p or not os.path.isabs(p):
-        return fail("nothing was sent: cannot resolve %s to an absolute path" % _tilde(p or str(raw or "")))
-    p = os.path.normpath(p)
+    p = _file_comments_path(raw, sid)             # the real file: the sidecar and the CLIs key on it
+    if not p:
+        return fail("nothing was sent: cannot resolve %s to an absolute path" % _tilde(str(raw or "")))
     rc = msg.get("comments") or []
     if not isinstance(rc, list) or not all(isinstance(c, dict) for c in rc):
         return fail("nothing was sent: the request's comments were not a list")
@@ -31671,18 +31710,19 @@ def _edit_diff(old, new, name):
 
 
 def _edit_log_before(raw, sid):
-    """Is this save one the comments log may record? → {path} (the normalized absolute path the
-    log-edit call names) or None: a path inside .trackchanges/ itself, a tree with no .trackchanges/
-    anywhere above (no sidecar, log or config entry can exist for it), or no node to run the host
-    script. Path predicates and a PATH probe only — it opens nothing. The text the save replaces comes
+    """Is this save one the comments log may record? → {path} (the absolute REAL path the log-edit
+    call names — _file_comments_path, the path _save_file writes through, so the entry lands in the
+    .trackchanges/ the sidecar lives in) or None: a path inside .trackchanges/ itself, a tree with no
+    .trackchanges/ anywhere above (no sidecar, log or config entry can exist for it), or no node to run
+    the host script. Path predicates and a PATH probe only — it opens nothing. The text the save replaces comes
     out of _save_file's own read (its `prior` argument), made only once every refusal there has been
     passed: the first build read the whole file HERE, ahead of the consent gate, the text-name check,
     the size cap and the mtime fence, so a frame naming a multi-GB blob under a tracked tree was read
     into memory and then refused (the review, 2026-09-06). Called ahead of _save_file so an ordinary
     save on an untracked tree costs no node process."""
     try:
-        p = os.path.normpath(_resolve_open_path(str(raw or ""), sid))
-        if (not os.path.isabs(p) or _under_trackchanges(p) or not _trackchanges_above(p)
+        p = _file_comments_path(raw, sid)
+        if (not p or _under_trackchanges(p) or not _trackchanges_above(p)
                 or not _file_comments_node()):
             return None
         return {"path": p}
@@ -41028,7 +41068,8 @@ def _bundle_inputs(cv):
     vscode-extension/esbuild.js's entry points — the check is only as good as this list, and a file
     missing from it is a change that silently never ships.
 
-    Three roots, because the build has three (see esbuild.js):
+    Four roots, because the build reaches into four (esbuild.js's entry points and the imports it
+    follows from them):
     - `vscode-extension/src` — the extension entry (src/extension.ts).
     - `ui/webview` — the shared browser UI, and where render.ts + styles.css actually live. THIS is
       the one the check used to miss (the user 2026-08-08: the fast-mode badge stayed blue in the chat
@@ -41037,11 +41078,20 @@ def _bundle_inputs(cv):
       luck: a change that happened to also touch src/ rebuilt everything, so it looked like it worked.
     - `ui/romp-timeline-view.js` — not under either directory, but INLINED into timeline-main.ts for
       the VS Code timeline view, so editing it leaves that bundle stale too.
+    - `vendor/` — pinned third-party sources the webview imports INTO the bundles: anchor-map.ts
+      imports vendor/track-changents/engine.js, so the render, feed and files bundles carry it
+      (plans/file-review.md, Vendoring). The fourth recurrence (the review, 2026-09-06): a re-vendor
+      or a new patch under vendor/track-changents/patches/ changes engine.js with nothing under ui/
+      touched, so a restart found dist current and every browser kept the old anchor algorithm while
+      the host script (tools/file-comments-host.mjs) loaded the new one from disk — the panel and the
+      host disagreeing on where a comment sits, with nothing on screen saying why. The scan reads the
+      whole vendor/ tree, .mjs included: an extra rebuild after a re-vendor costs one esbuild run; a
+      bundled file missing from this list ships dark. Located through _vendor_tree (UI's sibling).
 
     Extensions matter as much as directories: a CSS-only change must trigger a rebuild (the user
     2026-06-16 hit a shipped style that never went live because only *.ts was checked). That fix
     covered the extensions and left the directory wrong, which is how the same bug came back."""
-    src, web = cv / "src", UI / "webview"
+    src, web, vend = cv / "src", UI / "webview", _vendor_tree()
     # *.js under ui/webview matters too (the third recurrence, 2026-08-09): gear.js is a plain-JS
     # module feed.ts require()s into the chat bundle — not an entry point, so the entry-point-derived
     # test never saw it either, and a gear-only change (the Fast judging checkbox) shipped dark
@@ -41049,6 +41099,7 @@ def _bundle_inputs(cv):
     # is only as good as this list, and the directories and the extensions have now each burned us.
     return [*src.rglob("*.ts"), *src.rglob("*.css"), *src.rglob("*.js"),
             *web.rglob("*.ts"), *web.rglob("*.css"), *web.rglob("*.js"),
+            *vend.rglob("*.ts"), *vend.rglob("*.css"), *vend.rglob("*.js"), *vend.rglob("*.mjs"),
             *[p for p in [UI / "romp-timeline-view.js"] if p.exists()]]
 
 

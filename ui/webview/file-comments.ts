@@ -16,7 +16,9 @@
 //   • Change awareness by POLLING (2.5 s while the panel is open and the tab visible): HEAD /file on
 //     the file, the sidecar the kernel named, and the project's config.json, comparing X-Romp-Mtime-Ns
 //     as STRINGS. The Files pane has no filesystem watcher; the poll stands in for that event, and the
-//     person's own writes never fire it because every verb reply re-baselines it.
+//     person's own writes never fire it because every verb reply re-baselines it. Replies land in the
+//     order their asks were issued (applyStatus): the kernel runs each ask concurrently and answers when
+//     it finishes, and an older status arriving after a newer write's reply must not put the panel back a step.
 //   • What is unsent is derived from the comments log on the owning kernel, never from browser state
 //     (decision 10): the `status` reply carries it, the button's count is that number.
 //   • Every write sits behind the one file-editing consent, shared with Save (decision 5).
@@ -40,6 +42,16 @@ import {
 
 const POLL_MS = 2500;
 const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
+// How long a `status` ask may stay unanswered before the panel says so. A kernel that has the op answers
+// within its own bound: the host script is cut off at 10 s (contract C2, _FILE_COMMENTS_TIMEOUT) and the
+// refusal is sent then, so an ask still open past that plus the relay was never received by a kernel with
+// the handler — a kernel from before this feature matches no `type` and sends nothing, not even a warn, and
+// federation's drop notice covers only an UNREACHABLE host, not a reachable one that has no answer. There is
+// no event to key on because the older kernel emits none; the timer speaks only when the answer never comes
+// (feed.ts's redistill watch is the same shape, and ui/CLAUDE.md wants every wait to have a backstop).
+// `status` only: a mutating verb that is failed here could have landed on disk, and the kept note would
+// invite a duplicate — those keep waiting for the kernel's own answer.
+const STATUS_DEADLINE_MS = 15000;
 // One send answers a todo (decision 28): a todo naming several files is answered by the FIRST send, and
 // later sends for its other files show no checkbox. A viewer is built per open, so the memory of which
 // todos THIS page has sent for lives at module level — a second file opened from the same todo, a Reload
@@ -170,7 +182,48 @@ const clock = (t: number | string): string => {
 // Sessions pane's gate, reused: skip the tick while hidden, catch up once on the first visible moment
 const paneHidden = (): boolean => document.hidden || window.innerWidth === 0 || window.innerHeight === 0;
 
-type Pending = { verb: string; ok: (m: Record<string, unknown>) => void; fail: (e: { code: string; error: string }) => void };
+type Pending = { verb: string; ok: (m: Record<string, unknown>) => void; fail: (e: { code: string; error: string }) => void; deadline?: ReturnType<typeof setTimeout> };
+/** A status reply as the panel applies it: the kernel's fields plus the reqId of the ask it answers. */
+type Reply = Status & { reqId: number };
+
+// ── which of two status replies read the disk later ────────────────────────────────────────────────
+// Mtimes are decimal nanosecond strings (~1.7e18 exceeds JS's safe integers, so they never become numbers):
+// digit strings order by length, then by text. A value beats null (a sidecar or config that now exists is a
+// later reading than one that says it does not); anything that is not digits is no clock and claims nothing.
+function laterNs(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a) return false;
+  if (!b) return true;
+  if (!/^\d+$/.test(a) || !/^\d+$/.test(b)) return false;
+  return a.length !== b.length ? a.length > b.length : a > b;
+}
+/** Did `a` read a LATER disk than `b`? True when any of the file, the sidecar or the config moved forward. */
+export function newerStatus(a: Status, b: Status): boolean {
+  return laterNs(a.fileMtimeNs, b.fileMtimeNs) || laterNs(a.storeMtimeNs, b.storeMtimeNs) || laterNs(a.configMtimeNs, b.configMtimeNs);
+}
+
+// ── a path the panel prints inline ─────────────────────────────────────────────────────────────────
+// Chromium breaks a line at neither a slash nor anywhere inside an unbroken token, and a flex item's automatic
+// minimum size is that token, so a path wider than the aside's 340px (about 55 characters) pushed .fc-panel
+// into a horizontal scrollbar: the folder button of the tracking choice, the folder-off confirm, and any error
+// row naming a path. The path is appended as text with a <wbr> after every `/` — a break where a reader would
+// put one, and no change to textContent — with `overflow-wrap: anywhere` behind it for a single component
+// wider than the aside (it also lets the item's minimum size shrink below the token).
+/** The path split after every `/`: "/a/b/c.md" → ["/", "a/", "b/", "c.md"]. */
+export function pathSegments(path: string): string[] {
+  return path.match(/[^/]*\/|[^/]+$/g) || [];
+}
+function appendPath(node: HTMLElement, path: string): void {
+  pathSegments(path).forEach((seg, i) => {
+    if (i) node.appendChild(document.createElement("wbr"));
+    node.appendChild(document.createTextNode(seg));
+  });
+  node.style.overflowWrap = "anywhere";
+}
+/** A .fileview-btn is `flex: 0 0 auto`, one line, right for "Reload" and wrong for a label carrying a path:
+ *  this one may shrink to its row and wrap inside, its lines starting at the left like the text around it. */
+function shrinkable(b: HTMLElement): void {
+  b.style.flex = "0 1 auto"; b.style.minWidth = "0"; b.style.textAlign = "left";
+}
 // A passage comment's `range` indexes `text` — the source the selection was made over, or the reload the
 // passage was re-found in (retargetComposer) — so the anchor is always built over the text the offsets
 // belong to, never over whatever sits at those offsets now. `text` travels with every non-null range.
@@ -240,6 +293,7 @@ class Panel {
   root: HTMLElement | null = null;          // the aside, built on first open
   open = false;
   pending = new Map<number, Pending>();
+  appliedReq = 0;                           // the reqId of the newest ask whose reply is showing (applyStatus)
   openCards = new Set<string>();            // keyed expand state: survives every re-render (ui/CLAUDE.md)
   openLog = new Set<string>();              // expanded Log rows, keyed by entry (ts|kind) — the same rule
   logOpen = false;
@@ -370,16 +424,28 @@ class Panel {
   }
 
   // ── the wire ───────────────────────────────────────────────────────────────────────────────────
-  request(verb: string, args?: Record<string, unknown>, fence?: Record<string, string>): Promise<Status> {
+  request(verb: string, args?: Record<string, unknown>, fence?: Record<string, string>): Promise<Reply> {
     const reqId = ++reqSeq;
     const { ctx } = this;
     const msg: Record<string, unknown> = { type: "fileComments", reqId, sid: ctx.sid || undefined, path: ctx.path, verb };
     if (args) msg.args = args;
     if (fence) msg.fence = fence;
-    return new Promise<Status>((ok, fail) => {
-      this.pending.set(reqId, { verb, ok: (m) => ok(m as unknown as Status), fail });
+    return new Promise<Reply>((ok, fail) => {
+      // the reply carries the ask's own reqId (the client's, not the echo) so applyStatus can order it
+      const p: Pending = { verb, ok: (m) => ok({ ...m, reqId } as unknown as Reply), fail };
+      if (verb === "status") p.deadline = setTimeout(() => this.expire(reqId), STATUS_DEADLINE_MS);   // STATUS_DEADLINE_MS: why, and why status only
+      this.pending.set(reqId, p);
       ctx.post(msg);
     });
+  }
+  /** A status ask past its deadline: failed under `no-answer`, naming the machine whose kernel it went to. */
+  private expire(reqId: number): void {
+    const p = this.pending.get(reqId);
+    if (!p) return;
+    this.pending.delete(reqId);
+    const machine = hostOf(this.ctx.sid || "") || "this machine";
+    p.fail({ code: "no-answer", error: "No answer from the kernel on " + machine + " after " + STATUS_DEADLINE_MS / 1000
+      + " s. It may predate file comments: update and restart it, then Reload to ask again." });
   }
   /** The kernel's reply carries two optional texts on a SENT message: `warning` (nothing stamped:
    *  the todo switch is off, or the todo was already settled) and `logWarning` (the comments log
@@ -399,6 +465,7 @@ class Panel {
     const p = this.pending.get(Number(m.reqId));
     if (!p) return;                                    // an older open's reply, or a stale one — lands nowhere
     this.pending.delete(Number(m.reqId));
+    if (p.deadline) clearTimeout(p.deadline);
     if (ok) p.ok(m);
     else p.fail({ code: String(m.code || "failed"), error: String(m.error || "the request failed") });
   }
@@ -406,12 +473,15 @@ class Panel {
   failAll(text: string | null): void {
     if (text === null || !this.pending.size) return;
     const ps = [...this.pending.values()]; this.pending.clear();
-    for (const p of ps) p.fail({ code: "unreachable", error: text });
+    for (const p of ps) { if (p.deadline) clearTimeout(p.deadline); p.fail({ code: "unreachable", error: text }); }
   }
 
   // ── status ─────────────────────────────────────────────────────────────────────────────────────
   /** The first ask, at mount: mounted hidden, revealed when the kernel answers (the GitHub link's
-   *  idiom). A `no-node` refusal keeps the action away for good — the gear's row says why. */
+   *  idiom). A `no-node` refusal keeps the action away for good — the gear's row says why. A kernel that
+   *  never answers (one from before this feature, reached through federation for a remote session's file,
+   *  or the VS Code extension's local one) is named after STATUS_DEADLINE_MS, the way any other refusal
+   *  is: the action appears with the reason as its title and in the panel's head row. */
   probe(): void {
     this.request("status").then((s) => this.applyStatus(s), (e: { code: string; error: string }) => {
       if (e.code === "no-node") return;
@@ -421,15 +491,27 @@ class Panel {
       this.errors.set("head", { text: e.error, reload: false });
     });
   }
-  applyStatus(s: Status): void {
+  /** Replies land in the order their asks were ISSUED, not the order they arrive. The kernel runs each ask
+   *  concurrently and answers as each finishes, so a `status` the poll asked (or onSaved, or Reload, or a
+   *  send's refresh) can be answered after a later comment or toggle whose reply already carried the
+   *  post-write state — and applying it as it came put the panel back a step (the new card gone, Send's count
+   *  down) until the next tick saw the store moved against that regressed baseline and re-read it: a card
+   *  move on no new information (CLAUDE.md). An older ask's reply is dropped, unless its own clocks say it
+   *  read a NEWER disk than what is showing (its run started late and saw a write the applied reply
+   *  predates): then it IS new information and lands. Returns whether it was applied. */
+  applyStatus(s: Reply): boolean {
+    if (this.status && s.reqId < this.appliedReq && !newerStatus(s, this.status)) return false;
+    this.appliedReq = Math.max(this.appliedReq, s.reqId);
     this.status = s;
     this.statusRefusal = null;
+    this.errors.delete("head");                        // a status refusal's row (probe, refresh) is answered by a status
     this.base = pollBaseline(s);
     this.unit.hidden = false;
     this.button.textContent = actionLabel(s);
     this.button.title = s.store ? "Comments and changes kept beside this file" : "Comment on this file, or track a session's changes to it";
     this.ctx.setEditBlocked(editBlockedReason(s.hunks || []));
     this.paintAll();                                   // repaints the highlights and renders the panel
+    return true;
   }
   /** Re-ask status. While the ask is out and no status has ever landed, the cards section shows the romp
    *  loader (ui/CLAUDE.md: a wait wears the loader, never a line claiming a read); a refusal leaves the
@@ -867,18 +949,42 @@ class Panel {
     const s = this.status;
     const { head, cards, send, log } = this.sections;
     if (!this.root.contains(head)) this.root.replaceChildren(head, this.composerBox, cards, send, log);   // built once per open
+    const keep = this.focusKey();                      // the control holding focus, by identity: the rebuild detaches it
     head.replaceChildren(this.renderHead(s));
     this.renderComposer();
     cards.replaceChildren(this.renderCards(s));
     send.replaceChildren(this.renderSend(s));
     log.replaceChildren(this.renderLog(s));
+    if (keep) this.refocus(keep);
+  }
+  // Every section's children are rebuilt per render, and a removed element loses its focus to the body — so
+  // Enter on a card's head opened the card and left the keyboard nowhere: the second Enter did nothing (or
+  // fell through to the chat's composer), and the person had to Tab back in after every toggle. The composer's
+  // input persists for the same reason (the sections comment); the rebuilt controls are re-found instead, by
+  // what they ARE — the action plus the id, key or slot that names its subject — never by their node, the way
+  // render.ts refocuses the active tab after `#tabs` is rebuilt.
+  private focusKey(): { act: string; id?: string; key?: string; slot?: string } | null {
+    const a = document.activeElement as HTMLElement | null;
+    if (!a || !this.root || !this.root.contains(a) || !a.dataset || !a.dataset.act) return null;
+    return { act: a.dataset.act, id: a.dataset.id, key: a.dataset.key, slot: a.dataset.slot };
+  }
+  private refocus(k: { act: string; id?: string; key?: string; slot?: string }): void {
+    if (!this.root || this.root.contains(document.activeElement)) return;   // still focused (the input): nothing to mend
+    for (const n of Array.from(this.root.querySelectorAll("[data-act]")) as HTMLElement[]) {
+      const d = n.dataset;
+      if (d.act !== k.act || d.id !== k.id || d.key !== k.key || d.slot !== k.slot) continue;
+      // the first FOCUSABLE match: a collapsed card carries the head's act and id too, but no tabindex
+      if ((n.tabIndex >= 0 || n.tagName.toUpperCase() === "BUTTON") && !(n as HTMLButtonElement).disabled) { n.focus({ preventScroll: true }); return; }
+    }
   }
   private errRow(slot: string): HTMLElement | null {
     const e = this.errors.get(slot);
     if (!e) return null;
     const row = el("div", "fileview-err fc-err" + (e.warn ? " fc-err-warn" : ""));
     row.dataset.slot = slot;
-    row.appendChild(el("span", undefined, e.text));
+    const text = el("span", undefined, e.text);
+    text.style.overflowWrap = "anywhere";              // the host names paths in its refusals; the poll names its target
+    row.appendChild(text);
     if (e.reload) { const b = btn("Reload", "fcreload"); b.dataset.slot = slot; b.title = "Read the file and its comments again"; row.appendChild(b); }
     const x = btn("✕", "fcerrx", "fileview-btn fc-x"); x.dataset.slot = slot; x.setAttribute("aria-label", "Dismiss"); row.appendChild(x);
     return row;
@@ -914,7 +1020,8 @@ class Panel {
       const pick = el("div", "fc-row fc-choice");
       pick.appendChild(el("span", "fc-note", "Track:"));
       pick.appendChild(btn("This file", "fctrackfile"));
-      const f = btn("Its folder " + folderOf(this.ctx.path), "fctrackfolder");
+      const f = btn("Its folder ", "fctrackfolder");
+      appendPath(f, folderOf(this.ctx.path)); shrinkable(f);
       f.title = "Everything under the folder, files not written yet included";
       pick.appendChild(f);
       pick.appendChild(btn("Cancel", "fctrackcancel"));
@@ -922,7 +1029,9 @@ class Panel {
     }
     if (this.trackStop && s?.trackedBy) {
       const stop = el("div", "fc-row fc-choice");
-      stop.appendChild(el("span", "fc-note", "Stop tracking everything under " + s.trackedBy.entry + "?"));
+      const ask = el("span", "fc-note", "Stop tracking everything under ");
+      appendPath(ask, s.trackedBy.entry); ask.appendChild(document.createTextNode("?"));
+      stop.appendChild(ask);
       stop.appendChild(btn("Stop", "fctrackstop"));
       stop.appendChild(btn("Cancel", "fctrackcancel"));
       head.appendChild(stop);

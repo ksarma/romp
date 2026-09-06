@@ -8,6 +8,9 @@
 // The message builder must produce EXACTLY the text the kernel builds for the same parts (C3): the
 // kernel's builder and this one are tested against the same literal, and the panel shows this text
 // in the send confirm as "what goes" — a preview that differs from the sent message would be a lie.
+// Two of the kernel's rules ride along as ports: the path is ONE shell word on the two command lines
+// (shWord = _sh_word) and the second "To respond" bullet follows the kernel's text allowlist
+// (isTextPath = _is_text_path), never the viewer's own verdict.
 
 // ── the sidecar and reply shapes (track-changents v3 + the host script's status fields) ────────────
 export type Anchor = { quote: string; prefix: string; suffix: string };
@@ -117,17 +120,79 @@ export function neutralizeRompMarkers(text: string): string {
   return String(text ?? "").replace(ROMP_MARKER_OPEN_RE, "<!- -").replace(ROMP_GOALID_BARE_RE, "$1;");
 }
 
+// ── one shell word — the kernel's _sh_word (shlex.quote), ported unchanged ─────────────────────────
+// The session runs the message's two command lines as written, so the kernel puts the path on them as
+// ONE word: an empty string is ''; a word made only of [A-Za-z0-9_@%+=:,./-] passes through unchanged, so
+// an ordinary path reads as the plan's own `--file <absPath>`; anything else is wrapped in single quotes,
+// each single quote inside it written as '"'"'. Single quotes keep a space from splitting the word and
+// leave $, backticks and ; inert (a `Meeting notes.md` used to reach the CLI as …/Meeting plus a stray
+// word, and a `;` in a name ran what followed it). The prose keeps the plain path. Same rule as
+// shlex.quote with re.ASCII's \w; tests/test_kernel_file_comments_hardening.py pins the kernel's cases
+// and file-comments-model-message.test.ts pins this port to the same ones.
+const SH_SAFE_RE = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+export function shWord(s: string): string {
+  const t = String(s ?? "");
+  if (!t) return "''";
+  if (SH_SAFE_RE.test(t)) return t;
+  return "'" + t.replace(/'/g, "'\"'\"'") + "'";
+}
+
+// ── text or not — the kernel's _is_text_path with its _TEXT_EXT and _TEXT_NAMES, ported unchanged ──
+// The kernel decides text vs image/PDF by its own allowlist, never by a client flag (C2), and the second
+// "To respond" bullet follows that verdict: track-edit (or edit-normally) on a text file, regenerate on
+// anything else. The preview reads the path the same way, so a file the viewer showed as neither image
+// nor PDF but the kernel does not call text (a .dat, an .ipynb) previews the bullet the session receives.
+// The lists are copied word for word; the test compares them against kernel.py's literals.
+export const TEXT_EXT: ReadonlySet<string> = new Set((
+  "txt md markdown rst adoc org text log err out diff patch csv tsv"
+  + " py pyi rb rs go java kt kts swift c h cc cpp hpp cs m mm scala clj lua pl php r jl dart"
+  + " js jsx mjs cjs ts tsx json jsonc json5 yaml yml toml ini cfg conf properties"
+  + " html htm xml svg css scss sass less vue svelte astro"
+  + " sh bash zsh fish ps1 bat cmd nix tf hcl proto graphql gql sql prisma"
+  + " lock mod sum gradle cmake mk make bazel bzl gemspec podspec bats"
+).split(" ").filter(Boolean));
+export const TEXT_NAMES: ReadonlySet<string> = new Set([
+  "makefile", "dockerfile", "jenkinsfile", "procfile", "rakefile", "gemfile", "brewfile",
+  "vagrantfile", "caddyfile", "justfile", "license", "licence", "notice", "authors",
+  "changelog", "readme", "todo", "codeowners", ".gitignore", ".gitattributes",
+  ".dockerignore", ".editorconfig", ".env", ".bashrc", ".zshrc", ".profile",
+]);
+
+/** os.path.splitext's extension without its dot: the text after the last dot of `base`, unless every
+ *  character before that dot is itself a dot (".bashrc" and "..md" have no extension). */
+function extOf(base: string): string {
+  const dot = base.lastIndexOf(".");
+  if (dot < 0) return "";
+  for (let i = 0; i < dot; i++) if (base[i] !== ".") return base.slice(dot + 1);
+  return "";
+}
+
+/** Is `fp` a path the kernel serves as TEXT? Its basename lowered, then the extension allowlist or the
+ *  extensionless names that are text by convention — name-based, like the kernel's. */
+export function isTextPath(fp: string): boolean {
+  const p = String(fp ?? "");
+  const base = p.slice(p.lastIndexOf("/") + 1).toLowerCase();
+  return TEXT_EXT.has(extOf(base)) || TEXT_NAMES.has(base);
+}
+
 // ── the message (C3) — byte-identical to the kernel's builder ──────────────────────────────────────
 export type MessageOpts = {
   absPath: string; comments: SendComment[]; accepted: number; rejected: number;
-  tracked: boolean;   // the post-toggle verdict: picks the second bullet
-  media: boolean;     // an image or PDF (the kernel decides by its text allowlist; the panel passes its verdict)
+  tracked: boolean;   // the post-toggle verdict: picks the second bullet on a text file
+  /** The viewer's image-or-PDF verdict. NOT consulted: the kernel picks the second bullet by its text
+   *  allowlist, not a client flag (C2), so the builder reads the path through isTextPath the same way —
+   *  the two verdicts differ on a file the viewer calls neither image nor PDF and the kernel calls not
+   *  text. Optional so the panel's call compiles; the panel can stop computing it. */
+  media?: boolean;
 };
 
 export function buildSendMessage(o: MessageOpts): string {
   // The same fields the kernel neutralizes, so the preview is the sent text byte for byte: the path (it
-  // rides the header and both command lines) and each comment's id, desc and body. The counts are numbers.
+  // rides the header plain and both command lines as one shell word) and each comment's id, desc and
+  // body. The counts are numbers. Text or not is the RAW path's verdict, as the kernel's _is_text_path(p).
   const ap = neutralizeRompMarkers(o.absPath);
+  const word = shWord(ap);
   const n = o.comments.length;
   const lines: string[] = ["[obsidian-diff] I left " + n + " comment" + (n === 1 ? "" : "s") + " on " + ap + ".", ""];
   for (const c of o.comments) {
@@ -135,12 +200,12 @@ export function buildSendMessage(o: MessageOpts): string {
   }
   if (o.accepted + o.rejected > 0) lines.push("I accepted " + o.accepted + " of your changes and rejected " + o.rejected + ".", "");
   let second: string;
-  if (o.media) second = "  • to revise it:       regenerate the file with normal writes; never run track-edit on it";
-  else if (o.tracked) second = "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + ap + ' --thread <id> --old "<exact text>" --new "<replacement>"';
+  if (!isTextPath(o.absPath)) second = "  • to revise it:       regenerate the file with normal writes; never run track-edit on it";
+  else if (o.tracked) second = "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + word + ' --thread <id> --old "<exact text>" --new "<replacement>"';
   else second = "  • to revise the text: edit the file normally, then say what you changed with the reply command above";
   lines.push(
     "To respond:",
-    "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file " + ap + ' --thread <id> --note "<your reply>"',
+    "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file " + word + ' --thread <id> --note "<your reply>"',
     second,
     "",
     "When you have addressed these, ask me for another look the same way you asked for this one,",

@@ -14,12 +14,17 @@
 // load-time rebase that re-places changes after outside edits, anchor location, the write, the
 // comments-log append. The sidecar format is track-changents v3, read and written ONLY through the
 // vendored store-io (never a second implementation of the format); the comments log beside it is
-// romp's own, outside that contract. Three rules the file-review plan fixes and this script keeps:
+// romp's own, outside that contract. Four rules the file-review plan fixes and this script keeps:
 //   * a corrupt or newer-version sidecar is refused, never replaced (loadStoreStatus, not loadStore
 //     or ensureStore, which mint a fresh sidecar over anything they cannot read);
 //   * the same for .trackchanges/config.json: a config that exists but cannot be read (conflict
 //     markers, a half-written file, a newer version) refuses on every verb; it never reads as
-//     "nothing tracked", and set-tracked never rewrites it from that reading (checkConfig);
+//     "nothing tracked", and set-tracked never rewrites it from that reading (checkConfig) — nor
+//     in place: it is replaced by temp-and-rename, so this script never produces the half-written
+//     file it refuses (writeConfigAtomic);
+//   * a refused verb changes nothing on disk. In particular the `.trackchanges/` landmark a loose
+//     file gets on its first comment or tracking toggle (decision 37) is created only after every
+//     check the verb can refuse on has passed (withSidecar, doSetTracked).
 //   * a reply or resolve into a comment the live sidecar lacks refuses `no-comment`; this script
 //     never calls reviveThreadFromSuperseded, which overwrites the live sidecar from a park.
 // The file's text is read only when a verb needs it: to rebase an existing sidecar, to place an
@@ -36,7 +41,7 @@ import { fileURLToPath } from 'node:url';
 import engine from '../vendor/track-changents/engine.js';
 import {
   findVaultRoot, storePathFor, relPathFor, configPathFor, trackedPaths, untrackedPaths,
-  trackedClosure, isTrackedFile, setTracked, loadStoreStatus, saveStore, STORE_VERSION,
+  trackedClosure, isTrackedFile, loadStoreStatus, saveStore, STORE_VERSION,
 } from '../vendor/track-changents/store-io.mjs';
 import { addReply } from '../vendor/track-changents/cli/track-reply.mjs';
 
@@ -609,8 +614,15 @@ function doStatus(ctx) {
   return reply(ctx, { root, paths, ...loadFile(ctx, paths) });
 }
 
-// comment, reply, resolve: fence on the sidecar, load, mutate, save, report.
-function withSidecar(ctx, create, mutate) {
+// comment, reply, resolve: fence on the sidecar, load, decide, then write. `plan(store, text)`
+// runs every check the verb itself can refuse on (the anchor, the comment id) and returns the
+// step that changes the store; it runs BEFORE the landmark, so a refused verb leaves the disk as
+// it found it. Ordered the other way, a passage comment whose passage was edited away between the
+// selection and Enter left an empty `.trackchanges/` beside a loose file — a root for every later
+// verb and for the CLIs — under a refusal that named no such thing. `store` is null in `plan` when
+// no sidecar exists yet (a first comment); the seed is minted after the landmark, whose root
+// gives the seed its relative path.
+function withSidecar(ctx, create, plan) {
   const file = readFile(ctx);
   let root = findVaultRoot(ctx.abs);
   let paths = root ? pathsFor(root, ctx.abs) : null;
@@ -622,12 +634,13 @@ function withSidecar(ctx, create, mutate) {
   if (!store && !create) {
     throw new Refusal('no-comment', `comment ${String(ctx.args.commentId)} is not among the comments for ${ctx.shown} — reload and retry`);
   }
+  const apply = plan(store, file.text);
   if (!root) {
     root = createLandmark(ctx);
     paths = pathsFor(root, ctx.abs);
   }
   if (!store) store = seedStore(paths.rel);
-  mutate(store, file.text, paths);
+  apply(store);
   saveStore(root, paths.storePath, store, file.text);
   return reply(ctx, { root, paths, store: reloadSaved(ctx, paths, file.text), ...file });
 }
@@ -641,7 +654,7 @@ function doComment(ctx) {
     if (built.error === 'anchor-ambiguous') {
       throw new Refusal('anchor-ambiguous', `the selected passage occurs more than once in ${ctx.shown} with the same surroundings, so a comment on it could not be placed again later — select more of the text around it`);
     }
-    store.comments.push(built.comment);
+    return (s) => { s.comments.push(built.comment); };
   });
 }
 
@@ -652,8 +665,10 @@ function doReply(ctx) {
     if (!findComment(store, id)) {
       throw new Refusal('no-comment', `comment ${String(id)} is not among the comments for ${ctx.shown} — reload and retry`);
     }
-    const res = addReply(store, id, AUTHOR, note, Date.now(), null);
-    if (res.error) throw new BadRequest(res.error);
+    return (s) => {
+      const res = addReply(s, id, AUTHOR, note, Date.now(), null);
+      if (res.error) throw new BadRequest(res.error);
+    };
   });
 }
 
@@ -661,20 +676,59 @@ function doResolve(ctx) {
   const id = requireCommentId(ctx.args);
   if (typeof ctx.args.on !== 'boolean') throw new BadRequest('resolve needs on: true|false');
   return withSidecar(ctx, false, (store) => {
-    const c = findComment(store, id);
-    if (!c) throw new Refusal('no-comment', `comment ${String(id)} is not among the comments for ${ctx.shown} — reload and retry`);
-    c.resolved = ctx.args.on;
+    if (!findComment(store, id)) throw new Refusal('no-comment', `comment ${String(id)} is not among the comments for ${ctx.shown} — reload and retry`);
+    return (s) => { findComment(s, id).resolved = ctx.args.on; };
   });
 }
 
 // The folder entry that tracks a file's directory: `<dir>/` relative to the root. A file at the
 // root itself has no folder entry to write (an empty prefix matches nothing), so that refuses.
-function folderEntryFor(ctx, rel) {
+// A loose file is always that case — its project would start in its own folder (decision 37) —
+// so its refusal says why, in place of a root the person never chose.
+function folderEntryFor(ctx, rel, loose) {
   const dir = path.dirname(rel);
   if (!dir || dir === '.' || dir === '' || dir.startsWith('..')) {
+    if (loose) {
+      throw new Refusal('folder-is-root', `${ctx.shown} has no project above it, so tracking would start in its own folder ${tilde(path.dirname(ctx.abs))} and there is no folder inside that to track; track the file itself`);
+    }
     throw new Refusal('folder-is-root', `${ctx.shown} sits at its project's root, so there is no folder to track; track the file itself, or open a file inside a folder`);
   }
   return dir + '/';
+}
+
+// config.json replaced, never rewritten in place. The vendored setTracked ends in a bare
+// writeFileSync, which truncates the file before it writes it, so a kill (the kernel's 10 s
+// timeout SIGKILLs this process) or a full disk between the two leaves a half-written config:
+// this script then refuses `corrupt` on every verb while the guard reads the same file as nothing
+// tracked and passes raw writes to every file the list protected. So the list is computed as
+// setTracked computes it and written the way the sidecar (saveStore) and the commented file
+// (writeFileAtomic) are: a temp file in the same directory, fsync, rename. The bytes equal
+// writeTrackedPaths's exactly — same shape, same dedupe, the `untracked` vetoes kept — which the
+// disk tests pin against the vendored writer, so the Obsidian and VS Code hosts read no difference.
+// The temp name does not end in .json, so their sidecar scans skip it.
+function writeConfigAtomic(root, relPath, on) {
+  const list = trackedPaths(root);
+  const next = on ? (list.includes(relPath) ? list : [...list, relPath]) : list.filter((p) => p !== relPath);
+  const cfg = { v: CONFIG_VERSION, tracked: [...new Set(next.filter((s) => typeof s === 'string' && s))] };
+  const off = untrackedPaths(root);
+  if (off.length) cfg.untracked = off;
+  const configPath = configPathFor(root);
+  const dir = path.dirname(configPath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, `.config.romp-fc-${process.pid}-${Date.now()}.tmp`);
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'w');
+    fs.writeFileSync(fd, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+    try { fs.fsyncSync(fd); } catch { /* fsync unsupported on some filesystems */ }
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmp, configPath);
+  } catch (e) {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    throw e;
+  }
 }
 
 function doSetTracked(ctx) {
@@ -688,23 +742,26 @@ function doSetTracked(ctx) {
   if (paths) checkConfig(ctx, paths);
   const file = loadFile(ctx, paths);
   if (!root && !on) return reply(ctx, { root: null, paths: null, ...file });
-  if (!root) {
-    root = createLandmark(ctx);
-    paths = pathsFor(root, ctx.abs);
-  }
+  // With no landmark, the root the toggle would create is the file's own directory (decision
+  // 37). Every check below runs against that root first — the veto (none, with no config), the
+  // folder entry (always the root for a loose file) — and the landmark is created only once none
+  // refused, so a refused toggle leaves the disk as it found it: no `.trackchanges/` created beside
+  // the file by a click that answered folder-is-root.
+  const loose = !root;
+  const newRoot = root || path.dirname(ctx.abs);
+  if (!paths) paths = pathsFor(newRoot, ctx.abs);
   let entry;
   let kind;
   if (on) {
     // The `untracked` veto wins over the list and over inheritance, for the guard and the CLIs as
     // for trackedByFor; an entry written under it would change nothing but the config, so refuse
     // and name the entry to remove (the config is the vault owner's, edited by hand).
-    const veto = vetoEntryFor(root, paths.rel);
+    const veto = vetoEntryFor(newRoot, paths.rel);
     if (veto != null) {
       throw new Refusal('tracked-vetoed', `${ctx.shown} cannot be tracked while the untracked entry "${veto}" in ${tilde(paths.configPath)} vetoes it — remove that entry there first`);
     }
     kind = scope;
-    entry = scope === 'file' ? paths.rel : folderEntryFor(ctx, paths.rel);
-    setTracked(root, entry, true);
+    entry = scope === 'file' ? paths.rel : folderEntryFor(ctx, paths.rel, loose);
   } else {
     const before = trackedByFor(root, ctx.abs);
     if (!before) return reply(ctx, { root, paths, ...file });
@@ -714,8 +771,9 @@ function doSetTracked(ctx) {
     }
     kind = before.kind;
     entry = before.entry;
-    setTracked(root, entry, false);
   }
+  if (loose) root = createLandmark(ctx); // asserts the root it finds is newRoot, the file's directory
+  writeConfigAtomic(root, entry, on);
   appendLog(paths.logPath, logEntry('set-tracked', { on, scope: kind, entry }));
   return reply(ctx, { root, paths, ...file });
 }

@@ -452,6 +452,33 @@ test("a `no-node` refusal keeps the action away for good; a stale reqId lands no
   assert.equal(unit.hidden, true, "no node on the owning kernel: the action never appears (the gear's row says why)");
 });
 
+test("rawTarget's fallbacks: a rawRange the source no longer holds gives way to the selection, an empty selection targets nothing, a passage gone from the block is still found earlier, and an absent one leaves the mapper's slice", async () => {
+  const { rawTarget } = await import("./file-comments");
+  const src = "Latency: p95 in prose.\n\n| Route | p95 |\n|---|---|\n| /a | 1 |\n";
+  const table = src.indexOf("| Route");
+  const inTable = { start: src.indexOf("p95", table), end: src.indexOf("p95", table) + 3 };
+  const base = { ok: false as const, reason: "This selection touches a table; comment on it from the Raw view.", blockStartLine: 2, blockStartOffset: table, rawHasQuote: true };
+  // a rawRange found over a longer text (the file shrank under a reload): out of bounds, so the trimmed selection is
+  // searched instead — from the block, so the table's cell wins over the prose above it
+  assert.deepEqual(rawTarget(src, { ...base, rawRange: { start: 9, end: src.length + 40 }, selText: " p95 " }), inTable);
+  assert.deepEqual(rawTarget(src, { ...base, rawRange: { start: 12, end: 9 }, selText: "p95" }), inTable, "an inverted range is no range");
+  assert.deepEqual(rawTarget(src, { ...base, rawRange: { start: -1, end: 3 }, selText: "p95" }), inTable, "nor is one before the start");
+  // the selection was whitespace and the mapper kept no slice: nothing to search for — null, the button only scrolls
+  assert.equal(rawTarget(src, { ...base, selText: "  \n" }), null);
+  // the words are not in the refused block after all (the block came out of sync) but do occur earlier: that
+  // occurrence is targeted rather than none — the person still lands on the text they selected
+  const prose = { start: src.indexOf("p95"), end: src.indexOf("p95") + 3 };
+  assert.deepEqual(rawTarget(src, { ...base, blockStartOffset: src.indexOf("|---|"), selText: "p95 in prose" }), { start: 9, end: 9 + "p95 in prose".length });
+  assert.deepEqual(rawTarget(src, { ...base, blockStartOffset: undefined, selText: "p95" }), prose, "no block offset: searched from the top");
+  assert.deepEqual(rawTarget(src, { ...base, blockStartOffset: -5, selText: "p95" }), prose, "a negative one clamps to the top");
+  // the DOM spelling is nowhere in the source and the mapper kept no slice: null; with a slice, the slice stands
+  assert.equal(rawTarget(src, { ...base, selText: "p99" }), null);
+  const rr = { start: inTable.start, end: inTable.end };
+  const got = rawTarget(src, { ...base, rawRange: rr, selText: "p99" });
+  assert.deepEqual(got, inTable, "the mapper's slice, searched by its own source spelling");
+  assert.equal(src.slice(got!.start, got!.end), "p95", "…and the range's quote is the source's text");
+});
+
 // ── what the stand-in cannot show, pinned at source ────────────────────────────────────────────────
 
 test("the registry entry: exported by file-comments.ts, registered in file-view.ts, with no runtime import cycle", () => {
@@ -546,7 +573,11 @@ test("the floating Comment button rides the seam's selection hook — before the
   assert.match(SRC, /else this\.composer = \{ kind: "comment", range: null, quote: null, refusal: \{ \.\.\.res, selText \} \};/, "a refusal opens the composer anyway, note intact");
   const raw = SRC.split("switchToRaw(): void {")[1].split("\n  }\n")[0];
   assert.match(raw, /this\.ctx\.setMode\("raw"\);/);
-  assert.match(raw, /if \(r\.rawHasQuote && r\.selText\) \{\n\s*const i = src\.indexOf\(r\.selText\);/, "the passage is re-targeted when its text occurs in the source");
+  // the passage is re-targeted through rawTarget — the refused block's own occurrence, not the file's first — and
+  // the composer then holds a placed range: refusal gone, the view scrolled to it, the presel mark on it
+  assert.match(raw, /const range = rawTarget\(src, r\);\n\s*if \(range\) \{\n\s*c\.range = range; c\.quote = src\.slice\(range\.start, range\.end\); c\.text = src; c\.refusal = null;/);
+  assert.match(raw, /this\.ctx\.scrollToOffset\(range\.start\);\n\s*this\.repaintPresel\(\);/);
+  assert.doesNotMatch(raw, /\.indexOf\(/, "the switch does no lookup of its own — the search and its fallbacks live in rawTarget");
   assert.match(raw, /if \(typeof r\.blockStartLine === "number"\) this\.ctx\.scrollToOffset\(lineStartOffset\(src, r\.blockStartLine\)\);/, "else scrolled to the block's first line");
   assert.match(SRC, /else if \(e\.key === "Escape"\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); this\.closeComposer\(\); \}/, "Escape in the composer never closes the viewer");
 });
@@ -596,6 +627,11 @@ test("the sheets: the panel block is byte-equal in styles.css and feed.css, toke
   assert.doesNotMatch(body, /rgba?\(/, "no bare rgba either — --accent-wash, --overlay-05/10 and color-mix over tokens");
   assert.doesNotMatch(body, /border-radius: 999px/, "pills through --radius-pill");
   for (const m of body.match(/font-size: (0\.\d+em)/g) || []) assert.ok(["0.66em", "0.72em", "0.82em", "0.86em"].includes(m.slice(11)), m + " is on the ladder");
+  // the Log row carries no size of its own: its time is the SAME .fc-time a card head wears, and a 0.72em time inside a
+  // 0.86em row would compound to 0.62em (ui/CLAUDE.md, font sizes) — the body size sits on the text span beside it.
+  // The byte-equal check above holds the feed page to this too.
+  assert.match(body, /\n\.fc-log-row \{ display: flex; gap: 8px; align-items: baseline; \}\n\.fc-log-row > :not\(\.fc-time\) \{ font-size: 0\.86em; \}\n/);
+  assert.match(body, /\.fc-time \{[^}]*font-size: 0\.72em;/, "the one time size, card heads and Log rows alike");
   assert.match(body, /\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; container-type: inline-size; \}/);
   assert.match(body, /@container \(max-width: 680px\) \{\n\s*\.fileview-main \{ flex-direction: column; \}/, "the narrow fold: the aside drops below the body");
   assert.match(body, /\.fc-hl \{ background: color-mix\(in srgb, var\(--warn\) 14%, transparent\); box-shadow: inset 0 0 0 1\.5px/, "a ring, not a fill a diff colour would occlude");

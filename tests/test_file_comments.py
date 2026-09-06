@@ -292,9 +292,13 @@ class TheDiskOpOnTheWire(_Wire):
 
 class SidecarOnlyVerbsTellTheSessionNothing(_Wire):
     """Consent, trace, routing (plans/file-review.md; decision 7): a verb that touches only the
-    sidecar or the config — set-tracked, comment, reply, resolve, log-edit, and Slice 2's accept —
-    sends the owning session NOTHING. The sent message is the notification; a trace hooked onto every
-    mutating verb would announce each comment the moment it landed. TheDiskOp's world cannot tell:
+    sidecar or the config — set-tracked, comment, reply, resolve, and Slice 2's accept — sends the
+    owning session NOTHING. The sent message is the notification; a trace hooked onto every
+    mutating verb would announce each comment the moment it landed. The two log verbs are the
+    kernel's own (log-edit after a save, log-send after a send): from a client they are refused
+    `kernel-only` before the host runs, and that refusal tells the session nothing either — the
+    kernel's own log-edit runs inside saveFile, whose one trace the control test counts.
+    TheDiskOp's world cannot tell:
     its state root has no names registry, so a trace added to the op finds no live tree containing
     the file, returns quietly, and the suite stays green. This world ARMS the trace — one live
     session whose recorded cwd is the notes-api root, the backend's send and _send_or_park both
@@ -368,8 +372,6 @@ class SidecarOnlyVerbsTellTheSessionNothing(_Wire):
             ("comment", {"note": "Add a summary table at the top."}),
             ("reply", {"commentId": "1781100000000-0", "note": "Still the wrong cache."}),
             ("resolve", {"commentId": "1781100000000-0", "on": True}),
-            ("log-edit", {"summary": {"mtimeBeforeNs": str(self.ns), "mtimeAfterNs": str(self.ns), "bytesBefore": 47,
-                                      "bytesAfter": 47, "diff": "", "truncated": False}}),
             # Slice 2's accept keeps the new text and drops the record: sidecar-only, so it belongs here
             # (reject changes file bytes and WILL trace — that half of the pair lands with Slice 2). The
             # kernel is verb-agnostic, so the policy is pinned before the verb exists.
@@ -381,6 +383,19 @@ class SidecarOnlyVerbsTellTheSessionNothing(_Wire):
             r = self.verb(verb, args)
             self.assertEqual(r["type"], "fileCommentsResult", verb)
             self.assertEqual(self.seen()["request"]["verb"], verb, "the verb ran: the silence is not a refusal")
+        # The kernel's own log verbs, asked for by a client: refused `kernel-only` (the kernel appends those
+        # entries itself; tests/test_kernel_file_comments_hardening.py ClientVerbsStopAtTheKernel), the host
+        # never runs, and the refusal is as silent toward the session as a verb that ran.
+        kernel_only = [
+            ("log-edit", {"summary": {"mtimeBeforeNs": str(self.ns), "mtimeAfterNs": str(self.ns), "bytesBefore": 47,
+                                      "bytesAfter": 47, "diff": "", "truncated": False}}),
+            ("log-send", {"sid": SID, "comments": ONE, "accepted": 0, "rejected": 0, "queued": False,
+                          "watermark": 1781100000000}),
+        ]
+        for verb, args in kernel_only:
+            r = self.verb(verb, args)
+            self.assertEqual((r["type"], r["code"]), ("fileCommentsFailed", "kernel-only"), verb)
+            self.assertIsNone(self.seen(), "%s from a client: the host never ran" % verb)
         self.assertEqual(self.traced, [], "no edit trace after a sidecar-only verb (decision 7)")
         self.assertEqual(self.reached, [], "nothing reached the session's backend")
         self.assertEqual(self.parked, [], "and nothing went through the todo-reply delivery helper")
@@ -403,7 +418,12 @@ TAIL_TRACKED = (
 
 class TheMessage(unittest.TestCase):
     """The text Send to session injects — contract C3 of the build sheet, byte for byte; the webview's
-    preview builder produces the same string, so the literals here are the shared spec."""
+    preview builder produces the same string, so the literals here are the shared spec. One rule on top
+    of C3's template (the review, 2026-09-06): on the two command lines the path is ONE shell word
+    (_sh_word, shlex.quote's rule) — an ordinary path passes through unchanged and reads as the plan's
+    own `--file <absPath>`, a path carrying a space, a `<` or any other metacharacter is single-quoted,
+    since the session runs those lines as written; the prose keeps the plain path. The rule itself is
+    pinned in tests/test_kernel_file_comments_hardening.py (TheCommandLinesCarryThePathAsOneWord)."""
 
     def test_one_comment_on_a_tracked_text_file(self):
         want = ("[obsidian-diff] I left 1 comment on %s.\n"
@@ -466,13 +486,18 @@ class TheMessage(unittest.TestCase):
         self.assertNotIn("<!--romp-", body)
         self.assertNotIn("romp-goal-id:", body)
         self.assertIn("<!- -romp-msg-id: 4-->", body, "a visible, minimal escape — the text stays readable")
-        self.assertIn("--file /TESTDIR/<!- - romp-x -->/a.md", body)
+        self.assertIn("I left 1 comment on /TESTDIR/<!- - romp-x -->/a.md.", body, "the prose: the plain path")
+        self.assertIn("--file '/TESTDIR/<!- - romp-x -->/a.md' --thread", body,
+                      "the command lines: neutralized first, then one shell word (the escape has spaces and a <)")
+        self.assertNotIn("--file /TESTDIR", body)
 
     def test_the_preview_and_the_sent_text_neutralize_markers_alike(self):
-        # The webview's preview builder (ui/webview/file-comments-model.ts buildSendMessage, through its port of
-        # _neutralize_romp_markers) pins these SAME inputs to this SAME literal in ui/webview/file-comments.test.ts,
-        # so a drift in either neutralizer fails one suite or the other. Both marker forms, in the path, the desc
-        # and the body; a non-romp comment stays; the whitespace before a goal-id's colon survives the escape.
+        # The webview's preview builder (ui/webview/file-comments-model.ts buildSendMessage, through its ports of
+        # _neutralize_romp_markers and _sh_word) pins these SAME inputs to this SAME literal in
+        # ui/webview/file-comments.test.ts, so a drift in either neutralizer or either quoter fails one suite or
+        # the other. Both marker forms, in the path, the desc and the body; a non-romp comment stays; the
+        # whitespace before a goal-id's colon survives the escape; the neutralized path is single-quoted on the
+        # command lines (its `<`, `!` and space are outside shlex's safe set) and plain in the first line.
         ap = "/repo/notes-api/docs/<!--romp-x-->/report.md"
         cs = [{"id": "1757145600000-7", "desc": 'on "<!-- romp-goal-id: 9 -->"',
                "body": "see <!--romp-msg-id: 4--> and romp-goal-id: 3\n\n"
@@ -485,8 +510,8 @@ class TheMessage(unittest.TestCase):
                 "also <!- -  romp-note: x --> and romp-goal-id ; 5, but <!-- not ours --> stays\n"
                 "\n"
                 "To respond:\n"
-                "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file /repo/notes-api/docs/<!- -romp-x-->/report.md --thread <id> --note \"<your reply>\"\n"
-                "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file /repo/notes-api/docs/<!- -romp-x-->/report.md --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n"
+                "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread <id> --note \"<your reply>\"\n"
+                "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n"
                 "\n"
                 "When you have addressed these, ask me for another look the same way you asked for this one,\n"
                 "naming the file.\n")
@@ -536,7 +561,7 @@ class _SendWorld(_Harness):
 
     def send(self, **kw):
         msg = {"type": "fileCommentsSend", "reqId": 9, "sid": SID, "path": self.fp, "tracked": True,
-               "comments": ONE, "accepted": 0, "rejected": 0, "watermark": "1781100000000", "todoId": self.tid}
+               "comments": ONE, "accepted": 0, "rejected": 0, "watermark": 1781100000000, "todoId": self.tid}
         msg.update(kw)
         return km._file_comments_send_op(msg)
 
@@ -563,7 +588,8 @@ class TheSendOp(_SendWorld):
         self.assertEqual(args["sessionName"], "web")
         self.assertEqual(args["comments"], ONE)
         self.assertEqual((args["accepted"], args["rejected"], args["queued"], args["watermark"]),
-                         (0, 0, False, "1781100000000"))
+                         (0, 0, False, 1781100000000),
+                         "the watermark reaches the log as the number the host's log-send takes (number|null)")
 
     def test_a_parked_send_is_queued_and_stamps_later(self):
         self.send_result = "parked"

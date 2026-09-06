@@ -1595,7 +1595,10 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-primary { color: var(--accent); border-color: var(--accent); }
 .fc-sent { color: var(--green); }
 .fc-log { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--card-border); }
-.fc-log-row { display: flex; gap: 8px; align-items: baseline; font-size: 0.86em; }
+/* the row carries no size of its own: its time is the SAME .fc-time a card head wears, and a 0.72em time inside a
+   0.86em row compounds to 0.62em (ui/CLAUDE.md, font sizes) — the body size sits on the text span beside it */
+.fc-log-row { display: flex; gap: 8px; align-items: baseline; }
+.fc-log-row > :not(.fc-time) { font-size: 0.86em; }
 .fc-log-row .fc-time { margin-left: 0; }
 /* highlights, both views (painted by anchor-map.ts): a comment is a RING around its passage, never a fill a diff
    colour would occlude, each wrapped line its own rounded box; the text-changed state (quote gone, context found)

@@ -56,7 +56,17 @@ test("a conflict keeps the buffer, says why, and Reload asks before discarding",
 });
 
 test("the kernel's save is atomic, mode-preserving, symlink-transparent, and UTF-8-honest", () => {
-  assert.match(KERNEL, /def _save_file\(raw, sid, content, base_mtime_ns\):/);
+  // `prior` (Slice 1): an optional dict the save fills with the replaced bytes + mtime for the comments
+  // log's edit entry (the ack's `logged`, pinned above). It is filled from the read the save already
+  // makes, AFTER the mtime fence and the UTF-8 refusal and BEFORE the temp file exists — so a refused
+  // save reads nothing for it, and the log gets the bytes the replace is about to destroy
+  assert.match(KERNEL, /def _save_file\(raw, sid, content, base_mtime_ns, prior=None\):/);
+  const save = KERNEL.slice(KERNEL.indexOf("def _save_file("), KERNEL.indexOf("def ", KERNEL.indexOf("def _save_file(") + 1));
+  const at = (needle: string): number => { const i = save.indexOf(needle); assert.notEqual(i, -1, needle); return i; };
+  const fill = at('prior["bytes"], prior["ns"] = cur, st.st_mtime_ns');
+  assert.ok(at("if st.st_mtime_ns != base_ns:") < fill, "the mtime fence rules before prior is filled");
+  assert.ok(at("not UTF-8 on disk") < fill, "the UTF-8 refusal rules before prior is filled");
+  assert.ok(fill < at("tempfile.mkstemp("), "prior holds the bytes BEFORE the replace destroys them");
   assert.match(KERNEL, /changed on disk since you opened it/);
   assert.match(KERNEL, /fd, tmp = tempfile\.mkstemp\(prefix="\.romp-save-", dir=d\)/);
   assert.match(KERNEL, /os\.replace\(tmp, wp\)/);

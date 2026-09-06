@@ -15,8 +15,9 @@
 #   - the tracked-changes tooling: ~/.claude/hooks/track-*.mjs, ~/.claude/skills/tracked-changes,
 #     and the guard's PreToolUse entry — ONLY where they point into THIS clone's
 #     vendor/track-changents/, or into a vendor/track-changents/ that no longer exists (a romp
-#     clone moved or deleted after install.sh ran); a track-changents install of your own is left
-#     as it is
+#     clone moved or deleted after install.sh ran); the guard's entry also goes when it is the
+#     exact string install.sh writes and nothing is at that path any more (its link removed by
+#     hand before this ran); a track-changents install of your own is left as it is
 #   - the git pre-push hook symlink
 #   - vscode-extension/node_modules, dist, *.vsix   (build artifacts)
 #   - the SDK venv under the state dir
@@ -105,6 +106,15 @@ rm -f "$HOME/.claude/romp-postal.mcp.json"
 # so it resolves to the OLD path, never into this clone's copy — and a dangling link is nobody's live
 # install, while only romp links into a vendor/track-changents/. Left registered, the guard fails on
 # every Write/Edit in every Claude Code session on the machine until settings.json is edited by hand.
+#
+# And one where there is no path to follow at all: NOTHING at ~/.claude/hooks/track-guard.mjs — not a
+# dangling link, no link — because it was removed by hand, or ~/.claude/hooks/ deleted, before this ran.
+# A path with nothing at it resolves to itself, which is under no vendor/track-changents/, so a
+# resolve-only rule reads install.sh's own entry as someone else's and keeps it — the same failing
+# hook on every Write/Edit as above. With nothing to resolve, the command string is the only evidence:
+# "~/.claude/hooks/track-guard.mjs" is the exact string install.sh writes and track-changents' own
+# installer never does (it writes the expanded home path), so that entry is romp's and goes. Any other
+# form with nothing at its path is not romp's to drop; it stays, with a notice that says what is wrong.
 echo "==> ~/.claude/settings.json"
 python3 - "$ROMP_DIR" <<'PYEOF'
 import json, os, sys
@@ -114,6 +124,7 @@ OURS = {"tmux-status.sh", "romp-summarize.sh", "romp-postal-drain.sh", "romp-pos
         "romp-postal-revive.sh", "romp-postal-context.sh", "romp-wake.sh"}
 VENDORED = os.path.realpath(os.path.join(sys.argv[1], "vendor", "track-changents"))
 VENDOR_PART = os.sep + os.path.join("vendor", "track-changents") + os.sep
+INSTALLED_GUARD = "~/.claude/hooks/track-guard.mjs"     # the exact command string install.sh registers
 
 
 def tooling_verdict(path):
@@ -132,13 +143,22 @@ def tooling_verdict(path):
 
 
 def guard_verdict(cmd):
-    """None when the command names no track-guard.mjs; else the tooling_verdict of the path it names.
-    Every whitespace token is tried (a `node <path>` form counts too, as in install.sh's presence
-    check); ~ and $HOME are expanded; a symlink is judged by where it points."""
+    """None when the command names no track-guard.mjs; else whose the entry is: the tooling_verdict of
+    the path it names ("ours", "stale", "foreign"), with one refinement. When that says "foreign" and
+    NOTHING is at the path — no file, no link, dangling or not — there was nothing to judge it by, and
+    the string is the only evidence: "gone" for the exact string install.sh writes (romp registered
+    it, and a command with no file behind it is nobody's live install), "missing" for any other form
+    (not romp's to drop). A missing path under some vendor/track-changents/ is still "stale", judged
+    first. Every whitespace token is tried (a `node <path>` form counts too, as in install.sh's
+    presence check); ~ and $HOME are expanded; a symlink is judged by where it points."""
     for tok in str(cmd).split():
         if os.path.basename(tok) != "track-guard.mjs":
             continue
-        return tooling_verdict(os.path.expanduser(os.path.expandvars(tok)))
+        path = os.path.expanduser(os.path.expandvars(tok))
+        verdict = tooling_verdict(path)
+        if verdict == "foreign" and not os.path.lexists(path):
+            return "gone" if tok == INSTALLED_GUARD else "missing"
+        return verdict
     return None
 
 
@@ -151,7 +171,7 @@ except (FileNotFoundError, ValueError):
 
 hooks = settings.get("hooks") or {}
 removed = []
-stale_guard, foreign_guard = [], []
+stale_guard, gone_guard, foreign_guard, missing_guard = [], [], [], []
 for event in list(hooks):
     groups = hooks.get(event) or []
     for g in groups:
@@ -161,13 +181,17 @@ for event in list(hooks):
             guard = guard_verdict(cmd)
             if cmd.startswith("~/.claude/hooks/") and cmd.rsplit("/", 1)[-1] in OURS:
                 removed.append(event + ":" + cmd.rsplit("/", 1)[-1])
-            elif guard in ("ours", "stale"):
+            elif guard in ("ours", "stale", "gone"):
                 removed.append(event + ":track-guard.mjs")
                 if guard == "stale":
                     stale_guard.append(cmd)
+                elif guard == "gone":
+                    gone_guard.append(cmd)
             else:
                 if guard == "foreign":
                     foreign_guard.append(cmd)
+                elif guard == "missing":
+                    missing_guard.append(cmd)
                 keep.append(h)
         g["hooks"] = keep
     groups = [g for g in groups if g.get("hooks")]      # drop groups we emptied
@@ -190,8 +214,14 @@ else:
 for cmd in stale_guard:
     print("    de-registered a track-guard.mjs entry that led into a vendor/track-changents/ which no longer"
           " exists — a romp clone moved or deleted since install (%s)" % cmd)
+for cmd in gone_guard:
+    print("    de-registered a track-guard.mjs entry with nothing at the path it names — install.sh's entry,"
+          " its link already removed (%s)" % cmd)
 for cmd in foreign_guard:
     print("    left alone: a track-guard.mjs entry that points outside this clone (%s)" % cmd)
+for cmd in missing_guard:
+    print("    left alone: a track-guard.mjs entry that names a path where nothing exists, in a form install.sh"
+          " does not write — not romp's to drop; remove it by hand if that guard is gone for good (%s)" % cmd)
 PYEOF
 
 # ── 2b. the tracked-changes tooling (vendor/track-changents) ───────────────

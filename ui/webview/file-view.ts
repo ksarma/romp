@@ -138,7 +138,7 @@ export function hostStub(sid: string): FileViewIdentity | null {
   return { name: (host ? host + ":" : "") + bare.slice(0, 8), color: null };
 }
 let saveSeq = 0;
-let editHooks: { reqId: number; saved: (mtimeNs: string, logged: boolean) => void; failed: (err: string) => void } | null = null;
+let editHooks: { reqId: number; logWarning: string | null; saved: (mtimeNs: string, logged: boolean) => void; failed: (err: string) => void } | null = null;
 // Set by the open viewer: returns false to VETO a close (an editor holding unsaved changes asks
 // first). The guard must live in closeFileView itself, because the browser overlay and the Escape
 // handler both close through it without knowing an edit is in progress.
@@ -663,7 +663,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   document.body.appendChild(wrap);
 
   // A one-line notice above the body in the viewer's error dress (the edit-blocked reason, a save
-  // failure): one at a time, replacing the last, and the body content underneath survives.
+  // failure, a save whose comments-log entry did not land): one at a time, replacing the last, and
+  // the body content underneath survives.
   const noteBar = (msg: string): HTMLElement => {
     document.getElementById("fileview-save-err")?.remove();
     const bar2 = el("div", "fileview-err");
@@ -887,13 +888,24 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         bar2.appendChild(re);
       }
     };
-    editHooks = {
+    const hooks: NonNullable<typeof editHooks> = {
       reqId: ++saveSeq,
+      // The kernel's account of a comments-log append that failed, or of a log it could not read back
+      // after appending — filled from the fileSaved reply before `saved` runs (plans/file-review.md, The
+      // comments log: a failed append is reported in the reply, never a failed save). The save landed,
+      // so it is no error state — but the Log the panel shows then lacks (or cannot read back) the entry
+      // this edit owed, and a person reading it later would take the silence for "nothing happened".
+      logWarning: null,
       saved: (mtNs, logged) => {
         mtimeNs = mtNs;
         text = content;
         // the seam's onSaved: the panel refreshes its Log (the kernel appended the edit before replying)
         for (const cb of savedHooks) { try { cb({ mtimeNs: mtNs, logged }); } catch { /* a hook must never cost the save */ } }
+        // The comments-log warning goes up in the note bar, in the kernel's own words (CLAUDE.md:
+        // surface it, never degrade silently) — here, above the editor the in-flight stay below keeps,
+        // and again after exitEdit's repaint on the other path, which takes this bar with the editor.
+        const noteLog = () => { if (hooks.logWarning) noteBar(hooks.logWarning); };
+        noteLog();
         // Keystrokes typed DURING the round-trip survive the ack (the review's in-flight-typing
         // finding): if the live buffer moved past the snapshot we saved, stay in edit mode with the
         // new baseline — never re-render over what the user is still typing.
@@ -903,6 +915,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
           return;
         }
         exitEdit();                             // re-renders the highlighted view from the saved bytes
+        noteLog();
       },
       failed: (err) => {
         saveBtn.disabled = false; saveBtn.textContent = "Save";
@@ -920,6 +933,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         showSaveError(err);
       },
     };
+    editHooks = hooks;
     post({ type: "saveFile", path, sid: sid || undefined, content, baseMtimeNs: mtimeNs, reqId: saveSeq });
   };
   renderBody();   // buttons take their initial state now; the loader stays up until the fetch lands
@@ -1183,7 +1197,11 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
       h.apply(String(m.url || ""), String(m.reason || ""));
     } else if (m.type === "fileSaved" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
-      h.saved(String(m.mtimeNs || ""), m.logged === true);   // `logged`: the comments log took the edit (Slice 1; absent on an older kernel = false)
+      // `logged`: the comments log took the edit (Slice 1; absent on an older kernel = false). `logWarning`:
+      // the kernel's account of an append that failed or a log it could not read back — saveFile's reply
+      // is the ONLY place that text exists, so a reader that dropped it would lose it for good.
+      h.logWarning = typeof m.logWarning === "string" && m.logWarning ? m.logWarning : null;
+      h.saved(String(m.mtimeNs || ""), m.logged === true);
     } else if (m.type === "fileSaveFailed" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
       h.failed(String(m.error || "the save failed"));
