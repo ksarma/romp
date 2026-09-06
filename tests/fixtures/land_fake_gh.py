@@ -45,6 +45,7 @@ Synthetic data only: PR numbers, titles and branches are the tests' inventions.
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -183,7 +184,18 @@ def opts(argv, flags_with_value):
     return got
 
 
+_ROW = re.compile(r'^\[((?:\.\w+(?:, )?)+)\] \| map\(if \. == null then "" else tostring end\) \| join\("\\u001f"\)$')
+
+
+def jq_word(v):
+    """One value as jq -r prints it: strings raw, booleans and numbers as JSON words, null as null."""
+    return v if isinstance(v, str) else json.dumps(v)
+
+
 def apply_jq(rows, expr):
+    m = _ROW.match(expr)
+    if m and isinstance(rows, dict):
+        return "\x1f".join("" if rows.get(k) is None else jq_word(rows.get(k)) for k in m.group(1).replace(".", "").split(", "))
     if expr == ".[] | [.number, (.mergeCommit.oid // \"none\"), .baseRefName] | @tsv":
         return "\n".join("%d\t%s\t%s" % (r["number"], (r.get("mergeCommit") or {}).get("oid") or "none", r["baseRefName"]) for r in rows)
     if expr == ".[0].number":
@@ -199,8 +211,7 @@ def apply_jq(rows, expr):
                                       c.get("status") or "", c.get("conclusion") or "", c.get("state") or ""])
                          for c in rows.get("statusCheckRollup") or [])
     if expr.startswith(".") and "." not in expr[1:] and isinstance(rows, dict):
-        v = rows.get(expr[1:])
-        return json.dumps(v)
+        return jq_word(rows.get(expr[1:]))
     die("unsupported --jq expression %r" % expr)
 
 
@@ -341,7 +352,8 @@ def repo_view(state, argv):
     o = opts(argv, {"--json", "--jq"})
     fields = (o.get("--json") or [""])[0].split(",")
     repo = state.get("repo", {})
-    print(json.dumps({f: repo.get(f) for f in fields if f}))
+    out = {f: repo.get(f) for f in fields if f}
+    print(apply_jq(out, o["--jq"][0]) if o.get("--jq") else json.dumps(out))
 
 
 def api(state, argv):

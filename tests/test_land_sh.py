@@ -291,6 +291,35 @@ class Branches(_Base):
         self.assertNotIn("--delete-branch", " ".join(" ".join(c) for c in fx.merges()))
 
 
+class Names(_Base):
+    def test_branch_names_holding_a_comma_or_a_brace_are_read_whole(self):
+        """The PR fields were read out of gh's JSON with a sed pattern that ended a value at the first
+        ',' or '}', both legal in a branch name, so 'feat,x}y' was 'feat' to the branch delete, the
+        pair detection and the base refusals. Every field comes from gh's own --jq now."""
+        fx = self.fx
+        fx.set_gh(repo={"deleteBranchOnMerge": False})
+        fx.branch("feat,x}y", {"f.txt": "f\n"})
+        fx.pr(101, "feat,x}y")
+        p = fx.land("101")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("deleting remote branch 'feat,x}y'", p.stdout)
+        self.assertEqual(fx.calls("api", "-X", "DELETE"), [["api", "-X", "DELETE", "repos/{owner}/{repo}/git/refs/heads/feat,x}y"]])
+        self.assertEqual(fx.bare_rev("feat,x}y"), "", "the whole name was deleted")
+        # A pair whose lower branch has such a name is still the pair, not a refusal.
+        fx.branch("a,b", {"a.txt": "a\n"})
+        fx.branch("c}d", {"c.txt": "c\n"}, base="a,b")
+        fx.pr(201, "a,b")
+        fx.pr(203, "c}d", base="a,b")
+        p = fx.land("203", "201")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("#203 is based on 'a,b', the branch of #201, the other PR of this pair", p.stdout)
+        gh = fx.gh()
+        self.assertEqual((gh["prs"]["201"]["state"], gh["prs"]["203"]["state"], gh["prs"]["203"]["baseRefName"]),
+                         ("MERGED", "MERGED", "main"))
+        self.assertEqual([c[3] for c in fx.calls("api", "-X", "DELETE")][1:],
+                         ["repos/{owner}/{repo}/git/refs/heads/a,b", "repos/{owner}/{repo}/git/refs/heads/c}d"])
+
+
 class Bases(_Base):
     """Any base but main is refused; an open PR's branch only with --into-open-pr."""
 

@@ -25,9 +25,12 @@
 # branches on merge (it does here); when that setting is off, the remote ref is deleted through the
 # API once the PR reads MERGED. Local branches and worktrees are the owning session's.
 #
-# gh's JSON is reduced by gh's own --jq to one word or one row per line; the shell parses none of
-# gh's prose. The one thing read from a gh error line is the status gh appends to every API error,
-# `(HTTP 404)`, which tells "no branch protection" from a read that failed.
+# gh's JSON is reduced by gh's own --jq to one word per line, or one row of fields joined on US
+# (\x1f, a byte neither a branch name nor a check name can hold; git refuses control characters in
+# a ref name); the shell parses no JSON and none of gh's prose. A sed pattern that once read the
+# fields ended a value at the first ',' or '}', both legal in a branch name (2026-09-06 review). The
+# one thing read from a gh error line is the status gh appends to every API error, `(HTTP 404)`,
+# which tells "no branch protection" from a read that failed.
 #
 # Env: ROMP_GH names the gh binary (tests stub it); ROMP_ORPHANS_LIMIT passes through to
 # pr-orphans.sh. Exit 2 on a refusal, a stop or a usage error, 1 when gh fails; otherwise
@@ -111,9 +114,15 @@ EOF
 
 usage() { echo "usage: scripts/land.sh [--auto] [--into-open-pr] N [M]   (PR numbers; merge commits only; --help for the refusals)" >&2; exit 2; }
 
-json_field() {  # json_field <json> <key>: the string, boolean or number value of a flat top-level key
-    printf '%s' "$1" | sed -n 's/.*"'"$2"'": *"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' | head -n1
+# row_of <keys...>: a --jq expression giving the named top-level fields as one US-joined row, null
+# as empty, booleans and numbers as words. Read back with `IFS="$US" read -r`. The separator is
+# spelled as jq's escape, passed as an argument: printf would turn it into the byte in a format.
+row_of() {
+    local keys="" k
+    for k in "$@"; do keys="${keys:+$keys, }.$k"; done
+    printf '[%s] | map(if . == null then "" else tostring end) | join("%s")' "$keys" '\u001f'
 }
+US=$'\x1f'
 
 list() {  # list "<words>": the words ", "-joined, with a leading space, for a message
     local out="" w
@@ -140,15 +149,16 @@ if [ "${#prs[@]}" -lt 1 ] || [ "${#prs[@]}" -gt 2 ]; then usage; fi
 
 # Repository settings: merge commits must be allowed, and the other two methods being off is what
 # makes the wrong click impossible (a warning here, not a refusal: the settings are the maintainer's).
-settings="$("$GH" repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,deleteBranchOnMerge 2>/dev/null || echo '{}')"
-if [ "$(json_field "$settings" mergeCommitAllowed)" = "false" ]; then
+settings="$("$GH" repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,deleteBranchOnMerge \
+    --jq "$(row_of mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed deleteBranchOnMerge)" 2>/dev/null || true)"
+IFS="$US" read -r merge_commit_allowed squash_allowed rebase_allowed deletes_on_merge <<< "$settings"
+if [ "$merge_commit_allowed" = "false" ]; then
     echo "land: refused: the repository does not allow merge commits (gh repo edit --enable-merge-commit)" >&2
     exit 2
 fi
-if printf '%s' "$settings" | grep -Eq '"(squashMergeAllowed|rebaseMergeAllowed)": *true'; then
+if [ "$squash_allowed" = "true" ] || [ "$rebase_allowed" = "true" ]; then
     echo "land: warning: squash or rebase merges are still enabled in the repository settings" >&2
 fi
-deletes_on_merge="$(json_field "$settings" deleteBranchOnMerge)"
 
 auto_flag=()
 if [ "$auto" = 1 ]; then
@@ -208,15 +218,10 @@ fi
 # US (\x1f), a byte no check name holds; a '|' shifted the fields of a check named 'build | linux',
 # and a tab is IFS whitespace to `read`, which folds the empty fields together.
 read_pr() {
-    local view
-    view="$("$GH" pr view "$1" --json state,isDraft,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus)"
-    pr_state="$(json_field "$view" state)"
-    pr_draft="$(json_field "$view" isDraft)"
-    pr_base="$(json_field "$view" baseRefName)"
-    pr_head_ref="$(json_field "$view" headRefName)"
-    pr_head_sha="$(json_field "$view" headRefOid)"
-    pr_mergeable="$(json_field "$view" mergeable)"
-    pr_mss="$(json_field "$view" mergeStateStatus)"
+    local row
+    row="$("$GH" pr view "$1" --json state,isDraft,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus \
+        --jq "$(row_of state isDraft baseRefName headRefName headRefOid mergeable mergeStateStatus)")"
+    IFS="$US" read -r pr_state pr_draft pr_base pr_head_ref pr_head_sha pr_mergeable pr_mss <<< "$row"
     pr_rollup="$("$GH" pr view "$1" --json statusCheckRollup \
         --jq '(.statusCheckRollup // [])[] | [.__typename, (.name // .context), .status, .conclusion, .state] | map(. // "") | join("\u001f")')"
 }
@@ -236,7 +241,7 @@ load_pr() {
 classify_checks() {
     local kind name status conclusion cstate word
     checks_failing=""; checks_pending=""; checks_n=0
-    while IFS=$'\x1f' read -r kind name status conclusion cstate; do
+    while IFS="$US" read -r kind name status conclusion cstate; do
         [ -n "$kind$name$status$conclusion$cstate" ] || continue
         checks_n=$((checks_n + 1))
         if [ "$kind" = StatusContext ]; then word="$cstate"
@@ -375,7 +380,7 @@ for i in "${order[@]}"; do
         exit 1
     fi
     verb=stopped
-    after="$(json_field "$("$GH" pr view "$n" --json state)" state)"
+    after="$("$GH" pr view "$n" --json state --jq .state)"
     if [ "$after" != "MERGED" ]; then
         echo "land: #$n reads $after after the merge call (auto-merge armed: it lands when the required checks pass); nothing more to do for it now"
         continue
