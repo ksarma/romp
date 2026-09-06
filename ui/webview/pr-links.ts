@@ -5,55 +5,82 @@
 // the session tree's origin remote by the same parser the file viewer's GitHub link uses — and this
 // module does the text work in ONE place for every surface: the chat's markdown (render.ts md()), its
 // plain-text user-todo rows, the feed's card titles, distiller lines, checklists and modal (feed.ts),
-// and the outline's goal rows (fleet.ts).
+// the outline's goal rows (fleet.ts) and the Waiting-on-you pane's asks (waiting.ts).
 //
 // Shapes that link — each needs a word boundary BEFORE it (start of text, whitespace, an opening
-// bracket or quote, a comma/semicolon/colon), so a `#` glued to letters, a path or a URL never does:
+// bracket or quote, a comma/semicolon/colon, an em or en dash), so a `#` glued to letters, a path or a
+// URL never does:
 //   #123               → https://github.com/<session repo>/pull/123
 //   PR #123 / pull #123 (any case, the space optional) → the same; the whole phrase is the link
 //   owner/repo#123     → https://github.com/owner/repo/pull/123 — a reference into another repository
 // GitHub answers /pull/<n> for an ISSUE number with a redirect to /issues/<n>, so one form covers both.
+// The ASCII hyphen is deliberately NOT a boundary: it ends URL paths and identifiers
+// (`https://example.com/a-#12` must stay plain); the dashes appear in neither.
 //
-// What never links: text inside <code> or <pre> (a colour `#fff`, a CSS id, a shell comment), text
-// already inside an <a> (a GitHub URL marked autolinked, a [text](url)), a path link (.file-uri-link),
-// and any `#` that is part of a word, a URL fragment or a colour literal — `#1EA1EB` and `#0c1a2e`
-// fail the number shape (hex letters after the digits, or a leading zero; a PR number has neither).
-// The cross-repo form also refuses a "repo" that reads like a FILENAME (`docs/x.html#12`, `src/app.py#3`
-// — an extension-shaped tail after a dot): that is a path with a fragment, and a wrong link is worse
-// than none. The cost is a repository literally named `something.js`, which stays plain text.
+// The cross-repo form follows GitHub's own name grammar. An owner (a user or organization login) is
+// alphanumerics and single hyphens — never leading, trailing or doubled — at most 39 characters; a
+// repository name may also carry `.` and `_`, at most 100 characters, and is never `.` or `..`. So
+// `my.org/repo#1` (a dotted owner) and `a/..#12` are not references. Two plain words around a slash
+// (`src/lib#3`) ARE one — that is GitHub's syntax byte for byte, and a directory path never carries a
+// bare numeric fragment (a line reference is `file.py#L12`, which fails the number shape) — so it
+// links. The one refusal beyond the grammar is a "repo" that reads like a FILENAME (`docs/x.html#12`,
+// `src/app.py#3` — an extension-shaped tail after a dot): that is a path with a fragment, and a wrong
+// link is worse than none. The cost is a repository named like a file (`something.js`, `tool.dev`),
+// which stays plain text in the cross-repo form — except GitHub Pages repos (`owner/owner.github.io`),
+// the one standard dotted repo name, which link. A session's OWN repo is never filtered this way: the
+// kernel shipped it, so a bare `#12` links in a `user.github.io` or `something.js` checkout too.
+//
+// What never links: text inside code-like elements (<code>, <pre>, <kbd>, <samp>, <var>, <tt> — a
+// color `#fff`, a CSS id, a shell comment, a quoted key or token), text already inside an <a> (a GitHub
+// URL marked autolinked, a [text](url)), a path link (.file-uri-link), and any `#` that is part of a
+// word, a URL fragment or a color literal — `#1EA1EB` and `#0c1a2e` fail the number shape (hex letters
+// after the digits, or a leading zero; a PR number has neither). Typographic wrappers (<em>, <strong>,
+// <sup>) are walked: a `#13` in them is still a reference.
 // A session with no GitHub repository (`githubRepo` null: no repo, no origin, or an origin elsewhere)
 // links NOTHING, the cross-repo form included — the honest rendering is the plain text, never a
 // guessed host.
+
+import { hostPrefix } from "./host-prefix";
 
 /** One run of text; `href` marks a link, `label` its repo-qualified reference for the hover title. */
 export interface PrRefSegment { text: string; href?: string; label?: string }
 
 export const PR_LINK_CLASS = "pr-link";
 
-// GitHub's own name rules: an owner is alphanumerics and hyphens (≤ 39), a repo may also carry `.`
-// and `_`. A PR number has no leading zero and (with room to spare) at most seven digits.
-const OWNER = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})";
+// GitHub's own name grammar (see the header): the owner rule is GitHub's login rule verbatim — an
+// alphanumeric, then up to 38 more of alphanumerics or a hyphen that is followed by an alphanumeric.
+// A PR number has no leading zero and (with room to spare) at most seven digits.
+const OWNER = "[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}";
 const REPO = "[A-Za-z0-9_.-]{1,100}";
 const NUM = "[1-9]\\d{0,6}";
+const DOT_NAME = /^\.{1,2}$/;                  // `.` and `..`: inside the character class, never a repo
 // group 1 = the boundary character (re-emitted as text; empty at the start of the text)
 // groups 2/3/4 = owner / repo / number of the cross-repo form
 // group 5 = the number of a `PR #n` / `pull #n` phrase; group 6 = the number of a bare `#n`
 // the trailing lookahead refuses a word character, another `#` or a `/` right after the number, which
 // is what keeps `#12abc`, `#1EA1EB` and a `#12/x` path fragment out
 const REF_SRC =
-  "(^|[\\s(\\[{<,;:\"'“‘«])(?:" +
+  "(^|[\\s(\\[{<,;:\"'“‘«—–])(?:" +
   "(" + OWNER + ")/(" + REPO + ")#(" + NUM + ")" +
   "|(?:PR|pull)\\s?#(" + NUM + ")" +
   "|#(" + NUM + ")" +
   ")(?![\\w#/])";
 
-const REPO_SHAPE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/;
+const REPO_SHAPE = new RegExp("^" + OWNER + "/" + REPO + "$");
 const FILENAME_TAIL = /\.[A-Za-z0-9]{1,5}$/;   // `x.html`, `app.py`, `notes.md`: a path fragment, not a repo
+const PAGES_REPO = /\.github\.io$/i;            // GitHub Pages: the one standard dotted repo name
 
-/** The session repo as the kernel ships it, or null when it is absent or not owner/repo-shaped — a
- *  URL is only ever built from a value that passed this. */
+/** The cross-repo form's refusal beyond the grammar: a repo that reads like a filename (see the header). */
+function filenameShaped(repo: string): boolean {
+  return FILENAME_TAIL.test(repo) && !PAGES_REPO.test(repo);
+}
+
+/** The session repo as the kernel ships it, or null when it is absent or not owner/repo-shaped by
+ *  GitHub's grammar — a URL is only ever built from a value that passed this. */
 export function validPrRepo(repo: string | null | undefined): string | null {
-  return typeof repo === "string" && REPO_SHAPE.test(repo) ? repo : null;
+  if (typeof repo !== "string" || !REPO_SHAPE.test(repo)) return null;
+  if (DOT_NAME.test(repo.slice(repo.indexOf("/") + 1))) return null;
+  return repo;
 }
 
 export function prUrl(repo: string, n: string): string {
@@ -73,7 +100,8 @@ export function prRefSegments(text: string, repo: string | null | undefined): Pr
     const end = m.index + m[0].length;
     let target: string, n: string;
     if (m[4]) {
-      if (FILENAME_TAIL.test(m[3])) continue;   // `docs/x.html#12`: a path's fragment; the scan resumes after it
+      // `a/..#12` is no repo; `docs/x.html#12` is a path's fragment — the scan resumes after either
+      if (DOT_NAME.test(m[3]) || filenameShaped(m[3])) continue;
       target = m[2] + "/" + m[3]; n = m[4];
     }
     else if (m[5]) { target = r; n = m[5]; }
@@ -87,9 +115,11 @@ export function prRefSegments(text: string, repo: string | null | undefined): Pr
   return out;
 }
 
-// Elements whose text never links: an existing link, code (inline or fenced), form controls, and
-// the chat's own path links (a `docs/x.md#12`-shaped path must stay the path it is).
-const SKIP_TAGS = new Set(["A", "CODE", "PRE", "SCRIPT", "STYLE", "TEXTAREA", "INPUT", "BUTTON", "SELECT", "OPTION", "SVG"]);
+// Elements whose text never links: an existing link, code-like text (inline or fenced code, a key, a
+// sample, a variable, teletype), form controls, and the chat's own path links (a `docs/x.md#12`-shaped
+// path must stay the path it is).
+const CODE_LIKE = "a, code, pre, kbd, samp, var, tt";
+const SKIP_TAGS = new Set(["A", "CODE", "PRE", "KBD", "SAMP", "VAR", "TT", "SCRIPT", "STYLE", "TEXTAREA", "INPUT", "BUTTON", "SELECT", "OPTION", "SVG"]);
 const SKIP_CLASSES = ["file-uri-link", "url-code-link"];
 
 function skipElement(e: Element): boolean {
@@ -99,15 +129,17 @@ function skipElement(e: Element): boolean {
 }
 
 /** Turn the PR references in `root`'s text nodes into anchors (class pr-link, target _blank, rel
- *  noopener noreferrer, a title naming the repo-qualified reference). Skips <a>/<code>/<pre> subtrees
- *  and the chat's path links; a root that itself sits inside one of those is left alone. Returns the
- *  number of links made. Walks childNodes and edits through insertBefore/removeChild only, so a
- *  test's plain-object DOM stand-in runs it as the browser does. */
+ *  noopener noreferrer, a title naming the repo-qualified reference). Skips code-like subtrees and
+ *  existing anchors (SKIP_TAGS) and the chat's path links; a root that itself sits inside one of those
+ *  is left alone. Returns the number of links made. A root whose whole text has no `#` — the common
+ *  case — costs one native textContent read and no walk. Walks childNodes and edits through
+ *  insertBefore/removeChild only, so a test's plain-object DOM stand-in runs it as the browser does. */
 export function linkifyPrRefs(root: Node | null | undefined, repo: string | null | undefined): number {
   const r = validPrRepo(repo);
   if (!r || !root) return 0;
+  if ((root.textContent || "").indexOf("#") < 0) return 0;
   const rootEl = root as Element;
-  if (root.nodeType === 1 && typeof rootEl.closest === "function" && rootEl.closest("a, code, pre")) return 0;
+  if (root.nodeType === 1 && typeof rootEl.closest === "function" && rootEl.closest(CODE_LIKE)) return 0;
   let made = 0;
   const visit = (node: Node): void => {
     const kids = Array.from(node.childNodes || []);   // snapshot: text children are replaced as we go
@@ -151,14 +183,63 @@ function linkifyTextNode(tn: Node, repo: string): number {
   return made;
 }
 
+/** Set `el`'s text to `text` with its PR references linked — and only when (text, repo) differs from
+ *  what `el` already shows, keyed on two data attributes the element carries. The feed updates a card
+ *  IN PLACE on every kernel push; rewriting an unchanged title would replace its anchors under the
+ *  pointer every half-second (the hover title never appears, a press lands on a node that is gone by
+ *  the release). Keeping the node is the click-safety rule's keyed update: identity survives a push. */
+export function setLinkedText(el: HTMLElement, text: string, repo: string | null | undefined): void {
+  const r = validPrRepo(repo) || "";
+  if (el.dataset.prText === text && el.dataset.prRepo === r) return;
+  el.textContent = text;
+  if (r) linkifyPrRefs(el, r);
+  el.dataset.prText = text;
+  el.dataset.prRepo = r;
+}
+
+/** A session row as the frame ships it: the feed's `sessions` rows and the chat's session map both
+ *  carry a sid, a name and the kernel's githubRepo. A federated row wears its host on BOTH (`host:uuid`,
+ *  `host:name`); a local row is bare. */
+export interface SessionRepoRow { sid: string; name: string; githubRepo?: string | null }
+
+/** The repository of the ONE session in `rows` that is the named sender of a message — the frame's own
+ *  githubRepo for that session, never a guess (the reading session's repo is never substituted for the
+ *  sender's; a wrong link is worse than none). `host` is the sender's host when the frame names it
+ *  ("" = the viewing kernel's own; the feed's held-mail cards carry `blocked.origin`); undefined when it
+ *  does not (the chat's postal cards carry only the sender's NAME, and the kernel writes a remote
+ *  sender's bare name too), in which case every row is a candidate — a local one by its name, a
+ *  federated one by its bare name — so a homonym on any attached host makes the sender ambiguous.
+ *  Zero or several candidates, or a candidate the kernel gave no repo → null: the text stays plain.
+ *  (A remote homonym on a host NOT attached to this dashboard is invisible here; only the kernel
+ *  naming the sender's sid on the card could close that.) */
+export function senderPrRepo(rows: readonly SessionRepoRow[], sender: string, host?: string): string | null {
+  if (!sender) return null;
+  const hit = rows.filter((s) => {
+    if (!s || typeof s.sid !== "string" || typeof s.name !== "string") return false;
+    if (host === undefined) return (hostPrefix(s.name, s.sid)?.rest ?? s.name) === sender;
+    if (host === "") return s.sid.indexOf(":") < 0 && s.name === sender;
+    return s.sid.startsWith(host + ":") && s.name === host + ":" + sender;
+  });
+  return hit.length === 1 ? validPrRepo(hit[0].githubRepo) : null;
+}
+
 /** Follow a PR link the way the chat follows its links (render.ts's a[href] delegate): on the web
  *  dashboard the viewer's own browser opens a tab; in a VS Code webview the href goes to the host,
- *  which openExternal()s it (view-routing.ts routes `openLink` for every pane). Installed ONCE per pane
- *  document on the CAPTURE phase, so the click never reaches the card or row handlers beneath the link
- *  — a link inside a feed card must open the PR, not also open the card's modal; one inside an outline
- *  row must not also jump the chat. No per-anchor listener: the anchors are rebuilt on every push, and
- *  a listener on a rebuilt node is the click-safety bug ui/CLAUDE.md names. The chat pane does NOT
- *  install this — its own delegate already opens every absolute-scheme anchor the same way. */
+ *  which openExternal()s it (view-routing.ts routes `openLink` for every pane; extension.ts consumes it
+ *  for every panel). Installed ONCE per pane document on the CAPTURE phase, so the click never reaches
+ *  the card or row handlers beneath the link — a link inside a feed card must open the PR, not also
+ *  open the card's modal; one inside an outline row must not also jump the chat.
+ *
+ *  Click-safe across re-renders (ui/CLAUDE.md): the action hangs on the STABLE document, keyed off the
+ *  anchor's `href` attribute — never on the anchor node, which every push rebuilds. A native `click`
+ *  needs the press and the release on one node, so a push mid-press would drop it (or hand it to the
+ *  card underneath). So the press is followed by attribute: `pointerdown` remembers the href under the
+ *  primary button, `pointerup` on a pr-link with the SAME href opens it — the rebuilt twin counts, the
+ *  node's identity does not — and the native click that may follow (on the anchor, or on the common
+ *  ancestor when the pressed node is gone) is spent, so the card's own handler never sees it. The
+ *  click path itself stays for a keyboard activation (Enter on a focused link fires click alone).
+ *  Every flag clears on the next press or key — an event, never a timer. The chat pane does NOT install
+ *  this — its own delegate already opens every absolute-scheme anchor the same way. */
 export function installPrLinkOpener(
   doc: { addEventListener(type: string, fn: (e: Event) => void, capture?: boolean): void },
   post: ((msg: { type: string; href: string }) => void) | undefined,
@@ -167,16 +248,40 @@ export function installPrLinkOpener(
     open: (href) => { window.open(href, "_blank", "noopener,noreferrer"); },
   },
 ): void {
-  doc.addEventListener("click", (e: Event) => {
-    const t = e.target as Element | null;
-    const a = t && typeof t.closest === "function" ? (t.closest("a." + PR_LINK_CLASS + "[href]") as HTMLAnchorElement | null) : null;
-    if (!a) return;
-    const href = a.getAttribute("href") || "";
-    if (!/^https:\/\/github\.com\//.test(href)) return;   // only the hrefs this module writes
-    e.preventDefault();
-    e.stopPropagation();
+  /** the pr-link href under an event target, or null — only the hrefs this module writes */
+  const hrefAt = (t: EventTarget | null): string | null => {
+    const el = t as Element | null;
+    const a = el && typeof el.closest === "function" ? (el.closest("a." + PR_LINK_CLASS + "[href]") as HTMLAnchorElement | null) : null;
+    const href = a ? a.getAttribute("href") || "" : "";
+    return /^https:\/\/github\.com\//.test(href) ? href : null;
+  };
+  const open = (href: string): void => {
     const p = env.protocol();
     if (p === "http:" || p === "https:") env.open(href);
     else if (post) post({ type: "openLink", href });
+  };
+  const primary = (e: Event): boolean => {
+    const pe = e as PointerEvent;
+    return (pe.button === undefined || pe.button === 0) && pe.isPrimary !== false;
+  };
+  let pressed: string | null = null;   // the pr-link href under the primary button since pointerdown
+  let spent = false;                    // the click that follows an open at pointerup is already served
+  doc.addEventListener("pointerdown", (e) => { spent = false; pressed = primary(e) ? hrefAt(e.target) : null; }, true);
+  doc.addEventListener("pointercancel", () => { pressed = null; }, true);
+  doc.addEventListener("keydown", () => { spent = false; pressed = null; }, true);
+  doc.addEventListener("pointerup", (e) => {
+    const was = pressed;
+    pressed = null;
+    if (!was || !primary(e) || hrefAt(e.target) !== was) return;   // released elsewhere: no click
+    open(was);
+    spent = true;
+  }, true);
+  doc.addEventListener("click", (e) => {
+    if (spent) { spent = false; e.preventDefault(); e.stopPropagation(); return; }
+    const href = hrefAt(e.target);
+    if (!href) return;
+    e.preventDefault();
+    e.stopPropagation();
+    open(href);
   }, true);
 }

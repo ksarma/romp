@@ -56,7 +56,7 @@ import { mathBlock, mathInline } from "./math";
 import { setTip, pruneTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 import { dragSlotIndex } from "./dragslot";
-import { linkifyPrRefs } from "./pr-links";
+import { linkifyPrRefs, senderPrRepo } from "./pr-links";
 import { perfFrameHandler } from "./perf-telemetry";
 
 for (const [name, lang] of Object.entries({
@@ -791,16 +791,17 @@ function prRepoFor(sid?: string | null): string | null {
   return (id && sessions.get(id)?.githubRepo) || null;
 }
 
-// A postal body was written by its SENDER, so its `#123` means the sender's repository when that is
-// known: an inbound message names its peer, and when exactly one open session carries that name and a
-// repo, it is that one. Otherwise — an outbound message, an unknown or ambiguous peer, a peer with no
-// repo — the reading session's repository, which peers on the same project share.
+// A postal body was written by its SENDER, so its `#123` means the sender's repository — and only a
+// repository the frame actually names for that sender is used; nothing is guessed (a wrong link is worse
+// than none). An OUTBOUND message was written by the reading session: its own repo, as the frame ships
+// it. An INBOUND message names its sender by NAME only (the same name its chip navigates by; the kernel
+// writes a remote sender's bare name too), so the sender is the one session in the frame — local, or
+// federated compared on its bare name — that answers to that name, and the link uses ITS githubRepo. No
+// such session, more than one (a homonym on any attached host), or one the kernel gave no repo: the
+// text stays plain. The reading session's repo is never substituted for the sender's.
 function postalRepoFor(ev: { direction: "in" | "out"; peer: string }): string | null {
-  if (ev.direction === "in" && ev.peer) {
-    const named = Array.from(sessions.values()).filter((s) => s.name === ev.peer && s.githubRepo);
-    if (named.length === 1) return named[0].githubRepo || null;
-  }
-  return prRepoFor();
+  if (ev.direction === "out") return prRepoFor();
+  return senderPrRepo(Array.from(sessions.values(), (s) => ({ sid: s.id, name: s.name, githubRepo: s.githubRepo })), ev.peer);
 }
 
 function highlight(container: HTMLElement, lineNos = true) {

@@ -7,7 +7,7 @@
 // pushes and updated in place — never torn down — so hovering one doesn't flicker
 // when the fleet streams new deliverables in.
 import { distillText, distillInputs, applyDistillLine, distillPending, distillStaleNote } from "./distiller-line";
-import { linkifyPrRefs, installPrLinkOpener } from "./pr-links";
+import { linkifyPrRefs, setLinkedText, senderPrRepo, installPrLinkOpener } from "./pr-links";
 import { spinFor, KIND_WORD, kindWord, waitedSuffix } from "./spin-caption";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { searchMatches, searchSids } from "./feed-search";
@@ -448,9 +448,20 @@ const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
 // PR links inside cards open the PR and nothing else: capture-phase on the document, so the card's own
 // click (modal / pin) under the link never fires. Web → the viewer's browser; VS Code → the host's
-// openExternal via `openLink` (view-routing.ts). Once, on the stable document (the click-safety rule).
+// openExternal via `openLink` (view-routing.ts; extension.ts opens it for the feed panel). Once, on the
+// stable document, keyed off the anchor's href across the press (the click-safety rule: the anchors
+// themselves are rebuilt by pushes).
 installPrLinkOpener(document, vscodeApi ? (m) => vscodeApi.postMessage(m) : undefined);
-function linkifyPrRefsIn<T extends HTMLElement>(elm: T, sid: string | undefined): T { linkifyPrRefs(elm, prRepoOf(sid)); return elm; }
+function linkifyPrRefsIn<T extends HTMLElement>(elm: T, repo: string | null): T { linkifyPrRefs(elm, repo); return elm; }
+// A held message was written by its SENDER (blocked.frm, on host blocked.origin), so its `#123` means
+// the sender's repository — the one the frame's session rows name for that session, never the
+// recipient card's own (pr-links.ts senderPrRepo: a wrong link is worse than none). The origin is the
+// viewing kernel's own host → a local row; another host → its federated row; unknown ("?") → any row
+// by bare name, if exactly one answers to it.
+function prRepoOfSender(frm: string | undefined, origin: string | undefined): string | null {
+  const host = !origin || origin === "?" ? undefined : origin === feedSelfHost ? "" : origin;
+  return senderPrRepo(sessionsMeta, frm || "", host);
+}
 
 // The settings gear (the ⛭ modal + analytics) is part of THIS bundle now —
 // gear.js builds its DOM here and rides our one kernel channel, so both hosts
@@ -1730,8 +1741,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   }
   // a re-check card dims slightly (between a normal card and a provisional ghost) so it reads as "handled, pending"
   if (!it.provisional) card.style.opacity = it.recheck ? ".8" : "";
-  a._title.textContent = it.text;
-  linkifyPrRefs(a._title, prRepoOf(it.sid));   // `#123` in the goal text → its PR page (pr-links.ts)
+  setLinkedText(a._title, it.text, prRepoOf(it.sid));   // `#123` in the goal text → its PR page; keyed, so an unchanged title keeps its anchors across pushes (pr-links.ts)
   a._name.replaceChildren(...hostNameNodes(it.name, it.sid));   // remote "host:" prefix = quiet metadata
   if (it.color) a._name.style.color = it.color.bg;
   setWorkDot(a._name, dotFor(it.name));   // working/awaiting dot before the session name
@@ -2276,7 +2286,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
       quarWho(it.blocked.origin || "", it.blocked.frm || "?"),
       Object.assign(el("span", "fq-arrow"), { textContent: "\u2192" }),
       quarWho(toHost, it.blocked.to || it.name || "?", it.color?.bg),
-      linkifyPrRefsIn(Object.assign(el("div", "fq-gist"), { textContent: it.blocked.gist || it.blocked.body || "" }), it.sid));
+      linkifyPrRefsIn(Object.assign(el("div", "fq-gist"), { textContent: it.blocked.gist || it.blocked.body || "" }), prRepoOfSender(it.blocked.frm, it.blocked.origin)));
     qBody.title = "click to read the whole message and decide";
     a._qApprove.disabled = false; a._qApprove.textContent = "Approve";
     a._qDeny.disabled = false; a._qDeny.textContent = "Deny";
@@ -2529,8 +2539,7 @@ function updateGroupCard(card: HTMLElement, g: AskGroup) {
   card.style.background = cardTint(nowSec() - g.t);
   // outline in the group's session identity colour (the user 2026-07-15) — CSS: 0.5α rest, bolded on hover/pin
   setCardChannels(card, (g.color && hexToRgb(g.color.bg)) || ageRgb(nowSec() - g.t));
-  a._title.textContent = g.title;
-  linkifyPrRefs(a._title, prRepoOf(g.sid));
+  setLinkedText(a._title, g.title, prRepoOf(g.sid));   // keyed like the ask card's title
   a._name.replaceChildren(...hostNameNodes(g.name, g.sid));
   if (g.color) a._name.style.color = g.color.bg;
   setWorkDot(a._name, dotFor(g.name));   // working/awaiting dot before the session name
