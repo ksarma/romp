@@ -277,6 +277,40 @@ class Visibility(unittest.TestCase):
                          "both failure doors carry the wording (WS editTag + POST /tag --host)")
 
 
+class HostSeqRidesTheRows(unittest.TestCase):
+    """Round 9 of the 2026-09-06 tab-groups review: every remoteTags row carries its host's OWN views
+    store's write seq, read off the cached /views reading (a kernel stamps `seq` on its blob since
+    2026-09-05). A remote rename rides this kernel's blob with no change to the local `seq`, so a client
+    ordering what a blob says about a remote tag — the tab strip's rename follow, which stands down on a
+    blob older than its memory's evidence — needs the host's. A host that stamps none puts none on the
+    row, and the local blob's own `seq` stays the local store's."""
+
+    def tearDown(self):
+        km._remotes.clear()
+
+    def _rows(self):
+        return [t for t in km._views_client().get("remoteTags") or [] if t["host"] == HOST]
+
+    def test_a_stamped_reading_stamps_every_row_of_the_host(self):
+        _attach(views={"seq": 1757000000123, "tags": [_remote_tag("g100", "web"), _remote_tag("g200", "api")]})
+        rows = self._rows()
+        self.assertEqual([t["name"] for t in rows], ["web", "api"])
+        self.assertEqual([t["seq"] for t in rows], [1757000000123, 1757000000123], "the host's seq, not a per-tag one")
+        local_seq = km._views_client().get("seq")
+        self.assertNotEqual(local_seq, 1757000000123, "the local blob's seq is the local store's, untouched")
+
+    def test_an_unstamped_or_junk_seq_puts_none_on_the_row(self):
+        for bad in (None, 0, -4, True, "1757000000123", 1.5, {"n": 1}):
+            with self.subTest(seq=bad):
+                views = {"tags": [_remote_tag("g100", "web")]}
+                if bad is not None:
+                    views["seq"] = bad
+                _attach(views=views)
+                rows = self._rows()
+                self.assertEqual(len(rows), 1)
+                self.assertNotIn("seq", rows[0], "an older host stamps none; junk is not a seq")
+
+
 class SupervisorViewsCache(unittest.TestCase):
     """_cache_remote_views: the supervisor's store of a host's /views reading marks the views dirty and
     wakes the pusher when the reading CHANGED — a pane receives a remote host's tags only on the views

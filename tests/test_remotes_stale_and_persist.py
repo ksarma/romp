@@ -23,6 +23,7 @@ Synthetic only — placeholder host/token, no network.
 import json
 import os
 import tempfile
+import time
 import unittest
 from importlib.machinery import SourceFileLoader
 
@@ -143,6 +144,41 @@ class SupervisorStatePersists(unittest.TestCase):
             self.assertNotIn("_views_at", r)
         served = [t for t in km._views_client().get("remoteTags") or [] if t.get("host") == "TESTHOST"]
         self.assertEqual([t["name"] for t in served], ["web"], "the down host's cached tags are in the union after the boot")
+
+    def test_a_file_an_older_build_wrote_loads_without_the_keys_this_build_does_not_save(self):
+        # Round 9 of the 2026-09-06 tab-groups review: _NOT_SAVED keeps _views_at out of the SAVED row, but a
+        # remotes.json the previous build wrote carries one, and _remotes_load copied every key of the row —
+        # so the first boot on this build restored the stamp, and _poll_remote_views' gate served the cached
+        # reading for up to REMOTE_VIEWS_EVERY past it instead of re-reading. Every unsaved key goes on load.
+        reading = {"tags": [{"id": "g100", "name": "web", "color": "", "members": ["s1"]}]}
+        rows = self._disk()
+        rows[0].update({"views": reading, "_views_at": time.time(), "misses": 3, "ok_polls": 9,
+                        "usage": {"five_hour": {}}, "_usage_at": time.time()})
+        km.REMOTES_FILE.write_text(json.dumps(rows))
+        with km._remotes_lock:
+            km._remotes.clear()
+        km._remotes_load()
+        with km._remotes_lock:
+            r = km._remotes["TESTHOST"]
+        self.assertEqual(r["views"], reading, "the reading itself is kept: a down host's tags survive the boot")
+        for k in km._NOT_SAVED:
+            if k != "proc":                              # the live-Popen slot, set to None on load
+                self.assertNotIn(k, r, "%s loaded from an older file" % k)
+        # and the gate reads at once: the poll dials the tunnel instead of serving the loaded reading
+        dials = []
+
+        class Dial:
+            def __init__(self, *a, **kw):
+                dials.append(a)
+                raise OSError("no tunnel in a test")
+
+        saved = km.http.client.HTTPConnection
+        km.http.client.HTTPConnection = Dial
+        try:
+            self.assertEqual(km._poll_remote_views(r), reading, "the failed dial keeps the last good reading, as ever")
+        finally:
+            km.http.client.HTTPConnection = saved
+        self.assertEqual(len(dials), 1, "a real read was attempted: the older file's stamp did not gate it")
 
     def test_a_status_change_reaches_disk(self):
         # THE BUG: this is the drop the file used to miss entirely.

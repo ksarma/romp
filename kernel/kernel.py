@@ -3881,6 +3881,13 @@ def _views_client():
         cand = [(r["host"], r.get("views")) for r in _remotes.values()
                 if isinstance(r.get("views"), dict)]
     for host, rv in sorted(cand):
+        # the host's OWN store's write seq, on every row of its tags: a remote rename rides this kernel's
+        # blob with no change to the local `seq`, so a client ordering what a blob says about a remote
+        # tag (tab-groups.ts followTagRenames — a pane stands down on evidence older than its memory's)
+        # needs the host's; an older host that stamps none puts none on the row (round 9 of the
+        # 2026-09-06 tab-groups review)
+        hseq = rv.get("seq")
+        hseq = int(hseq) if isinstance(hseq, int) and not isinstance(hseq, bool) and hseq > 0 else None
         for t in (rv.get("tags") or [])[:_VIEWS_MAX_TAGS]:
             if not isinstance(t, dict) or not t.get("id"):
                 continue
@@ -3888,10 +3895,13 @@ def _views_client():
             # the NAME BASIS (round 7 of the 2026-09-05 review): an older remote build, or a padded
             # remote store, serves "web " raw; rendered raw, no lens entry (all on the basis) could
             # pick it and the union kept it apart from a local "web" — see _tag_name_basis
-            remote.append({"id": host + ":" + str(t["id"])[:64], "host": host,
-                           "name": _tag_name_basis(t.get("name")) or "tag",
-                           "color": str(t.get("color") or "")[:16],
-                           "members": [_remote_tag_member_str(host, m) for m in members]})
+            row = {"id": host + ":" + str(t["id"])[:64], "host": host,
+                   "name": _tag_name_basis(t.get("name")) or "tag",
+                   "color": str(t.get("color") or "")[:16],
+                   "members": [_remote_tag_member_str(host, m) for m in members]}
+            if hseq:
+                row["seq"] = hseq
+            remote.append(row)
     if remote:
         v["remoteTags"] = remote
     # tag federation v2: a queued edit is VISIBLE, never gone-but-not-gone — the matching cached
@@ -16080,6 +16090,10 @@ def _remotes_load():
             if not isinstance(row, dict) or not row.get("host"):
                 continue
             r = dict(row)
+            for k in _NOT_SAVED:    # a file an older build wrote carries keys this one does not save; they
+                r.pop(k, None)      #   describe a process that is gone — a /views poll stamp restored here
+            #                         gated the boot's first read for up to REMOTE_VIEWS_EVERY and served
+            #                         the cached reading (round 9 of the 2026-09-06 tab-groups review)
             r["proc"], r["status"] = None, "down"
             r["booting"] = False       # transient in-flight Start flag — persisted mid-boot it would
             #                            freeze the row's status against the supervisor forever
