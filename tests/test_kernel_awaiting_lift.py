@@ -825,11 +825,30 @@ class LiftGate(unittest.TestCase):
         self._tick()
         self.assertNotIn(SID, km._LIFT_GATE, "the sid left the alive set: its entry went with it")
 
-    def test_the_key_is_taken_before_the_read(self):
-        import inspect
-        src = inspect.getsource(km._lift_spent_awaiting)
-        self.assertLess(src.index("_lift_gate_key(sid)"), src.index("jd.load_goals(sid)"),
-                        "stat before read: a writer racing the load costs a reload, never a wrong skip")
+    def test_a_writer_racing_the_load_costs_one_reload_never_a_wrong_skip(self):
+        """The key is stat-ed BEFORE the read. A closer that publishes a stamp while the load is in flight
+        leaves an entry keyed on the pre-write files, so the next tick's key mismatches and the stamp is
+        found one cycle late. Keyed after the load, the entry would carry the writer's identity against
+        the pre-write store's empty answer, and the fresh stamp would be gated out of sight for good."""
+        self._returned_dispatch()
+        self._seed_unstamped()
+        counted = km.jd.load_goals
+        raced = []
+        def racing(fsid):
+            store = counted(fsid)                       # the real read: the pre-write, unstamped store
+            if not raced:
+                raced.append(fsid)
+                pub = json.loads((km.jd.GOALDIR / (SID + ".json")).read_text())
+                pub["nodes"][self.gid] = self._stamped_node()
+                km.jd.save_goals(SID, pub)              # the closer publishes under the read: a rename
+            return store
+        km.jd.load_goals = racing
+        self.assertEqual(self._tick(), 1, "tick 1 read once and saw nothing to lift")
+        self.assertEqual(len(raced), 1)
+        self.assertIsNotNone(self._stamp(), "the racing publish's stamp stands after tick 1")
+        self.assertEqual(km._LIFT_GATE[SID][1], False, "the entry says what that read found")
+        self.assertGreaterEqual(self._tick(), 1, "tick 2: the files moved under the read, so it loads")
+        self.assertIsNone(self._stamp(), "…and lifts the stamp one cycle late, never never")
 
     def test_perf_reports_the_gate(self):
         self._seed_unstamped()
