@@ -471,7 +471,7 @@ _load_split_env_words() { eval "$(sed -n '/^_split_env_words() {/,/^}/p' "$SVC")
     [ "$output" = $'LONGER_TOKEN=a-value-longer-than-the-word-short\nD=2' ]
 }
 
-@test "_split_env_words: a backslash escapes the next character inside and outside quotes; an unterminated quote refuses the body" {
+@test "_split_env_words: a backslash escapes the next character inside and outside quotes; an unterminated quote keeps the words before it" {
     _load_split_env_words
     unset body
     run _split_env_words 'A_TOKEN=a\ b "B_TOKEN=c\"d e" C_TOKEN=\"f D=\\x'
@@ -485,13 +485,16 @@ _load_split_env_words() { eval "$(sed -n '/^_split_env_words() {/,/^}/p' "$SVC")
     [ "$output" = 'A_TOKEN=trail' ]
     run _split_env_words 'X=1 "A_TOKEN=open B_TOKEN=b'
     [ "$status" -eq 1 ]
-    [ -z "$output" ]                                          # nothing from the body, not even the words before the quote
+    [ "$output" = 'X=1' ]                                     # the words before the quote, as systemd keeps them; nothing from the quote on
+    run _split_env_words '"A_TOKEN=open B_TOKEN=b'
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]                                          # the quote opened the first word: no word stands
     run _split_env_words ""
     [ "$status" -eq 0 ]
     [ -z "$output" ]
 }
 
-@test "status (Linux): an escaped quote in an Environment= value is a value, and an unterminated line names nothing" {
+@test "status (Linux): an escaped quote in an Environment= value is a value, and an unterminated line names the words before its quote" {
     ROMP_OS_OVERRIDE=Linux "$SVC" install >/dev/null
     local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
     mkdir -p "$ROMP_SYSTEMD_DIR/romp-manager.service.d"
@@ -499,15 +502,18 @@ _load_split_env_words() { eval "$(sed -n '/^_split_env_words() {/,/^}/p' "$SVC")
         printf '[Service]\n'
         # A_TOKEN's value carries an escaped quote followed by what looks like a second assignment: one word
         printf 'Environment="A_TOKEN=%s\\" B_TOKEN=%s"\n' "$v" "$v"
-        # an unterminated quote: systemd ignores the assignment, and so does this (C_TOKEN is not named)
+        # an unterminated quote: systemd ignores the assignment it opens, and so does this (C_TOKEN is not named)
         printf 'Environment="C_TOKEN=%s\n' "$v"
         printf 'Environment=D_TOKEN=%s\n' "$v"
+        # a word completed before an unterminated quote is kept, by systemd and here (E_TOKEN named, F_TOKEN not)
+        printf 'Environment=E_TOKEN=%s "F_TOKEN=%s\n' "$v" "$v"
     } > "$ROMP_SYSTEMD_DIR/romp-manager.service.d/env.conf"
     ROMP_OS_OVERRIDE=Linux run "$SVC" status
     [ "$status" -eq 0 ]
-    [[ "$output" == *"unit carries credential-shaped lines: A_TOKEN, D_TOKEN"* ]]
+    [[ "$output" == *"unit carries credential-shaped lines: A_TOKEN, D_TOKEN, E_TOKEN"* ]]
     [[ "$output" != *"B_TOKEN"* ]]
     [[ "$output" != *"C_TOKEN"* ]]
+    [[ "$output" != *"F_TOKEN"* ]]
     [[ "$output" != *"$v"* ]]
 }
 

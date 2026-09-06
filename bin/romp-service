@@ -273,8 +273,10 @@ _split_env_words() {   # <Environment= body> → one word per line, systemd's ru
     # whitespace-separated; a quoted stretch ("…" or '…') is part of ONE word with its quotes removed, so
     # "A_TOKEN=x y" is one assignment and B_TOKEN=b inside "NOT=a B_TOKEN=b" is a value, not a name; a
     # backslash escapes the next character, inside and outside quotes (\" does not close a quote, "\ "
-    # does not split a word); an unterminated quote is the body systemd refuses ("ignoring"): nothing is
-    # printed for it and the status is 1. Approximate on purpose, since the output is NAMES: systemd's
+    # does not split a word); an unterminated quote ends the parse where systemd's ends: the words
+    # completed before it are printed (systemd had taken them into the environment by the time it logged
+    # "Invalid syntax, ignoring" for the rest), the word the quote opened is dropped with the rest of the
+    # body, and the status is 1. Approximate on purpose, since the output is NAMES: systemd's
     # C-style escapes (\n, \xNN) become the character after the backslash, which can change a value but
     # never which name an assignment sets. The assignments happen on separate lines: `local a=1 b=${#a}`
     # expands ${#a} before `local` assigns a, so a one-line form read the CALLER's variable of that name.
@@ -298,7 +300,10 @@ _split_env_words() {   # <Environment= body> → one word per line, systemd's ru
             word+="$c"; have=1
         fi
     done
-    [[ -n "$q" ]] && return 1                         # unterminated: the whole body is refused, no word of it
+    if [[ -n "$q" ]]; then                            # unterminated: the words before the quote stand, the rest is refused
+        printf '%s' "$out"
+        return 1
+    fi
     [[ $have -eq 1 ]] && out+="$word"$'\n'
     printf '%s' "$out"
     return 0
