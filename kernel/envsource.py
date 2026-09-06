@@ -90,13 +90,18 @@ import subprocess
 import tempfile
 import threading
 import time
-from importlib.machinery import SourceFileLoader as _SFL
+import importlib.util
 from pathlib import Path
 
 # The file source's module, loaded the way sdk_backend loads it (one module object under one name),
 # for the env-file path both sources share. Its own parser is key-specific; the generalised rule
 # below is pinned equal to it by tests/test_envsource.py.
-_keysrc = _SFL("romp_keysource", str(Path(__file__).resolve().parent / "keysource.py")).load_module()
+_HERE = Path(__file__).resolve().parent
+_ls_spec = importlib.util.spec_from_file_location("romp_loadsource", str(_HERE / "loadsource.py"))
+_ls_mod = importlib.util.module_from_spec(_ls_spec)
+_ls_spec.loader.exec_module(_ls_mod)
+load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
+_keysrc = load_source("romp_keysource", _HERE / "keysource.py")
 
 COMMAND_VAR = "ROMP_CREDENTIAL_COMMAND"
 SELECTOR_FILE_VAR = "ROMP_CREDENTIAL_SELECTOR_FILE"

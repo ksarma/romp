@@ -44,15 +44,19 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from importlib.machinery import SourceFileLoader
+import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 # The SAME modules the kernel reads the credential with, not a second copy of the rules: writer and
 # reader then cannot disagree about which file holds the key, which line wins, how it is parsed, how
 # the mode is decided, where the selector lives or how a fingerprint is taken.
-ks = SourceFileLoader("romp_keysource", str(ROOT / "kernel" / "keysource.py")).load_module()
-es = SourceFileLoader("romp_envsource", str(ROOT / "kernel" / "envsource.py")).load_module()
+_ls_spec = importlib.util.spec_from_file_location("romp_loadsource", str(ROOT / "kernel" / "loadsource.py"))
+_ls_mod = importlib.util.module_from_spec(_ls_spec)
+_ls_spec.loader.exec_module(_ls_mod)
+load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
+ks = load_source("romp_keysource", ROOT / "kernel" / "keysource.py")
+es = load_source("romp_envsource", ROOT / "kernel" / "envsource.py")
 
 KPORTS = ["http://127.0.0.1:29855", "http://127.0.0.1:7878", "http://127.0.0.1:7432"]
 

@@ -219,13 +219,11 @@ class SdkSingleFlight(unittest.TestCase):
 
         fake_mod = mock.Mock()
         fake_mod.SdkBackend = lambda *a, **k: FakeBackend()
-        fake_loader = mock.Mock()
-        fake_loader.load_module.return_value = fake_mod
         prev = km._sdk_backend
         try:
             km._sdk_backend = None
             results = [None] * 6
-            with mock.patch.object(km, "SourceFileLoader", return_value=fake_loader), \
+            with mock.patch.object(km, "load_source", return_value=fake_mod), \
                  mock.patch.object(km, "_ensure_sdk_on_path", return_value=True):
                 ts = [threading.Thread(target=lambda i=i: results.__setitem__(i, km._sdk()))
                       for i in range(6)]

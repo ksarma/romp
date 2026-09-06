@@ -44,24 +44,28 @@ from pathlib import Path
 # The tmux launcher picks the first unused colour; for an SDK session we pick deterministically by a
 # stable hash of the sid (the launcher's own fallback when all are taken), so the session gets a
 # consistent colour without cross-backend "used" bookkeeping.
-from importlib.machinery import SourceFileLoader as _SFL
-_pal = _SFL("romp_palette", str(Path(__file__).resolve().parent / "palette.py")).load_module()
+import importlib.util
+_HERE = Path(__file__).resolve().parent
+_ls_spec = importlib.util.spec_from_file_location("romp_loadsource", str(_HERE / "loadsource.py"))
+_ls_mod = importlib.util.module_from_spec(_ls_spec)
+_ls_spec.loader.exec_module(_ls_mod)
+load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
+_pal = load_source("romp_palette", _HERE / "palette.py")
 # The LIVE source of the manager's API key (keysource.py — stdlib only, loaded the same way so the
 # module works from bin/ symlinks too). `romp keyswap` loads the identical file, so the writer and
 # the reader can never disagree about which path holds the key or how its line is parsed.
-_keysrc = _SFL("romp_keysource", str(Path(__file__).resolve().parent / "keysource.py")).load_module()
+_keysrc = load_source("romp_keysource", _HERE / "keysource.py")
 # The COMMAND source (envsource.py — stdlib only): a configured command prints a set of NAME=VALUE
 # lines that is merged into each child's environment at launch. Setting ROMP_CREDENTIAL_COMMAND
 # selects it; unset, every call here returns an empty set and the file source above is the whole
 # story. Values leave that module through one accessor (injection), never through a log or a wire.
-_envsrc = _SFL("romp_envsource", str(Path(__file__).resolve().parent / "envsource.py")).load_module()
+_envsrc = load_source("romp_envsource", _HERE / "envsource.py")
 # The by-text KEY RULE (session_backend.echo_text_key): the one normalization under which an input echo's
 # text is compared with a transcript record's, shared with the kernel's _atom_user_texts so the landing
 # scan below can never find what prune_live cannot retire. Loaded under its own module name on purpose:
 # the kernel loads that file as romp_session_backend and TmuxBackend subclasses that copy's ABC, and
 # re-executing the source into that module object would rebind the class out from under the subclass.
-echo_text_key = _SFL("romp_session_backend_keys",
-                     str(Path(__file__).resolve().parent / "session_backend.py")).load_module().echo_text_key
+echo_text_key = load_source("romp_session_backend_keys", _HERE / "session_backend.py").echo_text_key
 
 
 def _bin_on_path_env(environ) -> dict:
