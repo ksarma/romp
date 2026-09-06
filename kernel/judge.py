@@ -194,8 +194,14 @@ _EFFORT_FLOOR = {"fable": (5, 0), "mythos": (5, 0), "opus": (4, 6), "sonnet": (4
 #   family -> first (major, minor) the CLI treats as adaptive; below it is its denylist. The catalog knows
 #   no Haiku past 4.5, so haiku's floor marks where the denylist ends, not a version that exists.
 _ALIAS_HEAD = {"fable": (5, 1), "opus": (5, 0), "sonnet": (5, 0), "haiku": (4, 5)}   # the catalog's aliases block
+#   as read from the 2.1.257 / 2.1.258 binaries. 2.1.263 resolves alias targets at run time from a published
+#   catalog, falling back to its compiled table, so this can go stale with no CLI upgrade: _note_served_model
+#   checks it against the id each call actually served, and _ALIAS_SERVED outranks it once a call has answered.
 _MODEL_FAMILIES = tuple(_EFFORT_FLOOR)
 _UNKNOWN_MODEL_LOGGED = set()   # ids already announced as unplaceable (one stderr line each)
+_ALIAS_SERVED = {}              # family -> (major, minor) the CLI served for the BARE alias this process, read off
+                                #   result envelopes (_note_served_model); _adaptive_thinking asks it before the table
+_ALIAS_DRIFT_LOGGED = set()     # (family, served id) pairs already announced as off the table (one stderr line each)
 
 
 def _model_family_version(model):
@@ -233,7 +239,8 @@ def _model_family_version(model):
 def _adaptive_thinking(model):
     """True when `model` runs adaptive thinking under CLI 2.1.257 / 2.1.258 — the models whose index-tier
     cost lever is `--effort` (_EFFORT_FLOOR: Fable and Mythos, every version; Opus >= 4.6; Sonnet >= 4.6;
-    a bare alias is the version the catalog resolves it to, _ALIAS_HEAD — `haiku` is Haiku 4.5, so False).
+    a bare alias is the version the CLI has been SEEN to serve for it this process — _ALIAS_SERVED, read off
+    the result envelopes — else the table's head, _ALIAS_HEAD: `haiku` is Haiku 4.5, so False).
     False is the CLI's denylist — Haiku 4.5 and older, Sonnet 4.5 and older, Opus 4.5 and older, every
     claude-3 — the models where MAX_THINKING_TOKENS=0 is honored and is the lever. An id this cannot
     place — no family it knows, or a family with no readable version — gets the CLI's own answer for an
@@ -251,9 +258,52 @@ def _adaptive_thinking(model):
                              "otherwise) and leaves the thinking-off env var unset; extend _EFFORT_FLOOR "
                              "when the CLI's catalog places it\n" % (model, INDEX_EFFORT_DEFAULT))
         return True
-    if ver is None:                                # a bare alias: the version the catalog resolves it to
-        ver = _ALIAS_HEAD.get(fam, _EFFORT_FLOOR[fam])
+    if ver is None:                                # a bare alias: the version the CLI served for it, else the
+        ver = _ALIAS_SERVED.get(fam) or _ALIAS_HEAD.get(fam, _EFFORT_FLOOR[fam])   # catalog head we assume
     return ver >= _EFFORT_FLOOR[fam]
+
+
+def _note_served_model(model, wrap):
+    """After a successful claude-engine call: compare the id the CLI SERVED — the result envelope's
+    `modelUsage`, which the CLI keys by model id (a dated `claude-haiku-4-5-20251001`) — with what
+    _ALIAS_HEAD assumes for a BARE family alias. The served version is recorded (_ALIAS_SERVED) so
+    _adaptive_thinking follows the CLI from the next call, and a mismatch is announced once per (alias,
+    served id): the table is a copy of the CLI's catalog, and the envelope is that catalog answering.
+    The same-family entry with the most output tokens is the model that wrote the reply (a side call's
+    entry cannot move the alias). Quiet when they agree, when `model` is a versioned id (a pin is a
+    pin, never remapped), and when the envelope names no same-family model — that carries no evidence
+    either way, so the table's answer stands exactly as it did before this check. Every tier feeds the
+    record; only the index tier's lever reads it. Best-effort, never raises (mirrors _log_judge_usage —
+    bookkeeping must not cost the reply)."""
+    try:
+        fam, ver = _model_family_version(model)
+        if fam is None or ver is not None:
+            return
+        mu = wrap.get("modelUsage") if isinstance(wrap, dict) else None
+        if not isinstance(mu, dict):
+            return
+        best = None                               # (output tokens, served id, served version)
+        for mid, u in mu.items():
+            sfam, sver = _model_family_version(mid)
+            if sfam != fam or not sver:
+                continue
+            out = u.get("outputTokens") if isinstance(u, dict) else None
+            out = out if isinstance(out, (int, float)) else 0
+            if best is None or out > best[0]:
+                best = (out, mid, sver)
+        if best is None:
+            return
+        _, mid, served = best
+        _ALIAS_SERVED[fam] = served
+        head = _ALIAS_HEAD.get(fam, _EFFORT_FLOOR[fam])
+        if served != head and (fam, mid) not in _ALIAS_DRIFT_LOGGED:
+            _ALIAS_DRIFT_LOGGED.add((fam, mid))
+            sys.stderr.write("romp-judge: the CLI serves the bare %s alias as %s (%d.%d), not the %d.%d "
+                             "_ALIAS_HEAD assumes — the index tier's lever for %s follows the served version "
+                             "from here; move _ALIAS_HEAD when the CLI's catalog does\n"
+                             % (fam, mid, served[0], served[1], head[0], head[1], fam))
+    except Exception:
+        pass
 
 
 # The DISTILLING tier (the user 2026-08-14): the card-prose writers — distiller, briefer, staller — get
@@ -1520,6 +1570,8 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
             if isinstance(wrap, dict) and isinstance(wrap.get("result"), str):
                 _judge_ctx.last["reply"] = _mid_elide(wrap["result"])
                 _log_judge_usage(judge or tier, tier, model, fsid, wrap, sent, recv)
+                _note_served_model(model, wrap)       # the envelope names the model a bare alias resolved to;
+                                                      # the alias table is checked against it (one line per drift)
                 _auth_down_clear(fsid)                # billing works → unlatch (cheap no-op when unlatched)
                 if auth == "login":
                     # only a LOGIN-billed success is evidence the login window reset early — a
