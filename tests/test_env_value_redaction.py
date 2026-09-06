@@ -26,6 +26,7 @@ Every probe value is synthetic and assembled at run time ("romp-test-fixture-" +
 pattern-shaped probe is a public key prefix joined to uuids), so no literal in this file is a
 credential.
 """
+import hashlib
 import json
 import os
 import pprint
@@ -214,10 +215,57 @@ class CredentialPattern(_WithConftest):
             self.assertFalse(tok in red, text[:12])
             self.assertTrue(self.cf.CREDENTIAL_REDACTED in red)
         for text in ("sha256:1a2b3c1a2b3c", "XDG_STATE_HOME=/tmp/romp-tests-state-%s/floor" % tok,
-                     "the word %s alone" % tok, "at: 1700000000", "n=%s" % uuid.uuid4().hex[:31],
+                     "the word %s alone" % tok, "at: 1700000000", "n=%s" % uuid.uuid4().hex[:23],
                      "testMethod=test_a_long_descriptive_name_without_a_digit_in_it_stays_readable"):
             self.assertEqual(self.cf.redact_credential_tokens(text), text, text[:20])
         self.assertEqual(self.cf.redact_credential_tokens(None), None)
+
+    def test_the_generic_floor_is_24_with_a_digit_and_40_for_mixed_case_without_one(self):
+        # a 31-character hex after `=` slipped through the old floor of 32; 24 is the floor now. A token
+        # of letters only is caught at 40 when it mixes cases (a base64 tail can lack a digit); an
+        # all-lowercase one of any length is an identifier and stays
+        red = self.cf.redact_credential_tokens
+        for n in (24, 31):
+            hexn = uuid.uuid4().hex[:n]
+            self.assertEqual(red("KEY=%s" % hexn), "KEY=" + self.cf.CREDENTIAL_REDACTED, n)
+        hex23 = uuid.uuid4().hex[:23]
+        self.assertEqual(red("KEY=%s" % hex23), "KEY=%s" % hex23, "under the floor")
+        mixed40, mixed39 = "aB" * 20, ("aB" * 20)[:39]
+        self.assertEqual(red("KEY=%s" % mixed40), "KEY=" + self.cf.CREDENTIAL_REDACTED)
+        self.assertEqual(red("KEY=%s" % mixed39), "KEY=%s" % mixed39, "39 mixed-case characters without a digit stay")
+        lower44 = "a" * 44
+        self.assertEqual(red("KEY=%s" % lower44), "KEY=%s" % lower44, "one case, no digit: an identifier")
+        # the cost the docstring names: a test method name with a digit, 24 characters or more, in a value position
+        self.assertEqual(red("testMethod=test_with_2_digits_and_a_long_name"), "testMethod=" + self.cf.CREDENTIAL_REDACTED)
+
+    def test_a_token_alone_on_a_line_is_a_value_position(self):
+        # an apiKeyHelper's stdout contract is one token on one line, with nothing to mark it as a value
+        red = self.cf.redact_credential_tokens
+        tok = uuid.uuid4().hex                                     # 32 characters, no known prefix
+        self.assertEqual(red(tok), self.cf.CREDENTIAL_REDACTED)
+        self.assertEqual(red(tok + "\n"), self.cf.CREDENTIAL_REDACTED + "\n", "a trailing newline is the contract")
+        self.assertEqual(red("line one\n%s\nline three" % tok), "line one\n%s\nline three" % self.cf.CREDENTIAL_REDACTED)
+        self.assertEqual(red("the word %s alone" % tok), "the word %s alone" % tok, "a token among words is not a value")
+        short = uuid.uuid4().hex[:23]
+        self.assertEqual(red(short), short, "the floor applies to a bare line too")
+
+    def test_a_pytest_node_id_and_a_named_git_sha_are_kept(self):
+        red = self.cf.redact_credential_tokens
+        node = "tests/test_x.py::Case::test_method_with_2_digits_and_a_long_name"
+        self.assertEqual(red(node), node, "the segment after :: is a test's name")
+        self.assertEqual(red(node + " FAILED"), node + " FAILED")
+        tok = uuid.uuid4().hex
+        self.assertEqual(red("x-api-key:%s" % tok), "x-api-key:" + self.cf.CREDENTIAL_REDACTED, "one colon is still a value position")
+        sha = hashlib.sha1(b"romp-test-fixture-commit").hexdigest()     # 40 lowercase hex, a commit id's shape
+        self.assertTrue(any(c.isdigit() for c in sha) and len(sha) == 40)
+        for text in ("commit=%s" % sha, "commit: %s" % sha, "{'commit': '%s'}" % sha, "Commit: %s" % sha,
+                     "HEAD_COMMIT=%s" % sha, "objects/%s" % sha, "repo@%s" % sha):
+            self.assertEqual(red(text), text, text[:12])
+        for text in ("KEY=%s" % sha, sha, "sha: %s" % sha):
+            self.assertEqual(red(text), text.replace(sha, self.cf.CREDENTIAL_REDACTED), text[:8])
+        # a 40-hex token that is not a sha's alphabet (upper case, a '-') is not exempted by the commit word
+        other = "A1" * 20
+        self.assertEqual(red("commit=%s" % other), "commit=" + self.cf.CREDENTIAL_REDACTED)
 
     def test_the_two_nets_are_applied_in_order_and_share_one_pattern_list(self):
         v = probe_value("env")
