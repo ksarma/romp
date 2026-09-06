@@ -28,6 +28,10 @@ import pytest
 # atexit is the fallback for a normal exit that skipped unconfigure; nothing survives an os._exit
 # (pytest-timeout's thread method ends a hung run that way), so a hang leaks one root. The prefix
 # is what a stray one looks like in the system temp dir.
+# The temp dir this process was handed is recorded before the redirect: a test that must leave
+# the root (an AF_UNIX socket path that would not fit sun_path under a nested root) falls back to
+# it, and only to it — a literal system path in a `dir=` would bypass the redirect (one did).
+os.environ["ROMP_TESTS_SYSTEM_TMPDIR"] = tempfile.gettempdir()
 _TMP_ROOT = tempfile.mkdtemp(prefix="romp-tests-")
 tempfile.tempdir = _TMP_ROOT
 os.environ["TMPDIR"] = _TMP_ROOT

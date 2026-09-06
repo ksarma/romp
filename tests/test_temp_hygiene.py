@@ -13,11 +13,14 @@ exit, since the package imports before conftest can redirect anything. The same 
 at no global or system config (GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM) with a synthetic identity: the
 seed commits had been running the developer's global pre-commit hook.
 
-Pinned here from inside a run (the floors are in place and children inherit them) and end to end
+Pinned here from inside a run (the floors are in place and children inherit them; no test pins a
+temp path to a literal directory) and end to end
 (a nested pytest on a leaking module leaves the system temp dir it was given exactly as it found
 it). This module loads no romp code, so it needs no state-root preamble. Everything skips under a
 bare unittest run, where conftest never loaded and there is nothing to pin.
 """
+import ast
+import glob
 import importlib.util
 import os
 import re
@@ -60,6 +63,49 @@ class PrivateTempRoot(unittest.TestCase):
         self.assertEqual(py.stdout, root, "a Python child's tempfile answers with the root")
         sh = _run(["mktemp", "-d", "-u"])   # -u: name only, nothing created
         self.assertEqual(os.path.dirname(sh.stdout.strip()), root, "a shell's mktemp -d lands in it")
+
+    def test_the_handed_temp_dir_is_recorded_and_is_the_roots_parent(self):
+        # The one sanctioned way out of the root (tests/test_kernel_socket_deliver._socket_dir, for
+        # a socket path that would not fit sun_path) goes to the dir the run was handed, never to a
+        # literal system path.
+        handed = os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR")
+        self.assertTrue(handed, "conftest records the temp dir it replaced")
+        self.assertEqual(os.path.realpath(os.path.dirname(tempfile.gettempdir())), os.path.realpath(handed))
+
+    TEMPFILE_CALLS = ("mkdtemp", "mkstemp", "mktemp", "TemporaryDirectory", "NamedTemporaryFile",
+                      "TemporaryFile", "SpooledTemporaryFile")
+
+    def test_no_test_pins_a_temp_path_to_a_literal_directory(self):
+        # A string literal as the `dir=` of a tempfile call bypasses the redirect: the socket tests
+        # carried dir="/tmp" and left three rompsock* directories in the real /tmp per run, where the
+        # nested-run check below could not see them. Static, so it covers every module whether or
+        # not a run exercises it. Python files are read as syntax (a call's keyword, so
+        # parse_session(dir="/TESTDIR") is not a hit and a call split over lines is), after a text
+        # prefilter that keeps the parse to the files that could match; a bats `mktemp` naming /tmp
+        # is the shell shape.
+        bad = []
+        might = re.compile(r"\bdir\s*=")
+        for path in sorted(glob.glob(os.path.join(HERE, "*.py"))):
+            src = open(path, encoding="utf-8").read()
+            if not (might.search(src) and any(c in src for c in self.TEMPFILE_CALLS)):
+                continue
+            for node in ast.walk(ast.parse(src)):
+                if not isinstance(node, ast.Call):
+                    continue
+                f = node.func
+                name = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else None
+                if name in self.TEMPFILE_CALLS and any(
+                        kw.arg == "dir" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)
+                        for kw in node.keywords):
+                    bad.append("%s:%d: %s" % (os.path.relpath(path, ROOT), node.lineno,
+                                              ast.get_source_segment(src, node).splitlines()[0]))
+        sh_pin = re.compile(r"\bmktemp\b[^\n|;&#]*(?:\s-p\s*|\s)/(?:tmp|var/tmp|private/tmp)\b")
+        for path in sorted(glob.glob(os.path.join(HERE, "*.bats")) + glob.glob(os.path.join(HERE, "*.bash"))):
+            for n, line in enumerate(open(path, encoding="utf-8"), 1):
+                if sh_pin.search(line) and not line.lstrip().startswith("#"):
+                    bad.append("%s:%d: %s" % (os.path.relpath(path, ROOT), n, line.strip()))
+        self.assertEqual(bad, [], "temp paths take the process temp dir (the private root); a test that "
+                         "must leave it falls back to ROMP_TESTS_SYSTEM_TMPDIR — see _socket_dir")
 
 
 def _git_version():
@@ -133,7 +179,15 @@ LEAKY_MODULE = textwrap.dedent('''\
 class RunLeavesNothing(unittest.TestCase):
     """A nested pytest, handed a fresh directory as its system temp dir and loading this repo's
     conftest as a plugin, runs a module that leaks every way the suite does: after it exits the
-    directory holds exactly what it held before."""
+    directory holds exactly what it held before.
+
+    The fresh directory is the whole check; the machine's real system temp dir is not diffed. It
+    would be cheap (a prefix-filtered os.scandir over 101k entries measured 0.10 s, 2026-09-06) but
+    not attributable: that dir is shared with every process on the box, and with other checkouts
+    running this suite beside it, romp-prefixed entries appeared there about twice a minute (345
+    bursts in three hours, measured the same day) — a before/after diff over a nested run of a few
+    seconds would fail a third of the time with nothing wrong. Only a literal path can reach it past
+    TMPDIR, and PrivateTempRoot pins that class statically."""
 
     def _nested(self, *extra):
         fresh = tempfile.mkdtemp()

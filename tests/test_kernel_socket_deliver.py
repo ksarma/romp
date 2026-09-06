@@ -8,12 +8,15 @@ sends no ack). Untagged sessions must keep today's pane injection untouched. Syn
 fixtures only."""
 import json
 import os
+import shutil
 import socket
+import sys
 import tempfile
 import threading
 import time
 import unittest
 from importlib.machinery import SourceFileLoader
+from unittest.mock import patch
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
 # Hermetic state BEFORE the loads — they resolve their state root at import time, and only
@@ -35,13 +38,36 @@ def _registry_row(dirpath, pid, session_id, sock, started_at=1000):
                    "startedAt": started_at, "cwd": "/tmp/x", "kind": "interactive"}, f)
 
 
+# Where an inbox socket lives (2026-09-06): the run's private temp root — tempfile.gettempdir(),
+# which tests/conftest.py points at a romp-tests-* directory it removes when the run ends — when the
+# socket path fits in sun_path, and the temp dir this process was handed before that redirect only
+# when it would not. sun_path is 108 bytes on Linux and 104 on macOS, NUL included; an xdist
+# worker's root nested under a macOS TMPDIR puts the socket at 116 bytes
+# (/var/folders/../T/romp-tests-x/romp-tests-x/rompsockx/inbox.sock), the Linux equivalent at 72.
+# conftest records the handed dir as ROMP_TESTS_SYSTEM_TMPDIR (the system temp dir, or the
+# controller's root for a worker); without conftest, gettempdir() already is that dir. Either way
+# close() removes the directory. Before this the dir was pinned to "/tmp" and never removed:
+# the pin bypassed the redirect and every run left three rompsock* directories behind.
+_SUN_PATH_MAX = 104 if sys.platform == "darwin" else 108
+_SOCK_NAME = "inbox.sock"
+
+
+def _socket_dir():
+    d = tempfile.mkdtemp(prefix="rompsock")
+    if len(os.fsencode(os.path.join(d, _SOCK_NAME))) < _SUN_PATH_MAX:
+        return d
+    os.rmdir(d)
+    return tempfile.mkdtemp(prefix="rompsock", dir=os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir())
+
+
 class _OneShotInbox:
     """A real AF_UNIX listener capturing everything one client writes (the CLI parses per
-    line and acks nothing for a plain send, so capture-and-close mirrors it exactly)."""
+    line and acks nothing for a plain send, so capture-and-close mirrors it exactly).
+    close() removes the socket's directory; callers addCleanup it."""
 
     def __init__(self):
-        self.dir = tempfile.mkdtemp(prefix="rompsock", dir="/tmp")
-        self.path = os.path.join(self.dir, "inbox.sock")
+        self.dir = _socket_dir()
+        self.path = os.path.join(self.dir, _SOCK_NAME)
         self.got = []
         self._srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._srv.bind(self.path)
@@ -84,6 +110,55 @@ class _OneShotInbox:
         except OSError:
             pass
         self._thread.join(timeout=1.0)
+        shutil.rmtree(self.dir, ignore_errors=True)    # idempotent: a second close finds nothing
+
+
+class InboxDir(unittest.TestCase):
+    """_socket_dir's rule, and that an inbox leaves nothing behind."""
+
+    def test_the_dir_is_under_the_private_root_when_the_path_fits_and_gone_after_close(self):
+        inbox = _OneShotInbox()
+        self.addCleanup(inbox.close)
+        root = tempfile.gettempdir()
+        self.assertLess(len(os.fsencode(inbox.path)), _SUN_PATH_MAX)
+        fits_in_root = len(os.fsencode(os.path.join(root, os.path.basename(inbox.dir), _SOCK_NAME))) < _SUN_PATH_MAX
+        self.assertEqual(os.path.dirname(inbox.dir),
+                         root if fits_in_root else os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or root)
+        self.assertTrue(os.path.exists(inbox.path))
+        inbox.close()
+        self.assertFalse(os.path.exists(inbox.dir), "close() removes the socket's directory")
+        inbox.close()                                      # a second close is a no-op
+
+    def test_a_path_too_long_for_the_private_root_falls_back_to_the_handed_dir(self):
+        handed = tempfile.gettempdir()
+        deep = os.path.join(handed, "d" * 120)             # deep + /rompsockXXXXXXXX/inbox.sock > 108
+        os.mkdir(deep)
+        self.addCleanup(shutil.rmtree, deep, ignore_errors=True)
+        with patch.dict(os.environ, {"ROMP_TESTS_SYSTEM_TMPDIR": handed}), patch.object(tempfile, "tempdir", deep):
+            d = _socket_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        self.assertEqual(os.path.dirname(d), handed)
+        self.assertLess(len(os.fsencode(os.path.join(d, _SOCK_NAME))), _SUN_PATH_MAX)
+        self.assertEqual(os.listdir(deep), [], "the too-long candidate was removed, not left behind")
+
+    def test_the_rule_is_exercised_under_the_limit_by_a_real_bind(self):
+        # The constant is the platform's, not a guess: a socket at exactly _SUN_PATH_MAX - 1 bytes
+        # binds and one at _SUN_PATH_MAX does not, which is what the length check encodes.
+        with tempfile.TemporaryDirectory() as td:
+            if len(os.fsencode(td)) + 2 >= _SUN_PATH_MAX:
+                self.skipTest("the temp root itself is near sun_path's limit")
+            for length, ok in ((_SUN_PATH_MAX - 1, True), (_SUN_PATH_MAX, False)):
+                path = os.path.join(td, "s" * (length - len(td) - 1))
+                self.assertEqual(len(os.fsencode(path)), length)
+                srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                try:
+                    srv.bind(path)
+                    bound = True
+                except OSError:
+                    bound = False
+                finally:
+                    srv.close()
+                self.assertEqual(bound, ok, path)
 
 
 class SocketRegistry(unittest.TestCase):
@@ -128,16 +203,14 @@ class SocketWrite(unittest.TestCase):
 
     def test_writes_one_user_record(self):
         inbox = _OneShotInbox()
-        try:
-            self.assertTrue(km._socket_deliver(inbox.path, "mail body <!-- romp-msg-id: 1 -->"))
-            got = inbox.wait()
-            self.assertEqual(len(got), 1)
-            rec = json.loads(got[0].decode("utf-8"))
-            self.assertEqual(rec["type"], "user")
-            self.assertEqual(rec["message"]["role"], "user")
-            self.assertEqual(rec["message"]["content"], "mail body <!-- romp-msg-id: 1 -->")
-        finally:
-            inbox.close()
+        self.addCleanup(inbox.close)
+        self.assertTrue(km._socket_deliver(inbox.path, "mail body <!-- romp-msg-id: 1 -->"))
+        got = inbox.wait()
+        self.assertEqual(len(got), 1)
+        rec = json.loads(got[0].decode("utf-8"))
+        self.assertEqual(rec["type"], "user")
+        self.assertEqual(rec["message"]["role"], "user")
+        self.assertEqual(rec["message"]["content"], "mail body <!-- romp-msg-id: 1 -->")
 
     def test_false_when_socket_is_gone(self):
         self.assertFalse(km._socket_deliver("/tmp/rompsock-nonexistent/inbox.sock", "x"))
@@ -187,27 +260,23 @@ class DeliverGate(unittest.TestCase):
 
     def test_tagged_session_delivers_down_the_socket(self):
         inbox = _OneShotInbox()
-        try:
-            _registry_row(self.reg, os.getpid(), SID, inbox.path)
-            be = _StubTmux(accept=True)
-            self.assertTrue(be.deliver(SID, "banner text"))
-            got = inbox.wait()
-            self.assertEqual(json.loads(got[0].decode("utf-8"))["message"]["content"], "banner text")
-            self.assertEqual(be.pane_calls, [])            # the pane was never touched
-        finally:
-            inbox.close()
+        self.addCleanup(inbox.close)
+        _registry_row(self.reg, os.getpid(), SID, inbox.path)
+        be = _StubTmux(accept=True)
+        self.assertTrue(be.deliver(SID, "banner text"))
+        got = inbox.wait()
+        self.assertEqual(json.loads(got[0].decode("utf-8"))["message"]["content"], "banner text")
+        self.assertEqual(be.pane_calls, [])                # the pane was never touched
 
     def test_untagged_session_keeps_the_pane_path(self):
         inbox = _OneShotInbox()
-        try:
-            _registry_row(self.reg, os.getpid(), SID, inbox.path)
-            be = _StubTmux(accept=False)
-            be.deliver(SID, "banner text")                 # pane stub has no ❯ prompt → undelivered
-            time.sleep(0.2)
-            self.assertEqual(inbox.got, [])                # nothing reached the socket
-            self.assertIn("capture", be.pane_calls)        # the pane path ran instead
-        finally:
-            inbox.close()
+        self.addCleanup(inbox.close)
+        _registry_row(self.reg, os.getpid(), SID, inbox.path)
+        be = _StubTmux(accept=False)
+        be.deliver(SID, "banner text")                     # pane stub has no ❯ prompt → undelivered
+        time.sleep(0.2)
+        self.assertEqual(inbox.got, [])                    # nothing reached the socket
+        self.assertIn("capture", be.pane_calls)            # the pane path ran instead
 
     def test_tagged_but_dead_socket_falls_back_to_the_pane(self):
         _registry_row(self.reg, os.getpid(), SID, "/tmp/rompsock-nonexistent/inbox.sock")
