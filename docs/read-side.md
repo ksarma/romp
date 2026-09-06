@@ -54,6 +54,31 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   **same served UI** over the **same protocol**, so the two front ends stay
   consistent by construction. Keeping the WS protocol stable is the compatibility
   contract.
+- **Liveness is a keepalive, and staleness is event-keyed.** The kernel sends a
+  `ka` frame to every socket every 10 s; the pane shim force-closes a socket that
+  has gone 30 s without any frame. After a reconnect the shim raises the "what you
+  see may be stale" prompt only on the SECOND `ka` arriving before the resync
+  frame — one full heartbeat period, bracketed by two kernel heartbeats on that
+  socket with no resync between them (a single `ka` can be a beat that was already
+  queued when the socket was accepted) — or on the reconnected socket closing
+  again before its resync; the first non-keepalive frame retires the prompt, never
+  a timer. A client that falls 16 MB behind is dropped by the kernel, loudly: one
+  `ws: dropping` line in the kernel log, written where the drop is decided so every
+  send path is covered, naming the pane, the dashboard, the backlog and the push
+  slot whose frame tipped the budget when a push did; and a row in the dashboard's
+  bell (at most five drop rows, none older than an hour, so they never crowd out a
+  backend problem). Every close of a socket that opened leaves a `wsclose`
+  breadcrumb (code, reason, socket age) in `client-diag.jsonl`; the redials an
+  outage refuses are counted and reported as one `wsconnfail` row on the next
+  open, and at most 20 breadcrumbs wait in the shim's queue for it.
+- **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
+  kernel's, so the pane never reads the browser's clock against them: it anchors
+  on the frame's `now` paired with the moment that frame arrived from the wire
+  (`feed-age.ts`; federation stamps the merged frame it re-emits with `nowAt`, so a
+  re-emit on a view-order write or a remote host's frame never moves an age), and
+  every "(Xm ago)", the current goal's elapsed time and the recency cutoff move on
+  a 15 s refresh — skipped while the pane is hidden, with one catch-up render when
+  it is shown again — rather than only when a frame lands.
 - **Both judge tiers run continuously for any live session — no connection gate.**
   The kernel runs the index tier (captioner + archiver) AND the triage tier
   (planner → closer → courier → grouper → consolidator → distiller) in parallel,
