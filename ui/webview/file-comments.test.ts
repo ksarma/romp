@@ -843,7 +843,7 @@ test("docs: the guide covers the panel, the poll, the consent, either view and m
   const flat = (t: string) => t.replace(/\s+/g, " ");   // the guide wraps at 80 columns
   const files = flat(GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges")));
   for (const phrase of ["**Comments**", "**Track changes**", "**Send to session**", "Rendered or Raw", "**Comment on this file**", "image or a PDF",
-    ".trackchanges/", "comments log", ".gitignore", "**File comments**", "**File editing**", "every few seconds"]) {
+    ".trackchanges/", "comments log", ".gitignore", "**File comments**", "**File editing**", "every few seconds", "**Re-place**"]) {
     assert.ok(files.includes(phrase), "Files section: " + phrase);
   }
   const chat = flat(GUIDE.slice(GUIDE.indexOf("### The chat"), GUIDE.indexOf("### The feed")));

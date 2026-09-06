@@ -1963,7 +1963,7 @@ class Panel {
     const res = btn(c.resolved ? "Reopen" : "Resolve", "fcresolve"); res.dataset.id = c.id; res.dataset.on = c.resolved ? "0" : "1"; acts.appendChild(res);
     if (replaceOffered) {                              // Re-place needs the picture in view and a pointer that can draw
       const rp = btn("Re-place", "fcreplace"); rp.dataset.id = c.id;
-      rp.title = regionSt === "stale" ? "The image changed: draw the region again where it belongs now" : "Draw the region again; the comment keeps its words";
+      rp.title = regionSt === "stale" ? "The image changed: draw the region again where it belongs now" : "Draw the region again; the comment keeps its words and its replies";
       acts.appendChild(rp);
     }
     const src = this.ctx.text();

@@ -5,8 +5,10 @@ The paragraph described a re-place as "the comment keeps its words", the current
 the panel's Re-place button (ui/webview/file-comments.ts). Read at the moment it matters, a stale
 region comment a session has already answered, that line does not say whether the answer survives:
 "its words" can mean the text the person typed alone. No other user-facing string on the Re-place
-path names replies either (the stale title says where to draw, the composer note what Cancel does),
-so the guide was the one place that could settle it and did not (review finding, 2026-09-06).
+path named replies either (the stale title says where to draw, the composer note what Cancel does),
+so the guide was the one place that could settle it and did not (review finding, 2026-09-06). The
+review consolidation then made the current-region title say the same — "keeps its words and its
+replies" — so the control and the guide agree on what a re-place keeps, and this module pins both.
 
 The fact is available and the host settles it: `retarget` in tools/file-comments-host.mjs writes
 one field, `target` (the rectangle and the hash of the bytes it was drawn on), so the comment's id,
@@ -72,6 +74,13 @@ class FiguresSaysWhatReplaceKeeps(unittest.TestCase):
         # guide adds the fact after them, so a reader who saw the tooltip finds the same words here.
         self.assertIn("the comment keeps its words and its replies, and only the rectangle changes",
                       self.figures)
+
+    def test_the_current_region_title_names_the_replies_too(self):
+        # The control the person reads at the moment it matters says the same as the guide: a
+        # re-place keeps the words and the replies. The stale title stays about where to draw.
+        panel = _read("ui", "webview", "file-comments.ts")
+        self.assertIn('"Draw the region again; the comment keeps its words and its replies"', panel)
+        self.assertNotIn('"Draw the region again; the comment keeps its words"', panel)
 
     def test_the_kept_set_is_stated_once(self):
         # One statement of what a re-place keeps, not the earlier "keeps its words" alone somewhere
