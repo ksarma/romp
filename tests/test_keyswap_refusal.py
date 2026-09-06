@@ -267,11 +267,26 @@ class NamedSwapRefused(_Env):
         self.assertIn("MISMATCH    the kernel is in command mode and this shell is not: the kernel pinned command mode when it", out)
         self.assertIn("this shell reads no ROMP_CREDENTIAL_COMMAND now. The kernel got the line from one of:", out)
         # the /keycycle answer cannot say WHERE the kernel got the line (the manager's environment, a
-        # service.env line removed since the kernel started, or the shell that ran `romp up` all read the
-        # same), so the report asserts no cause: it lists the three places, each with its remedy
+        # service.env line removed since the kernel started, another service.env, or the shell that ran
+        # `romp up` all read the same), so the report asserts no cause: it lists the places, each with
+        # its remedy
         self.assertNotIn("the kernel's environment carries", out, "a cause to check, not a fact")
-        self.assertIn("- the manager's environment (the unit's Environment=, or service.env as the manager loaded it at its", out)
-        self.assertIn("start), which every kernel inherits: restart the manager; `romp refresh` alone keeps the mode", out)
+        # the manager's environment is TWO causes with two remedies: a service.env line the manager loaded
+        # goes at the restart, which re-reads the file; a line in the unit, a drop-in or the profile a
+        # shell-wrapped ExecStart sources is re-applied by a restart, so it is removed where it is first
+        self.assertIn("- service.env as the manager loaded it at its start, which every kernel inherits: the line is", out)
+        self.assertIn("gone from the file this shell reads, so restart the manager (the restart re-reads the file);", out)
+        self.assertIn("`romp refresh` alone keeps the mode", out)
+        self.assertIn("- the unit's Environment=, a drop-in, or the profile a shell-wrapped ExecStart sources: a manager", out)
+        self.assertIn("restart re-applies these, so remove the line there first (`systemctl --user daemon-reload`", out)
+        self.assertIn("after editing a unit or a drop-in), then restart the manager", out)
+        self.assertNotIn("the unit's Environment=, or service.env as the manager loaded it", out,
+                         "one cause with one remedy would send a unit line's owner to a restart that re-applies it")
+        # the kernel may read ANOTHER service.env: the installer carries a non-default ROMP_SERVICE_ENV_FILE
+        # into the unit or plist (bin/romp-service), the answer carries no path, and this shell's is named
+        self.assertIn("- another service.env: the installer carries a non-default ROMP_SERVICE_ENV_FILE into the unit or", out)
+        self.assertIn("plist, so the kernel may read a file other than this shell's (%s):" % self.path, out)
+        self.assertIn("run this command with the same ROMP_SERVICE_ENV_FILE, or check the unit for that variable", out)
         self.assertIn("- service.env, edited since the kernel read it at its start: `romp refresh`", out)
         self.assertIn("- the shell that ran `romp up`, which exported it: stop that `romp up`; start it from a shell without the line", out)
         # the manager restart is named by the commands that restart one: `romp-service install` is not
@@ -284,6 +299,30 @@ class NamedSwapRefused(_Env):
         rc, out, _err = self.run_cli("--cycle-all")
         self.assertEqual(rc, 1)
         self.assertIn("cycle       NOT DONE", out)
+
+    def test_a_kernel_in_file_mode_under_a_file_that_carries_the_line_names_the_other_file_cause(self):
+        # the file this shell reads carries ROMP_CREDENTIAL_COMMAND and the kernel is in file mode. The
+        # first cause is a line added since the kernel started, and `romp refresh` is the whole fix; the
+        # second is that the kernel reads ANOTHER service.env (the installer carried a non-default
+        # ROMP_SERVICE_ENV_FILE into the unit or plist), which no kernel restart mends, so the block
+        # names it with this shell's path. Called at the block: the report's header would run the command
+        self.write_env("ROMP_PERF=1\nROMP_CREDENTIAL_COMMAND=romp-test-fixture-cmd \"$1\"\n")
+        cli.es._reset()
+        said = []
+        try:
+            rc = cli._mode_mismatch({"keySource": "file", "keyFp": ""}, "command", said.append)
+        finally:
+            cli.es._reset()
+        out = "\n".join(said)
+        self.assertEqual(rc, 1)
+        self.assertIn("kernel      reads (none) in FILE mode", out)
+        self.assertIn("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in service.env", out)
+        self.assertIn("there needs no manager restart). Until then the kernel injects no set.", out)
+        self.assertIn("If the kernel is still in file mode after `romp refresh`, it reads another service.env: the installer", out)
+        self.assertIn("carries a non-default ROMP_SERVICE_ENV_FILE into the unit or plist, and this shell reads %s." % self.path, out)
+        self.assertIn("Run this command with the same ROMP_SERVICE_ENV_FILE, or check the unit for that variable.", out)
+        self.assertNotIn("systemctl", out, "adding the line is never a manager restart")
+        self.assertNotIn("set in this shell's", out)
 
     def test_a_second_positional_is_counted_never_echoed(self):
         # a key value typed where a name was expected must not reach stderr

@@ -498,17 +498,26 @@ itself. Removing the line under the installed service needs a manager restart,
 gui/$(id -u)/com.romp.manager` on macOS: the service loaded `service.env` into
 the manager's environment when the manager started, every kernel inherits that
 environment, and `romp refresh` restarts kernels only, so a new kernel still
-carries the variable and stays in command mode. The other `ROMP_CREDENTIAL_*`
+carries the variable and stays in command mode. The restart re-reads
+`service.env`, so remove the line first. A line in the unit's own
+`Environment=`, in a drop-in, or in the profile a shell-wrapped `ExecStart`
+sources is different: a manager restart re-applies it, so it has to be removed
+where it is, with `systemctl --user daemon-reload` after editing a unit or a
+drop-in, and the manager restarted after that. The other `ROMP_CREDENTIAL_*`
 values are read live, the environment first, with the same consequence: a
 line the manager's environment already carries is shadowed by that copy until
 the manager restarts, while a line the environment does not carry (one added
-since the manager started) is read from the file at once. An edit to the
-unit's own `Environment=` lines, and the variables a shell-wrapped `ExecStart`
-loaded, reach the kernel at the next manager restart as well. When `romp
-keyswap` finds the kernel in command mode under a shell that reads no line, it
-cannot tell which of three places still carries it (the manager's environment,
-a `service.env` line removed since the kernel started, or the shell that ran
-`romp up`), so its `MISMATCH` lists all three, each with its remedy.
+since the manager started) is read from the file at once. When `romp keyswap`
+finds the kernel in command mode under a shell that reads no line, it cannot
+tell which place still carries it, so its `MISMATCH` lists each with its
+remedy: `service.env` as the manager loaded it; the unit, a drop-in, or the
+profile a shell-wrapped `ExecStart` sources; another `service.env`, when the
+installer carried a non-default `ROMP_SERVICE_ENV_FILE` into the unit or plist
+and this shell reads a different file (run `romp keyswap` with the same
+variable, or check the unit); a `service.env` line removed since the kernel
+started; and the shell that ran `romp up`. The same other-file cause is named
+under a kernel in file mode when the file this shell reads carries the line,
+since `romp refresh` reaches only the file the kernel reads.
 
 The kernel checks the configuration once at boot and logs one line per
 finding, names and fingerprints only. When the first run succeeds the line is
