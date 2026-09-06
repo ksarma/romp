@@ -2528,8 +2528,12 @@ def _norm_timeline_views(d):
         seen.add(g["id"][:64])
         members = [m for m in (_member_pair(x) for x in _lst(g.get("members"))) if m]
         dedup = {(m["host"], m["sid"]): m for m in members}
+        # the NAME BASIS (round 5 of the 2026-09-05 review): clamped to _VIEWS_MAX_NAME and stripped,
+        # the spelling the targeted door already gives a rename (_edit_tag) — a whole-blob write
+        # carrying "web " beside "web" passed the door's collision pass as two names and the store
+        # held a padded twin every name-keyed surface showed as one. Empty after the strip → "tag".
         rec = {"id": g["id"][:64],
-               "name": str(g.get("name") or "tag")[:_VIEWS_MAX_NAME],
+               "name": str(g.get("name") or "")[:_VIEWS_MAX_NAME].strip() or "tag",
                "color": str(g.get("color") or "")[:16],
                "members": [dedup[k] for k in sorted(dedup)]}
         if g.get("mtime"):                       # v2's edit stamp survives the rebuild (absent = 0 = legacy)
@@ -3466,9 +3470,10 @@ def _edit_tag(name=None, add=(), remove=(), color=None, delete=False, rename=Non
     default (_default_tag_name). Returns (tag-or-None, error-or-None); the returned row is the
     post-normalize one, so a create's caller learns the minted id and name from it."""
     # Clamp the name into the STORED basis before the lookup: the normalizer clamps names to
-    # _VIEWS_MAX_NAME on write, so matching on the raw name would miss the stored tag and mint an
-    # unaddressable same-named duplicate on every subsequent edit.
-    name = str(name)[:_VIEWS_MAX_NAME] if name is not None else None
+    # _VIEWS_MAX_NAME and strips them on write (round 5 of the 2026-09-05 review), so matching on
+    # the raw name would miss the stored tag and mint an unaddressable same-named duplicate on every
+    # subsequent edit. A name that is empty after the strip is no name: a create takes the default.
+    name = (str(name)[:_VIEWS_MAX_NAME].strip() or None) if name is not None else None
     with _views_lock:   # the server is threaded; two unlocked merges would both copy the same pre-state
         v = json.loads(json.dumps(_timeline_views()))     # deep copy: never mutate the cached blob
         if tid is not None:

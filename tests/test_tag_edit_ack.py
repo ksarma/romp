@@ -1354,6 +1354,38 @@ class WholeBlobNameCollisions(_Wire):
                 self.assertTrue(self.notices and not self.notices[0][1], "both refusals are the poster's: loud")
                 self.assertIn('"api" (name collision)', self.notices[0][0])
 
+    def test_names_are_stripped_at_the_door_so_a_padded_spelling_is_the_same_name(self):
+        """Round 5 of the 2026-09-05 review: the targeted door stripped a rename, the whole-blob door
+        stripped nothing, so "web " beside "web" passed the collision pass as two names. Names are
+        now clamped and stripped in the normalizer — the first step of every write and every read —
+        and the targeted door's lookup uses the same basis."""
+        served = self.seed()
+        blob = json.loads(json.dumps(served))
+        blob["tags"].append({"id": "gpad", "name": "web ", "color": "#000000", "members": []})
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": blob, "edited": ["gpad"]})
+        self.assertEqual((a["ok"], [r["tid"] for r in a["refused"]]), (False, ["gpad"]))
+        self.assertEqual(a["refused"][0]["reason"], 'a tag named "web" already exists, so it was not created')
+        self.assertEqual([t["name"] for t in km._timeline_views()["tags"]], ["web"], "no padded twin")
+        blob["tags"][-1]["name"] = "  api  "
+        b = self.post({"type": "setTimelineViews", "writeId": "w2", "views": blob, "edited": ["gpad"]})
+        self.assertEqual((b["ok"], b["refused"]), (True, []))
+        self.assertEqual(store_tag("api")["id"], "gpad", "stored stripped")
+        self.assertEqual(next(t for t in b["views"]["tags"] if t["id"] == "gpad")["name"], "api", "…and served stripped")
+        # the targeted door addresses the stored spelling from a padded one, rather than minting a twin
+        t, err = km._edit_tag(" web ", add=[SID2])
+        self.assertIsNone(err)
+        self.assertEqual(t["id"], "gA")
+        self.assertEqual(sorted(t["name"] for t in km._timeline_views()["tags"]), ["api", "web"])
+        # a name that is only padding is no name: the whole-blob door stores the default, the targeted door mints one
+        blob2 = json.loads(json.dumps(km._views_client()))
+        blob2["tags"].append({"id": "gblank", "name": "   ", "color": "", "members": []})
+        c = self.post({"type": "setTimelineViews", "writeId": "w3", "views": blob2, "edited": ["gblank"]})
+        self.assertTrue(c["ok"])
+        self.assertEqual(store_tag("tag")["id"], "gblank")
+        t2, err = km._edit_tag("   ", add=[SID3])
+        self.assertIsNone(err)
+        self.assertTrue(t2["name"].strip() and t2["id"] not in ("gA", "gpad", "gblank"), "a create with no name takes the default")
+
     def test_the_normalizer_drops_a_second_entry_under_one_id(self):
         v = km._norm_timeline_views({"active": "all", "tags": [
             {"id": "g1", "name": "web", "members": [SID1]}, {"id": "g1", "name": "web", "members": [SID2]},

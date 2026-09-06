@@ -382,7 +382,9 @@ tag another dashboard deleted, and is kept out with a reason. A write without
 or created under, a name another tag in the resulting set holds, with a reason
 naming the collision: a renamed tag stands as the store has it and keeps its claim
 on that name, so a tag created under it in the same write is refused too; a new one
-is kept out. Names address edits, so the store holds one tag per name. A lens or order
+is kept out. Names address edits, so the store holds one tag per name, and a
+name is clamped and stripped at both doors, so a padded spelling is the same
+name. A lens or order
 write is built from the store's blob the client last adopted plus the fields it
 sets. It never carries a targeted edit still in flight, which is that edit's own
 claim; the copy the client shows keeps such edits, and a refusal of one reverts
