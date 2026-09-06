@@ -2609,8 +2609,18 @@ _VIEWS_RESTAMP_ERR = [None]   # the last OSError the reader's re-stamp write hit
 # floor, so a file restored from an older copy was served under its old seq and every dashboard
 # holding a higher one ignored it until the next kernel write. The floor outlives the entry: a
 # recreated file whose seq fell behind it is re-stamped past it (ordered, not judged), and every
-# write orders past it. Set wherever a blob is cached (_views_cache_put); never lowered.
-_VIEWS_SEQ_FLOOR = [0]
+# write orders past it. Set wherever a blob is cached (_views_cache_put); never lowered. KEYED BY
+# STORE PATH like the read cache (round 6 of the 2026-09-05 review): one process can serve more
+# than one state dir (a test suite; a kernel rebound to another root), and a floor shared across
+# them made a cold read of a small-seq file in a fresh state dir a re-stamp write, ordered past
+# another store's seq. The live kernel has one store, so one entry.
+_VIEWS_SEQ_FLOOR = {}
+
+
+def _views_seq_floor(p=None):
+    """The seq floor of the store at `p` (the current store by default): the highest seq this process
+    has served or written from THAT file, 0 for one it has not touched."""
+    return _VIEWS_SEQ_FLOOR.get(str(p if p is not None else _views_path()), 0)
 
 
 def _views_cache_put(p, key, d):
@@ -2618,7 +2628,7 @@ def _views_cache_put(p, key, d):
     its seq — the two facts every later read and write order themselves against."""
     _flags_cache[str(p)] = (key, d)
     try:
-        _VIEWS_SEQ_FLOOR[0] = max(_VIEWS_SEQ_FLOOR[0], int(d.get("seq") or 0))
+        _VIEWS_SEQ_FLOOR[str(p)] = max(_views_seq_floor(p), int(d.get("seq") or 0))
     except (TypeError, ValueError):
         pass
 
@@ -2676,7 +2686,7 @@ def _timeline_views():
                 floor = int(hit[1].get("seq") or 0) if hit is not None else 0
             except (TypeError, ValueError):
                 floor = 0
-            floor = max(floor, _VIEWS_SEQ_FLOOR[0])
+            floor = max(floor, _views_seq_floor(p))
             base = hit[1] if (judge and hit is not None) else _norm_timeline_views(d)
             judged, _rows = _judge_timeline_views(
                 d2, base=base, seq_floor=floor,
@@ -2795,12 +2805,13 @@ def _views_restamp(d, hit):
         raw = d2.get("tags") if isinstance(d2.get("tags"), list) else (d2.get("groups") if isinstance(d2.get("groups"), list) else [])
         d2["tags"] = _views_stamp_legacy_tags([t for t in raw if isinstance(t, dict)], d); d2.pop("groups", None)
         return "a store from before the write sequence, stamped once", d2, False
-    if hit is None and _VIEWS_SEQ_FLOOR[0] and seq < _VIEWS_SEQ_FLOOR[0]:
+    floor = _views_seq_floor()                     # this store's own floor (the reader reads _views_path())
+    if hit is None and floor and seq < floor:
         # no served blob to judge against (the store was read as missing, or the cache is cold),
         # but a floor to order past (round 5 of the 2026-09-05 review): a file restored from an
         # older copy is re-stamped past the last seq this kernel served, as written — every
         # dashboard holding that seq adopts it, where under its own seq they all ignored it
-        return ("a file with seq %d appeared behind the last served %d" % (seq, _VIEWS_SEQ_FLOOR[0])), d, False
+        return ("a file with seq %d appeared behind the last served %d" % (seq, floor)), d, False
     if hit is not None:
         try:
             last = int(hit[1].get("seq") or 0)
@@ -3052,7 +3063,7 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
         prev_seq = int(prev_blob.get("seq") or 0)
     except (TypeError, ValueError):
         prev_seq = 0
-    v["seq"] = max(prev_seq + 1, int(seq_floor or 0) + 1, _VIEWS_SEQ_FLOOR[0] + 1, int(time.time() * 1000))
+    v["seq"] = max(prev_seq + 1, int(seq_floor or 0) + 1, _views_seq_floor() + 1, int(time.time() * 1000))
     return v, rows
 
 

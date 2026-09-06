@@ -974,7 +974,7 @@ class SeqFloorOutlivesTheCacheEntry(_Wire):
         p.unlink()
         self.assertEqual(km._timeline_views()["tags"], [], "read as missing: the cache entry is forgotten")
         self.assertNotIn(str(p), km._flags_cache)
-        self.assertGreaterEqual(km._VIEWS_SEQ_FLOOR[0], s1, "…the floor is not")
+        self.assertGreaterEqual(km._views_seq_floor(), s1, "…the floor is not")
         restored = json.loads(json.dumps(content))
         restored["seq"] = s1 - 5                                       # a restore from an older copy
         km._atomic_write(p, json.dumps(restored))
@@ -997,6 +997,32 @@ class SeqFloorOutlivesTheCacheEntry(_Wire):
         self.assertEqual(km._timeline_views()["tags"], [])
         a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": {"active": "all", "tags": []}})
         self.assertGreater(a["seq"], v["seq"] + 100)
+
+    def test_the_floor_is_per_store_so_two_state_dirs_in_one_process_do_not_share_one(self):
+        """Round 6 of the 2026-09-05 review: the floor was one module-wide number keyed on nothing,
+        while the read cache beside it is keyed by path — so a process serving two state dirs (a test
+        suite; a kernel rebound to another root) re-stamped a cold read of a small-seq file in the
+        fresh dir past the OTHER store's seq: a write on read, ordered against a store it never held."""
+        from pathlib import Path
+        s1 = self.seed()["seq"]
+        home = km.jd.STATE
+        self.assertGreaterEqual(km._views_seq_floor(), s1, "the first store's floor is raised by its own writes")
+        other = tempfile.mkdtemp()
+        km.jd.STATE = Path(other)
+        p2 = km._views_path()
+        try:
+            km._atomic_write(p2, json.dumps({"active": "all", "tags": [dict(WEB)], "seq": 5, "at": 100}))
+            before = p2.read_bytes()
+            v = km._timeline_views()
+            self.assertEqual(v["seq"], 5, "served as written: this store has no floor of its own")
+            self.assertEqual(p2.read_bytes(), before, "…and the file is not rewritten")
+            self.assertEqual(km._views_seq_floor(), 5, "the read raised THIS store's floor…")
+            self.assertGreaterEqual(km._views_seq_floor(home / "timeline-views.json"), s1, "…and left the other's alone")
+            self.assertEqual(self.notices, [])
+        finally:
+            km.jd.STATE = home
+            km._flags_cache.pop(str(p2), None)
+            km._VIEWS_SEQ_FLOOR.pop(str(p2), None)
 
 
 class ForeignWriteReStamped(_Wire):
