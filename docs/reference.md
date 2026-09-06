@@ -436,6 +436,99 @@ on. The kernel logs which it chose at start (`cli scope: on` or `off`, with the
 reason). The macOS launchd path is unchanged: there is no cgroup kill there,
 and the tmux server keeps its launchd lineage.
 
+#### Per-session memory limits (opt-in)
+
+A session's scope can carry a memory limit, so a runaway process is killed
+inside its own session before a machine-wide OOM killer has to pick a victim.
+On 2026-09-06 a session's shell expanded a glob over a large `/tmp`, grew past
+30 GB, and the machine's userspace OOM killer (earlyoom) killed the largest
+process it saw at that instant: the romp kernel, which ended every session. No
+limit is set by default; the size is the user's choice, per machine. Four
+variables in the service environment (`~/.config/romp/service.env`) opt in.
+The kernel reads each once at its start and hands it to the session's scope
+wrapper, so, like the other service variables, a change takes effect at the
+next manager restart:
+
+- `ROMP_CLI_SCOPE_MEMORY_MAX`: the hard limit (systemd `MemoryMax=`). Above
+  it, the cgroup's OOM killer sends SIGKILL to the largest process in the scope
+  and to nothing else. When that is a tool's process, as in the incident, the
+  session sees a failed tool call: the Bash tool reports the command killed
+  (exit status 137), and the scope keeps running with the CLI in it. When the
+  CLI is itself the largest process, it is the one killed, and the session is
+  cut as after any CLI death. The kernel and the other sessions are untouched
+  either way.
+- `ROMP_CLI_SCOPE_MEMORY_HIGH`: the soft limit (`MemoryHigh=`). Above it, the
+  scope is throttled and its memory reclaimed; nothing is killed.
+- `ROMP_CLI_SCOPE_MEMORY_SWAP_MAX`: the swap limit (`MemorySwapMax=`). Without
+  it, a scope at `MemoryMax` pushes pages to swap instead of being killed,
+  until the machine's swap is used up, and the swapping slows every other
+  process. On a machine with swap, set this too.
+- `ROMP_CLI_SCOPE_OOM_SCORE_ADJ`: an integer from -1000 to 1000, written to
+  the session tree's `oom_score_adj` before the CLI starts. The CLI and
+  everything it spawns inherit it; the kernel keeps its own. Linux's OOM
+  killer and earlyoom rank processes by a score this value is added to, so a
+  session with a raised value is chosen before the kernel when the whole
+  machine runs out of memory. Raising the value needs no privilege. Lowering
+  it below the systemd user manager's own value needs privilege and is
+  refused (see the note on `OOMScoreAdjust=` at the end of this section).
+
+Sizes are an integer with an optional `K`, `M`, `G` or `T` suffix (powers of
+1024, as systemd reads them) or `infinity`. The adjustment takes no leading
+zero: Linux reads `0400` as octal. A value that fails its rule is dropped and
+reported, and the session still starts in its scope. A value the kernel
+refuses at its start is a problem line naming the variable and the rule, and
+it never reaches systemd, which would otherwise refuse the whole scope and
+start no CLI. The session starts in its scope without that one limit. The
+wrapper checks the same rule and reports a value it refuses on stderr as
+`romp-cli-scope: ignored: …`, which the kernel logs as a problem naming the
+session. The wrapper uses the same line for a systemd that does not know one
+of the properties (`OOMPolicy=` on scopes needs systemd 253); the CLI then
+starts in its scope with none of the limits.
+
+Whenever a memory limit is set, the wrapper also sets `OOMPolicy=continue` on
+the scope. A scope's default is `stop`: when Linux's OOM killer kills one
+process in it, systemd stops the whole scope, which ends the CLI and every
+tmux server and `setsid` job in it. With `continue`, only the killed process
+is gone. Each kill is logged to the user journal as `<unit>: A process of
+this unit has been killed by the OOM killer` (`journalctl --user --since today
+| grep 'romp-session-'`).
+
+The limits need the memory controller delegated to the systemd user manager,
+which stock systemd does (`systemctl show user@$(id -u).service -p
+DelegateControllers` lists `memory`). Without it, systemd accepts the
+properties and applies nothing, and the report below still says they are in
+force. To check a live session, run from a shell inside it:
+`cat /sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.max` prints the
+limit in bytes, or `max` when none applies.
+
+A suggested starting point for a shared 62 GB machine:
+`ROMP_CLI_SCOPE_MEMORY_MAX=16G`, `ROMP_CLI_SCOPE_MEMORY_HIGH=12G`,
+`ROMP_CLI_SCOPE_MEMORY_SWAP_MAX=0`, `ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500`. One
+session can still take a quarter of the machine, more than any ordinary tool
+call needs; the kernel (a few GB), the other sessions and the system keep the
+rest. A session that reaches the limit is throttled from 12 GB and killed at
+16 GB, without swapping first. An adjustment of 500 adds 500 points to each
+session's OOM score, on a scale where 1000 points is the whole of the
+machine's memory, so the machine-wide killers also choose a runaway session
+before the kernel.
+
+The limits do not reach the shared tmux server. Work a session hands to the
+server the manager started (`tmux new-session` on the default socket) runs in
+that server's scope (`romp-tmux-*`), not the session's, so the session's limit
+does not apply to it. A private server started from the session (`tmux -L
+<name>`) lives in the session's scope and is covered.
+
+`OOMScoreAdjust=` on the manager unit cannot protect the kernel, which is why
+the adjustment is a raised score on the session tree. The systemd user manager
+runs unprivileged and grants at most its own `oom_score_adj`: 100 on the
+systemd 255 install this was verified on, where the romp manager and the
+kernel sit at 200, so `OOMScoreAdjust=-500` on the unit yields 100. Sessions
+inherit the kernel's value too, because the kernel spawns them, so lowering
+the kernel's score lowers every session's by the same amount. The wrapper
+writes the raised value in the session's own process, after the kernel has
+spawned it, so the kernel keeps its own. None of this exists on the launchd
+path.
+
 `ANTHROPIC_API_KEY` is the one exception to that last sentence: where an
 installation keeps a key in this file, the kernel reads that line fresh at
 every session launch, so a change there needs no restart. This fork's tooling
@@ -555,20 +648,31 @@ and `key:managed` name sources whose material the kernel never holds.
   outside the signal on both sides of the ratio). A reader that sees `inTurn >
   0` and a `lastEventAt` minutes old should treat the signal as unknown rather
   than healthy.
-- `cliScope`: `on`, the kernel's boot verdict on per-session transient scopes
-  (see "What survives a restart"); `fallbacks`, CLI launches since boot on which
-  the scope wrapper's pre-flight scope failed and it ran the CLI directly, which
-  it reports with a `romp-cli-scope: fallback: …` stderr line. Each is also a
-  problem line in the kernel log, in exactly this form: `cli scope: session
-  <name> (<sid8>) started its CLI outside a scope — <line>`, where `<sid8>` is
-  the first 8 characters of the session id and `<line>` is the wrapper's whole
-  stderr line, its `romp-cli-scope: fallback:` prefix included. The wrapper's
-  other message, `romp-cli-scope: refused: …` (`ROMP_CLI_REAL` unset, exit 127),
-  starts no CLI and is not counted: it is a launch failure, reported on the
-  session's error card. `lastFallbackAt`, epoch seconds of the newest fallback,
-  `null` when there was none. `on: true` with `fallbacks > 0` means the verdict
-  stopped holding after boot: those sessions' work is in the service cgroup, and
-  a service restart kills it.
+- `cliScope`: the per-session scopes (see "What survives a restart" and
+  "Per-session memory limits"). `on`, true when the kernel chose at boot to
+  run CLIs in scopes. `fallbacks`, CLI launches since boot on which the scope
+  wrapper's pre-flight scope failed, so it ran the CLI directly and reported
+  `romp-cli-scope: fallback: …` on stderr. Each is also a problem line in the
+  kernel log, in exactly this form: `cli scope: session <name> (<sid8>) started
+  its CLI outside a scope — <line>`, where `<sid8>` is the first 8 characters
+  of the session id and `<line>` is the wrapper's whole stderr line, its
+  `romp-cli-scope: fallback:` prefix included. The wrapper's other message,
+  `romp-cli-scope: refused: …` (`ROMP_CLI_REAL` unset, exit status 127), is
+  not counted: no CLI starts, and the failure is reported on the session's
+  error card. `lastFallbackAt`, epoch seconds of the newest fallback; `null`
+  when there was none. `on: true` with `fallbacks > 0` means scopes were on at
+  boot and some launches ran without one: those sessions' work is in the
+  service cgroup, and a service restart kills it. The limits: `memoryMax`,
+  `memoryHigh`, `memorySwapMax` (the size strings in force) and `oomScoreAdj`
+  (an integer), each `null` when its variable is unset, when its value was
+  rejected, or when the scopes are off (no scope starts, so no limit applies);
+  `rejected`, the names of the variables whose values failed their rule (each
+  also a problem line at the kernel's start); `limitsIgnored`, wrapper
+  `romp-cli-scope: ignored: …` lines since boot, one per CLI launch on which a
+  limit was not applied (each also a problem line, `cli scope: session <name>
+  (<sid8>) started its CLI without a per-session limit — <line>`). `on: true`
+  with a limit set and `limitsIgnored > 0` means a value the kernel accepted
+  did not reach the scope.
 - `config`: the constants in force (see "Derived state").
 - `overall`: `state`, the most severe state among buckets that are not
   `unknown` (`thrashing > degraded > recovering > healthy`; `unknown` when every

@@ -88,9 +88,85 @@ CLI_SCOPE_PROBE_TIMEOUT = 10.0
 #   CLI_SCOPE_REFUSAL_PREFIX — ROMP_CLI_REAL was unset and it refused (exit 127). No CLI started, so this
 #     is a launch failure on its own, reported by _record_launch_error like any other; it is not a
 #     fallback and is not counted as one.
+#   CLI_SCOPE_IGNORED_PREFIX — a per-session limit (CLI_SCOPE_LIMITS) was not applied: a value that did
+#     not parse, or a property this systemd does not know. The CLI starts, in its scope, so as with the
+#     fallback nothing would ever drain the line from the tail; _on_cli_stderr logs it at once
+#     (_note_cli_scope_ignored) and launch_failure_text drops it. Not a fallback: the scope is there.
 CLI_SCOPE_NOTICE_PREFIX = "romp-cli-scope:"
 CLI_SCOPE_FALLBACK_PREFIX = CLI_SCOPE_NOTICE_PREFIX + " fallback:"
 CLI_SCOPE_REFUSAL_PREFIX = CLI_SCOPE_NOTICE_PREFIX + " refused:"
+CLI_SCOPE_IGNORED_PREFIX = CLI_SCOPE_NOTICE_PREFIX + " ignored:"
+
+# Per-session limits on the scopes (2026-09-06): every one opt-in, none set by default. A session's
+# shell that globbed a bloated /tmp grew past 30 GB and the box's userspace OOM killer took the largest
+# process it found at that instant — the kernel — cutting every session. A memory limit on the scope
+# makes the runaway die inside its own session instead (the cgroup's OOM killer SIGKILLs the largest
+# process in the scope, that process alone; the session sees a failed tool call), and a raised
+# oom_score_adj on the session tree makes the box-wide killers prefer a session over the kernel. Read
+# from the manager's environment ONCE per backend (cli_scope_limits), like the scope verdict, and
+# handed to bin/romp-cli-scope through options.env; the wrapper turns the sizes into systemd-run
+# properties (MemoryMax=, MemoryHigh=, MemorySwapMax=, with OOMPolicy=continue whenever one is set —
+# a scope's default `stop` would end the whole scope on one OOM kill) and writes the adjustment to its
+# own /proc/self/oom_score_adj before the exec. The same syntax rules live in the wrapper (size_ok,
+# adj_ok): the kernel's check is what /api-health and the boot log report from, and what keeps a bad
+# value from reaching the wrapper at all (it goes down empty); the wrapper's is its own guard.
+# Rows: (environment variable, /api-health key, validator, the rule in words, JSON type).
+# ASCII digits only ([0-9], never \d, which in a str pattern also matches other scripts' digits that
+# the wrapper's [!0-9] and systemd reject). A leading zero is refused for the adjustment: Linux parses
+# oom_score_adj with base 0, so `0400` would land as octal 256 while this reported 400. Sizes may
+# carry one (systemd reads them in base 10; verified: MemoryMax=016M gave memory.max 16777216).
+CLI_SCOPE_SIZE_RE = re.compile(r"([0-9]+[KMGT]?|infinity)\Z")
+CLI_SCOPE_ADJ_RE = re.compile(r"-?(0|[1-9][0-9]{0,3})\Z")
+CLI_SCOPE_SIZE_RULE = "a size (digits with an optional K, M, G or T suffix, or infinity)"
+CLI_SCOPE_ADJ_RULE = "an integer in -1000..1000 with no leading zero"
+
+
+def _cli_scope_size_ok(v: str) -> bool:
+    return bool(CLI_SCOPE_SIZE_RE.match(v))
+
+
+def _cli_scope_adj_ok(v: str) -> bool:
+    return bool(CLI_SCOPE_ADJ_RE.match(v)) and abs(int(v)) <= 1000
+
+
+CLI_SCOPE_LIMITS = (
+    ("ROMP_CLI_SCOPE_MEMORY_MAX", "memoryMax", _cli_scope_size_ok, CLI_SCOPE_SIZE_RULE, str),
+    ("ROMP_CLI_SCOPE_MEMORY_HIGH", "memoryHigh", _cli_scope_size_ok, CLI_SCOPE_SIZE_RULE, str),
+    ("ROMP_CLI_SCOPE_MEMORY_SWAP_MAX", "memorySwapMax", _cli_scope_size_ok, CLI_SCOPE_SIZE_RULE, str),
+    ("ROMP_CLI_SCOPE_OOM_SCORE_ADJ", "oomScoreAdj", _cli_scope_adj_ok, CLI_SCOPE_ADJ_RULE, int),
+)
+
+
+def cli_scope_limits(environ=None, log=None, scope_on=True) -> tuple[dict, dict]:
+    """The per-session limits (CLI_SCOPE_LIMITS) from `environ` (the manager's environment): a pair
+    (in_force, rejected). `in_force` maps each set variable's /api-health key to its value, as the
+    string the wrapper receives; `rejected` maps each variable whose value fails its rule to that
+    value — such a variable is NOT handed to the wrapper (an unparsable size makes systemd-run refuse
+    the whole scope and start no CLI) and is logged once, as a problem naming the variable and the
+    rule. An unset or empty variable is neither. `log`, when given, takes (message, problem=bool);
+    with `scope_on` false the in-force line says the limits apply to nothing, since no scope is
+    started for them to apply to. Pure on its inputs, so the rules are testable on any OS."""
+    env = os.environ if environ is None else environ
+    in_force, rejected = {}, {}
+    for var, key, ok, rule, _typ in CLI_SCOPE_LIMITS:
+        v = env.get(var, "")
+        if not v:
+            continue
+        if ok(v):
+            in_force[key] = v
+        else:
+            rejected[var] = v
+            if log:
+                log("cli scope: %s=%r is not %s — not applied; sessions run in their scopes without that "
+                    "limit" % (var, v, rule), problem=True)
+    if in_force and log:
+        listed = " ".join("%s=%s" % (k, v) for k, v in in_force.items())
+        if scope_on:
+            log("cli scope: per-session limits in force — %s" % listed)
+        else:
+            log("cli scope: per-session limits are set (%s) but the scopes are off, so they apply to nothing"
+                % listed)
+    return in_force, rejected
 
 
 def cli_scope_wrapper() -> str:
@@ -2094,13 +2170,15 @@ STDERR_TAIL_LINES = 40
 
 
 def _without_scope_fallback_notices(text: str) -> str:
-    """`text` less every line of the scope wrapper's fallback notice (CLI_SCOPE_FALLBACK_PREFIX). On a
-    fallback launch that notice is the FIRST line of the CLI's stderr, about 230 characters of it, and
+    """`text` less every line of the scope wrapper's fallback notice (CLI_SCOPE_FALLBACK_PREFIX) and of
+    its `ignored:` line (CLI_SCOPE_IGNORED_PREFIX, a per-session limit not applied). On a fallback
+    launch that notice is the FIRST line of the CLI's stderr, about 230 characters of it, and
     _note_cli_scope_fallback logged it the moment it arrived; left in, it led the launch-error card of a
     CLI that then failed at start and pushed the CLI's own reason past the card's 600-character cut. The
-    wrapper's exit-127 refusal (CLI_SCOPE_REFUSAL_PREFIX) is kept: it IS that launch's reason, and
-    nothing else reports it."""
-    return "\n".join(ln for ln in text.splitlines() if not ln.startswith(CLI_SCOPE_FALLBACK_PREFIX))
+    `ignored:` line is logged at arrival the same way (_note_cli_scope_ignored). The wrapper's exit-127
+    refusal (CLI_SCOPE_REFUSAL_PREFIX) is kept: it IS that launch's reason, and nothing else reports it."""
+    return "\n".join(ln for ln in text.splitlines()
+                     if not ln.startswith((CLI_SCOPE_FALLBACK_PREFIX, CLI_SCOPE_IGNORED_PREFIX)))
 
 
 def launch_failure_text(exc: BaseException, tail: str = "") -> str:
@@ -4419,7 +4497,10 @@ class SdkSession:
         like any other line. The wrapper's other line, the exit-127 refusal (CLI_SCOPE_REFUSAL_PREFIX,
         ROMP_CLI_REAL unset), is only buffered: no CLI started, so the launch fails and
         _record_launch_error reports the line from the tail. Logging it here as well reported the one
-        event twice, and the first time as a CLI "started outside a scope" when none had started.
+        event twice, and the first time as a CLI "started outside a scope" when none had started. Its
+        third line, `ignored:` (CLI_SCOPE_IGNORED_PREFIX, a per-session limit not applied), is logged at
+        once like the fallback — the CLI starts, in its scope — and counted apart from the fallbacks
+        (_note_cli_scope_ignored).
 
         Called from the SDK's stderr reader task; it isolates exceptions per line, but keep it total
         anyway (a raise here would lose the very diagnostics this exists to keep)."""
@@ -4429,6 +4510,8 @@ class SdkSession:
                 self._stderr_tail.append(text)
                 if text.startswith(CLI_SCOPE_FALLBACK_PREFIX):
                     self.backend._note_cli_scope_fallback(self, text)
+                elif text.startswith(CLI_SCOPE_IGNORED_PREFIX):
+                    self.backend._note_cli_scope_ignored(self, text)
         except Exception:
             pass
 
@@ -6021,6 +6104,12 @@ class SdkBackend:
         # whether it stopped holding afterwards. Read by api_health_snapshot.
         self.cli_scope_fallbacks = 0
         self.cli_scope_fallback_at: float | None = None
+        # The per-session limits (cli_scope_limits): the values the wrapper applies, keyed as /api-health
+        # reports them, and the variables refused (each logged once, as a problem, in there). Read once
+        # per backend, like the verdict; _options hands them down at every connect. `cli_scope_ignored`
+        # counts the wrapper's `ignored:` lines since boot (_note_cli_scope_ignored).
+        self.cli_scope_limits, self.cli_scope_rejected = cli_scope_limits(log=self._log, scope_on=self.cli_scope)
+        self.cli_scope_ignored = 0
         self._heal_attempts: dict[str, int] = {}  # sid -> crash-resume attempts since its last COMPLETED turn
         #                                           (bounds _heal_cut_session to one resume per cut; a completed
         #                                           turn resets it, so a crash LOOP can't respawn forever)
@@ -7126,6 +7215,17 @@ class SdkBackend:
         self._log("cli scope: session %s (%s) started its CLI outside a scope — %s"
                   % (sess.name, str(sess.sid)[:8], text), problem=True)
 
+    def _note_cli_scope_ignored(self, sess, text: str) -> None:
+        """The scope wrapper wrote its `ignored:` line on `sess`'s stderr (SdkSession._on_cli_stderr,
+        CLI_SCOPE_IGNORED_PREFIX): a per-session limit (CLI_SCOPE_LIMITS) was not applied, and the CLI
+        runs in its scope without it. Logged at once as a problem, for the fallback's reason (the CLI
+        starts, so nothing drains the tail), and counted for /api-health (cliScope.limitsIgnored) —
+        apart from the fallbacks, since the scope itself is there."""
+        with self._lock:
+            self.cli_scope_ignored += 1
+        self._log("cli scope: session %s (%s) started its CLI without a per-session limit — %s"
+                  % (sess.name, str(sess.sid)[:8], text), problem=True)
+
     def api_health_snapshot(self, now: float | None = None, uptime_s=None) -> dict:
         """The /api-health payload (ApiHealth.snapshot) plus what only the backend knows: how many SDK
         sessions it holds and how many are in a retry storm right now — the cheapest direct thrash
@@ -7141,10 +7241,18 @@ class SdkBackend:
         out["coverage"]["retrying"] = sum(1 for s in live if getattr(s, "retrying", False))
         # The per-session scopes (cli_scope_supported): the boot verdict, and whether it stopped holding
         # afterwards — CLI launches the wrapper reported running without a scope (_note_cli_scope_fallback).
+        # Plus the per-session limits (cli_scope_limits): each /api-health key carries the value in force
+        # — null when unset, refused, or when the scopes are off (nothing is started for a limit to apply
+        # to); `rejected` names the variables whose values failed their rule; `limitsIgnored` counts the
+        # wrapper's `ignored:` lines since boot (_note_cli_scope_ignored).
         with self._lock:
-            n, at = self.cli_scope_fallbacks, self.cli_scope_fallback_at
+            n, at, ign = self.cli_scope_fallbacks, self.cli_scope_fallback_at, self.cli_scope_ignored
         out["cliScope"] = {"on": bool(self.cli_scope), "fallbacks": n,
-                           "lastFallbackAt": int(at) if at else None}
+                           "lastFallbackAt": int(at) if at else None,
+                           "limitsIgnored": ign, "rejected": sorted(self.cli_scope_rejected)}
+        for _var, key, _ok, _rule, typ in CLI_SCOPE_LIMITS:
+            v = self.cli_scope_limits.get(key) if self.cli_scope else None
+            out["cliScope"][key] = typ(v) if v is not None else None
         return out
 
     def _poke(self):
@@ -7220,6 +7328,12 @@ class SdkBackend:
             if os.access(wrapper, os.X_OK):
                 kw["cli_path"] = wrapper
                 kw["env"]["ROMP_CLI_REAL"] = self.claude_bin
+                # The per-session limits (cli_scope_limits): every variable goes down explicitly — the
+                # vetted value, or EMPTY for one unset or refused. options.env merges over the manager's
+                # environment, which is where a refused value came from; sent down empty, the wrapper
+                # reads it as unset and reports nothing a second time (the boot log has it).
+                for var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
+                    kw["env"][var] = self.cli_scope_limits.get(key, "")
             elif not self._cli_scope_wrapper_logged:
                 self._cli_scope_wrapper_logged = True
                 self._log("cli scope: the wrapper %s is missing or not executable (a packaging bug) — "

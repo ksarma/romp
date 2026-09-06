@@ -14,9 +14,15 @@ ROMP_CLI_SCOPE=0 for every backend construction):
   * the wrapper's fallback notice (a failed pre-flight, the CLI run directly; its `fallback:` form)
     is logged the moment it arrives and counted, since on that path the CLI starts and nothing else
     would ever read it; its `refused:` line (ROMP_CLI_REAL unset, exit 127) is only buffered — no
-    CLI started, and the launch-error path reports it.
+    CLI started, and the launch-error path reports it;
+  * the per-session limits (2026-09-06; cli_scope_limits, CLI_SCOPE_LIMITS): the size and
+    oom_score_adj rules, agreement with the wrapper's own shell rules on one shared corpus, the
+    once-per-backend read, the _options overlay (vetted values down explicitly, refused ones down
+    empty), the /api-health fields, and the wrapper's third stderr form (`ignored:`), logged at
+    arrival and counted apart from the fallbacks.
 Synthetic fixtures only: placeholder sid, /bin/true as the CLI.
 """
+import json
 import os
 import subprocess
 import sys
@@ -32,6 +38,9 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 os.environ["ROMP_CLI_SCOPE"] = "0"   # the conftest floor, re-asserted for a bare unittest run
+for _v in ("ROMP_CLI_SCOPE_MEMORY_MAX", "ROMP_CLI_SCOPE_MEMORY_HIGH", "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX",
+           "ROMP_CLI_SCOPE_OOM_SCORE_ADJ"):
+    os.environ.pop(_v, None)         # and the limits floor (the same reasoning: tool shells inherit them)
 sb = SourceFileLoader("romp_sdk_backend_cli_scope", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
 
 SID = "11111111-2222-3333-4444-555555555555"
@@ -379,8 +388,9 @@ class FallbackNotice(_Backend):
 
     def test_the_snapshot_reports_the_verdict_and_the_fallbacks(self):
         self.assertEqual(self.be.api_health_snapshot()["cliScope"],
-                         {"on": False, "fallbacks": 0, "lastFallbackAt": None},
-                         "the test floor: off, nothing fell back")
+                         {"on": False, "fallbacks": 0, "lastFallbackAt": None, "limitsIgnored": 0, "rejected": [],
+                          "memoryMax": None, "memoryHigh": None, "memorySwapMax": None, "oomScoreAdj": None},
+                         "the test floor: off, nothing fell back, no limits")
         self._capture()
         sess = self._sess()
         sess._on_cli_stderr(self.NOTICE + "\n")
@@ -398,20 +408,264 @@ class FallbackNotice(_Backend):
         with open(os.path.join(BIN, "romp-cli-scope")) as f:
             src = f.read()
         lines = [ln for ln in src.splitlines() if ">&2" in ln and "echo" in ln]
-        self.assertEqual(len(lines), 2, "the refusal and the fallback: %r" % (lines,))
+        self.assertEqual(len(lines), 3, "the refusal, the fallback and the ignored form: %r" % (lines,))
         for ln in lines:
             self.assertIn('"%s ' % sb.CLI_SCOPE_NOTICE_PREFIX, ln, ln)
         self.assertEqual(sum('"%s ' % sb.CLI_SCOPE_FALLBACK_PREFIX in ln for ln in lines), 1, lines)
         self.assertEqual(sum('"%s ' % sb.CLI_SCOPE_REFUSAL_PREFIX in ln for ln in lines), 1, lines)
-        # both forms are instances of the generic prefix, so "every line starts with it" still holds,
-        # and neither is a prefix of the other
-        for p in (sb.CLI_SCOPE_FALLBACK_PREFIX, sb.CLI_SCOPE_REFUSAL_PREFIX):
+        self.assertEqual(sum('"%s ' % sb.CLI_SCOPE_IGNORED_PREFIX in ln for ln in lines), 1, lines)
+        # all three forms are instances of the generic prefix, so "every line starts with it" still
+        # holds, and none is a prefix of another
+        forms = (sb.CLI_SCOPE_FALLBACK_PREFIX, sb.CLI_SCOPE_REFUSAL_PREFIX, sb.CLI_SCOPE_IGNORED_PREFIX)
+        for p in forms:
             self.assertTrue(p.startswith(sb.CLI_SCOPE_NOTICE_PREFIX + " "), p)
-        self.assertFalse(sb.CLI_SCOPE_FALLBACK_PREFIX.startswith(sb.CLI_SCOPE_REFUSAL_PREFIX))
-        self.assertFalse(sb.CLI_SCOPE_REFUSAL_PREFIX.startswith(sb.CLI_SCOPE_FALLBACK_PREFIX))
+            for q in forms:
+                if p != q:
+                    self.assertFalse(p.startswith(q), (p, q))
         # and the fixtures above are what the script writes, word for word up to the reason
         self.assertTrue(self.NOTICE.startswith(sb.CLI_SCOPE_FALLBACK_PREFIX + " systemd-run cannot start"))
         self.assertIn(self.REFUSAL.split(";")[0], src)
+
+
+# ---- the per-session limits (2026-09-06) ----
+
+# One corpus for both rule-holders: the kernel's regexes (cli_scope_limits) and the wrapper's shell
+# functions (size_ok, adj_ok) must give the same verdict on every value, or a value the kernel accepts
+# and hands down is refused at launch (or the reverse: never reported at boot, refused per launch).
+SIZE_OK = ["16G", "8192M", "1024", "0", "1T", "5K", "infinity", "016M", "12345678901234567890"]
+SIZE_BAD = ["16g", "abc", "16 G", "16GB", "1.5G", "-1", "G", "50%", "Infinity", "16GG", " 16G", "16G\n",
+            "1_000", "infinity ", "K16", "0x10", "\u0663M", "\uff11\uff10M"]   # other scripts' digits: not [0-9]
+ADJ_OK = ["500", "-1000", "0", "1000", "-1", "-0", "999"]
+ADJ_BAD = ["1001", "-1001", "+5", "5x", "--5", "-", "1e3", "5 ", "10000", "-10000", "abc", "5\n", "1 000",
+           "0100", "-0100", "01000", "00", "\uff15\uff10\uff10"]   # leading zeros (octal to Linux); other digits
+LIMIT_VARS = ("ROMP_CLI_SCOPE_MEMORY_MAX", "ROMP_CLI_SCOPE_MEMORY_HIGH", "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX",
+              "ROMP_CLI_SCOPE_OOM_SCORE_ADJ")
+IGNORED = ("romp-cli-scope: ignored: ROMP_CLI_SCOPE_MEMORY_MAX is not a size (digits with an optional K, M, G or T "
+           "suffix, or infinity) — the CLI runs in its scope without it")
+
+
+def _wrapper_verdicts(fn, values):
+    """Run the wrapper's own `fn` (size_ok / adj_ok), lifted verbatim out of bin/romp-cli-scope, over
+    `values` under sh: a list of True/False. The script execs, so it cannot be sourced; the function
+    bodies are cut from `\nNAME() {` to the first line that is exactly `}`."""
+    with open(os.path.join(BIN, "romp-cli-scope")) as f:
+        src = f.read()
+
+    def body(name):
+        i = src.index("\n%s() {" % name)
+        j = src.index("\n}\n", i)
+        return src[i:j + 3]
+    script = (body("size_ok") + body("adj_ok")
+              + '\nfor v in "$@"; do if %s "$v"; then echo ok; else echo bad; fi; done\n' % fn)
+    r = subprocess.run(["sh", "-s", "--"] + list(values), input=script, capture_output=True, text=True, timeout=30)
+    out = r.stdout.split("\n")[:-1]
+    assert r.returncode == 0 and len(out) == len(values), (r.returncode, r.stderr, out)
+    return [o == "ok" for o in out]
+
+
+class LimitRules(unittest.TestCase):
+    """cli_scope_limits: the size and adjustment rules, what is in force and what is refused, the log."""
+
+    def _log(self):
+        rows = []
+        return rows, (lambda m, problem=False: rows.append((m, bool(problem))))
+
+    def test_nothing_set_is_nothing(self):
+        rows, log = self._log()
+        self.assertEqual(sb.cli_scope_limits({}, log=log), ({}, {}))
+        self.assertEqual(sb.cli_scope_limits({v: "" for v in LIMIT_VARS}, log=log), ({}, {}),
+                         "empty is unset — what the kernel sends down for a refused one")
+        self.assertEqual(rows, [])
+
+    def test_every_valid_size_is_in_force_under_its_api_key(self):
+        for v in SIZE_OK:
+            env = {"ROMP_CLI_SCOPE_MEMORY_MAX": v, "ROMP_CLI_SCOPE_MEMORY_HIGH": v, "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX": v}
+            in_force, rejected = sb.cli_scope_limits(env)
+            self.assertEqual(in_force, {"memoryMax": v, "memoryHigh": v, "memorySwapMax": v}, v)
+            self.assertEqual(rejected, {}, v)
+
+    def test_every_bad_size_is_refused_and_logged_as_a_problem_naming_the_variable_and_the_rule(self):
+        for v in SIZE_BAD:
+            rows, log = self._log()
+            in_force, rejected = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_HIGH": v}, log=log)
+            self.assertEqual(in_force, {}, v)
+            self.assertEqual(rejected, {"ROMP_CLI_SCOPE_MEMORY_HIGH": v}, v)
+            self.assertEqual(len(rows), 1, (v, rows))
+            m, problem = rows[0]
+            self.assertTrue(problem, v)
+            self.assertIn("ROMP_CLI_SCOPE_MEMORY_HIGH", m)
+            self.assertIn("not a size", m)
+            self.assertIn("K, M, G or T", m, "the rule, so the fix is in the line")
+            self.assertIn("without that limit", m, "and what happens meanwhile")
+
+    def test_the_adjustment_rule(self):
+        for v in ADJ_OK:
+            in_force, rejected = sb.cli_scope_limits({"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": v})
+            self.assertEqual((in_force, rejected), ({"oomScoreAdj": v}, {}), v)
+        for v in ADJ_BAD:
+            rows, log = self._log()
+            in_force, rejected = sb.cli_scope_limits({"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": v}, log=log)
+            self.assertEqual((in_force, rejected), ({}, {"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": v}), v)
+            self.assertIn("-1000..1000", rows[0][0], v)
+            self.assertIn("no leading zero", rows[0][0], v)
+
+    def test_a_refused_value_leaves_the_others_in_force(self):
+        rows, log = self._log()
+        in_force, rejected = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "abc", "ROMP_CLI_SCOPE_MEMORY_HIGH": "12G",
+                                                  "ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"}, log=log)
+        self.assertEqual(in_force, {"memoryHigh": "12G", "oomScoreAdj": "500"})
+        self.assertEqual(rejected, {"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"})
+        self.assertEqual([p for _m, p in rows], [True, False], "one problem, then the in-force line")
+        self.assertIn("in force", rows[1][0])
+        self.assertIn("memoryHigh=12G", rows[1][0])
+        self.assertIn("oomScoreAdj=500", rows[1][0])
+
+    def test_with_the_scopes_off_the_in_force_line_says_the_limits_apply_to_nothing(self):
+        rows, log = self._log()
+        in_force, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "16G"}, log=log, scope_on=False)
+        self.assertEqual(in_force, {"memoryMax": "16G"}, "still read, for the report")
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(rows[0][1], "not a problem: a setting, idle")
+        self.assertIn("apply to nothing", rows[0][0])
+        self.assertIn("scopes are off", rows[0][0])
+
+    def test_no_log_callback_is_fine(self):
+        self.assertEqual(sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"})[1], {"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"})
+
+    def test_the_table_names_the_four_variables_once_each(self):
+        self.assertEqual(tuple(row[0] for row in sb.CLI_SCOPE_LIMITS), LIMIT_VARS)
+        self.assertEqual(len({row[1] for row in sb.CLI_SCOPE_LIMITS}), 4, "distinct api keys")
+
+    def test_the_wrapper_agrees_with_the_kernel_on_every_size(self):
+        values = SIZE_OK + SIZE_BAD
+        expected = [sb._cli_scope_size_ok(v) for v in values]
+        self.assertEqual(expected, [True] * len(SIZE_OK) + [False] * len(SIZE_BAD), "the corpus is what it claims")
+        got = _wrapper_verdicts("size_ok", values)
+        self.assertEqual(dict(zip(values, got)), dict(zip(values, expected)))
+
+    def test_the_wrapper_agrees_with_the_kernel_on_every_adjustment(self):
+        values = ADJ_OK + ADJ_BAD
+        expected = [sb._cli_scope_adj_ok(v) for v in values]
+        self.assertEqual(expected, [True] * len(ADJ_OK) + [False] * len(ADJ_BAD), "the corpus is what it claims")
+        got = _wrapper_verdicts("adj_ok", values)
+        self.assertEqual(dict(zip(values, got)), dict(zip(values, expected)))
+
+
+class LimitsOnTheBackend(_Backend):
+    """Read once at construction from the manager's environment; handed down by _options; reported by
+    api_health_snapshot; the wrapper's `ignored:` line logged at arrival and counted."""
+
+    def _construct(self, **env):
+        saved = {k: os.environ.get(k) for k in env}
+        os.environ.update(env)
+        try:
+            return sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, log=self.logged.append)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_the_default_backend_has_no_limits(self):
+        self.assertEqual(self.be.cli_scope_limits, {})
+        self.assertEqual(self.be.cli_scope_rejected, {})
+        self.assertEqual(self.be.cli_scope_ignored, 0)
+
+    def test_the_limits_are_read_once_at_construction(self):
+        be = self._construct(ROMP_CLI_SCOPE_MEMORY_MAX="16G", ROMP_CLI_SCOPE_MEMORY_HIGH="", ROMP_CLI_SCOPE_OOM_SCORE_ADJ="500")
+        self.assertEqual(be.cli_scope_limits, {"memoryMax": "16G", "oomScoreAdj": "500"})
+        self.assertEqual(be.cli_scope_rejected, {})
+        # the test floor keeps the scope off, so the boot line says the limits are idle
+        self.assertTrue(any("apply to nothing" in m for m in self.logged), self.logged)
+        # the environment changed after construction: the backend's view does not
+        before = os.environ.get("ROMP_CLI_SCOPE_MEMORY_MAX")
+        os.environ["ROMP_CLI_SCOPE_MEMORY_MAX"] = "1G"
+        try:
+            self.assertEqual(be.cli_scope_limits["memoryMax"], "16G")
+        finally:
+            if before is None:
+                os.environ.pop("ROMP_CLI_SCOPE_MEMORY_MAX", None)
+            else:
+                os.environ["ROMP_CLI_SCOPE_MEMORY_MAX"] = before
+
+    def test_a_refused_value_is_recorded_and_the_rest_stand(self):
+        be = self._construct(ROMP_CLI_SCOPE_MEMORY_MAX="lots", ROMP_CLI_SCOPE_MEMORY_SWAP_MAX="0")
+        self.assertEqual(be.cli_scope_limits, {"memorySwapMax": "0"})
+        self.assertEqual(be.cli_scope_rejected, {"ROMP_CLI_SCOPE_MEMORY_MAX": "lots"})
+        self.assertTrue(any("ROMP_CLI_SCOPE_MEMORY_MAX" in m and "not a size" in m for m in self.logged), self.logged)
+
+    def test_options_hands_every_variable_down_explicitly_when_on(self):
+        self.be.cli_scope = True
+        self.be.cli_scope_limits = {"memoryMax": "16G", "oomScoreAdj": "500"}
+        self.be.cli_scope_rejected = {"ROMP_CLI_SCOPE_MEMORY_HIGH": "abc"}
+        env = self._kw()["env"]
+        self.assertEqual(env["ROMP_CLI_SCOPE_MEMORY_MAX"], "16G")
+        self.assertEqual(env["ROMP_CLI_SCOPE_OOM_SCORE_ADJ"], "500")
+        self.assertEqual(env["ROMP_CLI_SCOPE_MEMORY_HIGH"], "", "refused: down empty, so the wrapper reads it as unset")
+        self.assertEqual(env["ROMP_CLI_SCOPE_MEMORY_SWAP_MAX"], "", "unset: down empty too")
+        self.assertEqual(env["ROMP_CLI_REAL"], "/bin/true", "the rest of the overlay is unchanged")
+
+    def test_options_sends_nothing_when_off_or_when_the_wrapper_is_missing(self):
+        self.be.cli_scope_limits = {"memoryMax": "16G"}
+        self.be.cli_scope = False
+        for v in LIMIT_VARS:
+            self.assertNotIn(v, self._kw()["env"], v)
+        self.be.cli_scope = True
+        before = sb.cli_scope_wrapper
+        sb.cli_scope_wrapper = lambda: os.path.join(self.d, "no-such-wrapper")
+        self.be._log = lambda m, problem=None: None
+        try:
+            env = self._kw()["env"]
+        finally:
+            sb.cli_scope_wrapper = before
+        for v in LIMIT_VARS:
+            self.assertNotIn(v, env, "no wrapper, no scope, nothing for a limit to apply to")
+
+    def test_the_snapshot_reports_the_values_in_force_and_the_refused_names(self):
+        self.be.cli_scope_limits = {"memoryMax": "16G", "memoryHigh": "12G", "oomScoreAdj": "500"}
+        self.be.cli_scope_rejected = {"ROMP_CLI_SCOPE_MEMORY_SWAP_MAX": "some"}
+        self.be.cli_scope = True
+        snap = self.be.api_health_snapshot()["cliScope"]
+        self.assertEqual(snap["memoryMax"], "16G")
+        self.assertEqual(snap["memoryHigh"], "12G")
+        self.assertIsNone(snap["memorySwapMax"], "refused: not in force")
+        self.assertEqual(snap["oomScoreAdj"], 500, "an integer, as JSON should carry it")
+        self.assertEqual(snap["rejected"], ["ROMP_CLI_SCOPE_MEMORY_SWAP_MAX"])
+        self.assertEqual(snap["limitsIgnored"], 0)
+        json.dumps(snap)
+        # scopes off: nothing is in force, however the variables read; the refusal still shows
+        self.be.cli_scope = False
+        snap = self.be.api_health_snapshot()["cliScope"]
+        for key in ("memoryMax", "memoryHigh", "memorySwapMax", "oomScoreAdj"):
+            self.assertIsNone(snap[key], key)
+        self.assertEqual(snap["rejected"], ["ROMP_CLI_SCOPE_MEMORY_SWAP_MAX"])
+
+    def test_the_ignored_line_is_logged_at_once_and_counted_apart_from_the_fallbacks(self):
+        problems = []
+        self.be._log = lambda m, problem=None: problems.append((m, problem))
+        sess = self._sess()
+        sess._on_cli_stderr(IGNORED + "\n")
+        self.assertEqual(len(problems), 1, problems)
+        m, p = problems[0]
+        self.assertTrue(p, "a problem line: the CLI starts, so nothing else would ever read it")
+        self.assertIn("web", m)
+        self.assertIn(SID[:8], m)
+        self.assertIn("without a per-session limit", m)
+        self.assertIn(IGNORED, m, "the wrapper's own line, verbatim")
+        self.assertEqual(sess.stderr_tail(), IGNORED, "buffered too")
+        self.assertEqual(self.be.cli_scope_ignored, 1)
+        self.assertEqual(self.be.cli_scope_fallbacks, 0, "not a fallback: the scope is there")
+        self.assertIsNone(self.be.cli_scope_fallback_at)
+        snap = self.be.api_health_snapshot()["cliScope"]
+        self.assertEqual((snap["limitsIgnored"], snap["fallbacks"]), (1, 0))
+
+    def test_the_fixture_is_what_the_wrapper_writes(self):
+        with open(os.path.join(BIN, "romp-cli-scope")) as f:
+            src = f.read()
+        self.assertTrue(IGNORED.startswith(sb.CLI_SCOPE_IGNORED_PREFIX + " ROMP_CLI_SCOPE_MEMORY_MAX is not a size"))
+        self.assertIn('"romp-cli-scope: ignored: $1 — the CLI runs in its scope without it"', src)
+        self.assertIn('is not a size (digits with an optional K, M, G or T suffix, or infinity)', src)
 
 
 if __name__ == "__main__":
