@@ -45,7 +45,8 @@ tag order, each with a header in the tag's color, and the untagged sessions afte
 at the end. A session with several tags sits under the first of them in your tag order; its
 other tags still filter. Each header shows a chevron, the tag's colour, its name, and a
 member count. Click a header, or press Enter on it, to fold its section down to the header
-alone; the count then says how many tabs are folded away. A folded header keeps the ⚑ flag
+alone; the count then says how many tabs are folded away, and a small dot after it says when
+one of them is working or waiting on you (hover it for their names). A folded header keeps the ⚑ flag
 of any session in it that has asked you for something; when several have, the flag shows how
 many, and hovering it names them. Click the flag to open the section. To keep one tab visible
 while its section is folded, right-click the tab and pick **Show when folded** under **Tags**;

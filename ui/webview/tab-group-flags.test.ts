@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { viewTagUnion } from "./session-views";
 import { planStrip, parseTabGroups, setSectionCollapsed, isSectionCollapsed, type TabSection } from "./tab-groups";
-import { sectionTodoFlag, sectionTodoTitle } from "./tab-state";
+import { sectionTodoFlag, sectionTodoTitle, sectionPip, sectionPipMembers, sectionPipTitle } from "./tab-state";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
@@ -155,4 +155,36 @@ test("the flag wears the tab glyph's class and the header's count size; the butt
 
 test("docs: the guide's tab-groups paragraph says a folded section keeps the flag and the click opens it", () => {
   assert.match(GUIDE, /A folded header keeps the ⚑ flag\s+of any session in it that has asked you for something; when several have, the flag shows how\s+many, and hovering it names them\. Click the flag to open the section\./);
+});
+
+test("executed + pinned: BOTH member-derived marks ride a folded header — the state pip, then the flag — over the hidden members only; open headers carry neither", () => {
+  // the notes-api world: archived folds by default; old1 is waiting on you, old2 flagged a todo, old3 is
+  // quiet; a pinned member's state and todo show on its own tab, so neither mark counts it
+  const unions = viewTagUnion({ ...V, tags: [...V.tags, { id: "g3", name: "archived2", color: "#6b7280", members: [] }] });
+  const sessions = new Map<string, Sess & { status?: { state: string; apiAuthErr?: boolean } }>([
+    ["tests", { name: "tests", status: { state: "needsInput" } }],
+    ["old1", { name: "old1", status: { state: "ready" }, userTodos: todo(1) }],
+  ]);
+  const st = parseTabGroups(null);
+  const arch = heads(planStrip(["web", "tests", "old1"], unions, st, "web", false).items).find((h) => h.head.name === "archived")!;
+  assert.deepEqual(arch.hidden, ["tests", "old1"]);
+  const kind = sectionPip(arch.hidden.map((id) => sessions.get(id)?.status));
+  assert.equal(kind, "blocked", "a hidden member waiting on you → the red pip");
+  assert.equal(sectionPipTitle(kind!, sectionPipMembers(kind!, arch.hidden.map((id) => sessions.get(id)))), "a session in this group is blocked or waiting on you: tests");
+  assert.deepEqual(sectionTodoFlag(arch.hidden.map((id) => sessions.get(id))), { count: 1, names: ["old1"] }, "…and the flag for the other, side by side");
+  // pin tests (the waiting one): its state leaves the pip; the flag is unchanged
+  const pinned = setSectionCollapsed(st, "archived", true);
+  const pinnedSt = { ...pinned, pinned: [{ tag: "g4", sid: "tests" }] };
+  const unions2 = viewTagUnion({ ...V, tags: [...V.tags.slice(0, 1), { id: "g4", name: "archived", color: "#6b7280", members: ["tests", "old1"] }] });
+  const arch2 = heads(planStrip(["web", "tests", "old1"], unions2, pinnedSt, "web", false).items).find((h) => h.head.name === "archived")!;
+  assert.deepEqual(arch2.hidden, ["old1"], "the pinned member is on the strip");
+  assert.equal(sectionPip(arch2.hidden.map((id) => sessions.get(id)?.status)), null, "its waiting state shows on its own tab, not the header");
+  assert.deepEqual(sectionTodoFlag(arch2.hidden.map((id) => sessions.get(id))), { count: 1, names: ["old1"] });
+  // render.ts: both marks are built inside the folded block, pip before flag, both over `hidden`
+  assert.match(FOLDED, /const kind = sectionPip\(hidden\.map\(\(id\) => sessions\.get\(id\)\?\.status\)\);/);
+  assert.ok(FOLDED.indexOf("sectionPip(") < FOLDED.indexOf("sectionTodoFlag("), "the pip, then the flag");
+  assert.ok(HEAD.indexOf('el("span", "tab-group-count")') < HEAD.indexOf("sectionPip("), "both after the count — subordinate to the label");
+  assert.equal(HEAD.split("sectionPip(").length - 1, 1, "one pip derivation, inside the folded block — open headers carry neither mark");
+  assert.match(HEAD, /pip\.title = sectionPipTitle\(kind, sectionPipMembers\(kind, hidden\.map\(\(id\) => sessions\.get\(id\)\)\)\);/, "the pip's tooltip names the sessions, like the flag's");
+  assert.match(CSS, /\.tab-group-pip \{ flex: 0 0 auto; width: 6px; height: 6px;/, "small");
 });

@@ -239,19 +239,26 @@ test("executed: the header click sets the fold state from what it RENDERED — n
     "rendered open → fold; rendered folded → open");
 });
 
-test("a folded section renders its header alone with the folded-away count and NO pip — a label, not a session; cycling skips folded ids", () => {
+test("a folded section renders its header alone with the folded-away count and one MEMBER-derived pip after it — a label, not a session; cycling skips folded ids", () => {
   assert.match(RENDER, /function visibleOrder\(\): string\[\] \{ return order\.filter\(\(id\) => tabInView\(id\) && !collapsedTabIds\.has\(id\)\); \}/,
     "every cycling path walks visibleOrder (session-views.test pins the three callers)");
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
   assert.match(head, /n\.textContent = String\(collapsed \? hidden\.length : total\);/, "the count: every member when open, the folded-away members when folded");
-  assert.ok(!head.includes("sectionPip(") && !head.includes("tab-group-pip"),
-    "no summary pip: a status dot beside a name is a session's dress (the user 2026-09-06); a member's state shows on its own tab, and a need under the fold is the flag's job");
+  // the pip is the MEMBERS' (a hidden one blocked/waiting/working/retrying), never the header's own status
+  // (the user 2026-09-06: no session-tab affordances on a header — but a fold must still say a hidden
+  // member needs you, the reason the user-todo flag exists); over the hidden members, after the count
+  assert.match(head, /const kind = sectionPip\(hidden\.map\(\(id\) => sessions\.get\(id\)\?\.status\)\);/,
+    "one summary pip, classified by tab-state.ts — the same rule the tab itself wears (tab-state.test)");
+  assert.match(head, /pip\.title = sectionPipTitle\(kind, sectionPipMembers\(kind, hidden\.map\(\(id\) => sessions\.get\(id\)\)\)\);/, "the tooltip names the sessions");
+  assert.ok(head.indexOf('el("span", "tab-group-count")') < head.indexOf("sectionPip("), "after the count");
+  assert.ok(!head.includes("tabStateClass("), "the header itself wears no state class");
   assert.ok(!head.includes('"tab-dot"'), "never a .tab-dot — the kernel's mobile scrape keys on the tab pips' vocabulary");
   assert.match(head, /const sep = el\("div", "tab-group-sep"\);/, "the untagged trail is UNLABELED (the ruling): a separator, not a header");
-  // the tab's own class comes from tab-state.ts, which no longer exports a header rule
+  // the tab's own class comes from the same function
   assert.match(RENDER, /const stateCls = tabStateClass\(s\.status\);\s*\n\s*if \(stateCls\) tab\.classList\.add\(stateCls\);/);
-  assert.doesNotMatch(ui("webview", "tab-state.ts"), /sectionPip|SECTION_PIP_TITLE/, "the pip rule went with the pip");
-  assert.doesNotMatch(CSS, /\.tab-group-pip/, "and no pip rule remains in the sheet");
+  assert.match(CSS, /\.tab-group-pip \{ flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var\(--st-working-bg\); \}/, "small: subordinate to the label");
+  assert.match(CSS, /\.tab-group-pip\.blocked \{ background: var\(--st-blocked-bg\); \}/, "status colours keep their meaning");
+  assert.match(CSS, /\.tab-group-pip\.retrying \{ background: #e67e22; \}/, "amber, the tab's .tab-retrying hue");
 });
 
 test("row hairlines count section headers and the separator as row members (T134's floating look must not return)", () => {
@@ -362,7 +369,7 @@ test("the header's structure and gestures read as a label: chevron (flips with t
   assert.match(head, /if \(sec\.color\) swatch\.style\.background = sec\.color;/, "the tag's colour from the views store");
   // none of a tab's affordances
   assert.ok(!head.includes("tab-close") && !head.includes("tabStateClass(") && !head.includes("tab-dot") && !head.includes("tabCtxGauge("),
-    "no close, no state class, no pip, no gauge");
+    "no close, no state class of its own, no tab pip, no gauge");
   // keyboard: a button to the keyboard, through the same click → delegate path as the pointer; the active
   // tab's header (no fold action) is not a tab stop
   assert.match(head, /head\.setAttribute\("role", "button"\);\s*\n\s*head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);/);
@@ -382,8 +389,13 @@ test("the header's structure and gestures read as a label: chevron (flips with t
   // override, and the tokens are ones the strip already wears (theme-parity.test.ts checks --fg/--dim/
   // --accent against --bg in both themes)
   const rules = Array.from(CSS.matchAll(/\n(\.tab-group-[^{\n]*)\{([^}]*)\}/g));
-  assert.ok(rules.length >= 12, "the section rules were found: " + rules.length);
-  for (const [, sel, body] of rules) assert.doesNotMatch(body.replace(/var\([^)]*\)/g, "V"), /#[0-9a-fA-F]{3,8}\b|rgba?\(/, "a raw colour in " + sel.trim());
+  assert.ok(rules.length >= 15, "the section rules were found: " + rules.length);
+  for (const [, sel, body] of rules) {
+    if (sel.trim() === ".tab-group-pip.retrying") continue;   // the one literal: the tab's own amber, checked equal below
+    assert.doesNotMatch(body.replace(/var\([^)]*\)/g, "V"), /#[0-9a-fA-F]{3,8}\b|rgba?\(/, "a raw colour in " + sel.trim());
+  }
+  assert.equal(CSS.match(/\.tab-group-pip\.retrying \{ background: (#[0-9a-fA-F]{6}); \}/)![1], CSS.match(/\.tab\.tab-retrying \{ --state: (#[0-9a-fA-F]{6}); \}/)![1],
+    "the pip's retrying amber IS the tab's (a status literal the sheet keeps raw on the tab too)");
   const toks = new Set((rules.map((m) => m[2]).join(" ").match(/var\((--[a-z-]+)/g) || []).map((m) => m.slice(4)));
-  for (const t of toks) assert.ok(["--fg", "--dim", "--accent", "--accent-wash", "--box-border"].includes(t), "a token the strip does not already wear: " + t);
+  for (const t of toks) assert.ok(["--fg", "--dim", "--accent", "--accent-wash", "--box-border", "--st-working-bg", "--st-blocked-bg"].includes(t), "a token the strip does not already wear: " + t);
 });

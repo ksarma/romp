@@ -443,8 +443,9 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 /* TAB SECTIONS — groups are tags (the user 2026-09-04): one header per home tag in the strip, the
    untagged trail behind a plain separator. A header reads as a LABEL, not a session (the user
    2026-09-06): a disclosure chevron that flips with the fold, the tag's colour as a short bar, the name
-   small and letter-spaced, and the member count (the folded-away count while folded). No pip, no state
-   class, no close — none of a tab's dress — and hover/focus brighten the label and colour the chevron
+   small and letter-spaced, and the member count (the folded-away count while folded). No state class,
+   no close, no pip of its own — none of a tab's dress; folded, two small MEMBER-derived marks follow the
+   count (the state pip below and the user-todo flag), and hover/focus brighten the label and colour the chevron
    in the accent (a fold cue), never a row wash (a "select me" cue). The header is focusable (Enter or
    Space fold), drags to reorder the groups (tagOrder), and the header under a dragged group wears the
    accent insertion cue. 0.82em is the surface's sub-line size (the menus' sub-lines) — labels match
@@ -469,6 +470,13 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-group-swatch { flex: 0 0 auto; width: 3px; height: 12px; border-radius: 1px; background: var(--dim); }
 .tab-group-name { font-weight: 600; }
 .tab-group-count { opacity: 0.7; }
+/* the folded header's member-state pip (after the count, small — subordinate to the label): the tab's
+   status colours by the tab's own rule (tab-state.ts) — working gold, blocked/waiting red, retrying the
+   tab's own amber (#e67e22, the status literal .tab.tab-retrying keeps raw; status colours keep their
+   meaning). Not the header's own status: the header wears no state class. */
+.tab-group-pip { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--st-working-bg); }
+.tab-group-pip.blocked { background: var(--st-blocked-bg); }
+.tab-group-pip.retrying { background: #e67e22; }
 /* the folded header's user-todo flag (the user 2026-09-06): a member tab's ⚑ must not vanish under a
    fold. The glyph is the tab's own (.tab-usertodo — same mark, same 10px) and the count, when more than
    one member has one, wears the header's text size (font: inherit). A real button — focusable, Enter

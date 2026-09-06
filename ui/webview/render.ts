@@ -33,7 +33,7 @@ import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionKey, isPinned, togglePinned,
          reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
-import { tabStateClass, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
+import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
@@ -4721,8 +4721,10 @@ function releaseTabStrip(): void {
 // A SECTION HEADER for the tab strip (tab groups on tags, the user 2026-09-04). It reads as a LABEL,
 // not a session (the user 2026-09-06): a disclosure chevron that flips with the fold, the tag's colour
 // as a short bar, the name in the strip's small letter-spaced label style, and the member count — the
-// folded-away count while folded. No pip and none of a tab's affordances: no close, no state class,
-// no dot. It carries data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip
+// folded-away count while folded. None of a tab's own affordances: no close, no state class, no dot of
+// its own. Folded, it carries two MEMBER-derived marks after the count, small, so a fold hides no
+// "needs you": the summary pip (tab-state.ts's rule, the tab's own colours) and the user-todo flag. It
+// carries data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip
 // rebuilds on every push), is a button to the keyboard too (Enter or Space fold and open; the chevron
 // says which), and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted
 // union order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The
@@ -4776,6 +4778,18 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   n.textContent = String(collapsed ? hidden.length : total);   // folded: the folded-away members — a pinned one shows itself
   head.appendChild(n);
   if (collapsed) {
+    // the folded gist, MEMBER-derived: one pip by the TAB's own state rule (tab-state.ts) — red for a
+    // hidden member blocked on you or waiting for you, gold for working, amber for an API error
+    // retrying on its own (the tab renders that amber too; a red pip there was a false interrupt).
+    // After the count and small, so the header still reads as a label; the tooltip names the sessions.
+    // Over the HIDDEN members only: a pinned member's own tab shows its state. Not the header's own
+    // pip — it wears no state class — and never a tab pip class (the kernel's mobile scrape keys on those).
+    const kind = sectionPip(hidden.map((id) => sessions.get(id)?.status));
+    if (kind) {
+      const pip = el("span", "tab-group-pip" + (kind === "working" ? "" : " " + kind));
+      pip.title = sectionPipTitle(kind, sectionPipMembers(kind, hidden.map((id) => sessions.get(id))));
+      head.appendChild(pip);
+    }
     // the USER-TODO flag (the user 2026-09-06): a member tab's ⚑ — "this session flagged something
     // it needs from you" — must not vanish under a fold. Derived from the field the tab itself reads
     // (the session's userTodos, refreshed by every chat delta → renderTabs), so the frame that
