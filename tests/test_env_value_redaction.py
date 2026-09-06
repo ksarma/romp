@@ -19,7 +19,14 @@ for the assertion nobody wrote that way. Pinned here:
     `+  and   '<b>' = g()` lines, the haystack of `assert '<a>' in '<b>'` and unittest's `'<a>' not
     found in '<b>'`, the elements of a list, tuple or set repr, unittest's `Lists differ:` line, its
     quoted per-element lines and its diff of a container spread over lines, and the fragments of a
-    value pytest ellipsized at default verbosity or unittest shortened with `[N chars]`).
+    value pytest ellipsized at default verbosity or unittest shortened with `[N chars]`); a JWT by its
+    shape wherever it sits, cut or whole; the dotted rest of a token that qualifies; the head of a cut
+    key bounded at the widest cut a tool makes; and the fragment rule's documented costs (a camelCase
+    name or a digit-bearing run against a cut is redacted, a Capitalised word or a single-case
+    identifier is not).
+  ScrubCost: the scrub is linear: a 200 KB adversarial line (a run of repeated prefixes, of one case,
+    of digits, of dashes, of dots) is scrubbed within a generous budget; the first of them took 80
+    seconds before the cut-key rule's head was bounded.
   ReportShapes: the hook's work on a report object of each outcome (a failure's longrepr, a skip's
     tuple, a passed test's sections).
   HookEndToEnd: subprocess pytest runs against a copy of the conftest. A test that fails with a probe
@@ -36,6 +43,7 @@ Every probe value is synthetic and assembled at run time ("romp-test-fixture-" +
 pattern-shaped probe is a public key prefix joined to uuids), so no literal in this file is a
 credential.
 """
+import base64
 import hashlib
 import json
 import os
@@ -44,6 +52,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from types import SimpleNamespace
@@ -70,6 +79,23 @@ def probe_value(tag=""):
 def patterned_probe(prefix="sk-ant-api03-"):
     """A token of a public key format, assembled at run time: a prefix and two uuids of tail."""
     return prefix + uuid.uuid4().hex + uuid.uuid4().hex
+
+
+def _b64url(b):
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def _jwt_parts(claims=1):
+    """A fabricated JWT's three segments, assembled at run time: the public HS256 header, a claim set
+    of invented values (`claims` uuids besides a subject and a timestamp), a signature hashed from a
+    uuid."""
+    hdr = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
+    body = {"sub": str(uuid.uuid4()), "iat": 1700000000}
+    for i in range(claims):
+        body["c%d" % i] = uuid.uuid4().hex
+    pay = _b64url(json.dumps(body, separators=(",", ":")).encode())
+    sig = _b64url(hashlib.sha256(uuid.uuid4().bytes).digest())
+    return hdr, pay, sig
 
 
 def _copy_hook(d):
@@ -363,12 +389,145 @@ class CredentialPattern(_WithConftest):
         self.assertEqual(red("['%s[101 chars]%s']" % (k[:54], k[-3:])), "['%s']" % R)
         # a mixed-case fragment without a digit qualifies when the upper-case letter is not its first
         self.assertEqual(red("'abcdEfghijk...'"), "'%s...'" % R)
-        # what stays: a Capitalised word, an identifier, words, a fragment under the floor, a bare cut, a
-        # prefix with nothing before the cut, a cut among words
+        # what stays: a Capitalised word, a single-case identifier, words, a fragment under the floor, a bare
+        # cut, a prefix with nothing before the cut, a cut among words
         for text in ("'Connecting...'", "'Reconnecting...'", "'test_a_long_...ithout_digits'",
                      "'the quick br...the lazy dog'", "'abc1234...'", "'...'", "'hf_...'", "loading... done",
                      "'%s'" % a[:12]):
             self.assertEqual(red(text), text, text)
+
+    def test_a_cut_keys_head_is_bounded_at_the_widest_cut_a_tool_makes(self):
+        # the head between a known prefix and the cut is matched up to CUT_HEAD_MAX characters. pytest's
+        # saferepr at its default 240 leaves 118 of the repr (117 of a quoted string) on each side of the
+        # `...`: a --showlocals line, a traceback's arguments, the operands on a `+  where` line; unittest's
+        # `[N chars]` leaves at most 63 (a common prefix of up to 22 it does not shorten, then 41); the `==`
+        # operands 13. The bound is what keeps the scrub linear (ScrubCost). A head beyond it (pytest at -v
+        # keeps 1198) is the format rule's own match and the tail a fragment: two markers, nothing of the
+        # key between them
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        self.assertEqual(self.cf._credpat.CUT_HEAD_MAX, 120)
+        k = "sk-ant-api03-" + uuid.uuid4().hex * 5                  # 173 characters
+        self.assertEqual(red("key        = '%s...%s'" % (k[:117], k[-118:])), "key        = '%s'" % R, "pytest's 240 cut, quoted")
+        self.assertEqual(red("%s...%s" % (k[:118], k[-119:])), R, "the same cut of an unquoted repr")
+        h = "hf_" + uuid.uuid4().hex * 5
+        self.assertEqual(red("E        +  where '%s...%s' = f()" % (h[:117], h[-118:])), "E        +  where '%s' = f()" % R)
+        self.assertEqual(red("['%s[90 chars]%s']" % (k[:61], k[-5:])), "['%s']" % R, "unittest's widest head, 22 + 41")
+        # the bound counts the run after the prefix: 120 is one marker, 121 two; 1191 is pytest's -v cut
+        run = uuid.uuid4().hex * 80
+        self.assertEqual(red("key = 'sk-ant-%s...%s'" % (run[:120], k[-100:])), "key = '%s'" % R)
+        for n in (121, 130, 1191):
+            self.assertEqual(red("key = 'sk-ant-%s...%s'" % (run[:n], k[-100:])), "key = '%s...%s'" % (R, R), n)
+        self.assertEqual(red("'sk-ant-a...'"), "'%s'" % R, "one character of head is a head")
+
+    def test_a_cut_identifier_or_date_is_redacted_when_it_has_a_digit_or_an_interior_capital(self):
+        # the fragment rule cannot tell a camelCase or PascalCase name from a base64 tail without a digit
+        # (one 8-character fragment in 25 has that shape), nor a cut date from a hex tail, so both are
+        # redacted against a cut: a readability cost the module docstring names, pinned so it is a measured
+        # one. A Capitalised word and a single-case identifier stay, with or without dots
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        for text in ("'SessionStart...'", "'HookEndToEnd...'", "'getUserById...'", "'python38...'", "'2026-09-06...'"):
+            self.assertEqual(red(text), "'%s...'" % R, text)
+        self.assertEqual(red("assert 'HookEndToEnd...rTheFirstTime' == 'HookEndToEnd...TheSecondTime'"),
+                         "assert '%s...%s' == '%s...%s'" % (R, R, R, R), "a diff of two hook names loses both")
+        self.assertEqual(red("'2026-09-06T1...6+00:00'"), "'%s...6+00:00'" % R, "the head is a fragment; the tail is under the floor")
+        for text in ("'Connecting...'", "'Abcdefgh...'", "'test_a_long_...ithout_digits'", "'snake_case_id...'", "'deadbeef...'",
+                     "'ABCDEFGHIJKL...'", "'2.1.261...'", "'python3.12.3...'"):
+            self.assertEqual(red(text), text, text)
+
+    def test_a_diff_line_pytest_truncated_mid_token_is_a_fragment_position(self):
+        # pytest truncates an explanation over 8 lines or 640 characters and appends `...` to its last
+        # line; a diff line so cut ends in `...` instead of the token's end the diff rule requires, and its
+        # marker and sign are no fragment position. A piece of a compared JWT showed that way. The marker
+        # and sign stay; the same floor and letter rules as any fragment apply; a `...` that does not end
+        # the line is not pytest's cut
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        a = uuid.uuid4().hex + uuid.uuid4().hex
+        for pre in ("E         + ", "E         - ", "E       -  "):
+            self.assertEqual(red("%s%s..." % (pre, a[:60])), "%s%s..." % (pre, R), pre)
+            self.assertEqual(red("%s%s..." % (pre, a[:8])), "%s%s..." % (pre, R), "8 characters is the floor")
+        self.assertEqual(red("E         + %s.%s..." % (a[:30], a[30:50])), "E         + %s..." % R, "the dotted rest rides along")
+        self.assertEqual(red("E         + %s...\nE         \n" % a[:60]), "E         + %s...\nE         \n" % R)
+        for text in ("E         + abcdefg...", "E         + Connecting...", "E         + test_a_long_...", "E         + %s... more" % a[:30],
+                     "+ %s..." % a[:60]):
+            self.assertEqual(red(text), text, text[:20])
+
+    def test_a_qualifying_token_takes_its_dotted_rest(self):
+        # a dotted token in a value position was matched to its first dot; the `.<more>` segments ride along
+        # once the first run qualifies. A dot with no token character after it (a sentence's, an ellipsis)
+        # is not taken, and a run that does not qualify on its own is not helped by its dots
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        tok, sig = uuid.uuid4().hex, uuid.uuid4().hex[:20]
+        for text, want in (("KEY=%s.%s" % (tok, sig), "KEY=" + R), ("E         - %s.%s" % (tok, sig), "E         - " + R),
+                           ("%s.%s" % (tok, sig), R), ("KEY=%s. Next" % tok, "KEY=%s. Next" % R), ("KEY=%s..." % tok, "KEY=%s..." % R),
+                           ("['%s.x.y', 'b']" % tok, "['%s', 'b']" % R)):
+            self.assertEqual(red(text), want, text[:12])
+        # the costs the docstring names: a digit-bearing file name in a value position loses its extension,
+        # a uuid-named file alone on a line is redacted
+        self.assertEqual(red("file=test_kernel_webpush_2026.py"), "file=" + R)
+        self.assertEqual(red("%s.jsonl" % uuid.uuid4()), R)
+        for text in ("version=2.1.261.3", "module: kernel.sdk_backend.thing", "n=%s.%s" % (uuid.uuid4().hex[:23], sig)):
+            self.assertEqual(red(text), text, text)
+
+    def test_a_jwt_is_redacted_whole_wherever_it_sits(self):
+        # a JWT has no provider prefix; its shape is the format: `eyJ` (a base64url JSON object) and dotted
+        # segments. Before the rule a JWT in a value position lost only its header, a public constant, and
+        # kept its payload and signature; alone on a line or on a diff line nothing of it was matched
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        hdr, pay, sig = _jwt_parts()
+        jwt = "%s.%s.%s" % (hdr, pay, sig)
+        for text, want in (("token=%s" % jwt, "token=" + R), ("Authorization: Bearer %s" % jwt, "Authorization: Bearer " + R),
+                           ("{'token': '%s'}" % jwt, "{'token': '%s'}" % R), ("E       assert '%s' == 'x'" % jwt, "E       assert '%s' == 'x'" % R),
+                           ("E         - %s" % jwt, "E         - " + R), (jwt, R), (jwt + "\n", R + "\n"),
+                           ("Authorization: WebPush %s" % jwt, "Authorization: WebPush " + R),     # a scheme no value position knows
+                           ("token=%s. Next" % jwt, "token=%s. Next" % R)):                        # a sentence's dot is not a segment
+            self.assertEqual(red(text), want, text[:24])
+        # the header the kernel's push code mints: a JWT after `t=`, a public key after `k=`
+        self.assertEqual(red("Authorization: vapid t=%s, k=%s" % (jwt, _b64url(hashlib.sha512(uuid.uuid4().bytes).digest()))),
+                         "Authorization: vapid t=%s, k=%s" % (R, R))
+        # two segments (unsecured), five (JWE), a 20-character header ({"alg":"ES256"}), the shortest ({"alg":"none"})
+        es = _b64url(json.dumps({"alg": "ES256"}, separators=(",", ":")).encode())
+        none_hdr = _b64url(json.dumps({"alg": "none"}, separators=(",", ":")).encode())
+        self.assertEqual((len(es), len(none_hdr)), (20, 19))
+        for tok in ("%s.%s" % (hdr, pay), ".".join([hdr] + [_b64url(hashlib.sha256(uuid.uuid4().bytes).digest()[:n]) for n in (32, 12, 30, 16)]),
+                    "%s.%s.%s" % (es, pay, sig), "%s.%s." % (none_hdr, pay)):
+            self.assertEqual(red("t=%s" % tok), "t=" + R + ("." if tok.endswith(".") else ""), tok[:8])
+        # a header past JWT_HEADER_MAX falls to the generic rule and its dotted rest: whole in a value
+        # position, alone on a line and on a diff line
+        self.assertEqual(self.cf._credpat.JWT_HEADER_MAX, 256)
+        long_hdr = _b64url(json.dumps({"alg": "RS256", "kid": uuid.uuid4().hex, "x5c": [_b64url(uuid.uuid4().bytes * 14)]},
+                                      separators=(",", ":")).encode())
+        self.assertGreater(len(long_hdr), 256)
+        lj = "%s.%s.%s" % (long_hdr, pay, sig)
+        for text, want in (("token=%s" % lj, "token=" + R), (lj, R), ("E         - %s" % lj, "E         - " + R)):
+            self.assertEqual(red(text), want, text[:12])
+        # what stays: too little after the prefix to be a header, the prefix alone, a header with no dot after it
+        for text in ("x eyJab.cd y", "'eyJ'", "a %s b" % hdr):
+            self.assertEqual(red(text), text, text)
+
+    def test_an_ellipsized_jwt_is_redacted_with_its_dotted_head_and_tail(self):
+        # pytest's cuts of a JWT: the `==` operands (12 and 13 characters), saferepr's 240 (a head of 117
+        # holding the header, a dot and part of the payload; a tail of 118 that may begin at a dot), the
+        # short summary's cut with no tail; unittest's `[N chars]` with the prefix alone before it, its
+        # 5 + 41 head, and a fragment between two cuts. No 8-character piece of any segment survives
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        hdr, pay, sig = _jwt_parts(claims=6)
+        jwt = "%s.%s.%s" % (hdr, pay, sig)
+        self.assertGreater(len(jwt), 240)
+        for text, want in (("assert '%s...%s' == '%s...%s'" % (jwt[:12], jwt[-13:], jwt[:12], jwt[-13:]), "assert '%s' == '%s'" % (R, R)),
+                           ("j          = '%s...%s'" % (jwt[:117], jwt[-118:]), "j          = '%s'" % R),
+                           ("E        +  where '%s...%s' = f()" % (jwt[:117], jwt[-118:]), "E        +  where '%s' = f()" % R),
+                           ("j = '%s...%s'" % (jwt[:117], jwt[jwt.rindex("."):]), "j = '%s'" % R),
+                           ("FAILED t.py::t - AssertionError: assert '%s..." % jwt[:60], "FAILED t.py::t - AssertionError: assert '%s" % R),
+                           ("Lists differ: ['eyJ[35 chars]%s'] != ['eyJ[35 chars]%s']" % (jwt[38:90], jwt[38:80]),
+                            "Lists differ: ['%s'] != ['%s']" % (R, R)),
+                           ("['%s[101 chars]%s']" % (jwt[:54], jwt[-3:]), "['%s']" % R),
+                           ("'[13 chars]%s[20 chars]%s'" % (jwt[40:75], jwt[-12:]), "'[13 chars]%s[20 chars]%s'" % (R, R))):
+            out = red(text)
+            self.assertEqual(out, want, text[:30])
+            for seg in (hdr, pay, sig):
+                for i in range(0, len(seg) - 8 + 1):
+                    self.assertFalse(seg[i:i + 8] in out, "a piece of a segment reached the output")
+        self.assertEqual(red("'eyJ...'"), "'eyJ...'", "the prefix alone around a cut shows nothing")
 
     def test_the_two_nets_are_applied_in_order_and_share_one_pattern_list(self):
         v = probe_value("env")
@@ -379,6 +538,39 @@ class CredentialPattern(_WithConftest):
         self.assertEqual(self.cf.CREDENTIAL_REDACTED, "[REDACTED-CREDENTIAL]")
         self.assertEqual(os.path.realpath(self.cf._credpat.__file__), PATTERNS, "the conftest loads this file")
         self.assertIs(self.cf.redact_credential_tokens("x"), "x")
+
+
+class ScrubCost(_WithConftest):
+    """The scrub is linear in its input. A rule tried at every occurrence of its prefix inside a long run
+    it never consumes must do bounded work per occurrence: the cut-key rule's unbounded head made the
+    scrub quadratic (80 seconds for a 200 KB line of repeated `hf_`, 0.8 for 20 KB), and the JWT rule's
+    header would have been the same on repeated `eyJ`. The budget is generous for CI; each line here
+    took 0.16 seconds or less on the development box after the fix, minutes before it."""
+
+    BUDGET_SECONDS = 5.0
+
+    def test_a_200_kb_adversarial_line_is_scrubbed_within_the_budget(self):
+        n = 200 * 1024
+
+        def rep(unit):
+            return unit * (n // len(unit) + 1)
+        hexrun = rep("a1b2c3d4e5f6")
+        lines = {
+            "repeated hf_": rep("hf_"), "repeated rpa_": rep("rpa_"), "repeated hf_-": rep("hf_-"),
+            "hf_1 off a value position": " " + rep("hf_1"), "repeated sk-ant-": rep("sk-ant-"), "repeated AIza": rep("AIza"),
+            "repeated eyJ": rep("eyJ"), "eyJ1 off a value position": " " + rep("eyJ1"), "dotted eyJa.": rep("eyJa."),
+            "one case": rep("a") + " x", "mixed case": rep("aB") + " x", "digits": rep("1") + " x",
+            "underscores": rep("_"), "dashes": rep("-"),
+            "hex after a quote": "'" + hexrun, "hex after a cut": "..." + hexrun, "hex on a diff line": "E         - " + hexrun + " x",
+            "hex on a cut diff line": "E         - " + hexrun + "...",
+            "dotted segments": rep(".a"), "dotted after =": "=" + hexrun[:24] + rep(".a") + " x",
+            "repeated cuts": rep("..."), "repeated [N chars]": rep("[1 chars]"),
+        }
+        for name, line in lines.items():
+            t0 = time.perf_counter()
+            self.cf.redact_credential_tokens(line)
+            dt = time.perf_counter() - t0
+            self.assertLess(dt, self.BUDGET_SECONDS, "%s: %.1f s for %d characters" % (name, dt, len(line)))
 
 
 class ReportShapes(_WithConftest):
@@ -595,6 +787,42 @@ class HookEndToEnd(unittest.TestCase):
             # the keys' assert line (2) and diff (2); the tokens' four fragments and diff (6); the list's (6);
             # the tuple's (4); the three-element block (2 heads, 2 elements, 6 diff lines); the keys' block (8)
             self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 30, out[-2500:])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_a_failing_comparison_of_two_jwts_prints_the_marker_on_every_rendering(self):
+        # two fabricated JWTs, long enough for every cut: pytest's `==` operands and diff lines (which skip
+        # the identical header, and which its 640-character truncation cuts mid-token with `...` appended),
+        # the 240 cut of --showlocals, a list through unittest's `[N chars]`, and a bare print; and two long
+        # unknown-format tokens, whose diff's second line that truncation always cuts. No 8-character piece
+        # of any segment of any token survives on any line
+        d = tempfile.mkdtemp()
+        try:
+            _copy_hook(d)
+            j = {name: "%s.%s.%s" % _jwt_parts(claims=6) for name in ("a", "b")}
+            j.update({name: uuid.uuid4().hex * 14 for name in ("x", "y")})              # 448 characters each
+            with open(os.path.join(d, "probes.json"), "w") as fh:
+                json.dump(j, fh)
+            with open(os.path.join(d, "test_probe_jwt.py"), "w") as fh:
+                fh.write("import json, os, unittest\n"
+                         "P = json.load(open(os.path.join(os.path.dirname(__file__), 'probes.json')))\n\n"
+                         "def test_plain():\n    a = P['a']\n    b = P['b']\n"
+                         "    print('Authorization: Bearer ' + a)\n    assert a == b\n\n"
+                         "def test_hex():\n    assert P['x'] == P['y']\n\n"
+                         "class Cmp(unittest.TestCase):\n"
+                         "    def test_lists(self):\n        self.assertEqual([P['a'], P['b']], [P['b'], P['a']])\n")
+            rc, out = self._run(d, "--showlocals", "test_probe_jwt.py")
+            self.assertNotEqual(rc, 0)
+            self.assertTrue("3 failed" in out, out[-600:])
+            for name, v in j.items():
+                for seg in v.split("."):
+                    for i in range(0, len(seg) - 8 + 1):
+                        self.assertFalse(seg[i:i + 8] in out, "a piece of %s reached the report" % name)
+            self.assertTrue("Full output truncated" in out, "the JWT diff is long enough for pytest's truncation")
+            # the JWT test: the print, the assert line (2), two diff lines, two locals; the hex test: the assert
+            # line (2), two diff lines, two locals; the unittest one: the Lists differ line (2) and two element
+            # lines (its diff is over maxDiff and not shown)
+            self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 17, out[-2500:])
         finally:
             shutil.rmtree(d, ignore_errors=True)
 

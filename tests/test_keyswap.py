@@ -711,7 +711,8 @@ class KeyswapCli(_EnvFile):
     def test_the_kernels_fingerprint_is_compared_with_the_files_and_a_mismatch_is_loud(self):
         # the operator procedure used to be "compare the two sha256 lines by eye"; the CLI now asks the kernel
         # (a /keycycle read that names no session) and says MISMATCH when the kernel reads another key — the
-        # symptom of a path the kernel's environment does not carry, an unreadable file, or a startup fallback
+        # symptom of a ROMP_SERVICE_ENV_FILE the kernel and this shell resolve differently, an unreadable file,
+        # or a startup fallback (the wording is pinned in tests/test_keyswap_refusal.py)
         cli._kernel = lambda: "http://127.0.0.1:29855"
         cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {"ok": True, "keyFp": "deadbeefcafe", "rows": []}
         rc, said = self.run_cli()
@@ -719,6 +720,9 @@ class KeyswapCli(_EnvFile):
         self.assertEqual(rc, 1)
         self.assertIn("MISMATCH", said)
         self.assertIn("sha256:deadbeefcafe", said)
+        self.assertIn("reads another service.env:", said)
+        self.assertIn("this shell reads %s." % self.path, said, "the other-file cause names this shell's path")
+        self.assertNotIn("installed with another env-file path", said, "one direction of the cause; the general form replaced it")
         self.posted.clear()
         cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
             "ok": True, "keyFp": ks.fingerprint(ks.read_key(self.path)), "rows": []}
@@ -969,7 +973,10 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.assertIn("A running kernel keeps the mode it started in: `romp refresh`", out)
         self.assertIn("restarts the kernels into command mode (a kernel reads service.env at its start, so a line added", out)
         self.assertIn("there needs no manager restart)", out)
-        self.assertNotIn("systemctl", out, "adding the line is a kernel restart, never a manager restart")
+        # the other-file block that follows names the manager restart for ITS remedy (a changed
+        # ROMP_SERVICE_ENV_FILE in the unit); the advice for the line itself never does
+        self.assertNotIn("systemctl", out.split("reads another service.env:")[0], "adding the line is a kernel restart, never a manager restart")
+        self.assertIn("reads another service.env:", out)
         self.assertNotIn("set in this shell's", out)
 
     def test_mismatch_when_the_kernels_fingerprint_differs_names_the_two_environments(self):

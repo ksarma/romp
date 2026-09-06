@@ -67,6 +67,29 @@ NEW_KEY = "sk-ant-TEST-1111"
 SID = "11111111-2222-3333-4444-555555555501"
 
 
+# The one explanation the three MISMATCH hints share for a kernel that reads ANOTHER service.env
+# (cli/keyswap.py, _other_file): the file-mode fingerprint MISMATCH, the command-mode MISMATCH's other-file
+# cause and the file-mode MISMATCH under a shell whose file carries the line render these lines word for
+# word, each with its own indent. Pinned here so a rewording of one hint that leaves the others behind fails.
+OTHER_FILE = (
+    "the kernel and this shell each resolve the service.env path from ROMP_SERVICE_ENV_FILE in their own",
+    "environment; this shell reads %s.",
+    "Look for the variable where the kernel's environment comes from: the unit's Environment= and its",
+    "drop-ins (Linux) or the plist's EnvironmentVariables (macOS), where `romp-service install` writes it",
+    "when the installing shell's path is not the default; the profile a shell-wrapped ExecStart sources;",
+    "or the shell that ran `romp up`. Then run this command with the same ROMP_SERVICE_ENV_FILE, or change",
+    "it there and restart the manager: `romp-service install` from a shell with the wanted path rewrites",
+    "the unit or the plist (Linux: `systemctl --user restart romp-manager` after it; macOS: the install",
+    "reloads and restarts the job); a drop-in: edit it, `systemctl --user daemon-reload`, then the restart;",
+    "a profile: edit it, then the restart; a `romp up` shell: start it again with the path.",
+)
+
+
+def other_file_block(path, indent):
+    """The shared lines as one hint renders them: this shell's path filled in, each line under `indent`."""
+    return "\n".join(indent + (line % path if "%s" in line else line) for line in OTHER_FILE)
+
+
 class _Env(unittest.TestCase):
     """A temp env file at the path every reader resolves, the declaration cleared, the one-shot reset."""
 
@@ -285,44 +308,49 @@ class NamedSwapRefused(_Env):
                          "one cause with one remedy would send a unit line's owner to a restart that re-applies it")
         # the macOS form of that cause: the plist's EnvironmentVariables are part of the loaded job definition,
         # which `launchctl kickstart -k` restarts without re-reading the plist, so the job is booted out and
-        # bootstrapped again. The label and the plist path are bin/romp-service's own (LABEL, LAUNCHD_DIR)
-        self.assertIn("job as loaded and does not re-read the plist, so reload it: `launchctl bootout", out)
-        self.assertIn("gui/$(id -u)/com.romp.manager`, then `launchctl bootstrap gui/$(id -u)", out)
-        self.assertIn("~/Library/LaunchAgents/com.romp.manager.plist`. `romp-service install` does that on macOS (it", out)
+        # bootstrapped again, and the hint names `romp-service install` for that and never the bare pair:
+        # bootout only starts the old job's teardown, and a bootstrap issued while a manager drains its
+        # sessions is refused (Input/output error) with the old job gone and no agent loaded, so the installer
+        # polls `launchctl print` until the job has left launchd before it bootstraps (bin/romp-service,
+        # install; the reader mid-keyswap is the one with sessions to drain)
+        self.assertIn("job as loaded and does not re-read the plist; the reload is `romp-service install`: it rewrites", out)
+        self.assertIn("the plist, which drops a line added by hand, boots the job out, waits for the old job to drain its", out)
+        self.assertIn("sessions and leave launchd, then bootstraps it, so it is the reload and the restart in one; a", out)
+        self.assertIn("bootstrap issued before the old job is gone is refused (Input/output error) and leaves no agent", out)
+        self.assertNotIn("launchctl bootstrap", out, "the pair is never given: the install waits, a reader typing it would not")
+        self.assertNotIn("launchctl bootout", out)
         svc = open(os.path.join(BIN, "romp-service"), encoding="utf-8").read()
         self.assertIn('LABEL="com.romp.manager"', svc)
-        self.assertIn('LAUNCHD_DIR="${ROMP_LAUNCHD_DIR:-$HOME/Library/LaunchAgents}"', svc)
-        self.assertIn('PLIST="$LAUNCHD_DIR/$LABEL.plist"', svc)
-        # `romp-service install` is named for what it does per platform: on macOS a plist rewrite and a
-        # reload of the job (bootout, bootstrap), on Linux a unit rewrite and a systemd reload with no restart
-        # of a running manager (daemon-reload, enable --now)
-        self.assertIn("rewrites the plist and reloads the job); on Linux it rewrites the unit and reloads systemd and", out)
-        self.assertIn("leaves a running manager as it is, so restart it after", out)
-        self.assertIn('"$LAUNCHCTL" bootout "gui/$(id -u)/$LABEL"', svc)
-        self.assertIn('"$LAUNCHCTL" bootstrap "gui/$(id -u)" "$PLIST"', svc)
+        install = svc.split("case \"${1:-status}\" in")[1].split("uninstall)")[0]
+        bootout = install.index('"$LAUNCHCTL" bootout "gui/$(id -u)/$LABEL"')
+        bootstrap = install.index('"$LAUNCHCTL" bootstrap "gui/$(id -u)" "$PLIST"')
+        self.assertLess(bootout, bootstrap)
+        self.assertIn('"$LAUNCHCTL" print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || break', install[bootout:bootstrap],
+                      "the install waits for the old job to leave launchd before it bootstraps")
+        # `romp-service install` is named for what it does per platform: on macOS the plist rewrite and the
+        # waited reload, on Linux a unit rewrite and a systemd reload with no restart of a running manager
+        # (daemon-reload, enable --now)
+        self.assertIn("loaded. On Linux the install rewrites the unit and reloads systemd and leaves a running manager as", out)
+        self.assertIn("it is, so restart it after", out)
         self.assertIn("systemctl --user daemon-reload\n            systemctl --user enable --now romp-manager.service", svc)
-        self.assertNotIn("systemctl --user restart", svc.split("case \"${1:-status}\" in")[1].split("uninstall)")[0],
-                         "install restarts no running manager on Linux")
+        self.assertNotIn("systemctl --user restart", install, "install restarts no running manager on Linux")
         # the kernel may read ANOTHER service.env: kernel/keysource.py resolves the path from ROMP_SERVICE_ENV_FILE
         # wherever the kernel's environment sets it (the installer's unit or plist line is one source; a drop-in,
         # a profile or the shell that ran `romp up` are others), the answer carries no path, and this shell's is
-        # named, with the places to look per platform
-        self.assertIn("- another service.env: the kernel resolves the path from ROMP_SERVICE_ENV_FILE wherever its", out)
-        self.assertIn("environment sets it (the installer's line in the unit or the plist for a non-default path, a", out)
-        self.assertIn("drop-in, the profile a shell-wrapped ExecStart sources, the shell that ran `romp up`), so it may", out)
-        self.assertIn("read a file other than this shell's (%s):" % self.path, out)
-        self.assertIn("run this command with the same ROMP_SERVICE_ENV_FILE, or look for the variable in the unit and", out)
-        self.assertIn("its drop-ins on Linux, the plist on macOS", out)
+        # named, with the places to look per platform and the remedy per place: the block the file-mode
+        # fingerprint MISMATCH renders too (OTHER_FILE), under the bullet
+        self.assertIn("            - another service.env:\n" + other_file_block(self.path, " " * 14), out)
         self.assertNotIn("the installer carries", out, "the installer is one source of the variable, not the cause")
         self.assertNotIn("check the unit for that variable", out, "the unit is the Linux place; the plist is the macOS one")
         self.assertEqual(ks.service_env_path(), self.path, "the CLI names the path the kernel's own resolver gives this environment")
         self.assertIn("- service.env, edited since the kernel read it at its start: `romp refresh`", out)
         self.assertIn("- the shell that ran `romp up`, which exported it: stop that `romp up`; start it from a shell without the line", out)
-        # the manager restart is named by the commands that restart one; `romp-service install` appears once,
-        # for what it does per platform, never as the restart
+        # the manager restart is named by the commands that restart one; `romp-service install` appears for what
+        # it does: the macOS reload under the unit-or-plist cause, and twice under the other-file cause (it
+        # writes the variable into the unit or the plist; from a shell with the wanted path it rewrites it)
         self.assertIn("The manager restart is `systemctl --user restart romp-manager`, or on macOS `launchctl kickstart -k", out)
         self.assertIn("gui/$(id -u)/com.romp.manager`", out)
-        self.assertEqual(out.count("romp-service install"), 1)
+        self.assertEqual(out.count("romp-service install"), 3)
         self.assertNotIn("`romp refresh` restarts the kernels into file mode", out)
         self.assertIn("put the line back in service.env instead", out)
         rc, out, _err = self.run_cli("--cycle-all")
@@ -340,7 +368,7 @@ class NamedSwapRefused(_Env):
         cli.es._reset()
         said = []
         try:
-            rc = cli._mode_mismatch({"keySource": "file", "keyFp": ""}, "command", said.append)
+            rc = cli._mode_mismatch({"keySource": "file", "keyFp": ""}, said.append)
         finally:
             cli.es._reset()
         out = "\n".join(said)
@@ -348,14 +376,46 @@ class NamedSwapRefused(_Env):
         self.assertIn("kernel      reads (none) in FILE mode", out)
         self.assertIn("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in service.env", out)
         self.assertIn("there needs no manager restart). Until then the kernel injects no set.", out)
-        self.assertIn("If the kernel is still in file mode after `romp refresh`, it reads another service.env: its environment", out)
-        self.assertIn("sets ROMP_SERVICE_ENV_FILE (the installer's line in the unit or the plist, a drop-in, a profile, or the", out)
-        self.assertIn("shell that ran `romp up`), and this shell reads %s." % self.path, out)
-        self.assertIn("Run this command with the same ROMP_SERVICE_ENV_FILE, or look for the variable in the unit and its", out)
-        self.assertIn("drop-ins on Linux, the plist on macOS.", out)
+        self.assertIn("            If the kernel is still in file mode after `romp refresh`, it reads another service.env:\n"
+                      + other_file_block(self.path, " " * 12), out)
         self.assertNotIn("the installer carries", out)
-        self.assertNotIn("systemctl", out, "adding the line is never a manager restart")
+        self.assertNotIn("systemctl", out.split("reads another service.env:")[0], "adding the line is never a manager restart")
         self.assertNotIn("set in this shell's", out)
+
+    def test_the_file_mode_fingerprint_mismatch_explains_the_other_file_cause_as_the_mode_mismatches_do(self):
+        # a file-mode kernel on another fingerprint. The hint's other-file cause used to say the service was
+        # installed with another env-file path the kernel's environment does not carry (re-run the install,
+        # then restart): one direction, and a kernel whose ROMP_SERVICE_ENV_FILE comes from a drop-in, a
+        # profile or the `romp up` shell was re-installed and restarted for nothing, with no pointer to the
+        # place. The three hints render the one explanation (cli._other_file): the variable, this shell's
+        # path, the places per platform, the remedy per place and the reload a unit or plist line takes
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: {"ok": True, "keyFp": ks.fingerprint(NEW_KEY), "keySource": "file", "rows": []}
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("MISMATCH    the kernel is not reading this file's key. Usual causes: the file is unreadable to the kernel,", out)
+        self.assertIn("            the file has no %s line and the kernel still holds its startup key, or the kernel" % ks.KEY_VAR, out)
+        self.assertIn("            reads another service.env:\n" + other_file_block(self.path, " " * 12), out)
+        for gone in ("installed with", "does not carry", "re-run", "then restart the manager)", "wherever its"):
+            self.assertNotIn(gone, out, gone)
+        block = other_file_block(self.path, "")
+        for fact in ("ROMP_SERVICE_ENV_FILE", self.path, "the unit's Environment= and its", "drop-ins (Linux)",
+                     "plist's EnvironmentVariables (macOS)", "where `romp-service install` writes it",
+                     "the profile a shell-wrapped ExecStart sources", "the shell that ran `romp up`",
+                     "run this command with the same ROMP_SERVICE_ENV_FILE", "or change\nit there and restart the manager",
+                     "`romp-service install` from a shell with the wanted path rewrites", "the unit or the plist (Linux: `systemctl --user restart romp-manager` after it",
+                     "macOS: the install\nreloads and restarts the job", "a drop-in: edit it, `systemctl --user daemon-reload`, then the restart",
+                     "a profile: edit it, then the restart", "a `romp up` shell: start it again with the path"):
+            self.assertIn(fact, block, fact)
+        self.assertNotIn("launchctl", block, "the macOS reload is the install; no bare pair")
+        self.assertNotIn(OLD_KEY, out)
+        self.assertNotIn(NEW_KEY, out)
+        self.assertEqual(ks.service_env_path(), self.path, "the path named is the one the kernel's own resolver gives this environment")
+        # the same lines, word for word, under the command-mode MISMATCH's bullet
+        said = []
+        cli._mode_mismatch({"keySource": "command", "keyFp": ks.fingerprint(NEW_KEY)}, said.append)
+        self.assertIn("            - another service.env:\n" + other_file_block(self.path, " " * 14), "\n".join(said))
+        self.assertEqual(cli._other_file(self.path), tuple(other_file_block(self.path, "").split("\n")))
 
     def test_a_second_positional_is_counted_never_echoed(self):
         # a key value typed where a name was expected must not reach stderr
@@ -398,28 +458,82 @@ class HelpAndDocsAgree(unittest.TestCase):
 
     def test_every_restart_advice_about_a_unit_or_plist_line_names_the_reload(self):
         # a unit Environment= line or a plist EnvironmentVariables pair is part of the loaded service
-        # definition, which a manager restart re-applies; advice that says "restart" about one and not
-        # "reload" sends the reader to a restart that changes nothing. Two paragraphs of the reference did
+        # definition, which a manager restart re-applies; advice that says "restart" about one and not the
+        # reload sends the reader to a restart that changes nothing. Two paragraphs of the reference did
         # (the `romp refresh --quiet` paragraph and the keyswap section's list of places named a bare
-        # restart), so the property is pinned over every paragraph rather than the two that were fixed
+        # restart), so the property is pinned over the whole reference. A block is a paragraph, or one
+        # bullet of a list, so one bullet's "reload" covers no neighbour; a block is selected by the concept
+        # (a unit or plist line, however worded: the ports paragraph says "unit" and "bakes in"), not by the
+        # literal `Environment=`; and a selected block names the reload when it carries `romp-service install`
+        # (the macOS reload; on Linux it performs daemon-reload), or `daemon-reload` in a block that names no
+        # macOS, or points at the section that carries both. The floor is today's count, so a rewrite that
+        # drops a block out of selection fails here
         import re
         ref = self._read("docs/reference.md")
-        hits = [p for p in re.split(r"\n\s*\n", ref) if re.search(r"Environment=|EnvironmentVariables", p) and "restart" in p]
-        self.assertGreaterEqual(len(hits), 3, "the paragraphs this covers")
-        for p in hits:
-            self.assertIn("reload", p, p[:160])
-        # the same for the CLI's three hints about such a line: the mode MISMATCH under a command-mode kernel,
-        # the one under a shell whose environment alone carries the line, and the fingerprint MISMATCH's causes
+        blocks = [b for p in re.split(r"\n\s*\n", ref) for b in re.split(r"\n(?=\s*[-*] )", p) if b.strip()]
+        concept = re.compile(r"Environment=|EnvironmentVariables|unit'?s? (?:own )?environment|baked into the unit|"
+                             r"unit bakes|(?:unit|plist) line|line in the (?:unit|plist)|in the unit\b|in the plist\b|"
+                             r"plist's", re.I)
+        hits = [b for b in blocks if concept.search(b) and re.search(r"\brestart", b)]
+        self.assertGreaterEqual(len(hits), 5, "the blocks this covers:\n" + "\n---\n".join(h[:120] for h in hits))
+        anchor = "#two-things-still-need-a-restart"
+        for b in hits:
+            flat = " ".join(b.split())
+            if anchor in flat:
+                continue
+            if "macOS" in flat or "plist" in flat.lower():
+                self.assertIn("romp-service install", flat, flat[:160])
+            else:
+                self.assertTrue("romp-service install" in flat or "daemon-reload" in flat, flat[:160])
+        self.assertTrue(any(anchor in b for b in hits), "the by-reference form is exercised")
+        # the section the others point at carries both reloads and the wait
+        section = " ".join(ref.split("#### Two things still need a restart")[1].split("\n#")[0].split())
+        self.assertIn("`systemctl --user daemon-reload` after editing a unit or a drop-in, then the restart", section)
+        self.assertIn("the reload is `romp-service install`", section)
+        # the same for the CLI's hints about such a line: the mode MISMATCH under a command-mode kernel, the one
+        # under a shell whose environment alone carries the line, the fingerprint MISMATCH's causes, and the
+        # other-file block all three MISMATCHes share
         src = self._read("cli/keyswap.py")
         for phrase in ("the unit's Environment=, a drop-in, or the profile a shell-wrapped ExecStart sources (Linux), or the",
                        "a line in the unit's own Environment= or the plist's EnvironmentVariables",
-                       "a line changed or removed there, or one in the unit, at the"):
+                       "a line changed or removed there, or one in the unit, at the",
+                       "the unit's Environment= and its"):
             self.assertIn(phrase, src, phrase)
         for phrase in ("first, reload the definition, then restart the manager.",
                        "reaches them at the manager restart that follows a reload of the definition",
-                       "plist line reaches that restart only once the definition is reloaded: daemon-reload on Linux,"):
+                       "plist line reaches that restart only once the definition is reloaded: daemon-reload on Linux,",
+                       "`romp-service install` on macOS), the two resolve different selector files",
+                       "on macOS the reload is `romp-service",
+                       "a drop-in: edit it, `systemctl --user daemon-reload`, then the restart;"):
             self.assertIn(phrase, src, phrase)
         self.assertNotIn("reaches them at the next manager restart (`systemctl --user restart romp-manager`)", src)
+
+    def test_the_launchd_reload_is_romp_service_install_and_never_the_bare_pair(self):
+        # bin/romp-service's install waits between bootout and bootstrap: bootout only starts the old job's
+        # teardown, a manager draining live sessions takes seconds to exit, and a bootstrap issued while it
+        # drains is refused (Input/output error) with the old job gone and no agent loaded, which is how two
+        # installs ended before the wait (bin/romp-service, install). The reader mid-keyswap has sessions to
+        # drain, so the CLI names `romp-service install` as the macOS reload and never the pair, and wherever
+        # the reference gives the pair by hand the `launchctl print` wait sits between the two commands with
+        # the reason beside it
+        import re
+        src = self._read("cli/keyswap.py")
+        rendered = "\n".join(re.findall(r'out\("(.*)"\)', src))          # the lines the reader sees, not docstrings
+        for pair in ("launchctl bootstrap", "launchctl bootout", "bootout then bootstrap"):
+            self.assertNotIn(pair, rendered, pair)
+        self.assertIn("the reload is `romp-service install`", rendered)
+        self.assertIn("`romp-service install` on macOS)", rendered)
+        self.assertIn("on macOS the reload is `romp-service", rendered)
+        ref = " ".join(self._read("docs/reference.md").split())          # the reference wraps a command across lines
+        given = list(re.finditer(r"`launchctl bootstrap gui/", ref))
+        self.assertEqual(len(given), 1, "the pair is given by hand in one place, the section the others point at")
+        for m in given:
+            bootout = ref.rfind("`launchctl bootout gui/", 0, m.start())
+            self.assertGreater(bootout, -1, "a bootstrap given with no bootout before it")
+            self.assertIn("`launchctl print gui/", ref[bootout:m.start()], "bootout then bootstrap with no wait between")
+            self.assertIn("until it fails", ref[bootout:m.start()])
+            self.assertIn("Input/output error", ref[bootout - 1500:m.start()], "the reason for the wait")
+        self.assertNotIn("launchctl bootstrap gui/", " ".join(src.split()))
 
     def test_the_docs_show_the_command_mode_report_with_placeholder_fingerprints(self):
         ref = self._read("docs/reference.md")

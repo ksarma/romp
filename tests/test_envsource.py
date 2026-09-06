@@ -1439,12 +1439,59 @@ class NothingLeaks(_Lab):
 
 
 class Floor(unittest.TestCase):
-    """conftest's import-time and per-test floor: no test starts with a credential command configured."""
+    """conftest's import-time and per-test floor: no test starts with a credential command configured, and
+    none reads the selector file under the real HOME — ROMP_CREDENTIAL_SELECTOR_FILE is floored to a path
+    that does not exist (2026-09-06; popped before, which meant the default under HOME)."""
 
-    def test_the_four_variables_are_absent_at_test_start(self):
-        for v in es.CONFIG_VARS:
+    REAL_DEFAULT = os.path.realpath(os.path.join(os.path.expanduser("~"), ".config", "romp", "credential-selector"))
+
+    def test_the_command_names_and_timeout_are_absent_at_test_start(self):
+        for v in (es.COMMAND_VAR, es.NAMES_VAR, es.TIMEOUT_VAR):
             self.assertFalse(v in os.environ, v)
         self.assertFalse(es.configured())
+
+    def test_the_selector_file_is_floored_to_a_path_that_does_not_exist(self):
+        p = os.environ.get(es.SELECTOR_FILE_VAR) or ""
+        self.assertTrue(p, "%s is not floored" % es.SELECTOR_FILE_VAR)
+        self.assertFalse(os.path.exists(p), "the floor points at a file that exists")
+        self.assertEqual(es.selector_path(), p)
+        self.assertNotEqual(os.path.realpath(p), self.REAL_DEFAULT, "the floor is this machine's default selector file")
+        self.assertEqual(es.read_selector(), ("", ""), "no file: no selector and no error, an empty `$1`")
+        self.assertEqual(es._selector_ident()[1], "absent")
+
+    def test_a_decoy_selector_at_the_default_location_under_a_private_home_is_not_read(self):
+        # a command-mode test that sets its fake command and forgets the selector variable: the floor,
+        # not the default under HOME, is what the run reads — proven against a decoy at that default
+        d = tempfile.mkdtemp()
+        before = {v: os.environ.get(v) for v in ("HOME", "XDG_CONFIG_HOME", es.COMMAND_VAR, es.NAMES_VAR)}
+        try:
+            os.environ["HOME"] = d
+            os.environ.pop("XDG_CONFIG_HOME", None)
+            decoy = os.path.join(d, ".config", "romp", "credential-selector")
+            os.makedirs(os.path.dirname(decoy))
+            with open(decoy, "w") as fh:
+                fh.write("hp\n")
+            self.assertEqual(os.path.join(os.path.expanduser("~"), ".config", "romp", "credential-selector"), decoy,
+                             "the decoy is at the default location for this process")
+            self.assertEqual(es.selector_path(), os.environ[es.SELECTOR_FILE_VAR], "the floor names the file, not the default")
+            self.assertEqual(es.read_selector(), ("", ""))
+            script = os.path.join(d, "cmd.sh")
+            with open(script, "w") as fh:
+                fh.write("#!/bin/sh\necho 'A_TOKEN=%s'\n" % fixture_value())
+            os.chmod(script, 0o700)
+            os.environ[es.COMMAND_VAR] = script + ' "$1"'
+            os.environ[es.NAMES_VAR] = "hp"
+            es._reset()
+            snap = es.current()
+            self.assertTrue(snap["ok"])
+            self.assertEqual((snap["selector"], snap["selectorNote"]), ("", ""), "the decoy's token was not read as `$1`")
+        finally:
+            for v, was in before.items():
+                if was is None:
+                    os.environ.pop(v, None)
+                else:
+                    os.environ[v] = was
+            es._reset()
 
 
 if __name__ == "__main__":

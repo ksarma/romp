@@ -9,7 +9,13 @@ the launch environment of every session CLI, every judge call and the catalog fe
 variable is what selects this mode; unset, nothing here runs and every caller sees an empty set.
 
 Configuration (process environment first, then the same line in the manager's env file, so a
-terminal outside the manager tree resolves the same values):
+terminal outside the manager tree resolves the same values). Every reader takes an optional
+`environ`, and an explicit one stands in for the process ENVIRONMENT only: the env file consulted
+after it is still the process's (`ROMP_SERVICE_ENV_FILE`, else the default under `XDG_CONFIG_HOME` or
+`HOME`, keysource's rule), so `command({})` is the file's line alone — the probe `romp keyswap` uses
+to tell a line set in the shell from one set in the file. A check that must be pure on its inputs
+(sdk_backend.key_source_verdict on a hypothetical environ) therefore does not decide its mode through
+these readers: it takes the env file's TEXT as an input and reads the line from that (2026-09-06).
 
 * `ROMP_CREDENTIAL_COMMAND` — run as `/bin/sh -c <command> sh <selector>`, so the selector is `$1`.
 * `ROMP_CREDENTIAL_SELECTOR_FILE` — a file holding ONE token (a name such as `hp`), passed as `$1`.
@@ -190,7 +196,9 @@ def _file_config() -> dict:
 
 
 def config_value(name: str, environ=None) -> str:
-    """One configuration value: the process environment's, else the env file's line, else ""."""
+    """One configuration value: the environment's, else the env file's line, else "". An explicit
+    `environ` replaces the process environment; the file is the process's either way (the module
+    docstring: `command({})` is the file's line alone, and keyswap's mode probe reads it that way)."""
     env = os.environ if environ is None else environ
     v = (env.get(name) or "").strip()
     if v:
