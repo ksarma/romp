@@ -16653,8 +16653,14 @@ def attach_remote(host, kernel_port=None):
                 time.sleep(1.0)
             if not token:
                 token = _fetch_remote_token(host)  # the fresh kernel wrote its serve-token on startup
-        elif not token:
-            boot_detail = detail                   # applied below, AFTER _spawn_tunnel resets detail
+        else:
+            # the refusal rides the row whether or not a token came back: a host attached before
+            # `romp down` stopped it still has its serve-token file, and keeping the reason only on
+            # the no-token path left the popover with the generic no-kernel hint instead of the stop
+            # and the way out (review find, round 2, 2026-09-06). Applied below, AFTER _spawn_tunnel
+            # resets detail; the supervisor keeps a specific parked detail over its generic hint
+            # and clears it once the kernel answers.
+            boot_detail = detail
     with _remotes_lock:
         r = _remotes.get(host)
         if r is None:                              # detached mid-fetch
@@ -16677,8 +16683,8 @@ def attach_remote(host, kernel_port=None):
             except Exception:
                 pass
             _spawn_tunnel(r)
-        if boot_detail and not token:
-            r["detail"] = boot_detail              # the popover's next step (e.g. "run bin/romp-host-setup")
+        if boot_detail:
+            r["detail"] = boot_detail              # the popover's next step ("run bin/romp-host-setup", the romp down refusal)
         pub = _remote_public(r)
     _remotes_save()
     _tunnel_wake.set()

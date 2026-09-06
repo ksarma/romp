@@ -161,6 +161,35 @@ class StartRemoteKernelRespectsRompDown(unittest.TestCase):
         finally:
             km._update_remote, km._remote_kernel_up, km._start_remote_kernel, km._remotes = saved
 
+    def test_an_attach_that_fetched_a_token_still_carries_the_reason(self):
+        # a host attached before it was stopped still has its serve-token file, so the attach's
+        # fetch returns one; the bootstrap then asked for the boot, was refused, and DROPPED the
+        # reason, which it kept only on the no-token path. The popover showed the generic no-kernel
+        # hint instead of the stop and the way out (review find, round 2, 2026-09-06). The reason
+        # rides the row whenever the boot was declined; the supervisor keeps a specific parked
+        # detail over its generic hint and clears it once the kernel answers.
+        class _Proc:
+            pid = 4242
+            def poll(self):
+                return None
+        saved = (km._fetch_remote_token, km._remote_kernel_up, km._start_remote_kernel, km._spawn_tunnel,
+                 km._known_note, km._remotes_save, km._remotes)
+        km._remotes = {}
+        km._fetch_remote_token = lambda h: "tok-cached"
+        km._remote_kernel_up = lambda h, p: False
+        km._start_remote_kernel = lambda h: (False, "romp is stopped on %s by romp down; not starting it (romp up there starts it)" % h)
+        km._spawn_tunnel = lambda r: r.update(proc=_Proc(), status="starting", detail="")
+        km._known_note = lambda *a, **k: None
+        km._remotes_save = lambda: None
+        try:
+            pub = km.attach_remote(HOST)
+            self.assertEqual(pub["detail"], "romp is stopped on TESTHOST by romp down; not starting it (romp up there starts it)")
+            self.assertEqual(km._remotes[HOST]["detail"], pub["detail"], "the row carries the reason for the popover")
+            self.assertEqual(km._remotes[HOST]["token"], "tok-cached", "the token is kept and the tunnel dials as before")
+        finally:
+            (km._fetch_remote_token, km._remote_kernel_up, km._start_remote_kernel, km._spawn_tunnel,
+             km._known_note, km._remotes_save, km._remotes) = saved
+
 
 class SupervisorRespectsBoot(unittest.TestCase):
     def test_supervisor_defers_to_an_in_flight_start(self):
