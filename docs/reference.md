@@ -1442,7 +1442,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   previous call. `disk_hits`, `disk_misses` and `disk_seeds` count the memo
   behind the no-op save check: the file's identity matched and it was not
   parsed, it was read and parsed (or attempted), or the entry was filled from
-  the publish's own write.
+  the publish's own write. `absent_hits` and `absent_misses` count the memo
+  behind the two triage sweeps over stores no discovered session owns:
+  answered from the memo, or loaded and evaluated because the store, its
+  override journal or its archive changed or was new.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the workers' share is `cpu_ms_workers`), and

@@ -213,8 +213,12 @@ class _PerfStats:
                                    parsed, or attempted; entry filled from a publish's own temp);
                                    scans / scan_hits /
                                    scan_parses: judge_failure_scan's per-store memo (calls, stores
-                                   served from the memo, stores read and parsed)
-      judge                        passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
+                                   served from the memo, stores read and parsed); absent_hits /
+                                   absent_misses: the memo behind the two triage sweeps over stores
+                                   no discovered session owns (answered from the memo; loaded and
+                                   evaluated because the store, its override journal or its archive
+                                   changed or was new)
+      judge                       passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
                                    _run_tier, plus every per-session worker the tiers run in
