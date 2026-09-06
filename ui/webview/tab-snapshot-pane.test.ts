@@ -152,12 +152,49 @@ test("the client's Ledger type declares the two fields the snapshot reads off th
 test("the row's second line: the session's own working note, quieter, under the now line (tab-snapshot.ts SnapRow.note, the model's request of the renderer)", () => {
   // the model moved the postal working note out of the now line (it is the session's claim to a branch and
   // files, written for peers) and onto the row as its own field; the renderer and the sheet paint it
-  assert.match(SNAP, /if \(r\.note\) \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*const note = el\("span", "snap-note"\); note\.textContent = r\.note; note\.setAttribute\("aria-hidden", "true"\);\s*\n\s*btn\.appendChild\(note\);\s*\n\s*\}\s*\n\s*item\.appendChild\(btn\);/,
-    "appended last, so the wrapping row puts it under the first line's parts; spoken by the label (rowWords), like the flag");
+  assert.match(SNAP, /if \(r\.note\) \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*const note = el\("span", "snap-note"\); note\.textContent = r\.note; note\.setAttribute\("aria-hidden", "true"\);\s*\n\s*btn\.appendChild\(note\);\s*\n\s*\}\s*\n\}/,
+    "appended last (fillSnapshotRow's last part), so the wrapping row puts it under the first line's parts; spoken by the label (rowWords), like the flag");
   const block = CSS.slice(CSS.indexOf("#tab-snapshot {"), CSS.indexOf(".snap-when {") + 400);
   assert.match(block, /\.snap-row \{ display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px;/, "the row wraps: the note takes the second line, a hair below");
   assert.match(block, /\.snap-note \{ flex: 1 0 100%; min-width: 0; padding-left: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.82em; color: var\(--dim\); opacity: 0\.7; \}/,
     "the header's 0.82em (the sheet's one sub-line size), the dim token a step quieter, one line, indented past the pip (7px) and its gap (8px)");
   assert.equal(noteLine({ summary: "", workingNote: "  own branch web; editing the list page  " }), "own branch web; editing the list page", "the model's line is the text painted");
   assert.equal(noteLine({ summary: "Building the notes-api web pages" }), "", "no note: no second line (the `if (r.note)`)");
+});
+
+test("snapshot rows update in place, keyed by session id, so the row a keyboard user is on and a hover's title survive the push that changes a row (round 2)", () => {
+  // every model change repainted the rows with host.replaceChildren; sameRow folds lastT and lastMsg, so the rows
+  // rebuilt on nearly every push while a member worked, and the button the user had Tabbed onto was destroyed under
+  // them within seconds (focus to body; Enter did nothing, the composer being disabled under the snapshot). The
+  // strip keeps focus across its rebuild by re-focusing the active tab (renderTabs); the rows keep it by keeping
+  // their NODES: tab-snapshot-view.ts reconcileRows (executed in tab-snapshot-view.test.ts) patches the standing
+  // row nodes, makes and removes only the rows that came and went, and moves only a reordered one. The event is
+  // the push that changed the model; the same-object path above it still moves nothing but the ago texts.
+  const paint = SNAP.slice(SNAP.indexOf("function renderSnapshot(): boolean {"), SNAP.indexOf("function snapshotRowNode("));
+  assert.match(paint, /if \(next === snapModel && host\.childElementCount\) \{/, "the same-object gate stands");
+  assert.equal(paint.split("host.replaceChildren(").length - 1, 1, "the host's children are replaced once: the first paint");
+  assert.match(paint, /let list = host\.querySelector<HTMLElement>\("\.snap-list"\);\s*\n\s*if \(!list\) \{[\s\S]*?host\.replaceChildren\(h, list\);\s*\n\s*\}/, "the heading and the list are made once, with the host's first paint");
+  assert.match(paint, /part\("snap-name"\)\.textContent = next\.name;\s*\n\s*part\("snap-count"\)\.textContent = words\.count;/, "the heading's parts are patched, not remade");
+  assert.match(paint, /reconcileRows<SnapRow, Element>\(list, next\.rows, \(n\) => n\.getAttribute\("data-id"\), \(r\) => snapshotRowNode\(r, now\), \(n, r\) => fillSnapshotRow\(n\.firstElementChild as HTMLElement, r, now\)\);/,
+    "keyed by the row's session id: a new row's node from snapshotRowNode, a standing row's parts from fillSnapshotRow");
+  assert.doesNotMatch(paint, /for \(const r of next\.rows\) list\.appendChild/, "no wholesale row build");
+  // a MOVED row: insertBefore detaches and re-attaches its node, which blurs it (the browser's focus fixup); the same
+  // event puts focus back on it (the strip's refocus rule, by node instead of by id). A row GONE from under focus
+  // (its session left the section): the row now in its place takes it, the last when it was last, so the keyboard
+  // user is not dropped to body by a removal either
+  assert.match(paint, /const focused = document\.activeElement as HTMLElement \| null;\s*\n\s*const focusedAt = focused && list\.contains\(focused\) \? Array\.from\(list\.children\)\.indexOf\(focused\.closest\("\.snap-item"\)!\) : -1;\s*\n\s*reconcileRows<SnapRow, Element>\(/,
+    "the focused node and its place, read before the update");
+  assert.match(paint, /if \(focused && list\.contains\(focused\)\) \{ if \(document\.activeElement !== focused\) focused\.focus\(\); \}/, "moved: put back");
+  assert.match(paint, /else if \(focusedAt >= 0 && list\.children\.length\) list\.children\[Math\.min\(focusedAt, list\.children\.length - 1\)\]\.querySelector<HTMLElement>\("\.snap-row"\)\?\.focus\(\);/, "gone: the row in its place");
+  // the row node: the item carries the key; the button (Tab's target, the title's owner) is filled by the same function a
+  // patch calls, so a made row and a patched row have one shape
+  const node = SNAP.slice(SNAP.indexOf("function snapshotRowNode("), SNAP.indexOf("function fillSnapshotRow("));
+  assert.match(node, /item\.dataset\.id = r\.id;/, "the key, on the item the list holds");
+  assert.match(node, /fillSnapshotRow\(btn, r, now\);\s*\n\s*item\.appendChild\(btn\);\s*\n\s*return item;/, "one fill for both paths");
+  const fill = SNAP.slice(SNAP.indexOf("function fillSnapshotRow("), SNAP.indexOf("function showActive() {"));
+  assert.match(fill, /btn\.className = "snap-row" \+ \(r\.closed \? " closed" : ""\) \+ \(r\.loading \? " loading" : ""\);/, "the classes rewritten, not toggled one by one");
+  assert.match(fill, /btn\.replaceChildren\(\);/, "the parts emptied, then appended in order: the button stands");
+  assert.match(fill, /const nowEl = el\("span", "snap-now"\); nowEl\.textContent = r\.loading \? "opening…" : r\.now; btn\.appendChild\(nowEl\);/, "the parts as before");
+  // the sheet: the focus ring is on the button, the node that stands
+  assert.match(CSS, /\.snap-row:focus-visible \{ outline: 1px solid var\(--accent\); outline-offset: -1px; \}/);
 });

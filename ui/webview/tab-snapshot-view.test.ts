@@ -4,7 +4,7 @@
 // only: the notes-api demo world (web / api / tests), placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { rowStillOpen, installSnapshotEscape } from "./tab-snapshot-view";
+import { rowStillOpen, installSnapshotEscape, reconcileRows } from "./tab-snapshot-view";
 
 test("a row whose session left the strip mid-press opens nothing (round 2): a frame's row needs its session, a placeholder's row its meta, and a closing tab is neither", () => {
   // click safety keeps the pressed row in the DOM until the release, so a session dismissed between mousedown
@@ -91,4 +91,72 @@ test("the arm yields to this page's own layers at capture, to an earlier capture
   // a mark set BETWEEN the phases by a listener that does not stop propagation (a target-phase handler) also wins
   f.docCap.push((e) => { if (e.key === "Escape") e.preventDefault(); });
   f.dispatch(key("Escape")); assert.equal(left, 1, "marked between the phases: yielded");
+});
+
+// ── the rows update in place, keyed by session id ─────────────────────────────────────────────────
+// A stand-in for the list node: children in order, the DOM's insertBefore (a node already in the list is
+// moved: detached, then put before the reference; a null reference appends) and removeChild. Each row's node
+// is a plain object, so identity is what the assertions compare.
+type Row = { id: string; now: string };
+type Node = { id: string | null; text: string };
+class List {
+  children: Node[] = [];
+  insertBefore(n: Node, ref: Node | null): void {
+    const i = this.children.indexOf(n); if (i >= 0) this.children.splice(i, 1);
+    const j = ref ? this.children.indexOf(ref) : -1;
+    if (j < 0) this.children.push(n); else this.children.splice(j, 0, n);
+  }
+  removeChild(n: Node): void { const i = this.children.indexOf(n); if (i >= 0) this.children.splice(i, 1); }
+}
+const rows = (...rs: Array<[string, string]>): Row[] => rs.map(([id, now]) => ({ id, now }));
+
+test("a changed row keeps its node, patched; a row that came is made and one that went is removed with the others standing; a reorder moves without remaking (round 2)", () => {
+  // every model change repainted the rows wholesale (host.replaceChildren), and sameRow folds lastT and lastMsg,
+  // so the rows rebuilt on nearly every push while a member worked: the button a keyboard user had Tabbed onto
+  // was destroyed under them within seconds (focus to body, Enter dead), and a hover's title dismissed. The
+  // node is what focus and the title belong to, so the node is what a rebuild must keep.
+  const list = new List();
+  const made: string[] = [], patched: string[] = [];
+  const key = (n: Node) => n.id;
+  const make = (r: Row): Node => { made.push(r.id); return { id: r.id, text: r.now }; };
+  const patch = (n: Node, r: Row) => { patched.push(r.id); n.text = r.now; };
+  // the first paint: every row made, in the model's order
+  let out = reconcileRows(list, rows(["web", "building the list page"], ["api", "idle"], ["tests", "running the suite"]), key, make, patch);
+  assert.deepEqual(out, { kept: 0, made: 3, moved: 0, removed: 0 });
+  assert.deepEqual(list.children.map((n) => n.id), ["web", "api", "tests"]);
+  const [web, api, tests] = list.children;
+  // the push that changes the second row (a tool call: its lastT moved): the node the user is on stands, patched
+  made.length = 0; patched.length = 0;
+  out = reconcileRows(list, rows(["web", "building the list page"], ["api", "reading the schema"], ["tests", "running the suite"]), key, make, patch);
+  assert.equal(list.children[1], api, "the same object: focus and the hover title stay on it");
+  assert.equal(api.text, "reading the schema", "with the new parts");
+  assert.deepEqual(made, [], "nothing remade");
+  assert.deepEqual(patched, ["web", "api", "tests"], "every standing row takes the model's parts (the model changed; which row is not tracked)");
+  assert.deepEqual(out, { kept: 3, made: 0, moved: 0, removed: 0 });
+  // a row gone (its session left the section) and a row come: the others' nodes stand where they were
+  made.length = 0;
+  out = reconcileRows(list, rows(["web", "building the list page"], ["tests", "running the suite"], ["docs", "drafting the guide"]), key, make, patch);
+  assert.deepEqual(list.children.map((n) => n.id), ["web", "tests", "docs"]);
+  assert.equal(list.children[0], web); assert.equal(list.children[1], tests);
+  assert.deepEqual(made, ["docs"]);
+  assert.deepEqual(out, { kept: 2, made: 1, moved: 0, removed: 1 });
+  // a reorder (the strip's order changed): nothing made or removed; one node moves
+  const docs = list.children[2];
+  out = reconcileRows(list, rows(["docs", "drafting the guide"], ["web", "building the list page"], ["tests", "running the suite"]), key, make, patch);
+  assert.deepEqual(list.children, [docs, web, tests], "the same three objects, in the new order");
+  assert.deepEqual(out, { kept: 3, made: 0, moved: 1, removed: 0 });
+  // an empty section: every row removed
+  out = reconcileRows(list, rows(), key, make, patch);
+  assert.deepEqual(list.children, []);
+  assert.deepEqual(out, { kept: 0, made: 0, moved: 0, removed: 3 });
+});
+
+test("a node without a key and a second node under one key (never expected) are removed, not reused: one node per row", () => {
+  const list = new List();
+  const stray: Node = { id: null, text: "" }, web: Node = { id: "web", text: "" }, web2: Node = { id: "web", text: "twin" };
+  list.children.push(stray, web, web2);
+  const out = reconcileRows(list, rows(["web", "building"]), (n) => n.id, (r) => ({ id: r.id, text: r.now }), (n, r) => { n.text = r.now; });
+  assert.deepEqual(list.children, [web], "the first node under the key is the row's; the stray and the twin go");
+  assert.equal(web.text, "building");
+  assert.deepEqual(out, { kept: 1, made: 0, moved: 0, removed: 2 });
 });

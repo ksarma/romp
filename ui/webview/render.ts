@@ -34,7 +34,7 @@ import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned, reachableFrom, headWords,
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, type SnapModel, type SnapRow } from "./tab-snapshot";
-import { rowStillOpen, installSnapshotEscape } from "./tab-snapshot-view";
+import { rowStillOpen, installSnapshotEscape, reconcileRows } from "./tab-snapshot-view";
 import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
@@ -10231,30 +10231,63 @@ function renderSnapshot(): boolean {
   snapModel = next;
   const words = snapshotHeading(next.name, next.rows.length);
   host.setAttribute("aria-label", words.label);
-  const h = document.createElement("h2"); h.className = "snap-head";
-  const sw = el("span", "tab-group-swatch"); if (next.color) sw.style.background = next.color; sw.setAttribute("aria-hidden", "true");
-  const nm = el("span", "snap-name"); nm.textContent = next.name;
-  const ct = el("span", "snap-count"); ct.textContent = words.count;
-  h.append(sw, nm, ct);
-  const list = el("div", "snap-list"); list.setAttribute("role", "list");
-  for (const r of next.rows) list.appendChild(snapshotRowNode(r, now));
-  host.replaceChildren(h, list);
+  // THE ROWS UPDATE IN PLACE, KEYED BY SESSION ID (the round-2 review; tab-snapshot-view.ts reconcileRows). The
+  // heading and the list are made once, with the host's first paint; from then on the heading's parts are
+  // patched and the rows reconciled: a standing row keeps its node (fillSnapshotRow rewrites its parts), a row
+  // that came is made, one that went is removed, a reordered one moved. The strip keeps focus across its
+  // rebuild by re-focusing the active tab; the rows keep it by keeping their nodes: sameRow folds lastT and
+  // lastMsg, so the model changes on nearly every push while a member works, and the wholesale replaceChildren
+  // destroyed the button the user had Tabbed onto (focus to body, Enter dead) and dismissed a hover's title
+  // within seconds. The event is the push that changed the model; the same-object path above moves nothing.
+  let list = host.querySelector<HTMLElement>(".snap-list");
+  if (!list) {
+    const h = document.createElement("h2"); h.className = "snap-head";
+    const sw = el("span", "tab-group-swatch"); sw.setAttribute("aria-hidden", "true");
+    h.append(sw, el("span", "snap-name"), el("span", "snap-count"));
+    list = el("div", "snap-list"); list.setAttribute("role", "list");
+    host.replaceChildren(h, list);
+  }
+  const part = (cls: string) => host.querySelector<HTMLElement>(".snap-head > ." + cls)!;
+  part("tab-group-swatch").style.background = next.color || "";
+  part("snap-name").textContent = next.name;
+  part("snap-count").textContent = words.count;
+  // a MOVED row: insertBefore detaches and re-attaches its node, which blurs it (the browser's focus fixup); the
+  // same event puts focus back on it (the strip's refocus rule, by node instead of by id). A row GONE from under
+  // focus (its session left the section): the row now in its place takes it, the last when it was last, so a
+  // removal does not drop the keyboard user to body either.
+  const focused = document.activeElement as HTMLElement | null;
+  const focusedAt = focused && list.contains(focused) ? Array.from(list.children).indexOf(focused.closest(".snap-item")!) : -1;
+  reconcileRows<SnapRow, Element>(list, next.rows, (n) => n.getAttribute("data-id"), (r) => snapshotRowNode(r, now), (n, r) => fillSnapshotRow(n.firstElementChild as HTMLElement, r, now));
+  if (focused && list.contains(focused)) { if (document.activeElement !== focused) focused.focus(); }
+  else if (focusedAt >= 0 && list.children.length) list.children[Math.min(focusedAt, list.children.length - 1)].querySelector<HTMLElement>(".snap-row")?.focus();
   host.style.display = "";
   return true;
 }
-// One row: a real button (Tab reaches it, Enter opens) carrying data-act="open" for the host's delegate.
-// Its parts reuse the strip's vocabulary — the tab's emoji glyph, the tab's ⚑, the tab's state colors on
-// the pip (tab-state.ts's rule, tab-snapshot.ts rowState), the session's identity color on its name (the
-// Outline's session label) — and the age color the tab tip and the Outline give their times.
+// One row: a real button (Tab reaches it, Enter opens) carrying data-act="open" for the host's delegate, in
+// an item that carries the row's key (the session id) for the keyed update. The button is the node that
+// stands across rebuilds (focus and the title are its), so a made row and a patched row take their parts
+// from the one fillSnapshotRow.
 function snapshotRowNode(r: SnapRow, now: number): HTMLElement {
   const item = el("div", "snap-item"); item.setAttribute("role", "listitem");
+  item.dataset.id = r.id;
   const btn = document.createElement("button");
   btn.type = "button";
+  fillSnapshotRow(btn, r, now);
+  item.appendChild(btn);
+  return item;
+}
+// The row's attributes and parts, written onto its button: on a made row once, on a standing row at every
+// model change (the classes rewritten whole, the parts emptied and appended in order). The parts reuse the
+// strip's vocabulary: the tab's emoji glyph, the tab's ⚑, the tab's state colors on the pip (tab-state.ts's
+// rule, tab-snapshot.ts rowState), the session's identity color on its name (the Outline's session label),
+// and the age color the tab tip and the Outline give their times.
+function fillSnapshotRow(btn: HTMLElement, r: SnapRow, now: number): void {
   btn.className = "snap-row" + (r.closed ? " closed" : "") + (r.loading ? " loading" : "");
   btn.dataset.act = "open"; btn.dataset.id = r.id;
   const words = rowWords(r);
   btn.setAttribute("aria-label", words.label);
   btn.title = words.title;
+  btn.replaceChildren();
   const pip = el("span", "snap-pip" + (r.pip ? " " + r.pip : "")); pip.setAttribute("aria-hidden", "true");
   btn.appendChild(pip);
   const em = tabEmojiNode(r.emoji); if (em) btn.appendChild(em);
@@ -10282,8 +10315,6 @@ function snapshotRowNode(r: SnapRow, now: number): HTMLElement {
     const note = el("span", "snap-note"); note.textContent = r.note; note.setAttribute("aria-hidden", "true");
     btn.appendChild(note);
   }
-  item.appendChild(btn);
-  return item;
 }
 
 function showActive() {

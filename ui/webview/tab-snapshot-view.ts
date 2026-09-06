@@ -50,3 +50,39 @@ export function installSnapshotEscape(win: EscapeTarget, hooks: EscapeHooks): vo
     hooks.leave();
   }, false);
 }
+
+/** The least of a list node the keyed row update needs: the DOM's HTMLElement, or a test's stand-in. */
+export interface RowList<N> { readonly children: ArrayLike<N>; insertBefore(node: N, ref: N | null): unknown; removeChild(node: N): unknown }
+
+/** THE ROWS UPDATE IN PLACE, KEYED BY SESSION ID (the round-2 review). Every model change repainted the rows
+ *  wholesale, and sameRow (tab-snapshot.ts) folds lastT and lastMsg, so the rows rebuilt on nearly every push
+ *  while a member worked: the button a keyboard user had Tabbed onto was destroyed under them within seconds
+ *  (focus to body, Enter dead), and a hover's title dismissed. Focus and the title belong to the NODE, so the
+ *  node is what a rebuild keeps: a row whose key stands is patched (`patch`), a row that came is made (`make`)
+ *  and put in its place, a row that went is removed, a reordered row moved (insertBefore, which on a real DOM
+ *  detaches and re-attaches the node: the caller re-focuses a moved row). A node with no key, or a second node
+ *  under a key (never expected), is removed, never reused. Moves are per row, not a longest-common-subsequence:
+ *  a section holds a handful of rows, and a reorder is rare. Returns the counts, for the tests. */
+export function reconcileRows<R extends { id: string }, N>(
+  list: RowList<N>, rows: readonly R[], keyOf: (node: N) => string | null | undefined,
+  make: (row: R) => N, patch: (node: N, row: R) => void,
+): { kept: number; made: number; moved: number; removed: number } {
+  const want = new Set(rows.map((r) => r.id));
+  const standing = new Map<string, N>();
+  let removed = 0;
+  for (const n of Array.from(list.children)) {
+    const k = keyOf(n);
+    if (k && want.has(k) && !standing.has(k)) standing.set(k, n);
+    else { list.removeChild(n); removed++; }
+  }
+  let kept = 0, made = 0, moved = 0;
+  rows.forEach((row, i) => {
+    let node = standing.get(row.id);
+    if (node) { patch(node, row); kept++; } else { node = make(row); made++; }
+    const at = list.children[i] ?? null;
+    if (at === node) return;
+    list.insertBefore(node, at);
+    if (standing.has(row.id)) moved++;
+  });
+  return { kept, made, moved, removed };
+}
