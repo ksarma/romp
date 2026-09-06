@@ -247,5 +247,54 @@ class Visibility(unittest.TestCase):
                          "both failure doors carry the wording (WS editTag + POST /tag --host)")
 
 
+class SupervisorViewsCache(unittest.TestCase):
+    """_cache_remote_views: the supervisor's store of a host's /views reading marks the views dirty and
+    wakes the pusher when the reading CHANGED — a pane receives a remote host's tags only on the views
+    blob the pusher ships, and a silent store left a reattached host's tags trailing its tabs by a
+    pusher cycle (round 7 of the 2026-09-06 tab-groups review). An unchanged reading is not news."""
+
+    def setUp(self):
+        self.r = _attach(views={"tags": [_remote_tag("g100", "web")]})
+        self._dirty = km._views_dirty[0]
+        km._views_dirty[0] = 0.0
+        km._pusher_wake.clear()
+
+    def tearDown(self):
+        km._views_dirty[0] = self._dirty
+        km._pusher_wake.clear()
+        km._remotes.clear()
+
+    def test_a_changed_reading_is_stored_and_marks_the_views_dirty(self):
+        new = {"tags": [_remote_tag("g100", "api")]}
+        self.assertTrue(km._cache_remote_views(self.r, new))
+        self.assertEqual(self.r["views"], new)
+        self.assertGreater(km._views_dirty[0], 0.0, "the dirty mark moved: the cached feed and timeline rebuild past it")
+        self.assertTrue(km._pusher_wake.is_set(),
+                        "...and the pusher is woken, so the tabOrder frame carrying the tags ships on its next cycle")
+
+    def test_the_first_reading_of_a_fresh_row_counts_as_a_change(self):
+        r = _attach()                                        # no cached views yet: the reattach's first pass
+        self.assertTrue(km._cache_remote_views(r, {"tags": []}))
+        self.assertEqual(r["views"], {"tags": []})
+        self.assertTrue(km._pusher_wake.is_set())
+
+    def test_an_unchanged_reading_stores_nothing_and_wakes_no_one(self):
+        same_object = self.r["views"]                        # what the poll's rate gate hands back
+        self.assertFalse(km._cache_remote_views(self.r, same_object))
+        self.assertFalse(km._cache_remote_views(self.r, {"tags": [_remote_tag("g100", "web")]}),
+                         "a re-read that parses equal is not news either")
+        self.assertFalse(km._cache_remote_views(self.r, None),
+                         "no reading this pass (the host down, or its first read failed): the cache stands")
+        self.assertEqual(self.r["views"], {"tags": [_remote_tag("g100", "web")]})
+        self.assertEqual(km._views_dirty[0], 0.0)
+        self.assertFalse(km._pusher_wake.is_set())
+
+    def test_the_supervisor_stores_its_reading_through_the_cache(self):
+        import inspect
+        src = inspect.getsource(km._tunnel_supervisor)
+        self.assertIn("_cache_remote_views(r, rviews)", src)
+        self.assertNotIn('r["views"] = rviews', src, "no bare store: the wake rides the store")
+
+
 if __name__ == "__main__":
     unittest.main()

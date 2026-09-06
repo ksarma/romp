@@ -16525,6 +16525,26 @@ def _poll_remote_views(r):
         return r.get("views")
 
 
+def _cache_remote_views(r, rviews):
+    """The supervisor's store of a pass's /views reading on the host's row — and the pusher's WAKE when
+    the reading CHANGED. A remote host's tags reach a pane only on the local views blob (_views_client,
+    riding the pusher's tabOrder frame and the cached feed and timeline builds), while its tabs reach
+    the pane over the relay within a /tunnels poll of the row coming up. Stored silently, a reattached
+    host's tags followed its tabs by whatever the pusher's cycle had left (20-40 s on a loaded box), and
+    on a quiet box the feed's and timeline's cached builds served the blob without them until some
+    signature moved — and a tab-strip pin written in that window judged the host's sessions as tabs no
+    tag holds and dropped their pins (round 7 of the 2026-09-06 tab-groups review). The dirty mark
+    busts those caches and wakes the pusher, so the frame goes on its next cycle. Compared by CONTENT:
+    the poll's rate gate hands back the cached object itself, and a re-read of an unchanged store
+    parses equal — neither is news, and a mark per pass would rebuild the feed every 15 s per host for
+    nothing. None (no reading this pass) stores nothing. Returns whether the row changed."""
+    if rviews is None or rviews == r.get("views"):
+        return False
+    r["views"] = rviews
+    _mark_views_dirty()
+    return True
+
+
 # ── first-class PR-landing watches (the user 2026-08-24, both teams' surveys: every landing watch
 # was a mortal shell loop that died with kernel restarts) ─────────────────────────────────────────
 # A session registers interest in a PR; the KERNEL polls gh for the terminal state and delivers the
@@ -18331,8 +18351,7 @@ def _tunnel_supervisor():
                             r["usage"] = ruse
                         else:
                             r.pop("usage", None)
-                    if rviews is not None:
-                        r["views"] = rviews
+                    _cache_remote_views(r, rviews)     # a CHANGED reading wakes the pusher: the tags reach the pane by its frame
                     auto_check = (st == "up")
                     peer_up = (st == "up")
                     peer_port, peer_tok = r.get("bus_port"), r.get("token") or ""
