@@ -6,7 +6,7 @@
 //   stdin   {"verb", "path", "args": {...}, "fence": {...}|null}
 //   stdout  {"ok": true, "verb", "root", "storePath", "trackedBy", "agentTooling", "fileMtimeNs",
 //            "storeMtimeNs", "configMtimeNs", "store", "hunks", "unsent", "log", "logTruncated",
-//            "baseline"?, "logged"?, "accepted"?, "rejected"?}
+//            "fileHash" | "embeddedHashes", "baseline"?, "logged"?, "accepted"?, "rejected"?}
 //        or {"ok": false, "code", "error"}          — a refusal; exit status 0
 //   crash   a non-zero exit with the reason on stderr  — a malformed request or a program error
 //
@@ -31,7 +31,14 @@
 //   * a decision about a change that is no longer pending (accepted already, or coalesced away by a
 //     later track-edit) refuses `no-change` by id, so the caller reloads instead of deciding a
 //     different change under the same name; and accept never drops a comment bound to the change
-//     (`suggestionId`), it marks it resolved, so the ids in a sent message stay addressable.
+//     (`suggestionId`), it marks it resolved, so the ids in a sent message stay addressable;
+//   * a region comment's `target.hash` is this script's sha256 of the figure's BYTES (Slice 3), never
+//     the client's value and never a hash of the lossy text: for a standalone image or PDF the file's
+//     own, for a figure embedded in a markdown file the bytes of the `src` the embed names, resolved
+//     against the file's directory and refused unless it is a regular file inside the project root.
+//     Every reply carries the current hash to compare against — `fileHash` on a media file,
+//     `embeddedHashes` per src on a text file — with null for "unknown" (unreadable, or past the
+//     size cap), which is never the same as stale.
 // The file's text is read only when a verb needs it: to rebase an existing sidecar, to place an
 // anchor, to stamp a fingerprint. `status` runs on every viewer open, a file the viewer refuses
 // above 2 MB included, so on a file with no sidecar it stats the file and reads nothing (statFile).
@@ -42,6 +49,7 @@
 //
 // Vendored code: vendor/track-changents (MIT, LICENSE beside it).
 
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -64,16 +72,29 @@ export const LOG_TAIL = 200;
 // Every human action and log entry is authored `you`, with no authorId (decision 6).
 export const AUTHOR = 'you';
 export const LOG_SUFFIX = '.comments-log.jsonl';
+// The files the viewer shows as an image or a PDF: the kernel's _PREVIEW_MIME extensions (the media
+// half of GET /file), mirrored here because a region comment can exist only on a file the viewer
+// renders as media. `status` on such a file answers the hash of its bytes (fileHash); on any other
+// file it answers the hashes of the figures its region comments name (embeddedHashes). The regions
+// test pins this set against the kernel's dict.
+export const MEDIA_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'pdf']);
+// How many bytes a reply will hash: a media file up to the kernel's _PREVIEW_MAX_BYTES (the most
+// the viewer shows), and one shared budget for the figures a text file's region comments name.
+// Past either the hash is null. FILE_COMMENTS_HASH_CAP and FILE_COMMENTS_EMBEDDED_HASH_CAP
+// override them for tests; the kernel never sets them.
+export const FILE_HASH_CAP = 50_000_000;
+export const EMBEDDED_HASH_CAP = 200_000_000;
 // config.json's format version: store-io's CONFIG_VERSION (not exported), the one shape this script
 // and the vendored CLIs read and write.
 const CONFIG_VERSION = 2;
 
-// The verbs through Slice 2; Slice 5 adds save. The verbs that write the FILE (not only the
-// sidecar) — reject, reject-all, and later save — also fence on fileMtimeNs (requireFence with
-// 'file-moved') and check the text (not-text, too-large) before any write; no other verb does.
+// The verbs through Slice 3 (retarget is Slice 3's re-place gesture); Slice 5 adds save. The verbs
+// that write the FILE (not only the sidecar) — reject, reject-all, and later save — also fence on
+// fileMtimeNs (requireFence with 'file-moved') and check the text (not-text, too-large) before any
+// write; no other verb does.
 const VERBS = new Set([
   'status', 'set-tracked', 'comment', 'reply', 'resolve', 'log-edit', 'log-send',
-  'accept', 'accept-all', 'reject', 'reject-all',
+  'accept', 'accept-all', 'reject', 'reject-all', 'retarget',
 ]);
 
 // ── outcome classes ─────────────────────────────────────────────────
@@ -430,6 +451,176 @@ function statFile(ctx) {
   return { text: null, fileMtimeNs: st.mtimeNs.toString() };
 }
 
+// ── regions: the bytes behind a target ──────────────────────────────
+
+function envCap(name, dflt) {
+  const v = process.env[name];
+  if (v == null || v === '') return dflt;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) throw new Error(`${name} must be a non-negative number of bytes, not ${JSON.stringify(v)}`);
+  return n;
+}
+export function fileHashCap() { return envCap('FILE_COMMENTS_HASH_CAP', FILE_HASH_CAP); }
+export function embeddedHashCap() { return envCap('FILE_COMMENTS_EMBEDDED_HASH_CAP', EMBEDDED_HASH_CAP); }
+
+export function isMediaPath(p) {
+  const ext = path.extname(String(p == null ? '' : p)).slice(1).toLowerCase();
+  return ext !== '' && MEDIA_EXTENSIONS.has(ext);
+}
+
+// The sha256 hex of a regular file's BYTES, streamed through the hash in chunks and never decoded:
+// the UTF-8 text every other read in this script produces is lossy for an image (every invalid
+// sequence becomes U+FFFD), so a hash over it would call two different files the same. Opened as
+// openRegular opens (non-blocking, fstat through the descriptor, regular files only), so a FIFO or
+// a directory named as a figure fails at once instead of hanging. `cap` (bytes, or null for none)
+// is checked against the size before any byte is read: over it the hash is null, "unknown", which
+// the panel shows as such and never as stale. Throws on anything unreadable; the caller decides
+// between a refusal (comment, retarget) and null (the hashes a reply carries).
+export function hashRegular(abs, cap) {
+  let fd;
+  try {
+    fd = fs.openSync(abs, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) throw new Error(`${abs} is not a regular file`);
+    if (cap != null && st.size > cap) return { hash: null, size: st.size };
+    const h = createHash('sha256');
+    const buf = Buffer.allocUnsafe(64 * 1024);
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      h.update(buf.subarray(0, n));
+    }
+    return { hash: h.digest('hex'), size: st.size };
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
+  }
+}
+
+// The region a comment names, checked the way every other argument is (a bad shape is a caller
+// bug, so BadRequest) and rebuilt from its known fields: `kind`, `region` (fractions of the image's
+// natural size, kept to four decimals — the client sends four, and this makes sure), `page` (PDFs
+// only, 1-based), and `src`. The hash is not the client's to send; stampTarget computes it.
+// `embedded` says whether the comment carries an anchor: a figure in a markdown file names its
+// `src` (the embed's destination as written) and a standalone image or PDF has none, and the two
+// cannot mix — a src with no embed line to stand on, or an embed line with no figure to hash,
+// would hash the wrong file.
+export function validateTarget(raw, embedded) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new BadRequest('target must be an object {kind, region, page?, src?}');
+  if (raw.kind !== 'image' && raw.kind !== 'pdf') throw new BadRequest('target.kind must be "image" or "pdf"');
+  const reg = raw.region;
+  if (!reg || typeof reg !== 'object' || Array.isArray(reg)) throw new BadRequest('target.region must be an object {x, y, w, h}');
+  const region = {};
+  for (const k of ['x', 'y', 'w', 'h']) {
+    const v = reg[k];
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1) throw new BadRequest(`target.region.${k} must be a number between 0 and 1`);
+    region[k] = Math.round(v * 1e4) / 1e4;
+  }
+  if (!(region.w > 0) || !(region.h > 0)) throw new BadRequest('target.region.w and .h must be greater than 0 at four decimals');
+  const out = { kind: raw.kind, region };
+  if (raw.kind === 'pdf') {
+    if (!Number.isInteger(raw.page) || raw.page < 1) throw new BadRequest('target.page must be a positive integer for a pdf');
+    out.page = raw.page;
+  } else if (raw.page != null) {
+    throw new BadRequest('an image target takes no page');
+  }
+  if (raw.src != null) {
+    if (typeof raw.src !== 'string' || !raw.src) throw new BadRequest('target.src must be a non-empty string when present');
+    if (!embedded) throw new BadRequest('target.src names an embedded figure, which needs the anchor of its embed line');
+    out.src = raw.src;
+  } else if (embedded) {
+    throw new BadRequest("a region on an embedded figure needs target.src, the embed's destination as written");
+  }
+  return out;
+}
+
+// Where an embedded figure's `src` points: resolved against the commented file's directory as a
+// path — the string exactly as the client sent it; a destination the renderer percent-decoded is
+// the client's to decode before sending — then confirmed by realpath to be INSIDE the project root:
+// never above it, and not through a symlink that leaves it. `rootDir` is the root the file has, or
+// for a loose file the one its first comment is about to create, its own directory (decision 37).
+// Returns the resolved path or throws with the reason; the caller makes that a refusal (comment,
+// retarget) or a null hash (the hashes a reply carries). Whether it is a regular file is
+// hashRegular's check, on the same descriptor it reads.
+export function resolveSrc(ctx, rootDir, src) {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(src)) throw new Error(`${src} is a URL, not a file in the project`);
+  const abs = path.resolve(path.dirname(ctx.abs), src);
+  let real;
+  try {
+    real = fs.realpathSync(abs);
+  } catch (e) {
+    throw new Error(`${tilde(abs)} cannot be resolved: ${e && e.message ? e.message : String(e)}`);
+  }
+  const rootReal = fs.realpathSync(rootDir);
+  if (real !== rootReal && !real.startsWith(rootReal + path.sep)) {
+    throw new Error(`${tilde(real)} is outside the project root ${tilde(rootReal)}`);
+  }
+  return real;
+}
+
+// The target `comment` and `retarget` write: the validated shape plus the hash of the bytes it
+// is about — the figure `src` names, or the commented file itself for a standalone image or PDF.
+// No size cap here: this is the one moment the bytes are known to be the ones the person drew on,
+// and the viewer showed them, so they are within the kernel's cap already. Key order is the
+// contract's: kind, region, page (pdf), hash, src (embedded).
+function stampTarget(ctx, rootDir, target) {
+  let abs = ctx.abs;
+  if (target.src != null) {
+    try {
+      abs = resolveSrc(ctx, rootDir, target.src);
+    } catch (e) {
+      throw new Refusal('unreadable', `the figure ${target.src} in ${ctx.shown} cannot be read: ${tildeText(e && e.message ? e.message : String(e))}; nothing was changed`);
+    }
+  }
+  let hash;
+  try {
+    hash = hashRegular(abs, null).hash;
+  } catch (e) {
+    const what = target.src != null ? `the figure ${target.src} in ${ctx.shown}` : ctx.shown;
+    throw new Refusal('unreadable', `${what} cannot be read: ${tildeText(e && e.message ? e.message : String(e))}; nothing was changed`);
+  }
+  const out = { kind: target.kind, region: target.region };
+  if (target.page != null) out.page = target.page;
+  out.hash = hash;
+  if (target.src != null) out.src = target.src;
+  return out;
+}
+
+// The hash a reply carries for a media file: its bytes as they are now, for the panel to compare
+// with each region comment's target.hash. Null past the cap, and null (with a note on stderr) when
+// the file cannot be read at this moment — the verb already read or stat'ed it, so that is a race
+// with a writer, and "unknown" is the honest answer where a refusal would deny a write that landed.
+function fileHashFor(ctx) {
+  try {
+    return hashRegular(ctx.abs, fileHashCap()).hash;
+  } catch (e) {
+    process.stderr.write(`file-comments-host: ${ctx.shown} could not be hashed: ${tildeText(e && e.message ? e.message : String(e))}\n`);
+    return null;
+  }
+}
+
+// The hashes a reply carries for a text file: one per distinct `src` its region comments name, in
+// order of first appearance, each the figure's bytes as they are now — or null when the src does
+// not resolve to a regular file inside the root, or when hashing it would take the call past the
+// shared budget. An empty object when the file has no sidecar or no region comments.
+function embeddedHashesFor(ctx, rootDir, store) {
+  if (!store || !rootDir) return {};
+  const out = new Map();
+  let budget = embeddedHashCap();
+  for (const c of store.comments || []) {
+    const src = c && c.target && c.target.src;
+    if (typeof src !== 'string' || !src || out.has(src)) continue;
+    let hash = null;
+    try {
+      const r = hashRegular(resolveSrc(ctx, rootDir, src), budget);
+      if (r.hash != null) { hash = r.hash; budget -= r.size; }
+    } catch (e) {
+      process.stderr.write(`file-comments-host: the figure ${src} in ${ctx.shown} was not hashed: ${tildeText(e && e.message ? e.message : String(e))}\n`);
+    }
+    out.set(src, hash);
+  }
+  return Object.fromEntries(out);
+}
+
 // `too-large`: only verbs that write the file check it, before any write (the kernel's cap).
 export function checkTooLarge(shown, text) {
   if (Buffer.byteLength(text, 'utf8') > TEXT_MAX_BYTES) {
@@ -607,7 +798,8 @@ function validateAnchor(anchor) {
 // The comment object in addComment's exact shape (cli/track-comment.mjs): id `${now}-${idx}`,
 // author `you`, no authorId, ts, anchor (a passage only), body, replies [], resolved false. A
 // whole-file comment has no anchor and the id `${now}-0`. `target` (a region on an image or a
-// PDF page, Slices 3 and 4) passes through untouched. A CHANGE comment (`args.suggestionId`, the
+// PDF page) is not attached here: doComment validates it and stamps the hash (stampTarget) once
+// the anchor, if any, is placed. A CHANGE comment (`args.suggestionId`, the
 // Reply on a change's card) has no anchor and no target, carries `suggestionId`, and takes its id
 // from the change's current offset the way the other hosts' change threads do; the change must be
 // pending in `suggestions`, else `{error: 'no-change'}`. The other hosts bind a thread to a change
@@ -643,7 +835,6 @@ export function buildComment(text, args, now, suggestions) {
       resolved: false,
     };
   }
-  if (args.target != null) c.target = args.target;
   return { comment: c };
 }
 
@@ -677,6 +868,10 @@ function reply(ctx, state, extra) {
     log,
     logTruncated,
   };
+  // What a region comment's target.hash is compared with, on every reply (each one is the status
+  // the panel holds next): a media file's own bytes, or the figures a text file's comments name.
+  if (isMediaPath(ctx.abs)) out.fileHash = fileHashFor(ctx);
+  else out.embeddedHashes = embeddedHashesFor(ctx, root, store);
   if (ctx.args.baseline === true) out.baseline = engine.baselineOf(text, store ? store.suggestions : []);
   return Object.assign(out, extra || {});
 }
@@ -706,7 +901,8 @@ function doStatus(ctx) {
 // selection and Enter left an empty `.trackchanges/` beside a loose file — a root for every later
 // verb and for the CLIs — under a refusal that named no such thing. `store` is null in `plan` when
 // no sidecar exists yet (a first comment); the seed is minted after the landmark, whose root
-// gives the seed its relative path.
+// gives the seed its relative path. `root` is null in `plan` for the same loose file; a check that
+// needs the root then uses the one the landmark is about to make, the file's own directory.
 function withSidecar(ctx, create, plan) {
   const file = readFile(ctx);
   let root = findVaultRoot(ctx.abs);
@@ -719,7 +915,7 @@ function withSidecar(ctx, create, plan) {
   if (!store && !create) {
     throw new Refusal('no-comment', `comment ${String(ctx.args.commentId)} is not among the comments for ${ctx.shown} — reload and retry`);
   }
-  const apply = plan(store, file.text);
+  const apply = plan(store, file.text, root);
   if (!root) {
     root = createLandmark(ctx);
     paths = pathsFor(root, ctx.abs);
@@ -736,8 +932,14 @@ function noChange(ctx, ids) {
   return new Refusal('no-change', `${what} no longer pending in ${ctx.shown} — reload and retry`);
 }
 
+// comment {note}, {anchor, note}, {suggestionId, note}, {target, note}, {anchor, target, note}: the
+// target's shape is checked first (a caller bug, before any disk read the anchor needs), the
+// anchor is placed, and only then is the figure hashed — the region's own refusals (`unreadable`
+// for a src outside the root or unreadable) come after the passage's, and all of them before the
+// landmark and the write.
 function doComment(ctx) {
-  return withSidecar(ctx, true, (store, text) => {
+  return withSidecar(ctx, true, (store, text, root) => {
+    const target = ctx.args.target == null ? null : validateTarget(ctx.args.target, ctx.args.anchor != null);
     const built = buildComment(text, ctx.args, Date.now(), store ? store.suggestions : []);
     if (built.error === 'anchor-not-found') {
       throw new Refusal('anchor-not-found', `the selected passage is no longer in ${ctx.shown} — reload and select it again`);
@@ -746,7 +948,28 @@ function doComment(ctx) {
       throw new Refusal('anchor-ambiguous', `the selected passage occurs more than once in ${ctx.shown} with the same surroundings, so a comment on it could not be placed again later — select more of the text around it`);
     }
     if (built.error === 'no-change') throw noChange(ctx, [ctx.args.suggestionId]);
+    if (target) built.comment.target = stampTarget(ctx, root || path.dirname(ctx.abs), target);
     return (s) => { s.comments.push(built.comment); };
+  });
+}
+
+// retarget {commentId, target}: the re-place gesture on a region comment — a new rectangle (and
+// for a PDF a page) over the same figure, the hash recomputed from the bytes as they are now, so a
+// comment the figure's regeneration made stale is current again. The comment must exist (else
+// `no-comment`) and be a region comment (a target on a comment that has none is a caller bug); an
+// embedded figure's new target names its src as the old one did and a standalone one's has none —
+// the anchor decides, as it does for comment. Fenced on the sidecar like every sidecar write; the
+// anchor, id, body and replies stay as they were; nothing is appended to the comments log, since a
+// re-placed rectangle is not a decision.
+function doRetarget(ctx) {
+  const id = requireCommentId(ctx.args);
+  if (ctx.args.target == null) throw new BadRequest('retarget needs target: {kind, region, page?, src?}');
+  return withSidecar(ctx, false, (store, text, root) => {
+    const c = findComment(store, id);
+    if (!c) throw new Refusal('no-comment', `comment ${String(id)} is not among the comments for ${ctx.shown} — reload and retry`);
+    if (!c.target || typeof c.target !== 'object') throw new BadRequest(`comment ${String(id)} has no region to re-place`);
+    const target = stampTarget(ctx, root || path.dirname(ctx.abs), validateTarget(ctx.args.target, c.anchor != null));
+    return (s) => { findComment(s, id).target = target; };
   });
 }
 
@@ -1088,6 +1311,7 @@ const HANDLERS = {
   'accept-all': (ctx) => doAccept(ctx, true),
   reject: (ctx) => doReject(ctx, false),
   'reject-all': (ctx) => doReject(ctx, true),
+  retarget: doRetarget,
 };
 
 // One request in, one result object out; throws Refusal or BadRequest (or a program error).
