@@ -4,13 +4,14 @@
 // must refuse to bring the manager back while the marker exists — the one door that would undo a
 // deliberate stop with nobody asking — and a deliberate `up` clears it. Run from the repo root:
 //   node --test tests/manager-*.test.js
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-down-marker-'));
+after(() => fs.rmSync(stateDir, { recursive: true, force: true }));   // one leaked dir per run otherwise
 process.env.ROMP_STATE_DIR = stateDir;       // baked at require time (STATE_ROOT)
 delete process.env.ROMP_SUPERVISED;
 const { ensureDecision, downMarkerHeld, clearDownMarker, DOWN_MARKER } =
