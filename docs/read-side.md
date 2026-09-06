@@ -269,8 +269,10 @@ landed one: an attachment further back read as never landed, and the resumed CLI
 the send again. The found verdict is recorded on the echo (`_landed`), and
 `prune_live` and the chat merge retire the echo on it without a text match, so a found
 echo always has an exit and a later boot never re-scans it. Every by-text comparison
-of an echo against a record, the guard's scan, `prune_live`'s retire and the kernel's
-`_atom_user_texts` and its folds, uses one key, `echo_text_key` in
+of an echo against a record, the guard's scan, `prune_live`'s retire, the kernel's
+`_atom_user_texts` and its folds, the tmux echo's prune (`_tmux_echo_prune`) and the
+user-todo answer's landed check (`_paste_landed_texts`, the match set
+`_user_todo_answer_lost` reads), uses one key, `echo_text_key` in
 `session_backend.py` (outer whitespace stripped, nothing else). The scan used to
 collapse inner whitespace while the prune compared raw text against stripped keys, so
 a send with a trailing newline was found, hence neither re-fed nor flagged, and yet
@@ -303,8 +305,15 @@ That stamp reads the events' own kernel stamps: only an event stamped before the
 press's second is the anchor or background, so the frame's copy of this send (its
 echo, or its landed atom when the CLI was idle) is read as the send's own and not as
 an older message. The comparison assumes that the client's clock and the kernel
-host's agree to the second; `stampBase` states the assumption. A press-time stamp
-reads no stamp, since its frame predates the press. An
+host's agree to the second; `stampBase` states the assumption. The kernel's queued
+bubble carries no stamp, so a late stamp presumes that the frame's newest queued copy
+of the text is this send's own (one copy per identical send pressed against the same
+placeholder frame); without that, a send into a busy or held queue whose first frame
+already listed it sat as a second bubble beside the kernel's copy for the whole wait,
+and its ✕ would have cancelled the real queued send. The presumption misreads one
+case, stated in `stampBase`: an older identical message already in the queue, with
+this send not yet received when the frame was built, is read as this send's copy. A
+press-time stamp reads no stamp, since its frame predates the press. An
 absorbed atom sits at its send time, above the steps that were already
 running, so its event carries `absorbed` and `landedAt`, the time the CLI took it:
 the repaired timestamp of the attachment's file-order predecessor (the boundary

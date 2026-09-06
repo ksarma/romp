@@ -158,8 +158,8 @@ const eventSecond = (e: TailEvent): number | null => {
  *  NOT yet received the send as the frame was built and an older identical message sits in the queue (a
  *  held queue keeps one for hours), that older copy is read as this send's — receipt is presumed, and a
  *  send lost on its way to the kernel hides behind the older copy until the queue moves. That case needs
- *  the same text queued twice around a page load; the double bubble it trades against needed only a send
- *  into a queue. A stamp on each queued text would make the reading exact and remove the presumption.
+ *  the same text queued twice around a page load; the double bubble needed only a send into a queue. A
+ *  stamp on each queued text would make the reading exact and remove the presumption.
  *
  *  THE CLOCK ASSUMPTION, stated once: the press is the client's clock (ms); the events wear the kernel
  *  host's clock in whole seconds — the echo atom is stamped `int(time.time())` at the kernel's receipt
