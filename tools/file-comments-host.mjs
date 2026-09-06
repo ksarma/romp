@@ -6,7 +6,8 @@
 //   stdin   {"verb", "path", "args": {...}, "fence": {...}|null}
 //   stdout  {"ok": true, "verb", "root", "storePath", "trackedBy", "agentTooling", "fileMtimeNs",
 //            "storeMtimeNs", "configMtimeNs", "store", "hunks", "unsent", "log", "logTruncated",
-//            "fileHash" | "embeddedHashes", "baseline"?, "logged"?, "accepted"?, "rejected"?}
+//            "fileHash" | "embeddedHashes", "baseline"?, "logged"?, "logWarning"?, "accepted"?,
+//            "rejected"?}
 //        or {"ok": false, "code", "error"}          — a refusal; exit status 0
 //   crash   a non-zero exit with the reason on stderr  — a malformed request or a program error
 //
@@ -38,7 +39,30 @@
 //     against the file's directory and refused unless it is a regular file inside the project root.
 //     Every reply carries the current hash to compare against — `fileHash` on a media file,
 //     `embeddedHashes` per src on a text file — with null for "unknown" (unreadable, or past the
-//     size cap), which is never the same as stale.
+//     size cap), which is never the same as stale;
+//   * once a verb's primary write has landed — the file (reject, save), the sidecar (accept), the
+//     config (set-tracked) — nothing after it fails the verb: a comments-log append that fails, or a
+//     log or a sidecar that cannot be read back, is reported in the reply (`logged: false`,
+//     `logWarning` with the OS text), the rule the kernel's saveFile path keeps for log-edit (a failed
+//     append is reported in the reply and never fails the save). A non-zero exit there would report a
+//     write that landed as one that did not: the kernel sends no trace for a failed verb, so the
+//     session whose file changed is never told, and the client keeps a buffer it believes unsaved
+//     behind a fence the write has already moved (appendLanded, settleLanded, reply's `landed`);
+//   * the verbs that write the file refuse what the kernel's saveFile refuses, before any write, so
+//     `save` widens nothing: a name outside the viewer's text scope (TEXT_EXT and TEXT_NAMES — the
+//     kernel's _is_text_path, pinned against its source by test) and a file past the 2 MB cap on
+//     disk (checkTextPath, checkDiskSize);
+//   * nothing is written on a client's word that the kernel cannot carry back: the reply a verb would
+//     send is built and measured before the write (checkReplyFits, REPLY_MAX_BYTES — the kernel's
+//     _FILE_COMMENTS_REPLY_MAX) and refuses `too-large` past it. Over that cap the kernel kills this
+//     process and discards its stdout AFTER the write landed, then does the same to every later
+//     `status` on the file, so one oversized record or note would lock the file's comments until the
+//     sidecar was fixed by hand;
+//   * a path inside .trackchanges/ — the sidecar, the config, the log — is never logged (the log
+//     would record itself), the kernel's _under_trackchanges rule for saveFile; and `save` logs an
+//     edit only for a file that already has a sidecar, a comments log, or a tracked flag, the rule
+//     log-edit follows (a save that created the log would make every later plain save of a file
+//     nobody tracked logged too).
 // The file's text is read only when a verb needs it: to rebase an existing sidecar, to place an
 // anchor, to stamp a fingerprint. `status` runs on every viewer open, a file the viewer refuses
 // above 2 MB included, so on a file with no sidecar it stats the file and reads nothing (statFile).
@@ -72,6 +96,34 @@ import { decodeTextOrNull } from '../vendor/track-changents/cli/track-edit.mjs';
 
 // The kernel's _TEXT_MAX_BYTES: the cap on any text this script writes back to a file.
 export const TEXT_MAX_BYTES = 2 * 1024 * 1024;
+// The kernel's _FILE_COMMENTS_REPLY_MAX: the most stdout it holds for one reply before it kills this
+// process and discards what it read. checkReplyFits measures the reply a verb would send before a
+// write that carries a client's text into the sidecar or the log, with REPLY_SLACK left for the
+// stand-ins the estimate uses (the mtimes the write will set, the reloaded sidecar's normalization,
+// the tracking verdict and the hashes, each a few dozen bytes).
+export const REPLY_MAX_BYTES = 16 * 1024 * 1024;
+const REPLY_SLACK = 64 * 1024;
+// The kernel's _TEXT_EXT and _TEXT_NAMES (_is_text_path): the files GET /file serves as text and
+// saveFile writes. The verbs that write the file keep to the same names, so the dashboard writes no
+// file through this script that it would not write through saveFile. Mirrored, not imported; the
+// scope test pins both sets against the kernel's source.
+export const TEXT_EXT = new Set((
+  'txt md markdown rst adoc org text log err out diff patch csv tsv'
+  + ' py pyi rb rs go java kt kts swift c h cc cpp hpp cs m mm scala clj lua pl php r jl dart'
+  + ' js jsx mjs cjs ts tsx json jsonc json5 yaml yml toml ini cfg conf properties'
+  + ' html htm xml svg css scss sass less vue svelte astro'
+  + ' sh bash zsh fish ps1 bat cmd nix tf hcl proto graphql gql sql prisma'
+  + ' lock mod sum gradle cmake mk make bazel bzl gemspec podspec bats'
+).split(' ').filter(Boolean));
+export const TEXT_NAMES = new Set([
+  'makefile', 'dockerfile', 'jenkinsfile', 'procfile', 'rakefile', 'gemfile', 'brewfile',
+  'vagrantfile', 'caddyfile', 'justfile', 'license', 'licence', 'notice', 'authors',
+  'changelog', 'readme', 'todo', 'codeowners', '.gitignore', '.gitattributes',
+  '.dockerignore', '.editorconfig', '.env', '.bashrc', '.zshrc', '.profile',
+]);
+// The sidecar directory, the kernel's _TRACKCHANGES_DIR: a path inside one is the tracking
+// machinery itself, and an edit to it is never logged.
+export const TRACKCHANGES_DIR = '.trackchanges';
 // The Log the panel shows: the newest LOG_TAIL entries of the comments log, oldest first.
 export const LOG_TAIL = 200;
 // Every human action and log entry is authored `you`, with no authorId (decision 6).
@@ -141,6 +193,11 @@ function tildeText(s) {
   const home = homeDir();
   if (!home) return s;
   return String(s).split(home + path.sep).join('~' + path.sep);
+}
+
+// An error's text for the person: its message, tilde-collapsed.
+function errText(e) {
+  return tildeText(e && e.message ? e.message : String(e));
 }
 
 // Nanosecond mtime as a decimal string, the kernel's X-Romp-Mtime-Ns; null when the path is
@@ -638,6 +695,49 @@ export function checkTooLarge(shown, text) {
   }
 }
 
+// The kernel's _human_bytes, for the refusals that name a size.
+export function human(n) {
+  for (const [unit, step] of [['GB', 1 << 30], ['MB', 1 << 20], ['KB', 1 << 10]]) {
+    if (n >= step) return `${(n / step).toFixed(1)} ${unit}`;
+  }
+  return `${n} bytes`;
+}
+
+// The kernel's _is_text_path: the extension allowlist plus the extensionless names that are text
+// by convention, on the basename lower-cased. The extension is Python's os.path.splitext's: the
+// text after the last dot, unless every character before that dot is a dot (`.gitignore` has
+// none). Name-based only; the bytes are checkIsText's.
+export function isTextPath(p) {
+  const base = path.basename(String(p == null ? '' : p)).toLowerCase();
+  const dot = base.lastIndexOf('.');
+  const ext = dot > 0 && /[^.]/.test(base.slice(0, dot)) ? base.slice(dot + 1) : '';
+  return (ext !== '' && TEXT_EXT.has(ext)) || TEXT_NAMES.has(base);
+}
+
+// The kernel's _under_trackchanges: is the path inside a .trackchanges/ directory (a directory
+// segment, not the basename)? The sidecar, the config and the log are files the viewer can open
+// and edit; an edit to them is never logged, since the log would record itself.
+export function underTrackchanges(abs) {
+  return path.normalize(abs).split(path.sep).slice(0, -1).includes(TRACKCHANGES_DIR);
+}
+
+// Two refusals the kernel's _save_file makes that the verbs writing the file (reject, save) make
+// too, before any write, so this script writes no file saveFile would refuse: a name outside the
+// viewer's text scope, and a file past the text cap on disk — readFile read it whole, since a
+// sidecar's rebase and fingerprint need the text, but the viewer never loaded it (a 413), so no
+// text a client sends about it is text the person saw. `cannot` is the verb's clause: "cannot
+// save", "cannot write".
+function checkTextPath(ctx, cannot) {
+  if (!isTextPath(ctx.abs)) {
+    throw new Refusal('not-text', `${cannot} ${ctx.shown}: not a text file the viewer edits; nothing was changed`);
+  }
+}
+function checkDiskSize(ctx, file, cannot) {
+  if (file.bytes > TEXT_MAX_BYTES) {
+    throw new Refusal('too-large', `${cannot} ${ctx.shown}: the file on disk is ${human(file.bytes)}, past the ${human(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
+  }
+}
+
 // `not-text`: the verbs that write the file refuse a file whose bytes are not UTF-8 text, before
 // any write. Writing back the lossy decode would replace every invalid sequence with U+FFFD and
 // destroy the file; the sidecar-only verbs never write the file, so they take such a file as the
@@ -852,14 +952,32 @@ export function buildComment(text, args, now, suggestions) {
 
 // ── the reply ───────────────────────────────────────────────────────
 
-function reply(ctx, state, extra) {
+// A comments log that exists but cannot be read is a disk state, not a program error: before a
+// write it refuses `unreadable` naming the log (nothing was changed — `status`, and every verb's
+// pre-write estimate); after one — `opts.landed`, the landedState of a verb whose primary write has
+// landed — it leaves `log` empty and is reported in `logWarning`, never failing the verb.
+// `opts.estimate` builds
+// the reply a verb WOULD send, for checkReplyFits to measure before the write: `opts.pending` are
+// the log entries the verb is about to append, and the fields whose size is fixed but whose cost is
+// not — the tracking verdict (a vault walk) and the hashes (the figures' bytes) — are stood in for.
+function reply(ctx, state, extra, opts) {
+  const o = opts || {};
   const { root, paths, store, text, fileMtimeNs } = state;
   let log = [];
   let logTruncated = false;
   let entries = [];
   if (paths) {
-    const read = readLog(paths.logPath);
-    entries = read.entries;
+    let read;
+    try {
+      read = readLog(paths.logPath);
+    } catch (e) {
+      if (!o.landed) {
+        throw new Refusal('unreadable', `cannot read the comments log for ${ctx.shown} (${tilde(paths.logPath)}): ${errText(e)}; nothing was changed`);
+      }
+      read = { entries: [], bad: 0 };
+      landedProblem(o.landed, `the comments log for ${ctx.shown} could not be read back: ${errText(e)}`);
+    }
+    entries = o.pending && o.pending.length ? [...read.entries, ...o.pending] : read.entries;
     if (read.bad) process.stderr.write(`file-comments-host: ${read.bad} unreadable line(s) in ${tilde(paths.logPath)} skipped\n`);
     logTruncated = entries.length > LOG_TAIL;
     log = logTruncated ? entries.slice(entries.length - LOG_TAIL) : entries;
@@ -869,7 +987,7 @@ function reply(ctx, state, extra) {
     verb: ctx.verb,
     root,
     storePath: paths ? paths.storePath : null,
-    trackedBy: root ? trackedByFor(root, ctx.abs) : null,
+    trackedBy: root && !o.estimate ? trackedByFor(root, ctx.abs) : null,
     agentTooling: agentTooling(),
     fileMtimeNs,
     storeMtimeNs: paths ? statNs(paths.storePath) : null,
@@ -882,10 +1000,13 @@ function reply(ctx, state, extra) {
   };
   // What a region comment's target.hash is compared with, on every reply (each one is the status
   // the panel holds next): a media file's own bytes, or the figures a text file's comments name.
-  if (isMediaPath(ctx.abs)) out.fileHash = fileHashFor(ctx);
+  if (o.estimate) { if (isMediaPath(ctx.abs)) out.fileHash = null; else out.embeddedHashes = {}; }
+  else if (isMediaPath(ctx.abs)) out.fileHash = fileHashFor(ctx);
   else out.embeddedHashes = embeddedHashesFor(ctx, root, store);
   if (ctx.args.baseline === true) out.baseline = engine.baselineOf(text, store ? store.suggestions : []);
-  return Object.assign(out, extra || {});
+  Object.assign(out, extra || {});
+  if (o.landed && o.landed.problems.length) out.logWarning = `${o.landed.did}, but ${o.landed.problems.join('; and ')}`;
+  return out;
 }
 
 // Re-read what was just written so the reply carries the sidecar as every later load sees it.
@@ -893,6 +1014,72 @@ function reloadSaved(ctx, paths, text) {
   const store = loadOrRefuse(ctx, paths, text);
   if (!store) throw new Error(`the sidecar ${tilde(paths.storePath)} vanished after its write`);
   return store;
+}
+
+// ── after a write has landed ────────────────────────────────────────
+
+// The state of a verb whose primary write has landed: `did` names it for the person ("saved",
+// "the changes were rejected"), `problems` collects what went wrong after it. Nothing after the
+// landed write may fail the verb: the kernel reads a non-zero exit as a verb that did nothing — it
+// sends no trace to the session whose file just changed (never-lose-the-thread), and the client
+// keeps a buffer it believes unsaved behind a fence the write has already moved, so its next try
+// refuses store-moved or file-moved against its own write. So the log append, the sidecar's
+// read-back and the log's read-back are reported instead, in `logged` and `logWarning`
+// (plans/file-review.md, The comments log: a failed append is reported in the reply and never
+// fails the save — the kernel's rule for log-edit after saveFile, kept here for the verbs that
+// write in one process). Each problem also goes to stderr, for the kernel's tail.
+function landedState(did) { return { did, problems: [] }; }
+function landedProblem(landed, clause) {
+  landed.problems.push(clause);
+  process.stderr.write(`file-comments-host: ${landed.did}, but ${clause}\n`);
+}
+
+// Append a verb's log entries after its write landed: true when every entry landed; else false,
+// with the entries that did not named in the warning (an append that fails midway leaves the
+// earlier ones on disk, and the log is never rewritten).
+function appendLanded(ctx, paths, entries, landed) {
+  let n = 0;
+  try {
+    fs.mkdirSync(path.dirname(paths.logPath), { recursive: true });
+    for (const e of entries) { appendLog(paths.logPath, e); n++; }
+    return true;
+  } catch (e) {
+    const missing = entries.slice(n).map((x) => x.kind);
+    const which = n
+      ? `the ${missing.join(' and ')} ${missing.length > 1 ? 'entries were' : 'entry was'} not written to`
+      : 'not written to';
+    landedProblem(landed, `${which} the comments log for ${ctx.shown}: ${errText(e)}`);
+    return false;
+  }
+}
+
+// The sidecar after a landed write, re-read as every later load sees it (afterDecision: pruned
+// when emptied); when it cannot be — a writer that replaced it in the same instant, a disk that
+// stopped answering — the records this process wrote stand in and the reply says so.
+function settleLanded(ctx, paths, store, text, landed) {
+  try {
+    return afterDecision(ctx, paths, store, text);
+  } catch (e) {
+    landedProblem(landed, `the comments for ${ctx.shown} could not be read back after the write: ${errText(e).replace(/; nothing was changed$/, '')} — reload`);
+    return store;
+  }
+}
+
+// Measure the reply a verb would send, before it writes: the sidecar it is about to save (carried
+// as `store` and again as `hunks`), the log with the entries it is about to append, the baseline
+// when asked — and refuse `too-large` when the kernel would not carry it. Past REPLY_MAX_BYTES the
+// kernel kills this process and discards its stdout AFTER the write landed, then does the same to
+// every later `status` on the file, so a record or a note a client sends at that size would lock
+// the file's comments until the sidecar was fixed by hand. The records and notes the editor and
+// the panel produce describe text the viewer showed, a file under the 2 MB cap, so nothing they
+// send comes near it. `what` names the addition for the person ("this comment", "the change
+// records and the decisions taken in the editor").
+function checkReplyFits(ctx, state, extra, pending, what) {
+  const est = reply(ctx, state, extra, { estimate: true, pending });
+  const bytes = Buffer.byteLength(JSON.stringify(est), 'utf8') + 1;
+  if (bytes > REPLY_MAX_BYTES - REPLY_SLACK) {
+    throw new Refusal('too-large', `cannot write the comments for ${ctx.shown}: with ${what} they come to ${human(bytes)} in one reply, past the ${human(REPLY_MAX_BYTES)} the dashboard can carry back; nothing was changed`);
+  }
 }
 
 // ── verbs ───────────────────────────────────────────────────────────
@@ -928,12 +1115,17 @@ function withSidecar(ctx, create, plan) {
     throw new Refusal('no-comment', `comment ${String(ctx.args.commentId)} is not among the comments for ${ctx.shown} — reload and retry`);
   }
   const apply = plan(store, file.text, root);
+  // The root the write will have: for a loose file, the landmark's — its own directory, created
+  // below, after the last check that can refuse (the reply's size).
+  const rootToBe = root || path.dirname(ctx.abs);
+  const pathsToBe = paths || pathsFor(rootToBe, ctx.abs);
+  if (!store) store = seedStore(pathsToBe.rel);
+  apply(store);
+  checkReplyFits(ctx, { root: rootToBe, paths: pathsToBe, store, ...file }, null, [], `this ${ctx.verb}`);
   if (!root) {
     root = createLandmark(ctx);
     paths = pathsFor(root, ctx.abs);
   }
-  if (!store) store = seedStore(paths.rel);
-  apply(store);
   saveStore(root, paths.storePath, store, file.text);
   return reply(ctx, { root, paths, store: reloadSaved(ctx, paths, file.text), ...file });
 }
@@ -1086,8 +1278,10 @@ function doAccept(ctx, all) {
     if (c && c.suggestionId != null && set.has(String(c.suggestionId))) c.resolved = true;
   }
   saveStore(root, paths.storePath, store, file.text);
-  appendLog(paths.logPath, logEntry('accept', { changes: changesOf(decided) }));
-  return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, file.text), ...file }, { accepted: ids });
+  const landed = landedState('the changes were accepted');
+  const logged = appendLanded(ctx, paths, [logEntry('accept', { changes: changesOf(decided) })], landed);
+  const after = settleLanded(ctx, paths, store, file.text, landed);
+  return reply(ctx, { root, paths, store: after, ...file }, { accepted: ids, logged }, { landed });
 }
 
 // Put the sidecar back as it was before a reject or a save whose file write failed: the prior
@@ -1109,9 +1303,11 @@ function restoreSidecar(storePath, prior) {
 // back from the engine remapped into post-reject coordinates; reloading the saved sidecar against
 // the new text re-verifies them the way every later load will.
 function doReject(ctx, all) {
+  checkTextPath(ctx, 'cannot write');
   const { file, root, paths, store } = loadForDecision(ctx, true);
   const decided = decidedChanges(ctx, store, all);
   const ids = decided.map((h) => h.id);
+  checkDiskSize(ctx, file, 'cannot write');
   checkIsText(ctx.shown, file);
   for (const h of decided) {
     // The load-time rebase placed every kept op where its text is; a row that disagrees with the
@@ -1138,8 +1334,10 @@ function doReject(ctx, all) {
     }
     throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${why}; ${restored}`);
   }
-  appendLog(paths.logPath, logEntry('reject', { changes: changesOf(decided) }));
-  return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, newText), text: newText, fileMtimeNs }, { rejected: ids });
+  const landed = landedState('the changes were rejected');
+  const logged = appendLanded(ctx, paths, [logEntry('reject', { changes: changesOf(decided) })], landed);
+  const after = settleLanded(ctx, paths, store, newText, landed);
+  return reply(ctx, { root, paths, store: after, text: newText, fileMtimeNs }, { rejected: ids, logged }, { landed });
 }
 
 // ── save (Slice 5) ──────────────────────────────────────────────────
@@ -1312,24 +1510,32 @@ export function editDiff(oldText, newText, name) {
 // `{id, oldText, newText}`, whose records the field has already dropped (and, for a reject, whose
 // old text the buffer already holds). Fenced on the sidecar AND the file: "" for storeMtimeNs means
 // no sidecar exists, so the editor had nothing to remap and nothing to decide (a non-empty list is
-// then a caller bug), and no sidecar is created — the file and the log are written. Otherwise, in
-// order and with nothing written until every check has passed: the file must be UTF-8 text on disk
-// and `content` text the file can hold (`not-text`), under the cap (`too-large`), and every record
-// must fit `content` (`desync`, naming the first that does not). Then the order track-edit and
-// reject use: the sidecar first (the records, every comment bound by `suggestionId` to a decided
-// change marked resolved and KEPT, the detached ops as they were, the fingerprint over `content`),
-// the file through writeFileAtomic, the prior sidecar bytes put back if the file write fails; then
-// the log (one `edit` entry in the kernel's direct-edit shape, built here from the old and new
-// text, then an `accept` and a `reject` entry for each non-empty list), and pruneIfClean when
-// nothing is pending and no comment or detached op remains — the reply then carries storeMtimeNs
-// null and store null. The reply is the standard status with the new fileMtimeNs and `logged`.
+// then a caller bug), and no sidecar is created — the file (and, for a file the log has business
+// with, the log) is written. Otherwise, in order and with nothing written until every check has
+// passed: the file's name must be one the viewer edits and the file on disk under the cap (what
+// saveFile refuses, `not-text` and `too-large`), the file must be UTF-8 text on disk and `content`
+// text the file can hold (`not-text`), under the cap (`too-large`), every record must fit `content`
+// (`desync`, naming the first that does not), and the reply this save would send — the records as
+// `store` and `hunks`, the log entries it appends — must be one the kernel carries (`too-large`,
+// checkReplyFits). Then the order track-edit and reject use: the sidecar first (the records, every
+// comment bound by `suggestionId` to a decided change marked resolved and KEPT, the detached ops as
+// they were, the fingerprint over `content`), the file through writeFileAtomic, the prior sidecar
+// bytes put back if the file write fails. From here the write has landed and nothing fails the
+// verb (appendLanded, settleLanded): the log gets one `edit` entry in the kernel's direct-edit
+// shape (built before the writes from the old and new text, the mtime after filled in once known),
+// then an `accept` and a `reject` entry for each non-empty list — for a file that already has a
+// sidecar, a comments log, or a tracked flag, the rule log-edit follows, and never for a path
+// inside .trackchanges/ — and pruneIfClean runs when nothing is pending and no comment or detached
+// op remains (the reply then carries storeMtimeNs null and store null). The reply is the standard
+// status with the new fileMtimeNs, `logged`, and `logWarning` when an append or a read-back failed.
 // A save whose content equals the file and whose records equal the sidecar is still a write: the
 // person pressed Save, so the file is replaced (a new inode, a new mtime), the sidecar is rewritten,
 // and the log gets an edit entry with an empty diff — never a short-circuit, since the kernel sends
 // the same trace saveFile sends and the person expects a saved file.
-// With no root above the file (the client sends save only for a tracked file or one with a
-// sidecar, both of which have a root) the file is written and nothing is created — no landmark,
-// no log, the rule log-edit follows for a plain save — and the reply says `logged: false`.
+// With no root above the file the file is written and nothing is created — no landmark, no log —
+// and the reply says `logged: false`; so does a save of a file under a root that has neither a
+// sidecar, a log, nor a tracked flag (the request a browser sends when its status predates a peer's
+// toggle-off; the host does not take its word for the route).
 function doSave(ctx) {
   const a = ctx.args;
   if (typeof a.content !== 'string') throw new BadRequest('save needs content: the whole new text as a string');
@@ -1339,17 +1545,39 @@ function doSave(ctx) {
   const taken = new Set();
   const accepted = requireDecisions(a.accepted, 'accepted', submitted, taken);
   const rejected = requireDecisions(a.rejected, 'rejected', submitted, taken);
+  checkTextPath(ctx, 'cannot save');
   const { file, root, paths, store } = loadForDecision(ctx, true);
   if (!store) {
     if (a.suggestions.length) throw new BadRequest('save with no sidecar takes no suggestions: there was nothing to remap');
     if (accepted.length || rejected.length) throw new BadRequest('save with no sidecar takes no accepted or rejected changes: nothing was pending');
   }
+  checkDiskSize(ctx, file, 'cannot save');
   checkIsText(ctx.shown, file, 'it cannot be saved from the dashboard: the text the editor holds is a lossy decode of its bytes, and writing that back would destroy them');
   checkContentText(ctx.shown, a.content);
   checkTooLarge(ctx.shown, a.content);
   const fit = fitRecords(a.content, a.suggestions);
   if (fit.misfit) {
     throw new Refusal('desync', `change ${fit.misfit.id} does not fit the text being saved to ${ctx.shown}: ${fit.misfit.why}; nothing was changed — reload and retry`);
+  }
+  // Whether the log has business with this file, decided before the writes from the disk as it is:
+  // a sidecar, a log, or the tracked flag (read from a config checkConfig passed in loadForDecision),
+  // and never a path inside .trackchanges/. The entries are built here too (editDiff is pure), so
+  // nothing after the writes has anything left to compute but the append itself.
+  const logs = !!paths && !underTrackchanges(ctx.abs)
+    && (!!store || exists(paths.logPath) || isTrackedFile(root, ctx.abs));
+  const entries = [];
+  if (logs) {
+    const { diff, truncated } = editDiff(file.text, a.content, path.basename(ctx.abs));
+    entries.push(logEntry('edit', {
+      mtimeBeforeNs: file.fileMtimeNs,
+      mtimeAfterNs: file.fileMtimeNs, // a stand-in of the same width; the write's own mtime replaces it below
+      bytesBefore: file.bytes,
+      bytesAfter: Buffer.byteLength(a.content, 'utf8'),
+      diff,
+      truncated,
+    }));
+    if (accepted.length) entries.push(logEntry('accept', { changes: accepted }));
+    if (rejected.length) entries.push(logEntry('reject', { changes: rejected }));
   }
   let prior = null;
   if (store) {
@@ -1360,8 +1588,10 @@ function doSave(ctx) {
         if (c && c.suggestionId != null && taken.has(String(c.suggestionId))) c.resolved = true;
       }
     }
-    saveStore(root, paths.storePath, store, a.content);
   }
+  checkReplyFits(ctx, { root, paths, store, text: a.content, fileMtimeNs: file.fileMtimeNs }, { logged: logs }, entries,
+    'the change records and the decisions taken in the editor');
+  if (store) saveStore(root, paths.storePath, store, a.content);
   let fileMtimeNs;
   try {
     fileMtimeNs = writeFileAtomic(ctx.abs, a.content);
@@ -1376,24 +1606,14 @@ function doSave(ctx) {
     }
     throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${why}; ${restored}`);
   }
+  const landed = landedState('saved');
   let logged = false;
-  if (paths) {
-    fs.mkdirSync(path.dirname(paths.logPath), { recursive: true });
-    const { diff, truncated } = editDiff(file.text, a.content, path.basename(ctx.abs));
-    appendLog(paths.logPath, logEntry('edit', {
-      mtimeBeforeNs: file.fileMtimeNs,
-      mtimeAfterNs: fileMtimeNs,
-      bytesBefore: file.bytes,
-      bytesAfter: Buffer.byteLength(a.content, 'utf8'),
-      diff,
-      truncated,
-    }));
-    if (accepted.length) appendLog(paths.logPath, logEntry('accept', { changes: accepted }));
-    if (rejected.length) appendLog(paths.logPath, logEntry('reject', { changes: rejected }));
-    logged = true;
+  if (logs) {
+    entries[0].mtimeAfterNs = fileMtimeNs;
+    logged = appendLanded(ctx, paths, entries, landed);
   }
-  const after = store ? afterDecision(ctx, paths, store, a.content) : null;
-  return reply(ctx, { root, paths, store: after, text: a.content, fileMtimeNs }, { logged });
+  const after = store ? settleLanded(ctx, paths, store, a.content, landed) : null;
+  return reply(ctx, { root, paths, store: after, text: a.content, fileMtimeNs }, { logged }, { landed });
 }
 
 // The folder entry that tracks a file's directory: `<dir>/` relative to the root. A file at the
@@ -1489,15 +1709,18 @@ function doSetTracked(ctx) {
   }
   if (loose) root = createLandmark(ctx); // asserts the root it finds is newRoot, the file's directory
   writeConfigAtomic(root, entry, on);
-  appendLog(paths.logPath, logEntry('set-tracked', { on, scope: kind, entry }));
-  return reply(ctx, { root, paths, ...file });
+  const landed = landedState('the tracking setting was written');
+  const logged = appendLanded(ctx, paths, [logEntry('set-tracked', { on, scope: kind, entry })], landed);
+  return reply(ctx, { root, paths, ...file }, { logged }, { landed });
 }
 
 const EDIT_SUMMARY_KEYS = ['mtimeBeforeNs', 'mtimeAfterNs', 'bytesBefore', 'bytesAfter', 'diff', 'truncated'];
 
 // A direct edit from the viewer (decision 33), logged by the kernel's saveFile path after the
 // save: only for a file that already has a sidecar, a comments log, or a tracked flag; never
-// creates a sidecar, a log, or a landmark. The append comes first so the record never depends on
+// creates a sidecar, a log, or a landmark; never for a path inside .trackchanges/ (the kernel does
+// not call it for one — _under_trackchanges — and this script keeps the rule itself, as `save`
+// does: the log would record itself). The append comes first so the record never depends on
 // the sidecar being readable — nor on the config: a sidecar or a log makes the file the log's
 // business whatever config.json says, and only the tracked flag needs a readable config.
 function doLogEdit(ctx) {
@@ -1509,7 +1732,8 @@ function doLogEdit(ctx) {
   try {
     if (paths) {
       const cfg = configStatus(paths);
-      if (exists(paths.storePath) || exists(paths.logPath) || (cfg === 'ok' && isTrackedFile(root, ctx.abs))) {
+      const own = !underTrackchanges(ctx.abs);
+      if (own && (exists(paths.storePath) || exists(paths.logPath) || (cfg === 'ok' && isTrackedFile(root, ctx.abs)))) {
         const fields = {};
         for (const k of EDIT_SUMMARY_KEYS) if (summary[k] !== undefined) fields[k] = summary[k];
         appendLog(paths.logPath, logEntry('edit', fields));

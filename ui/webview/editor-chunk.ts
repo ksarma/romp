@@ -16,7 +16,9 @@
 // hook, not a way to register anything: the record-list field is the vendored track-changents
 // field (vendor/track-changents/obsidian/src/track-cm.js, bundled unchanged), the marks are romp's
 // derived track-decorations.ts, and both are curated here like every other extension. The handle
-// hands back the remapped records and a net ledger of decisions so a Save can send both.
+// hands back the remapped records and a net ledger of decisions so a Save can send both, and the
+// one rule romp adds over the field's ids keeps those two lists disjoint: an id the ledger holds is
+// never minted again (the filter in trackSetup).
 //
 // The SAVE PATH IS NOT THIS MODULE'S: the consent gate, the nanosecond conflict floor, and the
 // edit trace all live behind file-view's saveFile op — this is the text surface only, handing the
@@ -127,7 +129,9 @@ export interface TrackOpts {
 }
 
 /** What the mount handle exposes when `track` was given. Both read the LIVE state: the records as the field
- *  holds them now (remapped through every keystroke since the mount), and the net ledger. */
+ *  holds them now (remapped through every keystroke since the mount), and the net ledger. No id is in both: a
+ *  decided id is never minted again for a later split (trackSetup's id filter), which is what the host's save
+ *  requires of the two lists it is sent. */
 export interface TrackHandle { suggestions(): unknown[]; ledger(): TrackLedger }
 
 export interface EditorHandle {
@@ -207,6 +211,39 @@ export function trackSetup(opts: TrackOpts): TrackSetup {
     }
     return out;
   });
+  // Romp's one rule over the field's ids (2026-09-06): an id the ledger holds is never minted again. The engine
+  // mints a split's right half against the ids in play NOW (`X~1` for the first split of X) and the vendored field
+  // passes it no `mint` — sound where every decision persists at once, as upstream's does, but here a decided
+  // fragment leaves the field for the ledger, so the next split of the same parent minted `X~1` a second time: a
+  // save then named one id as decided AND pending, which the host refuses (requireDecisions) though the records fit
+  // the text, and a decision on the new `X~1` replaced the earlier entry by id, so the first was never logged. This
+  // filter reads what the field made of the change and renames any id the ledger holds to the parent's next free
+  // suffix (the engine's own scheme); the renamed list lands as an explicit setSuggestions on the same transaction,
+  // which the field takes verbatim and history snapshots as it does any list. Undo and redo dispatch with
+  // filter:false and restore recorded lists, where the rule already held. Only a doc change can mint, an explicit
+  // list never does, and an empty ledger has nothing to collide with, so those three are checked before the
+  // transaction's state is read; when no id collides the transaction passes through and the state it computed is
+  // the one the dispatch uses.
+  const ledgerIds = (l: TrackLedger) => new Set([...l.accepted, ...l.rejected].map((e) => e.id));
+  const freshIds = EditorState.transactionFilter.of((tr) => {
+    if (!tr.docChanged || tr.effects.some((e) => e.is(setSuggestions))) return tr;
+    const start = tr.startState.field(ledgerField);
+    if (!start.accepted.length && !start.rejected.length) return tr;
+    const ops = tr.state.field(field);
+    const decided = ledgerIds(tr.state.field(ledgerField));
+    if (!ops.some((o) => decided.has(String(o.id)))) return tr;
+    const taken = new Set([...decided, ...ops.map((o) => String(o.id))]);
+    const renamed = ops.map((o) => {
+      const id = String(o.id);
+      if (!decided.has(id)) return o;
+      const parent = id.replace(/~\d+$/, "");   // a fragment's parent is its id less the last suffix
+      let n = 1, fresh: string;
+      while (taken.has(fresh = `${parent}~${n}`)) n++;
+      taken.add(fresh);
+      return { ...o, id: fresh };
+    });
+    return [tr, { effects: setSuggestions.of(renamed) }];
+  });
   const records = opts.suggestions as TrackRecord[];
   const setup: TrackSetup = {
     extensions: [],
@@ -249,7 +286,7 @@ export function trackSetup(opts: TrackOpts): TrackSetup {
   };
   setup.extensions = [
     field, makeInvertedEffects(field),
-    ledgerField, ledgerInvert,
+    ledgerField, ledgerInvert, freshIds,
     ...trackDecorations(field, host, { authorColor: opts.authorColor }),
     EditorView.updateListener.of((u) => {
       if (opts.onLedger && u.startState.field(ledgerField) !== u.state.field(ledgerField)) opts.onLedger(u.state.field(ledgerField));

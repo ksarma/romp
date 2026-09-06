@@ -584,7 +584,7 @@ test('a save whose file write fails puts the prior sidecar bytes back, changes n
 
 // ── no sidecar yet ──────────────────────────────────────────────────
 
-test('a "" fence with no records writes the file and the edit entry but never a sidecar; a file with no root gets no landmark and logged:false', () => {
+test('a "" fence with no records writes the file and, for a tracked file, the edit entry but never a sidecar; a file with no root gets no landmark and logged:false', () => {
   // A tracked file with no sidecar yet: the log lands beside config.json, no sidecar appears.
   const w = world();
   writeTrackedPaths(w.root, ['docs/report.md']);
@@ -620,15 +620,85 @@ test('a "" fence with no records writes the file and the edit entry but never a 
   assert.deepEqual(r3.log, []);
   assert.equal(fs.existsSync(path.join(w.looseDir, '.trackchanges')), false, 'no landmark for a plain save');
   assert.equal(r3.fileMtimeNs, statNs(w.loose));
-  // A file under a root that has no .trackchanges/ yet, neither tracked nor commented: the
-  // directory is created for the log alone (the root itself is the .git landmark, unchanged).
+  // A file under a root that has no .trackchanges/ yet, neither tracked nor commented: the file
+  // is written and nothing else happens — no edit entry, no log file, no .trackchanges/ created
+  // for it. An `edit` entry is for a file that already has a sidecar, a comments log, or a tracked
+  // flag (the plan's rule, the one log-edit follows); a save that created the log would make every
+  // later plain save of the file logged too, for a file nobody tracked.
   const w2 = world();
   const s3 = status(w2, w2.index);
   assert.equal(s3.root, w2.root);
   assert.equal(fs.existsSync(path.join(w2.root, '.trackchanges')), false);
-  const r4 = ok(w2, saveReq(w2.index, s3, fs.readFileSync(w2.index, 'utf8') + '\nAppendix.\n', []));
-  assert.equal(r4.logged, true);
-  assert.deepEqual(fs.readdirSync(path.join(w2.root, '.trackchanges')), [path.basename(logPathFor(storePathFor(w2.root, w2.index)))]);
-  assert.deepEqual(r4.log.map((e) => e.kind), ['edit']);
+  const text2 = fs.readFileSync(w2.index, 'utf8') + '\nAppendix.\n';
+  const r4 = ok(w2, saveReq(w2.index, s3, text2, []));
+  assert.equal(fs.readFileSync(w2.index, 'utf8'), text2, 'the file is written');
+  assert.equal(r4.fileMtimeNs, statNs(w2.index));
+  assert.equal(r4.logged, false);
+  assert.deepEqual(r4.log, []);
   assert.equal(r4.trackedBy, null);
+  assert.equal(r4.store, null);
+  assert.equal(fs.existsSync(path.join(w2.root, '.trackchanges')), false, 'nothing is created for a file the log has no business with');
+});
+
+// The rule save follows for its edit entry is log-edit's, so a save from the editor and a plain
+// saveFile of the same file at the same moment log alike: the file is logged when it already has
+// a sidecar, a comments log, or a tracked flag, and never otherwise. The untracked, uncommented
+// case is the request a browser sends when its status predates a peer's toggle-off (the client
+// decides the route from the status it holds); the host does not take its word for it.
+test('save logs an edit only for a file with a sidecar, a log, or a tracked flag — the rule log-edit follows — and creates no log otherwise', () => {
+  const summary = { mtimeBeforeNs: '1', mtimeAfterNs: '2', bytesBefore: 10, bytesAfter: 12, diff: '@@ -1 +1 @@\n-a\n+b\n', truncated: false };
+  const w = world();
+  const lp = logPathFor(storePathFor(w.root, w.index));
+  // Neither tracked nor commented: log-edit would not log it, and neither does save.
+  const c0 = ok(w, { verb: 'log-edit', path: w.index, args: { summary } });
+  assert.equal(c0.logged, false);
+  assert.equal(fs.existsSync(path.join(w.root, '.trackchanges')), false);
+  const s0 = status(w, w.index);
+  const t1 = fs.readFileSync(w.index, 'utf8') + '\nOne.\n';
+  const r1 = ok(w, saveReq(w.index, s0, t1, []));
+  assert.equal(fs.readFileSync(w.index, 'utf8'), t1);
+  assert.equal(r1.logged, false);
+  assert.deepEqual(r1.log, []);
+  assert.equal(fs.existsSync(lp), false, 'no log is created');
+  assert.equal(fs.existsSync(path.join(w.root, '.trackchanges')), false);
+  // The save changed nothing about the file's standing: a later plain save is still not logged.
+  const c1 = ok(w, { verb: 'log-edit', path: w.index, args: { summary } });
+  assert.equal(c1.logged, false);
+  assert.equal(fs.existsSync(lp), false);
+  // Tracked flag: logged. Then the flag is removed the way a CLI, a hand edit, or a sibling
+  // file's folder toggle removes it — no entry lands on this file's log — and the log alone
+  // keeps the file the log's business, so the next save is logged too.
+  writeTrackedPaths(w.root, ['index.md']);
+  const s1 = status(w, w.index);
+  assert.deepEqual(s1.trackedBy, { kind: 'file', entry: 'index.md' });
+  const t2 = t1 + 'Two.\n';
+  const r2 = ok(w, saveReq(w.index, s1, t2, []));
+  assert.equal(r2.logged, true);
+  assert.deepEqual(r2.log.map((e) => e.kind), ['edit']);
+  assert.equal(fs.existsSync(storePathFor(w.root, w.index)), false, 'no sidecar is created');
+  writeTrackedPaths(w.root, []);
+  const s2 = status(w, w.index);
+  assert.equal(s2.trackedBy, null);
+  assert.equal(s2.storeMtimeNs, null);
+  assert.deepEqual(s2.log.map((e) => e.kind), ['edit'], 'the log survives the untrack');
+  const t3 = t2 + 'Three.\n';
+  const r3 = ok(w, saveReq(w.index, s2, t3, []));
+  assert.equal(r3.logged, true);
+  assert.equal(r3.trackedBy, null);
+  assert.deepEqual(r3.log.map((e) => e.kind), ['edit', 'edit']);
+  assert.deepEqual(readLogLines(lp).map((e) => e.kind), ['edit', 'edit']);
+  assert.equal(fs.readFileSync(w.index, 'utf8'), t3);
+  // A sidecar alone (an untracked file with a whole-file comment) is logged as well.
+  const other = path.join(w.root, 'docs', 'other.md');
+  fs.writeFileSync(other, 'Some text.\n');
+  const so = status(w, other);
+  assert.equal(so.trackedBy, null);
+  const co = ok(w, { verb: 'comment', path: other, args: { note: 'whole-file note' }, fence: fenceFor(so) });
+  assert.ok(co.store, 'the comment made a sidecar');
+  const s4 = status(w, other);
+  const r4 = ok(w, saveReq(other, s4, 'Some text.\nMore.\n', s4.store.suggestions));
+  assert.equal(r4.logged, true);
+  assert.equal(r4.trackedBy, null);
+  assert.deepEqual(r4.log.map((e) => e.kind), ['edit']);
+  assert.equal(readSidecar(co.storePath).comments.length, 1, 'the comment is kept');
 });

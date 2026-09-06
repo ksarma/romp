@@ -2,14 +2,15 @@
 // tracked-changes editor — the decision ledger kept net of undo, the click policy, the marks built from the
 // vendored field, and the transactions an in-editor accept or reject dispatches. The vendored field itself is
 // covered by the ported upstream oracle (track-cm-oracle.test.ts); this file tests what romp adds on top.
-// Executed where CodeMirror needs no DOM (EditorState + history + the decoration facet); the DOM-only parts
-// (widget rendering, the event handlers' wiring) are pinned at source.
+// Executed where CodeMirror needs no DOM (EditorState + history + the decoration facet, and the update-listener
+// facet run the way EditorView.update runs it); the DOM-only parts (widget rendering, the mouse handlers' wiring)
+// are pinned at source.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { EditorState, Transaction, type TransactionSpec } from "@codemirror/state";
-import { EditorView, type DecorationSet, type Decoration } from "@codemirror/view";
+import { EditorView, type DecorationSet, type Decoration, type ViewUpdate } from "@codemirror/view";
 import { undo, redo, isolateHistory } from "@codemirror/commands";
 import { extensionsFor, trackSetup, applyDecision, EMPTY_LEDGER, type TrackLedger, type TrackSetup } from "./editor-chunk";
 import { trackClickAction, idsAtPosition, displayItems, CLS, CHANGE_SEL, type TrackRecord } from "./track-decorations";
@@ -27,16 +28,30 @@ const del = (id: string, from: number, oldText: string, author = "web"): TrackRe
 const sub = (id: string, from: number, newText: string, oldText: string, author = "web"): TrackRecord => ({ id, author, ts: 1, kind: "sub", from, newText, oldText });
 
 /** A headless tracked editor: the chunk's real extension set plus a track setup, seeded as mount() seeds it, with
- *  a dispatch target @codemirror/commands' undo/redo can drive. */
+ *  a dispatch target @codemirror/commands' undo/redo can drive. Every transaction after the seed also runs the
+ *  update-listener facet the way EditorView.update does (view/dist/index.js: `for (let listener of
+ *  this.state.facet(updateListener)) listener(update)`, over the NEW state), with an update that carries what a
+ *  ViewUpdate carries minus the view. So the listeners the chunk's extension set actually holds execute — onChange
+ *  keyed on docChanged, onLedger keyed on the ledger field's identity, the decorations' onOpsChanged relay — and a
+ *  listener dropped from that set is absent from the facet and never fires here either. The seed itself runs no
+ *  listener, as in mount(), where it lands before the view exists. Unlike EditorView.update (which logs a
+ *  listener's exception and goes on), this lets it throw: a listener that needs the view fails the test. */
 function editor(doc: string, records: TrackRecord[], onLedger?: (l: TrackLedger) => void) {
   const t = trackSetup({ suggestions: records, onLedger, authorColor: (a) => (a === "web" ? "#abcdef" : null) });
-  const target = {
-    state: EditorState.create({ doc, extensions: extensionsFor("md", { onChange: noop, onSave: noop }, t) }).update(t.seed).state,
-    dispatch(tr: Transaction) { target.state = tr.state; },
+  let changed = 0;
+  const fire = (tr: Transaction) => {
+    const u = { view: undefined, state: tr.state, startState: tr.startState, transactions: [tr], changes: tr.changes, docChanged: tr.docChanged } as unknown as ViewUpdate;
+    for (const listener of tr.state.facet(EditorView.updateListener)) listener(u);
   };
-  const put = (spec: TransactionSpec) => { target.state = target.state.update(spec).state; };
+  const target = {
+    state: EditorState.create({ doc, extensions: extensionsFor("md", { onChange: () => { changed++; }, onSave: noop }, t) }).update(t.seed).state,
+    dispatch(tr: Transaction) { target.state = tr.state; fire(tr); },
+  };
+  const put = (spec: TransactionSpec) => { const tr = target.state.update(spec); target.state = tr.state; fire(tr); };
   return {
     t,
+    /** How many times the mount's onChange ran: the chunk's listener fires it once per document-changing transaction. */
+    changes: () => changed,
     doc: () => target.state.doc.toString(),
     ops: () => t.suggestions(target.state),
     ledger: () => t.ledger(target.state),
@@ -131,16 +146,54 @@ test("accept: the record leaves the field, the text stays, the ledger gains the 
   assert.equal(h.doc(), "The big cat.");
   assert.deepEqual(h.ops(), []);
   assert.deepEqual(h.ledger(), { accepted: [{ id: "a1", oldText: "", newText: "big " }], rejected: [] });
+  assert.equal(seen.length, 1, "the chunk's listener reported the decision once");
+  assert.equal(seen[0], h.ledger(), "…with the very object the field holds (the reducer's identity contract)");
   assert.equal(h.undo(), true);
   assert.equal(h.doc(), "The big cat.");
   assert.deepEqual(h.ops().map((o) => o.id), ["a1"]);
   assert.deepEqual(h.ledger(), { accepted: [], rejected: [] }, "undo removes the entry: the ledger is net of undo");
+  assert.equal(seen.length, 2);
+  assert.deepEqual(seen[1], EMPTY_LEDGER, "the undo is reported too: a listener keeping its own copy sees the entry leave");
   assert.equal(h.redo(), true);
   assert.deepEqual(h.ops(), []);
   assert.deepEqual(h.ledger().accepted.map((e) => e.id), ["a1"]);
-  // the onLedger listener is a VIEW listener (updateListener), so a headless state never fires it; its wiring is
-  // pinned below and keyed on the reducer's identity contract tested above
-  assert.equal(seen.length, 0);
+  assert.equal(seen.length, 3);
+  assert.deepEqual(seen[2].accepted.map((e) => e.id), ["a1"]);
+  assert.equal(h.changes(), 0, "none of these transactions changed the document, so onChange never ran");
+});
+
+// file-view.ts derives `dirty` from the text in onChange and marks an accept dirty ONLY through onLedger, since an
+// accept changes no text (an accept-then-Save with no onLedger takes doSave's nothing-changed branch and drops the
+// acceptance silently). This runs the listener facet the chunk's state actually carries — the regex pin below reads
+// the listener's body, not its membership in the extension set — so that wiring is executed, not just pinned.
+test("the onLedger listener rides in the chunk's extension set: an accept alone reaches it and not onChange; typing reaches onChange and not onLedger; a reject reaches both", () => {
+  const seen: TrackLedger[] = [];
+  const h = editor("I like cats a lot.", [sub("s1", 2, "like", "love"), ins("a1", 11, " a lot")], (l) => seen.push(l));
+  assert.equal(seen.length, 0, "the seed is no decision");
+  assert.equal(h.changes(), 0, "…and no keystroke");
+  // the save path's case: click to accept, no keystroke, Save — onLedger is the only signal the buffer is worth saving
+  assert.ok(h.resolve(11, false), "the insertion starts at 11");
+  assert.equal(h.doc(), "I like cats a lot.");
+  assert.equal(h.changes(), 0, "an accept changes no text: onChange did not run");
+  assert.equal(seen.length, 1, "…so onLedger is the one report of it");
+  assert.deepEqual(seen[0], { accepted: [{ id: "a1", oldText: "", newText: " a lot" }], rejected: [] });
+  // typing: the field remaps, onChange runs, the ledger is untouched and unreported
+  h.type({ changes: { from: 0, to: 0, insert: ">> " } });
+  assert.equal(h.changes(), 1);
+  assert.equal(seen.length, 1, "typing is no decision");
+  assert.deepEqual(h.ops().map((o) => o.from), [5], "the substitution moved with the text");
+  // a reject carries the buffer edit AND the decision in one transaction: both listeners run once
+  assert.ok(h.resolve(5, true));
+  assert.equal(h.doc(), ">> I love cats a lot.");
+  assert.equal(h.changes(), 2);
+  assert.equal(seen.length, 2);
+  assert.deepEqual(seen[1], { accepted: [{ id: "a1", oldText: "", newText: " a lot" }], rejected: [{ id: "s1", oldText: "love", newText: "like" }] });
+  // undo of the reject: the text comes back (onChange) and the report says the decision is gone (onLedger)
+  assert.equal(h.undo(), true);
+  assert.equal(h.doc(), ">> I like cats a lot.");
+  assert.equal(h.changes(), 3);
+  assert.equal(seen.length, 3);
+  assert.deepEqual(seen[2], { accepted: [{ id: "a1", oldText: "", newText: " a lot" }], rejected: [] });
 });
 
 test("reject: the text reverts and the record leaves in ONE transaction; undo restores text, record and ledger together", () => {

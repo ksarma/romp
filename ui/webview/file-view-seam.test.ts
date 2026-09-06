@@ -950,6 +950,65 @@ test("a tracked file with nothing pending, or one with only a sidecar, still sav
   assert.equal(lastOf("fileComments", "save"), undefined, "no save verb for an untracked file");
 });
 
+test("a tracked file the session has not written yet (a folder entry covers it, no sidecar): Save goes through the panel fenced on an EMPTY store mtime — the host's must-not-exist — and the reply that creates no sidecar leaves the glance at tracked; a store-moved refusal re-fences on the sidecar that appeared when it holds no changes, and stands when it does", async (t) => {
+  // routesSave() is true for trackedBy alone, so this is the one save whose store fence comes from a null storeMtimeNs.
+  // The host's requireFence reads "" as "no sidecar may exist" and refuses store-moved ("disappeared from disk") for
+  // any other string against an absent file — a stringified null would refuse every save of a tracked-but-unwritten
+  // file, and the retry, re-fenced the same way, would refuse again. Mutating fenceOf to String(s.storeMtimeNs) passed
+  // every suite before this test.
+  const fresh: Partial<Status> = { trackedBy: { kind: "folder", entry: "docs/" }, store: null, storeMtimeNs: null };
+  const o = await open(REPORT, t);
+  await answerStatus(status([], fresh));
+  assert.equal(o.wrap.querySelector(".fileview-fc button")!.textContent, "Comments · tracked", "the glance: tracked, nothing written yet");
+  await enterEdit(o);
+  assert.equal(ed.trackOpts, null, "no sidecar, nothing pending: a plain mount");
+  const m = saveTracked(o, DOC + "\nMore.\n");
+  assert.deepEqual(m.args, { content: DOC + "\nMore.\n", suggestions: [], accepted: [], rejected: [] }, "no records rode in, none come back");
+  assert.deepEqual(m.fence, { storeMtimeNs: "", configMtimeNs: "1757145600000000003", fileMtimeNs: MT },
+    "the absent sidecar is fenced as the empty string the host reads as must-not-exist — never \"null\"");
+  // the host wrote the file and the log and created no sidecar: its reply is the status with store null again
+  await saveReply(m.reqId, status([], { ...fresh, fileMtimeNs: "1757145600000000009" }));
+  assert.deepEqual(savedInfos, [{ mtimeNs: "1757145600000000009", logged: true }], "saved and logged, as for any tracked file");
+  assert.equal(o.ctx.mtimeNs(), "1757145600000000009");
+  assert.equal(o.ctx.editing(), false); assert.equal(o.b.edit.hidden, false, "edit mode left");
+  assert.equal(o.ctx.text(), DOC + "\nMore.\n", "text() is the saved bytes");
+  assert.equal(o.wrap.querySelector(".fileview-fc button")!.textContent, "Comments · tracked", "still no sidecar: the glance did not move");
+  // a sidecar appeared mid-edit (a session left a comment; no change): the refusal says so, the re-read holds no
+  // records either, so the save goes again fenced on the sidecar as it stands now — no longer ""
+  await enterEdit(o);
+  const m2 = saveTracked(o, DOC + "\nMore.\nAgain.\n");
+  assert.equal(m2.fence.storeMtimeNs, "", "the second edit fences from the latest status, which still has no sidecar");
+  await saveRefused(m2.reqId, "store-moved", "the comments for ~/notes-api/docs/report.md appeared on disk since you opened the file — reload and retry");
+  const commented = status([], { ...fresh, storeMtimeNs: "1757145600000000020", fileMtimeNs: "1757145600000000009",
+    store: { v: 3, path: "docs/report.md", suggestions: [], comments: [{ id: "c-1", author: "api", authorId: SID, ts: T0, body: "Say which cache." }] } });
+  await answerStatus(commented);
+  const again = lastOf("fileComments", "save");
+  assert.notEqual(again.reqId, m2.reqId, "a second save frame");
+  assert.deepEqual(again.fence, { storeMtimeNs: "1757145600000000020", configMtimeNs: "1757145600000000003", fileMtimeNs: "1757145600000000009" },
+    "re-fenced on the sidecar that appeared, and on the file as the editor loaded it");
+  assert.deepEqual(again.args, m2.args, "the same text, still no records");
+  assert.equal(o.b.save.disabled, true, "still saving");
+  await saveReply(again.reqId, status([], { ...commented, fileMtimeNs: "1757145600000000021" }));
+  assert.equal(o.ctx.mtimeNs(), "1757145600000000021");
+  assert.equal(o.ctx.editing(), false);
+  assert.equal(o.wrap.querySelector(".fileview-fc button")!.textContent, "Comments · 1", "the glance follows the reply: the sidecar with its one comment");
+  // the sidecar that appeared carries a session's CHANGE: the editor never saw it, so no retry — the refusal stands, with Reload
+  const c = await open(REPORT, t);
+  await answerStatus(status([], fresh));
+  await enterEdit(c);
+  const m3 = saveTracked(c, DOC + "\nMore.\n");
+  assert.equal(m3.fence.storeMtimeNs, "");
+  await saveRefused(m3.reqId, "store-moved", "the comments for ~/notes-api/docs/report.md appeared on disk since you opened the file — reload and retry");
+  await answerStatus(status([hunk("h1")], { trackedBy: { kind: "folder", entry: "docs/" }, storeMtimeNs: "1757145600000000030" }));
+  assert.equal(lastOf("fileComments", "save").reqId, m3.reqId, "no retry: the sidecar holds a change the editor did not load");
+  const bar = errBar(c.body)!;
+  assert.ok(bar, "the refusal is the note bar over the editor");
+  assert.match(bar.childNodes[0].textContent, /appeared on disk since you opened the file/);
+  assert.equal(bar.querySelector("button")!.textContent, "Reload file", "a moved sidecar offers Reload");
+  assert.equal(ed.destroyed, 0, "the buffer survives"); assert.equal(ed.buf, DOC + "\nMore.\n");
+  assert.equal(c.b.save.disabled, false); assert.equal(c.b.save.textContent, "Save", "re-armed");
+});
+
 test("a store-moved refusal: the panel re-reads status and retries once when the sidecar's records are still the ones the editor carries; when they changed, the refusal reaches the bar with Reload, and the buffer survives; Reload asks, then re-opens", async (t) => {
   const o = await open(REPORT, t);
   const { body, b } = o;

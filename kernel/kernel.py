@@ -31308,8 +31308,8 @@ def _edit_trace_body(path):
 
 
 def _edit_trace(path, sid):
-    """After a dashboard raw-mode save lands (or the comments panel's `save` verb, which writes the
-    file the same way — _file_comments_after), TELL the session whose worktree it hit (the user
+    """After a dashboard raw-mode save lands (or the comments panel's `save` verb when it rejected none
+    of the session's changes — _save_trace), TELL the session whose worktree it hit (the user
     2026-08-22): an agent's world must never change silently under it — the never-lose-the-thread
     rule, pointed the other way from _save_file's mtime guard (which protects the human from the
     agent; this protects the agent from the human). Best-effort by design, loud on failure: a trace
@@ -31351,6 +31351,47 @@ def _reject_trace(path, sid, n):
         Sessions.backend_for(target).send(target, _reject_trace_body(path, n))
     except Exception as ex:
         sys.stderr.write("reject-trace to %s failed: %s\n" % (target, ex))
+
+
+def _save_trace_body(path, n):
+    """The text the owning session hears after the editor's Save (Slice 5, the `save` verb) wrote the
+    file with `n` of the session's tracked changes rejected in the editor — plans/file-review.md,
+    Consent, trace, routing: a verb that changes the file's bytes says the file and its sidecar both
+    changed and how many changes were rejected. A save that rejected nothing is a direct edit and
+    sends _edit_trace_body (the pending changes it carried moved with the text, which the CLIs read
+    fresh on every call, so there is no news in that); a save that rejected some is that edit AND a
+    reject, and told as the edit body alone it read as an overwrite — the session re-read, found its
+    changes gone, and had no word they were refused rather than lost, where the same decision from
+    the panel's Reject says the count (the review, 2026-09-06). The person's voice, the same marker
+    tail and the same neutralized, tilde-collapsed path as the two bodies it joins;
+    tests/test_kernel_file_comments_save.py renders it against the injected-voice vocabulary."""
+    n = int(n or 0)
+    return ("Heads up: I just edited `%s` directly on disk, outside our conversation, and rejected %d of your "
+            "tracked changes in it; the file and its sidecar both changed, so re-read it before writing."
+            % (_neutralize_romp_markers(_tilde(str(path or ""))), n)) + _TRACE_MARKER_TAIL
+
+
+def _save_trace(path, sid, n):
+    """After the editor's Save lands through the `save` verb, TELL the session whose worktree holds the
+    file: _edit_trace when the save rejected none of its changes (the file changed exactly as a direct
+    edit changes it), _save_trace_body naming `n` when it rejected some. The count is the request's own
+    `rejected` ledger, and for THIS verb the request is the record: a reject's ids are a request the
+    host may narrow (land, coalesce, refuse one by one — so _reject_trace counts the reply), but the
+    editor's ledger is the decisions already taken there, which the host checks entry by entry and
+    refuses WHOLE on any fault (its requireDecisions: a BadRequest, exit 2, the kernel's host-error)
+    before it writes anything, and logs verbatim as its `reject` entry — an ok reply means exactly
+    these landed. Same owner lookup, same direct backend send, best-effort and loud on failure, as its
+    two siblings; the save itself already succeeded and was acked before this runs."""
+    if int(n or 0) <= 0:
+        _edit_trace(path, sid)
+        return
+    target = _edit_trace_sid(path, sid)
+    if not target:
+        return
+    try:
+        Sessions.backend_for(target).send(target, _save_trace_body(path, n))
+    except Exception as ex:
+        sys.stderr.write("save-trace to %s failed: %s\n" % (target, ex))
 
 
 # ---- FILE COMMENTS (plans/file-review.md, Slice 1). The viewer's comments panel keeps a person's
@@ -31503,16 +31544,23 @@ def _file_comments_call(path, verb, args=None, fence=None):
     start) with the stderr tail. Every caller tests `err` first. argv is a list and the request rides
     stdin: no shell, nothing of the request in a command line.
 
-    Two bounds on what one call can pull through the kernel (the review, 2026-09-06: a `status
+    Three bounds on what one call can pull through the kernel (the review, 2026-09-06: a `status
     {baseline: true}` frame — any authenticated socket, no consent, since status is read-only — made
     the host read a 45 MB file and the kernel hold, parse and re-serialize a 46 MB reply on its own
     thread, one per frame, on the kernel that self-hosts every session; the /file route stats and
     refuses above _TEXT_MAX_BYTES and streams downloads in fixed chunks for exactly this reason).
     `baseline` is the whole file in the reply, so it is refused `too-large` on a STAT before node
     runs when the file is past the text cap: the viewer never loads such a file (/file answers 413),
-    so no consumer of the baseline exists above it. And the host's stdout is read through
-    _run_bounded, which kills the child past _FILE_COMMENTS_REPLY_MAX instead of buffering — a
-    backstop for any verb, present or future, whose answer outgrows what one socket frame may carry."""
+    so no consumer of the baseline exists above it. A `save`'s `content` (Slice 5: the whole new text,
+    the first argument that is a file's worth of text by design) is refused `too-large` past the same
+    cap BEFORE the request is serialized, node spawned or a byte piped: the host enforces the cap, but
+    last — after it has parsed the request, read the file and scanned the text twice — while the frame
+    reader admits up to _WS_MAX_MESSAGE, so every byte of an oversized save was paid for on the kernel
+    that self-hosts the sessions before the refusal (the review, 2026-09-06); nothing legitimate is
+    lost, since the viewer never loads a file past the cap and the host refuses the same text the same
+    way. And the host's stdout is read through _run_bounded, which kills the child past
+    _FILE_COMMENTS_REPLY_MAX instead of buffering — a backstop for any verb, present or future, whose
+    answer outgrows what one socket frame may carry."""
     node = _file_comments_node()
     if not node:
         return None, ("no-node", "cannot open the comments for %s: node is not installed on this machine, "
@@ -31527,6 +31575,17 @@ def _file_comments_call(path, verb, args=None, fence=None):
             return None, ("too-large", "cannot return the baseline of %s: the file on disk is %s, past the %s "
                                        "text cap the viewer loads" % (_tilde(path), _human_bytes(size),
                                                                      _human_bytes(_TEXT_MAX_BYTES)))
+    if verb == "save" and isinstance(args.get("content"), str):
+        # the string's length alone settles it when that already exceeds the cap (a character is at least
+        # one byte: no 60 MB encode to learn what is known); otherwise the exact encoding, at most 8 MB.
+        # `surrogatepass` so the count itself never raises — a lone surrogate is the host's `not-text`.
+        text = args["content"]
+        over = len(text) > _TEXT_MAX_BYTES
+        size = len(text) if over else len(text.encode("utf-8", "surrogatepass"))
+        if size > _TEXT_MAX_BYTES:
+            return None, ("too-large", "cannot save %s: the text is %s%s, past the %s text cap the viewer edits"
+                          % (_tilde(path), "at least " if over else "", _human_bytes(size),
+                             _human_bytes(_TEXT_MAX_BYTES)))
     req = {"verb": verb, "path": path, "args": args, "fence": fence if isinstance(fence, dict) else None}
     try:
         rc, out_b, err_b, overflow = _run_bounded([node, str(_FILE_COMMENTS_HOST)], json.dumps(req),
@@ -31592,8 +31651,20 @@ def _file_comments_op(msg):
     `kernel-only` for log-edit and log-send, the entries the kernel appends itself after a save and
     after a send — the host would take them from anyone, and one client-minted send entry with a
     far-future watermark would hide every later comment from the unsent derivation for the rest of the
-    file's life (the review, 2026-09-06); `no-node` when node is absent (status too: the panel hides
-    the action on it); then the host script."""
+    file's life (the review, 2026-09-06); for `save` (Slice 5: the editor's Save through the host),
+    saveFile's two PATH rules, which the host cannot apply because its checks are bytes (UTF-8 on
+    disk, no NUL, the cap): `not-text` for a name _is_text_path refuses — the same allowlist and the
+    same phrase, so one path is refused or written the same way through both doors (the review,
+    2026-09-06: `authorized_keys`, `data.sqlite-journal` and every extensionless name saveFile
+    refuses were written through here) — and `not-tracked` when no .trackchanges/ sits at or above
+    the file (_trackchanges_above, the predicate saveFile's edit log uses): the verb writes the file
+    TOGETHER with its sidecar, and every sidecar, log and config lives in that directory, so with
+    none there is nothing to write together, the panel never routes a save here (it needs trackedBy
+    or store, both under it), and the host would have written the file anyway and minted a
+    .trackchanges/ holding a log for a file with nothing tracked, which the plan's rule for the
+    `edit` entry excludes (The comments log; the plain Save is the door for such a file); `no-node`
+    when node is absent (status too: the panel hides the action on it); then the host script. The
+    save's size bound sits in _file_comments_call beside the baseline's."""
     rid, verb = msg.get("reqId"), str(msg.get("verb") or "")
 
     def fail(code, error):
@@ -31609,6 +31680,13 @@ def _file_comments_op(msg):
     if verb in _FILE_COMMENTS_KERNEL_VERBS:
         return fail("kernel-only", "cannot run %s on the comments for %s: the kernel appends that entry itself, "
                                    "after a save or a send — it is not a request a client makes" % (verb, _tilde(p)))
+    if verb == "save":
+        if not _is_text_path(p):
+            return fail("not-text", "cannot save %s: not a text file the viewer edits" % _tilde(p))
+        if not _trackchanges_above(p):
+            return fail("not-tracked", "cannot save %s through the comments panel: no .trackchanges/ folder at or "
+                                       "above it, so it has no sidecar to save together with — the viewer's plain "
+                                       "Save writes it" % _tilde(p))
     if not _file_comments_node():
         return fail("no-node", "cannot open the comments for %s: node is not installed on this machine, "
                                "and the comments helper runs under it" % _tilde(p))
@@ -31845,10 +31923,12 @@ def _file_comments_after(msg, rep):
     successful reject or reject-all — the host answered ok and its `rejected` list names the ids it
     resolved — the session whose tree holds the file is told, once, through _reject_trace; after a
     successful `save` (Slice 5: the editor's Save over a tracked file, which the host writes together
-    with the remapped sidecar) it is told through _edit_trace, the SAME trace a saveFile sends — the
-    file changed under the session exactly as a direct edit changes it, and nothing else follows:
-    the host appended the log's `edit` entry itself, so the kernel never calls log-edit here (the
-    Slice 5 contract, H4). Nothing follows any other verb, a refusal, or a reject that resolved nothing
+    with the remapped sidecar) it is told once through _save_trace: the SAME trace a saveFile sends
+    when the editor rejected none of its changes (the file changed under the session exactly as a
+    direct edit changes it), and a body naming how many it rejected otherwise — the request's ledger,
+    which the host applied whole or refused (see _save_trace). Nothing else follows a save: the host
+    appended the log's `edit`, `accept` and `reject` entries itself, so the kernel never calls log-edit
+    here (the Slice 5 contract, H4). Nothing follows any other verb, a refusal, or a reject that resolved nothing
     (an empty list: the file did not change). The count comes from the host's reply, never from the
     client's request (the ids a client ASKED to reject may have landed, coalesced or been refused by
     id), so a successful reject whose reply lacks the list is a contract break between the host and
@@ -31864,7 +31944,9 @@ def _file_comments_after(msg, rep):
     sid = msg.get("sid") or None
     path = _file_comments_path(msg.get("path"), sid) or str(msg.get("path") or "")
     if verb == "save":
-        _edit_trace(path, sid)
+        args = msg.get("args") if isinstance(msg.get("args"), dict) else {}
+        ledger = args.get("rejected")
+        _save_trace(path, sid, len(ledger) if isinstance(ledger, list) else 0)
         return
     rejected = rep.get("rejected")
     if not isinstance(rejected, list):
@@ -40911,7 +40993,8 @@ class Handler(BaseHTTPRequestHandler):
             # and the recv loop must not wait on it. After the reply, like saveFile's trace: a reject
             # or reject-all that changed the file is told to the owning session (_file_comments_after),
             # and Slice 5's save — file and sidecar written together by the host — sends the edit
-            # trace itself, with no log-edit (the host logged); sidecar-only verbs tell it nothing.
+            # trace, or one naming how many of the session's changes the editor rejected, with no
+            # log-edit (the host logged); sidecar-only verbs tell it nothing.
             _file_comments_reply(client, msg, _file_comments_op, "fileCommentsFailed", after=_file_comments_after)
         elif msg and msg.get("type") == "fileCommentsSend":
             # Send to session: the file's unsent comments and decisions as ONE message in the person's

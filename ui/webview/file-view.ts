@@ -570,8 +570,28 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // bundle) — then Edit refuses in the panel's words while anything is pending, without loading the chunk again.
   let trackedEdit: TrackedEdit | null = null;
   let chunkTracks: boolean | null = null;
-  // the decisions the editor holds (an accept changes no text, so the text comparison alone would call the buffer clean)
-  const decided = (): boolean => { const l = cm && cm.track ? cm.track.ledger() : null; return !!l && l.accepted.length + l.rejected.length > 0; };
+  // The chunk's ledger is a fold over every decision since the MOUNT, with no reset (its handle reads only), and a save
+  // whose ack lands over in-flight typing keeps the editor — and with it the ledger — alive (hooks.saved). The host has
+  // applied and logged what that save carried, so `applied` remembers it and `unsent()` is what the next Save may send:
+  // the ledger beyond it. Before this the second Save re-sent the same accept, the host logged it twice, and the Send
+  // confirm counted two accepted changes for one (the review's duplicate-decision finding). An id is matched within its
+  // side: an accept undone and redone after the save sends nothing; an accept undone and turned into a reject sends the
+  // reject, and the log then reads accept, reject — what happened. A landed save moves each id it carried to that side
+  // (mergeApplied), so a third flip is sent again. Reset with the editor (exitEdit): a fresh mount is a fresh ledger.
+  let applied: EditDecisions = { accepted: [], rejected: [] };
+  const beyond = (all: EditDecision[], done: EditDecision[]): EditDecision[] => all.filter((e) => !done.some((d) => d.id === e.id));
+  const unsent = (): EditDecisions => {
+    const l = cm && cm.track ? cm.track.ledger() : null;
+    return l ? { accepted: beyond(l.accepted, applied.accepted), rejected: beyond(l.rejected, applied.rejected) } : { accepted: [], rejected: [] };
+  };
+  const mergeApplied = (sent: EditDecisions): void => {
+    const ids = new Set([...sent.accepted, ...sent.rejected].map((e) => e.id));
+    const keep = (l: EditDecision[]) => l.filter((e) => !ids.has(e.id));
+    applied = { accepted: [...keep(applied.accepted), ...sent.accepted], rejected: [...keep(applied.rejected), ...sent.rejected] };
+  };
+  // the decisions the editor holds that no landed save has carried (an accept changes no text, so the text comparison
+  // alone would call the buffer clean)
+  const decided = (): boolean => { const u = unsent(); return u.accepted.length + u.rejected.length > 0; };
   const isMd = langFor(path) === "markdown";  // .md/.markdown — the only kind with a Rendered form
   const segBtns: Array<["rendered" | "raw", HTMLButtonElement]> = [];
   if (isMd) {
@@ -1031,9 +1051,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const exitEdit = () => {
     editing = false; dirty = false; ta = null;
     cm?.destroy(); cm = null;
+    applied = { accepted: [], rejected: [] };   // the ledger went with the editor; the next mount starts one afresh
     editHooks = null;                           // a cancelled save's late ack must not touch a NEW session
     saveBtn.disabled = false; saveBtn.textContent = "Save";
     renderBody();
+    // a fetch that landed while the editor was up painted nothing (fetchFile): now that the edit is over, read the file
+    // as it is — the exit is the event the dropped bytes were waiting for
+    if (refetchAfterEdit) { refetchAfterEdit = false; fetchFile(); }
   };
   const doSave = () => {
     const buf = bufValue();
@@ -1042,6 +1066,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     saveBtn.disabled = true; saveBtn.textContent = "Saving…";   // acknowledge before the round-trip
     // restore the file's own line endings — an untouched CRLF file must round-trip byte-identical
     const content = eolCRLF ? buf.replace(/\n/g, "\r\n") : buf;
+    // the decisions this save carries (the tracked path below fills it): marked applied when the save lands, so a later
+    // Save from the same editor sends only what came after
+    let sent: EditDecisions | null = null;
     // Loud, in place, and the BUFFER SURVIVES: the error bar sits above the textarea. A conflict
     // (the disk moved — an agent wrote it) offers Reload, which re-opens fresh — behind the same
     // discard confirm, so the user's edits are never thrown away silently (never a merge UI).
@@ -1073,6 +1100,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       saved: (mtNs, logged) => {
         mtimeNs = mtNs;
         text = content;
+        refetchAfterEdit = false;               // the reply is the file as it stands: a fetch dropped under this edit is moot
+        if (sent) mergeApplied(sent);           // the host applied and logged these: no later Save from this editor re-sends them
         // the seam's onSaved: the panel refreshes its Log (the kernel appended the edit before replying)
         for (const cb of savedHooks) { try { cb({ mtimeNs: mtNs, logged }); } catch { /* a hook must never cost the save */ } }
         // The comments-log warning goes up in the note bar, in the kernel's own words (CLAUDE.md:
@@ -1088,6 +1117,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
           saveBtn.disabled = false; saveBtn.textContent = "Save";
           return;
         }
+        // A decision clicked during the round-trip is the same stay with no text moved (an accept changes
+        // none): it is in the ledger beyond what this save carried, and leaving would destroy it with the editor.
+        if (decided()) { dirty = true; saveBtn.disabled = false; saveBtn.textContent = "Save"; return; }
         exitEdit();                             // re-renders the highlighted view from the saved bytes
         noteLog();
       },
@@ -1110,11 +1142,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     editHooks = hooks;
     if (trackedEdit && trackedEdit.routesSave()) {
       // A tracked file, or one with a sidecar (Slice 5): the save goes through the comments host, which writes the file
-      // and the remapped sidecar together — the records as the editor holds them now and the decisions taken in it (an
-      // editor that carried no changes sends none). The panel's promise stands in for the fileSaved reply: the same
-      // hooks, guarded the same way (a Cancel nulls editHooks, so a late answer touches nothing).
+      // and the remapped sidecar together — the records as the editor holds them now and the decisions taken in it that
+      // no earlier save from this editor carried (unsent; an editor that carried no changes sends none). The panel's
+      // promise stands in for the fileSaved reply: the same hooks, guarded the same way (a Cancel nulls editHooks, so a
+      // late answer touches nothing).
       const records = cm && cm.track ? cm.track.suggestions() : [];
-      const decisions: EditDecisions = cm && cm.track ? cm.track.ledger() : { accepted: [], rejected: [] };
+      const decisions = unsent();
+      sent = decisions;
       trackedEdit.save(content, records, decisions).then(
         (r) => { if (editHooks !== hooks) return; editHooks = null; hooks.saved(r.mtimeNs, r.logged); },
         (e: { code?: unknown; error?: unknown }) => {
@@ -1143,7 +1177,27 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // The fetch pipeline, as a function: the open runs it once, and the seam's reload() runs it again
   // (the comments panel's poll saw the file's mtime move — an agent wrote it) with the action row
   // and the aside left standing; only the body and the mtime change.
+  //
+  // What lands is applied in ONE step, headers and bytes together, under two guards — and a fetch that
+  // fails either guard changes nothing, not even the mtime:
+  // - the newest fetch wins (fetchSeq): two reloads in flight land in any order, and the older one's
+  //   bytes must not replace the newer's;
+  // - the editor holds the truth while it is up (editing): its buffer is the text, and `mtimeNs` is the
+  //   file the editor LOADED — the save fence's own value (plans/file-review.md Slice 5). The seam's
+  //   reload() already stands down in edit mode, but a fetch started BEFORE Edit (the poll saw the file
+  //   move, then the person clicked Edit) used to land inside it: `mtimeNs` moved to the newer file while
+  //   the buffer came from the older bytes, so both save doors passed their fence and overwrote a
+  //   session's write silently — the case the fence exists to refuse (the review's fetch-race finding).
+  //   Reading the headers into the state before the bytes had landed opened the same window between the
+  //   two continuations, which is why they are applied together. The dropped bytes are read again when
+  //   the edit ends (exitEdit, refetchAfterEdit): the exit is the event, not a timer.
+  let fetchSeq = 0;
+  let refetchAfterEdit = false;
   const fetchFile = () => {
+    const my = ++fetchSeq;
+    type Verdict = { isText: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };
+    // this fetch's verdicts off the headers, held here until its bytes land and applied with them below
+    let v: Verdict | null = null;
     fetch(fileUrl(path, sid), { cache: "no-store" }).then((r): Promise<string | Blob> => {
       // Every failure says WHY, in the pane, rather than leaving a blank one: the kernel distinguishes
       // "not a type I serve" from "too big" from "not text after all", and that is exactly what the
@@ -1156,19 +1210,26 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // round-trip (the latin-1 fallback re-decodes non-UTF-8 files — saving that back would rewrite
       // every non-ASCII byte, the review's executed repro), anchored by the ns mtime header (an old
       // kernel that sends neither simply gets no Edit button).
-      isText = (r.headers.get("Content-Type") || "").startsWith("text/plain")
+      v = { isText: false, mtimeNs: "", isImage: false, isPdf: false, isSvgImage: false };
+      v.isText = (r.headers.get("Content-Type") || "").startsWith("text/plain")
         && r.headers.get("X-Romp-Text-Utf8") !== "0";
-      mtimeNs = r.headers.get("X-Romp-Mtime-Ns") || "";
+      v.mtimeNs = r.headers.get("X-Romp-Mtime-Ns") || "";
       // Media branches on the SAME kernel verdict (an image 200 wears image/* and no X-Romp-Text-Utf8 —
       // tests/test_kernel_preview.py pins that contract server-side). The bytes below are the one fetch
       // either way: media takes them as a blob for an object URL, never a second request.
       const ct = r.headers.get("Content-Type") || "";
-      isImage = ct.startsWith("image/");
-      isPdf = ct.startsWith("application/pdf");
-      isSvgImage = ct === "image/svg+xml";
+      v.isImage = ct.startsWith("image/");
+      v.isPdf = ct.startsWith("application/pdf");
+      v.isSvgImage = ct === "image/svg+xml";
+      // THIS fetch's flags choose the body's shape; the viewer's own isImage/isPdf still say what shows now
+      const { isImage, isPdf } = v;
       return isImage || isPdf ? r.blob() : r.text();
     }).then((t) => {
       if (!document.getElementById("romp-fileview")) return;    // closed while it was in flight
+      if (my !== fetchSeq) return;                              // a newer fetch is the one that lands
+      if (editing) { refetchAfterEdit = true; return; }         // the editor holds the truth; read again when it ends
+      const got = v!;                                           // set with the headers above; a failure never reaches here
+      isText = got.isText; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage;
       if (t instanceof Blob) {
         // Minted only now — a viewer closed (above) or REPLACED mid-flight creates nothing to leak,
         // and never clobbers the new open's mediaUrlLive registration.
@@ -1194,6 +1255,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       renderBody();
     }).catch((err) => {
       if (!document.getElementById("romp-fileview")) return;
+      if (my !== fetchSeq) return;                              // the same guards as a landing: an older failure paints over nothing…
+      if (editing) { refetchAfterEdit = true; return; }         // …and never over the editor's host (the exit re-reads and says why then)
       const why = el("div", "fileview-err");
       const msg = String(err && err.message || err);
       why.textContent = msg;
