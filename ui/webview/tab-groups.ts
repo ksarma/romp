@@ -300,7 +300,13 @@ export function tagRenames(prev: SessionViews | null | undefined, next: SessionV
  *  local blob (remoteTags, the kernel's cached read of the host) with no change to the blob's write
  *  seq, so no seq could name it; and a tag renamed back and then forth again is followed each time,
  *  each being to a name the memory does not hold for it. Every rename the frame carries is remembered,
- *  matched or not, and the memory is pruned to the tags the blob still has. Returns `st` itself when
+ *  matched or not, and the memory is pruned to the tags the blob still has — PER HOST: a local tag's
+ *  entry goes when the local store lacks its id, a remote tag's (`host:tid`) when its host is in the
+ *  blob without it (a deleted tag); a remote id whose host contributes no tag at all is KEPT, since the
+ *  blob cannot say whether the tag is gone or the host is — a detach pops the host's cached read (a
+ *  DOWN host's stays), and a reattach's tabs can run one supervisor pass ahead of it — and a rename
+ *  followed in that window would otherwise erase the memory of the host's renames, for a stale pane
+ *  to re-apply one after the reattach (round 6 of the 2026-09-06 review). Returns `st` itself when
  *  every rename is already followed — the late pane writes nothing and notifies no one.
  *
  *  THE LIMIT: a remote-only pin has no id, so a rename of the remote tag that happens while no client
@@ -328,9 +334,15 @@ export function followTagRenames(st: TabGroupsState, renames: readonly TagRename
       if (rest) put(pinEntry(sectionRef(rest), p.sid));
     }
   }
+  // the memory, pruned per host (the doc above): an id stands while the blob carries it, or while it is
+  // a remote host's and the blob carries none of that host's tags
   const live = new Set(unions.flatMap((u) => u.ids));
+  const present = new Set([...live].map(hostOf).filter((h) => h !== ""));
   const followed: Record<string, string> = {};
-  for (const [id, name] of Object.entries(st.followed || {})) if (live.has(id)) followed[id] = name;
+  for (const [id, name] of Object.entries(st.followed || {})) {
+    const h = hostOf(id);
+    if (live.has(id) || (h !== "" && !present.has(h))) followed[id] = name;
+  }
   for (const r of fresh) followed[r.id] = r.to;
   return { ...st, pinned: out, followed };
 }

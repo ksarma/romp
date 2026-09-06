@@ -701,7 +701,7 @@ test("executed: MIRROR B — a remote pin, then a local same-name tag comes to h
   assert.deepEqual(followTagRenames(other, tagRenames(withB, withBRenamed), viewTagUnion(withBRenamed)).pinned, other.pinned, "g9 does not hold B's member: untouched");
 });
 
-test("executed: a rename is followed ONCE PER BROWSER — the store remembers, by tag id, the name each renamed tag's pins were carried to, so a pane adopting the frame late (after the user turned a pin off), or a later frame from a stale base, or a same-seq frame carrying a remote rename already followed, changes nothing; a rename back and then forth follows each time; a frame whose renames match no pin is remembered too; the memory is pruned to live tags and round-trips", () => {
+test("executed: a rename is followed ONCE PER BROWSER — the store remembers, by tag id, the name each renamed tag's pins were carried to, so a pane adopting the frame late (after the user turned a pin off), or a later frame from a stale base, or a same-seq frame carrying a remote rename already followed, changes nothing; a rename back and then forth follows each time; a frame whose renames match no pin is remembered too; the memory is pruned to live tags per host and round-trips", () => {
   // local infra (g7) holds web and api; host A's infra holds web too — the rename SPLITS the section
   const A = rt("TESTHOST-A", "t1", "infra", ["web"]);
   const local = (name: string, members = ["web", "api"]) => ({ id: "g7", name, color: "#4EC9B0", members });
@@ -756,9 +756,11 @@ test("executed: a rename is followed ONCE PER BROWSER — the store remembers, b
   // a permuted store changes nothing either: the memory, not the entries' order, is what the late pane reads
   const permuted = { ...st1, pinned: [...st1.pinned].reverse() };
   assert.equal(followTagRenames(permuted, tagRenames(V0, V1), u1), permuted);
-  // the memory is pruned to the tags the blob still has
-  const stale = { ...st1, followed: { g7: "ops", g99: "gone", "TESTHOST-Z:t9": "gone" } };
-  assert.deepEqual(followTagRenames(stale, tagRenames(V1, R1), viewTagUnion(R1)).followed, { g7: "ops", "TESTHOST-A:t1": "platform" }, "g99 and Z's tag are in no union: dropped");
+  // the memory is pruned to the tags the blob still has, per host (the next test): a local id the store lacks and a
+  // remote id its host no longer lists go; a host in no union at all keeps its entries
+  const stale = { ...st1, followed: { g7: "ops", g99: "gone", "TESTHOST-A:t9": "gone", "TESTHOST-Z:t9": "away" } };
+  assert.deepEqual(followTagRenames(stale, tagRenames(V1, R1), viewTagUnion(R1)).followed, { g7: "ops", "TESTHOST-A:t1": "platform", "TESTHOST-Z:t9": "away" },
+    "g99 is in no union and A lists no t9: dropped; Z contributes no tag — detached, or not yet read — so its memory waits with it");
   // it persists beside the pins, reads back, and junk drops
   assert.deepEqual(parseTabGroups('{"followed":{"g7":"ops","g8":3,"x":null}}').followed, { g7: "ops" });
   assert.equal(parseTabGroups('{"followed":["g7"]}').followed, undefined);
@@ -776,6 +778,46 @@ test("executed: a rename is followed ONCE PER BROWSER — the store remembers, b
   } finally {
     g.localStorage = savedLS;
   }
+});
+
+test("executed: the follow's memory is pruned PER HOST — a detached host's tag keeps its memory through the renames followed while it is away, so a stale pane adopting the reattach frame stands down; a down host's (tags cached) too; a deleted tag's goes, local or on a host the blob still lists", () => {
+  // local infra (g7) holds web and api, local x (g8) holds tests; host A's infra (t1) holds web too
+  const A = rt("TESTHOST-A", "t1", "infra", ["web"]);
+  const g7 = { id: "g7", name: "infra", color: "#4EC9B0", members: ["web", "api"] };
+  const g8 = (name: string) => ({ id: "g8", name, color: "#e0af68", members: ["tests"] });
+  const V0 = { active: "all", tags: [g7, g8("x")], remoteTags: [A], seq: 4 };
+  const R1 = { ...V0, remoteTags: [{ ...A, name: "platform" }] };                        // A renames t1 (a remote rename: no seq change)
+  const D = { ...R1, remoteTags: [] };                                                    // A detaches: the kernel pops its cached tags
+  const D2 = { ...D, tags: [g7, g8("y")], seq: 5 };                                      // while A is away, a local rename: x → y
+  const V4 = { ...D2, remoteTags: [{ ...A, name: "platform" }], tagOrder: ["platform", "infra", "y"] };   // A is back, still platform, dragged first
+  const vis = ["web", "api", "tests", "loose"];
+  let st = foldAll(parseTabGroups(null), "infra", "platform", "y");
+  st = setPinned(st, secOf(viewTagUnion(V0), "infra"), "web", true);
+  // pane 1 follows A's rename; the user turns the platform half off
+  const st1 = followTagRenames(st, tagRenames(V0, R1), viewTagUnion(R1));
+  assert.deepEqual(st1.pinned, [{ sid: "web", name: "infra", id: "g7" }, { sid: "web", name: "platform" }]);
+  const off = setPinned(st1, secOf(viewTagUnion({ ...R1, tagOrder: ["platform"] }), "platform"), "web", false);
+  assert.deepEqual([off.pinned, off.followed], [[{ sid: "web", name: "infra", id: "g7" }], { "TESTHOST-A:t1": "platform" }]);
+  assert.equal(followTagRenames(off, tagRenames(R1, D), viewTagUnion(D)), off, "the detach frame renames nothing");
+  // ROUND 6's BUG: the x → y follow, with A away, pruned the memory to the blob's tags — and A's went with them
+  const away = followTagRenames(off, tagRenames(D, D2), viewTagUnion(D2));
+  assert.deepEqual(away.pinned, off.pinned, "no pin names x");
+  assert.deepEqual(away.followed, { "TESTHOST-A:t1": "platform", g8: "y" }, "A's memory stands: the blob carries none of A's tags, so it cannot say the tag is gone");
+  // A reattaches. A background pane whose held blob predates A's rename adopts the frame and computes
+  // infra → platform again — already followed, so it stands down, and web stays folded away under platform
+  assert.equal(followTagRenames(away, tagRenames(V0, V4), viewTagUnion(V4)), away, "the stale pane stands down");
+  assert.deepEqual(strip(vis, viewTagUnion(V4), away, "loose"), [["#platform(folded)", "#infra(folded)", "#y(folded)", "#null", "loose"], ["web", "api", "tests"]]);
+  assert.deepEqual(followTagRenames({ ...away, followed: { g8: "y" } }, tagRenames(V0, V4), viewTagUnion(V4)).pinned, [{ sid: "web", name: "infra", id: "g7" }, { sid: "web", name: "platform" }],
+    "(without A's memory, the late pane re-applies the pin the user turned off)");
+  // A DOWN instead of detached: the kernel keeps a down host's cached tags in the blob, so its ids are live and the memory stood already
+  const downV = { ...R1, tags: [g7, g8("y")], seq: 5 };
+  assert.deepEqual(followTagRenames(off, tagRenames(R1, downV), viewTagUnion(downV)).followed, { "TESTHOST-A:t1": "platform", g8: "y" });
+  // a deleted tag's memory goes — a local id the store lacks, a remote id its host (in the blob) no longer lists —
+  // while a host in no union keeps every entry of its own
+  const stale = { ...away, followed: { ...away.followed, g99: "gone", "TESTHOST-A:t9": "gone", "TESTHOST-Z:t9": "away" } };
+  const V5 = { ...V4, tags: [g7, g8("z")], seq: 6 };
+  assert.deepEqual(followTagRenames(stale, tagRenames(V4, V5), viewTagUnion(V5)).followed, { "TESTHOST-A:t1": "platform", g8: "z", "TESTHOST-Z:t9": "away" },
+    "g99 is not in the local store and A lists no t9: dropped; Z contributes no tag, so its memory waits with it");
 });
 
 test("executed: a REMOTE host's rename of a MIXED section — the entry carries the local id, and the remote tag's new name gains a half while the local tag holds the tab under the old, as a local rename keeps the old-name half: pinned under either drag order, and when the new name already sits ahead in tagOrder the tab's home moves on the frame and stays on the strip", () => {
