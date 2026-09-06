@@ -746,8 +746,8 @@ one screen: pusher cycles and wakes per second, cycle time percentiles, the
 share of cycle time in each stage, CPU split between the pusher thread, the
 judge threads and the rest of the process, builds served from cache against
 rebuilds, bytes sent per slot as full frames, deltas and deduplicated frames,
-goal-store loads and writes per second, judge passes and their durations,
-memory and thread count. `romp perf --json` prints one raw snapshot. If the
+goal-store loads and writes per second, judge passes and their durations
+with the chain memo's hits and misses, memory and thread count. `romp perf --json` prints one raw snapshot. If the
 kernel restarted between the two snapshots the counters have started over, so
 the command says so and exits non-zero instead of printing negative rates; a
 refused token is reported as such, not as a dead kernel.
@@ -778,7 +778,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   previous call.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
-  per-session worker they run; the workers' share is `cpu_ms_workers`).
+  per-session worker they run; the workers' share is `cpu_ms_workers`), and
+  `chain_memo` with `hit`, `miss`, `populate`, `bypass`: the memo behind the
+  write-moment chain check, which asks before every planner mint whether the
+  prompt sits on a rewound-away branch. A hit served a memoized check, a miss
+  built one, a populate stored one (a build that failed is a miss with no
+  populate), and a bypass built without memoizing because an input file could
+  not be stat'd.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys

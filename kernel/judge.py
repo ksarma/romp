@@ -2095,7 +2095,14 @@ def _chain_key(path, cands, states):
     candidates and the states file first, then read the states rows once for the resume links the
     lineage closure needs, then stat the from-files the closure added. Every file the adapter will
     read is stat'd before it is read, so a key can never match a later call whose content this
-    build did not see (see the note at _CHAIN_MEMO). Raises OSError when any stat fails."""
+    build did not see (see the note at _CHAIN_MEMO). Raises OSError when any stat fails.
+
+    Two of the four components do the work and two are redundant guards: `fk` (the candidates' and
+    the states file's stats) moves on an append, a states row and an anchor appearing; the closure
+    moves when a from-file joins or vanishes. The candidate tuple repeats what `fk`'s length and
+    entries already say, and the from-file stats cover a rewrite of files the CLI never writes
+    again after their fork; both are kept because a stat costs nothing and the key must not depend
+    on that reasoning staying true."""
     fk = _fileset_key(list(cands) + ([states] if states else []))
     links = em.resume_fork_links(em._load_states(states))
     closure = em._lineage_closure(Path(path), cands, links)

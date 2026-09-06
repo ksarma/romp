@@ -533,7 +533,9 @@ class WriteMomentStandDown(Base):
 class ChainMemo(Base):
     """The write-moment chain memo (perf plan B1, 2026-09-06): _rewound_away answers an unchanged
     session without a second FileAdapter, and every input the adapter reads busts the memo — a
-    transcript append, a states resumeFork row (the lineage closure), the pending cut. A build that
+    transcript append, a states resumeFork row (by the states file's own stat, and by the lineage
+    closure it grows), a from-file leaving that closure, the pending cut — and the key is taken
+    before the build reads, so a write that lands mid-build is never sealed under it. A build that
     raises and a key that cannot be stat'd never memoize; reconcile_rewound_goals shares the on-disk
     slot; entries evict oldest-used at the cap and _rebind_state clears them."""
 
@@ -589,6 +591,70 @@ class ChainMemo(Base):
         self.assertEqual(len(self.built), 2)
         self.assertEqual(jd._rewound_away(SID, str(self.path), "u2"), "durable")
         self.assertEqual(len(self.built), 2, "the stitched world is memoized too")
+
+    def test_a_states_row_whose_from_file_is_already_the_anchor_invalidates_by_its_stat_alone(self):
+        # the common first-hop shape: the SDK's resume fork records from=<the stable sid>, and
+        # _judge_candidates already carries <sid>.jsonl as the anchor, so the row adds NOTHING to
+        # the lineage closure — only the states file's (mtime, size) in the key moves, and that
+        # has to be enough on its own
+        self.write(self.base_recs() + self.fork_recs())                 # SID.jsonl: the anchor
+        other = "33333333-4444-5555-6666-777777777777"
+        leaf = self.td / (other + ".jsonl")
+        leaf.write_text("\n".join(json.dumps(r) for r in [
+            uline(T0 + 100, "continues after the machine cut", "u5", None),
+            aline(T0 + 110, "Stitched reply.", "a5", "u5")]) + "\n")
+        jd.STATESDIR.mkdir(parents=True, exist_ok=True)
+        states = jd.STATESDIR / (SID + ".jsonl")
+        states.write_text(json.dumps({"t": T0 + 80, "note": "an unrelated synthetic states row"}) + "\n")
+        self.assertFalse(jd._rewound_away(SID, str(leaf), "u2"), "no link yet: u2 sits in the anchor's own graph")
+        self.assertEqual(len(self.built), 1)
+        with open(states, "a") as f:
+            f.write(json.dumps({"resumeFork": {"from": SID, "to": other}, "t": T0 + 90}) + "\n")
+        self.assertEqual(jd._rewound_away(SID, str(leaf), "u2"), "durable",
+                         "the stitch re-points the fresh head at the anchor's tip, behind which u2 is rewound")
+        self.assertEqual(len(self.built), 2, "the states stat alone busted the memo")
+
+    def test_a_from_file_that_vanishes_invalidates_through_the_closure(self):
+        # the lineage closure's own channel: the from-file is not a candidate and nothing writes
+        # the states file, so neither the candidates' stats nor the states stat move — only the
+        # closure (with the from-file stats it carries) can bust the key
+        frm = "22222222-3333-4444-5555-666666666666"
+        (self.td / (frm + ".jsonl")).write_text(
+            "\n".join(json.dumps(r) for r in self.base_recs() + self.fork_recs()) + "\n")
+        self.write([uline(T0 + 100, "continues after the machine cut", "u5", None),
+                    aline(T0 + 110, "Stitched reply.", "a5", "u5")])
+        jd.STATESDIR.mkdir(parents=True, exist_ok=True)
+        (jd.STATESDIR / (SID + ".jsonl")).write_text(
+            json.dumps({"resumeFork": {"from": frm, "to": SID}, "t": T0 + 90}) + "\n")
+        self.assertEqual(jd._rewound_away(SID, str(self.path), "u2"), "durable")
+        self.assertEqual(jd._rewound_away(SID, str(self.path), "u2"), "durable")
+        self.assertEqual(len(self.built), 1)
+        (self.td / (frm + ".jsonl")).unlink()
+        self.assertFalse(jd._rewound_away(SID, str(self.path), "u2"), "no from-file: u2 is unknown again")
+        self.assertEqual(len(self.built), 2, "the closure lost a file and the key moved with it")
+        self.assertFalse(jd.ERRORS.exists() and "chain-check" in jd.ERRORS.read_text(),
+                         "a clean rebuild, not a failed one answering False")
+
+    def test_the_key_is_taken_before_the_build_reads(self):
+        # a rewind that lands DURING a build (after the key's stats, while the adapter reads) is
+        # never sealed under that key: the next call re-stats, sees the append and rebuilds,
+        # instead of serving a pre-append verdict as the post-append world's
+        self.write(self.base_recs())
+        orig = em.chain_membership
+
+        def append_mid_build(*a, **k):
+            out = orig(*a, **k)
+            em.chain_membership = orig                          # once: the racing writer
+            self.append(self.fork_recs())
+            return out
+        em.chain_membership = append_mid_build
+        try:
+            self.assertFalse(jd._rewound_away(SID, str(self.path), "u2"), "built from the pre-append records")
+        finally:
+            em.chain_membership = orig
+        self.assertEqual(jd._rewound_away(SID, str(self.path), "u2"), "durable",
+                         "the key predates the append, so the next call's stat misses and rebuilds")
+        self.assertEqual(len(self.built), 2)
 
     def test_arming_and_clearing_the_cut_each_answer_fresh(self):
         self.write(self.base_recs())
