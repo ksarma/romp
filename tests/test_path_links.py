@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Chat file links are filesystem-VERIFIED, and shortened mentions are FIXED (the user 2026-08-09).
 
-The client linkifies path-shaped tokens by shape alone (render.ts CLICKABLE_PATH_RE), so a bare
+The client linkifies path-shaped tokens by shape alone (path-links.ts CLICKABLE_PATH_RE), so a bare
 `render.js` in a reply became a blue link that 404'd on click — the token resolved against the
 session's cwd, where no such file lives. The kernel is the machine with the filesystem, so at
 message-build time it resolves every shape-matched token in three tiers (exact stat; unique
@@ -18,6 +18,7 @@ tests/fixtures/path_token_parity.json. Synthetic fixtures only.
 """
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -192,9 +193,9 @@ class RepoListEdges(_Repo):
 
 
 class TokenizerParity(unittest.TestCase):
-    """The Python port and render.ts CLICKABLE_PATH_RE must agree on what a token IS — the map's keys
-    are what the client looks up, so a tokenizer drift silently unlinks. The client side of the same
-    fixture runs in chat-path-links.test.ts."""
+    """The Python port and path-links.ts CLICKABLE_PATH_RE must agree on what a token IS — the map's
+    keys are what the client looks up, so a tokenizer drift silently unlinks. The client side of the
+    same fixture runs in chat-path-links.test.ts."""
 
     def test_the_shared_fixture_tokenizes_identically(self):
         with open(os.path.join(HERE, "fixtures", "path_token_parity.json")) as f:
@@ -202,6 +203,31 @@ class TokenizerParity(unittest.TestCase):
         self.assertGreaterEqual(len(cases), 10, "the fixture is the parity surface — keep it broad")
         for c in cases:
             self.assertEqual(km._path_tokens(c["text"]), c["tokens"], c["text"])
+
+
+class ParityPointers(unittest.TestCase):
+    """The docstrings above send a maintainer to the client file that owns CLICKABLE_PATH_RE, and that
+    file must still define it. Slice 0 of plans/file-review.md moved the regex from render.ts into
+    ui/webview/path-links.ts; the kernel's comments were repointed (pinned by
+    tests/test_kernel_path_token_pointer.py) while this module's docstrings kept naming render.ts, and
+    no test read them — TokenizerParity runs the fixture's tokens and never looks at where the client
+    half lives. Same pointer shape and the same check as the kernel's, over this module's own source."""
+
+    # every "<file>.ts CLICKABLE_PATH_RE" pointer in this module, by the .ts basename it names
+    POINTER_RE = re.compile(r"(?:[\w\-]+/)*([\w\-]+\.ts) CLICKABLE_PATH_RE")
+
+    def test_this_modules_pointers_name_the_file_that_defines_the_regex(self):
+        with open(os.path.realpath(__file__), encoding="utf-8") as f:
+            named = sorted(set(self.POINTER_RE.findall(f.read())))
+        self.assertTrue(named, "this module names the client file that owns CLICKABLE_PATH_RE")
+        webview = os.path.join(os.path.dirname(HERE), "ui", "webview")
+        for name in named:
+            target = os.path.join(webview, name)
+            self.assertTrue(os.path.isfile(target), "%s names a file that does not exist" % name)
+            with open(target, encoding="utf-8") as f:
+                defines = "export const CLICKABLE_PATH_RE" in f.read()
+            self.assertTrue(defines,
+                            "%s no longer defines CLICKABLE_PATH_RE; this module's pointer is stale" % name)
 
 
 class BuildSessionWiring(unittest.TestCase):

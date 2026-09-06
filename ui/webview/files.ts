@@ -43,7 +43,7 @@ function writeStore(): void { try { localStorage.setItem(RECENT_KEY, JSON.string
 /** Open `path` here: cache the identity so the chip resolves, open the shared viewer, and record the file
  *  as recent only when the open really happened (a dirty-edit veto keeps the previous viewer up).
  *  `todoId` is the user todo a Waiting-on-you detail link opened it from (the relay carries it; the recent
- *  list does not — a re-open is no longer that ask). */
+ *  list does not — a re-open is no longer that todo). */
 function openHere(path: string, sid: string | null, identity: FileViewIdentity | null, todoId: string | null = null): void {
   if (sid && identity) identities.set(sid, identity);
   if (!openFileView(path, sid, { todoId })) return;

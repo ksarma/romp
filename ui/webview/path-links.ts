@@ -73,7 +73,7 @@ function pathLinkRelease(e: Event): void {
 // `relative` bare paths are resolved against a session's cwd by whoever opens them — a relative
 // `design/foo.md` is relative to the repo the agent runs in, not the kernel's cwd (the user 2026-07-06);
 // `sid` names that session when the text belongs to one other than the host's active one — a todo's
-// note is written by the session that flagged it, wherever it is read.
+// detail is written by the session that filed it, wherever it is read.
 export function openPathLink(raw: string, open: string, relative = false, sid?: string | null): HTMLElement {
   const a = el("span", "file-uri-link");
   a.textContent = raw;                       // shown exactly as written, selectable/copyable in place
@@ -141,7 +141,7 @@ function trailingPunct(tok: string): [string] | null {
 // both path arms scan to the run's end and back before failing — quadratic in the run's length: one
 // slash plus a 40K-character run of hex, words or dashes (a hash, a separator line, a minified dump)
 // cost 3-5 s, per text node, on the main thread. A todo's detail has no length cap, and the
-// Waiting-on-you pane re-links every session's detail on every feed frame, so one session's note could
+// Waiting-on-you pane re-links every session's detail on every feed frame, so one session's detail could
 // freeze the pane for every reader. The regex's text is the kernel's parity contract and stays; this
 // drives it in linear time. It tries the three arms in the regex's own order at each position, as
 // sticky regexes cut from the one source, and remembers what a failure PROVES about the positions ahead:
@@ -207,7 +207,7 @@ export interface PathLinkHit { el: HTMLElement; open: string; verified: boolean 
 // shortened mention to its real file). When the map is present, a token links ONLY if it's in the map,
 // and it opens the map's value — so `render.js` in prose stops 404ing, and hover shows the real target.
 // Every shape gate still applies; the map only ever narrows. No map at all (an old kernel, a cached
-// payload, a surface the kernel never judged — a todo's note) keeps shape-only linking.
+// payload, a surface the kernel never judged — a todo's detail) keeps shape-only linking.
 // file:// URIs are explicit absolute paths — never gated on the map.
 // Returns the hits in document order, so a caller's "first mention" is the walk's first.
 export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLinks?: Record<string, string>): PathLinkHit[] {

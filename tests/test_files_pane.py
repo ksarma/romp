@@ -205,7 +205,7 @@ class Relay(unittest.TestCase):
     def test_the_pane_branch_forwards_the_todo_id_and_the_feed_route_does_not(self):
         """The Waiting-on-you pane's detail link (plans/file-review.md, Slice 0) posts the same viewFile with
         `todoId` — the user todo the path came from; the shell forwards it as-is (null for a chat click, which
-        carries none) so the viewer can tie its work back to the ask. The feed route, which no todo link
+        carries none) so the viewer can tie its work back to the todo. The feed route, which no todo link
         uses, forwards path + sid only, as before."""
         js = km._LANDING_SETTINGS_JS
         head = "if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');"
@@ -219,6 +219,23 @@ class Relay(unittest.TestCase):
         files = (UI / "files.ts").read_text()
         self.assertIn('typeof m.todoId === "string" ? m.todoId : null', files)
         self.assertIn("openFileView(path, sid, { todoId })", files)
+
+    def test_the_relay_comment_names_the_todo_id_referent_a_user_todo_never_an_ask(self):
+        """CONTEXT.md (User todo, Avoid) lists "ask" because the feed payload's `asks` field already means the
+        card list. The relay comment above the pane branch is where the shell defines `todoId`; the round-1
+        review found it saying the viewer ties its work back to "the ask" and the fix commit reworded it to
+        "the todo" (ui/webview/file-view-vocab.test.ts pins the viewer's twin). This pins the shell's, so the
+        two definitions a reader sees side by side cannot drift apart again."""
+        js = km._LANDING_SETTINGS_JS
+        head = "if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');"
+        lines = js.split(head)[0].rstrip("\n").split("\n")
+        start = len(lines)
+        while start > 0 and lines[start - 1].lstrip().startswith("//"):
+            start -= 1
+        comment = "\n".join(lines[start:])
+        self.assertIn("todoId", comment, "the comment directly above the pane branch defines todoId")
+        self.assertRegex(comment, r"\buser todo\b", "todoId is the user todo the path came from")
+        self.assertNotRegex(comment, r"(?i)\bask\b", "CONTEXT.md (User todo, Avoid): `asks` already means the feed's card list")
 
     def test_the_feed_route_is_the_else_branch_and_unchanged(self):
         js = km._LANDING_SETTINGS_JS

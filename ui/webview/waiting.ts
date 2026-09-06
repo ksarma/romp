@@ -112,27 +112,36 @@ function linkDetailPaths(node: HTMLElement, sid: string): void {
 // forwards this whole message into it (kernel.py's landing shell; files.ts opens the viewer). The
 // identity is the row's own chip (name + colour — the pane has no session list to name the file's
 // session by; a row with no name sends null and the viewer falls to the kernel's stub); todoId names the
-// ask the file was opened from, so the viewer can tie its work back to it.
-// Then the keyboard goes with the file. A keydown never crosses an iframe boundary, and the viewer's only
+// user todo the file was opened from, so the viewer can tie its work back to it.
+// Then focus moves to the Files pane. A keydown never crosses an iframe boundary, and the viewer's only
 // keyboard close is a document-level Escape in the Files document — so with focus left here, the Escape a
 // keyboard user pressed after opening a file (Enter on a focused link) closed the Reply modal and left the
 // viewer up (the 2026-09-06 review). The panes are same-origin siblings, so this pane focuses the Files
 // pane's window itself, the way the shell's Alt+Arrow nav does (focusPane in _LANDING_FOCUS_JS:
 // contentWindow.focus(), which also moves the shell's focus ring). No text field loses anything: the link
-// already held this document's focus (a click focuses the tabIndex span; Enter came from it). A window
-// focus lands even while the pane is still display:none — the shell's bring-forward runs a task later —
-// so the two calls are not a race (waiting-link-focus.test.ts drives both in a browser). Alt+Left comes
+// already held this document's focus (a click focuses the tabIndex span; Enter came from it). The pane
+// must be ON SCREEN first: Firefox refuses to focus the window of a display:none frame (Chromium does not,
+// which hid this), and the shell's relay brings the pane forward only when the posted message reaches it,
+// a task after this call. So this pane brings it forward itself, through the shell's own pane toggle
+// (window.__rompPaneToggle, the call the relay makes — the relay's then finds nothing to change), and
+// focuses after that; a shell without the toggle gets the focus call as before (the review's round 3;
+// waiting-pane-browser.test.ts drives this in Firefox and Chromium with the pane closed). Alt+Left comes
 // back; an open Reply modal then takes the focus back into its box (showReply). The iframe check is against
 // the PARENT document's HTMLIFrameElement: an element of another document is never an instance of this
-// document's constructor, so a check against this one's would focus nothing. A plain instanceof, not a
-// cast, because user-todo-links.test.ts executes this body as it stands.
+// document's constructor, so a check against this one's would focus nothing. Plain JS in the body — no
+// cast, no annotation — because user-todo-links.test.ts executes it as it stands; the shell's toggle is
+// typed on Window below for that reason (palette-main.ts's chatPost reveals-then-focuses the same way).
+declare global { interface Window { __rompPaneToggle?: (key: string, to?: boolean) => void } }
 function openTodoPath(path: string, sid: string, todoId: string): void {
   const r = rows.find((x) => x.sid === sid);
   const identity = r && r.name ? { name: r.name, color: r.color } : null;
   try { window.parent.postMessage({ romp: "viewFile", pane: "pane", path, sid, identity, todoId }, "*"); } catch { /* not in the shell */ }
   try {
-    const pd = window.parent.document, ff = pd.getElementById("f-files");
-    if (pd.defaultView && ff instanceof pd.defaultView.HTMLIFrameElement) ff.contentWindow?.focus();
+    const pd = window.parent.document, ff = pd.getElementById("f-files"), shell = pd.defaultView;
+    if (shell && ff instanceof shell.HTMLIFrameElement) {
+      if (typeof shell.__rompPaneToggle === "function") shell.__rompPaneToggle("files", true);
+      ff.contentWindow?.focus();
+    }
   } catch { /* a parent this pane cannot read is not the shell */ }
 }
 
@@ -182,7 +191,7 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
   const send = el("button", "picker-action confirm-btn"); send.textContent = "Send";
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
-  // A link in the quoted detail hands the keyboard to the Files pane (openTodoPath). When it comes back —
+  // A link in the quoted detail moves focus to the Files pane (openTodoPath). When focus comes back —
   // Alt+Left, a click into this pane — the document's focus has been reset to its body, BEHIND this
   // overlay, where Tab would walk the covered rows before reaching the box. The modal is the topmost thing
   // on the pane, so it takes the focus back into its box, where the answer goes (Shift+Tab still reaches
@@ -283,11 +292,31 @@ function hostLine(h: string): HTMLElement {
   return line;
 }
 
+// While a pointer is PRESSED on the list, re-renders are HELD and flushed after the release (the tab
+// strip's and the timeline's idiom: render.ts tabPointerHeld, romp-timeline-view.js _pointerHeld). render()
+// does list.replaceChildren() on every call, and a rebuild between mousedown and mouseup on a row's control
+// detaches the pressed node: the native click then never fires (the released node shares no ancestor with a
+// detached one), so the delegate below never runs — the link, Reply or Dismiss flashes nothing and opens
+// nothing (ui/CLAUDE.md, click safety; the 2026-09-06 review). Two rebuilds land mid-press: a feed frame
+// (the pane rebuilds on any session's push while sessions work) and the disarm below, which re-renders
+// SYNCHRONOUSLY on the pointerdown that starts the very press whose click it then loses. The flush waits a
+// tick: the click dispatches right after pointerup, and must fire against the still-present node first.
+// Every press must reach a release — pointerup, pointercancel, or the window losing focus (released over
+// another frame, where this document sees no pointerup) — or the hold defers rebuilds until the next press.
+let listPointerHeld = false;
+let renderPendingWhilePressed = false;
+function releaseList(): void {
+  if (!listPointerHeld) return;
+  listPointerHeld = false;
+  if (renderPendingWhilePressed) { renderPendingWhilePressed = false; setTimeout(() => render(), 0); }
+}
+
 function render(): void {
   const head = document.getElementById("waiting-head");
   const list = document.getElementById("waiting-list");
   if (!head || !list) return;
   if (!loaded) return;   // the rows have not been built yet: leave the list empty so the romp loader holds
+  if (listPointerHeld) { renderPendingWhilePressed = true; return; }   // pressed: the release flushes (releaseList)
   const items = flatten();
   const now = nowSec();
   const title = el("span", ""); title.textContent = "Waiting on you";
@@ -427,13 +456,19 @@ onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
   });
   // A tap anywhere that is NOT an armed Dismiss button disarms — one persistent listener, so it survives
   // every re-render (a per-node listener would die with the rebuilt row). Covers both pointer kinds: the
-  // arming tap is on the button (target is the armed .ut-dismiss), so it never self-cancels.
+  // arming tap is on the button (target is the armed .ut-dismiss), so it never self-cancels. A press on the
+  // list is latched FIRST, in this same listener: the disarm's render() then defers to the release instead
+  // of detaching the node under the pointer before its click (listPointerHeld, above render).
   document.addEventListener("pointerdown", (ev) => {
-    if (!armedDismiss.size) return;
     const t = ev.target as HTMLElement | null;
+    if (t && list.contains(t)) listPointerHeld = true;
+    if (!armedDismiss.size) return;
     if (t && t.closest(".ut-dismiss.armed")) return;
     armedDismiss.clear(); render();
   }, true);
+  window.addEventListener("pointerup", releaseList);
+  window.addEventListener("pointercancel", releaseList);
+  window.addEventListener("blur", releaseList);   // released over another frame: no pointerup reaches this document
 })();
 
 // keep every "Xm ago" honest between frames: a quiet board sends a delta client nothing, so the ages

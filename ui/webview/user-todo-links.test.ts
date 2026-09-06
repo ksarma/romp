@@ -219,7 +219,7 @@ test("the shell forwards todoId into the Files pane; files.ts hands it to the vi
   assert.match(FILES, /openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null\);/);
   assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null\): void \{/);
   assert.match(FILES, /if \(!openFileView\(path, sid, \{ todoId \}\)\) return;/);
-  assert.doesNotMatch(FILES, /rememberRecent\([^)]*todoId/, "the recent list does not remember the ask — a re-open is no longer that todo");
+  assert.doesNotMatch(FILES, /rememberRecent\([^)]*todoId/, "the recent list does not remember the user todo — a re-open is no longer that todo");
   assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null \}\): boolean \{/);
   assert.match(VIEW, /export interface FileViewActionCtx \{ path: string; sid: string \| null; todoId\?: string \| null; \}/);
   assert.match(VIEW, /const n = a\.mount\(\{ path, sid: sid \|\| null, todoId: opts\?\.todoId \?\? null \}\);/);
