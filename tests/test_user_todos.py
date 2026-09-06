@@ -1032,7 +1032,7 @@ class DeliveryKeyedStamp(_StoreSandbox):
 
     def test_the_drain_delivers_and_stamps(self):
         tid, _ = self._park_an_answer()
-        km._compacting_now = lambda sid: False        # compaction ended — the FIFO may drain
+        km._compacting_now = lambda sid, **k: False        # compaction ended — the FIFO may drain
         be = _FakeBackend()
         saved = km.Sessions.backend_for
         km.Sessions.backend_for = staticmethod(lambda sid: be)
@@ -1047,7 +1047,7 @@ class DeliveryKeyedStamp(_StoreSandbox):
 
     def test_a_dropped_dead_session_queue_leaves_the_todo_open(self):
         tid, _ = self._park_an_answer()
-        km._compacting_now = lambda sid: False
+        km._compacting_now = lambda sid, **k: False
         saved = km.Sessions.backend_for
         km.Sessions.backend_for = staticmethod(
             lambda sid: (_ for _ in ()).throw(RuntimeError("session is gone")))
@@ -1504,7 +1504,7 @@ class TmuxPasteRefusalReopens(_StoreSandbox):
         # never lands, so the seam's landed check must find no delivery and reopen
         km._sessions = lambda now, window=None, forks=True: [{"sid": SID, "path": "/dev/null"}]
         km._parse = lambda path, sid, now: {"turns": []}
-        km._compacting_now = lambda sid: False
+        km._compacting_now = lambda sid, **k: False
         km._pending_ops.clear()
         km._pane_io_locks.clear()
 
@@ -1741,7 +1741,7 @@ class _TmuxPasteHarness(_StoreSandbox):
         self.turns = []
         km._sessions = lambda now, window=None, forks=True: [{"sid": SID, "path": "/dev/null"}]
         km._parse = lambda path, sid, now: {"turns": self.turns}
-        km._compacting_now = lambda sid: False
+        km._compacting_now = lambda sid, **k: False
         km._pending_ops.clear()
         km._pane_io_locks.clear()
 
@@ -2548,7 +2548,7 @@ class EscalationFloorPredicate(_StoreSandbox):
             mock.patch.object(km, "_last_state", lambda s: last_state),
             mock.patch.object(km, "_backend_queued", lambda s: queued),
             mock.patch.object(km, "_backend_rewind_pending", lambda s: rewind),
-            mock.patch.object(km, "_compacting_now", lambda s: compacting),
+            mock.patch.object(km, "_compacting_now", lambda s, **k: compacting),
             mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="", **k: interrupted),
             mock.patch.dict(km._pending_ops, pending_ops or {}, clear=True),
         ]

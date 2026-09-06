@@ -403,7 +403,7 @@ class _PerfStats:
         memos = {}
         for name, report in (("goals_snap", _goals_memo_report), ("lift_gate", _lift_gate_report),
                              ("goals_shared", jd.shared_store_stats), ("wire", lambda: dict(_wire_stats)),
-                             ("intr_marks", _intr_marks_memo_report)):
+                             ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report)):
             try:
                 memos[name] = report()
             except Exception:
@@ -2967,7 +2967,49 @@ def _rgb(color):
         return [112, 136, 170]
 
 
+_sessions_scope_stats = {"hit": 0, "miss": 0, "wide_hit": 0, "wide_miss": 0}   # /perf memos.sessions_scope
+
+
+def _sessions_scope_report():
+    """The per-cycle discover memo's counters, for /perf (plan D4). `hit`/`miss` are _sessions reads
+    inside a cycle, `wide_*` the _alive_sessions wide walk's; the memo lives for one cycle, so it has
+    no standing occupancy to report."""
+    return dict(_sessions_scope_stats)
+
+
 def _sessions(now, window=None, forks=True):
+    """The discover() rows the surfaces build from — [{sid, name, anchor, path, mtime}], newest
+    transcript first — for every romp session touched within `window` (discover's 48h default).
+
+    Inside a pusher cycle the rows are memoized on the cycle's scope (_live_scope.sessions, opened by
+    _pusher_cycle, thread-confined like its liveness snapshot; perf batch 2 P3, 2026-09-06): every
+    _alive_sessions call in the tick jobs, every _path_of miss under _compacting_now, _msg_summaries,
+    build_session and the tab/lane lists each ran a discover fingerprint (a stat per names entry, three
+    times, plus one per transcript) and a stat per row — 34-37 sweeps per cycle on a 30-session
+    kernel, 4.3% of the pusher's GIL, all returning the same rows. One sweep per (window, forks) key
+    per cycle now; outside a cycle every read is fresh, exactly as _tmux_sessions and _path_of behave.
+    The key is normalized the way discover normalizes its own (jd.WINDOW for None, bool(forks)).
+
+    Every call hands out a COPY of the row list, hit or miss, so no caller can grow or reorder the
+    cycle's shared list (the headless _alive_sessions fallback returns this list as its own); the row
+    dicts are shared and read-only by every in-cycle consumer — each filters or reorders into a list
+    of its own, and build_session copies before its one write.
+
+    Within one cycle the rows' membership and `mtime` are the cycle's snapshot: a transcript that grows
+    mid-cycle keeps its start-of-cycle mtime here, so _msg_summaries' per-sid cache and
+    _timeline_sessions' dead-lane cutoff lag one cycle at most, healed by the next sweep (never an
+    under-scan: the next cycle's fresh mtime forces the rescan), and a names/ rewrite delivered by a cwd
+    op after the memo fills is seen next cycle, as _live_scope.names already behaves. Direct
+    jd.discover callers (_walk_root_record, _token_analytics) are not served by this; the wide walk in
+    _alive_sessions has its own scope memo (_discover_wide)."""
+    memo = getattr(_live_scope, "sessions", None)
+    key = (jd.WINDOW if window is None else int(window), bool(forks))
+    if memo is not None:
+        hit = memo.get(key)
+        if hit is not None:
+            _sessions_scope_stats["hit"] += 1
+            return list(hit)
+        _sessions_scope_stats["miss"] += 1
     out = []
     for fsid, path, anchor, name in jd.discover(now, window, forks):
         try:
@@ -2976,7 +3018,31 @@ def _sessions(now, window=None, forks=True):
             mtime = 0
         out.append({"sid": fsid, "name": name or fsid[:8], "anchor": anchor, "path": str(path), "mtime": mtime})
     out.sort(key=lambda s: s["mtime"], reverse=True)
+    if memo is not None:
+        memo[key] = out
+        return list(out)
     return out
+
+
+def _discover_wide(now, window):
+    """{fsid: discover row} over `window` — the wide walk _alive_sessions resolves a live session idle
+    longer than the 48h caption window through. Memoized on the pusher cycle's scope beside _sessions
+    (key ("wide", window); perf batch 2 P3): whenever one such session is live, every _alive_sessions
+    call in the cycle — the two builds, the chat tabs and about eight tick jobs — repeated the walk, a
+    fingerprint each. Read-only for every caller (a dict lookup per sid), so no copy. Outside a cycle
+    it reads fresh."""
+    memo = getattr(_live_scope, "sessions", None)
+    key = ("wide", int(window))
+    if memo is not None:
+        hit = memo.get(key)
+        if hit is not None:
+            _sessions_scope_stats["wide_hit"] += 1
+            return hit
+        _sessions_scope_stats["wide_miss"] += 1
+    wide = {f[0]: f for f in jd.discover(now, window=window)}
+    if memo is not None:
+        memo[key] = wide
+    return wide
 
 
 def _path_of(sid, now=None):
@@ -2994,6 +3060,10 @@ def _path_of(sid, now=None):
     if memo is not None:
         memo[sid] = p
     return p
+
+
+_PATH_UNRESOLVED = object()   # "no path was passed" for the helpers that take a caller's row path
+#                               (_compacting_now, _user_todo_idle) — None is a real value (no transcript)
 
 
 def _has_tmux():
@@ -3029,7 +3099,7 @@ def _alive_sessions(now, tmux):
     have = {s["sid"] for s in alive}
     stale_live = [sid for sid in tmux if sid not in have]
     if stale_live:
-        wide = {f[0]: f for f in jd.discover(now, window=jd.DEATH_BACKFILL_WINDOW)}
+        wide = _discover_wide(now, jd.DEATH_BACKFILL_WINDOW)   # one walk per cycle (the scope memo)
         for sid in stale_live:
             ent = wide.get(sid)
             if ent is not None:
@@ -5482,7 +5552,7 @@ def _user_todo_fp(sid):
 
 
 def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, peer_wait=None,
-                    interrupted=None):
+                    interrupted=None, tm=None, path=_PATH_UNRESOLVED):
     """The idle-escalation floor's ARMING read (plans/user-todos.md): True only when this session
     has SETTLED idle with nothing else in motion — the exact idle the auto-nudge tick requires —
     so its open user todos ARE its frontier and the focus card may floor to needs-input. Read-side
@@ -5516,10 +5586,15 @@ def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, p
     a few lines before this call — 2026-09-06, perf batch 2 P2 S2: the recompute here was a second
     full user-atom scan per session per build). None = not known, compute it here. The two sites read
     an EXCEPTION differently — build_feed's badge reads "not interrupted", this gate reads "not idle"
-    — so a caller whose read raised passes None, never False, and the gate re-derives its own answer."""
+    — so a caller whose read raised passes None, never False, and the gate re-derives its own answer.
+
+    `tm` / `path`: the caller's liveness row and transcript path for _compacting_now's gate (the same
+    hoist _session_rows makes; perf batch 2 P3): build_feed holds both, and without them the gate
+    resolved the path through _path_of's 48h search — nothing for a live session idle longer than
+    that, so its cached parse went unread there."""
     if ps is None or who_working or sess_awaiting_why or aerr or peer_wait:
         return False
-    if perm_state in _NEEDS_INPUT_STATES or perm_state == "compacting" or _compacting_now(sid):
+    if perm_state in _NEEDS_INPUT_STATES or perm_state == "compacting" or _compacting_now(sid, tm=tm, path=path):
         return False
     if _pending_ops.get(str(sid)) or _backend_queued(sid) or _backend_rewind_pending(sid):
         return False
@@ -8064,7 +8139,11 @@ def _interrupt_block_tick(now, tmux):
         if _session_flag(sid, "hideFromFeed"):           # muted from the feed → no interrupt-block bookkeeping either
             continue
         st = (tmux.get(sid) or {}).get("state", "")
-        if st in _NEEDS_INPUT_STATES or st == "compacting" or _compacting_now(sid):
+        # the row's own path and live meta go in (perf batch 2 P3, 2026-09-06): the default _path_of
+        # searched the 48h set, so a LIVE session idle longer than that — resolved into this row by
+        # _alive_sessions' wide walk — read as having no transcript here, and an optimistic compact
+        # click on it could not be disproved by its compact_boundary for the 180 s cap
+        if st in _NEEDS_INPUT_STATES or st == "compacting" or _compacting_now(sid, tm=tmux.get(sid), path=s["path"]):
             continue                                     # awaiting you / compacting → a different needs-you path owns it
         if _api_error(s["path"]):                        # stopped on an API error → not a user stop
             continue
@@ -23791,7 +23870,8 @@ def _save_pending_ops():
 _pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("env", {…}) | ("cwd", path, busy_retries) | ("compact",), …] in park order
 
 
-_PATH_UNRESOLVED = object()   # _compacting_now's "no path was passed" sentinel — None is a real value (no transcript)
+# (_PATH_UNRESOLVED, the "no path was passed" sentinel below, is defined beside _path_of: the user-todo
+# floor takes it as a default too, and it is defined earlier in the file.)
 
 
 def _compacting_now(sid, tm=None, path=_PATH_UNRESOLVED):
@@ -28518,7 +28598,7 @@ def build_feed(now, tmux=None):
         todo_top = None
         _todo_idle = bool(_ut_open) and _user_todo_idle(fsid, ps, who_working, sess_awaiting_why,
                                                         perm_state, aerr, wmap.get(fsid),
-                                                        interrupted=_intr_read)
+                                                        interrupted=_intr_read, tm=tm, path=s["path"])
         if _todo_idle and api_top is None and perm_top is None and jauth_top is None:
             f = store.get("lastNode")
             while f and nodes.get(f, {}).get("parentId") is not None:
@@ -36443,6 +36523,9 @@ def _pusher_cycle():
     try:
         _live_scope.paths = {}                  # …and the cycle's sid→path memo (_path_of): the parked-op drain
         #                                         otherwise resolves a held sid's path once per gate per cycle
+        _live_scope.sessions = {}               # …and the cycle's discover rows (_sessions, keyed (window,
+        #                                         forks); the wide walk under ("wide", window)): ~35 sweeps
+        #                                         per cycle became one (perf batch 2 P3, 2026-09-06)
         _live_scope.names = _names_snapshot()   # …and the cycle's NAMES snapshot, same idiom: the name/
         #                                       cwd/color helpers otherwise re-read the registry per path
         #                                       token and per postal card (~38% of pusher wall, py-spy
@@ -36453,6 +36536,7 @@ def _pusher_cycle():
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
+        _live_scope.sessions = None
         _PERF_STATS.cycle(time.monotonic() - _t_cycle, time.thread_time() - _c_cycle)
 
 

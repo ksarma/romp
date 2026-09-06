@@ -661,14 +661,24 @@ def run(args, state, mirror_of, out, private):
         return int(time.time())
 
     def scope(tmux):
+        """The pusher cycle's scope, as _pusher_cycle opens it: the liveness snapshot, the sid->path memo,
+        the discover-rows memo (perf batch 2 P3; a kernel from before it never reads the slot) and the
+        names snapshot."""
         km._live_scope.snapshot = tmux
         km._live_scope.paths = {}
+        km._live_scope.sessions = {}
         km._live_scope.names = km._names_snapshot()
 
     def unscope():
         km._live_scope.snapshot = None
         km._live_scope.names = None
         km._live_scope.paths = None
+        km._live_scope.sessions = None
+
+    def new_cycle():
+        """A fresh cycle's per-cycle memos (what _pusher_cycle resets between two cycles)."""
+        km._live_scope.paths = {}
+        km._live_scope.sessions = {}
 
     def clear_kernel_caches():
         """The kernel-side caches a freshly started kernel lacks (build_session's inputs above the parse)."""
@@ -904,7 +914,7 @@ def run(args, state, mirror_of, out, private):
             km._push(clients, tmux=tmux)
             bench["push_cold_cycle"] = single((time.perf_counter() - t0) * 1000, bytes=client_bytes(clients), clients=apps)
             reset_client_bytes(clients)
-            km._live_scope.paths = {}
+            new_cycle()
             km._push(clients, tmux=tmux)               # a warming cycle: baselines, wire caches, chat cache
             reset_client_bytes(clients)
 
@@ -914,7 +924,7 @@ def run(args, state, mirror_of, out, private):
 
                 def connect_before(_app=app):
                     holder["c"] = fake_client(km, _app, active if _app == "chat" else None)
-                    km._live_scope.paths = {}
+                    new_cycle()
 
                 def connect_push():
                     km._push([holder["c"]], connect=True, tmux=tmux)
@@ -927,7 +937,7 @@ def run(args, state, mirror_of, out, private):
             samples = []
             quiet, rebuilt = [], []
             for _ in range(3 * iters):
-                km._live_scope.paths = {}
+                new_cycle()
                 reset_client_bytes(clients)
                 b0 = built_at()
                 t0 = time.perf_counter()
@@ -949,13 +959,13 @@ def run(args, state, mirror_of, out, private):
                 st2["bytes_per_push"] = sum(f["bytes"] for f in rebuilt) / len(rebuilt)
                 bench["push_steady_rebuild"] = st2
             reset_client_bytes(clients)
-            km._live_scope.paths = {}
+            new_cycle()
             km._push(clients, tmux=tmux)
             bench["push_steady"]["bytes"] = client_bytes(clients)   # one further cycle's per-slot bytes
             out["push_rebuilds"] = len(rebuilt)
             if args.profile:
                 def one_push():
-                    km._live_scope.paths = {}
+                    new_cycle()
                     km._push(clients, tmux=tmux)
                 profiles["push_steady"] = profile_entry(one_push, None, repo)
     finally:

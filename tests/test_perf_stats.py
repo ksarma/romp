@@ -116,7 +116,8 @@ class Collector(unittest.TestCase):
                                               "disk_hits", "disk_misses", "disk_seeds",
                                               "absent_hits", "absent_misses"},
                          "read through jd.goal_io_stats")
-        self.assertEqual(set(snap["memos"]), {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks"},
+        self.assertEqual(set(snap["memos"]),
+                         {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope"},
                          "one block per memo the kernel keeps (plan D4)")
         self.assertEqual(set(snap["memos"]["goals_snap"]),
                          {"hit", "miss", "fail", "evict", "punch", "entries", "bytes"},
@@ -142,6 +143,10 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["memos"]["intr_marks"]), {"hit", "miss", "evict", "entries"},
                          "the _interrupt_marks memo: counters plus its occupancy")
         for k, v in snap["memos"]["intr_marks"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["sessions_scope"]), {"hit", "miss", "wide_hit", "wide_miss"},
+                         "the pusher cycle's discover memo: _sessions reads and the wide walk")
+        for k, v in snap["memos"]["sessions_scope"].items():
             self.assertIsInstance(v, int, k)
         for k in ("rss_kb", "threads", "cpu_s", "pid"):
             self.assertIn(k, snap["process"])
