@@ -20327,7 +20327,10 @@ def _postal_index():
             continue
         if o.get("ev") == "sent" and o.get("id"):
             idx[o["id"]] = {"id": o["id"], "from": o.get("from", "?"), "fromId": o.get("from_id", ""),
-                            "fromHost": o.get("from_host", ""),
+                            # the sender's host as the log stamped it: "" for this kernel's own sessions,
+                            # a peer's name for relayed mail — and None when the row carries NO field, a
+                            # row from before the field existed, whose sender could be either (2026-09-06)
+                            "fromHost": o.get("from_host"),
                             "toId": o.get("to_id", ""), "body": o.get("body", ""), "kind": o.get("kind", ""),
                             "t": o["t"] if isinstance(o.get("t"), (int, float)) else 0, "park": bool(o.get("park"))}
     _postal_index_memo[0] = (key, idx, _postal_body_map(idx))
@@ -20549,17 +20552,21 @@ def _hydrate_postal(events, index, sid=None):
                         frm = _name_of(rec["fromId"]) or (
                             (rec.get("fromHost", "") + ":" if rec.get("fromHost") else "")
                             + (rec["fromId"][:8] if rec["fromId"] else "?"))
-                    cards.append({"kind": "postal-service", "direction": "in", "peer": frm,
-                                  # the sender's HOST as the log stamped it ("" = this kernel's own): the chat
-                                  # resolves the sender's repository for the body's PR links by host AND name,
-                                  # so a remote homonym never borrows a local session's repo (review find,
-                                  # 2026-09-06); the name alone was the rule before this field existed
-                                  "peerHost": rec.get("fromHost", ""),
-                                  "color": _name_color(rec["fromId"]) if rec["fromId"] else None,
-                                  "body": rec["body"], "summary": caption_for(rec["id"]),   # incoming caption (full body on expand)
-                                  "intent": _postal_intent(rec.get("kind"), rec.get("body")),
-                                  "mid": rec["id"], "t": rec["t"] or None,
-                                  "park": rec["park"], "ts": ev.get("ts"), "uuid": ev.get("uuid")})
+                    card = {"kind": "postal-service", "direction": "in", "peer": frm,
+                            "color": _name_color(rec["fromId"]) if rec["fromId"] else None,
+                            "body": rec["body"], "summary": caption_for(rec["id"]),   # incoming caption (full body on expand)
+                            "intent": _postal_intent(rec.get("kind"), rec.get("body")),
+                            "mid": rec["id"], "t": rec["t"] or None,
+                            "park": rec["park"], "ts": ev.get("ts"), "uuid": ev.get("uuid")}
+                    if rec.get("fromHost") is not None:
+                        # the sender's HOST as the log stamped it ("" = this kernel's own): the chat resolves
+                        # the sender's repository for the body's PR links by host AND name, so a remote
+                        # homonym never borrows a local session's repo (review find, 2026-09-06). A row with
+                        # NO field — from before the log stamped one — gets no peerHost: the chat then
+                        # resolves the name alone, as it did before the field, rather than reading absence
+                        # as "this kernel's own" and presenting a pre-field remote sender as local
+                        card["peerHost"] = rec["fromHost"]
+                    cards.append(card)
             if len(cards) == len(ids):                   # all-or-nothing: a partial log never half-renders
                 out.extend(cards); continue
             # NOT every id resolved. The turn still passes through unhydrated — a half-rendered card run
@@ -23063,27 +23070,61 @@ def _norm_branch(br):
 
 
 _tree_cache = {}   # dir -> (git toplevel or "", the evidence the verdict was filed on) — see _tree_of
+_pointer_cache = {}   # a worktree's `.git` pointer FILE -> (its mtime, the gitdir it names) — see _pointer_gitdir
+_top_shape = {}   # toplevel -> the verdict key of its OWN `.git` entry, which its per-tree memos stand under — see _vouch_tree
+
+
+def _pointer_gitdir(dotgit, mt):
+    """The directory a worktree's (or a submodule's) `.git` pointer FILE names — its one line is
+    'gitdir: <private-dir>', resolved against the tree when relative — read ONCE per (path, mtime): git
+    never rewrites the pointer in normal use (`git worktree repair` does, and that moves the mtime), so
+    the memo holds for the tree's life. Re-read per call, the pointer made a worktree cwd — this repo's
+    own convention, so the shape most builds pay — cost five stats and a file read per _tree_of call
+    against a plain toplevel's two stats (review find, 2026-09-06); it is three stats and no read now.
+    '' for a malformed pointer, memoized (the content is what it is until the mtime moves); '' and NOT
+    memoized when the file cannot be read."""
+    hit = _pointer_cache.get(dotgit)
+    if hit is not None and hit[0] == mt:
+        return hit[1]
+    try:
+        with open(dotgit) as f:
+            line = f.readline().strip()
+    except OSError:
+        return ""
+    gd = ""
+    if line.startswith("gitdir:"):
+        rel = line[len("gitdir:"):].strip()
+        if rel:
+            gd = rel if os.path.isabs(rel) else os.path.normpath(os.path.join(os.path.dirname(dotgit), rel))
+    if len(_pointer_cache) > 512:                        # bounded, like _tree_cache
+        _pointer_cache.clear()
+    _pointer_cache[dotgit] = (mt, gd)
+    return gd
 
 
 def _gitdir_of(top):
     """The git directory behind `top/.git`: the entry itself when it is a directory; for a WORKTREE (or a
-    submodule), whose .git is a one-line FILE ('gitdir: <private-dir>'), the directory that line names,
-    resolved against `top` when relative. '' when there is neither. The one reader of the pointer for
-    the HEAD file, the config file and _tree_of's evidence, which each parsed it on their own before."""
+    submodule), whose .git is a one-line FILE, the directory that line names (_pointer_gitdir). '' when
+    there is neither. ONE stat — the entry's kind is read off it, where isdir-then-isfile cost two — and
+    the memoized pointer read. The one reader of the pointer for the HEAD file, the config file and
+    _tree_of's evidence, which each parsed it on their own before."""
     dotgit = os.path.join(top, ".git")
     try:
-        if os.path.isdir(dotgit):
-            return dotgit
-        if os.path.isfile(dotgit):
-            with open(dotgit) as f:
-                line = f.readline().strip()
-            if line.startswith("gitdir:"):
-                gd = line[len("gitdir:"):].strip()
-                if gd:
-                    return gd if os.path.isabs(gd) else os.path.normpath(os.path.join(top, gd))
+        st = os.stat(dotgit)
     except OSError:
-        pass
+        return ""
+    if stat.S_ISDIR(st.st_mode):
+        return dotgit
+    if stat.S_ISREG(st.st_mode):
+        return _pointer_gitdir(dotgit, st.st_mtime)
     return ""
+
+
+def _is_bare_gitdir(d):
+    """Is `d` itself a git directory — a BARE repository, or a `.git` directory registered as a cwd? git's
+    own test for one (is_git_directory): HEAD, objects/ and refs/ at the path. One stat when it is not."""
+    return (os.path.isfile(os.path.join(d, "HEAD")) and os.path.isdir(os.path.join(d, "objects"))
+            and os.path.isdir(os.path.join(d, "refs")))
 
 
 def _dotgit_on_chain(d):
@@ -23109,20 +23150,59 @@ def _dotgit_on_chain(d):
         p = parent
 
 
-def _verdict_key(ev, found):
+def _own_dotgit(ev, top):
+    """Is the chain's `.git` entry the found toplevel's OWN — `top/.git` — rather than one git's discovery
+    walked PAST: an empty or otherwise invalid `.git` directory below the toplevel, which git skips and
+    continues upward from? Lexical first (the evidence path is an abspath, git's toplevel a physical path),
+    realpath only when they differ, so a cwd reached through a symlink is still the toplevel's own.
+    Decided once per verdict, on _tree_of's miss path — never per call."""
+    if not top or ev is None:
+        return False
+    d = os.path.dirname(ev[0])
+    return d == top or os.path.realpath(d) == top
+
+
+def _verdict_key(ev, own):
     """The part of the chain evidence (_dotgit_on_chain) a verdict is filed on, and holds while it is equal.
     A pointer FILE is keyed on its path, its mtime and whether the gitdir it names exists, found or not:
     git never rewrites the pointer in normal use (`git worktree repair` does, and that moves the mtime),
     and its target vanishing (the main clone removed) or reappearing (restored from a backup, the pointer
-    untouched) is exactly what flips git's answer. A `.git` DIRECTORY git accepted is keyed on its path
-    alone — its mtime churns with every index write; one git rejected adds the mtime, which `git init`
-    filling it moves. None when the chain carries no `.git` at all."""
+    untouched) is exactly what flips git's answer. A `.git` DIRECTORY that is the found toplevel's OWN
+    (`own`, _own_dotgit) is keyed on its path alone — its mtime churns with every index write. Any other
+    directory entry adds the mtime, which `git init` filling it moves: one git rejected with no repo
+    above, and one git walked PAST on its way to a toplevel above (an empty `.git` below a valid repo —
+    git skips an invalid directory and continues upward). Keyed on its path alone like the toplevel's
+    own, the walked-past entry served the parent's toplevel, branch and repo forever once `git init`
+    made it a repository of its own (review find, 2026-09-06). None when the chain carries no `.git`."""
     if ev is None:
         return None
     path, mt, is_file = ev
     if is_file:
-        return path, mt, os.path.isdir(_gitdir_of(os.path.dirname(path)))
-    return (path,) if found else (path, mt)
+        gd = _pointer_gitdir(path, mt)
+        return path, mt, bool(gd) and os.path.isdir(gd)
+    return (path,) if own else (path, mt)
+
+
+def _vouch_tree(top):
+    """Called when git has just named `top` as a toplevel: the shape of the tree's OWN `.git` entry — its
+    verdict key: a directory's path; a pointer's path, mtime and whether its target exists — is compared
+    with the shape the tree's per-tree memos (HEAD path, config path, branch, repo) were filed under, and
+    a DIFFERENT shape forgets them. The re-ask that led here is the one event that says the tree behind
+    `top` may have changed: a worktree rm -rf'd and re-made as a plain clone at the same path (the old
+    clone still lists it under .git/worktrees/<name>, so the memoized HEAD and config paths inside THAT
+    clone still resolved and were trusted — the dead worktree's branch and the old clone's repo on every
+    build for the kernel's life, and `git worktree prune` leaves the clone's own config where it is;
+    review find, 2026-09-06), or one clone's worktree replaced by another's. Only a changed shape
+    forgets, so a subdirectory asked about for the first time under a memoized tree costs no fork."""
+    shape = _verdict_key(_dotgit_on_chain(top), True)
+    if _top_shape.get(top, shape) != shape:
+        for memo in (_head_path_cache, _config_path_cache, _branch_cache, _repo_cache):
+            memo.pop(top, None)
+    if len(_top_shape) > 512:                            # bounded; a memo never outlives the shape vouching for it
+        _top_shape.clear()
+        for memo in (_head_path_cache, _config_path_cache, _branch_cache, _repo_cache):
+            memo.clear()
+    _top_shape[top] = shape
 
 
 def _tree_of(d):
@@ -23132,10 +23212,14 @@ def _tree_of(d):
     while that evidence holds, so a build costs stats and never a fork until something on the chain
     changes:
       * a FOUND toplevel re-asks git when its `.git` entry goes (the tree deleted or moved: the walk reaches
-        another entry or none), changes kind (a plain repo replaced by a worktree at the same path), or —
-        for a worktree — when its pointer is rewritten or the clone it names disappears; a nested repo
-        appearing below the toplevel re-asks too. Before, a found toplevel was trusted for the life of the
-        kernel and a dead one served a stale branch and repo, or forked per build (review find, 2026-09-06);
+        another entry or none), changes kind (a plain repo replaced by a worktree at the same path, or the
+        reverse), or — for a worktree — when its pointer is rewritten or the clone it names disappears; a
+        nested repo appearing below the toplevel re-asks too, and so does `git init` filling an empty
+        `.git` that git had walked past (that entry keeps its mtime in the key — _verdict_key). A re-ask
+        that names a toplevel whose own `.git` changed shape forgets that tree's HEAD, config, branch and
+        repo memos (_vouch_tree), so a worktree re-made as a plain clone shows the clone's branch and
+        repo, not the dead worktree's. Before, a found toplevel was trusted for the life of the kernel and
+        a dead one served a stale branch and repo, or forked per build (review find, 2026-09-06);
       * a NOT-A-REPO verdict re-asks when a `.git` appears on the chain, or the one git rejected changes
         (its mtime, or a pointer's target coming back). So a directory becoming a tree the moment the
         session runs `git init` (then `gh repo create`) is found on the next call — a cached "" once kept
@@ -23146,12 +23230,18 @@ def _tree_of(d):
         the entry's mere presence forked `git rev-parse` on every call, forever (review find, 2026-09-06).
     A git failure that is not a verdict — a timeout, no git binary — caches nothing: the next call asks
     again rather than serving an answer git never gave. The branch rides _tree_branch's own HEAD-mtime
-    memo so it stays current without a second discipline."""
+    memo so it stays current without a second discipline. Counted, a memoized call costs two stats for a
+    plain toplevel and three for a worktree's (the chain's one, the pointer target's, HEAD's — the pointer
+    itself is read once per mtime, _pointer_gitdir), plus one per directory between the cwd and its
+    `.git`; never a read, never a fork."""
     if not d:
         return "", ""
     ev = _dotgit_on_chain(d)
     hit = _tree_cache.get(d)
-    if hit is not None and hit[1] == _verdict_key(ev, bool(hit[0])):
+    # the stored key's SHAPE says how the entry was keyed — a found toplevel's own `.git` directory
+    # (path,), any other directory entry (path, mtime), a pointer file a triple — so the recomputed key
+    # compares like with like, and an entry that changed kind compares unequal
+    if hit is not None and hit[1] == _verdict_key(ev, hit[1] is not None and len(hit[1]) == 1):
         top = hit[0]
     else:
         try:
@@ -23160,9 +23250,11 @@ def _tree_of(d):
         except Exception:
             return "", ""                              # not git's answer: nothing to cache
         top = r.stdout.strip() if r.returncode == 0 else ""
+        if top:
+            _vouch_tree(top)                           # BEFORE the branch below reads the tree's memos
         if len(_tree_cache) > 512:                     # bounded: distinct edit dirs, not unbounded growth
             _tree_cache.clear()
-        _tree_cache[d] = (top, _verdict_key(ev, bool(top)))
+        _tree_cache[d] = (top, _verdict_key(ev, _own_dotgit(ev, top)))
     return top, (_tree_branch(top) if top else "")
 
 
@@ -23176,14 +23268,19 @@ def _git_head_file(cwd):
     that private dir. Resolved once per cwd (the pointer never moves for a live worktree) — treating the
     worktree shape as uncacheable made _git_branch fork 2-3 `git rev-parse` per session per rebuild
     forever, ~10-40 forks/s on a busy kernel whose convention is one worktree per session (the Mac 66%
-    CPU burn, 2026-08-16, sampled as __fork at 68/2s). '' when there is no resolvable HEAD — and that
-    answer is NOT memoized: a directory with no `.git` today may carry one on the next call, and the
-    re-resolution is two stats. A memoized path that stops resolving is evicted by its reader
-    (_pointer_mtime)."""
+    CPU burn, 2026-08-16, sampled as __fork at 68/2s). A BARE repository is its own git directory — HEAD,
+    objects/ and refs/ at the directory itself (_is_bare_gitdir), no `.git` and no work tree — so its HEAD
+    is `cwd/HEAD`: the branch HEAD names shows for a session registered in a bare clone (a
+    bare-plus-worktrees layout), as it did when `_git_branch` forked the query there per build (review
+    find, 2026-09-06). '' when there is no resolvable HEAD — and that answer is NOT memoized: a directory
+    with no `.git` today may carry one on the next call, and the re-resolution is two stats. A memoized
+    path that stops resolving is evicted by its reader (_pointer_mtime)."""
     hp = _head_path_cache.get(cwd)
     if hp:
         return hp
     gd = _gitdir_of(cwd)
+    if not gd and _is_bare_gitdir(cwd):
+        gd = cwd
     hp = os.path.join(gd, "HEAD") if gd else ""
     if hp:
         if len(_head_path_cache) > 512:                  # bounded, like _tree_cache
@@ -23211,11 +23308,12 @@ def _pointer_mtime(resolve, cache, top):
 
 
 def _tree_branch(top):
-    """The branch checked out at a tree's toplevel, derived DIRECTLY from the folder — so it shows the
-    instant a session is opened, before any turn writes gitBranch into the transcript (the user
-    2026-06-24: branch should be a property of the dir, known in advance). Memoized on the resolved HEAD
-    file's mtime (worktrees included — see _git_head_file). '' when detached or unavailable; a HEAD file
-    that cannot be found is git's own "not a repository" and is '' without a fork."""
+    """The branch checked out at a tree's toplevel — or the one a BARE repository's HEAD names — derived
+    DIRECTLY from the folder, so it shows the instant a session is opened, before any turn writes
+    gitBranch into the transcript (the user 2026-06-24: branch should be a property of the dir, known in
+    advance). Memoized on the resolved HEAD file's mtime (worktrees and bare clones included — see
+    _git_head_file). '' when detached or unavailable; a HEAD file that cannot be found is git's own "not
+    a repository" and is '' without a fork."""
     mt = _pointer_mtime(_git_head_file, _head_path_cache, top)
     if mt is None:
         return ""
@@ -23238,13 +23336,19 @@ def _tree_branch(top):
 
 def _git_branch(cwd):
     """The git branch for a directory: the branch of the tree containing it (_tree_of, then
-    _tree_branch), '' when not in one / detached / unavailable. Applies to BOTH backends (a never-run
-    tmux session shows it too). Going through _tree_of means a session cwd that is a SUBDIRECTORY of its
-    tree is memoized like the toplevel — with no `.git` of its own to key on it forked `git rev-parse`
-    on every build — and a directory outside every tree costs the evidence walk, never a fork."""
+    _tree_branch), or — when the directory is itself a BARE repository, which has no work tree for
+    `rev-parse --show-toplevel` to name — the branch its HEAD names, through the same HEAD-mtime memo
+    (_git_head_file knows the shape; the direct per-build query this replaced answered there, so a
+    session registered in a bare clone kept its branch). '' when in neither / detached / unavailable.
+    Applies to BOTH backends (a never-run tmux session shows it too). Going through _tree_of means a
+    session cwd that is a SUBDIRECTORY of its tree is memoized like the toplevel — with no `.git` of its
+    own to key on it forked `git rev-parse` on every build — and a directory outside every tree costs
+    the evidence walk plus two stats for the bare shape, never a fork."""
     if not cwd:
         return ""
-    return _tree_of(os.path.expanduser(cwd))[1]
+    d = os.path.expanduser(cwd)
+    top, br = _tree_of(d)
+    return br if top else _tree_branch(d)
 
 
 _repo_cache = {}          # tree toplevel -> (owner/repo or None, config mtime): the GitHub repo its origin names
@@ -25148,6 +25252,12 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
             # (ui/webview/pr-links.ts; the user 2026-09-06). Top-level like gitBranch, so it is never
             # windowed off the wire; a memoized store-derived value, so the dedup-compared payload holds.
             "githubRepo": _github_repo_of(scwd),
+            # this machine's name, as its peers know it (_self_host; the feed frame carries the same): the
+            # chat reads an inbound postal card's sender host against it (a card stamped with the viewing
+            # kernel's own name resolves to ITS sessions). It learned the name only from the + picker's
+            # reply before, so that reading was inert until the picker had been opened (review find,
+            # 2026-09-06). Stable, so the dedup-compared payload holds.
+            "selfHost": _self_host(),
             "events": events, "status": status, "ledger": ledger,
             # SDK sessions gate the box on the backend's LIVE task set (the CLI's task lifecycle stream —
             # authoritative, terminal-cleared); the spawned_at heuristic remains the tmux/no-snapshot fallback.
