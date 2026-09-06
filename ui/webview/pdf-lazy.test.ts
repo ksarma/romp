@@ -182,12 +182,17 @@ test("file-view loads the PDF chunk exactly as it loads the editor chunk: the sa
   assert.match(live, /maxBytes: PDF_MAX_BYTES,/);
   assert.match(live, /body\.replaceChildren\(wait, host\);/, "the loader and the chunk's host, the host laid out before render() fits pages to it");
   assert.match(live, /closeHooks\.push\(dropPdf\);/);
-  // the fallbacks, all through one function, all the frame with a notice in the error dress
+  // the fallbacks, all through one function, all the frame with a notice in the error dress ABOVE it. A frame already
+  // showing these bytes is kept in place and the notice heads its column (a rebuilt frame reloads the document and
+  // loses the reader's place — the round-2 review); with no frame to keep, a fresh one is built with the notice first.
   assert.match(live, /if \(blob\.size > PDF_MAX_BYTES\) \{ fallback\(pdfCapMessage\(blob\.size, PDF_MAX_BYTES\)\); return; \}/, "the cap refuses before the chunk is fetched");
   assert.match(live, /\.catch\(\(err\) => fallback\(String\(err && \(err as Error\)\.message \|\| err\)\)\);/, "a chunk load failure or a render rejection");
+  assert.match(live, /if \(h\.pages === 0\) \{ h\.dispose\(\); fallback\("this PDF has no pages"\); return; \}/, "a page-less document is a refusal too, never a blank root");
   assert.match(live, /note\.textContent = why \+ " — showing the browser's PDF viewer instead; comments on the whole file still work\.";/);
   assert.match(live, /const note = el\("div", "fileview-err"\);/);
-  assert.match(live, /fall\.appendChild\(pdfBlock\(url, path\)\);/);
+  assert.match(live, /col\.prepend\(note\);/, "a kept frame takes the notice above it, in place");
+  assert.match(live, /const fall = pdfBlock\(url, path\);[^\n]*\n\s*fall\.prepend\(note\);[^\n]*\n\s*aimFrame\(fall\);[^\n]*\n\s*body\.replaceChildren\(fall\);/,
+    "no frame to keep: a fresh frame, the notice first, aimed at the reader's page before it joins the document");
 });
 
 pdfjsTest("file-view's cap is the chunk's default, and its refusal is the chunk's capMessage word for word", () => {
@@ -239,6 +244,12 @@ test("each page is a positioned, 1-based-numbered wrapper (the overlay's anchor)
   assert.match(CHUNK, /canvas\.className = "fileview-pdf-canvas";/);
   assert.match(CHUNK, /canvas\.dataset\.page = String\(i\);/);
   assert.match(CHUNK, /canvas\.style\.width = "100%";/);
+  // the tree, not just the names: the canvas INSIDE its wrapper, the wrapper in the root — file-comments' regionImages()
+  // looks for the canvas in each wrapper pdfPages() finds, and a canvas hung on the root (or a wrapper never attached)
+  // leaves every page without an overlay and no error. Named here; executed with the panel's own lookups, on real
+  // pages, in pdf-lazy-render.test.ts.
+  assert.match(CHUNK, /wrap\.appendChild\(canvas\);\n\s*root\.appendChild\(wrap\);/,
+    "canvas into wrapper, wrapper into root — the shape regionImages() reads");
   assert.match(CHUNK, /for \(let i = 1; i <= n; i\+\+\) \{/, "pages are numbered from 1, as PDFs and the wire's target.page do");
   assert.match(CHUNK, /const vp = proxy\.getViewport\(\{ scale: cssW \/ base\.width \}\);/,
     "width-fit: the scale is the root's width over the page's natural width");
