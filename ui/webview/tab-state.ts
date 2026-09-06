@@ -46,10 +46,19 @@ export function sectionPip(states: ReadonlyArray<TabStateLike | null | undefined
   return null;
 }
 
+/** The pip's phrase for ONE session (and the bare phrase when no name is known). */
 export const SECTION_PIP_TITLE: Record<SectionPip, string> = {
   blocked: "a session in this group is blocked or waiting on you",
   working: "a session in this group is working",
   retrying: "a session in this group hit an API error and is retrying on its own",
+};
+
+/** The same three for SEVERAL sessions, counted — the flag's tooltip already counts this way
+ *  (sectionTodoTitle); a singular phrase before a list of names read as one session, then two. */
+export const SECTION_PIP_TITLE_MANY: Record<SectionPip, (n: number) => string> = {
+  blocked: (n) => `${n} sessions in this group are blocked or waiting on you`,
+  working: (n) => `${n} sessions in this group are working`,
+  retrying: (n) => `${n} sessions in this group hit an API error and are retrying on their own`,
 };
 
 const PIP_CLASSES: Record<SectionPip, readonly string[]> = {
@@ -65,9 +74,12 @@ export function sectionPipMembers(kind: SectionPip, members: ReadonlyArray<TabMe
   return names;
 }
 
-/** The pip's hover text: the rule's phrase, then the sessions by name. */
+/** The pip's hover text: the rule's phrase — singular for one session, counted for several — then the
+ *  sessions by name. */
 export function sectionPipTitle(kind: SectionPip, names: readonly string[]): string {
-  return names.length ? `${SECTION_PIP_TITLE[kind]}: ${names.join(", ")}` : SECTION_PIP_TITLE[kind];
+  if (!names.length) return SECTION_PIP_TITLE[kind];
+  const phrase = names.length === 1 ? SECTION_PIP_TITLE[kind] : SECTION_PIP_TITLE_MANY[kind](names.length);
+  return `${phrase}: ${names.join(", ")}`;
 }
 
 // A FOLDED HEADER'S USER-TODO FLAG (the user 2026-09-06): a session tab with an open user todo wears
