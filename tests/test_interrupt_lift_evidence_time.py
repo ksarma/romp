@@ -287,5 +287,65 @@ class EndToEndThroughTheTick(unittest.TestCase):
                          "a restart-cut session that comes back and asks a question still reaches the user")
 
 
+class TheTickPushesNothingInline(EndToEndThroughTheTick):
+    """perf batch 2 P1 (2026-09-06): the tick's flips reach the feed through the writers' own dirty mark
+    and pusher wake — the next cycle's rebuild — never through an inline _push_all on the tick. The
+    stand-down lift (a marker whose block a judge now owns) writes nothing and so moves nothing.
+    _views_dirty is a module global shared across the suite: each test records its own floor."""
+
+    def setUp(self):
+        super().setUp()
+        self.pushes = []
+        self._push = km._push_all
+        km._push_all = lambda *a, **k: self.pushes.append(1)
+        self._was_set = km._pusher_wake.is_set()
+        km._pusher_wake.clear()
+
+    def tearDown(self):
+        km._push_all = self._push
+        if self._was_set:
+            km._pusher_wake.set()
+        else:
+            km._pusher_wake.clear()
+        super().tearDown()
+
+    def test_the_block_marks_the_views_dirty_wakes_the_pusher_and_pushes_nothing_inline(self):
+        floor = time.time()
+        km._interrupt_block_tick(NOW, self.tmux)
+        self.assertEqual(jd.load_goals(SID)["status"][GID], "blocked")
+        self.assertEqual(self.pushes, [], "no inline push from the tick")
+        self.assertTrue(km._pusher_wake.is_set(), "the writer woke the pusher; its next cycle carries the flip")
+        self.assertGreater(km._views_dirty[0], floor, "…and marked the views dirty, so that cycle rebuilds")
+
+    def test_the_lift_does_the_same(self):
+        km._interrupt_block_tick(NOW, self.tmux)
+        km._pusher_wake.clear()
+        self._reengage()
+        floor = time.time()
+        km._interrupt_block_tick(NOW, self.tmux)
+        self.assertEqual(jd.load_goals(SID)["status"][GID], "working")
+        self.assertEqual(self.pushes, [])
+        self.assertTrue(km._pusher_wake.is_set())
+        self.assertGreater(km._views_dirty[0], floor)
+
+    def test_a_stand_down_lift_moves_nothing(self):
+        km._interrupt_block_tick(NOW, self.tmux)
+        st = jd.load_goals(SID)                          # a judge now owns the block: the diary's last block
+        self.assertTrue(jd.record_verdict(st, st["nodes"][GID], "closer", "block", RESUME_T,
+                                          why="which host for prod?"))
+        jd.rollup_status(st, False)
+        jd.save_goals(SID, st)
+        self.assertEqual(km._intr_blocked(SID), GID, "the marker still points at the card")
+        self._reengage()
+        km._pusher_wake.clear()
+        floor = km._views_dirty[0]
+        km._interrupt_block_tick(NOW, self.tmux)
+        self.assertIsNone(km._intr_blocked(SID), "the marker is retired")
+        self.assertEqual(jd.load_goals(SID)["status"][GID], "blocked", "…and the judge's block stands")
+        self.assertEqual(self.pushes, [], "nothing new to show: no push")
+        self.assertEqual(km._views_dirty[0], floor, "no store write, no dirty mark")
+        self.assertFalse(km._pusher_wake.is_set(), "and no wake")
+
+
 if __name__ == "__main__":
     unittest.main()

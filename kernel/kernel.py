@@ -7505,7 +7505,8 @@ def _auto_pause_on_limit():
         _set_retry_paused(True)
         sys.stderr.write("retry-pause: auto-engaged — usage limit reached (%s) → auto-retry + judges paused until reset\n"
                          % ",".join(account))
-        _push_all()
+        _push_soon()                                     # the flag rides the next push's globalRetryPaused frame
+        #                                                  (see _auto_resume_retry: no view reads it, so no dirty mark)
 
 
 def _spend_capped_session(now, tmux):
@@ -7536,7 +7537,8 @@ def _auto_pause_on_spend_limit(now, tmux):
         _set_retry_paused(True, reason="spend")
         sys.stderr.write("retry-pause: auto-engaged — monthly spend limit reached → auto-retry + judges "
                          "paused until the cap is raised (claude.ai/settings/usage)\n")
-        _push_all()
+        _push_soon()                                     # the flag rides the next push's globalRetryPaused frame
+        #                                                  (see _auto_resume_retry: no view reads it, so no dirty mark)
 
 
 def _auto_resume_retry(now, tmux):
@@ -7549,7 +7551,19 @@ def _auto_resume_retry(now, tmux):
 
     Event-based recovery signal: a live session that is NOT currently blocked on an API error AND has written
     fresh transcript output since the pause began (mtime past the pause floor) is proof the account can serve
-    requests again. Clearing re-enables both auto-retry and the judges together."""
+    requests again. Clearing re-enables both auto-retry and the judges together.
+
+    Delivery (perf batch 2 P1, 2026-09-06; the two auto-pause siblings above do the same): the flip
+    WAKES the pusher (_push_soon) instead of building a push inline on this thread. retry-paused.json is
+    in no view signature and neither build_feed nor build_timeline reads it — its readers on the wire are
+    the per-push globalRetryPaused frame, sent to every chat client on every push, and build_session's
+    queued-hold reason on the ACTIVE tab, which rebuilds every push — so the next cycle delivers the
+    flip with no view rebuild, one cycle start after the write (sub-second). A dirty mark here would
+    force a full feed and timeline rebuild for a change the views do not display. A BACKGROUND chat
+    tab's queued-hold reason still waits for the next _judge_gen bump (its _chat_build_sig folds no
+    dirty input): pre-existing, unchanged. The re-arm below is the one write the feed DOES show (a
+    given-up card's summary sentinel goes back to None), so that branch marks the views dirty — the
+    store write is the new information, the flag flip is not."""
     if not _retry_paused_on():
         return
     floor = _retry_pause_ts()
@@ -7569,9 +7583,10 @@ def _auto_resume_retry(now, tmux):
                 rearmed = jd.rearm_failed_summaries(now)  # while degraded, so their summaries/briefs retry now
                 if rearmed:
                     sys.stderr.write("distiller: re-armed %d given-up card(s) after recovery\n" % rearmed)
+                    _mark_views_dirty()                  # store writes the cards show → rebuild past the sig
             except Exception:
                 sys.stderr.write("rearm-failed-summaries: %s\n" % traceback.format_exc())
-            _push_all()                                  # globalRetryPaused=false reaches the UI immediately
+            _push_soon()                                 # globalRetryPaused=false rides the next push (docstring)
             return
 
 
@@ -8035,8 +8050,14 @@ def _interrupt_block_tick(now, tmux):
     The once-per-episode marker is VERIFIED against the store each tick, never trusted (the user
     2026-08-08): judges complete/clear the goal it points at off newer turns (or compaction archives
     it), and trusting the bare marker skipped the re-block forever — the live focus goal sat in
-    Working wearing only the badge, auto-nudge suppressed: invisible-blocked."""
-    changed = False
+    Working wearing only the badge, auto-nudge suppressed: invisible-blocked.
+
+    No inline push (perf batch 2 P1, 2026-09-06): both writers end in _mark_views_dirty(), which
+    stamps the dirty mark and sets _pusher_wake, so the next cycle's own _push_all rebuilds past the
+    mark — the same rebuild the inline call paid here, moved one cycle start later (the jobs after
+    this tick, about 3% of the pusher's GIL, plus the next cycle's liveness read: sub-second). The
+    inline call bought no earlier rebuild, only a second push's fixed cost, and on the stand-down
+    path below (a marker whose block a judge now owns) it pushed with nothing new to show."""
     alive = _alive_sessions(now, tmux)
     for s in alive:
         sid = s["sid"]
@@ -8071,17 +8092,16 @@ def _interrupt_block_tick(now, tmux):
                                      for a in (turn.get("atoms") or [])])
                 g = _record_interrupt_block(sid, ev)
                 if g:
-                    _set_intr_blocked(sid, g); changed = True
+                    _set_intr_blocked(sid, g)
         else:                                            # working / re-engaged / machine cut → lift OUR block if any
             ib = _intr_blocked(sid)
             if ib:
                 # the re-engagement IS the newest turn's trigger — the same stamp the judges will put on
                 # every verdict about that turn, so their ruling outranks this lift on arrival order
                 _lift_interrupt_block(sid, ib, turns[-1].get("t") if turns else 0)
-                _set_intr_blocked(sid, None); changed = True
+                _set_intr_blocked(sid, None)
     _intr_marks_forget({s["sid"] for s in alive})       # a sid that left the alive set releases its memo entries
-    if changed:                                          # a needs-you flip should reach the feed at once
-        _push_all()
+    # a flip's writer marked the views dirty and woke the pusher: the next cycle carries it (docstring)
 
 
 def _walk_root_record(sid):
