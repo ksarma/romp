@@ -17,7 +17,8 @@ does. Synthetic fixtures only: placeholder ids, invented text, hermetic state.
 The kernel here is a private module object (romp_kernel_ftcaches), so its caches are nobody else's; the
 judge, the event model and the session backend are the shared fixed-name modules, and every value of
 theirs a test touches (the state root and the paths derived from it, the memos, the counters, the echo
-key) goes back in tearDown.
+key) goes back in tearDown. One assertion pins the fixed tree's entry point rather than a race:
+Counters.test_assembly_stats_count_exactly, second half (see its comment).
 """
 import contextlib
 import io
@@ -493,12 +494,17 @@ class ClickStamps(unittest.TestCase):
     tearDown = setUp
 
     def test_interrupt_pop_keeps_a_click_that_landed_during_the_ruling(self):
+        # Both clicks land through the stamp table itself, the write the WS op and the Ctrl+C relay made
+        # before _mark_interrupt_clicked existed, so on the unfixed tree this fails on the pop, not on a name.
         now = int(time.time())
-        km._mark_interrupt_clicked(SID)
+        km._interrupt_clicked[SID] = time.time()
         t0 = km._interrupt_clicked[SID]
+
+        def reclick():
+            km._interrupt_clicked[SID] = time.time()
         stop = _Hooked({"type": "user", "t": now,
                         "message": {"role": "user", "content": "[Request interrupted by user]"}},
-                       "t", lambda: km._mark_interrupt_clicked(SID))     # a second stop, mid-ruling
+                       "t", reclick)                                       # a second stop, mid-ruling
         session = {"turns": [{"atoms": [stop]}]}
         self.assertFalse(km._interrupting(SID, session, now, None), "the first click settled")
         self.assertIn(SID, km._interrupt_clicked, "was: the second click's cue popped with the first")
@@ -644,13 +650,16 @@ class Counters(unittest.TestCase):
             km._DRAIN_REFUSED.update(saved)
 
     def test_assembly_stats_count_exactly(self):
+        # _asm_demote first: it exists on both trees, so without the GIL the unfixed tree fails here, on the
+        # lost increments. _asm_count is the helper the fix added, so its half pins the fixed tree's entry
+        # point (an AttributeError before the fix, not a race).
         em._ASM_STATS.pop("ft-test", None)
         em._ASM_STATS.pop("g:ft-test", None)
         try:
-            total = _hammer(lambda: em._asm_count("ft-test"))
-            self.assertEqual(em._ASM_STATS["ft-test"], total)
-            demoted = _hammer(lambda: em._asm_demote("ft-test"), n=2000)
+            demoted = _hammer(lambda: em._asm_demote("ft-test"))
             self.assertEqual(em._ASM_STATS["g:ft-test"], demoted)
+            total = _hammer(lambda: em._asm_count("ft-test"), n=2000)
+            self.assertEqual(em._ASM_STATS["ft-test"], total)
         finally:
             em._ASM_STATS.pop("ft-test", None)
             em._ASM_STATS.pop("g:ft-test", None)
