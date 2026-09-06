@@ -41,5 +41,5 @@ test("the offer retires with the window and rides beside the auto-retry, never i
   assert.match(KERNEL, /_cap_off = _cap_switch_offer\(fsid, aerr\) if aerr else None/);
   assert.match(KERNEL, /\*\*\(\{"capOffer": _cap_off\} if _cap_off else \{\}\),/, "sparse — absent payloads are byte-identical");
   // the auto-retry contract is untouched: the retry button + auto ladder read exactly as before
-  assert.match(FEED, /vscodeApi\?\.postMessage\(\{ type: "apiRetry", id: it\.sid \}\);/);
+  assert.match(FEED, /vscodeApi\?\.postMessage\(\{ type: "apiRetry", id: it\.sid, manual: true \}\);/);   // manual: the kernel fires it past the auto gates (2026-09-06)
 });

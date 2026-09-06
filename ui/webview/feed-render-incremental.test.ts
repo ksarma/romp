@@ -9,12 +9,12 @@
 //
 // The stand-in is the fleet-live-clock.test.ts tree of plain objects, grown to what feed.ts's boot and
 // render paths touch: a small selector engine (descendant chains, classes, ids, attribute presence and
-// equality, a never-matching :hover), insertBefore/sibling walks, dataset-backed data-* attributes, a
+// equality; every pseudo-class, :hover included, matches nothing), insertBefore/sibling walks, dataset-backed data-* attributes, a
 // style object with custom properties, EventTarget elements, and counters for the writes the gate is about
 // (replaceChildren on a card's name node, textContent sets, getBoundingClientRect reads, scrollTop writes).
 // gear.js's initGear returns at once when #rsettings already exists, so the settings modal never mounts.
 // Synthetic only: the notes-api demo world, placeholder sids, hostname TESTHOST.
-import { test, mock } from "node:test";
+import { test, mock, after } from "node:test";
 import * as assert from "node:assert/strict";
 
 // ── a DOM stand-in ─────────────────────────────────────────────────────────────────────────────────
@@ -119,7 +119,17 @@ class El extends EventTarget {
   getAttribute(k: string): string | null { return this.attrs.get(k) ?? (k.startsWith("data-") ? this.dataset[camel(k.slice(5))] ?? null : k === "title" && this.title ? this.title : null); }
   hasAttribute(k: string): boolean { return this.getAttribute(k) !== null; }
   removeAttribute(k: string): void { this.attrs.delete(k); if (k === "title") this.title = ""; }
-  getBoundingClientRect() { rectReads++; return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }; }
+  getBoundingClientRect() {
+    // a rendered element gets a rect from its place: a column's cards stack 100 px apart and each column sits
+    // at its own left, so a card that changed column or slot has a different rect and one that did not has
+    // the same; anything hidden (display:none on it or an ancestor) or detached is a zero rect, as in a browser
+    rectReads++;
+    for (let n: El | null = this; n; n = n.parentNode) if (n.style.display === "none") return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    if (!this.isConnected) return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    const p = this.parentNode!;
+    const top = p.children.indexOf(this) * 100, left = p.id.length * 10;
+    return { left, top, right: left + 300, bottom: top + 90, width: 300, height: 90 };
+  }
   scrollIntoView(): void {}
   focus(): void {}
   blur(): void {}
@@ -222,8 +232,9 @@ const settle = () => new Promise<void>((r) => setImmediate(r));   // let a defer
 const dispatch = async (f: any) => {
   win.dispatchEvent(new MessageEvent("message", { data: f }));
   await settle();
-  if (listenerErrors.length) { const e = listenerErrors.shift()!; throw new Error("a listener threw: " + (e.stack || e.message)); }
+  if (listenerErrors.length) { const es = listenerErrors.splice(0); throw new Error("a listener threw: " + es.map((e) => e.stack || e.message).join("\n---\n")); }
 };
+after(() => { assert.deepEqual(listenerErrors.map((e) => e.stack || e.message), [], "no listener threw outside a dispatch (a gesture handler, a timer)"); });
 const card = (id: string): any => body.querySelector(`[data-key="a:${id}"]`);
 const colOf = (id: string) => card(id)?.parentNode?.id;
 const nameRebuilds = () => ({ g1: card("g1")._name.rc, g2: card("g2")._name.rc, g3: card("g3")._name.rc });
@@ -259,14 +270,23 @@ test("frame B: only the card whose object changed repaints; it moves column; the
   assert.equal(card("g1")._checklist.children[0], row, "…and its rows are the same nodes, not a rebuild");
   assert.equal(scrollWrites[scrollWrites.length - 1], 120, "the scroll position is restored");
   assert.ok(rectReads > readsBefore, "a column changed, so the FLIP passes read rects");
+  assert.ok(card("g2").classList.contains("fitem-flying"), "the card that crossed columns flies in the back layer");
+  assert.match(card("g2").style.transform, /^translate\(/, "…inverted to its old spot first");
 });
 
 test("frame C: the same frame re-dispatched (a federation re-emit) rebuilds nothing and reads no rects", async () => {
   // frame B emptied api's run in Working, so its session header left as a ghost (re-keyed x:N until its exit
-  // animation ends, or the 600 ms backstop); a ghost is a key the plan does not hold, so that column reads
-  // its rects until it is gone — let the backstop fire first
-  mock.timers.tick(700);
+  // animation ends, or the 600 ms backstop) and g2 flew to Completed; 700 ms later both backstops have fired:
+  // no transition ends under the stand-in, so the fly's own backstop is what takes the card out of the back
+  // layer (before it, a card whose transitionend never came kept pointer-events:none until its next repaint)
+  // (two ticks: a timer created inside a mock tick is stamped with the tick's END time, so one 700 ms tick
+  // would run the nested animation frame AFTER the 650 ms backstop — the reverse of a browser's order)
+  mock.timers.tick(20);
+  assert.equal(card("g2").style.transform, "translate(0, 0)", "the frame after the invert releases the offset");
+  mock.timers.tick(680);
   assert.equal(body.querySelectorAll(".sess-exit").length, 0, "the exited header is gone");
+  assert.ok(!card("g2").classList.contains("fitem-flying"), "the fly ended by its backstop");
+  assert.equal(card("g2").style.transform, "", "…and the card is back in normal flow");
   await dispatch(frame([g1, { ...g2, column: "completed" }, g3]));   // a fresh copy of g2 IS a new object: it repaints — that is the contract
   assert.deepEqual(nameRebuilds(), { g1: 1, g2: 3, g3: 1 });
   const readsBefore = rectReads;
@@ -322,5 +342,86 @@ test("Undo inside a card's 180 ms collapse keeps the restored card: the gesture 
   mock.timers.tick(200);                    // the collapse timer fires and finds nothing to remove
   assert.equal(card("g3"), c3, "the restored card is still on the board, the same element");
   assert.equal(colOf("g3"), "col-asks-list");
+});
+
+test("a card moving into a FOLDED column (display:none, a zero rect) gets no fly: nothing to glide to, and the class it would wear turns the pointer off", async () => {
+  body.byId("col-completed-list")!.style.display = "none";   // the Completed section folded to its header
+  const g3done = { ...card("g3")._it, column: "completed" };
+  await dispatch(frame([g1, card("g2")._it, g3done], { working: ["web"] }));
+  assert.equal(colOf("g3"), "col-completed-list", "the card moved");
+  assert.ok(!card("g3").classList.contains("fitem-flying"), "no fly into a column nobody can see");
+  assert.equal(card("g3").style.transform ?? "", "", "no inverted transform left on it");
+  body.byId("col-completed-list")!.style.display = "";
+});
+
+test("…and a card LEAVING a folded column (a zero First rect) gets no fly either: nothing to glide from", async () => {
+  body.byId("col-completed-list")!.style.display = "none";   // g3 sits in the folded Completed section
+  await dispatch(frame([g1, card("g2")._it, { ...card("g3")._it, column: "working" }], { working: ["web"] }));
+  assert.equal(colOf("g3"), "col-asks-list", "the card moved back to Working");
+  assert.ok(!card("g3").classList.contains("fitem-flying"), "no fly from a spot nobody could see");
+  assert.equal(card("g3").style.transform ?? "", "", "no inverted transform from the pane's corner");
+  body.byId("col-completed-list")!.style.display = "";
+});
+
+test("a second fly of the same card while the first still runs keeps its own Invert through the first fly's cancel, and the first fly's backstop leaves it alone", async () => {
+  const c2 = card("g2");
+  await dispatch(frame([g1, { ...c2._it, column: "working" }, card("g3")._it], { working: ["web"] }));   // fly 1: Completed → Working
+  assert.ok(c2.classList.contains("fitem-flying"));
+  mock.timers.tick(20);                                        // fly 1 plays: its transition is running
+  assert.equal(c2.style.transform, "translate(0, 0)");
+  await dispatch(frame([g1, { ...c2._it, column: "completed" }, card("g3")._it], { working: ["web"] }));   // fly 2, mid-flight: back to Completed
+  const inverted = c2.style.transform;
+  assert.match(inverted, /^translate\(-?\d/, "fly 2 inverted the card to its old spot");
+  assert.notEqual(inverted, "translate(0, 0)");
+  // the browser cancels fly 1's transition on that write and tells EVERY listener before fly 2's Play frame
+  c2.dispatchEvent(Object.assign(new Event("transitioncancel"), { propertyName: "transform" }));
+  assert.equal(c2.style.transform, inverted, "fly 1's cancel handler is superseded; fly 2's ignores an event before its own Play — the Invert survives");
+  assert.ok(c2.classList.contains("fitem-flying"), "…and the back layer stays on for the crossing");
+  mock.timers.tick(20);                                        // fly 2 plays
+  assert.equal(c2.style.transform, "translate(0, 0)");
+  assert.match(c2.style.transition, /transform \.42s/);
+  mock.timers.tick(610);                                       // fly 1's 650 ms backstop falls due: superseded, a no-op
+  assert.match(c2.style.transition, /transform \.42s/, "fly 2 is still in flight");
+  assert.ok(c2.classList.contains("fitem-flying"));
+  mock.timers.tick(20);                                        // fly 2's own backstop ends it
+  assert.equal(c2.style.transform, "");
+  assert.equal(c2.style.transition, "");
+  assert.ok(!c2.classList.contains("fitem-flying"));
+});
+
+test("Retry latches on the click and re-arms only on a deciding event: the kernel's reply frame, or a repaint of the card", async () => {
+  const blockedG1 = { ...g1, blocked: { state: "apiError", what: "the API returned 529", status: 529 } };
+  await dispatch(frame([blockedG1, card("g2")._it, card("g3")._it]));   // web is NOT working: the API-error unit shows
+  const retry = card("g1")._apiRetry;
+  assert.equal(retry.style.display, ""); assert.equal(retry.disabled, false); assert.equal(retry.textContent, "Retry");
+  const sent = posted.length;
+  retry.onclick(ev);
+  assert.deepEqual(posted.slice(sent), [{ type: "apiRetry", id: WEB, manual: true }], "a MANUAL retry: the kernel fires it past every auto gate");
+  assert.equal(retry.disabled, true); assert.equal(retry.textContent, "Retrying…");
+  await dispatch(frame([blockedG1, card("g2")._it, card("g3")._it]));   // the same objects again: nothing decided
+  assert.equal(retry.disabled, true, "a re-emit is not a deciding event");
+  await dispatch({ type: "err", sid: API, text: "another session's business" });
+  assert.equal(retry.disabled, true, "another session's reply is not this card's event");
+  await dispatch({ type: "err", sid: WEB, text: "the retry was not delivered" });
+  assert.equal(retry.disabled, false, "the kernel's reply for this session re-arms it");
+  assert.equal(retry.textContent, "Retry");
+  retry.onclick(ev);
+  assert.equal(retry.disabled, true);
+  await dispatch(frame([{ ...blockedG1 }, card("g2")._it, card("g3")._it]));   // a new object for the card: it repaints
+  assert.equal(retry.disabled, false, "a repaint re-arms it too");
+  await dispatch(frame([g1, card("g2")._it, card("g3")._it]));   // the block is gone: the unit hides
+  assert.equal(card("g1")._apiRetry.style.display, "none");
+});
+
+test("a second reveal pulse inside the first's window is not cut short by the first's backstop", async () => {
+  const c1 = card("g1");
+  await dispatch({ type: "revealCards", keys: ["g1"] });
+  assert.ok(c1.classList.contains("card-pulse"));
+  mock.timers.tick(600);
+  await dispatch({ type: "revealCards", keys: ["g1"] });        // pulse again, 600 ms in
+  mock.timers.tick(1000);                                       // the FIRST backstop's moment (1500 ms after it armed)
+  assert.ok(c1.classList.contains("card-pulse"), "the second pulse still shows: one handle per element");
+  mock.timers.tick(600);                                        // the second backstop
+  assert.ok(!c1.classList.contains("card-pulse"), "…and it comes off at its own end");
   mock.timers.reset();
 });

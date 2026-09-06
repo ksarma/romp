@@ -4,7 +4,10 @@
 // badge on an unchanged card, so the test walks the inputs one at a time. Synthetic notes-api world.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { cardInputsKey, cardNeedsUpdate, sameKeySeq, type GateEnv, type GateItem } from "./feed-card-gate";
+import { upsertById } from "./feed-delta";
 
 const WEB = "11111111-2222-3333-4444-555555555555";
 const API = "11111111-2222-3333-4444-666666666666";
@@ -110,4 +113,20 @@ test("sameKeySeq: the FLIP gate is order-sensitive and length-sensitive", () => 
   assert.equal(sameKeySeq(["a:1", "a:2"], ["a:1"]), false, "a card left");
   assert.equal(sameKeySeq(["a:1"], ["a:1", "a:2"]), false, "a card arrived");
   assert.equal(sameKeySeq([], []), true, "an empty column stays empty");
+});
+
+// --- the gate's premise: an unchanged card keeps its OBJECT through the delta path ---------------------
+test("upsertById hands an untouched card back by reference and only the re-sent one as a new object — the identity the gate reads", () => {
+  const a = card({ itemId: "g1" }), b = card({ itemId: "g2", sid: API, name: "api" }), c = card({ itemId: "g3" });
+  const b2 = { ...b, column: "completed" };
+  const out = upsertById([a, b, c], [b2], [], "itemId");
+  assert.equal(out[0], a, "same object: the gate skips it");
+  assert.equal(out[1], b2, "the re-sent card is the new object: the gate repaints it");
+  assert.equal(out[2], c);
+  assert.notEqual(out[1], b);
+});
+
+test("federation's merge pushes each host's cards by reference (a defensive copy there would silently turn the gate into always-update)", () => {
+  const FED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "federation.ts"), "utf8");
+  assert.match(FED, /if \(Array\.isArray\(f\.asks\)\) merged\.asks\.push\(\.\.\.f\.asks\);/);
 });

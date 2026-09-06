@@ -484,7 +484,7 @@ onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
 // document as this feed bundle). Default ON. These gate the CARDS only — the modal always shows everything
 // (the user 2026-06-17). `!== false` so a missing key defaults to shown.
 // Memoised on the RAW settings string (2026-09-06): called per card per render and per live pass, and each
-// call parsed the blob. The raw string is the truth, so the memo is exact and needs no invalidation. The
+// call parsed the blob. Keyed on the raw string, the memo is exact and needs no invalidation. The
 // `colormap` rides along for the per-card update gate: a colormap change must repaint every tint at once.
 type FeedPrefs = { newestFirst: boolean; collapsed: boolean; grouped: boolean; stacked: boolean; colormap: string };
 const PREFS_DEFAULT: FeedPrefs = { newestFirst: false, collapsed: false, grouped: true, stacked: false, colormap: "aurora" };
@@ -720,7 +720,7 @@ function el(tag: string, cls?: string): HTMLElement {
   return e;
 }
 // A text write that compares first (2026-09-06). In a document that has created a MutationObserver — gear.js
-// does at boot — Blink treats an identical textContent write as a real Text-node replacement and dirties
+// creates several at boot — Blink treats an identical textContent write as a real Text-node replacement and dirties
 // layout (feed-age.ts has the mechanism). The grouped-mode session headers repaint on every render (they are
 // not behind the per-card update gate), so their labels write through here.
 function setText(e: HTMLElement, s: string): void { if (e.textContent !== s) e.textContent = s; }
@@ -969,6 +969,23 @@ function setCardNotify(card: HTMLElement, it: AskItem, value: boolean): void {
   pendingNotify.set(it.itemId, value);               // sticky until the kernel's payload carries it
   paintCardBell(card, value);                        // acknowledge instantly, before the round-trip
   vscodeApi?.postMessage({ type: "cardNotify", itemId: it.itemId, sid: it.sid, value });
+}
+
+// Re-arm the card-face latches (Retry's "Retrying…", Revive's "Reviving…") on the kernel's reply to the
+// click — an err, warn or reviveFailed frame for the session, or for no session in particular. The
+// click-safe rule holds the acknowledgement until a deciding event; with the per-card update gate the
+// className rewrite no longer re-arms them on every push, so the reply frame and a repaint of the card
+// (a new object, a key flip) are those events (2026-09-06 review).
+function rearmLatches(sid: string): void {
+  for (const card of askEls.values()) {
+    const a = card as any;
+    const it = a._it as AskItem | undefined;
+    if (sid && it && it.sid !== sid) continue;
+    const r = a._apiRetry as HTMLButtonElement | undefined;
+    if (r && r.disabled) { r.disabled = false; r.textContent = "Retry"; }
+    const v = a._revive as HTMLButtonElement | undefined;
+    if (v && v.disabled) { v.disabled = false; v.textContent = (v as any)._idle || "Revive"; }
+  }
 }
 
 function showCardMenu(e: MouseEvent, card: HTMLElement): void {
@@ -1311,7 +1328,7 @@ function makeAskCard(it: AskItem): HTMLElement {
     card.dispatchEvent(new MouseEvent("mouseleave"));
     dressHeaderIfLast(card, it.sid);   // the run's last card takes its header with it — one motion (2026-08-24)
     pendingCleared.add(it.itemId);   // suppress from incoming pushes until the kernel confirms the clear
-    clearedStack.push([it]);         // cache for an instant optimistic Undo
+    clearedStack.push([(card as any)._it ?? it]);   // cache the FRESHEST payload copy for an instant optimistic Undo (the closure's `it` is the card's creation-time object)
     card.classList.add("dismissing");
     vscodeApi?.postMessage({ type: "askClear", itemId: it.itemId, sid: it.sid });
     setTimeout(() => { if (askEls.get(it.itemId) === card && card.classList.contains("dismissing")) { card.remove(); askEls.delete(it.itemId); dropDismissed([it.itemId]); } }, 180);
@@ -2103,7 +2120,8 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
         para.textContent = p;
         if (stampOk && i < bp!.length) {
           const age = el("span", "fask-para-age");
-          stampAge(age, bp![i].since || nowS, "plain", false, nowS, relAge, ageTint);   // stamped: the live pass moves it
+          if (bp![i].since) stampAge(age, bp![i].since, "plain", false, nowS, relAge, ageTint);   // stamped: the live pass moves it
+          else age.textContent = relAge(0);   // no event time → the static "<1m ago" this chip always showed; nothing to count from
           para.append(" ", age);
         }
         // T220 first: the paragraph's own citation, with its located span riding the landing
@@ -2227,14 +2245,17 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
       : it.blocked.status ? `⚠ API error · ${it.blocked.status}` : "⚠ API error";
     // a refusal's raw CLI text buries the remedy — the kernel's `what` states it plainly, so tip with that
     setTip(a._apiBadge as HTMLElement, (spendLimit || refusal) ? it.blocked.what : (it.blocked.text || it.blocked.what));
-    // Under the per-card update gate (2026-09-06) a latched "Retrying…" holds until THIS card's object
-    // changes, where before it re-armed on the next push of any card: the session resuming moves the
-    // working set (the key) and hides the whole unit; a retry that fails again arrives as a new block
-    // record. Revive below latches the same way.
+    // The latched "Retrying…" (2026-09-06, under the per-card update gate) re-arms here on any repaint of
+    // this card — a new object or a key flip; the expected path is the session resuming, which moves the
+    // working set (the key) and hides the whole unit — and on the kernel's reply to the click (an err or
+    // warn frame for the session, rearmLatches). Before the gate it re-armed on the next push of any card.
+    // The click is a MANUAL retry (render.ts sends the same): the kernel fires it past every auto gate, so
+    // the button is never a dead no-op on a paused or suppressed thread (the user 2026-07-06). Revive
+    // below latches and re-arms the same way.
     a._apiRetry.disabled = false; a._apiRetry.textContent = "Retry";
     a._apiRetry.onclick = (ev: Event) => {
       ev.stopPropagation();
-      vscodeApi?.postMessage({ type: "apiRetry", id: it.sid });
+      vscodeApi?.postMessage({ type: "apiRetry", id: it.sid, manual: true });
       a._apiRetry.disabled = true; a._apiRetry.textContent = "Retrying…";
     };
   }
@@ -2290,6 +2311,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   if (isParked && it.blocked) {
     const toSid = it.blocked.toSid || it.sid;
     a._revive.disabled = false; a._revive.textContent = `Revive ${it.blocked.toName || it.name}`;
+    (a._revive as any)._idle = a._revive.textContent;   // the label rearmLatches restores
     a._revive.onclick = (ev: Event) => {
       ev.stopPropagation();
       vscodeApi?.postMessage({ type: "reviveSession", id: toSid });
@@ -4209,7 +4231,9 @@ function entryKey(e: Entry, listEl: HTMLElement): string {
 }
 function childKeys(listEl: HTMLElement): string[] {
   const out: string[] = [];
-  for (const c of Array.from(listEl.children) as HTMLElement[]) if (c.dataset.key) out.push(c.dataset.key);
+  // an exiting header's ghost ("x:N", startSessHeadExit) is never planned and animates its own collapse:
+  // not a move, so it does not make its column read rects for the 600 ms it lingers
+  for (const c of Array.from(listEl.children) as HTMLElement[]) { const k = c.dataset.key; if (k && !k.startsWith("x:")) out.push(k); }
   return out;
 }
 
@@ -4279,10 +4303,14 @@ function reconcileCol(listEl: HTMLElement, entries: Entry[], globalDesired: Set<
 // unchanged has nothing that can glide, so its rects go unread. And the Last pass reads EVERY rect before
 // writing ANY transform: a transform write creates a paint layer and dirties layout, so the old per-card
 // read/write interleave forced about 60 layouts per delta (measured) on top of the one the frame needs.
-// Cards below a card whose HEIGHT changed used to glide in place as a side effect of reading every column;
-// they snap now — that glide keyed on no event.
+// Cards below a card whose CONTENT changed height (a takeaway landing, a chip appearing) used to glide in
+// place as a side effect of reading every column; they snap now, in every layout: the passes key on
+// membership and order only. Capturing on content changes as well would read every column's rects on most
+// deltas (the kernel re-sends every card of a working session per rebuild) — about 40 ms on the recorded
+// board — for a glide that follows new information anyway.
 type FlipState = { rect: DOMRect; col: string };
 type FlyCol = "asks" | "needsInput" | "completed";
+let flySeq = 0;   // the fly token: the element remembers the newest fly's number (see the WRITE phase)
 const FLY_COLS: FlyCol[] = ["asks", "needsInput", "completed"];
 function captureCardRects(cols: ReturnType<typeof ensureCols>, which: readonly FlyCol[]): Map<string, FlipState> {
   const m = new Map<string, FlipState>();
@@ -4305,7 +4333,15 @@ function flyColumnChanges(first: Map<string, FlipState>, cols: ReturnType<typeof
       const k = c.dataset.key; if (!k) continue;
       const prev = first.get(k);
       if (!prev) continue;                                 // brand-new card → no FLIP (nothing to glide from)
+      // a card nobody could see — its column folded to the header (display:none) — has a zero First rect:
+      // nothing to glide from, and a fly from (0,0) zooms in from the pane's corner
+      if (!prev.rect.width && !prev.rect.height) continue;
       const now = c.getBoundingClientRect();
+      // …and a target nobody can see has a zero Last rect and no transition to run, so a fly written to it
+      // would never end (2026-09-06 review: the class it wears, pointer-events:none, then stayed until the
+      // card's next repaint, and the update gate no longer rewrites className every render). Nothing to
+      // glide to; leave it.
+      if (!now.width && !now.height) continue;
       const dx = prev.rect.left - now.left, dy = prev.rect.top - now.top;
       if (!dx && !dy) continue;                            // didn't move → leave it alone
       // Two flavors of move, ONE FLIP (the user 2026-06-29): a card that CHANGED COLUMN flies in the BACK
@@ -4317,22 +4353,46 @@ function flyColumnChanges(first: Map<string, FlipState>, cols: ReturnType<typeof
   }
   // WRITE phase
   for (const { c, dx, dy, crossed } of moves) {
+    // ONE fly owns an element at a time (2026-09-06 review, reproduced in Chromium): a second render can fly
+    // the same card while the first fly's 420 ms transition still runs — two deltas within half a second
+    // on an active board. The second Invert cancels the first transition, and the browser delivers that
+    // transitioncancel to EVERY listener on the element before the second fly's Play frame. Two guards:
+    // a per-element token, so a superseded fly's end/cancel/backstop removes its own listeners and touches
+    // nothing else; and `played`, so a fly ignores transition events that arrive before its own Play wrote
+    // the transition — those belong to the fly it cancelled. Without them the older fly's cancel handler
+    // wiped the newer Invert and the card snapped where it should have glided.
+    const mine = ++flySeq;
+    (c as any)._flySeq = mine;
     if (crossed) c.classList.add("fitem-flying");
     // Invert: jump the card back to its old spot, instantly.
     c.style.transition = "none";
     c.style.transform = `translate(${dx}px, ${dy}px)`;
-    // Play: next frame, release the offset with a transition → it glides to its new home.
+    // the fly ends on its own event — end OR cancel (a card re-inserted or hidden mid-flight gets
+    // transitioncancel, never transitionend) — with a backstop so a lost event can never leave the card
+    // in the back layer, pointer-events off (absorbIntoParent's idiom). Idempotent: whichever fires first.
+    let flown = false, played = false;
+    const done = (ev?: TransitionEvent) => {
+      if (flown) return;
+      if (ev && (ev.propertyName !== "transform" || !played)) return;   // not this fly's transition
+      flown = true;
+      c.removeEventListener("transitionend", done);
+      c.removeEventListener("transitioncancel", done);
+      if ((c as any)._flySeq !== mine) return;             // superseded: the newer fly owns the element's styles
+      c.classList.remove("fitem-flying");                  // whichever fly added it — the element is settled now
+      c.style.transition = ""; c.style.transform = "";     // back to normal flow + stacking
+    };
+    c.addEventListener("transitionend", done);
+    c.addEventListener("transitioncancel", done);
+    window.setTimeout(done, 650);
+    // Play: next frame, release the offset with a transition → it glides to its new home. Unless the fly
+    // already ended or was superseded (a hidden tab pauses animation frames while the backstop's timer
+    // still runs): a release after that would leave an inline identity transform on a settled card.
     requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (flown || (c as any)._flySeq !== mine) return;
+      played = true;
       c.style.transition = "transform .42s cubic-bezier(.22, .61, .36, 1)";
       c.style.transform = "translate(0, 0)";
     }));
-    const done = (ev: TransitionEvent) => {
-      if (ev.propertyName !== "transform") return;
-      c.removeEventListener("transitionend", done);
-      if (crossed) c.classList.remove("fitem-flying");
-      c.style.transition = ""; c.style.transform = "";   // back to normal flow + stacking
-    };
-    c.addEventListener("transitionend", done);
   }
 }
 
@@ -4688,18 +4748,25 @@ function render() {
   // a card that changes column can FLY from its old spot to the new one instead of teleporting — in the
   // columns where something moves (see the FLIP block): a column whose planned key sequence equals its
   // current one has no card entering, leaving or changing place. A quiet delta reads no rects at all.
-  const flipCols = FLY_COLS.filter((k) => !sameKeySeq(childKeys(cols[k]), buckets[k].map((e) => entryKey(e, cols[k]))));
+  // In the STACKED layout (the pref, or the narrow-container force) the sections sit one above the other,
+  // so a card leaving one section shifts every card in the sections below it: when a column's membership
+  // or order changed there, every column is read, as before. (A content-height change alone still
+  // captures nothing, in either layout — see the FLIP block.)
+  const gprefs = feedPrefs();
+  const differing = FLY_COLS.filter((k) => !sameKeySeq(childKeys(cols[k]), buckets[k].map((e) => entryKey(e, cols[k]))));
+  const flipCols = differing.length && (stackForced || gprefs.stacked) ? FLY_COLS : differing;
   const flipFirst = captureCardRects(cols, flipCols);
 
   // The per-card update gate's inputs, resolved ONCE for this render (feed-card-gate.ts cardInputsKey):
   // everything updateAskCard reads outside the ask object. Where the delta cost went before the gate, on
-  // the recorded 810-card board (tools/ui-bench.mjs, a 542 KB delta with 58 changed cards, 775 ms in the
-  // handler): about 55% the forced layout of the whole invalidated tree at `list.scrollTop = prevScroll`
-  // below, about 20% the 810 updateAskCard calls, about 10% the FLIP rect passes, about 10% the parse.
+  // the recorded 810-card board (the headless-Chrome bench, tools/ui-bench.mjs, PR #227: a 542 KB delta
+  // with 58 changed cards, about 480 ms in the handler paired against this change in one load window,
+  // 775 ms in the first unpaired recording): about 55% the forced layout of the whole invalidated tree
+  // at `list.scrollTop = prevScroll` below, about 20% the 810 updateAskCard calls, about 10% the FLIP
+  // rect passes, about 10% the parse.
   // Skipping the unchanged cards shrinks the dirty set that layout processes as well as the JS, so the
   // per-delta cost now scales with the cards the kernel re-sent (during activity, every card of every
   // working session per rebuild), not with the board.
-  const gprefs = feedPrefs();
   const gate: GateEnv = {
     dot: dotFor, working: (n) => workingSet.has(n), userTodos: userTodosMap,
     focusId: hoverAskId ?? pinnedAskId, pinnedId: pinnedAskId, notifyOn: cardNotifyOn,
@@ -5381,6 +5448,12 @@ window.addEventListener("message", perfFrameHandler("feed", (m) => vscodeApi?.po
                                  text: copy ? title + ": " + copy : title,
                                  sid: typeof m.sid === "string" ? m.sid : "" }, "*");
     showErrDialog(title, m.text, copy);
+    rearmLatches(typeof m.sid === "string" ? m.sid : typeof m.id === "string" ? m.id : "");   // the kernel's reply IS the event
+  } else if (m.type === "reviveFailed") {
+    // the kernel's answer to a Revive that did not take (today it is aimed at the chat pane; a kernel that
+    // also tells the feed lands here): the latched "Reviving…" on that session re-arms — the reply is the
+    // deciding event. (The feed page has no `warn` handler by design — see undelivered-err.test.ts.)
+    rearmLatches(typeof m.sid === "string" ? m.sid : typeof m.id === "string" ? m.id : "");
   } else if (m.type === "pickerOptions" && typeof m.name === "string") {
     // the host read the blocked session's live resume-picker screen — show the
     // same options in-page; a choice goes back as keystrokes (transport only,
@@ -5579,6 +5652,17 @@ function revealCards(keys: Set<string>) {
     c.classList.remove("card-pulse");
     void c.offsetWidth;
     c.classList.add("card-pulse");
+    // and off again when the animation ends (the update gate no longer rewrites className every render,
+    // which used to strip it); under reduced motion no animation runs and the class paints a steady
+    // accent ring, so a backstop a little past the animation's 1.4 s takes it off (2026-09-06 review)
+    // One pulse per element at a time: a second reveal inside the window re-arms the same handle, so the
+    // first reveal's backstop cannot cut the second's animation short.
+    const prev = (c as any)._pulse as { off: () => void; t: number } | undefined;
+    if (prev) { window.clearTimeout(prev.t); c.removeEventListener("animationend", prev.off); }
+    const off = () => { c.removeEventListener("animationend", off); window.clearTimeout(cur.t); (c as any)._pulse = undefined; c.classList.remove("card-pulse"); };
+    const cur = { off, t: window.setTimeout(off, 1500) };
+    (c as any)._pulse = cur;
+    c.addEventListener("animationend", off);
   }
 }
 
@@ -5592,9 +5676,9 @@ function revealCards(keys: Set<string>) {
 // change, this pass is what moves time on every card the kernel does not re-send.
 //
 // The pass WRITES ONLY WHAT CHANGED (2026-09-06). Writing every label and tint every 15 s cost 69-119 ms of
-// style and layout per tick on an 800-card board (measured with tools/ui-bench.mjs) for the 2-13 labels
+// style and layout per tick on an 800-card board (the headless-Chrome bench, tools/ui-bench.mjs, PR #227) for the 2-13 labels
 // whose minute actually rolled over: in a document that has ever created a MutationObserver — gear.js
-// does at boot — Blink treats an identical textContent write as a real Text-node replacement (feed-age.ts
+// creates several at boot — Blink treats an identical textContent write as a real Text-node replacement (feed-age.ts
 // has the mechanism, and paintAge the compare). Tints compare against the last string written (applyTint).
 // A pane nobody can see skips the pass and catches up once when shown (liveRefresher, the Outline
 // pane's pattern): a hidden tab (document.hidden), or a pane the shell has display:none'd — a zero
@@ -5607,8 +5691,11 @@ function livePass(): void {
     applyTint(card, now - it.t);
     // the latched Continue's hover title names how long ago it was sent (contTitle, T150): a title, so it
     // cannot be stamped — refreshed here for the few latched buttons, compare-then-write like the rest
+    // — only once the payload itself carries the latch (the same test updateAskCard re-arms on): a click
+    // latches the button before any frame lands, and the stale object's followupAt would name an older
+    // follow-up (2026-09-06 review)
     const cont = (card as any)._cont as HTMLButtonElement | undefined;
-    if (cont && cont.disabled) {
+    if (cont && cont.disabled && (it.followupPending || it.recheck || it.rejudging)) {
       const ct = contTitle(true, "a continue", it.followupAt);
       if (cont.title !== ct) cont.title = ct;
     }

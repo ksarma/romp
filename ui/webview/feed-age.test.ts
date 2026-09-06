@@ -165,7 +165,7 @@ test("feed.ts reads the clock only through nowSec(), stamps every age-bearing el
   // only when its inputs change, so a duration baked into a caption would freeze on a card never re-sent
   assert.match(FEED, /function durSpan\(since: number\): HTMLElement \{\n\s*const d = el\("span", "fask-dur"\);\n\s*stampAge\(d, since, "dur", false, nowSec\(\), relAge, ageTint\);/);
   assert.doesNotMatch(FEED, /, Date\.now\(\) \/ 1000\)/, "no elapsed label reads the browser clock any more (the clock anchors themselves still do, feed-age.ts liveNow)");
-  assert.match(FEED, /stampAge\(age, bp!\[i\]\.since \|\| nowS, "plain", false, nowS, relAge, ageTint\);/);
+  assert.match(FEED, /if \(bp!\[i\]\.since\) stampAge\(age, bp!\[i\]\.since, "plain", false, nowS, relAge, ageTint\);/);
   // the wash is recomputed from the live clock at render, through the one compare-then-write tint helper…
   assert.match(FEED, /function applyTint\(card: HTMLElement, ageSecs: number\): void \{\n\s*const s = cardTint\(ageSecs\);\n\s*if \(\(card as any\)\._tint === s\) return;/);
   assert.match(FEED, /applyTint\(card, nowSec\(\) - it\.t\);/);

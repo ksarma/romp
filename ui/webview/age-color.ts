@@ -15,9 +15,9 @@ export const COLORMAPS: Record<string, Array<[number, number, number]>> = {
   cividis: [[0, 34, 78], [33, 59, 110], [76, 85, 108], [108, 110, 114], [142, 137, 120], [177, 165, 112], [217, 197, 92], [254, 232, 56]],
 };
 // Memoised on the RAW settings string (2026-09-06): every tint on the board calls this — ~800 per render
-// and per 15 s live pass — and each call parsed the settings blob. The raw string is the truth, so the
-// memo is exact and needs no invalidation: a different string re-parses, the same string returns the
-// same stops. (A hygiene change, a few ms; the measured costs were elsewhere — see feed-card-gate.ts.)
+// and per 15 s live pass — and each call parsed the settings blob. Keyed on the raw string, the memo is
+// exact and needs no invalidation: a different string re-parses, the same string returns the same stops.
+// (A few ms per pass; the measured costs were elsewhere — see feed-card-gate.ts.)
 let stopsRaw: string | null | undefined;
 let stopsMemo: Array<[number, number, number]> = COLORMAPS.aurora;
 function selectedStops(): Array<[number, number, number]> {

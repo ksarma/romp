@@ -10,9 +10,9 @@
 //
 // The refresh WRITES ONLY WHAT CHANGED (2026-09-06). It used to set every stamped label's textContent
 // every 15 s, changed or not, and that cost 69-119 ms of style and layout per tick on an 800-card board
-// (measured with tools/ui-bench.mjs: 10-12 ms of script, the rest layout). The reason the compare is
+// (the headless-Chrome bench, tools/ui-bench.mjs, PR #227: 10-12 ms of script, the rest layout). The reason the compare is
 // needed, and must stay: Blink short-circuits an identical textContent write only in a document that has
-// never created a MutationObserver. gear.js creates two at boot (the settings modal's pickers), and the
+// never created a MutationObserver. gear.js creates several at boot (the settings modal's pickers), and the
 // flag is permanent once set — any other observer, a browser extension's included, sets it too — so in
 // every romp pane an identical textContent write replaces the Text node and dirties layout. Only 2-13 of
 // 810 labels actually change per tick (relAge rounds to the minute, then the hour), so comparing first
@@ -76,8 +76,8 @@ export function refreshAges(els: Iterable<AgeEl>, now: number, rel: (secs: numbe
  *  Waiting pane run the same one and a test can drive it: `tick` runs the pass unless the pane is hidden
  *  (a hidden tab, or a zero-size iframe the shell has display:none'd), in which case it remembers that a
  *  pass was skipped; `catchUp` (wired to visibilitychange and resize) runs ONE pass if and only if one
- *  was skipped and the pane is visible now — an ordinary resize, or a visibility flip with nothing
- *  owed, runs nothing. */
+ *  was skipped and the pane is visible now — an ordinary resize, or a visibility flip with no skipped
+ *  pass behind it, runs nothing. */
 export function liveRefresher(opts: { hidden: () => boolean; pass: () => void }): { tick: () => void; catchUp: () => void } {
   let skipped = false;
   const tick = () => {

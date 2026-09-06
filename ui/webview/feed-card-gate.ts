@@ -3,8 +3,9 @@
 // on every card (~810 on the recorded board): the class rewrite, the tint, the name nodes minted
 // anew, the delegation lines rebuilt — a whole-board style invalidation — and then the scroll
 // restore at the end of render() forced a synchronous layout of the whole invalidated tree. A
-// 542 KB feedDelta carrying 58 changed cards cost as much as a full 6.6 MB frame (775 ms in the
-// handler, measured by tools/ui-bench.mjs): about 55% the forced layout at the scrollTop restore,
+// 542 KB feedDelta carrying 58 changed cards cost as much as a full 6.6 MB frame (about 480 ms in the
+// handler paired against this change in one load window, 775 ms in the first unpaired recording; the
+// headless-Chrome bench, tools/ui-bench.mjs, PR #227): about 55% the forced layout at the scrollTop restore,
 // about 20% the 810 updateAskCard calls, about 10% the FLIP rect passes, about 10% the parse.
 // Skipping the unchanged cards shrinks the dirty set that layout has to process as well as the JS.
 //

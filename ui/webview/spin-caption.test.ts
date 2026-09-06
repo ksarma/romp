@@ -335,6 +335,18 @@ test("a caption that ends in a duration also says where the duration starts: cap
   assert.equal(spinFor({ column: "working", working: { since: NOW - 8 * 60, toolUses: 23 } }, false, false, NOW).dur!.text, "Working — 23 tool uses · ");
 });
 
+test("a wait that started this very second, or whose clock runs ahead of the kernel's, reads 0m — still a live part", () => {
+  const NOW = 100_000;
+  for (const since of [NOW, NOW + 30]) {
+    const s = spinFor({ awaiting: { why: "", since }, column: "working" }, false, false, NOW);
+    assert.equal(s.caption, "Awaiting agents · 0m");
+    assert.deepEqual(s.dur, { text: "Awaiting agents · ", since });
+    const w = spinFor({ column: "working", working: { since, toolUses: 1 } }, false, false, NOW);
+    assert.equal(w.caption, "Working — 1 tool use · 0m");
+    assert.deepEqual(w.dur, { text: "Working — 1 tool use · ", since });
+  }
+});
+
 test("no start, no duration part: the caption stands alone", () => {
   assert.equal(spinFor({ awaiting: { why: "" }, column: "working" }, false, false, 5000).dur, null);
   assert.equal(spinFor({ awaiting: { why: "", since: 1000 }, column: "working" }, false, false).dur, null, "no clock, no duration");
