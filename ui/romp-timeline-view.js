@@ -449,9 +449,9 @@ function niceStep(W) { for (const s of NICE) if (W / s <= 8) return s; return 17
 // Clamp the advance to [0, maxAheadSec]: never run backward (a clock hiccup), and never fling the edge
 // far ahead if the tab was backgrounded (rAF paused → huge elapsed) or the kernel went quiet.
 const MAX_INTERP_AHEAD = 30;   // seconds the edge may glide past the last data.now before it just waits
-const LIVE_MIN_PX = 0.15;      // live-tick repaints once the edge would move ≥ this many px — small so the
-                               // glide stays smooth at high zoom (effectively native rAF), but >0 so a
-                               // near-static (zoomed-out) edge idles instead of repainting for nothing
+const LIVE_MIN_PX = 0.15;      // the live tick writes its translate once the edge would move at least this many
+                               // px; below it the frame is a no-op — small so the glide stays smooth at high zoom
+                               // (effectively native rAF), but >0 so a near-static (zoomed-out) edge idles
 function perfNow() { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(); }
 function interpNow(baseSec, baseMs, nowMs, live, maxAheadSec) {
   if (!live || baseMs == null) return baseSec;
@@ -4365,7 +4365,9 @@ class TimelinePanel {
     // back to a full draw() before the drift reaches the battery column. Glyphs are anchored rather than clamped
     // and overhang their anchor, so the ones anchored within that cap of the edge are listed (`edge`) and the
     // tick hides each once its anchor crosses the edge, where a full draw would have culled it. Nothing is
-    // painted over the gutter either way.
+    // painted over the gutter either way. The tick only moves what the build drew: a gridline or clock whose
+    // tick enters the window between builds, or a lane aging out, waits for the next full draw — there is no
+    // clip, so nothing is pre-drawn outside the window — a lag the kernel's 5 s skeleton rebuild bounds.
     const plot = el('g', { 'data-tl-plot': '1' });
     const riders = [];          // {el, attr, base, min} or {el, fn}: the live-edge riders — an open bar's/span's/run's width (or x2) is max(min, base + the drift), base the UN-clamped extent so the floor applies to the grown value; fn re-derives a placement the build centred
     const edge = [];            // {el, x}: glyphs anchored within the drift cap of the plot's left edge — the tick hides one once its anchor crosses the edge (_tickTranslate), the event a full draw culls it on
