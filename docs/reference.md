@@ -751,18 +751,25 @@ it run every time:
   `romp down: the login service did not stop` and exits 1.
 - The manager probe: `romp-manager status` on the control port (`:7432` by
   default). A manager that answers is stopped through its own control endpoint
-  (`romp-manager down`, a `POST /stop`) and given three seconds to leave. One
+  (`romp-manager down`, a `POST /stop`) and given up to seven seconds to leave
+  (the manager itself waits five for its kernels, then sends SIGKILL). One
   still answering after that: `romp down` releases the hold, removes the
   marker, prints `romp down: a manager is still running on :<port> (pid <pid>)`,
   which says to stop it by hand and run `romp down` again, and exits 1.
 - The kernel probe: `GET /healthz` on the kernel port (`:29855` by default). A
   kernel still answering (one that ran with no manager, or one that outlived
-  the manager's SIGTERM) is stopped through its own stop endpoint. One still
-  answering after that: `romp down` releases the hold, removes the marker,
-  appends a superseding `down-failed` row to `restart-audit.jsonl`, prints a
-  line naming the kernel that is still up, and exits 1.
+  the manager's SIGTERM) is sent the manager's own stop signal (SIGTERM at the
+  pid its `GET /version` reports) and given up to six seconds to leave; a
+  kernel the earlier steps already asked to stop gets three seconds of drain
+  first. One still answering after that: `romp down` releases the hold, removes
+  the marker, appends a superseding `down-failed` row to `restart-audit.jsonl`,
+  prints `romp down: the kernel on :<port> (pid <pid>) is still running after
+  being asked to stop`, which says to stop it by hand and run `romp down`
+  again, and exits 1. A kernel that answers but reports no pid is not stopped
+  and gets the same loud exit.
 - Nothing left answering: a `[romp] down` line that says what stopped (the
-  service, a manager outside it, or both) and names `romp up`, or
+  service, a manager outside it, a kernel the probe found, or a kernel that
+  answered the quiesce and has since gone) and names `romp up`, or
   `[romp] nothing was running` when neither the service nor a manager was up
   (the auto-start stays held until `romp up`), and exit 0.
 
