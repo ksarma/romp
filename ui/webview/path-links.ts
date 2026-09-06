@@ -5,15 +5,17 @@
 // shape, so the kernel's tokenizer parity (tests/fixtures/path_token_parity.json) and the chat's link
 // behaviour have a single source.
 //
-// This module MATCHES and MARKS; it binds nothing. Every link it emits is a `.file-uri-link` span
+// This module MATCHES and MARKS; it binds no action. Every link it emits is a `.file-uri-link` span
 // carrying data-act="openpath" (PATH_LINK_ACT), data-path (what a click opens — for a shortened mention
 // the kernel's fixed target, not the token), data-rel="1" when the token was a bare path rather than a
 // file:// URI (so a resolver uses a session's cwd), and data-sid when the caller named the session the
 // text belongs to. What a click DOES is the hosting document's call: render.ts binds openPath per span
 // (the editor in VS Code; the viewer, or the shell's relay, on the web) and paints its figure previews
-// from the hits; waiting.ts routes the act through its delegate to the shell's viewFile relay. A
-// document that cannot act on a click should not call this — a link that does nothing is worse than
-// text (ui/CLAUDE.md, every control acknowledges).
+// from the hits; waiting.ts routes the act through its delegate to the shell's viewFile relay. The one
+// listener this module puts on a span is the keyboard's: Enter or Space on a focused link clicks it, so
+// the host's click handler is reached from the keyboard too (pathLinkKey, below). A document that cannot
+// act on a click should not call this — a link that does nothing is worse than text (ui/CLAUDE.md, every
+// control acknowledges).
 
 export const PATH_LINK_ACT = "openpath";
 
@@ -24,6 +26,17 @@ export function fileUriToPath(uri: string): string {
   let p = uri.replace(/^file:\/\//i, "");   // file:///Users/… → /Users/… (host is empty for file:///)
   try { p = decodeURIComponent(p); } catch { /* malformed %-escape — use verbatim */ }
   return p;
+}
+// A <span> is not a control: it has no tab stop and no activation key, so a keyboard user could reach the
+// links in the Waiting-on-you pane's row fold and its Reply modal — where the focus already sits in a
+// textarea — only by leaving for the pointer (2026-09-06). Enter or Space on a focused link clicks it;
+// the click is still the host's (a delegate on a stable root in waiting.ts, render.ts's per-span binder),
+// this only gives the keyboard the route a pointer has. Both keys, as the dashboard's other keyboard-
+// activated rows take them (render.ts); Space is prevented so it does not also scroll the pane.
+function pathLinkKey(e: KeyboardEvent): void {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  (e.currentTarget as HTMLElement).click();
 }
 // A VERBATIM file link, marked for whoever hosts it. `raw` is shown as written (selectable/copyable in
 // place); `open` is what gets opened. A bare file:// can't be followed by the browser from the http
@@ -36,6 +49,9 @@ export function openPathLink(raw: string, open: string, relative = false, sid?: 
   const a = el("span", "file-uri-link");
   a.textContent = raw;                       // shown exactly as written, selectable/copyable in place
   a.title = "Open " + open;
+  a.tabIndex = 0;                            // in the tab order, like the <a> it stands in for…
+  a.role = "link";                           // …and announced as one (the ARIA IDL attribute)
+  a.onkeydown = pathLinkKey;                 // Enter / Space → this span's click, whoever handles it
   a.dataset.act = PATH_LINK_ACT;
   a.dataset.path = open;
   if (relative) a.dataset.rel = "1";
@@ -71,10 +87,81 @@ export function looksLikeBareFileName(tok: string): boolean {
 }
 // One finder covers the file: scheme, the slashed-path alternative, and the bare-filename alternative.
 // The kernel's _path_tokens is a port of it (kernel.py), and both sides run the same fixture — a token
-// the kernel never saw is a verdict the client can never look up.
+// the kernel never saw is a verdict the client can never look up. Its TEXT is that contract; how it is
+// run is PathTokenScanner's business (below) — the g-flag loop it was written for is quadratic.
 export const CLICKABLE_PATH_RE = /file:\/\/\/?[^\s<>"'`)]+|[~.\w\-]*\/[~.\w\-/]*[\w\-]|[\w\-][\w\-.]*\.[A-Za-z0-9]{1,8}/gi;
 // Trailing sentence punctuation is left out of a token, not swallowed by it ("see a/b.md." links a/b.md).
-export const TRAILING_PUNCT_RE = /[.,;:!?)\]}>"'`]+$/;
+// The characters are the source; the regex is built from them (the kernel mirrors it as _PATH_TRAIL_RE).
+export const TRAILING_PUNCT = ".,;:!?)]}>\"'`";
+export const TRAILING_PUNCT_RE = new RegExp("[" + TRAILING_PUNCT.replace(/[\\\]^-]/g, "\\$&") + "]+$");
+// The token's trailing punctuation, found from the END. TRAILING_PUNCT_RE's `+$` is tried from every
+// position of the token and backs off one character at a time when the end is not there, which is
+// quadratic on a long token made of punctuation: a token of 40K dots and a slash (the path arm matches
+// it whole) cost 1.5 s in the trim alone. Shaped like the regex's match — [the run] or null — because
+// that is how the walk reads it.
+function trailingPunct(tok: string): [string] | null {
+  let i = tok.length;
+  while (i > 0 && TRAILING_PUNCT.includes(tok[i - 1])) i--;
+  return i < tok.length ? [tok.slice(i)] : null;
+}
+
+// ── a linear-time driver for CLICKABLE_PATH_RE ────────────────────────────────────────────────────
+// Run with the g flag, the engine restarts at every position, and on an unbroken run of word characters
+// both path arms scan to the run's end and back before failing — quadratic in the run's length: one
+// slash plus a 40K-character run of hex, words or dashes (a hash, a separator line, a minified dump)
+// cost 3-5 s, per text node, on the main thread. A todo's detail has no length cap, and the
+// Waiting-on-you pane re-links every session's detail on every feed frame, so one session's note could
+// freeze the pane for every reader. The regex's text is the kernel's parity contract and stays; this
+// drives it in linear time. It tries the three arms in the regex's own order at each position, as
+// sticky regexes cut from the one source, and remembers what a failure PROVES about the positions ahead:
+//   - the path arm `[~.\w\-]*\/[~.\w\-/]*[\w\-]` failing at i fails at every later position of the same
+//     run of [~.\w\-/] characters — the first slash it can reach from there is the same one or a later
+//     one, and the word character it needs after that slash is drawn from a smaller suffix of the run;
+//   - the bare arm `[\w\-][\w\-.]*\.[A-Za-z0-9]{1,8}` failing at i fails at every later position of the
+//     same run of [\w\-.] characters — the dot-then-alphanumeric it needs is drawn from a smaller suffix;
+//   - the URI arm starts only at an f or F, and its `file:` cannot lie inside either run (a colon is in
+//     neither class), so a dead run's positions are tried for it as cheaply as any other.
+// Each arm therefore scans a run at most once beyond its matches in it, and the text costs time linear
+// in its length. The matches are exactly the regex's — pinned by a differential test over the regex
+// itself at every start position, and by the kernel parity fixture (path-links.test.ts).
+const [URI_ARM, PATH_ARM, BARE_ARM] = CLICKABLE_PATH_RE.source.split("|").map((arm) => new RegExp(arm, "iy"));
+const isWordCh = (c: number): boolean => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;   // \w
+const isBareStartCh = (c: number): boolean => isWordCh(c) || c === 45;              // [\w\-]
+const isBareCh = (c: number): boolean => isBareStartCh(c) || c === 46;              // [\w\-.]
+const isPathCh = (c: number): boolean => isBareCh(c) || c === 126 || c === 47;      // [~.\w\-/]
+function runEnd(text: string, i: number, inRun: (c: number) => boolean): number {
+  while (i < text.length && inRun(text.charCodeAt(i))) i++;
+  return i;
+}
+export class PathTokenScanner {
+  private pathDead = 0;   // the path arm is proven to fail at every position before this one
+  private bareDead = 0;   // the bare arm likewise
+  constructor(private readonly text: string) {}
+  /** The first match at or after `from`, as [start, end) — what CLICKABLE_PATH_RE.exec finds with
+   *  lastIndex = from — or null. Successive calls must not move `from` backwards. */
+  next(from: number): [number, number] | null {
+    const t = this.text, n = t.length;
+    for (let i = from; i < n; i++) {
+      const c = t.charCodeAt(i);
+      if (c === 0x66 || c === 0x46) {                       // f / F — the only characters a URI can start at
+        URI_ARM.lastIndex = i;
+        if (URI_ARM.test(t)) return [i, URI_ARM.lastIndex];
+      }
+      if (!isPathCh(c)) continue;                           // neither path arm can start here
+      if (i >= this.pathDead) {
+        PATH_ARM.lastIndex = i;
+        if (PATH_ARM.test(t)) return [i, PATH_ARM.lastIndex];
+        this.pathDead = runEnd(t, i, isPathCh);
+      }
+      if (isBareStartCh(c) && i >= this.bareDead) {
+        BARE_ARM.lastIndex = i;
+        if (BARE_ARM.test(t)) return [i, BARE_ARM.lastIndex];
+        this.bareDead = runEnd(t, i, isBareCh);
+      }
+    }
+    return null;
+  }
+}
 
 /** One link the walk emitted: the span, what it opens, and whether the kernel stat'd that target this
  *  build (a fixed mention) — the chat's figure pass wants exactly these. */
@@ -103,25 +190,27 @@ export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLi
     const inCode = !!tn.parentElement?.closest("code");                  // inline code — where bare filenames may link
     const text = tn.data;
     if (!text.includes("/") && !(inCode && text.includes("."))) continue;   // cheap pre-filter: no slash (and, in code, no dot) → nothing here
-    const re = new RegExp(CLICKABLE_PATH_RE.source, "gi");
+    const scan = new PathTokenScanner(text);
     const frag = document.createDocumentFragment();
-    let last = 0, any = false, m: RegExpExecArray | null;
-    while ((m = re.exec(text))) {
-      let tok = m[0];
-      const trail = tok.match(TRAILING_PUNCT_RE);   // don't grab a sentence's closing punctuation
+    let last = 0, any = false, from = 0, m: [number, number] | null;
+    while ((m = scan.next(from))) {
+      const [start, end] = m;
+      from = end;                                   // a token that stays prose: the scan resumes after all of it
+      let tok = text.slice(start, end);
+      const trail = trailingPunct(tok);             // don't grab a sentence's closing punctuation
       if (trail) tok = tok.slice(0, tok.length - trail[0].length);
       if (!tok) continue;
       const isUri = /^file:\/\//i.test(tok);
       if (!isUri && !looksLikeFilePath(tok) && !(inCode && looksLikeBareFileName(tok))) continue;   // "and/or", `np.array` etc. — leave as prose
       const fixed = !isUri && pathLinks ? pathLinks[tok] : undefined;   // the kernel's verdict, when it rendered one
       if (!isUri && pathLinks && typeof fixed !== "string") continue;   // checked against the filesystem: no such file (or several) → prose
-      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      if (start > last) frag.appendChild(document.createTextNode(text.slice(last, start)));
       const open = isUri ? fileUriToPath(tok) : (fixed ?? tok);
       const link = isUri ? fileUriLink(tok) : openPathLink(tok, open, true, sid);
       frag.appendChild(link);
       hits.push({ el: link, open, verified: !isUri && typeof fixed === "string" });   // the kernel stat'd a fixed one this build
-      last = m.index + tok.length;
-      re.lastIndex = last;
+      last = start + tok.length;
+      from = last;                                  // a linked token: resume right after what was linked — its trimmed tail is prose
       any = true;
     }
     if (!any) continue;

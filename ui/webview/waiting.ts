@@ -376,9 +376,14 @@ onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
       if (!tid || !sid) return;
       showReply(sid, tid, ((x as any)._uttext as string) || "", ((x as any)._utdetail as string) || "");
     },
-    // a file path in a row's detail (path-links.ts marks it with the todo's sid; the row says which todo)
+    // a file path in a row's detail: the ROW says which session and which todo, the same way the Reply
+    // modal's delegate takes both from its closure. Not the span's own data-sid: path-links.ts stamps it
+    // on a bare path (whose resolver needs a cwd) and not on a file:// URI (an absolute path names no
+    // session), so a handler gated on the span's sid dropped every URI click right after the delegate's
+    // press flash — a link that acknowledged and opened nothing (the 2026-09-06 review).
     openpath: (x) => {
-      const p = x.dataset.path, sid = x.dataset.sid, tid = x.closest<HTMLElement>(".ut-item")?.dataset.tid;
+      const row = x.closest<HTMLElement>(".ut-item");
+      const p = x.dataset.path, sid = row?.dataset.sid, tid = row?.dataset.tid;
       if (p && sid && tid) openTodoPath(p, sid, tid);
     },
     // Dismiss arms then confirms in place (render.ts's utdismiss, lifted): clearing an ask the agent

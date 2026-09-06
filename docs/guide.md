@@ -123,10 +123,12 @@ pane, which comes forward if it was closed. The pane is
 off by default, like the outline; turn it on from the bottom bar. Sessions flag
 requests only where the gear's **User todos** switch is on, and the switch is
 per machine: while it is off on this one, the pane says so and still lists the
-other machines' requests. The list covers live sessions only. A request from a
-session that has ended stays hidden until you revive the session, so if a
-request you expected is missing, look for an ended session in the session list.
-The file the request named is still on disk.
+other machines' requests. A request you expected can be missing for two
+reasons. A session that has ended keeps its requests out of the list until you
+revive it (click **+**; closed sessions are listed under **Recent**). A session
+you have hidden from the feed (right-click its tab, **Hide from feed**) keeps
+them out too, though its tab still shows the ⚑ mark; **Show in feed** on the
+same menu brings them back. The file the request named is still on disk.
 
 ### Files
 

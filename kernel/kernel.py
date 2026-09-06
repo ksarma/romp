@@ -34916,7 +34916,7 @@ if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElem
 // with the session's identity the chat resolved (name + colour — the pane has no session list to name
 // the file's session by; files.ts caches it for the viewer's chip). The Waiting-on-you pane's detail
 // links post the same message (plans/file-review.md, Slice 0) with todoId — the user todo the path came
-// from — which is forwarded as-is so the viewer can tie its work back to the ask; a chat click carries
+// from — which is forwarded as-is so the viewer can tie its work back to the todo; a chat click carries
 // none and the pane sees null. The pane STAYS up — nothing to put back — so none of the feed route's
 // was-off / ack / restore machinery below applies to this branch.
 if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');
