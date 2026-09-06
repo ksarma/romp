@@ -23,7 +23,9 @@ tree last:
    passes `problems()` below (moved here from the retired `tests/test_upstream_md.py`: one header
    per table, four cells a row, no blank line inside a table);
 6. `set` rewrites one header line and leaves the body byte-identical; `import --row` turns a
-   synthetic row into an entry that parses and round-trips its cells;
+   synthetic row into an entry that parses and round-trips its cells, sees an existing entry whether
+   or not it parses, keeps the entry's header values under `--replace` and takes the row's under
+   `--force`, and names every value it kept or changed;
 7. the real tree: `check()` over `upstream/` and UPSTREAM.md returns no problems.
 """
 import contextlib
@@ -685,7 +687,7 @@ class SetAndImport(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.d.glob("*.md")), ["2026-09-06-alpha.md", second.name])
         e, _ = L.parse_entry(second.name, second.read_text(encoding="utf-8"))
         self.assertEqual(e.get("status"), "offered")   # the migration's rule: the cell derives a status, so the cell wins
-        self.assertIn("rewrote the existing entry", report[0])
+        self.assertIn("rewrote the existing entry; changed status merged -> offered", report[0])
 
     def test_import_row_refuses_an_existing_entry_and_names_it(self):
         _, first, _ = L.import_row(self.ROW, self.d, self.d)
@@ -721,7 +723,8 @@ class SetAndImport(unittest.TestCase):
         self.assertTrue(e.notes.startswith("A reworded paragraph"), e.notes)   # the first paragraph is the row's
         self.assertEqual(e.status_detail, "**candidate**")
         self.assertIn("\n2026-09-08: offered as their PR #970 (branch `tabtoggle-offer`).\n", e.body)
-        self.assertIn("rewrote the existing entry; kept its status approved and 1 appended body lines", report[0])
+        self.assertIn("rewrote the existing entry; kept status approved (row: candidate); kept 1 appended body lines", report[0])
+        self.assertNotIn("changed", report[0])   # nothing in the header moved
 
     def test_import_row_force_rewrites_the_entry_from_the_row(self):
         path = self._entry_someone_acted_on()
@@ -768,11 +771,168 @@ class SetAndImport(unittest.TestCase):
         path.unlink()
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            rc = L.main(["--root", str(self.d), "import", "--row", row, str(self.d)])
+            rc = L.main(["--root", str(self.d), "import", "--row", row])
         self.assertEqual(rc, 1, out.getvalue())
+        self.assertTrue((self.d / "upstream" / path.name).exists())   # no PATH: the root's upstream/
         with contextlib.redirect_stdout(out):
-            rc = L.main(["--root", str(self.d), "import", "--row", "| Fine | `x.py` | candidate | Notes. |", str(self.d)])
+            rc = L.main(["--root", str(self.d), "import", "--row", "| Fine | `x.py` | candidate | Notes. |"])
         self.assertEqual(rc, 0, out.getvalue())
+
+    def test_import_row_writes_into_the_named_directory_and_refuses_a_second_path(self):
+        """`import --row '<row>' <dir>` once bound <dir> to the migration's `source` and wrote under the
+        root's upstream/ without a word (2026-09-06)."""
+        row = "| Fine | `x.py` | candidate | Notes. |"
+        elsewhere = self.d / "elsewhere"
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = L.main(["--root", str(self.d), "import", "--row", row, str(elsewhere)])
+        self.assertEqual(rc, 0, out.getvalue())
+        self.assertEqual([p.name for p in elsewhere.glob("*.md")], [f"{L.today()}-fine.md"])
+        self.assertFalse((self.d / "upstream").exists())
+        for argv, want in ((["import", "--row", row, str(elsewhere), str(self.d)], "import --row takes at most one PATH, the entry directory; got 2"),
+                           (["import", str(self.d / "UPSTREAM.md")], "import needs <UPSTREAM.md> <dir>, or --row '<row text>' [<dir>]; got 1 PATH"),
+                           (["import"], "got 0 PATHs"),
+                           (["import", "--replace", str(self.d / "UPSTREAM.md"), str(elsewhere)], "--replace and --force need --row")):
+            with self.subTest(argv=argv):
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+                    L.main(["--root", str(self.d), *argv])
+                self.assertEqual(cm.exception.code, 2)
+                self.assertIn(want, err.getvalue())
+        self.assertEqual([p.name for p in elsewhere.glob("*.md")], [f"{L.today()}-fine.md"])   # the refusals wrote nothing
+
+    NO_KEYWORD_ROW = "| Thing on the strip | `x.py` | **keep as-is — deliberate** | Notes. |"
+
+    def test_a_re_run_after_a_blank_status_is_refused_and_replace_rewrites_in_place(self):
+        """A no-keyword row leaves `status` blank, so the entry does not parse. The refusal and the
+        rewrite must see it anyway: read strictly it vanished, and a re-run wrote `<slug>-2.md` beside
+        it with exit 0 and 'diff empty' (2026-09-06)."""
+        _, first, ok = L.import_row(self.NO_KEYWORD_ROW, self.d, self.d)
+        self.assertFalse(ok)
+        fixed = self.NO_KEYWORD_ROW.replace("**keep as-is — deliberate**", "keep-private — deliberate")
+        with self.assertRaises(SystemExit) as cm:
+            L.import_row(fixed, self.d, self.d)
+        self.assertIn(f"upstream/{first.name} already holds this entry", str(cm.exception))
+        self.assertEqual(sorted(p.name for p in self.d.glob("*.md")), ["2026-09-06-alpha.md", first.name])   # nothing written
+        report, again, ok = L.import_row(fixed, self.d, self.d, replace=True)
+        self.assertTrue(ok, report)
+        self.assertEqual(again, first)
+        self.assertEqual(sorted(p.name for p in self.d.glob("*.md")), ["2026-09-06-alpha.md", first.name])
+        e, got = L.parse_entry(first.name, first.read_text(encoding="utf-8"))
+        self.assertEqual(got, [])
+        self.assertEqual(e.get("status"), "keep-private")   # the file's was blank, so the row's fills it
+        self.assertIn("rewrote the existing entry; changed status (blank) -> keep-private", report[0])
+        self.assertFalse([l for l in report if "matched no keyword" in l], report)
+
+    def test_a_migration_re_run_rewrites_a_blank_status_entry_in_place(self):
+        (self.d / "UPSTREAM.md").write_text(_doc([self.NO_KEYWORD_ROW]), encoding="utf-8")
+        entries = self.d / "upstream"
+        name = f"{L.today()}-thing-on-the-strip.md"
+        for _ in range(2):   # a first run, and a re-run before anyone set the status
+            report, ok = L.import_file(self.d / "UPSTREAM.md", entries, self.d)
+            self.assertFalse(ok)
+            self.assertEqual([p.name for p in entries.glob("*.md")], [name])
+        self.assertTrue(any("rewrote the existing entry" in l and "SET BY HAND" in l for l in report), report)
+        self.assertTrue(any(l.endswith("(status blank until set by hand; a re-run rewrites the file in place and keeps the status once set)") for l in report), report)
+        L.set_key(entries / name, "status", "keep-private")
+        report, ok = L.import_file(self.d / "UPSTREAM.md", entries, self.d)
+        self.assertTrue(ok, report)
+        self.assertEqual([p.name for p in entries.glob("*.md")], [name])
+        self.assertTrue(any("no keyword; kept the file's hand-set keep-private" in l for l in report), report)
+
+    def test_new_and_check_see_a_title_a_broken_entry_carries(self):
+        t = "A title the broken entry carries, long enough for the sixty-character prefix rule"
+        root = self.d / "root"
+        entries = root / "upstream"
+        entries.mkdir(parents=True)
+        (root / "UPSTREAM.md").write_text(FRONT_OK, encoding="utf-8")
+        (entries / "2026-09-05-broken.md").write_text(_entry("2026-09-05-broken.md", title=t, status=""), encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            L.new_entry(entries, "again", t + " (rewritten)", "x", added="2026-09-06")
+        self.assertIn("upstream/2026-09-05-broken.md already carries this title", str(cm.exception))
+        self.assertEqual([p.name for p in entries.glob("*.md")], ["2026-09-05-broken.md"])
+        (entries / "2026-09-06-twin.md").write_text(_entry("2026-09-06-twin.md", title=t), encoding="utf-8")
+        _, got = L.check(root)
+        self.assertEqual(got, ["2026-09-05-broken.md: required key `status` is blank",
+                               "2026-09-06-twin.md: title shares its first 60 characters with 2026-09-05-broken.md (one entry in two versions?)"])
+
+    def test_replace_over_a_hand_set_status_with_a_no_keyword_row_gives_no_set_hint(self):
+        _, path, _ = L.import_row(self.NO_KEYWORD_ROW, self.d, self.d)
+        L.set_key(path, "status", "keep-private")
+        report, again, ok = L.import_row(self.NO_KEYWORD_ROW, self.d, self.d, replace=True)
+        self.assertTrue(ok, report)
+        self.assertEqual(again, path)
+        self.assertIn("no keyword; kept the file's hand-set keep-private", report[0])
+        self.assertFalse([l for l in report if "before `check` will pass" in l], report)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = L.main(["--root", str(self.d), "import", "--row", self.NO_KEYWORD_ROW, str(self.d), "--replace"])
+        self.assertEqual(rc, 0, out.getvalue())
+        self.assertNotIn("before `check` will pass", out.getvalue())
+
+    CANDIDATE_ROW = ROW.replace("**offered** — their PR #961 (2026-09-06), label `fix`", "**candidate**")
+    TERMINAL_ROW = ROW.replace("**offered** — their PR #961 (2026-09-06), label `fix`", "**merged** — their PR #961 (2026-09-06), label `fix`")
+
+    def test_replace_keeps_every_header_value_the_file_carries_and_force_takes_the_rows(self):
+        """The matrix {entry same, entry differs} x {--replace, --force} x {candidate row, terminal row}.
+        --replace once protected only `status`: the row's derived offered, closed, tier and pr overwrote
+        the file's hand-set values, and the report named the new values without saying one changed, so
+        an approved entry ended with a closed date and the wrong upstream PR (2026-09-06)."""
+        hand = {"status": "approved", "offered": "their PR #970", "pr": "999", "closed": "2026-09-10", "tier": "tests-only"}
+        from_candidate = {"status": "candidate", "offered": "", "pr": "321", "closed": "", "tier": ""}
+        from_terminal = {"status": "merged", "offered": "their PR #961", "pr": "321", "closed": "2026-09-06", "tier": "fix"}
+        for differs in (False, True):
+            for row_name, row, derived in (("candidate", self.CANDIDATE_ROW, from_candidate), ("terminal", self.TERMINAL_ROW, from_terminal)):
+                for mode in ("replace", "force"):
+                    with self.subTest(entry="differs" if differs else "same", row=row_name, mode=mode):
+                        d = Path(tempfile.mkdtemp())
+                        self.addCleanup(shutil.rmtree, d)
+                        _, path, _ = L.import_row(self.CANDIDATE_ROW, d, d)
+                        if differs:
+                            for key, value in hand.items():
+                                L.set_key(path, key, value)
+                            with open(path, "a", encoding="utf-8") as f:
+                                f.write("\n2026-09-08: offered as their PR #970 (branch `tabtoggle-offer`).\n")
+                        before = hand if differs else from_candidate
+                        report, again, ok = L.import_row(row, d, d, **{mode: True})
+                        self.assertTrue(ok, report)
+                        self.assertEqual(again, path)
+                        e, got = L.parse_entry(path.name, path.read_text(encoding="utf-8"))
+                        self.assertEqual(got, [])
+                        line = report[0]
+                        for key in hand:
+                            file_value, row_value = before[key], derived[key]
+                            if mode == "force":
+                                want = row_value or file_value   # the row wins wherever it says something
+                            else:
+                                want = file_value or row_value   # the file's value stands; the row fills blanks
+                            self.assertEqual(e.get(key), want, (key, line))
+                            if mode == "replace" and file_value and row_value and file_value != row_value:
+                                self.assertIn(f"kept {key} {file_value} (row: {row_value})", line)
+                            else:
+                                self.assertNotIn(f"kept {key} ", line)
+                            if want != file_value:
+                                self.assertIn(f"changed {key} {file_value or '(blank)'} -> {want}", line)
+                            else:
+                                self.assertNotIn(f"changed {key} ", line)
+                        if differs:
+                            self.assertEqual("2026-09-08: offered" in e.body, mode == "replace")
+                            self.assertIn("kept 1 appended body lines" if mode == "replace" else "dropped 1 appended body lines", line)
+                        else:
+                            self.assertNotIn("appended body lines", line)
+
+    def test_the_rewrite_line_names_each_header_value_it_changed(self):
+        """The migration's two documented resets (a pr, a closed date) and any --force rewrite read
+        exactly like a rewrite that changed nothing until the line said old -> new (2026-09-06)."""
+        _, path, _ = L.import_row(self.ROW, self.d, self.d)
+        L.set_key(path, "pr", "143")
+        moved = self.ROW.replace("fork PR #321 (`tabtoggle`)", "fork PR #140 (`tabtoggle`)")
+        report, _, ok = L.import_row(moved, self.d, self.d, force=True)
+        self.assertTrue(ok, report)
+        self.assertIn("changed where fork PR #321 (`tabtoggle`): `ui/webview/tabs.ts` -> fork PR #140 (`tabtoggle`): `ui/webview/tabs.ts`", report[0])
+        self.assertIn("changed pr 143 -> 140", report[0])
+        report, _, _ = L.import_row(moved, self.d, self.d, force=True)
+        self.assertIn("(rewrote the existing entry)", report[0])   # a rewrite that changes nothing names nothing
+        self.assertNotIn("changed", report[0])
 
     def test_a_terminal_status_takes_the_first_date_as_closed(self):
         row = "| Thing | `x.py` | ✅ **merged** — their PR #544, 2026-08-22 (merge `782c617a`); came home 2026-08-23 | Notes. |"
