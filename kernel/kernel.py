@@ -749,16 +749,18 @@ def _interrupt_marks_atoms(atoms, cut_t=0.0, cut_cause=""):
     this surface).
 
     A user atom whose `author` key is present and None is dropped before the text scan (2026-09-06,
-    perf batch 2 P2 S1). The file adapter writes author None for exactly one shape, a record with no
-    text block (event_model.author_of: every branch on a non-empty text returns an author, and the
-    final `_is_real_prompt` gate is the only path to None) — the tool_result-only harness lines that
-    are most of a transcript's user records. Such an atom can be neither an interrupt record
-    (is_interrupt_record needs text) nor a human prompt (author != "human"), and the forward scan in
-    _machine_cut_cause reads past it as wedge either way, so dropping it changes no tally; it only
-    saves the per-atom is_interrupt_record text join, the bulk of this function's cost on the pusher
-    thread. An atom with NO author key at all (an SDK live-tail atom: sdk_backend.msg_to_atom sets
-    none on stream user messages) is kept and classified as before — absence is not the adapter's
-    no-text marker."""
+    perf batch 2 P2 S1). event_model.author_of returns None for exactly one shape, a record with no
+    text block (every branch on a non-empty text returns an author; the final `_is_real_prompt` gate
+    is the only path to None), so such an atom can be neither an interrupt record (is_interrupt_record
+    needs text) nor a human prompt (author != "human"), and the forward scan in _machine_cut_cause
+    reads past it as wedge either way: dropping it changes no tally. Its reach is narrow on purpose.
+    The file adapter OMITS the key for a None author rather than writing it (measured on a 31-session
+    state copy: all 19,667 text-less user atoms lack the key; none carries None), so on disk-parsed
+    sessions this gate meets nothing, and a key-less atom must NOT be skipped: an SDK live-tail atom
+    (sdk_backend.msg_to_atom sets no author on stream user messages) may carry text, and a merged
+    live interrupt record would otherwise go uncounted until a parse of the disk record replaced it —
+    on a feed-only dashboard, whose cached parse nothing refreshes promptly, an arbitrary lag on the
+    "interrupted" badge. The per-cycle scan itself is what the memo in _interrupt_marks removes."""
     users = [a for a in atoms if a.get("type") == "user" and a.get("author", "") is not None]
     last_intr = last_human = 0
     for i, a in enumerate(users):

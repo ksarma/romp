@@ -86,8 +86,10 @@ class _Counter:
 
 
 class AuthorNoneAtomsAreSkipped(unittest.TestCase):
-    """S1: a user atom the file adapter marked author None (a text-less record) is dropped before the
-    text scan. No tally changes; the per-atom text join is what goes."""
+    """S1: a user atom carrying author None (author_of's answer for a text-less record) is dropped before
+    the text scan; no tally changes. The file adapter OMITS the key for that answer rather than writing
+    it (pinned below), so the gate's reach on disk-parsed sessions is nil and a key-less atom is still
+    scanned: the SDK live tail carries texty user atoms without the key."""
 
     def test_a_text_less_author_none_atom_never_changes_the_marks(self):
         base = [uatom(T0, "wire the thing"), intr(T0 + 60)]
@@ -118,12 +120,36 @@ class AuthorNoneAtomsAreSkipped(unittest.TestCase):
             c.close()
 
     def test_an_atom_without_an_author_key_is_still_classified(self):
-        # an SDK live-tail atom (msg_to_atom) carries no author key at all; absence is not the
-        # adapter's no-text marker, so the atom is examined exactly as before
+        # an SDK live-tail atom (msg_to_atom) carries no author key at all and may carry text; a merged
+        # live interrupt record must count the moment it is merged, so absence is never a skip
         live_stop = {"type": "user", "t": T0 + 90,
                      "message": {"role": "user", "content": "[Request interrupted by user]"}}
         atoms = [uatom(T0, "wire the thing"), live_stop]
         self.assertEqual(km._interrupt_marks_atoms(atoms), (T0 + 90, T0))
+
+    def test_the_file_adapter_omits_the_key_for_a_text_less_record(self):
+        # the premise the docstring states: a tool_result-only line parses to a user atom with NO
+        # author key (not author None), so the gate above meets nothing on a disk-parsed session
+        td = tempfile.mkdtemp()
+        path = os.path.join(td, SID + ".jsonl")
+        recs = [uline(T0, "wire the thing", "u1"),
+                {"type": "assistant", "timestamp": iso(T0 + 5), "uuid": "a1", "parentUuid": "u1",
+                 "message": {"role": "assistant", "stop_reason": "tool_use",
+                             "content": [{"type": "tool_use", "id": "tu1", "name": "Bash", "input": {}}]}},
+                {"type": "user", "timestamp": iso(T0 + 6), "uuid": "u2", "parentUuid": "a1",
+                 "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu1",
+                                                          "content": "ok"}]}}]
+        with open(path, "w") as f:
+            f.write("\n".join(json.dumps(r) for r in recs) + "\n")
+        try:
+            sess = em.parse_session(path, rompuuid=SID, now=NOW)
+        finally:
+            os.remove(path); os.rmdir(td)
+        users = [a for t in sess["turns"] for a in t.get("atoms") or [] if a.get("type") == "user"]
+        by_uuid = {a.get("uuid"): a for a in users}
+        self.assertIn("u2", by_uuid, "the tool_result-only line is a user atom of its own")
+        self.assertNotIn("author", by_uuid["u2"], "…with the author key omitted, not None")
+        self.assertEqual(by_uuid["u1"].get("author"), "human")
 
     def test_author_none_means_no_text_in_the_file_adapter(self):
         # the exactness claim, checked against author_of itself: across every promptSource the
