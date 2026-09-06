@@ -163,13 +163,16 @@ test("figurePath resolves a src the way the viewer loads it and the host hashes 
   }
 });
 
-test("figureTargets: one HEAD target per distinct figure the sidecar's region comments name, first appearance first, resolved comments included", () => {
+test("figureTargets: one HEAD target per distinct figure the sidecar's OPEN region comments name, first appearance first; a resolved comment names none", () => {
   assert.deepEqual(figureTargets(status(), ABS), ["/repo/notes-api/docs/figs/latency.png", "/repo/notes-api/docs/figs/errors.png"]);
   const twice: StoreComment = { ...onLatency, id: T0 + "-99", ts: T0 + 5000, target: { ...onLatency.target!, region: REGION_B } };
   const resolved: StoreComment = { ...onErrors, resolved: true };
   const store = { v: 3, path: "docs/figures.md", suggestions: [], comments: [twice, resolved, passage, onLatency] };
-  assert.deepEqual(figureTargets({ store }, ABS), ["/repo/notes-api/docs/figs/latency.png", "/repo/notes-api/docs/figs/errors.png"],
-    "two comments on one figure are one HEAD; a resolved comment's card still wears the stale tag, so its figure is watched");
+  assert.deepEqual(figureTargets({ store }, ABS), ["/repo/notes-api/docs/figs/latency.png"],
+    "two comments on one figure are one HEAD; a resolved comment's card wears no stale tag and paints no rectangle, so its figure is not watched for it");
+  const both: StoreComment = { ...onLatency, id: T0 + "-77", ts: T0 + 7000, target: { ...onLatency.target!, src: "figs/errors.png" } };
+  assert.deepEqual(figureTargets({ store: { ...store, comments: [resolved, both] } }, ABS), ["/repo/notes-api/docs/figs/errors.png"],
+    "a figure an OPEN comment also names is watched for that comment, wherever the resolved one sits");
   const spellings: StoreComment[] = [
     { ...onLatency, target: { ...onLatency.target!, src: "figs/p95%20latency.png" } },
     { ...onErrors, target: { ...onErrors.target!, src: "figs/p95 latency.png" } },

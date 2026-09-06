@@ -731,7 +731,8 @@ test("source pins: the overlay's wiring (data-act names, the coarse gate, the se
   assert.match(SRC, /const args: Record<string, unknown> = \{ note, target: regionTarget\(c\.region, c\.src\) \};\n\s*if \(c\.range && c\.text !== undefined\) \{ args\.anchor = makeAnchor\(c\.text, c\.range\); args\.hintOffset = c\.range\.start; \}/);
   assert.match(SRC, /const e = root && t !== null \? embedFor\(img, root, t, this\.ctx\.path\) : null;/, "the embed found the way the picture click finds it");
   // every rectangle is registered as the panel's own, so the delegate routes its click
-  assert.match(SRC, /for \(const r of layer\.paint\(per\.get\(img\) \|\| \[\], pending, replacing\)\) this\.marks\.add\(r\);/);
+  assert.match(SRC, /for \(const r of layer\.paint\(per\.get\(img\) \|\| \[\], pending, replacing\)\) this\.mark\(r\);/, "every rectangle is the panel's own (owns), and registered for the document's listeners (panelMark)");
+  assert.match(SRC, /this\.regionLayers\.set\(img, layer\);\n\s*this\.mark\(layer\.overlay\);/, "so is the overlay the browser's own click lands on after a handed-on press");
   // the overlay pass runs for a media body (where the text pass has nothing to paint) and after the text pass
   assert.match(SRC, /if \(src === null \|\| !root\) \{ this\.paintRegions\(\); this\.render\(\); return; \}/);
   assert.match(SRC, /this\.paintPresel\(root, src, rendered\);\n\s*this\.paintRegions\(\);\n\s*this\.render\(\);/);

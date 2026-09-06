@@ -532,14 +532,18 @@ export function figurePath(filePath: string, src: string): string | null {
   return filePath.slice(0, filePath.lastIndexOf("/") + 1) + rel;
 }
 
-/** The figures to HEAD: one path per distinct `target.src` in the sidecar, in order of first appearance, resolved
- *  by figurePath — resolved comments included, since their cards still wear the stale tag. Empty with no sidecar or
- *  no embedded regions; a standalone image is the poll's `file` target already. */
+/** The figures to HEAD: one path per distinct `target.src` among the sidecar's OPEN region comments, in order of first
+ *  appearance, resolved by figurePath. A resolved comment names none: its card wears "resolved" alone (no stale tag, no
+ *  Re-place), and the picture paints no rectangle for it, so nothing on screen depends on that figure's freshness — a
+ *  HEAD per tick for it was cost with no reader (the 2026-09-06 review; a figure an open comment also names is watched
+ *  for that comment). Reopening one is a write, and its reply carries the hash to flip it by. Empty with no sidecar or
+ *  no open embedded regions; a standalone image is the poll's `file` target already. */
 export function figureTargets(s: Pick<Status, "store"> | null | undefined, path: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const c of (s && s.store ? s.store.comments : []) || []) {
-    const src = c && c.target ? c.target.src : undefined;
+    if (!c || c.resolved) continue;
+    const src = c.target ? c.target.src : undefined;
     if (typeof src !== "string" || !src || seen.has(src)) continue;
     seen.add(src);
     const p = figurePath(path, src);
