@@ -501,9 +501,17 @@ environment, and `romp refresh` restarts kernels only, so a new kernel still
 carries the variable and stays in command mode. The restart re-reads
 `service.env`, so remove the line first. A line in the unit's own
 `Environment=`, in a drop-in, or in the profile a shell-wrapped `ExecStart`
-sources is different: a manager restart re-applies it, so it has to be removed
-where it is, with `systemctl --user daemon-reload` after editing a unit or a
-drop-in, and the manager restarted after that. The other `ROMP_CREDENTIAL_*`
+sources (Linux), or in the plist's `EnvironmentVariables` (macOS), is
+different: a manager restart re-applies it, so it has to be removed where it
+is and the service definition reloaded before the restart. On Linux that is
+`systemctl --user daemon-reload` after editing a unit or a drop-in, then the
+restart. On macOS `launchctl kickstart -k` restarts the job as launchd loaded
+it and does not re-read the plist, so the job is reloaded instead: `launchctl
+bootout gui/$(id -u)/com.romp.manager`, then `launchctl bootstrap gui/$(id -u)
+~/Library/LaunchAgents/com.romp.manager.plist`. `romp-service install` does
+the same on macOS, since it rewrites the plist and reloads the job; on Linux
+it rewrites the unit and reloads systemd but leaves a running manager as it
+is, so the restart still follows. The other `ROMP_CREDENTIAL_*`
 values are read live, the environment first, with the same consequence: a
 line the manager's environment already carries is shadowed by that copy until
 the manager restarts, while a line the environment does not carry (one added

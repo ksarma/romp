@@ -352,16 +352,24 @@ def _mode_mismatch(body, local_mode, out):
     that exported it. The manager's environment is two places with two remedies: a service.env line
     the manager loaded is gone once the file is edited and the manager restarted (the restart re-reads
     the file), while a line in the unit's Environment=, a drop-in, or the profile a shell-wrapped
-    ExecStart sources is RE-APPLIED by a restart, so it is removed where it is first (daemon-reload
-    after a unit edit) and the manager restarted after. One more place is another file: the installer
+    ExecStart sources (Linux), or in the plist's EnvironmentVariables (macOS: the manager's environment
+    there is the plist's pairs plus service.env as bin/romp-node-launch parses it at each start), is
+    RE-APPLIED by a restart, so it is removed where it is first, the definition reloaded, and the
+    manager restarted after. The reload is `systemctl --user daemon-reload` after a unit or drop-in
+    edit; on macOS `launchctl kickstart -k` restarts the job as launchd loaded it and does not re-read
+    the plist, so the job is booted out and bootstrapped again (bin/romp-service: LABEL, PLIST). One
+    more place is another file: the installer
     carries a non-default ROMP_SERVICE_ENV_FILE into the unit or plist (bin/romp-service,
     _service_env_override), so the kernel and this shell can read different service.env files, and
     the answer carries no path, so this too is a cause, with this shell's path named. The same cause
     is named under a file-mode kernel when the file this shell reads carries the line: `romp refresh`
     reaches only the file the kernel reads. The manager restart is `systemctl --user restart
-    romp-manager` on Linux and `launchctl kickstart -k` on the launchd agent on macOS; `romp-service
-    install` is not one (on Linux it writes and enables the unit and leaves a running manager as it
-    is). Names the variable, the places and this shell's file path; never a value."""
+    romp-manager` on Linux and `launchctl kickstart -k` on the launchd agent on macOS. `romp-service
+    install` is named for what it does per platform, never as the restart: on macOS it rewrites the
+    plist and reloads the job (bootout, then bootstrap), which is the reload and the restart in one;
+    on Linux it rewrites the unit and reloads systemd (daemon-reload, enable --now) and leaves a
+    running manager as it is. Names the variable, the places and this shell's file path; never a
+    value."""
     kmode = body.get("keySource") or "file"
     out("kernel      reads %s in %s mode" % (_sha(body.get("keyFp") or ""), kmode.upper()))
     path = ks.service_env_path()
@@ -371,9 +379,15 @@ def _mode_mismatch(body, local_mode, out):
         out("            - service.env as the manager loaded it at its start, which every kernel inherits: the line is")
         out("              gone from the file this shell reads, so restart the manager (the restart re-reads the file);")
         out("              `romp refresh` alone keeps the mode")
-        out("            - the unit's Environment=, a drop-in, or the profile a shell-wrapped ExecStart sources: a manager")
-        out("              restart re-applies these, so remove the line there first (`systemctl --user daemon-reload`")
-        out("              after editing a unit or a drop-in), then restart the manager")
+        out("            - the unit's Environment=, a drop-in, or the profile a shell-wrapped ExecStart sources (Linux), or the")
+        out("              plist's EnvironmentVariables (macOS): a manager restart re-applies these, so remove the line there")
+        out("              first, reload the definition, then restart the manager. Linux: `systemctl --user daemon-reload`")
+        out("              after editing a unit or a drop-in, then the restart. macOS: `launchctl kickstart -k` restarts the")
+        out("              job as loaded and does not re-read the plist, so reload it: `launchctl bootout")
+        out("              gui/$(id -u)/com.romp.manager`, then `launchctl bootstrap gui/$(id -u)")
+        out("              ~/Library/LaunchAgents/com.romp.manager.plist`. `romp-service install` does that on macOS (it")
+        out("              rewrites the plist and reloads the job); on Linux it rewrites the unit and reloads systemd and")
+        out("              leaves a running manager as it is, so restart it after")
         out("            - another service.env: the installer carries a non-default ROMP_SERVICE_ENV_FILE into the unit or")
         out("              plist, so the kernel may read a file other than this shell's (%s):" % path)
         out("              run this command with the same ROMP_SERVICE_ENV_FILE, or check the unit for that variable")

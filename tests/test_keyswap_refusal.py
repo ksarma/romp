@@ -277,11 +277,32 @@ class NamedSwapRefused(_Env):
         self.assertIn("- service.env as the manager loaded it at its start, which every kernel inherits: the line is", out)
         self.assertIn("gone from the file this shell reads, so restart the manager (the restart re-reads the file);", out)
         self.assertIn("`romp refresh` alone keeps the mode", out)
-        self.assertIn("- the unit's Environment=, a drop-in, or the profile a shell-wrapped ExecStart sources: a manager", out)
-        self.assertIn("restart re-applies these, so remove the line there first (`systemctl --user daemon-reload`", out)
-        self.assertIn("after editing a unit or a drop-in), then restart the manager", out)
+        self.assertIn("- the unit's Environment=, a drop-in, or the profile a shell-wrapped ExecStart sources (Linux), or the", out)
+        self.assertIn("plist's EnvironmentVariables (macOS): a manager restart re-applies these, so remove the line there", out)
+        self.assertIn("first, reload the definition, then restart the manager. Linux: `systemctl --user daemon-reload`", out)
+        self.assertIn("after editing a unit or a drop-in, then the restart. macOS: `launchctl kickstart -k` restarts the", out)
         self.assertNotIn("the unit's Environment=, or service.env as the manager loaded it", out,
                          "one cause with one remedy would send a unit line's owner to a restart that re-applies it")
+        # the macOS form of that cause: the plist's EnvironmentVariables are part of the loaded job definition,
+        # which `launchctl kickstart -k` restarts without re-reading the plist, so the job is booted out and
+        # bootstrapped again. The label and the plist path are bin/romp-service's own (LABEL, LAUNCHD_DIR)
+        self.assertIn("job as loaded and does not re-read the plist, so reload it: `launchctl bootout", out)
+        self.assertIn("gui/$(id -u)/com.romp.manager`, then `launchctl bootstrap gui/$(id -u)", out)
+        self.assertIn("~/Library/LaunchAgents/com.romp.manager.plist`. `romp-service install` does that on macOS (it", out)
+        svc = open(os.path.join(BIN, "romp-service"), encoding="utf-8").read()
+        self.assertIn('LABEL="com.romp.manager"', svc)
+        self.assertIn('LAUNCHD_DIR="${ROMP_LAUNCHD_DIR:-$HOME/Library/LaunchAgents}"', svc)
+        self.assertIn('PLIST="$LAUNCHD_DIR/$LABEL.plist"', svc)
+        # `romp-service install` is named for what it does per platform: on macOS a plist rewrite and a
+        # reload of the job (bootout, bootstrap), on Linux a unit rewrite and a systemd reload with no restart
+        # of a running manager (daemon-reload, enable --now)
+        self.assertIn("rewrites the plist and reloads the job); on Linux it rewrites the unit and reloads systemd and", out)
+        self.assertIn("leaves a running manager as it is, so restart it after", out)
+        self.assertIn('"$LAUNCHCTL" bootout "gui/$(id -u)/$LABEL"', svc)
+        self.assertIn('"$LAUNCHCTL" bootstrap "gui/$(id -u)" "$PLIST"', svc)
+        self.assertIn("systemctl --user daemon-reload\n            systemctl --user enable --now romp-manager.service", svc)
+        self.assertNotIn("systemctl --user restart", svc.split("case \"${1:-status}\" in")[1].split("uninstall)")[0],
+                         "install restarts no running manager on Linux")
         # the kernel may read ANOTHER service.env: the installer carries a non-default ROMP_SERVICE_ENV_FILE
         # into the unit or plist (bin/romp-service), the answer carries no path, and this shell's is named
         self.assertIn("- another service.env: the installer carries a non-default ROMP_SERVICE_ENV_FILE into the unit or", out)
@@ -289,11 +310,11 @@ class NamedSwapRefused(_Env):
         self.assertIn("run this command with the same ROMP_SERVICE_ENV_FILE, or check the unit for that variable", out)
         self.assertIn("- service.env, edited since the kernel read it at its start: `romp refresh`", out)
         self.assertIn("- the shell that ran `romp up`, which exported it: stop that `romp up`; start it from a shell without the line", out)
-        # the manager restart is named by the commands that restart one: `romp-service install` is not
-        # among them (on Linux it writes and enables the unit and leaves a running manager as it is)
+        # the manager restart is named by the commands that restart one; `romp-service install` appears once,
+        # for what it does per platform, never as the restart
         self.assertIn("The manager restart is `systemctl --user restart romp-manager`, or on macOS `launchctl kickstart -k", out)
         self.assertIn("gui/$(id -u)/com.romp.manager`", out)
-        self.assertNotIn("romp-service install", out)
+        self.assertEqual(out.count("romp-service install"), 1)
         self.assertNotIn("`romp refresh` restarts the kernels into file mode", out)
         self.assertIn("put the line back in service.env instead", out)
         rc, out, _err = self.run_cli("--cycle-all")
