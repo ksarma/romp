@@ -1053,6 +1053,120 @@ test("executed: a stale pane's re-adoption of its held blob is NO NEWS (round 9)
   }
 });
 
+test("executed: a NEWER blob with the held names is news (round 10) — two panes over one store, adoptBase mirrored: the tag renamed BACK to the name a stale pane holds, after another pane carried the pin from a blob it never saw, has the owed rename carried (before: the no-news shortcut answered first, the pin stayed under the stale name and the tab folded away until the tag's next rename); the shortcut yields only to a stamped entry the blob names otherwise under a seq past the stamp, so the round-9 scenarios — the re-adoption flap, the late intermediate frame, a members-only change, a local seq bump, an unstamped host — still write nothing", () => {
+  // the two-pane simulator: one shared store, each pane adopting as render.ts adoptBase does
+  const store = new Map<string, string>();
+  let writes = 0;
+  const g: any = globalThis;
+  const savedLS = g.localStorage;
+  g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); writes++; } };
+  class Pane {
+    held: any = null;
+    adopt(v: any): boolean {
+      const prev = this.held;
+      this.held = v;
+      const unions = viewTagUnion(v);
+      const st = readTabGroups(unions);
+      const next = followAdoption(st, prev, v, unions);
+      if (next !== st) writeTabGroups(next);
+      return next !== st;
+    }
+  }
+  const stored = () => { const o = JSON.parse(store.get(TABGROUPS_KEY)!); return [o.pinned, o.followed, o.followedSeq]; };
+  const reset = (st: TabGroupsState) => { store.clear(); writeTabGroups(st); writes = 0; };
+  const M1 = "TESTHOST-A:m1", vis = [M1, "tests", "loose"];
+  const t1 = (name: string, seq?: number) => ({ ...rt("TESTHOST-A", "t1", name, [M1]), ...(seq !== undefined ? { seq } : {}) });
+  const g8 = { id: "g8", name: "x", color: "#e0af68", members: ["tests"] };
+  const V0 = { active: "all", tags: [g8], remoteTags: [t1("web", 10)], tagOrder: ["web", "api", "ops", "qa", "x"], seq: 4 };
+  const V1 = { ...V0, remoteTags: [t1("api", 11)] };   // A renames web → api
+  const V2 = { ...V0, remoteTags: [t1("ops", 12)] };   // api → ops
+  const V3 = { ...V0, remoteTags: [t1("api", 13)] };   // ops → api: BACK to the name a stale pane holds
+  const V4 = { ...V0, remoteTags: [t1("qa", 14)] };    // api → qa
+  const base = setPinned(foldAll(parseTabGroups(null), "web", "api", "ops", "qa", "x"), secOf(viewTagUnion(V0), "web"), M1, true);
+  try {
+    // D — THE FINDING. P and B both adopt V0 and V1 (pin under api @11); B's local socket dies. P adopts V2 (pin → ops @12) and
+    // closes. A renames ops → api (V3 @13). B redials and adopts V3 against its held V1: the same names, so the round-9
+    // shortcut answered "no news" and returned the state — the memory ops @12 against the blob's api @13 never read as the
+    // rename B owed. A remote-only pin has no id: nothing matched it under ops, and the tab folded away.
+    reset(base);
+    let P = new Pane(), B = new Pane();
+    P.adopt(V0); B.adopt(V0);
+    assert.equal(P.adopt(V1), true); assert.equal(B.adopt(V1), false, "B: web → api is followed already");
+    assert.equal(P.adopt(V2), true);
+    assert.deepEqual(stored(), [[{ sid: M1, name: "ops" }], { "TESTHOST-A:t1": "ops" }, { "TESTHOST-A:t1": 12 }], "P carried the pin to ops and stamped A's seq");
+    assert.equal(sameTagNames(V1, V3), true, "the shortcut's premise: B's held blob and the new one name every tag alike");
+    assert.equal(B.adopt(V3), true, "…and yet the blob is newer than the memory's evidence for t1 (13 > 12) and names it otherwise: the check runs");
+    assert.deepEqual(stored(), [[{ sid: M1, name: "api" }], { "TESTHOST-A:t1": "api" }, { "TESTHOST-A:t1": 13 }], "the owed rename ops → api is carried and the stamp advances");
+    const u3 = viewTagUnion(V3);
+    assert.equal(isPinned(readTabGroups(u3), secOf(u3, "api"), M1), true, "the pin shows under the section the tag makes now");
+    assert.deepEqual(strip(vis, u3, readTabGroups(u3), "loose"), [["#api(folded)", M1, "#x(folded)", "#null", "loose"], ["tests"]],
+      "the tab stays on the strip under its folded section (before: folded away with no gesture on it)");
+    assert.equal(B.adopt(V4), true); assert.deepEqual(stored()[0], [{ sid: M1, name: "qa" }], "the next rename is followed as before");
+    // D2 — the same with P alive: P adopts V3 first and carries the pin; B's shortcut then holds (the memory agrees with the blob)
+    reset(base);
+    P = new Pane(); B = new Pane();
+    P.adopt(V0); B.adopt(V0); P.adopt(V1); B.adopt(V1); P.adopt(V2);
+    assert.equal(P.adopt(V3), true); assert.equal(B.adopt(V3), false, "nothing owed: P carried it");
+    assert.deepEqual(stored(), [[{ sid: M1, name: "api" }], { "TESTHOST-A:t1": "api" }, { "TESTHOST-A:t1": 13 }]);
+    // the rule's edges, on the state alone: at the stamp is not past it; an unstamped entry keeps the shortcut
+    const ops13: TabGroupsState = { ...base, pinned: [{ sid: M1, name: "ops" }], followed: { "TESTHOST-A:t1": "ops" }, followedSeq: { "TESTHOST-A:t1": 13 } };
+    assert.equal(followAdoption(ops13, V1, V3), ops13, "a blob AT the memory's seq is not newer: the same names, no write (the equal-seq path is a stated limit)");
+    assert.notEqual(followAdoption({ ...ops13, followedSeq: { "TESTHOST-A:t1": 12 } }, V1, V3), ops13, "past it, the check runs");
+    const unstamped: TabGroupsState = { ...base, pinned: [{ sid: M1, name: "ops" }], followed: { "TESTHOST-A:t1": "ops" } };
+    assert.equal(followAdoption(unstamped, V1, V3), unstamped, "an unstamped entry orders nothing: the shortcut holds");
+    // the LOCAL face of D: the pin carries the id, so it never left the strip — but the memory was left stale (ops @6 against api @7)
+    const L0 = { active: "all", tags: [{ id: "g1", name: "web", color: "#fff", members: ["m1"] }], tagOrder: ["web", "api", "ops"], seq: 4 };
+    const L1 = { ...L0, tags: [{ ...L0.tags[0], name: "api" }], seq: 5 }, L2 = { ...L0, tags: [{ ...L0.tags[0], name: "ops" }], seq: 6 };
+    const L3 = { ...L0, tags: [{ ...L0.tags[0], name: "api" }], seq: 7 };
+    reset(setPinned(foldAll(parseTabGroups(null), "web", "api", "ops"), secOf(viewTagUnion(L0), "web"), "m1", true));
+    P = new Pane(); B = new Pane();
+    P.adopt(L0); B.adopt(L0); P.adopt(L1); B.adopt(L1); P.adopt(L2);
+    assert.equal(B.adopt(L3), true);
+    assert.deepEqual(stored(), [[{ sid: "m1", name: "api", id: "g1" }], { g1: "api" }, { g1: 7 }], "the memory follows the tag");
+    // ROUND 9 UNCHANGED — S1, the re-adoption flap: B's socket is dead; it re-adopts V0 on every router re-emit while P follows
+    reset(base);
+    P = new Pane(); B = new Pane();
+    P.adopt(V0); B.adopt(V0); P.adopt(V1);
+    const w1 = writes;
+    assert.deepEqual([B.adopt(V0), B.adopt(V0), B.adopt(V0)], [false, false, false], "memory api @11 against the re-emitted web @10: not newer, no carry-back");
+    P.adopt(V2);
+    assert.deepEqual([B.adopt(V0), B.adopt(V0)], [false, false]);
+    assert.equal(B.adopt(V2), false, "B catches up: followed already");
+    assert.equal(writes - w1, 1, "P's one follow is the only write");
+    assert.deepEqual(stored(), [[{ sid: M1, name: "ops" }], { "TESTHOST-A:t1": "ops" }, { "TESTHOST-A:t1": 12 }]);
+    // S7, the late intermediate frame: P on V2; B, held V0, adopts V1 late, then V2
+    reset(base);
+    P = new Pane(); B = new Pane();
+    P.adopt(V0); B.adopt(V0); P.adopt(V1); P.adopt(V2);
+    const w7 = writes;
+    assert.deepEqual([B.adopt(V1), B.adopt(V2), writes - w7], [false, false, 0], "stood down, then followed already");
+    // E, members changed and names not: a tab joins t1 (A @13, a local lens write @5) — no news, the stamp kept
+    reset(base);
+    P = new Pane();
+    P.adopt(V0); P.adopt(V1); P.adopt(V2);
+    const wE = writes;
+    assert.equal(P.adopt({ ...V0, remoteTags: [{ ...t1("ops", 13), members: [M1, "TESTHOST-A:m2"] }], seq: 5 }), false);
+    assert.deepEqual([writes - wE, stored()[2]], [0, { "TESTHOST-A:t1": 12 }]);
+    // a local seq bump on a stale pane's blob (the held names, A still @10) against the memory ops @12: A's seq is not past the stamp
+    reset(base);
+    P = new Pane(); B = new Pane();
+    P.adopt(V0); B.adopt(V0); P.adopt(V1); P.adopt(V2);
+    const wH = writes;
+    assert.deepEqual([B.adopt({ ...V0, seq: 9 }), writes - wH, stored()[0]], [false, 0, [{ sid: M1, name: "ops" }]]);
+    // an UNSTAMPED host (a kernel from before the stamp): the memory has no stamp, so no blob is newer than it — B's stale
+    // blob, re-emitted or under a bumped local seq, keeps the shortcut and carries nothing back (THE LIMITS' unstamped case)
+    const U = (name: string) => ({ ...V0, remoteTags: [t1(name)] });
+    reset(base);
+    P = new Pane(); B = new Pane();
+    P.adopt(U("web")); B.adopt(U("web")); P.adopt(U("api"));
+    const wU = writes;
+    assert.deepEqual([B.adopt(U("web")), B.adopt({ ...U("web"), seq: 9 }), writes - wU], [false, false, 0]);
+    assert.deepEqual(stored(), [[{ sid: M1, name: "api" }], { "TESTHOST-A:t1": "api" }, undefined]);
+  } finally {
+    g.localStorage = savedLS;
+  }
+});
+
 test("executed: the owed rename against a MIXED pin (round 9 coverage) — a pin under a mixed section turned off is re-applied by neither adoption order; the remote half unpinned after a watched split stands through the remote tag's next owed rename with the local-id entry untouched; and a local-id entry whose name went stale is not the pin a watched rename of a NEWER same-named local tag moves (the `!x.local` clause)", () => {
   const t1 = (name: string) => rt("TESTHOST-A", "t1", name, ["TESTHOST-A:m1"]);
   const g9 = { id: "g9", name: "api", color: "#fff", members: ["TESTHOST-A:m1"] };
