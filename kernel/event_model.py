@@ -2423,7 +2423,9 @@ _ASM_STATS = {"full": 0, "fold": 0, "serve": 0, "bypass": 0, "fallback": 0}   # 
 _ASM_STATS_LOCK = threading.Lock()   # `+= 1` is a read-modify-write: parses run on the pusher, the judge tiers'
 #                                      pools and connect pushes at once, and the counts drift low without the
 #                                      GIL (tests assert exact deltas; the 2026-09-06 free-threading review).
-#                                      Held for the increment only; never with _ASM_LOCK or a key lock.
+#                                      Held for the increment only. It may be taken while a key lock is held
+#                                      (_assemble counts full parses, folds and serves inside _asm_key_lock)
+#                                      and never acquires another lock itself, so no ordering cycle exists.
 
 
 def _asm_count(key, n=1):
