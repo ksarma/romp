@@ -64,7 +64,10 @@ function clearDownMarker(file = DOWN_MARKER) {
 delete process.env.TMUX;
 delete process.env.TMUX_PANE;
 
-function log(msg) { process.stderr.write('[romp-manager] ' + msg + '\n'); }
+// log(msg, cb): cb runs once the line is written. A caller about to process.exit() passes its exit as
+// the callback, or the line can be lost: stderr on a pipe is asynchronous on macOS (the SessionStart
+// hook reads ensure's output through one), and exit() does not wait for pending writes.
+function log(msg, cb) { process.stderr.write('[romp-manager] ' + msg + '\n', cb); }
 
 // romp-serve is the kernel launcher (rebuilds dist if stale, then execs node on it). Resolve it the
 // same way the other consumers do: $ROMP_SERVE_BIN → $ROMP_DIR/bin → next to this script → the
@@ -730,7 +733,9 @@ function ensureDecision({ alive, held }) {
 function ensureUp() {
   probeControl((alive) => {
     const d = ensureDecision({ alive, held: downMarkerHeld() });
-    if (d === 'held') log('the kernel is down by `romp down` — not auto-starting it; `romp up` brings it back');
+    if (d === 'held') {   // the reason is the one thing this run says: exit only once it is written
+      return log('the kernel was stopped by `romp down`; not auto-starting it. `romp up` brings it back', () => process.exit(0));
+    }
     if (d === 'spawn') spawn(process.execPath, [__filename, 'up'], { detached: true, stdio: 'ignore' }).unref();
     process.exit(0);
   });

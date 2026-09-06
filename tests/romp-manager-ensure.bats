@@ -266,13 +266,14 @@ PYEOF
 @test "ensure: a romp down marker holds the auto-start — no manager comes up, exit 0, the reason said" {
     command -v node >/dev/null 2>&1 || skip "node not available"
     command -v curl >/dev/null 2>&1 || skip "curl not available"
-    CPORT=7571 MPORT=7572
+    CPORT=7601 MPORT=7602                     # a pair no other suite binds: on 7571 (romp-manager-origin.bats's) a
+                                              # concurrent run's manager answered the probe and ensure said nothing
     local state="$TEST_DIR/state"
     mkdir -p "$state"
     printf '{"t": %s, "cmd": "romp down"}\n' "$(date +%s)" > "$state/down-by-romp"
     run env ROMP_STATE_DIR="$state" ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKE" node "$MGR" ensure
     [ "$status" -eq 0 ]                       # the SessionStart hook is not failing: the kernel is down on purpose
-    [[ "$output" == *"down by \`romp down\`"* ]]
+    [[ "$output" == *"stopped by \`romp down\`"* ]]
     [[ "$output" == *"romp up"* ]]
     sleep 1                                   # a spawned manager would have bound the port by now
     run curl -fsS "http://127.0.0.1:$CPORT/status"
