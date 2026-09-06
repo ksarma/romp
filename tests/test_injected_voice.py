@@ -320,11 +320,10 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
         # here can reach it.
         pm = SourceFileLoader("romp_postal_voice_results",
                               os.path.join(BIN, "romp-postal-service")).load_module()
-        saved = (pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat)
+        saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
         canned = {}
         pm._kernel_post = lambda path, body, timeout=4.0: canned.get("res")
-        pm.my_name = lambda: "api"
-        pm.my_id = lambda: SID
+        pm._self_identity = lambda: (SID, "api")     # the one resolver every tool call reads (2026-09-06)
         pm._heartbeat = lambda *a, **k: None
         # the per-install switch (2026-09-03) is OFF by default: turn it on for the live branches,
         # then off again for the two refusals a still-connected session hears
@@ -347,7 +346,7 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             results["add: switch off"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
             results["withdraw: switch off"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
         finally:
-            pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat = saved
+            pm._kernel_post, pm._self_identity, pm._heartbeat = saved
             pm.USER_TODOS_SWITCH.unlink()
         # the sweep rendered the real branches, not seven copies of one fallback
         self.assertIn("Noted", results["add: noted"])
