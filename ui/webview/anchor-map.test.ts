@@ -677,7 +677,7 @@ test("Rendered refusals: code, table, HTML block, entity prose, escaped link lab
   assert.equal(r.blockStartLine, lineOf("A [label"));
   // list line beginning with a tab after the marker
   r = bad(mapRenderedSelection(inside(byTag("UL"), 0, 4), El(box), source));
-  assert.match(r.reason, /tab after its marker|could not be placed/);
+  assert.match(r.reason, /tab after its marker|could not place/);
   assert.equal(r.blockStartLine, lineOf("- Item one"));
   // blockquote line beginning with a tab after the marker (the lexer turned it into code)
   r = bad(mapRenderedSelection(inside(byTag("BLOCKQUOTE"), 0, 4), El(box), source));

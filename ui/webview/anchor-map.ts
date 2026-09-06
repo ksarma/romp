@@ -227,6 +227,15 @@ function rowAt(idx: RawIndex, g: number): number {
 }
 const rawDomChar = (idx: RawIndex, g: number): string => { const r = rowAt(idx, g); return idx.rows[r].text[g - idx.rowStart[r]]; };
 const rawSrcOf = (idx: RawIndex, g: number): number => { const r = rowAt(idx, g); return idx.rows[r].srcStart + (g - idx.rowStart[r]); };
+/** The DOM text of global range [s, e): the rows' texts, no separators. */
+function rawDomSlice(idx: RawIndex, s: number, e: number): string {
+  let out = "";
+  for (let r = rowAt(idx, s); r < idx.rows.length && idx.rowStart[r] < e; r++) {
+    const row = idx.rows[r];
+    out += row.text.slice(Math.max(0, s - idx.rowStart[r]), Math.min(row.text.length, e - idx.rowStart[r]));
+  }
+  return out;
+}
 
 export function mapRawSelection(sel: SelLike, codeRoot: Element, source: string): MapResult {
   const root = codeRoot as unknown as DElement;
@@ -241,8 +250,7 @@ export function mapRawSelection(sel: SelLike, codeRoot: Element, source: string)
   if (s >= e) return refuse("Select some text to comment on.");
   // Self-check on the untrimmed range: the text nodes' concatenation must equal the source slice with
   // its line endings removed (a DOM "\n" standing for a source "\r" is a line ending too).
-  let dom = "";
-  for (let g = s; g < e; g++) dom += rawDomChar(idx, g);
+  const dom = rawDomSlice(idx, s, e);
   const untrimmed = source.slice(rawSrcOf(idx, s), rawSrcOf(idx, e - 1) + 1);
   if (dom.replace(/[\r\n]/g, "") !== untrimmed.replace(/[\r\n]/g, "")) {
     return refuse("The Raw view does not match the file text; reload the file and try again.");
@@ -383,12 +391,12 @@ class View {
  *  the lexer expanded after the marker, marked's setext protection) fails the suffix test and refuses. */
 function suffixLineView(raw: View, text: string): View {
   const rawLines = raw.str.split("\n"), textLines = text.split("\n");
-  if (textLines.length > rawLines.length) throw new Refusal("the block's lines could not be placed in the source");
+  if (textLines.length > rawLines.length) throw new Refusal("a block whose lines the mapping could not place");
   const map: number[] = new Array(text.length + 1);
   let rawLineStart = 0, ti = 0, endN = raw.n(0);
   for (let i = 0; i < textLines.length; i++) {
     const rl = rawLines[i], tl = textLines[i];
-    if (!rl.endsWith(tl)) throw new Refusal("a line begins with a tab after its marker, or the lexer rewrote it");
+    if (!rl.endsWith(tl)) throw new Refusal("a line that begins with a tab after its marker");
     const off = rl.length - tl.length;
     for (let k = 0; k < tl.length; k++) map[ti + k] = raw.n(rawLineStart + off + k);
     ti += tl.length;
@@ -397,7 +405,7 @@ function suffixLineView(raw: View, text: string): View {
     rawLineStart += rl.length + 1;
   }
   for (let i = textLines.length; i < rawLines.length; i++) {
-    if (rawLines[i].trim() !== "") throw new Refusal("the block's lines could not be placed in the source");
+    if (rawLines[i].trim() !== "") throw new Refusal("a block whose lines the mapping could not place");
   }
   map[text.length] = endN;
   return new View(text, null, map);
@@ -415,7 +423,7 @@ class Emitter {
     if (isWs(c)) return;
     if (this.pos.length && n >= 0) {
       const prev = this.pos[this.pos.length - 1];
-      if (prev >= 0 && n <= prev) throw new Refusal("the walk placed a character out of order");
+      if (prev >= 0 && n <= prev) throw new Refusal("text the mapping could not order");
     }
     this.chars += c; this.pos.push(n);
   }
@@ -430,7 +438,7 @@ const ENTITY_RE = /&(#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);/;
 const countNL = (s: string): number => { let n = 0; for (let i = 0; i < s.length; i++) if (s[i] === "\n") n++; return n; };
 
 function emitText(view: View, em: Emitter): void {
-  if (ENTITY_RE.test(view.str)) throw new Refusal("this paragraph contains an HTML entity");
+  if (ENTITY_RE.test(view.str)) throw new Refusal("prose with an HTML entity");
   for (let i = 0; i < view.str.length; i++) em.put(view.str[i], view.n(i));
 }
 
@@ -442,14 +450,14 @@ function plainInline(tokens: Token[]): string {
       case "text": {
         const tt = t as Tokens.Text;
         if (tt.tokens) { out += plainInline(tt.tokens); break; }
-        if (ENTITY_RE.test(tt.raw)) throw new Refusal("this block contains an HTML entity");
+        if (ENTITY_RE.test(tt.raw)) throw new Refusal("prose with an HTML entity");
         out += tt.raw; break;
       }
       case "escape": out += (t as Tokens.Escape).raw.slice(1); break;
       case "codespan": { const n = /^`+/.exec(t.raw)![0].length; out += t.raw.slice(n, t.raw.length - n); break; }
       case "em": case "strong": case "del": case "link": out += plainInline((t as Tokens.Em).tokens); break;
       case "image": case "br": case "html": break;
-      default: throw new Refusal(`unsupported content (${t.type})`);
+      default: throw new Refusal(`content of a kind the mapping does not handle (${t.type})`);
     }
   }
   return out;
@@ -459,7 +467,7 @@ function walkInline(tokens: Token[], view: View, em: Emitter): void {
   let p = 0;
   for (const t of tokens) {
     const raw = t.raw;
-    if (!view.str.startsWith(raw, p)) throw new Refusal(`the text of a ${t.type} could not be placed in the source`);
+    if (!view.str.startsWith(raw, p)) throw new Refusal(`a ${t.type} the mapping could not place`);
     switch (t.type) {
       case "text": {
         const tt = t as Tokens.Text;
@@ -470,14 +478,14 @@ function walkInline(tokens: Token[], view: View, em: Emitter): void {
       case "escape": em.put(raw.slice(1), view.n(p + 1)); break;
       case "codespan": {
         const n = /^`+/.exec(raw)![0].length;
-        if (raw.length < 2 * n || raw.slice(raw.length - n) !== "`".repeat(n)) throw new Refusal("an inline code span could not be placed");
+        if (raw.length < 2 * n || raw.slice(raw.length - n) !== "`".repeat(n)) throw new Refusal("an inline code span the mapping could not place");
         for (let i = n; i < raw.length - n; i++) em.put(raw[i], view.n(p + i));
         break;
       }
       case "em": case "strong": case "del": {
         const tt = t as Tokens.Em | Tokens.Strong | Tokens.Del;
         const d = t.type === "em" ? 1 : t.type === "strong" ? 2 : (/^~+/.exec(raw) || [""])[0].length;
-        if (!d || raw.slice(d, raw.length - d) !== tt.text) throw new Refusal(`the ${t.type} delimiters could not be placed`);
+        if (!d || raw.slice(d, raw.length - d) !== tt.text) throw new Refusal(`${t.type} marks the mapping could not place`);
         walkInline(tt.tokens, view.sub(p + d, p + d + tt.text.length), em);
         break;
       }
@@ -487,7 +495,7 @@ function walkInline(tokens: Token[], view: View, em: Emitter): void {
           // The label's tokens tile `text`, which is the label with `\[` and `\]` unescaped: an escaped
           // bracket shifts every later position, so such labels refuse (plan).
           if (raw.slice(1, 1 + tt.text.length) !== tt.text || raw[1 + tt.text.length] !== "]") {
-            throw new Refusal(/\\[\[\]]/.test(raw) ? "a link label with an escaped bracket" : "a link could not be placed");
+            throw new Refusal(/\\[\[\]]/.test(raw) ? "a link label with an escaped bracket" : "a link the mapping could not place");
           }
           walkInline(tt.tokens, view.sub(p + 1, p + 1 + tt.text.length), em);
         } else {
@@ -498,11 +506,11 @@ function walkInline(tokens: Token[], view: View, em: Emitter): void {
         break;
       }
       case "image": case "br": case "html": break;   // no rendered text
-      default: throw new Refusal(`unsupported content (${t.type})`);
+      default: throw new Refusal(`content of a kind the mapping does not handle (${t.type})`);
     }
     p += raw.length;
   }
-  if (p !== view.str.length) throw new Refusal("inline tokens do not cover their text");
+  if (p !== view.str.length) throw new Refusal("text the mapping could not place");
 }
 
 /** ATX: the text follows the hashes and whitespace; setext: the text starts the raw. */
@@ -511,10 +519,10 @@ function headingTextOffset(raw: string, text: string): number {
   if (m) {
     let off = m[0].length;
     while (off < raw.length && isWs(raw[off])) off++;
-    if (!raw.startsWith(text, off)) throw new Refusal("a heading could not be placed");
+    if (!raw.startsWith(text, off)) throw new Refusal("a heading the mapping could not place");
     return off;
   }
-  if (!raw.startsWith(text)) throw new Refusal("a heading could not be placed");
+  if (!raw.startsWith(text)) throw new Refusal("a heading the mapping could not place");
   return 0;
 }
 
@@ -528,13 +536,13 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
       // Block text (tight list items): `raw` doubles interior newlines; `text` is the source text, and
       // the raw's extra trailing newlines are the ones the lexer moved onto this token.
       const tt = t as Tokens.Text;
-      if (!view.str.startsWith(tt.text, p)) throw new Refusal("a list item's text could not be placed (indented code inside it?)");
+      if (!view.str.startsWith(tt.text, p)) throw new Refusal("a list item with indented code, or one the mapping could not place");
       if (tt.tokens) walkInline(tt.tokens, view.sub(p, p + tt.text.length), em);
       else emitText(view.sub(p, p + tt.text.length), em);
       p += tt.text.length;
       const trailing = raw.length - tt.text.length - countNL(tt.text);
-      if (trailing < 0) throw new Refusal("a list item's text could not be placed");
-      for (let k = 0; k < trailing; k++, p++) if (view.str[p] !== "\n") throw new Refusal("a list item's text could not be placed");
+      if (trailing < 0) throw new Refusal("a list item the mapping could not place");
+      for (let k = 0; k < trailing; k++, p++) if (view.str[p] !== "\n") throw new Refusal("a list item the mapping could not place");
       continue;
     }
     if (!view.str.startsWith(raw, p)) {
@@ -548,7 +556,7 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
       }
       if (view.str.startsWith(raw, q)) p = q;
       else if (/^ *\t/.test(view.str.slice(p, p + 8))) throw new Refusal("a line that begins with a tab after its marker");
-      else throw new Refusal(`a ${t.type} could not be placed in the source`);
+      else throw new Refusal(`a ${t.type} the mapping could not place`);
     }
     switch (t.type) {
       case "space": case "hr": break;
@@ -560,7 +568,7 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
       }
       case "paragraph": {
         const tt = t as Tokens.Paragraph;
-        if (!raw.startsWith(tt.text) || /[^\n]/.test(raw.slice(tt.text.length))) throw new Refusal("a paragraph could not be placed");
+        if (!raw.startsWith(tt.text) || /[^\n]/.test(raw.slice(tt.text.length))) throw new Refusal("a paragraph the mapping could not place");
         walkInline(tt.tokens, view.sub(p, p + tt.text.length), em);
         break;
       }
@@ -573,13 +581,13 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         const tt = t as Tokens.List;
         let q = p;
         for (const item of tt.items) {
-          if (!view.str.startsWith(item.raw, q)) throw new Refusal("a list item could not be placed");
+          if (!view.str.startsWith(item.raw, q)) throw new Refusal("a list the mapping could not place");
           walkBlocks(item.tokens, suffixLineView(view.sub(q, q + item.raw.length), item.text), em);
           q += item.raw.length;
         }
         // the last item's raw is trimmed, and a single newline after the list is moved onto the list's raw
         while (q < p + raw.length && view.str[q] === "\n") q++;
-        if (q !== p + raw.length) throw new Refusal("the list's items do not cover the list");
+        if (q !== p + raw.length) throw new Refusal("a list the mapping could not place");
         break;
       }
       case "code": {
@@ -598,7 +606,7 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         break;
       }
       case "html": throw new Refusal("an HTML block");
-      default: throw new Refusal(`unsupported content (${t.type})`);
+      default: throw new Refusal(`content of a kind the mapping does not handle (${t.type})`);
     }
     p += raw.length;
   }
@@ -681,7 +689,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
       }
       if (!N.startsWith(t.raw, pos)) {
         const j = N.indexOf(t.raw, pos);
-        if (j >= 0) pos = j; else broken = `a ${t.type} could not be placed in the source`;
+        if (j >= 0) pos = j; else broken = `a ${t.type} the mapping could not place`;
       }
     }
     if (t.type === "space") { if (broken === null) pos += t.raw.length; continue; }
@@ -695,6 +703,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
                   refused, dom: [], isHtml: t.type === "html", tag: tagOf(t) });
     if (broken === null) pos += t.raw.length;
   }
+  if (lexError !== null) blocks.length = 0;
   // ── the DOM's top-level nodes and their text
   const topNodes: DNode[] = [];
   const topStart: number[] = [];
@@ -708,6 +717,10 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   const content = topNodes.filter((n) => isElement(n) || stripWs((n as DText).data) !== "");
   const nodeText = new Map<DNode, string>();
   for (const n of content) nodeText.set(n, stripWs(isText(n) ? n.data : textOf(n)));
+  if (lexError !== null) {
+    blocks.push({ startN: 0, endN: N.length, chars: "", pos: [], holes: [], refused: `markdown the lexer could not parse (${lexError})`,
+                  dom: content.slice(), isHtml: false, tag: null });
+  }
   // ── pair blocks with nodes, in order. Every token but `html` renders as exactly one element, so the
   //    pairing is 1:1 except across an html block, whose node count is unknown (zero for a comment, several
   //    for sibling tags, none of its text if DOMPurify dropped it). There the walk resyncs: it tries each
@@ -731,6 +744,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   let j = 0;
   for (let b = 0; b < blocks.length; b++) {
     const blk = blocks[b];
+    if (lexError !== null) { for (const n of blk.dom) nodeBlock.set(n, b); break; }
     if (blk.isHtml) {
       blk.refused = blk.refused || "an HTML block";
       let jj = content.length;
@@ -744,7 +758,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
     } else if (j < content.length && nodeText.get(content[j]) === blk.chars) {
       blk.dom = [content[j++]];
     } else {
-      blk.refused = "the rendered text here does not match the file text";
+      blk.refused = "a block whose rendered text does not match the file";
       if (j < content.length) blk.dom = [content[j++]];
     }
     for (const n of blk.dom) nodeBlock.set(n, b);
@@ -868,10 +882,6 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   return { ok: true, range: { start, end }, quote: source.slice(start, end) };
 }
 
-/** Source offsets covered by an emitted character (one source character; never a tab expansion or a
- *  line ending, since only non-whitespace is emitted). */
-const charSrc = (idx: RenderedIndex, n: number): number => nOf(idx, n);
-
 /** The (text node, offset) of the k-th non-whitespace character under `node`. */
 function nthNonWs(node: DNode, k: number): { t: DText; off: number } | null {
   let seen = 0;
@@ -915,7 +925,8 @@ function stripMarkup(q: string): string {
     l = l.replace(/!\[[^\]]*\]\([^)]*\)/g, "");
     l = l.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]*)\]\[[^\]]*\]/g, "$1");
     l = l.replace(/<(https?:\/\/[^>]+)>/g, "$1");
-    l = l.replace(/(\*\*|__)(.+?)\1/g, "$2").replace(/(\*|_)(.+?)\1/g, "$2").replace(/~~(.+?)~~/g, "$1");
+    l = l.replace(/\*\*(.+?)\*\*/g, "$1").replace(/(?<!\w)__(.+?)__(?!\w)/g, "$1").replace(/\*(.+?)\*/g, "$1")
+         .replace(/(?<!\w)_(.+?)_(?!\w)/g, "$1").replace(/~~(.+?)~~/g, "$1");
     l = l.replace(/`+/g, "").replace(/\\([\\`*_{}[\]()#+\-.!>~|])/g, "$1");
     return l.replace(/(\s{2,}|\\)$/, "");
   }).join("\n");
@@ -935,7 +946,7 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
     for (let k = 0; k < blk.pos.length; k++) {
       const p = blk.pos[k];
       if (p < 0) continue;
-      const s = charSrc(idx, p);
+      const s = nOf(idx, p);   // one source character: emitted text is never a tab expansion or a line ending
       if (s >= range.start && s < range.end) { if (!first) first = { b, k }; last = { b, k }; }
     }
   }
