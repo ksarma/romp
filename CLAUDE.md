@@ -169,6 +169,8 @@ broad `git add` will sweep up your work). Conventions:
   2. Land it on the fork's `main` the way the user prefers for that change — a PR
      within the fork when it wants a read-through, a merge when it does not. Opening
      a PR against the upstream project is a separate decision only the user makes.
+     PRs land through a batch (`scripts/batch.py`); do not click merge; see
+     `docs/batching.md`.
 - **Clean up when finished.** After publishing, remove the worktree
   (`git worktree remove ../romp-<session>`) and delete its branch — don't leave stale
   worktrees lying around.
