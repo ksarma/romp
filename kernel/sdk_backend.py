@@ -4554,36 +4554,61 @@ class SdkSession:
         turn, every subagent and every background task — and the session came back as a crash resume,
         all over ONE message the kernel could not file (a `KeyError` on a message uuid, from a
         live-tail sweep racing the kernel thread; see SdkBackend._note_live_tail_race). A malformed or
-        unexpected message now costs its own handling and nothing else: the transcript keeps the
-        message, the CLI keeps running. Returns whether the handler ran clean."""
+        unexpected message now costs its own handling and nothing else: the CLI keeps running (what
+        the kernel lost of that one message depends on its class — see _failure_consequence).
+        Returns whether the handler ran clean.
+
+        The REPORT is guarded too: an exception's `__str__` can raise (a third-party error type
+        wrapping partial data), and the kernel's log callback can (stderr closed under a service
+        restart). Unguarded, either ended the drain from inside the except — the outcome this method
+        exists to prevent. A reporter failure logs one plain line built from names only, and if even
+        that cannot be written the failure is swallowed: the stream comes first."""
         try:
             self._on_message(msg, AssistantMessage, ResultMessage, SystemMessage)
             return True
         except Exception as e:
-            self._note_message_failure(msg, e)
+            try:
+                self._note_message_failure(msg, e)
+            except Exception as e2:
+                try:
+                    self.backend._log("sdk session %s: a %s in a handler on a %s message, and reporting it "
+                                      "failed too (%s); handling stopped, stream continues"
+                                      % (self.name, type(e).__name__, type(msg).__name__, type(e2).__name__),
+                                      problem=True,
+                                      key=("stream-fail-report", self.sid, type(e).__name__, type(e2).__name__))
+                except Exception:
+                    pass
             return False
 
     def _note_message_failure(self, msg, e) -> None:
         """One problem line per failure, with enough to fix by: the exception type, the message's type
-        and subtype (never its content), and — the first time a signature is seen this kernel life —
-        the frame chain (file:line function, no locals). Repeats of a signature log one short counted
-        line, so a handler that fails on every message is visible without burying the log. A bare
-        `KeyError: '<uuid>'` with none of this is what the last such failure left to diagnose from."""
+        and subtype (never its content), the exception's own text (uuid-shaped ids shortened, clipped —
+        _mask_ids), what that class of message losing its handling costs, and — the first time a
+        signature is seen this kernel life — the frame chain (file:line function, no locals, bounded;
+        _compact_tb). A bare `KeyError: '<uuid>'` with none of this is what the last such failure left
+        to diagnose from.
+
+        Repeats: the kernel log gets one short counted line per repeat, so a handler that fails on
+        every message is visible there; the error-center RING keeps one entry per (session, exception
+        type, failing frame) and counts the repeats on it (_log's `key`), so the flood neither evicts
+        every other problem from the ring nor busts the feed cache per message (2026-09-06)."""
         kind = _describe_msg(msg)
         chain = _compact_tb(e)
-        sig = (type(e).__name__, kind, chain.rsplit(" > ", 1)[-1])
+        site = chain.rsplit(" > ", 1)[-1]
+        sig = (self.sid, type(e).__name__, site)
         with SdkSession._stream_fail_lock:
             n = SdkSession._stream_fail_seen.get(sig, 0) + 1
             SdkSession._stream_fail_seen[sig] = n
+        key = ("stream-fail",) + sig
         if n == 1:
             self.backend._log("sdk session %s: %s while handling a %s message; that message's handling "
-                              "stopped there (the transcript keeps it) and the stream continues. %s: %s, at %s"
-                              % (self.name, type(e).__name__, kind, type(e).__name__, _mask_ids(e), chain),
-                              problem=True)
+                              "stopped there (%s) and the stream continues. %s: %s, at %s"
+                              % (self.name, type(e).__name__, kind, _failure_consequence(msg),
+                                 type(e).__name__, _mask_ids(e), chain), problem=True, key=key)
         else:
             self.backend._log("sdk session %s: %s while handling a %s message (repeat %d this kernel life; "
                               "the frame chain was logged with the first); handling stopped, stream continues"
-                              % (self.name, type(e).__name__, kind, n), problem=True)
+                              % (self.name, type(e).__name__, kind, n), problem=True, key=key)
 
     def _on_message(self, msg, AssistantMessage, ResultMessage, SystemMessage):
         if getattr(self, "_ping_feeding", False):   # getattr: __new__-built test doubles skip __init__
@@ -4868,53 +4893,67 @@ class SdkSession:
             # the authoritative flag so parked ops proceed immediately, instead of waiting out a 180s cap.
             self._compacting = False
             self._clearing = False   # /clear backstop: the turn settled, whatever the init did or didn't flip
-            if self._rewind_to and getattr(self, "_rewind_wait", False):
-                # delete-while-busy: THIS settle is the interrupted turn ending — the flag is being
-                # ARMED here, not consumed. Second observer of the turn-end fact (the Stop hook is
-                # the first; _complete_rewind_wait is idempotent, first one wins) — it exists for
-                # the turn shapes where Stop never fires (an interrupt that dies straight to the
-                # ResultMessage).
+            try:
+                if self._rewind_to and getattr(self, "_rewind_wait", False):
+                    # delete-while-busy: THIS settle is the interrupted turn ending — the flag is being
+                    # ARMED here, not consumed. Second observer of the turn-end fact (the Stop hook is
+                    # the first; _complete_rewind_wait is idempotent, first one wins) — it exists for
+                    # the turn shapes where Stop never fires (an interrupt that dies straight to the
+                    # ResultMessage).
+                    try:
+                        self.backend._complete_rewind_wait(self)
+                    except Exception as e:
+                        self.backend._log("rewind (%s): delete-while-busy completion failed at the "
+                                          "settle: %s" % (self.name, e))
+                elif self._rewind_to and self._rewind_armed:
+                    # the rewind turn settled — the flag is CONSUMED (the leaf moved past the recorded one, so
+                    # rewind_disposition would drop it on the next connect anyway; this just tidies the reg now).
+                    # A bare rollback consumes here too: the settled turn IS the branch's first (leaf moved).
+                    # ARMED is part of the guard (delete-while-busy): the interrupted turn's own settle
+                    # lands moments after the Stop hook armed the flag, and an unguarded consume read
+                    # that fresh arm as the branch-take — flags could never accompany an UNARMED
+                    # running turn before, so armed-only is byte-identical for the idle paths.
+                    self._rewind_to = self._rewind_leaf = ""
+                    self._rewind_bare = False
+                    self._rewind_armed = False
+                    self._rewind_wait = False
+                    try:
+                        self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
+                                                 rewindWait=False)
+                    except Exception as e:
+                        self.backend._log("rewind (%s): registry clear failed after the turn landed: %s" % (self.name, e))
+                    # the BRANCH-TAKE event: the settled turn is the new branch's first landed record —
+                    # the kernel's held goal cleanup archives on exactly this (two-phase rewind timing)
+                    self.backend._rewind_resolved(self.sid, "taken")
+                self.backend._turn_completed(self.sid)   # a landed result re-arms the crash-resume budget
+                self._mark("waiting")
+                self.backend.retire_live_work(self.sid)   # turn over → a work atom that never landed never will
+                asyncio.ensure_future(self._do_refresh_context())   # refresh ctx % + model from the SDK and
+                #   persist them, so the bar reflects the turn that just landed and survives idle/restart.
+                asyncio.ensure_future(self._do_refresh_usage())     # + the exact /usage snapshot (rail bars)
+            finally:
+                # THE TURN-END PLUMBING runs whatever the settle steps above did (2026-09-06). With
+                # per-message containment (_handle_stream_message) an exception in _turn_completed,
+                # _mark or retire_live_work no longer ends the stream — so if these sat after it in
+                # straight-line code, a contained failure left the session settled 'waiting' with the
+                # input feeder still parked on _input_wake, no push, a rename ping undelivered and a
+                # deferred effort reconnect that never fired. (Before containment the stream's death
+                # and the reconnect's fresh inputs() re-drained the queue, at the cost of the CLI.)
+                # The exception itself still propagates out of this finally to the containment's report.
+                if self._input_wake is not None:   # turn done → release the next queued turn, if any
+                    self._input_wake.set()
+                self.backend._poke()
+                # a pending rename ping delivers HERE, as its own turn (the user answered first; the
+                # empty-queue guard + the feed-hold make its record unfoldable — see _deliver_rename_ping)
                 try:
-                    self.backend._complete_rewind_wait(self)
+                    self.backend._deliver_rename_ping(self)
                 except Exception as e:
-                    self.backend._log("rewind (%s): delete-while-busy completion failed at the "
-                                      "settle: %s" % (self.name, e))
-            elif self._rewind_to and self._rewind_armed:
-                # the rewind turn settled — the flag is CONSUMED (the leaf moved past the recorded one, so
-                # rewind_disposition would drop it on the next connect anyway; this just tidies the reg now).
-                # A bare rollback consumes here too: the settled turn IS the branch's first (leaf moved).
-                # ARMED is part of the guard (delete-while-busy): the interrupted turn's own settle
-                # lands moments after the Stop hook armed the flag, and an unguarded consume read
-                # that fresh arm as the branch-take — flags could never accompany an UNARMED
-                # running turn before, so armed-only is byte-identical for the idle paths.
-                self._rewind_to = self._rewind_leaf = ""
-                self._rewind_bare = False
-                self._rewind_armed = False
-                self._rewind_wait = False
-                try:
-                    self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
-                                             rewindWait=False)
-                except Exception as e:
-                    self.backend._log("rewind (%s): registry clear failed after the turn landed: %s" % (self.name, e))
-                # the BRANCH-TAKE event: the settled turn is the new branch's first landed record —
-                # the kernel's held goal cleanup archives on exactly this (two-phase rewind timing)
-                self.backend._rewind_resolved(self.sid, "taken")
-            self.backend._turn_completed(self.sid)   # a landed result re-arms the crash-resume budget
-            self._mark("waiting")
-            self.backend.retire_live_work(self.sid)   # turn over → a work atom that never landed never will
-            asyncio.ensure_future(self._do_refresh_context())   # refresh ctx % + model from the SDK and
-            #   persist them, so the bar reflects the turn that just landed and survives idle/restart.
-            asyncio.ensure_future(self._do_refresh_usage())     # + the exact /usage snapshot (rail bars)
-            self.backend._poke()
-            if self._input_wake is not None:   # turn done → release the next queued turn, if any
-                self._input_wake.set()
-            # a pending rename ping delivers HERE, as its own turn (the user answered first; the
-            # empty-queue guard + the feed-hold make its record unfoldable — see _deliver_rename_ping)
-            self.backend._deliver_rename_ping(self)
-            if self._reconnect_when_idle and not self.ended:   # an effort change waited for this turn to end
-                self._reconnect_when_idle = False
-                self._reconnect = True
-                self._wake_set()
+                    self.backend._log("rename ping (%s): delivery at the settle failed: %s: %s"
+                                      % (self.name, type(e).__name__, _mask_ids(e)))
+                if self._reconnect_when_idle and not self.ended:   # an effort change waited for this turn to end
+                    self._reconnect_when_idle = False
+                    self._reconnect = True
+                    self._wake_set()
         elif getattr(msg, "rate_limit_info", None) is not None:
             # A RateLimitEvent: the account-wide /usage limits (5h + weekly) the CLI streams when the limit state
             # changes — the SDK's designed source for the rail usage bars. Duck-typed (no SDK-type import needed).
@@ -5973,11 +6012,26 @@ def _mask_ids(text, cap: int = 160) -> str:
     return s if len(s) <= cap else s[:cap] + "…"
 
 
-def _compact_tb(exc) -> str:
+COMPACT_TB_FRAMES = 8     # the innermost frames a compact chain keeps (the failing site is at that end)
+COMPACT_TB_CHARS = 600    # and its hard length cap
+
+
+def _compact_tb(exc, max_frames: int = COMPACT_TB_FRAMES, cap: int = COMPACT_TB_CHARS) -> str:
     """The exception's frame chain as `file:line function` steps, outermost first — no locals, no
-    source lines: enough to name the site on the next occurrence, small enough for one log line."""
+    source lines: enough to name the site on the next occurrence, small enough for one log line.
+    BOUNDED: the innermost `max_frames` frames, prefixed with how many outer ones were dropped, and
+    the whole thing clipped to `cap` characters with '…' — a RecursionError's chain ran to 18 KB
+    otherwise, into the error-center ring and every feed payload that carries it (2026-09-06)."""
     frames = traceback.extract_tb(getattr(exc, "__traceback__", None))
-    return " > ".join("%s:%d %s" % (os.path.basename(f.filename), f.lineno, f.name) for f in frames) or "?"
+    if not frames:
+        return "?"
+    dropped = max(0, len(frames) - max_frames)
+    s = " > ".join("%s:%d %s" % (os.path.basename(f.filename), f.lineno, f.name) for f in frames[dropped:])
+    if dropped:
+        s = "…%d outer frame%s dropped… > %s" % (dropped, "" if dropped == 1 else "s", s)
+    if len(s) > cap:
+        s = s[:cap - 1] + "…"
+    return s
 
 
 def _describe_msg(msg) -> str:
@@ -5986,6 +6040,24 @@ def _describe_msg(msg) -> str:
     n = type(msg).__name__
     st = getattr(msg, "subtype", None)
     return "%s/%s" % (n, st) if isinstance(st, str) and st else n
+
+
+def _failure_consequence(msg) -> str:
+    """What the kernel lost when this message's handler failed, by message class — the problem line's
+    reassurance has to be true for the message it is about. An assistant or user message is also a
+    transcript record, so the chat rebuilds it from disk. A ResultMessage exists only on the stream,
+    but the settle's turn-end plumbing (the queue wake, the push, the deferred reconnect) runs in a
+    finally, so the turn still closed. A stream event is a partial the full message supersedes. Every
+    other frame (a SystemMessage subtype: task events, compact boundaries, status) exists only on the
+    stream: the kernel's copy of what it carried is gone until the next such frame."""
+    n = type(msg).__name__
+    if n in ("AssistantMessage", "UserMessage"):
+        return "the transcript keeps the message"
+    if n == "ResultMessage":
+        return "the turn still closed: its queue wake, push and any deferred reconnect ran"
+    if n == "StreamEvent":
+        return "a partial-stream event; the full message follows"
+    return "a stream-only frame the transcript never holds: what it carried is lost to the kernel until the next one"
 
 
 def _evict_live_overflow(d: dict, cap: int = LIVE_TAIL_CAP) -> int:
@@ -6060,6 +6132,21 @@ class SdkBackend:
         #                                           writes come from kernel AND loop threads)
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
         self._live: dict[str, dict] = {}          # sid -> {key -> atom}: the in-memory LIVE TAIL (ahead of disk)
+        # THE LIVE-TAIL LOCK (2026-09-06). `_live` and every per-sid dict inside it are shared by the
+        # kernel thread (send, recall, dismiss_echo, the pusher's live_atoms/prune_live) and each
+        # session's loop thread (_forward, the settle's retire_live_work, _mark_dropped_echoes at
+        # spawn/reconnect). Lock-free, the sweeps read `d[k]` off stale key lists (KeyError ended a
+        # session's CLI), _persist_echoes and _mark_dropped_echoes walked a dict the other thread was
+        # resizing (RuntimeError: out of the pusher's build; out of the session thread at reconnect),
+        # and `if not d: _live.pop(sid)` was two steps, so an atom stashed between them landed in a
+        # dict nothing could reach. The rule: every write to the tail (a stash, a pop, the sid-level
+        # pop) and every read that iterates it happens under this lock; iteration walks a snapshot
+        # taken under it; the emptiness check and the sid-level pop are one step under it; and the
+        # lock is never held across I/O (a reg write, a transcript read, the orphan-reply append) or
+        # a callback (the pusher wake, a state mark) — copy under the lock, act outside. Re-entrant
+        # so a locked site may call a helper that locks. The class attribute below is the default
+        # for __new__-built test doubles.
+        self._live_lock = threading.RLock()
         self._rl_lock = threading.Lock()          # serializes usage.json read-merge-write (_record_rate_limit)
         self._drain_hold_until = 0.0              # deploy-drain lease (T121): RUNTIME-ONLY — a fresh boot starts clear by construction
         self._drain_hold_since = 0.0
@@ -7171,7 +7258,7 @@ class SdkBackend:
     # ---- logging / wakeups ----
     PROBLEM_RING = 100        # how many backend problems are kept for the dashboard (oldest dropped)
 
-    def _log(self, m, problem=None):
+    def _log(self, m, problem=None, key=None):
         """Every backend line goes to the kernel log; the ones that report a FAILURE also land in a ring
         the dashboard's error center reads, so an SDK problem shows up where the user is looking instead
         of only in a file nobody tails (the user 2026-07-28, who could tell exceptions were happening and
@@ -7180,15 +7267,38 @@ class SdkBackend:
         What counts as a problem is the exact event, not a keyword sniff on the message: a line logged
         while an exception is being handled IS that exception's report. sys.exc_info() is live for the
         whole dynamic extent of an `except` block — helpers called from inside one included — so the
-        classification follows the code path that produced the line. `problem=` overrides either way."""
+        classification follows the code path that produced the line. `problem=` overrides either way.
+
+        `key` (hashable) dedupes a RECURRING problem in the ring: a repeat of a key already in the ring
+        counts on that entry (its text gains the count) instead of appending — the kernel log still
+        gets every line, but the ring is 100 entries and its sequence number is the feed's cache key,
+        so a handler failing on every streamed message used to evict every other problem within a
+        minute and force a feed rebuild per message (2026-09-06). One cache bust per NEW problem; a
+        key whose entry the ring has since dropped enters again as new."""
         if problem is None:
             problem = sys.exc_info()[0] is not None
         if problem:
             with self._problem_lock:
-                self._problem_seq += 1
-                self._problems.append({"seq": self._problem_seq, "t": time.time(), "text": str(m)})
-                if len(self._problems) > self.PROBLEM_RING:
-                    del self._problems[:-self.PROBLEM_RING]
+                hit = None
+                if key is not None:
+                    for row in reversed(self._problems):
+                        if row.get("key") == key:
+                            hit = row
+                            break
+                if hit is not None:
+                    hit["count"] = int(hit.get("count") or 1) + 1
+                    hit["last"] = time.time()
+                    reps = hit["count"] - 1
+                    hit["text"] = "%s (%d repeat%s this kernel life; each is a kernel log line)" % (
+                        hit.get("first", hit["text"]), reps, "" if reps == 1 else "s")
+                else:
+                    self._problem_seq += 1
+                    row = {"seq": self._problem_seq, "t": time.time(), "text": str(m)}
+                    if key is not None:
+                        row.update(key=key, first=str(m), count=1)
+                    self._problems.append(row)
+                    if len(self._problems) > self.PROBLEM_RING:
+                        del self._problems[:-self.PROBLEM_RING]
         if self._log_cb:
             self._log_cb(m)
 
@@ -7785,11 +7895,14 @@ class SdkBackend:
             return None
         text = s.unqueue(idx, expect)
         if text is not None:
-            live = self._live.get(sid) or {}
-            for k, a in list(live.items()):                # snapshot: the live-tail thread may mutate concurrently
-                if a.get("_echo_text") == text:
-                    live.pop(k, None)                      # one echo per canceled message
-                    break
+            with self._live_lock:                          # find + pop + the sid-level pop, one step
+                live = self._live.get(sid) or {}
+                for k, a in list(live.items()):
+                    if a.get("_echo_text") == text:
+                        live.pop(k, None)                  # one echo per canceled message
+                        break
+                if not live and self._live.get(sid) is live:
+                    self._live.pop(sid, None)
             self._persist_echoes(sid)                      # the canceled echo leaves the restart mirror too
             self._wake_push()                              # repaint without the echo so it stops reading as sent
         return text
@@ -7853,7 +7966,7 @@ class SdkBackend:
             echo["rompAuto"] = True                          # auto-nudge → romp-logo on the chat/timeline
         if user_todo:
             echo["_todo"] = str(user_todo)                   # the answer's ask, for the loss-reopen seam
-        self._live.setdefault(sid, {})[key] = echo
+        self._stash_live(sid, key, echo)
         self._persist_echoes(sid)                            # unlanded echoes survive a kernel restart (reg mirror)
         self._wake_push()
         return True
@@ -7866,17 +7979,23 @@ class SdkBackend:
         echo died with the kernel, and the message vanished with NO trace anywhere. With the mirror, the
         reseeded echo persists unanswered in the chat, so the LOSS is visible and the user can resend.
         Command-feedback lines (/model etc.) are deliberately not mirrored — replaying a stale confirmation
-        after a restart would assert something that may no longer be true."""
-        d = self._live.get(sid) or {}
+        after a restart would assert something that may no longer be true.
+
+        The walk is under the live-tail lock (the reg write is not): reached from prune_live on the
+        kernel thread while the session thread stashes and retires atoms, an unlocked walk raised
+        `RuntimeError: dictionary changed size during iteration` out of the pusher's chat build —
+        every client missed that cycle and nothing reached the error center (2026-09-06)."""
         snap = []
-        for a in d.values():
-            if not a.get("_echo_text") or a.get("command"):
-                continue
-            e = {"t": a.get("t", 0), "text": a["_echo_text"], "author": a.get("author") or "human",
-                 "rompAuto": bool(a.get("rompAuto")), "dropped": bool(a.get("dropped"))}
-            if a.get("_todo"):
-                e["todo"] = str(a["_todo"])   # a user-todo ANSWER's echo keeps its ask's id across restarts
-            snap.append(e)
+        with self._live_lock:
+            d = self._live.get(sid) or {}
+            for a in list(d.values()):
+                if not a.get("_echo_text") or a.get("command"):
+                    continue
+                e = {"t": a.get("t", 0), "text": a["_echo_text"], "author": a.get("author") or "human",
+                     "rompAuto": bool(a.get("rompAuto")), "dropped": bool(a.get("dropped"))}
+                if a.get("_todo"):
+                    e["todo"] = str(a["_todo"])   # a user-todo ANSWER's echo keeps its ask's id across restarts
+                snap.append(e)
         try:
             self._update_reg(sid, echoes=snap)
         except Exception as e:
@@ -7907,7 +8026,7 @@ class SdkBackend:
                     atom["dropped"] = True
                 if e.get("todo"):
                     atom["_todo"] = str(e["todo"])   # the loss-reopen seam survives the restart too
-                self._live.setdefault(reg["sid"], {})[key] = atom
+                self._stash_live(reg["sid"], key, atom)
             if self._live.get(reg["sid"]):
                 self._mark_dropped_echoes(reg["sid"], _queue_texts(reg.get("queue")))
 
@@ -7929,13 +8048,19 @@ class SdkBackend:
         kept the first, exactly the duplicate that branch refuses by design. The loss still surfaces in
         full (the dropped flag, the todo-reopen seam); only the queue re-add is withheld. Boot and
         dead-spawn callers keep the default: no client survived there to have landed anything."""
-        d = self._live.get(sid)
-        if not d:
-            return
         qs = {q for q in queued_texts if isinstance(q, str)}
-        newly = [a for a in d.values()
-                 if a.get("_echo_text") and not a.get("command") and not a.get("dropped")
-                 and a["_echo_text"] not in qs]
+        # The selection is under the live-tail lock; everything after it (the transcript scan, the
+        # queue re-add, the reg write) is not. This runs on the SESSION thread at spawn and at every
+        # reconnect, outside the connect's try — while the kernel thread's send() stashes an echo into
+        # the same dict. Unlocked, the comprehension raised RuntimeError there and the session thread
+        # died with no reconnect (2026-09-06).
+        with self._live_lock:
+            d = self._live.get(sid)
+            if not d:
+                return
+            newly = [a for a in list(d.values())
+                     if a.get("_echo_text") and not a.get("command") and not a.get("dropped")
+                     and a["_echo_text"] not in qs]
         if not newly:
             return
         # RE-DELIVER, don't just flag (the user 2026-08-23, their strongest point in the restart
@@ -8058,18 +8183,23 @@ class SdkBackend:
         only: a live (pending) echo is the sole visible record of an in-flight send and must stay until
         it lands or its loss is proven. Returns the retired text, or None on a miss (already gone —
         idempotent; the next push simply paints without it)."""
-        live = self._live.get(sid) or {}
-        for k, a in list(live.items()):                    # snapshot: the live-tail thread may mutate concurrently
-            if not (a.get("_echo_text") and a.get("dropped")):
-                continue
-            if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
-                live.pop(k, None)
-                if not live:
-                    self._live.pop(sid, None)
-                self._persist_echoes(sid)
-                self._wake_push()
-                return a.get("_echo_text")
-        return None
+        hit = None
+        with self._live_lock:                              # find + pop + the sid-level pop, one step
+            live = self._live.get(sid) or {}
+            for k, a in list(live.items()):
+                if not (a.get("_echo_text") and a.get("dropped")):
+                    continue
+                if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
+                    live.pop(k, None)
+                    if not live and self._live.get(sid) is live:
+                        self._live.pop(sid, None)
+                    hit = a
+                    break
+        if hit is None:
+            return None
+        self._persist_echoes(sid)                          # the reg write and the wake, outside the lock
+        self._wake_push()
+        return hit.get("_echo_text")
 
     def rewind(self, sid: str, target_uuid: str, text: str) -> "tuple[bool, str]":
         """Rewind the conversation to `target_uuid` (a transcript record uuid the KERNEL has validated:
@@ -8927,10 +9057,10 @@ class SdkBackend:
         a dormant session."""
         t = int(time.time())
         uid = "cmd:%d:%s" % (t, command.lstrip("/"))
-        self._live.setdefault(sid, {})[uid] = {
+        self._stash_live(sid, uid, {
             "type": "user", "uuid": uid, "session_id": sid, "fsid": fsid, "parentUuid": None,
             "t": t, "author": "human", "command": command, "_echo_text": disp,
-            "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
+            "message": {"role": "user", "content": [{"type": "text", "text": disp}]}})
         append_cmd_gesture(self.state_dir, sid, disp, t=t)
         self._wake_push()
 
@@ -9393,27 +9523,40 @@ class SdkBackend:
 
     _live_tail_race_seen: set = set()          # sweep sites that saw a key vanish mid-sweep, per kernel life
     _live_tail_race_lock = threading.Lock()
+    _live_lock = threading.RLock()             # the default for __new__-built test doubles; __init__ gives
+    #                                            each backend its own (the rule is documented there)
 
     def _note_live_tail_race(self, site: str) -> None:
-        """A live-tail sweep found a message-uuid key gone between its snapshot and its pop. The tail
-        (`self._live[sid]`) is a plain dict shared by two threads without a lock: the session's loop
-        thread adds atoms (_forward) and retires them at the settle (retire_live_work), and the kernel
-        thread prunes landed ones during a chat build (prune_live). Each sweep used to walk a stale
-        key list and read `d[k]` — so when the kernel thread pruned a just-landed reply while the
-        settle sweep still held its uuid, `KeyError: '<message uuid>'` escaped _on_message and ended
-        the receive loop, which tore the CLI down mid-work (a peer session lost its turn, a Workflow
-        run and a background agent to it, 2026-09-06). The sweeps now iterate a snapshot of items and
-        pop with a default, so the collision costs nothing — and it is still reported, ONCE per site
-        per kernel life: the race is real, and a fix that made it invisible would hide the next thing
-        that shares this dict."""
+        """A live-tail sweep, holding the live-tail lock, found a key gone between its snapshot and its
+        pop. Before the lock (2026-09-06) the tail (`self._live[sid]`) was a plain dict shared by two
+        threads: the session's loop thread added atoms (_forward) and retired them at the settle
+        (retire_live_work), the kernel thread pruned landed ones during a chat build (prune_live), and
+        each sweep walked a stale key list and read `d[k]` — so when the kernel thread pruned a
+        just-landed reply while the settle sweep still held its uuid, `KeyError: '<message uuid>'`
+        escaped _on_message and ended the receive loop, which tore the CLI down mid-work (a peer
+        session lost its turn, a Workflow run and a background agent to it). The lock (`_live_lock`,
+        see __init__) is the fix; the sweeps still walk a snapshot and pop with a default, so a key
+        that vanishes anyway costs nothing — and it is reported, ONCE per site per kernel life, because
+        under the lock it can only mean a mutator changed the tail without taking it: a fix that made
+        that invisible would hide the next thing that shares this dict. (retire_live_work does not
+        report: it releases the lock for the orphan salvage's transcript read, and a key gone at its
+        pop is a landing prune_live filed in that window — expected, not a fault.)"""
         with SdkBackend._live_tail_race_lock:
             if site in SdkBackend._live_tail_race_seen:
                 return
             SdkBackend._live_tail_race_seen.add(site)
-        self._log("live tail (%s): a message-uuid key vanished mid-sweep; another thread retired the "
-                  "atom first (the kernel-thread prune racing the session thread). Harmless: the sweep "
-                  "continued. Before 2026-09-06 this KeyError ended the session's receive loop and its "
-                  "CLI. Reported once per site per kernel life." % site, problem=True)
+        self._log("live tail (%s): a message-uuid key vanished between the sweep's snapshot and its pop "
+                  "with the live-tail lock held — something changed the tail without taking _live_lock. "
+                  "Harmless here: the sweep continued (before 2026-09-06 this KeyError ended the "
+                  "session's receive loop and its CLI). Reported once per site per kernel life." % site,
+                  problem=True)
+
+    def _stash_live(self, sid: str, key: str, atom: dict) -> None:
+        """Add one atom to the sid's live tail — the ONE way a key enters it from outside _forward
+        (send's echo, the boot reseed, the /model chip). Under the live-tail lock, so the stash can
+        never land in a dict a sweep is popping from `_live` in the same instant."""
+        with self._live_lock:
+            self._live.setdefault(sid, {})[key] = atom
 
     def _forward(self, sess: SdkSession, msg):
         # LIVE TAIL: translate the streamed message to an atom and stash it in memory, AHEAD of the
@@ -9424,9 +9567,11 @@ class SdkBackend:
         if not (atom and atom.get("uuid")):
             return
         _note_skill_tool_ids(atom, sess._skill_tool_ids)   # a Skill tool_use arms its payload's classification
-        d = self._live.setdefault(sess.sid, {})
-        d[atom["uuid"]] = atom
-        if _evict_live_overflow(d):              # safety cap if no client ever drains/prunes — never an echo
+        with self._live_lock:
+            d = self._live.setdefault(sess.sid, {})
+            d[atom["uuid"]] = atom
+            vanished = _evict_live_overflow(d)   # safety cap if no client ever drains/prunes — never an echo
+        if vanished:
             self._note_live_tail_race("_evict_live_overflow")
         # The stream is the AUTHORITATIVE busy signal: a genuine WORK atom (streamed assistant/tool
         # output — not an input echo, not a /model-style command line) means the CLI is producing RIGHT
@@ -9463,8 +9608,10 @@ class SdkBackend:
 
     def live_atoms(self, sid: str) -> list:
         """The session's in-memory live-tail atoms (newest last), for build_session to merge ahead of disk."""
-        d = self._live.get(sid)
-        return sorted(d.values(), key=lambda a: a.get("t", 0)) if d else []
+        with self._live_lock:                      # the pusher's read: copy under the lock, sort outside
+            d = self._live.get(sid)
+            vals = list(d.values()) if d else []
+        return sorted(vals, key=lambda a: a.get("t", 0))
 
     def prune_live(self, sid: str, tx_uuids, tx_user_texts=(), human_floor: int = 0) -> None:
         """Drop live atoms the transcript has now caught up on — by uuid (assistant/tool/user from the
@@ -9479,10 +9626,11 @@ class SdkBackend:
         can be neither queued nor landed, and the blanket floor hid exactly that in-flight message the
         moment any other human record landed. A plain-text echo now prunes ONLY by its own text landing —
         and a genuinely dropped send's echo PERSISTS, so the loss shows (the tmux echo's semantics).
-        (Echo-only: real stream atoms have no _echo_text and prune by uuid as before.)"""
-        d = self._live.get(sid)
-        if not d:
-            return
+        (Echo-only: real stream atoms have no _echo_text and prune by uuid as before.)
+
+        Pure dict work, so the whole sweep runs under the live-tail lock (the emptiness check and the
+        sid-level pop included — one step, so a stash can never land in a dict this pops); the echo
+        mirror's reg write follows outside it."""
         # `tx_user_texts` may be a MAPPING text → the newest record time carrying it (the kernel's
         # _merge_live_atoms ships that since T237b): an echo then lands by text only through a record
         # written AT OR AFTER its own send — a fork copies the parent's history, and "ok" / "go ahead" /
@@ -9497,24 +9645,28 @@ class SdkBackend:
             return et in text_t and float(text_t[et] or 0) >= float(a.get("t") or 0)
         echo_removed = False
         vanished = 0
-        for k, a in list(d.items()):   # a SNAPSHOT — the session thread may pop under us (_note_live_tail_race)
-            et = a.get("_echo_text")
-            landed = a.get("uuid") in tx_uuids or _by_text(a, et)
-            stale_echo = (bool(et) and human_floor and a.get("t", 0) <= human_floor
-                          and not a.get("command") and _path_bearing(et))
-            # A COMMAND atom (the CLI's streamed /model, /compact feedback) from a TURN-LESS control
-            # request may never get a transcript record to land against — retire it once a genuine human
-            # turn postdates it, so the stale confirmation line doesn't ride pinned inside every later
-            # turn forever (the user 2026-07-02, with the live_work command exemption).
-            stale_cmd = bool(a.get("command")) and human_floor and a.get("t", 0) <= human_floor
-            if landed or stale_echo or stale_cmd:
-                echo_removed = echo_removed or bool(et and not a.get("command"))
-                if d.pop(k, None) is None:
-                    vanished += 1
+        with self._live_lock:
+            d = self._live.get(sid)
+            if not d:
+                return
+            for k, a in list(d.items()):   # a SNAPSHOT (belt-and-braces under the lock — _note_live_tail_race)
+                et = a.get("_echo_text")
+                landed = a.get("uuid") in tx_uuids or _by_text(a, et)
+                stale_echo = (bool(et) and human_floor and a.get("t", 0) <= human_floor
+                              and not a.get("command") and _path_bearing(et))
+                # A COMMAND atom (the CLI's streamed /model, /compact feedback) from a TURN-LESS control
+                # request may never get a transcript record to land against — retire it once a genuine human
+                # turn postdates it, so the stale confirmation line doesn't ride pinned inside every later
+                # turn forever (the user 2026-07-02, with the live_work command exemption).
+                stale_cmd = bool(a.get("command")) and human_floor and a.get("t", 0) <= human_floor
+                if landed or stale_echo or stale_cmd:
+                    echo_removed = echo_removed or bool(et and not a.get("command"))
+                    if d.pop(k, None) is None:
+                        vanished += 1
+            if not d and self._live.get(sid) is d:
+                self._live.pop(sid, None)
         if vanished:
             self._note_live_tail_race("prune_live")
-        if not d:
-            self._live.pop(sid, None)
         if echo_removed:
             self._persist_echoes(sid)   # keep the restart mirror in step (empty once everything landed)
 
@@ -9526,46 +9678,51 @@ class SdkBackend:
         belongs to an attempt that produced NO transcript record (an API-errored/rate-limited try, a
         killed process). Left in place it is merged forever, and its live_work forces the turn open —
         the chat chip read WORKING with a 3h20m timer on a session whose turn died in a usage-limit
-        retry storm, while the timeline lane said READY (the user 2026-07-03)."""
-        d = self._live.get(sid)
-        if not d:
-            return
-        vanished = 0
-        for k, a in list(d.items()):   # a SNAPSHOT — the kernel thread may prune under us (_note_live_tail_race)
-            if not a.get("_echo_text") and not a.get("command"):
-                # An assistant atom carrying real TEXT that never landed on disk is a reply the user WATCHED
-                # stream but the transcript dropped (an API-errored try — the CLI discards the partial and the
-                # retry writes a fresh record with a new uuid). Persist it durably BEFORE dropping the live
-                # atom, so build_session can interleave it back at its timestamp — dedup'd against the disk so a
-                # retry that DID re-reply never doubles. Without this the reply vanishes at settle and only the
-                # "Recovered after N retries" note remains where it was (the user 2026-07-21).
-                if a.get("type") == "assistant" and not a.get("isApiError"):
-                    txt = _atom_text(a)
-                    # "(no content)" is the CLI's placeholder for contentless command feedback (an SDK
-                    # /clear streams one) — nothing the user watched, nothing to salvage. Persisted, it
-                    # resurfaced as a worked reply on the bare command turn (the user 2026-07-27); the
-                    # parse-side guard in synthesize_orphans covers markers already written.
-                    # VERIFIED AT THE WRITE MOMENT (the user 2026-08-26): a marker claims "this reply
-                    # is on disk nowhere", and the claim's precondition — prune_live retired every
-                    # landed atom — holds only for sessions the chat BUILDS. A comment thread is never
-                    # built (hidden by design), so its landed replies were still live at settle and
-                    # EVERY thread reply minted a spurious marker: states/ litter, and the judge's
-                    # per-push marker scan grows with it. One tail read of the sid's own transcript
-                    # per would-be marker (settles are rare; healthy sessions already pruned) keeps
-                    # the salvage honest for every hidden-session shape, threads and future ones. A
-                    # genuinely-lost reply (the API-error discard) is on disk nowhere and still mints.
-                    if txt.strip() and txt.strip() != "(no content)" \
-                            and not self._reply_on_disk(sid, a.get("uuid") or ""):
-                        try:
-                            append_orphan_reply(self.state_dir, sid, a.get("uuid") or "", txt, t=a.get("t"))
-                        except Exception:
-                            self._log("orphan-reply persist failed: %s" % traceback.format_exc())
-                if d.pop(k, None) is None:
-                    vanished += 1
-        if vanished:
-            self._note_live_tail_race("retire_live_work")
-        if not d:
-            self._live.pop(sid, None)
+        retry storm, while the timeline lane said READY (the user 2026-07-03).
+
+        Three phases around the live-tail lock: the work atoms are snapshotted under it, the orphan
+        salvage's I/O (a transcript tail read, the marker append) runs outside it, and the pops go
+        back under it — from the SAME dict object the snapshot came from, with the emptiness check
+        and the sid-level pop as one step. A key already gone at its pop is a landing prune_live
+        filed during the I/O window (legitimate, under the lock), so it is not reported as a race."""
+        with self._live_lock:
+            d = self._live.get(sid)
+            if not d:
+                return
+            work = [(k, a) for k, a in list(d.items()) if not a.get("_echo_text") and not a.get("command")]
+        for k, a in work:
+            # An assistant atom carrying real TEXT that never landed on disk is a reply the user WATCHED
+            # stream but the transcript dropped (an API-errored try — the CLI discards the partial and the
+            # retry writes a fresh record with a new uuid). Persist it durably BEFORE dropping the live
+            # atom, so build_session can interleave it back at its timestamp — dedup'd against the disk so a
+            # retry that DID re-reply never doubles. Without this the reply vanishes at settle and only the
+            # "Recovered after N retries" note remains where it was (the user 2026-07-21).
+            if a.get("type") == "assistant" and not a.get("isApiError"):
+                txt = _atom_text(a)
+                # "(no content)" is the CLI's placeholder for contentless command feedback (an SDK
+                # /clear streams one) — nothing the user watched, nothing to salvage. Persisted, it
+                # resurfaced as a worked reply on the bare command turn (the user 2026-07-27); the
+                # parse-side guard in synthesize_orphans covers markers already written.
+                # VERIFIED AT THE WRITE MOMENT (the user 2026-08-26): a marker claims "this reply
+                # is on disk nowhere", and the claim's precondition — prune_live retired every
+                # landed atom — holds only for sessions the chat BUILDS. A comment thread is never
+                # built (hidden by design), so its landed replies were still live at settle and
+                # EVERY thread reply minted a spurious marker: states/ litter, and the judge's
+                # per-push marker scan grows with it. One tail read of the sid's own transcript
+                # per would-be marker (settles are rare; healthy sessions already pruned) keeps
+                # the salvage honest for every hidden-session shape, threads and future ones. A
+                # genuinely-lost reply (the API-error discard) is on disk nowhere and still mints.
+                if txt.strip() and txt.strip() != "(no content)" \
+                        and not self._reply_on_disk(sid, a.get("uuid") or ""):
+                    try:
+                        append_orphan_reply(self.state_dir, sid, a.get("uuid") or "", txt, t=a.get("t"))
+                    except Exception:
+                        self._log("orphan-reply persist failed: %s" % traceback.format_exc())
+        with self._live_lock:
+            for k, _a in work:
+                d.pop(k, None)
+            if not d and self._live.get(sid) is d:
+                self._live.pop(sid, None)
 
     def _reply_on_disk(self, sid: str, uuid: str) -> bool:
         """Does the sid's transcript already hold this uuid? The orphan salvage's own precondition,
@@ -9607,11 +9764,11 @@ class SdkBackend:
         fate at settle (echo, command, apiError, hasText). The kernel's chat-divergence tripwire logs it
         to pin WHICH atom held a chat turn open after the backend settled — the 2026-07-25 stale-"running"
         chat could not be diagnosed because a restart cleared exactly this state before anyone read it."""
-        d = self._live.get(sid)
-        if not d:
-            return []
+        with self._live_lock:
+            d = self._live.get(sid)
+            vals = list(d.values()) if d else []   # copy under the lock; the summary is built outside
         out = []
-        for a in list(d.values()):                 # copy: loop threads mutate the dict mid-iteration
+        for a in vals:
             if not isinstance(a, dict):
                 continue
             out.append({"uuid": a.get("uuid") or "", "type": a.get("type") or "",
