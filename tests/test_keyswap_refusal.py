@@ -368,7 +368,7 @@ class NamedSwapRefused(_Env):
         cli.es._reset()
         said = []
         try:
-            rc = cli._mode_mismatch({"keySource": "file", "keyFp": ""}, "command", said.append)
+            rc = cli._mode_mismatch({"keySource": "file", "keyFp": ""}, said.append)
         finally:
             cli.es._reset()
         out = "\n".join(said)
@@ -413,7 +413,7 @@ class NamedSwapRefused(_Env):
         self.assertEqual(ks.service_env_path(), self.path, "the path named is the one the kernel's own resolver gives this environment")
         # the same lines, word for word, under the command-mode MISMATCH's bullet
         said = []
-        cli._mode_mismatch({"keySource": "command", "keyFp": ks.fingerprint(NEW_KEY)}, "file", said.append)
+        cli._mode_mismatch({"keySource": "command", "keyFp": ks.fingerprint(NEW_KEY)}, said.append)
         self.assertIn("            - another service.env:\n" + other_file_block(self.path, " " * 14), "\n".join(said))
         self.assertEqual(cli._other_file(self.path), tuple(other_file_block(self.path, "").split("\n")))
 

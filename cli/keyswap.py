@@ -215,7 +215,7 @@ def _kernel_check(path, out, refresh=False):
             out("kernel      not running — sessions read the file when it is")
         return rc
     if (body.get("keySource") or "file") != "file":
-        return _mode_mismatch(body, "file", out)
+        return _mode_mismatch(body, out)
     return _compare(body.get("keyFp") or "", path, out, body.get("refreshed"))
 
 
@@ -280,7 +280,7 @@ def _cycle(sessions, all_, out, path=None, refresh=False):
         out("cycle       FAILED — %s" % (body.get("error") or body.get("detail") or "unknown"))
         return 1
     if (body.get("keySource") or "file") != "file":
-        _mode_mismatch(body, "file", out)
+        _mode_mismatch(body, out)
         out("cycle       NOT DONE — fix the mismatch above first, then cycle.")
         return 1
     if _compare(body.get("keyFp") or "", path or ks.service_env_path(), out, body.get("refreshed")):
@@ -374,13 +374,15 @@ def _other_file(path):
     )
 
 
-def _mode_mismatch(body, local_mode, out):
+def _mode_mismatch(body, out):
     """The kernel and this shell resolve DIFFERENT modes: ROMP_CREDENTIAL_COMMAND is set for one and not
-    the other. The kernel decides its mode ONCE, when it starts (envsource.pin_mode), from its
-    environment and then service.env; this shell reads its own environment and then service.env
-    now. Under the installed service the kernel's environment is the manager's, which holds every
-    service.env line as of the MANAGER's start (systemd's EnvironmentFile=; the macOS launcher's
-    parse) plus the unit's own Environment= lines, and every kernel inherits it. So which restart
+    the other. The caller established that; the kernel's mode is read from the answer (`keySource`) and
+    this shell's is the other one, so nothing else is passed in. The kernel decides its mode ONCE, when
+    it starts (envsource.pin_mode), from its environment and then service.env; this shell reads its own
+    environment and then service.env now. Under the installed service the kernel's environment is the
+    manager's, which holds every service.env line as of the MANAGER's start (systemd's
+    EnvironmentFile=; the macOS launcher's parse) plus the unit's own Environment= lines, and every
+    kernel inherits it. So which restart
     makes the two agree depends on where the variable is: a line ADDED to service.env reaches the
     next kernel (`romp refresh`; the kernel reads the file itself); a value in this shell's
     environment alone reaches no kernel. A kernel in command mode under a shell that reads no line
@@ -548,7 +550,7 @@ def _kernel_lines(body, st, out):
     how many live sessions launched on which fingerprint, and MISMATCH when the kernel's run and this
     shell's disagree. Returns the exit code the comparison deserves."""
     if (body.get("keySource") or "file") != "command":
-        return _mode_mismatch(body, "command", out)
+        return _mode_mismatch(body, out)
     kfp = body.get("keyFp") or ""
     kerr = body.get("keyErr") or ""
     kkind = body.get("keyKind") or ""
