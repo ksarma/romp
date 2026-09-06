@@ -3632,9 +3632,11 @@ class SdkSession:
         legitimately be in flight (the user 2026-07-01, who switched the model on a new session and it
         said working indefinitely). A reconnect abandons the previous client; a turn it left in flight
         can NEVER get its ResultMessage on the new connection — so inflight, and the "working" signal it
-        drives, would be stranded elevated FOREVER. request_reconnect defers while inflight>0, but a race
-        (it fired at inflight==0, then the input generator fed a turn before the teardown ran) can still
-        strand a turn here: settle the counters to idle. A not-yet-STARTED _pending turn survives as
+        drives, would be stranded elevated FOREVER. request_reconnect defers while inflight>0, and
+        inputs() holds the queue once a reconnect is armed (2026-09-06: that closed, at the feed, the
+        race this guarded — the arm at inflight==0, then the feeder fed a turn before the teardown
+        ran); this stays as the backstop for anything that still strands a turn here: settle the
+        counters to idle. A not-yet-STARTED _pending turn survives as
         before (never fed to the dead client; the new inputs() re-feeds it). No-op on the first connect
         and on a clean reconnect. Event-based on the reconnect itself, not a time/age heuristic.
 
@@ -4137,6 +4139,16 @@ class SdkSession:
                     # would land it on the un-rewound branch (the exact wrong-branch delivery this guards)
                     blocked = blocked or bool(self._rewind_to and not self._rewind_armed)
                     blocked = blocked or self._ping_feeding   # the ping's record must not share its window
+                    # a reconnect is ARMED (_reconnect: the waker is about to tear this client down) →
+                    # hold the head for the NEXT client. The settle wakes this feeder and arms a deferred
+                    # reconnect in the same finally, both wakeups queued FIFO on the loop, so without
+                    # this hold the feeder ran first and fed a message gate-held behind an interrupted
+                    # turn to the dying client; the teardown stranded it in flight and
+                    # _reconcile_stranded, on a resumable conversation, flagged it 'never delivered'
+                    # (round-3 review, 2026-09-06). The same hold covers the idle arm in
+                    # _do_request_reconnect racing a send that lands before the waker runs. The loop's
+                    # top clears _reconnect before the new client's inputs() is created.
+                    blocked = blocked or self._reconnect
                     # a parked deploy restart is DRAINING (T121): hold NEW turn starts — the queued
                     # prompt persists (the checkpoint) and /busy falls to 0 on this box's own
                     # turn-end events. Mid-turn forwards keep flowing (inflight > 0), so the
@@ -4932,9 +4944,10 @@ class SdkSession:
                 # the feeder still parked, no poke and no 'waiting', while the failure line claimed the
                 # turn had closed. Ordered so that nothing that can raise comes before the flag writes:
                 # the state resets and the queue wake are plain assignments; the two steps that touch a
-                # file or a lock are guarded and reported LAST, so a failing log callback cannot skip
-                # the poke, the rename ping or the deferred reconnect. The bookkeeping's exception, if
-                # any, still propagates out of this finally to the containment's report.
+                # file or a lock are guarded and reported LAST, and the report itself is guarded, so a
+                # failing log callback can neither skip the poke, the rename ping or the deferred
+                # reconnect nor replace the bookkeeping's exception. That exception, if any, is the
+                # only one that propagates out of this finally, to the containment's report.
                 self.retrying = False
                 self.retry_count = 0                    # turn over → clear the storm count (a turn that errored out without recovering leaves no "recovered" note)
                 self.retry_info = None
@@ -4974,11 +4987,24 @@ class SdkSession:
                     failed.append(("the rename ping's delivery", e))
                 if self._reconnect_when_idle and not self.ended:   # an effort change waited for this turn to end
                     self._reconnect_when_idle = False
-                    self._reconnect = True
-                    self._wake_set()
+                    self._reconnect = True     # inputs() holds the queue from here: the wake above cannot feed
+                    self._wake_set()           #   the head to THIS client — the new one takes it (see inputs)
                 for what, err in failed:
-                    self.backend._log("settle (%s): %s failed: %s: %s"
-                                      % (self.name, what, type(err).__name__, _mask_ids(err)), problem=True)
+                    # The report is guarded too (round-3 review): _log runs the kernel's log callback
+                    # bare, and a callback raising here (a closed stderr under a service restart) would
+                    # propagate out of this finally and REPLACE the bookkeeping's exception, so the
+                    # containment reported the callback's fault and the bookkeeping's site never
+                    # reached the ring. One attempt: the line is built in its own try (an err whose
+                    # __str__ raises falls back to the type alone), the ring row lands before the
+                    # callback runs (see _log), and a callback failure costs the kernel log line only.
+                    try:
+                        line = "settle (%s): %s failed: %s: %s" % (self.name, what, type(err).__name__, _mask_ids(err))
+                    except Exception:
+                        line = "settle (%s): %s failed: %s" % (self.name, what, type(err).__name__)
+                    try:
+                        self.backend._log(line, problem=True)
+                    except Exception:
+                        pass
         elif getattr(msg, "rate_limit_info", None) is not None:
             # A RateLimitEvent: the account-wide /usage limits (5h + weekly) the CLI streams when the limit state
             # changes — the SDK's designed source for the rail usage bars. Duck-typed (no SDK-type import needed).

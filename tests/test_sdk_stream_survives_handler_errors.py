@@ -10,7 +10,8 @@ racing the kernel thread's prune_live on the same unlocked dict: `for k in list(
 with the kernel thread deleting the just-landed reply between the snapshot and the read. The review
 then found the same unlocked dict raising RuntimeError out of the pusher's build (_persist_echoes)
 and out of the session thread at reconnect (_mark_dropped_echoes), and the two-step
-`if not d: _live.pop(sid)` orphaning an atom stashed between the steps. Three fixes, all covered here:
+`if not d: _live.pop(sid)` orphaning an atom stashed between the steps. Three fixes, all covered here,
+and a fourth the review of the settle turned up:
 
   * the live tail has ONE lock (SdkBackend._live_lock): every stash, every pop, the sid-level pop and
     every iterating read take it; sweeps walk a snapshot taken under it; the emptiness check and the
@@ -27,20 +28,26 @@ and out of the session thread at reconnect (_mark_dropped_echoes), and the two-s
     evicted; the reporter itself is guarded; the ResultMessage branch is ONE try whose finally is
     the whole settle (state resets, 'waiting', the queue wake, the poke, the rename ping, the
     deferred reconnect), so a raise anywhere in the result's bookkeeping still closes the turn; a
-    fault of the stream itself still ends the loop as before.
+    fault of the stream itself still ends the loop as before;
+  * that settle woke the input feeder and THEN armed the deferred reconnect, both wakeups FIFO on
+    the loop, so the feeder fed a message gate-held behind an interrupted turn to the client about
+    to be torn down, and _reconcile_stranded flagged it 'never delivered' (pre-existing on main).
+    inputs() now holds the queue while a reconnect is armed; the new client's feeder takes the head.
 
 Every id here is synthetic (the placeholder uuid family); no message content is real.
 """
 import asyncio
 import inspect
 import os
+import shutil
 import sys
 import tempfile
 import threading
 import time
 import traceback
+import types
 import unittest
-from importlib.machinery import SourceFileLoader
+from importlib.machinery import ModuleSpec, SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -751,6 +758,40 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
         self.assertEqual(len(probs), 1, probs)
         self.assertIn("settle (web): the 'waiting' state write failed: OSError", probs[0])
 
+    def test_a_raising_log_callback_in_the_report_loop_keeps_the_bookkeepings_exception(self):
+        """Three failures at once (round-3 review): the bookkeeping raises (a NaN usage field), a settle
+        step fails (the 'waiting' write at ENOSPC) AND the kernel's log callback raises (stderr closed
+        under a service restart). The report loop was the one unguarded step left after the flags, and
+        its raise REPLACED the bookkeeping's exception: the containment reported a BrokenPipeError and
+        the ValueError and its site never reached the ring. The report is guarded now: the settle runs
+        to its end, the step's own report lands (the ring row precedes the callback in _log), and the
+        line the containment files names the fold's failure and its frame."""
+        import json
+        be = _backend()
+        s = self._busy(be)
+        def bad_mark(state):
+            raise OSError(28, "No space left on device")
+        s._mark = bad_mark
+        def badlog(m):
+            raise OSError(32, "Broken pipe")
+        be._log_cb = badlog                            # armed AFTER construction (construction logs too)
+        usage = json.loads('{"input_tokens": NaN, "output_tokens": 5}')
+        out = self._settle(be, s, ok_expected=False, msg=_result(total_cost_usd=0.5, usage=usage))
+        self.assertEqual(s.inflight, 0, "the turn settled")
+        self.assertTrue(out["wake"] and out["pokes"] == 1, "the feeder was released and the kernel poked once")
+        self.assertTrue(out["reconnect"] and not out["still_deferred"] and out["wake_event"],
+                        "the deferred reconnect fired")
+        probs = _problems(be)
+        self.assertTrue([p for p in probs if "settle (web): the 'waiting' state write failed: OSError" in p],
+                        "the settle step's own report landed before the callback raised: %r" % probs)
+        filed = [p for p in probs if "while handling a ResultMessage" in p]
+        self.assertEqual(len(filed), 1, probs)
+        self.assertIn("ValueError while handling a ResultMessage", filed[0],
+                      "the bookkeeping's exception is the one the containment files, not the callback's")
+        self.assertIn("the turn still settled", filed[0])
+        self.assertIn("_on_message", filed[0], "…with the fold's frame")
+        self.assertNotIn("BrokenPipeError while handling", " ".join(probs))
+
     def test_a_clean_settle_runs_the_same_plumbing_once(self):
         be = _backend()
         s = self._busy(be)
@@ -782,6 +823,206 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
         # nothing that can raise precedes the flag writes in the finally
         self.assertLess(settle.index("self._input_wake.set()"), settle.index("step()"))
         self.assertLess(settle.index("self._input_wake.set()"), settle.index("self.backend._poke()"))
+
+
+class TheDeferredReconnectTakesTheHeldQueueWithIt(unittest.TestCase):
+    """Pre-existing on main, found by the round-3 review of the settle: its finally wakes the input
+    feeder and THEN arms the deferred reconnect, both wakeups queued FIFO on the loop, so the feeder
+    ran first and fed a message gate-held behind the interrupted turn to the client the waker was
+    about to tear down; the teardown stranded it in flight and _reconcile_stranded — on a resumable
+    conversation, where a re-feed could duplicate — flagged it 'never delivered'. A message queued
+    behind a stopped turn while the user changed /effort had to be sent again. inputs() now holds the
+    queue while a reconnect is armed (_reconnect), so the NEW client's feeder takes the head.
+
+    The REAL _amain runs here (its inputs() closure, the teardown, _reconcile_stranded) against a
+    stand-in SDK module whose client records what it was fed and when — installed in sys.modules for
+    the test (the backend imports the SDK lazily, at the top of _amain) and removed after."""
+    FSID = "11111111-2222-3333-4444-ffffffffff01"   # the CLI's own session id, announced by the init
+
+    class _Client:
+        instances = []
+
+        def __init__(self, options=None, transport=None):
+            self.options = options
+            self.no = len(type(self).instances) + 1
+            type(self).instances.append(self)
+            self.writes = []                # (text, when) — when relative to this client's result and teardown
+            self.first_write = asyncio.Event()
+            self.release = asyncio.Event()  # the test releases the turn's ResultMessage
+            self.result_sent = self.torn_down = False
+            self.interrupts = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            self.torn_down = True
+            return False
+
+        async def query(self, prompt, session_id="default"):
+            async for turn in prompt:
+                when = ("after-teardown" if self.torn_down else
+                        "after-result" if self.result_sent else "before-result")
+                self.writes.append((turn["message"]["content"][0]["text"], when))
+                self.first_write.set()
+
+        async def interrupt(self):
+            self.interrupts += 1
+
+        async def get_context_usage(self):
+            return {"percentage": 2, "model": "claude-x"}
+
+        async def get_server_info(self):
+            return {}
+
+        async def receive_messages(self):
+            await self.first_write.wait()
+            yield _SystemMessage("init", {"model": "claude-x", "permissionMode": "acceptEdits",
+                                          "session_id": TheDeferredReconnectTakesTheHeldQueueWithIt.FSID},
+                                 uuid="s-%d" % self.no)
+            yield _AssistantMessage([_TextBlock("working on it")], uuid="a-%d" % self.no)
+            await self.release.wait()
+            self.result_sent = True
+            yield _result(uuid="r-%d" % self.no, subtype="success", is_error=False, num_turns=1,
+                          session_id=TheDeferredReconnectTakesTheHeldQueueWithIt.FSID, duration_ms=1,
+                          duration_api_ms=1, total_cost_usd=0.01, usage={"input_tokens": 1, "output_tokens": 1},
+                          result="ok", parent_tool_use_id=None)
+            await asyncio.Event().wait()    # the stream parks until the teardown cancels it
+
+    class _Options:
+        def __init__(self, **kw):
+            self.session_id = self.resume = None
+            for k, v in kw.items():
+                setattr(self, k, v)
+
+    def setUp(self):
+        sb.SdkSession._stream_fail_seen.clear()
+        self._Client.instances = []
+        fake = types.ModuleType("claude_agent_sdk")
+        fake.__spec__ = ModuleSpec("claude_agent_sdk", loader=None)   # sdk_importable's find_spec reads it
+        fake.ClaudeSDKClient, fake.ClaudeAgentOptions, fake.HookMatcher = self._Client, self._Options, (lambda **kw: kw)
+        fake.AssistantMessage, fake.ResultMessage = _AssistantMessage, _ResultMessage
+        fake.SystemMessage, fake.TextBlock = _SystemMessage, _TextBlock
+        self._saved_sdk = sys.modules.get("claude_agent_sdk")
+        sys.modules["claude_agent_sdk"] = fake
+        self.state = tempfile.mkdtemp()
+        cwd = os.path.join(self.state, "proj")
+        os.makedirs(cwd)
+        self.lines = []
+        self.be = sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None,
+                                log=lambda m, **k: self.lines.append(str(m)))
+        reg = {"sid": SID, "name": "web", "mode": "acceptEdits", "alive": True, "cwd": cwd}
+        sb.write_reg(self.be.state_dir, SID, reg)
+        self.s = sb.SdkSession(self.be, dict(reg))
+        async def _noop(): pass
+        self.s._do_refresh_usage = _noop            # the stand-in client has no control channel for /usage
+        self.be.sessions[SID] = self.s
+
+    def tearDown(self):
+        self.s.shutdown()
+        if self.s.thread.ident is not None:            # the source pin never starts it
+            self.s.thread.join(timeout=10)
+        if self._saved_sdk is None:
+            sys.modules.pop("claude_agent_sdk", None)
+        else:
+            sys.modules["claude_agent_sdk"] = self._saved_sdk
+        shutil.rmtree(self.state, ignore_errors=True)
+
+    def _wait(self, pred, what, timeout=10.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if pred():
+                return
+            time.sleep(0.01)
+        self.fail("timed out waiting for %s; clients fed %r; log tail %r"
+                  % (what, [c.writes for c in self._Client.instances], self.lines[-6:]))
+
+    def _echo(self, key, text):
+        echo = _echo(key, text, int(time.time()))
+        self.be._stash_live(SID, key, echo)      # the chat's echo of the send, as send() stashes it
+        return echo
+
+    def _first_turn(self):
+        """Connect and run one turn to its in-flight state: client 1 has the first turn and the init
+        named the conversation (resume_sid), so a later reconnect resumes rather than starts fresh."""
+        s = self.s
+        s.start()
+        self._wait(lambda: s.client is not None, "the first connect")
+        self._echo("echo:first", "first turn")
+        s.enqueue("first turn")
+        self._wait(lambda: s.inflight == 1 and s.resume_sid == self.FSID, "the first turn in flight and its init")
+        c1 = self._Client.instances[0]
+        self.assertEqual(c1.writes, [("first turn", "before-result")])
+        return c1
+
+    def test_a_head_held_behind_an_interrupted_turn_is_fed_to_the_new_client_and_never_flagged(self):
+        s = self.s
+        c1 = self._first_turn()
+        s.interrupt()                                  # the stop button: the queue gate closes (inflight>0 and _interrupted)
+        self.assertTrue(s._interrupted)
+        self._wait(lambda: c1.interrupts == 1, "the interrupt control request")
+        echo = self._echo("echo:head", "queued head")
+        s.enqueue("queued head")
+        time.sleep(0.2)                                # every chance to be (wrongly) fed now
+        self.assertEqual(s.pending(), ["queued head"], "gate-held behind the interrupted turn")
+        self.assertEqual(c1.writes, [("first turn", "before-result")])
+        s.request_reconnect()                          # an /effort change while busy: deferred to the turn's end
+        self._wait(lambda: s._reconnect_when_idle, "the deferred reconnect armed")
+        s.loop.call_soon_threadsafe(c1.release.set)    # the interrupted turn's ResultMessage: the settle runs
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1].writes,
+                   "the reconnected client to be fed")
+        c2 = self._Client.instances[1]
+        self.assertEqual(c1.writes, [("first turn", "before-result")], "nothing fed to the client being torn down")
+        self.assertEqual(c2.writes, [("queued head", "before-result")], "the new client took the head")
+        self.assertEqual(s.pending(), [])
+        self.assertEqual((s.inflight, list(s._inflight_texts)), (1, ["queued head"]), "in flight on the new client")
+        self.assertFalse(echo.get("dropped"), "not flagged never-delivered")
+
+    def test_a_send_racing_an_idle_arm_is_fed_to_the_new_client(self):
+        """The other arm: request_reconnect on an IDLE session sets _reconnect at once, and a send whose
+        wake queued behind the waker's used to be popped by the feeder before the teardown ran — the
+        race _reconcile_stranded's docstring names. Both land in one loop step here, the order the
+        race needs; the hold keeps the head for the new client."""
+        s = self.s
+        c1 = self._first_turn()
+        s.loop.call_soon_threadsafe(c1.release.set)
+        self._wait(lambda: s.inflight == 0, "the first turn to settle")
+        echo = self._echo("echo:late", "late send")
+        def arm_then_send():
+            s._do_request_reconnect(True)              # idle → _reconnect = True and the waker is woken
+            s.enqueue("late send")                     # …its wake queued behind the waker's
+        s.loop.call_soon_threadsafe(arm_then_send)
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1].writes,
+                   "the reconnected client to be fed")
+        self.assertEqual(c1.writes, [("first turn", "before-result")], "nothing fed to the client being torn down")
+        self.assertEqual(self._Client.instances[1].writes, [("late send", "before-result")])
+        self.assertFalse(echo.get("dropped"))
+
+    def test_a_deferred_arm_alone_does_not_hold_mid_turn_forwards(self):
+        """The hold keys on _reconnect (armed: the teardown is next), not on _reconnect_when_idle (an
+        /effort change waiting for the turn to end): a message sent mid-turn with one pending is still
+        forwarded to the running turn's client — the designed forward — and the settle folds it."""
+        s = self.s
+        c1 = self._first_turn()
+        s.request_reconnect()
+        self._wait(lambda: s._reconnect_when_idle, "the deferred reconnect armed")
+        echo = self._echo("echo:mid", "mid-turn note")
+        s.enqueue("mid-turn note")
+        self._wait(lambda: len(c1.writes) == 2, "the mid-turn forward")
+        self.assertEqual(c1.writes[1], ("mid-turn note", "before-result"))
+        s.loop.call_soon_threadsafe(c1.release.set)
+        self._wait(lambda: len(self._Client.instances) == 2 and s.client is self._Client.instances[1], "the reconnect")
+        self.assertEqual(self._Client.instances[1].writes, [], "nothing was held for the new client")
+        self.assertEqual(s.inflight, 0)
+        self.assertFalse(echo.get("dropped"), "folded into the turn, not flagged")
+
+    def test_the_hold_keys_on_the_armed_flag_by_source(self):
+        src = inspect.getsource(sb.SdkSession._amain)
+        i_inputs = src.index("async def inputs():")
+        i_pop = src.index("item = self._pending.pop(0)", i_inputs)
+        gate = src[i_inputs:i_pop]
+        self.assertIn("blocked = blocked or self._reconnect\n", gate, "the armed flag is a hold in the gate")
+        self.assertNotIn("_reconnect_when_idle", gate, "…and the deferred flag is not (mid-turn forwards flow)")
 
 
 class TheDrainLoopOutlivesAHandlerFailure(unittest.TestCase):
