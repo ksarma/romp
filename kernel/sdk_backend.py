@@ -1326,16 +1326,20 @@ def task_death_notice(tasks: list, cause: str = "a restart or crash") -> str:
 
     It says "cut off", not "died" (2026-09-05): under the per-session scopes (cli_scope_supported) a
     task's tool shell can outlive the CLI — the process may well still be running, and the session
-    that relaunches it without checking runs two. So the ask is to check first. The voice is the person the
-    session works for; the only romp noun is the sanctioned [romp] prefix (test_injected_voice)."""
+    that relaunches it without checking runs two. So the ask is to check first. The voice is the person
+    the session works for, addressing it as "you" (so the sentence names the session once, not twice,
+    and "the claude process that started them" says whose process ended — review, 2026-09-06); the only
+    romp noun is the sanctioned [romp] prefix (test_injected_voice). `cause` is read after "ended" in
+    parentheses, so it must stand on its own there (_RECONNECT_CAUSE does)."""
     n = len(tasks)
     descs = "; ".join(d for d in ((t.get("desc") or "").strip() for t in tasks[:4]) if d)
     one = n == 1
-    return ("<!-- romp-injected --><!-- romp-system -->[romp] %d background task%s this session had "
-            "running %s cut off from the session when its claude process ended (%s)%s. "
+    return ("<!-- romp-injected --><!-- romp-system -->[romp] %d background task%s you had running %s "
+            "cut off when the claude process that started %s ended (%s)%s. "
             "%s completion notification%s will never arrive. Check whether %s still running before "
             "relaunching %s; if %s needed, carry on."
-            % (n, "" if one else "s", "was" if one else "were", cause, (": " + descs) if descs else "",
+            % (n, "" if one else "s", "was" if one else "were", "it" if one else "them", cause,
+               (": " + descs) if descs else "",
                "Its" if one else "Their", "" if one else "s", "it is" if one else "each is",
                "it", "it isn't" if one else "they aren't"))
 
@@ -4467,7 +4471,7 @@ class SdkSession:
                                                             len(died), "" if len(died) == 1 else "s", reason))
             self.backend._poke()
 
-    _RECONNECT_CAUSE = "its process was restarted by a settings switch or a rewind"   # the death notice's cause on
+    _RECONNECT_CAUSE = "a settings switch or a rewind restarted it"   # the death notice's cause on
     #   a reconnect: every trigger of the reconnect loop (effort/fast/auth/mode switches, edit-message rewinds and
     #   rollbacks) is named truthfully — the loop cannot tell them apart here, so the notice names the family
 
