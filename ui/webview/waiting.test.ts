@@ -74,7 +74,9 @@ test("one row per todo, OLDEST first; the age is the kernel's clock on the recen
   assert.match(SRC, /stampAge\(age, w\.todo\.createdT, "plain", true, now, relAge, ageColorReadable\)/);
   assert.match(SRC, /return liveNow\(hostNow, hostNowAt, Date\.now\(\)\);/);
   assert.match(SRC, /hostNowAt = typeof m\.nowAt === "number" \? m\.nowAt : Date\.now\(\);/);
-  assert.match(SRC, /refreshAges\(document\.querySelectorAll<HTMLElement>\("\[data-age-t\]"\), nowSec\(\), relAge, ageColorReadable\)/);
+  assert.match(SRC, /const live = liveRefresher\(\{ hidden: paneHidden, pass: \(\) => \{\n\s*refreshAges\(document\.querySelectorAll<HTMLElement>\("\[data-age-t\]"\), nowSec\(\), relAge, ageColorReadable\);/,
+    "the 15 s pass runs through the shared visibility gate (feed-age.ts liveRefresher)");
+  assert.match(SRC, /setInterval\(live\.tick, 15000\);\n\s*document\.addEventListener\("visibilitychange", live\.catchUp\);\n\s*window\.addEventListener\("resize", live\.catchUp\);/);
   // the session chip: host-prefixed name in the session's identity colour; click opens the chat
   assert.match(SRC, /sess\.replaceChildren\(\.\.\.hostNameNodes\(w\.name \|\| w\.sid, w\.sid\)\)/);
   assert.match(SRC, /sess\.dataset\.act = "open"; sess\.dataset\.sid = w\.sid;/);
