@@ -4,11 +4,57 @@ any test that skips its own rebind writes into the REAL ~/.local/state/romp (the
 judge-errors.jsonl lines from legacy-flag fixtures made that visible). conftest.py imports before every
 test module, so this is a suite-wide floor; per-class _rebind_state/tempdir isolation still layers on
 top exactly as before."""
+import atexit
 import os
+import shutil
 import sys
 import tempfile
 
 import pytest
+
+# Every temp path a run creates lives under ONE private root, removed when the run ends (2026-09-06).
+# The suite mints thousands of temp directories per run and cleans up almost none of them: 500+
+# module preambles `mkdtemp()` a state root that the kernel then stamps with romp/repo-root, and
+# per-test mkdtemp/mkstemp calls rarely get a tearDown. Each run left ~5,600 entries in the system
+# temp dir, at up to ten a second; by the time it was noticed /tmp held 1.8 million of them, `ls
+# /tmp` took ten seconds and anything started from /tmp stalled at import. Rather than chase every
+# call site, redirect the process's temp dir: tempfile.tempdir is set directly (gettempdir() caches
+# its first answer, and tests/__init__.py has already called it by the time this runs), and TMPDIR
+# is exported so every child the tests spawn — kernels, git, `mktemp -d` in a shell — inherits the
+# same root. Import-time, not pytest_configure: this module's own XDG floor below and every
+# module-level mkdtemp at collection must land inside it. Removed in pytest_unconfigure, which
+# under pytest-xdist runs in the controller and in every worker, each of which imported this file
+# and so owns a root of its own; atexit is the fallback for a process torn down without it.
+# The prefix is what a stray one looks like in the system temp dir.
+_TMP_ROOT = tempfile.mkdtemp(prefix="romp-tests-")
+tempfile.tempdir = _TMP_ROOT
+os.environ["TMPDIR"] = _TMP_ROOT
+
+
+def _remove_tmp_root():
+    shutil.rmtree(_TMP_ROOT, ignore_errors=True)
+
+
+atexit.register(_remove_tmp_root)
+
+
+def pytest_unconfigure(config):
+    _remove_tmp_root()
+
+
+# No test's git reads the developer's configuration (2026-09-06). Fixture repos are built by `git
+# init` + `git commit` in temp dirs, and those commands honoured the developer's global config: a
+# global core.hooksPath ran their pre-commit hook (a gitleaks scan) on every seed commit, an LFS
+# filter would run on every checkout, and a credential helper or insteadOf rewrite could reach a
+# real remote (tests/test_file_github.py pins its own environment for exactly that reason). CI has no
+# global git config, so a test that leans on one is already broken there; this makes every run match.
+# GIT_CONFIG_GLOBAL is honoured by git >= 2.32; the identity is synthetic, and it is set rather than
+# defaulted so a developer's own GIT_AUTHOR_* cannot leak into fixture commits either. Tests that
+# want a specific identity or config still win: `git -c` and a per-call env override these.
+os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+os.environ["GIT_AUTHOR_NAME"] = os.environ["GIT_COMMITTER_NAME"] = "romp tests"
+os.environ["GIT_AUTHOR_EMAIL"] = os.environ["GIT_COMMITTER_EMAIL"] = "tests@example.invalid"
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="romp-tests-state-")
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sessions; it outranks the XDG floor
