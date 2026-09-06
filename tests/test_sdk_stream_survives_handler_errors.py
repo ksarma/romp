@@ -687,13 +687,18 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
 
     def test_a_raising_spend_write_still_settles_the_turn(self):
         """The verifier's probe: _record_spend raising on a result that carries a cost — a step that sat
-        BEFORE the try and before inflight = 0 in the first cut, so the turn never settled."""
+        BEFORE the try and before inflight = 0 in the first cut, so the turn never settled. The result
+        carries a `modelUsage` map, the shape a current CLI emits: a paid result WITHOUT one takes the
+        fold's per-turn fallback and files its own problem line first (usage_fallback_notice), which is
+        that path's subject, not this test's — here the ring must hold the containment's line alone."""
         be = _backend()
         s = self._busy(be)
         def bad_spend(*a, **k):
             raise OSError(28, "No space left on device")
         be._record_spend = bad_spend
-        out = self._settle(be, s, ok_expected=False, msg=_result(total_cost_usd=0.5, usage={"input_tokens": 10}))
+        out = self._settle(be, s, ok_expected=False,
+                           msg=_result(total_cost_usd=0.5, usage={"input_tokens": 10},
+                                       model_usage={"claude-test-model": {"inputTokens": 10, "outputTokens": 5}}))
         self._assert_settled(s, out)
         probs = _problems(be)
         self.assertEqual(len(probs), 1)
