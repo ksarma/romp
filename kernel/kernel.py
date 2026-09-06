@@ -213,7 +213,10 @@ class _PerfStats:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
                                    _run_tier, plus every per-session worker the tiers run in
-                                   judge.py's thread pools; the split rides as cpu_ms_workers)
+                                   judge.py's thread pools; the split rides as cpu_ms_workers),
+                                   chain_memo {hit, miss, populate, bypass}: the write-moment chain
+                                   memo's counters (judge.chain_memo_stats), so its hit rate is
+                                   read from the live kernel rather than assumed
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -350,6 +353,10 @@ class _PerfStats:
             workers = 0.0
         judge["cpu_ms_workers"] = workers
         judge["cpu_ms_sum"] += workers                     # tier threads + their pool workers
+        try:
+            judge["chain_memo"] = jd.chain_memo_stats()
+        except Exception:
+            judge["chain_memo"] = {}
         try:
             goals = jd.goal_io_stats()
         except Exception:
@@ -921,6 +928,30 @@ def _version_info():
             # NO defaultDir or nativeDialogs here: /version is auth-exempt and this payload
             # carries no filesystem paths (see the handler's comment) — both ride the GATED
             # /defaults route instead, where the gear already fetches them.
+
+
+# client-diag.jsonl held rare breadcrumbs (a wsclose, a stale-banner raise) until the pane bundles began posting
+# a performance row per pane per active minute (ui/webview/perf-telemetry.ts, 2026-09-06): about 1 KB each, so
+# an open dashboard adds several MB a day and nothing pruned it. Past this many bytes the file is renamed to
+# client-diag.jsonl.1 (replacing the previous .1) and a new file starts, so at most two files, about 16 MB,
+# are ever kept; `romp perf client` reads both. Checked on every append: one stat, under one lock.
+CLIENT_DIAG_MAX_BYTES = 8 * 1024 * 1024
+_client_diag_lock = threading.Lock()
+
+
+def _client_diag_append(fp, line):
+    """Append one row to client-diag.jsonl, rotating it first once it is at the cap. One lock across the size
+    check, the rename and the write: every pane's socket is its own handler thread, so rows arrive
+    concurrently, and two threads finding the file at the cap at once would both rename, the second moving
+    the file the first had just started over the run the first had just rotated, and that run was gone."""
+    with _client_diag_lock:
+        try:
+            if fp.stat().st_size >= CLIENT_DIAG_MAX_BYTES:
+                os.replace(str(fp), str(fp) + ".1")
+        except OSError:
+            pass   # no file yet (fresh state) or a failed rename: the append below still goes to the current file
+        with open(fp, "a", encoding="utf-8") as f:
+            f.write(line)
 
 
 def _dist_ver():
@@ -21119,7 +21150,7 @@ def _postal_intent(kind, body=""):
     return m.group(1) if m else ""
 
 
-_postal_index_memo = [None]   # ((mtime_ns, size), idx) — exact-change key of messages.jsonl
+_postal_index_memo = [None]   # ((mtime_ns, size), idx, body_map) — exact-change key of messages.jsonl
 
 
 def _postal_index():
@@ -21128,7 +21159,9 @@ def _postal_index():
     Memoized on the log's (mtime_ns, size): the log is append-only and every send appends, so the key
     moves on exactly the events that change the answer — build_session hydrates every postal card
     through this and re-parsed the whole log per push otherwise (~7% of the pusher's wall time,
-    py-spy 2026-08-31). Consumers only read the index (_hydrate_postal), so sharing one dict is safe."""
+    py-spy 2026-08-31). Consumers only read the index (_hydrate_postal), so sharing one dict is safe.
+    The memo also carries the index's body-keyed map (_postal_body_rows), built once per index version
+    beside it, so the outgoing-card join does not rescan every row per card per build."""
     p = jd.STATE / "timeline" / "messages.jsonl"
     try:
         st = os.stat(p)
@@ -21153,8 +21186,33 @@ def _postal_index():
                             "fromHost": o.get("from_host", ""),
                             "toId": o.get("to_id", ""), "body": o.get("body", ""), "kind": o.get("kind", ""),
                             "t": o["t"] if isinstance(o.get("t"), (int, float)) else 0, "park": bool(o.get("park"))}
-    _postal_index_memo[0] = (key, idx)
+    _postal_index_memo[0] = (key, idx, _postal_body_map(idx))
     return idx
+
+
+def _postal_body_map(index):
+    """{body: [rows]} over a postal index, rows in the index's (log) order — the same order the linear
+    scan it replaces walked, so a tie on time still resolves to the same row. Only string bodies are
+    keyed: the far-host relay logs a /send request's body without a type check, so a `sent` row can
+    carry a JSON list or object, which is unhashable. An outgoing card's body is always a string, so
+    such a row never matched the scan's `==` either; skipping it keeps one malformed row from raising
+    inside every session's chat build (review find 2026-09-06)."""
+    m = {}
+    for r in index.values():
+        b = r["body"]
+        if isinstance(b, str):
+            m.setdefault(b, []).append(r)
+    return m
+
+
+def _postal_body_rows(index):
+    """The body-keyed map for `index`: the memoized index's map comes from its memo entry (built once
+    per index version, never per card); any other dict (a caller's own index) gets one built here, once
+    per call. enrich_out in _hydrate_postal joins an outgoing card to its log row through this."""
+    hit = _postal_index_memo[0]
+    if hit is not None and hit[1] is index:
+        return hit[2]
+    return _postal_body_map(index)
 
 
 def _name_color_by_name(name):
@@ -21209,10 +21267,18 @@ def _postal_out_card(ev):
             "status": status, "ts": ev.get("ts"), "uuid": ev.get("uuid")}
 
 
+def _cli_send_match(ev):
+    """The `romp mail send` match over a Bash tool event's input, or None. The ONE matcher behind both
+    _cli_send_card (which renders the card) and _chat_postal_relevant (which decides whether the chat
+    fold keeps the raw event for re-hydration): a send the fold sealed away as a plain Bash row would
+    never pick up the recipient's caption or colour, so the two must agree on what a send is."""
+    return _CLI_SEND_RE.search(ev.get("input") or "")
+
+
 def _cli_send_card(ev):
     """A Bash `romp mail send <to> <body>` tool event → an outgoing card, only once the CLI confirmed
     delivery (else it stays a Bash row so a failure is visible)."""
-    m = _CLI_SEND_RE.search(ev.get("input") or "")
+    m = _cli_send_match(ev)
     if not m:
         return None
     kind, peer, body = m.group(1), m.group(2), _shell_unquote(m.group(3))   # group(1) = optional --kind
@@ -21288,6 +21354,7 @@ def _hydrate_postal(events, index, sid=None):
     # a ~2s cold-cache cost, but MOST sessions carry no incoming postal traffic — so only pay it when this
     # session actually has an incoming card to caption, never on the first-built tab that has no postal mail.
     _msgsum = [None]
+    _bodies = [None]   # the index's body map, fetched on the first outgoing card (none → never)
     def caption_for(mid):
         if _msgsum[0] is None:
             _msgsum[0] = _msg_summaries()
@@ -21298,8 +21365,12 @@ def _hydrate_postal(events, index, sid=None):
         # received, keyed by msg id), the out-card just never joined it. The send tool's output carries no
         # id, so join through the postal log: the sent row wearing this exact body, closest in time to the
         # send when the same text went out more than once. No row / no caption yet → no summary field, and
-        # the client falls back to its two-line clamp until the recipient's judge has run.
-        recs = [r for r in index.values() if r["body"] == card["body"]]
+        # the client falls back to its two-line clamp until the recipient's judge has run. The join is
+        # a body-keyed lookup (_postal_body_rows), not a scan of every row per card: the scan was about
+        # 2% of the kernel's interpreter time with a 2000-row log (GIL profile 2026-09-06).
+        if _bodies[0] is None:
+            _bodies[0] = _postal_body_rows(index)
+        recs = _bodies[0].get(card["body"]) or ()
         if recs:
             et = em.parse_z(ev.get("ts") or "") or 0
             rec = min(recs, key=lambda r: abs((r["t"] or 0) - et)) if et else recs[-1]
@@ -21762,11 +21833,28 @@ def _chat_seam_open_at(events, lo):
 
 def _chat_postal_relevant(ev):
     """The raw (pre-hydration) events _hydrate_postal can turn into something else — the ones whose
-    rendering depends on the postal index and the judges' captions rather than the transcript."""
+    rendering depends on the postal index and the judges' captions rather than the transcript. The
+    chat fold keeps exactly these raw and re-hydrates them when the index or the captions move;
+    everything else it seals as rendered.
+
+    A Bash event counts only when its input is a `romp mail send` (_cli_send_match, the matcher
+    _cli_send_card renders from) or its command is a mail read (_reads_mail). Every plain Bash event
+    used to count, so the fold re-hydrated each one on every judge pass to the same raw row: about
+    7.6 us per sealed Bash event per pass, 2.3% of the kernel's interpreter time (GIL profile
+    2026-09-06). A send whose tool_result has not landed yet is sealed like the rest of its turn, its
+    id recorded in the entry's open_tools, and the tool-fill gate demotes the entry when the result
+    lands; relevance reads only the input, so a result landing later can never change it.
+
+    Invariant, pinned in tests/test_chat_fold.py: when this returns False for an event,
+    _hydrate_postal([ev], index, sid)[0] is ev — the same object, untouched."""
     k = ev.get("kind")
     if k == "tool":
         nm = ev.get("name") or ""
-        return bool(_SEND_TOOL_RE.search(nm)) or nm == "Bash" or _reads_mail(ev)
+        if _SEND_TOOL_RE.search(nm):
+            return True
+        if nm == "Bash" and _cli_send_match(ev) is not None:
+            return True
+        return _reads_mail(ev)
     if k == "user":
         return bool(em.POSTAL_RE.findall(ev.get("md") or ""))
     return False
@@ -30998,7 +31086,18 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
         if c.get("sent", {}).get(key, (None,))[0] == sig:      # it went (or was already held) → rebase
             states[ftype] = {"rev": 0, "rest": rest_sig,
                              "coll": {n: {kk: e[1] for kk, e in ents.items()} for n, (ents, _o) in colls.items()},
-                             "order": {n: list(o) for n, (_e, o) in colls.items()}, "at": now}
+                             "order": {n: list(o) for n, (_e, o) in colls.items()}, "at": now, "parts": parts}
+        return
+    if parts is st.get("parts") and now - st.get("at", 0) < _DEDUP_REPOST_S:
+        # Identity short-circuit (2026-09-06). `parts` is the split of the payload OBJECT (_delta_parts is keyed on
+        # its identity), and st["parts"] is the split the client's held state was last written from or last compared
+        # equal to — the keyed full, the last delta that went, or the unchanged branch below. The same object means
+        # the same entries and the same remainder, so the
+        # per-entry compare below would find nothing and return at its unchanged branch; the builders reuse an
+        # unchanged payload object across cycles (_bars_wire holds the bars by the cached timeline's identity), and
+        # that compare cost about 3.7 ms per timeline client per unchanged cycle. Counted as the same fact the
+        # unchanged branch counts: built, not sent. Past the repost window the loop runs and the repost goes.
+        _PERF_STATS.send(key, "deduped", len(pre))
         return
     frame = {"type": "delta", "slot": ftype, "base": st["rev"], "rev": st["rev"] + 1, "coll": {}}
     changed = False
@@ -31031,6 +31130,13 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
     if not changed:
         if now - st.get("at", 0) < _DEDUP_REPOST_S:    # unchanged: nothing to send (the repost keeps the fade alive)
             _PERF_STATS.send(key, "deduped", len(pre))   # built and compared, not sent — the same fact
+            # Adopt this split as the held one (review find, 2026-09-06): the compare just showed the held entry
+            # strings, key sets, order shape and remainder equal it, so the same object next cycle is an identity
+            # hit rather than another compare. A content-equal rebuild (the view sig's 5 s bucket rebuilds the
+            # timeline on a quiet system; a feed differing only in `now`) would otherwise be re-compared on every
+            # cycle until the repost, and the previous build's split — its whole entry-object graph — would stay
+            # referenced from here meanwhile. `at` stands: the repost timer counts from the last frame that went.
+            st["parts"] = parts
             return                                         # _send_client's dedup records for a whole-frame client
     s = json.dumps(frame, default=str)
     if len(s) >= _DELTA_MAX_FRACTION * len(pre):       # not worth a delta → the full frame, rebased
@@ -31040,12 +31146,9 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
         return
     _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0, delta=1)
     _PERF_STATS.send(key, "delta", len(s))
-    try:
-        c["send"](s)
-    except Exception:
-        c["alive"] = False
-        return
-    st["rev"] += 1; st["rest"] = rest_sig; st["at"] = now
+    if not _client_send(c, s, key):                    # like every other frame: curSlot names the slot for the length
+        return                                         # of the send, a drop is logged with it, and the client is dead
+    st["rev"] += 1; st["rest"] = rest_sig; st["at"] = now; st["parts"] = parts
     for name, (ents, _order) in colls.items():
         st["coll"][name] = {kk: e[1] for kk, e in ents.items()}
         st["order"][name] = next_order[name]
@@ -34920,7 +35023,10 @@ if(!P.createDiv)P.createDiv=function(o){return this.createEl('div',o);};
 if(!P.createSpan)P.createSpan=function(o){return this.createEl('span',o);};})();
 (function(){var api=window.acquireVsCodeApi(),panel=null;
 function post(m){api.postMessage(m);}
-window.addEventListener("message",function(ev){var m=ev.data;if(!m||!panel)return;
+// the frame listener, wrapped like every pane's through the page's performance collector when there is one
+// (ui/webview/perf-telemetry.ts, published on window.__rompPerf by federation.js, which loads before this boot),
+// so each frame's handling is timed by type; without a collector the plain listener
+var onFrame=function(ev){var m=ev.data;if(!m||!panel)return;
 if(m.type==="data")panel.update(m.data);
 else if(m.type==="bars"&&panel.applyBars)panel.applyBars(m);
 else if(m.type==="activeChat"&&panel.setActiveChat)panel.setActiveChat(m.activeChat);
@@ -34934,7 +35040,8 @@ else if((m.type==="tagEditAck"||m.type==="viewsAck")&&panel.viewsAck)panel.views
 else if(m.type==="caps"&&panel.setCaps)panel.setCaps(m);
 else if(m.type==="unknownOp"&&panel.unknownOp)panel.unknownOp(m);
 else if(m.type==="tagEditFailed"&&panel.tagEditFailed)panel.tagEditFailed(m);
-else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);});
+else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);};
+window.addEventListener("message",(window.__rompPerf&&window.__rompPerf.wrapFrameHandler)?window.__rompPerf.wrapFrameHandler(onFrame):onFrame);
 window.__rompTimelineOpenExternal=function(url){try{var u=new URL(url);if(u.protocol==="vscode:"){var q=u.searchParams;
 post({type:"deepLink",session:q.get("session"),anchor:q.get("anchor")||undefined,anchorT:Number(q.get("anchorT"))||undefined,anchorKind:q.get("anchorKind")||undefined,compose:q.get("compose")==="1"});
 if(window.parent!==window)window.parent.postMessage({romp:"reveal",pane:"chat"},"*");return;}}catch(e){}window.open(url,"_blank");};
@@ -40589,8 +40696,9 @@ class Handler(BaseHTTPRequestHandler):
                 rec = {"t": int(time.time()), "wid": str(client.get("wid") or ""),
                        "surface": str(msg.get("surface") or ""), "what": str(msg.get("what") or ""),
                        "data": msg.get("data")}
-                with open(jd.STATE / "client-diag.jsonl", "a", encoding="utf-8") as f:
-                    f.write(json.dumps(rec) + "\n")
+                # past the size cap the file becomes .1 and a new one starts; the check, rename and write are one
+                # locked step, since every pane's socket posts from its own handler thread
+                _client_diag_append(jd.STATE / "client-diag.jsonl", json.dumps(rec) + "\n")
             except OSError:
                 pass
         elif msg and msg.get("type") == "orderAudit":

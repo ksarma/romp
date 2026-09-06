@@ -1,6 +1,6 @@
 # plans/ — design documents
 
-Two kinds of document live here, and **each file's status header says which it is**:
+Three kinds of document live here, and **each file's status header says which it is**:
 
 - **Shipped design history** (most files): the work landed, and the doc records the
   *why* — the incident that motivated a mechanism, the alternatives weighed, what the
@@ -14,6 +14,9 @@ Two kinds of document live here, and **each file's status header says which it i
   wait-taxonomy — to be re-planned together when revived), and `boot-visibility-card.md`
   (parked 2026-08-15 as a long-term consideration; its notes on the boot reconcile's
   existing recovery behavior are current as of filing).
+- **A plan under construction** (status `BUILDING`): `file-review.md`, file comments and
+  tracked changes in the file viewer, approved 2026-09-06 and being built as six fork PRs;
+  its status header says how far the build has got.
 
 Living architecture references (the event model, the read side) live in `docs/`
 instead — see `docs/architecture.md`.
