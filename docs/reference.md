@@ -834,9 +834,11 @@ kernel's answer to the CLI all render only the first 12 hex digits of its
 sha256.
 
 Remote kernels are cycled from their own machine. `ROMP_SERVICE_ENV_FILE`
-overrides the path of the env file the kernel reads. A kernel started before
-this feature has no `/keycycle` route and says so; take the update once with
-`romp refresh` (or `romp refresh --quiet`).
+overrides the path of the env file the kernel reads; `ROMP_SERVICE_ENV` is
+accepted as an alias by the kernel, `romp keyswap` and `romp-service install`
+alike, and the installer writes the primary name into the unit or the plist. A
+kernel started before this feature has no `/keycycle` route and says so; take
+the update once with `romp refresh` (or `romp refresh --quiet`).
 
 The kernel also guards the rule at start. If the env file carries a
 credential-shaped line (`ANTHROPIC_API_KEY`, any `*_API_KEY`, any `*_TOKEN`

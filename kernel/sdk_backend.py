@@ -3054,12 +3054,16 @@ def _noted_take() -> tuple:
     command that broke between two connects (the secret store gone away, then a refusal that
     invalidated the set) failed silently on every judge call and every catalog fetch until the next
     session connect, visible only as api-health's keySource.lastRun (2026-09-06). With no backend
-    constructed yet (the catalog's boot fetch can race construction; a standalone import) or the
-    registered one dropped, the read is plain, and the boot verdict says the first run's outcome when
-    a backend is built. The record reaches the noter after envsource's lock is released, so it can be
-    older than one another thread noted meanwhile; the noter orders records (its `attempt` watermark)
-    rather than this reader holding the lock across a log write. The `values` half is under
-    injection()'s rule: nothing may log, store or send it."""
+    constructed yet (a standalone import) or the registered one dropped, the read is plain, and the
+    boot verdict says the first run's outcome when a backend is built. A read DURING construction is
+    the same read: the catalog's boot fetch starts just before the kernel constructs the backend and
+    coalesces with the boot verdict on the command's one run, and the backend registers its noter only
+    after the verdict has logged that run and primed the guards from it — so this reader finds no noter
+    yet, or one that has nothing to add; registered before the verdict, the noter said the run here
+    first and the verdict said it again. The record reaches the noter after envsource's lock is
+    released, so it can be older than one another thread noted meanwhile; the noter orders records
+    (its `attempt` watermark) rather than this reader holding the lock across a log write. The
+    `values` half is under injection()'s rule: nothing may log, store or send it."""
     snap, vals = _envsrc.take()
     noter = _credential_noter()
     if noter is not None:
@@ -6659,13 +6663,20 @@ class SdkBackend:
         self._cred_timeout_said = None            # the ROMP_CREDENTIAL_TIMEOUT_S problem last said (change-only)
         self._cred_noted_attempt = -1             # the `attempt` of the record last noted: an older record is ignored
         self._cred_note_lock = threading.Lock()   # the noter runs on session, judge and catalog threads at once
+        self.key_source = self._boot_key_source_verdict()
         # The module-level readers (work_api_key for a judge's key-billed call, credential_set for the
         # judges' environment and the catalog fetch) say a failed run through THIS backend's noter: one
         # episode guard for every path that can run the command (_noted_take). The kernel constructs one
         # backend per process, so the last one registered is the live one; the reference is weak, so a
-        # backend a test drops is released and notes nothing (_CREDENTIAL_NOTER).
+        # backend a test drops is released and notes nothing (_CREDENTIAL_NOTER). Registered AFTER the
+        # verdict, on purpose: the kernel starts the model-catalog thread just before it constructs the
+        # backend, and that thread's first act is a credential_set() whose run coalesces with the verdict's,
+        # so both return when the command exits. Registered first, the reader's record reached the noter
+        # here before the verdict's lines were logged and the boot said one failure twice (2026-09-06).
+        # Now a reader whose take() returns during construction finds no noter (a plain read; the verdict is
+        # the boot's report of that run) or one whose guards the verdict has already primed (nothing said);
+        # a verdict that raised primed nothing, and the reader or the next path says the run once.
         _register_credential_noter(self._note_credential_set)
-        self.key_source = self._boot_key_source_verdict()
         # The /api-health aggregator (one ring, one lock; see ApiHealth). Fed from _on_message on each
         # session's thread, read by the kernel's route; the salt is minted lazily at the first label.
         self.api_health = ApiHealth(self.state_dir, log=self._log)
@@ -6941,10 +6952,13 @@ class SdkBackend:
         describes is the command's FIRST run, and its lines are the boot's ONE report of that record:
         the noter takes the record as `reported` (guards set, nothing said) once the lines are logged,
         so the next path that meets the same facts is silent, and a verdict that could not be taken
-        leaves the record unsaid for the next path to say. Before this the noter spoke first and the
-        verdict again, two problem lines about one failure at boot (2026-09-06). Whether a key is
-        injected is the record's own `hasKey`, so the boot describes one record from one read — the
-        live work_key read is a second read, which on a failing command was a second run."""
+        leaves the record unsaid for the next path to say. This runs BEFORE the constructor registers
+        the noter for the module-level readers: a reader whose run coalesced with this one (the
+        catalog's boot fetch) then reads plain, or meets guards already primed. Before this the noter
+        spoke first and the verdict again, two problem lines about one failure at boot (2026-09-06).
+        Whether a key is injected is the record's own `hasKey`, so the boot describes one record from
+        one read — the live work_key read is a second read, which on a failing command was a second
+        run."""
         snap = None
         try:
             env_text = ""

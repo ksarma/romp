@@ -20717,8 +20717,7 @@ def _fold_tasks(session):
                     # `subject`; its result is an agent id, not "Task #N") is not a to-do checklist item.
                     # Folding it as a pending task gave a session that only launched background agents a
                     # phantom open task, which tripped the card's "can't read the task store" error the
-                    # moment the store was unresolvable (the user 2026-09-03, personality-1's overnight
-                    # pipeline). Only a checklist create (it carries a `subject`) folds; the background
+                    # moment the store was unresolvable (the user 2026-09-03, a session whose only Task calls were background-agent launches). Only a checklist create (it carries a `subject`) folds; the background
                     # task has its own rendering (bgTasks / TaskStop).
                     if not str(inp.get("subject") or "").strip() and ("prompt" in inp or "agent_hint" in inp):
                         continue

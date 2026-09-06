@@ -20,7 +20,8 @@ for the assertion nobody wrote that way. Pinned here:
     found in '<b>'`, the elements of a list, tuple or set repr, unittest's `Lists differ:` line, its
     quoted per-element lines and its diff of a container spread over lines, and the fragments of a
     value pytest ellipsized at default verbosity or unittest shortened with `[N chars]`); a JWT by its
-    shape wherever it sits, cut or whole; the dotted rest of a token that qualifies; the head of a cut
+    shape wherever it sits, cut or whole (a cut inside its header up to the header bound, and the stated
+    limit past it); the dotted rest of a token that qualifies; the head of a cut
     key bounded at the widest cut a tool makes, and a wider head taken with its cut and tail by the
     format rule, quoted or bare; the `hf_` and `rpa_` rules' letters-and-digits class and its cost;
     and the fragment rule's documented costs (a camelCase name or a digit-bearing run against a cut is
@@ -97,6 +98,18 @@ def _jwt_parts(claims=1):
     pay = _b64url(json.dumps(body, separators=(",", ":")).encode())
     sig = _b64url(hashlib.sha256(uuid.uuid4().bytes).digest())
     return hdr, pay, sig
+
+
+def _jwt_header_of(width):
+    """A fabricated JOSE header of exactly `width` base64url characters (a multiple of 4: unpadded base64url
+    reaches no other width): RS256 with a `kid` of uuid hex padded to fill it. Assembled at run time."""
+    assert width % 4 == 0, width
+    n = width * 3 // 4                                            # bytes of JSON
+    pad_len = n - len('{"alg":"RS256","kid":""}')
+    pad = (uuid.uuid4().hex * (pad_len // 32 + 1))[:pad_len]
+    hdr = _b64url(json.dumps({"alg": "RS256", "kid": pad}, separators=(",", ":")).encode())
+    assert len(hdr) == width and hdr.startswith("eyJ"), (len(hdr), width)
+    return hdr
 
 
 def _copy_hook(d):
@@ -441,21 +454,29 @@ class CredentialPattern(_WithConftest):
             for i in range(0, len(secret) - 8 + 1):
                 self.assertFalse(secret[i:i + 8] in out, "a piece of the key reached the output")
 
-    def test_the_hf_and_rpa_rules_match_the_letters_and_digits_a_real_token_has(self):
-        # a Hugging Face token is `hf_` and 34 letters and digits; RunPod publishes the `rpa_` prefix and no
-        # body format, and its rule is the same class. A token of that shape is one marker whole, cut within
-        # the bound and cut past it, bare or quoted. The class is narrow so an `hf_`-prefixed identifier is
-        # not redacted; its cost is a body no real token has, with `_` or `-` in it: the format rule stops at
-        # that character, so past the bound the rest of such a head shows, while within it the cut rule's
-        # head class takes the whole head. Pinned so that widening the class is a deliberate change
+    def test_the_hf_and_rpa_rules_take_a_real_tokens_letters_and_the_wider_class_they_keep(self):
+        # a Hugging Face token is `hf_` and 34 letters (gitleaks' rule: `hf_` then 34 letters of either
+        # case); RunPod publishes the `rpa_` prefix and no body format. Both rules take letters and digits,
+        # wider than gitleaks' class on purpose (the module docstring says why): a real token is one marker
+        # whole, cut within the bound and cut past it, bare or quoted, and so is a body of the same width
+        # with digits in it — pinned so that narrowing the class, or widening it, is a deliberate change.
+        # The class is narrow in the other direction, so an `hf_`-prefixed identifier is not redacted; its
+        # cost is a body no real token has, with `_` or `-` in it: the format rule stops at that character,
+        # so past the bound the rest of such a head shows, while within it the cut rule's head class takes
+        # the whole head
         red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        letters = "".join(alphabet[b % 52] for b in uuid.uuid4().bytes + uuid.uuid4().bytes + uuid.uuid4().bytes)[:34]
+        with_digits = uuid.uuid4().hex[:17] + uuid.uuid4().hex.upper()[:17]
+        self.assertTrue(letters.isalpha() and any(c.isdigit() for c in with_digits))
         for prefix in ("hf_", "rpa_"):
-            tok = prefix + (uuid.uuid4().hex[:17] + uuid.uuid4().hex.upper()[:17])
-            self.assertEqual(len(tok), len(prefix) + 34)
-            long = prefix + (uuid.uuid4().hex + uuid.uuid4().hex.upper()) * 5     # past the bound: no real token is
-            for text, want in (("token %s here" % tok, "token %s here" % R), ("'%s...%s'" % (tok[:12], tok[-13:]), "'%s'" % R),
-                               ("%s...%s" % (long[:135], long[-118:]), R), ("'%s[88 chars]%s'" % (long[:135], long[-5:]), "'%s'" % R)):
-                self.assertEqual(red(text), want, text[:12])
+            for body in (letters, with_digits):
+                tok = prefix + body
+                self.assertEqual(len(tok), len(prefix) + 34)
+                long = prefix + (uuid.uuid4().hex + uuid.uuid4().hex.upper()) * 5     # past the bound: no real token is
+                for text, want in (("token %s here" % tok, "token %s here" % R), ("'%s...%s'" % (tok[:12], tok[-13:]), "'%s'" % R),
+                                   ("%s...%s" % (long[:135], long[-118:]), R), ("'%s[88 chars]%s'" % (long[:135], long[-5:]), "'%s'" % R)):
+                    self.assertEqual(red(text), want, text[:12])
         self.assertEqual(red("at hf_hub_download_to_cache_dir()"), "at hf_hub_download_to_cache_dir()")
         body = uuid.uuid4().hex * 10
         fake = "hf_%s_%s" % (body[:40], body[41:])                  # an underscore after 40 letters and digits
@@ -573,6 +594,55 @@ class CredentialPattern(_WithConftest):
                 for i in range(0, len(seg) - 8 + 1):
                     self.assertFalse(seg[i:i + 8] in out, "a piece of a segment reached the output")
         self.assertEqual(red("'eyJ...'"), "'eyJ...'", "the prefix alone around a cut shows nothing")
+
+    def test_a_jwt_cut_inside_its_header_is_taken_up_to_the_header_bound(self):
+        # the cut rule's header is bounded at JWT_HEADER_MAX, the whole-token rule's bound, so a JWT cut
+        # anywhere inside any header an installation meets is one marker, bare or quoted, on a diff line
+        # and in a value position (bounded at CUT_HEAD_MAX until 2026-09-06, a cut 121 or more characters
+        # past `eyJ` inside a longer header was taken by no rule in bare text, head and tail shown). A
+        # whole header of any width within the bound with the cut in the payload is the JWT rule's match,
+        # as before. The bound is on the head, not the header: a cut within the first JWT_HEADER_MAX
+        # characters of a longer header is taken too. What is not: a head with more than JWT_HEADER_MAX
+        # characters between `eyJ` and the first dot or the cut — a cut deeper than that inside such a
+        # header, or a payload cut after a whole header past the bound. In a value position the generic
+        # rule takes the head and the tail shows; quoted, the fragment rule takes both; in bare text the
+        # header shows, whole with the cut and tail when the cut is inside it, and up to its dot when the
+        # cut is in the payload, whose own `eyJ` (a JSON payload begins with one too) starts the cut
+        # rule's match. The limit the docstring states, pinned as a measured cost (no enumerated tool
+        # leaves a head of that width)
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        M = self.cf._credpat.JWT_HEADER_MAX
+        _hdr, pay, sig = _jwt_parts(claims=6)
+
+        def check(tok, where):
+            for text, want in (("x %s y" % tok, "x %s y" % R), ("%s\n" % tok, "%s\n" % R), ("log: %s" % tok, "log: %s" % R),
+                               ("'%s'" % tok, "'%s'" % R), ("E         - %s" % tok, "E         - %s" % R)):
+                out = red(text)
+                self.assertEqual(out, want, (where, text[:12]))
+                for piece in (tok[:tok.index("...")], tok[tok.index("...") + 3:]):
+                    for i in range(0, len(piece) - 8 + 1):
+                        self.assertFalse(piece[i:i + 8] in out, (where, "a piece of the token reached the output"))
+
+        for width in (124, 200, M):                      # 124 = `eyJ` + 121, the first width past the old bound
+            hdr = _jwt_header_of(width)
+            jwt = "%s.%s.%s" % (hdr, pay, sig)
+            for cut in sorted({100, 124, 150, width - 1, width}):
+                if cut <= width:                          # inside the header, up to and including its last character
+                    check("%s...%s" % (jwt[:cut], jwt[-40:]), (width, cut))
+            check("%s...%s" % (jwt[:width + 1 + 150], jwt[-40:]), (width, "payload"))
+        wide = "%s.%s.%s" % (_jwt_header_of(M + 4), pay, sig)
+        for cut in (150, M + 3):                          # inside a header past the bound, within the head bound
+            check("%s...%s" % (wide[:cut], wide[-40:]), ("wide header", cut))
+        hdr = wide[:M + 4]
+        tok = "%s...%s" % (hdr, wide[-40:])                 # the whole header before the cut: a head past the bound
+        self.assertEqual(red("x %s y" % tok), "x %s y" % tok, "bare: nothing takes it")
+        self.assertEqual(red("log: %s" % tok), "log: %s...%s" % (R, wide[-40:]), "a value position: the head; the tail shows")
+        self.assertEqual(red("'%s'" % tok), "'%s...%s'" % (R, R), "quoted: the fragment rule, twice")
+        self.assertTrue(pay.startswith("eyJ"), "a JSON payload begins with `eyJ` as the header does")
+        tok = "%s...%s" % (wide[:M + 4 + 1 + 150], wide[-40:])   # the same header whole, a payload cut deep
+        self.assertEqual(red("x %s y" % tok), "x %s.%s y" % (hdr, R), "bare: the header shows; the payload's `eyJ` starts the cut rule's match")
+        self.assertEqual(red("log: %s" % tok), "log: %s...%s" % (R, wide[-40:]))
+        self.assertEqual(red("'%s'" % tok), "'%s...%s'" % (R, R))
 
     def test_the_two_nets_are_applied_in_order_and_share_one_pattern_list(self):
         v = probe_value("env")
