@@ -208,7 +208,12 @@ class _PerfStats:
                                    under "other"). A deduped frame was built and compared, not sent
       goals                        loads, saves, writes: judge.load_goals calls, save_goals calls,
                                    and the saves that reached the disk (a byte-identical republish
-                                   is a save without a write)
+                                   is a save without a write); disk_hits / disk_misses / disk_seeds:
+                                   the no-op check's disk-side memo (identity matched; file read and
+                                   parsed, or attempted; entry filled from a publish's own temp);
+                                   scans / scan_hits /
+                                   scan_parses: judge_failure_scan's per-store memo (calls, stores
+                                   served from the memo, stores read and parsed)
       judge                        passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
@@ -217,6 +222,14 @@ class _PerfStats:
                                    chain_memo {hit, miss, populate, bypass}: the write-moment chain
                                    memo's counters (judge.chain_memo_stats), so its hit rate is
                                    read from the live kernel rather than assumed
+      memos                        one entry per memo the kernel keeps, each a flat dict of counters:
+                                   goals_snap (the judge pass's stat-keyed goal-store snapshot, see
+                                   _begin_goals_pass) -> hit / miss (stores served from the memo vs
+                                   decoded, summed over passes), fail (versions that did not
+                                   decode), evict (entries dropped for files gone from the
+                                   directory), punch (snapshot entries copied for a user gesture),
+                                   and the gauges entries / bytes (memoized paths and their summed
+                                   file size)
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -361,10 +374,15 @@ class _PerfStats:
             goals = jd.goal_io_stats()
         except Exception:
             goals = {}
+        try:
+            memos = {"goals_snap": _goals_memo_report()}
+        except Exception:
+            memos = {}
         now = time.time()
         return {"now": now, "since": since, "uptime_s": now - _STARTED, "log": _PERF,
                 "process": _process_stats(), "pusher": pusher, "stages_ms": stages,
-                "builds": builds, "sends": sends, "goals": goals, "judge": judge, "http": http}
+                "builds": builds, "sends": sends, "goals": goals, "judge": judge, "http": http,
+                "memos": memos}
 
 
 _PERF_STATS = _PerfStats()
@@ -1416,6 +1434,18 @@ def _models_api_credential():
     designated for nothing here and is left alone. A login-only box (Claude Code's OAuth, no key) has
     no HTTP credential the kernel can borrow: the refresh says so once and serves the seed — the CLI's
     own alias table still tracks each family's newest there."""
+    # The command source's set first (2026-09-05): its ANTHROPIC_LP_API_KEY line is the direct-call
+    # key on an installation that keeps every credential out of files and out of the manager's
+    # environment. Read through the judges' wire (jd._ENV_SET_FN → sdk_backend.credential_set), so
+    # like the work key it is never read here before the backend exists; {} in file mode.
+    setfn = getattr(jd, "_ENV_SET_FN", None)
+    if setfn is not None:
+        try:
+            lp = (setfn() or {}).get("ANTHROPIC_LP_API_KEY") or ""
+        except Exception:
+            lp = ""
+        if lp.strip():
+            return ("x-api-key", lp.strip())
     lp = (os.environ.get("ANTHROPIC_LP_API_KEY") or "").strip()
     if lp:
         return ("x-api-key", lp)
@@ -1432,6 +1462,27 @@ def _models_api_credential():
     if tok:
         return ("Authorization", "Bearer " + tok)
     return None
+
+
+def _credential_accepted(cred) -> bool:
+    """The Models API accepted `cred`. When that credential is the command source's own direct-call
+    key (the set's ANTHROPIC_LP_API_KEY, the first rung of _models_api_credential), this is a success
+    of the set, and the event that re-arms envsource's once-per-credential refusal path: through the
+    judges' wire (jd._ENV_OK_FN, sdk_backend.credential_auth_ok), as the set itself arrives. A
+    credential from any other rung (the environment's key, the claimed work key, a bearer) says
+    nothing about the set and re-arms nothing. Compares values inside this process only; nothing is
+    rendered. Returns whether the path was re-armed."""
+    okfn = getattr(jd, "_ENV_OK_FN", None)
+    setfn = getattr(jd, "_ENV_SET_FN", None)
+    if okfn is None or setfn is None or not cred:
+        return False
+    try:
+        lp = ((setfn() or {}).get("ANTHROPIC_LP_API_KEY") or "").strip()
+        if lp and tuple(cred) == ("x-api-key", lp):
+            return bool(okfn(""))
+    except Exception:
+        pass
+    return False
 
 
 def _fetch_models_api(cred, timeout=8):
@@ -1490,6 +1541,7 @@ def _refresh_model_catalog(reason, _async=True):
                                  % (reason, _catalog_status["lastError"], _catalog_status["source"],
                                     len(_catalog_status["added"])))
                 return
+            _credential_accepted(cred)
             added = _apply_model_catalog(merge_model_catalog(_MODEL_SEED, rows), "api")
             now = int(time.time())
             _catalog_status["fetchedAt"] = now
@@ -12301,6 +12353,12 @@ def _sdk_locked():
             # the unwired judges inherited the post-claim env on a login-less host and every call
             # refused "Not logged in" for 13 hours while the cards sat parked in Working).
             jd._WORK_KEY_FN = sbmod.work_api_key
+            # The command source's set (kernel/envsource.py, 2026-09-05) reaches the judges and the
+            # catalog fetch through the same kind of wire: the set for a call's environment (minus the
+            # key, which rides the billing decision), and the invalidation a credential refusal fires.
+            jd._ENV_SET_FN = sbmod.credential_set
+            jd._ENV_INVALIDATE_FN = sbmod.credential_invalidate
+            jd._ENV_OK_FN = sbmod.credential_auth_ok        # a served call re-arms that invalidation
             # T222: the live model catalog — the last fetched list installs before any picker asks,
             # then the BOOT event refreshes it (async; the key is claimable from here on)
             try:
@@ -21671,7 +21729,49 @@ _judge_gen = [0]                                 # bumped each producer pass →
 _goals_snap = [None]                             # {sid: store} while a judge pass is mid-flight, else None
 _goals_snap_at = [0.0]                           # when that snapshot's file reads STARTED (see _feed_goals)
 _goals_snap_done = {}                            # sid → the user-write mark already punched onto THIS snapshot
+_goals_snap_owned = set()                        # sids whose snapshot entry is THIS pass's private copy (copy-on-punch)
 _goals_snap_lock = threading.Lock()
+# STAT-KEYED STORE MEMO (2026-09-06, performance plan B5). The snapshot used to json.loads EVERY
+# goals/<fsid>.json at the start of every pass — 72 files of up to 1.3 MB, about 3% of the kernel's
+# interpreter time, most of the producer thread's cost — although a pass changes only a few of them.
+# Every writer publishes by rename (save_goals), so the bytes under an inode never change once it is at
+# its path. The memo keeps the parsed object per path under (st_ino, st_mtime_ns, st_size); a pass
+# stats every file, decodes only the ones whose key moved, and builds the snapshot from memo
+# REFERENCES. Consequence: a snapshot entry is shared with later passes, so nothing may mutate it —
+# _feed_goals copies an entry before punching a user gesture onto it (the _apply_rewind_hold idiom),
+# and build_feed only reads. A version that fails to decode is remembered under its key too, so a
+# corrupt store is decoded (and reported) once per file version rather than once per pass; its sid
+# stays out of the snapshot and the feed reads it live. Entries for paths gone from the directory are
+# evicted at the next pass.
+# WHAT THE KEY RESTS ON: st_mtime_ns moving between publishes, not the inode. Inode numbers recycle
+# (on ext4, consecutive tmp+rename publishes of one path alternate between two numbers, so the third
+# version can sit on the first's inode), and equal sizes are common (a digit bump, a same-length
+# status word). On Linux 6.13+ (multigrain timestamps) the move is guaranteed: the pass's own stat
+# marks the inode as queried, so the next publish gets a fine-grained stamp. On a coarse-timestamp
+# kernel, two equal-size publishes of one store inside one clock tick after the pass's stat reproduce
+# the memoized key and pin the earlier parse until the store's next publish — a known blind spot; the
+# byte compare on a stat hit in plan C1 closes it. Superseded by that shared read-only store cache
+# (plan C1) when it lands.
+_goals_memo = [{}]                               # path → ((st_ino, st_mtime_ns, st_size), parsed store | _GOALS_MEMO_BAD)
+_GOALS_MEMO_BAD = object()                       # a file version that did not decode: no snapshot entry, no retry until it changes
+_goals_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0, "punch": 0}   # observability + tests (/perf memos)
+
+
+def _goals_memo_decode(data):
+    """The memo's one decode: a raw parse of the file's bytes, exactly what the snapshot always held
+    (no _guard_nodes, no replay — those are load_goals' business). A module function so tests count
+    decodes here rather than by patching json.loads."""
+    return json.loads(data)
+
+
+def _goals_memo_report():
+    """The memo's counters plus its current occupancy, for /perf: `entries` memoized paths and `bytes`
+    their summed on-disk size (a proxy for the parsed objects' footprint; plan D3)."""
+    memo = _goals_memo[0]
+    out = dict(_goals_memo_stats)
+    out["entries"] = len(memo)
+    out["bytes"] = sum(k[2] for k, v in memo.values() if v is not _GOALS_MEMO_BAD)
+    return out
 # A USER gesture (card reply, Move to Working, resolve) must NEVER wait out a pass (the user 2026-07-21).
 # The snapshot above exists to hide half-applied JUDGE writes; it was also hiding the user's own, because
 # optimistic_followup writes the LIVE store while the feed reads the frozen copy. A reply landing
@@ -21686,27 +21786,74 @@ def _note_user_goal_write(sid):
     _user_goal_write[str(sid)] = time.time()
 
 def _begin_goals_pass():
-    """Capture the PRE-pass goal stores so build_feed serves a pass-boundary-consistent view for the pass."""
-    at = time.time()          # stamped BEFORE the reads: a write racing this loop must count as AFTER them,
-    snap = {}                 # so it gets replayed onto the snapshot rather than lost to the read order
+    """Capture the PRE-pass goal stores so build_feed serves a pass-boundary-consistent view for the pass.
+
+    Stat-keyed (see the memo note above): each store is decoded only when its (ino, mtime_ns, size)
+    moved since the last pass; an unchanged one is served as the memoized object. The key is taken by
+    fstat on the fd the bytes are read from, so key and content are the same file version: a rename
+    landing between the listing's stat and the open is read whole from the new inode and keyed as
+    such. Any race the other way (content newer than its key) only costs one extra decode next pass;
+    it can never pin a stale parse, because the next stat sees a moved key. The one way a stale parse
+    CAN pin is the coarse-timestamp blind spot in the memo note above (equal size, recycled inode, same
+    clock tick); on a multigrain-timestamp kernel it does not occur."""
+    # ui/webview/feed-move-ack.test.ts pins the next line's comment text ("stamped BEFORE the reads").
+    at = time.time()          # stamped BEFORE the reads and the stats that gate them: a write racing this loop
+    snap = {}                 # must count as AFTER them, so it is replayed onto the snapshot, not lost to the read order
+    prev = _goals_memo[0]
+    memo = {}
+    hit = miss = fail = 0
     try:
-        for p in jd.GOALDIR.glob("*.json"):
-            try:
-                snap[p.stem] = json.loads(p.read_text())
-            except Exception:
-                pass
-    except Exception:
-        pass
+        entries = [e for e in os.scandir(jd.GOALDIR) if e.name.endswith(".json") and e.is_file()]
+    except OSError:
+        entries = []
+    for ent in entries:
+        path, sid = ent.path, ent.name[:-5]
+        key = None
+        try:
+            st = ent.stat()
+            key = (st.st_ino, st.st_mtime_ns, st.st_size)
+            old = prev.get(path)
+            if old is not None and old[0] == key:
+                hit += 1                                   # same file version → the memoized parse (or its
+                memo[path] = old                           # remembered decode failure) stands
+                if old[1] is not _GOALS_MEMO_BAD:
+                    snap[sid] = old[1]
+                continue
+            with open(path, "rb") as fh:
+                st = os.fstat(fh.fileno())
+                key = (st.st_ino, st.st_mtime_ns, st.st_size)
+                data = fh.read()
+            store = _goals_memo_decode(data)
+        except FileNotFoundError:
+            continue                                       # gone between the listing and the read: no store
+        except Exception as e:                             # unreadable or undecodable: out of the snapshot (the
+            fail += 1                                      # feed reads it live, as before), said once per version
+            if key is not None:
+                memo[path] = (key, _GOALS_MEMO_BAD)
+            sys.stderr.write("goals-pass: %s: %s: %s (not in the pass snapshot; served live until the file changes)\n"
+                             % (ent.name, type(e).__name__, e))
+            continue
+        miss += 1
+        memo[path] = (key, store)
+        snap[sid] = store
+    _goals_memo[0] = memo
+    _goals_memo_stats["hit"] += hit
+    _goals_memo_stats["miss"] += miss
+    _goals_memo_stats["fail"] += fail
+    _goals_memo_stats["evict"] += len(prev.keys() - memo.keys())
     with _goals_snap_lock:
         _goals_snap[0] = snap
         _goals_snap_at[0] = at
         _goals_snap_done.clear()
+        _goals_snap_owned.clear()
 
 def _end_goals_pass():
-    """Pass over — drop the snapshot so reads go live again (post-pass results + any user writes show now)."""
+    """Pass over — drop the snapshot so reads go live again (post-pass results + any user writes show now).
+    The memo keeps its parsed stores: they are the next pass's cache hits."""
     with _goals_snap_lock:
         _goals_snap[0] = None
         _goals_snap_done.clear()
+        _goals_snap_owned.clear()
 
 def _feed_goals(sid):
     """Goal store for the FEED, frozen at the pre-pass snapshot while a judge pass is mid-flight (so a card
@@ -21725,6 +21872,14 @@ def _feed_goals(sid):
         if snap is not None and sid in snap:
             store, mark = snap[sid], _user_goal_write.get(str(sid), 0.0)
             if mark >= _goals_snap_at[0] and _goals_snap_done.get(sid) != mark:
+                if sid not in _goals_snap_owned:
+                    # COPY-ON-PUNCH: the entry is the memo's object, shared with every later pass that
+                    # finds the file unchanged, so the replay and rollup below must land on a copy of it
+                    # (the _apply_rewind_hold idiom). Once per pass per sid: a second gesture in the
+                    # same pass punches the copy this one made.
+                    store = snap[sid] = json.loads(json.dumps(store))
+                    _goals_snap_owned.add(sid)
+                    _goals_memo_stats["punch"] += 1
                 try:
                     jd._replay_overrides(sid, store)   # the reopen/move/resolve/unclear event, applied by the judge's own code
                     jd.rollup_status(store, False)     # …and the card's column follows it (the user just acted → working)
@@ -26253,6 +26408,10 @@ def _compact_goal_stores():
     hasn't changed since the last sweep (no new clears, no judge write), so the steady state is just stats."""
     import glob
     moved = 0
+    try:
+        jd._disk_memo_evict_absent()                   # save_goals' disk-side memo: drop removed stores' entries
+    except Exception:
+        pass
     try:
         paths = glob.glob(str(jd.GOALDIR / "*.json"))
     except Exception:
@@ -39204,7 +39363,17 @@ class Handler(BaseHTTPRequestHandler):
                 # re-read it. So the door cannot be used to point a session at a key of the caller's
                 # choosing, and the response carries only a FINGERPRINT (sha256 head) so the caller can
                 # confirm that the kernel reads what it just wrote without either side printing a key.
-                # Body: {"sessions": [<id-or-name>…]} or {"all": true}.
+                # Body: {"sessions": [<id-or-name>…]} or {"all": true}, plus "refresh": true to make the
+                # kernel re-run its credential command FIRST (the command source, kernel/envsource.py;
+                # a plain re-read in file mode) — `romp keyswap --refresh`, and the first step of every
+                # cycle there. The answer adds keySource ("file"|"command"), keyKind ("key"|"helper"|
+                # "login"|"": what keyFp is of — "login" is a command-mode set with no key and no
+                # apiKeyHelper configured, so there is nothing to fingerprint and no error), keyErr (why
+                # there is no fingerprint, or the last run's failure; ""), setFp (the command's whole set,
+                # role variables included), selector (the declared token, or "(undeclared, N chars)"),
+                # launched ({fingerprint: live sessions on it}), refreshed ({"from","to"} when asked) and
+                # each row's `from` (the fingerprint its CLI launched on) — fingerprints and reasons with
+                # counts, never a value.
                 try:
                     b = json.loads(raw_body or b"{}")
                 except Exception:
@@ -39214,7 +39383,19 @@ class Handler(BaseHTTPRequestHandler):
                 if be is None:
                     return self._send(503, json.dumps({"ok": False, "error": "no SDK backend"}),
                                       "application/json")
+                refreshed = None
+                if b.get("refresh"):
+                    fn = getattr(be, "refresh_key_source", None)
+                    if fn is not None:
+                        try:
+                            refreshed = fn()
+                        except Exception as e:
+                            refreshed = {"error": str(e)[:80]}
                 keyfp = _work_key_fp()
+                try:
+                    kstat = getattr(be, "key_source_status", lambda: {})() or {}
+                except Exception as e:
+                    kstat = {"err": "status failed: %s" % str(e)[:80]}
                 rows = []
                 if b.get("all"):
                     # every LIVE SDK session: the dormant ones need nothing (their next launch reads
@@ -39229,14 +39410,23 @@ class Handler(BaseHTTPRequestHandler):
                                           "application/json")
                     who_list = [(str(w), _sid_of(str(w))) for w in raw if str(w or "").strip()]
                 for who, sid in who_list:
+                    live = (getattr(be, "sessions", None) or {}).get(sid)
+                    frm = str(getattr(live, "_launched_key_fp", "") or "") if live is not None else ""
                     try:
                         status = be.cycle_key(sid)
                     except Exception as e:
                         status = "error: %s" % str(e)[:80]
-                    rows.append({"session": _name_of(sid) or who, "status": status})
+                    rows.append({"session": _name_of(sid) or who, "status": status, "from": frm})
                 if any(r["status"] == "cycling" for r in rows):
                     _push_soon()                      # something changed; a fingerprint READ ({"sessions": []}) did not
-                return self._send(200, json.dumps({"ok": True, "keyFp": keyfp, "rows": rows}),
+                return self._send(200, json.dumps({"ok": True, "keyFp": keyfp, "rows": rows,
+                                                   "keySource": kstat.get("source") or "file",
+                                                   "keyKind": kstat.get("fpKind") or "",
+                                                   "keyErr": kstat.get("err") or "",
+                                                   "launched": kstat.get("launched") or {},
+                                                   "setFp": kstat.get("setFp") or "",
+                                                   "selector": kstat.get("selector") or "",
+                                                   "refreshed": refreshed}),
                                   "application/json")
             if u.path in ("/interrupt", "/end"):
                 # Headless session control (2026-07-05): interrupt/end existed ONLY as WS drive ops, so
