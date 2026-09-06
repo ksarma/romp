@@ -578,9 +578,10 @@ _FRAME_HEAD_RE = re.compile(r'"(type|slot)": "([^"]*)"')
 
 def frame_label(km, c, s):
     """The per-slot label for one frame handed to a fake client. _client_send leaves the dedup key on
-    the client (`curSlot`) for the length of its call, and that key names the slot. The keyed delta path
-    (_send_slot_delta) calls send() directly, so its frames are labelled from their own head:
-    `{"type": "delta", "slot": "bars", ...}` books as bars-delta, and any other direct frame as its type."""
+    the client (`curSlot`) for the length of its call, and that key names the slot. A frame that arrives
+    with no key set (a --repo checkout from before the keyed delta path went through _client_send, or a
+    one-shot reply) is labelled from its own head: `{"type": "delta", "slot": "bars", ...}` books as
+    bars-delta, and any other direct frame as its type."""
     key = c.get("curSlot")
     if key is not None:
         return km._perf_slot(key) if hasattr(km, "_perf_slot") else str(key)

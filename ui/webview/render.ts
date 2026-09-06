@@ -56,6 +56,7 @@ import { mathBlock, mathInline } from "./math";
 import { setTip, pruneTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 import { dragSlotIndex } from "./dragslot";
+import { perfFrameHandler } from "./perf-telemetry";
 
 for (const [name, lang] of Object.entries({
   bash, sh: bash, shell: bash, python, py: python, javascript, js: javascript,
@@ -12963,7 +12964,9 @@ function pipeBanner(up: boolean, queued: number): void {
 // hid). An event gets a transient cue; the steady state stays on the surfaces already carrying it; no pixel
 // of transcript is spent. hostDownNote is still the one place that note is worded — see host-prefix.ts.)
 
-window.addEventListener("message", (e: MessageEvent) => {
+// every frame's synchronous handling time is measured (perf-telemetry.ts: one clientDiag row a
+// minute, read by `romp perf client`); the handler itself is unchanged
+window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
   const m = e.data;
   if (!m) return;
   // the shell's palette: "Fork this session…" → the fork modal for the ACTIVE session, from the tip
@@ -13428,7 +13431,7 @@ window.addEventListener("message", (e: MessageEvent) => {
     document.getElementById("cmt-pop")?.remove();
     renderCommentPopover();
   }
-});
+}));
 
 // Tick the working timer (the chip color-pulse is pure CSS) and keep the model/ctx
 // meta fresh as status updates land.
