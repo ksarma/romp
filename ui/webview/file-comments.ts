@@ -20,7 +20,9 @@
 //     body's picture and over every figure in rendered markdown take a drag and paint each region comment as a
 //     rectangle placed by percentages, dashed once the image's bytes changed under it (the host's hash against
 //     the stored one). The card shows the region cut from the picture and offers Re-place, which retargets the
-//     comment to the next region drawn. Desktop only; a coarse pointer reads and comments on the whole file.
+//     comment to the next region drawn. Desktop only; a coarse pointer reads and comments on the whole file. A figure
+//     in rendered markdown is wrapped by its overlay only while the panel is open or the figure has a rectangle to show
+//     (paintRegions): closed, with nothing to show, the author's own layout of the page stands.
 //   • The kernel does the disk work on the OWNING kernel (the `fileComments` op runs a node host
 //     script over the vendored track-changents store); this module renders JSON and never holds a
 //     sidecar it writes back. Both ops carry `sid`, so federation routes a remote session's file to
@@ -54,7 +56,7 @@ import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paint
 import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-map";   // the change painters (contract D4)
 import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
 import {
-  type Status, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, actionLabel, cardModel, changeCards, changeGroups,
+  type Status, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, type Target, actionLabel, cardModel, changeCards, changeGroups,
   foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, sendParts, sendCounts, buildSendMessage, unsentCount,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   regionTarget, regionState, figureTargets, figuresMoved, type PollBaseline, type FigureBaseline, type HeadVerdict,
@@ -156,9 +158,17 @@ export function normPath(p: string): string {
   return (abs ? "/" : "") + out.join("/");
 }
 const decoded = (s: string): string => { try { return decodeURIComponent(s); } catch { return s; } };
+// An embed's dest is decoded with decodeURI, as the viewer decodes it before it loads the picture (file-view.ts
+// rewriteFigureSrcs), the poll before it HEADs the figure (file-comments-model.ts figurePath) and the host before it
+// hashes it: the three readers of a destination must name one file. decodeURIComponent, which stood here first, also
+// decodes the escapes of RESERVED characters, so `a%26b.png` became `a&b.png` on this side and stayed `a%26b.png` on
+// the viewer's — and a figure written with such an escape never matched its embed once rewritten through /file (the
+// drag refused, the embed-line frame unpainted, the picture click's offer a whole-file comment). fileUrlPath keeps
+// decodeURIComponent: fileUrl built its `path` with encodeURIComponent, and that is the exact inverse there.
+const decodedDest = (s: string): string => { try { return decodeURI(s); } catch { return s; } };
 /** Where an embed's `dest`, as written, points relative to the markdown file at `filePath` (absolute dest: itself). */
 export function embedPath(filePath: string, dest: string): string {
-  const d = decoded(dest);
+  const d = decodedDest(dest);
   if (d.startsWith("/")) return normPath(d);
   return normPath(filePath.slice(0, filePath.lastIndexOf("/") + 1) + d);
 }
@@ -303,7 +313,38 @@ type Composer =
   | { kind: "replace"; commentId: string; ref: string; src: string | null };
 /** Why a region on a figure cannot be saved: the anchor is the embed line, and the source holds none for this picture. */
 const EMBED_NOT_FOUND = "the line that embeds this image was not found in the source, so a region on it cannot be saved";
+/** The passage composer's refusal for the same figure — the picture click's Comment offer builds it (startImageComment), and
+ *  Switch to Raw on a refused region turns the region composer into it: a Raw selection of the embed line places the note. */
+const EMBED_NOT_FOUND_SELECT = "The line that embeds this image was not found in the source; select it in the Raw view.";
 type Err = { text: string; reload: boolean; warn?: boolean };
+
+// ── why a region's staleness is unknown ─────────────────────────────────────────────────────────────
+// The host puts a reason beside every hash it could not take (fileHashFor / embeddedHashesFor in the host script:
+// `fileHashReason` for a media file, `embeddedHashReasons[src]` for a figure a text file's comments name), because the
+// kernel keeps the host's stderr only when a call fails — the reason reaches the panel in the reply or not at all. The
+// Status type (file-comments-model.ts) names the hashes; the reasons are read off the same reply here, where the card
+// is the one thing that shows them: the tag's title collapsed, a sentence in the open card (a title never reaches touch,
+// the caption idiom of renderSend). Unknown also has causes the host cannot explain, each named in its own words: a
+// comment saved without a hash, a host from before region comments (no hash field at all). Never a bare "unknown": a
+// deleted figure, one moved outside the project and one past the hash cap are three different things for the person to
+// do (CLAUDE.md: surface the error, never degrade silently).
+type HashReasons = { fileHashReason?: string | null; embeddedHashReasons?: Record<string, string | null> | null };
+const UNKNOWN_GENERIC = "Whether the image changed since this region was drawn could not be checked.";
+/** The host's reason as the card shows it: capitalized, ending in a period (the host writes lowercase fragments). */
+const asSentence = (s: string): string => { const t = s.trim(); return t.charAt(0).toUpperCase() + t.slice(1) + (/[.!?]$/.test(t) ? "" : "."); };
+/** Why a region comment's staleness cannot be told (regionState "unknown"): the host's own reason when it sent one,
+ *  else the panel-side cause it can see, else the generic sentence. */
+export function unknownReason(target: Target, s: Status | null): string {
+  if (typeof target.hash !== "string" || !target.hash) return "This region was saved without the image's hash, so a later change to the image cannot be detected.";
+  if (!s) return UNKNOWN_GENERIC;
+  const r = s as Status & HashReasons;
+  const src = typeof target.src === "string" && target.src ? target.src : null;
+  const reason = src ? (r.embeddedHashReasons && typeof r.embeddedHashReasons === "object" ? r.embeddedHashReasons[src] : undefined) : r.fileHashReason;
+  if (typeof reason === "string" && reason.trim()) return asSentence(reason);
+  const current = src ? (r.embeddedHashes && typeof r.embeddedHashes === "object" ? r.embeddedHashes[src] : undefined) : r.fileHash;
+  if (current === undefined) return "The file's machine sent no hash for this image, so whether it changed since this region was drawn could not be checked. Its kernel may predate region comments: update and restart it.";
+  return UNKNOWN_GENERIC;
+}
 
 // ── the wire: ONE window listener for the module, dispatching to the live panel by reqId ───────────
 // A reply is matched by reqId only — a REMOTE kernel's reply comes back with its sid host-prefixed
@@ -931,8 +972,7 @@ class Panel {
     this.openPanel();
     this.composer = range
       ? { kind: "comment", range, quote: src.slice(range.start, range.end), text: src, refusal: null }
-      : { kind: "comment", range: null, quote: null, refusal: { ok: false, rawHasQuote: false, selText: "",
-          reason: "The line that embeds this image was not found in the source; select it in the Raw view." } };
+      : { kind: "comment", range: null, quote: null, refusal: { ok: false, rawHasQuote: false, selText: "", reason: EMBED_NOT_FOUND_SELECT } };
     this.errors.delete("composer");
     this.repaintPresel();
     this.renderComposer();
@@ -997,7 +1037,16 @@ class Panel {
    *  (rawTarget) — so the presel mark shows it; otherwise scroll to the block's first line and leave the
    *  note waiting for a Raw selection. */
   switchToRaw(): void {
-    const c = this.composer;
+    let c = this.composer;
+    if (c && c.kind === "region" && c.refusal) {
+      // a region on a figure the source holds no embed for: nothing to anchor a region to, but a passage on the embed's
+      // line can still carry the note. The composer becomes the one the picture click's offer builds for the same
+      // figure (startImageComment), awaiting a Raw selection; the typed note stays in the input, the pending rectangle
+      // leaves the overlay. The refusal's own sentence used to send the person to Cancel — the one exit that drops the note.
+      c = this.composer = { kind: "comment", range: null, quote: null, refusal: { ok: false, rawHasQuote: false, selText: "", reason: EMBED_NOT_FOUND_SELECT } };
+      this.errors.delete("composer");
+      this.repaintPresel();
+    }
     if (!c || c.kind !== "comment" || !c.refusal) return;
     this.ctx.setMode("raw");
     const src = this.ctx.text();
@@ -1274,8 +1323,22 @@ class Panel {
       this.located.set(card.id, loc ? { ...loc, painted: true } : { state: "located", painted: true });
     }
     const active = this.open && !isCoarsePointer();
+    const rendered = this.ctx.mode() === "rendered";
     for (const img of imgs) {
+      const marks = per.get(img) || [];
+      const pending = c && c.kind === "region" && c.img === img && !c.refusal ? c.region : null;
+      const replacing = !!c && c.kind === "replace" && this.replaceTarget(c.commentId) === img;
+      // A figure in rendered markdown takes a layer only while the panel is open, or when there is something to put on it —
+      // its rectangles, the pending region, the re-place cue. The wrapper is a layout of its own (the sheet's inline-block
+      // around a block picture) standing in the AUTHOR's flow: wrapped on every paint, a right-floated README logo stopped
+      // floating and a width="100%" plot shrank to its natural width, with the panel closed and no comment anywhere near
+      // them (the 2026-09-06 review). Closed, a figure with nothing to show stays as the browser laid it out, and a layer
+      // with nothing left to show comes down (closePanel's pass puts the picture back). The media body's one picture keeps
+      // its layer as before: it is the file, in a box built for it, and its rectangles show whenever a text file's
+      // highlights would (the probe's status paints both).
+      const wanted = !rendered || this.open || marks.length > 0 || pending !== null || replacing;
       let layer = this.regionLayers.get(img);
+      if (!wanted) { if (layer) { layer.dispose(); this.regionLayers.delete(img); } continue; }
       if (!layer) {
         // onClick is a PLAIN picture's click; a framed picture's (an embed-line comment's highlight, data-act="fcopen")
         // the layer hands to the picture itself (handOn), so the delegate's fcopen and the row's IMG listener hear it as
@@ -1287,9 +1350,7 @@ class Panel {
         this.regionLayers.set(img, layer);
       }
       layer.setActive(active);
-      const pending = c && c.kind === "region" && c.img === img && !c.refusal ? c.region : null;
-      const replacing = !!c && c.kind === "replace" && this.replaceTarget(c.commentId) === img;
-      const key = JSON.stringify([per.get(img) || [], pending, replacing]);
+      const key = JSON.stringify([marks, pending, replacing]);
       if (this.paintedKey.get(layer) === key) continue;   // nothing new for this picture: its rectangles stand (paintedKey)
       this.paintedKey.set(layer, key);
       for (const r of layer.paint(per.get(img) || [], pending, replacing)) this.marks.add(r);
@@ -1588,8 +1649,14 @@ class Panel {
     else if (c.kind === "change") ref.appendChild(el("span", "fc-note", "Reply on the change " + c.ref));
     else if (c.kind === "replace") ref.appendChild(el("span", "fc-note", "Drag the comment's new place on the image (now " + c.ref + "). Cancel keeps it where it is."));
     else if (c.kind === "region") {
-      if (c.refusal) ref.appendChild(el("span", "fc-note fc-refused", c.refusal[0].toUpperCase() + c.refusal.slice(1) + ". Cancel, and comment on its passage from the Raw view."));
-      else {
+      if (c.refusal) {
+        // no embed line, so no region — but a passage on that line can carry the note, and the switch keeps it (switchToRaw)
+        // where Cancel drops it (closeComposer clears the input): the sentence points at the switch, never at Cancel
+        ref.appendChild(el("span", "fc-note fc-refused", c.refusal[0].toUpperCase() + c.refusal.slice(1) + ". Select its line in the Raw view instead; the note stays."));
+        const sw = btn("Switch to Raw", "fcraw");
+        sw.title = "Raw view; select the line that embeds this image there";
+        ref.appendChild(sw);
+      } else {
         ref.appendChild(el("span", "fc-note", "On " + regionDesc(c.region)));
         const crop = cropThumb(c.img, c.region);
         if (crop) ref.appendChild(crop);
@@ -1683,6 +1750,7 @@ class Panel {
   private renderCard(c: Card): HTMLElement {
     const isOpen = this.openCards.has(c.id);
     const loc = this.located.get(c.id);
+    const picture = c.target ? this.regionImageFor(c) : null;   // the picture the region is on, in this view; null when it shows none
     const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : ""));
     card.dataset.id = c.id;
     // the expand/collapse target: the whole card while collapsed, the HEAD alone once open — the open body
@@ -1703,7 +1771,15 @@ class Panel {
     // a region (Slice 3): whether the image still has the bytes it was drawn on (E2) — dashed on the picture, a tag here
     const regionSt = c.target ? regionState(c.target, this.status) : "current";
     if (regionSt === "stale") { const t = el("span", "fc-tag fc-tag-stale", "stale"); t.title = "The image changed after this region was drawn; Re-place it, or resolve it"; head.appendChild(t); }
-    if (regionSt === "unknown") { const t = el("span", "fc-tag", "unknown"); t.title = "Whether the image changed since this region was drawn could not be checked"; head.appendChild(t); }
+    if (regionSt === "unknown" && c.target) { const t = el("span", "fc-tag", "unknown"); t.title = unknownReason(c.target, this.status); head.appendChild(t); }
+    // a region whose picture this view does not show, with no passage to reveal in its place: a standalone image's region
+    // seen in the SVG Source view (the XML). No seam call returns to the picture from here (setMode is the markdown
+    // pair only), so the tag names the way back rather than leaving the card a dead end (ui/CLAUDE.md)
+    if (c.target && !c.anchor && !picture && this.ctx.mode() !== "media") {
+      const t = el("span", "fc-tag", "not shown");
+      t.title = this.ctx.media() === "svg" ? "The Source view shows the XML, not the image; press Source again to see the region on it" : "This view does not show the image the region is on";
+      head.appendChild(t);
+    }
     if (loc && loc.state === "context") head.appendChild(el("span", "fc-tag", "text changed"));
     if (loc && loc.state === "detached") head.appendChild(el("span", "fc-tag", "detached"));
     if (c.decision) { const d = el("span", "fc-tag", c.decision); d.title = "You " + c.decision + " the change this comment is on"; head.appendChild(d); }
@@ -1712,9 +1788,10 @@ class Panel {
     head.appendChild(el("span", "fc-time", clock(c.ts)));
     card.appendChild(head);
     if (!isOpen) { card.appendChild(el("div", "fc-preview", c.body.replace(/\s+/g, " ").trim())); return card; }
-    const picture = c.target ? this.regionImageFor(c) : null;
     if (picture) { const crop = this.cropFor(picture, c); if (crop) card.appendChild(crop); }   // the region cut from the picture (E5)
     card.appendChild(el("div", "fc-body", c.body));
+    // the open card says in words why the region's staleness is unknown (unknownReason): the tag's title never reaches touch
+    if (regionSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status)));
     if (c.replies.length) card.appendChild(this.renderTurns(c.replies));
     const acts = el("div", "fc-actions");
     const reply = btn("Reply", "fcreply"); reply.dataset.id = c.id; acts.appendChild(reply);

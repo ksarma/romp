@@ -19,8 +19,9 @@ import { regionDesc, staleness, type Region, type Staleness } from "./region-geo
 export type Anchor = { quote: string; prefix: string; suffix: string };
 /** A region on an image or a PDF page (Slice 3; contract E1): fractions of the natural size, the page for a PDF,
  *  the sha256 of the file's bytes the HOST stamped when the region was drawn (staleness compares it with the
- *  file's current hash), and for a figure embedded in markdown `src` exactly as the embed writes it — the name
- *  the sent message and the card call the figure by (describeComment), and the key of `embeddedHashes`. */
+ *  file's current hash), and for a figure embedded in markdown `src` exactly as the embed writes it — the key of
+ *  `embeddedHashes` and of the host's own lookups. The sent message and the card name the figure by that src
+ *  DECODED (describeComment, decodeSrc): the embed may percent-encode it, and the file on disk has the space. */
 export type Target = { kind: "image" | "pdf"; region: Region; page?: number; hash?: string; src?: string };
 export type StoreReply = { author: string; authorId?: string; ts: number; body?: string; kind?: string; oldText?: string; newText?: string };
 export type StoreComment = {
@@ -93,11 +94,14 @@ export function decidedChange(log: LogEntry[] | null | undefined, id: string): {
  *  change describes the change while it is pending, and from the log's accept or reject entry after a decision
  *  (a manual Accept before the send would otherwise describe it as "on this file"). A region comment names the
  *  region — "the region at x, y, w, h", "… of page N" on a PDF — and on a figure embedded in a text file ALSO the
- *  figure, by its `src` as the embed writes it ("… of figs/latency.png"): such a comment carries the embed line's
- *  anchor as well, but the region wins over the anchor, and the fractions alone say which part of a picture without
- *  saying which picture — on a page with several figures the session would have to open the sidecar to learn which
- *  one, and the message is what it reads. A person would name the picture (CLAUDE.md, the injected voice). The
- *  standalone forms are the plan's own; the figure's name is this module's addition to them. */
+ *  figure, by its `src` DECODED the way the viewer loads it and the host hashes it ("… of figs/p95 latency.png" for
+ *  an embed written `figs/p95%20latency.png`; decodeSrc): such a comment carries the embed line's anchor as well,
+ *  but the region wins over the anchor, and the fractions alone say which part of a picture without saying which
+ *  picture — on a page with several figures the session would have to open the sidecar to learn which one, and
+ *  the message is what it reads. A person would name the picture, and by the name it has on disk (CLAUDE.md, the
+ *  injected voice): the encoded spelling is a path that does not exist, and a session that ran `ls` on it got
+ *  ENOENT while the host had hashed the decoded file (the review of 2026-09-06). The standalone forms are the
+ *  plan's own; the figure's name is this module's addition to them. */
 export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] = []): string {
   if (c.suggestionId) {
     const h = hunks.find((x) => x.id === c.suggestionId);
@@ -107,7 +111,7 @@ export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] 
   }
   if (c.target && c.target.region) {
     const at = regionDesc(c.target.region, c.target.kind === "pdf" ? c.target.page : null);
-    return "on " + (typeof c.target.src === "string" && c.target.src ? at + " of " + c.target.src : at);
+    return "on " + (typeof c.target.src === "string" && c.target.src ? at + " of " + decodeSrc(c.target.src) : at);
   }
   if (c.anchor && typeof c.anchor.quote === "string" && c.anchor.quote) return 'on "' + c.anchor.quote.slice(0, 40) + '"';
   return "on this file";
@@ -507,14 +511,23 @@ export function pollTargets(s: Status, path: string): { file: string; store: str
  *  and the host apply (file-view.ts rewriteFigureSrcs, file-comments-host.mjs resolveSrc). */
 const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 
-/** Where an embedded figure's `src` points, for the /file route: decoded as the viewer decodes it before loading the
- *  picture and as the host decodes it before hashing (decodeURI; a malformed escape is taken as written); an absolute
- *  path is itself; a relative one is joined to the text file's directory, `.` and `..` left as written for the kernel
- *  to resolve (a client-side normalization would be a second opinion on what it serves). Null for a URL. */
+/** An embedded figure's `src` as the viewer decodes it before loading the picture and as the host decodes it before
+ *  hashing (file-view.ts rewriteFigureSrcs, file-comments-host.mjs decodeSrc): decodeURI, so `p95%20latency.png` is
+ *  the file with the space, and a malformed escape (`100%.png`) is taken as written. The one spelling of a figure
+ *  this module puts in front of the person or the session — the message and the card (describeComment) and the
+ *  poll's HEAD target (figurePath) — since it is the name the file has on disk; the src AS WRITTEN stays the key
+ *  of `embeddedHashes` and the value the target stores. */
+export function decodeSrc(src: string): string {
+  try { return decodeURI(src); } catch { return src; }
+}
+
+/** Where an embedded figure's `src` points, for the /file route: decoded as the viewer and the host decode it
+ *  (decodeSrc); an absolute path is itself; a relative one is joined to the text file's directory, `.` and `..` left
+ *  as written for the kernel to resolve (a client-side normalization would be a second opinion on what it serves).
+ *  Null for a URL. */
 export function figurePath(filePath: string, src: string): string | null {
   if (!src || URL_SCHEME_RE.test(src)) return null;
-  let rel = src;
-  try { rel = decodeURI(src); } catch { /* a malformed escape: the spelling as written */ }
+  const rel = decodeSrc(src);
   if (rel.startsWith("/")) return rel;
   return filePath.slice(0, filePath.lastIndexOf("/") + 1) + rel;
 }

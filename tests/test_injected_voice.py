@@ -175,6 +175,14 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # romp-authored and scanned here. No marker tail, like a todo answer: this IS the person
             # writing. Rendered for one comment on a tracked text file, several on an untracked one,
             # and one on an image, since the second bullet differs.
+            # The parenthetical after "Comment <id>" (`desc`) is composed in the webview
+            # (file-comments-model.ts describeComment, region-geometry.ts regionDesc) and the kernel
+            # prints it verbatim, so the descs below are COPIES of what the client emits, one body per
+            # form: a passage, this file, a change with the decision sentence, a region of a standalone
+            # image, a region of a figure embedded in a text file (Slice 3, which names the figure by
+            # its src), a region of a PDF page (the plan's own specimen). A copy catches a drift only
+            # when the editor propagates it, so the composers' own string literals are scanned at the
+            # source as well (test_the_client_composed_desc_speaks_plainly_at_its_source).
             "file comments message": km._file_comments_message(
                 "/TESTDIR/notes-api/docs/report.md",
                 [{"id": "1781100000000-0", "desc": 'on "shipping the cache in v1.2"',
@@ -188,6 +196,39 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             "file comments message (image)": km._file_comments_message(
                 "/TESTDIR/notes-api/docs/latency.png",
                 [{"id": "1781100000005-0", "desc": "on this file", "body": "The y axis needs units."}],
+                0, 0, True, False),
+            # the plan's specimen (plans/file-review.md, "The contract"): a change the session made,
+            # named by its old and new text, and the accepted/rejected sentence — "change" is the
+            # person's word for it (CONTEXT.md), never the storage format's
+            "file comments message (decided changes)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.md",
+                [{"id": "1781100000000-0", "desc": 'on "shipping the cache in v1.2"',
+                  "body": "Which cache? Say which."},
+                 {"id": "1781100000001-0", "desc": 'on your change "40%" to "35%"',
+                  "body": "Keep the measured number."}],
+                4, 1, True, True),
+            # Slice 3: a region of a standalone image — fractions of its natural size, two decimals —
+            # beside a whole-file comment; the image bullet, since the file is not text
+            "file comments message (image, region)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/latency.png",
+                [{"id": "1781100000005-0", "desc": "on this file", "body": "Which run is this?"},
+                 {"id": "1781100000006-0", "desc": "on the region at 0.50, 0.50, 0.25, 0.25",
+                  "body": "This spike."}],
+                0, 0, False, False),
+            # Slice 3: a region of a figure embedded in a markdown file — the desc names the figure by
+            # its src as the embed writes it, and the file is text, so the text bullets stay
+            "file comments message (embedded figure)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/figures.md",
+                [{"id": "1781100000007-0",
+                  "desc": "on the region at 0.12, 0.40, 0.35, 0.20 of figs/latency.png",
+                  "body": "Label the axes."}],
+                0, 0, True, True),
+            # a region of a PDF page: regionDesc composes the page form today and the plan's specimen
+            # carries it (Slice 4 renders the pages)
+            "file comments message (pdf page)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.pdf",
+                [{"id": "1781100000008-0", "desc": "on the region at 0.12, 0.40, 0.35, 0.20 of page 2",
+                  "body": "This table is cut off."}],
                 0, 0, True, False),
         }
         # every repeat-nudge variant wears the same voice as the first fire (the user 2026-08-11): the
@@ -213,6 +254,38 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                                      "%r speaks romp at the session (%r: %s). Write it as the person "
                                      "it works for asking — see CLAUDE.md, 'Messages we inject into a "
                                      "session'." % (name, word, why))
+
+    def test_the_client_composed_desc_speaks_plainly_at_its_source(self):
+        # The file-comments descs in _bodies are COPIES: the parenthetical is composed in the webview
+        # (describeComment in file-comments-model.ts, regionDesc in region-geometry.ts) and the kernel
+        # prints it verbatim, so a romp noun added to either composer would reach a session while the
+        # copies here stayed clean. This reads the two composers' own string literals — every fixed
+        # phrase a desc can carry — and scans them the way the rendered bodies are scanned. Comments
+        # in the source are skipped (they are not emitted); a composer that moved or was renamed
+        # fails loudly here — re-pin it, do not drop the scan. Each composer's known phrases must be
+        # among what was read, so the scan can never pass by reading nothing.
+        ui = os.path.join(os.path.dirname(HERE), "ui", "webview")
+        composers = (("file-comments-model.ts", "describeComment", ("on this file", 'on "', "on your change")),
+                     ("region-geometry.ts", "regionDesc", ("the region at ", " of page ")))
+        token = re.compile(r'"((?:[^"\\\n]|\\.)*)"|\'((?:[^\'\\\n]|\\.)*)\'|`((?:[^`\\]|\\.)*)`'
+                           r'|//[^\n]*|/\*.*?\*/', re.S)
+        for fname, fn, expect in composers:
+            src = Path(ui, fname).read_text(encoding="utf-8")
+            m = re.search(r"^export function %s\b.*?^\}" % re.escape(fn), src, re.S | re.M)
+            self.assertIsNotNone(m, "%s: `export function %s` not found at column 0 — the desc composer "
+                                    "moved or was renamed; re-pin it here" % (fname, fn))
+            literals = [a or b or c for a, b, c in token.findall(m.group(0)) if a or b or c]
+            for phrase in expect:
+                self.assertTrue(any(phrase in lit for lit in literals),
+                                "%s.%s no longer carries %r — the scan read the wrong span, or the desc form "
+                                "changed; fix the pin AND the copies in _bodies" % (fname, fn, phrase))
+            for lit in literals:
+                for word, why in ROMP_WORDS:
+                    with self.subTest(composer=fn, literal=lit, word=word):
+                        self.assertNotIn(word, lit.lower(),
+                                         "%s.%s would print %r into the Send to session message (%r: %s). "
+                                         "The desc reaches the session verbatim — write it as the person "
+                                         "would name the spot." % (fname, fn, lit, word, why))
 
     def test_the_command_allowance_is_the_span_not_the_word(self):
         # the T212 allowance must never become a whitelist: bare "romp" in prose, or any other
@@ -306,14 +379,14 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # never a status ask — bolting a progress question onto it would be noise
             # …and the file-comments message is the person's own comments with instructions on how
             # to answer them — its ask is "address these and ask me for another look", not a status
-            if name in ("typed follow-up on a summary",
-                        "debt reminder (question)", "debt reminder (handoff)",
-                        "debt reminder (several)", "comment thread opener", "user-todo answer",
-                        "user-todo context block", "edit trace", "reject trace", "reject trace (one change)",
-                        "comment-thread merge", "compaction suggestion",
-                        "file comments message", "file comments message (untracked, several)",
-                        "file comments message (image)"):
-                #        ^ a housekeeping suggestion, not a progress ask — it elicits nothing
+            if (name.startswith("file comments message")       # every form of the Send to session message
+                    or name in ("typed follow-up on a summary",
+                                "debt reminder (question)", "debt reminder (handoff)",
+                                "debt reminder (several)", "comment thread opener", "user-todo answer",
+                                "user-todo context block", "edit trace", "reject trace",
+                                "reject trace (one change)", "comment-thread merge",
+                                "compaction suggestion")):
+                                # ^ a housekeeping suggestion, not a progress ask — it elicits nothing
                 continue
             text = prose(body).lower()
             with self.subTest(message=name):

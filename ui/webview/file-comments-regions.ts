@@ -1,11 +1,13 @@
-// Region comments on images — the OVERLAY (plans/file-review.md, Slice 3; contract E5).
+// Region comments on images — the OVERLAY (plans/file-review.md: "Slice 3: region comments on images", and the
+// "Images and PDFs" paragraph under "UX").
 //
 // A person reading a figure wants to point at a part of it — the axis label that is wrong, the bar that
 // should not be there — and until now the only comment an image took was on the file as a whole. This
 // module puts a drawing surface over every rendered image the viewer shows (the standalone image body,
 // or each figure in rendered markdown): a `position: relative` wrapper around the <img>, an absolutely
 // positioned overlay the size of the DRAWN image, and on it one rectangle per region comment, placed by
-// CSS percentages from the stored fractions, so it is right at any viewer width by construction. A drag
+// CSS percentages from the stored fractions, so it is right at any viewer width by construction, and
+// appended largest first, so a rectangle inside another stays above it and can be clicked (paint). A drag
 // on the overlay becomes a region (region-geometry.ts does the arithmetic); the panel (file-comments.ts)
 // decides what a drawn region means — a new comment's composer, or the re-placement of an existing one.
 //
@@ -59,7 +61,8 @@ export type LayerHooks = {
 /** The thumbnail's bounds in CSS pixels; the crop keeps its own aspect inside them. */
 export const THUMB_MAX: Size = { width: 240, height: 140 };
 
-/** Whether the primary pointer is a finger (a phone or tablet): region drawing is off there (E5). */
+/** Whether the primary pointer is a finger (a phone or tablet): region drawing is off there (plans/file-review.md,
+ *  Slice 3: desktop only in v1; decision 26). */
 export function isCoarsePointer(): boolean {
   try { return window.matchMedia("(pointer: coarse)").matches; } catch { return false; }
 }
@@ -230,12 +233,22 @@ export class RegionLayer {
 
   /** Rebuild the rectangles: one per mark (a control: data-act="fcopen", data-id, a Tab stop), the
    *  composer's pending region when there is one, and the re-place cue on the overlay. Returns the controls
-   *  so the panel can register them as its own. Called on every paint pass, so nothing is ever stacked. */
+   *  so the panel can register them as its own. Called on every paint pass, so nothing ever accumulates.
+   *
+   *  The rectangles go down LARGEST FIRST (stackOrder). They are absolutely positioned siblings with no z-index,
+   *  so the one appended later paints over, and is hit before, the ones appended before it. Appended in card
+   *  order, a rectangle drawn later around a whole plot covered the detail rectangle drawn earlier inside it, and
+   *  a click at the detail's centre opened the plot's card, with the panel closed (the browser's own hit test)
+   *  and open alike (the press handed on to the rectangle it began on) — the 2026-09-06 review. Largest first, a
+   *  rectangle inside another is always above it, so every rectangle can be reached from the mouse wherever no
+   *  smaller one covers it; the Tab order follows, outer to inner. Two identical rectangles keep card order, the
+   *  later above; the one under it is still a Tab stop and has its card in the panel. The pending region comes
+   *  last, above them all, as before. */
   paint(marks: RegionMark[], pending: Region | null, replacing: boolean): HTMLElement[] {
     const o = this.overlay; const doc = o.ownerDocument;
     for (const n of Array.from(o.childNodes)) if (n !== this.band) o.removeChild(n);
     const out: HTMLElement[] = [];
-    for (const m of marks) {
+    for (const m of stackOrder(marks)) {
       const r = mk(doc, "div", "fc-region" + (m.state === "stale" ? " fc-stale" : m.state === "unknown" ? " fc-unknown" : ""));
       r.setAttribute("style", styleAttr({ ...regionStyle(m.region), ...(m.style || {}) }));
       r.dataset.act = "fcopen"; r.dataset.id = m.id;
@@ -259,6 +272,14 @@ export class RegionLayer {
     const parent = this.wrap.parentNode;
     if (parent) { parent.insertBefore(this.img, this.wrap); parent.removeChild(this.wrap); }
   }
+}
+
+/** The order the rectangles are appended in, which is their stacking order: by area, largest first, so a
+ *  rectangle inside another is above it; equal areas keep the given (card) order. The index breaks ties, so the
+ *  result does not lean on the engine's sort being stable. */
+export function stackOrder(marks: RegionMark[]): RegionMark[] {
+  const area = (r: Region): number => r.w * r.h;
+  return marks.map((m, i) => ({ m, i })).sort((a, b) => area(b.m.region) - area(a.m.region) || a.i - b.i).map((x) => x.m);
 }
 
 /** The card's thumbnail: the region cropped from the picture onto a canvas, drawn from the <img> itself

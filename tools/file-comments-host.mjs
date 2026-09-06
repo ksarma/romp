@@ -696,11 +696,22 @@ function embeddedHashesFor(ctx, rootDir, store) {
 // an embed inside fenced code renders as text and is skipped. Each is {start, end, dest} over the
 // text's offsets, dest exactly as written, which is what a region comment's `src` is. The targets
 // test runs the panel's fixture forms through this so the two readers stay in step.
+//
+// Linear in the text, on purpose: `comment` and `retarget` run this over the WHOLE file (a
+// reference-style embed's destination sits in a definition anywhere in it) under the kernel's 10 s
+// deadline, and the viewer shows texts up to 2 MB. Before the Slice 3 review two parts of the
+// reading were quadratic — fence membership scanned per embed (#fences × #embeds), and the
+// one-regex `<img>` form rescanning from every `<img` to the next `>` — so a 2 MB file of repeated
+// fences and embeds, or of `<img ` with no `>`, took the host past the deadline on every attempt,
+// and no region could be placed on any figure in it (measured). The embeds test pins the cost and
+// the agreement with the one-regex reading.
 const LABEL = '(?:\\\\.|[^\\[\\]\\\\])*';
 const IMG_INLINE = new RegExp('!\\[(' + LABEL + ')\\]\\([ \\t]*(?:<([^<>\\n]*)>|([^\\s()]*(?:\\([^\\s()]*\\)[^\\s()]*)*))(?:[ \\t]+(?:"[^"]*"|\'[^\']*\'|\\([^()]*\\)))?[ \\t]*\\)', 'g');
 const IMG_FULL_REF = new RegExp('!\\[(' + LABEL + ')\\]\\[(' + LABEL + ')\\]', 'g');
 const IMG_SHORT_REF = new RegExp('!\\[(' + LABEL + ')\\](?![\\[(])', 'g');
-const IMG_HTML = /<img\b[^>]*?\bsrc[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/gi;
+const IMG_OPEN = /<img\b/gi;
+const SRC_ATTR = /\bsrc[ \t]*=[ \t]*/gi;
+const NOT_BARE = /[\s"'>]/;
 const REF_DEF = /^ {0,3}\[((?:\\.|[^\[\]\\])+)\]:[ \t]*<?([^\s>]+)>?/gm;
 const normLabel = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 
@@ -721,9 +732,83 @@ function fencedRanges(text) {
   return out;
 }
 
+// Whether offset i lies in one of the fenced ranges: a binary search, since fencedRanges walks the
+// lines once and so yields them sorted and disjoint.
+function inFencedRange(fences, i) {
+  let lo = 0;
+  let hi = fences.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (fences[mid][1] <= i) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < fences.length && fences[lo][0] <= i;
+}
+
+// The raw `<img …>` tags of a text, each {start, end, dest}, in order: exactly the matches of
+//   /<img\b[^>]*?\bsrc[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/gi
+// (the panel's regex), without its cost. That regex rescans from every `<img` to the next `>`, so a
+// text of repeated `<img ` with no `>` costs #tags × distance. Read as the regex reads: from each
+// `<img\b`, its window runs to the first `>` after it; the tag's src is the first `src=` in the
+// window whose value can be read — a quoted value runs to its closing quote, even across `>` and
+// newlines, a bare one to the next whitespace, quote or `>` — and is followed by a `>` somewhere
+// later; the match runs through the value to the next `>`. Linear because every position asked of
+// the cursors below is asked in increasing order, a tag's window is scanned for `src=` at most once
+// (when a tag has no usable src, no `<img` between it and its `>` has one either — their windows
+// are the tail of its own — so the walk resumes past that `>`), and a value's chars are inside the
+// match they complete.
+function htmlImgTags(text) {
+  const out = [];
+  const lastGt = text.lastIndexOf('>');
+  if (lastGt < 0) return out;
+  // Monotone cursors: the first '>' / '"' / "'" at or after the position last asked, or -1.
+  let gt = -1;
+  const nextGt = (i) => { if (gt < i) gt = text.indexOf('>', i); return gt; };
+  const quote = { '"': -1, "'": -1 };
+  const nextQuote = (ch, i) => { if (quote[ch] < i) quote[ch] = text.indexOf(ch, i); return quote[ch]; };
+  let srcAt = -1;   // the `src=` last found: its offset, and the offset past its `=` and spaces
+  let srcEnd = -1;
+  const nextSrc = (i) => {
+    if (srcAt >= i) return srcAt;
+    SRC_ATTR.lastIndex = i;
+    const m = SRC_ATTR.exec(text);
+    if (m) { srcAt = m.index; srcEnd = SRC_ATTR.lastIndex; } else { srcAt = Infinity; srcEnd = Infinity; }
+    return srcAt;
+  };
+  let pos = 0;
+  let m;
+  while (pos <= lastGt) {
+    IMG_OPEN.lastIndex = pos;
+    m = IMG_OPEN.exec(text);
+    if (!m) break;
+    const start = m.index;
+    const winEnd = nextGt(start + 4);
+    if (winEnd < 0) break;
+    let dest;
+    let valueEnd = -1;
+    for (let from = start + 4; nextSrc(from) < winEnd; from = srcAt + 1) {
+      const v = srcEnd;
+      const ch = text[v];
+      if (ch === '"' || ch === "'") {
+        const close = nextQuote(ch, v + 1);
+        if (close >= 0 && close < lastGt) { dest = text.slice(v + 1, close); valueEnd = close + 1; break; }
+      } else if (v < lastGt && !NOT_BARE.test(ch)) {
+        let e = v + 1;
+        while (e < text.length && !NOT_BARE.test(text[e])) e++;
+        dest = text.slice(v, e); valueEnd = e; break;
+      }
+    }
+    if (valueEnd < 0) { pos = winEnd + 1; continue; }
+    const end = nextGt(valueEnd) + 1;
+    out.push({ start, end, dest });
+    pos = end;
+  }
+  return out;
+}
+
 export function imageEmbeds(text) {
   const fences = fencedRanges(text);
-  const inFence = (i) => fences.some(([a, b]) => i >= a && i < b);
+  const inFence = (i) => inFencedRange(fences, i);
   const defs = new Map();
   let m;
   REF_DEF.lastIndex = 0;
@@ -732,11 +817,11 @@ export function imageEmbeds(text) {
   const push = (start, len, dest) => {
     if (dest !== undefined && !inFence(start)) out.push({ start, end: start + len, dest });
   };
-  for (const re of [IMG_INLINE, IMG_FULL_REF, IMG_SHORT_REF, IMG_HTML]) re.lastIndex = 0;
+  for (const re of [IMG_INLINE, IMG_FULL_REF, IMG_SHORT_REF]) re.lastIndex = 0;
   while ((m = IMG_INLINE.exec(text))) push(m.index, m[0].length, m[2] ?? m[3] ?? '');
   while ((m = IMG_FULL_REF.exec(text))) push(m.index, m[0].length, defs.get(normLabel(m[2] || m[1])));
   while ((m = IMG_SHORT_REF.exec(text))) push(m.index, m[0].length, defs.get(normLabel(m[1])));
-  while ((m = IMG_HTML.exec(text))) push(m.index, m[0].length, m[1] ?? m[2] ?? m[3] ?? '');
+  for (const t of htmlImgTags(text)) push(t.start, t.end - t.start, t.dest);
   out.sort((a, b) => a.start - b.start);
   return out.filter((e, i) => !i || e.start >= out[i - 1].end);   // a shortcut form inside a longer one: the longer wins
 }

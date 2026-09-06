@@ -487,7 +487,7 @@ test("mediaElement() is null for a text body even when the rendered markdown car
   assert.deepEqual(ctx.renderedImages(), [], "a repaint rebuilt the body: the hand-laid figures went with the old one, and innerHTML parses nothing here");
 });
 
-test("rewriteFigureSrcs, executed over a sanitized DOM stand-in: relative srcs go to the kernel's /file for <dir>/<src> with the authored value kept in data-fv-src; absolute paths, http(s), data:, blob: and empty srcs stay; a remote sid relays", async () => {
+test("rewriteFigureSrcs, executed over a sanitized DOM stand-in: relative srcs go to the kernel's /file for <dir>/<src> and absolute paths to /file for themselves, the authored value kept in data-fv-src; protocol-relative, http(s), data:, blob: and empty srcs stay; a remote sid relays", async () => {
   const fv = await mod();
   const DIR = ROOT + "/docs/";
   const q = (p: string) => "/file?path=" + encodeURIComponent(p) + "&sid=" + SID;
@@ -505,7 +505,7 @@ test("rewriteFigureSrcs, executed over a sanitized DOM stand-in: relative srcs g
     [mk("./plot.png"), q(DIR + "./plot.png"), "./plot.png"],
     [mk("six%20seven.png"), q(DIR + "six seven.png"), "six%20seven.png"],              // marked's percent-encoding decoded back to the path
     [mk("bad%E0%A4%A.png"), q(DIR + "bad%E0%A4%A.png"), "bad%E0%A4%A.png"],            // a malformed escape: taken as written
-    [mk(ROOT + "/docs/plot.png"), ROOT + "/docs/plot.png", null],                        // absolute path: untouched
+    [mk(ROOT + "/docs/plot.png"), q(ROOT + "/docs/plot.png"), ROOT + "/docs/plot.png"],  // absolute path: /file for the path itself, as the poll and the host read it (file-view-figures-absolute.test.ts)
     [mk("//cdn.example.test/x.png"), "//cdn.example.test/x.png", null],                 // protocol-relative: an absolute URL
     [mk("https://example.test/x.png"), "https://example.test/x.png", null],
     [mk("http://example.test/x.png"), "http://example.test/x.png", null],
@@ -713,9 +713,9 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   const rw = VIEW.split("export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {")[1].split("\n}\n")[0];
   assert.match(rw, /root\.querySelectorAll\("img\[src\]"\)\.forEach/, "a DOM walk over the sanitized tree");
   assert.match(rw, /const src = img\.getAttribute\("src"\) \|\| "";/);
-  assert.match(rw, /if \(!src \|\| src\.startsWith\("\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\)\) \{ img\.removeAttribute\("data-fv-src"\); return; \}/, "untouched: empty, absolute path, any scheme");
+  assert.match(rw, /if \(!src \|\| src\.startsWith\("\/\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\)\) \{ img\.removeAttribute\("data-fv-src"\); return; \}/, "untouched: empty, protocol-relative URL, any scheme — an absolute PATH is rewritten");
   assert.match(rw, /try \{ rel = decodeURI\(src\); \} catch \{/, "marked's percent-encoding undone; malformed taken as written");
-  assert.match(rw, /img\.setAttribute\("data-fv-src", src\);\n\s*img\.setAttribute\("src", fileUrl\(dir \+ rel, sid\)\);/, "the authored value kept, then the kernel URL for <dir>/<src>");
+  assert.match(rw, /img\.setAttribute\("data-fv-src", src\);\n\s*img\.setAttribute\("src", fileUrl\(rel\.startsWith\("\/"\) \? rel : dir \+ rel, sid\)\);/, "the authored value kept, then the kernel URL: the path itself when absolute, else <dir>/<src>");
   assert.doesNotMatch(rw, /innerHTML|outerHTML|\.replace\(|DOMParser/, "never a string rewrite of marked's HTML");
   assert.doesNotMatch(rw, /normalize|\.\.\//, "no client-side path normalization: the kernel resolves and gates `..`");
 });

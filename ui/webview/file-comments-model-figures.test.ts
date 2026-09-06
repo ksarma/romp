@@ -14,6 +14,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   describeComment, sendParts, buildSendMessage, cardModel, figurePath, figureTargets, figuresMoved, pollTargets, ABSENT,
+  decodeSrc, regionState, regionTarget,
   type Status, type StoreComment, type Target,
 } from "./file-comments-model";
 
@@ -58,13 +59,54 @@ function status(over: Partial<Status> = {}): Status {
 }
 
 // ── (1) the message names the figure ───────────────────────────────────────────────────────────────
-test("desc on an embedded figure names the region AND the figure, by its src as the embed writes it", () => {
+test("desc on an embedded figure names the region AND the figure, by its src decoded to the file's name on disk", () => {
   assert.equal(describeComment(onLatency, []), "on the region at 0.12, 0.40, 0.35, 0.20 of figs/latency.png");
   assert.equal(describeComment(onErrors, []), "on the region at 0.50, 0.50, 0.25, 0.10 of figs/errors.png");
   assert.ok(!describeComment(onLatency, []).includes("![p95 latency]"), "the region wins over the embed line's anchor; the figure is named by src, not by quoting the embed");
   const encoded: StoreComment = { ...onLatency, target: { ...onLatency.target!, src: "figs/p95%20latency.png" } };
-  assert.equal(describeComment(encoded, []), "on the region at 0.12, 0.40, 0.35, 0.20 of figs/p95%20latency.png",
-    "the spelling the session finds in the source, not a decoded path");
+  assert.equal(describeComment(encoded, []), "on the region at 0.12, 0.40, 0.35, 0.20 of figs/p95 latency.png",
+    "the file's name on disk, not the embed's percent-encoded spelling (the review of 2026-09-06: `ls figs/p95%20latency.png` got ENOENT while the host hashed the decoded file)");
+});
+
+// The review of 2026-09-06 (round 2): marked percent-encodes a destination with a space, so `![](figs/p95%20latency.png)`
+// is the only inline embed spelling for such a file — the normal case, not an edge — and the message named that
+// spelling while the host (decodeSrc) hashed `figs/p95 latency.png`. The figure's name in the message and on the card
+// now goes through the same decode the viewer and the host apply; the src AS WRITTEN stays what the target stores
+// and what keys embeddedHashes, so the decode is display-only and staleness still finds its hash.
+test("the figure's name is the src decoded as the viewer loads it and the host hashes it; the stored src and the hash key stay as written", () => {
+  assert.equal(decodeSrc("figs/p95%20latency.png"), "figs/p95 latency.png");
+  assert.equal(decodeSrc("figs/latency.png"), "figs/latency.png", "a plain src is itself");
+  assert.equal(decodeSrc("figs/100%.png"), "figs/100%.png", "a malformed escape is taken as written, as the host reads it");
+  assert.equal(decodeSrc("figs/%E0%A4%A.png"), "figs/%E0%A4%A.png");
+  assert.equal(decodeSrc("figs/caf%C3%A9.png"), "figs/café.png", "a UTF-8 escape decodes to the character the file name has");
+  const encoded: StoreComment = { ...onLatency, target: { ...onLatency.target!, src: "figs/p95%20latency.png" } };
+  const malformed: StoreComment = { ...onErrors, target: { ...onErrors.target!, src: "figs/100%.png" } };
+  assert.equal(describeComment(malformed, []), "on the region at 0.50, 0.50, 0.25, 0.10 of figs/100%.png", "unreadable as an escape: named as written, which IS the file's name");
+  // the name the message gives and the file the poll HEADs are one file: the desc's tail is figurePath's tail
+  for (const c of [onLatency, onErrors, encoded, malformed]) {
+    const named = describeComment(c, []).split(" of ")[1];
+    assert.ok(figurePath(ABS, c.target!.src!)!.endsWith("/" + named), named + " is the file the poll watches: " + figurePath(ABS, c.target!.src!));
+  }
+  // the sent message and the collapsed card carry the decoded name
+  const s = status({
+    store: { v: 3, path: "docs/figures.md", suggestions: [], comments: [encoded, malformed] },
+    unsent: { comments: [encoded.id, malformed.id], replies: [], accepted: 0, rejected: 0, watermark: null },
+    embeddedHashes: { "figs/p95%20latency.png": H("a"), "figs/100%.png": H("b") },
+  });
+  const parts = sendParts(s);
+  const body = buildSendMessage({ absPath: ABS, comments: parts.comments, accepted: 0, rejected: 0, tracked: false });
+  assert.ok(body.includes("Comment " + encoded.id + " (on the region at 0.12, 0.40, 0.35, 0.20 of figs/p95 latency.png):\nThe y axis is mislabeled.\n"), body);
+  assert.ok(!body.includes("%20"), "no percent-encoded spelling reaches the session");
+  assert.deepEqual(cardModel(s.store, [], []).map((c) => c.ref),
+    ["the region at 0.12, 0.40, 0.35, 0.20 of figs/p95 latency.png", "the region at 0.50, 0.50, 0.25, 0.10 of figs/100%.png"]);
+  // display-only: the target still stores the src as written, and embeddedHashes is still read by that key
+  assert.equal(regionTarget(REGION_A, "figs/p95%20latency.png").src, "figs/p95%20latency.png", "the target the comment sends keeps the embed's spelling");
+  assert.equal(regionState(encoded.target, s), "current", "staleness looks the hash up under the spelling the host keyed it by");
+  assert.equal(regionState({ ...encoded.target!, hash: H("z") }, s), "stale");
+  assert.equal(regionState(encoded.target, { embeddedHashes: { "figs/p95 latency.png": H("a") } }), "unknown", "the decoded spelling is not the key");
+  assert.match(MODEL, /at \+ " of " \+ decodeSrc\(c\.target\.src\)/, "the figure's name goes through the shared decode");
+  assert.doesNotMatch(MODEL, /at \+ " of " \+ c\.target\.src\b/, "never the src as written");
+  assert.ok(HOST.includes("function decodeSrc(src) {\n  try { return decodeURI(src); } catch { return src; }"), "the host's decode is the same two lines");
 });
 
 test("the standalone forms are unchanged: an image names the region alone, a PDF page its page (the plan's own two)", () => {
@@ -87,7 +129,7 @@ test("the message for two figures on one page tells them apart (the scenario the
   assert.ok(body.includes("Comment " + onLatency.id + " (on the region at 0.12, 0.40, 0.35, 0.20 of figs/latency.png):\nThe y axis is mislabeled.\n"), body);
   assert.ok(body.includes("Comment " + onErrors.id + " (on the region at 0.50, 0.50, 0.25, 0.10 of figs/errors.png):\nStart this one at zero.\n"), body);
   assert.ok(body.startsWith("[obsidian-diff] I left 2 comments on " + ABS + ".\n"), "the header and the rest are untouched: the kernel prints the client's desc verbatim, so the parenthetical is the one place this lands");
-  assert.match(MODEL, /at \+ " of " \+ c\.target\.src/, "the figure follows the region phrase the way a PDF's page does");
+  assert.match(MODEL, /at \+ " of " \+ decodeSrc\(c\.target\.src\)/, "the figure follows the region phrase the way a PDF's page does");
 });
 
 test("the card's one-line reference names the figure too — on a page with several, the collapsed card says which", () => {
