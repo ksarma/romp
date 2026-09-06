@@ -16,13 +16,16 @@ Every bug fix or feature change lands with a test (repo rule). Four suites:
 - **`*.bats`** — the shell surfaces: `bin/romp`, the launch chain, hooks,
   postal CLI. Keep them GNU/BSD-portable (CI runs bats on ubuntu).
   Run: `bats tests/*.bats`.
-  Any test that runs the real `bin/romp-manager`, or whose subject shells out
-  to tmux, must isolate the tmux socket directory and floor `ROMP_CLI_SCOPE=0`:
-  `load tmux-private`, `tmux_private_socket_dir "$TEST_DIR"` in setup (it
-  exports `TMUX_TMPDIR` under the test dir and creates it first; tmux 3.4
-  silently uses the machine's default socket directory when `TMUX_TMPDIR`
-  names a missing one), and `tmux_private_kill` in teardown before the
-  `rm -rf`. A tmux mock on PATH covers only the tests that install one: on
+  Any test whose subject shells out to tmux must isolate the tmux socket
+  directory: `load tmux-private`, `tmux_private_socket_dir "$TEST_DIR"` in
+  setup (it exports `TMUX_TMPDIR` under the test dir and creates it first;
+  tmux 3.4 silently uses the machine's default socket directory when
+  `TMUX_TMPDIR` names a missing one), and `tmux_private_kill` in teardown
+  before the `rm -rf` (it fails the test if the directory is already gone,
+  since a server started under it has then leaked). Tests that start the real
+  `bin/romp-manager` must also floor `ROMP_CLI_SCOPE=0`, so the manager never
+  starts a transient systemd scope on the live user manager; the hook suites
+  need not. A tmux mock on PATH covers only the tests that install one: on
   2026-09-06 a sweep ran `romp-manager-ensure.bats` while the machine's
   default tmux server was down, the real manager it starts ran `tmux
   start-server` on the default socket, and for the rest of the day the

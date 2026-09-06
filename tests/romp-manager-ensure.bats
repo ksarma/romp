@@ -117,8 +117,17 @@ teardown() {
     CPORT=7593 MPORT=7594            # teardown's /stop reaps the detached manager on this port
     run env ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKE" node "$MGR" ensure
     [ "$status" -eq 0 ]
+    # Wait for the control port, not the env file: startManager() runs tmux (which writes the file) a few
+    # milliseconds BEFORE it binds the port, and teardown's /stop needs the port. A test that returned on
+    # the file could hand teardown a manager that is not yet listening, and the /stop would miss it.
     local i
-    for i in $(seq 1 50); do [ -s "$FAKE_TMUX_ENV" ] && break; sleep 0.1; done
+    for i in $(seq 1 50); do
+        curl -fsS "http://127.0.0.1:$CPORT/status" >/dev/null 2>&1 && break
+        sleep 0.1
+    done
+    run curl -fsS "http://127.0.0.1:$CPORT/status"
+    [ "$status" -eq 0 ]
+    MGR_PID="$(printf '%s' "$output" | grep -oE '"pid":[ ]*[0-9]+' | head -1 | grep -oE '[0-9]+')"
     [ -s "$FAKE_TMUX_ENV" ]
     grep -qxF "TMUX_TMPDIR=$TEST_DIR/tmux" "$FAKE_TMUX_ENV"
     grep -qxF "TMUX_TMPDIR_IS_DIR=1" "$FAKE_TMUX_ENV"
@@ -137,7 +146,16 @@ teardown() {
     [[ "$TMUX_TMPDIR" == "$TEST_DIR/"* ]]
     [ -d "$TMUX_TMPDIR" ]
 
-    env PATH="$path" ROMP_MANAGER_PORT=7595 ROMP_SERVE_PORT=7596 ROMP_SERVE_BIN="$FAKE" \
+    # The server sources a tmux.conf at start-server, and the manager's call cannot be given -f from here
+    # (nor would -f on the helper's own kill/show calls help: a client passes -f only to a server it
+    # starts, and neither command starts one). So the developer's config is kept out by pointing HOME
+    # and XDG_CONFIG_HOME at the test dir, where no tmux.conf exists. The socket path does not depend on
+    # HOME (TMUX_TMPDIR alone decides it), so the pin below is unchanged; the manager's own use of HOME
+    # is its state dir, which this also keeps out of the developer's. /etc/tmux.conf, if a box has one,
+    # is still read; nothing short of -f avoids that.
+    local home="$TEST_DIR/home"; mkdir -p "$home"
+    env PATH="$path" HOME="$home" XDG_CONFIG_HOME="$home/.config" \
+        ROMP_MANAGER_PORT=7595 ROMP_SERVE_PORT=7596 ROMP_SERVE_BIN="$FAKE" \
         node "$MGR" up >/dev/null 2>&1 &
     MGR_PID=$!
     # startManager() runs tmux before it binds the control port, so a live port means the call is done.

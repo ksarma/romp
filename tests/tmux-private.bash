@@ -26,9 +26,16 @@ tmux_private_socket_dir() {   # $1 = the test's temp dir, removed in teardown
 # The machine's tmux: the first `tmux` on PATH that is NOT under the test directory, where every suite
 # here keeps its mocks. A mock on PATH answers `kill-server` with exit 0 and kills nothing (the first
 # run of the isolation leaked a server that way), so the kill below never goes through PATH.
-# Prints the path; fails when there is none (a box without tmux started no server either).
+# Prints the path. Exit 1 when there is none (a box without tmux started no server either); exit 2,
+# with a message, when tmux_private_socket_dir was never called: with TMUX_PRIVATE_TEST_DIR unset the
+# exclusion pattern would read `/*` and skip EVERY absolute PATH entry, so the search would report "no
+# tmux" on a box that has one, and a caller would take that for a box with nothing to kill.
 tmux_private_real_tmux() {
     local dir dirs
+    if [ -z "${TMUX_PRIVATE_TEST_DIR:-}" ]; then
+        echo "tmux-private: TMUX_PRIVATE_TEST_DIR is unset (tmux_private_socket_dir not called); refusing to pick a tmux" >&2
+        return 2
+    fi
     IFS=: read -ra dirs <<< "$PATH"
     for dir in "${dirs[@]}"; do
         [ -n "$dir" ] || continue
@@ -44,10 +51,25 @@ tmux_private_real_tmux() {
 # this can never resolve to the machine's server), and it runs before the directory is removed:
 # afterwards a bare `tmux kill-server` WOULD fall back to the machine's (the silent fallback above).
 # kill-server never starts a server, so a stale socket is inert.
+#
+# Exit 0 when tmux_private_socket_dir was never called (nothing was armed, so nothing can have leaked;
+# a teardown that runs after a setup failed early must not add a second error). Exit 1, with a message,
+# when it WAS called and the directory is already gone: the sockets went with it, so any server started
+# under it is now unreachable by -S and has leaked. That is the teardown ordering bug this guards
+# (an `rm -rf "$TEST_DIR"` before the kill), and a silent exit 0 there would hide it.
 tmux_private_kill() {
-    local sock tmux
-    [[ -n "${TMUX_PRIVATE_DIR:-}" && -d "$TMUX_PRIVATE_DIR" ]] || return 0
-    tmux="$(tmux_private_real_tmux)" || return 0
+    local sock tmux rc
+    [ -n "${TMUX_PRIVATE_DIR:-}" ] || return 0
+    if [ ! -d "$TMUX_PRIVATE_DIR" ]; then
+        echo "tmux-private: $TMUX_PRIVATE_DIR is gone before tmux_private_kill ran; a server started under it has leaked (call tmux_private_kill before the rm -rf)" >&2
+        return 1
+    fi
+    tmux="$(tmux_private_real_tmux)" && rc=0 || rc=$?
+    case "$rc" in
+        0) ;;
+        1) return 0 ;;    # no tmux on the box: no server was started
+        *) return 1 ;;    # refused (message already printed)
+    esac
     for sock in "$TMUX_PRIVATE_DIR"/tmux-*/*; do
         [ -S "$sock" ] || continue
         "$tmux" -S "$sock" kill-server 2>/dev/null || true
