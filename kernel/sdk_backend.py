@@ -3753,6 +3753,14 @@ class SdkSession:
         with self._lock:
             return list(self._pending)
 
+    def fed_texts(self) -> list[str]:
+        """The texts FED to the current client whose ResultMessage has not landed (`_inflight_texts`,
+        oldest first); thread-safe. A mid-turn send lives here from the inputs() pop until the turn
+        settles: the CLI holds it, queued behind the running turn, to splice at the next tool boundary.
+        prune_live reads this so no floor retires the echo of a message the CLI provably still holds."""
+        with self._lock:
+            return list(self._inflight_texts)
+
     def unqueue(self, idx: int, expect: str | None = None) -> str | None:
         """Remove the queued turn at position `idx` (the chat's queued list is this same _pending order)
         and return its raw text, or None if it's gone — a user-todo ANSWER comes back as its
@@ -6219,15 +6227,24 @@ class SdkSession:
 
 LIVE_TAIL_CAP = 100
 
-# A path-looking token (absolute or ~-rooted): the one case where an echo's text-match against the
-# transcript can structurally FAIL — the transcript extracts an attached file's path out of the user
-# text (the user 2026-06-25) — so only these echoes stay eligible for the genuine-human-turn floor
+# An IMAGE path (absolute or ~-rooted, a known image extension): the one case where an echo's
+# text-match against the transcript can structurally FAIL. The CLI reads an image path typed or
+# dragged into the composer and rewrites it in the submitted text to "[Image #N]" — the picture
+# lands as an image block, the path is gone from the record's text (the user 2026-06-25, the
+# screenshots-piling-up bug) — so only these echoes stay eligible for the genuine-human-turn floor
 # retire in prune_live. Everything else prunes by its own text landing, or persists (a visible loss).
-_PATHY_RE = re.compile(r"(?:^|[\s'\"`(])(?:~/|/)[^\s'\"`)]+")
+# NARROWED 2026-09-06 from "any absolute or ~-rooted path": the transcript extracts nothing else, yet
+# the old predicate matched a quote chip's `path:line` source label, so a staged comment fed into a
+# running turn was retired as a stale echo the second its sibling landed — while its message was
+# still in the CLI's queue, with nothing left to show it for the 30 s until the splice. The
+# extension set is the twin of the kernel's _IMG_PATH_RE (_user_images reads the extraction back
+# from the transcript with the same set; tests/test_kernel_fed_echo_absorbed.py pins the parity).
+_IMG_PATH_RE = re.compile(r"(?:^|[\s'\"`(])((?:~/|/)[^\s'\"`()]+\.(?:png|jpe?g|gif|webp|bmp|svg))\b", re.I)
 
 
 def _path_bearing(text: str) -> bool:
-    return bool(_PATHY_RE.search(text or ""))
+    """True when `text` carries an image path the CLI would extract (see _IMG_PATH_RE)."""
+    return bool(_IMG_PATH_RE.search(text or ""))
 
 
 def _evict_live_overflow(d: dict, cap: int = LIVE_TAIL_CAP) -> None:
@@ -9989,10 +10006,28 @@ class SdkBackend:
         can be neither queued nor landed, and the blanket floor hid exactly that in-flight message the
         moment any other human record landed. A plain-text echo now prunes ONLY by its own text landing —
         and a genuinely dropped send's echo PERSISTS, so the loss shows (the tmux echo's semantics).
-        (Echo-only: real stream atoms have no _echo_text and prune by uuid as before.)"""
+        (Echo-only: real stream atoms have no _echo_text and prune by uuid as before.)
+
+        FED TEXTS OUTRANK THE FLOOR (2026-09-06). An echo whose text the session has fed to the CLI but
+        not yet landed (`fed_texts`, the `_inflight_texts` twin of `inflight`) is in flight by
+        construction: the CLI holds it queued behind the running turn and splices it at the next tool
+        boundary, minutes later if that boundary is slow. It retires on exactly two events — its text
+        lands (the absorbed atom's queued_command text reaches the kernel's _atom_user_texts) or the CLI
+        dies holding it (_reconcile_stranded / _mark_dropped_echoes flag it dropped and clear the fed
+        list, so the guard lifts with the loss visible). Two staged comments fed back to back showed
+        the hole: the first landed at second 39, the second was queued; its echo carried a quote chip's
+        `path:line` label, the old any-path predicate called that path-bearing, and the floor retired it
+        as stale — the store emptied, and the message was invisible for the 30 s until the splice."""
         d = self._live.get(sid)
         if not d:
             return
+        fed: set = set()
+        sess_map = getattr(self, "sessions", None)   # getattr: bound-method test doubles skip __init__
+        if sess_map is not None:
+            with self._lock:
+                s = sess_map.get(sid)
+            if s is not None:
+                fed = set(s.fed_texts())
         # `tx_user_texts` may be a MAPPING text → the newest record time carrying it (the kernel's
         # _merge_live_atoms ships that since T237b): an echo then lands by text only through a record
         # written AT OR AFTER its own send — a fork copies the parent's history, and "ok" / "go ahead" /
@@ -10010,8 +10045,11 @@ class SdkBackend:
             a = d[k]
             et = a.get("_echo_text")
             landed = a.get("uuid") in tx_uuids or _by_text(a, et)
+            # a DROPPED echo is no longer held by anyone (the marking cleared the fed list with the CLI
+            # that held it), so the guard covers live echoes only — a flagged loss keeps the old rules
+            in_flight = bool(et) and not a.get("dropped") and et in fed
             stale_echo = (bool(et) and human_floor and a.get("t", 0) <= human_floor
-                          and not a.get("command") and _path_bearing(et))
+                          and not a.get("command") and not in_flight and _path_bearing(et))
             # A COMMAND atom (the CLI's streamed /model, /compact feedback) from a TURN-LESS control
             # request may never get a transcript record to land against — retire it once a genuine human
             # turn postdates it, so the stale confirmation line doesn't ride pinned inside every later
