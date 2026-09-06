@@ -27500,10 +27500,14 @@ def _note_ws_drop(c, why, frame_len, key=None):
                             int(c.get("qbytes") or 0), int(frame_len)))
         if "bytes behind" in str(why):
             _WS_DROP_SEQ[0] += 1
+            # the row names the pane as the rail does — _PANE_ORDER's label, so the Outline pane is not its
+            # internal app id to the person reading it; an app with no rail label keeps its id. The stderr
+            # line above keeps the id: it is the log's word for the pane, shared with _drop_dead_ws_client.
+            app = c.get("app") or "?"
             _WS_DROPS.append({"seq": _WS_DROP_SEQ[0], "t": time.time(),
                               "text": "The %s pane's live connection was dropped: it had %.1f MB of "
                                       "updates waiting and had stopped reading them. It reconnects on "
-                                      "its own." % (c.get("app") or "?", int(c.get("qbytes") or 0) / 1e6)})
+                                      "its own." % (dict(_PANE_ORDER).get(app, app), int(c.get("qbytes") or 0) / 1e6)})
             del _WS_DROPS[:-20]
     except Exception:
         pass
