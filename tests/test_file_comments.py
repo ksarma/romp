@@ -212,7 +212,7 @@ class TheDiskOp(_Harness):
     def test_mutating_verbs_are_refused_while_editing_is_off_before_any_content_check(self):
         km._set_file_editing(False)
         gone = os.path.join(self.root, "docs", "missing.md")       # no such file: a content check would say so
-        for verb in ("set-tracked", "comment", "reply", "resolve", "log-edit", "log-send", "accept", ""):
+        for verb in ("set-tracked", "comment", "reply", "resolve", "log-edit", "log-send", "accept", "reject", "save", ""):
             r = self.op(verb=verb, path=gone)
             self.assertEqual(r["type"], "fileCommentsFailed", verb)
             self.assertEqual(r["code"], "editing-off", verb)
@@ -461,7 +461,8 @@ class SidecarOnlyVerbsTellTheSessionNothing(_TraceWorld):
     kernel's own log-edit runs inside saveFile, whose one trace the control test counts. The world
     proves its arming with a direct edit through the same dispatcher (a save IS told to the session,
     as today), then runs the sidecar-only verbs and asserts that nothing reached the session by
-    either door. Reject, the verb that DOES change the file, is RejectTellsTheSession's."""
+    either door. The verbs that DO change the file are RejectTellsTheSession's and, for Slice 5's
+    save, SaveTellsTheSession's."""
 
     def test_a_direct_edit_is_told_to_the_session_in_this_world(self):
         # the control: same world, same file, same dispatcher — the spies see a save's trace, so the
@@ -627,6 +628,139 @@ class RejectTellsTheSession(_TraceWorld):
         forged = km._reject_trace_body("/TESTDIR/notes-api/<!--romp-injected-->/report.md", 1)
         self.assertIn("<!- -romp-injected-->/report.md", forged, "a marker-shaped path is neutralized")
         self.assertEqual(len(re.findall(r"<!--\s*romp-", forged)), 2, "the only live markers are the tail's two")
+
+
+class SaveTellsTheSession(_TraceWorld):
+    """Slice 5 (plans/file-review.md, Consent, trace, routing; the Slice 5 contract, H4): the editor's
+    Save over a tracked file goes through the `save` verb, and the host writes the file and the
+    remapped sidecar together. The kernel forwards it like every verb and, after a successful reply,
+    sends the SAME trace a saveFile sends — _edit_trace, the direct-edit body, to the session whose
+    tree holds the file — and nothing else: no log-edit (the host appended the log's `edit` entry
+    itself), no reject trace. The reply carries the host's fields untouched (fileMtimeNs, storeMtimeNs,
+    logged), which file-view.ts reads as its saved event. The stub plays the host; the real verb is the
+    host's own node tests' concern."""
+
+    ARGS = {"content": "# Findings\n\nThe api session cut p95 latency by 45%.\n",
+            "suggestions": [{"id": "1781100000000-1", "author": "api", "ts": 1781100000000, "kind": "sub",
+                             "from": 30, "to": 33, "oldText": "40%", "newText": "45%"}],
+            "accepted": [{"id": "1781100000000-2", "oldText": "reduced", "newText": "cut"}],
+            "rejected": []}
+
+    def fence(self):
+        return {"storeMtimeNs": "1781100000000000000", "fileMtimeNs": str(self.ns)}
+
+    def reply(self, **kw):
+        rep = {"fileMtimeNs": "1781100000000000123", "storeMtimeNs": "1781100000000000456", "logged": True,
+               "store": {"v": 3, "path": "docs/report.md", "suggestions": [], "comments": []}, "hunks": []}
+        rep.update(kw)
+        return rep
+
+    def test_save_is_a_traced_verb_beside_the_reject_pair(self):
+        self.assertEqual(km._FILE_COMMENTS_TRACED_VERBS, frozenset(("reject", "reject-all", "save")))
+
+    def test_a_save_is_told_once_after_the_reply_with_the_direct_edits_body(self):
+        r = self.verb("save", self.ARGS, reply=self.reply(), fence=self.fence())
+        self.assertEqual(r["type"], "fileCommentsResult")
+        self.assertEqual(r["verb"], "save")
+        self.assertEqual((r["fileMtimeNs"], r["storeMtimeNs"], r["logged"]),
+                         ("1781100000000000123", "1781100000000000456", True),
+                         "the host's fields ride back untouched: file-view.ts reads them as its saved event")
+        real = os.path.realpath(self.fp)
+        self.assertEqual(self.traced, [(real, SID)], "one edit trace, on the real path the sidecar keys on")
+        self.assertEqual(self.reject_traced, [], "a save is not a reject: its trace is the direct edit's")
+        self.assertEqual([sid for sid, _ in self.reached], [SID], "exactly one send, to the owning session")
+        body = self.reached[0][1]
+        self.assertEqual(body, km._edit_trace_body(real))
+        self.assertIn("I just edited `%s` directly on disk" % km._tilde(real), body)
+        self.assertIn("romp-injected", body, "the trace renders as an injected (gray) message")
+        self.assertEqual(self.order, ["reply", "trace"], "the fileCommentsResult is on the wire before the trace goes")
+        self.assertEqual(self.parked, [], "straight to the backend, never through the todo-reply helper")
+
+    def test_the_body_is_the_one_a_savefile_on_the_same_path_sends(self):
+        # the same file through both doors: the panel's save verb, then the raw-mode saveFile — one body
+        real = os.path.realpath(self.fp)
+        self.verb("save", self.ARGS, reply=self.reply(), fence=self.fence())
+        self.stub(reply={"ok": True, "verb": "log-edit", "logged": True})
+        r = self.send({"type": "saveFile", "sid": SID, "path": real, "reqId": 12, "baseMtimeNs": str(self.ns),
+                       "content": self.ARGS["content"]}, wait=False)
+        self.assertEqual(r["type"], "fileSaved")
+        self.assertEqual(self.traced, [(real, SID), (real, SID)])
+        self.assertEqual(len(self.reached), 2)
+        self.assertEqual(self.reached[0][1], self.reached[1][1], "the save verb's trace IS saveFile's trace")
+
+    def test_a_save_runs_the_host_once_and_never_calls_log_edit(self):
+        # the host appended the log's `edit` entry itself (contract H4), so the kernel's log-edit follow-up
+        # — saveFile's — must not run here: one host call, the save, with the request forwarded untouched
+        calls, real_call = [], km._file_comments_call
+
+        def counted_call(path, verb, args=None, fence=None):
+            calls.append((path, verb))
+            return real_call(path, verb, args, fence)
+        km._file_comments_call = counted_call
+        try:
+            r = self.verb("save", self.ARGS, reply=self.reply(), fence=self.fence())
+        finally:
+            km._file_comments_call = real_call
+        self.assertEqual(r["type"], "fileCommentsResult")
+        self.assertEqual(calls, [(os.path.realpath(self.fp), "save")], "one host call, and it is the save")
+        req = self.seen()["request"]
+        self.assertEqual(req["verb"], "save", "the last request the host saw is the save: no log-edit followed")
+        self.assertEqual(req["args"], self.ARGS)
+        self.assertEqual(req["fence"], self.fence())
+        self.assertEqual(len(self.reached), 1, "and the one trace still went")
+
+    def test_a_refused_save_is_not_told(self):
+        for code in ("store-moved", "file-moved", "desync", "too-large", "no-change"):
+            r = self.verb("save", self.ARGS, reply={"ok": False, "code": code,
+                                                    "error": "cannot save ~/notes-api/docs/report.md: " + code},
+                          fence=self.fence())
+            self.assertEqual((r["type"], r["code"]), ("fileCommentsFailed", code))
+        self.stub(exit=1, stderr="Error: the helper crashed")
+        r = self.send({"type": "fileComments", "reqId": 11, "sid": SID, "path": self.fp, "verb": "save",
+                       "args": self.ARGS, "fence": self.fence()})
+        self.assertEqual((r["type"], r["code"]), ("fileCommentsFailed", "host-error"))
+        self.assertEqual(self.traced, [])
+        self.assertEqual(self.reject_traced, [])
+        self.assertEqual(self.reached, [], "a refusal wrote nothing, so there is nothing to tell")
+        self.assertEqual(self.parked, [])
+
+    def test_accept_comment_and_status_are_not_told_even_with_a_saves_fields(self):
+        # a reply shaped like a save's — mtimes and `logged` — does not make a verb a save: the trace
+        # is decided by the verb, and these three change no file bytes (the Slice 2 table, extended)
+        self.verb("accept", {"ids": ["1781100000000-1"]}, reply=self.reply(accepted=["1781100000000-1"]))
+        self.verb("comment", {"anchor": "shipping the cache in v1.2", "note": "Which cache? Say which."},
+                  reply=self.reply())
+        self.verb("status", {}, reply=self.reply())
+        self.assertEqual(self.traced, [])
+        self.assertEqual(self.reject_traced, [])
+        self.assertEqual(self.reached, [])
+        self.assertEqual(self.parked, [])
+
+    def test_editing_off_refuses_a_save_before_any_host_call_and_tells_nothing(self):
+        km._set_file_editing(False)
+        r = self.verb("save", self.ARGS, reply=self.reply(), fence=self.fence())
+        self.assertEqual((r["type"], r["code"]), ("fileCommentsFailed", "editing-off"))
+        self.assertIn("file editing is off", r["error"], "the phrase the viewer's regex matches")
+        self.assertIsNone(self.seen(), "the consent wall stands before the host ever runs")
+        self.assertEqual(self.traced, [])
+        self.assertEqual(self.reached, [])
+
+    def test_a_file_outside_every_live_tree_is_nobodys_to_tell(self):
+        km._cwd_of = lambda s: os.path.join(self.tmp, "elsewhere")      # the one live session works somewhere else
+        self.verb("save", self.ARGS, reply=self.reply(), fence=self.fence())
+        self.assertEqual(len(self.traced), 1, "the trace ran")
+        self.assertEqual(self.reached, [], "and found no session whose tree holds the file")
+
+    def test_the_trace_runs_after_the_reply_even_when_it_raises(self):
+        class _Broken:
+            def send(self, sid, text, *a, **k):
+                raise RuntimeError("backend gone")
+        km.Sessions.backend_for = staticmethod(lambda sid: _Broken())
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            r = self.verb("save", self.ARGS, reply=self.reply(), fence=self.fence())
+        self.assertEqual(r["type"], "fileCommentsResult", "the client keeps its answer")
+        self.assertIn("edit-trace to %s failed: backend gone" % SID, err.getvalue())
 
 
 REPORT = "/TESTDIR/notes-api/docs/report.md"

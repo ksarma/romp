@@ -31308,7 +31308,8 @@ def _edit_trace_body(path):
 
 
 def _edit_trace(path, sid):
-    """After a dashboard raw-mode save lands, TELL the session whose worktree it hit (the user
+    """After a dashboard raw-mode save lands (or the comments panel's `save` verb, which writes the
+    file the same way — _file_comments_after), TELL the session whose worktree it hit (the user
     2026-08-22): an agent's world must never change silently under it — the never-lose-the-thread
     rule, pointed the other way from _save_file's mtime guard (which protects the human from the
     agent; this protects the agent from the human). Best-effort by design, loud on failure: a trace
@@ -31836,21 +31837,34 @@ def _file_comments_reply(client, msg, op, fail_type, after=None):
     threading.Thread(target=_run, daemon=True).start()
 
 
-_FILE_COMMENTS_TRACED_VERBS = frozenset(("reject", "reject-all"))   # the verbs that change the FILE's bytes
+_FILE_COMMENTS_TRACED_VERBS = frozenset(("reject", "reject-all", "save"))   # the verbs that change the FILE's bytes
 
 
 def _file_comments_after(msg, rep):
     """What follows a fileComments reply (plans/file-review.md, Consent, trace, routing): after a
     successful reject or reject-all — the host answered ok and its `rejected` list names the ids it
-    resolved — the session whose tree holds the file is told, once, through _reject_trace. Nothing
-    follows any other verb, a refusal, or a reject that resolved nothing (an empty list: the file did
-    not change). The count comes from the host's reply, never from the client's request (the ids a
-    client ASKED to reject may have landed, coalesced or been refused by id), so a successful reject
-    whose reply lacks the list is a contract break between the host and the kernel: it is written to
-    stderr and no trace goes, because a count the kernel would have to guess is not one to tell the
-    session. The path is resolved as the op resolved it (_file_comments_path: the real file), so the
-    owner lookup and the body name the same file the sidecar keys on."""
-    if rep.get("type") != "fileCommentsResult" or str(msg.get("verb") or "") not in _FILE_COMMENTS_TRACED_VERBS:
+    resolved — the session whose tree holds the file is told, once, through _reject_trace; after a
+    successful `save` (Slice 5: the editor's Save over a tracked file, which the host writes together
+    with the remapped sidecar) it is told through _edit_trace, the SAME trace a saveFile sends — the
+    file changed under the session exactly as a direct edit changes it, and nothing else follows:
+    the host appended the log's `edit` entry itself, so the kernel never calls log-edit here (the
+    Slice 5 contract, H4). Nothing follows any other verb, a refusal, or a reject that resolved nothing
+    (an empty list: the file did not change). The count comes from the host's reply, never from the
+    client's request (the ids a client ASKED to reject may have landed, coalesced or been refused by
+    id), so a successful reject whose reply lacks the list is a contract break between the host and
+    the kernel: it is written to stderr and no trace goes, because a count the kernel would have to
+    guess is not one to tell the session. The path is resolved as the op resolved it
+    (_file_comments_path: the real file), so the owner lookup and the body name the same file the
+    sidecar keys on — for a save too, where saveFile names the client's own spelling; the two agree
+    whenever that spelling is not a symlink, and the owner is the same either way (_edit_trace_sid
+    resolves the real path)."""
+    verb = str(msg.get("verb") or "")
+    if rep.get("type") != "fileCommentsResult" or verb not in _FILE_COMMENTS_TRACED_VERBS:
+        return
+    sid = msg.get("sid") or None
+    path = _file_comments_path(msg.get("path"), sid) or str(msg.get("path") or "")
+    if verb == "save":
+        _edit_trace(path, sid)
         return
     rejected = rep.get("rejected")
     if not isinstance(rejected, list):
@@ -31859,8 +31873,6 @@ def _file_comments_after(msg, rep):
         return
     if not rejected:
         return
-    sid = msg.get("sid") or None
-    path = _file_comments_path(msg.get("path"), sid) or str(msg.get("path") or "")
     _reject_trace(path, sid, len(rejected))
 
 
@@ -40892,13 +40904,14 @@ class Handler(BaseHTTPRequestHandler):
         elif msg and msg.get("type") == "fileComments":
             # The viewer's comments panel (plans/file-review.md): ONE sidecar verb on the owning
             # kernel's disk — status, set-tracked, comment, reply, resolve, accept, accept-all, reject,
-            # reject-all, and the kernel's own log verbs — run by the node host script and answered on
+            # reject-all, save, and the kernel's own log verbs — run by the node host script and answered on
             # the sending socket with the client's reqId. Routed by sid like saveFile (federation strips
             # the host prefix), so a remote session's file is answered by the kernel that holds its
             # disk. Threaded like fileGitLink: the host script is a subprocess with a 10 s deadline,
             # and the recv loop must not wait on it. After the reply, like saveFile's trace: a reject
-            # or reject-all that changed the file is told to the owning session (_file_comments_after);
-            # sidecar-only verbs tell it nothing.
+            # or reject-all that changed the file is told to the owning session (_file_comments_after),
+            # and Slice 5's save — file and sidecar written together by the host — sends the edit
+            # trace itself, with no log-edit (the host logged); sidecar-only verbs tell it nothing.
             _file_comments_reply(client, msg, _file_comments_op, "fileCommentsFailed", after=_file_comments_after)
         elif msg and msg.get("type") == "fileCommentsSend":
             # Send to session: the file's unsent comments and decisions as ONE message in the person's
