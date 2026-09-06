@@ -203,8 +203,10 @@ if [ "$auto" = 1 ]; then
 fi
 
 # read_pr <n>: the fields the checks use, into pr_* variables. Two reads: the flat fields, then the
-# check rollup reduced by gh's --jq to one row per check, kind|name|status|conclusion|state (a
-# CheckRun has status and conclusion, a commit StatusContext has state; '|' keeps empty fields).
+# check rollup reduced by gh's --jq to one row per check, kind/name/status/conclusion/state (a
+# CheckRun has status and conclusion, a commit StatusContext has state). The fields are joined on
+# US (\x1f), a byte no check name holds; a '|' shifted the fields of a check named 'build | linux',
+# and a tab is IFS whitespace to `read`, which folds the empty fields together.
 read_pr() {
     local view
     view="$("$GH" pr view "$1" --json state,isDraft,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus)"
@@ -216,7 +218,7 @@ read_pr() {
     pr_mergeable="$(json_field "$view" mergeable)"
     pr_mss="$(json_field "$view" mergeStateStatus)"
     pr_rollup="$("$GH" pr view "$1" --json statusCheckRollup \
-        --jq '(.statusCheckRollup // [])[] | [.__typename, (.name // .context), .status, .conclusion, .state] | map(. // "") | join("|")')"
+        --jq '(.statusCheckRollup // [])[] | [.__typename, (.name // .context), .status, .conclusion, .state] | map(. // "") | join("\u001f")')"
 }
 
 # stash_pr <i> / load_pr <i>: the pr_* variables of prs[i], kept from the first pass.
@@ -234,7 +236,7 @@ load_pr() {
 classify_checks() {
     local kind name status conclusion cstate word
     checks_failing=""; checks_pending=""; checks_n=0
-    while IFS='|' read -r kind name status conclusion cstate; do
+    while IFS=$'\x1f' read -r kind name status conclusion cstate; do
         [ -n "$kind$name$status$conclusion$cstate" ] || continue
         checks_n=$((checks_n + 1))
         if [ "$kind" = StatusContext ]; then word="$cstate"

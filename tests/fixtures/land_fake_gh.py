@@ -194,9 +194,9 @@ def apply_jq(rows, expr):
         return "\n".join(r.get("type", "") for r in rows)
     if expr == "to_entries[] | select(.value != null) | .key" and isinstance(rows, dict):
         return "\n".join(k for k, v in rows.items() if v is not None)
-    if expr == '(.statusCheckRollup // [])[] | [.__typename, (.name // .context), .status, .conclusion, .state] | map(. // "") | join("|")':
-        return "\n".join("|".join([c.get("__typename") or "", c.get("name") or c.get("context") or "",
-                                   c.get("status") or "", c.get("conclusion") or "", c.get("state") or ""])
+    if expr == '(.statusCheckRollup // [])[] | [.__typename, (.name // .context), .status, .conclusion, .state] | map(. // "") | join("\\u001f")':
+        return "\n".join("\x1f".join([c.get("__typename") or "", c.get("name") or c.get("context") or "",
+                                      c.get("status") or "", c.get("conclusion") or "", c.get("state") or ""])
                          for c in rows.get("statusCheckRollup") or [])
     if expr.startswith(".") and "." not in expr[1:] and isinstance(rows, dict):
         v = rows.get(expr[1:])

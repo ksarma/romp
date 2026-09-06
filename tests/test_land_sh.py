@@ -510,6 +510,27 @@ class Readiness(_Base):
         p = fx.land("101")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
+    def test_a_check_name_containing_a_pipe_keeps_its_fields(self):
+        """The rollup rows were '|'-joined and read back on '|', so a check named 'build | linux' put
+        the rest of its name into the status field: a red check read as pending (refused for the
+        wrong reason without --auto; armed with it). The rows are joined on a byte no name holds."""
+        fx = self.fx
+        red = [{"__typename": "CheckRun", "name": "build | linux", "status": "COMPLETED", "conclusion": "FAILURE"}]
+        pending = [{"__typename": "CheckRun", "name": "build | linux", "status": "IN_PROGRESS", "conclusion": ""},
+                   {"__typename": "StatusContext", "context": "ci | lint", "state": "SUCCESS"}]
+        fx.pr(101, "a", checks=red)
+        self.assertRefused(fx.land("101"), "#101's checks are failing: build | linux (FAILURE)")
+        fx.pr(101, "a", checks=pending)
+        self.assertRefused(fx.land("101"), "#101's checks are pending: build | linux.")
+        fx.set_gh(repo={"allow_auto_merge": True}, rules=[{"type": "required_status_checks"}])
+        fx.pr(101, "a", checks=red)
+        self.assertRefused(fx.land("--auto", "101"), "#101's checks are failing: build | linux (FAILURE)")
+        self.assertFalse(fx.gh()["prs"]["101"].get("autoMerge"), "not armed")
+        fx.pr(101, "a", checks=pending)
+        p = fx.land("--auto", "101")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("#101's checks are pending (build | linux); --auto lands it when they pass", p.stdout)
+
     def test_no_checks_at_all_is_noted_not_refused(self):
         fx = self.fx
         fx.pr(101, "a", checks="none")
