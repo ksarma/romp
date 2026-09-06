@@ -40853,6 +40853,12 @@ class Handler(BaseHTTPRequestHandler):
                 # that holds every session's turn starts, so it needs the EXPLICIT serve token
                 # (_write_token_ok) on top of the preamble's _authorize — the /busy?drain=1 rule.
                 # No SDK backend ever built → nothing to hold or wait for: quiet at once.
+                # Every 200 names this process's pid: `romp down` ends by SIGTERMing a kernel nothing
+                # above it stopped, and the pid it signals must come from a route the serve token
+                # gates. GET /version's pid is auth-exempt and vouches for nothing: a CLI aimed at
+                # the wrong port (an empty ROMP_KERNEL_PORT falls to the default) took another
+                # romp's kernel pid from it and stopped every session there (2026-09-06). A pid
+                # given here was given under the caller's token, to a kernel the caller manages.
                 if not self._write_token_ok(q):
                     return self._send(403, json.dumps({"ok": False, "error":
                         "forbidden: /down needs the serve token (X-Romp-Token or ?token=)"}), "application/json")
@@ -40867,14 +40873,16 @@ class Handler(BaseHTTPRequestHandler):
                 if b.get("cancel") is True:
                     if be is not None and hasattr(be, "cancel_quiesce"):
                         be.cancel_quiesce()
-                    return self._send(200, json.dumps({"ok": True, "canceled": True}), "application/json")
+                    return self._send(200, json.dumps({"ok": True, "canceled": True, "pid": os.getpid()}),
+                                      "application/json")
                 wait = b.get("wait", DOWN_WAIT_DEFAULT_S)
                 if isinstance(wait, bool) or not isinstance(wait, (int, float)) or wait < 0 or wait > DOWN_WAIT_MAX_S:
                     return self._send(400, json.dumps({"ok": False, "error":
                         "wait must be a number of seconds in [0, %d]" % int(DOWN_WAIT_MAX_S)}), "application/json")
                 if be is None or not hasattr(be, "quiesce"):
                     return self._send(200, json.dumps({"ok": True, "quiet": True, "busy": 0,
-                                                       "inflight": [], "waited": 0}), "application/json")
+                                                       "inflight": [], "waited": 0, "pid": os.getpid()}),
+                                      "application/json")
                 be.quiesce(float(wait) + DOWN_HOLD_GRACE_S)
                 t0 = time.monotonic()
                 busy = be.busy_count()
@@ -40884,7 +40892,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, json.dumps({
                     "ok": True, "quiet": busy == 0, "busy": busy,
                     "inflight": be.inflight_names() if busy else [],
-                    "waited": round(time.monotonic() - t0, 1)}), "application/json")
+                    "waited": round(time.monotonic() - t0, 1), "pid": os.getpid()}), "application/json")
             if u.path == "/update-dismiss":
                 # the banner's Not-now, PERSISTED (the user 2026-08-31): the dismissal outlives the
                 # page and the kernel — event-keyed, a NEW sha/tag offers again. Body: {"tag": id}.

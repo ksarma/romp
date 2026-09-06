@@ -8,7 +8,9 @@ count reaches 0 or `wait` runs out, and answers what a stop right now would cut.
 the explicit-token gate (a WRITE that holds every session's turn starts, so the ambient cookie is
 not enough — the /busy?drain=1 rule), the wait-for-quiet loop against a fake backend whose count
 falls mid-wait, the bounded give-up with the in-flight names, the cancel arm, both create doors
-refusing while the hold is in force, and the no-backend case (nothing to hold: quiet at once).
+refusing while the hold is in force, the no-backend case (nothing to hold: quiet at once), and
+the pid every 200 names, which is the only pid `romp down` will send a stop signal to (2026-09-06:
+the auth-exempt /version vouches for nothing, and a CLI aimed at the wrong port took a pid from it).
 Synthetic only: the real Handler on an ephemeral loopback port, a fake backend, invented token.
 """
 import json
@@ -123,11 +125,42 @@ class DownRoute(unittest.TestCase):
         self.assertTrue(body["ok"])
         self.assertEqual(len(self.be.quiesced), 1)
 
+    # ── the pid: the direct stop's proof of ownership ────────────────────────
+    def test_a_200_names_this_kernels_pid_on_every_arm(self):
+        # `romp down` ends by SIGTERMing a kernel nothing above it stopped, at a pid it must not
+        # take from the auth-exempt /version: that route answers any local process, so a CLI aimed
+        # at the wrong port (an empty ROMP_KERNEL_PORT falls to the default) read another romp's
+        # kernel pid there and signaled it (2026-09-06). The pid a kernel names on a 200 here was
+        # given under the caller's serve token, so it is the pid of a kernel the caller manages.
+        for body in ({"wait": 0}, {"cancel": True}):
+            status, out = self._down(body)
+            self.assertEqual(status, 200, repr(body))
+            self.assertEqual(out["pid"], os.getpid(), repr(body))
+        km._sdk_backend = None                      # the no-backend arm too
+        status, out = self._down({"wait": 0})
+        self.assertEqual(status, 200)
+        self.assertEqual(out["pid"], os.getpid())
+
+    def test_a_wrong_or_missing_token_gets_a_refusal_with_no_pid(self):
+        # a kernel that is not the caller's must hand nothing a stop could act on
+        for headers, why in ((None, "no credential"),
+                             ({"X-Romp-Token": "not-this-kernels-token"}, "a wrong header token"),
+                             ({"Cookie": "romp_token=" + km.TOKEN}, "the ambient cookie alone")):
+            status, body = self._post("/down", {"wait": 0}, headers=headers)
+            self.assertIn(status, (401, 403), why)
+            # the preamble's text/plain refusal comes back as {"raw": text}: no pid anywhere in it
+            self.assertNotIn("pid", json.dumps(body), why)
+        status, body = self._post("/down?token=not-this-kernels-token", {"wait": 0})
+        self.assertIn(status, (401, 403))
+        self.assertNotIn("pid", json.dumps(body))
+        self.assertEqual(self.be.quiesced, [], "a refused caller holds nobody's turns either")
+
     # ── the quiesce ─────────────────────────────────────────────────────────
     def test_a_quiet_kernel_answers_at_once_and_holds_for_wait_plus_grace(self):
         status, body = self._down({"wait": 5})
         self.assertEqual(status, 200)
-        self.assertEqual(body, {"ok": True, "quiet": True, "busy": 0, "inflight": [], "waited": 0.0})
+        self.assertEqual(body, {"ok": True, "quiet": True, "busy": 0, "inflight": [], "waited": 0.0,
+                                "pid": os.getpid()})
         self.assertEqual(self.be.quiesced, [5 + km.DOWN_HOLD_GRACE_S],
                          "the hold outlives the wait by the grace, so the stop that follows lands "
                          "on a still-quiet kernel")
@@ -204,7 +237,7 @@ class DownRoute(unittest.TestCase):
         self.assertTrue(self.be.quiescing())
         status, body = self._down({"cancel": True})
         self.assertEqual(status, 200)
-        self.assertEqual(body, {"ok": True, "canceled": True})
+        self.assertEqual(body, {"ok": True, "canceled": True, "pid": os.getpid()})
         self.assertEqual(self.be.canceled, 1)
         self.assertFalse(self.be.quiescing())
         status, _ = self._post("/new", {"name": "web", "dir": tempfile.mkdtemp(), "backend": "sdk"},
@@ -244,11 +277,12 @@ class DownRoute(unittest.TestCase):
         km._sdk_backend = None
         status, body = self._down({"wait": 5})
         self.assertEqual(status, 200)
-        self.assertEqual(body, {"ok": True, "quiet": True, "busy": 0, "inflight": [], "waited": 0})
+        self.assertEqual(body, {"ok": True, "quiet": True, "busy": 0, "inflight": [], "waited": 0,
+                                "pid": os.getpid()})
         # the cancel arm is a no-op with the same answer
         status, body = self._down({"cancel": True})
         self.assertEqual(status, 200)
-        self.assertEqual(body, {"ok": True, "canceled": True})
+        self.assertEqual(body, {"ok": True, "canceled": True, "pid": os.getpid()})
 
 
 class QuiesceLease(unittest.TestCase):
