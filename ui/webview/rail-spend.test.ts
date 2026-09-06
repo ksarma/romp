@@ -42,8 +42,11 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   assert.ok(!KERNEL.includes("authTail"), "no key material in the status payload either");
   // rolling day/week read the HOUR buckets (192h = 8 days fits both); month-to-date reads the day
   // ledger. fiveHour/sevenDay stay emitted ONE release for version skew (the user 2026-08-13).
-  assert.match(KERNEL, /"day": _rolling\(24\), "week": _rolling\(7 \* 24\)/);
-  assert.match(KERNEL, /"fiveHour": _rolling\(5\), "sevenDay": _rolling\(7 \* 24\)/);
+  // …the seven-day walk runs once and first (its keys are every other window's), `sevenDay` and `week`
+  // are the same sum in two dicts, so a budget set on one stays off the other (round 6, 2026-09-06)
+  assert.match(KERNEL, /seven_days = _rolling\(7 \* 24\)/);
+  assert.match(KERNEL, /"fiveHour": _rolling\(5\), "sevenDay": seven_days,/);
+  assert.match(KERNEL, /"day": _rolling\(24\), "week": dict\(seven_days\)/);
   assert.ok(KERNEL.includes("k.startswith(month)"));
   // the accumulator: cumulative-per-process DELTAS, and each bucket splits out the key's own turns
   assert.ok(BACKEND.includes("delta = total - self._last_cost_total if total >= self._last_cost_total else total"));
