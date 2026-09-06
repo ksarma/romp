@@ -6,19 +6,33 @@
 # kill the user's kernels. Server-side clients (the kernel's Restart proxy, the
 # `romp on` CLI) send no Origin and must keep working.
 
+load free-port
+load tmux-private
+
 setup() {
     TEST_DIR="$(mktemp -d)"
     MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
+    # The manager under test is REAL, and startManager() runs `tmux start-server` before it binds the
+    # control port: a call this file has no interest in, which must still never reach the machine's
+    # tmux server (tests/tmux-private.bash has the 2026-09-06 incident). A no-op tmux on PATH absorbs
+    # it; the private socket directory catches any call that reaches the real binary anyway.
+    BIN="$TEST_DIR/bin"; mkdir -p "$BIN"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/tmux"
+    chmod +x "$BIN/tmux"
+    export PATH="$BIN:$PATH"
+    tmux_private_socket_dir "$TEST_DIR"
     # Fake kernel launcher: stays alive without binding a real port.
     FAKE="$TEST_DIR/fake-serve"
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$FAKE"
     chmod +x "$FAKE"
-    CPORT=7571; MPORT=7572
+    free_port CPORT MPORT   # fresh per test, never a literal (tests/free-port.bash)
 }
 
 teardown() {
     [[ -n "${MGR_PID:-}" ]] && kill "$MGR_PID" 2>/dev/null || true
-    rm -rf "$TEST_DIR"
+    # The kill before the rm (a server the real tmux started must not outlive the test), and last, so
+    # its failure is teardown's status: bats swallows a failing command mid-teardown.
+    tmux_private_kill && rm -rf "$TEST_DIR"
 }
 
 @test "manager rejects cross-site Origin, allows no-Origin clients" {

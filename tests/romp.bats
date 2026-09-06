@@ -3,6 +3,9 @@
 # Resolve path to the romp script under test
 ROMP_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp"
 
+load free-port
+load tmux-private
+
 setup() {
     TEST_DIR="$(mktemp -d)"
     WORK_DIR="$TEST_DIR/myproject"
@@ -78,6 +81,11 @@ MOCK
     _stub_claude "2.1.226"
 
     export PATH="$MOCK_DIR:$PATH"
+    # The romp-manager tests below start a REAL bin/romp-manager, whose startup runs `tmux start-server`,
+    # and `romp new -t` runs `tmux new-session`: the mock above takes both, and the private socket
+    # directory keeps any call that reaches the real binary off the machine's tmux server
+    # (tests/tmux-private.bash has the 2026-09-06 incident).
+    tmux_private_socket_dir "$TEST_DIR"
     unset TMUX            # default: outside tmux → attach-session branch
     # Hermetic HOME: bin/romp probes $HOME/.claude/romp-postal.mcp.json (would
     # nondeterministically append --mcp-config on a dev machine) and writes the
@@ -92,7 +100,9 @@ teardown() {
     # Tests that launch a background romp-manager record its pid in MGR_PID so we
     # always reap it (and its child kernels), even if an assertion aborted the test.
     [[ -n "${MGR_PID:-}" ]] && kill "$MGR_PID" 2>/dev/null
-    rm -rf "$TEST_DIR"
+    # The kill before the rm (a server the real tmux started must not outlive the test), and last, so
+    # its failure is teardown's status: bats swallows a failing command mid-teardown.
+    tmux_private_kill && rm -rf "$TEST_DIR"
 }
 
 # Helper — runs romp with merged stdout+stderr so BATS captures errors
@@ -1016,7 +1026,8 @@ MOCK
     command -v node >/dev/null 2>&1 || skip "node not available"
     local mgr; mgr="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
     # port nothing is listening on → the control client must fail fast with a clear message
-    run env ROMP_MANAGER_PORT=7531 node "$mgr" status
+    local port; free_port port
+    run env ROMP_MANAGER_PORT=$port node "$mgr" status
     [ "$status" -eq 1 ]
     [[ "$output" == *"not running"* ]]
 }
@@ -1032,7 +1043,7 @@ MOCK
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$fake"
     chmod +x "$fake"
 
-    local cport=7541 mport=7542 kport=7543
+    local cport mport kport; free_port cport mport kport
     # Launch the manager in the background; it auto-spawns 'main' on mport via the fake launcher.
     ROMP_MANAGER_PORT=$cport ROMP_SERVE_PORT=$mport ROMP_SERVE_BIN="$fake" \
         node "$mgr" up >/dev/null 2>&1 &
@@ -1075,7 +1086,7 @@ MOCK
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$fake"
     chmod +x "$fake"
 
-    local cport=7551 mport=7552 kport=7553
+    local cport mport kport; free_port cport mport kport
     ROMP_MANAGER_PORT=$cport ROMP_SERVE_PORT=$mport ROMP_SERVE_BIN="$fake" \
         node "$mgr" up >/dev/null 2>&1 &
     MGR_PID=$!
