@@ -31654,10 +31654,10 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
     is pending) and wears the shape below instead. The comments shape would have said "I left 0
     comments", printed the two `--thread <id>` command lines with no id to put in them, and asked
     the session to address a list that was not there (the review, 2026-09-06): a template speaking,
-    and a pointer at a thread that does not exist. So the decisions-only shape names the file and
-    the decisions, says outright that nothing needs a reply, and keeps the closing ask so the loop
-    still comes back. The prefix stays: to the vendored skill it means "you are the editor
-    for the file named here", which is as true of a decision as of a comment."""
+    and a reply command aimed at a comment that does not exist. So the decisions-only shape names the
+    file and the decisions, says outright that nothing needs a reply, and keeps the closing ask so
+    the loop still comes back. The prefix stays: to the vendored skill it means "you are the
+    editor for the file named here", which is as true of a decision as of a comment."""
     ap = _neutralize_romp_markers(str(path or ""))
     if not comments:
         lines = ["[obsidian-diff] I went over %s." % ap, ""]

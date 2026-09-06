@@ -1631,6 +1631,19 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-del { border-bottom: 2px solid var(--fc-author, var(--accent)); cursor: pointer; user-select: none; -webkit-user-select: none; }
 .fc-del::before { content: attr(data-fc-text); text-decoration: line-through; color: var(--dim);
   background: color-mix(in srgb, var(--err) 9%, transparent); }
+/* the author's chip beside a change in Raw (the plan's UX: the `▍web` after the marked text, "each with the author's
+   session chip in the session's color"): generated content on the LAST element painted for a change (data-fc-chip, set
+   by paintChangesRaw), so, like the struck label and the row number, it is no node and never enters a selection or a
+   walk. A pill at the card chip's size (.fc-chip: 0.72em, 600, --radius-pill), in the mark's own author colour as a
+   wash and a hairline under the surface's ink: the mark carries the session's background alone (--fc-author), and a
+   dark or a light session colour as INK would fail against one theme. inline-block so the pill has a box to cap and
+   clip; middle, not baseline, because a box that clips its overflow puts its baseline on its bottom edge. Rendered
+   marks carry no chip (the plan gives the chip to Raw). One selector, on the attribute the painter alone sets. */
+[data-fc-chip]::after { content: attr(data-fc-chip); display: inline-block; vertical-align: middle;
+  margin-left: 4px; padding: 0 6px; border-radius: var(--radius-pill); font-size: 0.72em; font-weight: 600; line-height: 1.3;
+  color: var(--fg); background: color-mix(in srgb, var(--fc-author, var(--accent)) 22%, transparent);
+  box-shadow: inset 0 0 0 1px var(--fc-author, var(--accent)); max-width: 10em; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
 /* ── end file comments panel ── */
 
 /* ── the viewer's image + PDF bodies (a .png used to open as line-numbered mojibake). The <img>

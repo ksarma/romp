@@ -47,7 +47,7 @@ import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paint
 import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-map";   // the change painters (contract D4)
 import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
 import {
-  type Status, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, actionLabel, cardModel, changeCards, changeGroups,
+  type Status, type Hunk, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, actionLabel, cardModel, changeCards, changeGroups,
   foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, buildSendMessage, unsentCount,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   type PollBaseline,
@@ -64,6 +64,37 @@ const FILE_VERBS = new Set(["reject", "reject-all"]);
 // retried (mutateOnce) — the plan's fence rule retries by stable change or comment id, and a retry here would decide
 // the changes that landed since the click, which the person has not seen. The list is re-read and the choice is theirs again.
 const BULK_VERBS = new Set(["accept-all", "reject-all"]);
+// The verbs that decide changes BY ID (accept and reject, `{ids}`). The plan's fence rule retries these by stable id,
+// and the id IS stable — the change under it is not: a same-author track-edit landing inside or beside a pending
+// change is coalesced INTO it (engine.coalesceOps keeps the earlier op's id and grows its texts), so after a moved
+// fence the clicked id can name a larger change than the card showed, and a retry would accept, or revert, text the
+// person never saw. mutate therefore keeps each change as its card showed it (seen), and mutateOnce decides nothing
+// when a change still pending under that id reads differently now (changedSince): the row under the card says so and
+// the list, re-read, is theirs again — the BULK_VERBS rule, for an id whose content moved. An id that is GONE is left
+// to the host, which refuses it `no-change` by name (the review2 suite pins that path).
+const DECIDE_VERBS = new Set(["accept", "reject"]);
+/** A change as its card showed it when Accept or Reject was clicked: the texts, which the id does not fix. */
+export type SeenChange = { id: string; kind: string; oldText: string; newText: string };
+/** The changes a by-id decision names (`args.ids`), as the status they were clicked over describes them. */
+export function seenChanges(s: Status | null, args: Record<string, unknown>): SeenChange[] {
+  const ids = Array.isArray(args.ids) ? args.ids.map(String) : [];
+  const out: SeenChange[] = [];
+  for (const h of (s && s.hunks) || []) if (ids.includes(String(h.id))) out.push({ id: String(h.id), kind: h.kind, oldText: h.oldText, newText: h.newText });
+  return out;
+}
+/** The seen changes still pending under their id that no longer read as they did — grown by a track-edit coalesced
+ *  into them. A change whose id is gone is not listed: the host's `no-change` refusal names it. */
+export function changedSince(seen: SeenChange[], hunks: Hunk[]): SeenChange[] {
+  return seen.filter((c) => {
+    const h = hunks.find((x) => String(x.id) === c.id);
+    return !!h && (h.kind !== c.kind || h.oldText !== c.oldText || h.newText !== c.newText);
+  });
+}
+/** The row under the card when a decision stood down (changedSince): in the person's words, and what to do next. */
+export function changedRowText(n: number): string {
+  return "Nothing decided: the session edited " + (n === 1 ? "this change" : "these changes") + " after you clicked, and "
+    + (n === 1 ? "it now reads" : "they now read") + " differently. Look it over and try again.";
+}
 // How long a `status` ask may stay unanswered before the panel says so. A kernel that has the op answers
 // within its own bound: the host script is cut off at 10 s (contract C2, _FILE_COMMENTS_TIMEOUT) and the
 // refusal is sent then, so an ask still open past that plus the relay was never received by a kernel with
@@ -346,6 +377,7 @@ class Panel {
   rejectAllConfirm = false;                 // the Reject all confirm row is showing (pane-local, like the folder-off confirm)
   paintedChanges = new Set<string>();       // the change ids whose marks the current view shows; the rest get Reveal
   busyVerb = new Map<string, string>();     // slot → the verb in flight, so a card's Accept/Reject relabels itself (ui/CLAUDE.md)
+  seen = new Map<string, SeenChange[]>();   // slot → the changes a by-id decision was clicked on, as the card showed them (DECIDE_VERBS)
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
   resolvedOpen = false;
   trackChoice = false;                      // the on-toggle's scope row (file / folder) is showing
@@ -776,12 +808,22 @@ class Panel {
     this.busy.add(slot); this.busyVerb.set(slot, verb); this.errors.delete(slot); this.render();
     try {
       if (!(await this.requireStatus(slot))) return null;
+      // the changes as the card showed them: with a status held, requireStatus asked nothing, so this is the status the
+      // card was rendered from. Every attempt (mutateOnce) is checked against it, the retry after a moved fence included.
+      if (DECIDE_VERBS.has(verb)) this.seen.set(slot, seenChanges(this.status, args));
       if (!(await this.ctx.ensureEditingAllowed())) { this.errors.set(slot, { text: "Nothing written: comments need file editing on.", reload: false }); return null; }
       return await this.mutateOnce(verb, args, slot, false);
-    } finally { this.busy.delete(slot); this.busyVerb.delete(slot); this.render(); }
+    } finally { this.busy.delete(slot); this.busyVerb.delete(slot); this.seen.delete(slot); this.render(); }
   }
   private async mutateOnce(verb: string, args: Record<string, unknown>, slot: string, retried: boolean): Promise<Status | null> {
     const s = this.status;
+    // a by-id decision stands only over the change the card showed (DECIDE_VERBS): one still pending under the clicked
+    // id that reads differently now — grown by a track-edit coalesced into it, seen by the refresh a moved fence ran or
+    // by a status that landed while the consent was up — is not decided. The card shows the new reading; the row says
+    // the choice is theirs again. Not a refusal to surface: the host would have said ok.
+    const seen = this.seen.get(slot);
+    const grown = seen && s ? changedSince(seen, s.hunks || []) : [];
+    if (grown.length) { this.errors.set(slot, { text: changedRowText(grown.length), reload: false }); return null; }
     const fence: Record<string, string> = { storeMtimeNs: s && s.storeMtimeNs !== null ? s.storeMtimeNs : "", configMtimeNs: s && s.configMtimeNs !== null ? s.configMtimeNs : "" };
     if (FILE_VERBS.has(verb)) fence.fileMtimeNs = s ? s.fileMtimeNs : "";   // reject rewrites the file: the file's mtime as last seen (FILE_VERBS)
     try {
@@ -1120,7 +1162,14 @@ class Panel {
     // newText rides along so the painters verify that each change's new text sits at its offsets before painting the
     // batch: the hunks index the string the HOST read, and the viewer's text can differ from it — a BOM the fetch
     // stripped puts every mark one character off. Refused, the changes stay card-only, each with Reveal (D4).
-    const changes: ChangePaint[] = (s.hunks || []).map((h) => ({ id: h.id, kind: h.kind, curFrom: h.curFrom, curTo: h.curTo, oldText: h.oldText, newText: h.newText, author: h.author }));
+    // `label`: the chip beside a Raw mark reads the session's CURRENT name from the colour map, as the card's chip does
+    // (chip) — the sidecar's `author` is the name at write time, and after a rename the mark and the card must name the
+    // session alike. An author with no live match keeps the sidecar's label (the painter's own fallback, chipLabel).
+    const changes: ChangePaint[] = (s.hunks || []).map((h) => {
+      const aid = authorIdOf(store, h.id);
+      const col = aid && this.colors ? this.colors.get(aid) : null;
+      return { id: h.id, kind: h.kind, curFrom: h.curFrom, curTo: h.curTo, oldText: h.oldText, newText: h.newText, author: h.author, label: col ? col.name : undefined };
+    });
     const stylesFor = (c: ChangePaint): Record<string, string> => {
       const aid = authorIdOf(store, c.id);
       const col = aid && this.colors ? this.colors.get(aid) : null;
