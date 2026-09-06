@@ -572,13 +572,16 @@ export function followAdoption(st: TabGroupsState, prev: SessionViews | null | u
  *  section folds like any other (the user 2026-09-06), and folded, its header is the tab's stand-in. */
 export interface HeadWords { count: string; title: string; label: string }
 
-export function headWords(name: string, total: number, hidden: number, folded: boolean, holdsActive: boolean): HeadWords {
+export function headWords(name: string, total: number, hidden: number, folded: boolean, holdsActive: boolean, back = false): HeadWords {
   const n = (k: number) => `${k} session${k === 1 ? "" : "s"}`;
   const reading = holdsActive ? "; holds the tab you are reading" : "";
   const here = holdsActive ? ", holds the tab you are reading" : "";
   if (!folded) {
+    // `back`: the pane is showing this section's snapshot, the section is open and holds the tab being read
+    // (the click puts that transcript back, render.ts show-transcript), so the title says so, not "fold"
+    const click = back ? "click to go back to the transcript" : "click to fold this group and see its sessions at a glance";
     return { count: String(total), label: `${name}, ${n(total)}${here}`,
-             title: `${name} — ${n(total)}${reading}; click to fold this group and see its sessions at a glance; drag to reorder the groups` };
+             title: `${name} — ${n(total)}${reading}; ${click}; drag to reorder the groups` };
   }
   if (hidden === 0) {
     const all = total === 1 ? "its one session is" : `all ${total} sessions are`;
