@@ -3094,7 +3094,53 @@ class SpendRecord(unittest.TestCase):
         r2.total_cost_usd, r2.usage = 2.0, {"input_tokens": 100}
         self._feed(s, r2)
         self.assertEqual(self._day()["tokIn"], 200)
-        self.assertEqual(len(self.be._problems), 1, "said once per session")
+        self.assertEqual(len(self.be._problems), 1, "said once")
+
+    def test_the_sdk_cause_is_said_once_per_kernel_life_not_per_session_or_revive(self):
+        """The missing field is the imported SDK's, one for every session this kernel runs, so the line
+        is HOST-level: it names no session and its flag lives on the backend. Per session it filled the
+        error center with one near-identical card per live session (20 resumed sessions on an old SDK,
+        20 cards for one remedy, crowding the ring) and another on every dormant revive, because _ensure
+        builds a fresh SdkSession for a dead thread (2026-09-06)."""
+        web = self._spend_session("11111111-2222-3333-4444-aaaaaaaaaaaa")
+        api = self._spend_session("11111111-2222-3333-4444-bbbbbbbbbbbb")
+        web.name, api.name = "web", "api"
+        def sdk_result(total):
+            r = _ResultMessage()                   # no model_usage attribute: the SDK predates the field
+            r.total_cost_usd, r.usage = total, {"input_tokens": 100, "output_tokens": 20}
+            return r
+        self._feed(web, sdk_result(1.0))
+        self._feed(api, sdk_result(1.0))
+        self.assertEqual(len(self.be._problems), 1, "one card for one host-level remedy")
+        text = self.be._problems[0]["text"]
+        self.assertTrue(text.startswith("spend: every session's token columns"), text)
+        self.assertNotIn("web", text, "a host-level line names no session")
+        self.assertNotIn("api", text)
+        self.assertIn("predates 0.1.51", text)
+        self.assertTrue(self.be._usage_fallback_sdk_noted)
+        self.assertFalse(web._usage_fallback_noted, "the per-session flag is the CLI cause's, untouched")
+        # a dormant revive builds a fresh SdkSession for the same sid: nothing new to say
+        again = self._spend_session("11111111-2222-3333-4444-aaaaaaaaaaaa")
+        self._feed(again, sdk_result(1.0))
+        self.assertEqual(len(self.be._problems), 1)
+        self.assertEqual(self._day()["tokIn"], 300, "every turn's tokens still land")
+
+    def test_the_cli_cause_stays_per_session_and_names_it(self):
+        """A present-but-empty modelUsage is THIS session's CLI's doing on this result and can differ per
+        session, so that line names the session and is said once per session; it never spends the SDK
+        cause's backend flag."""
+        web = self._spend_session("11111111-2222-3333-4444-aaaaaaaaaaaa")
+        api = self._spend_session("11111111-2222-3333-4444-bbbbbbbbbbbb")
+        web.name, api.name = "web", "api"
+        u = {"input_tokens": 100, "output_tokens": 20}
+        self._feed(web, self._result(1.0, usage=u, model_usage=None))
+        self._feed(web, self._result(2.0, usage=u, model_usage={}))
+        self._feed(api, self._result(1.0, usage=u, model_usage=None))
+        texts = [p["text"] for p in self.be._problems]
+        self.assertEqual(len(texts), 2, "one per session, not one per turn")
+        self.assertTrue(texts[0].startswith("spend: web's token columns"), texts[0])
+        self.assertTrue(texts[1].startswith("spend: api's token columns"), texts[1])
+        self.assertFalse(self.be._usage_fallback_sdk_noted, "the CLI cause never spends the SDK's once flag")
 
     def test_model_usage_totals_and_result_token_totals(self):
         self.assertIsNone(sb.model_usage_totals(None))

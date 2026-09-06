@@ -471,19 +471,31 @@ def result_token_totals(msg):
     return out, False
 
 
-def usage_fallback_notice(name, msg):
-    """The once-per-session problem line for a paid result with no modelUsage (result_token_totals
-    took the `usage` fallback). Names the cause the message can tell apart: a ResultMessage with no
+def usage_fallback_is_sdk(msg):
+    """True when a paid result's missing modelUsage is the SDK's doing: a ResultMessage with no
     model_usage ATTRIBUTE at all is a claude-agent-sdk older than 0.1.51 (a dataclass field from there
-    on — None, not missing, when the CLI sends nothing); a field that is there but empty is the CLI's
-    doing."""
-    if not hasattr(msg, "model_usage"):
-        cause = ("its ResultMessage has no model_usage field, so the kernel imported a claude-agent-sdk that "
-                 "predates 0.1.51. A copy installed outside the sdkvenv shadows the venv's: upgrade or remove it.")
-    else:
-        cause = "the CLI emitted no modelUsage on a paid result."
+    on — None, not missing, when the CLI sends nothing). A HOST-level fact: the kernel imported one SDK
+    for every session it runs."""
+    return not hasattr(msg, "model_usage")
+
+
+def usage_fallback_notice(name, msg):
+    """The problem line for a paid result with no modelUsage (result_token_totals took the `usage`
+    fallback). The cause the message can tell apart decides both the words and how often the settle
+    says them: the SDK cause (usage_fallback_is_sdk) is the same for every session, so its line names no
+    session and is said ONCE PER KERNEL LIFE, on the backend's flag — said per session it filled the
+    error center with one near-identical card per live session (texts differing only by name, so they
+    could not collapse) and another on every dormant revive, for one remedy (2026-09-06); a field that
+    is there but empty is THIS session's CLI's doing on this result, which can differ per session, so
+    that line names the session and is said once per session."""
+    if usage_fallback_is_sdk(msg):
+        return ("spend: every session's token columns are per-turn main-loop figures from here on (no subagent, "
+                "sidechain or compaction tokens; dollars are unaffected). Cause: the ResultMessage has no "
+                "model_usage field, so the kernel imported a claude-agent-sdk that predates 0.1.51. A copy "
+                "installed outside the sdkvenv shadows the venv's: upgrade or remove it.")
     return ("spend: %s's token columns are per-turn main-loop figures from here on (no subagent, sidechain or "
-            "compaction tokens; dollars are unaffected). Cause: %s" % (name, cause))
+            "compaction tokens; dollars are unaffected). Cause: the CLI emitted no modelUsage on a paid result."
+            % name)
 
 
 # The first cost delta after a connect above which the recorder leaves a trace in the kernel log: an
@@ -3830,8 +3842,10 @@ class SdkSession:
         self._spend_first_result = False   # True from a connect until its first result settles: that
         #   result's delta is checked against SANE_TURN_USD (an info-line trace — see the constant), and
         #   the init handler may re-seed the watermarks while it is still True (a cwd correction)
-        self._usage_fallback_noted = False  # the once-per-session problem line for paid results with no
-        #   modelUsage (usage_fallback_notice) has been logged: the token columns are main-loop-only
+        self._usage_fallback_noted = False  # the once-per-session problem line for paid results whose
+        #   modelUsage the CLI left empty (usage_fallback_notice) has been logged: the token columns are
+        #   main-loop-only. The SDK cause (no model_usage field at all) is host-level and has the
+        #   BACKEND's once flag, _usage_fallback_sdk_noted — one card per kernel life, not per session
         # Pending conversation REWIND (the chat's edit-message branch): the target record uuid +
         # the transcript leaf recorded at request time (the one-shot guard — see rewind_disposition).
         # Seeded from the reg so a kernel death mid-rewind re-applies it iff nothing landed since.
@@ -5368,13 +5382,20 @@ class SdkSession:
                     # the turn's figure — diffing it as a counter recorded turn-to-turn growth (the 2.6M-token
                     # turn that landed as 6,346). It is ADDED to the watermarks so they keep meaning "tokens
                     # this process has accounted for": should modelUsage appear later in the same process,
-                    # its delta catches up the subagent tokens without re-counting what landed here. Said
-                    # ONCE per session, as a problem the user can act on (usage_fallback_notice): the token
-                    # columns are main-loop-only from here on; the dollars are unaffected.
+                    # its delta catches up the subagent tokens without re-counting what landed here. Said as
+                    # a problem the user can act on (usage_fallback_notice): the token columns are
+                    # main-loop-only from here on; the dollars are unaffected. ONCE PER KERNEL LIFE for the
+                    # SDK cause, which is the host's (the backend's flag: per session it was one card per
+                    # live session plus one per dormant revive, for a single remedy); once per session for
+                    # the CLI cause, which is this session's.
                     for k, v in totals.items():
                         turn_u[k] = v
                         self._last_usage_totals[k] = self._last_usage_totals.get(k, 0) + v
-                    if not getattr(self, "_usage_fallback_noted", False):   # getattr: __new__-built doubles
+                    if usage_fallback_is_sdk(msg):
+                        if not getattr(self.backend, "_usage_fallback_sdk_noted", False):   # getattr: test doubles
+                            self.backend._usage_fallback_sdk_noted = True
+                            self.backend._log(usage_fallback_notice(self.name, msg), problem=True)
+                    elif not getattr(self, "_usage_fallback_noted", False):   # getattr: __new__-built doubles
                         self._usage_fallback_noted = True
                         self.backend._log(usage_fallback_notice(self.name, msg), problem=True)
                 self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,
@@ -6546,6 +6567,8 @@ class SdkBackend:
         self.append_prompt_path = append_prompt_path
         self._log_cb = log
         self._thinking_override_logged = False   # thinking_override_note said once per backend (see _options)
+        self._usage_fallback_sdk_noted = False   # usage_fallback_notice's SDK cause said once per kernel life:
+        #   the imported SDK is the host's, one for every session (the CLI cause keeps a per-session flag)
         self.sessions: dict[str, SdkSession] = {}
         self._lock = threading.Lock()
         self._turn_seq: dict = {}                 # sid -> turns ended this kernel life (turn_seq; under _lock)
