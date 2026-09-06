@@ -265,15 +265,15 @@ class NamedSwapRefused(_Env):
         self.assertEqual(rc, 1)
         self.assertIn("kernel      reads sha256:%s in COMMAND mode" % fp, out)
         self.assertIn("MISMATCH    the kernel is in command mode and this shell is not: the kernel pinned command mode when it", out)
-        self.assertIn("this shell reads no ROMP_CREDENTIAL_COMMAND now (its environment, then service.env)", out)
-        # the /keycycle answer cannot say WHERE the line still is (the manager's environment, a service.env
-        # line removed since the kernel started, or the shell that ran `romp up` all read the same), so the
-        # report asserts no cause: it lists the three places, each with its remedy
+        self.assertIn("this shell reads no ROMP_CREDENTIAL_COMMAND now. The kernel got the line from one of:", out)
+        # the /keycycle answer cannot say WHERE the kernel got the line (the manager's environment, a
+        # service.env line removed since the kernel started, or the shell that ran `romp up` all read the
+        # same), so the report asserts no cause: it lists the three places, each with its remedy
         self.assertNotIn("the kernel's environment carries", out, "a cause to check, not a fact")
-        self.assertIn("- the manager's environment (the unit's Environment=, or service.env as the manager loaded it at", out)
-        self.assertIn("still carries it: restart the manager; every kernel inherits that copy, `romp refresh` too", out)
-        self.assertIn("- service.env carried it when the kernel started and lost it since: `romp refresh`", out)
-        self.assertIn("- the shell that ran `romp up` exported it: stop that `romp up`; start it from a shell without the line", out)
+        self.assertIn("- the manager's environment (the unit's Environment=, or service.env as the manager loaded it at its", out)
+        self.assertIn("start), which every kernel inherits: restart the manager; `romp refresh` alone keeps the mode", out)
+        self.assertIn("- service.env, edited since the kernel read it at its start: `romp refresh`", out)
+        self.assertIn("- the shell that ran `romp up`, which exported it: stop that `romp up`; start it from a shell without the line", out)
         # the manager restart is named by the commands that restart one: `romp-service install` is not
         # among them (on Linux it writes and enables the unit and leaves a running manager as it is)
         self.assertIn("The manager restart is `systemctl --user restart romp-manager`, or on macOS `launchctl kickstart -k", out)

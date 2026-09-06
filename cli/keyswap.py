@@ -225,8 +225,8 @@ def _compare(kfp, path, out, refreshed=None):
         return 0
     out("MISMATCH    the kernel is not reading this file's key. Usual causes: the service was installed")
     out("            with another env-file path that the kernel's environment does not carry (re-run")
-    out("            `romp-service install`), the file is unreadable to the kernel, or the file has no")
-    out("            %s line and the kernel still holds its startup key." % ks.KEY_VAR)
+    out("            `romp-service install`, then restart the manager), the file is unreadable to the kernel,")
+    out("            or the file has no %s line and the kernel still holds its startup key." % ks.KEY_VAR)
     return 1
 
 
@@ -246,9 +246,10 @@ def _cycle(sessions, all_, out, path=None, refresh=False):
     """Reconnect the named sessions through the kernel, and report what it did per session. The
     kernel's fingerprint is READ and compared with the file's FIRST: cycling a session while the kernel
     reads another file would re-present the kernel's unchanged key, so a mismatch refuses to cycle.
-    The failure lines (an unusable port, no kernel, a kernel without the route, a refused read) are
-    upstream's, byte for byte: this is the file-mode surface upstream ships; the fork adds only the
-    refresh body and the mode check on the success path."""
+    The failure lines for an unusable port and a refused read are upstream's, byte for byte; the
+    no-kernel and no-route blocks keep the fork's main's second and third lines (upstream's say the
+    file is already swapped, which is never true here). The fork adds the refresh body and the mode
+    check on the success path."""
     try:
         _kernel_urls()
     except ValueError as e:
@@ -340,23 +341,29 @@ def _mode_mismatch(body, local_mode, out):
     the other. The kernel decides its mode ONCE, when it starts (envsource.pin_mode), from its
     environment and then service.env; this shell reads its own environment and then service.env
     now. Under the installed service the kernel's environment is the manager's, which holds every
-    service.env line as of the MANAGER's start (systemd's EnvironmentFile=) plus the unit's own
-    Environment= lines, and every kernel inherits it. So which restart makes the two agree depends
-    on where the variable is, and the line says which case applies: a line ADDED to service.env
-    reaches the next kernel (`romp refresh`; the kernel reads the file itself); a line REMOVED from
-    service.env is still in the manager's environment, which a new kernel inherits, so leaving
-    command mode takes a manager restart; a value in this shell's environment alone reaches no
-    kernel. Names the variable and the places; never a value."""
+    service.env line as of the MANAGER's start (systemd's EnvironmentFile=; the macOS launcher's
+    parse) plus the unit's own Environment= lines, and every kernel inherits it. So which restart
+    makes the two agree depends on where the variable is: a line ADDED to service.env reaches the
+    next kernel (`romp refresh`; the kernel reads the file itself); a value in this shell's
+    environment alone reaches no kernel. A kernel in command mode under a shell that reads no line
+    says only what is known (the kernel pinned the mode at its start) and lists the places the line
+    can still be, with the remedy for each: the /keycycle answer cannot tell the manager's
+    environment from a service.env line removed since the kernel started or from a `romp up` shell
+    that exported it. The manager restart is `systemctl --user restart romp-manager` on Linux and
+    `launchctl kickstart -k` on the launchd agent on macOS; `romp-service install` is not one (on
+    Linux it writes and enables the unit and leaves a running manager as it is). Names the variable
+    and the places; never a value."""
     kmode = body.get("keySource") or "file"
     out("kernel      reads %s in %s mode" % (_sha(body.get("keyFp") or ""), kmode.upper()))
     if kmode == "command":
-        out("MISMATCH    the kernel is in command mode and this shell is not: the kernel's environment carries")
-        out("            ROMP_CREDENTIAL_COMMAND (the unit's Environment= line, or a service.env line the manager loaded")
-        out("            when it started) and this shell's environment and service.env do not carry it now. A running")
-        out("            kernel keeps the mode it started in. To leave command mode, restart the manager (`systemctl")
-        out("            --user restart romp-manager`, or `romp-service install`): its environment still carries the")
-        out("            variable, so `romp refresh` alone starts kernels that inherit it and stay in command mode. If")
-        out("            the line should be set, put it back in service.env (this shell reads it from there).")
+        out("MISMATCH    the kernel is in command mode and this shell is not: the kernel pinned command mode when it")
+        out("            started; this shell reads no ROMP_CREDENTIAL_COMMAND now. The kernel got the line from one of:")
+        out("            - the manager's environment (the unit's Environment=, or service.env as the manager loaded it at its")
+        out("              start), which every kernel inherits: restart the manager; `romp refresh` alone keeps the mode")
+        out("            - service.env, edited since the kernel read it at its start: `romp refresh`")
+        out("            - the shell that ran `romp up`, which exported it: stop that `romp up`; start it from a shell without the line")
+        out("            The manager restart is `systemctl --user restart romp-manager`, or on macOS `launchctl kickstart -k")
+        out("            gui/$(id -u)/com.romp.manager`. To stay in command mode, put the line back in service.env instead.")
     elif es.command({}):
         # the file carries the line (an empty environ reads the file alone): the kernel reads the file
         # at its start, so the kernel restart is enough

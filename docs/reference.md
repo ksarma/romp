@@ -352,8 +352,9 @@ Unlike the port settings, it is not baked in at install: it is read each time
 the manager starts (the systemd unit through `EnvironmentFile=-`; the macOS
 login agent's launcher by parsing it line by line, never sourcing it, so a
 malformed line is skipped rather than executed). Change a value by editing the
-file and restarting the manager (`romp-service install`); a missing file is a
-no-op.
+file and restarting the manager (`systemctl --user restart romp-manager`; on
+macOS `launchctl kickstart -k gui/$(id -u)/com.romp.manager`); a missing file
+is a no-op.
 
 With no `ROMP_CREDENTIAL_COMMAND` line (see [Installing without keys on
 disk](#installing-without-keys-on-disk)) the kernel is in **file mode**,
@@ -492,10 +493,10 @@ restart:
 Which restart depends on where the kernel finds the value. Adding the
 `ROMP_CREDENTIAL_COMMAND` line to `service.env` changes the mode at the next
 kernel start: `romp refresh` is enough, because the kernel reads `service.env`
-itself. Removing the line under the installed service needs a manager restart
-(`systemctl --user restart romp-manager`, or `romp-service install`; on macOS
-the equivalent for the launch agent): systemd loaded `service.env` into the
-manager's environment when the manager started, every kernel inherits that
+itself. Removing the line under the installed service needs a manager restart,
+`systemctl --user restart romp-manager` on Linux and `launchctl kickstart -k
+gui/$(id -u)/com.romp.manager` on macOS: the service loaded `service.env` into
+the manager's environment when the manager started, every kernel inherits that
 environment, and `romp refresh` restarts kernels only, so a new kernel still
 carries the variable and stays in command mode. The other `ROMP_CREDENTIAL_*`
 values are read live, the environment first, with the same consequence: a
@@ -503,8 +504,11 @@ line the manager's environment already carries is shadowed by that copy until
 the manager restarts, while a line the environment does not carry (one added
 since the manager started) is read from the file at once. An edit to the
 unit's own `Environment=` lines, and the variables a shell-wrapped `ExecStart`
-loaded, reach the kernel at the next manager restart as well. `romp keyswap`
-says which case applies when it reports a mode `MISMATCH`.
+loaded, reach the kernel at the next manager restart as well. When `romp
+keyswap` finds the kernel in command mode under a shell that reads no line, it
+cannot tell which of three places still carries it (the manager's environment,
+a `service.env` line removed since the kernel started, or the shell that ran
+`romp up`), so its `MISMATCH` lists all three, each with its remedy.
 
 The kernel checks the configuration once at boot and logs one line per
 finding, names and fingerprints only. When the first run succeeds the line is
@@ -652,14 +656,23 @@ the kernel's view. `--refresh` asks the kernel to re-run without switching;
 the kernel line then carries the fingerprint before and after.
 
 `MISMATCH` means the kernel and your shell disagree, and the line says on
-what. On the mode: `ROMP_CREDENTIAL_COMMAND` is set on one side only; a
-running kernel keeps the mode it started in, and the line says which restart
-applies: `romp refresh` when the line was added to `service.env` (the kernel
-reads the file at its start); a manager restart when the line was removed
-(the manager's environment still carries it, and a kernel `romp refresh`
-starts inherits it) or when it lives in the unit's own `Environment=` lines;
-and a line set in your shell's environment only reaches no kernel until it is
-in `service.env`. On the fingerprint: the kernel's last run used
+what. On the mode: `ROMP_CREDENTIAL_COMMAND` is set on one side only, and a
+running kernel keeps the mode it started in. When your shell has the line and
+the kernel does not, the line says what reaches the kernel: `romp refresh`,
+when the line was added to `service.env` (the kernel reads the file at its
+start); nothing, when the line is set in your shell's environment only, until
+it is in `service.env`. When the kernel is in command mode and your shell
+reads no line, the kernel's answer cannot say where the kernel got the line,
+so the report lists the three places, each with its remedy:
+
+- the manager's environment (a `service.env` line it loaded at its start, or
+  the unit's own `Environment=` lines), which every kernel inherits: a manager
+  restart
+- `service.env`, edited since the kernel read it at its start: `romp refresh`
+- the shell that ran `romp up`, which exported the line: start it again from a
+  shell without the line
+
+On the fingerprint: the kernel's last run used
 another selector (`--refresh` re-runs it), or the two environments differ (the
 service environment and your shell hold different `ROMP_CREDENTIAL_*` values,
 different selector files, or a different `CLAUDE_CONFIG_DIR`; the
@@ -700,8 +713,10 @@ Per session the cycle reports one of:
 sessions are quiet: every session's CLI is a new process. The manager itself
 keeps running, so a `ROMP_CREDENTIAL_COMMAND` line added to `service.env` is
 applied by that restart, while a line removed from it, and an edit to the
-unit's own `Environment=` lines, still need `systemctl --user restart
-romp-manager` (the manager's environment carries what it loaded at its start).
+unit's own `Environment=` lines, still need a manager restart, because the
+manager's environment carries what it loaded at its start:
+`systemctl --user restart romp-manager`, or on macOS
+`launchctl kickstart -k gui/$(id -u)/com.romp.manager`.
 
 No key value is ever printed, logged, or sent over a socket. The command's
 output, the Log panel entry when the kernel's credential changes, and the
