@@ -6389,14 +6389,13 @@ class JudgeUsageLog(unittest.TestCase):
 
 
 class JudgeEnv(unittest.TestCase):
-    """The INDEX tier (captioner + archiver) keeps its cost lever, but the lever follows the MODEL
-    (2026-09-01) — by GENERATION, read from the CLI's (2.1.257 / 2.1.258) adaptive-thinking rule, not by
-    family. A model without adaptive thinking (Haiku, Sonnet 4.5, Opus 4.5 and older) otherwise emits a
-    long thinking block before the trivial caption — pure output waste — so it runs with
-    MAX_THINKING_TOKENS=0. A model with it (Fable, Opus 4.6+, Sonnet 4.6+) takes `--effort low` instead
-    (IndexTierLever below) and the env var is NOT set: on Fable the CLI drops the thinking parameter
-    outright (its rejects_disabled_thinking capability), so the var was a silent no-op that ran full-cost
-    thinking. TRIAGE keeps thinking on every model."""
+    """The INDEX tier (captioner + archiver) runs with MAX_THINKING_TOKENS=0 on EVERY model (2026-09-01;
+    unconditional since the PR #880 review). A model without adaptive thinking (Haiku, Sonnet 4.5, Opus
+    4.5 and older — the CLI's 2.1.257 / 2.1.258 denylist) otherwise emits a long thinking block before the
+    trivial caption — pure output waste — and Sonnet/Opus 4.6+ honor the var too. Where the CLI drops the
+    parameter outright (Fable, Mythos: its rejects_disabled_thinking capability) the var is a harmless
+    no-op and `--effort low` is the lever that lands (IndexTierLever below). The model-keyed half of the
+    lever lives in _judge_run; _judge_env reads no model. TRIAGE keeps thinking on every model."""
 
     def test_index_tier_sets_thinking_off_for_every_model(self):
         self.assertEqual(jd._judge_env("index", model="haiku").get("MAX_THINKING_TOKENS"), "0",
@@ -6422,14 +6421,6 @@ class JudgeEnv(unittest.TestCase):
             # 4.6+ honors thinking:disabled too — withholding the var there traded a measured thinking-off
             # path for unmeasured adaptive-low; it rides everywhere now, effort decides the rest
             self.assertEqual(jd._judge_env("index", model=m).get("MAX_THINKING_TOKENS"), "0", m)
-
-    def test_index_tier_with_no_model_resolves_the_tier_pick(self):
-        # the tier's configured model decides (INDEX_MODEL is haiku out of the box); a bare
-        # _judge_env("index") answers about that pick rather than assuming Haiku
-        jd._state_cache.clear()
-        self.assertEqual(jd._index_model(), jd.INDEX_MODEL)
-        self.assertEqual(jd._judge_env("index").get("MAX_THINKING_TOKENS"), "0",
-                         "the var rides the index tier whatever the pick resolves to")
 
     def test_every_tier_disables_prompt_caching(self):
         # One-shot judge calls never read the cache back — the per-call security mark re-rolls the
@@ -6536,10 +6527,11 @@ class IndexTierLever(unittest.TestCase):
     and effort is the lever those models honor. _judge_run resolves the tier's model first, then: no
     adaptive thinking (Haiku, Sonnet 4.5, Opus 4.5 and older) → MAX_THINKING_TOKENS=0 and no --effort
     flag; adaptive thinking (Fable, Mythos, Opus 4.6+, Sonnet 4.6+, and any model the CLI's catalog does
-    not place — its first-party default) → `--effort <index-effort setting, default low>` and NO env
-    var. The gear's existing Indexing effort pick (STATE/index-effort) is the configurability; the tier
-    logs which lever applied, once per model. The subprocess is stubbed and its argv + env captured —
-    nothing runs."""
+    not place — its first-party default) → `--effort <index-effort setting, default low>`, with the env
+    var riding beside it (unconditional on the index tier since the PR #880 review: honored on 4.6+
+    Sonnet/Opus, a no-op where the CLI drops it). The gear's existing Indexing effort pick
+    (STATE/index-effort) is the configurability; the tier logs which lever applied, once per model. The
+    subprocess is stubbed and its argv + env captured — nothing runs."""
 
     def setUp(self):
         self.calls = []
@@ -6674,6 +6666,157 @@ class IndexTierLever(unittest.TestCase):
         cmd, env = self.calls[0]
         self.assertNotIn("--effort", cmd, "triage keeps its own default (no flag unless the gear says so)")
         self.assertIsNone(env.get("MAX_THINKING_TOKENS"))
+
+
+class AliasHeadDrift(unittest.TestCase):
+    """_ALIAS_HEAD is a guess about the CLI's catalog — its aliases block as read from the 2.1.257 / 2.1.258
+    binaries — and 2.1.263 resolves alias targets at run time from a published catalog, so the table can
+    go stale with no CLI upgrade. The CLI's own answer rides every successful call: the result envelope's
+    `modelUsage` is keyed by the model id that actually served (a dated claude-haiku-4-5-20251001).
+    _note_served_model reads it after each call on a BARE alias, records the served version
+    (_ALIAS_SERVED), and _adaptive_thinking consults that ahead of the table from then on; a served
+    version the table disagrees with is announced once per (alias, served id). Quiet when they agree, on
+    a versioned pin (never remapped), and when the envelope names no same-family model — no evidence
+    either way, so the table's answer stands exactly as before. The subprocess is stubbed and its argv +
+    env captured — nothing runs."""
+
+    def setUp(self):
+        self.calls = []
+        self.stdout = json.dumps({"result": "a caption", "usage": {}})
+        self._saved_usage = jd.USAGE
+        self._td = Path(tempfile.mkdtemp())
+        jd.USAGE = self._td / "judge-usage.jsonl"
+        (jd.STATE / "index-effort").unlink(missing_ok=True)
+        self._reset()
+        os.environ.pop("MAX_THINKING_TOKENS", None)
+
+        def fake_run(cmd, **kw):
+            self.calls.append((cmd, kw.get("env") or {}))
+            return mock.Mock(stdout=self.stdout, stderr="", returncode=0)
+
+        self._patch = mock.patch.object(jd.subprocess, "run", side_effect=fake_run)
+        self._patch.start()
+
+    def tearDown(self):
+        self._patch.stop()
+        (jd.STATE / "index-effort").unlink(missing_ok=True)
+        self._reset()   # again, deliberately: a drifted head left behind would flip EffortCapability's
+        jd.USAGE = self._saved_usage   # `haiku -> False` pin in whichever worker runs it next
+        shutil.rmtree(self._td, ignore_errors=True)
+
+    def _reset(self):
+        jd._state_cache.clear()
+        jd._LEVER_LOGGED.clear()
+        jd._ALIAS_SERVED.clear()
+        jd._ALIAS_DRIFT_LOGGED.clear()
+
+    def _run(self, model, model_usage=None, tier="index", judge="captioner"):
+        """One stubbed call; the envelope carries `model_usage` under modelUsage when given (None: the
+        envelope names no model, the IndexTierLever stub's shape). Returns (argv, env, stderr text)."""
+        self.calls.clear()
+        wrap = {"result": "a caption", "usage": {}}
+        if model_usage is not None:
+            wrap["modelUsage"] = model_usage
+        self.stdout = json.dumps(wrap)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            reply = jd._judge_run(model, "SYS", "payload", judge=judge, tier=tier)
+        self.assertEqual(len(self.calls), 1, "exactly one subprocess call")
+        self.assertEqual(reply, "a caption", "the reply comes back whatever the envelope says about the model")
+        cmd, env = self.calls[0]
+        return cmd, env, err.getvalue()
+
+    def _effort_of(self, cmd):
+        return cmd[cmd.index("--effort") + 1] if "--effort" in cmd else None
+
+    @staticmethod
+    def _drift_lines(err):
+        return [ln for ln in err.splitlines() if "_ALIAS_HEAD" in ln]
+
+    def test_a_served_version_that_matches_the_table_is_quiet(self):
+        cmd, env, err = self._run("haiku", {"claude-haiku-4-5-20251001": {"inputTokens": 100, "outputTokens": 15}})
+        self.assertEqual(self._drift_lines(err), [], "the table agrees with the CLI: nothing to say")
+        self.assertIn("MAX_THINKING_TOKENS=0", err, "the lever line is the only line")
+        self.assertNotIn("--effort", cmd)
+        # .get() rather than assertNotIn(..., env), here and below: a failure must not print the whole
+        # environment (a copy of os.environ, credentials included) into the log
+        self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0")
+        self.assertEqual(jd._ALIAS_SERVED.get("haiku"), (4, 5), "an agreeing answer is recorded all the same")
+
+    def test_a_moved_alias_is_announced_once_and_the_lever_follows(self):
+        moved = {"claude-haiku-4-6-20260301": {"inputTokens": 100, "outputTokens": 15}}
+        cmd, env, err = self._run("haiku", moved)
+        self.assertNotIn("--effort", cmd, "the first call runs under the table's answer: the envelope arrives after it")
+        self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0")
+        lines = self._drift_lines(err)
+        self.assertEqual(len(lines), 1, "one drift line, got: %r" % err)
+        for s in ("haiku", "claude-haiku-4-6-20260301", "4.6", "4.5"):
+            self.assertIn(s, lines[0], "the line names the alias, the served id and both versions")
+        self.assertTrue(jd._adaptive_thinking("haiku"), "the served version places the alias from here")
+        cmd, env, err = self._run("haiku", moved)
+        self.assertEqual(self._effort_of(cmd), "low", "the second call carries the lever for the served version")
+        self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0", "…and the var still rides")
+        self.assertIn("--effort low", err, "the lever change is re-announced by the existing per-model line")
+        self.assertEqual(self._drift_lines(err), [], "the drift is said once per (alias, served id)")
+        _cmd, _env, err = self._run("haiku", moved)
+        self.assertEqual(err, "", "a third call: same lever, same served id — nothing new to say")
+
+    def test_the_reply_writer_decides_when_two_same_family_ids_appear(self):
+        _cmd, _env, err = self._run("haiku", {"claude-haiku-4-6-20260301": {"outputTokens": 40},
+                                              "claude-haiku-4-5-20251001": {"outputTokens": 3}})
+        self.assertEqual(jd._ALIAS_SERVED.get("haiku"), (4, 6), "the model that wrote the reply is the served one")
+        self.assertEqual(len(self._drift_lines(err)), 1)
+        self._reset()
+        _cmd, _env, err = self._run("haiku", {"claude-haiku-4-6-20260301": {"outputTokens": 3},
+                                              "claude-haiku-4-5-20251001": {"outputTokens": 40}})
+        self.assertEqual(jd._ALIAS_SERVED.get("haiku"), (4, 5))
+        self.assertEqual(self._drift_lines(err), [], "a side call's id does not move the alias")
+
+    def test_only_the_alias_family_speaks(self):
+        _cmd, _env, err = self._run("sonnet", {"claude-sonnet-5-20260201": {"outputTokens": 30},
+                                               "claude-haiku-4-6-20260301": {"outputTokens": 5}})
+        self.assertEqual(jd._ALIAS_SERVED.get("sonnet"), (5, 0))
+        self.assertNotIn("haiku", jd._ALIAS_SERVED, "another family's entry never speaks for haiku")
+        self.assertFalse(jd._adaptive_thinking("haiku"))
+        self.assertEqual(self._drift_lines(err), [], "sonnet's served 5.0 is the table's head")
+
+    def test_a_versioned_pin_is_never_remapped(self):
+        _cmd, _env, err = self._run("claude-haiku-4-5", {"claude-haiku-4-6-20260301": {"outputTokens": 15}})
+        self.assertEqual(jd._ALIAS_SERVED, {}, "a pin is a pin: only a bare alias is subject to resolution")
+        self.assertEqual(self._drift_lines(err), [])
+        self.assertFalse(jd._adaptive_thinking("claude-haiku-4-5"))
+
+    def test_every_tier_feeds_the_record_and_only_the_index_lever_reads_it(self):
+        # a triage call on the alias reveals its head just as well; triage's own levers are untouched
+        cmd, env, err = self._run("haiku", {"claude-haiku-4-6-20260301": {"outputTokens": 200}},
+                                  tier="triage", judge="planner")
+        self.assertNotIn("--effort", cmd, "triage keeps its own default")
+        self.assertIsNone(env.get("MAX_THINKING_TOKENS"))
+        self.assertEqual(len(self._drift_lines(err)), 1)
+        self.assertEqual(jd._ALIAS_SERVED.get("haiku"), (4, 6))
+        cmd, env, err = self._run("haiku")
+        self.assertEqual(self._effort_of(cmd), "low", "the index tier's lever follows what triage learned")
+        self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0")
+
+    def test_an_envelope_naming_no_model_is_quiet(self):
+        # absence carries no evidence of drift: the table's answer stands exactly as before this check
+        # existed (and IndexTierLever's stub, which names no model, keeps its empty-stderr assertion)
+        for mu in (None, {}):
+            self._reset()
+            cmd, env, err = self._run("haiku", mu)
+            self.assertEqual(self._drift_lines(err), [], "modelUsage=%r" % (mu,))
+            self.assertEqual(jd._ALIAS_SERVED, {})
+            self.assertNotIn("--effort", cmd)
+            self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0")
+
+    def test_a_malformed_entry_cannot_cost_the_reply(self):
+        # best-effort like _log_judge_usage: the reply is the call's product, the check is bookkeeping
+        for mu in ({"claude-haiku-4-6-20260301": "not a dict"},
+                   {"claude-haiku-4-6-20260301": {"outputTokens": "many"}},
+                   {"claude-haiku-4-6-20260301": None, "<synthetic>": {"outputTokens": 0}},
+                   "not a dict at all", 7):
+            self._reset()
+            self._run("haiku", mu)                    # asserts the reply came back
 
 
 class GistLlm(unittest.TestCase):
