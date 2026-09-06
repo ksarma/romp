@@ -14,8 +14,11 @@ record, and two things must hold end to end (the 2026-09-05/06 incidents, both r
      time), so the client can mark it and leave a cue where the pending bubble was.
 
 The sdk_backend twin of the image-path predicate is pinned against the kernel's, and both against the
-CLI paste hook's extension set (ImagePathPredicateTwins names the source). SYNTHETIC fixtures only (a
-private synthetic sid, the notes-api demo domain)."""
+CLI paste hook's extension set (ImagePathPredicateTwins names the source). The TEXT KEY the kernel's
+_atom_user_texts and the backend's scan + prune compare under is ONE function (session_backend.
+echo_text_key), pinned in OneTextRuleAcrossKernelAndBackend: the backend's landing scan can never find a
+text the kernel-fed prune cannot retire. SYNTHETIC fixtures only (a private synthetic sid, the notes-api
+demo domain)."""
 import json
 import os
 import re
@@ -315,6 +318,81 @@ class ChatEventSaysAbsorbed(unittest.TestCase):
         self.assertEqual(ab[0]["ts"][:19], iso(T0 + 38 + shift)[:19], "ts stays the send time — placement unchanged")
         self.assertTrue(all("absorbed" not in e for e in users if e["uuid"] != "att1"),
                         "a native user record never wears the flag")
+
+
+class OneTextRuleAcrossKernelAndBackend(unittest.TestCase):
+    """The by-text prune has two sides in two modules: the kernel builds the keys (_atom_user_texts →
+    tx_user_texts) and the SDK backend compares an echo's text against them (prune_live), while its boot
+    scan (_text_landed via _landed_texts) decides which echoes are "landed, merely un-pruned". Until
+    2026-09-06 the scan collapsed whitespace, the kernel stripped, and the prune compared raw — three
+    rules, so a trailing-newline send was found yet never retired. One function now, imported by both
+    modules; the property tested here is that the scan's match set for a record IS the kernel's key set
+    for the same record, and that an echo the scan would find retires through the real merge."""
+
+    def setUp(self):
+        self.w = _World()
+
+    def tearDown(self):
+        self.w.close()
+
+    def _texts(self, session):
+        return [t for turn in session["turns"] for a in turn["atoms"] for t in km._atom_user_texts(a)]
+
+    def test_the_kernel_and_the_backend_import_the_same_key_function(self):
+        k, b = km.sb.echo_text_key, sb.echo_text_key
+        self.assertEqual(os.path.realpath(k.__code__.co_filename), os.path.realpath(b.__code__.co_filename),
+                         "one definition, in session_backend.py")
+        self.assertEqual(k.__code__.co_code, b.__code__.co_code)
+        for probe in (" a\n", "a  b", "a\r\nb", "\n\t", "", None, 7):
+            self.assertEqual(k(probe), b(probe))
+        self.assertEqual(k(" fix the tests \n"), "fix the tests")
+        self.assertEqual(k("one  two\nthree"), "one  two\nthree", "outer whitespace only")
+
+    def test_the_scan_match_set_is_the_kernel_key_set_for_every_record_shape(self):
+        recs = [
+            uline(T0, " fix the tests \n", "u9"),                                       # edge whitespace, verbatim
+            uline(T0, [{"type": "text", "text": "one  two"}, {"type": "text", "text": " three "}], "u9"),
+            uline(T0, "a\r\nb", "u9"),                                                  # a bare CR, preserved
+            uline(T0, [{"type": "text", "text": "solo"}], "u9"),
+            uline(T0, [{"type": "tool_result", "tool_use_id": "t", "content": "ok"}], "u9"),
+        ]
+        for rec in recs:
+            self.assertEqual(sb._landed_texts(rec), set(km._atom_user_texts(rec)), json.dumps(rec)[:120])
+        # the absorbed shape: the scan reads the queued_command attachment, the kernel the parsed atom
+        self.w.write(running_turn() + spliced_tail())
+        absorbed = [a for t in self.w.parse()["turns"] for a in t["atoms"] if a.get("absorbed")]
+        self.assertEqual([a["uuid"] for a in absorbed], ["att1"])
+        self.assertEqual(sb._landed_texts(attline(T0 + 38, FED, "att1", "tr1")), set(km._atom_user_texts(absorbed[0])))
+
+    def test_an_edge_whitespace_echo_retires_when_its_text_lands(self):
+        # `romp send` passes its argument verbatim; the record stores the trailing newline verbatim; the
+        # kernel's key strips it. Pre-fix the raw echo text never matched the key and the echo stayed in
+        # the store forever (hidden by the display dedup, so the user saw nothing — and no exit).
+        text = FED + "\n"
+        self.w.write(running_turn() + [uline(T0 + 80, text, "u3", "tr1")])
+        key = self.w.echo(text, T0 + 38)
+        merged = km._merge_live_atoms(self.w.parse(), SID)
+        self.assertNotIn(SID, self.w.be._live, "the landed text retires the echo under the shared key")
+        self.assertEqual(self._texts(merged).count(km.sb.echo_text_key(text)), 1, "shown once: the record")
+
+    def test_a_recorded_landed_verdict_retires_through_the_merge_without_a_text_match(self):
+        # the backend's boot scan found the record and recorded `_landed` on the echo; the parse has no
+        # atom with that text (the two texts cannot meet) — the verdict alone is the exit
+        self.w.write(running_turn())
+        text = "a send the scan found but no key can match"
+        key = self.w.echo(text, T0 + 38)
+        self.w.be._live[SID][key]["_landed"] = True
+        merged = km._merge_live_atoms(self.w.parse(), SID)
+        self.assertNotIn(SID, self.w.be._live, "prune_live honours the recorded verdict")
+        self.assertNotIn(text, self._texts(merged), "…and nothing paints it as fresh")
+
+    def test_an_unlanded_echo_still_survives_the_merge(self):
+        # the control: no record, no verdict → the echo stays (guarantee 2: no floor retires it)
+        self.w.write(running_turn())
+        key = self.w.echo(FED + "\n", T0 + 38)
+        merged = km._merge_live_atoms(self.w.parse(), SID)
+        self.assertIn(key, self.w.be._live.get(SID, {}))
+        self.assertEqual(self._texts(merged).count(FED), 1, "the echo itself is shown, once")
 
 
 class ImagePathPredicateTwins(unittest.TestCase):

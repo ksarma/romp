@@ -20,7 +20,12 @@ guarantees, each pinned here:
      2026-07-29: a two-day-old lost send kept resurfacing mid-chat, posing as an ordinary bubble) —
      unless the transcript already carries the text, as a native user record OR as the queued_command
      attachment a mid-turn splice leaves (the absorbed send's only record): that echo is neither
-     re-delivered nor flagged, it just waits for the by-text prune (AbsorbedSendsCountAsLandedAtBoot).
+     re-delivered nor flagged — the verdict is recorded on it and prune_live retires it, by the text key
+     the scan and the prune share (session_backend.echo_text_key) or on the verdict alone
+     (AbsorbedSendsCountAsLandedAtBoot, FoundImpliesPrunable),
+  5. that scan starts at the transcript's byte size at SEND time — the mark the echo carries — never at
+     a fixed distance from EOF, so a landed send buried under megabytes of later output is still found
+     and never re-run (LandingScanStartsAtTheSend).
 SYNTHETIC fixtures only."""
 import json
 import os
@@ -710,21 +715,11 @@ class ReconnectStrandIsFlagOnly(unittest.TestCase):
                          "the not-yet-materialized conversation re-heads the queue, as documented")
 
 
-class AbsorbedSendsCountAsLandedAtBoot(unittest.TestCase):
-    """The boot/dead-spawn duplicate guard (_text_landed) must know the shape an ABSORBED send leaves. A
-    message fed into a running turn is spliced in at the CLI's next tool boundary as a queued_command
-    ATTACHMENT record — no native user line is ever written for it — and until 2026-09-06 the scan
-    accepted user records alone (its raw-line prefilter even required the literal '"user"', which an
-    attachment line lacks; it carries `userType`). So a kernel restart in the window between the splice
-    and the next merged build reseeded the echo, read the send as never landed, re-queued the text, and
-    the resumed CLI ran the same instruction a second time — the chat showed it twice.
-
-    Now a found text is neither re-delivered nor flagged: it landed and is merely un-pruned, and the next
-    build's by-text prune (the absorbed atom's text reaches _atom_user_texts) retires it. Two more scan
-    rules ride along, both mirrored from prune_live's by-text rule: a record stamped BEFORE the send is
-    not this send's landing ("ok" repeats), and the match is the whole collapsed text, never a substring.
-    A PRIVATE synthetic sid (the shared placeholder is reserved for fixtures other modules journal
-    against); the notes-api demo domain."""
+class _SpliceWorld(unittest.TestCase):
+    """A registry + transcript for one SDK session, with the CLI's record shapes for a running turn and a
+    mid-turn splice, and a backend constructor that runs the boot reseed. Shared by the scan classes
+    below; no tests of its own. A PRIVATE synthetic sid (the shared placeholder is reserved for fixtures
+    other modules journal against); the notes-api demo domain."""
 
     SID = "5a5a5a5a-6b6b-4c7c-8d8d-9e9e9e9e9e9e"
     SENT = ("Replying to this highlighted code (/tmp/notes-api/notes/api.py:42):\n"
@@ -769,6 +764,30 @@ class AbsorbedSendsCountAsLandedAtBoot(unittest.TestCase):
             for r in recs:
                 f.write(json.dumps(r) + "\n")
 
+    def _append(self, recs):
+        with open(self.tpath, "a") as f:
+            for r in recs:
+                f.write(json.dumps(r) + "\n")
+
+    def _size(self):
+        return os.path.getsize(self.tpath)
+
+    def _pad(self, mb, t0):
+        """`mb` megabytes of later output: tool_use / tool_result pairs of ~100 KB each, the shape a long
+        autonomous run writes after a splice. Every tool_result line carries the literal '"user"', so the
+        scan's prefilter lets each one through to the parser — the realistic cost, not a shortcut."""
+        out, i, n = [], 0, int(mb * 10)
+        for i in range(n):
+            u = "pad_%d" % i
+            out.append({"type": "assistant", "timestamp": self._iso(t0 + 2 * i), "uuid": "a_" + u, "parentUuid": None,
+                        "message": {"role": "assistant", "content": [
+                            {"type": "tool_use", "id": "tu_" + u, "name": "Bash", "input": {"command": "true"}}],
+                            "stop_reason": "tool_use"}})
+            out.append({"type": "user", "timestamp": self._iso(t0 + 2 * i + 1), "uuid": "tr_" + u, "parentUuid": "a_" + u,
+                        "message": {"role": "user", "content": [
+                            {"type": "tool_result", "tool_use_id": "tu_" + u, "content": "x" * 100_000}]}})
+        return out
+
     def _running_turn(self):
         return [self._user(self.T - 38, "tighten the notes-api search", "u1", None),
                 {"type": "assistant", "timestamp": self._iso(self.T - 28), "uuid": "a1", "parentUuid": "u1",
@@ -793,15 +812,36 @@ class AbsorbedSendsCountAsLandedAtBoot(unittest.TestCase):
                                             "queue": list(queue), "echoes": echoes})
         return sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None)   # __init__ runs the reseed
 
-    def _echo(self, text=None, t=None):
-        return {"t": t if t is not None else self.T, "text": text if text is not None else self.SENT,
-                "author": "human", "rompAuto": False, "dropped": False}
+    def _echo(self, text=None, t=None, **mark):
+        e = {"t": t if t is not None else self.T, "text": text if text is not None else self.SENT,
+             "author": "human", "rompAuto": False, "dropped": False}
+        e.update(mark)                # off / fsid: the send-time transcript mark; landed: a recorded verdict
+        return e
 
     def _queue(self):
         return (sb.read_reg(self.state, self.SID) or {}).get("queue") or []
 
+    def _mirror(self):
+        return (sb.read_reg(self.state, self.SID) or {}).get("echoes") or []
+
     def _live(self, be):
         return list((be._live.get(self.SID) or {}).values())
+
+
+class AbsorbedSendsCountAsLandedAtBoot(_SpliceWorld):
+    """The boot/dead-spawn duplicate guard (_text_landed) must know the shape an ABSORBED send leaves. A
+    message fed into a running turn is spliced in at the CLI's next tool boundary as a queued_command
+    ATTACHMENT record — no native user line is ever written for it — and until 2026-09-06 the scan
+    accepted user records alone (its raw-line prefilter even required the literal '"user"', which an
+    attachment line lacks; it carries `userType`). So a kernel restart in the window between the splice
+    and the next merged build reseeded the echo, read the send as never landed, re-queued the text, and
+    the resumed CLI ran the same instruction a second time — the chat showed it twice.
+
+    Now a found text is neither re-delivered nor flagged: it landed and is merely un-pruned, and the next
+    build's prune_live (the absorbed atom's text reaches _atom_user_texts) retires it. Two more scan
+    rules ride along, both mirrored from prune_live's by-text rule: a record stamped BEFORE the send is
+    not this send's landing ("ok" repeats), and the match is the whole text under the shared key
+    (echo_text_key), never a substring."""
 
     def test_the_attachment_only_transcript_counts_as_landed(self):
         self._write(self._running_turn() + self._splice())
@@ -877,18 +917,190 @@ class AbsorbedSendsCountAsLandedAtBoot(unittest.TestCase):
 
     def test_the_match_set_reads_both_record_shapes(self):
         # the helper _text_landed matches against: user text (string or blocks, joined AND per block —
-        # romp bundles injected messages), and the queued_command prompt (string or blocks); nothing else
-        self.assertEqual(sb._landed_texts({"type": "user", "message": {"content": " a  b "}}), {"a b"})
+        # romp bundles injected messages), and the queued_command prompt (string or blocks); nothing else.
+        # Keyed by echo_text_key — outer whitespace only, the kernel's rule — never collapsed: the CLI
+        # stores user text verbatim, and a wider match here is one the prune could never retire
+        self.assertEqual(sb._landed_texts({"type": "user", "message": {"content": " a  b "}}), {"a  b"})
         self.assertEqual(sb._landed_texts({"type": "user", "message": {"content": [
             {"type": "text", "text": "one"}, {"type": "text", "text": "two"}]}}), {"one two", "one", "two"})
         self.assertEqual(sb._landed_texts({"type": "attachment", "attachment": {
-            "type": "queued_command", "prompt": "x\ny"}}), {"x y"})
+            "type": "queued_command", "prompt": "x\ny"}}), {"x\ny"})
         self.assertEqual(sb._landed_texts({"type": "attachment", "attachment": {
             "type": "queued_command", "prompt": [{"type": "text", "text": "p"}]}}), {"p"})
         self.assertEqual(sb._landed_texts({"type": "attachment", "attachment": {"type": "total_tokens_reminder"}}), set())
         self.assertEqual(sb._landed_texts({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": "t", "content": "ok"}]}}), set())
         self.assertEqual(sb._landed_texts({"type": "assistant", "message": {"content": [{"type": "text", "text": "z"}]}}), set())
+
+
+class LandingScanStartsAtTheSend(_SpliceWorld):
+    """The scan's bound is the SEND EVENT, not a byte count. _text_landed once read the last 2 MB of the
+    transcript: fine for the LOST verdict (nothing to find anyway), wrong for the LANDED one — a send
+    spliced into a running turn, its echo left un-pruned because no client was connected to build, then
+    2 MB of tool output, then a kernel restart: the attachment sat above the window, the scan answered
+    False, and the resumed CLI ran the instruction a second time. Now send() records the transcript's
+    byte size (and the fsid it measured) on the echo, the mirror carries it across restarts, and the scan
+    reads from that mark to EOF: every record that can land the send is at or after it, however much
+    follows. An echo with no mark (persisted before marks existed), or whose mark belongs to another
+    file or lies past the end, reads the whole file — the side that never duplicates."""
+
+    def _spliced_then_padded(self, mb=3):
+        """running turn → the mark (the send happens here) → the splice → `mb` MB of later output."""
+        self._write(self._running_turn())
+        off = self._size()
+        self._append(self._splice() + self._pad(mb, self.T + 20))
+        return off
+
+    def test_an_attachment_three_megabytes_before_eof_is_found(self):
+        off = self._spliced_then_padded(3)
+        self.assertGreater(self._size() - off, 3_000_000, "the landing sits well outside any 2 MB tail")
+        be = self._backend([])
+        self.assertIs(be._text_landed(self.SID, self.SENT, self.T, off, self.SID), True)
+
+    def test_the_reseed_neither_refeeds_nor_flags_a_marked_send_buried_under_later_output(self):
+        off = self._spliced_then_padded(3)
+        be = self._backend([self._echo(off=off, fsid=self.SID)])
+        self.assertEqual(self._queue(), [], "found from the mark: never re-queued, the CLI would run it twice")
+        live = self._live(be)
+        self.assertEqual([a["_echo_text"] for a in live], [self.SENT])
+        self.assertFalse(live[0].get("dropped"))
+        self.assertTrue(live[0].get("_landed"), "the verdict is recorded for prune_live")
+        self.assertEqual((live[0].get("_echo_off"), live[0].get("_echo_fsid")), (off, self.SID),
+                         "the mark rides the reseeded atom")
+
+    def test_an_echo_without_a_mark_reads_the_whole_file(self):
+        # an echo persisted before marks existed: no tail window either — the whole file, and found
+        self._spliced_then_padded(3)
+        be = self._backend([self._echo()])
+        self.assertIs(be._text_landed(self.SID, self.SENT, self.T), True)
+        self.assertEqual(self._queue(), [])
+        self.assertFalse(self._live(be)[0].get("dropped"))
+
+    def test_a_mark_from_another_file_or_past_the_end_reads_from_the_start(self):
+        off = self._spliced_then_padded(3)
+        be = self._backend([])
+        # the fsid changed since the send (a /clear, a fork): the mark means nothing in this file
+        self.assertIs(be._text_landed(self.SID, self.SENT, self.T, off, "0f0f0f0f-1e1e-4d2d-8c3c-9b4b9b4b9b4b"), True)
+        # a mark past EOF (the file is not the one it was measured on) → from the start
+        self.assertIs(be._text_landed(self.SID, self.SENT, self.T, self._size() + 4096, self.SID), True)
+        # a mark with no fsid, or a non-integer, is no mark
+        self.assertIs(be._text_landed(self.SID, self.SENT, self.T, off, None), True)
+        self.assertIs(be._text_landed(self.SID, self.SENT, self.T, "%d" % off, self.SID), True)
+
+    def test_the_scan_starts_at_the_mark(self):
+        # a twin of the text BEFORE the mark with no readable stamp — which the send-time floor cannot
+        # exclude ("a record with no readable stamp still counts") — is excluded by position: it was on
+        # disk before the send, so it cannot be this send's landing
+        self._write([{"type": "user", "uuid": "u0", "parentUuid": None, "message": {"role": "user", "content": "ok"}}])
+        off = self._size()
+        self._append(self._running_turn())
+        be = self._backend([])
+        self.assertIs(be._text_landed(self.SID, "ok", self.T), True, "unmarked: the stampless twin counts")
+        self.assertIs(be._text_landed(self.SID, "ok", self.T, off, self.SID), False, "marked: nothing after the send")
+
+    def test_a_mark_inside_a_record_skips_the_fragment(self):
+        # the mark was taken while the CLI was mid-write: the scan's first line is a fragment of that
+        # record — skipped like any non-record line, never an error (which would read as "cannot scan")
+        self._write(self._running_turn())
+        first_line_end = open(self.tpath, "rb").read().index(b"\n") + 1
+        off = first_line_end + 10
+        self._append(self._splice())
+        be = self._backend([])
+        self.assertIs(be._text_landed(self.SID, self.SENT, self.T, off, self.SID), True)
+
+    def test_send_marks_the_echo_and_the_mirror_and_the_mark_survives_the_restart(self):
+        self._write(self._running_turn())
+        be = self._backend([])
+        reg = sb.read_reg(self.state, self.SID)
+        s = sb.SdkSession(be, dict(reg))
+        be._ensure = lambda sid: s                     # no real session thread
+        size_at_send = self._size()
+        self.assertTrue(be.send(self.SID, self.SENT))
+        atom = self._live(be)[0]
+        self.assertEqual((atom.get("_echo_off"), atom.get("_echo_fsid")), (size_at_send, self.SID),
+                         "the echo carries the transcript's size at the send, on the file it measured")
+        m = self._mirror()
+        self.assertEqual((m[0].get("off"), m[0].get("fsid")), (size_at_send, self.SID), "…and so does the mirror")
+        # the CLI took the text (the queue empties), spliced it, then wrote 3 MB; the kernel restarts
+        reg = sb.read_reg(self.state, self.SID); reg["queue"] = []; sb.write_reg(self.state, self.SID, reg)
+        self._append(self._splice() + self._pad(3, self.T + 20))
+        be2 = sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None)
+        self.assertEqual(self._queue(), [], "the restart never re-runs a send the mark proves landed")
+        live = self._live(be2)
+        self.assertEqual(len(live), 1)
+        self.assertFalse(live[0].get("dropped"))
+        self.assertTrue(live[0].get("_landed"))
+
+    def test_a_send_before_the_transcript_exists_marks_zero(self):
+        os.remove(self.tpath)
+        be = self._backend([])
+        s = sb.SdkSession(be, dict(sb.read_reg(self.state, self.SID)))
+        be._ensure = lambda sid: s
+        self.assertTrue(be.send(self.SID, self.SENT))
+        self.assertEqual(self._live(be)[0].get("_echo_off"), 0, "everything the file will ever hold is after the send")
+
+    def test_an_unmarked_mirror_entry_reseeds_without_a_mark(self):
+        # byte-compat with entries persisted before marks existed: no off → no _echo_off, and the
+        # mirror written back carries none either
+        self._write(self._running_turn())
+        be = self._backend([self._echo()])
+        atom = self._live(be)[0]
+        self.assertNotIn("_echo_off", atom)
+        self.assertNotIn("off", self._mirror()[0])
+
+
+class FoundImpliesPrunable(_SpliceWorld):
+    """A text the scan reports landed must be one prune_live can retire — else the echo has no exit: a
+    found echo is neither re-fed nor flagged, and dismiss_echo refuses a non-dropped echo. Until
+    2026-09-06 the scan matched whitespace-COLLAPSED text while the prune compared the RAW echo text
+    against the kernel's stripped keys, so `romp send <sid> $'text\n'` (the route passes its argument
+    verbatim) left an echo the chat hid, the prune never retired, and every boot re-scanned. Two fixes,
+    both pinned: one key rule on every side (session_backend.echo_text_key), and the found verdict
+    recorded on the echo so prune_live retires it even when no key matches."""
+
+    TEXT = "hello from a script\n"          # a trailing newline: the record stores it verbatim
+
+    def test_the_scan_and_the_prune_share_one_key(self):
+        self.assertEqual(sb.echo_text_key(" q\n"), "q")
+        self.assertEqual(sb.echo_text_key("a  b\nc"), "a  b\nc", "outer whitespace only, never collapsed")
+        self.assertEqual(sb.echo_text_key(None), "")
+        self._write(self._running_turn() + [self._user(self.T + 3, self.TEXT, "u2", "a1")])
+        be = self._backend([self._echo(text=self.TEXT)])
+        self.assertIs(be._text_landed(self.SID, self.TEXT, self.T), True)
+        self.assertEqual(self._queue(), [])
+        live = self._live(be)
+        self.assertFalse(live[0].get("dropped"))
+        # the kernel's key for that record (_atom_user_texts strips) retires the echo whose raw text differs
+        be.prune_live(self.SID, tx_uuids=set(), tx_user_texts={sb.echo_text_key(self.TEXT): self.T + 3}, human_floor=0)
+        self.assertNotIn(self.SID, be._live, "found ⇒ prunable")
+        self.assertEqual(self._mirror(), [])
+
+    def test_the_recorded_verdict_is_the_exit_when_no_key_matches(self):
+        self._write(self._running_turn() + [self._user(self.T + 3, self.TEXT, "u2", "a1")])
+        be = self._backend([self._echo(text=self.TEXT)])
+        live = self._live(be)
+        self.assertTrue(live[0].get("_landed"), "the scan's verdict is recorded on the echo")
+        self.assertTrue(self._mirror()[0].get("landed"), "…and mirrored, so a restart keeps it")
+        be.prune_live(self.SID, tx_uuids=set(), tx_user_texts={}, human_floor=0)
+        self.assertNotIn(self.SID, be._live, "prune_live honours the verdict without a text match")
+        self.assertEqual(self._mirror(), [])
+
+    def test_a_landed_echo_is_never_rescanned_or_flagged(self):
+        # the transcript is unreadable at this boot — the path that flags an unadjudicated echo
+        # (AbsorbedSendsCountAsLandedAtBoot's unreadable case) — but this one was already found
+        os.remove(self.tpath)
+        be = self._backend([self._echo(text=self.TEXT, landed=True)])
+        live = self._live(be)
+        self.assertTrue(live[0].get("_landed"))
+        self.assertFalse(live[0].get("dropped"), "a recorded landing is final: never re-scanned, never flagged")
+        self.assertEqual(self._queue(), [])
+
+    def test_an_unlanded_echo_is_still_unaffected_by_the_verdict_path(self):
+        # the control: no record, no verdict → the redeliver arm as before
+        self._write(self._running_turn())
+        be = self._backend([self._echo(text=self.TEXT)])
+        self.assertEqual(self._queue(), [self.TEXT])
+        self.assertFalse(self._live(be)[0].get("_landed"))
 
 
 if __name__ == "__main__":

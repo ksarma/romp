@@ -55,6 +55,13 @@ _keysrc = _SFL("romp_keysource", str(Path(__file__).resolve().parent / "keysourc
 # selects it; unset, every call here returns an empty set and the file source above is the whole
 # story. Values leave that module through one accessor (injection), never through a log or a wire.
 _envsrc = _SFL("romp_envsource", str(Path(__file__).resolve().parent / "envsource.py")).load_module()
+# The by-text KEY RULE (session_backend.echo_text_key): the one normalization under which an input echo's
+# text is compared with a transcript record's, shared with the kernel's _atom_user_texts so the landing
+# scan below can never find what prune_live cannot retire. Loaded under its own module name on purpose:
+# the kernel loads that file as romp_session_backend and TmuxBackend subclasses that copy's ABC, and
+# re-executing the source into that module object would rebind the class out from under the subclass.
+echo_text_key = _SFL("romp_session_backend_keys",
+                     str(Path(__file__).resolve().parent / "session_backend.py")).load_module().echo_text_key
 
 
 def _bin_on_path_env(environ) -> dict:
@@ -4025,9 +4032,10 @@ class SdkSession:
         - A RESUMABLE conversation: the atom may genuinely have landed, so re-feeding risks a real
           duplicate. Surface the loss instead, FLAG-ONLY (refeed=False, 2026-08-26): the drop-mark flips
           the echo to "never delivered" NOW — with the todo-reopen seam — rather than hours later at the
-          next thread spawn. _mark_dropped_echoes' redeliver arm must not run here: its _text_landed scan
-          is a bounded transcript-tail read whose miss would land the message TWICE in the resumed
-          conversation, the exact duplicate this branch is documented to refuse. The re-feed lives only
+          next thread spawn. _mark_dropped_echoes' redeliver arm must not run here: the abandoned client
+          may still be flushing the record its _text_landed scan looks for, so a miss is not proof of
+          loss, and a re-feed would land the message TWICE in the resumed conversation, the exact
+          duplicate this branch is documented to refuse. The re-feed lives only
           where the conversation is NOT resumable — the re-head above, and the boot/dead-spawn callers
           (_reseed_echoes, _run), where no client survives to have landed it."""
         if not self.inflight:
@@ -6320,12 +6328,12 @@ def _path_bearing(text: str) -> bool:
 
 
 def _landed_texts(rec: dict) -> set:
-    """Every whitespace-collapsed text a transcript record could have landed a send as — _text_landed's
-    match set, mirroring the kernel's _atom_user_texts (the joined text AND each text block: romp bundles
-    its injected messages as several blocks in one record). Two record shapes carry user text: a native
-    USER record, and the queued_command ATTACHMENT a mid-turn splice leaves, whose prompt is a plain
-    string or a content-block list (the SDK injection path; event_model reads it the same way). Anything
-    else → empty."""
+    """Every text a transcript record could have landed a send as — _text_landed's match set, keyed by
+    echo_text_key exactly as the kernel's _atom_user_texts keys the by-text prune (the joined text AND
+    each text block: romp bundles its injected messages as several blocks in one record). Two record
+    shapes carry user text: a native USER record, and the queued_command ATTACHMENT a mid-turn splice
+    leaves, whose prompt is a plain string or a content-block list (the SDK injection path; event_model
+    reads it the same way). Anything else → empty."""
     out: set = set()
     typ = rec.get("type")
     if typ == "user":
@@ -6343,11 +6351,11 @@ def _landed_texts(rec: dict) -> set:
         blocks = [str(b.get("text") or "") for b in c if isinstance(b, dict) and b.get("type") == "text"]
     else:
         return out
-    joined = " ".join(" ".join(blocks).split())
+    joined = echo_text_key(" ".join(blocks))
     if joined:
         out.add(joined)
     for b in blocks:
-        cb = " ".join(b.split())
+        cb = echo_text_key(b)
         if cb:
             out.add(cb)
     return out
@@ -8577,8 +8585,12 @@ class SdkBackend:
             # from the instant of the send. Cleared event-based by the lastSid-flipping init (the fresh
             # conversation exists) / the turn's ResultMessage.
             s._clearing = True
-        sent_t = int(time.time())              # the echo's stamp, minted BEFORE the CLI can see the text: the
-        s.enqueue(text, todo=user_todo or "")  # record it writes is then at or after it by construction (T237b)
+        # The echo's stamp AND the transcript's byte size, both taken BEFORE the CLI can see the text: the
+        # record it writes is then at or after both by construction (T237b for the stamp; the size,
+        # 2026-09-06, is where _text_landed starts the scan for this echo — see _transcript_mark).
+        sent_t = int(time.time())
+        sent_off, sent_fsid = self._transcript_mark(sid)
+        s.enqueue(text, todo=user_todo or "")
         # optimistic input echo: show the user's own message INSTANTLY (neither the transcript nor the
         # stream has it yet at send time — only we know the text). Synthetic uuid; pruned by text once the
         # transcript writes the real user atom.
@@ -8599,10 +8611,32 @@ class SdkBackend:
             echo["rompAuto"] = True                          # auto-nudge → romp-logo on the chat/timeline
         if user_todo:
             echo["_todo"] = str(user_todo)                   # the answer's ask, for the loss-reopen seam
+        if sent_off is not None:
+            echo["_echo_off"], echo["_echo_fsid"] = sent_off, sent_fsid   # the landing scan's start
         self._live.setdefault(sid, {})[key] = echo
         self._persist_echoes(sid)                            # unlanded echoes survive a kernel restart (reg mirror)
         self._wake_push()
         return True
+
+    def _transcript_mark(self, sid: str):
+        """(byte size, fsid) of the sid's current transcript at this instant — the send-time mark an echo
+        carries as _echo_off / _echo_fsid (mirrored as off / fsid), so _text_landed can start its scan
+        where this send's landing can first appear. The transcript is append-only and the CLI has not
+        seen the text yet, so every record that can land it begins at or after this size; a file that
+        does not exist yet marks 0. The fsid names the file the mark was measured on: a /clear or a fork
+        lands later sends in a different file, where the mark means nothing and the scan reads from the
+        start. (None, None) when the registry cannot be read — the echo then carries no mark and the
+        scan reads the whole file, the side that never duplicates."""
+        try:
+            reg = read_reg(self.state_dir, sid) or {}
+            fsid = str(reg.get("lastSid") or sid)
+            try:
+                size = os.path.getsize(transcript_path(reg.get("cwd") or "", fsid))
+            except OSError:
+                size = 0
+            return size, fsid
+        except Exception:
+            return None, None
 
     def _persist_echoes(self, sid: str) -> None:
         """Mirror the sid's UNLANDED input echoes to the registry (reg['echoes']), the way _persist_queue
@@ -8622,6 +8656,11 @@ class SdkBackend:
                  "rompAuto": bool(a.get("rompAuto")), "dropped": bool(a.get("dropped"))}
             if a.get("_todo"):
                 e["todo"] = str(a["_todo"])   # a user-todo ANSWER's echo keeps its ask's id across restarts
+            if a.get("_echo_off") is not None:
+                e["off"] = int(a["_echo_off"])                 # the send-time transcript mark (_transcript_mark)
+                e["fsid"] = str(a.get("_echo_fsid") or "")
+            if a.get("_landed"):
+                e["landed"] = True            # the boot/spawn scan found its record: prune_live retires it
             snap.append(e)
         try:
             self._update_reg(sid, echoes=snap)
@@ -8653,6 +8692,10 @@ class SdkBackend:
                     atom["dropped"] = True
                 if e.get("todo"):
                     atom["_todo"] = str(e["todo"])   # the loss-reopen seam survives the restart too
+                if isinstance(e.get("off"), int) and not isinstance(e.get("off"), bool):
+                    atom["_echo_off"], atom["_echo_fsid"] = e["off"], str(e.get("fsid") or "")
+                if e.get("landed"):
+                    atom["_landed"] = True           # already adjudicated landed: never re-scanned, never flagged
                 self._live.setdefault(reg["sid"], {})[key] = atom
             if self._live.get(reg["sid"]):
                 self._mark_dropped_echoes(reg["sid"], _queue_texts(reg.get("queue")))
@@ -8671,18 +8714,19 @@ class SdkBackend:
         (_persist_echoes), so it survives further restarts.
 
         `refeed=False` (2026-08-26, honoring _reconcile_stranded's documented policy): the RESUMABLE-
-        reconnect caller takes the flag path ONLY — the redeliver arm's _text_landed scan is a bounded
-        tail read whose miss would land the message a second time in a conversation that genuinely
-        kept the first, exactly the duplicate that branch refuses by design. The loss still surfaces in
-        full (the dropped flag, the todo-reopen seam); only the queue re-add is withheld. Boot and
-        dead-spawn callers keep the default: no client survived there to have landed anything."""
+        reconnect caller takes the flag path ONLY — the abandoned client may still be flushing the record
+        the redeliver arm's _text_landed scan looks for, so a miss there is not proof of loss, and a
+        re-feed would land the message a second time in a conversation that genuinely kept the first,
+        exactly the duplicate that branch refuses by design. The loss still surfaces in full (the dropped
+        flag, the todo-reopen seam); only the queue re-add is withheld. Boot and dead-spawn callers keep
+        the default: no client survived there to be writing anything."""
         d = self._live.get(sid)
         if not d:
             return
         qs = {q for q in queued_texts if isinstance(q, str)}
         newly = [a for a in d.values()
                  if a.get("_echo_text") and not a.get("command") and not a.get("dropped")
-                 and a["_echo_text"] not in qs]
+                 and not a.get("_landed") and a["_echo_text"] not in qs]
         if not newly:
             return
         # RE-DELIVER, don't just flag (the user 2026-08-23, their strongest point in the restart
@@ -8694,11 +8738,13 @@ class SdkBackend:
         # the LIVE session's _pending when one is running (its mirror rewrites reg['queue'] on every
         # mutation, so only _pending sticks), else the persisted reg queue the next spawn's seed reads.
         # A send the scan FINDS is neither re-delivered (a duplicate) nor flagged: it landed and is
-        # merely un-pruned — the next build's by-text prune retires it, and a `dropped` flag would
-        # call a delivered message "never delivered" for a push (the absorbed case, 2026-09-06: the
-        # scan knew only user records, so an absorbed send was re-queued and ran twice). A scan that
-        # cannot read the transcript answers None and the echo takes the flag path: never re-deliver
-        # on doubt, but never hide the possible loss either.
+        # merely un-pruned. The verdict is recorded on the echo (`_landed`, mirrored to the reg) and the
+        # next build's prune_live retires it — by text, or on the verdict alone should the two texts
+        # not meet — and a later boot never re-scans it. A `dropped` flag would call a delivered message
+        # "never delivered" for a push (the absorbed case, 2026-09-06: the scan knew only user records,
+        # so an absorbed send was re-queued and ran twice). A scan that cannot read the transcript
+        # answers None and the echo takes the flag path: never re-deliver on doubt, but never hide the
+        # possible loss either.
         # romp-authored echoes (nudges) keep the flag path: re-delivering one could double-nudge,
         # and its content is regenerable machinery, not the user's words. A refeed=False caller
         # (the resumable reconnect — docstring above) keeps EVERY echo on the flag path.
@@ -8707,10 +8753,12 @@ class SdkBackend:
             for a in sorted(newly, key=lambda x: x.get("t") or 0):
                 if a.get("author") != "human":
                     continue
-                seen = self._text_landed(sid, a["_echo_text"], a.get("t"))
+                seen = self._text_landed(sid, a["_echo_text"], a.get("t"),
+                                         a.get("_echo_off"), a.get("_echo_fsid"))
                 if seen is False:
                     redeliver.append(a)
                 elif seen:
+                    a["_landed"] = True                    # the verdict, for prune_live and the next boot
                     landed.add(a["_echo_text"])
         if redeliver:
             # The LIVE-session caller (a fresh spawn's _run) must deliver through the session's
@@ -8767,7 +8815,7 @@ class SdkBackend:
             if a["_echo_text"] in rekeyed:
                 continue                                   # now in the queue → renders as queued, prunes on landing
             if a["_echo_text"] in landed:
-                continue                                   # landed, un-pruned → the next build's by-text prune
+                continue                                   # landed, un-pruned → the next build's prune_live
             a["dropped"] = True
             self._log("%s: a send never reached its CLI (the process died holding it) — kept in the chat "
                       "as never-delivered: %.80r" % (sid[:8], a["_echo_text"]), problem=True)
@@ -8780,7 +8828,7 @@ class SdkBackend:
         self._persist_echoes(sid)
         self._wake_push()
 
-    def _text_landed(self, sid: str, text: str, t: int | None = None):
+    def _text_landed(self, sid: str, text: str, t: int | None = None, off=None, fsid=None):
         """Did `text` land in the sid's transcript? The re-delivery guard: the echo prune is lazy (a landed
         echo may still be un-pruned at boot), so a queue re-add without this scan would duplicate a
         delivered message. Three answers, because the caller acts on each differently:
@@ -8795,28 +8843,41 @@ class SdkBackend:
                   the loss still surfaces for a human call.
         `t` is the echo's send time: a record stamped BEFORE it is not this send's landing — "ok", "go
         ahead" and a deliberate re-send repeat earlier texts (prune_live's own rule, T237b) — while a
-        record with no readable stamp still counts, the side that never duplicates. The match mirrors the
-        kernel's _atom_user_texts, the by-text prune this hands a found echo to: the joined text or any one
-        text block, whitespace-collapsed, EQUAL to the send — never a substring, or a found-but-never-
-        pruned echo would ride the tail forever. Reads the transcript TAIL (the loss window is recent by
-        construction — the send predates the death that orphaned it). Lines are pre-filtered on the two
-        record types' literals only, never on the text: JSON escapes newlines and quotes, so a raw-line
-        prefix test skipped every multi-line send (a quote chip's reply, for one) as never landed."""
+        record with no readable stamp still counts, the side that never duplicates. The match is
+        echo_text_key's, the same rule the kernel's _atom_user_texts keys prune_live's by-text retire
+        with, so a found echo is always one the prune can retire: the joined text or any one text block
+        EQUAL to the send — never a substring, or a found-but-never-pruned echo would ride the tail
+        forever. `off` / `fsid` are the echo's send-time transcript mark (_transcript_mark): the file's
+        byte size when the send was made, and the fsid it was measured on. The scan starts THERE — every
+        record that can land this send is at or after it, however much the session wrote afterwards —
+        rather than at a fixed distance from EOF, which read a landed send whose record sat more than
+        2 MB before EOF as never landed and re-queued it (2026-09-06). A mark from another file (the
+        fsid changed: a /clear, a fork), one past the file's end, or no mark at all (an echo persisted
+        before marks existed) reads from the start. Lines are streamed, never read whole, and
+        pre-filtered on the two record types' literals only, never on the text: JSON escapes newlines
+        and quotes, so a raw-line prefix test skipped every multi-line send (a quote chip's reply, for
+        one) as never landed. A mark taken while the CLI was mid-write leaves a line fragment first; it
+        fails to parse and is skipped like any other non-record line."""
         try:
             reg = read_reg(self.state_dir, sid) or {}
-            path = transcript_path(reg.get("cwd") or "", reg.get("lastSid") or sid)
-            want = " ".join(text.split())
+            cur = str(reg.get("lastSid") or sid)
+            path = transcript_path(reg.get("cwd") or "", cur)
+            want = echo_text_key(text)
             floor = int(t or 0)
+            start = 0
+            if (isinstance(off, int) and not isinstance(off, bool) and fsid is not None
+                    and str(fsid) == cur and 0 <= off <= os.path.getsize(path)):
+                start = off
             with open(path, "rb") as f:
-                f.seek(max(0, os.path.getsize(path) - 2_000_000))
-                for line in f.read().decode(errors="replace").splitlines():
-                    if '"user"' not in line and '"queued_command"' not in line:
+                f.seek(start)
+                for raw in f:
+                    if b'"user"' not in raw and b'"queued_command"' not in raw:
                         continue
                     try:
-                        rec = json.loads(line)
+                        rec = json.loads(raw.decode(errors="replace"))
                     except ValueError:
                         continue
-                    if want not in _landed_texts(rec):
+                    if not isinstance(rec, dict) or want not in _landed_texts(rec):
                         continue
                     ts = _record_epoch(rec.get("timestamp"))
                     if floor and ts is not None and ts < floor:
@@ -10243,6 +10304,14 @@ class SdkBackend:
         as the observable twin of `inflight`). The tmux route keeps its own floor in
         kernel._tmux_echo_settle, borrowing _path_bearing: there a send is a paste into the composer.
 
+        The by-text comparison is keyed by echo_text_key on BOTH sides (2026-09-06): the kernel builds
+        `tx_user_texts` from _atom_user_texts, and the echo's text is keyed the same way here — before,
+        the raw text was compared against stripped keys, so an echo whose text carried a trailing
+        newline never retired. An echo the boot/spawn scan already FOUND (`_landed`, recorded by
+        _mark_dropped_echoes from a direct read of the transcript and mirrored to the reg) retires
+        without the comparison at all: that is its exit when the two texts cannot meet, since a found
+        echo is neither flagged nor dismissable.
+
         `human_floor` still retires COMMAND atoms below. (Echo-only: real stream atoms have no
         _echo_text and prune by uuid as before.)"""
         d = self._live.get(sid)
@@ -10255,16 +10324,17 @@ class SdkBackend:
         # held. A plain set (older callers) keeps the unfloored match.
         text_t = tx_user_texts if isinstance(tx_user_texts, dict) else None
         def _by_text(a, et):
-            if not et:
+            key = echo_text_key(et)
+            if not key:
                 return False
             if text_t is None:
-                return et in tx_user_texts
-            return et in text_t and float(text_t[et] or 0) >= float(a.get("t") or 0)
+                return key in tx_user_texts
+            return key in text_t and float(text_t[key] or 0) >= float(a.get("t") or 0)
         echo_removed = False
         for k in list(d.keys()):
             a = d[k]
             et = a.get("_echo_text")
-            landed = a.get("uuid") in tx_uuids or _by_text(a, et)
+            landed = a.get("uuid") in tx_uuids or bool(a.get("_landed")) or _by_text(a, et)
             # A COMMAND atom (the CLI's streamed /model, /compact feedback) from a TURN-LESS control
             # request may never get a transcript record to land against — retire it once a genuine human
             # turn postdates it, so the stale confirmation line doesn't ride pinned inside every later

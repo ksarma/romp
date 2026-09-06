@@ -29,6 +29,20 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 
+def echo_text_key(text) -> str:
+    """The one rule under which an input echo's text and a transcript record's user text are compared:
+    outer whitespace stripped, nothing else. Three readers share it and must agree: the kernel's
+    _atom_user_texts (the keys of the `tx_user_texts` mapping prune_live receives), SdkBackend.prune_live's
+    by-text retire (the echo side of that comparison), and SdkBackend._text_landed / _landed_texts (the
+    transcript scan behind the boot and dead-spawn duplicate guard). Until 2026-09-06 the scan collapsed
+    internal whitespace while the prune compared the raw echo text against stripped keys, so a send whose
+    text carried a trailing newline (`romp send` passes its argument verbatim) was FOUND by the scan,
+    neither re-fed nor flagged, and never pruned or dismissable. Strip is as wide as the data needs: the
+    CLI stores user text verbatim (checked over this machine's transcripts, 2026-09-06 — double spaces,
+    bare CRs and line-trailing blanks all preserved). Not a str → ""."""
+    return text.strip() if isinstance(text, str) else ""
+
+
 class SessionBackend(ABC):
     # True when busy() may be overruled by the cached transcript parse, so the pusher must keep that parse
     # current for the sids it holds parked ops for (_refresh_parked_parses); a backend whose busy() is the
