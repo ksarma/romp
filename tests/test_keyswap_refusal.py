@@ -109,6 +109,17 @@ RESTART_BLOCK = (
     "plist by hand; drop-ins survive, so put your own lines in service.env or a drop-in.",
 )
 
+# Under a shell whose path comes from the alias ROMP_SERVICE_ENV (kernel/keysource.py accepts it after
+# ROMP_SERVICE_ENV_FILE) the path line is followed by these two, so "unset the variable in this shell" names a
+# variable the shell has set and the install remedy holds: bin/romp-service resolves the alias the same way and
+# writes ROMP_SERVICE_ENV_FILE into the unit or the plist (tests/romp-service.bats pins the installer's half).
+# Before, the installer read the primary alone, so an install from such a shell wrote no override line and
+# the kernel kept the default path with the remedy done (review find, 2026-09-06).
+ALIAS_NOTE = (
+    "This shell set it under the alias ROMP_SERVICE_ENV, which the installer reads too; the",
+    "line it writes into the unit or the plist is ROMP_SERVICE_ENV_FILE.",
+)
+
 # compared against whitespace-flattened text: the rendered block wraps it across two lines
 INSTALL_COST = "Either rewrite drops a line added to the unit or the plist by hand; drop-ins survive, so put your own lines in service.env or a drop-in."
 
@@ -117,25 +128,28 @@ INSTALL_COST = "Either rewrite drops a line added to the unit or the plist by ha
 WIDTH = 100
 
 
-def other_file_lines(path, indent):
+def other_file_lines(path, indent, alias=False):
     """OTHER_FILE as the CLI lays it out under a pad `indent` wide, unindented: the path inline while its
     sentence fits WIDTH, else the sentence to "reads" and the path whole, four columns deeper, on its own
-    line (cli._other_file's rule)."""
+    line (cli._other_file's rule); ALIAS_NOTE after the path when this shell's path came from the alias."""
     lines = []
     for line in OTHER_FILE:
         if "%s" not in line:
             lines.append(line)
-        elif len(indent) + len(line % path) <= WIDTH:
+            continue
+        if len(indent) + len(line % path) <= WIDTH:
             lines.append(line % path)
         else:
             lines.append(line.split(" %s.")[0])
             lines.append("    %s." % path)
+        if alias:
+            lines += list(ALIAS_NOTE)
     return lines
 
 
-def other_file_block(path, indent):
+def other_file_block(path, indent, alias=False):
     """The shared lines as one hint renders them: this shell's path filled in, each line under `indent`."""
-    return "\n".join(indent + line for line in other_file_lines(path, indent))
+    return "\n".join(indent + line for line in other_file_lines(path, indent, alias))
 
 
 def restart_block(indent):
@@ -199,12 +213,16 @@ def render_shapes(env, path=None):
 # reference's restart section by its anchor; the CLI's "(below)", which every hint resolves with the restart
 # block). A block whose concept and restart sit in different sentences must carry one of those somewhere in
 # it. A block is a paragraph or one bullet of a list, so one bullet's reload covers no neighbour; a block is
-# selected by the concept however worded (the ports paragraph says "unit" and "bakes in"), not by the literal
-# `Environment=`. Presence anywhere in the block was the earlier rule, and it passed a bare restart for a unit
-# line beside a mention of the install for another reason (round-7 verification).
+# selected by the concept however worded (the ports paragraph says "unit" and "bakes in"; the install's cost
+# says "a line added to the unit or the plist by hand", "added to either by hand", "a plist you edited by
+# hand"), not by the literal `Environment=`. Presence anywhere in the block was the earlier rule, and it passed
+# a bare restart for a unit line beside a mention of the install for another reason (round-7 verification);
+# the "added to" and "by hand" forms were outside the regex while the docs used them, so a bare restart in
+# those sentences passed (round-8 verification; the mutations are pinned below).
 CONCEPT = re.compile(r"Environment=|EnvironmentVariables|unit'?s? (?:own )?environment|baked into the unit|"
                      r"unit bakes|(?:unit|plist) line|line in the (?:unit|plist)|in the unit\b|in the plist\b|"
-                     r"plist's", re.I)
+                     r"plist's|added to (?:the )?(?:unit|plist|either)\b|(?:unit|plist)(?: or the plist)? by hand|"
+                     r"(?:unit|plist) you (?:added|edited)", re.I)
 RESTART_WORD = re.compile(r"\brestart")
 POINTER = re.compile(r"#two-things-still-need-a-restart|\(below\)")
 RELOAD_WORD = re.compile(r"reload|#two-things-still-need-a-restart|\(below\)")
@@ -642,7 +660,7 @@ class HelpAndDocsAgree(unittest.TestCase):
         # out of selection fails here
         ref = self._read("docs/reference.md")
         hits = [b for b in text_blocks(ref) if CONCEPT.search(b) and RESTART_WORD.search(b)]
-        self.assertGreaterEqual(len(hits), 5, "the blocks this covers:\n" + "\n---\n".join(h[:120] for h in hits))
+        self.assertGreaterEqual(len(hits), 6, "the blocks this covers:\n" + "\n---\n".join(h[:120] for h in hits))
         self.assertEqual(reload_violations(ref), [])
         self.assertTrue(any("#two-things-still-need-a-restart" in b for b in hits), "the by-reference form is exercised")
         # the section the others point at carries both reloads and the wait
@@ -662,7 +680,7 @@ class HelpAndDocsAgree(unittest.TestCase):
         for phrase in ("these, so remove the line there first, reload the definition, then restart (below)",
                        "daemon-reload` instead; not a line added to the unit or the plist by hand, which the",
                        "and a unit or plist line reaches that restart only once the definition is reloaded:",
-                       "daemon-reload on Linux, `romp-service install` on macOS), the two resolve different",
+                       "daemon-reload on Linux, `romp-service install` on macOS, which rewrites the plist as the",
                        "`systemctl --user daemon-reload` first. A plist edit takes `romp-service install`",
                        "instead: the kickstart does not re-read the plist; the install rewrites it and reloads"):
             self.assertIn(phrase, src, phrase)
@@ -696,6 +714,44 @@ class HelpAndDocsAgree(unittest.TestCase):
             flat = " ".join(text.split())
             self.assertTrue("romp-service install" in flat or "daemon-reload" in flat,
                             "the block-level rule these replace saw only presence, and passed this")
+        # the wording the reference uses for the install's cost, each turned into a bare restart: none matched
+        # the concept until round 8's verification (the regex knew "in the unit", not "added to the unit")
+        by_hand = ("A line you added to the unit or the plist by hand takes effect at the next manager restart.",
+                   "A line added to the unit by hand takes effect at the next manager restart (`systemctl --user "
+                   "restart romp-manager`).",
+                   "The install rewrites both; a line added to either by hand reaches the kernel at the next manager "
+                   "restart.",
+                   "A plist you edited by hand takes effect at the next manager restart.")
+        for text in by_hand:
+            self.assertTrue(reload_violations(text), text)
+            self.assertTrue(CONCEPT.search(text), text)
+
+    # the reference's four sentences on the install's cost, as written (the left side; a rewording lands here
+    # too), and each turned into the bare restart a regression would write. The pristine reference passes and
+    # every mutation fails, so the property covers the sentences round 8 added and not only the older wordings
+    COST_SENTENCES = (
+        ("Either rewrite drops a\nline you added to the unit or the plist by hand; a drop-in survives it (see\n"
+         "[Two things still need a restart](#two-things-still-need-a-restart)).",
+         "A line you added to the unit or the plist by hand takes effect at the next manager restart."),
+        ("a line added to the unit or the plist by hand does not\nsurvive `romp-service install`, which rewrites both",
+         "a line added to the unit or the plist by hand reaches the kernel at the next manager restart"),
+        ("The rewrite drops a line added to the unit by hand, as the\nplist rewrite does; a drop-in survives it, so a "
+         "line of your own belongs in\n`service.env` or a drop-in.",
+         "A line added to the unit by hand takes effect at the next manager restart (`systemctl --user restart "
+         "romp-manager`)."),
+        ("rewrites the unit's or the plist's line and drops a line added to either by\n  hand; a drop-in survives it "
+         "and takes the reload under [Two things still\n  need a restart](#two-things-still-need-a-restart))",
+         "rewrites the unit's or the plist's line; a line added to either by hand takes effect at the next manager "
+         "restart)"),
+    )
+
+    def test_a_bare_restart_in_any_cost_sentence_of_the_reference_fails_the_rule(self):
+        ref = self._read("docs/reference.md")
+        self.assertEqual(reload_violations(ref), [])
+        for written, bare in self.COST_SENTENCES:
+            self.assertEqual(ref.count(written), 1, "the reference's sentence moved or was reworded: " + written[:60])
+            mutated = ref.replace(written, bare)
+            self.assertTrue(reload_violations(mutated), "a bare restart passed: " + bare)
 
     def test_the_launchd_reload_is_romp_service_install_and_never_the_bare_pair(self):
         # bin/romp-service's install waits between bootout and bootstrap: bootout only starts the old job's
@@ -722,7 +778,7 @@ class HelpAndDocsAgree(unittest.TestCase):
         for pair in ("launchctl bootstrap", "launchctl bootout", "bootout then bootstrap", "bootstrap gui/"):
             self.assertNotIn(pair, rendered, pair)
         self.assertIn("A plist edit takes `romp-service install`", rendered)
-        self.assertIn("`romp-service install` on macOS)", rendered)
+        self.assertIn("`romp-service install` on macOS, which rewrites the plist", rendered)
         self.assertIn("instead: the kickstart does not re-read the plist; the install rewrites it and reloads", rendered)
         ref = " ".join(self._read("docs/reference.md").split())          # the reference wraps a command across lines
         given = list(re.finditer(r"`launchctl bootstrap gui/", ref))
@@ -835,6 +891,33 @@ class RenderedMismatches(_Env):
         self.assertEqual(cli._other_file(fits, 14)[1:3], ("in their own environment; this shell reads", "    %s." % fits),
                          "the same path under the deeper indent no longer fits")
 
+    def test_the_boundary_paths_render_within_100_columns_in_every_shape(self):
+        # the finding's arithmetic: under the 12-column indent the sentence holds a path of 44 characters and
+        # not 45; under the 14-column one, 42 and not 43. Both boundary paths render every shape within 100
+        # columns, the 44-character one inline where it fits and on its own line where it does not
+        edge = 100 - 12 - len("in their own environment; this shell reads .")
+        self.assertEqual(edge, 44)
+        fits, over = "/" + "p" * 43, "/" + "p" * 44
+        self.assertEqual((len(fits), len(over)), (44, 45))
+        for path in (fits, over):
+            shapes = render_shapes(self, path)
+            self.assertEqual(sorted(shapes), sorted(self.shapes))
+            for name, text in shapes.items():
+                for line in text.split("\n"):
+                    self.assertLessEqual(len(line), 100, "%s: %r" % (name, line))
+                self.assertEqual(reload_violations(text), [], name)
+            inline = "in their own environment; this shell reads %s.\n" % path
+            own_line = "in their own environment; this shell reads\n%s    %s.\n"
+            for name in ("file-mode fingerprint", "file-mode kernel, the file carries the line"):
+                self.assertIn(other_file_block(path, " " * 12), shapes[name], name)
+                if path == fits:
+                    self.assertIn(inline, shapes[name] + "\n", name + ": 44 characters fit the 12-column indent")
+                else:
+                    self.assertIn(own_line % (" " * 12, path), shapes[name] + "\n", name + ": 45 do not")
+            self.assertIn(other_file_block(path, " " * 14), shapes["command-mode kernel"])
+            self.assertIn(own_line % (" " * 14, path), shapes["command-mode kernel"] + "\n",
+                          "neither fits the 14-column indent")
+
     def test_the_shared_blocks_render_once_each_and_the_mechanics_never_twice(self):
         of = " ".join(other_file_block(self.path, "").split())
         rb = " ".join(restart_block("").split())
@@ -867,6 +950,23 @@ class RenderedMismatches(_Env):
         self.assertIn("A drop-in line reaches them at the manager restart after `systemctl --user\n"
                       "            daemon-reload` instead; not a line added to the unit or the plist by hand, which the\n"
                       "            next `romp-service install` rewrites away.", env_only)
+        # the command-mode fingerprint MISMATCH names the install as the reload a plist line takes; round 8 left
+        # it as the one shape without the cost, and this test looped over self.shared alone (round-8
+        # verification). The cost sits in the same sentence as the install it qualifies
+        self.assertIn("`romp-service install` on macOS, which rewrites the plist as the Linux install rewrites the unit, "
+                      "so a line added to either by hand is gone and the next kernel pins file mode; drop-ins survive, "
+                      "so put your own lines in service.env or a drop-in)",
+                      " ".join(self.shapes["command-mode fingerprint"].split()))
+        # and the property over every shape, however worded: a shape that names the install anywhere carries the
+        # words of its cost (a line added by hand is gone or rewritten away; a drop-in survives). Shape-wide, not
+        # per sentence: the shared shapes name the install as what writes the path line and give the cost once,
+        # in the restart block they render after their causes
+        cost = re.compile(r"by hand.*?(?:gone|rewrit|drops|survive)|(?:drops|rewrit)[^.]*by hand", re.I)
+        naming = [name for name, text in self.shapes.items() if "romp-service install" in text]
+        self.assertEqual(sorted(naming), sorted(self.shapes), "every shape names the install today")
+        for name in naming:
+            flat = " ".join(self.shapes[name].split())
+            self.assertTrue(cost.search(flat) and "drop-in" in flat, name + ": the install without its cost")
         for name, text in self.shapes.items():
             self.assertNotIn("which drops a line added by hand", text, name + ": the cost was stated for the plist alone")
             self.assertNotIn("so there the line goes in", text, name)
@@ -907,6 +1007,41 @@ class RenderedMismatches(_Env):
         self.assertNotEqual(default, self.path)
         self.assertTrue(default.endswith(os.path.join("romp", "service.env")), default)
 
+    def test_a_shell_that_set_the_alias_is_told_so_in_the_shared_shapes_only(self):
+        # kernel/keysource.py resolves the path from ROMP_SERVICE_ENV_FILE, else the alias ROMP_SERVICE_ENV; the
+        # hint named the primary alone, so an alias-only shell read "unset the variable in this shell" about a
+        # variable it never set and "install from this shell" about an installer that read the primary alone
+        # (round-8 verification). With both set, or the primary alone, nothing is added
+        for name, text in self.shapes.items():
+            for line in ALIAS_NOTE:
+                self.assertNotIn(line, text, name + ": both spellings set, the primary produced the path")
+        os.environ.pop("ROMP_SERVICE_ENV_FILE")
+        try:
+            self.assertEqual(ks.service_env_path(), self.path, "the alias alone resolves the same file")
+            self.assertTrue(cli._path_alias())
+            shapes = render_shapes(self)                        # the real temp path: the word-for-word pins
+            short = render_shapes(self, self.SHORT_PATH)        # a fabricated path: the width, whatever TMPDIR is
+            for name in self.shared:
+                indent = " " * (14 if name == "command-mode kernel" else 12)
+                self.assertIn(other_file_block(self.path, indent, alias=True), shapes[name], name)
+                flat = " ".join(shapes[name].split())
+                self.assertIn("this shell reads %s. %s Look for it where" % (self.path, " ".join(ALIAS_NOTE)), flat, name)
+                self.assertEqual(flat.count("ROMP_SERVICE_ENV,"), 1, name)
+                for line in short[name].split("\n"):
+                    self.assertLessEqual(len(line), 100, "%s: %r" % (name, line))
+                self.assertIn(other_file_block(self.SHORT_PATH, indent, alias=True), short[name], name)
+                self.assertEqual(reload_violations(shapes[name]), [], name)
+            for name in set(shapes) - set(self.shared):
+                self.assertEqual(shapes[name], self.shapes[name], name + ": no path named, so no alias named")
+            long = render_shapes(self, self.LONG_PATH)["file-mode fingerprint"]
+            self.assertIn(other_file_block(self.LONG_PATH, " " * 12, alias=True), long,
+                          "the note follows the path on its own line too")
+            os.environ.pop("ROMP_SERVICE_ENV")
+            self.assertFalse(cli._path_alias(), "neither set: the default path, and no alias to name")
+        finally:
+            os.environ["ROMP_SERVICE_ENV_FILE"] = self.path
+            os.environ["ROMP_SERVICE_ENV"] = self.path
+
     def test_no_rendered_shape_gives_the_bare_launchd_pair(self):
         for name, text in self.shapes.items():
             flat = " ".join(text.split())
@@ -915,7 +1050,7 @@ class RenderedMismatches(_Env):
         for name, text in self.shared.items():
             self.assertIn("A plist edit takes `romp-service install` instead: the kickstart does not re-read the plist",
                           " ".join(text.split()), name)
-        self.assertIn("`romp-service install` on macOS)", self.shapes["command-mode fingerprint"])
+        self.assertIn("`romp-service install` on macOS, which rewrites the plist", self.shapes["command-mode fingerprint"])
 
     def test_every_shape_passes_the_reload_rule(self):
         selected = 0
