@@ -992,9 +992,23 @@ that passes untracked files through.
 - **Tracked folders that hold figures.** The guard would send an agent to `track-edit` on an
   image, which corrupts it. Mitigation: the non-text refusal lands in the vendored guard and
   `track-edit` in Slice 1, before folder tracking ships.
-- **A file moved or renamed by the session.** The sidecar is keyed by path. Mitigation: the store
-  layer re-finds a moved file by content hash on load (`store-io` orphan healing), and the
-  comments log keeps the record either way (decision 27); no rename UI.
+- **A file moved or renamed by the session.** The sidecar is keyed by path. This plan first said
+  the store layer re-finds a moved file by content hash on load. The Slice 1 build (2026-09-06)
+  found otherwise: `store-io` heals only when `healOrphanStore` is called explicitly (the VS Code
+  host calls it; `loadStoreStatus` and the CLIs never do), and the host script does not call it,
+  on purpose. A heal is a disk write: on `status` it would run outside the consent gate, and on
+  a mutating verb it would make a sidecar appear under a `""` fence, refusing the very verb that
+  caused it. So today a renamed file starts a fresh sidecar and the old one stays behind as an
+  orphan; the comments log keeps the record either way (decision 27), and there is no rename UI.
+  The follow-up option: heal on a mutating verb only, behind the consent, and let the
+  fence-and-retry shape absorb the appearance (the verb refuses `store-moved` once, the client
+  re-issues `status` and retries by id).
+- **Author chips on a file a remote kernel owns.** `GET /sessions` lists only the local kernel's
+  sessions and no `/remote/<host>/sessions` relay exists, so on such a file the panel cannot map a
+  sidecar `authorId` to a session's name and color: those chips fall back to the neutral chip with
+  the sidecar's own author label. The Send label still names the session, since that comes from
+  the viewer's identity rather than the map (the Slice 1 build, 2026-09-06). A relay route is the
+  fix if the chips matter on a remote file.
 - **Ended session.** Its todo is hidden from Waiting on you and `_send_or_park` revives dormant
   sessions, not ended ones (`kernel.py:24047-24062, 12227-12234`). Mitigation: the guide note
   above; Send to session surfaces the refusal; the comments are already on disk.
