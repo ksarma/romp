@@ -2576,7 +2576,8 @@ def _norm_timeline_views(d, tag_cap=_VIEWS_MAX_TAGS):
     # TAG ORDER (the user 2026-08-25): the union DISPLAY order — a NAME list, viewer-side, so a
     # remote-homed tag holds its dragged position without any cross-kernel write (a display
     # preference must not need another kernel up; the lane order's viewer-side philosophy). Local
-    # tags ALSO keep their array order (the drag rewrites both); this list extends the same order
+    # tags' ARRAY order follows it too: the write door sorts the stored array by the write's
+    # tagOrder under an empty `edited` (the drag's write); this list extends the same order
     # across the whole name-keyed union. Names are not validated against the local store — a
     # remote name is unknowable here by design; junk entries cost nothing and age out on the next
     # drag. Absent stays absent, so pre-order blobs round-trip byte-identical.
@@ -2937,6 +2938,14 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
         # lens path. The judged path below is for a write that names the tags it changed, or for a
         # writer that cannot say (an older client, a file written outside the kernel).
         kept = [json.loads(json.dumps(pt)) for pt in prev.values()]
+        # …in the write's ORDER (round 6 of the 2026-09-05 review): the array order is an order
+        # field, this write's to set like `tagOrder` itself — the pill drag's contract is that the
+        # stored array reads in the dragged order too, since a reader without this kernel's tagOrder
+        # (a peer's dashboard, whose own order lacks these names) falls back to the array. Until now
+        # the store's order was copied and the posted array order discarded, so a drag reordered
+        # tagOrder and left the array as it was. Names the order lacks follow, in store order.
+        ord_ix = {n: i for i, n in enumerate(v.get("tagOrder") or [])}
+        kept.sort(key=lambda t: ord_ix.get(t.get("name"), len(ord_ix)))
         incoming = set(prev)
     for t in ([] if lens_only else v["tags"]):
         pt = prev.get(t["id"])

@@ -91,7 +91,10 @@ export interface InflightWrite {
  *  rename the kernel had refused as a duplicate landed through the next lens toggle (round 4 of
  *  the 2026-09-05 review). The kernel keeps the store's copy of any tag a write with an empty
  *  `edited` differs on, so what rides here must be exactly what the store served. The tags
- *  array re-sorts to `tagOrder` when one is given (the timeline's pill-drag contract). */
+ *  array re-sorts to `tagOrder` when one is given — the pill-drag contract that the stored array
+ *  reads in the dragged order too: over the socket the kernel's door orders the stored array by
+ *  the write's `tagOrder` itself (the array is not the write's to set under an empty `edited`),
+ *  and on the Electron path, where the posted blob IS the file, this re-sort is what does it. */
 export function lensBlob(base: SessionViews | null | undefined, fields: LensFields): SessionViews {
   const v = applyLensFields(base || { active: "all", tags: [] }, fields);
   if (fields.tagOrder) {

@@ -98,7 +98,10 @@ function rederiveViews(base, writes) {
 function isPendingTagId(id) { return typeof id === 'string' && /^pending-/.test(id); }
 // A lens or order write's own content — {active?, actives?, tagOrder?} — applied to a blob (a copy),
 // and the blob such a write POSTS: the STORE's blob (the last one adopted, never the pending copy)
-// with the fields set, the tags array re-sorted to a given order (the pill-drag contract). The
+// with the fields set, the tags array re-sorted to a given order — the pill-drag contract that the
+// stored array reads in the dragged order too: over the socket the kernel's door orders the stored
+// array by the write's tagOrder itself; on the Electron path, where the posted blob IS the file,
+// this re-sort does it. The
 // hand-mirrors of views-writes.ts applyLensFields / lensBlob (round 4 of the 2026-09-05 review: a
 // whole-blob write built from the pending copy carried every targeted edit still in flight as this
 // page's claim on those tags, and a rename the kernel had refused landed through a lens toggle).
@@ -3637,8 +3640,9 @@ class TimelinePanel {
           const tc = tg.color || MODEL_FG;
           // the tag itself: the normal pill, NO ✕ — actions live beside it, never on it.
           // DRAGGABLE (the user 2026-08-25): grab a pill to reorder the tags — the drop writes
-          // tagOrder (the union display order, viewer-side) AND re-sorts the local tags array to
-          // match (the natural store for local-only readers). The membership drag's discipline:
+          // tagOrder (the union display order, viewer-side); the kernel orders the stored tags
+          // array by it, so a reader without this tagOrder sees the same order. The membership
+          // drag's discipline:
           // pointer capture, an accent border cue that moves WITHOUT rebuilding mid-drag (the
           // redraw-eats-pointer rule); the rebuild and the write happen on the drop. The rename
           // input keeps the cell — no drag while editing.
@@ -3674,8 +3678,9 @@ class TimelinePanel {
                 if (toIdx === fromIdx) return;
                 const names = cells.map((c) => c._tname);
                 names.splice(toIdx, 0, names.splice(fromIdx, 1)[0]);
-                // the union display order, remote-homed names included; lensBlob re-sorts the
-                // store's local tags array to match (the natural store for local-only readers)
+                // the union display order, remote-homed names included; the kernel orders the
+                // stored tags array by it (lensBlob's own re-sort matters on the Electron path,
+                // where the posted blob is the file)
                 this._setLens({ tagOrder: names });
                 build();
               };

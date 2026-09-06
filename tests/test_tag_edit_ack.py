@@ -596,10 +596,42 @@ class EditedBoundsTheWrite(_Wire):
         self.assertEqual(store_tag("docs")["id"], d["id"], "the create survives")
         self.assertEqual(km._timeline_views()["actives"]["timeline"], {"tags": ["api"]}, "the lens landed")
         self.assertEqual(km._timeline_views()["tagOrder"], ["docs", "api"], "…and the order")
-        self.assertEqual([t["id"] for t in a["views"]["tags"]], [t["id"] for t in store["tags"]],
-                         "the ack's blob is the store's tag set")
+        self.assertEqual(sorted(t["id"] for t in a["views"]["tags"]), sorted(t["id"] for t in store["tags"]),
+                         "the ack's blob is the store's tag set (in the write's order, round 6)")
         self.assertEqual(self.notices, [], "the normal lens path: nothing said")
         self.assertGreater(a["seq"], store["seq"], "the write moved the store")
+
+    def test_an_order_write_orders_the_stored_array_too_the_pill_drags_contract(self):
+        """Round 6 of the 2026-09-05 review: under an empty `edited` the door copied the store's tags
+        in STORE order and discarded the posted array order, so a pill drag moved tagOrder and left
+        the array as it was — a reader without this kernel's tagOrder (a peer's dashboard) kept
+        showing the old order, and the clients' comments promised a re-sort that never landed. The
+        array order is an order field, the write's to set: it follows the write's tagOrder; names the
+        order lacks trail in store order."""
+        self.seed()                                                        # web (gA)
+        api, err = km._edit_tag("api", add=[SID2])
+        self.assertIsNone(err)
+        docs, err = km._edit_tag("docs", add=[SID3])
+        self.assertIsNone(err)
+        self.assertEqual([t["name"] for t in km._timeline_views()["tags"]], ["web", "api", "docs"])
+        drag = json.loads(json.dumps(km._views_client()))
+        drag["tagOrder"] = ["docs", "web", "remote-only"]                   # the drop: a union order, a remote name included
+        drag["tags"] = list(reversed(drag["tags"]))                         # the client's own re-sort: ignored, the order decides
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": drag, "edited": []})
+        self.assertEqual((a["ok"], a["refused"]), (True, []))
+        store = km._timeline_views()
+        self.assertEqual([t["name"] for t in store["tags"]], ["docs", "web", "api"],
+                         "the array follows the order; the name the order lacks trails in store order")
+        self.assertEqual(store["tagOrder"], ["docs", "web", "remote-only"])
+        self.assertEqual([t["name"] for t in a["views"]["tags"]], ["docs", "web", "api"], "the ack's blob agrees")
+        self.assertEqual([t["mtime"] for t in store["tags"]].count(None), 0)
+        self.assertTrue(all(t["id"] in ("gA", api["id"], docs["id"]) for t in store["tags"]), "the same three tags: nothing changed but order")
+        # a lens write carrying the same order keeps the array where it is
+        lens = json.loads(json.dumps(a["views"]))
+        lens["actives"] = {"timeline": {"tags": ["api"]}, "chat": {"all": True}, "outline": {"all": True}}
+        b = self.post({"type": "setTimelineViews", "writeId": "w2", "views": lens, "edited": []})
+        self.assertEqual((b["ok"], [t["name"] for t in km._timeline_views()["tags"]]), (True, ["docs", "web", "api"]))
+        self.assertEqual(self.notices, [])
 
     def test_a_lens_write_cannot_store_a_dangling_active_it_is_validated_against_the_tags_that_stand(self):
         """Round 6 of the 2026-09-05 review: the normalizer validated `active` against the POSTED

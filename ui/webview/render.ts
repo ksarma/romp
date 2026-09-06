@@ -14865,8 +14865,8 @@ setupSettings();
     if (draggedGroup) {
       // a GROUP drop (tab groups): the dragged tag takes the target section's slot in tagOrder —
       // the FULL union order, written through the same views path the timeline's pill drag uses
-      // (postTagOrder → setTimelineViews, the tags array re-sorted to match), so both surfaces read
-      // one order. pendingSessionViews shows it instantly; the kernel's ack settles it.
+      // (postTagOrder → setTimelineViews; the kernel orders the stored tags array by it), so both
+      // surfaces read one order. pendingSessionViews shows it instantly; the kernel's ack settles it.
       e.preventDefault();
       const to = tabs.querySelector<HTMLElement>(".tab-group-head.drop-target")?.dataset.group;
       if (to && to !== draggedGroup) {
