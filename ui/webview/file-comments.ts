@@ -25,9 +25,11 @@
 //     A PDF's pages are read from the chunk's shells (pdfPages): a page with no shell is one the regenerated document
 //     no longer has (pageGone: stale, Re-place on any page); a shell with no canvas is a page pdf.js could not draw
 //     (pageUnrendered: the card says so and reaches the page's own notice, and claims nothing about the file). A
-//     page's crop is kept once cut (crops), so a card keeps its picture after the chunk evicts the page's bitmap; a
-//     page with no bitmap and nothing kept (pageUndrawn: the chunk draws pages as they near the reader) has, in the
-//     crop's place, a line that says so and scrolls the page in, which draws it and brings the crop.
+//     region's crop is cut and kept as its page draws (cutCrop, from the region pass on every draw's repaint), the card
+//     open or not, so a card keeps its picture after the chunk evicts the page's bitmap, and a card expanded once the
+//     page has scrolled away shows it too; a page with no bitmap and nothing kept (pageUndrawn: the chunk draws pages as
+//     they near the reader, and nothing here can ask for one) has, in the crop's place, a line that says so and scrolls
+//     the page in, which draws it and brings the crop.
 //   • The kernel does the disk work on the OWNING kernel (the `fileComments` op runs a node host
 //     script over the vendored track-changents store); this module renders JSON and never holds a
 //     sidecar it writes back. Both ops carry `sid`, so federation routes a remote session's file to
@@ -400,9 +402,11 @@ class Panel {
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
   regionLayers = new Map<Pictured, RegionLayer>();            // the overlays, one per picture in view — an <img>, or a PDF page's canvas (Slice 3/4; paintRegions)
   cropWait = new WeakSet<HTMLImageElement>();                 // pictures whose load will re-render the cards for their thumbnails
-  // a PDF region's crop, kept from the last time its page was drawn (cropFor): the chunk keeps only the bitmaps near the
-  // reader (a far page's canvas is 0×0), and a card must not lose its picture because its page scrolled away. Keyed by
-  // what the crop was cut from, so a re-place or a regenerated file drops it (cropKey)
+  // a PDF region's crop, kept from the last time its page was drawn (cutCrop: on every draw's repaint for every region on
+  // the page, the card open or not, and on an open card's render): the chunk keeps only the bitmaps near the reader (a far
+  // page's canvas is 0×0), and a card must not lose its picture because its page scrolled away, nor lack one because it
+  // was closed while the page was on screen. Keyed by what the crop was cut from, so a re-place or a regenerated file
+  // drops it (cropKey)
   crops = new Map<string, { key: string; crop: HTMLCanvasElement }>();
   resolvedOpen = false;
   trackChoice = false;                      // the on-toggle's scope row (file / folder) is showing
@@ -1234,7 +1238,9 @@ class Panel {
   /** Whether a PDF region's page is mounted with its canvas but no bitmap: the chunk draws a page as it nears the reader
    *  (one scroller height away) and gives a far page's bitmap back, so a page outside that window is a 0×0 canvas —
    *  before its first draw, and after an eviction. Such a card has no fresh crop to cut (cropFor), and the chunk's only
-   *  API is render(): nothing here can ask for the page. What the card can do is say so where the crop would be and
+   *  API is render(): nothing here can ask for the page. A page drawn at any time since the document was shown (or since
+   *  the file last changed) has left its regions' crops kept (cutCrop), the card open or not, so this state reaches the
+   *  crop's slot only for a page not drawn in that time. What the card can do then is say so where the crop would be and
    *  reach the page (cropWaitNote); the scroll draws it, and the draw's repaint (the seam's onRendered) brings the crop. */
   private pageUndrawn(c: Card): boolean {
     const shell = this.pageShellFor(c);
@@ -1253,7 +1259,9 @@ class Panel {
   /** The overlays: one layer per picture in view (built once per picture, dropped when the picture leaves), each
    *  repainted with the rectangles of the open region comments on it — placed by percentages, dashed when the
    *  image's bytes changed under them and marked unknown when that cannot be told (regionState), the author's chip
-   *  and colour — plus the composer's pending region and the re-place cue. The drag is armed only while the panel
+   *  and colour — plus the composer's pending region and the re-place cue. Each region on a page with its bitmap in
+   *  also has its crop cut and kept here (cutCrop), whatever its card's state, so the picture outlives the bitmap. The
+   *  drag is armed only while the panel
    *  is open and the pointer is fine (E5: a coarse pointer reads, and the whole-file comment stands in); the
    *  rectangles show whenever the highlights do. A painted rectangle is the comment's mark (located, painted): the
    *  card's reference links to it and offers no Reveal. A pending region whose picture was repainted is re-found
@@ -1276,9 +1284,16 @@ class Panel {
     }
     const per = new Map<Pictured, RegionMark[]>();
     for (const card of this.cards()) {
-      if (card.resolved || !card.target || (card.target.kind !== "image" && card.target.kind !== "pdf")) continue;
+      if (!card.target || (card.target.kind !== "image" && card.target.kind !== "pdf")) continue;
       const img = this.regionImageFor(card);
       if (!img) continue;
+      // a drawn page: the crop of every region on it is cut and kept NOW (cutCrop), the card open or closed, resolved or
+      // not — this pass runs on every draw's repaint (the seam's onRendered, from the chunk's onPage), so a card expanded
+      // after the page has scrolled away, or opened for the first time then, shows its picture rather than the wait line;
+      // the line is left for a page not drawn since the document was shown (pageUndrawn), which nothing here can ask for.
+      // Only under a key: with no file hash nothing would be kept, and the cut would be wasted
+      if (isCanvas(img) && this.cropKey(card)) this.cutCrop(img, card);
+      if (card.resolved) continue;
       const chip = this.chipFor(card.author, card.authorId);
       (per.get(img) || per.set(img, []).get(img)!).push({ id: card.id, region: card.target.region, label: chip.label, state: regionState(card.target, s), style: chip.style });
       const loc = this.located.get(card.id);
@@ -1387,20 +1402,26 @@ class Panel {
     if (!t || t.kind !== "pdf" || !s || !s.fileHash) return null;
     return t.page + "|" + JSON.stringify(t.region) + "|" + (t.hash || "") + "|" + s.fileHash;
   }
-  /** The card's thumbnail: cut from the picture in view (a page's from its canvas) and, for a PDF page, kept — the
-   *  chunk gives a far page's bitmap back (a 0×0 canvas) and takes a failed page's canvas away, and the card then shows
-   *  the crop from the last draw of the same bytes rather than none. No picture and nothing kept: no thumbnail — the
-   *  card's crop slot then says the page is not drawn and reaches it (pageUndrawn, cropWaitNote); the scroll draws the
-   *  page, and the crop comes with that draw's repaint. A picture still loading re-renders the cards once, on its load. */
+  /** The region's thumbnail cut from its picture (cropThumb) and, for a PDF page whose bytes the status names (cropKey),
+   *  kept under its key (crops) — the one cut for both the render of an open card (cropFor) and the region pass over a
+   *  drawn page (paintRegions), so a crop kept with the card closed is the crop the open card would have cut. Null when
+   *  the picture has no bitmap to cut from (a 0×0 canvas, a picture still loading); nothing kept is dropped for it. */
+  private cutCrop(img: Pictured, c: Card): HTMLCanvasElement | null {
+    const fresh = cropThumb(img, c.target!.region);
+    if (fresh) { const key = this.cropKey(c); if (key) this.crops.set(c.id, { key, crop: fresh }); }
+    return fresh;
+  }
+  /** The card's thumbnail: cut from the picture in view (a page's from its canvas) and, for a PDF page, kept (cutCrop) —
+   *  the chunk gives a far page's bitmap back (a 0×0 canvas) and takes a failed page's canvas away, and the card then shows
+   *  the crop from the last draw of the same bytes rather than none, kept while the card was open or while it was closed
+   *  (the region pass keeps every drawn page's crops). No picture and nothing kept: no thumbnail — the card's crop slot
+   *  then says the page is not drawn and reaches it (pageUndrawn, cropWaitNote); the scroll draws the page, and the crop
+   *  comes with that draw's repaint. A picture still loading re-renders the cards once, on its load. */
   private cropFor(img: Pictured | null, c: Card): HTMLCanvasElement | null {
     if (!c.target) return null;
-    const key = this.cropKey(c);
-    const fresh = img ? cropThumb(img, c.target.region) : null;
-    if (fresh) {
-      if (key) this.crops.set(c.id, { key, crop: fresh });
-      return fresh;
-    }
-    const kept = this.crops.get(c.id);
+    const fresh = img ? this.cutCrop(img, c) : null;
+    if (fresh) return fresh;
+    const kept = this.crops.get(c.id); const key = this.cropKey(c);
     if (kept && key && kept.key === key) return kept.crop;
     if (img && !isCanvas(img) && img.complete === false && !this.cropWait.has(img)) {
       this.cropWait.add(img);

@@ -348,7 +348,7 @@ export function makeRender(pdfjsLib: PdfLib) {
     // a page pdf.js cannot read or draw, after the first (whose failure rejects render() below): loud in place.
     // The wrapper keeps the page's extent (the pages after it stay where they were) and shows the failure in the
     // viewer's error dress; the canvas goes, since no bitmap will come and a page with none must not take a
-    // region comment (the panel arms its overlays on the canvases it finds); the caller hears it once; no retry,
+    // region comment (the panel arms its overlays on the canvases it finds); onPageError fires once; no retry,
     // a damaged page object fails the same way every time.
     const fail = (p: Page, e: unknown) => {
       p.failed = true;
@@ -406,7 +406,7 @@ export function makeRender(pdfjsLib: PdfLib) {
         stage.width = 0; stage.height = 0;       // the staging store is released now, not when the collector gets to it
       }
       p.drawnAt = cssW;
-      uncue(p);                                  // the bitmap is in: the loader gives way to pixels, before the caller hears of them
+      uncue(p);                                  // the bitmap is in: the loader is removed before onPage fires
       opts.onPage?.({ index: p.index, canvas: p.canvas, width: vp.width, height: vp.height });
     }
     const drop = (p: Page) => {                  // release a far-away page's bitmap; the wrapper keeps its extent
