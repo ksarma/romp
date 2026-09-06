@@ -29017,7 +29017,10 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         tm = tmux.get(sid)
         live = tm is not None
         hexcol = (tm and tm["color"]) or (_name_color(sid) or {}).get("bg", "#888888")
-        goals = jd.load_goals(sid)
+        # The SKELETON reads the goal store for a DEAD lane only (its blocked badge, in the dead branch
+        # below): its segment loop runs over no turns and it derives no judging marks, so a live lane's
+        # load — the largest per-lane cost of the skeleton build — bought nothing (2026-09-06).
+        goals = jd.load_goals(sid) if with_bars else None
         if with_bars:
             try:
                 session = _parse(s["path"], sid, now)
@@ -29084,6 +29087,8 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         else:                             # dead lane: NEVER "working" — a turn left open at death (e.g. a stalled API
                                           # turn that never returned a ResultMessage, then ended) must not read as
                                           # active (the user 2026-06-23); badgeFor dims a dead lane anyway.
+            if goals is None:
+                goals = jd.load_goals(sid)                  # the skeleton's one store read: a dead lane's badge
             blocked = "blocked" in goals.get("status", {}).values() and not _session_flag(sid, "hideFromFeed")
             state = "needsInput" if blocked else "idle"   # muted → no awaiting/background-task badge on the lane
             aw_open = open_now                          # unused (awaitingBg is None for a dead lane) — kept defined
@@ -32129,10 +32134,24 @@ def _push(targets, connect=False, tmux=None):
         # TIMELINE in two messages (the user 2026-06-25): the LANES SKELETON ({type:"data"}) flushes FIRST —
         # cheap, so the lanes/status paint instantly — THEN the heavy bars+judging ride a {type:"bars"} message
         # (the ~95% of the payload). On a COLD connect the skeleton is on the wire before the expensive
-        # _cached_timeline build even runs, so the user sees the fleet at once instead of a blank wait.
+        # _cached_timeline build even runs, so the user sees their sessions at once instead of a blank wait.
         # LIVE-FIRST (the user 2026-06-26): the very first paint after a kernel start reads NO dead session — it
         # builds live sessions only (lanes + bars) so the main UI is up at once; the producer warms the full
         # build (live + dead-within-12h) and the next pusher push folds the dead lanes in, in the background.
+        # WARM (2026-09-06): once a full build is cached, the skeleton is PROJECTED from it (_timeline_skeleton)
+        # instead of built again. Every cycle used to run build_timeline(with_bars=False) — no transcript
+        # parse, but the same per-lane derivation the full build had just done (store loads, the chip over
+        # the cached parse plus the live merge, the awaiting overlay) — 4% of the kernel's GIL samples and
+        # 12% of the pusher thread, re-deriving lanes the cached build already held. A cache hit now serves
+        # lanes byte-identical to the last rebuild, so no lane moves without a rebuild, and rebuilds still
+        # come on every view-sig change, on _views_dirty and at the 5 s bucket: the lanes lag a rebuild by at
+        # most REBUILD_MIN_S, the lag the bars always had. Two visible differences from the built skeleton:
+        # the lanes' `compactions` come from the full build's parse (the built skeleton parsed nothing and
+        # always shipped []), and a dead lane's `since` is its last work end rather than the transcript mtime.
+        # The frame is serialized ONCE per cycle and deduped on the skeleton MINUS its clock (_skeleton_sig):
+        # the clock sits inside `data`, out of reach of _dedup_sig's top-level strip, so every cycle's frame
+        # compared as new and 27 KB went to every timeline client every cycle. The pane's clock still
+        # advances: the bars delta carries `now` on each rebuild, and the 60 s repost stands.
         _PERF_STATS.stage("push.feed", time.monotonic() - _t_stage)
         _t_stage = time.monotonic()
         timeline = None
@@ -32140,16 +32159,21 @@ def _push(targets, connect=False, tmux=None):
         if want_tl:
             tl_clients = [c for c in targets if c["app"] == "timeline"]
             live_first = connect and _built_timeline[1] is None     # cold start, nothing warmed yet → live only
-            skel = build_timeline(now, tmux, with_bars=False, live_only=live_first)
-            for c in tl_clients:
-                _send_client(c, ("timeline",), {"type": "data", "data": skel})
             if live_first:
+                skel = build_timeline(now, tmux, with_bars=False, live_only=True)
+                for c in tl_clients:
+                    _send_client(c, ("timeline",), {"type": "data", "data": skel})
                 timeline = build_timeline(now, tmux, with_bars=True, live_only=True)   # live bars now (no dead reads)
                 tl_warming = True                                   # this is the PARTIAL cold build — the client keeps its loader up
                 _producer_wake.set()                                # ...if it lands empty (SDK/federation not yet merged), rather than flashing
                 #                                                     "no activity"; a later warmed push (tl_warming False) settles it (the user 2026-07-03)
             else:
                 timeline = _cached_timeline(now, tmux, fsig, connect)
+                skel = _timeline_skeleton(timeline, now)
+                frame = {"type": "data", "data": skel}
+                skel_pre, skel_sig = json.dumps(frame), _skeleton_sig(skel)
+                for c in tl_clients:
+                    _send_client(c, ("timeline",), frame, pre=skel_pre, sig=skel_sig)
         _PERF_STATS.stage("push.timeline", time.monotonic() - _t_stage)
     except Exception:
         sys.stderr.write("push build: %s\n" % traceback.format_exc())
@@ -32511,15 +32535,43 @@ def _fleet_view_sig(now, tmux):
                  # bust the FEED cache the way it already busts the owning session's chat cache
                  (jd.STATE / "user-todos.json", "__utodos__"),
                  # …and the feature switch (2026-09-03): a flip changes every one of those reads
-                 (jd.STATE / USER_TODOS_SWITCH_FILE, "__utswitch__")):
+                 (jd.STATE / USER_TODOS_SWITCH_FILE, "__utswitch__"),
+                 # the timeline's own file inputs (2026-09-06): the lanes frame is projected from the
+                 # cached build, so what the lanes read must bust the cache — the usage bars
+                 # (usage.json, via _usage_for_client) and the views blob (timeline-views.json, via
+                 # _views_client). Before, only the 5 s bucket brought either to the timeline.
+                 (jd.STATE / "usage.json", "__usage__"),
+                 (_views_path(), "__views__")):
         try:
             sig[k] = os.stat(p).st_mtime
         except OSError:
             pass
     for s in sorted(tmux):
         t = tmux[s]
-        sig["t:" + s] = (t.get("state"), t.get("model"), t.get("ctx"), t.get("effort"), t.get("mode"), t.get("fast"), t.get("since"))
+        # Every row field the lanes and the chat chip derive from (2026-09-06). `context` is the row's
+        # key (the tmux vars and the SDK merge both write it); the sig read `ctx`, which no row carries,
+        # so a context-% change never busted the cache and the lane's battery waited on the bucket.
+        # The rest were never keyed: the fast-mode refusal reason (the lane's `fast` blanks on it), the
+        # model-switch and interrupt bits (the chip's switching dots and 'interrupting' badge), the
+        # subagent pill, and the background-task ids behind the awaiting badge. `snapT` stays out: it is
+        # the snapshot's clock, not a fact about the session.
+        sig["t:" + s] = (t.get("state"), t.get("model"), t.get("context"), t.get("effort"), t.get("mode"),
+                         t.get("fast"), t.get("since"), t.get("fastReason"), bool(t.get("modelPending")),
+                         bool(t.get("interrupting")), _row_items_sig(t.get("subagents")),
+                         _row_ids_sig(t.get("bgTasks")))
     return tuple(sorted(sig.items()))
+
+
+def _row_items_sig(rows):
+    """A liveness row's list of dicts (the live subagents) as an immutable, comparable value for the view
+    signature: each dict's sorted items. The lane ships the whole list, so any field change counts."""
+    return tuple(tuple(sorted(r.items())) if isinstance(r, dict) else r for r in (rows or ()))
+
+
+def _row_ids_sig(tasks):
+    """The background-task ids off a liveness row, for the view signature: the awaiting badge and its task
+    list key on which tasks exist (toolUseId), not on a task's progress fields."""
+    return tuple(str(t.get("toolUseId") or "") for t in (tasks or ()) if isinstance(t, dict))
 
 
 def _cached_feed(now, tmux, sig, connect=False):
@@ -33081,6 +33133,22 @@ def _cached_timeline(now, tmux, sig, connect=False):
     _PERF_STATS.build("timeline", False, time.monotonic() - _t0)
     _built_timeline[:] = [sig, tl, time.time(), started]
     return tl
+
+
+def _timeline_skeleton(tl, now):
+    """The {type:"data"} lanes frame's body, PROJECTED from a full timeline build (2026-09-06): the same
+    dict minus the heavy time-plotted detail — turns, judging, messages, which ride the {type:"bars"}
+    message — stamped with this cycle's clock. A shallow copy, never a mutation: `tl` is the cached build
+    (_built_timeline[1]), shared with every later cycle and the identity key of the bars wire cache."""
+    return {**tl, "turns": {}, "judging": [], "messages": [], "now": now}
+
+
+def _skeleton_sig(skel):
+    """The lanes frame's dedup signature: the skeleton with its clock removed. The frame nests the skeleton
+    under `data`, so _dedup_sig's TOP-LEVEL strip of `now` never reached it — every cycle's frame compared
+    as new and went to every timeline client (27 KB a cycle, measured): the same clock leak
+    tests/test_payload_dedup_invariant.py guards against at the top level, one level down."""
+    return json.dumps({**skel, "now": None}, sort_keys=True, default=str)
 
 
 def _run_tier(fn):
