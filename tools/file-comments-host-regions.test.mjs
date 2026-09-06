@@ -362,6 +362,14 @@ test('a text file\'s replies carry embeddedHashes: one per distinct src its regi
   assert.deepEqual(Object.keys(r.embeddedHashes), ['figs/latency.png', 'figs/errors.png']);
   assert.equal(r.store.comments.length, 3);
   assert.equal('fileHash' in r, false);
+  // Beside the hashes, each figure's mtime from the same read (embeddedMtimes, by src, in statNs's nanosecond string
+  // form — the kernel's X-Romp-Mtime-Ns): the baseline the panel's poll compares its HEADs of the figure with, so a
+  // figure regenerated between this read and the poll's first HEAD is a move, not a first observation.
+  const mtimeNs = (p) => fs.statSync(p, { bigint: true }).mtimeNs.toString();
+  assert.deepEqual(r.embeddedMtimes, { 'figs/latency.png': mtimeNs(w.latency), 'figs/errors.png': mtimeNs(w.errors) });
+  assert.match(r.embeddedMtimes['figs/latency.png'], /^\d{16,}$/, 'nanoseconds, as a string');
+  assert.deepEqual(status(w, w.figures, { FILE_COMMENTS_EMBEDDED_HASH_CAP: '1' }).embeddedMtimes, r.embeddedMtimes,
+    'past the cap the hash is null but the mtime is still read: the poll compares mtimes whatever the hash');
 
   // The figure is regenerated: its hash flips while every comment keeps the hash it was drawn on
   // (the panel's stale verdict is that comparison). A deleted figure is null — unknown, not stale.
@@ -369,6 +377,7 @@ test('a text file\'s replies carry embeddedHashes: one per distinct src its regi
   fs.unlinkSync(w.errors);
   st = status(w, w.figures);
   assert.deepEqual(st.embeddedHashes, { 'figs/latency.png': sha256(REGENERATED), 'figs/errors.png': null });
+  assert.deepEqual(Object.keys(st.embeddedMtimes), ['figs/latency.png'], 'a figure that could not be read has no mtime either: the poll keeps its own reading for it');
   for (const c of st.store.comments.slice(0, 2)) assert.equal(c.target.hash, sha256(LATENCY));
   assert.equal(st.store.comments[2].target.hash, sha256(ERRORS));
   // A src that now points outside the root is null too, with a note on stderr, never a refusal.
@@ -382,7 +391,9 @@ test('a text file\'s replies carry embeddedHashes: one per distinct src its regi
   // A text file whose comments name no figure, and one with no sidecar, answer {}.
   r = comment(w, w.report, status(w, w.report), { note: 'Whole file.' });
   assert.deepEqual(r.embeddedHashes, {});
+  assert.deepEqual(r.embeddedMtimes, {});
   assert.deepEqual(status(w, w.report).embeddedHashes, {});
+  assert.deepEqual(status(w, w.report).embeddedMtimes, {});
 });
 
 test('the embedded budget: figures are hashed until the call would pass the cap, then null; the caps are the kernel\'s numbers', () => {

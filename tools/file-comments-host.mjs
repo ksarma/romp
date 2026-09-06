@@ -529,14 +529,20 @@ function decodeSrc(src) {
 // a directory named as a figure fails at once instead of hanging. `cap` (bytes, or null for none)
 // is checked against the size before any byte is read: over it the hash is null, "unknown", which
 // the panel shows as such and never as stale. Throws on anything unreadable; the caller decides
-// between a refusal (comment, retarget) and null (the hashes a reply carries).
+// between a refusal (comment, retarget) and null (the hashes a reply carries). `mtimeNs` is the
+// file's mtime from the same fstat, in nanoseconds as a string (statNs's form, the kernel's
+// X-Romp-Mtime-Ns): what a reply hands the panel's poll as the baseline its HEADs of the figure
+// are compared with, so the reading the hash was taken at and the reading the poll starts from
+// are one and the same.
 export function hashRegular(abs, cap) {
   let fd;
   try {
     fd = fs.openSync(abs, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
-    const st = fs.fstatSync(fd);
+    const st = fs.fstatSync(fd, { bigint: true });
     if (!st.isFile()) throw new Error(`${abs} is not a regular file`);
-    if (cap != null && st.size > cap) return { hash: null, size: st.size };
+    const size = Number(st.size);
+    const mtimeNs = st.mtimeNs.toString();
+    if (cap != null && size > cap) return { hash: null, size, mtimeNs };
     const h = createHash('sha256');
     const buf = Buffer.allocUnsafe(64 * 1024);
     for (;;) {
@@ -544,7 +550,7 @@ export function hashRegular(abs, cap) {
       if (n === 0) break;
       h.update(buf.subarray(0, n));
     }
-    return { hash: h.digest('hex'), size: st.size };
+    return { hash: h.digest('hex'), size, mtimeNs };
   } finally {
     if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
   }
@@ -726,11 +732,17 @@ function fileHashFor(ctx) {
 // different situations for the person, and a null alone showed all three as one "unknown").
 // Empty objects when the file has no sidecar or no region comments. `store` is the one the reply
 // carries (derivedSrcsFor): a comment in the contract's src-less shape is hashed under the src its
-// passage told, and skipped when it could not — its reason is in derivedSrcReasons.
+// passage told, and skipped when it could not — its reason is in derivedSrcReasons. `mtimes` (the
+// reply's embeddedMtimes) is each figure's mtime as read here, by the same src, for every figure
+// that could be stat'ed — past the cap too, since the poll compares mtimes whatever the hash — and
+// absent where it could not: the panel's poll HEADs these figures and compares against this reading,
+// so a figure regenerated between this read and the poll's first HEAD of it is a move it re-asks
+// status for, not a first observation it takes as the baseline (the review consolidation, 2026-09-06).
 function embeddedHashesFor(ctx, rootDir, store) {
   const hashes = new Map();
   const reasons = {};
-  if (!store || !rootDir) return { hashes: {}, reasons };
+  const mtimes = {};
+  if (!store || !rootDir) return { hashes: {}, reasons, mtimes };
   const cap = embeddedHashCap();
   let budget = cap;
   for (const c of store.comments || []) {
@@ -739,6 +751,7 @@ function embeddedHashesFor(ctx, rootDir, store) {
     let hash = null;
     try {
       const r = hashRegular(resolveSrc(ctx, rootDir, src), budget);
+      mtimes[src] = r.mtimeNs;
       if (r.hash != null) { hash = r.hash; budget -= r.size; }
       else reasons[src] = `the figure ${tilde(src)} (${humanBytes(r.size)}) was not checked: the figures ${ctx.shown}'s comments name are checked up to ${humanBytes(cap)} together, and this one would pass it`;
     } catch (e) {
@@ -746,7 +759,7 @@ function embeddedHashesFor(ctx, rootDir, store) {
     }
     hashes.set(src, hash);
   }
-  return { hashes: Object.fromEntries(hashes), reasons };
+  return { hashes: Object.fromEntries(hashes), reasons, mtimes };
 }
 
 // ── regions: the embeds a passage holds ─────────────────────────────
@@ -1235,6 +1248,7 @@ function reply(ctx, state, extra) {
     const eh = embeddedHashesFor(ctx, root, store);
     out.embeddedHashes = eh.hashes;
     out.embeddedHashReasons = eh.reasons;
+    out.embeddedMtimes = eh.mtimes;                 // the poll's baseline for each figure, from the read the hash came from
     out.derivedSrcs = derived.srcs;
     out.derivedSrcReasons = derived.reasons;
     for (const reason of [...Object.values(eh.reasons), ...Object.values(derived.reasons)]) process.stderr.write(`file-comments-host: ${reason}\n`);

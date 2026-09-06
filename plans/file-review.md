@@ -970,7 +970,12 @@ names none, and refuses `no-figure` when the passage embeds none or several dist
 figure embedded twice still tells). A `src` is decoded as the viewer decodes it before it resolves
 (`p95%20latency.png` is the file with the space) and stored as written. Panel side: the poll HEADs
 every figure a text file's open region comments name beside the file and the sidecar, so a
-regenerated embedded figure re-asks `status` and flips by hash; a resolved comment's card shows the
+regenerated embedded figure re-asks `status` and flips by hash; the reply carries each named
+figure's mtime from the read its hash came from (`embeddedMtimes`, by src, absent where the figure
+could not be read), which seeds the poll's baseline for it as `fileMtimeNs` seeds the file's, so a
+figure regenerated between the host's read and the poll's first HEAD is a move on that tick and not
+a first observation (the review consolidation, 2026-09-06; before it that window left the card
+reading current until the next status or move); a resolved comment's card shows the
 resolved tag alone (no stale tag, no Re-place, no rectangle), so a figure only resolved comments
 name is not watched, and reopening one is a write whose reply carries the hash to flip it by; the
 sent message names the figure of a region comment on an embedded figure; a stale card offers
@@ -1180,7 +1185,8 @@ Risks bullet on figure paths names the trade.
   open region comments name (Slice 3). Mitigation: only while the panel is open and the tab
   visible. The poll's state per file is one of absent, present with an
   mtime, or unknown with a status; it starts after the first `status` supplies the sidecar path,
-  takes its baseline from every `fileCommentsResult` so the person's own writes never fire it, and
+  takes its baseline from every `fileCommentsResult` (the file's `fileMtimeNs`, the figures'
+  `embeddedMtimes`) so the person's own writes never fire it, and
   treats a 404 as the value "absent" so absent-to-present is a transition like any other; a 413
   or 415 stops the poll on that file and shows the kernel's reason row.
 

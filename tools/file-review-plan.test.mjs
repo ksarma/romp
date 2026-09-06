@@ -151,6 +151,16 @@ test('the plan counts the poll\'s figures as the OPEN region comments\' figures,
   assert.ok(/if \(!c \|\| c\.resolved\) continue;/.test(ft.slice(0, ft.indexOf('\n}\n') + 1)), 'figureTargets skips resolved comments');
 });
 
+test('the poll\'s figure baseline is the status reply\'s embeddedMtimes, in the plan, the host and the panel alike', () => {
+  assert.ok(slice3.includes('the reply carries each named figure\'s mtime from the read its hash came from (`embeddedMtimes`, by src, absent where the figure could not be read), which seeds the poll\'s baseline for it'), 'the build note states the baseline');
+  assert.ok(risks.includes('takes its baseline from every `fileCommentsResult` (the file\'s `fileMtimeNs`, the figures\' `embeddedMtimes`)'), 'the Risks bullet counts the figures among what a reply re-baselines');
+  assert.ok(/out\.embeddedMtimes = eh\.mtimes;/.test(host), 'the host puts the mtimes on every text-file reply');
+  assert.ok(/mtimes\[src\] = r\.mtimeNs;/.test(host), '…from the same read as the hash, whatever the hash');
+  assert.ok(/const st = fs\.fstatSync\(fd, \{ bigint: true \}\);/.test(host), 'nanoseconds need a bigint stat: a double rounds two adjacent writes onto one value');
+  assert.ok(/export function figureBaseline\(/.test(model));
+  assert.ok(/this\.figureBase = figureBaseline\(s, this\.ctx\.path, this\.figureBase\);/.test(panel), 'applyStatus seeds the figures\' baseline from the reply, beside pollBaseline');
+});
+
 // ── Slice 3's build note and the UX paragraph ───────────────────────
 
 test('Slice 3 carries a build note whose caps are the host\'s constants and the kernel\'s preview cap', () => {

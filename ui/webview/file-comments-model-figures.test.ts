@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   describeComment, sendParts, buildSendMessage, cardModel, figurePath, figureTargets, figuresMoved, pollTargets, ABSENT,
-  decodeSrc, regionState, regionTarget, figureFenceHash,
+  decodeSrc, regionState, regionTarget, figureFenceHash, figureBaseline,
   type Status, type StoreComment, type Target,
 } from "./file-comments-model";
 
@@ -223,4 +223,22 @@ test("figureFenceHash: the hash the status holds for the figure a write is about
   assert.equal(figureFenceHash(png, null), null);
   // what the panel sends and the host compares are the same reading: the fence's value is regionState's `current`
   assert.equal(regionState({ ...onLatency.target!, hash: figureFenceHash(status(), onLatency.target!)! }, status()), "current");
+});
+
+test("figureBaseline: a status reply's embeddedMtimes seed the poll's figure baseline by resolved path, over the poll's own readings; a figure the reply has no mtime for keeps its reading; nothing without the field", () => {
+  const A = "/repo/notes-api/docs/figs/latency.png", B = "/repo/notes-api/docs/figs/errors.png";
+  const reply = status({ embeddedMtimes: { "figs/latency.png": "1757145600000000010", "figs/errors.png": "1757145600000000020" } });
+  assert.deepEqual(figureBaseline(reply, ABS, {}), { [A]: "1757145600000000010", [B]: "1757145600000000020" }, "the reply's reading of each figure, resolved against the text file's folder as the poll's HEAD target is");
+  assert.deepEqual(figureBaseline(reply, ABS, { [A]: "1757145600000000001", [B]: "1757145600000000002" }), { [A]: "1757145600000000010", [B]: "1757145600000000020" }, "…over the poll's own earlier readings: the reply is the later one");
+  assert.deepEqual(figureBaseline(status({ embeddedMtimes: { "figs/latency.png": "1757145600000000010" } }), ABS, { [B]: "1757145600000000002" }),
+    { [A]: "1757145600000000010", [B]: "1757145600000000002" }, "a figure the host could not read keeps the poll's reading");
+  assert.deepEqual(figureBaseline(status({ embeddedMtimes: {} }), ABS, { [A]: "1757145600000000001" }), { [A]: "1757145600000000001" });
+  assert.deepEqual(figureBaseline(status(), ABS, { [A]: "1757145600000000001" }), { [A]: "1757145600000000001" }, "an older host sends no mtimes: the poll's own readings stand");
+  assert.deepEqual(figureBaseline(null, ABS, {}), {});
+  assert.deepEqual(figureBaseline(status({ embeddedMtimes: { "https://example.invalid/c.png": "1757145600000000010", "figs/x.png": "" } }), ABS, {}), {}, "a URL names no HEAD target; an empty value is no reading");
+  // the seeded baseline is what the next tick compares with: a first HEAD that differs is a move, one that matches is not
+  const seeded = figureBaseline(reply, ABS, {});
+  assert.deepEqual(figuresMoved(seeded, [A, B], { [A]: "1757145600000000010", [B]: "1757145600000000021" }).moved, [B], "errors.png was regenerated between the host's read and the poll's first HEAD: a move on the first tick");
+  assert.deepEqual(figuresMoved(seeded, [A, B], { [A]: "1757145600000000010", [B]: "1757145600000000020" }).moved, []);
+  assert.doesNotMatch(MODEL, /Number\([^)]*[mM]time|parseInt\([^)]*[mM]time|BigInt\(/, "still no numeric coercion of an mtime");
 });

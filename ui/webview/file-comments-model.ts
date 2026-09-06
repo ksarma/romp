@@ -50,6 +50,9 @@ export type Status = {
   fileHash?: string | null;
   /** a text file: the current sha256 of every figure its region comments name, by `src` as written (E2) */
   embeddedHashes?: Record<string, string | null> | null;
+  /** a text file: the mtime (nanoseconds, a string) of each of those figures from the read the hash came from, by `src`
+   *  — the poll's baseline for it (figureBaseline); absent where the figure could not be read, and from an older host */
+  embeddedMtimes?: Record<string, string> | null;
 };
 
 const EMPTY_UNSENT: Unsent = { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null };
@@ -516,9 +519,12 @@ export function pollTargets(s: Status, path: string): { file: string; store: str
 // session that regenerates the figure touches neither the text file, the sidecar, nor config.json — none of the
 // three targets above moves, so a poll over them alone never re-asks status, and the card and rectangle keep
 // showing the figure current until a Reload. So the poll HEADs the figures too. The status reply carries their
-// hashes (embeddedHashes), not their mtimes, so the reply gives them no baseline: the baseline is the poll's own
-// previous reading of each, and a figure's first reading is an observation with nothing to compare to. A move
-// re-asks status, whose embeddedHashes then flip the comment to stale by hash — the flip stays the hash's call.
+// hashes (embeddedHashes) and, from the same read, their mtimes (embeddedMtimes), which seed the poll's baseline
+// (figureBaseline) the way fileMtimeNs seeds the file's: a figure regenerated between the host's read and the poll's
+// first HEAD of it is a move, not a first observation. Where the reply has no mtime for a figure (it could not be
+// read; an older host) the baseline is the poll's own previous reading, and a first reading is an observation with
+// nothing to compare to. A move re-asks status, whose embeddedHashes then flip the comment to stale by hash — the
+// flip stays the hash's call.
 
 /** A src with a URL scheme (http:, https:, data:, …) names no file the kernel serves — the same test the viewer
  *  and the host apply (file-view.ts rewriteFigureSrcs, file-comments-host.mjs resolveSrc). */
@@ -567,6 +573,24 @@ export function figureTargets(s: Pick<Status, "store"> | null | undefined, path:
 
 /** The figures' baseline: path → the mtime string (or ABSENT) the poll last read for it. */
 export type FigureBaseline = Record<string, string>;
+
+/** The figures' baseline after a status reply: the reply's `embeddedMtimes` (by src, resolved through figurePath) over
+ *  the poll's own readings (`prev`) — the reply is the later reading of every figure it names, taken with the hashes the
+ *  cards now show, so the next HEAD is compared with it; a figure the reply has no mtime for keeps its previous reading.
+ *  Every reply re-baselines the figures it read, as pollBaseline re-baselines the file, so no reading of the panel's own
+ *  fires the poll. */
+export function figureBaseline(s: Pick<Status, "embeddedMtimes"> | null | undefined, path: string, prev: FigureBaseline): FigureBaseline {
+  const next: FigureBaseline = { ...prev };
+  const m = s && s.embeddedMtimes && typeof s.embeddedMtimes === "object" ? s.embeddedMtimes : null;
+  if (!m) return next;
+  for (const src of Object.keys(m)) {
+    const v = m[src];
+    if (typeof v !== "string" || !v) continue;
+    const p = figurePath(path, src);
+    if (p !== null) next[p] = v;
+  }
+  return next;
+}
 
 /** One tick's verdict over the figures. `seen` is this tick's readings (only the HEADs that answered with a value);
  *  a figure MOVED when it had a baseline and the reading differs (string inequality, as mtimeMoved). `next` is what the

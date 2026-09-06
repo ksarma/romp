@@ -448,6 +448,44 @@ test("the poll HEADs the figure a region comment names: a regenerated figure —
   } finally { fetchImpl = noKernel; }
 });
 
+test("the status reply's embeddedMtimes are the poll's baseline for the figures: a figure regenerated between the host's read and the first HEAD is a move on that tick, one unchanged is not, and every reply re-seeds", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const mtimes: Record<string, string | undefined> = { [MD]: "1757145600000000001", [STORE_MD]: "1757145600000000002", [PNG]: "1757145600000000009" };
+  fetchImpl = async (url: string, init?: { method?: string }) => {
+    if (!init || init.method !== "HEAD") return { status: 200, headers: { get: () => null }, json: async () => [] };
+    const p = decodeURIComponent((/[?&]path=([^&]*)/.exec(url) || [])[1] || "");
+    const mt = mtimes[p];
+    return { status: mt === undefined ? 404 : 200, headers: { get: (k: string) => (k === "X-Romp-Mtime-Ns" && mt !== undefined ? mt : null) } };
+  };
+  let reloads = 0;
+  try {
+    const h = await harness({ kind: "rendered", html: REPORT_HTML, src: REPORT, reload: () => { reloads++; } });
+    // the host read the figure at …005 and hashed h1; by the poll's first HEAD the disk says …009 — the session regenerated
+    // it in between (the window the first-reading-is-an-observation rule left open: the card read current until the next move)
+    const read = (mt: string, hash = H1) => ({ ...figureStatus([embedded()], { "figure.png": hash }), embeddedMtimes: { "figure.png": mt } });
+    await h.ok(read("1757145600000000005"));
+    await h.open(read("1757145600000000005"));
+    const asks = () => h.posted.filter((m) => m.type === "fileComments" && m.verb === "status").length;
+    const n0 = asks();
+    t.mock.timers.tick(2500); await flush();
+    assert.equal(asks(), n0 + 1, "the first HEAD differs from the reply's reading: a move, status is re-asked");
+    assert.equal(reloads, 1, "and the view reloads for the new picture");
+    await h.ok(read("1757145600000000009", H2));
+    assert.deepEqual(h.tags(RID), ["stale"], "the fresh reply's hash flips the rectangle stale");
+    t.mock.timers.tick(2500); await flush();
+    assert.equal(asks(), n0 + 1, "the reply re-seeded the baseline at …009, which the disk still reads: no re-ask, no flap");
+    assert.equal(reloads, 1);
+    // a reply with no mtime for the figure (an older host, a figure it could not read) leaves the poll's own reading standing
+    await h.restatus(figureStatus([embedded()], { "figure.png": H2 }));
+    t.mock.timers.tick(2500); await flush();
+    assert.equal(asks(), n0 + 2, "the restatus itself was the one ask; the tick after it saw nothing move");
+    mtimes[PNG] = "1757145600000000012";
+    t.mock.timers.tick(2500); await flush();
+    assert.equal(asks(), n0 + 3, "…and the poll's own reading still catches the next regeneration");
+    h.dispose();
+  } finally { fetchImpl = noKernel; }
+});
+
 // ── the card's thumbnail ───────────────────────────────────────────────────────────────────────────
 
 test("a figure still loading when the status lands: the open region card gains its thumbnail on the figure's load", async () => {

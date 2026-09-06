@@ -59,7 +59,7 @@ import {
   type Status, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, type Target, actionLabel, cardModel, changeCards, changeGroups,
   foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, sendParts, sendCounts, buildSendMessage, unsentCount,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
-  regionTarget, regionState, figureTargets, figuresMoved, figureFenceHash, type PollBaseline, type FigureBaseline, type HeadVerdict,
+  regionTarget, regionState, figureTargets, figuresMoved, figureBaseline, figureFenceHash, type PollBaseline, type FigureBaseline, type HeadVerdict,
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5)
 import { regionDesc, isRegion, type Region } from "./region-geometry";
@@ -777,6 +777,7 @@ class Panel {
     this.statusRefusal = null;
     this.errors.delete("head");                        // a status refusal's row (probe, refresh) is answered by a status
     this.base = pollBaseline(s);
+    this.figureBase = figureBaseline(s, this.ctx.path, this.figureBase);   // the figures' baseline from the same reply (Slice 3)
     this.unit.hidden = false;
     this.button.textContent = actionLabel(s);
     this.button.title = s.store ? "Comments and changes kept beside this file" : "Comment on this file, or track a session's changes to it";
@@ -924,11 +925,11 @@ class Panel {
       }
       // the figures (Slice 3): a region comment on a figure embedded in a text file goes stale when the FIGURE's bytes
       // change, and a session that regenerates one touches none of the three targets above — so they are HEADed too.
-      // The status carries their hashes, not their mtimes, so the reply gives them no baseline: each is compared with the
-      // poll's own last reading of it (figuresMoved; a first reading is an observation, never a move). A move re-asks
-      // status, whose embeddedHashes flip the comment to stale by hash, and reloads the view so the new picture shows:
-      // the kernel serves /file with Cache-Control: no-cache, so the re-rendered <img> revalidates instead of reusing
-      // the old bytes. Nothing here re-baselines on a reply: no verb of the panel's writes a figure.
+      // Each is compared with its baseline (figuresMoved): the mtime the status reply read beside the figure's hash
+      // (embeddedMtimes, seeded in applyStatus through figureBaseline), else the poll's own last reading of it — a first
+      // reading with neither is an observation, never a move. A move re-asks status, whose embeddedHashes flip the
+      // comment to stale by hash, and reloads the view so the new picture shows: the kernel serves /file with
+      // Cache-Control: no-cache, so the re-rendered <img> revalidates instead of reusing the old bytes.
       const figs = figureTargets(this.status, this.ctx.path);
       const seen: FigureBaseline = {};
       for (const target of figs) {
