@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, calendar
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from importlib.machinery import SourceFileLoader
@@ -11657,7 +11657,9 @@ def _default_backend():
 # session just behaved oddly. The feed payload carries the ring and the feed mirrors it into the bell,
 # the same path card badges and /clear boundaries already take (badge-mirror.ts).
 # _SDK_BOOT_PROBLEMS covers the window where there is no backend to hold a ring — the construction itself
-# failed — which is exactly when the user most needs to be told.
+# failed — which is exactly when the user most needs to be told. It also carries the kernel's own one-off
+# problems, which have no ring of their own: a spend-ledger bucket the analytics cannot place
+# (_ledger_key_unplaced), reported once per key.
 _SDK_BOOT_PROBLEMS = []
 
 
@@ -27861,11 +27863,44 @@ _SERIES_HOURS = 192          # 8 days of hourly points — covers the 7-day hove
 
 
 def _series_index(hour_key, h0):
-    """spend.json/usage-history.json hour keys ("%Y-%m-%dT%H", localtime) → dense-array index, or None."""
-    try:
-        return int(time.mktime(time.strptime(hour_key, "%Y-%m-%dT%H")) // 3600) - h0
-    except Exception:
+    """spend.json/usage-history.json hour keys ("%Y-%m-%dT%H", localtime) → dense-array index, or None.
+    The slot is the epoch-hour of the bucket's FIRST instant (_bucket_start), the modal's rule for the same
+    key. mktime(strptime(key)) carried isdst=-1, and for the fall-back day's repeated hour glibc resolves
+    that to whichever offset its PREVIOUS mktime call used — so the T01 bucket landed in one of two adjacent
+    slots depending on what the process converted last, and the hover's bar for that hour moved between
+    builds with no new turn behind it (2026-09-06). The bucket holds both clock hours' turns; its slot is
+    the first of them and the second stays an honest zero, as the modal's period edges read it. The rule,
+    key by key; _spend_series takes the slots of the keys in its span from one walk (_first_instants) and
+    applies this to a key outside it. Raises ValueError, as _bucket_start does, for a well-formed key no
+    instant names and no gap places."""
+    if not isinstance(hour_key, str) or "T" not in hour_key:
         return None
+    st = _bucket_start(hour_key)
+    return None if st is None else int(st // 3600) - h0
+
+
+_LEDGER_UNPLACED = set()   # spend.json bucket keys already reported to the error center: one row per key per kernel
+
+
+def _ledger_key_unplaced(key, err, effect):
+    """A spend.json bucket key the rule cannot place — _bucket_start raised for a well-formed key that
+    names no instant in this zone and lies in no gap (a Feb 31), which the recorder never writes, so a
+    hand edit or a file gone bad — is reported to the error center ONCE per key, naming the key, the
+    file and what the reading leaves out; the reading goes on without the bucket. The raise itself
+    stays (a wrong key is a wrong period cut, and a caller whose keys come from real instants wants to
+    be stopped by it). Letting it through here — which this file did for a few hours on 2026-09-06, from
+    _series_index's delegation to _bucket_start until this; the strptime rule before it skipped such a
+    key with no word at all — stopped the whole timeline instead: _spend_series runs in every usage
+    build, a usage build in every timeline push, and the push tick's catch logged the traceback and sent
+    nothing, on every tick, to every client, for as long as the key stayed in the file. That is the
+    fail-loudly rule (2026-07-03) at the wrong grain: a dashboard that stops updating and a stderr line
+    naming a spend bucket. This row is the visible error the rule asks for, and the graph missing one
+    bucket is what the row says it is."""
+    if key in _LEDGER_UNPLACED:
+        return
+    _LEDGER_UNPLACED.add(key)
+    _sdk_problem("The spend ledger %s holds a bucket the kernel cannot place on a clock (%s); %s until the "
+                 "bucket is removed." % (jd.STATE / "spend.json", err, effect))
 
 
 def _spend_series(keyed_only=False, now=None):
@@ -27875,7 +27910,9 @@ def _spend_series(keyed_only=False, now=None):
     shared key. Zero IS the honest value for an hour with no turns (money, unlike pct, has a true
     zero). None when nothing is recorded at all. Same keyed_only split as _spend_windows, for the same
     reason. `now` anchors h0 — injectable so a caller with a frozen evidence clock (tests) can't
-    straddle an hour boundary between writing a bucket and reading its index (the 23:00 UTC CI run)."""
+    straddle an hour boundary between writing a bucket and reading its index (the 23:00 UTC CI run). A
+    key the rule cannot place is left out and reported once (_ledger_key_unplaced): this runs in every
+    usage build, and a raise here took the whole timeline down with it."""
     try:
         d = json.loads((jd.STATE / "spend.json").read_text())
     except Exception:
@@ -27883,15 +27920,31 @@ def _spend_series(keyed_only=False, now=None):
     hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
     if not hours:
         return None
-    h0 = int((time.time() if now is None else now) // 3600) - (_SERIES_HOURS - 1)
+    now = time.time() if now is None else now
+    h0 = int(now // 3600) - (_SERIES_HOURS - 1)
     usd = [0.0] * _SERIES_HOURS
+    # every key with an instant in the series' span, with its first instant, from one walk: the slot rule
+    # key by key (_series_index) costs a _bucket_start each, 30-55 µs, and this runs on every usage build
+    walked = _hour_buckets_back(now, now - h0 * 3600)
+    first = _first_instants(walked)
+    oldest = walked[-1][0]
     for k, e in hours.items():
-        i = _series_index(k, h0)
+        st = first.get(k)
+        if st is not None:
+            i = int(st // 3600) - h0
+        elif k < oldest:              # no instant in the span, and a wall hour before the span's oldest: before h0
+            continue
+        else:
+            try:
+                i = _series_index(k, h0)  # past now (a clock that stepped back) or a key no instant names: the rule itself
+            except ValueError as err:     # a well-formed key nothing places: told once, left out, and the build goes on
+                _ledger_key_unplaced(k, err, "its dollars are left out of the hover graph")
+                continue
         if i is None or not (0 <= i < _SERIES_HOURS) or not isinstance(e, dict):
             continue
         if keyed_only:
             e = e.get("key") if isinstance(e.get("key"), dict) else {}
-        usd[i] = round(float((e or {}).get("usd") or 0), 4)
+        usd[i] = round(usd[i] + float((e or {}).get("usd") or 0), 4)   # add: buckets a mid-hour transition splits share a slot
     return {"h0": h0, "usd": usd}
 
 
@@ -27920,7 +27973,21 @@ def _spend_recorded_at():
         return None
 
 
-def _spend_windows(keyed_only=False):
+# Day buckets dated before this were recorded by a recorder that folded the CLI's CUMULATIVE
+# total_cost_usd raw on every result — each turn re-added the whole session-so-far — until the per-turn
+# delta fold landed (2026-08-08/09; the buckets for 08-07..08-09 carry the inflation). The ledger keeps
+# those buckets as recorded (the user's data is never rewritten), and every reading that sums one says
+# so: the window carries `preFix: True` and the rail's hover names it (2026-09-05). Applied at READ
+# time, so the flag needs no migration and follows the buckets out of the 90-day ledger on its own.
+SPEND_PRE_FIX_DATE = "2026-08-10"
+
+
+def _spend_pre_fix(key):
+    """True for a day ("%Y-%m-%d") or hour ("%Y-%m-%dT%H") bucket key dated before the per-turn fix."""
+    return isinstance(key, str) and key[:10] < SPEND_PRE_FIX_DATE
+
+
+def _spend_windows(keyed_only=False, now=None):
     """API-mode usage windows MIRRORING the subscription bars (the user 2026-08-04, who wanted the two
     auth modes to read identically at a glance): rolling 5h and 7d summed from spend.json's hour
     buckets, month-to-date from its day buckets — each {usd, tok, turns}, plus `budget` where
@@ -27931,7 +27998,9 @@ def _spend_windows(keyed_only=False):
     API key (see _record_spend). That is what the rail's API readout shows beside a login's bars on a
     mixed host: the total would fold login turns' computed costs in — dollars nobody is billed (the
     user 2026-08-08). The no-login machine keeps the total (everything there IS the key, and legacy
-    files predate the split)."""
+    files predate the split). `now` is the clock the windows end at — the wall clock by default; the
+    analytics build passes its own so the modal's keyed guard reads the rail's windows at the modal's
+    instant."""
     try:
         d = json.loads((jd.STATE / "spend.json").read_text())
     except Exception:
@@ -27939,10 +28008,14 @@ def _spend_windows(keyed_only=False):
     days = d.get("days") if isinstance(d.get("days"), dict) else {}
     hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
 
-    def _sum(entries):
+    def _sum(items):
+        """Sum (bucket key, bucket) pairs; a window that folds a bucket dated before the per-turn fix
+        says so (`preFix`, see SPEND_PRE_FIX_DATE) — the figure stays as recorded."""
         out = {"usd": 0.0, "tok": 0, "turns": 0}
-        for e in entries:
+        for k, e in items:
             if isinstance(e, dict):
+                if _spend_pre_fix(k):
+                    out["preFix"] = True
                 if keyed_only:
                     e = e.get("key") if isinstance(e.get("key"), dict) else {}
                     out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
@@ -27954,11 +28027,23 @@ def _spend_windows(keyed_only=False):
                     out["tok"] += sum(int(e.get(k) or 0) for k in ("tokIn", "tokOut", "tokCacheR", "tokCacheW"))
         return out
 
-    now = time.time()
+    now = time.time() if now is None else now
+
+    # the hour buckets of the longest rolling window, walked once run by run (_hour_buckets_back); every
+    # shorter window is a prefix of the same walk, cut by the walker's own rule (_hour_window) — the keys
+    # the analytics modal sums (_analytics_edges), so the rail cell and the modal's ledger figure agree.
+    # `now - i*3600` sampled once an hour and could not see a bucket shorter than an hour: a 30-minute
+    # spring-forward (Lord Howe Island) leaves a half-hour bucket between two samples, and its turns fell
+    # out of the hour/day/week sums while the modal, cut at the oldest bucket's first instant, counted
+    # their transcript rows (2026-09-06). Walked once because _usage() rebuilds this on every call, and
+    # `starts` is shared for the same reason: where a window widens past a split key (_hour_window), a
+    # key's first instant is computed once for all five windows, not once per window.
+    walked = _hour_buckets_back(now, 7 * 24 * 3600)
+    starts = {}
 
     def _rolling(hrs):
-        keys = {time.strftime("%Y-%m-%dT%H", time.localtime(now - i * 3600)) for i in range(hrs + 1)}
-        return _sum(v for k, v in hours.items() if k in keys)
+        keys = set(_hour_window(now, hrs * 3600, walked, starts)[0])
+        return _sum((k, v) for k, v in hours.items() if k in keys)
 
     def _rolling_days(n):
         # the recorder keys day buckets by LOCAL date — build the key set as DATES, not seconds (T235b,
@@ -27968,7 +28053,7 @@ def _spend_windows(keyed_only=False):
         # keeps "the last n local dates through today" exact on every host regardless of its zone.
         today = datetime.fromtimestamp(now).date()
         keys = {(today - timedelta(days=i)).isoformat() for i in range(n + 1)}
-        return _sum(v for k, v in days.items() if k in keys), keys
+        return _sum((k, v) for k, v in days.items() if k in keys), keys
 
     month = time.strftime("%Y-%m", time.localtime(now))   # explicit clock: the frozen-clock tests govern it
     # day/week are the API-key cell's windows (the user 2026-08-13: pay-per-token has no reset windows,
@@ -27983,11 +28068,12 @@ def _spend_windows(keyed_only=False):
     # month is exact once the ledger is old enough; a younger ledger says so (`since`) rather than
     # reading as a silently short window.
     rolling_month, month_keys = _rolling_days(30)
-    win = {"fiveHour": _rolling(5), "sevenDay": _rolling(7 * 24),
+    seven_days = _rolling(7 * 24)   # first: its keys are every other hour window's, so `starts` fills once
+    win = {"fiveHour": _rolling(5), "sevenDay": seven_days,
            "hour": _rolling(1),   # the last hour, same rolling bucket math as day (the user 2026-08-15)
-           "day": _rolling(24), "week": _rolling(7 * 24),
+           "day": _rolling(24), "week": dict(seven_days),   # the same sum; its own dict, so a budget set on one stays off the other
            "month": rolling_month,
-           "monthToDate": _sum(v for k, v in days.items() if isinstance(k, str) and k.startswith(month))}
+           "monthToDate": _sum((k, v) for k, v in days.items() if isinstance(k, str) and k.startswith(month))}
     oldest = min((k for k in days if isinstance(k, str) and len(k) == 10), default=None)
     if oldest and oldest > min(month_keys):
         win["month"]["since"] = oldest          # the ledger is younger than the window — say how far it reaches
@@ -28699,7 +28785,34 @@ def _derive_judging(sid, caps, goals, t0, out, seg_ends=None):
         pass
 
 
-_session_tok_cache = {}   # path -> (mtime, [(t, in, out, cache_w, cache_r, model), ...]): per-message token rows
+_session_tok_cache = {}   # path -> (fingerprint, [(t, in, out, cache_w, cache_r, model), ...]): one token row
+#                           per API RESPONSE (message.id) across the main transcript and every subagent
+#                           transcript under it; the fingerprint is every contributing file's path + mtime
+
+
+def _subagent_transcripts(path):
+    """The subagent transcripts beside a session's main one, sorted; [] when none. The CLI writes each
+    spawned agent's conversation under `<sid>/subagents/` next to `<sid>.jsonl`: Task agents as
+    `agent-<id>.jsonl` at the top, and (Claude Code 2.1.261) Workflow agents one level down at
+    `workflows/wf_<id>/agent-<id>.jsonl` — its path parser takes any extra segments — so the walk is
+    RECURSIVE (2026-09-06: the flat listing missed every nested file; on the box that found it those
+    held a quarter of the sessions' tokens and 62% of their output tokens). Bounded to the session's own
+    subagents tree: no symlink is followed — not a directory (os.walk's followlinks=False), not a FILE
+    (os.walk lists a symlinked file like any other and the reader would open it wherever it points; the
+    CLI writes none, so one is a user's, and it is skipped), and not the subagents directory itself.
+    Cost: one directory read per directory under it plus one lstat per file."""
+    base, ext = os.path.splitext(str(path))
+    if ext != ".jsonl":
+        return []
+    d = os.path.join(base, "subagents")
+    if os.path.islink(d):
+        return []
+    out = []
+    for root, dirs, files in os.walk(d):            # followlinks=False — never leaves the session's own tree
+        dirs.sort()
+        out.extend(p for p in (os.path.join(root, n) for n in files if n.endswith(".jsonl"))
+                   if not os.path.islink(p))
+    return sorted(out)
 
 
 def _msg_epoch(o):
@@ -28713,44 +28826,104 @@ def _msg_epoch(o):
         return None
 
 
-def _session_tokens(path, t0):
-    """Sum a session's token usage over assistant messages timestamped >= t0 — the SESSIONS half of the
-    token split, windowed to match the PIPELINE half (_judge_usage) so the footer compares like-for-like.
-    Each assistant record carries a `usage` block. The per-message rows are mtime-cached (now-independent);
-    the windowed sum is computed per call. Undated rows are counted (defensive). Zeros on error."""
-    z = {"in": 0, "out": 0, "cache_w": 0, "cache_r": 0}
-    try:
-        mt = os.path.getmtime(path)
-    except OSError:
-        return dict(z)
-    hit = _session_tok_cache.get(path)
-    if not hit or hit[0] != mt:
-        rows = []
+def _session_tok_rows(path):
+    """Refresh and return a session's per-response token rows (_session_tok_cache) — one row per API
+    response over the main transcript and every subagent transcript under it — or None when the main
+    transcript is unreadable. The fingerprint is every contributing file's path + mtime, so a subagent
+    that lands or grows refreshes the rows while the main file rests; a subagent file gone between the
+    listing and the read drops out and the rest still count. Cost per call: the subagents walk (one
+    directory read per directory) plus one stat per file; the parse runs only on a changed fingerprint.
+    The analytics build calls this ONCE per session (_session_usage).
+
+    ONE row per API response, not per transcript record (2026-09-05): the CLI writes a response with
+    several content blocks as several assistant records that share one `message.id`, so summing records
+    counted each response 2.3-3.0x (the analytics read 1.55x the ledger over a day). The row kept is the
+    one with the LARGEST output count, and that rule is load-bearing, not defensive: a MAIN transcript's
+    same-id records repeat one usage block, but a SUBAGENT transcript's carry the stream-start snapshot
+    (a few output tokens) on every record but the last, which holds the final tally — measured
+    2026-09-06 over 30 days of subagent files, 94% of multi-record groups differ and the last record
+    holds the maximum in every one; a first-record fold would keep about a tenth of the subagents'
+    output tokens. A record with no id counts on its own."""
+    files = [str(path)] + _subagent_transcripts(path)
+    fp = []
+    for p in files:
         try:
-            with open(path, errors="replace") as f:
+            fp.append((p, os.path.getmtime(p)))
+        except OSError:
+            if p == files[0]:
+                return None
+            continue                                  # a subagent file gone since the listing
+    fp = tuple(fp)
+    hit = _session_tok_cache.get(path)
+    if hit and hit[0] == fp:
+        return hit[1]
+    rows, by_id = [], {}
+    for p, _mt in fp:
+        try:
+            with open(p, errors="replace") as f:
                 for line in f:
                     try:
                         o = json.loads(line)
                     except Exception:
                         continue
-                    if o.get("type") != "assistant":
+                    if not isinstance(o, dict) or o.get("type") != "assistant":
                         continue
                     m = o.get("message") or {}
                     u = m.get("usage") or {}
-                    rows.append((_msg_epoch(o),
-                                 int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
-                                 int(u.get("cache_creation_input_tokens") or 0),
-                                 int(u.get("cache_read_input_tokens") or 0),
-                                 m.get("model") or ""))   # for cost weighting (price is per-model)
+                    row = (_msg_epoch(o),
+                           int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
+                           int(u.get("cache_creation_input_tokens") or 0),
+                           int(u.get("cache_read_input_tokens") or 0),
+                           m.get("model") or "")   # for cost weighting (price is per-model)
+                    mid = m.get("id")
+                    if mid:
+                        j = by_id.get(mid)
+                        if j is not None:            # the same response again (another content block)
+                            if row[2] > rows[j][2]:
+                                rows[j] = (rows[j][0],) + row[1:]
+                            continue
+                        by_id[mid] = len(rows)
+                    rows.append(row)
         except OSError:
-            return dict(z)
-        _session_tok_cache[path] = (mt, rows)
-        hit = _session_tok_cache[path]
-    acc = dict(z)
-    for (t, i, o, cw, cr, _m) in hit[1]:
-        if t is None or t >= t0:
-            acc["in"] += i; acc["out"] += o; acc["cache_w"] += cw; acc["cache_r"] += cr
-    return acc
+            if p == files[0]:
+                return None
+            continue   # a subagent file gone between the listing and the read — the rest still count
+    _session_tok_cache[path] = (fp, rows)
+    return rows
+
+
+def _session_usage(path, t0, prices, split=None):
+    """The analytics build's ONE pass over a session's rows: token totals over responses timestamped
+    >= t0 (the SESSIONS half of the split, cut at the same t0 as the PIPELINE half, _judge_usage, so
+    the modal compares like-for-like), the token-price estimate over the same span (`cost`: each
+    response's tokens x its model's _model_prices row — an ESTIMATE; sessions log no cost of their own,
+    unlike judges — with cache reads priced too, cheap per token but huge in volume), and, when `split`
+    is given, that estimate over [t0, split) alone (`costBefore`: the part of the window before the
+    ledger's first bucket, which the modal adds to the ledger's dollars — see _token_analytics).
+    Undated rows count in the totals and the whole-window estimate (defensive) and never in
+    `costBefore` (they cannot be placed against a bound). Zeros when the transcript is unreadable."""
+    out = {"in": 0, "out": 0, "cache_w": 0, "cache_r": 0, "cost": 0.0, "costBefore": 0.0}
+    rows = _session_tok_rows(path)
+    if rows is None:
+        return out
+    for (t, i, o, cw, cr, model) in rows:
+        if t is not None and t < t0:
+            continue
+        out["in"] += i; out["out"] += o; out["cache_w"] += cw; out["cache_r"] += cr
+        pr = _price_for(model, prices) if prices else None
+        if not pr:
+            continue
+        c = i * pr["in"] + o * pr["out"] + cw * pr["cache_w"] + cr * pr["cache_r"]
+        out["cost"] += c
+        if split is not None and t is not None and t < split:
+            out["costBefore"] += c
+    return out
+
+
+def _session_tokens(path, t0):
+    """A session's token totals over responses timestamped >= t0 — _session_usage's token half."""
+    u = _session_usage(path, t0, None)
+    return {k: u[k] for k in ("in", "out", "cache_w", "cache_r")}
 
 
 # judge-usage.jsonl is append-only, time-ordered, and never rotated (38.7 MB / 148k lines measured
@@ -28864,6 +29037,11 @@ DEFAULT_MODEL_PRICES = {   # $/token: input, output, cache write (5m), cache rea
                            # the LiteLLM refresh overwrites these with the live feed (which carries the
                            # exact ids), so they just need to be sane when offline / before the first fetch.
     "claude-fable-5":            {"in": 10e-6, "out": 50e-6, "cache_w": 12.5e-6, "cache_r": 1e-6},
+    "claude-fable-5-1":          {"in": 10e-6, "out": 50e-6, "cache_w": 12.5e-6, "cache_r": 0.25e-6},   # its
+    #   own row (2026-09-05): without one the family fallback priced Fable 5.1's cache reads at Fable 5's
+    #   $1/Mtok — 4x the list rate. Rates read from Claude Code 2.1.261's baked-in model catalog, where
+    #   claude-fable-5-1 carries the tier `tier_10_50_cache_read_0_25` (10 / 50 / 12.5 / 0.25 $/Mtok;
+    #   1h cache writes are 20 and are folded into cache_w here at the 5m rate, a known simplification)
     "claude-opus-4-8":           {"in": 5e-6, "out": 25e-6, "cache_w": 6.25e-6, "cache_r": 0.5e-6},
     "claude-sonnet-5":           {"in": 3e-6, "out": 15e-6, "cache_w": 3.75e-6, "cache_r": 0.3e-6},
     "claude-sonnet-4-6":         {"in": 3e-6, "out": 15e-6, "cache_w": 3.75e-6, "cache_r": 0.3e-6},
@@ -28939,11 +29117,17 @@ def _model_prices(now=None):
 
 
 def _price_for(model, prices):
-    """The price row for a model: exact id, else any priced model of the same family
-    (fable/opus/sonnet/haiku) so a differently-dated id still gets a sane rate, else None
-    (uncounted — defensive)."""
+    """The price row for a model: exact id, else the priced model with the same (family, major, minor)
+    signature (a dated `claude-fable-5-1-2026…` lands on the fable-5-1 row, not on whichever fable row
+    the table lists first — the two differ 4x on cache reads), else any priced model of the same family
+    (fable/opus/sonnet/haiku) so an unknown id still gets a sane rate, else None (uncounted — defensive)."""
     if model in prices:
         return prices[model]
+    sig = _price_sig(model)
+    if sig:
+        for k, v in prices.items():
+            if _price_sig(k) == sig:
+                return v
     m = (model or "").lower()
     for fam in ("fable", "opus", "sonnet", "haiku"):
         if fam in m:
@@ -28954,32 +29138,504 @@ def _price_for(model, prices):
 
 
 def _session_cost(path, t0, prices):
-    """$ cost of a session's token usage over [t0, now], priced per-message by its model — sessions carry
-    no logged cost (unlike judges). Reuses _session_tokens' per-message row cache (which now carries the
-    model). Cache reads are cheap per token but huge in volume, so all four token classes are priced."""
-    _session_tokens(path, t0)                        # populate/refresh the row cache
-    hit = _session_tok_cache.get(path)
-    if not hit:
-        return 0.0
-    c = 0.0
-    for (t, i, o, cw, cr, model) in hit[1]:
-        if t is not None and t < t0:
-            continue
-        pr = _price_for(model, prices)
-        if pr:
-            c += i * pr["in"] + o * pr["out"] + cw * pr["cache_w"] + cr * pr["cache_r"]
-    return c
+    """The token-price ESTIMATE of a session's usage over responses timestamped >= t0 — _session_usage's
+    cost half (priced per response by its model; sessions carry no logged cost, unlike judges)."""
+    return _session_usage(path, t0, prices)["cost"]
 
 
 _ANALYTICS_MEMO = {}   # window -> {"t": epoch, "jkey": judge-usage cache size, "resp": the payload}
 
 
+_HOUR_KEY = "%Y-%m-%dT%H"
+_DATE_KEY = "%Y-%m-%d"
+
+
+def _key_fields(key):
+    """(year, month, day, hour, fmt) for a ledger bucket key — a local hour (`%Y-%m-%dT%H`) or a local date
+    (`%Y-%m-%d`, hour 0) — or None for anything else. A slice parse, not strptime: strptime costs 7 µs and
+    the closure over a split key (_hour_window) places every key of a window."""
+    try:
+        if len(key) == 13 and key[4] == "-" and key[7] == "-" and key[10] == "T":
+            f = int(key[:4]), int(key[5:7]), int(key[8:10]), int(key[11:13]), _HOUR_KEY
+        elif len(key) == 10 and key[4] == "-" and key[7] == "-":
+            f = int(key[:4]), int(key[5:7]), int(key[8:10]), 0, _DATE_KEY
+        else:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return f if 1 <= f[1] <= 12 and 1 <= f[2] <= 31 and 0 <= f[3] <= 23 else None
+
+
+def _run_start(t, key, fmt, lt=None):
+    """The first instant of the RUN of instants that share `key` and reach t (t formats to key; `lt` is
+    its localtime if the caller has it). The top of t's clock hour — or date — at t's own UTC offset,
+    unless that top names another key (the offset changed between it and t): then the run starts where the
+    key first appears, found by bisection (a zone changes offset at most once in any hour, so the key is
+    absent then present across (top, t]). Where the second before the run still carries the key — a
+    fall-back replays the clock hour, so the daylight 01:00 and the standard 01:00 are one two-hour run —
+    the run extends through that stretch by the same rule. Three or four localtime/strftime calls on the
+    common path; the bisection (about a dozen more) only on the hour a transition falls in."""
+    return _run_start_and_prev(t, key, fmt, lt)[0]
+
+
+def _run_start_and_prev(t, key, fmt, lt=None):
+    """(start, start_lt, prev_lt, prev_key): _run_start, the localtime of that first instant, and the
+    localtime and key of the second before the run — the run's first UTC offset and the walker's next
+    step, both of which the search computed anyway."""
+    t = int(t)
+    hourly = fmt == _HOUR_KEY
+
+    def top(u, lt):
+        s = u - lt.tm_min * 60 - lt.tm_sec - (0 if hourly else lt.tm_hour * 3600)
+        slt = time.localtime(s)
+        if time.strftime(fmt, slt) == key:
+            return s, slt
+        lo, hi, hlt = s, u, lt               # key absent at lo, present at hi: its first instant is in (lo, hi]
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            mlt = time.localtime(mid)
+            if time.strftime(fmt, mlt) == key:
+                hi, hlt = mid, mlt
+            else:
+                lo = mid
+        return hi, hlt
+
+    s, slt = top(t, lt if lt is not None else time.localtime(t))
+    while True:
+        prev = time.localtime(s - 1)
+        prev_key = time.strftime(fmt, prev)
+        if prev_key != key:
+            return s, slt, prev, prev_key
+        s, slt = top(s - 1, prev)
+
+
+# How far an instant naming a bucket key can lie from the key's wall time read as UTC: the widest UTC
+# offset a TZ setting can carry, rounded up (tzdata's run from -12 to +14 hours; a POSIX TZ string allows
+# 24:59:59). _bucket_start reads the offsets in force this far either side of a key, and
+# _splitting_fall_back this far before a window: a replay reaches at most its offset difference plus an
+# hour past the change, and tzdata's longest is seven hours (Antarctica/Vostok, 1994).
+_OFFSET_REACH = 26 * 3600
+
+
+def _bucket_start(key):
+    """Epoch start of a ledger bucket key — a local hour (`%Y-%m-%dT%H`) or a local date (`%Y-%m-%d`);
+    None for anything else. The EARLIEST instant that formats to the key: on a fall-back day one local
+    hour key names two clock hours (New York's 01:00 daylight, then 01:00 standard), the recorder folds
+    both into the one bucket, and the bucket starts at the first of them.
+
+    Read from the key alone, never from the C library's placing of a wall time. An instant names the key
+    iff its wall clock lies in the key's hour (or date), so at UTC offset `o` the key's instants lie in
+    [G - o, G + L - o), G the key's wall time read as UTC and L its length, and every instant that can
+    name the key is within _OFFSET_REACH of G. The offsets in force across that reach are read off
+    hourly localtime samples (54 for an hour key), and each offset yields one instant that names the key,
+    if any does: the hour's first second read at that offset; else its last second, walked back to its
+    run's first instant (_run_start) — a change landing mid-hour leaves the hour no first second at the
+    new offset (the Chatham Islands spring forward at 02:45, so their T03 is 03:45-03:59); else the
+    samples at that offset themselves (only where two changes fall inside one key, which no hour can hold
+    and no date in tzdata does). The earliest of those instants is the answer: a bucket's first instant
+    is either the top of its hour at the offset then in force — one of the first-second readings — or a
+    clock change landing inside the hour, whose run holds the hour's last second at that offset.
+
+    The one assumption is that no two clock changes fall within an hour of each other (tzdata's closest
+    pair is six days 23 hours apart: Brazil, 2000), so no offset in force escapes the hourly samples and
+    _run_start's bisection meets one change per hour. Nothing here asks mktime: until 2026-09-06 the key
+    was placed by mktime, whose answer for a replayed wall time follows the library's PREVIOUS call
+    (glibc; POSIX does not say), and the arms that then tried both isdst hints could neither tell two
+    standard-time offsets apart (Antarctica/Casey's +11 -> +08, a three-hour replay; Davis, Vostok and
+    Rothera likewise) nor see past the two-hour replay they were bounded by, so a replayed key's start
+    followed the process's conversion history by two or three hours, and its hover slot with it.
+
+    A key no instant formats to — a spring-forward gap, or a date the zone skipped (Samoa's 2011-12-30)
+    — starts where the gap ends: the first instant whose key sorts after it, bisected between the two
+    consecutive samples the gap lies between (keys rise with time up to a gap, and a fall-back only ever
+    sets a key BACK, so the first sample past the key is the first past the gap). A well-formed key that
+    fits neither rule, or one the C library cannot place at all (a year past time_t), raises ValueError,
+    naming it: a None start for a real key is a wrong period cut waiting to happen, not a value to pass
+    on."""
+    f = _key_fields(key)
+    if f is None:
+        return None
+    y, m, d, h, fmt = f
+    span = 3600 if fmt == _HOUR_KEY else 86400
+    g = calendar.timegm((y, m, d, h, 0, 0))
+    lo, hi = g - _OFFSET_REACH, g + span + _OFFSET_REACH
+    at = {}                                  # UTC offset -> the sample instants it was in force at
+    try:
+        for s in range(lo, hi + 1, 3600):
+            at.setdefault(time.localtime(s).tm_gmtoff, []).append(s)
+    except (OverflowError, OSError, ValueError):   # a year the C library cannot place (time_t's range)
+        raise ValueError("ledger bucket %r is outside the range this zone can place" % (key,))
+
+    def names(t):
+        return time.strftime(fmt, time.localtime(t)) == key
+
+    first = None
+    for off, samples in at.items():
+        t = g - off                          # the key's first second, read at this offset
+        if names(t):
+            cand = t
+        elif names(t + span - 1):
+            cand = _run_start(t + span - 1, key, fmt)
+        else:
+            cand = next((_run_start(s, key, fmt) for s in samples if names(s)), None)
+        if cand is not None and (first is None or cand < first):
+            first = cand
+    if first is not None:
+        return first
+
+    def later(t):
+        return time.strftime(fmt, time.localtime(t)) > key
+
+    prev = lo
+    if later(prev):
+        raise ValueError("ledger bucket %r names no instant in this zone, and the reach before it sorts after it" % (key,))
+    for s in range(lo + 3600, hi + 1, 3600):
+        if later(s):                         # the gap is in (prev, s]: bisect to the first instant past it
+            while s - prev > 1:
+                mid = (prev + s) // 2
+                if later(mid):
+                    s = mid
+                else:
+                    prev = mid
+            return s
+        prev = s
+    raise ValueError("ledger bucket %r names no instant in this zone, and no gap ends within reach of it" % (key,))
+
+
+def _hour_buckets_back(now, secs):
+    """[(key, start, off0, off1)] for every RUN of hour-keyed instants that intersects [now - secs, now],
+    newest first, with each run's first instant and the UTC offsets (seconds east) at its first and last
+    instants — the keys the recorder (sdk_backend._record_spend) gives the turns of that span. Walked
+    run by run: the run of `now`, then the run of the second before its start, and so on until a run
+    starts at or before now - secs. The walk follows the buckets as they lie, whatever their length: the
+    fall-back day's repeated hour is one two-hour run (one key), a spring-forward gap is no run, and a
+    30-minute shift's half-hour bucket is one run like any other. Sampling `now - i*3600` once an hour
+    (the rule until 2026-09-06) could not see a bucket shorter than its stride: on Lord Howe Island's
+    spring-forward day the samples stepped from T03 to T01 over the half-hour T02, so that bucket's turns
+    were in no window while the period, cut at the oldest bucket's first instant, covered their instants.
+    A key can appear twice: where a fall-back's replay crosses a clock-hour boundary (the Chatham Islands,
+    03:45 -> 02:45; Antarctica/Troll, 03:00 -> 01:00) a bucket's instants come in two runs with another
+    key's run between them — _hour_window folds that, and reads the span's clock changes off the two
+    offsets, which the walk already had (the localtime of each run's last instant is the step that found
+    the run; its first instant's is the search's own reading of the start)."""
+    cut = now - secs
+    t = int(now)                  # bucket edges are whole seconds; the bucket of floor(now) is now's bucket
+    lt = time.localtime(t)
+    key = time.strftime(_HOUR_KEY, lt)
+    out = []
+    while True:
+        start, slt, prev_lt, prev_key = _run_start_and_prev(t, key, _HOUR_KEY, lt)
+        if start > t:             # cannot happen (a run starts at or before the instant naming it); keep the walk finite if it ever does
+            start, slt, prev_lt = t, time.localtime(t), time.localtime(t - 1)
+            prev_key = time.strftime(_HOUR_KEY, prev_lt)
+        out.append((key, start, slt.tm_gmtoff, lt.tm_gmtoff))
+        if start <= cut:
+            return out
+        t, lt, key = start - 1, prev_lt, prev_key
+
+
+def _runs_through(walked, cut):
+    """The prefix of a walk (_hour_buckets_back, newest first) through the first run that starts at or
+    before `cut` — the runs of the window [cut, now] — or None where the walk does not reach `cut`."""
+    for i, (_k, st, _off0, _off1) in enumerate(walked):
+        if st <= cut:
+            return walked[:i + 1]
+    return None
+
+
+def _hour_window(now, secs, walked=None, starts=None):
+    """(keys, t0) for a rolling hour window [now - secs, now] over the hour ledger: the bucket keys the
+    window sums — every key with an instant in the span (_hour_buckets_back), newest first, each once —
+    and t0, the earliest instant any of them names, so the ledger's whole-bucket sum and a cut of the
+    transcript and judge rows at t0 count the same turns. In every zone whose buckets are contiguous
+    runs (every DST rule that changes the clock on the hour by one hour, and the 30-minute Lord Howe
+    shift) the keys are the walked runs and t0 the oldest run's start. Where a fall-back's replay crosses
+    a clock-hour boundary — the Chatham Islands' 03:45 -> 02:45, or Antarctica/Troll's two-hour 03:00 ->
+    01:00 — a key's instants form two runs with another key's run between them, so a key in the span can
+    name instants BEFORE the oldest run's start; the whole-bucket sum holds those turns, so t0 reaches
+    back to the earliest first instant among the keys and every key with an instant in [t0, now] joins,
+    until nothing widens.
+
+    That closure costs a _bucket_start per key it asks, so it runs only where it widens — where a key of
+    the span owns an instant before the oldest run's start (_splitting_fall_back, which finds the change
+    that split it off the walk's own offsets or in the 26 hours before the oldest run, and checks that
+    its replay reaches the window) — and asks only the keys that change can have split. The gate returns
+    the end of the replay stretch, the first instant past the last one a split key names. A key whose
+    walked run starts at or past that end owns no instant before t0: a split key's instants all lie
+    inside the stretch, and any other key's form one run, the one the walk found, whose start is its
+    first instant already. Widening moves t0 down and the stretch not at all, and a change whose replay
+    reaches the new t0 but not the old one ended at or before the old t0, inside the same bound, so one
+    bound serves every pass. About 26 localtime calls and no _bucket_start on the common path; New York,
+    London and Lord Howe never run the closure, and Chatham, Troll and Casey run it only in the hours a
+    window's start lies inside a replay (two, three and five hours a year), for the stretch's two or
+    three keys. The rail's 7d window crosses the stretch a week after the change and costs those two or
+    three first instants there; until 2026-09-06 the closure asked every key of the window, 170 first
+    instants and 8-9 ms per rail build against 1.5 elsewhere, for those same hours. Until 2026-09-06 the
+    gate also fired on any fall-back at a walked run boundary and any fall-back in the two hours before
+    the oldest run — so New York's inside-run fall-back ran the closure for 45 minutes after its change,
+    Chatham's ran it for a week on the rail's 7d window with nothing to widen, and a replay longer than
+    two hours (Antarctica/Casey's three) was not looked for; before that, the gate was two shapes read
+    off the runs — a key walked twice, or an oldest run that does not start at its key's first instant —
+    and missed Troll's third: with now in the first replayed hour the walk is T01's standard run then
+    T02's daylight run, each key once, T02's run its key's first, yet T01's bucket also holds the
+    daylight hour before that.
+
+    `walked` lets the rail pass one long walk for its several windows — each is a prefix of the same
+    walk, cut by the walker's own rule — and `starts` a dict the caller shares across them, so a key's
+    first instant is computed once per build however many windows the closure runs for (the rail's five
+    windows each reran it on Chatham's fall-back week: 510 _bucket_start calls for 170 keys, 2.2 ms per
+    build). A widening that the walk reaches takes its prefix; only one past its end walks again."""
+    if walked is None:
+        walked = _hour_buckets_back(now, secs)
+    if starts is None:
+        starts = {}
+    runs = _runs_through(walked, now - secs)
+    if runs is None:              # a walk shorter than the window: not a caller's shape today; walk this one
+        walked = runs = _hour_buckets_back(now, secs)
+    keys = list(dict.fromkeys(k for k, _st, _off0, _off1 in runs))
+    t0 = runs[-1][1]
+    reach = _splitting_fall_back(runs)
+    if reach is None:
+        return keys, t0
+    while True:
+        first = t0
+        for k, st, _off0, _off1 in runs:
+            if st >= reach:       # not one of the split keys: its instants are one run, and the walk has its start
+                continue
+            if k not in starts:
+                starts[k] = _bucket_start(k)
+            if starts[k] is not None and starts[k] < first:
+                first = starts[k]
+        if first >= t0:
+            return keys, t0
+        t0 = first
+        runs = _runs_through(walked, t0)
+        if runs is None:
+            walked = runs = _hour_buckets_back(now, now - t0)
+        keys = list(dict.fromkeys(k for k, _st, _off0, _off1 in runs))
+
+
+def _replay_reaches(x, o_old, o_new, t0):
+    """Where the fall-back at instant x — UTC offset o_old before it, o_new after, seconds east — splits
+    keys and one of them owns instants on both sides of t0: the END of the stretch those keys' instants
+    cover (the first instant past the last of them); None otherwise. A fall-back replays the wall times
+    between where the clock landed and where it left; the keys of that stretch are split (each names
+    instants before x and again after it) iff the stretch crosses a clock-hour boundary — the clock lands
+    in an earlier hour than the one it left (Chatham's 03:45 -> 02:45; New York's 02:00 -> 01:00 stays
+    in the hour it left, so its T01 is one run). Their instants run from the top of the landing hour
+    read at the old offset to the top of the hour after the one left, read at the new, and a key among
+    them has an instant before t0 and one at or after it iff t0 lies strictly inside that stretch. Every
+    instant of a split key lies inside the stretch, so a key whose run starts at or past its end is not
+    one of them: _hour_window's closure asks a first instant of no such key."""
+    left = (x - 1 + o_old) // 3600 * 3600        # the top of the wall hour the clock left
+    landed = (x + o_new) // 3600 * 3600          # the top of the wall hour it landed in
+    end = left + 3600 - o_new
+    return end if landed < left and landed - o_old < t0 < end else None
+
+
+def _splitting_fall_back(runs):
+    """Where a key of the span a walk covers (_hour_buckets_back's runs, newest first) owns an instant
+    BEFORE the oldest run's start t0 — the one case in which the walk's keys and t0 are not the window's,
+    and _hour_window widens — the end of the replay stretch that split it (_replay_reaches), the bound
+    past which no key of the window can be one of the split; None where no key owns such an instant.
+    Only a fall-back whose replay crosses a clock-hour boundary splits a key, and the change is in one of
+    two places. At a walked run boundary: the walk carries each run's offsets at its first and last
+    instant, so a boundary whose older side sits above (east of) its newer side is a fall-back at that
+    instant; a fall-back inside a run (New York's) shows only as one run's two offsets and splits
+    nothing, and a spring-forward at a boundary replays nothing. Or before t0: hourly localtime samples
+    over the _OFFSET_REACH before it — longer than any replay reaches past its change — find a change
+    between two samples that differ, bisected to the second. Either way the change counts only where its
+    replay's keys straddle t0. Every change in reach is read and the latest end returned, so were two
+    replays to reach one t0 the bound would cover both; tzdata has no such pair (the samples, which the
+    common path reads in full anyway, are what this costs). The one assumption is that no two clock
+    changes fall within an hour of each other, so a change lies between two consecutive hourly samples
+    that differ and a run's two ends see at most one; tzdata's closest pair is six days 23 hours apart
+    (Brazil, 2000: states that entered daylight time on 8 October left it on the 15th), and the samples
+    see both of those."""
+    t0 = runs[-1][1]
+    reach = None
+    for (_k, st, off0, _off1), (_ok, _ost, _ooff0, older) in zip(runs, runs[1:]):
+        if off0 < older:
+            end = _replay_reaches(st, older, off0, t0)
+            if end is not None and (reach is None or end > reach):
+                reach = end
+    newer = runs[-1][2]           # the offset at t0
+    t = t0
+    for _i in range(_OFFSET_REACH // 3600):
+        t -= 3600
+        off = time.localtime(t).tm_gmtoff
+        if off != newer:          # one change in (t, t + 3600]: the first instant past t whose offset is not `off`
+            lo, hi = t, t + 3600
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                if time.localtime(mid).tm_gmtoff == off:
+                    lo = mid
+                else:
+                    hi = mid
+            if newer < off:
+                end = _replay_reaches(hi, off, newer, t0)
+                if end is not None and (reach is None or end > reach):
+                    reach = end
+            newer = off
+    return reach
+
+
+def _first_instants(walked):
+    """{key: first instant} for every key with an instant in the span a walk covers (_hour_buckets_back's
+    runs, newest first): each key's earliest walked run start — exact wherever no key of the span owns
+    an instant before the oldest run's start (_splitting_fall_back) — else _bucket_start for the keys
+    whose run starts inside the replay stretch the gate found, the only ones it can have split (see
+    _hour_window), and the run start for the rest. The hover series' slots come from this (one walk for
+    192 keys), the modal's and the rail's windows from _hour_window, which reads the same gate. The
+    series' span, 192 hours, has its start inside a stretch about eight days after the change, for the
+    same two to five hours a year as the rail's 7d window a day earlier, and asks two or three first
+    instants there (until 2026-09-06, one per key of the span: 192, 8 ms per build)."""
+    reach = _splitting_fall_back(walked)
+    first = {}
+    for k, st, _off0, _off1 in walked:
+        if k not in first or st < first[k]:
+            first[k] = st
+    if reach is not None:
+        for k, st in first.items():
+            if st < reach:
+                first[k] = _bucket_start(k)
+    return first
+
+
+def _hour_keys_back(now, secs):
+    """The keys of _hour_window(now, secs) — every hour bucket with an instant in [now - secs, now],
+    newest first, each once."""
+    return _hour_window(now, secs)[0]
+
+
+def _analytics_edges(now, window):
+    """The analytics window's edges, by the RAIL's own bucket rule so the modal's ledger figure IS the rail
+    cell's: `window` seconds rounded up to n whole hours, and every hour bucket with an instant in those n
+    hours plus this one, while the 8-day hour ledger covers it, else n whole local dates plus today. Returns
+    (kind, keys, t0): kind "hours"|"days", the bucket keys newest first, and t0 — the epoch start of the
+    oldest bucket. t0 is the ONE cut every figure in the modal takes (the ledger sum, the transcript rows,
+    the judge rows), so the 'judges = N% of session cost' line compares like-for-like. Before this
+    (2026-09-06) the ledger summed whole buckets while the judge and token figures were cut at exactly
+    now - window, so a 1h view opened at :59 divided 60 minutes of judge dollars by 120 minutes of
+    session dollars. So `1h` covers 60 to 120 minutes, `24h` 24 to 25 hours and `30d` 30 to 31 local
+    dates — the rail's `1 hour` / `1 day` / `1 month` read the same way — and the modal says where the
+    period starts (`from` in the payload) rather than promising an exact hour.
+
+    The hour keys are every bucket with an instant in [now - n hours, now], walked run by run
+    (_hour_window), newest first, each once — the keys the rail sums (_spend_windows._rolling), so the
+    modal's ledger figure IS the rail cell's. Walked, not sampled: `now - i*3600` once an hour hit the
+    fall-back day's two-hour bucket twice (a caller summing per key added it where the rail's set counted
+    it once; the bucket holds both hours' turns, so once is right) and could not see a bucket shorter than
+    an hour at all — on Lord Howe Island's 30-minute spring-forward the samples stepped over the half-hour
+    T02 bucket, so its turns were in no ledger figure while t0, the oldest bucket's first instant, put
+    their transcript and judge rows in the period (2026-09-06). Date keys are date arithmetic, so none
+    repeats and none is skipped over; a date the ZONE skipped (Samoa's 2011-12-30) is a key no instant
+    formats to, which no bucket can carry, and _bucket_start gives it the first instant after the gap.
+
+    t0 is the earliest instant any key in the window names — `_bucket_start(keys[-1])`, the oldest
+    bucket's first instant, wherever buckets are contiguous (see _hour_window for the zones where a
+    newer key reaches further back) — in both branches, never arithmetic from the current hour or
+    midnight. `this_hour - n*3600` assumed every
+    bucket spans 3600 s and that mktime's isdst=-1 names the repeated hour's first clock hour; neither
+    holds on the fall-back day (the repeated hour's bucket spans two clock hours, glibc's answer depends
+    on its previous call), so a 1h view at 02:30 standard time, and the 24h view the next day, cut the
+    transcript and judge rows at the second 01:00 while the ledger summed the whole bucket — one hour of
+    session dollars with no tokens or judges against it (2026-09-06). The same happened to midnight in a
+    zone whose fall-back crosses it, and a zone with a 30-minute shift put t0 half an hour off every
+    time the window crossed a transition. The oldest key is a strftime of a real instant, so it always
+    names one."""
+    if window <= (_SERIES_HOURS - 1) * 3600:
+        n = -(-int(window) // 3600)
+        keys, t0 = _hour_window(now, n * 3600)
+        return "hours", keys, t0
+    n = -(-int(window) // 86400)
+    today = datetime.fromtimestamp(now).date()
+    keys = [(today - timedelta(days=i)).isoformat() for i in range(n + 1)]
+    t0 = _bucket_start(keys[-1])
+    if t0 is None:                # cannot happen (the key is a date's isoformat); a None t0 is no cut at all — say so, never pass it on
+        raise ValueError("no start for the period's oldest date %r" % (keys[-1],))
+    return "days", keys, t0
+
+
+def _spend_ledger_window(now, window, keyed_only=False):
+    """The sessions' spend over the analytics window as the RAIL's ledger recorded it — the CLI's own
+    per-turn total_cost_usd, folded per result into spend.json (sdk_backend _record_spend) — for the
+    modal to show in place of its token-price estimate wherever the ledger reaches (2026-09-05: the
+    estimate read 1.55x the ledger over a day). {usd, turns, tok, since?, sinceT?, preFix?, keyed?}, or
+    None when the ledger holds no bucket of the window's kind.
+
+    THE WINDOW is the rail's, whole buckets per _analytics_edges, summed whole — so this figure equals
+    the rail cell's for the matching window, and the build cuts every other figure at the same edges'
+    t0. `keyed_only` sums each bucket's `key` sub-counters instead — the turns whose session billed an
+    API key — the rail's own rule on a host that runs a login beside a key (a login turn's computed cost
+    is billed to no one, the user 2026-08-08); the caller decides by the rail's arms (_token_analytics)
+    and the result says `keyed` so the modal can say what it left out. `since` names the oldest bucket
+    when the ledger starts INSIDE the window, `sinceT` its epoch start, so the build can price the
+    window's earlier part from transcripts instead of letting a young ledger read as a quietly short
+    window (the T235 discipline); for day buckets `sinceDate` is that oldest local DATE as a string, so
+    the modal prints the kernel's date rather than an epoch in the browser's zone (a browser west of the
+    kernel rendered the previous date, 2026-09-06). The oldest bucket itself may hold only part of its
+    hour or day (the ledger began mid-bucket); that sliver is in neither figure, and the modal says so."""
+    try:
+        d = json.loads((jd.STATE / "spend.json").read_text())
+    except Exception:
+        return None
+    days = d.get("days") if isinstance(d.get("days"), dict) else {}
+    hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
+    kind, keys, _t0 = _analytics_edges(now, window)
+    buckets = hours if kind == "hours" else days
+    if not buckets:
+        return None
+    out = {"usd": 0.0, "turns": 0, "tok": 0}
+    for k in keys:
+        e = buckets.get(k)
+        if not isinstance(e, dict):
+            continue
+        if _spend_pre_fix(k):
+            out["preFix"] = True   # a bucket from before the per-turn fix is in this sum (see the constant)
+        if keyed_only:
+            e = e.get("key") if isinstance(e.get("key"), dict) else {}
+            out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
+            out["turns"] += int(e.get("turns") or 0)
+            out["tok"] += int(e.get("tok") or 0)
+        else:
+            out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
+            out["turns"] += int(e.get("turns") or 0)
+            out["tok"] += sum(int(e.get(kk) or 0) for kk in ("tokIn", "tokOut", "tokCacheR", "tokCacheW"))
+    if keyed_only:
+        out["keyed"] = True
+    oldest = min(k for k in buckets if isinstance(k, str))   # one ledger's keys sort chronologically
+    if oldest > min(keys):
+        out["since"] = oldest
+        try:
+            st = _bucket_start(oldest)
+        except ValueError as err:     # the ledger's oldest key is one nothing places: no cut for the estimate before it
+            _ledger_key_unplaced(oldest, err, "the analytics leave out the estimate for the part of the period before the ledger")
+            st = None
+        if st is not None:
+            out["sinceT"] = st
+        if kind == "days":
+            out["sinceDate"] = oldest   # the kernel's own local date, for the modal to print as a date
+    return out
+
+
 def _token_analytics(now, window):
-    """Token usage over the trailing `window` seconds for the analytics modal (the /analytics endpoint):
-    the coding SESSIONS total (summed transcript usage of the discovered fleet) vs the judge PIPELINE
-    broken out per judge AND per tier (_judge_usage). One ARBITRARY window — the modal's period picker.
-    Each side also carries $ cost so the modal can toggle tokens↔cost without a refetch: judges = exact
-    logged cost, sessions = tokens × _model_prices. Cheap: _session_tokens caches per-path rows and
+    """Token usage over the analytics window for the modal (the /analytics endpoint): the coding SESSIONS
+    total (summed transcript usage of the discovered sessions, subagents included) vs the judge PIPELINE
+    broken out per judge AND per tier (_judge_usage). One ARBITRARY window — the modal's period picker —
+    read at the rail's bucket edges (_analytics_edges): `from` is the period's real start (`fromDate` the
+    same edge as the kernel's local date string when the buckets are days — dates are the kernel's, and
+    an epoch rendered in the browser's zone can name the wrong one), and the ledger sum, the transcript
+    rows and the judge rows are all cut there, so every ratio in the modal is like-for-like. Each side carries $ so the modal toggles tokens<->cost without a refetch: judges =
+    exact logged cost; sessions = `cost`, tokens x _model_prices over the whole period (an ESTIMATE),
+    plus `ledger` — the CLI's own per-turn cost from the rail's ledger (_spend_ledger_window), which the
+    modal shows first. On a host that runs a login beside a key the ledger figure is the KEYED split,
+    the rail's own rule (`ledger.keyed`), under the rail's own guard — the key has recorded turns in the
+    rail's day/week/month windows; with a key alone, a key never used, or no key it is the total. Where the ledger
+    began inside the period, `ledger.estBefore` is the estimate for [from, ledger.sinceT) — the part the
+    ledger predates, priced from every session's transcript (the estimate cannot tell a login turn from
+    a key turn) — and the modal adds it to the ledger's dollars, each labelled. Cheap: _session_tok_rows
+    caches per-path rows (one walk + stats per session per build, parse only on change) and
     _judge_usage reads the shared incremental row cache, so this re-sums memory."""
     # a tiny TTL memo: the modal refetches on every period click and every reopen, and the recompute is
     # honest-but-pointless within seconds of itself (the user 2026-08-13's fast-and-visible rule); a new
@@ -28988,17 +29644,38 @@ def _token_analytics(now, window):
     jkey = _JUDGE_USAGE_CACHE["size"]
     if memo and memo["jkey"] == jkey and now - memo["t"] < 15:
         return memo["resp"]
-    t0 = now - window
+    kind, _keys, t0 = _analytics_edges(now, window)
+    # the rail's arm for the session dollars: a key beside a login → the keyed split (login turns'
+    # computed cost is billed to no one) — but, as on the rail, only once the key has RECORDED turns in
+    # the rail's own windows (a key merely configured beside a login gave a $0.00 Sessions bar with the
+    # keyed footnote while the rail showed no spend at all, 2026-09-06); a key alone → the total (every
+    # turn bills it, and legacy buckets predate the split); no key → the total, the CLI's computed cost,
+    # billed to no one
+    keyed = False
+    if _auth_key_present() and _claude_account():
+        ksp = _spend_windows(keyed_only=True, now=now)
+        keyed = any((ksp.get(k) or {}).get("turns") for k in ("day", "week", "month"))
+    led = _spend_ledger_window(now, window, keyed_only=keyed)
+    split = led.get("sinceT") if led else None
     prices = _model_prices(now)
     s = {"in": 0, "out": 0, "cost": 0.0}
+    before = 0.0
     # discover at the MODAL's window, never the 48h default: the 7d/30d views used to sum judges over
     # the full window but sessions over only the last 48h of activity — the "judges = N% of session
     # cost" note was wrong there by construction (the user 2026-08-13's map)
-    for fsid, path, anchor, name in jd.discover(now, window=max(window, 48 * 3600)):
-        d = _session_tokens(str(path), t0)
+    for fsid, path, anchor, name in jd.discover(now, window=max(int(now - t0), 48 * 3600)):
+        d = _session_usage(str(path), t0, prices, split)
         s["in"] += d["in"]; s["out"] += d["out"]
-        s["cost"] += _session_cost(str(path), t0, prices)
-    resp = {"window": window, "now": now, "sessions": s, "judges": _judge_usage(t0)}
+        s["cost"] += d["cost"]; before += d["costBefore"]
+    if led:
+        if split is not None:
+            led["estBefore"] = round(before, 6)
+        s["ledger"] = led
+    resp = {"window": window, "now": now, "from": t0, "buckets": kind, "sessions": s, "judges": _judge_usage(t0)}
+    if kind == "days":
+        resp["fromDate"] = _keys[-1]   # the oldest local DATE as the kernel names it — the modal prints this,
+        #                                not `from` through the browser's zone (a browser west of the kernel
+        #                                showed the day before the period's first date, 2026-09-06)
     _ANALYTICS_MEMO[window] = {"t": now, "jkey": _JUDGE_USAGE_CACHE["size"], "resp": resp}
     return resp
 
@@ -34775,7 +35452,8 @@ if(legacy){det._spendLegacyMonth=true;}
 SPEND_WINS.forEach(function(w){var k=w[0];if(legacy&&k==='monthToDate')k='month';else if(legacy&&k==='month')return;
 var seg=sp[k];if(!seg||typeof seg.usd!=='number')return;
 var row=(det._spend=det._spend||{})[w[0]]={label:w[1],usd:seg.usd,tok:seg.tok||0,turns:seg.turns||0};
-if(w[0]==='month'&&typeof seg.since==='string')row.since=seg.since;});   // a ledger younger than the window says so
+if(w[0]==='month'&&typeof seg.since==='string')row.since=seg.since;   // a ledger younger than the window says so
+if(seg.preFix)row.preFix=true;});   // the window folds a day recorded before the per-turn fix (inflated as recorded)
 if(u.spendSeries&&u.spendSeries.usd)det._spendSeries=u.spendSeries;}   // $/hour, for the hover graph (the user 2026-08-13)
 // One payload's WINDOW detail for the hover (used/elapsed/reset per window). Detail only, no markup:
 // the rail no longer draws each account's own bars (they aggregate, below), but the tip still tells
@@ -34974,6 +35652,7 @@ if(sp.week&&typeof sp.week.usd==='number')per.push({host:e.host,usd:sp.week.usd}
 SPEND_WINS.forEach(function(w){var v=sp[w[0]];if(!v)return;
 var t=(sum[w[0]]=sum[w[0]]||{label:w[1],usd:0,tok:0,turns:0});
 t.usd+=v.usd;t.tok+=v.tok;t.turns+=v.turns;
+if(v.preFix)t.preFix=true;   // any host's pre-fix day in the sum marks the summed row
 if(v.since&&(!t.since||v.since>t.since))t.since=v.since;});   // the YOUNGEST ledger bounds the sum (T235b): it is complete only from there
 if(e.det._spendLegacyMonth)legacyN++;
 var ss=e.det._spendSeries;
@@ -34993,6 +35672,9 @@ var h='<div class="ru-tip-win ru-tip-fleetspend"><div class=ru-tip-name><span>AP
 var lab=v.label;
 if(k==='month'&&v.since)lab+=' \u00b7 complete since '+esc(v.since);
 if(k==='month'&&legacyN)lab+=' \u00b7 '+legacyN+' machine'+(legacyN>1?'s':'')+' not counted (older build)';
+// days before the per-turn fix were recorded inflated (each result re-added the session so far) and
+// are kept as recorded; a window that folds one says so instead of reading as a clean figure
+if(v.preFix)lab+=' \u00b7 includes days recorded before the per-turn fix';
 return '<div class=ru-tip-row><span class=ru-tip-k>'+lab+'</span>'
 +'<span class=ru-tip-v>'+fmtUsd(v.usd)+' \u00b7 '+fmtTok(v.tok)+' tok \u00b7 '+(v.turns||0)+' turns</span></div>';}).join('');
 // every machine in the sum, BY NAME (the user 2026-08-13: a host with no login \u2014 the devbox \u2014 vanished
