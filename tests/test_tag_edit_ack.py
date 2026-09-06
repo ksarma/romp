@@ -2110,6 +2110,55 @@ class ReaderRestampUnwritableNamesTheDrop(_Wire):
         self.assertEqual(len(self.notices), 2, "once per file state: a cold read of the same unfixed file names it again")
         self.assertEqual(self.notices[0], self.notices[1])
 
+    def test_two_cold_readers_racing_to_the_lock_on_a_full_disk_name_the_drop_once(self):
+        """Round 9 of the 2026-09-05 review: the cache hit check runs before the file lock, and the
+        in-lock re-check compared the stat key alone — which a FAILED write leaves unchanged. Two readers
+        that both missed a cold cache (the pusher and a handler, on a kernel starting over a full disk)
+        serialized on the lock, and the loser re-stated the same key, judged again, failed again and
+        filed the file-fact notice again: two identical red notices for one file state. The loser now
+        finds the winner's cache entry under the lock and serves it, as the next read would."""
+        self._file(40, at=1000)
+        self._full_disk()
+        real = km._views_restamp
+        gate = threading.Barrier(2)
+
+        def restamp(d, hit):
+            # runs after the hit check and before the lock: both readers pass the check before either
+            # takes the lock, the window the race needs
+            try:
+                gate.wait(timeout=10)
+            except threading.BrokenBarrierError:
+                pass
+            return real(d, hit)
+        km._views_restamp = restamp
+        served, failures = [], []
+
+        def read():
+            try:
+                served.append(len(km._timeline_views()["tags"]))
+            except Exception as e:                            # pragma: no cover - the assertion below reports it
+                failures.append(repr(e))
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                readers = [threading.Thread(target=read) for _ in range(2)]
+                for t in readers:
+                    t.start()
+                for t in readers:
+                    t.join(timeout=30)
+        finally:
+            km._views_restamp = real
+        self.assertEqual(failures, [])
+        self.assertEqual(served, [32, 32], "both readers are answered, under the cap")
+        self.assertEqual(len(self.notices), 1, "one file state, one notice: the loser serves the winner's cache entry")
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len([ln for ln in lines if "no dashboard wrote this" in ln]), 1, "…and one stderr file fact")
+        self.assertEqual(len([ln for ln in lines if "could not be re-stamped" in ln]), 1)
+        self.assertEqual(len(json.loads(km._views_path().read_text())["tags"]), 40, "the file is as it was")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(len(km._timeline_views()["tags"]), 32)
+        self.assertEqual(len(self.notices), 1, "a warm read adds nothing")
+
 
 class RefusalRowsAreBounded(_Wire):
     """Round 8 of the 2026-09-05 review: round 7 gave every posted entry past the door's read bound a

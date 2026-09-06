@@ -3014,6 +3014,16 @@ def _timeline_views():
                 return _norm_timeline_views({})
             if (st2.st_mtime_ns, st2.st_size) != key:
                 return _timeline_views()
+            hit2 = _flags_cache.get(str(p))
+            if hit2 is not None and hit2[0] == key:
+                # The same file state, served and cached by a reader that held the lock while this one
+                # waited (round 9 of the 2026-09-05 review): the failed-write path below caches the
+                # served blob under the file's UNCHANGED key — a write that never reached its replace
+                # leaves the stat alone — so the re-check above could not tell that read had happened,
+                # and two cold readers racing on a full disk each judged the file, each failed the
+                # write, and each filed the file-fact notice. The check the function opens with, run
+                # again under the lock; it serves nothing that check would not.
+                return hit2[1]
             try:
                 floor = int(hit[1].get("seq") or 0) if hit is not None else 0
             except (TypeError, ValueError):
@@ -3098,7 +3108,8 @@ def _timeline_views():
                     # write that lands (a RMW built from this cache) persists the served blob: the
                     # drop becomes permanent THEN, unless the file is brought under the cap first.
                     # Named now, once per file state (the cache entry below keeps every further read
-                    # a hit), with that consequence in the notice.
+                    # a hit, and a reader that raced this one to the lock finds it there), with that
+                    # consequence in the notice.
                     _views_lost_notice(_notice_list(
                         "%s Its re-stamp could not be written — %d tag%s not served and %s lost at the next "
                         "write unless the file is brought under the cap first"
