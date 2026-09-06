@@ -645,7 +645,8 @@ MOCK
     printf 'myproject\t%s\t\t\t🌙\n' "$WORK_DIR" > "$ndir/abc123-uuid"
     run run_romp resume abc123-uuid
     [ "$status" -eq 0 ]
-    ! grep -q 'bg=🌙' "$MOCK_LOG"
+    run grep -q 'bg=🌙' "$MOCK_LOG"
+    [ "$status" -ne 0 ]   # never a bare `! grep` here: set -e and the ERR trap skip an inverted command, so mid-test it checks nothing
     grep -qE 'status-style bg=#[0-9A-Fa-f]{6},fg=[a-z]+' "$MOCK_LOG"   # a palette color, as for any colorless record
     rec="$(cat "$ndir/abc123-uuid")"
     [ "$(awk -F'\t' '{print NF}' <<<"$rec")" -eq 5 ]
