@@ -409,6 +409,59 @@ def last_record_uuid(path, tail_bytes: int = 262144) -> str:
     return ""
 
 
+# ── spend metering: which of the result event's token counters to fold ─────────────────────────────
+# A ResultMessage carries TWO token accounts, and only one of them is fit for accounting (verified
+# against Claude Code 2.1.261's own schema text, 2026-09-05):
+#   `usage`       — "MAIN AGENT LOOP ONLY … per-turn in streaming-input sessions. Prefer modelUsage for
+#                   token/cost accounting". It omits every subagent, sidechain and internal call, and in
+#                   a streaming session it is THIS TURN's count, not a running total. Diffing it as a
+#                   cumulative counter (which it was in older CLIs) under-counted a 2.6M-token turn as
+#                   6,346 tokens.
+#   `modelUsage`  — cumulative across the CLI process, per model, covering the main loop, subagents,
+#                   sidechains and internal calls (the SDK passes it through as `model_usage`, camelCase
+#                   keys). Summed across models per field it is the counter the dollars already diff.
+# The spend recorder keys its token fields by the `usage` dict's names, so the camelCase fields map
+# onto those; `usage` stays the FALLBACK for a CLI too old to emit modelUsage (cumulative there).
+_MODEL_USAGE_KEYS = (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens"),
+                     ("cache_read_input_tokens", "cacheReadInputTokens"),
+                     ("cache_creation_input_tokens", "cacheCreationInputTokens"))
+
+
+def model_usage_totals(model_usage):
+    """Sum a `modelUsage` map ({model: {inputTokens, outputTokens, cacheReadInputTokens,
+    cacheCreationInputTokens, …}}) across models into the four `usage`-named token fields. None when
+    the map is absent, empty or holds no per-model dict — the caller falls back to `usage` then."""
+    if not isinstance(model_usage, dict) or not model_usage:
+        return None
+    out = {k: 0 for k, _ in _MODEL_USAGE_KEYS}
+    seen = False
+    for per_model in model_usage.values():
+        if not isinstance(per_model, dict):
+            continue
+        seen = True
+        for k, ck in _MODEL_USAGE_KEYS:
+            n = per_model.get(ck)
+            if isinstance(n, (int, float)):
+                out[k] += int(n)
+    return out if seen else None
+
+
+def result_token_totals(msg):
+    """The CUMULATIVE token counters a ResultMessage carries, in `usage`-dict names: modelUsage summed
+    across models when the CLI emits it, else the `usage` dict itself (an older CLI, where that dict
+    was the process-lifetime counter). Missing fields read 0."""
+    totals = model_usage_totals(getattr(msg, "model_usage", None))
+    if totals is not None:
+        return totals
+    u = getattr(msg, "usage", None)
+    u = u if isinstance(u, dict) else {}
+    out = {}
+    for k, _ in _MODEL_USAGE_KEYS:
+        v = u.get(k)
+        out[k] = int(v) if isinstance(v, (int, float)) else 0
+    return out
+
+
 def rewind_disposition(rewind_to: str, rewind_leaf: str, leaf_now: str) -> str:
     """Should a (re)connect apply a pending conversation rewind? ONE-SHOT and event-guarded:
     "apply"  — a rewind is pending and the transcript's leaf is still the one recorded at
@@ -3619,11 +3672,13 @@ class SdkSession:
         #   so spend folds the DELTA between results — folding the raw value re-added the whole
         #   session-so-far cost every turn (the user 2026-08-08, whose spend line was fiction). Reset
         #   at each connect: a fresh CLI process starts its counter at zero.
-        self._last_usage_totals = {}  # same for the TOKEN counts: the result event's usage is the
-        #   process-lifetime `this.totalUsage` counter (verified in the bundle beside total_cost_usd),
-        #   so each field folds as a delta too — raw folding compounded the token readout exactly like
-        #   the dollars (the user 2026-08-08, round two: the hover's 5h/7d/month $-per-token ratios
-        #   diverged wildly because each window carried a different inflation factor).
+        self._last_usage_totals = {}  # same for the TOKEN counts: per-field watermarks of the result
+        #   event's cumulative counters — `modelUsage` summed across models (see result_token_totals;
+        #   the `usage` dict is per-turn and main-loop-only on current CLIs, so diffing IT under-counted
+        #   tokens by orders of magnitude, 2026-09-05), each field folding as a delta — raw folding
+        #   compounded the token readout exactly like the dollars (the user 2026-08-08, round two: the
+        #   hover's 5h/7d/month $-per-token ratios diverged wildly because each window carried a
+        #   different inflation factor).
         # Pending conversation REWIND (the chat's edit-message branch): the target record uuid +
         # the transcript leaf recorded at request time (the one-shot guard — see rewind_disposition).
         # Seeded from the reg so a kernel death mid-rewind re-applies it iff nothing landed since.
@@ -5101,14 +5156,12 @@ class SdkSession:
             if isinstance(total, (int, float)) and total > 0:
                 delta = total - self._last_cost_total if total >= self._last_cost_total else total
                 self._last_cost_total = float(total)
-                # the usage dict is the SAME kind of counter (`usage: this.totalUsage` in the bundle):
-                # per-field deltas, a shrunken field folding whole — see _last_usage_totals in __init__
-                u = getattr(msg, "usage", None)
-                u = u if isinstance(u, dict) else {}
+                # the token counters are the SAME kind of counter — modelUsage summed across models,
+                # cumulative per process and subagent-inclusive; the per-turn main-loop `usage` dict only
+                # when the CLI emits no modelUsage (result_token_totals): per-field deltas, a shrunken
+                # field folding whole — see _last_usage_totals in __init__
                 turn_u = {}
-                for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
-                    v = u.get(k)
-                    v = int(v) if isinstance(v, (int, float)) else 0
+                for k, v in result_token_totals(msg).items():
                     last = self._last_usage_totals.get(k, 0)
                     turn_u[k] = v - last if v >= last else v
                     self._last_usage_totals[k] = v

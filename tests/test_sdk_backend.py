@@ -2979,6 +2979,101 @@ class SpendRecord(unittest.TestCase):
         self.assertAlmostEqual(day()["usd"], 3.8)
         self.assertEqual(day()["tokIn"], 190)
 
+    # ── the token SOURCE (2026-09-05): modelUsage, not the per-turn main-loop `usage` dict ──────────
+    def _spend_session(self, sid="11111111-2222-3333-4444-cccccccccccc"):
+        s = sb.SdkSession(self.be, {"sid": sid, "name": "n", "cwd": "/tmp"})
+        self.be._forward = lambda sess, msg: None
+        self.be._turn_completed = lambda sid: None
+        async def _noop(): pass
+        s._do_refresh_context = _noop
+        s._do_refresh_usage = _noop
+        return s
+
+    @staticmethod
+    def _result(total, usage=None, model_usage=None):
+        r = _ResultMessage()
+        r.total_cost_usd = total
+        r.usage = usage
+        r.model_usage = model_usage
+        return r
+
+    def _feed(self, s, r):
+        import asyncio
+        async def run():
+            s._on_message(r, _AssistantMessage, _ResultMessage, type("S", (), {}))
+            await asyncio.sleep(0)
+        asyncio.run(run())
+
+    def _day(self):
+        return json.loads(self.p.read_text())["days"][self._today()]
+
+    def test_model_usage_summed_across_models_is_the_token_source_and_folds_as_deltas(self):
+        """Claude Code 2.1.261's result `usage` is PER-TURN and MAIN-LOOP-ONLY (its own schema text says
+        to prefer modelUsage for accounting); diffing it as a cumulative counter recorded 6,346 tokens
+        for a turn that used 2.6M. `modelUsage` is the cumulative, subagent-inclusive counter, per
+        model — summed across models per field, it folds as deltas exactly like the dollars."""
+        s = self._spend_session()
+        mu1 = {"claude-fable-5-1": {"inputTokens": 1000, "outputTokens": 200,
+                                    "cacheReadInputTokens": 50000, "cacheCreationInputTokens": 3000,
+                                    "webSearchRequests": 0, "costUSD": 0.9},
+               "claude-haiku-4-5-20251001": {"inputTokens": 500, "outputTokens": 50,
+                                             "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}}
+        self._feed(s, self._result(1.0, usage={"input_tokens": 100, "output_tokens": 20}, model_usage=mu1))
+        d = self._day()
+        self.assertEqual((d["tokIn"], d["tokOut"], d["tokCacheR"], d["tokCacheW"]), (1500, 250, 50000, 3000),
+                         "the first turn folds the whole modelUsage counter, summed across models")
+        mu2 = {"claude-fable-5-1": {"inputTokens": 2500, "outputTokens": 300,
+                                    "cacheReadInputTokens": 90000, "cacheCreationInputTokens": 3000},
+               "claude-haiku-4-5-20251001": {"inputTokens": 500, "outputTokens": 50,
+                                             "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}}
+        self._feed(s, self._result(2.0, usage={"input_tokens": 120, "output_tokens": 30}, model_usage=mu2))
+        d = self._day()
+        self.assertEqual((d["tokIn"], d["tokOut"], d["tokCacheR"], d["tokCacheW"]), (3000, 350, 90000, 3000),
+                         "the second turn folds the modelUsage DELTA (1500 in / 100 out / 40k cache reads)")
+        self.assertNotEqual(d["tokIn"], 220, "the per-turn main-loop usage dict is not what lands")
+        self.assertEqual(d["turns"], 2)
+        self.assertAlmostEqual(d["usd"], 2.0, msg="the dollars fold as before")
+
+    def test_a_shrunken_model_usage_counter_folds_whole(self):
+        s = self._spend_session()
+        self._feed(s, self._result(1.0, model_usage={"m": {"inputTokens": 3000, "outputTokens": 10}}))
+        self._feed(s, self._result(0.2, model_usage={"m": {"inputTokens": 400, "outputTokens": 5}}))   # a
+        #   counter BELOW the watermark = a CLI process we did not see restart → fold it whole, never negative
+        d = self._day()
+        self.assertEqual((d["tokIn"], d["tokOut"]), (3400, 15))
+        self.assertAlmostEqual(d["usd"], 1.2)
+
+    def test_usage_dict_is_the_fallback_only_when_model_usage_is_absent(self):
+        """An older CLI emits no modelUsage; its `usage` dict WAS the process-lifetime counter, so the
+        delta fold over it stays. Absent, empty, or a map with no per-model dict all count as absent."""
+        s = self._spend_session()
+        self._feed(s, self._result(1.0, usage={"input_tokens": 100, "output_tokens": 20}, model_usage=None))
+        self._feed(s, self._result(2.0, usage={"input_tokens": 140, "output_tokens": 25}, model_usage={}))
+        self._feed(s, self._result(3.0, usage={"input_tokens": 150, "output_tokens": 27},
+                                   model_usage={"claude-x": "not a dict"}))
+        d = self._day()
+        self.assertEqual((d["tokIn"], d["tokOut"]), (150, 27), "cumulative usage diffed to per-turn deltas")
+        # …and once modelUsage appears it diffs against the SAME per-field watermark (one process, one
+        # counter): 5000 - 150 lands, never a double count of what the usage dict already folded
+        self._feed(s, self._result(3.5, usage={"input_tokens": 160}, model_usage={"m": {"inputTokens": 5000}}))
+        self.assertEqual(self._day()["tokIn"], 5000)
+
+    def test_model_usage_totals_and_result_token_totals(self):
+        self.assertIsNone(sb.model_usage_totals(None))
+        self.assertIsNone(sb.model_usage_totals({}))
+        self.assertIsNone(sb.model_usage_totals({"m": 3}))
+        self.assertEqual(sb.model_usage_totals({"a": {"inputTokens": 1, "outputTokens": 2,
+                                                     "cacheReadInputTokens": 3, "cacheCreationInputTokens": 4},
+                                                "b": {"inputTokens": 10, "outputTokens": 20.0}}),
+                         {"input_tokens": 11, "output_tokens": 22, "cache_read_input_tokens": 3,
+                          "cache_creation_input_tokens": 4})
+        r = self._result(1.0, usage={"input_tokens": 7, "cache_read_input_tokens": "x"}, model_usage=None)
+        self.assertEqual(sb.result_token_totals(r), {"input_tokens": 7, "output_tokens": 0,
+                                                     "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0})
+        self.assertEqual(sb.result_token_totals(_ResultMessage()),   # a bare double: no counters at all
+                         {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
+                          "cache_creation_input_tokens": 0})
+
 
 class RewindFiles(unittest.TestCase):
     """The bubble's restore-files affordance rides the SDK's designed rewind_files control request (the
