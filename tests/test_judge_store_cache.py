@@ -5,7 +5,7 @@ The pusher thread's read-only sites used to parse a goal store on every load; lo
 them one deep-frozen parsed object per file version, verified on every call by the store's identity
 (inode, mtime_ns, size) PLUS a byte compare, the override journal's identity and the goals-archive's.
 Writers stay on load_goals. All fixtures SYNTHETIC; this module uses a PRIVATE synthetic sid and a
-fresh state root per test (tests/CLAUDE.md, goal-store fixtures)."""
+fresh state root per test (the root CLAUDE.md, "Goal-store fixtures use a PRIVATE synthetic sid")."""
 import contextlib
 import copy
 import io
