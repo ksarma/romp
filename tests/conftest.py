@@ -10,8 +10,21 @@ import tempfile
 
 import pytest
 
-os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="romp-tests-state-")
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="romp-tests-state-")   # recorded by tests/__init__.py's hook
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sessions; it outranks the XDG floor
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Temp-directory hygiene (2026-09-06, see tests/__init__.py): remove every directory this
+    process made through tempfile.mkdtemp, this state root included, when the session ends. Runs in
+    the controller and in every xdist worker, since each is its own pytest session. The package's
+    atexit hook does the same at interpreter exit; both are idempotent."""
+    try:
+        from tests import remove_made_dirs
+    except Exception:
+        return
+    remove_made_dirs()
+
 
 # No test may reach a REAL manager control port (2026-08-27): on a machine running a live romp,
 # every shell the manager tree spawns inherits ROMP_MANAGER_PORT, and any test kernel that dials
