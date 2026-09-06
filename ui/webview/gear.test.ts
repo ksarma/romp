@@ -61,11 +61,22 @@ test("EVERY queued-class kernel setting is emitted with its gesture time (comple
   // stale flush takes the no-stamp compat path, records a forged-fresh arrival stamp, and the
   // judge tiers fan that stamp mesh-wide over genuinely newer gestures. Adding a member without
   // a stamped emitter goes red here: zero emitters found, or an emitter literal without gt.
+  // The stamp is minted through the gesture clock (gesture-clock.js) under the emitter's own STORE
+  // name — stamp('judge-model') for setJudgeModel — so it lands above every stamp the page has seen
+  // for that store; a bare Date.now() is the bug the clock replaced (a device whose clock runs ahead
+  // stamps every store into the future and locks every other device out until the skew elapses).
+  // STALE_TYPE (gear.js) is the store→type map, the same one the stale toast's Apply anyway trusts.
   const FED = read("ui", "webview", "federation.ts");
   const setSrc = FED.match(/const KERNEL_SETTING = new Set\(\[([\s\S]*?)\]\)/);
   assert.ok(setSrc, "federation.ts's KERNEL_SETTING set located");
   const members = Array.from(setSrc![1].matchAll(/"([A-Za-z]+)"/g)).map((m) => m[1]);
   assert.ok(members.length >= 9, `the set parsed (${members.length} members)`);
+  const typeSrc = GEAR.match(/var STALE_TYPE = \{([\s\S]*?)\};/);
+  assert.ok(typeSrc, "gear.js's STALE_TYPE map located");
+  const storeType: Record<string, string> = {};
+  for (const m of typeSrc![1].matchAll(/'([a-z-]+)':\s*'(set[A-Za-z]+)'/g)) storeType[m[1]] = m[2];
+  for (const type of members)
+    assert.ok(Object.values(storeType).includes(type), `STALE_TYPE names a store for ${type}`);
   // scan every webview source that could emit one (the gear, the file viewer's consent post,
   // the feed's judge-limit switch, and any future emitter under ui/webview)
   const srcDir = path.join(ROOT, "ui", "webview");
@@ -78,8 +89,10 @@ test("EVERY queued-class kernel setting is emitted with its gesture time (comple
       const re = new RegExp(`\\{\\s*type:\\s*['"]${type}['"][^}]*\\}`, "g");
       for (const lit of text.match(re) || []) {
         emitters++;
-        assert.match(lit, /\bgt:\s*Date\.now\(\)/,
-          `${f} must stamp the gesture time inside the ${type} message literal itself: ${lit}`);
+        const stamp = lit.match(/\bgt:\s*gclock\.stamp\(['"]([a-z-]+)['"]\)/);
+        assert.ok(stamp, `${f} must stamp the gesture through the clock inside the ${type} message literal itself: ${lit}`);
+        assert.equal(storeType[stamp![1]], type, `${f} stamps ${type} under its own store name: ${lit}`);
+        assert.doesNotMatch(lit, /Date\.now\(\)/, `${f}: the bare wall clock is the bug the clock replaced: ${lit}`);
       }
     }
     assert.ok(emitters >= 1,
@@ -184,7 +197,7 @@ test("the /compact suggestion is a real settings checkbox beside Auto Nudge (the
   assert.ok(GEAR.indexOf("id=rs-autonudge") < at && at < GEAR.indexOf("id=rs-conserve"),
     "…directly after Auto Nudge, where the user asked for it");
   assert.ok(/csg\.addEventListener\('change'/.test(GEAR)
-    && GEAR.includes("post({ type: 'setCompactSuggest', enabled: csg.checked, gt: Date.now() })"),
+    && GEAR.includes("post({ type: 'setCompactSuggest', enabled: csg.checked, gt: gclock.stamp('compact-suggest') })"),
     "the click posts the kernel's designed setCompactSuggest message — gesture-stamped, like "
     + "every kernel-side setting the gear emits");
   assert.ok(GEAR.includes("csg.checked = !!v.compactSuggest"),

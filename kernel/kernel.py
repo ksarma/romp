@@ -633,6 +633,11 @@ def _version_info():
                          "commentModel": jd._state_str("comment-model", "session"),
                          "commentEffort": jd._state_str("comment-effort", "session"),
                          "commentFast": jd._state_str("comment-fast", "session")},
+            # every gt-gated store's last-applied gesture stamp (epoch-ms ints, nothing path-shaped):
+            # the gear stamps its next gesture above these instead of trusting the device clock.
+            # Top-level, not lifted into /tunnels rows — a remote's newer stamp reaches the dashboard
+            # through its settingStale frame, and Apply anyway is the designed path from there.
+            "settingsGt": _settings_gt(),
             "defaultDir": _tilde(_default_create_dir()),   # the resolved default new-session dir → the gear "Default directory" field
             "nativeDialogs": _native_dialogs()}   # whether Browse… can draw a dialog HERE → the gear drops the button when it can't
 
@@ -3367,7 +3372,7 @@ def _setting_stale(name, gt, applied_gt):
     _stale_seen.last = None
     if gt is None or gt > applied_gt:
         return False
-    _stale_seen.last = {"setting": name, "storedGt": applied_gt}
+    _stale_seen.last = {"setting": name, "storedGt": applied_gt, "gt": gt}
     sys.stderr.write("setting %s: stale gesture stood down (gesture %d <= applied %d) — "
                      "no apply, no propagation\n" % (name, gt, applied_gt))
     return True
@@ -28181,7 +28186,44 @@ def _setting_kept_value(name):
     return jd._state_str(name, "")   # the judge-tier stores are bare value files
 
 
-def _tell_stale_gesture(client):
+# Every gt-gated store, by the name _setting_stale is called with — the vocabulary the settingStale
+# frame and the gear's STALE_LABELS already share, so /version's settingsGt speaks the same one.
+_GT_STORES = ("auto-nudge", "compact-suggest", "file-editing", "update-mode", "thinking-summaries",
+              "judge-model", "index-model", "judge-effort", "index-effort",
+              "distill-model", "distill-effort", "comment-model", "comment-effort", "comment-fast")
+
+
+def _setting_stored_gt(name):
+    """The last-APPLIED gesture stamp a store holds — _setting_kept_value's switch, for the stamp
+    beside the value. Absent file, absent field or garbled content all read 0 (nothing to outrank),
+    the same defensive shape the setters use for `prev`."""
+    if name == "auto-nudge":
+        return _gt_int(_auto_nudge_data().get("gt"))
+    if name == "compact-suggest":
+        return _gt_int(_auto_nudge_data().get("compactSuggestGt"))
+    if name == "update-mode":
+        return _update_mode_gt()
+    if name in ("file-editing", "thinking-summaries"):
+        try:
+            d = json.loads((jd.STATE / (THINKING_SUMMARIES_FILE if name == "thinking-summaries"
+                                        else "file-editing.json")).read_text())
+            return _gt_int(d.get("gt")) if isinstance(d, dict) else 0
+        except Exception:
+            return 0
+    return _judge_state_gt(name)   # the judge-tier stores keep theirs in a `<name>.gt` sidecar
+
+
+def _settings_gt():
+    """/version's `settingsGt`: every gt-gated store's last-applied gesture stamp, keyed by the
+    store name the settingStale frame uses (PR #879 follow-up). Gesture stamps are minted on the
+    DEVICE, so a clock running ahead used to stamp every store into the future and lock every
+    correctly-clocked device out until the skew elapsed; a dashboard that reads this on open stamps
+    its next gesture at max(Date.now(), gt + 1) instead of trusting its own wall clock
+    (ui/webview/gesture-clock.js). Epoch-ms integers only — fine for the auth-exempt route."""
+    return {n: _setting_stored_gt(n) for n in _GT_STORES}
+
+
+def _tell_stale_gesture(client, msg):
     """A gt-gated setter just refused: if that refusal was a stale STAND-DOWN (recorded on this
     thread by _setting_stale), answer the DELIVERING socket with a small settingStale frame — the
     same targeted _reply idiom the saveFile acks use, never a broadcast. Without it the refusal
@@ -28189,12 +28231,20 @@ def _tell_stale_gesture(client):
     pick as applied (the gear fills only on open), and with the mesh AGREEING on the kept value
     the mixed marks showed nothing. The gear toasts the frame and re-fills if open — event-keyed,
     the frame IS the deciding event; no polling. A refusal for any other cause (invalid value,
-    OSError) records no notice and sends nothing."""
+    OSError) records no notice and sends nothing.
+    The frame echoes `gesture`: the refused message itself, WITHOUT its stamp, so the toast can
+    offer to re-issue it as a new gesture (a fresh click is legitimate new information) stamped
+    above the stored one. The stamp is dropped on purpose — a re-issue can never reuse the stale
+    one — and the gear only re-issues a type that matches the setting the frame names.
+    It also carries `gt`, the refused gesture's OWN stamp: a dashboard's broadcast reaches every
+    linked kernel, so one stale flush draws one refusal per kernel — all sharing this stamp — and
+    the gear folds them into one toast naming the refusing hosts (setting + gt is the fold key)."""
     st = _pop_stale_notice()
     if not st:
         return
     _reply(client, {"type": "settingStale", "setting": st["setting"],
-                    "storedGt": st["storedGt"], "kept": _setting_kept_value(st["setting"])})
+                    "storedGt": st["storedGt"], "gt": st["gt"], "kept": _setting_kept_value(st["setting"]),
+                    "gesture": {k: v for k, v in msg.items() if k != "gt"}})
 
 
 # ---- pasted-image hydration + dropped-file handling (ported from the old TS kernel chat-view/src/
@@ -35849,7 +35899,7 @@ class Handler(BaseHTTPRequestHandler):
             # feed gear → server-side Auto Nudge on/off; a stale gesture stamp stands down (no
             # apply), and the dashboard that made the losing gesture hears it
             if _set_auto_nudge(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setCompactSuggest" and msg.get("enabled") is not None:
             # T208 opt-in — kernel-side like autoNudge, gt-gated like every queued setting. Only a
             # real apply acts immediately on turn-on (don't wait 4s) — a stood-down toggle is not
@@ -35859,23 +35909,23 @@ class Handler(BaseHTTPRequestHandler):
             if _set_compact_suggest(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None:
                 _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setUpdateMode" and msg.get("mode") in _UPDATE_MODES:
             # feed gear → how romp handles new releases at boot; gt-gated like every queued setting
             if _set_update_mode(str(msg["mode"]), gt=_gesture_ms(msg)) is None:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setFileEditing" and msg.get("enabled") is not None:
             # The viewer's Edit consent popup (the user 2026-08-22) — a kernel-side setting like
             # setAutoNudge, broadcast by federation.ts KERNEL_SETTING so one yes answers the mesh.
             # A stale gesture stamp stands down (a queued flush must not undo a newer choice).
             if _set_file_editing(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setThinkingSummaries" and msg.get("enabled") is not None:
             # The gear's Thinking summaries checkbox (2026-09-01) — kernel-side like setFileEditing but
             # PER-INSTALL (not a KERNEL_SETTING: nothing to propagate), gt-gated all the same; the SDK
             # backend reads the store at each session's next connect, so nothing else to do here.
             if _set_thinking_summaries(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "askClear" and msg.get("itemId"):
             # a cleared card drops any composer citation chip pointing INTO it (the user 2026-07-01) — the
             # goal is gone, so following up on it makes no sense. Chips can cite a SUB-goal of the card
@@ -36364,63 +36414,63 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=_propagate_judge_settings,   # …and every linked kernel's judges with it
                                  args=({"judgeModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setIndexModel" and msg.get("model"):
             _jgt = _set_index_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Indexing model" dropdown
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"indexModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setJudgeEffort":
             _jgt = _set_judge_effort(str(msg.get("effort") or ""), gt=_gesture_ms(msg))   # gear "Triage effort" ("" = default/none)
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"judgeEffort": str(msg.get("effort") or ""), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setIndexEffort":
             _jgt = _set_index_effort(str(msg.get("effort") or ""), gt=_gesture_ms(msg))   # gear "Indexing effort"
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"indexEffort": str(msg.get("effort") or ""), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setDistillModel" and msg.get("model"):
             _jgt = _set_distill_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Distilling model" ("triage" = follow the triage pick)
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"distillModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setDistillEffort" and msg.get("effort"):
             _jgt = _set_distill_effort(str(msg["effort"]), gt=_gesture_ms(msg))   # gear "Distilling effort" ("triage" = follow; "none" = pinned no-flag)
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"distillEffort": str(msg["effort"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setCommentModel" and msg.get("model"):
             _jgt = _set_comment_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Comment model" ("session" = same as the session)
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"commentModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setCommentEffort" and msg.get("effort"):
             _jgt = _set_comment_effort(str(msg["effort"]), gt=_gesture_ms(msg))   # gear "Comment effort"
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"commentEffort": str(msg["effort"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setCommentFast" and msg.get("fast"):
             _jgt = _set_comment_fast(str(msg["fast"]), gt=_gesture_ms(msg))     # gear "Fast comment threads" ("on" / "session")
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"commentFast": str(msg["fast"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
 
     def _ws(self):
         key = self.headers.get("Sec-WebSocket-Key")

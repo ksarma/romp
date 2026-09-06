@@ -21,6 +21,8 @@ import DOMPurify from "dompurify";
 import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const gclock = require("./gesture-clock.js");   // the gesture clock every settings post stamps through
 
 // hljs is registered per-bundle. Same language set (and grammar registrations) the chat's fence
 // highlighting uses, dup-guarded, so importing this module alongside render.ts costs nothing.
@@ -335,16 +337,21 @@ export function openFileView(path: string, sid?: string | null): void {
   // wrongly-granted yes here can do is draw one refused save with its plain-words error.
   async function editingAllowed(): Promise<boolean> {
     let on = false;
-    try { on = !!(await (await fetch(kernelUrl("/version"), { cache: "no-store" })).json()).fileEditing; } catch { /* ask below */ }
+    try {
+      const v = await (await fetch(kernelUrl("/version"), { cache: "no-store" })).json();
+      on = !!v.fileEditing;
+      gclock.learnAll(v.settingsGt);   // the same read teaches the clock every store's current stamp
+    } catch { /* ask below */ }
     if (on) return true;
     if (!window.confirm(
       "Allow editing files from the dashboard?\n\n" +
       "Saves write straight to disk on the file's machine — and this applies on every machine " +
       "connected here. A session working in that folder is told when you edit under it.\n\n" +
       "You can turn this off later in the settings gear.")) return false;
-    // gt = the consent's own click time: federation queues this per host across a down socket, and
-    // the kernel orders applies by the stamp — a flush hours later must not outrank a newer gesture
-    post({ type: "setFileEditing", enabled: true, gt: Date.now() });
+    // gt = the consent's own click, stamped through the gesture clock (above every stamp the read
+    // above reported): federation queues this per host across a down socket, and the kernel orders
+    // applies by the stamp — a flush hours later must not outrank a newer gesture
+    post({ type: "setFileEditing", enabled: true, gt: gclock.stamp("file-editing") });
     return true;
   }
   editBtn.addEventListener("click", () => {

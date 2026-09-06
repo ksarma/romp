@@ -103,6 +103,11 @@ export function prefixInbound(host: string, msg: any): any {
   // prefixed), but its buildId only means something on THAT kernel's counter — stamp the host so the
   // feed pane compares it against the same host's frame in the merged payload, never the local counter
   if (out.type === "cardMoveAck" || out.type === "cardPredict") out.host = host;
+  // a remote kernel's stand-down reply to a settings gesture (settingStale) cannot name its own host;
+  // the gear folds one flush's N refusals into one toast and names the refusing machines. The local
+  // host ("") took the identity exit above, so a local frame has no host key: the gear words it as
+  // this machine. The echoed `gesture` inside passes through untouched — it is re-issued as-is.
+  if (out.type === "settingStale") out.host = host;
   if (out.type === "sessionList" && Array.isArray(out.items)) {
     out.items = out.items.map((it: any) => (it && typeof it === "object" && typeof it.id === "string"
       ? { ...it, id: prefixId(host, it.id),
@@ -949,7 +954,9 @@ export class FederationManager {
   //   frozen, so every KERNEL_SETTING carries `gt` (epoch ms minted at the user's gesture, where
   //   the message is built) and the KERNEL orders applies by it, standing stale flushes down. The
   //   queue's contract here is to deliver the message UNCHANGED — never re-stamp at send or flush
-  //   time, which would forge freshness onto an hours-old pick;
+  //   time, which would forge freshness onto an hours-old pick. Queueing is journaled (`sendqueue`),
+  //   so a later disagreement between machines is attributable to this tab holding the pick while
+  //   the host was down, and to the older pick of the same type it replaced;
   // - anything else keeps its behavior (replaying an arbitrary action minutes later can be worse
   //   than dropping it — a deliberate non-goal) but the drop lands a client-diag breadcrumb naming
   //   the type and host, beside the existing warn toast: a drop is never silent.
@@ -960,7 +967,15 @@ export class FederationManager {
       return;
     }
     if (c && msg && typeof msg.type === "string" && KERNEL_SETTING.has(msg.type)) {
-      c.pending.set(msg.type, msg); // not dropped — it rides the next open, so no toast here
+      // not dropped — it rides the next open, so no toast; but never silent either: the breadcrumb
+      // names the host, the type, the gesture's own stamp, the socket's state at queue time (rs; -1
+      // = not dialed) and, when it replaced an older queued pick of the same type, that pick's stamp
+      // (superseded). The kernel stamps the journal line's time — nothing is minted here.
+      const prev = c.pending.get(msg.type);
+      c.pending.set(msg.type, msg);
+      this.diag("sendqueue", { host, msgType: msg.type, gt: typeof msg.gt === "number" ? msg.gt : 0,
+                               rs: c.ws ? c.ws.readyState : -1,
+                               ...(prev ? { superseded: typeof prev.gt === "number" ? prev.gt : true } : {}) });
       return;
     }
     this.diag("senddrop", { host, msgType: (msg && msg.type) || "" });
@@ -971,13 +986,28 @@ export class FederationManager {
    *  synchronously, so they precede ANY post-reconnect traffic. The file viewer's consent flow relies
    *  on exactly that: its setFileEditing broadcast must land before the save that follows the yes
    *  (the same-socket ordering the save route's gate assumes), now across a down-socket window too.
-   *  Returns the flushed types for the open breadcrumb. */
+   *  Each entry clears AS IT IS DELIVERED: a send that throws mid-flush leaves only the undelivered
+   *  ones for the next open. A whole-map clear after the loop would replay the delivered ones too,
+   *  and a replay is one gesture delivered twice (a kernel without gesture ordering applies it twice;
+   *  a current one logs an echo or stand-down line per copy). The halt is journaled in the hostconn
+   *  family (`flush-halt`, naming what went and what is held) because a partial flush is never
+   *  silent; the catch swallows on purpose so the open handler still stamps lastRecv and dispatches
+   *  romp:hostRelayUp, and the dead socket's own onclose redials. Returns the flushed types for the
+   *  open breadcrumb. */
   private flushPending(conn: Conn): string[] {
     if (!conn.pending.size || !conn.ws || conn.ws.readyState !== 1) return [];
-    const types = [...conn.pending.keys()];
-    for (const m of conn.pending.values()) conn.ws.send(JSON.stringify(m));
-    conn.pending.clear();
-    return types;
+    const flushed: string[] = [];
+    for (const [t, m] of conn.pending) {   // deleting the current entry mid-iteration is spec-safe on a Map
+      try {
+        conn.ws.send(JSON.stringify(m));
+      } catch (e) {
+        this.diag("hostconn", { host: conn.host, ev: "flush-halt", flushed: [...flushed], held: [...conn.pending.keys()] });
+        break;
+      }
+      conn.pending.delete(t);
+      flushed.push(t);
+    }
+    return flushed;
   }
 
   // A route to a host whose socket isn't open would otherwise VANISH — creating a session on an

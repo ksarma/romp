@@ -262,6 +262,88 @@ test("a setting queued on a CLOSED socket survives the watchdog's lost-timer red
   });
 });
 
+// ── the queue's edges (the #879 review's smaller notes): queueing is journaled, and a flush that
+// throws part-way clears only what it delivered.
+
+test("a setting queued for a down host leaves a sendqueue breadcrumb: host, type, stamp, socket state", () => {
+  withFed((fm, _win, localSends) => {
+    const sock = attach(fm, "TESTHOSTA");           // CONNECTING: the window a send used to drop in
+    fm.outbound({ type: "setJudgeModel", model: "m1", gt: 1000 });
+    const q = diags(localSends, "sendqueue");
+    assert.equal(q.length, 1, "one line per queued gesture per down host");
+    assert.deepEqual(q[0].data, { host: "TESTHOSTA", msgType: "setJudgeModel", gt: 1000, rs: 0 });
+    assert.equal(diags(localSends, "senddrop").length, 0, "queued, not dropped");
+    // the user picks again while the host is still down: the replaced pick is named
+    fm.outbound({ type: "setJudgeModel", model: "m2", gt: 2000 });
+    const q2 = diags(localSends, "sendqueue");
+    assert.equal(q2.length, 2);
+    assert.deepEqual(q2[1].data, { host: "TESTHOSTA", msgType: "setJudgeModel", gt: 2000, rs: 0, superseded: 1000 });
+    sock.open();
+    assert.deepEqual(sock.sent.map((s) => JSON.parse(s)), [{ type: "setJudgeModel", model: "m2", gt: 2000 }],
+      "the flush itself is unchanged: latest per type, stamp intact");
+  });
+});
+
+test("a live send is not a queue event: no sendqueue breadcrumb on an OPEN socket", () => {
+  withFed((fm, _win, localSends) => {
+    const sock = attach(fm, "TESTHOSTA");
+    sock.open();
+    fm.outbound({ type: "setJudgeModel", model: "m1", gt: 1000 });
+    assert.deepEqual(sock.types(), ["setJudgeModel"], "delivered live");
+    assert.equal(diags(localSends, "sendqueue").length, 0);
+  });
+});
+
+test("a CLOSED socket queues with rs 3; an unstamped message records gt 0 and supersedes as `true`", () => {
+  withFed((fm, _win, localSends) => {
+    const s1 = attach(fm, "TESTHOSTA");
+    s1.open();
+    s1.readyState = 3;                                // the relay dropped under us
+    fm.outbound({ type: "setAutoNudge", enabled: false });   // an older emitter: no stamp
+    fm.outbound({ type: "setAutoNudge", enabled: true, gt: 5 });
+    const q = diags(localSends, "sendqueue").map((d) => d.data);
+    assert.deepEqual(q, [{ host: "TESTHOSTA", msgType: "setAutoNudge", gt: 0, rs: 3 },
+                         { host: "TESTHOSTA", msgType: "setAutoNudge", gt: 5, rs: 3, superseded: true }]);
+  });
+});
+
+/** A socket whose Nth send throws — the mid-flush failure the per-entry clear exists for. */
+class FlakySocket extends FakeSocket {
+  static failAt = 2;
+  n = 0;
+  send(s: string): void {
+    if (++this.n === FlakySocket.failAt) throw new Error("send failed mid-flush");
+    super.send(s);
+  }
+}
+
+test("a send that throws mid-flush clears only the delivered entries: the held one flushes on the redial, nothing replays", () => {
+  withFed((fm, _win, localSends) => {
+    (globalThis as any).WebSocket = FlakySocket;      // withFed restores the global in its finally
+    const sock = attach(fm, "TESTHOSTA") as FlakySocket;
+    fm.outbound({ type: "setFileEditing", enabled: true, gt: 10 });
+    fm.outbound({ type: "setJudgeModel", model: "m1", gt: 20 });
+    sock.open();                                      // the first send lands, the second throws
+    assert.deepEqual(sock.types(), ["setFileEditing"]);
+    assert.deepEqual([...fm.conns.get("TESTHOSTA").pending.keys()], ["setJudgeModel"],
+      "the delivered entry is gone from the queue; the undelivered one is held");
+    const halt = diags(localSends, "hostconn").filter((d) => d.data.ev === "flush-halt");
+    assert.equal(halt.length, 1, "a partial flush is never silent");
+    assert.deepEqual(halt[0].data, { host: "TESTHOSTA", ev: "flush-halt", flushed: ["setFileEditing"], held: ["setJudgeModel"] });
+    const open = diags(localSends, "hostconn").filter((d) => d.data.ev === "open").pop();
+    assert.deepEqual(open.data, { host: "TESTHOSTA", ev: "open", flushed: ["setFileEditing"] },
+      "the open breadcrumb names what actually went, and the open handler ran on past the halt");
+    // the redial: only the held entry rides the fresh socket
+    (globalThis as any).WebSocket = FakeSocket;
+    sock.readyState = 3;
+    const s2 = redial(fm, "TESTHOSTA");
+    s2.open();
+    assert.deepEqual(s2.sent.map((s) => JSON.parse(s)), [{ type: "setJudgeModel", model: "m1", gt: 20 }],
+      "the delivered entry is not replayed — a replay is one gesture delivered twice");
+    assert.equal(fm.conns.get("TESTHOSTA").pending.size, 0);
+  });
+});
+
 // Source pins, in the federation-remote-gate.test.ts style: the properties above hold only while
 // every remote send routes through the ONE queue-aware helper, and the flush hangs on the open
 // event itself — a raw `ws.send` site or a timer-based flush would reopen the hole quietly.

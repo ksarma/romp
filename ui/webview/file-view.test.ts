@@ -362,7 +362,10 @@ test("Edit is consent-gated, and the gate is the KERNEL's flag, not the button (
   // — stamped with the gesture's own time, so a copy queued for a down host and flushed hours
   // later can never outrank a newer pick at the kernel (the store orders applies by gt)
   assert.match(VIEW, /window\.confirm\(\s*\n?\s*"Allow editing files from the dashboard\?/);
-  assert.match(VIEW, /post\(\{ type: "setFileEditing", enabled: true, gt: Date\.now\(\) \}\);/);
+  assert.match(VIEW, /post\(\{ type: "setFileEditing", enabled: true, gt: gclock\.stamp\("file-editing"\) \}\);/,
+    "…minted through the gesture clock, above every stamp the /version read just reported");
+  assert.match(VIEW, /const gclock = require\("\.\/gesture-clock\.js"\);/, "the viewer loads the clock");
+  assert.match(VIEW, /gclock\.learnAll\(v\.settingsGt\);/, "the consent check's /version read teaches the clock");
   // the popup's promise of a gear off-switch is real, and the save route refuses server-side
   const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
   assert.ok(GEAR.includes("'setFileEditing'"), "the gear can turn it back off");

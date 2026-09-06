@@ -155,6 +155,15 @@ test("routeOutbound: dropFile routes by its session id — attachment bytes reac
   assert.deepEqual(prefixInbound("gpu1", reply), reply);
 });
 
+test("prefixInbound: a remote kernel's settingStale frame is host-stamped (the gear names the refusing machines)", () => {
+  const f = { type: "settingStale", setting: "judge-model", storedGt: 2000, gt: 1000, kept: "m",
+              gesture: { type: "setJudgeModel", model: "x" } };
+  const out = prefixInbound("gpu1", f);
+  assert.equal(out.host, "gpu1");
+  assert.deepEqual(out.gesture, f.gesture, "the echoed gesture passes through untouched — it is re-issued as-is");
+  assert.deepEqual(prefixInbound("", f), f, "the local kernel's frame has no host key (the gear words it as this machine)");
+});
+
 test("prefixInbound: glowTurns groups get sid-prefixed so the merged chat finds the remote pane", () => {
   // The return leg of the same highlight: the owning kernel answers with glowTurns keyed by its own
   // bare sids, but the merged chat page keys its views "host:sid" — unprefixed groups matched nothing.

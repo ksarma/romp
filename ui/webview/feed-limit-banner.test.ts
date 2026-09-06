@@ -35,8 +35,9 @@ test("the banner is build-once, acknowledges, and offers Opus only for the Fable
     "built once — the button survives re-renders (click-safety)");
   assert.match(FEED, /btn\.textContent = "Switching…";\s*\n\s*\/\/ ?.*|btn\.textContent = "Switching…";/,
     "acknowledges before the kernel round-trip");
-  assert.match(FEED, /vscodeApi\?\.postMessage\(\{ type: "setJudgeModel", model: "opus", gt: Date\.now\(\) \}\)/,
-    "the switch is a settings gesture like any gear pick — stamped so the kernel can order it");
+  assert.match(FEED, /vscodeApi\?\.postMessage\(\{ type: "setJudgeModel", model: "opus", gt: gclock\.stamp\("judge-model"\) \}\)/,
+    "the switch is a settings gesture like any gear pick — stamped through the gesture clock so the kernel can order it");
+  assert.match(FEED, /const gclock = require\("\.\/gesture-clock\.js"\);/, "the feed loads the clock the gear stamps with");
   assert.match(FEED, /btn\.style\.display = fable \? "" : "none";/, "the switch offer is Fable-specific");
   assert.match(FEED, /The account's usage window is full/, "general exhaustion states it plainly");
   assert.match(FEED, /paintJudgeLimit\(\);   \/\/ the usage-limit banner above the columns/,

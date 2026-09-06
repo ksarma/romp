@@ -173,6 +173,13 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
   color: var(--text-muted, #9aa0a6);
   font-size: 11px; line-height: 1.4; padding: 2px 4px; border-radius: 8px; }
 .rs-stale-toast-x:hover { color: var(--fg, #fff); background: rgba(255, 255, 255, 0.08); }
+/* the toast's one action (Apply anyway): the gear's small bordered button (#rs-keys-btn's dress), in
+   this sheet's literal palette because the gear's hosts load only this sheet */
+.rs-stale-toast-act { flex: 0 0 auto; cursor: pointer; font: inherit; font-size: 11px; line-height: 1.4;
+  padding: 2px 8px; border-radius: 5px; border: 1px solid var(--hairline, #3a3a3a);
+  background: var(--btn-bg, #2a2a2a); color: var(--fg, #ccc); white-space: nowrap; }
+.rs-stale-toast-act:hover { border-color: var(--accent, #9cd2ff); color: var(--accent, #9cd2ff);
+  background: var(--accent-wash, rgba(156, 210, 255, 0.12)); }
 .rs-stale-toast.fade { opacity: 0; }
 
 /* the login paste-code MODAL (the user 2026-08-30): the panel treatment — centered card over a

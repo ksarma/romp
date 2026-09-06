@@ -444,6 +444,10 @@ const vscodeApi =
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { initGear } = require("./gear.js");
 initGear((m: Record<string, unknown>) => vscodeApi?.postMessage(m));
+// the gesture clock the gear stamps its settings posts with — one module graph per document, so
+// the gear's learning (each store's stamp from /version on open) serves the banner below too
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const gclock = require("./gesture-clock.js");
 
 // The romp strip (VS Code only — the host opts in via __rompShowStrip): usage
 // bars + the gear button, docked below #feed-foot. The gear raises the modal
@@ -4252,8 +4256,10 @@ function ensureJudgeLimit(): HTMLElement {
   btn.onclick = () => {
     btn.disabled = true;
     btn.textContent = "Switching…";                      // acknowledge before the round-trip
-    // gt: a settings gesture like any gear pick — stamped at the click so the kernel can order it
-    vscodeApi?.postMessage({ type: "setJudgeModel", model: "opus", gt: Date.now() });
+    // gt: a settings gesture like any gear pick — stamped at the click, through the gesture clock, so
+    // the kernel can order it (with the gear never opened in this document the clock has learned
+    // nothing and this is the wall clock; a refusal then offers Apply anyway)
+    vscodeApi?.postMessage({ type: "setJudgeModel", model: "opus", gt: gclock.stamp("judge-model") });
   };
   b.appendChild(btn);
   const sess = el("span", "jl-sess"); b.appendChild(sess);   // who the window actually touches (2026-08-28)

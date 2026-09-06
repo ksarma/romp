@@ -629,6 +629,22 @@ class StaleGestureAnswersTheDeliveringSocket(_Base):
         self.assertEqual(frames[0]["setting"], "judge-model")
         self.assertEqual(frames[0]["storedGt"], T_NEW)
         self.assertEqual(frames[0]["kept"], "fable", "the kept value rides along (cheap: one store read)")
+        self.assertEqual(frames[0]["gt"], T_OLD, "the refused gesture's own stamp rides the frame — the "
+                         "dashboard folds N kernels' refusals of one flush by it")
+
+    def test_the_frame_echoes_the_refused_gesture_without_its_stamp(self):
+        # the toast's Apply anyway re-issues exactly this echo with a FRESH stamp (PR #879 follow-up):
+        # the refused message rides back minus its gt, so a re-issue can never reuse the stale one
+        self.dispatch_rec({"type": "setJudgeModel", "model": "fable", "gt": T_NEW})
+        sent = self.dispatch_rec({"type": "setJudgeModel", "model": "opus", "gt": T_OLD})
+        frames = [m for m in sent if m.get("type") == "settingStale"]
+        self.assertEqual(frames[0]["gesture"], {"type": "setJudgeModel", "model": "opus"})
+        self.assertNotIn("gt", frames[0]["gesture"], "the stale stamp is dropped on purpose")
+        # a boolean toggle echoes the same way
+        self.dispatch_rec({"type": "setAutoNudge", "enabled": False, "gt": T_NEW})
+        sent = self.dispatch_rec({"type": "setAutoNudge", "enabled": True, "gt": T_OLD})
+        frames = [m for m in sent if m.get("type") == "settingStale"]
+        self.assertEqual(frames[0]["gesture"], {"type": "setAutoNudge", "enabled": True})
 
     def test_every_gt_gated_setting_answers(self):
         cases = [({"type": "setAutoNudge", "enabled": False}, {"type": "setAutoNudge", "enabled": True},
@@ -665,13 +681,125 @@ class StaleGestureAnswersTheDeliveringSocket(_Base):
             self.assertEqual(len(frames), 1, store)
             self.assertEqual(frames[0]["setting"], store)
             self.assertEqual(frames[0]["storedGt"], T_NEW)
+            self.assertEqual(frames[0]["gt"], T_OLD, store)
             self.assertEqual(frames[0]["kept"], kept, store)
+            self.assertEqual(frames[0]["gesture"], older, "the refused message echoes back minus its gt (%s)" % store)
 
     def test_no_frame_for_invalid_or_unstamped(self):
         sent = self.dispatch_rec({"type": "setJudgeModel", "model": "gpt-99", "gt": T_NEW})
         self.assertEqual(sent, [], "a refused VALUE is not a stale gesture — no frame")
         sent = self.dispatch_rec({"type": "setJudgeModel", "model": "haiku"})
         self.assertEqual(sent, [], "the unstamped compat path applies — no frame")
+
+
+class VersionReportsEveryStoredStamp(_Base):
+    """/version carries `settingsGt`: every gt-gated store's last-applied stamp, keyed by the store
+    name the settingStale frame uses (PR #879 follow-up). The gear reads /version on every open and
+    stamps its next gesture at max(Date.now(), gt + 1) — the maintainer's proposed shape — instead of
+    trusting the device's wall clock. Integers only: the route is auth-exempt."""
+
+    def test_a_fresh_install_reports_every_store_at_zero(self):
+        gts = km._version_info()["settingsGt"]
+        self.assertEqual(set(gts), set(km._GT_STORES), "one key per gt-gated store, no more, no less")
+        self.assertEqual(len(km._GT_STORES), 14, "five toggles/modes + nine judge-tier stores")
+        self.assertEqual(set(gts.values()), {0}, "nothing applied yet reads 0 — nothing to outrank")
+        self.assertEqual(json.loads(json.dumps(gts)), gts, "plain JSON — ints, no paths, nothing to redact")
+
+    def test_each_setter_s_stamp_is_reported_under_its_store_and_nothing_else_moves(self):
+        self.assertEqual(km._set_judge_model("fable", gt=T_NEW), T_NEW)
+        self.assertEqual(km._set_auto_nudge(False, gt=T_OLD), T_OLD)
+        self.assertEqual(km._set_compact_suggest(True, gt=T_NEW + 5), T_NEW + 5)
+        self.assertEqual(km._set_file_editing(True, gt=T_NEW + 6), T_NEW + 6)
+        self.assertEqual(km._set_update_mode("auto", gt=T_NEW + 7), T_NEW + 7)
+        self.assertEqual(km._set_thinking_summaries(True, gt=T_NEW + 8), T_NEW + 8)
+        self.assertEqual(km._set_comment_fast("on", gt=T_NEW + 9), T_NEW + 9)
+        gts = km._version_info()["settingsGt"]
+        want = {"judge-model": T_NEW, "auto-nudge": T_OLD, "compact-suggest": T_NEW + 5,
+                "file-editing": T_NEW + 6, "update-mode": T_NEW + 7, "thinking-summaries": T_NEW + 8,
+                "comment-fast": T_NEW + 9}
+        for store, gt in want.items():
+            self.assertEqual(gts[store], gt, store)
+        for store in set(km._GT_STORES) - set(want):
+            self.assertEqual(gts[store], 0, "%s was never set and stays 0" % store)
+        # the two checkboxes that share auto-nudge.json keep separate clocks in the report too
+        self.assertNotEqual(gts["auto-nudge"], gts["compact-suggest"])
+
+    def test_an_unstamped_apply_reports_its_arrival_time(self):
+        before = int(time.time() * 1000)
+        km._set_index_effort("high")
+        got = km._version_info()["settingsGt"]["index-effort"]
+        self.assertGreaterEqual(got, before, "the compat path's arrival stamp is what the store holds")
+
+    def test_the_frames_setting_names_are_exactly_the_report_s_keys(self):
+        # the completeness cross-check: every store a settingStale frame can name is reported, so the
+        # gear's clock (which learns from BOTH) has one vocabulary
+        sent = []
+        client = {"send": lambda s: sent.append(json.loads(s)), "alive": True}
+        newer = [{"type": "setAutoNudge", "enabled": False}, {"type": "setCompactSuggest", "enabled": True},
+                 {"type": "setFileEditing", "enabled": True}, {"type": "setUpdateMode", "mode": "auto"},
+                 {"type": "setThinkingSummaries", "enabled": True}, {"type": "setJudgeModel", "model": "fable"},
+                 {"type": "setIndexModel", "model": "fable"}, {"type": "setJudgeEffort", "effort": "high"},
+                 {"type": "setIndexEffort", "effort": "high"}, {"type": "setDistillModel", "model": "haiku"},
+                 {"type": "setDistillEffort", "effort": "high"}, {"type": "setCommentModel", "model": "haiku"},
+                 {"type": "setCommentEffort", "effort": "high"}, {"type": "setCommentFast", "fast": "on"}]
+        older = [{"type": "setAutoNudge", "enabled": True}, {"type": "setCompactSuggest", "enabled": False},
+                 {"type": "setFileEditing", "enabled": False}, {"type": "setUpdateMode", "mode": "off"},
+                 {"type": "setThinkingSummaries", "enabled": False}, {"type": "setJudgeModel", "model": "opus"},
+                 {"type": "setIndexModel", "model": "opus"}, {"type": "setJudgeEffort", "effort": "low"},
+                 {"type": "setIndexEffort", "effort": "low"}, {"type": "setDistillModel", "model": "triage"},
+                 {"type": "setDistillEffort", "effort": "low"}, {"type": "setCommentModel", "model": "session"},
+                 {"type": "setCommentEffort", "effort": "session"}, {"type": "setCommentFast", "fast": "session"}]
+        with contextlib.redirect_stderr(io.StringIO()):
+            for n, o in zip(newer, older):
+                km.Handler._dispatch_ws(types.SimpleNamespace(), dict(n, gt=T_NEW), client)
+                km.Handler._dispatch_ws(types.SimpleNamespace(), dict(o, gt=T_OLD), client)
+        named = {m["setting"] for m in sent if m.get("type") == "settingStale"}
+        self.assertEqual(named, set(km._version_info()["settingsGt"]), "frames and the report share one vocabulary")
+        self.assertEqual(len(named), 14)
+
+
+class ASkewedClockCannotLockTheStore(_Base):
+    """The maintainer's scenario on #879: a device whose clock runs ahead stamps a store into the
+    future, and every correctly-clocked device is refused until the skew elapses — no gesture from
+    them can win. With the frame echoing the refused gesture and reporting the stamp it lost to, the
+    dashboard re-issues the same pick stamped max(now, storedGt + 1): applied, propagated with that
+    stamp, no frame. The re-issue is a new user gesture — new information, not a clock heuristic."""
+
+    def dispatch_rec(self, msg):
+        sent = []
+        client = {"send": lambda s: sent.append(json.loads(s)), "alive": True}
+        with contextlib.redirect_stderr(io.StringIO()):
+            km.Handler._dispatch_ws(types.SimpleNamespace(), msg, client)
+        return sent
+
+    def test_the_echoed_gesture_re_issued_above_the_stored_stamp_wins(self):
+        self.dispatch_rec({"type": "setJudgeModel", "model": "fable", "gt": T_NEW})   # the fast clock's pick
+        self.propagated.clear()
+        sent = self.dispatch_rec({"type": "setJudgeModel", "model": "opus", "gt": T_OLD})   # the honest clock's, refused
+        frame = [m for m in sent if m.get("type") == "settingStale"][0]
+        self.assertEqual(frame["storedGt"], T_NEW)
+        self.assertEqual(km.jd._state_str("judge-model", ""), "fable", "refused: the store still holds the future stamp's pick")
+        self.assertEqual(self.propagated, [], "a refusal fans nothing out")
+        # what the toast's Apply anyway sends: the echo plus max(Date.now(), storedGt + 1) — the
+        # device's clock says T_OLD, so the learned stamp wins
+        retry = dict(frame["gesture"], gt=max(T_OLD, frame["storedGt"] + 1))
+        sent = self.dispatch_rec(retry)
+        self.assertEqual([m for m in sent if m.get("type") == "settingStale"], [], "the re-issue is not refused")
+        self.assertEqual(km.jd._state_str("judge-model", ""), "opus", "the correctly-clocked device's pick applied")
+        self.assertEqual(km._judge_state_gt("judge-model"), T_NEW + 1, "the store holds the re-issue's stamp")
+        self.assertEqual(self.propagated[-1], {"judgeModel": "opus", "gt": T_NEW + 1},
+                         "…and the fan-out carries it, so every receiver orders the same way")
+        self.assertEqual(km._version_info()["settingsGt"]["judge-model"], T_NEW + 1)
+
+    def test_a_toggle_climbs_the_same_way(self):
+        self.dispatch_rec({"type": "setFileEditing", "enabled": False, "gt": T_NEW})
+        sent = self.dispatch_rec({"type": "setFileEditing", "enabled": True, "gt": T_OLD})
+        frame = [m for m in sent if m.get("type") == "settingStale"][0]
+        self.assertFalse(km._file_editing_on())
+        sent = self.dispatch_rec(dict(frame["gesture"], gt=max(T_OLD, frame["storedGt"] + 1)))
+        self.assertEqual(sent, [])
+        self.assertTrue(km._file_editing_on(), "the re-issued consent applied")
+        self.assertEqual(km._setting_stored_gt("file-editing"), T_NEW + 1)
 
 
 class WiringPins(unittest.TestCase):
@@ -698,9 +826,13 @@ class WiringPins(unittest.TestCase):
         self.assertIn('_set_update_mode(str(msg["mode"]), gt=_gesture_ms(msg))', self.src)
 
     def test_every_stood_down_branch_tells_the_delivering_socket(self):
-        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client)"), 14,
+        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client, msg)"), 14,
                                 "all fourteen gt-gated branches (five toggles + nine judge tiers) "
-                                "answer the delivering socket on a stand-down")
+                                "answer the delivering socket on a stand-down, handing over the "
+                                "refused message so the frame can echo it")
+        self.assertNotIn("_tell_stale_gesture(client)\n", self.src,
+                         "no branch still calls the echo-less form — the toast's Apply anyway "
+                         "re-issues what the frame echoes")
 
     def test_the_docstring_names_all_three_none_causes(self):
         doc = km._set_judge_state.__doc__ or ""
