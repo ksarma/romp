@@ -20,7 +20,8 @@ What these pin, in the order the module is used:
     during a run makes the next caller run again; take() reads record and values together; an
     authentication failure invalidates once per credential, a success re-arms it, and a refusal
     stamped with a credential that is not the current one (a session still on the set from before
-    a rotation) invalidates nothing.
+    a rotation) invalidates nothing; the record's setSeq (the set's identity within a generation)
+    moves only when a run hands back another set.
   Selector — the one-token file: missing is "no selector", a non-token is an error carrying a byte
     count, an undeclared name is refused before anything runs, a name is rendered only when it is
     declared (else by length), the write is atomic, 0600 and through a symlink.
@@ -31,7 +32,10 @@ What these pin, in the order the module is used:
     never leave it; one token expected; cached until invalidate(), under the generation of the set
     it ran with (the run's own read, or the generation handed in beside a set a connect took), so
     an invalidation before or during the run leaves the entry stale; a caller that already holds
-    the set hands it in so the command is not run twice.
+    the set hands it in so the command is not run twice. The entry is for (generation, setSeq): a
+    set that changed under one generation (a recovery after a failed run, a selector hand edit)
+    gets a fresh fingerprint and an unchanged one keeps its entry; and an entry is never written
+    over a newer one, so a late connect's older run cannot hide a refusal on the current output.
   NothingLeaks — no fixture value in any status field or reason, whatever the command does with it.
 
 Synthetic throughout: every value is "romp-test-fixture-" + a uuid, assembled at run time (no
@@ -117,6 +121,15 @@ class _Lab(unittest.TestCase):
     def select(self, token):
         with open(os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"], "w") as fh:
             fh.write(token)
+
+    def edit_selector(self, token, bump_s=1):
+        """A hand edit: the token written and the mtime moved `bump_s` seconds past now, so the
+        file's stat identity changes even when two edits land within one clock tick."""
+        p = os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"]
+        with open(p, "w") as fh:
+            fh.write(token + "\n")
+        t = time.time_ns() + bump_s * 10**9
+        os.utime(p, ns=(t, t))
 
     def helper(self, body, config_dir=None):
         """A fake settings.json naming a fake apiKeyHelper script; returns the helper's path."""
@@ -651,6 +664,34 @@ class CacheAndCoalescing(_Lab):
         vals["A_TOKEN"] = "changed by a caller"
         self.assertEqual(es.take()[1]["A_TOKEN"], v, "callers get a copy")
         self.assertEqual(es._runs, 1)
+
+    def test_the_record_carries_the_sets_identity_which_moves_only_when_a_run_hands_back_another_set(self):
+        # setSeq: the set's identity within a generation, what the helper's fingerprint is cached
+        # under beside the generation. invalidate() moves the generation and not this; a run that
+        # hands back the same set leaves it; a run that hands back another set moves it; a failed
+        # run keeps the set and so moves nothing.
+        v = fixture_value()
+        self.configure(self.printing({"A_TOKEN": v}))
+        s0 = es.current()
+        seq0 = s0["setSeq"]
+        es.invalidate()
+        s1 = es.current()
+        self.assertEqual((s1["generation"], s1["setSeq"]), (s0["generation"] + 1, seq0),
+                         "the same set again: the generation moved, the identity did not")
+        self.script("exit 2")
+        es.invalidate()
+        s2 = es.current()
+        self.assertEqual((s2["ok"], s2["stale"], s2["setSeq"]), (False, True, seq0), "a failed run keeps the set")
+        self.printing({"A_TOKEN": fixture_value("rotated")})
+        s3 = es.current()
+        self.assertEqual((s3["ok"], s3["generation"], s3["setSeq"]), (True, s2["generation"], seq0 + 1),
+                         "the retry handed back another set under the same generation")
+        self.printing({"A_TOKEN": v, "B_TOKEN": fixture_value()})
+        es.invalidate()
+        s4 = es.current()
+        self.assertEqual((s4["setSeq"], sorted(s4["names"])), (seq0 + 2, ["A_TOKEN", "B_TOKEN"]))
+        self.assertEqual(es.status()["setSeq"], seq0 + 2, "status() carries it too")
+        self.assertEqual(es.take()[0]["setSeq"], seq0 + 2, "and take()'s record")
 
     def test_a_hand_edit_of_the_selector_file_re_runs_the_command(self):
         # the selector file may be one an apiKeyHelper already reads and an operator edits by hand:
@@ -1221,6 +1262,120 @@ class HelperFingerprint(_Lab):
         es.helper_fingerprint(values={"A_TOKEN": role_b})
         self.assertEqual(es._helper["gen"], es._gen)
         self.assertEqual(es.helper_runs(), 3)
+
+    def test_a_late_connect_carrying_an_older_generation_does_not_overwrite_the_current_entry(self):
+        # connect X takes the set at generation G; a refresh lands and connect Y takes the set at G+1
+        # and stores the helper's fingerprint under it; X, late, asks for the helper's fingerprint
+        # with the generation and set it took. X's run is for its own set and X gets that fingerprint
+        # (the credential its CLI bills), but the slot keeps Y's entry. Before this X's run overwrote
+        # the slot with an entry for G, and until the next reader healed it a refusal on a session
+        # stamped with Y's fingerprint was not a refusal of the helper's output as far as
+        # invalidate_for_auth_failure could see, so it invalidated nothing.
+        h, role_x, role_y = fixture_value("helper"), fixture_value("role-x"), fixture_value("role-y")
+        self.helper('echo "%s-${A_TOKEN:-none}"' % h)
+        self.configure(self.printing({"A_TOKEN": role_x}))
+        snap_x, vals_x = es.take()
+        self.printing({"A_TOKEN": role_y})
+        es.invalidate("a refresh between X's take and its helper fingerprint")
+        snap_y, vals_y = es.take()
+        self.assertEqual(snap_y["generation"], snap_x["generation"] + 1)
+        fp_y, _reason = es.helper_fingerprint(values=vals_y, generation=snap_y["generation"], set_seq=snap_y["setSeq"])
+        self.assertEqual(fp_y, es.fingerprint("%s-%s" % (h, role_y)))
+        self.assertEqual((es._helper["gen"], es._helper["fp"]), (snap_y["generation"], fp_y))
+        fp_x, reason_x = es.helper_fingerprint(values=vals_x, generation=snap_x["generation"], set_seq=snap_x["setSeq"])
+        self.assertEqual((fp_x, reason_x), (es.fingerprint("%s-%s" % (h, role_x)), ""),
+                         "X gets the fingerprint of its own run: the credential its CLI bills")
+        self.assertEqual(es.helper_runs(), 2)
+        self.assertEqual((es._helper["gen"], es._helper["fp"]), (snap_y["generation"], fp_y),
+                         "the slot keeps the current entry; X's older one is not written over it")
+        self.assertTrue(es.invalidate_for_auth_failure("401", fp_y), "a refusal on the current helper output fires")
+        self.assertFalse(es.invalidate_for_auth_failure("401", fp_y), "once")
+        self.assertEqual(es.helper_fingerprint(), (fp_y, ""), "the next read runs the helper on the current set")
+        self.assertEqual(es.helper_runs(), 3)
+
+    def test_a_recovery_that_hands_back_another_set_under_one_generation_is_a_fresh_fingerprint(self):
+        # the store is unreachable for one run and back at the next, handing back a rotated role
+        # variable: the retry after a failed run moves no generation, so an entry keyed on the
+        # generation alone served the OLD overlay's fingerprint for the new set, and a connect on the
+        # new set was stamped with it (cycle_key then read that session as current). The set's
+        # identity (setSeq) rides beside the generation now.
+        h, role_a, role_b = fixture_value("helper"), fixture_value("role-a"), fixture_value("role-b")
+        self.helper('echo "%s-${A_TOKEN:-none}"' % h)
+        self.configure(self.printing({"A_TOKEN": role_a}))
+        snap_a, vals_a = es.take()
+        fp_a = es.helper_fingerprint(values=vals_a, generation=snap_a["generation"], set_seq=snap_a["setSeq"])[0]
+        self.assertEqual(fp_a, es.fingerprint("%s-%s" % (h, role_a)))
+        self.script("exit 2")
+        es.invalidate("a refresh while the store is unreachable")
+        snap_f, vals_f = es.take()
+        self.assertEqual((snap_f["ok"], snap_f["stale"]), (False, True))
+        self.assertEqual(snap_f["setSeq"], snap_a["setSeq"], "a failed run keeps the set: its identity holds")
+        fp_f = es.helper_fingerprint(values=vals_f, generation=snap_f["generation"], set_seq=snap_f["setSeq"])[0]
+        self.assertEqual((fp_f, es.helper_runs()), (fp_a, 2), "the generation moved: a run, on the same overlay")
+        self.printing({"A_TOKEN": role_b})                    # the store is back, with a rotated role variable
+        snap_b, vals_b = es.take()
+        self.assertTrue(snap_b["ok"])
+        self.assertEqual(snap_b["generation"], snap_f["generation"], "the retry after a failure moves no generation")
+        self.assertEqual(snap_b["setSeq"], snap_f["setSeq"] + 1, "but the set changed: its identity moved")
+        fp_b, reason_b = es.helper_fingerprint(values=vals_b, generation=snap_b["generation"], set_seq=snap_b["setSeq"])
+        self.assertEqual((fp_b, reason_b), (es.fingerprint("%s-%s" % (h, role_b)), ""),
+                         "the new set's own fingerprint, not the previous set's cached one")
+        self.assertEqual(es.helper_runs(), 3)
+        self.assertEqual(es.helper_fingerprint(), (fp_b, ""), "the current read agrees")
+        self.assertEqual(es.helper_runs(), 3, "an unchanged set keeps the entry")
+        self.assertEqual(es.helper_fingerprint(values=vals_b, generation=snap_b["generation"]), (fp_b, ""),
+                         "values and a generation with no set identity: the current one, as with the generation")
+        self.assertEqual((es.helper_runs(), es._runs), (3, 3))
+
+    def test_a_selector_hand_edit_that_changes_the_set_is_a_fresh_fingerprint_and_one_that_does_not_keeps_it(self):
+        # the selector file may be one the operator edits by hand: the edit re-runs the command with
+        # no invalidate(), so the set can change under one generation
+        h = fixture_value("helper")
+        self.helper('echo "%s-${SEL:-none}"' % h)
+        self.configure(self.script('echo "SEL=${1:-none}"') + ' "$1"', names="hp,lp")
+        self.select("hp")
+        snap_hp, vals_hp = es.take()
+        self.assertEqual(snap_hp["selector"], "hp")
+        fp_hp = es.helper_fingerprint(values=vals_hp, generation=snap_hp["generation"], set_seq=snap_hp["setSeq"])[0]
+        self.assertEqual(fp_hp, es.fingerprint(h + "-hp"))
+        self.edit_selector("lp")
+        snap_lp, vals_lp = es.take()
+        self.assertEqual((snap_lp["selector"], es._runs), ("lp", 2), "the edit re-ran the command")
+        self.assertEqual(snap_lp["generation"], snap_hp["generation"], "with no invalidation")
+        self.assertEqual(snap_lp["setSeq"], snap_hp["setSeq"] + 1, "and another set came back")
+        fp_lp, reason_lp = es.helper_fingerprint(values=vals_lp, generation=snap_lp["generation"], set_seq=snap_lp["setSeq"])
+        self.assertEqual((fp_lp, reason_lp, es.helper_runs()), (es.fingerprint(h + "-lp"), "", 2),
+                         "the new set's own fingerprint")
+        self.assertEqual(es.helper_fingerprint(), (fp_lp, ""))
+        self.assertEqual(es.helper_runs(), 2, "the current read is served the entry")
+        # an edit the command answers with the same set: the file rewritten with the same token
+        self.edit_selector("lp", bump_s=2)
+        snap_same, vals_same = es.take()
+        self.assertEqual(es._runs, 3, "the stat identity moved: a run")
+        self.assertEqual((snap_same["generation"], snap_same["setSeq"]), (snap_lp["generation"], snap_lp["setSeq"]),
+                         "the same set came back: its identity holds")
+        self.assertEqual(es.helper_fingerprint(values=vals_same, generation=snap_same["generation"],
+                                               set_seq=snap_same["setSeq"]), (fp_lp, ""))
+        self.assertEqual(es.helper_runs(), 2, "an unchanged set keeps the entry")
+
+    def test_a_late_connect_on_the_set_from_before_a_selector_edit_does_not_overwrite_the_entry_either(self):
+        # the same ordering within one generation: X took the set before a hand edit, Y after; Y
+        # stores its entry first; X's run, for the older set, is handed back to X and not written
+        # over Y's. The set's identity orders the two where the generation alone could not.
+        h = fixture_value("helper")
+        self.helper('echo "%s-${SEL:-none}"' % h)
+        self.configure(self.script('echo "SEL=${1:-none}"') + ' "$1"', names="hp,lp")
+        self.select("hp")
+        snap_x, vals_x = es.take()
+        self.edit_selector("lp")
+        snap_y, vals_y = es.take()
+        self.assertEqual(snap_y["generation"], snap_x["generation"])
+        self.assertGreater(snap_y["setSeq"], snap_x["setSeq"])
+        fp_y = es.helper_fingerprint(values=vals_y, generation=snap_y["generation"], set_seq=snap_y["setSeq"])[0]
+        fp_x = es.helper_fingerprint(values=vals_x, generation=snap_x["generation"], set_seq=snap_x["setSeq"])[0]
+        self.assertEqual((fp_x, fp_y), (es.fingerprint(h + "-hp"), es.fingerprint(h + "-lp")))
+        self.assertEqual((es._helper["seq"], es._helper["fp"]), (snap_y["setSeq"], fp_y), "the slot keeps Y's entry")
+        self.assertTrue(es.invalidate_for_auth_failure("401", fp_y), "a refusal on the current helper output fires")
 
     def test_the_helper_runs_in_a_session_clis_environment_role_variables_merged_romp_sid_absent(self):
         # a helper that picks its store by a role variable, and one that would see a session identity

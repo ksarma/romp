@@ -65,7 +65,9 @@ sessions authenticate through Claude Code's own `apiKeyHelper`, and the kernel n
 value. To tell whether a running session is on the current credential, `helper_fingerprint()` runs
 the configured helper with the same runner — in the environment a session CLI gets (the set's role
 variables merged, `ROMP_SID` absent) — and hashes its output inside this function; the bytes never
-leave it.
+leave it. The result is cached for the set it ran with, identified by the record's `generation` and
+`setSeq` (the second moves when a run hands back a different set under one generation), and an
+entry is never written over a newer one.
 """
 from __future__ import annotations
 
@@ -537,9 +539,10 @@ _runs = 0                         # command executions, total (tests count coale
 _attempts = 0                     # _run_locked completions, total — what a waiting caller coalesces on
 _failures = 0                     # consecutive failed runs
 _last_ok_at: float | None = None  # wall-clock time of the last successful run (None: none yet)
+_set_seq = 0                      # moves when a run hands back a DIFFERENT set: the set's identity under one generation
 
 _helper_lock = threading.Lock()
-_helper: dict = {"gen": -1, "fp": "", "reason": "", "runs": 0}
+_helper: dict = {"gen": -1, "seq": -1, "fp": "", "reason": "", "runs": 0}   # the entry is FOR (gen, seq)
 
 
 _auth_failed_for: tuple | None = None    # (set fp, helper fp) the last auth-failure invalidation was for
@@ -622,18 +625,32 @@ def _empty_snapshot(env_cfg: bool) -> dict:
             "names": [], "dropped": [], "droppedAuth": [], "badLines": 0, "emptyValues": 0,
             "setFp": "", "keyFp": "", "hasKey": False, "stale": False,
             "runs": _runs, "failures": _failures, "lastOkAt": _last_ok_at, "generation": _gen,
-            "selector": "", "selectorNote": "", "timeoutProblem": ""}
+            "setSeq": _set_seq, "selector": "", "selectorNote": "", "timeoutProblem": ""}
+
+
+def _set_values(new: dict) -> None:
+    """Under _lock: make `new` the set, moving the set's identity (_set_seq) only when it DIFFERS
+    from the set before. Two paths re-run the command without moving the generation (the retry
+    after a failed run, a selector-file edit), and either can hand back another set: a caller
+    caching something per set (the helper's fingerprint) keys on (generation, setSeq), so a set
+    that changed under one generation is not served the old set's entry, and one that did not
+    change keeps it. A comparison of values, inside the one function that holds them."""
+    global _values, _set_seq
+    if new != _values:
+        _set_seq += 1
+    _values = new
 
 
 def _run_locked(environ) -> None:
     """Under _lock: run the command once and record the outcome. A failure keeps `_values`."""
-    global _values, _snap, _snap_selector_ident, _runs, _attempts, _failures, _last_ok_at
+    global _snap, _snap_selector_ident, _runs, _attempts, _failures, _last_ok_at
     gen = _gen
     cmd = command(environ)
     snap = _empty_snapshot(configured(environ))
     if not snap["configured"]:
-        _values = {}
+        _set_values({})
         snap["generation"] = gen
+        snap["setSeq"] = _set_seq
         _snap = snap
         _attempts += 1
         return
@@ -677,7 +694,7 @@ def _run_locked(environ) -> None:
                 else:
                     reason = reason_key = "printed no usable NAME=VALUE line"
             else:
-                _values = parsed["values"]
+                _set_values(parsed["values"])
     if reason:
         _failures += 1
         snap["ok"] = False
@@ -695,6 +712,7 @@ def _run_locked(environ) -> None:
     snap["keyFp"] = fingerprint(_values.get(KEY_VAR, ""))
     snap["hasKey"] = KEY_VAR in _values
     snap["generation"] = gen
+    snap["setSeq"] = _set_seq
     _snap = snap
     _attempts += 1                          # at completion: a caller that read the counter mid-run sees it move
 
@@ -746,7 +764,8 @@ def current(environ=None) -> dict:
     (True/False; None when no command is configured), reason, at, exitCode, durationS, timedOut,
     names (the set's variable names), dropped (ROMP_* names refused), badLines, emptyValues, setFp,
     keyFp (of the set's ANTHROPIC_API_KEY, "" when absent), hasKey, stale (a failed run is standing
-    on the previous set), runs, failures, lastOkAt, generation, selector (the token, when declared),
+    on the previous set), runs, failures, lastOkAt, generation, setSeq (the set's identity within the
+    generation: it moves when a run hands back a different set), selector (the token, when declared),
     selectorNote ("(undeclared, N chars)" otherwise), timeoutProblem. Never a value."""
     with _fresh(environ):
         return dict(_snap)
@@ -765,8 +784,10 @@ def take(environ=None) -> tuple:
     """(record, values) from ONE read under the lock — for a connect that needs both the value-free
     record (to log and stamp) and the set (to inject): read separately, a run could land between
     the two and the key injected would not be the set the log names. The `values` half is
-    injection()'s and under its rule. The record's `generation` is the generation the values were
-    served under: a caller handing the values to helper_fingerprint() hands that in beside them."""
+    injection()'s and under its rule. The record's `generation` and `setSeq` are the generation the
+    values were served under and the set's identity within it (it moves when a run hands back a
+    different set): a caller handing the values to helper_fingerprint() hands both in beside them,
+    so the fingerprint is cached for exactly the set it was run with."""
     with _fresh(environ):
         return dict(_snap), dict(_values)
 
@@ -814,7 +835,8 @@ def helper_command(config_dir=None, environ=None) -> str:
     return cmd
 
 
-def helper_fingerprint(config_dir=None, environ=None, timeout=None, values=None, generation=None) -> tuple:
+def helper_fingerprint(config_dir=None, environ=None, timeout=None, values=None, generation=None,
+                       set_seq=None) -> tuple:
     """(fingerprint, reason) for the credential the configured apiKeyHelper prints right now — the
     helper is run with the same runner and its output hashed HERE; the bytes never leave this
     function. ("", reason) when no helper is configured, it fails, times out, or prints anything
@@ -838,18 +860,37 @@ def helper_fingerprint(config_dir=None, environ=None, timeout=None, values=None,
     overlay was built, so an invalidate() between a connect's take() and this call stored the
     pre-invalidation overlay's fingerprint under the post-invalidation generation, and every caller
     after was served it as current. With `values` given and no generation, the current one (the
-    caller did not say); with `values` None, the generation of the set read here."""
+    caller did not say); with `values` None, the generation of the set read here.
+
+    `set_seq` is the record's `setSeq` beside that generation: the set's identity WITHIN it. The
+    entry is cached for (generation, setSeq), not the generation alone, because the set can change
+    under one generation: the retry after a failed run can hand back a rotated role variable, and a
+    hand edit of the selector file re-runs the command with no invalidate(). Keyed on the generation
+    alone, a connect on the new set was stamped with the OLD overlay's fingerprint, and cycle_key
+    read it as current. An unchanged set keeps its entry (a failed run keeps the set, so it moves
+    nothing). As with `generation`, absent means the current one.
+
+    The entry is written only when it is not OLDER than the one in the slot. A connect that took the
+    set and then waited (its own connect work, the helper lock) can reach here after an invalidate()
+    and a later connect stored the current entry; its run is for its own set and it gets that
+    fingerprint back (the credential ITS CLI bills), but writing it over the current entry would
+    leave the slot naming a fingerprint no current launch gets, and until the next reader healed it
+    a refusal on the current one was not "the helper's output" to invalidate_for_auth_failure and
+    invalidated nothing."""
     if values is None:
         with _fresh(environ):
             values = dict(_values)
             if generation is None:
                 generation = _snap.get("generation")
+            if set_seq is None:
+                set_seq = _snap.get("setSeq")
     overlay = {k: v for k, v in values.items() if k != KEY_VAR}
     with _helper_lock:
-        # the generation this run is FOR: the set's own, so an invalidate between the set's read and
-        # here, or during the run, leaves the result stale on completion
-        gen = _gen if generation is None else int(generation)
-        if _helper["gen"] == gen:
+        # the identity this run is FOR: the set's own generation and sequence, so an invalidate
+        # between the set's read and here, or during the run, leaves the result stale on completion,
+        # and a set that changed under one generation is not served the old set's entry
+        key = (_gen if generation is None else int(generation), _set_seq if set_seq is None else int(set_seq))
+        if (_helper["gen"], _helper["seq"]) == key:
             return _helper["fp"], _helper["reason"]
         cmd = helper_command(config_dir, environ)
         fp, reason = "", ""
@@ -872,7 +913,8 @@ def helper_fingerprint(config_dir=None, environ=None, timeout=None, values=None,
                     reason = "printed something that is not a printable token (%d bytes)" % len(lines[0])
                 else:
                     fp = fingerprint(lines[0].strip())
-        _helper.update({"gen": gen, "fp": fp, "reason": reason})
+        if key >= (_helper["gen"], _helper["seq"]):
+            _helper.update({"gen": key[0], "seq": key[1], "fp": fp, "reason": reason})
         return fp, reason
 
 
@@ -883,7 +925,7 @@ def helper_runs() -> int:
 def _reset() -> None:
     """Tests only: forget everything, including the counters and the mode pin."""
     global _gen, _values, _snap, _snap_selector_ident, _runs, _attempts, _failures, _last_ok_at, _FILE_CFG, _MODE_PIN
-    global _auth_failed_for, _auth_failed_fps
+    global _auth_failed_for, _auth_failed_fps, _set_seq
     with _lock, _helper_lock:
         _gen += 1
         _auth_failed_for = None
@@ -895,6 +937,7 @@ def _reset() -> None:
         _attempts = 0
         _failures = 0
         _last_ok_at = None
+        _set_seq = 0
         _FILE_CFG = ((), {})
         _MODE_PIN = None
-        _helper.update({"gen": -1, "fp": "", "reason": "", "runs": 0})
+        _helper.update({"gen": -1, "seq": -1, "fp": "", "reason": "", "runs": 0})

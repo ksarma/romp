@@ -1640,6 +1640,29 @@ class _CommandMode(_Backend):
     def problems(self):
         return [p["text"] for p in self.be.problems()]
 
+    def helper(self, body):
+        """A fake apiKeyHelper in the lab's CLAUDE_CONFIG_DIR: a settings.json naming a script."""
+        d = os.environ["CLAUDE_CONFIG_DIR"]
+        os.makedirs(d, exist_ok=True)
+        h = os.path.join(self.lab, "helper.sh")
+        with open(h, "w") as fh:
+            fh.write("#!/bin/sh\n" + body + "\n")
+        os.chmod(h, 0o700)
+        with open(os.path.join(d, "settings.json"), "w") as fh:
+            json.dump({"apiKeyHelper": h}, fh)
+        return h
+
+    def helper_billed(self, n, moved):
+        """A live session launched without the set's key whose CLI found one through the helper: the
+        shape cycle_key converges on the helper's fingerprint. `moved` collects its reconnects."""
+        s = self._sess(n, auth="login")
+        self.be.spawn("s%d" % n, "/tmp", sid=s.sid)
+        self.be._options(s, dict)
+        s.auth_live = "key"
+        s.request_reconnect = lambda defer=True: moved.append((s.name, defer))
+        self.be.sessions[s.sid] = s
+        return s
+
 
 class CommandSourceLaunch(_CommandMode):
     def test_the_set_rides_every_launch_and_the_key_only_where_the_auth_says_so(self):
@@ -2058,6 +2081,81 @@ class CommandSourceFailure(_CommandMode):
         self.assertEqual(es.helper_runs(), hruns, "the helper's fingerprint was cached from the refresh")
         self.assertEqual(s._launched_key_fp, es.fingerprint(h))
         self.assertEqual(s._launched_set_fp, es.set_fingerprint(self.values), "the previous set stands in")
+
+    def test_a_connect_after_a_recovery_that_rotated_a_role_variable_stamps_the_new_sets_helper_output(self):
+        # the store fails for one run and is back at the next with a rotated role variable: the retry
+        # moves no generation. Before this the helper's fingerprint was cached on the generation alone,
+        # so the connect on the new set was stamped with the old overlay's fingerprint, and cycle_key
+        # read that session as current although its CLI bills through a helper fed the new variable.
+        h = fixture_value("helper")
+        self.helper('echo "%s-${A_TOKEN:-none}"' % h)
+        self.be.refresh_key_source()
+        old_role, moved = self.values["A_TOKEN"], []
+        s1 = self.helper_billed(1, moved)
+        self.assertEqual(s1._launched_key_fp, es.fingerprint("%s-%s" % (h, old_role)))
+        self.assertEqual(self.be.cycle_key(s1.sid), "current")
+        self.fail_command("exit 3")
+        self.be.refresh_key_source()                          # the store is unreachable: the set stands, stale
+        self.assertFalse(self.be.key_source_status()["err"] == "", "the failed run is said")
+        gen = es._gen
+        new_role = fixture_value("rotated-role")
+        self.values["A_TOKEN"] = new_role
+        self.print_set(self.values)                           # back, with a rotated role variable
+        s2 = self.helper_billed(2, moved)                     # this connect's take() is the recovering run
+        self.assertEqual(es._gen, gen, "the recovery moved no generation")
+        self.assertEqual(s2._launched_key_fp, es.fingerprint("%s-%s" % (h, new_role)),
+                         "stamped with the helper's output for the set it launched with, not the previous set's")
+        self.assertEqual(s2._launched_set_fp, es.set_fingerprint(self.values))
+        self.assertEqual(self.be.cycle_key(s2.sid), "current")
+        self.assertEqual(self.be.cycle_key(s1.sid), "cycling", "the session on the previous set is not current")
+        self.assertEqual(moved, [("s1", False)])
+        why = [m for m in self.logged if m.startswith("keyswap (s1): reconnecting")]
+        self.assertEqual(len(why), 1, self.logged)
+        self.assertIn("the apiKeyHelper now prints sha256:%s" % s2._launched_key_fp, why[0])
+        self.assertFalse(any(old_role in m or new_role in m or h in m for m in self.logged), "no line carries a value")
+
+    def test_a_connect_whose_take_predates_a_refresh_does_not_hide_a_refusal_on_the_current_helper_output(self):
+        # connect X takes the set; before it asks for the helper's fingerprint an operator's refresh
+        # lands (the store now hands back a rotated role variable) and connect Y launches on the new
+        # set, stamped with the helper's current output. X is stamped with the output for ITS set and
+        # the cached entry stays Y's. Before this X's late run overwrote the entry with one for the
+        # old generation, and a 401 on Y was then not a refusal of the helper's output as far as the
+        # once-per-credential test could see, so it invalidated nothing and the next connect ran
+        # nothing.
+        import unittest.mock as mock
+        h = fixture_value("helper")
+        self.helper('echo "%s-${A_TOKEN:-none}"' % h)
+        self.be.refresh_key_source()
+        old_role, new_role = self.values["A_TOKEN"], fixture_value("rotated-role")
+        real_take, staged = es.take, {}
+
+        def racing_take(environ=None):
+            snap, vals = real_take(environ)
+            if not staged:                                    # X's take only: Y's own take below passes through
+                staged["armed"] = True
+                self.values["A_TOKEN"] = new_role
+                self.print_set(self.values)
+                self.be.refresh_key_source()                  # between X's take and its helper fingerprint
+                y = self._sess(2, auth="login")
+                self.be._options(y, dict)
+                staged["y"] = y
+            return snap, vals
+
+        x = self._sess(1, auth="login")
+        with mock.patch.object(es, "take", racing_take):
+            self.be._options(x, dict)
+        y = staged["y"]
+        self.assertEqual(x._launched_key_fp, es.fingerprint("%s-%s" % (h, old_role)),
+                         "X: the helper's output for the set it launched with")
+        self.assertEqual(y._launched_key_fp, es.fingerprint("%s-%s" % (h, new_role)))
+        self.assertEqual(es._helper["fp"], y._launched_key_fp, "the cached entry is the current one, not X's older run")
+        runs = es._runs
+        self.logged.clear()
+        self.be._credential_auth_failed(y, "HTTP 401 on a turn")
+        self._env_for(3, "login")
+        self.assertEqual(es._runs, runs + 1, "a refusal on the current helper output fires: the next connect re-runs")
+        self.assertTrue(any("s2 reported an authentication failure" in m for m in self.logged), self.logged)
+        self.assertFalse(any(old_role in m or new_role in m or h in m for m in self.logged), "no line carries a value")
 
     def test_no_key_and_no_helper_is_the_login_not_an_error(self):
         # the set carries role variables only and no apiKeyHelper is configured: the machine login

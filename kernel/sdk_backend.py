@@ -7970,11 +7970,14 @@ class SdkBackend:
         elif _envsrc.configured():
             # the set this connect already took rides along: the helper's environment is built from it
             # rather than from a second read, which on a failing command would be a second run; its
-            # generation rides with it, so an invalidate that landed since the take leaves the
-            # fingerprint stored stale rather than served as current
+            # generation and set identity (setSeq) ride with it, so an invalidate that landed since
+            # the take leaves the fingerprint stored stale rather than served as current, and a set
+            # that changed under one generation (a recovery after a failed run, a selector-file edit)
+            # gets its own fingerprint rather than the previous set's cached one
             sess._launched_key_fp = _envsrc.helper_fingerprint(
                 values=cred[1] if cred is not None else None,
-                generation=cred[0].get("generation") if cred is not None else None)[0]
+                generation=cred[0].get("generation") if cred is not None else None,
+                set_seq=cred[0].get("setSeq") if cred is not None else None)[0]
         else:
             sess._launched_key_fp = ""
         sess._launched_set_fp = _envsrc.set_fingerprint(role_vars)
