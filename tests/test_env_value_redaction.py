@@ -741,9 +741,18 @@ class ReportShapes(_WithConftest):
 
 
 class HookEndToEnd(unittest.TestCase):
-    def _run(self, d, *args):
+    def _run(self, d, *args, env=None):
+        """A child pytest over the files in `d`. Its environment is this process's without CI and
+        BUILD_NUMBER: with either set (pytest's `running_on_ci`) pytest neither truncates a long
+        assertion explanation nor trims the short summary's message to the terminal width, and the
+        tests here pin the truncated rendering wherever the suite runs. `env` adds variables on top
+        (a probe value; CI itself, for the untruncated rendering)."""
+        child = dict(os.environ)
+        for name in ("CI", "BUILD_NUMBER"):
+            child.pop(name, None)
+        child.update(env or {})
         r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", d] + list(args),
-                           cwd=d, capture_output=True, text=True, timeout=180)
+                           cwd=d, env=child, capture_output=True, text=True, timeout=180)
         return r.returncode, r.stdout + r.stderr
 
     def test_a_failing_test_that_renders_an_environment_value_prints_the_marker(self):
@@ -757,11 +766,8 @@ class HookEndToEnd(unittest.TestCase):
                          "    print('stdout carries ' + v)\n"
                          "    assert v == 'something else', 'the message carries ' + v\n")
             v = probe_value("probe")
-            env = dict(os.environ, ROMP_TEST_REDACTION_PROBE=v)
-            r = subprocess.run([sys.executable, "-m", "pytest", "test_probe_leak.py", "-q", "-p", "no:cacheprovider",
-                                "--rootdir", d], cwd=d, env=env, capture_output=True, text=True, timeout=120)
-            out = r.stdout + r.stderr
-            self.assertNotEqual(r.returncode, 0, "the probe test fails by design")
+            rc, out = self._run(d, "test_probe_leak.py", env={"ROMP_TEST_REDACTION_PROBE": v})
+            self.assertNotEqual(rc, 0, "the probe test fails by design")
             self.assertTrue("1 failed" in out, "the run reports the failure")
             self.assertFalse(v in out, "the probe value reached no line of the report")
             self.assertGreaterEqual(out.count("[REDACTED-ENV-VALUE]"), 2, "the message and the captured stdout both show the marker")
@@ -914,7 +920,11 @@ class HookEndToEnd(unittest.TestCase):
         # the identical header, and which its 640-character truncation cuts mid-token with `...` appended),
         # the 240 cut of --showlocals, a list through unittest's `[N chars]`, and a bare print; and two long
         # unknown-format tokens, whose diff's second line that truncation always cuts. No 8-character piece
-        # of any segment of any token survives on any line
+        # of any segment of any token survives on any line. The child runs twice, because pytest switches
+        # the truncation off when CI or BUILD_NUMBER is set (`running_on_ci`; GitHub Actions sets CI) and
+        # then also prints each failure's whole message in the short summary instead of one trimmed line:
+        # once without them (the cut renderings) and once with CI set (the whole diff lines, and the
+        # summary's repeat of every message)
         d = tempfile.mkdtemp()
         try:
             _copy_hook(d)
@@ -930,18 +940,31 @@ class HookEndToEnd(unittest.TestCase):
                          "def test_hex():\n    assert P['x'] == P['y']\n\n"
                          "class Cmp(unittest.TestCase):\n"
                          "    def test_lists(self):\n        self.assertEqual([P['a'], P['b']], [P['b'], P['a']])\n")
+
+            def no_piece(out):
+                for name, v in j.items():
+                    for seg in v.split("."):
+                        for i in range(0, len(seg) - 8 + 1):
+                            self.assertFalse(seg[i:i + 8] in out, "a piece of %s reached the report" % name)
+
             rc, out = self._run(d, "--showlocals", "test_probe_jwt.py")
             self.assertNotEqual(rc, 0)
             self.assertTrue("3 failed" in out, out[-600:])
-            for name, v in j.items():
-                for seg in v.split("."):
-                    for i in range(0, len(seg) - 8 + 1):
-                        self.assertFalse(seg[i:i + 8] in out, "a piece of %s reached the report" % name)
+            no_piece(out)
             self.assertTrue("Full output truncated" in out, "the JWT diff is long enough for pytest's truncation")
             # the JWT test: the print, the assert line (2), two diff lines, two locals; the hex test: the assert
-            # line (2), two diff lines, two locals; the unittest one: the Lists differ line (2) and two element
-            # lines (its diff is over maxDiff and not shown)
+            # line (4: each operand is ellipsized into two fragments), two diff lines; the unittest one: the
+            # Lists differ line (2) and two element lines (its diff is over maxDiff and not shown)
             self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 17, out[-2500:])
+            # the untruncated rendering: the same lines, whole, and the short summary's repeat of each failure's
+            # message (the captured print is a section, not part of it): the JWT test's assert line (2), diff
+            # lines (2) and locals (2), the hex test's (4 + 2), the unittest one's (2 + 2)
+            rc, out = self._run(d, "--showlocals", "test_probe_jwt.py", env={"CI": "1"})
+            self.assertNotEqual(rc, 0)
+            self.assertTrue("3 failed" in out, out[-600:])
+            no_piece(out)
+            self.assertFalse("Full output truncated" in out, "with CI set pytest shows the whole diff")
+            self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 17 + 16, out[-2500:])
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
@@ -957,12 +980,9 @@ class HookEndToEnd(unittest.TestCase):
                 fh.write("import os\n"
                          "raise RuntimeError('collection carries ' + os.environ['ROMP_TEST_REDACTION_PROBE'])\n")
             v = probe_value("outcomes")
-            env = dict(os.environ, ROMP_TEST_REDACTION_PROBE=v)
-            r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-rA", "-p", "no:cacheprovider", "--rootdir", d,
-                                "--continue-on-collection-errors", "test_probe_pass.py", "test_probe_broken.py"],
-                               cwd=d, env=env, capture_output=True, text=True, timeout=180)
-            out = r.stdout + r.stderr
-            self.assertNotEqual(r.returncode, 0, "the collection error fails the run")
+            rc, out = self._run(d, "-rA", "--continue-on-collection-errors", "test_probe_pass.py", "test_probe_broken.py",
+                                env={"ROMP_TEST_REDACTION_PROBE": v})
+            self.assertNotEqual(rc, 0, "the collection error fails the run")
             self.assertTrue("1 passed" in out and "1 error" in out, out[-600:])
             self.assertFalse(v in out, "neither the passed test's captured stdout nor the collection error shows the value")
             self.assertGreaterEqual(out.count("[REDACTED-ENV-VALUE]"), 2)
