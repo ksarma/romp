@@ -786,6 +786,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   built one, a populate stored one (a build that failed is a miss with no
   populate), and a bypass built without memoizing because an input file could
   not be stat'd.
+- `memos`: one block per memo the kernel keeps, each a flat map of counters.
+  `goals_snap` is the judge pass's goal-store snapshot, which re-reads a store
+  only when its file changed: `hit` and `miss` (stores served from memory
+  against decoded, summed over passes), `fail` (file versions that did not
+  decode), `evict` (entries dropped for files gone from the directory), `punch`
+  (entries copied so a user gesture could be applied to them), and the gauges
+  `entries` and `bytes` (memoized files and their summed size).
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys

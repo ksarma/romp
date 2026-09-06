@@ -44,7 +44,7 @@ SID = "11111111-2222-3333-4444-555555555555"
 # and node ids collide across test modules under the shared placeholder (CLAUDE.md, goal-store fixtures).
 GOAL_SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
 TOP_KEYS = {"now", "since", "uptime_s", "log", "process", "pusher", "stages_ms", "builds", "sends",
-            "goals", "judge", "http"}
+            "goals", "judge", "http", "memos"}
 
 
 def _burn_cpu(seconds):
@@ -114,6 +114,12 @@ class Collector(unittest.TestCase):
                          "read through jd.chain_memo_stats: the write-moment chain memo's counters")
         self.assertEqual(set(snap["goals"]), {"loads", "saves", "writes", "scans", "scan_hits", "scan_parses"},
                          "read through jd.goal_io_stats")
+        self.assertEqual(set(snap["memos"]), {"goals_snap"}, "one block per memo the kernel keeps (plan D4)")
+        self.assertEqual(set(snap["memos"]["goals_snap"]),
+                         {"hit", "miss", "fail", "evict", "punch", "entries", "bytes"},
+                         "the judge pass's goal-store memo: counters plus its occupancy")
+        for k, v in snap["memos"]["goals_snap"].items():
+            self.assertIsInstance(v, int, k)
         for k in ("rss_kb", "threads", "cpu_s", "pid"):
             self.assertIn(k, snap["process"])
         self.assertGreater(snap["process"]["threads"], 0)
