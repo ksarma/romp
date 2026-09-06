@@ -86,7 +86,39 @@ test("executed: needs you follows the FEED's column, not the tab's chip: a judge
   assert.equal(snapshotRow("web", { name: "web", status: { state: "idle" } }, { needsInput: null }).needsYou, false, "null = no feed build yet: not a verdict");
   assert.equal(snapshotRow("web", { name: "web", status: { state: "needsInput" } }, { needsInput: null }).needsYou, true, "…but the tab's live prompt still counts (the feed trails the chip by a push)");
   assert.equal(snapshotRow("web", { name: "web", status: { state: "blocked", apiTooLong: true } }, { needsInput: false }).needsYou, true, "the tab's on-you API error too");
-  assert.equal(rowWords(idle).label, "web — needs you — stopped until you answer — Pick a database", "the spoken label carries the feed's word");
+  assert.equal(rowWords(idle).label, "web — needs you — Pick a database", "the spoken label carries the feed's word, once");
+});
+
+test("executed: the feed's word claims only what is true of every card in its column (review r2): needs you, no 'stopped'", () => {
+  // the column also holds a peer's held message waiting for approval (the session idle, taking input) and the
+  // idle user-todo floor; feed.ts marks such a goal "needs you" and nothing about being stopped
+  assert.equal(FEED_BLOCK_STATE, "needs you");
+  assert.doesNotMatch(FEED_BLOCK_STATE, /stop|answer/);
+  const FEED = ui("webview", "feed.ts");
+  assert.match(FEED, /"blocked — needs you"/, "the feed pane's own word for a goal in that column");
+});
+
+test("executed: the spoken label carries NEEDS YOU whenever the row wears it, whatever the state word (review r2)", () => {
+  // the tab's own state words carry it in their text: once, never twice
+  const prompt = snapshotRow("api", { name: "api", status: { state: "needsInput" } }, { needsInput: true });
+  assert.equal(rowWords(prompt).label, "api — needs you — waiting on your answer");
+  const apiErr = snapshotRow("api", { name: "api", status: { state: "blocked", apiTooLong: true } }, null);
+  assert.equal(rowWords(apiErr).label, "api — needs you — stopped on an API error");
+  // every other state word gets the word in front of it: the review's cases, a rejudge turn and a kept-open closed session
+  const rejudge = snapshotRow("web", { name: "web", status: { state: "working" } }, { needsInput: true, tree: [{ text: "Pick a database", current: true }] });
+  assert.deepEqual([rejudge.needsYou, rejudge.state], [true, "working"]);
+  assert.equal(rowWords(rejudge).label, "web — needs you — working — Pick a database");
+  const closed = snapshotRow("web", { name: "web", status: { state: "closed" } }, { needsInput: true });
+  assert.deepEqual([closed.needsYou, closed.state], [true, "closed"]);
+  assert.equal(rowWords(closed).label, "web — needs you — closed");
+  assert.equal(rowWords(snapshotRow("web", { name: "web", status: { state: "compacting" } }, { needsInput: true })).label, "web — needs you — compacting");
+  // a todo on an idle row wears the chip too, so the label says so before counting the things
+  assert.equal(rowWords(snapshotRow("x", { name: "x", status: { state: "ready" }, userTodos: [{}] }, null)).label, "x — needs you — 1 thing it needs from you");
+  // …and never when the row does not wear it
+  assert.equal(rowWords(snapshotRow("web", { name: "web", status: { state: "working" } }, { needsInput: false })).label, "web — working");
+  assert.equal(rowWords(snapshotRow("web", { name: "web", status: { state: "awaitingBg" } }, { needsInput: null })).label, "web — waiting on background work");
+  // a loading row: the flag can be on it only through a ledger the client has no session for; spoken all the same
+  assert.equal(rowWords(snapshotRow("new1", null, { needsInput: true })).label, "(unnamed) — needs you — opening");
 });
 
 test("executed: the pip and the state word follow tab-state.ts — on-you red, transient amber, closed struck, idle none", () => {
@@ -138,6 +170,19 @@ test("executed: lastMessage takes the newest assistant text as PLAIN words on on
   assert.equal(lastMessage({ events: [{ kind: "assistant", text: "plain `text` field" }] }), "plain text field", "the text field when there is no md");
 });
 
+test("executed: plainText drops inline HTML and underscore emphasis too (review r2): the transcript renders them as structure, a tooltip showed them as typed", () => {
+  assert.equal(plainText("<b>x</b>", 400), "x");
+  assert.equal(plainText("_x_", 400), "x");
+  assert.equal(plainText("<details><summary>Test output</summary>\n12 passed\n</details>", 400), "Test output 12 passed", "the common reply shape: tags go, words stay");
+  assert.equal(plainText("<b>bold</b> and <a href='x'>l</a> &amp; <br>", 400), "bold and l &", "tags of every kind, an entity decoded once the tags are gone");
+  assert.equal(plainText("__Done__ _emph_ and snake_case __strong__", 400), "Done emph and snake_case strong", "emphasis at word edges goes; snake_case keeps its underscores, as in the file viewer");
+  assert.equal(plainText("a < b and c > d", 400), "a < b and c > d", "a bare comparison is not a tag");
+  assert.equal(plainText("say &lt;b&gt; &quot;hi&quot; it&#39;s x&nbsp;y", 400), 'say <b> "hi" it\'s x y', "escaped text stays text: decoded after the tag pass, so a typed <b> is not stripped");
+  assert.equal(plainText("before <!-- a note\nfor no one --> after", 400), "before after", "an HTML comment goes whole, across lines");
+  assert.equal(plainText("line<br>next<br/>last", 400), "line next last", "a break is a space, not a joined word");
+  assert.equal(plainText("**Done.** See `ui/x.ts`.", 400), "Done. See ui/x.ts.", "the markdown pass is unchanged");
+});
+
 test("executed: a push that changes nothing a row shows returns the SAME model object — the no-rebuild contract", () => {
   const a = snapshotModel(sec, look(sessions), look(ledgers), null);
   // a fresh frame: new session objects, new arrays, the same content (the client rebuilds them per push)
@@ -179,7 +224,7 @@ test("executed: the words — the heading's count and label, the row's spoken la
   assert.equal(rowWords(m.rows[0]).title, "Last message: Adding the list page now — the route and the template.\nClick to open this session.");
   assert.equal(rowWords(m.rows[1]).label, "api — needs you — waiting on your answer — 2 things it needs from you — Pick a database");
   assert.equal(rowWords(m.rows[2]).title, "No messages yet.\nClick to open this session.");
-  assert.equal(rowWords(snapshotRow("x", { name: "x", status: { state: "ready" }, userTodos: [{}] }, null)).label, "x — 1 thing it needs from you");
+  assert.equal(rowWords(snapshotRow("x", { name: "x", status: { state: "ready" }, userTodos: [{}] }, null)).label, "x — needs you — 1 thing it needs from you");
 });
 
 test("pinned: render.ts shows the snapshot on a header click — snapView set BEFORE the fold write, then the pane swaps; a session pick clears it", () => {
@@ -255,8 +300,16 @@ test("the guide describes the view and the new fold rule", () => {
   // the now line's real chain, the note as a second line, needs-you as the feed's word, the hover without markup
   assert.match(GUIDE, /What it is doing now comes from its current task, else from the headline of\s+its work so far, else from the last task it had;/);
   assert.match(GUIDE, /a session that has published a note of what it is\s+working on shows the note as a quieter second line\./);
-  assert.match(GUIDE, /\*\*Needs you\*\* appears when the feed shows one of the session's cards under Blocked, or when the\s+session is stopped on a prompt or an API error only you can clear;/);
+  assert.match(GUIDE, /\*\*Needs you\*\* appears when the feed shows one of the session's cards under Blocked, when the\s+session is stopped on a prompt or an API error only you can clear, or when it has flagged a todo\s+for you;/,
+    "the three triggers of the row's needs-you (tab-snapshot.ts snapshotRow): the feed's column, the tab's own block, an open user todo");
   assert.match(GUIDE, /the \*\*needs you\*\* word\s+follows the feed, at most a moment behind it\./);
   assert.match(GUIDE, /Hover a row for its last message, shown without\s+its formatting;/);
+  // the dot is the tab's own state, never the feed's verdict (rowState → pip; the idle feed-filed row has none)
+  assert.match(GUIDE, /a dot for its state \(yellow working, red stopped on a\s+prompt or an API error only you can clear, amber retrying an API error on its own, teal compacting,\s+green waiting on background work, none while it is idle\)/,
+    "every pip color the sheet paints (.snap-pip.*), by the tab's own state rule (tab-state.ts), and none for idle");
+  assert.match(GUIDE, /A session that asked a question and\s+went quiet shows the word with no dot: the dot follows the session's own state, the word follows\s+the feed\./);
+  assert.doesNotMatch(GUIDE, /red needs\s+you/, "the old dot rule, a red dot for every needs-you, is gone");
+  // the way back: all three exits (render.ts setActive, the Escape listener, show-transcript)
+  assert.match(GUIDE, /The transcript comes back when you pick a session, press Escape, or click that header again while\s+its section is open and holds the tab you are reading\./);
   assert.doesNotMatch(GUIDE, /its own note of what\s+it is working on, else its current task/, "the old two-rung chain, note first, is gone");
 });

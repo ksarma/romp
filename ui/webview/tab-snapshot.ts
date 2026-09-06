@@ -121,12 +121,24 @@ export function lastActivity(s: SnapSessionLike): number | null {
   return s.status?.sinceEpoch ? Math.floor(s.status.sinceEpoch / 1000) : null;
 }
 
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", apos: "'", nbsp: " " };
+
 /** A markdown message as plain words on one line, for a title attribute (a native tooltip renders text,
- *  so the source's markers would show as typed): fence lines go, each remaining line loses its block and
- *  inline markers (docreview.ts stripInline, the file viewer's rule), then the lines join with spaces. */
+ *  so the source's markers would show as typed): HTML comments go whole, fence lines go, each remaining
+ *  line loses its block and inline markers (docreview.ts stripInline, the file viewer's rule), the lines
+ *  join with spaces, and the join loses what the viewer keeps on purpose and the transcript never shows
+ *  as typed (review r2 2026-09-06): HTML tags (the chat renders a reply through marked and DOMPurify, so
+ *  <details>, <summary>, <br>, <b> paint as structure, never as text; each becomes a space), the entities
+ *  that stand for a character once the tags are gone (&amp; &lt; &gt; &quot; &#39; &nbsp;), and underscore
+ *  emphasis at word edges (_x_, __x__). snake_case keeps its underscores, as in the viewer; code spans are
+ *  not parsed, so a tag typed inside backticks goes with the rest. */
 export function plainText(md: string, max: number): string {
-  const lines = md.replace(/\r\n?/g, "\n").split("\n").filter((l) => !/^\s*(```|~~~)/.test(l));
-  return oneLine(lines.map(stripInline).join(" "), max);
+  const lines = md.replace(/<!--[\s\S]*?-->/g, " ").replace(/\r\n?/g, "\n").split("\n").filter((l) => !/^\s*(```|~~~)/.test(l));
+  const joined = lines.map(stripInline).join(" ")
+    .replace(/<\/?[A-Za-z][^<>]*>/g, " ")
+    .replace(/&(amp|lt|gt|quot|#39|apos|nbsp);/g, (_, e: string) => ENTITIES[e])
+    .replace(/(^|[^\w])_{1,2}([^_\s](?:[^_]*?[^_\s])?)_{1,2}(?=[^\w]|$)/g, "$1$2");
+  return oneLine(joined, max);
 }
 
 /** The last assistant message in the tail, one line of plain text, for the hover. */
@@ -157,9 +169,12 @@ export function rowState(st: SnapStatusLike | null | undefined): { pip: SnapPip;
 }
 
 /** The state word for a session the feed files under needs-you while the tab's own rule sees nothing (an
- *  idle session that asked a question and stopped, the common case): the feed's word, so the two panes
- *  agree on the one word the repo defines strictly. */
-export const FEED_BLOCK_STATE = "needs you — stopped until you answer";
+ *  idle session that asked a question and stopped, the common case): the feed's own word for that column
+ *  (feed.ts marks such a goal "needs you"), the one the repo defines strictly, and nothing more. The column
+ *  also holds cards that stop nothing (a peer's held message waiting for your approval, a session idle on
+ *  the todos it flagged for you), so a claim like "stopped until you answer" was false for some rows the
+ *  word reached (review r2 2026-09-06); "needs you" is true of every card there. */
+export const FEED_BLOCK_STATE = "needs you";
 
 export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, lg: SnapLedgerLike | null | undefined): SnapRow {
   const st = rowState(s?.status);
@@ -217,11 +232,16 @@ export function snapshotHeading(name: string, n: number): { count: string; label
   return { count, label: `${name}: ${count}; click one to open it` };
 }
 
-/** A row's spoken label (name, state, what it needs, what it is doing, its own note) and its hover title. */
+/** A row's spoken label (name, needs you, state, what it needs, what it is doing, its own note) and its
+ *  hover title. NEEDS YOU is spoken whenever the row wears it (review r2 2026-09-06): the tab's own state
+ *  words carry it in their text; every other state word (working, closed, compacting, a todo on an idle
+ *  row) gets the word in front of it, where the painted chip sits beside the pip. The button's aria-label
+ *  replaces its content for a reader, so a word only the chip carried was never spoken. */
 export function rowWords(r: SnapRow): { label: string; title: string } {
   const parts = [r.name];
-  if (r.loading) parts.push("opening");
-  else if (r.state) parts.push(r.state);
+  const stateWord = r.loading ? "opening" : r.state;
+  if (r.needsYou && !stateWord.startsWith(FEED_BLOCK_STATE)) parts.push(FEED_BLOCK_STATE);
+  if (stateWord) parts.push(stateWord);
   if (r.todos) parts.push(`${r.todos} thing${r.todos === 1 ? "" : "s"} it needs from you`);
   if (r.now) parts.push(r.now);
   if (r.note) parts.push(`its note: ${r.note}`);
