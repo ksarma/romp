@@ -165,6 +165,8 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # voice like the edit trace, for one change and for several
             "reject trace": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 2),
             "reject trace (one change)": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 1),
+            # the count-less form: the host wrote the file and died before saying which ids landed
+            "reject trace (count unknown)": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", None),
             # the compaction suggestion (the user 2026-08-30): idle + a lot of context → the person
             # suggests a /compact at a natural boundary; /compact is a CLI feature the session
             # already knows, and the thresholds behind the timing are never mentioned
@@ -330,6 +332,7 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                         "debt reminder (question)", "debt reminder (handoff)",
                         "debt reminder (several)", "comment thread opener", "user-todo answer",
                         "user-todo context block", "edit trace", "reject trace", "reject trace (one change)",
+                        "reject trace (count unknown)",
                         "comment-thread merge", "compaction suggestion",
                         "file comments message", "file comments message (untracked, several)",
                         "file comments message (image)", "file comments message (decisions only)"):
