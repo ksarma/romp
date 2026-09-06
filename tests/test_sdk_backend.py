@@ -3322,6 +3322,45 @@ class SpendRecord(unittest.TestCase):
         self.assertAlmostEqual(self._day()["usd"], 0.7)
         self.assertEqual(self._day()["tokIn"], 600)
 
+    def test_an_init_that_lands_a_new_fsid_and_corrects_the_cwd_re_seeds_from_the_file_the_cli_loaded(self):
+        """One init can both land a NEW fsid (a born-as-a-fork copy, or the CLI's adoption gate turning a
+        plain resume into a fork under a fresh id; a --resume-session-at rewind is an in-place branch on
+        the same fsid and never flips it) and correct the cwd. The flip moves resume_sid to the file the
+        CLI will WRITE, which holds no record yet; a CLI that restores its counters took them from the
+        file it LOADED, the old fsid's. The re-seed must read that one (2026-09-06: it read the new fsid's
+        and left a 12.5 seed at zero, so a restoring CLI's first result would have folded whole)."""
+        import asyncio
+        class _Sys:
+            def __init__(self, data): self.subtype = "init"; self.data = data
+        new_fsid = "33333333-4444-5555-6666-ffffffffffff"
+        mu = {"m": {"inputTokens": 1000, "outputTokens": 200}}
+        s = self._resumed_session([self._cost_state(12.5, mu)])     # the OLD fsid's record, under self.d
+        sb.write_reg(self.d, s.sid, {"sid": s.sid, "name": "n", "cwd": self.d, "alive": True, "lastSid": self._FSID})
+        s.cwd = tempfile.mkdtemp()                                   # the registry's variant: no transcript
+        s._seed_spend_watermarks()
+        self.assertEqual(s._last_cost_total, 0.0, "nothing under the variant")
+        async def init(cwd, fsid):
+            s._on_message(_Sys({"cwd": cwd, "session_id": fsid}), _AssistantMessage, _ResultMessage, _Sys)
+            await asyncio.sleep(0)
+        asyncio.run(init(self.d, new_fsid))
+        self.assertEqual((s.cwd, s.resume_sid), (self.d, new_fsid), "cwd adopted, fsid flipped")
+        self.assertEqual(sb.read_reg(self.d, s.sid)["lastSid"], new_fsid)
+        self.assertEqual(s._last_cost_total, 12.5, "re-seeded from the OLD fsid's file under the CLI's cwd")
+        self.assertEqual(s._last_usage_totals["input_tokens"], 1000)
+        self._feed(s, self._result(13.0, model_usage={"m": {"inputTokens": 1500, "outputTokens": 260}}))
+        self.assertAlmostEqual(self._day()["usd"], 0.5, msg="the restoring CLI's first result folds only this turn")
+        self.assertEqual(self._day()["tokIn"], 500)
+        # a flip WITHOUT a cwd correction re-seeds nothing: the connect-time seed read the loaded file already
+        s2 = self._resumed_session([self._cost_state(4.0, mu)], sid="11111111-2222-3333-4444-abababababab")
+        sb.write_reg(self.d, s2.sid, {"sid": s2.sid, "name": "n2", "cwd": self.d, "alive": True, "lastSid": self._FSID})
+        s2._seed_spend_watermarks()
+        self.assertEqual(s2._last_cost_total, 4.0)
+        async def init2():                                            # flips only the fsid; the cwd already matches
+            s2._on_message(_Sys({"cwd": self.d, "session_id": new_fsid}), _AssistantMessage, _ResultMessage, _Sys)
+            await asyncio.sleep(0)
+        asyncio.run(init2())
+        self.assertEqual((s2.resume_sid, s2._last_cost_total), (new_fsid, 4.0), "flipped, seed kept")
+
 
 class RewindFiles(unittest.TestCase):
     """The bubble's restore-files affordance rides the SDK's designed rewind_files control request (the

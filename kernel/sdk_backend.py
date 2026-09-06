@@ -532,7 +532,9 @@ def last_cost_state(path):
     carry the whole session's history in total_cost_usd, and watermarks reset to zero would fold that
     history as one turn's spend; seeding from the same file the CLI reads makes the first delta this
     turn's work. The seed reads transcript_path(cwd, resume_sid), and re-reads it when init corrects
-    the cwd (the CLI's own string keys its transcript path), so the two sides open the same file.
+    the cwd (the CLI's own string keys its transcript path) — with the sid the CLI LOADED when that init
+    also landed a new fsid (a fork landing moves resume_sid to the file the CLI will write) — so the two
+    sides open the same file.
 
     Scans BACKWARDS in chunks and stops at the first hit, so a transcript that carries the record
     (near its tail: the writer appends it at /clear, not per turn) costs a chunk or two, and one that
@@ -5076,7 +5078,7 @@ class SdkSession:
             if _lg:
                 _lg("api-health: give-up ingest failed: %s" % e)
 
-    def _seed_spend_watermarks(self):
+    def _seed_spend_watermarks(self, resume_sid=None):
         """Reset the spend watermarks for the CLI process a connect just started. Zero for a fresh
         process — or, when the resumed transcript carries a `cost-state` record, the counters that
         record holds, because a CLI that restores them reports its first total_cost_usd as the whole
@@ -5084,13 +5086,18 @@ class SdkSession:
         romp resume reads zero today). Arms the first-result check either way. Called at connect, and
         again from the init handler when the CLI's cwd corrects the registry's before any result has
         settled — the transcript path is keyed on the cwd, so that is when the seed can have read the
-        wrong file."""
+        wrong file. `resume_sid` names the transcript the CLI LOADED when that differs from
+        self.resume_sid: the init that corrects the cwd may in the same message have landed a new fsid
+        (a born-as-a-fork copy, or the CLI's adoption gate turning a plain resume into a fork under a
+        fresh id), and the file a restoring CLI took its counters from is the OLD one — the new fsid's
+        file has no record yet (2026-09-06; the fix's test double showed a 12.5 seed landing at zero)."""
         self._last_cost_total = 0.0   # a fresh CLI process starts its cumulative cost at zero
         self._last_usage_totals = {}  # …and its cumulative token counters
         self._spend_first_result = True
-        if not self.resume_sid:
+        sid = resume_sid or self.resume_sid
+        if not sid:
             return
-        cs = last_cost_state(transcript_path(self.cwd, self.resume_sid))
+        cs = last_cost_state(transcript_path(self.cwd, sid))
         if not cs:
             return
         self._last_cost_total = cs["total"]
@@ -5127,6 +5134,8 @@ class SdkSession:
             # rail's /usage bars — see _note_auth_source.
             self.backend._note_auth_source(self, d.get("apiKeySource"))
             fsid = d.get("session_id")
+            loaded_sid = self.resume_sid   # the transcript the CLI LOADED — a flip below moves resume_sid to
+            #                                the fsid it will WRITE, and the spend re-seed wants the former
             if fsid and fsid != self.resume_sid:
                 old = self.resume_sid
                 self.resume_sid = fsid
@@ -5167,7 +5176,10 @@ class SdkSession:
                     # so re-seed from the file the CLI opened — a registry variant that holds no transcript
                     # left the seed at zero for a file that carries a record, or the reverse. Never after
                     # a settle: resetting the watermarks mid-process would fold the counters whole again.
-                    self._seed_spend_watermarks()
+                    # The file the CLI opened is the PRE-flip sid's: when this same init also landed a new
+                    # fsid (a fork landing), resume_sid now names the file the CLI will write, which holds
+                    # no record — seeding from it read zero for a loaded file that carried one (2026-09-06).
+                    self._seed_spend_watermarks(resume_sid=loaded_sid)
             self.backend._poke()   # publish the model + permission-mode from init promptly: the snapshot reads
                                    # self.model, but with no poke the new model would wait out the 3s producer
                                    # backstop. NB: this init branch fires only once the FIRST turn arrives — the
