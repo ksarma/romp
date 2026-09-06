@@ -1296,3 +1296,21 @@ test("deletionLabel and the inline styles: the cap, the ellipsis, line endings a
   assert.equal(marks[0].getAttribute("style"), "color: rgb(1, 2, 3);", "the unsafe value is dropped, the sound one kept");
   assert.equal(marks[1].getAttribute("style"), "--fc-author: #abc;");
 });
+
+test("unpaintChanges walks elements only: a text node's children are never read (the panel tests' stand-in gives a Text none)", () => {
+  const source = fixture("handlers-crlf.py");
+  const { code } = buildRaw(source, "handlers-crlf.py");
+  const { changes } = crlfChanges(source);
+  const before = serialize(code);
+  const painted = paintChangesRaw(El(code), source, changes, stylesFor);
+  assert.ok(painted.length > 0);
+  // after painting, every text node under the body loses its childNodes, as a Text in a DOM stand-in may never have had one
+  const strip = (n: FakeNode) => {
+    if (n.nodeType === 3) { (n as unknown as { childNodes: unknown }).childNodes = undefined; return; }
+    for (const c of n.childNodes) strip(c);
+  };
+  strip(code);
+  unpaintChanges(El(code));
+  assert.equal(serialize(code), before, "every mark unwrapped, the text joined back, nothing thrown");
+  assert.ok(!/fc-(ins|del)/.test(serialize(code)));
+});

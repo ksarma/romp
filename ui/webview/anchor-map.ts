@@ -1186,6 +1186,7 @@ function mergeText(p: DElement): void {
 export function unpaintChanges(root: Element): void {
   const marks: DElement[] = [];
   const visit = (n: DNode) => {
+    if (isText(n)) return;   // a text node has no children (and a test stand-in may give it no childNodes at all)
     if (isElement(n) && (hasClass(n, "fc-ins") || hasClass(n, "fc-del"))) marks.push(n);
     for (let i = 0; i < n.childNodes.length; i++) visit(n.childNodes[i]);
   };
