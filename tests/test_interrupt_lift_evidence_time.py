@@ -195,10 +195,10 @@ class TheNudgeIsNotHeldByTheLift(unittest.TestCase):
                       "(and the sweep pops it on the turn's own end) — no silent card since 2026-08-13")
 
 
-class EndToEndThroughTheTick(unittest.TestCase):
-    """Through the parse: a genuine stop blocks the focus goal, the user's next message lifts it — and
-    the closer's verdict about THAT message's turn puts the card back in needs-you, where the six-minute
-    silent Working card should have been."""
+class _TickFixture(unittest.TestCase):
+    """The shared world for the tick tests: a hermetic state root, one session whose transcript ends in
+    a user interrupt, its focus goal in Working, and the re-engagement append. No tests of its own: the
+    concrete classes below derive from it, so each test is collected once."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -246,6 +246,12 @@ class EndToEndThroughTheTick(unittest.TestCase):
                                      "a2", "u3", "end_turn")) + "\n")
         km._parse_cache.clear()
 
+
+class EndToEndThroughTheTick(_TickFixture):
+    """Through the parse: a genuine stop blocks the focus goal, the user's next message lifts it — and
+    the closer's verdict about THAT message's turn puts the card back in needs-you, where the six-minute
+    silent Working card should have been."""
+
     def test_the_lift_records_the_reengagement_turns_trigger(self):
         km._interrupt_block_tick(NOW, self.tmux)
         self.assertEqual(jd.load_goals(SID)["status"][GID], "blocked")
@@ -287,7 +293,7 @@ class EndToEndThroughTheTick(unittest.TestCase):
                          "a restart-cut session that comes back and asks a question still reaches the user")
 
 
-class TheTickPushesNothingInline(EndToEndThroughTheTick):
+class TheTickPushesNothingInline(_TickFixture):
     """perf batch 2 P1 (2026-09-06): the tick's flips reach the feed through the writers' own dirty mark
     and pusher wake — the next cycle's rebuild — never through an inline _push_all on the tick. The
     stand-down lift (a marker whose block a judge now owns) writes nothing and so moves nothing.

@@ -8131,10 +8131,10 @@ def _interrupt_block_tick(now, tmux):
 
     No inline push (perf batch 2 P1, 2026-09-06): both writers end in _mark_views_dirty(), which
     stamps the dirty mark and sets _pusher_wake, so the next cycle's own _push_all rebuilds past the
-    mark — the same rebuild the inline call paid here, moved one cycle start later (the jobs after
-    this tick, about 3% of the pusher's GIL, plus the next cycle's liveness read: sub-second). The
-    inline call bought no earlier rebuild, only a second push's fixed cost, and on the stand-down
-    path below (a marker whose block a judge now owns) it pushed with nothing new to show."""
+    mark. The inline call spared no rebuild (the next cycle's dirty-forced build is the same one); it
+    delivered the flip one cycle tail earlier (the jobs after this tick, about 3% of the pusher's GIL,
+    plus the next cycle's liveness read: sub-second) at a second push's fixed cost, and on the
+    stand-down path below (a marker whose block a judge now owns) it pushed with nothing new to show."""
     alive = _alive_sessions(now, tmux)
     for s in alive:
         sid = s["sid"]
