@@ -273,15 +273,30 @@ const withStore = (comments: StoreComment[], path = "docs/figure.png"): Partial<
 
 // ── the harness ────────────────────────────────────────────────────────────────────────────────────
 type Posted = Record<string, any>;
-/** A mounted panel over a media body (`kind: "media"`: `.fileview-imgbox > img.fileview-img`) or a rendered-markdown
- *  body (`html` + `src`), inside the viewer's body row. */
-async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "rendered"; html?: string; src?: string; imgSrc?: string } = {}) {
+// the PDF's pages (Slice 4): two US-letter pages drawn at 306×396 CSS px (the 612×792 backing store at half size),
+// stacked 20px apart from (100, 200); a drag from (150, 240) to (250, 300) over page 1 is REGION again
+const PAGE_RECTS = [rectOf(100, 200, 306, 396), rectOf(100, 616, 306, 396)];
+const PDF = "/repo/notes-api/docs/deck.pdf";
+/** A mounted panel over a media body (`kind: "media"`: `.fileview-imgbox > img.fileview-img`; `kind: "pdf"`: the chunk's
+ *  `.fileview-pdfhost > .fileview-pdf > .fileview-pdf-page[data-page] > canvas.fileview-pdf-canvas`, two pages) or a
+ *  rendered-markdown body (`html` + `src`), inside the viewer's body row. */
+async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "pdf" | "rendered"; html?: string; src?: string; imgSrc?: string } = {}) {
   const fc = await import("./file-comments");
   const { kind = "media", html, src, imgSrc, ...ctxOver } = over;
   const main = doc.createElement("div"); main.className = "fileview-main";
   const body = doc.createElement("div"); body.className = "fileview-body"; main.appendChild(body);
   let media: E | null = null;
-  if (kind === "media") {
+  let pages: E[] = [];
+  if (kind === "pdf") {
+    const host = doc.createElement("div"); host.className = "fileview-pdfhost";
+    media = doc.createElement("div"); media.className = "fileview-pdf";
+    PAGE_RECTS.forEach((rect, i) => {
+      const w = doc.createElement("div"); w.className = "fileview-pdf-page"; w.dataset.page = String(i + 1); w.style.position = "relative"; w.rect = rect;
+      const c = doc.createElement("canvas"); c.className = "fileview-pdf-canvas"; c.dataset.page = String(i + 1); c.rect = rect; c.width = 612; c.height = 792;
+      w.appendChild(c); media!.appendChild(w); pages.push(w);
+    });
+    host.appendChild(media); body.appendChild(host);
+  } else if (kind === "media") {
     const box = doc.createElement("div"); box.className = "fileview-imgbox";
     media = doc.createElement("img"); media.className = "fileview-img"; media.setAttribute("src", imgSrc || "blob:romp/figure");
     media.rect = IMG_RECT; media.naturalWidth = 600; media.naturalHeight = 400; media.complete = true;
@@ -298,13 +313,14 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "re
   let aside: E | null = null;
   const noop = () => { /* inert */ };
   const ctx: FileViewActionCtx = {
-    path: kind === "media" ? PNG : MD, sid: SID, todoId: null,
+    path: kind === "media" ? PNG : kind === "pdf" ? PDF : MD, sid: SID, todoId: null,
     body: () => body as unknown as HTMLElement,
-    mode: () => (kind === "media" ? "media" : "rendered"),
-    text: () => (kind === "media" ? null : src === undefined ? null : src),
+    mode: () => (kind === "rendered" ? "rendered" : "media"),
+    text: () => (kind === "rendered" && src !== undefined ? src : null),
     mtimeNs: () => "1757145600000000001",
-    media: () => (kind === "media" ? "image" : null),
+    media: () => (kind === "media" ? "image" : kind === "pdf" ? "pdf" : null),
     mediaElement: () => media as unknown as HTMLElement | null, renderedImages: () => [],
+    pdfPages: () => pages as unknown as HTMLElement[],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { rendered.push(cb); }, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
     post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop,
@@ -316,9 +332,11 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "re
   const button = unit.childNodes[0] as E;
   const last = (): Posted => posted[posted.length - 1];
   const reply = async (data: Record<string, unknown>) => { win.dispatchEvent(new MessageEvent("message", { data })); await tick(); await tick(); };
-  const status = kind === "media" ? pngStatus : (o: Partial<Status> = {}) => pngStatus({ storePath: "/repo/notes-api/.trackchanges/docs%2Freport.md.json", fileHash: undefined, ...o });
+  const status = kind === "media" ? pngStatus
+    : kind === "pdf" ? (o: Partial<Status> = {}) => pngStatus({ storePath: "/repo/notes-api/.trackchanges/docs%2Fdeck.pdf.json", ...o })
+    : (o: Partial<Status> = {}) => pngStatus({ storePath: "/repo/notes-api/.trackchanges/docs%2Freport.md.json", fileHash: undefined, ...o });
   return {
-    fc, main, body, unit, button, posted, modes, saved, rendered, last, media,
+    fc, main, body, unit, button, posted, modes, saved, rendered, last, media, pages,
     ok: (o: Partial<Status> = {}) => reply({ type: "fileCommentsResult", reqId: last().reqId, ...status(o) }),
     refuse: (code: string, error: string) => reply({ type: "fileCommentsFailed", reqId: last().reqId, verb: last().verb, code, error }),
     q: (sel: string) => main.querySelector(sel),
@@ -672,6 +690,112 @@ test("Re-place on an embedded figure refuses a drag on another figure: the ancho
   h.dispose();
 });
 
+// ── a PDF's pages (Slice 4; contract F4) ───────────────────────────────────────────────────────────
+const pageComment = (page: number, over: Partial<StoreComment> = {}, target: Record<string, unknown> = {}): StoreComment =>
+  regionComment({ body: "Crop the header.", ...over }, { kind: "pdf", page, ...target });
+
+test("a PDF: one overlay per page in the chunk's own wrapper (no span, the canvas stays put); a drag on page 2 sends target {kind pdf, page 2, region}; the card names the page and crops it from the page's canvas; stale follows fileHash", async () => {
+  drawn.length = 0;
+  const h = await harness({ kind: "pdf" });
+  await h.ok();
+  assert.equal(h.qa(".fc-imgwrap").length, 0, "a page's wrapper is already positioned: nothing is wrapped");
+  const overlays = h.qa(".fileview-pdf-page .fc-overlay");
+  assert.equal(overlays.length, 2, "one overlay per page");
+  for (const [i, pg] of h.pages.entries()) {
+    assert.equal(pg.childNodes[0], pg.querySelector("canvas"), "the canvas is still the wrapper's first child");
+    assert.equal(pg.childNodes[1], overlays[i], "the overlay joins it inside the wrapper");
+    assert.equal(overlays[i].getAttribute("style"), null, "the canvas fills its wrapper: the sheet's inset: 0 places the overlay");
+  }
+  await h.open();
+  assert.equal(overlays[1].getAttribute("aria-label"), "Drag to comment on a region of the page");
+  assert.equal(h.q(".fc-empty")!.textContent, "No comments yet. Drag a rectangle on a page, or comment on this file.");
+  // the drag on page 2: (150, 656)→(250, 716) over its 306×396 box at (100, 616)
+  h.drag(overlays[1], [150, 656], [250, 716]);
+  assert.equal(h.q(".fc-composer")!.hidden, false);
+  assert.equal(h.q(".fc-composer-ref .fc-note")!.textContent, "On the region at 0.16, 0.10, 0.33, 0.15 of page 2", "the page named (E7)");
+  const crop = h.q(".fc-composer-ref canvas.fc-crop")!;
+  assert.ok(crop, "the crop, cut from the page's canvas");
+  assert.equal(crop.getAttribute("aria-label"), "the region at 0.16, 0.10, 0.33, 0.15 of the page");
+  assert.equal(drawn[drawn.length - 1][0], h.pages[1].querySelector("canvas"), "drawn from page 2's canvas");
+  assert.deepEqual(drawn[drawn.length - 1].slice(1, 5), [100, 80, 200, 120], "the source rectangle in the canvas's own pixels (612×792)");
+  assert.ok(overlays[1].querySelector(".fc-region-pending"), "the pending region on page 2");
+  assert.equal(overlays[0].querySelector(".fc-region-pending"), null, "and not on page 1");
+  h.input().value = "Crop the header.";
+  h.input().dispatch("keydown", { key: "Enter" });
+  await tick();
+  const c = h.last();
+  assert.equal(c.verb, "comment");
+  const R2 = { x: 0.1634, y: 0.101, w: 0.3268, h: 0.1515 };
+  assert.deepEqual(c.args, { note: "Crop the header.", target: { kind: "pdf", region: R2, page: 2 } }, "kind pdf, the 1-based page, no src, no hash (the host stamps it)");
+  await h.ok(withStore([pageComment(2, {}, { region: R2 })], "docs/deck.pdf"));
+  assert.equal(h.q(".fc-composer")!.hidden, true);
+  const rect = overlays[1].querySelector('.fc-region[data-act="fcopen"][data-id="' + T0 + '-0"]')!;
+  assert.ok(rect, "the rectangle on page 2");
+  assert.equal(overlays[0].querySelector(".fc-region"), null, "nothing on page 1");
+  assert.equal(styleOf(rect), "left: 16.34%; top: 10.10%; width: 32.68%; height: 15.15%;", "percentages of the page: right at any width");
+  const card = h.q('.fc-card[data-id="' + T0 + '-0"]')!;
+  assert.equal(card.querySelector(".fc-ref")!.textContent, "the region at 0.16, 0.10, 0.33, 0.15 of page 2");
+  assert.equal(card.querySelector(".fc-ref")!.getAttribute("data-act"), "fcgoto", "the reference scrolls to the rectangle");
+  assert.equal(card.querySelector(".fc-tag"), null, "hash h1 stored, h1 current");
+  h.click('.fc-card[data-id="' + T0 + '-0"] .fc-card-head');
+  const open = h.q('.fc-card.open[data-id="' + T0 + '-0"]')!;
+  assert.ok(open.querySelector("canvas.fc-crop"), "the open card shows the page crop");
+  assert.ok(open.querySelector('[data-act="fcreplace"]'), "and offers Re-place");
+  // the PDF regenerated: the file's hash moves, the region reads stale in the PDF's words
+  await h.restatus({ ...withStore([pageComment(2, {}, { region: R2 })], "docs/deck.pdf"), fileHash: H2 });
+  const stale = overlays[1].querySelector('.fc-region[data-id="' + T0 + '-0"]')!;
+  assert.equal(stale.classList.contains("fc-stale"), true);
+  assert.match(stale.title, /the PDF changed after it was drawn/);
+  const tag = h.q('.fc-card[data-id="' + T0 + '-0"] .fc-card-head .fc-tag')!;
+  assert.equal(tag.textContent, "stale");
+  assert.match(tag.title, /^The PDF changed after this region was drawn/);
+  // Re-place may land on another page: the drag on page 1 sends retarget with page 1
+  h.click('.fc-card.open [data-act="fcreplace"]');
+  assert.match(h.q(".fc-composer-ref .fc-note")!.textContent, /^Drag the comment's new place on a page \(now the region at 0\.16, 0\.10, 0\.33, 0\.15 of page 2\)\./);
+  assert.equal(overlays[1].classList.contains("fc-replacing"), true, "the cue on the comment's own page");
+  h.drag(overlays[0], [150, 240], [250, 300]);
+  await tick();
+  assert.equal(h.last().verb, "retarget");
+  assert.deepEqual(h.last().args, { commentId: T0 + "-0", target: { kind: "pdf", region: { x: 0.1634, y: 0.101, w: 0.3268, h: 0.1515 }, page: 1 } });
+  const moved = pageComment(1, {}, { region: R2, hash: H2 });
+  await h.ok({ ...withStore([moved], "docs/deck.pdf"), fileHash: H2 });
+  assert.ok(overlays[0].querySelector('.fc-region[data-id="' + T0 + '-0"]'), "the rectangle moved to page 1");
+  assert.equal(overlays[1].querySelector(".fc-region"), null);
+  assert.equal(h.q('.fc-card[data-id="' + T0 + '-0"] .fc-ref')!.textContent, "the region at 0.16, 0.10, 0.33, 0.15 of page 1");
+  // an evicted page (the chunk gave its bitmap back: a 0×0 canvas) has no crop, and the overlay measures the wrapper
+  (h.pages[0].querySelector("canvas") as E).width = 0; (h.pages[0].querySelector("canvas") as E).height = 0;
+  drawn.length = 0;
+  await h.restatus({ ...withStore([moved], "docs/deck.pdf"), fileHash: H2 });
+  h.click('.fc-card[data-id="' + T0 + '-0"] .fc-card-head');
+  assert.equal(h.q('.fc-card.open[data-id="' + T0 + '-0"] canvas.fc-crop'), null, "no picture to crop until the page is drawn again");
+  assert.equal(drawn.length, 0);
+  h.dispose();
+  assert.equal(h.qa(".fc-overlay").length, 0, "closing the viewer takes the overlays down");
+  for (const pg of h.pages) assert.equal(pg.childNodes.length, 1, "…and leaves each page's canvas where the chunk put it");
+});
+
+test("a PDF on a coarse pointer: the page overlays take no drag, the rectangles still open their cards, and the empty state names no gesture", async () => {
+  coarse = true;
+  try {
+    drawn.length = 0;
+    const h = await harness({ kind: "pdf" });
+    const c = pageComment(1);
+    await h.ok(withStore([c], "docs/deck.pdf"));
+    await h.open(withStore([c], "docs/deck.pdf"));
+    const overlays = h.qa(".fileview-pdf-page .fc-overlay");
+    assert.equal(overlays.length, 2);
+    assert.ok(overlays.every((o) => o.classList.contains("fc-overlay-off")));
+    const before = h.posted.length;
+    h.drag(overlays[0], [150, 240], [250, 300]);
+    assert.equal(h.q(".fc-composer")!.hidden, true);
+    assert.equal(h.posted.length, before);
+    h.click(".fc-region");
+    assert.ok(h.q('.fc-card.open[data-id="' + T0 + '-0"]'), "the rectangle opens its card");
+    assert.equal(h.q('.fc-card.open [data-act="fcreplace"]'), null, "no Re-place where nothing can be drawn");
+    h.dispose();
+  } finally { coarse = null; }
+});
+
 // ── the embed matcher, pure ────────────────────────────────────────────────────────────────────────
 
 test("srcIsEmbed: the authored dest, its percent-encoded twin, or the /file rewrite against the file's directory", async () => {
@@ -727,8 +851,15 @@ test("source pins: the overlay's wiring (data-act names, the coarse gate, the se
   assert.match(OVL, /o\.addEventListener\("click", \(ev: Event\) => \{ if \(this\.drew\) \{ this\.drew = false; ev\.stopPropagation\(\); ev\.preventDefault\(\); \} \}\);/);
   // the panel: the Re-place act, retarget with the comment's src, the composer's target path with the embed anchor
   assert.match(SRC, /fcreplace: \(x, ev\) => \{ ev\.stopPropagation\(\); this\.startReplace\(x\.dataset\.id!\); \}/);
-  assert.match(SRC, /void this\.mutate\("retarget", \{ commentId: c\.commentId, target: regionTarget\(region, c\.src\) \}, "card:" \+ c\.commentId\);/);
-  assert.match(SRC, /const args: Record<string, unknown> = \{ note, target: regionTarget\(c\.region, c\.src\) \};\n\s*if \(c\.range && c\.text !== undefined\) \{ args\.anchor = makeAnchor\(c\.text, c\.range\); args\.hintOffset = c\.range\.start; \}/);
+  assert.match(SRC, /void this\.mutate\("retarget", \{ commentId: c\.commentId, target: regionTarget\(region, c\.src, page\) \}, "card:" \+ c\.commentId\);/);
+  assert.match(SRC, /const args: Record<string, unknown> = \{ note, target: regionTarget\(c\.region, c\.src, c\.page\) \};\n\s*if \(c\.range && c\.text !== undefined\) \{ args\.anchor = makeAnchor\(c\.text, c\.range\); args\.hintOffset = c\.range\.start; \}/);
+  // a PDF page (Slice 4): the page from the canvas's data-page, the layer anchored in the chunk's positioned wrapper,
+  // the pages read from the seam's pdfPages before any <img>, and a re-place free to land on another page
+  assert.match(SRC, /const page = pageOf\(img\);/);
+  assert.match(SRC, /\}, isCanvas\(img\) \? img\.parentElement : null\);/);
+  assert.match(SRC, /const pages = this\.ctx\.pdfPages\(\);\n\s*if \(pages\.length\) return pages\.map\(\(pg\) => pg\.querySelector\("canvas\.fileview-pdf-canvas"\)\)/);
+  assert.match(SRC, /if \(page === null && own !== img\) \{/);
+  assert.match(OVL, /if \(!this\.owned\) \{ this\.overlay\.remove\(\); return; \}/, "an anchor the layer was given keeps its picture on dispose");
   assert.match(SRC, /const e = root && t !== null \? embedFor\(img, root, t, this\.ctx\.path\) : null;/, "the embed found the way the picture click finds it");
   // every rectangle is registered as the panel's own, so the delegate routes its click
   assert.match(SRC, /for \(const r of layer\.paint\(per\.get\(img\) \|\| \[\], pending, replacing\)\) this\.marks\.add\(r\);/);

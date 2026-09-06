@@ -16,8 +16,9 @@
 //     deletions struck at their point in Raw — through anchor-map's change painters (contract D4), and a
 //     click on a mark opens its card. Accept and Reject fence on the sidecar's mtime; Reject, which rewrites
 //     the file, also fences on the file's mtime and then reloads the view, since the bytes changed under it.
-//   • A region on an image (Slice 3) is a comment too: the overlays file-comments-regions.ts puts over the media
-//     body's picture and over every figure in rendered markdown take a drag and paint each region comment as a
+//   • A region on an image (Slice 3) or on a PDF page (Slice 4) is a comment too: the overlays file-comments-regions.ts
+//     puts over the media body's picture, over every figure in rendered markdown, and over each page the PDF chunk
+//     draws (one per page, the region's `page` from the canvas's data-page) take a drag and paint each region comment as a
 //     rectangle placed by percentages, dashed once the image's bytes changed under it (the host's hash against
 //     the stored one). The card shows the region cut from the picture and offers Re-place, which retargets the
 //     comment to the next region drawn. Desktop only; a coarse pointer reads and comments on the whole file.
@@ -57,7 +58,7 @@ import {
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   regionTarget, regionState, type PollBaseline,
 } from "./file-comments-model";
-import { RegionLayer, cropThumb, isCoarsePointer, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5)
+import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
 import { regionDesc, type Region } from "./region-geometry";
 
 const POLL_MS = 2500;
@@ -295,12 +296,21 @@ type Composer =
   | { kind: "change"; changeId: string; ref: string }   // a comment bound to a change (comment {suggestionId, note})
   // a region drawn on a picture (Slice 3): `img` is the picture (re-found after a repaint), `src` and `range` the
   // embed's dest and source range for a figure in rendered markdown (null for a standalone image), `text` the
-  // source the range indexes; `refusal` when the figure's embed line could not be found (nothing to anchor to)
-  | { kind: "region"; img: HTMLImageElement; region: Region; src: string | null; range: SourceRange | null; text?: string; refusal: string | null }
-  // Re-place: the next region drawn on the comment's picture becomes its target (retarget, E3); no words
-  | { kind: "replace"; commentId: string; ref: string; src: string | null };
+  // source the range indexes; `refusal` when the figure's embed line could not be found (nothing to anchor to);
+  // `page` the 1-based page when the picture is a PDF page's canvas (Slice 4), null otherwise
+  | { kind: "region"; img: Pictured; region: Region; page: number | null; src: string | null; range: SourceRange | null; text?: string; refusal: string | null }
+  // Re-place: the next region drawn on the comment's picture becomes its target (retarget, E3); no words. `page`
+  // is the comment's current page for a PDF region (the new place may be on any page)
+  | { kind: "replace"; commentId: string; ref: string; src: string | null; page: number | null };
 /** Why a region on a figure cannot be saved: the anchor is the embed line, and the source holds none for this picture. */
 const EMBED_NOT_FOUND = "the line that embeds this image was not found in the source, so a region on it cannot be saved";
+/** The PDF page a picture is (Slice 4): the chunk stamps `data-page` (1-based) on each page's canvas; null for an <img>
+ *  or anything without a positive integer there. */
+export function pageOf(el: Element | null | undefined): number | null {
+  const raw = el && (el as HTMLElement).dataset ? (el as HTMLElement).dataset.page : undefined;
+  const n = raw === undefined || raw === null ? NaN : Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : null;
+}
 type Err = { text: string; reload: boolean; warn?: boolean };
 
 // ── the wire: ONE window listener for the module, dispatching to the live panel by reqId ───────────
@@ -374,7 +384,7 @@ class Panel {
   paintedChanges = new Set<string>();       // the change ids whose marks the current view shows; the rest get Reveal
   busyVerb = new Map<string, string>();     // slot → the verb in flight, so a card's Accept/Reject relabels itself (ui/CLAUDE.md)
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
-  regionLayers = new Map<HTMLImageElement, RegionLayer>();   // the overlays, one per picture in view (Slice 3; paintRegions)
+  regionLayers = new Map<Pictured, RegionLayer>();            // the overlays, one per picture in view — an <img>, or a PDF page's canvas (Slice 3/4; paintRegions)
   cropWait = new WeakSet<HTMLImageElement>();                 // pictures whose load will re-render the cards for their thumbnails
   resolvedOpen = false;
   trackChoice = false;                      // the on-toggle's scope row (file / folder) is showing
@@ -994,7 +1004,7 @@ class Panel {
     else if (c.kind === "region") {
       // the target in fractions of the natural size (E1), the host stamping the hash; a figure in rendered markdown
       // also carries the embed line's anchor, built over the text its range indexes as for a passage comment
-      const args: Record<string, unknown> = { note, target: regionTarget(c.region, c.src) };
+      const args: Record<string, unknown> = { note, target: regionTarget(c.region, c.src, c.page) };
       if (c.range && c.text !== undefined) { args.anchor = makeAnchor(c.text, c.range); args.hintOffset = c.range.start; }
       r = await this.mutate("comment", args, "composer");
     } else {
@@ -1139,25 +1149,31 @@ class Panel {
     if (loc.state === "located" && loc.range) { c.range = loc.range; c.text = src; }
   }
   // ── region comments (Slice 3): the overlays ─────────────────────────────────────────────────────
-  /** The pictures that take an overlay in the current view: the media body's <img> (a PDF's frame takes none
-   *  until Slice 4), or every figure in rendered markdown; none in Raw, where the embed line is the mark. */
-  private regionImages(): HTMLImageElement[] {
+  /** The pictures that take an overlay in the current view: the media body's <img>, or each page's canvas while the
+   *  PDF chunk renders the pages (the seam's pdfPages; a PDF shown as the browser's frame takes none), or every figure
+   *  in rendered markdown; none in Raw, where the embed line is the mark. */
+  private regionImages(): Pictured[] {
     const mode = this.ctx.mode();
     if (mode === "media") {
+      const pages = this.ctx.pdfPages();
+      if (pages.length) return pages.map((pg) => pg.querySelector("canvas.fileview-pdf-canvas")).filter((c): c is HTMLCanvasElement => isCanvas(c));
       const m = this.ctx.mediaElement();
       return m && typeof m.tagName === "string" && m.tagName.toUpperCase() === "IMG" ? [m as HTMLImageElement] : [];
     }
     if (mode === "rendered") { const root = this.contentRoot(); return root ? (imgsIn(root) as HTMLImageElement[]) : []; }
     return [];
   }
-  /** The picture a region comment is on, in the current view: the media body's for a standalone image; for an
-   *  embedded figure the picture its anchor's embed line renders (exact), else the one whose src is the target's
-   *  (the anchor detached, the figure still there). Null when the view shows none. */
-  private regionImageFor(c: Card): HTMLImageElement | null {
+  /** The picture a region comment is on, in the current view: the media body's for a standalone image, the canvas of
+   *  its page for a PDF region; for an embedded figure the picture its anchor's embed line renders (exact), else the
+   *  one whose src is the target's (the anchor detached, the figure still there). Null when the view shows none. */
+  private regionImageFor(c: Card): Pictured | null {
     if (!c.target) return null;
     const imgs = this.regionImages();
     if (!imgs.length) return null;
-    if (this.ctx.mode() === "media") return imgs[0];
+    if (this.ctx.mode() === "media") {
+      if (c.target.kind === "pdf") { const page = c.target.page; return imgs.find((i) => pageOf(i) === page) || null; }
+      return isCanvas(imgs[0]) ? null : imgs[0];
+    }
     const root = this.contentRoot(); const src = this.ctx.text();
     const loc = this.located.get(c.id);
     if (root && src !== null && loc && loc.range) {
@@ -1194,13 +1210,13 @@ class Panel {
     const s = this.status;
     const c = this.composer;
     if (c && c.kind === "region" && !imgs.includes(c.img)) {
-      const again = this.ctx.mode() === "media" ? imgs[0]
+      const again = this.ctx.mode() === "media" ? (c.page ? imgs.find((i) => pageOf(i) === c.page) : imgs[0])
         : c.src ? imgs.find((i) => { const x = i.getAttribute("src"); return x !== null && srcIsEmbed(x, c.src!, this.ctx.path); }) : undefined;
       if (again) c.img = again;
     }
-    const per = new Map<HTMLImageElement, RegionMark[]>();
+    const per = new Map<Pictured, RegionMark[]>();
     for (const card of this.cards()) {
-      if (card.resolved || !card.target || card.target.kind !== "image") continue;
+      if (card.resolved || !card.target || (card.target.kind !== "image" && card.target.kind !== "pdf")) continue;
       const img = this.regionImageFor(card);
       if (!img) continue;
       const chip = this.chipFor(card.author, card.authorId);
@@ -1212,10 +1228,11 @@ class Panel {
     for (const img of imgs) {
       let layer = this.regionLayers.get(img);
       if (!layer) {
+        // a page's canvas already sits in the chunk's positioned wrapper (div.fileview-pdf-page): the layer anchors there
         layer = new RegionLayer(img, {
           onDraw: (i, r) => this.onRegionDrawn(i, r), onClick: (i) => this.onImageClick(i),
           onPress: () => { this.float.hidden = true; this.imageTarget = null; },   // what hideFloatOnDown does for a mousedown the overlay cancels
-        });
+        }, isCanvas(img) ? img.parentElement : null);
         this.regionLayers.set(img, layer);
       }
       layer.setActive(active);
@@ -1235,17 +1252,19 @@ class Panel {
    *  embed line, so another figure would make the two disagree). Otherwise the composer opens on the region; a
    *  figure in rendered markdown also needs the embed line's anchor (E1), found from the picture the way the picture
    *  click finds it, and a figure the source holds no embed for is refused with the reason, the note kept. */
-  onRegionDrawn(img: HTMLImageElement, region: Region): void {
+  onRegionDrawn(img: Pictured, region: Region): void {
     const c = this.composer;
+    const page = pageOf(img);                          // a PDF page's canvas names its page; an <img> has none
     if (c && c.kind === "replace") {
       const own = this.replaceTarget(c.commentId);
-      if (own !== img) {
+      // a PDF region may be re-placed on any page (the page rides in the new target); a figure's must stay on its own picture
+      if (page === null && own !== img) {
         this.errors.set("card:" + c.commentId, { text: own ? "Draw the new place on the figure this comment is on, not on another one." : "The figure this comment is on is not shown here.", reload: false });
         this.render();
         return;
       }
       this.composer = null;
-      void this.mutate("retarget", { commentId: c.commentId, target: regionTarget(region, c.src) }, "card:" + c.commentId);
+      void this.mutate("retarget", { commentId: c.commentId, target: regionTarget(region, c.src, page) }, "card:" + c.commentId);
       this.repaintPresel();
       this.renderComposer();
       return;
@@ -1258,7 +1277,7 @@ class Panel {
       if (e) { src = e.dest; range = { start: e.start, end: e.end }; text = t as string; }
       else refusal = EMBED_NOT_FOUND;
     }
-    this.composer = { kind: "region", img, region, src, range, text, refusal };
+    this.composer = { kind: "region", img, region, page, src, range, text, refusal };
     this.errors.delete("composer");
     this.repaintPresel();
     this.renderComposer();
@@ -1270,21 +1289,24 @@ class Panel {
     const card = this.cards().find((c) => c.id === id);
     if (!card || !card.target) return;
     this.openCards.add(this.cardKey(id));
-    this.composer = { kind: "replace", commentId: id, ref: card.ref, src: card.target.src || null };
+    this.composer = { kind: "replace", commentId: id, ref: card.ref, src: card.target.src || null, page: card.target.kind === "pdf" ? card.target.page ?? null : null };
     this.errors.delete("composer"); this.errors.delete("card:" + id);
     this.repaintPresel();
     this.render();
   }
   /** The picture a re-place must be drawn on: the comment's own, when the view shows it. */
-  private replaceTarget(commentId: string): HTMLImageElement | null {
+  private replaceTarget(commentId: string): Pictured | null {
     const card = this.cards().find((c) => c.id === commentId);
     return card ? this.regionImageFor(card) : null;
   }
-  /** The card's thumbnail from the picture in view; a picture still loading re-renders the cards once, on its load. */
-  private cropFor(img: HTMLImageElement, c: Card): HTMLCanvasElement | null {
+  /** The word for the file a region sits on, in the tags and titles: the image, or the PDF (whose pages the regions are on). */
+  private mediaNoun(): string { return this.ctx.media() === "pdf" ? "PDF" : "image"; }
+  /** The card's thumbnail from the picture in view (a page's crop is cut from the page's canvas); a picture still
+   *  loading re-renders the cards once, on its load. */
+  private cropFor(img: Pictured, c: Card): HTMLCanvasElement | null {
     if (!c.target) return null;
     const crop = cropThumb(img, c.target.region);
-    if (!crop && img.complete === false && !this.cropWait.has(img)) {
+    if (!crop && !isCanvas(img) && img.complete === false && !this.cropWait.has(img)) {
       this.cropWait.add(img);
       img.addEventListener("load", () => { this.cropWait.delete(img); this.render(); }, { once: true });
     }
@@ -1514,11 +1536,11 @@ class Panel {
     this.input.hidden = c.kind === "replace";          // a re-place takes a drag on the picture, not words
     if (c.kind === "reply") ref.appendChild(el("span", "fc-note", "Reply on " + c.ref));
     else if (c.kind === "change") ref.appendChild(el("span", "fc-note", "Reply on the change " + c.ref));
-    else if (c.kind === "replace") ref.appendChild(el("span", "fc-note", "Drag the comment's new place on the image (now " + c.ref + "). Cancel keeps it where it is."));
+    else if (c.kind === "replace") ref.appendChild(el("span", "fc-note", "Drag the comment's new place on " + (c.page ? "a page" : "the image") + " (now " + c.ref + "). Cancel keeps it where it is."));
     else if (c.kind === "region") {
       if (c.refusal) ref.appendChild(el("span", "fc-note fc-refused", c.refusal[0].toUpperCase() + c.refusal.slice(1) + ". Cancel, and comment on its passage from the Raw view."));
       else {
-        ref.appendChild(el("span", "fc-note", "On " + regionDesc(c.region)));
+        ref.appendChild(el("span", "fc-note", "On " + regionDesc(c.region, c.page)));
         const crop = cropThumb(c.img, c.region);
         if (crop) ref.appendChild(crop);
         if (c.range && c.text !== undefined && c.text !== this.ctx.text()) {   // the file changed and the embed line was not re-found (retargetComposer)
@@ -1572,7 +1594,7 @@ class Panel {
     }
     if (!cards.length && !view.cards.length) {
       list.appendChild(el("div", "fc-empty", this.ctx.mode() === "media"
-        ? (this.drawsRegions() ? "No comments yet. Drag a rectangle on the image, or comment on this file." : "No comments yet. Comment on this file to leave one.")
+        ? (this.drawsRegions() ? "No comments yet. Drag a rectangle on " + (this.ctx.media() === "pdf" ? "a page" : "the image") + ", or comment on this file." : "No comments yet. Comment on this file to leave one.")
         : "No comments yet. Select a passage and press Comment, or comment on this file."));
       return list;
     }
@@ -1625,8 +1647,8 @@ class Panel {
     head.appendChild(ref);
     // a region (Slice 3): whether the image still has the bytes it was drawn on (E2) — dashed on the picture, a tag here
     const regionSt = c.target ? regionState(c.target, this.status) : "current";
-    if (regionSt === "stale") { const t = el("span", "fc-tag fc-tag-stale", "stale"); t.title = "The image changed after this region was drawn; Re-place it, or resolve it"; head.appendChild(t); }
-    if (regionSt === "unknown") { const t = el("span", "fc-tag", "unknown"); t.title = "Whether the image changed since this region was drawn could not be checked"; head.appendChild(t); }
+    if (regionSt === "stale") { const t = el("span", "fc-tag fc-tag-stale", "stale"); t.title = "The " + this.mediaNoun() + " changed after this region was drawn; Re-place it, or resolve it"; head.appendChild(t); }
+    if (regionSt === "unknown") { const t = el("span", "fc-tag", "unknown"); t.title = "Whether the " + this.mediaNoun() + " changed since this region was drawn could not be checked"; head.appendChild(t); }
     if (loc && loc.state === "context") head.appendChild(el("span", "fc-tag", "text changed"));
     if (loc && loc.state === "detached") head.appendChild(el("span", "fc-tag", "detached"));
     if (c.decision) { const d = el("span", "fc-tag", c.decision); d.title = "You " + c.decision + " the change this comment is on"; head.appendChild(d); }
@@ -1644,7 +1666,7 @@ class Panel {
     const res = btn(c.resolved ? "Reopen" : "Resolve", "fcresolve"); res.dataset.id = c.id; res.dataset.on = c.resolved ? "0" : "1"; acts.appendChild(res);
     if (picture && !c.resolved && this.drawsRegions()) {   // Re-place needs the picture in view and a pointer that can draw
       const rp = btn("Re-place", "fcreplace"); rp.dataset.id = c.id;
-      rp.title = regionSt === "stale" ? "The image changed: draw the region again where it belongs now" : "Draw the region again; the comment keeps its words";
+      rp.title = regionSt === "stale" ? "The " + this.mediaNoun() + " changed: draw the region again where it belongs now" : "Draw the region again; the comment keeps its words";
       acts.appendChild(rp);
     }
     const src = this.ctx.text();

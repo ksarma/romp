@@ -122,6 +122,11 @@ test("regionTarget: the wire shape carries the kind, the fractions and the embed
   assert.deepEqual(regionTarget(region, null), { kind: "image", region });
   assert.deepEqual(regionTarget(region, "figure.png"), { kind: "image", region, src: "figure.png" });
   assert.deepEqual(Object.keys(regionTarget(region, "")), ["kind", "region"], "an empty src is no src");
+  // a page makes it a PDF region (F4): kind pdf, the 1-based page, and never a src — a PDF is always its own file
+  assert.deepEqual(regionTarget(region, null, 2), { kind: "pdf", region, page: 2 });
+  assert.deepEqual(regionTarget(region, "deck.pdf", 1), { kind: "pdf", region, page: 1 }, "a src beside a page is dropped");
+  assert.deepEqual(regionTarget(region, null, 0), { kind: "image", region }, "page 0 is no page (the host refuses one anyway)");
+  assert.deepEqual(regionTarget(region, null, null), { kind: "image", region });
 });
 
 test("dragIsClick: a press that moves less than the threshold in both axes is a click, not a region", () => {

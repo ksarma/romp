@@ -9,6 +9,12 @@
 // on the overlay becomes a region (region-geometry.ts does the arithmetic); the panel (file-comments.ts)
 // decides what a drawn region means — a new comment's composer, or the re-placement of an existing one.
 //
+// A PDF page (Slice 4) is a picture too: the chunk draws each page into a canvas inside a wrapper that is
+// already `position: relative` (div.fileview-pdf-page, data-page 1-based), so the layer takes that wrapper
+// as its ANCHOR instead of wrapping the canvas — the canvas stays where the chunk put it, the overlay joins
+// it — and the picture's natural size is the canvas's backing store (the page's own aspect). A region on a
+// page is a fraction of the page as drawn, which is why it is width-independent there too (contract F4).
+//
 // The overlay draws only while the panel is OPEN and the primary pointer is fine (`active`): the
 // rectangles are the file's marks and show whenever the highlights do (the probe's status paints both),
 // but a closed panel must not turn every picture into a drawing surface — the cursor, the native image
@@ -39,11 +45,14 @@ export type RegionMark = {
   /** `--fc-author` / `--fc-author-fg` from the session colour map; absent for the sheet's fallback */
   style?: Record<string, string>;
 };
+/** What a layer sits on: the viewer's <img> (a standalone image, a figure in rendered markdown), or a PDF page's
+ *  canvas as the chunk drew it (Slice 4). */
+export type Pictured = HTMLImageElement | HTMLCanvasElement;
 export type LayerHooks = {
   /** a completed drag: the region in fractions of the natural size */
-  onDraw: (img: HTMLImageElement, region: Region) => void;
+  onDraw: (img: Pictured, region: Region) => void;
   /** a press that did not move (and did not start on a rectangle): the picture click the viewer already had */
-  onClick: (img: HTMLImageElement) => void;
+  onClick: (img: Pictured) => void;
   /** every press on the overlay, before anything else: the overlay cancels the compat mousedown, so a listener
    *  waiting on mousedown (the panel's float hides on one) never hears of it otherwise */
   onPress?: () => void;
@@ -56,6 +65,19 @@ export const THUMB_MAX: Size = { width: 240, height: 140 };
 export function isCoarsePointer(): boolean {
   try { return window.matchMedia("(pointer: coarse)").matches; } catch { return false; }
 }
+
+/** A PDF page's canvas, as against an <img> (by tag, so a DOM stand-in without the constructors can answer). */
+export function isCanvas(el: Element | null | undefined): el is HTMLCanvasElement {
+  return !!el && typeof el.tagName === "string" && el.tagName.toUpperCase() === "CANVAS";
+}
+/** The picture's natural size: an <img>'s intrinsic pixels; a canvas's backing store (0×0 for a page the chunk
+ *  has evicted, which then reads as unknown: no crop, and the overlay falls back to the element's own box). */
+export function naturalSizeOf(el: Pictured): Size {
+  if (isCanvas(el)) return { width: el.width || 0, height: el.height || 0 };
+  return { width: el.naturalWidth || 0, height: el.naturalHeight || 0 };
+}
+/** The word for what changed under a stale region: the image's bytes, or the PDF's. */
+const nounFor = (el: Pictured): string => (isCanvas(el) ? "PDF" : "image");
 
 /** One `style` attribute from position percentages and custom properties — no CSSOM, as anchor-map's
  *  applyStyles: a name that is not a property name, or a value that could end the declaration, is skipped. */
@@ -71,8 +93,11 @@ function styleAttr(decls: Record<string, string>): string {
 const mk = (doc: Document, tag: string, cls: string): HTMLElement => { const e = doc.createElement(tag); e.className = cls; return e; };
 
 export class RegionLayer {
+  /** the positioned box the overlay sits in: the span this layer wrapped around an <img>, or the anchor it was given */
   readonly wrap: HTMLElement;
   readonly overlay: HTMLElement;
+  /** whether `wrap` is this layer's own span (unwrapped on dispose) or a caller's anchor (left standing) */
+  private readonly owned: boolean;
   private press: { id: number; start: Point; fromRegion: boolean } | null = null;
   private band: HTMLElement | null = null;
   private drew = false;
@@ -82,13 +107,20 @@ export class RegionLayer {
   private readonly onLoad = () => this.place();
   private sizer: ResizeObserver | null = null;
 
-  constructor(readonly img: HTMLImageElement, readonly hooks: LayerHooks) {
+  /** `anchor`: an already-positioned element holding the picture (a PDF page's wrapper), used as is; without one
+   *  the layer wraps the <img> in a span of its own. */
+  constructor(readonly img: Pictured, readonly hooks: LayerHooks, anchor?: HTMLElement | null) {
     const doc = img.ownerDocument;
-    this.wrap = mk(doc, "span", "fc-imgwrap");
     this.overlay = mk(doc, "div", "fc-overlay fc-overlay-off");
-    const parent = img.parentNode;
-    if (parent) parent.insertBefore(this.wrap, img);
-    this.wrap.appendChild(img);
+    this.owned = !anchor;
+    if (anchor) {
+      this.wrap = anchor;
+    } else {
+      this.wrap = mk(doc, "span", "fc-imgwrap");
+      const parent = img.parentNode;
+      if (parent) parent.insertBefore(this.wrap, img);
+      this.wrap.appendChild(img);
+    }
     this.wrap.appendChild(this.overlay);
     img.addEventListener("load", this.onLoad);
     // the exact event for "the drawn size changed": the aside opening narrows the body with no window resize;
@@ -104,11 +136,11 @@ export class RegionLayer {
   setActive(on: boolean): void {
     this.active = on;
     this.overlay.classList.toggle("fc-overlay-off", !on);
-    if (on) this.overlay.setAttribute("aria-label", "Drag to comment on a region of the image");
+    if (on) this.overlay.setAttribute("aria-label", "Drag to comment on a region of the " + (isCanvas(this.img) ? "page" : "image"));
     else this.overlay.removeAttribute("aria-label");
   }
 
-  private natural(): Size { return { width: this.img.naturalWidth || 0, height: this.img.naturalHeight || 0 }; }
+  private natural(): Size { return naturalSizeOf(this.img); }
   /** The drawn image's box in client coordinates: the element's rect, less any letterbox `object-fit: contain` adds. */
   box(): Box { return drawnBox(this.img.getBoundingClientRect(), this.natural()); }
 
@@ -181,7 +213,8 @@ export class RegionLayer {
       r.setAttribute("style", styleAttr({ ...regionStyle(m.region), ...(m.style || {}) }));
       r.dataset.act = "fcopen"; r.dataset.id = m.id;
       r.tabIndex = 0; r.setAttribute("role", "button");
-      r.title = "Open the comment on this region" + (m.state === "stale" ? " (the image changed after it was drawn)" : m.state === "unknown" ? " (whether the image changed could not be checked)" : "");
+      const noun = nounFor(this.img);
+      r.title = "Open the comment on this region" + (m.state === "stale" ? " (the " + noun + " changed after it was drawn)" : m.state === "unknown" ? " (whether the " + noun + " changed could not be checked)" : "");
       const chip = mk(doc, "span", "fc-region-chip");
       chip.dataset.label = m.label;                      // drawn by the sheet: no text node under the picture
       r.appendChild(chip);
@@ -192,11 +225,12 @@ export class RegionLayer {
     return out;
   }
 
-  /** Take the overlay down and put the picture back where it was. */
+  /** Take the overlay down and put the picture back where it was; an anchor the layer was given keeps its picture. */
   dispose(): void {
     this.img.removeEventListener("load", this.onLoad);
     if (this.sizer) { this.sizer.disconnect(); this.sizer = null; }
     else window.removeEventListener("resize", this.onResize);
+    if (!this.owned) { this.overlay.remove(); return; }
     const parent = this.wrap.parentNode;
     if (parent) { parent.insertBefore(this.img, this.wrap); parent.removeChild(this.wrap); }
   }
@@ -204,12 +238,13 @@ export class RegionLayer {
 
 /** The card's thumbnail: the region cropped from the picture onto a canvas, drawn from the <img> itself
  *  (same origin through /file or a blob URL; a cross-origin picture taints the canvas, which only matters
- *  for reading pixels back, and nothing does). Null when the picture has not loaded, has no natural size
- *  (an SVG without one), or cannot be drawn — the card then stands without one, and the caller may ask
- *  again on the image's load. Drawn at the device's pixel ratio so it is sharp; sized in CSS pixels. */
-export function cropThumb(img: HTMLImageElement, region: Region, max: Size = THUMB_MAX): HTMLCanvasElement | null {
-  if (img.complete === false) return null;
-  const crop = cropRect(region, { width: img.naturalWidth || 0, height: img.naturalHeight || 0 });
+ *  for reading pixels back, and nothing does) or from a PDF page's canvas. Null when the picture has not
+ *  loaded, has no natural size (an SVG without one; a page the chunk evicted), or cannot be drawn — the card
+ *  then stands without one, and the caller may ask again on the image's load. Drawn at the device's pixel
+ *  ratio so it is sharp; sized in CSS pixels. */
+export function cropThumb(img: Pictured, region: Region, max: Size = THUMB_MAX): HTMLCanvasElement | null {
+  if (!isCanvas(img) && img.complete === false) return null;
+  const crop = cropRect(region, naturalSizeOf(img));
   if (!crop) return null;
   const size = cropSize(crop, max);
   const canvas = img.ownerDocument.createElement("canvas") as HTMLCanvasElement;
@@ -219,7 +254,7 @@ export function cropThumb(img: HTMLImageElement, region: Region, max: Size = THU
   canvas.className = "fc-crop";
   canvas.setAttribute("style", styleAttr({ width: size.width + "px", height: size.height + "px" }));
   canvas.setAttribute("role", "img");
-  canvas.setAttribute("aria-label", regionDesc(region) + " of the image");
+  canvas.setAttribute("aria-label", regionDesc(region) + " of the " + (isCanvas(img) ? "page" : "image"));
   try {
     const cx = canvas.getContext("2d");
     if (!cx) return null;
