@@ -9928,6 +9928,12 @@ def _sdk_problem_rows(limit=20, cap=400):
             rows += [("be", r) for r in be.problems(limit)]
         except Exception:
             pass   # a fake/older backend without a usable ring: the boot problems still ride
+    # dropped dashboard sockets (_note_ws_drop) ride the same bell — a FEW, and RECENT: at most
+    # _WS_DROP_BELL_ROWS of them, none older than _WS_DROP_TTL_S, merged by time with the rest. Appended
+    # last and sliced positionally, twenty drops in a kernel's life would hide every later backend problem.
+    cutoff = time.time() - _WS_DROP_TTL_S
+    rows += [("ws", r) for r in _WS_DROPS if float(r.get("t") or 0) >= cutoff][-_WS_DROP_BELL_ROWS:]
+    rows.sort(key=lambda sr: float(sr[1].get("t") or 0))   # stable: same-t rows keep boot → backend → ws order
     out = []
     for src, r in rows[-limit:]:
         txt = _sdk_problem_text(r.get("text"), cap)
@@ -26866,8 +26872,11 @@ def _mk_ws_send(q, sock, client):
                 except OSError:
                     pass
                 # Raise: every caller already treats an exception from send as "mark this client dead".
-                raise OSError("ws client %s is %d bytes behind — dropping"
-                              % (client.get("app"), client["qbytes"]))
+                # Logged HERE, once per client (_note_ws_drop): the drop is loud whichever caller's frame
+                # tipped the budget — the ~60 direct client["send"] replies as much as the push paths.
+                why = "%d bytes behind" % client["qbytes"]
+                _note_ws_drop(client, why, len(s))
+                raise OSError("ws client %s is %s — dropping" % (client.get("app"), why))
             client["qbytes"] += len(s)
         q.put(s)                               # unbounded; the byte budget above is the real bound
     return send
@@ -27073,10 +27082,7 @@ def _send_to_app(app, msg):
     with _clients_lock:
         targets = [c for c in _clients if c["app"] == app]
     for c in targets:
-        try:
-            c["send"](s)
-        except Exception:
-            c["alive"] = False
+        _client_send(c, s)
 
 
 # WS heartbeat (the user 2026-06-29): the pusher DEDUPS — a quiet fleet sends no view frames for minutes — so a
@@ -27143,12 +27149,14 @@ def _keepalive_all(now=None):
             # not judged this beat — but still BEATEN: the ka must keep flowing to a client the kernel is
             # busy serving, or the shim's own silence watchdog closes a connection that is merely waiting
             # on a long build (review 2026-09-03, residual).
-        try:
-            c["send"](s)
-            if c.get("sock") is not None:
-                c["send"](_ws_ping_frame(str(int(now)).encode()))   # pingAt is stamped by the sender, on the wire
-        except Exception:
-            c["alive"] = False
+        # the beat goes through _client_send so a drop is logged where it is decided (_note_ws_drop, one
+        # line per client); the ping rides behind it on the same socket — pingAt is stamped by the sender,
+        # on the wire
+        if _client_send(c, s) and c.get("sock") is not None:
+            try:
+                c["send"](_ws_ping_frame(str(int(now)).encode()))
+            except Exception:
+                c["alive"] = False
 
 
 def _heartbeat():
@@ -27180,10 +27188,7 @@ def _send_to_view(app, msg, wid):
     with _clients_lock:
         targets = [c for c in _clients if c["app"] == app and (c.get("wid") or "") == wid]
     for c in targets:
-        try:
-            c["send"](s)
-        except Exception:
-            c["alive"] = False
+        _client_send(c, s)
 
 
 def _reveal_chat_for(client, focus_msg):
@@ -27401,6 +27406,65 @@ def _dedup_sig(msg, s):
         return json.dumps({k: v for k, v in msg.items() if k not in _DEDUP_VOLATILE},
                           sort_keys=True, default=str)
     return s
+
+
+# A dropped client is LOUD. _mk_ws_send raises when a client is WS_QUEUE_BYTES behind, and every caller
+# caught that with a bare `c["alive"] = False` — so a dashboard dropped every few minutes for a day (the
+# flashing "may be stale" prompt) left NO trace in the kernel log, the shim logged nothing on its side, and
+# it read as a flaky network. _drop_dead_ws_client already writes a line for the ping-timeout and
+# supersession drops; this is the same line for the budget drop, plus a row for the dashboard's bell (it
+# rides _sdk_problem_rows → the feed's `sdkNotices`, the existing kernel-problems channel), so the person at
+# the dashboard is told rather than left to wonder why the pane reloaded. Logged at the RAISE site
+# (_note_ws_drop from _mk_ws_send), so every caller is covered — the direct one-shot `client["send"]`
+# replies included, not only the push and keepalive paths that go through _client_send. Latched per client:
+# the sends after the first failure in the same cycle raise too, and would otherwise log the one drop
+# several times.
+_WS_DROPS = []           # {"seq", "t", "text"} rows, newest last, bounded — the bell's source
+_WS_DROP_SEQ = [0]
+_WS_DROP_BELL_ROWS = 5   # at most this many drop rows in the bell at once: they must not crowd a backend problem out
+_WS_DROP_TTL_S = 3600.0  # …and none older than this: a drop is news for an hour, then it is the log's business
+
+
+def _note_ws_drop(c, why, frame_len, key=None):
+    """Log one client's drop, once: the stderr line and — for the kernel's OWN drop (a client that fell
+    WS_QUEUE_BYTES behind; a socket that simply died is not news) — the bell row. `key` is the push slot
+    whose frame tipped the budget; the raise site (_mk_ws_send) has none of its own and reads the one
+    _client_send leaves on the client for the length of its call (`curSlot`), so the line names the frame
+    — a direct one-shot `client["send"]` finds it unset and the line reads `slot=-`, honestly."""
+    if c.get("dropLogged"):
+        return
+    c["dropLogged"] = True
+    if key is None:
+        key = c.get("curSlot")
+    try:
+        sys.stderr.write("ws: dropping %s client — %s (wid=%s slot=%s queued=%dB frame=%dB)\n"
+                         % (c.get("app"), why, c.get("wid") or "-", _perf_slot(key) if key else "-",
+                            int(c.get("qbytes") or 0), int(frame_len)))
+        if "bytes behind" in str(why):
+            _WS_DROP_SEQ[0] += 1
+            _WS_DROPS.append({"seq": _WS_DROP_SEQ[0], "t": time.time(),
+                              "text": "The %s pane's live connection was dropped: it had %.1f MB of "
+                                      "updates waiting and had stopped reading them. It reconnects on "
+                                      "its own." % (c.get("app") or "?", int(c.get("qbytes") or 0) / 1e6)})
+            del _WS_DROPS[:-20]
+    except Exception:
+        pass
+
+
+def _client_send(c, s, key=None):
+    """Enqueue one wire string on client `c`. A failure marks the client dead and logs the drop (once —
+    _mk_ws_send has usually logged it already, at the raise, naming the slot it finds in `curSlot`; see
+    _note_ws_drop). Returns whether the frame was accepted."""
+    c["curSlot"] = key
+    try:
+        c["send"](s)
+        return True
+    except Exception as e:
+        c["alive"] = False
+        _note_ws_drop(c, str(e), len(s), key)
+        return False
+    finally:
+        c.pop("curSlot", None)
 
 
 def _client_lock(c):
@@ -27682,10 +27746,7 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig):
         _send_slot(c, ftype, payload, pre, sig)
         return
     _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0, delta=1)
-    try:
-        c["send"](s)
-    except Exception:
-        c["alive"] = False
+    if not _client_send(c, s, key):
         return
     st["rev"] += 1; st["rest"] = rest_sig; st["at"] = now
     for name, (ents, _order) in colls.items():
@@ -27721,10 +27782,7 @@ def _send_client(c, key, msg, pre=None, sig=None):
             return
         c["sent"][key] = (sig, now)
         _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0)
-        try:
-            c["send"](s)                              # enqueue only (never blocks): the lock is held for microseconds
-        except Exception:
-            c["alive"] = False
+        _client_send(c, s, key)                       # enqueue only (never blocks): the lock is held for microseconds
 
 
 def _send_chat(c, m, ms, change_from, led_changed):
