@@ -783,6 +783,76 @@ class Assemble(_Base):
         self.assertIn("two-a-g", body)
         self.assertIn("main's line", body)
 
+    def test_a_rerere_replay_of_part_of_an_earlier_resolution_keeps_its_review(self):
+        """After a two-file resolution was reviewed, main takes one of the files as resolved, so the
+        next assembly conflicts in the other file alone and rerere replays it with the bytes that
+        were reviewed. The earlier record was matched only on an equal file list, so this read
+        'rerere replayed a recorded resolution' with no review and the digest said NOT recorded. A
+        replay of a subset of a recorded resolution, blob for blob, carries that review."""
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo-a\nthree\n"})
+        fx.branch("g", {"notes.txt": "one\ntwo-g\nthree\n", "README.md": "# notes-api\n\ng's line\n"})
+        fx.pr(101, "a", labels=["fix"], body=TRAILER)
+        fx.pr(108, "g", title="notes: the g version", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g\nthree\n")
+        fx._git("add", "notes.txt", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "round one")
+        fx.commit_main({"README.md": "# notes-api\n\nmain's line\n"}, "main moved on")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        with open(os.path.join(wt, "README.md"), "w") as f:
+            f.write("# notes-api\n\nmain's line\ng's line\n")
+        fx._git("add", "README.md", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "round two")
+        rec = [e for e in fx.state("b1")["assembly"]["merged"] if e["n"] == 108][0]["resolved"]
+        self.assertEqual(rec["files"], ["README.md", "notes.txt"])
+        self.assertEqual(rec["blobs"], {"README.md": fx.dev_git("rev-parse", "batch/b1:README.md"),
+                                        "notes.txt": fx.dev_git("rev-parse", "batch/b1:notes.txt")},
+                         "the record names the bytes it covers")
+        # main takes #108's README as is: the third assembly conflicts in notes.txt alone.
+        fx.commit_main({"README.md": "# notes-api\n\ng's line\n"}, "main takes g's README")
+        p = fx.ok("assemble", "b1", "--resolve", "108")
+        self.assertIn("rerere replayed the resolution recorded in the earlier assembly", p.stdout)
+        rec = [e for e in fx.state("b1")["assembly"]["merged"] if e["n"] == 108][0]["resolved"]
+        self.assertEqual(rec["files"], ["notes.txt"])
+        self.assertTrue(rec["replayed"])
+        self.assertEqual(rec["review"], "round two", "the same bytes were reviewed in round two")
+        self.assertEqual(fx.dev_git("show", "batch/b1:notes.txt"), "one\ntwo-a-g\nthree")
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        self.assertIn("- #108 g: conflict resolved in notes.txt (1 hunk); one review round in the earlier assembly, replayed by rerere: round two.", body)
+        self.assertNotIn("NOT recorded", body)
+
+    def test_prior_resolution_matches_a_subset_blob_for_blob_and_a_legacy_record_on_its_file_list(self):
+        """The rule behind the replay above, on a bare index: a record covers a replay when every
+        replayed path is among its files AND the blob staged for it equals the record's. Different
+        bytes under the same name (rerere's cache is shared across batches) carry no review. A record
+        written before blobs were recorded matches on an equal file list only, as it did."""
+        fx = self.fx
+        wt = fx.dev
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g\nthree\n")
+        fx.dev_git("add", "notes.txt")
+        staged = fx.dev_git("rev-parse", ":notes.txt")
+        readme = fx.dev_git("rev-parse", ":README.md")
+        rec = {"files": ["README.md", "notes.txt"], "review": "r", "blobs": {"README.md": readme, "notes.txt": staged}}
+        state = {"assembly": {"previous_resolutions": {"108": rec}}}
+        self.assertIs(batch.prior_resolution(state, "108", ["notes.txt"], wt), rec, "a subset, same bytes")
+        self.assertIs(batch.prior_resolution(state, "108", ["README.md", "notes.txt"], wt), rec)
+        self.assertIsNone(batch.prior_resolution(state, "108", ["notes.txt", "other.txt"], wt), "not a subset")
+        self.assertIsNone(batch.prior_resolution(state, "101", ["notes.txt"], wt), "another member's record")
+        self.assertIsNone(batch.prior_resolution(state, "108", [], wt))
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-other\nthree\n")
+        fx.dev_git("add", "notes.txt")
+        self.assertIsNone(batch.prior_resolution(state, "108", ["notes.txt"], wt), "same name, different bytes")
+        legacy = {"files": ["README.md", "notes.txt"], "review": "r"}
+        state = {"assembly": {"previous_resolutions": {"108": legacy}}}
+        self.assertIs(batch.prior_resolution(state, "108", ["notes.txt", "README.md"], wt), legacy)
+        self.assertIsNone(batch.prior_resolution(state, "108", ["notes.txt"], wt), "no blobs to compare a subset by")
+
     def test_continue_never_commits_a_conflict_marker_even_when_the_file_equals_the_conflicted_merge_tree(self):
         """The marker scan must read the files themselves: a file byte-identical to what merge-tree
         left for it (markers included) does not differ from that tree, so a scan of the differing

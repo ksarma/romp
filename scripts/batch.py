@@ -774,13 +774,31 @@ def conflict_attribution(root, state, m, files):
     return (", ".join("#%d" % k for k in earlier) or "the batch"), earlier
 
 
-def prior_resolution(state, key, files):
+def resolution_blobs(cwd, merge, paths):
+    """Per path, the blob the merge holds for it (None where the resolution deleted it), recorded so a
+    later rerere replay of the same bytes is recognized as the reviewed resolution."""
+    return {p: blob_of(merge, p, cwd) for p in paths}
+
+
+def prior_resolution(state, key, files, wt):
     """The resolution an earlier assembly of this batch recorded under `key` (a member number as a
-    string, or "main") for the same files, so a rerere replay of the same conflict keeps its review."""
+    string, or "main") that covers `files`, the paths rerere replayed and staged in `wt`: every one of
+    them is among the record's files and the blob staged for it equals the record's, so the review
+    carries over. A replay of a SUBSET of a recorded resolution qualifies: main can take one file's
+    change between assemblies and leave the others to conflict again, and their resolution is the
+    bytes the review covered. Same name, different bytes (rerere's cache is shared across batches)
+    does not. A record without blobs, written before they were recorded, matches on an equal file
+    list only."""
     rec = (state["assembly"].get("previous_resolutions") or {}).get(key)
-    if rec and sorted(rec.get("files") or []) == sorted(files):
-        return rec
-    return None
+    if not rec or not files or not set(files) <= set(rec.get("files") or []):
+        return None
+    blobs = rec.get("blobs")
+    if blobs is None:
+        return rec if set(files) == set(rec["files"]) else None
+    for p in files:
+        if blob_of("", p, wt) != blobs.get(p):   # ":path" is the index at stage 0
+            return None
+    return rec
 
 
 def commit_resolution(wt, files):
@@ -884,9 +902,9 @@ def merge_member(root, wt, state, m, resolve_set):
     resolved = None
     if not still and merge_in_progress(wt):
         # rerere replayed a recorded resolution and staged the result (rerere.autoUpdate). The review
-        # of the earlier assembly's resolution carries over when it is the same conflict (same member,
-        # same files): the replayed hunks are that resolution.
-        prior = prior_resolution(state, str(n), conflicted)
+        # of the earlier assembly's resolution carries over when the replayed files are that
+        # resolution's, blob for blob (prior_resolution).
+        prior = prior_resolution(state, str(n), replayed, wt)
         resolved = {"files": conflicted, "hunks": None, "replayed": True,
                     "how": "rerere replayed the resolution recorded in the earlier assembly" if prior else "rerere replayed a recorded resolution",
                     "review": prior["review"] if prior else None}
@@ -897,7 +915,7 @@ def merge_member(root, wt, state, m, resolve_set):
             if not still:
                 how, review = "%d UPSTREAM.md row(s) converted to entries (mechanical)" % rows, "mechanical"
                 if replayed:
-                    prior = prior_resolution(state, str(n), replayed)
+                    prior = prior_resolution(state, str(n), replayed, wt)
                     how += "; rerere replayed the earlier assembly's resolution in %s" % ", ".join(replayed)
                     review = prior["review"] if prior else None
                 resolved = {"files": conflicted, "how": how, "hunks": None, "review": review}
@@ -907,6 +925,7 @@ def merge_member(root, wt, state, m, resolve_set):
         sha, _ = commit_resolution(wt, resolved["files"])
         resolved["hunks"] = resolution_hunks(wt, sha, resolved["files"])
         resolved["choices"] = resolution_choices(wt, sha, resolved["files"], "the batch", "#%d" % n)
+        resolved["blobs"] = resolution_blobs(wt, sha, resolved["files"])
         state["assembly"]["merged"].append({"n": n, "merge": sha, "resolved": resolved})
         log(state, "merged #%d -> %s with %s" % (n, short(sha), resolved["how"]))
         return "merged"
@@ -951,7 +970,8 @@ def continue_after_resolution(root, wt, state, reviewed):
     if replayed:
         how += "; rerere replayed the earlier assembly's resolution in %s" % ", ".join(replayed)
     resolved = {"files": files, "how": how, "hunks": resolution_hunks(wt, sha, files), "review": reviewed,
-                "choices": resolution_choices(wt, sha, files, "the batch", remote_main() if is_main else "#%d" % cur["n"])}
+                "choices": resolution_choices(wt, sha, files, "the batch", remote_main() if is_main else "#%d" % cur["n"]),
+                "blobs": resolution_blobs(wt, sha, files)}
     if replayed:
         resolved["replayed_files"] = replayed
     if is_main:
@@ -1022,13 +1042,14 @@ def merge_main(root, wt, state):
                    wt, state["name"]))
             save_state(root, state)
             return False
-        prior = prior_resolution(state, "main", conflicted)
+        prior = prior_resolution(state, "main", replayed, wt)
         resolved = {"files": conflicted, "hunks": None, "replayed": True,
                     "how": "rerere replayed the resolution recorded in the earlier assembly" if prior else "rerere replayed a recorded resolution",
                     "review": prior["review"] if prior else None}
         sha, _ = commit_resolution(wt, conflicted)
         resolved["hunks"] = resolution_hunks(wt, sha, conflicted)
         resolved["choices"] = resolution_choices(wt, sha, conflicted, "the batch", remote_main())
+        resolved["blobs"] = resolution_blobs(wt, sha, conflicted)
     state["assembly"].setdefault("main_merges", []).append({"merge": sha, "main": main_sha, "resolved": resolved})
     state["assembly"]["head"] = sha
     state["verified"] = None
