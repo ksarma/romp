@@ -16,7 +16,7 @@ const FEED_CSS = web("feed.css");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 
 test("Edit arms only off the kernel's own verdicts: text/plain, faithful UTF-8, an ns anchor", () => {
-  assert.match(VIEW, /isText = \(r\.headers\.get\("Content-Type"\) \|\| ""\)\.startsWith\("text\/plain"\)\n      && r\.headers\.get\("X-Romp-Text-Utf8"\) !== "0";/);
+  assert.match(VIEW, /isText = \(r\.headers\.get\("Content-Type"\) \|\| ""\)\.startsWith\("text\/plain"\)\n\s+&& r\.headers\.get\("X-Romp-Text-Utf8"\) !== "0";/);
   assert.match(VIEW, /mtimeNs = r\.headers\.get\("X-Romp-Mtime-Ns"\) \|\| "";/);
   assert.match(VIEW, /editBtn\.hidden = editing \|\| text === null \|\| !isText \|\| !mtimeNs;/);
   // markdown edits from its RAW view — what you edit is what raw shows
@@ -26,7 +26,7 @@ test("Edit arms only off the kernel's own verdicts: text/plain, faithful UTF-8, 
 test("the ns anchor travels as a STRING end to end — JSON numbers would round it", () => {
   assert.match(VIEW, /let mtimeNs = "";/);
   assert.match(VIEW, /post\(\{ type: "saveFile", path, sid: sid \|\| undefined, content, baseMtimeNs: mtimeNs, reqId: saveSeq \}\);/);
-  assert.match(VIEW, /h\.saved\(String\(m\.mtimeNs \|\| ""\)\);/);
+  assert.match(VIEW, /h\.saved\(String\(m\.mtimeNs \|\| ""\), m\.logged === true\);/);   // `logged`: the comments log took the edit (Slice 1)
   assert.match(KERNEL, /"mtimeNs": str\(mt\)/);
   assert.match(KERNEL, /if st\.st_mtime_ns != base_ns:/, "the kernel compares NANOSECONDS — same-second writes are caught");
 });

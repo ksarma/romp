@@ -40,6 +40,18 @@ var SHORTCUT_ROWS =
 
 // Auto Nudge's hover description lives in a var because fillAutoNudge() appends to it when the attached
 // machines disagree — the row then has to say WHICH ones, and this is the one level down from the label.
+// The File comments row's copy, one sentence per /defaults verdict (kernel.py's fileComments key):
+// `ok` says what works; `no-node` names why the action is missing on this kernel's files and what to
+// do; `agent-tooling-absent` says comments work but the session cannot reply until install.sh's link
+// step has run on this machine. "This machine" is the kernel serving this dashboard — /defaults
+// answers for the local kernel only, and a peer's verdict is not carried by its /version poll.
+var FILECOMMENTS_SUB = {
+  checking: 'Checking whether the file viewer can keep comments and tracked changes on this machine\u2019s files\u2026',
+  ok: 'Comments and tracked changes work on this machine\u2019s files: the viewer\u2019s Comments action appears, and sessions here can reply to what you send. Comments live beside each file in its project\u2019s .trackchanges/ folder.',
+  'no-node': 'Comments are unavailable on this machine: node was not found on the kernel\u2019s PATH, so the Comments action does not appear on its files. Install node where the kernel runs (or fix the PATH the service bakes in), reinstall, and restart the kernel.',
+  'agent-tooling-absent': 'Comments work on this machine\u2019s files, but its sessions cannot reply to them yet: the track-changents tooling is not linked into ~/.claude here. Run install.sh on this machine (its link step places track-reply, track-edit, track-comment, track-config and the guard hook); there is no button for it.',
+  unknown: 'This kernel does not report on file comments (it predates them); update and restart it.',
+};
 var AUTONUDGE_SUB = "When a session goes idle but its goal still shows working (not blocked, not awaiting agents or a job "
   + "you), automatically nudge it once for a status update. Applies to every connected machine's kernel.";
 
@@ -119,6 +131,15 @@ var GEAR_HTML =
   "border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 4px;cursor:pointer'>" +
   '<option value=chat>The pane you clicked</option><option value=feed>The Feed pane</option><option value=pane>The Files pane</option>' +
   '</select>' +
+  '</span></div>' +
+  // File comments (plans/file-review.md Slice 1): a report, not a switch — whether the viewer's Comments
+  // action can appear on THIS kernel's files (node on its PATH) and whether its sessions can reply (the
+  // track-changents tooling linked into ~/.claude by install.sh). Read from the gated /defaults, the
+  // route the Default directory already rides; /version is auth-exempt and carries no verdicts about
+  // the machine. There is no kernel op to run the link step, so the row says to run it, and does not
+  // pretend to.
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>File comments</b>" +
+  '<span class=rs-sub id=rs-filecomments>' + FILECOMMENTS_SUB.checking + '</span>' +
   '</span></div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Text scheme</b>" +
   "<span class=rs-sub>Chat text colors only. Each option previews its own tiers — prose, the dimmer tool text, code. (Solarized Light is omitted — its tiers are made for a light page and turn muddy here.)</span>" +
@@ -1028,8 +1049,14 @@ function initGear(post) {
         // vanish into a macOS-only dialog (the user 2026-08-08). Drop the button rather than offer one
         // that cannot work; the field takes a typed path, which is what that machine has.
         if (ddb && typeof d.nativeDialogs === 'boolean') ddb.style.display = d.nativeDialogs ? '' : 'none';
+        // the File comments verdict (plans/file-review.md Slice 1): one sentence per value, in FILECOMMENTS_SUB
+        var fcs = document.getElementById('rs-filecomments');
+        if (fcs) fcs.textContent = FILECOMMENTS_SUB[typeof d.fileComments === 'string' ? d.fileComments : 'unknown'] || FILECOMMENTS_SUB.unknown;
       })
-      .catch(function () {});
+      .catch(function () {
+        var fcs = document.getElementById('rs-filecomments');
+        if (fcs) fcs.textContent = FILECOMMENTS_SUB.unknown;
+      });
     repaintSelectPicks();   // fill() writes sel.value directly (no change event) — the closed rows follow
     var x = lv(); b.innerHTML = 'kernel ' + (v.kernel_sha || '?') + '\nserving v' + v.dist_ver + '\nthis tab v' + (x || '?');
   }).catch(function () { b.textContent = '(version unavailable)'; }); }
