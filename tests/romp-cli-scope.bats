@@ -438,8 +438,9 @@ SH
 }
 
 @test "a systemd-run that rejects the properties: the pre-flight re-runs bare and the CLI gets its scope without them, after one ignored: line" {
-    # an older systemd (OOMPolicy= on scopes needs 253) refuses the whole scope; without this the
-    # CLI's own launch would be the first to find out, and no CLI would start
+    # an older systemd (OOMPolicy= on scopes needs 253) refuses a scope carrying the properties; the
+    # pre-flight carries them so it is the pre-flight that fails, not the CLI's own launch, and the
+    # bare retry gives the CLI a scope without them (the memory limits, all of them, for this launch)
     cat > "$BIN/systemd-run" <<'SH'
 #!/bin/sh
 printf '%s\n' "$@" > "$FAKE_LOG"
@@ -467,6 +468,36 @@ SH
     grep -q -- '-p MemoryMax=16G -p OOMPolicy=continue' "$ERR"
     grep -q 'Unknown assignment' "$ERR"
     grep -q 'runs in its scope without it' "$ERR"
+}
+
+@test "the ignored: line quotes the failure that decided — the second refusal of the properties, not the first" {
+    # call 1 (with the properties) fails with a bus fault, call 2 (bare) passes, call 3 (with them
+    # again) fails with the real rejection: that third call is what drops the limits, and the line
+    # must quote it — quoting the first named a transient fault as the reason a limit was dropped
+    cat > "$BIN/systemd-run" <<'SH'
+#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_LOG"
+echo "$*" >> "$FAKE_CALLS"
+n="$(wc -l < "$FAKE_CALLS")"
+case "$n" in
+    1) echo "Failed to connect to bus: Connection timed out" >&2; exit 1 ;;
+    3) echo "Failed to start transient scope unit: Unknown assignment: OOMPolicy=continue" >&2; exit 1 ;;
+esac
+while [ "$#" -gt 0 ]; do a="$1"; shift; [ "$a" = "--" ] && break; done
+exec "$@"
+SH
+    chmod +x "$BIN/systemd-run"
+    ERR="$TEST_DIR/stderr"
+    ROMP_CLI_SCOPE_MEMORY_MAX=16G run sh -c '"$0" a 2>"$1"' "$WRAPPER" "$ERR"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"REAL pid="* ]]
+    [ "$(wc -l < "$FAKE_CALLS")" -eq 4 ]
+    [[ "$(sed -n 4p "$FAKE_CALLS")" == *"--description=romp session $ROMP_SID -- $REAL a" ]]
+    [ "$(wc -l < "$ERR")" -eq 1 ]
+    grep -q '^romp-cli-scope: ignored: systemd-run rejected the per-session limits' "$ERR"
+    grep -q 'Unknown assignment' "$ERR"
+    run grep -q 'Connection timed out' "$ERR"
+    [ "$status" -ne 0 ]
 }
 
 @test "a pre-flight that fails once and then passes keeps the limits: a passing fault is not a refused property" {
@@ -523,8 +554,9 @@ SH
     [ "$(cat "$TIMEOUT_LOG")" = "10 systemd-run --user --scope --quiet --collect -p MemoryMax=16G -p MemorySwapMax=0 -p OOMPolicy=continue -- true" ]
 }
 
-# The adjustment is written to the wrapper's OWN oom_score_adj; exec-in-place carries it to the CLI.
-# A second fake CLI reports its adjustment (the first one's stdout is pinned byte-for-byte elsewhere).
+# The adjustment is written to the wrapper's OWN oom_score_adj, ahead of the pre-flight; exec-in-place
+# carries it to the CLI on every path that reaches one, the fallback included. A second fake CLI
+# reports its adjustment (the first one's stdout is pinned byte-for-byte elsewhere).
 _adj_cli() {
     REAL_ADJ="$TEST_DIR/claude-adj"
     cat > "$REAL_ADJ" <<'SH'
@@ -580,4 +612,55 @@ SH
     grep -q '^romp-cli-scope: ignored: ROMP_CLI_SCOPE_OOM_SCORE_ADJ could not be applied' "$ERR"
     grep -q 'privilege' "$ERR"
     [[ "$(sed -n 2p "$FAKE_CALLS")" == *"--unit=romp-session-11111111-"* ]]
+}
+
+@test "the adjustment applies on the fallback path too: a session run directly still carries it, with the one fallback line" {
+    # the write is to /proc/self and needs no scope; before it moved ahead of the pre-flight, a fallback
+    # launch skipped it silently while /api-health kept reporting the adjustment as in force
+    [ -r /proc/self/oom_score_adj ] || skip "no /proc/self/oom_score_adj on this box"
+    local cur; cur="$(cat /proc/self/oom_score_adj)"
+    [ "$cur" -le 900 ] || skip "this process already sits near the top of the range"
+    _adj_cli
+    cat > "$BIN/systemd-run" <<'SH'
+#!/bin/sh
+echo "$*" >> "$FAKE_CALLS"
+echo "Failed to connect to bus: No such file or directory" >&2
+exit 1
+SH
+    chmod +x "$BIN/systemd-run"
+    ERR="$TEST_DIR/stderr"
+    ROMP_CLI_SCOPE_MEMORY_MAX=16G ROMP_CLI_SCOPE_OOM_SCORE_ADJ=$((cur + 100)) run sh -c '"$0" 2>"$1"' "$WRAPPER" "$ERR"
+    [ "$status" -eq 0 ]
+    [ "$output" = "ADJ:$((cur + 100))" ]
+    [ "$(wc -l < "$FAKE_CALLS")" -eq 2 ]     # the pre-flight with the properties, then bare; the CLI ran directly
+    [ "$(wc -l < "$ERR")" -eq 1 ]
+    grep -q '^romp-cli-scope: fallback: ' "$ERR"
+    run grep -q 'ignored:' "$ERR"
+    [ "$status" -ne 0 ]
+    [ "$(cat /proc/self/oom_score_adj)" = "$cur" ]
+}
+
+@test "properties systemd rejects do not cost the adjustment: the CLI carries it in its bare scope, after the one ignored: line" {
+    [ -r /proc/self/oom_score_adj ] || skip "no /proc/self/oom_score_adj on this box"
+    local cur; cur="$(cat /proc/self/oom_score_adj)"
+    [ "$cur" -le 900 ] || skip "this process already sits near the top of the range"
+    _adj_cli
+    cat > "$BIN/systemd-run" <<'SH'
+#!/bin/sh
+echo "$*" >> "$FAKE_CALLS"
+case " $* " in *" -p "*) echo "Failed to start transient scope unit: Unknown assignment: OOMPolicy=continue" >&2; exit 1 ;; esac
+while [ "$#" -gt 0 ]; do a="$1"; shift; [ "$a" = "--" ] && break; done
+exec "$@"
+SH
+    chmod +x "$BIN/systemd-run"
+    ERR="$TEST_DIR/stderr"
+    ROMP_CLI_SCOPE_MEMORY_MAX=16G ROMP_CLI_SCOPE_OOM_SCORE_ADJ=$((cur + 100)) run sh -c '"$0" 2>"$1"' "$WRAPPER" "$ERR"
+    [ "$status" -eq 0 ]
+    [ "$output" = "ADJ:$((cur + 100))" ]
+    [ "$(wc -l < "$FAKE_CALLS")" -eq 4 ]
+    [[ "$(sed -n 4p "$FAKE_CALLS")" == *"--unit=romp-session-11111111-"* ]]
+    run grep -q -- '-p' <<< "$(sed -n 4p "$FAKE_CALLS")"
+    [ "$status" -ne 0 ]
+    [ "$(wc -l < "$ERR")" -eq 1 ]
+    grep -q '^romp-cli-scope: ignored: systemd-run rejected the per-session limits' "$ERR"
 }

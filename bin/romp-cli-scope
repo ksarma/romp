@@ -30,7 +30,9 @@
 # Two direct-exec paths, no scope: no ROMP_SID (a process with no session identity is a probe — the
 # SDK's per-connect `claude -v` version check — not a session, and must not get a scope of its own),
 # and a failed pre-flight (`systemd-run … -- true`: the user bus gone, scopes refused), where one
-# stderr line names the reason and the CLI runs directly rather than not at all.
+# stderr line names the reason and the CLI runs directly rather than not at all. The failed pre-flight
+# is a SESSION's launch, so the OOM-score adjustment below still applies on it: the write is to
+# /proc/self and needs no scope, and it is made before the pre-flight so no kernel-reached path skips it.
 #
 # Every stderr line this wrapper writes starts with `romp-cli-scope:`, and its second word says which
 # of the three messages it is, so the kernel tells them apart without reading the prose
@@ -43,10 +45,11 @@
 #     the log already has them.
 #   `romp-cli-scope: refused: …` — ROMP_CLI_REAL unset, exit 127, no CLI at all. The kernel counts no
 #     fallback for it: the launch fails, and the launch-error path reports the line on its own.
-#   `romp-cli-scope: ignored: …` — one of the per-session limits below was not applied (a value that
-#     does not parse, or a property this systemd does not know); the CLI runs in its scope without it.
-#     The CLI starts, so the kernel logs this line the moment it arrives, as a problem naming the
-#     session, and counts no fallback for it (the scope is there).
+#   `romp-cli-scope: ignored: …` — one of the per-session limits below was not applied: a value that
+#     does not parse, a property this systemd rejects, or an adjustment that parses but Linux will not
+#     let this process write. The CLI runs in its scope without it. The CLI starts, so the kernel logs
+#     this line the moment it arrives, as a problem naming the session, and counts no fallback for it
+#     (the scope is there). One launch can write more than one (the kernel counts lines, not launches).
 # The rest of the CLI's stderr the kernel only buffers, for a launch that fails.
 #
 # Per-session limits (2026-09-06), every one opt-in and none set by default. A session's shell that
@@ -63,24 +66,27 @@
 #                                                      lasts (verified: a 300 MB hog under MemoryMax=64M
 #                                                      survived on a box with a swapfile; with
 #                                                      MemorySwapMax=0 it was killed).
-#   ROMP_CLI_SCOPE_OOM_SCORE_ADJ    written to /proc/self/oom_score_adj before the exec, so the CLI and
-#                                   everything it spawns inherit it and the kernel keeps its own. The
-#                                   box-wide OOM killer and userspace killers such as earlyoom rank by a
-#                                   score this adds to, so a raised session is chosen over the kernel.
-#                                   Raising needs no privilege; lowering below the user manager's own
-#                                   value does (the write fails, and is reported).
+#   ROMP_CLI_SCOPE_OOM_SCORE_ADJ    written to /proc/self/oom_score_adj before the pre-flight and the
+#                                   exec, on the fallback path too, so the CLI and everything it spawns
+#                                   inherit it and the kernel keeps its own. The box-wide OOM killer and
+#                                   userspace killers such as earlyoom rank by a score this adds to, so a
+#                                   raised session is chosen over the kernel. Raising needs no privilege;
+#                                   lowering below the floor this process inherited (the user manager's
+#                                   own oom_score_adj) does: the write fails, and is reported.
 # Sizes are digits with one optional K, M, G or T suffix (binary, as systemd reads them) or `infinity`;
 # the adjustment is an integer in -1000..1000 with no leading zero (Linux reads `0400` as octal, 256). A
-# value that does not parse is NOT handed to systemd-run,
-# which would refuse the whole scope and start no CLI: it is skipped with one `ignored:` line naming the
-# variable. (The kernel validates the same variables once at its start and hands a bad one down empty,
-# so on a kernel-driven launch that line means the value reached the wrapper some other way.) Whenever
-# a memory property is set, OOMPolicy=continue goes with it: a scope's default is `stop` (systemd 255),
-# under which one OOM-killed process makes systemd stop the whole scope — the CLI, its tmux servers and
-# all — the opposite of what the limit is for. The pre-flight carries the properties, so a systemd that
-# does not know one of them (OOMPolicy= on scopes needs 253) fails there rather than at the CLI's own
-# launch; the wrapper then re-runs the pre-flight bare, and a scope that starts without the properties
-# gets the CLI without them, after one `ignored:` line.
+# value that does not parse is skipped with one `ignored:` line naming the variable, and the scope
+# starts with the other limits. (The kernel validates the same variables once at its start and hands a
+# refused one down empty, so on a kernel-driven launch that line means the value reached the wrapper
+# some other way.) Whenever a memory property is set, OOMPolicy=continue goes with it: a scope's default
+# is `stop` (systemd 255), under which one OOM-killed process makes systemd stop the whole scope — the
+# CLI, its tmux servers and all — the opposite of what the limit is for. The pre-flight carries the
+# properties, so a systemd that rejects one of them (OOMPolicy= on scopes needs 253) fails there rather
+# than at the CLI's own launch; the wrapper then re-runs the pre-flight bare, and a scope that starts
+# without the properties gets the CLI without them, after one `ignored:` line quoting the rejection. The
+# kernel runs the same property probe once at its start and hands rejected properties down empty
+# (cli_scope_limits in sdk_backend.py), so on a kernel-driven launch that line too means something
+# changed since boot.
 #
 # Environment: ROMP_CLI_REAL (required) — the real CLI; ROMP_SID — the session id (kernel-set);
 # ROMP_CLI_SCOPE=0 — run the CLI directly, no scope; the limits above. Arguments pass through verbatim.
@@ -146,28 +152,30 @@ for pair in ROMP_CLI_SCOPE_MEMORY_MAX=MemoryMax ROMP_CLI_SCOPE_MEMORY_HIGH=Memor
 done
 [ -n "$props" ] && props="$props -p OOMPolicy=continue"
 
-# A failed pre-flight with properties is retried bare, and a bare pass is followed by one more try WITH
-# them: only a second failure of the properties themselves drops them (for the session's whole life),
-# so a passing fault on the first try — a bus hiccup, the 10 s bound — does not cost the limits.
-if ! preflight $props; then
-    perr="$err"
-    if [ -z "$props" ] || ! preflight; then
-        echo "romp-cli-scope: fallback: systemd-run cannot start a transient scope (${err:-no detail}) — running the CLI directly, outside a scope; a service restart will take its background work down" >&2
-        exec "$ROMP_CLI_REAL" "$@"
-    elif ! preflight $props; then
-        ignored "systemd-run rejected the per-session limits (${props# }: ${perr:-no detail})"
-        props=""
-    fi
-fi
-
 # The OOM-score adjustment, on this process: exec-in-place carries it to the CLI and on to everything
 # the CLI spawns. `echo` is a builtin, so the redirection is opened by this shell and /proc/self is it.
+# Ahead of the pre-flight, so the fallback exec below carries it too (it is a /proc write and needs no
+# scope; the pre-flight's `true` inheriting it costs nothing).
 adj="${ROMP_CLI_SCOPE_OOM_SCORE_ADJ:-}"
 if [ -n "$adj" ]; then
     if ! adj_ok "$adj"; then
         ignored "ROMP_CLI_SCOPE_OOM_SCORE_ADJ is not an integer in -1000..1000"
     elif ! echo "$adj" > /proc/self/oom_score_adj 2>/dev/null; then
         ignored "ROMP_CLI_SCOPE_OOM_SCORE_ADJ could not be applied (a value below the user manager's own oom_score_adj needs a privilege it does not have)"
+    fi
+fi
+
+# A failed pre-flight with properties is retried bare, and a bare pass is followed by one more try WITH
+# them: only a second failure of the properties themselves drops them (for the session's whole life),
+# so a passing fault on the first try — a bus hiccup, the 10 s bound — does not cost the limits. The
+# line quotes that second failure, the one that decided: the first may have been the passing fault.
+if ! preflight $props; then
+    if [ -z "$props" ] || ! preflight; then
+        echo "romp-cli-scope: fallback: systemd-run cannot start a transient scope (${err:-no detail}) — running the CLI directly, outside a scope; a service restart will take its background work down" >&2
+        exec "$ROMP_CLI_REAL" "$@"
+    elif ! preflight $props; then
+        ignored "systemd-run rejected the per-session limits (${props# }: ${err:-no detail})"
+        props=""
     fi
 fi
 
