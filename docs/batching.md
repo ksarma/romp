@@ -18,7 +18,8 @@ also runs on every push to main).
    `Depends-on: #N` on one of the first lines of the body, so the batcher orders it. Do not open a
    PR against another session's branch. Do not merge a PR into another PR's branch. If a PR's base
    branch belongs to a PR that has already merged, retarget it before anything else:
-   `gh pr edit N --base main` (`scripts/land.sh` refuses the case).
+   `gh pr edit N --base main`. `scripts/land.sh` refuses any base but main (a merged PR's branch,
+   an open PR's branch, a branch with no PR).
 2. Give it one tier label: `fix`, `tests-only`, `feature`, or `major-feature`
    (`gh pr edit N --add-label fix`). A `major-feature` PR is discussed before it joins a batch; a
    `hold` label keeps a PR out of the next batch.
@@ -40,8 +41,14 @@ also runs on every push to main).
 
 Once, already done on this fork: delete branches on merge, squash and rebase merges off, so
 "Create a merge commit" is the only button. A ruleset on main (required checks by name, strict mode
-off, admin bypass) is optional and comes after the first batch has shown the check names; with one
-in place, `scripts/land.sh` uses `gh pr merge --auto`.
+off, admin bypass) is optional and comes after the first batch has shown the check names.
+
+Auto-merge (`gh pr merge --auto`) needs two things: the repository's "Allow auto-merge" setting
+(`gh api repos/{owner}/{repo} --jq .allow_auto_merge`; off on this fork today, and turning it on is
+your call: `gh repo edit --enable-auto-merge`) and required rules on main, a ruleset rule or branch
+protection. Without the setting GitHub rejects it; without the rules it merges at once and protects
+nothing. `scripts/land.sh --auto` reads both and refuses, naming the one that is missing; it never
+adds `--auto` on its own.
 
 Per batch, in order:
 
@@ -62,10 +69,16 @@ Per batch, in order:
    button yourself, tell the batcher to run `finish`.
 7. Nothing else. To revert a member later, `git revert -m 1 <its merge commit>` on a branch, as a PR.
 
-For one or two PRs that cannot wait: `scripts/land.sh N [M]`. It merges each with a merge commit,
-refuses squash and rebase and a base that belongs to a merged PR, and runs the orphan check
-afterward. The web button is equally safe now that branches delete on merge. If an urgent fix lands
-while a batch is open, the batcher merges main into the batch and re-verifies.
+For one or two PRs that cannot wait: `scripts/land.sh N [M]`. It checks both PRs before merging
+either, merges each with a merge commit, and runs the orphan check afterward. It refuses squash and
+rebase, a PR that is not open or is a draft, and any base but main: a merged PR's branch, a branch
+with no PR, or an open PR's branch. For an open PR's branch, `--into-open-pr` overrides the refusal,
+for a chain you want merged by hand from the bottom up; the content then sits on that branch until
+the lower PR merges, and the orphan check reports it until then. It never passes `--delete-branch`:
+gh's flag also deletes the local branch, which is checked out in a session's worktree here; the
+remote branch is deleted by the repository setting, or through the API when that setting is off. The
+web button is equally safe now that branches delete on merge. If an urgent fix lands while a batch
+is open, the batcher merges main into the batch and re-verifies (batcher step 7).
 
 ## If you are the batcher
 
@@ -81,10 +94,21 @@ subject; `verify` refuses the branch otherwise.
 3. Run the full sweep at the batch head (pytest, bats, `npm test`, `npm run typecheck`); re-run the
    known-flake modules alone before calling anything red.
 4. `scripts/batch.py verify <name> --sweep '<the counts>'`.
-5. `git push -u origin batch/<name>`, then `scripts/batch.py summarize <name>`, then watch the one
-   CI run. Red: `scripts/batch.py bisect <name> -- <failing test>` names the member;
+5. `git push -u origin batch/<name>` (after a rebuild, `git push --force-with-lease origin
+   batch/<name>`; `pull` pushes that way itself). If the pre-push hook refuses the push: it scans
+   each pushed commit's tree, so a batch tip that inherits a pre-scrub string trips it although the
+   new commits are merges; read what tripped and fix the member or ask. Never bypass the hook. Then
+   `scripts/batch.py summarize <name>` and watch the one CI run. If CI is red:
+   `scripts/batch.py bisect <name> -- <failing test>` names the member;
    `scripts/batch.py pull <name> N` rebuilds without it and says so on the PR.
-6. On the maintainer's word: `scripts/batch.py land <name>`. It verifies again, merges with a merge
+6. When a member's owner pushes a fix after the cut (they tell you by postal), run
+   `scripts/batch.py assemble <name> --repin N` (re-reads that head and rebuilds the branch;
+   `--repin all` re-reads every member), then repeat steps 3 to 5. Without the re-pin, `verify`
+   fails on the moved head.
+7. When main moves and the batch PR reads behind or conflicting, run `git merge origin/main` in
+   the batch worktree (`../romp-batch-<name>`; `verify` allows a merge of main on the chain), then
+   repeat steps 3 to 5.
+8. On the maintainer's word: `scripts/batch.py land <name>`. It verifies again, merges with a merge
    commit, and runs `finish`. If the maintainer clicked the button, run
    `scripts/batch.py finish <name>` alone.
 
