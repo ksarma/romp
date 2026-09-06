@@ -1993,6 +1993,26 @@ def _cwd_of(sid):
     return parts[1] if parts and len(parts) > 1 else ""
 
 
+def _session_cwd(sid, path=None, meta=None):
+    """The directory a session works in, for EVERY frame that names it or derives from it (the chat frame's
+    cwd, gitBranch and githubRepo; the feed's per-session githubRepo): the registry's dir FIRST, the
+    transcript's cwd stamp only as a fallback. The registry is known before the first turn and a move
+    rewrites it at once, while the transcript keeps stamping the old cwd until the model's next turn (and
+    its per-record stamp is the CLI's TRACKED cwd, which a shell `cd` inside a Bash call also moves) — so
+    the registry is the project directory whenever it exists. The stamp matters for a session romp never
+    registered (discovered from its transcript alone, opened read-only): with the registry empty it is the
+    only source, and one derivation here keeps the chat frame and the feed's session rows in agreement —
+    they disagreed when the feed read _cwd_of alone, so `#123` linked in the chat but not on the same
+    session's cards (review find, 2026-09-06). `meta` is a _session_meta already in hand; else it is read
+    from `path` (cached per transcript). "" when neither source names one."""
+    cwd = _cwd_of(sid)
+    if cwd:
+        return cwd
+    if meta is None and path:
+        meta = _session_meta(path)
+    return (meta or {}).get("cwd") or ""
+
+
 def _identity_of(sid):
     """The session's identity colors (bg, fg) from the names registry (3rd/4th tab fields), or ("", ""). Written
     at launch for BOTH backends (tmux launcher + SDK write_name), so it's available without shelling tmux —
@@ -23040,14 +23060,35 @@ def _norm_branch(br):
 _tree_cache = {}   # dir -> git toplevel ("" = not a repo) — where a path's tree ROOT is; branch stays live
 
 
+def _dotgit_on_chain(d):
+    """True when a `.git` (directory, or a worktree's pointer file) exists at `d` or any ancestor — the
+    chain `git rev-parse --show-toplevel` walks to find a tree. One stat per path component, no fork."""
+    p = os.path.abspath(d)
+    while True:
+        if os.path.exists(os.path.join(p, ".git")):
+            return True
+        parent = os.path.dirname(p)
+        if parent == p:
+            return False
+        p = parent
+
+
 def _tree_of(d):
     """(toplevel, branch) of the git tree containing directory `d`, ("", "") when not in one. The toplevel
-    mapping is cached per directory (it changes only if the tree is moved/deleted — then the branch read
-    below comes back empty and every consumer hides the row); the branch rides _git_branch's own
-    HEAD-mtime cache so it stays current without a second discipline."""
+    mapping is cached per directory. A FOUND toplevel changes only if the tree is moved/deleted — then the
+    branch read below comes back empty and every consumer hides the row. A "not a repo" verdict is NOT
+    final: the directory becomes a tree the moment the session runs `git init` (then `gh repo create`),
+    and a cached "" kept its GitHub repo (and every tree-derived row) hidden until a kernel restart while
+    gitBranch, re-derived per build, showed normally — silent degradation (review find, 2026-09-06). So a
+    cached "" is trusted only while no `.git` exists on the chain git's own discovery walks (`d` and its
+    ancestors, _dotgit_on_chain): a non-repo cwd costs one stat per path component per build, no fork,
+    and a `.git` appearing anywhere on that chain sends the next call back to git. The branch rides
+    _git_branch's own HEAD-mtime cache so it stays current without a second discipline."""
     if not d:
         return "", ""
     top = _tree_cache.get(d)
+    if top == "" and _dotgit_on_chain(d):       # the non-repo verdict is stale once a .git appears (see above)
+        top = None
     if top is None:
         top = ""
         try:
@@ -24966,13 +25007,9 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # effect + this session's model / cwd / branch / permission-mode / version (NOT the harness prompt —
     # see _claudemd_docs). Only when there's a real transcript to describe AND something to show.
     meta = _session_meta(sess["path"])
-    # The registry's dir FIRST (known before the first turn), the transcript's stamp only as a fallback:
-    # a move (SdkBackend.move) rewrites the registry at once, while the transcript keeps stamping the old
-    # cwd until the model's next turn — so the card would name the old folder for as long as the session
-    # sat idle after the move. And the per-record `cwd` stamp is the CLI's TRACKED cwd, which a shell
-    # `cd` inside a Bash tool call also moves (with no transcript move behind it), so it never was the
-    # session's project directory — only the registry (and the CLI's own `relocated` record) is.
-    scwd = _cwd_of(sid) or meta.get("cwd") or ""
+    # The registry's dir FIRST (known before the first turn; a move rewrites it at once), the transcript's
+    # stamp only as a fallback — _session_cwd says why, and the feed's session rows take the same derivation.
+    scwd = _session_cwd(sid, meta=meta)
     docs = _claudemd_docs(scwd)
     # The WORKTREE the session actually works in (the user 2026-08-13): the repo convention here puts real
     # work on per-session worktrees beside the registered clone, so the registered dir's branch read 'main'
@@ -25035,7 +25072,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     _kids = (_be_fk.fork_children().get(sid) if _be_fk and hasattr(_be_fk, "fork_children") else None) or None
     return {"type": "session", "id": sid, "name": sess["name"], "color": _name_color(sid),
             "branch": branch, "branches": _kids,
-            "cwd": _tilde(_cwd_of(sid) or meta.get("cwd") or ""),   # the CURRENT dir (a move rewrites it); lane tab shows it (the user 2026-06-22)
+            "cwd": _tilde(scwd),   # the CURRENT dir (a move rewrites it); lane tab shows it (the user 2026-06-22)
             # git branch as a TOP-LEVEL session field, NOT just inside the head system event: the status-bar
             # branch + tab tooltip must show for EVERY session, but the system event lives at events[0] and the
             # WIRE_TAIL window ships only the last 250 events — so on any session with >250 events the head
@@ -27300,8 +27337,9 @@ def build_feed(now, tmux=None):
             "sessions": [{"sid": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
                           # the session's GitHub repository (owner/repo, or null), so a card's `#123`
                           # links to ITS repository's PR page (the user 2026-09-06) — the derivation
-                          # the chat frame ships, memoized, a fixed value across unchanged builds
-                          "githubRepo": _github_repo_of(_cwd_of(s["sid"]))}
+                          # the chat frame ships, from the SAME directory (_session_cwd: registry, else
+                          # the transcript's stamp), memoized, a fixed value across unchanged builds
+                          "githubRepo": _github_repo_of(_session_cwd(s["sid"], s.get("path")))}
                          for s in _chat_tab_sessions(now, tmux)],
             # /clear boundary settles, newest per session → the bell logs each once (the user 2026-07-27)
             "clearNotices": _boundary_clear_notices(alive),

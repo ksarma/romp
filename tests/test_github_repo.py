@@ -9,8 +9,15 @@ elsewhere names no GitHub repository, and the clients then link nothing rather t
 Throwaway temp repos with fabricated origins (example-org/notes-api — the demo world); nothing here
 reaches a network (no fetch, no ls-remote — `remote get-url` reads config). The registry-keyed check
 uses a PRIVATE synthetic sid (the goal-store fixture rule, applied to the names registry too).
+
+Also here: _tree_of's re-validated "not a repo" verdict (a directory that becomes a repo after its
+first build is found without a kernel restart), _git_config_file's hand-built layouts (a relative
+gitdir, a gitdir with no commondir), and _session_cwd — the one derivation of a session's directory
+the chat frame and the feed's session rows share, so a never-registered session links the same repo
+on both.
 """
 import inspect
+import json
 import os
 import subprocess
 import tempfile
@@ -180,13 +187,189 @@ class Memo(unittest.TestCase):
         self.assertIsNone(km._github_repo_of(self.repo), "a null verdict replaces the memoized repo")
 
 
+class LateRepo(unittest.TestCase):
+    """A directory that becomes a repo AFTER its first build (`git init`, then a GitHub origin) is found on
+    the next call, with no kernel restart: _tree_of trusts a cached "not a repo" verdict only while no
+    `.git` exists on the chain git's discovery walks. Before the re-validation the verdict was cached
+    forever, so gitBranch (re-derived per build) showed while githubRepo stayed null — silent degradation
+    (review find, 2026-09-06). A directory that stays outside any repo is NOT re-asked: one fork, then
+    stats only."""
+
+    def setUp(self):
+        self._saved_env = {k: os.environ.get(k) for k in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")}
+        os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+        os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+        self.root = tempfile.mkdtemp()
+        if km._dotgit_on_chain(self.root):
+            self.skipTest("the temp root sits inside a repository; these need a directory outside every tree")
+        self.proj = os.path.join(self.root, "proj")
+        self.sub = os.path.join(self.proj, "src")
+        os.makedirs(self.sub)
+
+    def tearDown(self):
+        for k, v in self._saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _init_with_origin(self, d):
+        """What `git init` + a first commit + `gh repo create --push` leave behind (an unborn branch — init
+        with no commit — reads as no branch, like a detached HEAD; the repo is still found)."""
+        _git("init", "-q", "-b", "main", cwd=d)
+        with open(os.path.join(d, "f.txt"), "w") as f:
+            f.write("x\n")
+        _git("add", "f.txt", cwd=d)
+        _git("commit", "-q", "-m", "seed", cwd=d)
+        _git("remote", "add", "origin", HTTPS_ORIGIN, cwd=d)
+
+    def test_a_directory_that_becomes_a_repo_is_found_without_a_restart(self):
+        self.assertIsNone(km._github_repo_of(self.proj))
+        self.assertEqual(km._tree_of(self.proj), ("", ""))
+        self.assertEqual(km._tree_cache.get(self.proj), "", "the non-repo verdict is cached")
+        self._init_with_origin(self.proj)
+        self.assertEqual(km._github_repo_of(self.proj), REPO, "the next call sees the new tree")
+        top, br = km._tree_of(self.proj)
+        self.assertEqual(os.path.realpath(top), os.path.realpath(self.proj))
+        self.assertEqual(br, "main")
+
+    def test_a_repo_appearing_at_an_ancestor_is_found_from_a_subdirectory(self):
+        # the edit-derived tree (lastEditPath's directory) and a session whose cwd is a subdirectory
+        # of the project both resolve upward, as git does
+        self.assertIsNone(km._github_repo_of(self.sub))
+        self._init_with_origin(self.proj)
+        self.assertEqual(km._github_repo_of(self.sub), REPO)
+        self.assertEqual(os.path.realpath(km._tree_of(self.sub)[0]), os.path.realpath(self.proj))
+
+    def test_a_directory_still_outside_any_repo_is_not_re_asked(self):
+        real_run = km.subprocess.run
+        asks = []
+
+        def counting(*a, **k):
+            argv = a[0] if a else k.get("args")
+            if isinstance(argv, (list, tuple)) and "--show-toplevel" in argv:
+                asks.append(list(argv))
+            return real_run(*a, **k)
+        km.subprocess.run = counting
+        try:
+            self.assertEqual(km._tree_of(self.proj), ("", ""))
+            self.assertEqual(len(asks), 1, "the first call asks git")
+            self.assertEqual(km._tree_of(self.proj), ("", ""))
+            self.assertEqual(km._tree_of(self.sub), ("", ""))
+            self.assertEqual(km._tree_of(self.proj), ("", ""))
+            self.assertEqual(len(asks), 2, "one ask per directory; a still-non-repo verdict costs stats, not forks")
+        finally:
+            km.subprocess.run = real_run
+
+    def test_the_chain_check_is_a_stat_walk_up_to_the_root(self):
+        self.assertFalse(km._dotgit_on_chain(self.sub))
+        os.mkdir(os.path.join(self.proj, ".git"))          # any .git on the chain, a directory here
+        self.assertTrue(km._dotgit_on_chain(self.sub))
+        self.assertTrue(km._dotgit_on_chain(self.proj))
+        self.assertFalse(km._dotgit_on_chain(self.root), "an ancestor of the .git is not on its chain")
+
+
+class ConfigFile(unittest.TestCase):
+    """_git_config_file's layouts, built by hand under a private temp dir: the file is the memo's mtime
+    source, so a layout it cannot resolve forks `git remote get-url` on every build. The live-worktree
+    test above covers an absolute gitdir with a `..`-relative commondir; these are the other branches."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+
+    def _layout(self, name, gitdir_line):
+        top = os.path.join(self.root, name)
+        os.makedirs(top)
+        with open(os.path.join(top, ".git"), "w") as f:
+            f.write("gitdir: %s\n" % gitdir_line)
+        return top
+
+    def test_a_relative_gitdir_resolves_against_the_tree(self):
+        gd = os.path.join(self.root, "main", ".git", "worktrees", "wt")
+        os.makedirs(gd)
+        with open(os.path.join(gd, "commondir"), "w") as f:
+            f.write("../..\n")
+        top = self._layout("wt", "../main/.git/worktrees/wt")
+        self.assertEqual(km._git_config_file(top), os.path.join(self.root, "main", ".git", "config"))
+
+    def test_a_gitdir_with_no_commondir_holds_its_own_config(self):
+        # the submodule shape: .git is a file naming <super>/.git/modules/<name>, which has no commondir
+        # and carries the submodule's own remotes
+        gd = os.path.join(self.root, "super", ".git", "modules", "lib")
+        os.makedirs(gd)
+        top = self._layout("lib", gd)
+        self.assertEqual(km._git_config_file(top), os.path.join(gd, "config"))
+
+    def test_a_relative_gitdir_with_no_commondir_resolves_then_holds_its_own_config(self):
+        gd = os.path.join(self.root, "store", "gd")
+        os.makedirs(gd)
+        top = self._layout("tree", "../store/gd")
+        self.assertEqual(km._git_config_file(top), os.path.join(gd, "config"))
+
+    def test_an_absolute_commondir_is_taken_as_is(self):
+        gd = os.path.join(self.root, "private")
+        shared = os.path.join(self.root, "shared")
+        os.makedirs(gd)
+        os.makedirs(shared)
+        with open(os.path.join(gd, "commondir"), "w") as f:
+            f.write(shared + "\n")
+        top = self._layout("abs-common", gd)
+        self.assertEqual(km._git_config_file(top), os.path.join(shared, "config"))
+
+    def test_no_dot_git_at_all_is_no_config_file(self):
+        top = os.path.join(self.root, "bare-dir")
+        os.makedirs(top)
+        self.assertEqual(km._git_config_file(top), "")
+
+    def test_a_live_worktree_with_a_relative_gitdir_keeps_its_memo(self):
+        # a hand-relativized worktree (the .git pointer rewritten relative, as some tooling does): the
+        # repo is named AND a second call forks no `remote get-url` — the config file resolved, so the
+        # mtime memo holds
+        self._saved_env = {k: os.environ.get(k) for k in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")}
+        os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+        os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+        self.addCleanup(lambda: [os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+                                 for k, v in self._saved_env.items()])
+        main = _repo(self.root, "main-repo", HTTPS_ORIGIN)
+        wt = os.path.join(self.root, "main-repo-wt")
+        _git("worktree", "add", "-q", "-b", "wtb", wt, "HEAD", cwd=main)
+        with open(os.path.join(wt, ".git")) as f:
+            gd = f.readline().strip()[len("gitdir:"):].strip()
+        self.assertTrue(os.path.isabs(gd), "git writes the pointer absolute")
+        with open(os.path.join(wt, ".git"), "w") as f:
+            f.write("gitdir: %s\n" % os.path.relpath(gd, wt))
+        real = km._git_out
+        reads = []
+
+        def counting(args, cwd, *a, **kw):
+            if list(args[:2]) == ["remote", "get-url"]:
+                reads.append(cwd)
+            return real(args, cwd, *a, **kw)
+        km._git_out = counting
+        try:
+            self.assertEqual(km._github_repo_of(wt), REPO)
+            self.assertEqual(km._github_repo_of(wt), REPO)
+        finally:
+            km._git_out = real
+        self.assertEqual(len(reads), 1, "resolved config file → one read, then the memo")
+        self.assertEqual(os.path.realpath(km._git_config_file(os.path.realpath(wt))),
+                         os.path.realpath(os.path.join(main, ".git", "config")))
+
+
+UNREGISTERED_SID = "00000000-0000-4000-8000-000000000000"   # never written to the names registry
+
+
 class RegistryPath(_Fixtures):
-    """The feed's session rows derive the repo from the names registry's cwd (_cwd_of) — the same path
-    the chat frame takes through scwd. A PRIVATE synthetic sid, cleaned up after."""
+    """Both frames derive the repo from ONE directory, _session_cwd: the names registry's cwd first, the
+    transcript's cwd stamp for a session romp never registered. The chat frame passes the meta it has in
+    hand, the feed's session rows pass the transcript path; a session with no registry entry must link the
+    same repo on both — before the helper the feed read _cwd_of alone and linked nothing for it (review
+    find, 2026-09-06). A PRIVATE synthetic sid, cleaned up after."""
 
     def setUp(self):
         km.NAMES.mkdir(parents=True, exist_ok=True)
         (km.NAMES / PRIVATE_SID).write_text("web\t%s\t#123456\t#ffffff\n" % self.https)
+        self.transcript = os.path.join(tempfile.mkdtemp(), "transcript.jsonl")
 
     def tearDown(self):
         try:
@@ -194,12 +377,39 @@ class RegistryPath(_Fixtures):
         except FileNotFoundError:
             pass
 
+    def _stamp(self, cwd):
+        """A synthetic transcript whose records stamp `cwd`, the way the CLI stamps every record."""
+        with open(self.transcript, "w") as f:
+            f.write(json.dumps({"type": "user", "uuid": "11111111-2222-3333-4444-555555555555", "cwd": cwd,
+                                "version": "2.1.0", "gitBranch": "main",
+                                "message": {"role": "user", "content": "hello"}}) + "\n")
+        return self.transcript
+
     def test_the_registered_cwd_names_the_sessions_repo(self):
         self.assertEqual(km._cwd_of(PRIVATE_SID), self.https)
-        self.assertEqual(km._github_repo_of(km._cwd_of(PRIVATE_SID)), REPO)
+        self.assertEqual(km._github_repo_of(km._session_cwd(PRIVATE_SID)), REPO)
 
-    def test_an_unregistered_sid_has_no_repo(self):
-        self.assertIsNone(km._github_repo_of(km._cwd_of("00000000-0000-4000-8000-000000000000")))
+    def test_the_registry_outranks_the_transcripts_stamp(self):
+        # a shell `cd` inside a Bash call moves the CLI's tracked cwd, and the stamp with it — the
+        # registry is the project directory whenever it exists
+        path = self._stamp(self.elsewhere)
+        self.assertEqual(km._session_cwd(PRIVATE_SID, path), self.https)
+        self.assertEqual(km._session_cwd(PRIVATE_SID, meta={"cwd": self.elsewhere}), self.https)
+
+    def test_a_never_registered_session_takes_the_transcripts_stamp_on_both_frames(self):
+        path = self._stamp(self.https)
+        self.assertEqual(km._cwd_of(UNREGISTERED_SID), "", "no registry entry")
+        meta = km._session_meta(path)
+        chat_frame = km._session_cwd(UNREGISTERED_SID, meta=meta)        # build_session: the meta in hand
+        feed_row = km._session_cwd(UNREGISTERED_SID, path)               # build_feed: the transcript path
+        self.assertEqual(chat_frame, self.https)
+        self.assertEqual(feed_row, chat_frame, "the chat frame and the feed's session row name one directory")
+        self.assertEqual(km._github_repo_of(feed_row), REPO)
+
+    def test_no_registry_entry_and_no_transcript_is_no_directory_and_no_repo(self):
+        self.assertEqual(km._session_cwd(UNREGISTERED_SID), "")
+        self.assertEqual(km._session_cwd(UNREGISTERED_SID, None, None), "")
+        self.assertIsNone(km._github_repo_of(km._session_cwd(UNREGISTERED_SID)))
 
 
 class FrameWiring(unittest.TestCase):
@@ -207,14 +417,16 @@ class FrameWiring(unittest.TestCase):
 
     def test_the_session_frame_carries_the_repo_top_level(self):
         src = inspect.getsource(km.build_session)
+        self.assertIn("scwd = _session_cwd(sid, meta=meta)", src, "the shared derivation, with the meta in hand")
         self.assertIn('"githubRepo": _github_repo_of(scwd),', src,
                       "top-level like gitBranch — never windowed off the wire")
         self.assertLess(src.index('"gitBranch": sysinfo["gitBranch"]'), src.index('"githubRepo": _github_repo_of(scwd)'))
 
     def test_the_feed_session_rows_carry_the_repo(self):
         src = inspect.getsource(km.build_feed)
-        self.assertIn('"githubRepo": _github_repo_of(_cwd_of(s["sid"]))', src,
-                      "each tab-strip session row names its repo, from the registry's cwd")
+        self.assertIn('"githubRepo": _github_repo_of(_session_cwd(s["sid"], s.get("path")))', src,
+                      "each tab-strip session row names its repo from the SAME directory the chat frame uses")
+        self.assertNotIn('_github_repo_of(_cwd_of(', src, "never the registry alone — a transcript-only session has none")
 
 
 if __name__ == "__main__":
