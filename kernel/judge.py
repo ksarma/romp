@@ -1013,6 +1013,46 @@ def _log_judge_usage(judge, tier, model, fsid, wrap, sent=None, recv=None):
 
 _WORK_KEY_FN = None   # the kernel wires this to sdk_backend.work_api_key when it loads that module
                       # (_sdk_locked), so judges read the SAME once-per-process stash sessions bill from
+_ENV_SET_FN = None    # the kernel wires this to sdk_backend.credential_set: the command source's set
+                      # (kernel/envsource.py, 2026-09-05) — role variables for a judge call's env, minus
+                      # the key, which rides the explicit billing decision below. None = file mode /
+                      # standalone: nothing merged, byte for byte the environment as before
+_ENV_INVALIDATE_FN = None   # …and to sdk_backend.credential_invalidate: a credential-class refusal on
+                            # a judge call is the event that makes the cached set stale
+_ENV_OK_FN = None           # …and to sdk_backend.credential_auth_ok: a served call is the event that
+                            # re-arms the once-per-credential refusal path for the set it ran on
+
+
+def _env_set():
+    """The command source's current set, {} when unwired or on any failure — read through the kernel's
+    wire, never by running anything here (judge.py loads standalone; the runner lives in the kernel)."""
+    if _ENV_SET_FN is None:
+        return {}
+    try:
+        return dict(_ENV_SET_FN() or {})
+    except Exception:
+        return {}
+
+
+def _env_invalidate(reason):
+    if _ENV_INVALIDATE_FN is None:
+        return
+    try:
+        _ENV_INVALIDATE_FN(reason)
+    except Exception:
+        pass
+
+
+def _env_auth_ok():
+    """A judge call was served: the set its environment carried (or the helper the CLI ran) was
+    accepted. Passes no fingerprint: the call ran on the current set as a whole. A broken wire never
+    breaks the reply path."""
+    if _ENV_OK_FN is None:
+        return
+    try:
+        _ENV_OK_FN("")
+    except Exception:
+        pass
 
 
 def _work_key():
@@ -1277,9 +1317,18 @@ def _judge_env(tier, auth="login", model=None):
     standalone the var is still there, where a login-mode child would otherwise bill the key by mere
     inheritance — and injected back EXPLICITLY for a key-mode call only. Removal, not blanking, same
     rule as sdk_backend._options: the CLI treats even an empty var as key-mode-without-a-key and
-    refuses with "Not logged in"."""
+    refuses with "Not logged in".
+
+    The command source's set (_env_set, 2026-09-05) is merged over the environment MINUS its
+    ANTHROPIC_API_KEY — the same one door for the key: a login-billed call never receives the
+    command's key by inheritance, and a key-billed call gets it through _work_key (which reads the
+    same set in command mode). Its other names (a direct-call key, role variables) reach the child
+    exactly as a session CLI's tool shells get them. Empty in file mode."""
     wk = _work_key()                                  # read before the strip (standalone: same env)
     env = dict(os.environ)
+    overlay = _env_set()
+    overlay.pop("ANTHROPIC_API_KEY", None)            # the key rides the billing decision below, never the overlay
+    env.update(overlay)
     env.pop("ANTHROPIC_API_KEY", None)                # never ambient: billing is an explicit choice per call
     for k in ("TMUX", "TMUX_PANE"):
         env.pop(k, None)
@@ -1465,9 +1514,11 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
             outp = os.path.join(JUDGE_SCRATCH, "codex-%d-%d.out" % (os.getpid(), rid))
             try:
                 try:
-                    # another vendor's process has no use for the Anthropic key (_judge_env re-injects
-                    # it for key-billed sessions); strip it from the child's environment (PR #885 review)
-                    cenv = {k: v for k, v in env.items() if k != "ANTHROPIC_API_KEY"}
+                    # another vendor's process has no use for any Anthropic credential (_judge_env
+                    # re-injects the key for key-billed sessions, and the command source's set can carry
+                    # a direct-call key too); strip every ANTHROPIC_* name from the child's environment
+                    # (PR #885 review; widened 2026-09-05 with the command source)
+                    cenv = {k: v for k, v in env.items() if not k.startswith("ANTHROPIC_")}
                     p = subprocess.run(_judge_cmd_codex(model, _codex_effort(effort, tier), outp),
                                        input=(sys_prompt or "") + "\n\n" + (user or ""),
                                        capture_output=True, text=True, cwd=JUDGE_SCRATCH, env=cenv,
@@ -1589,11 +1640,16 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
                     # credential-class: only the user can fix it — latch, so build_feed floors this
                     # session's focus card instead of leaving the board silently frozen (2026-08-12)
                     _auth_down_mark(fsid, auth, msg[:160])
+                    # …and the command source's cached set is stale evidence: re-run it before the next
+                    # call rather than re-presenting a rotated-out credential (the exact event, no timer)
+                    _env_invalidate("judge call refused as unauthenticated (%s)" % (judge or tier))
                 return ""
             if isinstance(wrap, dict) and isinstance(wrap.get("result"), str):
                 _judge_ctx.last["reply"] = _mid_elide(wrap["result"])
                 _log_judge_usage(judge or tier, tier, model, fsid, wrap, sent, recv)
                 _auth_down_clear(fsid)                # billing works → unlatch (cheap no-op when unlatched)
+                _env_auth_ok()                        # …and the command source's set was accepted: a later
+                #                                       refusal of it is new information again
                 if auth == "login":
                     # only a LOGIN-billed success is evidence the login window reset early — a
                     # key-billed success says nothing about it (the user 2026-08-28; before this,
