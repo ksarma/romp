@@ -843,10 +843,16 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   let { b: be, k: ke } = E;
   if (idx.blocks[bs].refused === null && ks >= idx.blocks[bs].chars.length) { bs = nextBlock(bs + 1); ks = 0; }
   if (be >= 0 && idx.blocks[be].refused === null && ke === 0) { be = prevBlock(be - 1); if (be >= 0) ke = idx.blocks[be].chars.length; }
-  if (bs < 0 || be < 0 || bs > be || (bs === be && ks >= ke)) return refuse("The selection is only whitespace.", rawExtra());
-  for (let b = bs; b <= be; b++) {
+  if (bs < 0 || be < 0) return refuse("The selection is only whitespace.", rawExtra());
+  // a refused block anywhere in the span comes first: its text is what the person selected, whatever
+  // the mapping knows about it
+  for (let b = Math.min(bs, be); b <= Math.max(bs, be); b++) {
     const blk = idx.blocks[b];
     if (blk.refused !== null) return refuse(`This selection touches ${blk.refused}; comment on it from the Raw view.`, blockExtra(blk));
+  }
+  if (bs > be || (bs === be && ks >= ke)) return refuse("The selection is only whitespace.", rawExtra());
+  for (let b = bs; b <= be; b++) {
+    const blk = idx.blocks[b];
     const from = b === bs ? ks : 0, to = b === be ? ke : blk.chars.length;
     for (let k = from; k < to; k++) {
       const p = blk.pos[k];

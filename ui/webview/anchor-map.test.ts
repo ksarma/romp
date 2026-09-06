@@ -763,3 +763,98 @@ test("Rendered paint: a range over several blocks wraps each block's text and no
   for (const m of marks) assert.notEqual(stripWs(m.textContent), "", "no whitespace-only marks between blocks: " + JSON.stringify(m.textContent));
   assert.equal(stripWs(marks.map((m) => m.textContent).join("")), stripWs("Key points: Cache the rendered notes for five minutes."));
 });
+
+// ── Rendered: holes, html resync, inline html, autolinks, cache validity ───────────────────────────
+const firstEl = (root: FakeNode, tag: string, n = 0): FakeElement => {
+  const found: FakeElement[] = [];
+  const visit = (x: FakeNode) => { if (x.nodeType === 1 && (x as FakeElement).tagName === tag) found.push(x as FakeElement); x.childNodes.forEach(visit); };
+  visit(root); return found[n];
+};
+const wholeOf = (e: FakeElement) => { const p = nonWsPositions(e); return sel({ node: p[0].t, offset: p[0].off }, { node: p[p.length - 1].t, offset: p[p.length - 1].off + 1 }); };
+const partOf = (e: FakeElement, from: number, to: number) => { const p = nonWsPositions(e); return sel({ node: p[from].t, offset: p[from].off }, { node: p[to - 1].t, offset: p[to - 1].off + 1 }); };
+
+test("Rendered: code and tables nested in list items are holes — the other items still map, the hole refuses with its own line", () => {
+  const source = [
+    "- Install it:", "", "  ```sh", "  npm install notes-api", "  ```", "", "- Then run the server.", "", "- A table:", "",
+    "  | a | b |", "  |---|---|", "  | 1 | 2 |", "", "- After the table.", "",
+  ].join("\n");
+  const { box } = buildRendered(source);
+  const ul = firstEl(box, "UL");
+  assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(ul, "LI", 1)), El(box), source)).quote, "Then run the server.");
+  assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(ul, "LI", 3)), El(box), source)).quote, "After the table.");
+  assert.equal(ok(mapRenderedSelection(partOf(firstEl(ul, "LI", 0), 0, 7), El(box), source)).quote, "Install");
+  let r = bad(mapRenderedSelection(partOf(firstEl(ul, "PRE"), 0, 3), El(box), source));
+  assert.match(r.reason, /code block/);
+  assert.equal(r.blockStartLine, 2);
+  assert.equal(r.rawHasQuote, true);
+  assert.equal(source.slice(r.rawRange!.start, r.rawRange!.end), "npm");
+  r = bad(mapRenderedSelection(partOf(firstEl(ul, "TABLE"), 0, 1), El(box), source));
+  assert.match(r.reason, /table/);
+  assert.equal(r.blockStartLine, 10);
+  // a selection from the prose item into the code touches the hole
+  const li0 = nonWsPositions(firstEl(ul, "LI", 0)), pre = nonWsPositions(firstEl(ul, "PRE"));
+  r = bad(mapRenderedSelection(sel({ node: li0[0].t, offset: li0[0].off }, { node: pre[2].t, offset: pre[2].off + 1 }), El(box), source));
+  assert.match(r.reason, /code block/);
+  // a selection across the two prose items keeps the code's source between them
+  const li1 = nonWsPositions(firstEl(ul, "LI", 1));
+  r = bad(mapRenderedSelection(sel({ node: li0[0].t, offset: li0[0].off }, { node: li1[3].t, offset: li1[3].off + 1 }), El(box), source));
+  assert.match(r.reason, /code block/, "the hole lies inside the selection");
+  // painting a range inside the hole falls back to the code element's text
+  const marks = paintRendered(El(box), source, { start: source.indexOf("npm install"), end: source.indexOf("npm install") + 11 }, "fc-hl") as unknown as FakeElement[] | null;
+  assert.ok(marks && stripWs(marks.map((m) => m.textContent).join("")) === "npminstall");
+});
+
+test("Rendered: an HTML block that renders several elements, or none, does not shift the blocks after it", () => {
+  const source = "<p>one</p>\n<p>two</p>\n\nAfter the block.\n\n<!-- a comment -->\n\nLast paragraph.\n\n<div>x</div>\n\n# End\n";
+  const { box } = buildRendered(source);
+  const ps = box.childNodes.filter((n) => n.nodeType === 1 && (n as FakeElement).tagName === "P") as FakeElement[];
+  assert.equal(ps.length, 4);
+  let r = bad(mapRenderedSelection(wholeOf(ps[0]), El(box), source));
+  assert.match(r.reason, /HTML block/);
+  assert.equal(r.blockStartLine, 0);
+  r = bad(mapRenderedSelection(wholeOf(ps[1]), El(box), source));
+  assert.match(r.reason, /HTML block/);
+  assert.equal(ok(mapRenderedSelection(wholeOf(ps[2]), El(box), source)).quote, "After the block.");
+  assert.equal(ok(mapRenderedSelection(wholeOf(ps[3]), El(box), source)).quote, "Last paragraph.");
+  assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(box, "H1")), El(box), source)).quote, "End");
+  const div = box.childNodes.find((n) => n.nodeType === 1 && (n as FakeElement).tagName === "DIV") as FakeElement;
+  r = bad(mapRenderedSelection(wholeOf(div), El(box), source));
+  assert.match(r.reason, /HTML block/);
+  assert.equal(r.blockStartLine, 9);
+  // a selection from the html block into the paragraph after it refuses; from the paragraph on it maps
+  const a = nonWsPositions(ps[1]), b = nonWsPositions(ps[2]);
+  bad(mapRenderedSelection(sel({ node: a[0].t, offset: a[0].off }, { node: b[2].t, offset: b[2].off + 1 }), El(box), source));
+  assert.equal(ok(mapRenderedSelection(sel({ node: b[0].t, offset: b[0].off }, { node: nonWsPositions(ps[3])[3].t, offset: nonWsPositions(ps[3])[3].off + 1 }), El(box), source)).quote,
+               "After the block.\n\n<!-- a comment -->\n\nLast");
+});
+
+test("Rendered: inline HTML tags carry no text and stay in a quote that spans them; an autolink with an ampersand maps", () => {
+  const source = "Some <b>bold</b> words and <span class=\"x\">span</span> text.\n\nSee <https://example.com/?a=1&b=2> now.\n";
+  const { box } = buildRendered(source);
+  assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(box, "B")), El(box), source)).quote, "bold");
+  const p = nonWsPositions(firstEl(box, "P", 0));
+  assert.equal(ok(mapRenderedSelection(sel({ node: p[0].t, offset: p[0].off }, { node: p[12].t, offset: p[12].off + 1 }), El(box), source)).quote, "Some <b>bold</b> words");
+  assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(box, "A")), El(box), source)).quote, "https://example.com/?a=1&b=2");
+  // painting the span's word wraps just it
+  const s = source.indexOf("span</span>");
+  const marks = paintRendered(El(box), source, { start: s, end: s + 4 }, "fc-hl") as unknown as FakeElement[];
+  assert.equal(marks.length, 1); assert.equal(marks[0].textContent, "span"); assert.equal((marks[0].parentNode as FakeElement).tagName, "SPAN");
+});
+
+test("caches re-analyze when a container's children are replaced or the source changes", () => {
+  const A = "# Alpha\n\nFirst text.\n", B = "# Beta\n\nOther words here.\n";
+  const { box } = buildRendered(A);
+  assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(box, "H1")), El(box), A)).quote, "Alpha");
+  for (const c of box.childNodes.slice()) box.removeChild(c);
+  for (const n of parseHTML(box.ownerDocument, marked.parse(B) as string)) box.appendChild(n);
+  assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(box, "H1")), El(box), B)).quote, "Beta");
+  bad(mapRenderedSelection(wholeOf(firstEl(box, "H1")), El(box), A));
+  // Raw: the same code element re-filled with another file
+  const raw = buildRaw("one\ntwo\n", "notes.txt");
+  let t = allText(raw.code, isRow);
+  assert.equal(ok(mapRawSelection(sel({ node: t[0], offset: 0 }, { node: t[1], offset: 3 }), El(raw.code), "one\ntwo\n")).quote, "one\ntwo");
+  for (const c of raw.code.childNodes.slice()) raw.code.removeChild(c);
+  for (const n of parseHTML(raw.code.ownerDocument, wrapNumberedHtml(escapeHtml("three\nfour\n")))) raw.code.appendChild(n);
+  t = allText(raw.code, isRow);
+  assert.equal(ok(mapRawSelection(sel({ node: t[0], offset: 0 }, { node: t[1], offset: 4 }), El(raw.code), "three\nfour\n")).quote, "three\nfour");
+});
