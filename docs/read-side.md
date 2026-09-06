@@ -251,14 +251,28 @@ echo, because the CLI rewrites the path to `[Image #N]` and the text can never
 match. If the CLI dies holding the message, the echo is flagged `undelivered` and
 the chat offers copy-to-composer and dismiss. The client keeps its own pending
 bubble (dashed, "sending…") from the press until the kernel's payload accounts for
-the text: a landed user atom ends it, the `undelivered` verdict ends it, and the
-kernel's echo or queued bubble only hides it for that push (`ui/webview/send-pending.ts`).
-It has no lifetime; a connection drop relabels it "not confirmed". An absorbed atom
-sits at its send time, above the steps that were already running, so its event
-carries `absorbed` and `landedAt` (the boundary the CLI took it at): the bubble
-wears "joined mid-turn", and when the landing retired a pending bubble at the tail,
-a cue stays where the bubble was ("delivered into the running turn at HH:MM", with
-a jump) until jump or ✕.
+the text (`ui/webview/send-pending.ts`). At the press the bubble is anchored to the
+last stable kernel event, and the user events that already carry its text are
+recorded as background. Only a user atom that lands after that anchor, with exactly
+the sent text, ends the bubble; the scan runs from the anchor to the end of the
+resident events, never over a fixed number of tail events, so an absorbed atom placed
+a hundred events above the tail still ends it. One landing ends one bubble: two
+identical sends in flight end in send order, and a landing of "test the continue
+button" leaves a pending "test" alone. The `undelivered` verdict ends the bubble on
+the same terms, so resending a never-delivered message is not ended by the old
+bubble's verdict. The kernel's echo or queued bubble hides ours for that push and,
+once seen after the press, proves the kernel holds the send. The bubble has no
+lifetime. A connection drop relabels it "not confirmed" until the kernel's own copy
+appears or the message lands; the label is per bubble, so a group holding one dropped
+send and one in flight reads "not confirmed · sending…", and the chat repaints only
+when a bubble's state changed (a redial loop while the kernel is down repaints
+nothing). An absorbed atom sits at its send time, above the steps that were already
+running, so its event carries `absorbed` and `landedAt` (the boundary the CLI took it
+at): the bubble wears "joined mid-turn", and when the landing retired a pending
+bubble at the tail, a cue stays where the bubble was ("delivered into the running
+turn at HH:MM", with a jump) until jump or ✕. The cue hangs under the last event the
+chat draws in its current mode; compact mode hides thinking, so a thinking record at
+the tail is skipped.
 
 **The ledger is a table of contents** (pure projection of captions + archive):
 - top: the archiver's one-sentence headline for the session,
