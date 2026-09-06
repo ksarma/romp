@@ -39,5 +39,24 @@ Every bug fix or feature change lands with a test (repo rule). Four suites:
   gating, the kernel registry, and the drain-poll handshake. Run:
   `node --test tests/manager-*.test.js`.
 
+**Temp files and git are hermetic, suite-wide.** `tests/conftest.py` points the
+process temp dir (`tempfile.tempdir` and `TMPDIR`, so every child the tests
+spawn inherits it) at one private `romp-tests-*` root under the system temp dir
+and removes the root when the run ends, so a `mkdtemp()` a test never cleans up
+cannot outlive the run (before this, a full run left ~5,600 entries in `/tmp`
+and 1.8 million had piled up). Still clean up what you create — `with
+tempfile.TemporaryDirectory()`, `self.addCleanup(shutil.rmtree, ...)`, or the
+module-level `atexit.register(shutil.rmtree, ...)` line after a preamble's
+`mkdtemp()` — so a module is also correct under a bare unittest run, where
+conftest never loads; bats suites use `mktemp -d` in `setup` and `rm -rf` it in
+`teardown`. The same conftest gives git no global or system config
+(`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`) and a synthetic identity through
+`GIT_AUTHOR_*` / `GIT_COMMITTER_*`; bats suites that run git get the same from
+`load git-hermetic` + `git_hermetic` in `setup`. A fixture must not depend on
+the developer's git configuration (CI has none), and the env identity outranks
+`git config user.*` and `-c user.*` — a test that must pin a particular author
+exports its own `GIT_AUTHOR_*` after the floor. `tests/test_temp_hygiene.py`
+and `tests/git-hermetic.bats` pin both.
+
 `fixtures/` must stay SYNTHETIC: invented prompts, placeholder UUIDs, hostname
 `TESTHOST` — never real session data.
