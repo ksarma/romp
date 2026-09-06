@@ -11,7 +11,8 @@ import * as path from "node:path";
 import { viewTagUnion } from "./session-views";
 import { sectionTabs, anySectioned, homeTag, parseTabGroups, readTabGroups, writeTabGroups, isSectionCollapsed,
          toggleSectionCollapsed, setSectionCollapsed, planStrip, reorderTagOrder, applyTagOrder, TABGROUPS_KEY,
-         DEFAULT_COLLAPSED, sectionKey, isPinned, setPinned, togglePinned, type TabSection } from "./tab-groups";
+         DEFAULT_COLLAPSED, sectionKey, sectionRef, isPinned, setPinned, togglePinned, prunePinned,
+         type TabSection, type SectionRef } from "./tab-groups";
 import { sectionTodoFlag } from "./tab-state";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
@@ -398,4 +399,179 @@ test("the header's structure and gestures read as a label: chevron (flips with t
     "the pip's retrying amber IS the tab's (a status literal the sheet keeps raw on the tab too)");
   const toks = new Set((rules.map((m) => m[2]).join(" ").match(/var\((--[a-z-]+)/g) || []).map((m) => m.slice(4)));
   for (const t of toks) assert.ok(["--fg", "--dim", "--accent", "--accent-wash", "--box-border", "--st-working-bg", "--st-blocked-bg"].includes(t), "a token the strip does not already wear: " + t);
+});
+
+// SHOW WHEN FOLDED (the user 2026-09-06): a member pinned to its section keeps its tab on the strip
+// under the folded header, in strip order; the header stands in for the HIDDEN members alone — its
+// count and its user-todo flag read those, never a tab already on screen. A view preference like the
+// fold, stored beside it under romp:tabgroups, keyed by the section the user sees (sectionKey) and the
+// sid. The toggle is a row in the tab menu's Tags flyout beside the "Move to" rows.
+const VP = { ...V, tags: [...V.tags, { id: "g4", name: "archived", color: "#6b7280", members: ["old1", "old2", "old3"] }] };
+const ARCH: SectionRef = { key: "g4", name: "archived" };
+const headsOf = (p: ReturnType<typeof planStrip>) =>
+  p.items.filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[] } => "head" in i);
+const MAKE_HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
+
+test("executed: a folded section with one PINNED member renders the header, then that member; the hidden ids alone fold away", () => {
+  const unions = viewTagUnion(VP);
+  const st = setPinned(parseTabGroups(null), ARCH, "old2", true);
+  assert.equal(isPinned(st, ARCH, "old2"), true);
+  assert.equal(isPinned(st, ARCH, "old1"), false, "the sid must match — a pin is one member's, not the tag's");
+  assert.equal(isPinned(st, { key: "g2", name: "infra" }, "old2"), false, "…and the section must: a move to another group starts unpinned");
+  assert.deepEqual(st.pinned, [{ tag: "g4", sid: "old2" }], "stored under the section's key (the local tag's id) and the sid");
+  const p = planStrip(["web", "old1", "old2", "old3", "loose"], unions, st, "web", false);
+  assert.deepEqual(p.items.map((i) => ("head" in i ? `#${i.head.name}${i.folded ? "(folded)" : ""}` : i.id)),
+    ["#infra", "web", "#archived(folded)", "old2", "#null", "loose"], "the header, then the pinned member in its place; old1/old3 stay folded");
+  const arch = headsOf(p).find((h) => h.head.name === "archived")!;
+  assert.deepEqual(arch.hidden, ["old1", "old3"], "what the header stands in for");
+  assert.deepEqual([...p.folded], ["old1", "old3"], "keyboard cycling skips the hidden ones only — the pinned tab is reachable");
+  assert.equal(arch.head.key, "g4", "the plan keys the section as the pin row does (sectionRef)");
+  // a second member's pin is its own: setting or clearing one leaves the other (a filter on the tag
+  // alone would drop every pin under the tag)
+  const two = setPinned(st, ARCH, "old3", true);
+  assert.deepEqual(two.pinned, [{ tag: "g4", sid: "old2" }, { tag: "g4", sid: "old3" }]);
+  assert.deepEqual(setPinned(two, ARCH, "old3", false).pinned, [{ tag: "g4", sid: "old2" }]);
+  assert.deepEqual(setPinned(two, ARCH, "old2", true).pinned, [{ tag: "g4", sid: "old3" }, { tag: "g4", sid: "old2" }], "set on again: one entry, moved to the end");
+  // an open section: nothing hidden, pins irrelevant
+  assert.deepEqual(headsOf(planStrip(["old1", "old2"], unions, st, "old1", false))[0].hidden, []);
+});
+
+test("executed: the folded header's user-todo flag counts HIDDEN members only — a pinned member's own tab shows its glyph", () => {
+  const unions = viewTagUnion(VP);
+  const sessions = new Map([
+    ["old1", { name: "old1", userTodos: [] as { id: string; text: string }[] }],
+    ["old2", { name: "old2", userTodos: [{ id: "t1", text: "synthetic need" }] }],
+    ["old3", { name: "old3", userTodos: [{ id: "t2", text: "another synthetic need" }] }],
+  ]);
+  const st0 = parseTabGroups(null);
+  const all = headsOf(planStrip(["web", "old1", "old2", "old3"], unions, st0, "web", false)).find((h) => h.head.name === "archived")!;
+  assert.deepEqual(sectionTodoFlag(all.hidden.map((id) => sessions.get(id))), { count: 2, names: ["old2", "old3"] }, "nothing pinned: both count");
+  const st = setPinned(st0, ARCH, "old2", true);
+  const some = headsOf(planStrip(["web", "old1", "old2", "old3"], unions, st, "web", false)).find((h) => h.head.name === "archived")!;
+  assert.deepEqual(sectionTodoFlag(some.hidden.map((id) => sessions.get(id))), { count: 1, names: ["old3"] }, "old2 is on the strip: its own tab carries the glyph");
+  const both = setPinned(st, ARCH, "old3", true);
+  const none = headsOf(planStrip(["web", "old1", "old2", "old3"], unions, both, "web", false)).find((h) => h.head.name === "archived")!;
+  assert.equal(sectionTodoFlag(none.hidden.map((id) => sessions.get(id))), null, "every flagged member shown → no header flag");
+  // render.ts reads the plan's hidden list for the flag, as for the count and the pip
+  assert.match(MAKE_HEAD, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => sessions\.get\(id\)\)\);/);
+});
+
+test("executed: a pin follows the section the user sees — the local tag's id, else the NAME; never a remote host's tag id, which changes with the host set", () => {
+  // two hosts carry `infra` and no local tag does: the key was the first host's tag id, so that host
+  // detaching (or a local `infra` appearing) re-keyed the section and every pinned member folded away
+  // with no gesture on it
+  const A = { id: "TESTHOST-A:t1", host: "TESTHOST-A", name: "infra", color: "#4EC9B0", members: ["TESTHOST-A:m1"] };
+  const B = { id: "TESTHOST-B:t2", host: "TESTHOST-B", name: "infra", color: "#4EC9B0", members: ["TESTHOST-B:m1"] };
+  const both = viewTagUnion({ active: "all", tags: [], remoteTags: [A, B] });
+  const infra = both.find((u) => u.name === "infra")!;
+  assert.deepEqual(infra.ids, ["TESTHOST-A:t1", "TESTHOST-B:t2"]);
+  assert.equal(sectionKey(infra), "infra", "remote-only: the name");
+  assert.deepEqual(sectionRef(infra), { key: "infra", name: "infra" });
+  let st = setSectionCollapsed(parseTabGroups(null), "infra", true);
+  st = setPinned(st, sectionRef(infra), "TESTHOST-B:m1", true);
+  assert.deepEqual(st.pinned, [{ tag: "infra", sid: "TESTHOST-B:m1" }]);
+  const tabs = (unions: ReturnType<typeof viewTagUnion>, s: typeof st) =>
+    planStrip(["TESTHOST-A:m1", "TESTHOST-B:m1", "loose"], unions, s, "loose", false).items.filter((i) => "id" in i).map((i) => (i as { id: string }).id);
+  assert.deepEqual(tabs(both, st), ["TESTHOST-B:m1", "loose"], "pinned: on the strip under the folded header");
+  const aGone = planStrip(["TESTHOST-A:m1", "TESTHOST-B:m1", "loose"], viewTagUnion({ active: "all", tags: [], remoteTags: [B] }), st, "loose", false);
+  assert.deepEqual(aGone.items.map((i) => ("head" in i ? `#${i.head.name}${i.folded ? "(folded)" : ""}` : i.id)), ["#infra(folded)", "TESTHOST-B:m1", "#null", "TESTHOST-A:m1", "loose"],
+    "host A detached: B's member is still pinned under the folded header (A's, in no tag now, trails)");
+  assert.deepEqual([...aGone.folded], [], "nothing folded away");
+  const localToo = viewTagUnion({ active: "all", tags: [{ id: "g7", name: "infra", color: "#4EC9B0", members: ["web"] }], remoteTags: [A, B] });
+  const li = localToo.find((u) => u.name === "infra")!;
+  assert.equal(sectionKey(li), "g7", "a local tag: its id");
+  assert.deepEqual(tabs(localToo, st), ["TESTHOST-B:m1", "loose"], "a local infra appeared: the name-stored pin still matches (lookup takes the key OR the name)");
+  // the local id outranks the name, so a rename keeps the pin
+  const st2 = setPinned(parseTabGroups(null), sectionRef(li), "web", true);
+  assert.deepEqual(st2.pinned, [{ tag: "g7", sid: "web" }]);
+  assert.equal(isPinned(st2, { key: "g7", name: "ops" }, "web"), true, "renamed to ops: the id-stored pin stands");
+  assert.equal(isPinned(st2, { key: "g8", name: "infra" }, "web"), false, "another local tag that took the name: not this pin");
+  // an unpin through the section drops the entry whichever key it was stored under
+  assert.deepEqual(setPinned(st, sectionRef(li), "TESTHOST-B:m1", false).pinned, [], "the name-stored entry, dropped through the local id");
+  assert.equal(isPinned(st, sectionRef(li), "TESTHOST-A:m1"), false, "the sid must match");
+  // sectionKey itself: the local id first, else the name — a remote id never
+  assert.equal(sectionKey({ name: "infra", color: "", members: [], ids: ["TESTHOST-A:t1", "g2"], localId: "g2", remotes: [] }), "g2");
+  assert.equal(sectionKey({ name: "remotepool", color: "", members: [], ids: ["TESTHOST-A:r1"], localId: null, remotes: [] }), "remotepool");
+  assert.equal(sectionTabs(["TESTHOST-A:m1"], viewTagUnion(V))[0].key, "remotepool", "the plan's sections carry the same key");
+});
+
+test("executed: prunePinned drops the pins of tags and sessions that no longer exist — on the pin row's write, never per render", () => {
+  const unions = viewTagUnion(VP);   // qa g1, infra g2, empty g3, archived g4, remotepool (remote-only)
+  const st = { ...parseTabGroups(null), pinned: [
+    { tag: "g4", sid: "old2" },                        // stands: archived, a known session
+    { tag: "infra", sid: "web" },                      // stands: a union's name (one with a local id too)
+    { tag: "remotepool", sid: "TESTHOST-A:m1" },       // stands: a remote-only union, by name
+    { tag: "g9", sid: "old1" },                        // a deleted tag
+    { tag: "g4", sid: "closed1" },                     // a closed session
+    { tag: "TESTHOST-A:r1", sid: "TESTHOST-A:m1" },    // an older store's pin under a remote id: no section answers to it
+  ] };
+  const known = new Set(["web", "api", "tests", "old1", "old2", "old3", "TESTHOST-A:m1", "loose"]);
+  const pruned = prunePinned(st, unions, known);
+  assert.deepEqual(pruned.pinned, [{ tag: "g4", sid: "old2" }, { tag: "infra", sid: "web" }, { tag: "remotepool", sid: "TESTHOST-A:m1" }]);
+  assert.deepEqual([pruned.on, pruned.collapsed, pruned.expanded], [st.on, st.collapsed, st.expanded], "the fold state rides through untouched");
+  assert.equal(prunePinned(pruned, unions, known), pruned, "nothing to drop: the same object");
+  // render.ts: the pin row's write is the ONE prune site, over every tab the strip knows (a view-hidden
+  // session still exists); the plan reads pins and never rewrites them — a prune per render could act
+  // on a transient frame (a views blob mid-write, a host's tags not yet arrived) and put a tab away
+  assert.equal(RENDER.split("prunePinned(").length - 1, 1, "one call site");
+  assert.match(RENDER, /writeTabGroups\(prunePinned\(togglePinned\(readTabGroups\(\), sec, id\), unionFor\(\), knownTabIds\(\)\)\); build\(\);/);
+  assert.match(RENDER, /function knownTabIds\(\): Set<string> \{ return new Set<string>\(\[\.\.\.order, \.\.\.tabMeta\.keys\(\)\]\); \}/);
+  const TG = ui("webview", "tab-groups.ts");
+  const plan = TG.slice(TG.indexOf("export function planStrip("), TG.indexOf("export function reorderTagOrder("));
+  assert.ok(!plan.includes("prunePinned"), "the plan never prunes");
+});
+
+test("executed: the pin persists with the fold state under romp:tabgroups, survives the fold writes, and junk entries drop; unpin hides the tab again", () => {
+  const d = parseTabGroups(null);
+  const on = togglePinned(d, ARCH, "old2");
+  assert.deepEqual(on, { on: true, collapsed: [], expanded: [], pinned: [{ tag: "g4", sid: "old2" }] });
+  assert.deepEqual(setSectionCollapsed(on, "infra", true).pinned, on.pinned, "a fold write carries the pins through");
+  assert.deepEqual(toggleSectionCollapsed(on, "archived").pinned, on.pinned);
+  const off = togglePinned(on, ARCH, "old2");
+  assert.deepEqual(off, d, "toggling back drops the entry — the menu's one way off");
+  assert.deepEqual(togglePinned(off, ARCH, "old2"), on, "and on again");
+  assert.deepEqual(setPinned(setPinned(d, ARCH, "old2", true), ARCH, "old2", true).pinned, [{ tag: "g4", sid: "old2" }], "set on twice: one entry");
+  assert.deepEqual(parseTabGroups('{"pinned":[{"tag":"g4","sid":"old2"},{"tag":3,"sid":"x"},"junk",null,{"tag":"g1"},{"sid":"old1"}]}').pinned,
+    [{ tag: "g4", sid: "old2" }], "only well-formed (tag, sid) string pairs survive a read");
+  assert.deepEqual(parseTabGroups('{"pinned":"nope"}').pinned, []);
+  assert.deepEqual(parseTabGroups('{"pinned":[{"tag":"g4","sid":"old2","extra":1}]}').pinned, [{ tag: "g4", sid: "old2" }], "unknown fields do not ride along");
+  // round trip through the store
+  const store = new Map<string, string>();
+  const g: any = globalThis;
+  const savedLS = g.localStorage;
+  g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
+  try {
+    writeTabGroups(on);
+    assert.deepEqual(readTabGroups().pinned, [{ tag: "g4", sid: "old2" }]);
+    writeTabGroups(off);
+    assert.deepEqual(readTabGroups().pinned, [], "unpinned: gone from the store");
+  } finally {
+    g.localStorage = savedLS;
+  }
+  // unpin → the plan hides the tab again
+  const unions = viewTagUnion(VP);
+  const shown = planStrip(["web", "old1", "old2"], unions, on, "web", false);
+  assert.ok(shown.items.some((i) => "id" in i && i.id === "old2"), "pinned: on the strip");
+  const hidden = planStrip(["web", "old1", "old2"], unions, off, "web", false);
+  assert.ok(!hidden.items.some((i) => "id" in i && i.id === "old2"), "unpinned: folded away again");
+  assert.deepEqual([...hidden.folded], ["old1", "old2"]);
+});
+
+test("the toggle is a row in the tab menu's Tags flyout beside the Move-to rows: the home tag's chip, ✓ when on, the fold's own write and render path (source pins)", () => {
+  const fly = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), RENDER.indexOf("// New tag… — an inline input"));
+  const pin = fly.slice(fly.indexOf("// SHOW WHEN FOLDED"));
+  assert.ok(fly.indexOf('lb.textContent = "Move to " + g.name') < fly.indexOf("// SHOW WHEN FOLDED"), "after the Move-to rows, before New tag…");
+  assert.match(pin, /if \(home\) \{\s*\n\s*const sec = sectionRef\(home\);\s*\n\s*const on = isPinned\(readTabGroups\(\), sec, id\);/,
+    "only with a home tag (there is no fold to show through otherwise); keyed as the plan keys its sections (sectionRef)");
+  assert.doesNotMatch(pin, /isPinned\(readTabGroups\(\), home\.name|togglePinned\(readTabGroups\(\), home\.name|sectionKey\(home\)/,
+    "never the bare name (a local tag's key is its id) and never a key without the name (a name-stored pin would not match)");
+  assert.match(pin, /const row = el\("div", "ctx-item ctx-item-toggle ctx-item-pin" \+ \(on \? " current" : ""\)\);/, "the menus' ✓ mark when on");
+  assert.match(pin, /chip\.style\.background = home\.color \|\| "var\(--dim\)"; row\.appendChild\(chip\);/, "the home tag's chip, like its neighbours");
+  assert.match(pin, /lb\.textContent = "Show when folded";/);
+  assert.match(pin, /writeTabGroups\(prunePinned\(togglePinned\(readTabGroups\(\), sec, id\), unionFor\(\), knownTabIds\(\)\)\); build\(\);/,
+    "the write prunes, notifies (TABGROUPS_EVENT → renderTabs) and the flyout repaints its ✓ — no renderTabs() call of its own");
+  assert.doesNotMatch(pin, /renderTabs\(\)|setTimeout/);
+  // the phone layout's flat strip has no fold to show through: the plan ignores pins there (no-op by construction)
+  const p = planStrip(["web", "old1", "old2"], viewTagUnion(VP), setPinned(parseTabGroups(null), ARCH, "old2", true), "web", true);
+  assert.deepEqual(p.items, [{ id: "web" }, { id: "old1" }, { id: "old2" }]);
 });

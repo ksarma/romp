@@ -31,7 +31,7 @@ import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from 
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
-import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionKey, isPinned, togglePinned,
+import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned,
          reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
 import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
@@ -688,6 +688,9 @@ function tabInView(id: string): boolean { return id === peekId || chatVisible(id
 // header. Keyboard cycling walks the VISIBLE order, and a folded tab is not visible — the active
 // tab's section never renders folded, so the active id is always in it.
 let collapsedTabIds = new Set<string>();
+/** Every tab the strip knows — the kernel's order plus any pushed tab not yet in it (a placeholder):
+ *  the "does this session still exist" of the pin prune (tab-groups.ts prunePinned). */
+function knownTabIds(): Set<string> { return new Set<string>([...order, ...tabMeta.keys()]); }
 let draggedGroup: string | null = null;   // a section header mid-drag (reorders tagOrder) — never a tab
 // the tags a create in flight named (openProvisional): the provisional tab sections under its future
 // home from the first paint (planStrip's `pending`), instead of landing loose and jumping on the frame
@@ -5713,14 +5716,16 @@ function showTabMenu(e: MouseEvent, id: string) {
           sub.appendChild(row);
         }
         // SHOW WHEN FOLDED (the user 2026-09-06): keep this tab visible under its folded group. A
-        // per-browser view preference like the fold itself (romp:tabgroups), keyed by (tag id, sid)
-        // so it follows the tag, not its spelling, and a move to another group starts unpinned. Only
-        // while the strip is sectioned and the session has a home tag — there is no fold to show
-        // through otherwise. The row wears the home tag's chip and the menus' ✓ when on; the write
-        // notifies (TABGROUPS_EVENT) and the strip re-renders, the fold's own path.
+        // per-browser view preference like the fold itself (romp:tabgroups), keyed by the section the
+        // user sees (sectionKey: the local tag's id, else the name) and the sid, so a move to another
+        // group starts unpinned. Only while the strip is sectioned and the session has a home tag —
+        // there is no fold to show through otherwise. The row wears the home tag's chip and the menus'
+        // ✓ when on; the write prunes the pins of tags and sessions that are gone (this is the one
+        // write path, and a prune here moves nothing on screen), notifies (TABGROUPS_EVENT), and the
+        // strip re-renders, the fold's own path.
         if (home) {
-          const key = sectionKey(home);
-          const on = isPinned(readTabGroups(), key, id);
+          const sec = sectionRef(home);
+          const on = isPinned(readTabGroups(), sec, id);
           sub.appendChild(el("div", "ctx-sep"));
           const row = el("div", "ctx-item ctx-item-toggle ctx-item-pin" + (on ? " current" : ""));
           const chip = el("span", "ctx-tag-dot"); chip.style.background = home.color || "var(--dim)"; row.appendChild(chip);
@@ -5730,7 +5735,7 @@ function showTabMenu(e: MouseEvent, id: string) {
           sb2.textContent = on ? `stays on the strip while ${home.name} is folded` : `keep this tab on the strip while ${home.name} is folded`;
           bodyE.appendChild(sb2);
           row.appendChild(bodyE);
-          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(togglePinned(readTabGroups(), key, id)); build(); });
+          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(prunePinned(togglePinned(readTabGroups(), sec, id), unionFor(), knownTabIds())); build(); });
           sub.appendChild(row);
         }
         if (holding().length || others.length) sub.appendChild(el("div", "ctx-sep"));

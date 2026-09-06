@@ -20,14 +20,17 @@ export const TABGROUPS_EVENT = "romp-tabgroups";
 /** sections that start folded until the user opens them (remembered per browser once toggled) */
 export const DEFAULT_COLLAPSED: ReadonlySet<string> = new Set(["archived"]);
 
-/** One strip section: a tag's name + colour and the visible tabs homed in it, plus `key`, the tag's
- *  stored id (sectionKey) — the per-browser pin state is keyed by it, so a pin follows the TAG, not its
- *  spelling, and a session moved to another group starts unpinned. name null = the trailing untagged
- *  section (unlabeled by the user's ruling — a separator, not a header; key ""). */
+/** One strip section: a tag's name + color and the visible tabs homed in it, plus `key`, what its pins
+ *  are stored under (sectionKey). name null = the trailing untagged section (unlabeled by the user's
+ *  ruling — a separator, not a header; key ""). */
 export interface TabSection { name: string | null; key: string; color: string; ids: string[] }
 
+/** What a pin is matched against: a section's stored key and its name (isPinned). */
+export type SectionRef = Pick<TabSection, "key" | "name">;
+
 /** A member kept visible under its folded section — the tab menu's "Show when folded" (the user
- *  2026-09-06) — keyed by (tag id, sid). A view preference like the fold itself: per browser. */
+ *  2026-09-06): `tag` is the sectionKey the member was pinned under. A view preference like the fold
+ *  itself: per browser. */
 export interface PinnedRef { tag: string; sid: string }
 
 export interface TabGroupsState {
@@ -37,10 +40,24 @@ export interface TabGroupsState {
   pinned: PinnedRef[];  // members shown under their folded section
 }
 
-/** The id a section's pins are keyed by: the local tag's stored id, else the first remote's; a
- *  union with no ids at all (never built by viewTagUnion) falls back to its name. */
+/** The key a pin is STORED under. A pin follows the section the user sees: the local tag's stored id
+ *  when there is one (stable across a rename), else the union's NAME. Never a remote host's tag id —
+ *  that is the host's, and the kernel lists remote tags host by host, so the first one changed when a
+ *  host detached or a local tag of the name appeared, re-keying the section and unpinning its members
+ *  with nothing on screen to say why (the 2026-09-06 review). */
 export function sectionKey(u: TagUnion): string {
-  return u.localId || u.ids[0] || u.name;
+  return u.localId || u.name;
+}
+
+export function sectionRef(u: TagUnion): SectionRef {
+  return { key: sectionKey(u), name: u.name };
+}
+
+/** Does a stored pin name this section? Its stored key OR its name: a pin made while the section was
+ *  remote-only (stored under the name) keeps matching once a local tag of that name exists and the key
+ *  is its id; a pin under a local id keeps matching across the tag's renames. */
+function pinNames(sec: SectionRef, tag: string): boolean {
+  return tag === sec.key || tag === sec.name;
 }
 
 /** THE home-tag rule: the first union (they arrive in tagOrder) holding the id, or null. */
@@ -140,20 +157,34 @@ export function toggleSectionCollapsed(st: TabGroupsState, name: string): TabGro
   return setSectionCollapsed(st, name, !isSectionCollapsed(st, name));
 }
 
-/** Is this member kept visible under its folded section? Keyed by (tag id, sid) — see PinnedRef. */
-export function isPinned(st: TabGroupsState, tag: string, sid: string): boolean {
-  return st.pinned.some((p) => p.tag === tag && p.sid === sid);
+/** Is this member kept visible under its folded section? A pin for the sid under the section's key or
+ *  its name — see sectionKey and PinnedRef. */
+export function isPinned(st: TabGroupsState, sec: SectionRef, sid: string): boolean {
+  return st.pinned.some((p) => p.sid === sid && pinNames(sec, p.tag));
 }
 
-/** Set a member's pin EXPLICITLY (the fold's own idiom: the menu row passes the state it rendered). */
-export function setPinned(st: TabGroupsState, tag: string, sid: string, on: boolean): TabGroupsState {
-  const pinned = st.pinned.filter((p) => !(p.tag === tag && p.sid === sid));
-  if (on) pinned.push({ tag, sid });
+/** Set a member's pin EXPLICITLY (the fold's own idiom: the menu row passes the state it rendered). Off
+ *  drops every entry the section answers to — a name-stored pin as well as an id-stored one — else an
+ *  unpin through the id left the name's entry standing and the member on the strip. */
+export function setPinned(st: TabGroupsState, sec: SectionRef, sid: string, on: boolean): TabGroupsState {
+  const pinned = st.pinned.filter((p) => !(p.sid === sid && pinNames(sec, p.tag)));
+  if (on) pinned.push({ tag: sec.key, sid });
   return { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned };
 }
 
-export function togglePinned(st: TabGroupsState, tag: string, sid: string): TabGroupsState {
-  return setPinned(st, tag, sid, !isPinned(st, tag, sid));
+export function togglePinned(st: TabGroupsState, sec: SectionRef, sid: string): TabGroupsState {
+  return setPinned(st, sec, sid, !isPinned(st, sec, sid));
+}
+
+/** Drop the pins nothing can render any more — a tag (local id or name) no longer among the unions, a
+ *  session no longer among the tabs the strip knows — so the store does not keep an entry for every tag
+ *  ever deleted and session ever closed. On the WRITE path only (the pin row's click): a prune there
+ *  moves nothing on screen, where a prune per render could act on a transient frame (a views blob
+ *  mid-write, a host's tags not yet arrived) and put a tab away with no gesture. Returns `st` itself
+ *  when nothing is dropped. */
+export function prunePinned(st: TabGroupsState, unions: readonly TagUnion[], knownIds: ReadonlySet<string>): TabGroupsState {
+  const pinned = st.pinned.filter((p) => knownIds.has(p.sid) && unions.some((u) => u.localId === p.tag || u.name === p.tag));
+  return pinned.length === st.pinned.length ? st : { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned };
 }
 
 /** One strip item: a section header (folded or open; `active` = it holds the active tab; `hidden` =
@@ -199,7 +230,7 @@ export function planStrip(visibleIds: readonly string[], unions: readonly TagUni
   for (const sec of sectionTabs(visibleIds, u)) {
     const active = activeId !== null && sec.ids.includes(activeId);
     const f = sec.name !== null && !active && isSectionCollapsed(st, sec.name);
-    const hidden = f ? sec.ids.filter((id) => !isPinned(st, sec.key, id)) : [];
+    const hidden = f ? sec.ids.filter((id) => !isPinned(st, sec, id)) : [];
     items.push({ head: sec, folded: f, active, hidden });
     for (const id of sec.ids) { if (hidden.includes(id)) folded.add(id); else items.push({ id }); }
   }
