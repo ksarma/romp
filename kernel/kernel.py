@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, calendar
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from importlib.machinery import SourceFileLoader
@@ -27697,7 +27697,9 @@ def _series_index(hour_key, h0):
     that to whichever offset its PREVIOUS mktime call used — so the T01 bucket landed in one of two adjacent
     slots depending on what the process converted last, and the hover's bar for that hour moved between
     builds with no new turn behind it (2026-09-06). The bucket holds both clock hours' turns; its slot is
-    the first of them and the second stays an honest zero, as the modal's period edges read it."""
+    the first of them and the second stays an honest zero, as the modal's period edges read it. The rule,
+    key by key; _spend_series takes the slots of the keys in its span from one walk (_first_instants) and
+    applies this to a key outside it."""
     if not isinstance(hour_key, str) or "T" not in hour_key:
         return None
     st = _bucket_start(hour_key)
@@ -27719,10 +27721,22 @@ def _spend_series(keyed_only=False, now=None):
     hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
     if not hours:
         return None
-    h0 = int((time.time() if now is None else now) // 3600) - (_SERIES_HOURS - 1)
+    now = time.time() if now is None else now
+    h0 = int(now // 3600) - (_SERIES_HOURS - 1)
     usd = [0.0] * _SERIES_HOURS
+    # every key with an instant in the series' span, with its first instant, from one walk: the slot rule
+    # key by key (_series_index) costs a _bucket_start each, 30-55 µs, and this runs on every usage build
+    walked = _hour_buckets_back(now, now - h0 * 3600)
+    first = _first_instants(walked)
+    oldest = walked[-1][0]
     for k, e in hours.items():
-        i = _series_index(k, h0)
+        st = first.get(k)
+        if st is not None:
+            i = int(st // 3600) - h0
+        elif k < oldest:              # no instant in the span, and a wall hour before the span's oldest: before h0
+            continue
+        else:
+            i = _series_index(k, h0)  # past now (a clock that stepped back) or a key no instant names: the rule itself
         if i is None or not (0 <= i < _SERIES_HOURS) or not isinstance(e, dict):
             continue
         if keyed_only:
@@ -28936,7 +28950,7 @@ _DATE_KEY = "%Y-%m-%d"
 def _key_fields(key):
     """(year, month, day, hour, fmt) for a ledger bucket key — a local hour (`%Y-%m-%dT%H`) or a local date
     (`%Y-%m-%d`, hour 0) — or None for anything else. A slice parse, not strptime: strptime costs 7 µs and
-    _series_index places 192 keys on every usage build."""
+    the closure over a split key (_hour_window) places every key of a window."""
     try:
         if len(key) == 13 and key[4] == "-" and key[7] == "-" and key[10] == "T":
             f = int(key[:4]), int(key[5:7]), int(key[8:10]), int(key[11:13]), _HOUR_KEY
@@ -28962,149 +28976,156 @@ def _run_start(t, key, fmt, lt=None):
 
 
 def _run_start_and_prev(t, key, fmt, lt=None):
-    """_run_start, plus the localtime and key of the second before the run — the walker's next step,
-    which the search computed anyway."""
+    """(start, start_lt, prev_lt, prev_key): _run_start, the localtime of that first instant, and the
+    localtime and key of the second before the run — the run's first UTC offset and the walker's next
+    step, both of which the search computed anyway."""
     t = int(t)
     hourly = fmt == _HOUR_KEY
 
     def top(u, lt):
         s = u - lt.tm_min * 60 - lt.tm_sec - (0 if hourly else lt.tm_hour * 3600)
-        if time.strftime(fmt, time.localtime(s)) == key:
-            return s
-        lo, hi = s, u                        # key absent at lo, present at hi: its first instant is in (lo, hi]
+        slt = time.localtime(s)
+        if time.strftime(fmt, slt) == key:
+            return s, slt
+        lo, hi, hlt = s, u, lt               # key absent at lo, present at hi: its first instant is in (lo, hi]
         while hi - lo > 1:
             mid = (lo + hi) // 2
-            if time.strftime(fmt, time.localtime(mid)) == key:
-                hi = mid
+            mlt = time.localtime(mid)
+            if time.strftime(fmt, mlt) == key:
+                hi, hlt = mid, mlt
             else:
                 lo = mid
-        return hi
+        return hi, hlt
 
-    s = top(t, lt if lt is not None else time.localtime(t))
+    s, slt = top(t, lt if lt is not None else time.localtime(t))
     while True:
         prev = time.localtime(s - 1)
         prev_key = time.strftime(fmt, prev)
         if prev_key != key:
-            return s, prev, prev_key
-        s = top(s - 1, prev)
+            return s, slt, prev, prev_key
+        s, slt = top(s - 1, prev)
 
 
-def _mktime(ymdhms, isdst):
-    """time.mktime for a local wall-clock reading with an isdst hint, or None where the C library has no
-    instant for it: glibc returns -1 and CPython raises OverflowError for an isdst hint the zone cannot
-    satisfy at that reading (either arm on a date the zone skipped — Samoa's 2011-12-30 has no daylight
-    instant, Kwajalein's 1993-08-21 no standard one) and for a reading outside time_t's range."""
-    try:
-        return time.mktime(ymdhms + (0, 0, isdst))
-    except (OverflowError, ValueError, OSError):
-        return None
+# How far an instant naming a bucket key can lie from the key's wall time read as UTC: the widest UTC
+# offset a TZ setting can carry, rounded up (tzdata's run from -12 to +14 hours; a POSIX TZ string allows
+# 24:59:59). _bucket_start reads the offsets in force this far either side of a key, and
+# _splitting_fall_back this far before a window: a replay reaches at most its offset difference plus an
+# hour past the change, and tzdata's longest is seven hours (Antarctica/Vostok, 1994).
+_OFFSET_REACH = 26 * 3600
 
 
 def _bucket_start(key):
     """Epoch start of a ledger bucket key — a local hour (`%Y-%m-%dT%H`) or a local date (`%Y-%m-%d`);
-    None for anything else. The EARLIEST instant that formats to the key: on the DST fall-back day one
-    local hour key names two clock hours (01:00 daylight, then 01:00 standard), and the recorder folds
-    both into the one bucket, so the bucket starts at the first of them. mktime with tm_isdst=-1 leaves
-    that choice to the C library, and glibc answers with whichever UTC offset its PREVIOUS mktime call
-    resolved (POSIX does not say), so the pick depends on call order — an earlier standard-time
-    conversion anywhere in the process makes the repeated hour come back as its SECOND clock hour. So the
-    library's pick for the hour's first second — or its last, where no HH:00 exists (the Chatham Islands
-    spring forward at 02:45, so their T03 is 03:45-03:59) — is only the way IN to the bucket: the answer
-    is the start of the run of instants around it (_run_start), which walks back through a replayed hour
-    whichever clock hour the library chose. Where the UTC offset changed in the TWO HOURS before that
-    start, the key may own an earlier, separate run: a fall-back whose replay crosses a clock-hour boundary
-    leaves one key's instants on both sides of another's (the Chatham Islands' 03:45 -> 02:45 leaves T02's
-    daylight instants, T03's, then T02's standard ones; Antarctica/Troll's 03:00 -> 01:00 interleaves T01
-    and T02). Then both isdst arms are tried and the earliest run wins. Two hours because a fall-back
-    replays at most two hours (Troll's is the longest in tzdata), so the run that follows a replay starts
-    LESS than two hours after the change; the sample at start - 7200 is on the change's far side. Checking
-    one hour (until 2026-09-06) missed Troll's T02, whose standard run starts exactly one hour after the
-    change, so its start followed glibc's previous call again. That is the only place the arms are used —
-    a mktime hint the zone cannot satisfy sends glibc searching (30 µs in UTC, 140 µs in Tokyo), and
-    _series_index places 192 keys per usage build. A key no instant formats to — a spring-forward gap, or
-    a date the zone skipped (Samoa's 2011-12-30) — starts where the gap ends: the first instant whose key
-    sorts after it, bisected between the library's readings of it widened by two days. The same in every
-    library state, which the library's own normalized answer for a missing reading is not (it follows
-    the previous call too, and put Samoa's skipped date at the start of Dec 29 in one state). That
-    fallback stands whatever an isdst arm did: glibc has NO instant for an isdst hint on a skipped date
-    and CPython raises OverflowError, which once swallowed the fallback and handed a days period t0 None.
-    A well-formed key the library cannot place at all raises, naming it: a None start for a real key is
-    a wrong period cut waiting to happen, not a value to pass on."""
+    None for anything else. The EARLIEST instant that formats to the key: on a fall-back day one local
+    hour key names two clock hours (New York's 01:00 daylight, then 01:00 standard), the recorder folds
+    both into the one bucket, and the bucket starts at the first of them.
+
+    Read from the key alone, never from the C library's placing of a wall time. An instant names the key
+    iff its wall clock lies in the key's hour (or date), so at UTC offset `o` the key's instants lie in
+    [G - o, G + L - o), G the key's wall time read as UTC and L its length, and every instant that can
+    name the key is within _OFFSET_REACH of G. The offsets in force across that reach are read off
+    hourly localtime samples (54 for an hour key), and each offset yields one instant that names the key,
+    if any does: the hour's first second read at that offset; else its last second, walked back to its
+    run's first instant (_run_start) — a change landing mid-hour leaves the hour no first second at the
+    new offset (the Chatham Islands spring forward at 02:45, so their T03 is 03:45-03:59); else the
+    samples at that offset themselves (only where two changes fall inside one key, which no hour can hold
+    and no date in tzdata does). The earliest of those instants is the answer: a bucket's first instant
+    is either the top of its hour at the offset then in force — one of the first-second readings — or a
+    clock change landing inside the hour, whose run holds the hour's last second at that offset.
+
+    The one assumption is that no two clock changes fall within an hour of each other (tzdata's closest
+    pair is six days 23 hours apart: Brazil, 2000), so no offset in force escapes the hourly samples and
+    _run_start's bisection meets one change per hour. Nothing here asks mktime: until 2026-09-06 the key
+    was placed by mktime, whose answer for a replayed wall time follows the library's PREVIOUS call
+    (glibc; POSIX does not say), and the arms that then tried both isdst hints could neither tell two
+    standard-time offsets apart (Antarctica/Casey's +11 -> +08, a three-hour replay; Davis, Vostok and
+    Rothera likewise) nor see past the two-hour replay they were bounded by, so a replayed key's start
+    followed the process's conversion history by two or three hours, and its hover slot with it.
+
+    A key no instant formats to — a spring-forward gap, or a date the zone skipped (Samoa's 2011-12-30)
+    — starts where the gap ends: the first instant whose key sorts after it, bisected between the two
+    consecutive samples the gap lies between (keys rise with time up to a gap, and a fall-back only ever
+    sets a key BACK, so the first sample past the key is the first past the gap). A well-formed key that
+    fits neither rule, or one the C library cannot place at all (a year past time_t), raises ValueError,
+    naming it: a None start for a real key is a wrong period cut waiting to happen, not a value to pass
+    on."""
     f = _key_fields(key)
     if f is None:
         return None
     y, m, d, h, fmt = f
-    edges = ((h, 0, 0), (h, 59, 59) if fmt == _HOUR_KEY else (23, 59, 59))
-    starts = []
-    for hms in edges:
-        t = _mktime((y, m, d) + hms, -1)
-        if t is not None and time.strftime(fmt, time.localtime(t)) == key:
-            starts.append(_run_start(t, key, fmt))
-            break
-    if starts and time.localtime(starts[0]).tm_gmtoff == time.localtime(starts[0] - 7200).tm_gmtoff:
-        return starts[0]
-    for hms in edges:
-        for isdst in (1, 0):
-            t = _mktime((y, m, d) + hms, isdst)
-            if t is not None and time.strftime(fmt, time.localtime(t)) == key:
-                starts.append(_run_start(t, key, fmt))
-        if starts:
-            break
-    if starts:
-        return min(starts)
-    # no instant formats to the key: a spring-forward gap, or a date the zone skipped. The bucket starts
-    # where the gap ends — the first instant whose key sorts after this one — found by bisection. The
-    # library's readings of the key land near the gap on either side (interpreted at the offset from
-    # before the change, at or after it; at the offset from after, before it) and WHICH side follows its
-    # previous call whatever the hint (Samoa's 2011-12-30 came back as the start of Dec 29 in one state,
-    # of Dec 31 in the other), so the bracket is those readings widened by two days, longer than any gap
-    # (a skipped date). Keys rise with time across the bracket: no zone sets its clock back within two
-    # days of a gap.
-    cands = [int(t) for t in (_mktime((y, m, d, h, 0, 0), isdst) for isdst in (-1, 0, 1)) if t is not None]
-    if not cands:
-        raise ValueError("ledger bucket %r names no instant in this zone" % (key,))
-    lo, hi = min(cands) - 2 * 86400, max(cands) + 2 * 86400
+    span = 3600 if fmt == _HOUR_KEY else 86400
+    g = calendar.timegm((y, m, d, h, 0, 0))
+    lo, hi = g - _OFFSET_REACH, g + span + _OFFSET_REACH
+    at = {}                                  # UTC offset -> the sample instants it was in force at
+    try:
+        for s in range(lo, hi + 1, 3600):
+            at.setdefault(time.localtime(s).tm_gmtoff, []).append(s)
+    except (OverflowError, OSError, ValueError):   # a year the C library cannot place (time_t's range)
+        raise ValueError("ledger bucket %r is outside the range this zone can place" % (key,))
+
+    def names(t):
+        return time.strftime(fmt, time.localtime(t)) == key
+
+    first = None
+    for off, samples in at.items():
+        t = g - off                          # the key's first second, read at this offset
+        if names(t):
+            cand = t
+        elif names(t + span - 1):
+            cand = _run_start(t + span - 1, key, fmt)
+        else:
+            cand = next((_run_start(s, key, fmt) for s in samples if names(s)), None)
+        if cand is not None and (first is None or cand < first):
+            first = cand
+    if first is not None:
+        return first
 
     def later(t):
         return time.strftime(fmt, time.localtime(t)) > key
 
-    if later(lo) or not later(hi):
-        raise ValueError("ledger bucket %r names no instant, and no gap ends within two days of its readings" % (key,))
-    while hi - lo > 1:
-        mid = (lo + hi) // 2
-        if later(mid):
-            hi = mid
-        else:
-            lo = mid
-    return hi
+    prev = lo
+    if later(prev):
+        raise ValueError("ledger bucket %r names no instant in this zone, and the reach before it sorts after it" % (key,))
+    for s in range(lo + 3600, hi + 1, 3600):
+        if later(s):                         # the gap is in (prev, s]: bisect to the first instant past it
+            while s - prev > 1:
+                mid = (prev + s) // 2
+                if later(mid):
+                    s = mid
+                else:
+                    prev = mid
+            return s
+        prev = s
+    raise ValueError("ledger bucket %r names no instant in this zone, and no gap ends within reach of it" % (key,))
 
 
 def _hour_buckets_back(now, secs):
-    """[(key, start, off)] for every RUN of hour-keyed instants that intersects [now - secs, now], newest
-    first, with each run's first instant and `off`, the UTC offset (seconds east) at its LAST instant —
-    the keys the recorder (sdk_backend._record_spend) gives the turns of that span. Walked run by run:
-    the run of `now`, then the run of the second before its start, and so on until a run starts at or
-    before now - secs. The walk follows the buckets as they lie, whatever their length: the fall-back
-    day's repeated hour is one two-hour run (one key), a spring-forward gap is no run, and a 30-minute
-    shift's half-hour bucket is one run like any other. Sampling `now - i*3600` once an hour (the rule
-    until 2026-09-06) could not see a bucket shorter than its stride: on Lord Howe Island's spring-forward
-    day the samples stepped from T03 to T01 over the half-hour T02, so that bucket's turns were in no
-    window while the period, cut at the oldest bucket's first instant, covered their instants. A key can
-    appear twice: where a fall-back's replay crosses a clock-hour boundary (the Chatham Islands, 03:45 ->
-    02:45; Antarctica/Troll, 03:00 -> 01:00) a bucket's instants come in two runs with another key's run
-    between them — _hour_window folds that, and reads the span's clock changes off `off`, which the walk
-    already had (the localtime of each run's last instant is the step that found the run)."""
+    """[(key, start, off0, off1)] for every RUN of hour-keyed instants that intersects [now - secs, now],
+    newest first, with each run's first instant and the UTC offsets (seconds east) at its first and last
+    instants — the keys the recorder (sdk_backend._record_spend) gives the turns of that span. Walked
+    run by run: the run of `now`, then the run of the second before its start, and so on until a run
+    starts at or before now - secs. The walk follows the buckets as they lie, whatever their length: the
+    fall-back day's repeated hour is one two-hour run (one key), a spring-forward gap is no run, and a
+    30-minute shift's half-hour bucket is one run like any other. Sampling `now - i*3600` once an hour
+    (the rule until 2026-09-06) could not see a bucket shorter than its stride: on Lord Howe Island's
+    spring-forward day the samples stepped from T03 to T01 over the half-hour T02, so that bucket's turns
+    were in no window while the period, cut at the oldest bucket's first instant, covered their instants.
+    A key can appear twice: where a fall-back's replay crosses a clock-hour boundary (the Chatham Islands,
+    03:45 -> 02:45; Antarctica/Troll, 03:00 -> 01:00) a bucket's instants come in two runs with another
+    key's run between them — _hour_window folds that, and reads the span's clock changes off the two
+    offsets, which the walk already had (the localtime of each run's last instant is the step that found
+    the run; its first instant's is the search's own reading of the start)."""
     cut = now - secs
     t = int(now)                  # bucket edges are whole seconds; the bucket of floor(now) is now's bucket
     lt = time.localtime(t)
     key = time.strftime(_HOUR_KEY, lt)
     out = []
     while True:
-        start, prev_lt, prev_key = _run_start_and_prev(t, key, _HOUR_KEY, lt)
+        start, slt, prev_lt, prev_key = _run_start_and_prev(t, key, _HOUR_KEY, lt)
         if start > t:             # cannot happen (a run starts at or before the instant naming it); keep the walk finite if it ever does
-            start, prev_lt = t, time.localtime(t - 1)
+            start, slt, prev_lt = t, time.localtime(t), time.localtime(t - 1)
             prev_key = time.strftime(_HOUR_KEY, prev_lt)
-        out.append((key, start, lt.tm_gmtoff))
+        out.append((key, start, slt.tm_gmtoff, lt.tm_gmtoff))
         if start <= cut:
             return out
         t, lt, key = start - 1, prev_lt, prev_key
@@ -29113,7 +29134,7 @@ def _hour_buckets_back(now, secs):
 def _runs_through(walked, cut):
     """The prefix of a walk (_hour_buckets_back, newest first) through the first run that starts at or
     before `cut` — the runs of the window [cut, now] — or None where the walk does not reach `cut`."""
-    for i, (_k, st, _off) in enumerate(walked):
+    for i, (_k, st, _off0, _off1) in enumerate(walked):
         if st <= cut:
             return walked[:i + 1]
     return None
@@ -29132,24 +29153,19 @@ def _hour_window(now, secs, walked=None, starts=None):
     back to the earliest first instant among the keys and every key with an instant in [t0, now] joins,
     until nothing widens.
 
-    That closure costs a _bucket_start per key, so it runs only when the span holds the one thing that
-    splits a key: a fall-back whose change instant is a run boundary (the key changes at the instant the
-    clock is set back — which is exactly when the replay crosses an hour boundary; the New York fall-back
-    sets the clock back INSIDE the T01 run, and Lord Howe's inside T01 too, so neither splits anything).
-    Read off the walk: each run carries the UTC offset at its last instant, so an older run's offset
-    above the next newer run's is a fall-back in [that run's start, its end], and one localtime at the
-    start tells the two apart (the new offset already in force at the start: a boundary; the old one:
-    inside the run). The two hours before the oldest run are checked too, against the offset at its
-    start: a key in the span may own a run before t0 whose other run is in the span, and a fall-back
-    replays at most two hours (Troll's), so the change that split it is less than two hours before the
-    later run's start, which is at or after t0. That gate is complete — every split shape passes through
-    a fall-back at a run boundary in [t0 - 7200, now], and the samples it compares are never more than
-    one run plus two hours apart, while no zone changes its clock twice within months — and it costs two
-    localtime calls and no _bucket_start on the common path. Until 2026-09-06 the gate was two shapes
-    read off the runs — a key walked twice, or an oldest run that does not start at its key's first
-    instant — and missed Troll's third: with now in the first replayed hour the walk is T01's standard
-    run then T02's daylight run, each key once, T02's run its key's first, yet T01's bucket also holds
-    the daylight hour before that.
+    That closure costs a _bucket_start per key, so it runs only where it widens: where a key of the span
+    owns an instant before the oldest run's start (_splitting_fall_back, which finds the change that
+    split it off the walk's own offsets or in the 26 hours before the oldest run, and checks that its
+    replay reaches the window). About 26 localtime calls and no _bucket_start on the common path; New
+    York, London and Lord Howe never run the closure, and Chatham and Troll run it only in the hours a
+    window's start lies inside a replay. Until 2026-09-06 the gate fired on any fall-back at a walked run
+    boundary and any fall-back in the two hours before the oldest run — so New York's inside-run
+    fall-back ran the closure for 45 minutes after its change, Chatham's ran it for a week on the rail's
+    7d window with nothing to widen, and a replay longer than two hours (Antarctica/Casey's three) was
+    not looked for; before that, the gate was two shapes read off the runs — a key walked twice, or an
+    oldest run that does not start at its key's first instant — and missed Troll's third: with now in
+    the first replayed hour the walk is T01's standard run then T02's daylight run, each key once, T02's
+    run its key's first, yet T01's bucket also holds the daylight hour before that.
 
     `walked` lets the rail pass one long walk for its several windows — each is a prefix of the same
     walk, cut by the walker's own rule — and `starts` a dict the caller shares across them, so a key's
@@ -29163,7 +29179,7 @@ def _hour_window(now, secs, walked=None, starts=None):
     runs = _runs_through(walked, now - secs)
     if runs is None:              # a walk shorter than the window: not a caller's shape today; walk this one
         walked = runs = _hour_buckets_back(now, secs)
-    keys = list(dict.fromkeys(k for k, _st, _off in runs))
+    keys = list(dict.fromkeys(k for k, _st, _off0, _off1 in runs))
     t0 = runs[-1][1]
     if not _splitting_fall_back(runs):
         return keys, t0
@@ -29180,19 +29196,74 @@ def _hour_window(now, secs, walked=None, starts=None):
         runs = _runs_through(walked, t0)
         if runs is None:
             walked = runs = _hour_buckets_back(now, now - t0)
-        keys = list(dict.fromkeys(k for k, _st, _off in runs))
+        keys = list(dict.fromkeys(k for k, _st, _off0, _off1 in runs))
+
+
+def _replay_reaches(x, o_old, o_new, t0):
+    """True where the fall-back at instant x — UTC offset o_old before it, o_new after, seconds east —
+    splits keys and one of them owns instants on both sides of t0. A fall-back replays the wall times
+    between where the clock landed and where it left; the keys of that stretch are split (each names
+    instants before x and again after it) iff the stretch crosses a clock-hour boundary — the clock lands
+    in an earlier hour than the one it left (Chatham's 03:45 -> 02:45; New York's 02:00 -> 01:00 stays
+    in the hour it left, so its T01 is one run). Their instants run from the top of the landing hour
+    read at the old offset to the top of the hour after the one left, read at the new, and a key among
+    them has an instant before t0 and one at or after it iff t0 lies strictly inside that stretch."""
+    left = (x - 1 + o_old) // 3600 * 3600        # the top of the wall hour the clock left
+    landed = (x + o_new) // 3600 * 3600          # the top of the wall hour it landed in
+    return landed < left and landed - o_old < t0 < left + 3600 - o_new
 
 
 def _splitting_fall_back(runs):
-    """True where the span a walk covers (_hour_buckets_back's runs, newest first) can hold a key whose
-    instants form two runs: a fall-back at a walked run's start, or any fall-back in the two hours before
-    the oldest run's start (see _hour_window). Offsets are seconds east of UTC, so a fall-back is an
-    older offset ABOVE a newer one."""
-    for (_k, st, off), (_ok, _ost, older) in zip(runs, runs[1:]):
-        if older > off and time.localtime(st).tm_gmtoff != older:
-            return True
+    """True where a key of the span a walk covers (_hour_buckets_back's runs, newest first) owns an
+    instant BEFORE the oldest run's start t0 — the one case in which the walk's keys and t0 are not the
+    window's, and _hour_window widens. Only a fall-back whose replay crosses a clock-hour boundary splits
+    a key (_replay_reaches), and the change is in one of two places. At a walked run boundary: the walk
+    carries each run's offsets at its first and last instant, so a boundary whose older side sits above
+    (east of) its newer side is a fall-back at that instant; a fall-back inside a run (New York's) shows
+    only as one run's two offsets and splits nothing, and a spring-forward at a boundary replays nothing.
+    Or before t0: hourly localtime samples over the _OFFSET_REACH before it — longer than any replay
+    reaches past its change — find a change between two samples that differ, bisected to the second.
+    Either way the change fires the gate only where its replay's keys straddle t0. The one assumption is
+    that no two clock changes fall within an hour of each other, so a change lies between two consecutive
+    hourly samples that differ and a run's two ends see at most one; tzdata's closest pair is six days 23
+    hours apart (Brazil, 2000: states that entered daylight time on 8 October left it on the 15th), and
+    the samples see both of those."""
     t0 = runs[-1][1]
-    return time.localtime(t0 - 7200).tm_gmtoff > time.localtime(t0).tm_gmtoff
+    for (_k, st, off0, _off1), (_ok, _ost, _ooff0, older) in zip(runs, runs[1:]):
+        if off0 < older and _replay_reaches(st, older, off0, t0):
+            return True
+    newer = runs[-1][2]           # the offset at t0
+    t = t0
+    for _i in range(_OFFSET_REACH // 3600):
+        t -= 3600
+        off = time.localtime(t).tm_gmtoff
+        if off != newer:          # one change in (t, t + 3600]: the first instant past t whose offset is not `off`
+            lo, hi = t, t + 3600
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                if time.localtime(mid).tm_gmtoff == off:
+                    lo = mid
+                else:
+                    hi = mid
+            if newer < off and _replay_reaches(hi, off, newer, t0):
+                return True
+            newer = off
+    return False
+
+
+def _first_instants(walked):
+    """{key: first instant} for every key with an instant in the span a walk covers (_hour_buckets_back's
+    runs, newest first): each key's earliest walked run start — exact wherever no key of the span owns
+    an instant before the oldest run's start (_splitting_fall_back) — else _bucket_start per key. The
+    hover series' slots come from this (one walk for 192 keys), the modal's and the rail's windows from
+    _hour_window, which reads the same gate."""
+    if _splitting_fall_back(walked):
+        return {k: _bucket_start(k) for k in dict.fromkeys(k for k, _st, _off0, _off1 in walked)}
+    first = {}
+    for k, st, _off0, _off1 in walked:
+        if k not in first or st < first[k]:
+            first[k] = st
+    return first
 
 
 def _hour_keys_back(now, secs):

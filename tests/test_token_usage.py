@@ -614,10 +614,12 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
             time.mktime((2026, 3, 8, 1, 0, 0, 0, 0, isdst))
             self.assertEqual(km._bucket_start("2026-03-08T02"), calendar.timegm((2026, 3, 8, 7, 0, 0)), "primed isdst=%d" % isdst)
         self.assertIsNone(km._bucket_start("not-a-key"))
+        with self.assertRaises(ValueError):
+            km._bucket_start("2026-02-31T05")                                   # well-formed, names no date: loud, never None
         os.environ["TZ"] = "UTC"
         time.tzset()
         self.assertEqual(km._bucket_start("2026-07-01T12"), calendar.timegm((2026, 7, 1, 12, 0, 0)),
-                         "a zone without DST: the isdst=1 arm does not round-trip and is ignored")
+                         "a zone without DST: one offset in play, one reading")
 
     def test_a_ledger_born_in_the_repeated_hour_prices_only_the_time_before_its_first_instant(self):
         """The T01 bucket holds the turns of BOTH 01:00 hours. sinceT is the first 01:00, so a row in the
@@ -805,9 +807,9 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
             self.assertEqual(older, time.strftime("%Y-%m-%dT%H", time.localtime(km._bucket_start(newer) - 1)),
                              "%s is the bucket ending where %s starts" % (older, newer))
         self.assertEqual(set(keys), self._recorder_keys(t0, now), "every key the recorder would write in the period, and no other")
-        # the walker's own starts (its cheap top-of-hour path or the library's two-arm rule, whichever a bucket
-        # took) are the library's answer for every key — the modal's t0 rule, bucket by bucket
-        self.assertEqual([(k, s) for k, s, _off in km._hour_buckets_back(now, window)], [(k, km._bucket_start(k)) for k in keys])
+        # the walker's own run starts are _bucket_start's answer for every key — the modal's t0 rule, bucket by
+        # bucket (a contiguous bucket is one run, so its run start is its first instant)
+        self.assertEqual([(k, s) for k, s, _off0, _off1 in km._hour_buckets_back(now, window)], [(k, km._bucket_start(k)) for k in keys])
         return keys, t0
 
     def _ledger_rows_and_judges_agree(self, now, window):
@@ -880,7 +882,7 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
 
     # ── the Chatham Islands (+12:45): the clock changes at 02:45 / 03:45, so a change splits an hour ──────
     # Spring-forward (2026-09-27, 02:45 +12:45 -> 03:45 +13:45, at 14:00Z Sep 26): T02 is 02:00-02:44 (45
-    # minutes) and T03 is 03:45-03:59 (15 minutes) — no 03:00 exists, so no mktime arm can name T03's start.
+    # minutes) and T03 is 03:45-03:59 (15 minutes) — no 03:00 exists, so T03's start is the change itself.
     # Fall-back (2026-04-05, 03:45 +13:45 -> 02:45 +12:45, at 14:00Z Apr 4) replays 02:45-03:44: T02's
     # instants are 02:00-02:59 daylight AND 02:45-02:59 standard, with T03's first run between — one key,
     # two runs, and the whole-bucket sum holds turns from both.
@@ -889,9 +891,9 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
 
     def test_a_quarter_hour_bucket_after_a_mid_hour_spring_forward_is_in_every_window(self):
         """The bucket the old stride could least see: 15 minutes long, and its first instant is the change
-        itself (03:45), which neither isdst arm of mktime(03:00) names — the old _bucket_start returned a
-        normalized instant in another bucket for it. Every figure counts its turn now, and the day after the
-        change reads as 25 plain buckets."""
+        itself (03:45), which no reading of 03:00 names — the mktime-based _bucket_start (until 2026-09-06)
+        returned a normalized instant in another bucket for it. Every figure counts its turn now, and the day
+        after the change reads as 25 plain buckets."""
         os.environ["TZ"] = "Pacific/Chatham"
         time.tzset()
         self.assertEqual(km._bucket_start("2026-09-27T03"), self.CH_CHANGE_SPRING, "T03 starts at the change, 03:45")
@@ -919,8 +921,8 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
         first_t02, first_t03 = ch - 105 * 60, ch - 45 * 60             # 02:00 and 03:00 daylight
         self.assertEqual((km._bucket_start("2026-04-05T02"), km._bucket_start("2026-04-05T03")), (first_t02, first_t03))
         now = ch + 90 * 60                                              # 04:15 standard
-        self.assertEqual(km._hour_buckets_back(now, 3600), [("2026-04-05T04", ch + 75 * 60, 45900), ("2026-04-05T03", ch + 15 * 60, 45900)],
-                         "the walk alone: T04, then T03's second run — its start is not the key's first instant; both end at +12:45")
+        self.assertEqual(km._hour_buckets_back(now, 3600), [("2026-04-05T04", ch + 75 * 60, 45900, 45900), ("2026-04-05T03", ch + 15 * 60, 45900, 45900)],
+                         "the walk alone: T04, then T03's second run — its start is not the key's first instant; both start and end at +12:45")
         self.assertEqual(now - km._analytics_edges(now, 3600)[2], 195 * 60, "the 1h view spans 3h15m here")
         kind, keys, t0 = km._analytics_edges(now, 3600)
         self.assertEqual((kind, keys, t0), ("hours", ["2026-04-05T04", "2026-04-05T03", "2026-04-05T02"], first_t02))
@@ -982,7 +984,9 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
             ss = km._spend_series(now=now)
             self.assertEqual((ss["h0"], ss["usd"][first_slot], ss["usd"][first_slot + 1]), (h0, 2.0, 0.0), "isdst primed %d" % isdst)
 
-    # ── Antarctica/Troll (+00/+02): the one two-hour fall-back in tzdata, 03:00 +02 -> 01:00 +00 ─────────
+    # ── Antarctica/Troll (+00/+02): the longest fall-back tzdata still schedules, 03:00 +02 -> 01:00 +00 ──
+    # (Antarctica/Casey's three-hour shifts ended in 2023 and Vostok's seven-hour one was 1994; see the
+    # Antarctic-station test below for those).
     # 2026-10-25 at 01:00Z. The replay crosses the 02:00 boundary, so T01 and T02 each own two runs, and the
     # runs INTERLEAVE: T01 daylight [23:00Z, 00:00Z), T02 daylight [00:00Z, 01:00Z), T01 standard [01:00Z,
     # 02:00Z), T02 standard [02:00Z, 03:00Z). T02's standard run starts exactly one hour after the change.
@@ -991,8 +995,11 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
     def test_a_two_hour_fall_back_names_each_buckets_first_instant_whatever_mktime_did_last(self):
         """_bucket_start compared the offset at a run's start with the offset one hour earlier, and T02's
         standard run starts one hour after the change, where the new offset already applies: the arms never
-        ran, and the key followed glibc's previous call — 00:00Z or 02:00Z, two hover slots apart. The span
-        checked is two hours now, the longest replay in tzdata. Every fall-back this file names, under
+        ran, and the key followed glibc's previous call — 00:00Z or 02:00Z, two hover slots apart. Round 6
+        widened that check to two hours as "the longest replay in tzdata", which it is not (Casey's is three
+        hours, Vostok's was seven), and the arms could not have told Casey's two standard-time offsets apart
+        anyway. The start is now read off the key's own wall time at every offset in force around it, with
+        no library hint at all (the Antarctic-station test below). Every fall-back this file names, under
         alternating primings."""
         x = self.TR_CHANGE
         cases = (("Antarctica/Troll", (2026, 10, 25, 2), {"2026-10-25T00": x - 3 * 3600, "2026-10-25T01": x - 2 * 3600,
@@ -1031,7 +1038,7 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
         time.tzset()
         x = self.TR_CHANGE
         now = x + 30 * 60
-        self.assertEqual([(k, s) for k, s, _off in km._hour_buckets_back(now, 3600)], [("2026-10-25T01", x), ("2026-10-25T02", x - 3600)],
+        self.assertEqual([(k, s) for k, s, _off0, _off1 in km._hour_buckets_back(now, 3600)], [("2026-10-25T01", x), ("2026-10-25T02", x - 3600)],
                          "the walk alone: T01's standard run, then T02's daylight run, which is T02's first")
         for isdst in (0, 1):
             time.mktime((2026, 10, 25, 2, 0, 0, 0, 0, isdst))
@@ -1129,32 +1136,42 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
         self.assertEqual(km._bucket_start("1993-08-21"), calendar.timegm((1993, 8, 21, 12, 0, 0)),
                          "Kwajalein's skipped date, where the STANDARD arm is the one that raises")
 
-    def test_the_closure_computes_a_keys_first_instant_once_per_build_and_the_fast_path_never(self):
+    def test_the_closure_computes_a_keys_first_instant_once_per_build_and_only_where_a_window_widens(self):
         """Cost, both ways. Where a window widens, the rail's five windows share one memo, so a key's first
-        instant is computed once per build (the fall-back week on Chatham cost 510 calls for 170 keys, 2.2 ms
-        per build). Where no fall-back splits a key — a whole-hour fall-back sets the clock back inside a run,
-        a spring-forward splits nothing, a zone without DST changes nothing — the gate reads the offsets the
-        walk carried and computes no first instant at all."""
+        instant is computed once per build, and only for the windows that widen (the fall-back week on
+        Chatham once cost 510 calls for 170 keys, 2.2 ms per build; round 6 brought that to 168, one per key
+        of the 7d window, on every build of the week after the change, none of which widened). Where no split
+        key reaches a window's start — a whole-hour fall-back sets the clock back inside a run (New York,
+        London), a 30-minute one too (Lord Howe), a spring-forward splits nothing, a zone without DST changes
+        nothing, and any zone once its replay is behind every window's start — the gate reads the offsets
+        the walk carried and computes no first instant at all."""
         calls = []
         real = km._bucket_start
         km._bucket_start = lambda k: calls.append(k) or real(k)
         self.addCleanup(setattr, km, "_bucket_start", real)
-        for zone, label, now in (("Pacific/Chatham", "7d three days after the fall-back", self.CH_CHANGE_FALL + 3 * 86400 + 90 * 60),
-                                 ("Pacific/Chatham", "the fall-back day, 04:15 standard", self.CH_CHANGE_FALL + 90 * 60),
-                                 ("Antarctica/Troll", "the fall-back day, 01:30 standard", self.TR_CHANGE + 1800),
-                                 ("Antarctica/Troll", "three days after the fall-back", self.TR_CHANGE + 3 * 86400 + 1800)):
+        for zone, label, now, widened in (("Pacific/Chatham", "the fall-back day, 04:15 standard", self.CH_CHANGE_FALL + 90 * 60,
+                                           {"2026-04-05T04", "2026-04-05T03", "2026-04-05T02"}),
+                                          ("Antarctica/Troll", "the fall-back day, 01:30 standard", self.TR_CHANGE + 1800,
+                                           {"2026-10-25T01", "2026-10-25T02"})):
             os.environ["TZ"] = zone
             time.tzset()
-            keys7 = set(km._hour_window(now, 7 * 86400)[0])
-            for build in (lambda: km._spend_windows(now=now), lambda: km._analytics_edges(now, 7 * 86400)):
+            self.assertEqual(set(km._hour_window(now, 3600)[0]), widened, "the 1h window widens to these keys")
+            for build in (lambda: km._spend_windows(now=now), lambda: km._analytics_edges(now, 3600)):
                 del calls[:]
                 build()
                 with self.subTest(zone=zone, label=label):
                     self.assertEqual(len(calls), len(set(calls)), "no key computed twice: %r" % calls)
-                    self.assertEqual(set(calls), keys7, "one call per key of the widest window, none outside it")
-        for zone, label, now, window in (("America/New_York", "1h at 02:30 EST on the fall-back day", calendar.timegm((2026, 11, 1, 7, 30, 0)), 3600),
+                    self.assertEqual(set(calls), widened, "one call per key of the window that widened, none for the others")
+            del calls[:]
+            km._analytics_edges(now, 7 * 86400)
+            self.assertEqual(calls, [], "%s: the 7d window's start is a week before the replay; nothing to widen, nothing computed" % zone)
+        for zone, label, now, window in (("Pacific/Chatham", "7d three days after the fall-back", self.CH_CHANGE_FALL + 3 * 86400 + 90 * 60, 7 * 86400),
+                                         ("Antarctica/Troll", "24h three days after the fall-back", self.TR_CHANGE + 3 * 86400 + 1800, 86400),
+                                         ("America/New_York", "1h at 02:30 EST on the fall-back day", calendar.timegm((2026, 11, 1, 7, 30, 0)), 3600),
                                          ("America/New_York", "24h at 03:30 EST the day after", calendar.timegm((2026, 11, 2, 8, 30, 0)), 86400),
                                          ("America/New_York", "24h after the spring-forward", calendar.timegm((2026, 3, 8, 12, 0, 0)), 86400),
+                                         ("Europe/London", "1h at 01:30 GMT on the fall-back day", calendar.timegm((2026, 10, 25, 1, 30, 0)), 3600),
+                                         ("Australia/Lord_Howe", "1h at 01:45 standard on the fall-back day", calendar.timegm((2026, 4, 4, 15, 15, 0)), 3600),
                                          ("Australia/Lord_Howe", "24h across the 30-minute fall-back", calendar.timegm((2026, 4, 5, 1, 30, 0)), 86400),
                                          ("UTC", "24h", calendar.timegm((2026, 11, 1, 8, 30, 0)), 86400)):
             os.environ["TZ"] = zone
@@ -1164,6 +1181,136 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
             km._spend_windows(now=now)
             with self.subTest(zone=zone, label=label):
                 self.assertEqual(calls, [], "the fast path: no first instant computed")
+
+    def test_the_gate_fires_exactly_where_a_window_widens(self):
+        """_splitting_fall_back is exact, not a bound: every quarter hour from two hours before a change to nine
+        after, for 1h/5h/24h, it fires iff the closure then moves t0 or adds a key. So New York, London and
+        Lord Howe — a fall-back inside a run — never run the closure (round 6's t0 - 7200 leg ran it for the
+        45 minutes after their changes), and Chatham, Troll and Casey run it only while a window's start
+        lies inside the replay."""
+        for zone, x in (("Pacific/Chatham", self.CH_CHANGE_FALL), ("Antarctica/Troll", self.TR_CHANGE), ("Antarctica/Casey", calendar.timegm((2023, 3, 8, 16, 0, 0))),
+                        ("America/New_York", self.SECOND_0100), ("Europe/London", calendar.timegm((2026, 10, 25, 1, 0, 0))), ("Australia/Lord_Howe", calendar.timegm((2026, 4, 4, 15, 0, 0)))):
+            os.environ["TZ"] = zone
+            time.tzset()
+            fired_any = False
+            for now in range(x - 2 * 3600, x + 9 * 3600 + 1, 900):
+                walked = km._hour_buckets_back(now, 7 * 86400)
+                for window in (3600, 5 * 3600, 86400):
+                    runs = km._runs_through(walked, now - window)
+                    keys, t0 = km._hour_window(now, window, walked, {})
+                    widened = t0 < runs[-1][1] or set(keys) != {k for k, _st, _off0, _off1 in runs}
+                    fired = km._splitting_fall_back(runs)
+                    fired_any = fired_any or fired
+                    with self.subTest(zone=zone, now=time.strftime("%m-%d %H:%M %Z", time.localtime(now)), window=window):
+                        self.assertEqual(fired, widened)
+            self.assertEqual(fired_any, zone in ("Pacific/Chatham", "Antarctica/Troll", "Antarctica/Casey"), zone)
+
+    # ── the Antarctic stations: base-offset shifts between two STANDARD times, replaying up to seven hours ──
+    # Casey 2023-03-08 16:00Z: +11 -> +08 (03:00 -> 00:00, three hours; eight such since 2010). Davis 2011-10-27
+    # 19:00Z: +07 -> +05. Vostok 1994-01-31 17:00Z: +07 -> +00 (seven hours), and 2023-12-17 19:00Z: +07 -> +05.
+    # Rothera 1976-12-01 00:00Z: +00 -> -03. Both offsets are standard time, so no isdst hint can pick between
+    # the two readings of a replayed wall time: round 6's arms returned the same run twice and the answer
+    # followed mktime's previous call, two to three hours and hover slots apart (the round-6 verification).
+    @staticmethod
+    def _first_instants_by_minute(lo, hi):
+        """Brute-force truth: each hour key's first instant over a minute grid (every run starts on a whole minute)."""
+        first = {}
+        for t in range(lo, hi, 60):
+            first.setdefault(time.strftime("%Y-%m-%dT%H", time.localtime(t)), t)
+        return first
+
+    def test_a_shift_between_two_standard_times_names_each_buckets_first_instant_in_every_library_state(self):
+        """Every key around each change, under alternating primings (an unambiguous mktime on each side of the
+        change, the state that moved round 6's answer), equals the brute-force first instant; the replayed
+        keys' hover slots are one value each. Two hand-checked anchors: Casey's Mar 9 T00 starts at 00:00 +11
+        (13:00Z Mar 8), three hours before its second run; Vostok's Jan 31 T17 at 17:00 +07 (10:00Z), seven
+        hours before its second."""
+        cases = (("Antarctica/Casey", calendar.timegm((2023, 3, 8, 16, 0, 0))), ("Antarctica/Davis", calendar.timegm((2011, 10, 27, 19, 0, 0))),
+                 ("Antarctica/Vostok", calendar.timegm((1994, 1, 31, 17, 0, 0))), ("Antarctica/Vostok", calendar.timegm((2023, 12, 17, 19, 0, 0))),
+                 ("Antarctica/Rothera", calendar.timegm((1976, 12, 1, 0, 0, 0))), ("Antarctica/Troll", self.TR_CHANGE), ("Pacific/Chatham", self.CH_CHANGE_FALL),
+                 ("Australia/Lord_Howe", calendar.timegm((2026, 4, 4, 15, 0, 0))), ("America/New_York", self.SECOND_0100))
+        for zone, x in cases:
+            os.environ["TZ"] = zone
+            time.tzset()
+            a, b = time.localtime(x - 1).tm_gmtoff, time.localtime(x).tm_gmtoff
+            self.assertGreater(a, b, "%s: a fall-back at %s" % (zone, x))
+            first = self._first_instants_by_minute(x - 12 * 3600, x + 12 * 3600)
+            after = {time.strftime("%Y-%m-%dT%H", time.localtime(t)) for t in range(x, x + (a - b) + 3600, 60)}
+            replayed = sorted(k for k in first if first[k] < x and k in after)
+            self.assertTrue(replayed, zone)
+            h0 = int((x + 3 * 3600) // 3600) - (km._SERIES_HOURS - 1)
+            slots = {k: set() for k in replayed}
+            for i in range(4):
+                time.mktime(time.localtime(x - 86400 + (i % 2) * 2 * 86400)[:6] + (0, 0, -1))   # prime: a reading on one side, then the other
+                for k in sorted(k for k in first if first[k] >= x - 11 * 3600):
+                    with self.subTest(zone=zone, key=k, priming=i % 2):
+                        self.assertEqual(km._bucket_start(k), first[k])
+                for k in replayed:
+                    slots[k].add(km._series_index(k, h0))
+            for k in replayed:
+                self.assertEqual(slots[k], {int(first[k] // 3600) - h0}, "%s %s: one hover slot in every state" % (zone, k))
+        os.environ["TZ"] = "Antarctica/Casey"
+        time.tzset()
+        self.assertEqual(km._bucket_start("2023-03-09T00"), calendar.timegm((2023, 3, 8, 13, 0, 0)))
+        self.assertEqual(km._bucket_start("2023-03-09"), calendar.timegm((2023, 3, 8, 13, 0, 0)), "the date starts at its first midnight too")
+        os.environ["TZ"] = "Antarctica/Vostok"
+        time.tzset()
+        self.assertEqual(km._bucket_start("1994-01-31T17"), calendar.timegm((1994, 1, 31, 10, 0, 0)))
+        self.assertEqual(km._bucket_start("1994-02-01T00"), calendar.timegm((1994, 2, 1, 0, 0, 0)), "Feb 1 T00 exists once: at +07 its 00:00 was the change itself")
+
+    def test_a_three_hour_replay_widens_the_window_to_the_buckets_first_run(self):
+        """Casey, 1h at 01:30 +08 on 2023-03-09 (17:30Z Mar 8): the walk is T01's second run then T00's second
+        run (16:00Z), but both buckets also hold their +11 hours (T00 from 13:00Z), so the period reaches
+        back to 13:00Z — four and a half hours for a `1h` view — and takes in T02, whose +11 hour lies
+        between T00's two runs. The closure rule holds at every quarter hour across the change. Round 6 cut
+        t0 at 16:00Z or 15:00Z by the library's state."""
+        os.environ["TZ"] = "Antarctica/Casey"
+        time.tzset()
+        x = calendar.timegm((2023, 3, 8, 16, 0, 0))
+        now = x + 90 * 60
+        self.assertEqual([(k, s) for k, s, _off0, _off1 in km._hour_buckets_back(now, 3600)], [("2023-03-09T01", x + 3600), ("2023-03-09T00", x)])
+        for i in range(2):
+            time.mktime(time.localtime(x - 86400 + i * 2 * 86400)[:6] + (0, 0, -1))
+            with self.subTest(priming=i):
+                self.assertEqual(km._analytics_edges(now, 3600), ("hours", ["2023-03-09T01", "2023-03-09T00", "2023-03-09T02"], x - 3 * 3600))
+        for now in range(x - 2 * 3600, x + 5 * 3600 + 1, 900):
+            for window in (3600, 5 * 3600, 86400):
+                with self.subTest(now=time.strftime("%H:%M %Z", time.localtime(now)), window=window):
+                    self._closure_rule_holds(now, window)
+
+    def test_the_hover_series_places_every_key_by_the_rule_from_one_walk(self):
+        """_spend_series takes the slots of the keys in its span from one walk (_first_instants) — the rule
+        (_series_index) key by key is a _bucket_start each, 30-55 µs, 192 times on every usage build —
+        and the two agree key for key: across the Chatham, Troll and Casey replays (split keys, where the walk
+        alone would place a key by its LATER run unless the gate sends it to the rule), on the New York
+        fall-back day, and for a ledger whose keys predate the span or sort after now. In a zone with no
+        change in the span the walk decides every key of the span and the rule is asked only for the one
+        past now."""
+        calls = []
+        real = km._bucket_start
+        km._bucket_start = lambda k: calls.append(k) or real(k)
+        self.addCleanup(setattr, km, "_bucket_start", real)
+        for zone, now in (("Pacific/Chatham", self.CH_CHANGE_FALL + 90 * 60), ("Pacific/Chatham", self.CH_CHANGE_FALL + 3 * 86400),
+                          ("Antarctica/Troll", self.TR_CHANGE + 1800), ("Antarctica/Troll", self.TR_CHANGE + 7 * 86400 + 1800),
+                          ("Antarctica/Casey", calendar.timegm((2023, 3, 8, 18, 0, 0))), ("America/New_York", self.SECOND_0100 + 1800),
+                          ("UTC", self.SECOND_0100)):
+            os.environ["TZ"] = zone
+            time.tzset()
+            h0 = int(now // 3600) - (km._SERIES_HOURS - 1)
+            keys = sorted({time.strftime("%Y-%m-%dT%H", time.localtime(t)) for t in range(now - 200 * 3600, now + 1, 900)})   # every bucket of 200 hours: some before the span
+            future = time.strftime("%Y-%m-%dT%H", time.localtime(now + 3600))
+            ledger = {k: {"usd": 1.0 + i * 0.01, "turns": 1} for i, k in enumerate(keys + [future])}
+            (jd.STATE / "spend.json").write_text(json.dumps({"hours": ledger, "days": {}}))
+            want = [0.0] * km._SERIES_HOURS
+            for k, e in ledger.items():
+                i = km._series_index(k, h0)
+                if i is not None and 0 <= i < km._SERIES_HOURS:
+                    want[i] = round(want[i] + e["usd"], 4)
+            del calls[:]
+            with self.subTest(zone=zone, now=time.strftime("%m-%d %H:%M %Z", time.localtime(now))):
+                self.assertEqual(km._spend_series(now=now), {"h0": h0, "usd": want})
+                if zone == "UTC":
+                    self.assertEqual(calls, [future], "the walk placed every key of the span and every key before it; the rule ran for the key past now only")
 
 
 class CostWeighting(unittest.TestCase):
