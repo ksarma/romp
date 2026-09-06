@@ -2667,7 +2667,7 @@ class EscalationFloorWiring(_StoreSandbox):
         # review 2026-08-22: the predicate's peer-wait input comes from the SAME wait-for graph
         # the nudge tick and the waitingOn chip consult — never a second derivation
         src = inspect.getsource(km.build_feed)
-        self.assertIn("aerr, wmap.get(fsid))", src)
+        self.assertIn("aerr, wmap.get(fsid),", src)   # the edge, then the badge read (P2 S2)
 
     def test_the_provisional_chain_treats_a_floored_card_as_working(self):
         # review 2026-08-22: a todo-floored focus card reports needs_input, so without this the

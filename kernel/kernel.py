@@ -685,8 +685,20 @@ def _interrupt_marks(turns, sid=""):
 def _interrupt_marks_atoms(atoms, cut_t=0.0, cut_cause=""):
     """The pure-atom core of _interrupt_marks — `atoms` plus the backend's machineCut stamp as
     plain arguments, so the classifier is testable without a states/ file (T219's repro rides
-    this surface)."""
-    users = [a for a in atoms if a.get("type") == "user"]
+    this surface).
+
+    A user atom whose `author` key is present and None is dropped before the text scan (2026-09-06,
+    perf batch 2 P2 S1). The file adapter writes author None for exactly one shape, a record with no
+    text block (event_model.author_of: every branch on a non-empty text returns an author, and the
+    final `_is_real_prompt` gate is the only path to None) — the tool_result-only harness lines that
+    are most of a transcript's user records. Such an atom can be neither an interrupt record
+    (is_interrupt_record needs text) nor a human prompt (author != "human"), and the forward scan in
+    _machine_cut_cause reads past it as wedge either way, so dropping it changes no tally; it only
+    saves the per-atom is_interrupt_record text join, the bulk of this function's cost on the pusher
+    thread. An atom with NO author key at all (an SDK live-tail atom: sdk_backend.msg_to_atom sets
+    none on stream user messages) is kept and classified as before — absence is not the adapter's
+    no-text marker."""
+    users = [a for a in atoms if a.get("type") == "user" and a.get("author", "") is not None]
     last_intr = last_human = 0
     for i, a in enumerate(users):
         t = a.get("t", 0)
@@ -5407,7 +5419,8 @@ def _user_todo_fp(sid):
     return ("on:" if _user_todos_on() else "off:") + json.dumps(rows, sort_keys=True)
 
 
-def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, peer_wait=None):
+def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, peer_wait=None,
+                    interrupted=None):
     """The idle-escalation floor's ARMING read (plans/user-todos.md): True only when this session
     has SETTLED idle with nothing else in motion — the exact idle the auto-nudge tick requires —
     so its open user todos ARE its frontier and the focus card may floor to needs-input. Read-side
@@ -5434,7 +5447,14 @@ def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, p
       must not wedge the floor off (the bugsdk2 lesson).
 
     ps None / no turns reads UNKNOWN, never idle — the cache-warm idiom: the floor snaps in after
-    _warm_fleet_bg like every other parse-derived read, instead of guessing on a cold cache."""
+    _warm_fleet_bg like every other parse-derived read, instead of guessing on a cold cache.
+
+    `interrupted`: the caller's own reading of _interrupt_suppresses_nudge over this same `ps`, when
+    it has one (build_feed computes it per session for the card's badge, over the same turns and sid,
+    a few lines before this call — 2026-09-06, perf batch 2 P2 S2: the recompute here was a second
+    full user-atom scan per session per build). None = not known, compute it here. The two sites read
+    an EXCEPTION differently — build_feed's badge reads "not interrupted", this gate reads "not idle"
+    — so a caller whose read raised passes None, never False, and the gate re-derives its own answer."""
     if ps is None or who_working or sess_awaiting_why or aerr or peer_wait:
         return False
     if perm_state in _NEEDS_INPUT_STATES or perm_state == "compacting" or _compacting_now(sid):
@@ -5444,11 +5464,13 @@ def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, p
     turns = ps.get("turns") or []
     if not turns:
         return False
-    try:
-        if _interrupt_suppresses_nudge(turns, sid):
-            return False
-    except Exception:
-        return False                                 # an unreadable gate reads unknown, never idle
+    if interrupted is None:
+        try:
+            interrupted = _interrupt_suppresses_nudge(turns, sid)
+        except Exception:
+            return False                             # an unreadable gate reads unknown, never idle
+    if interrupted:
+        return False
     lt = turns[-1]
     ls_val, ls_t = _last_state(sid)
     if ls_val in _PROGRESSING_STATES and ls_t >= lt.get("end", lt.get("t", 0)):
@@ -28071,10 +28093,14 @@ def build_feed(now, tmux=None):
         # is user-chosen, not a stall — auto-nudge is suppressed (same predicate, _auto_nudge_tick) and
         # the working card wears an "interrupted" badge saying so (the user 2026-07-05). Cache-only,
         # like the working dot: the badge snaps in once _warm_fleet_bg fills the parse.
+        # `_intr_read` is what the user-todo floor below is handed (S2): the badge's own value when the
+        # read succeeded, None when it raised — the floor reads an unreadable gate as "not idle", the
+        # badge reads it as "not interrupted", and only None lets the floor keep its own reading.
         try:
             sess_interrupted = bool(ps) and not who_working and _interrupt_suppresses_nudge(ps["turns"], fsid)
+            _intr_read = sess_interrupted
         except Exception:
-            sess_interrupted = False
+            sess_interrupted, _intr_read = False, None
         # A user interrupt still IN FLIGHT (dispatched, not yet settled): the card wears a steady
         # "interrupting…" badge from the click until it settles, THEN falls to the past-tense "interrupted"
         # badge — never flickering between "working" and "interrupted" while the SDK live-tail retires mid-
@@ -28405,7 +28431,8 @@ def build_feed(now, tmux=None):
         # present event first.
         todo_top = None
         _todo_idle = bool(_ut_open) and _user_todo_idle(fsid, ps, who_working, sess_awaiting_why,
-                                                        perm_state, aerr, wmap.get(fsid))
+                                                        perm_state, aerr, wmap.get(fsid),
+                                                        interrupted=_intr_read)
         if _todo_idle and api_top is None and perm_top is None and jauth_top is None:
             f = store.get("lastNode")
             while f and nodes.get(f, {}).get("parentId") is not None:
