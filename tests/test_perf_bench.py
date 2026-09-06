@@ -6,10 +6,12 @@ and mirrors it with the flag, and --compare prints deltas. The tool is driven as
 same env recipe a person would use, so nothing here loads romp code in-process; the tool module itself
 is loaded once, for a direct check of its fake client's frame labelling (its import pulls in only the
 standard library)."""
+import atexit
 import copy
 import json
 import os
 import re
+import shutil
 from importlib.machinery import SourceFileLoader
 from types import SimpleNamespace
 import subprocess
@@ -29,9 +31,12 @@ TOOL = os.path.join(ROOT, "tools", "perf-bench.py")
 # ROMP_STATE_DIR overrides are the only "live" candidates the tool can see. It is also the ratchet's
 # preamble for the one in-process load below, the tool module, which loads no romp code at import. It
 # replaces conftest's suite-wide floor with another temp dir for the modules collected after this one,
-# which changes nothing for them.
-os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+# which changes nothing for them. Every temp dir this module makes is removed when it is done with it
+# (this one at interpreter exit): a suite that leaves its directories behind fills /tmp over time.
+_XDG_TMP = tempfile.mkdtemp()
+os.environ["XDG_STATE_HOME"] = _XDG_TMP
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+atexit.register(shutil.rmtree, _XDG_TMP, ignore_errors=True)
 
 SID_WEB = "11111111-2222-3333-4444-555555555555"
 SID_API = "22222222-3333-4444-5555-666666666666"
@@ -154,6 +159,15 @@ class PerfBench(unittest.TestCase):
         cls.main = run_tool(["--state", cls.state, "--claude-dir", cls.claude, "--repo", ROOT, "--iters", "2",
                              "--sessions", "2", "--profile", "--json", cls.json_path])
 
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    def _scratch_root(self, prefix):
+        root = tempfile.mkdtemp(prefix=prefix)
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        return root
+
     def _ok(self, r):
         self.assertEqual(r.returncode, 0, "rc=%d\nstdout:\n%s\nstderr:\n%s" % (r.returncode, r.stdout[-4000:], r.stderr[-4000:]))
 
@@ -254,7 +268,7 @@ class PerfBench(unittest.TestCase):
         self.assertEqual(c["frames"], 3)
 
     def test_refuses_the_live_default_dir_without_the_flag(self):
-        root = tempfile.mkdtemp(prefix="perf-bench-live-")
+        root = self._scratch_root("perf-bench-live-")
         state, claude = build_synthetic(root, web_turns=3)
         r = run_tool(["--state", state, "--claude-dir", claude, "--repo", ROOT, "--iters", "1"],
                      env_extra={"XDG_STATE_HOME": root})
@@ -266,7 +280,7 @@ class PerfBench(unittest.TestCase):
         self.assertEqual(r.returncode, 2, "ROMP_STATE_DIR names the live dir too")
 
     def test_live_flag_benches_a_mirror_and_leaves_the_original_alone(self):
-        root = tempfile.mkdtemp(prefix="perf-bench-live-")
+        root = self._scratch_root("perf-bench-live-")
         state, claude = build_synthetic(root, web_turns=3)
         before = {p: os.stat(p).st_mtime_ns for p in Path(state).rglob("*") if p.is_file()}
         out_json = os.path.join(root, "out.json")
@@ -288,6 +302,9 @@ class PerfBench(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(mirror, name)), "%s is not copied into the mirror" % name)
         self.assertIn("build_feed", out["benchmarks"])
         self.assertNotIn("push_steady", out["benchmarks"], "--clients '' skips the push benchmarks")
+        mirror_root = os.path.dirname(os.path.realpath(mirror))      # the tool's mkdtemp dir; the mirror is its romp/
+        self.assertTrue(os.path.basename(mirror_root).startswith("romp-perf-live-mirror-"), mirror_root)
+        shutil.rmtree(mirror_root, ignore_errors=True)                # kept for the assertions above, not beyond
         # without --keep-mirror the mirror is removed
         r = run_tool(["--state", state, "--claude-dir", claude, "--repo", ROOT, "--iters", "1", "--sessions", "1",
                       "--clients", "", "--i-know-this-is-live", "--json", out_json], env_extra={"XDG_STATE_HOME": root})
