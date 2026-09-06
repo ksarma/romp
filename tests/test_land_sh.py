@@ -14,9 +14,19 @@ What land.sh is held to:
     the remote branch is the repository setting's to delete, or the API's when the setting is off;
   - it refuses any base but main: an open PR's branch unless --into-open-pr, a merged PR's branch,
     a branch with no PR; an open PR is checked before merged ones, since branch names are reused;
-  - --auto is explicit and needs the repository's allow_auto_merge setting AND required rules on
-    main (a ruleset rule or classic protection), each refused by name;
-  - --squash / --rebase, and a bad argument, are refused before anything is read.
+  - it reads mergeability and the check rollup before merging anything: a conflicting, blocked,
+    red or (without --auto) pending PR is refused by name, the second of a pair before the first
+    merges; no checks at all is noted, not refused;
+  - a pair whose one member is based on the other's branch merges the lower PR first, whichever
+    order was given, and the upper one lands on main once GitHub retargets it; each PR is read
+    again right before its own merge, and a head that moved stops the run (the orphan check still
+    runs), while a PR the first merge marked merged is skipped, not failed;
+  - --auto is explicit and needs the repository's allow_auto_merge setting AND a rule on main that
+    gates a merge (required checks, required reviews; a ruleset that only blocks force pushes does
+    not count), each refused by name; a rules or protection read that fails for anything but a 404
+    is refused as unreadable, with gh's error;
+  - --squash / --rebase, and a bad argument, are refused before anything is read; --help / -h
+    print the usage and the refusal table and exit 0.
 
 Synthetic data only: a demo `notes-api` with invented PR numbers, branch names and titles.
 """
@@ -130,12 +140,18 @@ class Fixture:
         with open(self.state_file) as f:
             return json.load(f)
 
-    def pr(self, n, head, base="main", draft=False, state="OPEN", merge_commit=None, checks="success"):
+    def pr(self, n, head, base="main", draft=False, state="OPEN", merge_commit=None, checks="success", **overrides):
+        """`checks` is success, pending, failure, none, or a statusCheckRollup list; `overrides`
+        pins a served field (mergeable="UNKNOWN", mergeStateStatus="BLOCKED")."""
         self.gh_state = self.gh()
-        self.gh_state["prs"][str(n)] = {
+        self.gh_state["prs"][str(n)] = dict({
             "number": n, "title": "PR %d on %s" % (n, head), "baseRefName": base, "headRefName": head,
-            "isDraft": draft, "state": state, "mergeCommit": merge_commit, "mergedAt": None, "checks": checks}
+            "isDraft": draft, "state": state, "mergeCommit": merge_commit, "mergedAt": None, "checks": checks}, **overrides)
         self._save_gh()
+
+    def on_main(self, sha):
+        return subprocess.run(["git", "-C", self.bare, "merge-base", "--is-ancestor", sha, "refs/heads/main"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
     def set_gh(self, **kw):
         self.gh_state = self.gh()
@@ -363,8 +379,9 @@ class Auto(_Base):
         fx.set_gh(repo={"allow_auto_merge": True})
         p = fx.land("--auto", "101")
         self.assertRefused(p, "--auto with nothing required on main (no ruleset rule, no branch protection) merges at once and protects nothing")
-        self.assertIn(["api", "repos/{owner}/{repo}/rules/branches/main", "--jq", "length"], fx.calls("api"))
-        self.assertIn(["api", "repos/{owner}/{repo}/branches/main/protection"], fx.calls("api"))
+        self.assertIn(["api", "repos/{owner}/{repo}/rules/branches/main", "--jq", ".[].type"], fx.calls("api"))
+        self.assertIn(["api", "repos/{owner}/{repo}/branches/main/protection", "--jq", "to_entries[] | select(.value != null) | .key"],
+                      fx.calls("api"))
 
     def test_auto_with_the_setting_and_a_rule_arms_the_merge(self):
         fx = self.fx
@@ -397,6 +414,265 @@ class Auto(_Base):
         self.assertNotIn("--auto", fx.merges()[0])
         self.assertEqual([c for c in fx.calls("api") if c[1] == "repos/{owner}/{repo}"], [], "the setting is read only for --auto")
         self.assertEqual(fx.gh()["prs"]["101"]["state"], "MERGED")
+
+    def test_refuses_auto_when_the_only_rules_gate_no_merge(self):
+        """The rules endpoint lists every rule on main. One that only blocks force pushes or
+        deletion leaves --auto nothing to wait for; the refusal names what was found."""
+        fx = self.fx
+        fx.set_gh(repo={"allow_auto_merge": True}, rules=[{"type": "non_fast_forward"}, {"type": "deletion"}])
+        p = fx.land("--auto", "101")
+        self.assertRefused(p, "no rule on main gates a merge", "non_fast_forward, deletion", "merge without --auto")
+        self.assertNotIn("nothing required on main", p.stderr)
+
+    def test_a_required_review_rule_counts(self):
+        fx = self.fx
+        fx.set_gh(repo={"allow_auto_merge": True}, rules=[{"type": "non_fast_forward"}, {"type": "pull_request"}])
+        p = fx.land("--auto", "101")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("--auto", fx.merges()[0])
+
+    def test_classic_protection_that_requires_no_checks_or_reviews_does_not_count(self):
+        fx = self.fx
+        fx.set_gh(repo={"allow_auto_merge": True},
+                  protection={"url": "https://api.example.invalid/protection", "enforce_admins": {"enabled": True},
+                              "required_status_checks": None, "restrictions": None})
+        p = fx.land("--auto", "101")
+        self.assertRefused(p, "branch protection on main requires no checks and no reviews", "enforce_admins")
+        fx.set_gh(protection={"required_pull_request_reviews": {"required_approving_review_count": 1}})
+        p = fx.land("--auto", "101")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+
+    def test_a_failed_rules_read_is_unreadable_not_none(self):
+        fx = self.fx
+        fx.set_gh(repo={"allow_auto_merge": True}, rules=[{"type": "required_status_checks"}],
+                  fail={"rules": "HTTP 500: Internal Server Error (HTTP 500)"})
+        p = fx.land("--auto", "101")
+        self.assertRefused(p, "could not read the rules on main", "HTTP 500")
+        self.assertNotIn("nothing required", p.stderr)
+        self.assertNotIn("no ruleset rule", p.stderr)
+
+    def test_a_failed_protection_read_is_unreadable_unless_it_is_a_404(self):
+        fx = self.fx
+        fx.set_gh(repo={"allow_auto_merge": True}, fail={"protection": "Must have admin rights to Repository. (HTTP 403)"})
+        p = fx.land("--auto", "101")
+        self.assertRefused(p, "could not read main's branch protection", "HTTP 403")
+        self.assertNotIn("no branch protection", p.stderr)
+        fx.set_gh(fail={})
+        p = fx.land("--auto", "101")
+        self.assertRefused(p, "nothing required on main (no ruleset rule, no branch protection)")
+
+
+class Readiness(_Base):
+    """Mergeability and the check rollup are read before any merge: a red, pending, conflicting or
+    blocked PR is refused by name, the second of a pair before the first merges."""
+
+    def setUp(self):
+        super().setUp()
+        self.fx.branch("a", {"a.txt": "a\n"})
+        self.fx.pr(101, "a")
+
+    def conflicting_pr(self, n=102):
+        """A PR whose branch edits a line main has since changed."""
+        fx = self.fx
+        fx.branch("c", {"notes.txt": "one\nc\n"})
+        fx.branch("main", {"notes.txt": "one\nmain\n"})
+        fx.pr(n, "c")
+
+    def test_green_checks_merge(self):
+        fx = self.fx
+        p = fx.land("101")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(fx.gh()["prs"]["101"]["state"], "MERGED")
+        self.assertEqual(fx.calls("pr", "view", "101", "--json", "statusCheckRollup")[0][5], "--jq",
+                         "the rollup is reduced by gh's --jq, not parsed in the shell")
+
+    def test_refuses_failing_checks_with_or_without_auto(self):
+        fx = self.fx
+        fx.pr(101, "a", checks="failure")
+        self.assertRefused(fx.land("101"), "#101's checks are failing: ci (FAILURE)")
+        fx.set_gh(repo={"allow_auto_merge": True}, rules=[{"type": "required_status_checks"}])
+        self.assertRefused(fx.land("--auto", "101"), "#101's checks are failing")
+        self.assertEqual(fx.gh()["prs"]["101"]["state"], "OPEN")
+
+    def test_refuses_pending_checks_without_auto(self):
+        fx = self.fx
+        fx.pr(101, "a", checks="pending")
+        self.assertRefused(fx.land("101"), "#101's checks are pending: ci", "pass --auto")
+
+    def test_a_status_context_counts_like_a_check_run_and_skipped_is_green(self):
+        fx = self.fx
+        fx.pr(101, "a", checks=[{"__typename": "CheckRun", "name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                                {"__typename": "StatusContext", "context": "ci/lint", "state": "FAILURE"}])
+        self.assertRefused(fx.land("101"), "#101's checks are failing: ci/lint (FAILURE)")
+        fx.pr(101, "a", checks=[{"__typename": "CheckRun", "name": "tests", "status": "COMPLETED", "conclusion": "SKIPPED"},
+                                {"__typename": "CheckRun", "name": "docs", "status": "COMPLETED", "conclusion": "NEUTRAL"},
+                                {"__typename": "StatusContext", "context": "ci/lint", "state": "SUCCESS"}])
+        p = fx.land("101")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+
+    def test_no_checks_at_all_is_noted_not_refused(self):
+        fx = self.fx
+        fx.pr(101, "a", checks="none")
+        p = fx.land("101")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("#101 has no checks reported at its head", p.stdout)
+
+    def test_refuses_a_conflicting_pr(self):
+        fx = self.fx
+        self.conflicting_pr()
+        self.assertRefused(fx.land("102"), "#102 conflicts with main (mergeable: CONFLICTING)")
+
+    def test_refuses_a_pr_whose_mergeability_github_has_not_computed(self):
+        fx = self.fx
+        fx.pr(101, "a", mergeable="UNKNOWN")
+        self.assertRefused(fx.land("101"), "#101's mergeability is not computed yet (mergeable: UNKNOWN)", "re-run")
+
+    def test_refuses_a_blocked_or_behind_pr_without_auto(self):
+        fx = self.fx
+        fx.set_gh(rules=[{"type": "required_status_checks"}])
+        fx.pr(101, "a", checks="success", mergeStateStatus="BLOCKED")
+        self.assertRefused(fx.land("101"), "#101 is blocked by a rule on main (mergeStateStatus: BLOCKED)")
+        fx.pr(101, "a", checks="success", mergeStateStatus="BEHIND")
+        self.assertRefused(fx.land("101"), "#101 is behind main (mergeStateStatus: BEHIND)", "gh pr update-branch 101")
+
+    def test_auto_accepts_a_pr_blocked_by_pending_required_checks(self):
+        """With a ruleset requiring checks, a PR whose checks are still running reads BLOCKED; that is
+        the state --auto exists for."""
+        fx = self.fx
+        fx.set_gh(repo={"allow_auto_merge": True}, rules=[{"type": "required_status_checks"}])
+        fx.pr(101, "a", checks="pending")
+        self.assertEqual(fx.fake_gh("pr", "view", "101", "--json", "mergeStateStatus").stdout.strip(),
+                         '{"mergeStateStatus": "BLOCKED"}')
+        p = fx.land("--auto", "101")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("#101's checks are pending (ci); --auto lands it when they pass", p.stdout)
+        self.assertTrue(fx.gh()["prs"]["101"].get("autoMerge"))
+
+    def test_the_second_pr_of_a_pair_is_checked_before_the_first_merges(self):
+        fx = self.fx
+        self.conflicting_pr(102)
+        p = fx.land("101", "102")
+        self.assertRefused(p, "#102 conflicts with main")
+        self.assertEqual(fx.gh()["prs"]["101"]["state"], "OPEN", "the green first PR did not merge ahead of the refusal")
+        fx.branch("d", {"d.txt": "d\n"})
+        fx.pr(104, "d", checks="failure")
+        self.assertRefused(fx.land("101", "104"), "#104's checks are failing")
+        self.assertEqual(fx.gh()["prs"]["101"]["state"], "OPEN")
+
+    def test_a_merge_gh_refuses_stops_the_run_and_still_runs_the_orphan_check(self):
+        """The checks make this rare (a base that moves between the re-read and the merge); when it
+        happens the run stops with gh's error, exit 1, and the orphan check still reports."""
+        fx = self.fx
+        fx.branch("d", {"d.txt": "d\n"})
+        fx.pr(104, "d")
+        fx.set_gh(fail={"merge": {"104": "GraphQL: Base branch was modified. Review and try the merge again. (mergePullRequest)"}})
+        p = fx.land("101", "104")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("Base branch was modified", p.stderr)
+        self.assertIn("land: gh could not merge #104; stopping. Merged in this run: #101. The orphan check runs next.", p.stderr)
+        self.assertEqual(fx.gh()["prs"]["101"]["state"], "MERGED")
+        self.assertEqual(fx.gh()["prs"]["104"]["state"], "OPEN")
+        self.assertIn("pr-orphans: clean (1 merged PR(s)", p.stdout)
+
+
+class Pairs(_Base):
+    """A pair merges in the order that keeps heads stable, and each PR is read again right before
+    its own merge."""
+
+    def setUp(self):
+        super().setUp()
+        fx = self.fx
+        fx.branch("a", {"a.txt": "a\n"})
+        fx.branch("b", {"b.txt": "b\n"}, base="a")
+        fx.pr(201, "a")
+        fx.pr(203, "b", base="a")
+
+    def assertChainLanded(self, p, head_a, head_b):
+        fx = self.fx
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(fx.merges(), [["pr", "merge", "201", "--merge", "--match-head-commit", head_a],
+                                       ["pr", "merge", "203", "--merge", "--match-head-commit", head_b]],
+                         "the lower PR first, each pinned to the head that was checked")
+        gh = fx.gh()
+        self.assertEqual(gh["prs"]["201"]["state"], "MERGED")
+        self.assertEqual(gh["prs"]["203"]["state"], "MERGED")
+        self.assertEqual(gh["prs"]["203"]["baseRefName"], "main", "retargeted once 'a' was deleted")
+        for h in (head_a, head_b):
+            self.assertTrue(fx.on_main(h), "both heads reached main")
+        self.assertNotIn("merges into 'a'", p.stdout, "the upper PR does not land on the open branch")
+        self.assertIn("#203 is based on 'a', the branch of #201, the other PR of this pair: #201 merges first", p.stdout)
+        self.assertIn("pr-orphans: clean (2 merged PR(s)", p.stdout)
+
+    def test_a_chain_given_top_down_merges_bottom_up(self):
+        fx = self.fx
+        head_a, head_b = fx.bare_rev("a"), fx.bare_rev("b")
+        p = fx.land("--into-open-pr", "203", "201")
+        self.assertChainLanded(p, head_a, head_b)
+        self.assertIn("land: merging #201 before #203", p.stdout)
+
+    def test_a_chain_given_bottom_up_needs_no_flag(self):
+        fx = self.fx
+        head_a, head_b = fx.bare_rev("a"), fx.bare_rev("b")
+        p = fx.land("201", "203")
+        self.assertChainLanded(p, head_a, head_b)
+        self.assertNotIn("--into-open-pr", p.stdout + p.stderr)
+
+    def test_a_chain_when_the_repository_keeps_branches(self):
+        """With deleteBranchOnMerge off, land.sh deletes 'a' through the API after #201 merges, and
+        GitHub retargets #203 to main before its merge."""
+        fx = self.fx
+        fx.set_gh(repo={"deleteBranchOnMerge": False})
+        head_a, head_b = fx.bare_rev("a"), fx.bare_rev("b")
+        p = fx.land("201", "203")
+        self.assertChainLanded(p, head_a, head_b)
+        self.assertEqual([c[3] for c in fx.calls("api", "-X", "DELETE")],
+                         ["repos/{owner}/{repo}/git/refs/heads/a", "repos/{owner}/{repo}/git/refs/heads/b"])
+
+    def test_stops_when_a_head_moved_between_the_check_and_the_merge(self):
+        fx = self.fx
+        fx.set_gh(after_merge={"201": ["b"]})
+        head_b = fx.bare_rev("b")
+        p = fx.land("201", "203")
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("land: stopped: #203's head moved since it was checked (%s, now %s)" % (head_b[:10], fx.bare_rev("b")[:10]), p.stderr)
+        self.assertIn("#201 merged", p.stderr)
+        gh = fx.gh()
+        self.assertEqual(gh["prs"]["201"]["state"], "MERGED")
+        self.assertEqual(gh["prs"]["203"]["state"], "OPEN")
+        self.assertEqual(len(fx.merges()), 1, "the second merge was never attempted")
+        self.assertIn("pr-orphans: clean (1 merged PR(s)", p.stdout, "the orphan check still ran")
+
+    def test_a_pr_marked_merged_by_the_first_merge_is_skipped_not_failed(self):
+        """#203's branch carries #201's commit; both target main. Merging #203 makes GitHub mark
+        #201 merged, and the re-read before #201's merge sees that."""
+        fx = self.fx
+        fx.pr(203, "b", base="main")
+        p = fx.land("203", "201")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual([c[2] for c in fx.merges()], ["203"])
+        self.assertEqual(fx.gh()["prs"]["201"]["state"], "MERGED")
+        self.assertIn("#201 was marked merged by an earlier merge of this run; nothing to do for it", p.stdout)
+        self.assertIn("pr-orphans: clean (2 merged PR(s)", p.stdout)
+
+
+class Help(_Base):
+    def test_help_exits_0_and_names_every_refusal(self):
+        fx = self.fx
+        for flag in ("--help", "-h"):
+            p = fx.land(flag)
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            self.assertIn("usage: scripts/land.sh [--auto] [--into-open-pr] N [M]", p.stdout)
+            for frag in ("--squash", "--rebase", "not open", "draft", "merge commits", "CONFLICTING", "UNKNOWN",
+                         "failing", "pending", "BLOCKED", "BEHIND", "other than main", "--into-open-pr", "MERGED PR",
+                         "no PR has", "Allow auto-merge", "required_status_checks", "pull_request", "unreadable",
+                         "head moved", "pr-orphans.sh", "exit 2"):
+                self.assertIn(frag, p.stdout, flag)
+        self.assertEqual(fx.calls(), [], "help asks gh nothing")
+        p = fx.land("101", "--help")
+        self.assertEqual(p.returncode, 0, "--help anywhere on the line prints help")
+        header = (SCRIPTS / "land.sh").read_text().split("set -euo pipefail")[0]
+        self.assertIn("--help", header, "the header comment points at --help")
+        self.assertNotIn("Refusals (exit 2)", header, "and does not carry a second copy of the table")
 
 
 if __name__ == "__main__":

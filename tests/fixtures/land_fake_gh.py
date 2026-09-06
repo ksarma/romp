@@ -20,9 +20,25 @@ biting; each is named here so the fake is not mistaken for evidence about GitHub
   - With deleteBranchOnMerge the head branch of the merged PR is deleted and open PRs based on it
     are retargeted to the merged PR's base (documented). Indirect-merge marking: open PRs against
     the same base whose head is now reachable read MERGED.
+  - `pr view` serves `mergeable` (MERGEABLE or CONFLICTING, computed by a real merge-tree of the
+    PR's head against its base's tip; `mergeable` on the PR record overrides, for UNKNOWN),
+    `mergeStateStatus` (DIRTY when conflicting; BLOCKED when a rule on main gates a merge and the
+    checks are not green; UNSTABLE when they are not green with no such rule; else CLEAN;
+    `mergeStateStatus` on the record overrides) and `statusCheckRollup` (from the record's `checks`:
+    success, pending, failure or none give one CheckRun named `ci`; a list is served as is, so a
+    test can mix CheckRun and StatusContext entries). A merge without --auto is refused when the
+    status is BLOCKED, as GitHub refuses it.
   - `api repos/{owner}/{repo}` answers allow_auto_merge; `.../rules/branches/<b>` the rules on that
-    branch; `.../branches/<b>/protection` 404s unless `protection` is set; `-X DELETE
-    .../git/refs/heads/<b>` deletes the remote ref. `--jq` covers the expressions the scripts use.
+    branch (every rule, gating or not, as GitHub lists them); `.../branches/<b>/protection` 404s
+    unless `protection` is set (True serves required status checks; a dict is served as is);
+    `-X DELETE .../git/refs/heads/<b>` deletes the remote ref. `--jq` covers the expressions the
+    scripts use.
+  - Failure injection: `fail` maps an endpoint (`rules`, `protection`) to a gh error line, which the
+    fake prints and exits 1 with, the way a 5xx or an auth failure would; `fail.merge` maps a PR
+    number to the error its merge fails with, after the head check, the way GitHub refuses a merge
+    whose base moved under it. `after_merge` maps a PR
+    number to branches that get one more commit right after that PR merges, standing in for an
+    author who pushes between land.sh's check and its merge.
 
 Synthetic data only: PR numbers, titles and branches are the tests' inventions.
 """
@@ -71,6 +87,64 @@ def live_head(state, pr):
     return pr.get("headRefOid") or "0" * 40
 
 
+# Ruleset rule types that make a merge wait for something (GitHub's rule types; the rest, such as
+# non_fast_forward, deletion, creation, update, protect the ref and gate no merge).
+GATING_RULES = {"required_status_checks", "pull_request", "required_deployments", "merge_queue", "code_scanning"}
+
+
+def rollup_of(pr):
+    checks = pr.get("checks", "success")
+    if isinstance(checks, list):
+        return checks
+    if checks == "none":
+        return []
+    if checks == "pending":
+        return [{"__typename": "CheckRun", "name": "ci", "status": "IN_PROGRESS", "conclusion": ""}]
+    if checks == "failure":
+        return [{"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "FAILURE"}]
+    return [{"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+
+
+def checks_green(pr):
+    for c in rollup_of(pr):
+        word = (c.get("state") or "").upper() if c.get("__typename") == "StatusContext" else (
+            (c.get("conclusion") or "").upper() if (c.get("status") or "").upper() == "COMPLETED" else "PENDING")
+        if word not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
+            return False
+    return True
+
+
+def main_gates_merges(state):
+    """Whether a rule on main gates a merge: a gating ruleset rule, or classic protection with
+    required status checks or required reviews (the fake's rules and protection are main's)."""
+    if any(r.get("type") in GATING_RULES for r in state.get("rules", [])):
+        return True
+    prot = state.get("protection")
+    if prot is True:
+        return True
+    return isinstance(prot, dict) and any(prot.get(k) is not None for k in ("required_status_checks", "required_pull_request_reviews"))
+
+
+def mergeable_of(state, pr):
+    if pr.get("mergeable"):
+        return pr["mergeable"]
+    base_tip = git(state, "rev-parse", "--verify", "--quiet", "refs/heads/" + pr["baseRefName"], check=False).stdout.strip()
+    if not base_tip:
+        return "UNKNOWN"
+    mt = git(state, "merge-tree", "--write-tree", "--no-messages", base_tip, live_head(state, pr), check=False)
+    return "MERGEABLE" if mt.returncode == 0 else "CONFLICTING"
+
+
+def merge_state_status(state, pr):
+    if pr.get("mergeStateStatus"):
+        return pr["mergeStateStatus"]
+    if mergeable_of(state, pr) == "CONFLICTING":
+        return "DIRTY"
+    if checks_green(pr):
+        return "CLEAN"
+    return "BLOCKED" if pr.get("baseRefName") == "main" and main_gates_merges(state) else "UNSTABLE"
+
+
 def project(state, pr, fields):
     live_head(state, pr)
     out = {}
@@ -81,6 +155,12 @@ def project(state, pr, fields):
             out[f] = bool(pr.get("isDraft"))
         elif f == "state":
             out[f] = pr.get("state", "OPEN")
+        elif f == "statusCheckRollup":
+            out[f] = rollup_of(pr)
+        elif f == "mergeable":
+            out[f] = mergeable_of(state, pr)
+        elif f == "mergeStateStatus":
+            out[f] = merge_state_status(state, pr)
         else:
             out[f] = pr.get(f)
     return out
@@ -110,6 +190,14 @@ def apply_jq(rows, expr):
         return str(rows[0]["number"]) if rows else "null"
     if expr == "length":
         return str(len(rows))
+    if expr == ".[].type":
+        return "\n".join(r.get("type", "") for r in rows)
+    if expr == "to_entries[] | select(.value != null) | .key" and isinstance(rows, dict):
+        return "\n".join(k for k, v in rows.items() if v is not None)
+    if expr == '(.statusCheckRollup // [])[] | [.__typename, (.name // .context), .status, .conclusion, .state] | map(. // "") | join("|")':
+        return "\n".join("|".join([c.get("__typename") or "", c.get("name") or c.get("context") or "",
+                                   c.get("status") or "", c.get("conclusion") or "", c.get("state") or ""])
+                         for c in rows.get("statusCheckRollup") or [])
     if expr.startswith(".") and "." not in expr[1:] and isinstance(rows, dict):
         v = rows.get(expr[1:])
         return json.dumps(v)
@@ -185,6 +273,15 @@ def delete_local_branch(head):
         die("failed to delete local branch %s: %s" % (head, proc.stderr.strip()))
 
 
+def push_empty_commit(state, branch, env):
+    """An author's push to `branch` right after a merge: one more commit, same tree."""
+    tip = git(state, "rev-parse", "refs/heads/" + branch).stdout.strip()
+    tree = git(state, "rev-parse", tip + "^{tree}").stdout.strip()
+    commit = subprocess.run(["git", "-C", state["bare"], "commit-tree", tree, "-p", tip, "-m", "late push on %s" % branch],
+                            env=env, text=True, stdout=subprocess.PIPE, check=True).stdout.strip()
+    git(state, "update-ref", "refs/heads/" + branch, commit, tip)
+
+
 def pr_merge(state, argv):
     o = opts(argv, {"--match-head-commit", "--subject", "-t", "--body", "-b"})
     pr = get_pr(state, o["_"][0])
@@ -200,13 +297,19 @@ def pr_merge(state, argv):
     head = live_head(state, pr)
     if o.get("--match-head-commit") and o["--match-head-commit"][0] != head:
         die("head commit %s does not match %s" % (head, o["--match-head-commit"][0]))
-    if o.get("--auto") and pr.get("checks") == "pending":
+    injected = ((state.get("fail") or {}).get("merge") or {}).get(str(pr["number"]))
+    if injected:
+        die(injected)
+    mss = merge_state_status(state, pr)
+    if o.get("--auto") and (pr.get("checks") == "pending" or mss == "BLOCKED"):
         if not repo.get("allow_auto_merge"):
             die("Auto-merge is not allowed for this repository")
         pr["autoMerge"] = True
         save(state)
         print("Pull request #%d will be automatically merged when all requirements are met" % pr["number"])
         return
+    if mss == "BLOCKED":
+        die("Pull Request is not mergeable: the base branch policy prohibits the merge")
     base = pr["baseRefName"]
     base_tip = git(state, "rev-parse", "refs/heads/" + base).stdout.strip()
     mt = git(state, "merge-tree", "--write-tree", "--no-messages", base_tip, head, check=False)
@@ -226,6 +329,8 @@ def pr_merge(state, argv):
     if repo.get("deleteBranchOnMerge") or o.get("--delete-branch") or o.get("-d"):
         delete_remote_branch(state, pr["headRefName"], base)
     state.setdefault("merges", []).append({"pr": pr["number"], "auto": bool(o.get("--auto")), "commit": commit})
+    for branch in (state.get("after_merge") or {}).get(str(pr["number"]), []):
+        push_empty_commit(state, branch, env)
     save(state)
     print("Merged pull request #%d" % pr["number"])
     if o.get("--delete-branch") or o.get("-d"):
@@ -251,13 +356,20 @@ def api(state, argv):
         delete_remote_branch(state, branch, "main")
         save(state)
         return
+    fail = state.get("fail") or {}
     if path.endswith("/rulesets") or "/rules/branches/" in path:
+        if fail.get("rules"):
+            die(fail["rules"], code=1)
         rows = state.get("rules", [])
         print(apply_jq(rows, jq) if jq else json.dumps(rows))
         return
     if "/branches/" in path and path.endswith("/protection"):
-        if state.get("protection"):
-            print(json.dumps({"required_status_checks": {"contexts": ["ci"]}}))
+        if fail.get("protection"):
+            die(fail["protection"], code=1)
+        prot = state.get("protection")
+        if prot:
+            body = prot if isinstance(prot, dict) else {"required_status_checks": {"contexts": ["ci"], "strict": False}}
+            print(apply_jq(body, jq) if jq else json.dumps(body))
             return
         die("Branch not protected (HTTP 404)", code=1)
     if path.rstrip("/") == "repos/{owner}/{repo}":
