@@ -521,7 +521,12 @@ test("Enter on a card's head, then Enter again: the rebuilt head takes the focus
 test("a long path wraps: the folder button and the folder-off note break after every slash and may shrink; an error row wraps anywhere", async (t: TestContext) => {
   const DEEP = "/repo/notes-api/docs/reports/quarterly/latency/appendix/report.md";
   const w = world({ path: DEEP }); t.after(() => w.close());
-  const { aside } = await openPanel(w, status({ trackedBy: null }));
+  // the store's `path` is the file's relpath from the root, written by the host from the resolved path (store-io's
+  // relPathFor): the panel names the folder from root + path, the kernel's own spelling (filePath), so the fixture
+  // must carry the opened file's relpath — a status for this file cannot say "docs/report.md"
+  const rel = "docs/reports/quarterly/latency/appendix/report.md";
+  const { aside } = await openPanel(w, status({ trackedBy: null, storePath: ROOT + "/.trackchanges/" + encodeURIComponent(rel) + ".json",
+    store: { v: 3, path: rel, suggestions: [], comments: [first, second] } }));
   aside.querySelector('[data-act="fctrack"]')!.click();
   const f = aside.querySelector('.fc-choice [data-act="fctrackfolder"]')!;
   assert.equal(f.textContent, "Its folder /repo/notes-api/docs/reports/quarterly/latency/appendix/", "the label reads as before");

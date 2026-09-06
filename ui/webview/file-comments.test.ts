@@ -623,7 +623,8 @@ test("the send sequence: build from the current status, set-tracked when asked, 
   assert.match(SRC, /if \(this\.ctx\.todoId && !this\.todoAnswered\) opts\.appendChild\(this\.opt\("todo", "answer the todo this file was opened from"\)\);/);
   assert.match(SRC, /if \(!s\.trackedBy\) opts\.appendChild\(this\.opt\("track", "turn on tracking so the session's edits come back as changes"\)\);/);
   assert.match(SRC, /sendOpts = \{ todo: true, track: true \};/, "both checked by default (decision 8)");
-  assert.match(SRC, /buildSendMessage\(\{ absPath: this\.ctx\.path, comments: parts\.comments, accepted: parts\.accepted, rejected: parts\.rejected, tracked, media \}\)/, "the preview is the same builder the tests pin against the kernel's literal");
+  assert.match(SRC, /const abs = this\.filePath\(\);\n\s*if \(abs === null\)[^\n]*\n\s*else cf\.appendChild\(el\("pre", "fc-msg", buildSendMessage\(\{ absPath: abs, comments: parts\.comments, accepted: parts\.accepted, rejected: parts\.rejected, tracked, media \}\)\)\);/,
+    "the preview is the same builder the tests pin against the kernel's literal, fed the path the kernel will name (filePath), never a relative or ~ spelling");
 });
 
 test("every mutating verb: consent first, a fence from the current status, one retry on editing-off (re-consent) or a moved fence (fresh status), then the refusal verbatim with Reload", () => {
