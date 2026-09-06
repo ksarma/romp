@@ -567,6 +567,17 @@ class Render(unittest.TestCase):
         self.assertEqual(len(cells(row)), 4, row)
         self.assertIn("delegate\\|coordinate", row)
 
+    def test_html_in_a_cell_is_escaped_outside_code_spans(self):
+        title = "Chains on `logicalParentUuid:<pre-compact leaf>`, a <placeholder> & an ampersand"
+        (self.d / "2026-09-06-html.md").write_text(_entry("2026-09-06-html.md", title=title, where="a <b> & `c <d>`"), encoding="utf-8")
+        entries, got = L.load_entries(self.d)
+        self.assertEqual(got, [])
+        row = next(r for r in L.render(entries).split("\n") if "2026-09-06-html.md" in r)
+        cell_title, cell_where = L.row_cells(row)[:2]
+        self.assertEqual(cell_title, "[Chains on `logicalParentUuid:<pre-compact leaf>`, a &lt;placeholder> &amp; an ampersand](upstream/2026-09-06-html.md)")
+        self.assertEqual(cell_where, "a &lt;b> &amp; `c <d>`")
+        self.assertEqual(L.escape_cell("x|y `a|b` <c>"), "x\\|y `a\\|b` &lt;c>")
+
     def test_each_rendered_table_passes_the_checker(self):
         tables = _tables(self.rendered)
         self.assertEqual(len(tables), 3)

@@ -69,6 +69,7 @@ SLUG = re.compile(r"^[a-z0-9-]{3,60}$")
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 HEADER_LINE = re.compile(r"^([a-z]+):(?: (.*))?$")
 CONFLICT = re.compile(r"^(?:<{7}|>{7})(?: |$)|^={7}$")
+CODE_SPAN = re.compile(r"`[^`]*`")
 STATUS_DETAIL = "Status detail (migrated from the table): "
 ROW_HINT = "a table row; entries live in upstream/ now: run scripts/upstream-ledger.py import --row"
 TABLE_HEADER = "| What | Where it lives here | Status | Notes |"
@@ -293,9 +294,17 @@ def check(root):
 # ---------------------------------------------------------------- rendering
 
 def escape_cell(text):
-    """One table cell: pipes escaped (GitHub splits on a pipe even inside a code span), no newlines."""
+    """One table cell: no newlines; `&` and `<` outside code spans escaped (GitHub reads a title's
+    `<pre-compact leaf>` as an HTML tag and drops it); pipes escaped everywhere (GitHub splits on a
+    pipe even inside a code span)."""
     text = text.replace("\n", " ")
-    return re.sub(r"(?<!\\)\|", r"\\|", text)
+    out, pos = [], 0
+    for m in CODE_SPAN.finditer(text):
+        out.append(text[pos:m.start()].replace("&", "&amp;").replace("<", "&lt;"))
+        out.append(m.group())
+        pos = m.end()
+    out.append(text[pos:].replace("&", "&amp;").replace("<", "&lt;"))
+    return re.sub(r"(?<!\\)\|", r"\\|", "".join(out))
 
 
 def cut(text, limit=NOTES_CUT):
@@ -482,7 +491,7 @@ def set_key(path, key, value):
 # ---------------------------------------------------------------- the table import
 
 _ESCAPED_PIPE = re.compile(r"\\\|")
-_CODE_SPAN = re.compile(r"`[^`]*`")
+_CODE_SPAN = CODE_SPAN
 
 
 def row_cells(row):
