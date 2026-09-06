@@ -16,6 +16,12 @@ fake_clone() {
     mkdir -p "$CLONE/bin" "$CLONE/vscode-extension"
     cp "$ROMP_DIR/bin/romp-uninstall" "$CLONE/bin/romp-uninstall"
     chmod +x "$CLONE/bin/romp-uninstall"
+    # The tracked-changes links install.sh (run from the REAL clone) creates point into its
+    # vendor/track-changents/, and the uninstaller removes only links that resolve into ITS OWN clone's
+    # copy. Give the throwaway clone a vendor/ that resolves to the real one, so the two agree the way
+    # they do on a machine where install and uninstall run from the same clone. A symlink, never a
+    # copy: the uninstaller must not write under vendor/, and this would show it.
+    ln -s "$ROMP_DIR/vendor" "$CLONE/vendor"
     cat > "$CLONE/bin/romp-service" <<EOF
 #!/usr/bin/env bash
 echo "romp-service \$* (stub)" >> "$TEST_DIR/service.log"
@@ -406,4 +412,158 @@ EOF
         [ ! -d "$scratch" ]
         [ ! -d "$proj" ]
     done
+}
+
+# ── the tracked-changes tooling (vendor/track-changents) ─────────────────────
+# install.sh links the four CLIs, the guard and the skill from the clone's vendored copy into ~/.claude
+# and registers the guard as a PreToolUse hook. The uninstaller removes exactly those: a link is romp's
+# when it resolves into THIS clone's vendor/track-changents/, and the guard's entry is romp's when the
+# path it names does. A track-changents install of the user's own — links into a checkout of that
+# project, an entry with an expanded home path — points nowhere near the clone and stays.
+
+TC_LINKS="track-edit.mjs track-comment.mjs track-reply.mjs track-config.mjs track-guard.mjs"
+
+guard_entries() {   # the command of every track-guard.mjs entry, across all events
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+try:
+    s = json.load(open(sys.argv[1]))
+except (IOError, OSError, ValueError):
+    raise SystemExit
+for rules in (s.get("hooks") or {}).values():
+    for r in rules:
+        for h in r.get("hooks", []):
+            if h.get("command", "").endswith("track-guard.mjs"):
+                print(h["command"])
+PY
+}
+
+foreign_install() {   # the shape track-changents' own installer leaves behind, in $TEST_DIR/track-changents
+    OTHER="$TEST_DIR/track-changents"
+    mkdir -p "$OTHER/cli" "$OTHER/hooks" "$OTHER/skill" "$HOME/.claude/hooks" "$HOME/.claude/skills"
+    for tc in track-edit track-comment track-reply track-config; do
+        echo "// theirs" > "$OTHER/cli/$tc.mjs"
+        ln -s "$OTHER/cli/$tc.mjs" "$HOME/.claude/hooks/$tc.mjs"
+    done
+    echo "// theirs" > "$OTHER/hooks/track-guard.mjs"
+    ln -s "$OTHER/hooks/track-guard.mjs" "$HOME/.claude/hooks/track-guard.mjs"
+    echo "# theirs" > "$OTHER/skill/SKILL.md"
+    ln -s "$OTHER/skill" "$HOME/.claude/skills/tracked-changes"
+    cat > "$HOME/.claude/settings.json" <<JSON
+{ "hooks": { "PreToolUse": [ { "matcher": "Write|Edit|MultiEdit",
+    "hooks": [ { "type": "command", "command": "$HOME/.claude/hooks/track-guard.mjs", "timeout": 10 } ] } ] } }
+JSON
+}
+
+@test "romp-uninstall: removes the tracked-changes links and the guard registration install.sh created" {
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    for tc in $TC_LINKS; do [ -L "$HOME/.claude/hooks/$tc" ]; done
+    [ -L "$HOME/.claude/skills/tracked-changes" ]
+    [ "$(guard_entries)" = "~/.claude/hooks/track-guard.mjs" ]
+
+    run "$CLONE/bin/romp-uninstall" --yes
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"removed 6 links into vendor/track-changents/"* ]]
+    for tc in $TC_LINKS; do
+        [ ! -e "$HOME/.claude/hooks/$tc" ]
+        [ ! -L "$HOME/.claude/hooks/$tc" ]
+    done
+    [ ! -e "$HOME/.claude/skills/tracked-changes" ]
+    [ ! -L "$HOME/.claude/skills/tracked-changes" ]
+    [ -z "$(guard_entries)" ]
+    # The guard was alone in its Write|Edit|MultiEdit group, so the group and the event went with it.
+    run python3 -c 'import json, sys; print("PreToolUse" in (json.load(open(sys.argv[1])).get("hooks") or {}))' "$HOME/.claude/settings.json"
+    [ "$output" = "False" ]
+    # The vendored copy itself is untouched: the links were unlinked, never followed.
+    [ -f "$ROMP_DIR/vendor/track-changents/hooks/track-guard.mjs" ]
+    [ -f "$ROMP_DIR/vendor/track-changents/cli/track-edit.mjs" ]
+    [ -f "$ROMP_DIR/vendor/track-changents/skill/SKILL.md" ]
+}
+
+@test "romp-uninstall: a guard entry track-changents' installer wrote goes too once install.sh re-pointed its link at the vendored copy" {
+    # The other installer's entry names the expanded home path; install.sh counts it as registered
+    # (basename match) and re-points the LINK at romp's copy. The entry now resolves into this clone,
+    # so it is romp's to remove — judged by where the path leads, not by the string install.sh writes.
+    foreign_install
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [ "$(guard_entries)" = "$HOME/.claude/hooks/track-guard.mjs" ]
+    [ "$(readlink "$HOME/.claude/hooks/track-guard.mjs")" = "$ROMP_DIR/vendor/track-changents/hooks/track-guard.mjs" ]
+
+    run "$CLONE/bin/romp-uninstall" --yes
+    [ "$status" -eq 0 ]
+    [ -z "$(guard_entries)" ]
+    [ ! -L "$HOME/.claude/hooks/track-guard.mjs" ]
+    [[ "$output" != *"left alone"* ]]
+}
+
+@test "romp-uninstall: leaves another track-changents install's links and registration in place, with a notice" {
+    foreign_install
+    # A real file of the same name, the other case install.sh steps around.
+    rm "$HOME/.claude/hooks/track-comment.mjs"
+    echo "mine" > "$HOME/.claude/hooks/track-comment.mjs"
+
+    run "$CLONE/bin/romp-uninstall" --yes
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"left alone: ~/.claude/hooks/track-edit.mjs points outside this clone ($OTHER/cli/track-edit.mjs)"* ]]
+    [[ "$output" == *"left alone: ~/.claude/hooks/track-guard.mjs points outside this clone"* ]]
+    [[ "$output" == *"left alone: ~/.claude/skills/tracked-changes points outside this clone"* ]]
+    [[ "$output" == *"left alone: ~/.claude/hooks/track-comment.mjs is a real file, not a link"* ]]
+    [[ "$output" == *"left alone: a track-guard.mjs entry that points outside this clone ($HOME/.claude/hooks/track-guard.mjs)"* ]]
+    for tc in track-edit track-reply track-config; do
+        [ "$(readlink "$HOME/.claude/hooks/$tc.mjs")" = "$OTHER/cli/$tc.mjs" ]
+    done
+    [ "$(cat "$HOME/.claude/hooks/track-comment.mjs")" = "mine" ]
+    [ "$(readlink "$HOME/.claude/hooks/track-guard.mjs")" = "$OTHER/hooks/track-guard.mjs" ]
+    [ "$(readlink "$HOME/.claude/skills/tracked-changes")" = "$OTHER/skill" ]
+    [ "$(guard_entries)" = "$HOME/.claude/hooks/track-guard.mjs" ]
+    [ "$(cat "$OTHER/cli/track-edit.mjs")" = "// theirs" ]
+}
+
+@test "romp-uninstall: the ~ form of a guard entry is judged by where the link points, not by the string" {
+    # install.sh's own command string, but the link under it leads to a checkout of track-changents: a
+    # string-equality uninstaller would drop this entry, and the user's guard would stop firing.
+    foreign_install
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+s = json.load(open(p))
+s["hooks"]["PreToolUse"][0]["hooks"][0]["command"] = "~/.claude/hooks/track-guard.mjs"
+json.dump(s, open(p, "w"), indent=2)
+PY
+
+    run "$CLONE/bin/romp-uninstall" --yes
+    [ "$status" -eq 0 ]
+    [ "$(guard_entries)" = "~/.claude/hooks/track-guard.mjs" ]
+    [ "$(readlink "$HOME/.claude/hooks/track-guard.mjs")" = "$OTHER/hooks/track-guard.mjs" ]
+    [[ "$output" == *"left alone: a track-guard.mjs entry that points outside this clone"* ]]
+}
+
+@test "romp-uninstall: the tooling step is idempotent — a second run finds nothing and still exits 0" {
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    run "$CLONE/bin/romp-uninstall" --yes
+    [ "$status" -eq 0 ]
+    run "$CLONE/bin/romp-uninstall" --yes
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no links into this clone's vendor/track-changents/"* ]]
+    [[ "$output" != *"left alone"* ]]
+}
+
+@test "romp-uninstall: install then uninstall leaves no trace of the tooling under ~/.claude" {
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    run "$CLONE/bin/romp-uninstall" --yes
+    [ "$status" -eq 0 ]
+    # Nothing named track-* under hooks/, no tracked-changes skill (an unmatched glob stays literal,
+    # and a literal that does not exist is exactly the assertion).
+    for f in "$HOME"/.claude/hooks/track* "$HOME/.claude/skills/tracked-changes"; do
+        [ ! -e "$f" ]
+        [ ! -L "$f" ]
+    done
+    run grep -c 'track-guard\|track-changents\|PreToolUse' "$HOME/.claude/settings.json"
+    [ "$output" = "0" ]
+    # No stray link was left INSIDE the vendored skill dir (a dir-symlink followed instead of replaced).
+    [ ! -e "$ROMP_DIR/vendor/track-changents/skill/tracked-changes" ]
 }
