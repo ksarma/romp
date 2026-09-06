@@ -16,6 +16,7 @@
     "obsidian/src/track-cm.js": "2179c9f606cc4db8cbc0308ba2f04005f5d6c0755df00b8518eb9d30d6b6ed4e",
     "obsidian/src/track-logic.js": "7d11ce9045f2e90d5d7dcbf768a9c35e6b3507bb3e36b1ee6de3ca0ee82f25b4",
     "obsidian/src/track-rollup.js": "37710074ee30dbced7091bfd5b0abd856660367fb9cb678fbadcc10dc8c0420d",
+    "obsidian/src/track-snapshot.js": "42a240644a34d5563e09d3ada91a95573117d25eef9a9cd8f20c61982bace6b8",
     "package.json": "e512642391ada88ffa83d5584d4159742c156a5f27f46c7ec8bf7e1dc31f4984",
     "protocol.js": "e315d3b47db8e938dde691f8b857c105e3bc39501ca809fcc6be600eb4ac522e",
     "skill/SKILL.md": "15b72be0a3f4afedf7b2afa76f473fbac3acfdcfbb16888dea42e24374225369",

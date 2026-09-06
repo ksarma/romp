@@ -19,12 +19,18 @@ package.json  engine.js  display.js  protocol.js  store-io.mjs  LICENSE
 cli/cli-args.mjs  cli/track-comment.mjs  cli/track-config.mjs  cli/track-edit.mjs  cli/track-reply.mjs
 hooks/track-guard.mjs  hooks/track-hooks.test.mjs
 skill/SKILL.md
-obsidian/src/track-cm.js  obsidian/src/track-logic.js  obsidian/src/track-rollup.js
+obsidian/src/track-cm.js  obsidian/src/track-logic.js  obsidian/src/track-rollup.js  obsidian/src/track-snapshot.js
 ```
 
 Not vendored: upstream's tests other than the guard's, its README, its installer, the Obsidian
-plugin's other modules (`track-snapshot.js` is taken up by Slice 5 of the plan, which is its only
-consumer), and the VS Code host.
+plugin's other modules, and the VS Code host.
+
+`obsidian/src/track-snapshot.js` is vendored pristine as a CITATION, not as code romp runs: it is
+the source of `ui/webview/track-decorations.ts`, a derived module romp maintains (the plan, Slice 5),
+which adapts its inline-overlay decorations block (lines 442-790 at the pin) to the romp editor. That
+module's header names the source, the pin, and every departure. Nothing bundles or imports the
+vendored file itself; it is here so the derivation can be diffed against exactly what it derives from,
+and so a re-vendoring shows what upstream changed in the block.
 
 ## Patches
 
