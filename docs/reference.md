@@ -509,12 +509,23 @@ different: a manager restart re-applies it, so it has to be removed where it
 is and the service definition reloaded before the restart. On Linux that is
 `systemctl --user daemon-reload` after editing a unit or a drop-in, then the
 restart. On macOS `launchctl kickstart -k` restarts the job as launchd loaded
-it and does not re-read the plist, so the job is reloaded instead: `launchctl
-bootout gui/$(id -u)/com.romp.manager`, then `launchctl bootstrap gui/$(id -u)
-~/Library/LaunchAgents/com.romp.manager.plist`. `romp-service install` does
-the same on macOS, since it rewrites the plist and reloads the job; on Linux
-it rewrites the unit and reloads systemd but leaves a running manager as it
-is, so the restart still follows. The other `ROMP_CREDENTIAL_*`
+it and does not re-read the plist, so the job is reloaded instead, and the
+reload is `romp-service install`: it rewrites the plist (a line added to it by
+hand goes with the rewrite), boots the job out, waits until the old job has
+left launchd, bootstraps the plist again and checks that the job runs, which
+is the reload and the restart in one. It waits because `launchctl bootout`
+only starts the old job's teardown: a manager draining live sessions takes
+seconds to exit, and a `launchctl bootstrap` issued while it drains is refused
+with `Input/output error` and leaves no agent loaded at all, the old job gone
+and the new one not accepted (an install ended that way before the installer
+waited). A plist you edited by hand, which the install would overwrite, takes
+the same sequence by hand, wait included: `launchctl bootout
+gui/$(id -u)/com.romp.manager`; then `launchctl print
+gui/$(id -u)/com.romp.manager`, repeated until it fails; then `launchctl
+bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.romp.manager.plist`,
+repeated if it is refused. On Linux `romp-service install` rewrites the unit
+and reloads systemd but leaves a running manager as it is, so the restart
+still follows. The other `ROMP_CREDENTIAL_*`
 values are read live, the environment first, with the same consequence: a
 line the manager's environment already carries is shadowed by that copy until
 the manager restarts, while a line the environment does not carry (one added
@@ -524,10 +535,13 @@ tell which place still carries it, so its `MISMATCH` lists each with its
 remedy: `service.env` as the manager loaded it; the unit, a drop-in, or the
 profile a shell-wrapped `ExecStart` sources; another `service.env`, when the
 kernel's environment sets `ROMP_SERVICE_ENV_FILE` to a file other than the one
-this shell reads (the installer writes the line into the unit or the plist for
-a non-default path; a drop-in, a sourced profile or the shell that ran `romp
-up` can set it too; run `romp keyswap` with the same variable, or look for it
-in the unit and its drop-ins on Linux, the plist on macOS); a `service.env`
+this shell reads, or leaves it unset where this shell sets it (the installer
+writes the line into the unit or the plist when the installing shell's path is
+not the default; a drop-in, a sourced profile or the shell that ran `romp up`
+can set it too; look for it there, then run `romp keyswap` with the same
+variable, or change it where it is and restart the manager: `romp-service
+install` from a shell with the wanted path rewrites the unit's or the plist's
+line, and a drop-in edit takes the `daemon-reload` above); a `service.env`
 line removed since the kernel started; and the shell that ran `romp up`. The
 same other-file cause is named
 under a kernel in file mode when the file this shell reads carries the line,
@@ -698,7 +712,11 @@ so the report lists the places, each with its remedy:
 - another `service.env`, when the kernel's environment names a different file
   through `ROMP_SERVICE_ENV_FILE` (the installer's line in the unit or the
   plist, a drop-in, a profile, or the shell that ran `romp up`): run `romp
-  keyswap` with the same variable
+  keyswap` with the same variable, or change it where the kernel gets it and
+  restart the manager (`romp-service install` from a shell with the wanted
+  path rewrites the unit's or the plist's line; a drop-in edit takes the
+  reload under [Two things still need a
+  restart](#two-things-still-need-a-restart))
 - `service.env`, edited since the kernel read it at its start: `romp refresh`
 - the shell that ran `romp up`, which exported the line: start it again from a
   shell without the line
@@ -717,9 +735,13 @@ file (`service.env.<name>`). This fork refuses the rewrite: it does not write
 API keys to files, so the named swap exits 2 with that message, reads and
 writes nothing, and has no flag that lets it through. The bare command reports
 the key the kernel holds (as a fingerprint), the file it reads, and `MISMATCH`
-when the kernel is not reading this file's key; a cycle reads and compares the
-same way first and stops on a mismatch. Rotate the key at its source, then run
-`--cycle-all` for the key-billed sessions. In file mode the kernel hands a
+when the kernel is not reading this file's key, with the usual causes: the
+file is unreadable to the kernel, it has no key line and the kernel holds its
+startup key, or the kernel reads another `service.env` (the same other-file
+cause as above, with the places to look and the remedy per place); a cycle
+reads and compares the same way first and stops on a mismatch. Rotate the key
+at its source, then run `--cycle-all` for the key-billed sessions. In file
+mode the kernel hands a
 session billed through the `apiKeyHelper` no key, so such a session reads as
 the login and the cycle skips it: a rotated helper key reaches those sessions
 through `romp refresh --quiet` (every process is new), or through `--cycle-all`

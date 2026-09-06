@@ -201,12 +201,14 @@ def _candidates(path, out):
 
 def _kernel_check(path, out, refresh=False):
     """Compare what the KERNEL reads with what the FILE says — the check the operator procedure used
-    to ask for by eye (review find, 2026-09-04). The two can differ: the service was installed with
-    another env-file path that never reached the kernel's environment, the file is unreadable to the
-    kernel, the kernel still holds its startup key because the file has no key line, or the kernel
-    predates this feature. Reads the fingerprint through /keycycle with no sessions named — a read,
-    nothing cycles. Returns 0 when they agree (or no kernel is up to ask), 1 when they do not — or when
-    the port override is unusable, which is a misconfiguration to fix, not "no kernel"."""
+    to ask for by eye (review find, 2026-09-04). The two can differ: the kernel and this shell resolve
+    ROMP_SERVICE_ENV_FILE from their own environments, so they can read different service.env files
+    (_other_file renders that cause, shared with the two mode MISMATCHes: the places the kernel's
+    environment comes from and the remedy per place), the file is unreadable to the kernel, the kernel
+    still holds its startup key because the file has no key line, or the kernel predates this feature.
+    Reads the fingerprint through /keycycle with no sessions named — a read, nothing cycles. Returns 0
+    when they agree (or no kernel is up to ask), 1 when they do not — or when the port override is
+    unusable, which is a misconfiguration to fix, not "no kernel"."""
     body, rc = _ask(out, refresh)
     if body is None:
         if rc == 0:
@@ -218,15 +220,20 @@ def _kernel_check(path, out, refresh=False):
 
 
 def _compare(kfp, path, out, refreshed=None):
-    """Print the kernel's fingerprint and, when it is not the file's, say so and why it may be."""
+    """Print the kernel's fingerprint and, when it is not the file's, say so and why it may be. The
+    other-file cause is the one explanation the three MISMATCH hints share (_other_file): a kernel
+    whose ROMP_SERVICE_ENV_FILE comes from a drop-in, a profile or the `romp up` shell is pointed at
+    that place, and one whose unit or plist lacks the line this shell's environment carries is pointed
+    at the install that writes it."""
     note = _refreshed_note(refreshed, kfp, "re-read")
     out("kernel      reads %s%s" % (_sha(kfp), (" (%s)" % note) if note else ""))
     if kfp == ks.fingerprint(ks.read_key(path)):
         return 0
-    out("MISMATCH    the kernel is not reading this file's key. Usual causes: the service was installed")
-    out("            with another env-file path that the kernel's environment does not carry (re-run")
-    out("            `romp-service install`, then restart the manager), the file is unreadable to the kernel,")
-    out("            or the file has no %s line and the kernel still holds its startup key." % ks.KEY_VAR)
+    out("MISMATCH    the kernel is not reading this file's key. Usual causes: the file is unreadable to the kernel,")
+    out("            the file has no %s line and the kernel still holds its startup key, or the kernel" % ks.KEY_VAR)
+    out("            reads another service.env:")
+    for line in _other_file(path):
+        out("            " + line)
     return 1
 
 
@@ -336,6 +343,37 @@ def _explain(status):
     }.get(status, status)
 
 
+def _other_file(path):
+    """The one explanation the three MISMATCH hints share for a kernel that reads ANOTHER service.env
+    (the file-mode fingerprint MISMATCH, the command-mode MISMATCH's other-file cause, and the file-mode
+    MISMATCH under a shell whose file carries the line). The kernel resolves its path from
+    ROMP_SERVICE_ENV_FILE as ITS environment sets it (kernel/keysource.py, service_env_path) and this
+    shell from its own, so the two can read different files in either direction: the kernel's set to a
+    file this shell's is not, or this shell's set where the kernel's is not (the install that predates
+    the installer's line). The kernel's environment comes from the unit's Environment= and its drop-ins
+    on Linux or the plist's EnvironmentVariables on macOS (bin/romp-service writes the variable there
+    when the installing shell's path is not the default: _service_env_override), the profile a
+    shell-wrapped ExecStart sources, or the shell that ran `romp up`. The lines name the variable, this
+    shell's path and those places, then the remedy per place: run this command with the same variable,
+    or change it where the kernel gets it and restart the manager, where `romp-service install` from a
+    shell with the wanted path rewrites the unit or the plist (on Linux the restart follows; on macOS
+    the install reloads and restarts the job, waiting for the old one to drain) and a drop-in edit takes
+    `systemctl --user daemon-reload` before the restart. Never a value. Unindented; the caller's lead-in
+    ends with "another service.env:"."""
+    return (
+        "the kernel and this shell each resolve the service.env path from ROMP_SERVICE_ENV_FILE in their own",
+        "environment; this shell reads %s." % path,
+        "Look for the variable where the kernel's environment comes from: the unit's Environment= and its",
+        "drop-ins (Linux) or the plist's EnvironmentVariables (macOS), where `romp-service install` writes it",
+        "when the installing shell's path is not the default; the profile a shell-wrapped ExecStart sources;",
+        "or the shell that ran `romp up`. Then run this command with the same ROMP_SERVICE_ENV_FILE, or change",
+        "it there and restart the manager: `romp-service install` from a shell with the wanted path rewrites",
+        "the unit or the plist (Linux: `systemctl --user restart romp-manager` after it; macOS: the install",
+        "reloads and restarts the job); a drop-in: edit it, `systemctl --user daemon-reload`, then the restart;",
+        "a profile: edit it, then the restart; a `romp up` shell: start it again with the path.",
+    )
+
+
 def _mode_mismatch(body, local_mode, out):
     """The kernel and this shell resolve DIFFERENT modes: ROMP_CREDENTIAL_COMMAND is set for one and not
     the other. The kernel decides its mode ONCE, when it starts (envsource.pin_mode), from its
@@ -357,22 +395,24 @@ def _mode_mismatch(body, local_mode, out):
     RE-APPLIED by a restart, so it is removed where it is first, the definition reloaded, and the
     manager restarted after. The reload is `systemctl --user daemon-reload` after a unit or drop-in
     edit; on macOS `launchctl kickstart -k` restarts the job as launchd loaded it and does not re-read
-    the plist, so the job is booted out and bootstrapped again (bin/romp-service: LABEL, PLIST). One
-    more place is another file: the kernel resolves its service.env path from ROMP_SERVICE_ENV_FILE
-    wherever its environment sets it (kernel/keysource.py, service_env_path). The installer is one
-    source, writing the line into the unit or the plist for a non-default path (bin/romp-service,
-    _service_env_override); a drop-in, the profile a shell-wrapped ExecStart sources, and the shell
-    that ran `romp up` are others. So the kernel and this shell can read different service.env files,
-    and the answer carries no path, so this too is a cause, with this shell's path named and the
-    places to look per platform: the unit and its drop-ins on Linux, the plist on macOS. The same cause
-    is named under a file-mode kernel when the file this shell reads carries the line: `romp refresh`
-    reaches only the file the kernel reads. The manager restart is `systemctl --user restart
-    romp-manager` on Linux and `launchctl kickstart -k` on the launchd agent on macOS. `romp-service
-    install` is named for what it does per platform, never as the restart: on macOS it rewrites the
-    plist and reloads the job (bootout, then bootstrap), which is the reload and the restart in one;
-    on Linux it rewrites the unit and reloads systemd (daemon-reload, enable --now) and leaves a
-    running manager as it is. Names the variable, the places and this shell's file path; never a
-    value."""
+    the plist, so the job is booted out and bootstrapped again, and the hint names `romp-service
+    install` for that and never the bare pair: bootout only starts the old job's teardown, a manager
+    draining live sessions takes seconds to exit, and a bootstrap issued while it drains is refused
+    (Input/output error) with the old job gone and no new one accepted, so the installer polls
+    `launchctl print` until the job has left launchd before it bootstraps (bin/romp-service, install;
+    twice the blind pair left no agent loaded, 2026-07-20). The install rewrites the plist, which is
+    the removal of a hand-added line and the reload in one. One more place is another file: the kernel
+    resolves its service.env path from ROMP_SERVICE_ENV_FILE wherever its environment sets it, so the
+    kernel and this shell can read different service.env files, and the answer carries no path;
+    _other_file renders that cause, shared with the file-mode fingerprint MISMATCH, with this shell's
+    path, the places per platform and the remedy per place. The same cause is named under a file-mode
+    kernel when the file this shell reads carries the line: `romp refresh` reaches only the file the
+    kernel reads. The manager restart is `systemctl --user restart romp-manager` on Linux and
+    `launchctl kickstart -k` on the launchd agent on macOS. `romp-service install` is named for what it
+    does per platform: on macOS it rewrites the plist and reloads the job (bootout, the wait, bootstrap),
+    which is the reload and the restart in one; on Linux it rewrites the unit and reloads systemd
+    (daemon-reload, enable --now) and leaves a running manager as it is, so the restart follows. Names
+    the variable, the places and this shell's file path; never a value."""
     kmode = body.get("keySource") or "file"
     out("kernel      reads %s in %s mode" % (_sha(body.get("keyFp") or ""), kmode.upper()))
     path = ks.service_env_path()
@@ -386,17 +426,15 @@ def _mode_mismatch(body, local_mode, out):
         out("              plist's EnvironmentVariables (macOS): a manager restart re-applies these, so remove the line there")
         out("              first, reload the definition, then restart the manager. Linux: `systemctl --user daemon-reload`")
         out("              after editing a unit or a drop-in, then the restart. macOS: `launchctl kickstart -k` restarts the")
-        out("              job as loaded and does not re-read the plist, so reload it: `launchctl bootout")
-        out("              gui/$(id -u)/com.romp.manager`, then `launchctl bootstrap gui/$(id -u)")
-        out("              ~/Library/LaunchAgents/com.romp.manager.plist`. `romp-service install` does that on macOS (it")
-        out("              rewrites the plist and reloads the job); on Linux it rewrites the unit and reloads systemd and")
-        out("              leaves a running manager as it is, so restart it after")
-        out("            - another service.env: the kernel resolves the path from ROMP_SERVICE_ENV_FILE wherever its")
-        out("              environment sets it (the installer's line in the unit or the plist for a non-default path, a")
-        out("              drop-in, the profile a shell-wrapped ExecStart sources, the shell that ran `romp up`), so it may")
-        out("              read a file other than this shell's (%s):" % path)
-        out("              run this command with the same ROMP_SERVICE_ENV_FILE, or look for the variable in the unit and")
-        out("              its drop-ins on Linux, the plist on macOS")
+        out("              job as loaded and does not re-read the plist; the reload is `romp-service install`: it rewrites")
+        out("              the plist, which drops a line added by hand, boots the job out, waits for the old job to drain its")
+        out("              sessions and leave launchd, then bootstraps it, so it is the reload and the restart in one; a")
+        out("              bootstrap issued before the old job is gone is refused (Input/output error) and leaves no agent")
+        out("              loaded. On Linux the install rewrites the unit and reloads systemd and leaves a running manager as")
+        out("              it is, so restart it after")
+        out("            - another service.env:")
+        for line in _other_file(path):
+            out("              " + line)
         out("            - service.env, edited since the kernel read it at its start: `romp refresh`")
         out("            - the shell that ran `romp up`, which exported it: stop that `romp up`; start it from a shell without the line")
         out("            The manager restart is `systemctl --user restart romp-manager`, or on macOS `launchctl kickstart -k")
@@ -408,19 +446,18 @@ def _mode_mismatch(body, local_mode, out):
         out("            and was not when the kernel started. A running kernel keeps the mode it started in: `romp refresh`")
         out("            restarts the kernels into command mode (a kernel reads service.env at its start, so a line added")
         out("            there needs no manager restart). Until then the kernel injects no set.")
-        out("            If the kernel is still in file mode after `romp refresh`, it reads another service.env: its environment")
-        out("            sets ROMP_SERVICE_ENV_FILE (the installer's line in the unit or the plist, a drop-in, a profile, or the")
-        out("            shell that ran `romp up`), and this shell reads %s." % path)
-        out("            Run this command with the same ROMP_SERVICE_ENV_FILE, or look for the variable in the unit and its")
-        out("            drop-ins on Linux, the plist on macOS.")
+        out("            If the kernel is still in file mode after `romp refresh`, it reads another service.env:")
+        for line in _other_file(path):
+            out("            " + line)
     else:
         out("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in this shell's")
         out("            environment only, not in service.env, so a restarted kernel would not see it either. A running")
         out("            kernel keeps the mode it started in. Put the line in service.env, then `romp refresh` restarts the")
         out("            kernels into command mode; a line in the unit's own Environment= or the plist's EnvironmentVariables")
         out("            reaches them at the manager restart that follows a reload of the definition (`systemctl --user")
-        out("            daemon-reload`, then `systemctl --user restart romp-manager`; on macOS `launchctl bootout` then")
-        out("            `launchctl bootstrap` of the job). Until then the kernel injects no set.")
+        out("            daemon-reload`, then `systemctl --user restart romp-manager`; on macOS the reload is `romp-service")
+        out("            install`, which rewrites the plist and drops a line added by hand, so there the line goes in")
+        out("            service.env). Until then the kernel injects no set.")
     return 1
 
 
@@ -563,7 +600,7 @@ def _kernel_lines(body, st, out):
         out("            its next start, `romp refresh`; a line changed or removed there, or one in the unit, at the")
         out("            next manager restart, whose environment holds the copy loaded at its start, and a unit or")
         out("            plist line reaches that restart only once the definition is reloaded: daemon-reload on Linux,")
-        out("            bootout then bootstrap on macOS), the two resolve different selector files, or CLAUDE_CONFIG_DIR")
+        out("            `romp-service install` on macOS), the two resolve different selector files, or CLAUDE_CONFIG_DIR")
         out("            differs (the apiKeyHelper the kernel fingerprints is the one its own settings name).")
     return 1
 
