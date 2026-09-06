@@ -12698,19 +12698,54 @@ def _claude_bin():
     return os.environ.get("ROMP_CLAUDE_BIN") or shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
 
 
+# The python X.Y versions the SDK venv on disk was built for, when NONE of them is the one this
+# process runs; [] otherwise. Set by _ensure_sdk_on_path, read by _sdk_setup_hint and _sdk_locked so
+# the creation refusal and the boot log say what is actually wrong (a venv for another interpreter)
+# instead of claiming nothing was installed.
+_SDK_VENV_BUILT_FOR = []
+
+
 def _ensure_sdk_on_path():
     """Make claude_agent_sdk importable by the kernel's interpreter. Prefer an already-installed
-    copy; otherwise add the dedicated venv's site-packages (built by bin/romp-sdk-setup with the
-    SAME python, so the ABI matches) — the SDK dependency lives under ~/.local/state/romp/sdkvenv and
-    never touches system python. Returns True when importable."""
+    copy; otherwise add the dedicated venv's site-packages (built by bin/romp-sdk-setup under
+    ~/.local/state/romp/sdkvenv, never touching system python), but ONLY the one built for the python
+    this process runs. The venv's compiled extensions are per-interpreter: adding a 3.X venv to a 3.Y
+    kernel fails deep inside the import with a message that blamed a missing install (2026-09-06,
+    when a newer python appeared on the box between two respawns and every SDK session died for two
+    hours). A venv present for another version adds nothing and is named on stderr, once, with both
+    remedies. Returns True when importable."""
     import importlib.util
     import glob
+    global _SDK_VENV_BUILT_FOR
     if importlib.util.find_spec("claude_agent_sdk"):
         return True
-    for sp in sorted(glob.glob(str(jd.STATE / "sdkvenv" / "lib" / "python3.*" / "site-packages"))):
+    running = "%d.%d" % sys.version_info[:2]
+    found = sorted(glob.glob(str(jd.STATE / "sdkvenv" / "lib" / "python3.*" / "site-packages")))
+    match = [sp for sp in found if Path(sp).parent.name == "python" + running]
+    for sp in match:
         if sp not in sys.path:
             sys.path.insert(0, sp)
+    if found and not match:
+        built = sorted(Path(sp).parent.name[len("python"):] for sp in found)
+        if built != _SDK_VENV_BUILT_FOR:          # one line per verdict, not one per caller
+            _SDK_VENV_BUILT_FOR = built
+            sys.stderr.write("sdk-backend: sdkvenv is built for python %s but the kernel runs %s: re-run "
+                             "bin/romp-sdk-setup to rebuild it for %s, or set ROMP_PYTHON to the venv's "
+                             "interpreter and restart romp\n" % (" and ".join(built), running, running))
+        return False
+    _SDK_VENV_BUILT_FOR = []
     return importlib.util.find_spec("claude_agent_sdk") is not None
+
+
+def _sdk_setup_hint():
+    """SDK_SETUP_HINT, or its accurate sibling when a venv exists but was built for another python: the
+    remedy differs (run the venv's interpreter, or rebuild for this one), and "isn't installed" is false."""
+    if _SDK_VENV_BUILT_FOR:
+        return ("Session not created: romp's Agent SDK backend was set up for Python %s, but romp is running "
+                "on Python %d.%d. Set ROMP_PYTHON to that Python and restart romp, or re-run "
+                "bin/romp-sdk-setup to rebuild it, then try again. (tmux sessions still work.)"
+                % (" and ".join(_SDK_VENV_BUILT_FOR), *sys.version_info[:2]))
+    return SDK_SETUP_HINT
 
 
 def _sdk():
@@ -12743,7 +12778,7 @@ def _sdk_locked():
     global _sdk_backend
     if _sdk_backend is None:
         try:
-            if not _ensure_sdk_on_path():
+            if not _ensure_sdk_on_path() and not _SDK_VENV_BUILT_FOR:   # a mismatch was already named
                 sys.stderr.write("sdk-backend: claude_agent_sdk not found — run bin/romp-sdk-setup to "
                                  "enable the non-tmux backend (tmux sessions are unaffected)\n")
                 # The backend is STILL built, deliberately: it owns the registry, the persisted queues and
@@ -41297,7 +41332,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "application/json")
                 if be_req == "sdk":
                     if not _sdk_ready():          # see _sdk_ready — a built backend is not a working one
-                        return self._send(200, json.dumps({"ok": False, "error": SDK_SETUP_HINT}),
+                        return self._send(200, json.dumps({"ok": False, "error": _sdk_setup_hint()}),
                                           "application/json")
                     a = (b or {}).get("auth")
                     sid, extra = _create_sdk_session(nm, cwd, auth=(a if a in ("login", "key") else ""),
@@ -42701,7 +42736,7 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         # NEVER silently fall back to tmux (the user asked for SDK and got a mystery tmux
                         # session on a remote host without the venv, 2026-07-02). Say what's missing.
-                        client["send"](json.dumps({"type": "warn", "text": SDK_SETUP_HINT}))
+                        client["send"](json.dumps({"type": "warn", "text": _sdk_setup_hint()}))
                 elif msg.get("backend") == "codex":   # an OpenAI Codex thread (plans/codex-backend.md)
                     if _codex_ready():
                         try:

@@ -2616,6 +2616,58 @@ SDK_MISSING_TEXT = (
     "then restart romp. tmux-backed sessions are unaffected.")
 
 
+def sdk_venv_built_for(state_dir) -> list:
+    """The python X.Y versions the SDK venv under `state_dir` has site-packages for, [] with no venv."""
+    try:
+        lib = Path(state_dir) / "sdkvenv" / "lib"
+        return sorted(p.name[len("python"):] for p in lib.glob("python3.*") if (p / "site-packages").is_dir())
+    except Exception:
+        return []
+
+
+def sdk_venv_interpreter(state_dir) -> str:
+    """The interpreter the venv's pyvenv.cfg records: `executable` (python >= 3.11), else `home` plus the
+    version line (`version` from venv, `version_info` from uv). "" when there is no cfg or it names none."""
+    try:
+        lines = (Path(state_dir) / "sdkvenv" / "pyvenv.cfg").read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return ""
+    kv = {}
+    for line in lines:
+        if "=" in line:
+            k, v = line.split("=", 1)
+            kv[k.strip()] = v.strip()
+    if kv.get("executable"):
+        return kv["executable"]
+    m = re.match(r"(\d+\.\d+)", kv.get("version") or kv.get("version_info") or "")
+    if kv.get("home") and m:
+        return os.path.join(kv["home"], "python" + m.group(1))
+    return ""
+
+
+def sdk_unavailable_text(state_dir) -> str:
+    """What the user is told when claude_agent_sdk will not import. SDK_MISSING_TEXT when nothing on disk
+    says otherwise (no venv, or a venv for THIS python that is broken: the install remedy fits). When
+    the venv exists for a DIFFERENT python the install claim is false and the fix is different, so the
+    text says what happened and gives the one remedy the disk supports: the recorded interpreter still
+    exists, so point romp back at it; or it is gone, so rebuild for the one romp runs. Which one is
+    right is not a guess: bin/romp-serve's pick_python follows the venv's interpreter, so a mismatch
+    means ROMP_PYTHON chose another python or the venv's own is gone (2026-09-06: two hours of
+    "isn't installed" over a venv that was present, intact and built for the previous python)."""
+    running = "%d.%d" % sys.version_info[:2]
+    built = sdk_venv_built_for(state_dir)
+    if not built or running in built:
+        return SDK_MISSING_TEXT
+    interp = sdk_venv_interpreter(state_dir)
+    if interp and os.access(interp, os.X_OK):
+        remedy = "Set ROMP_PYTHON=%s in service.env and restart romp." % interp
+    else:
+        remedy = "Re-run bin/romp-sdk-setup to rebuild it for Python %s, then restart romp." % running
+    return ("romp's Agent SDK backend was set up for Python %s, but romp is running on Python %s, so this "
+            "session can't run. Its messages are being kept, not sent. %s tmux-backed sessions are unaffected."
+            % (" and ".join(built), running, remedy))
+
+
 def sdk_importable() -> bool:
     """Is claude_agent_sdk actually importable RIGHT NOW? Checked at backend construction so the failure
     is reported ONCE, up front, for every session — rather than one session at a time as each one's
@@ -7435,9 +7487,12 @@ class SdkBackend:
         # The dependency check, done ONCE here: absent → every session this backend owns reports the same
         # launch error (launch_error), instead of each one silently dying at its own lazy import.
         self._sdk_missing = not sdk_importable()
+        # The text every session reports: read from the disk once here, so a venv built for another
+        # python is named as such rather than as a missing install (sdk_unavailable_text).
+        self._sdk_missing_text = sdk_unavailable_text(self.state_dir) if self._sdk_missing else SDK_MISSING_TEXT
         if self._sdk_missing and log:
             self._log("claude_agent_sdk is NOT importable — every SDK session will report itself unable to "
-                      "start (run bin/romp-sdk-setup). tmux sessions are unaffected.", problem=True)
+                      "start. %s" % self._sdk_missing_text, problem=True)
         # Per-session transient scopes (see cli_scope_supported): ONE verdict per backend, cached here;
         # _options reads it at every connect. The probe runs here, never per session.
         self.cli_scope = cli_scope_supported(log=self._log)
@@ -11633,7 +11688,9 @@ class SdkBackend:
         # named 'claude_agent_sdk'" tells a user nothing about what to run.
         dep = isinstance(exc, ImportError)
         tail = "" if dep else sess.stderr_tail()   # what the CLI itself said before it exited
-        text = SDK_MISSING_TEXT if dep else launch_failure_text(exc, tail)
+        # read the disk NOW, not the construction-time verdict: this path is the import that failed
+        # after the check passed, and the venv may have been rebuilt or the interpreter changed since
+        text = sdk_unavailable_text(self.state_dir) if dep else launch_failure_text(exc, tail)
         rec = {"text": text, "at": int(time.time()), "limit": is_launch_limit(text), "dep": dep}
         try:
             self._update_reg(sess.sid, launchError=rec)
@@ -11676,7 +11733,7 @@ class SdkBackend:
         A MISSING SDK outranks any per-session record: it is true of every session immediately, needs no
         session to have died to be known, and it is the actionable one."""
         if self._sdk_missing:
-            return {"text": SDK_MISSING_TEXT, "at": 0, "limit": False, "dep": True}
+            return {"text": self._sdk_missing_text, "at": 0, "limit": False, "dep": True}
         try:
             rec = (read_reg(self.state_dir, str(sid)) or {}).get("launchError")
         except Exception:

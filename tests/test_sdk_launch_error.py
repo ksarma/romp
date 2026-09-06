@@ -23,6 +23,7 @@ SYNTHETIC fixtures only (placeholder ids, hostname TESTHOST).
 """
 import json
 import os
+import shutil
 import sys
 import tempfile
 import types
@@ -98,6 +99,80 @@ class MissingDependencyIsReportedForEverySession(unittest.TestCase):
 
     def test_a_healthy_install_reports_nothing(self):
         self.assertIsNone(_backend(self.state, missing=False).launch_error(SID))
+
+
+class VenvBuiltForAnotherInterpreter(unittest.TestCase):
+    """The SDK is not importable AND a venv exists for a different python: the text says THAT, with
+    the remedy that fits what is on disk, instead of claiming nothing was installed (2026-09-06: two
+    hours of "isn't installed" over a venv that was present, intact and built for the old python)."""
+
+    RUNNING = "%d.%d" % sys.version_info[:2]
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.state = self.td.name
+        self.venv = Path(self.state) / "sdkvenv"
+        (self.venv / "lib" / "python3.99" / "site-packages").mkdir(parents=True)
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _cfg(self, executable):
+        (self.venv / "pyvenv.cfg").write_text(
+            "home = %s\nversion = 3.99.0\nexecutable = %s\n" % (os.path.dirname(executable), executable))
+
+    def test_recorded_interpreter_present_names_the_pin(self):
+        interp = os.path.join(self.state, "py399", "python3.99")
+        os.makedirs(os.path.dirname(interp))
+        Path(interp).write_text("#!/bin/sh\n")
+        os.chmod(interp, 0o755)
+        self._cfg(interp)
+        err = _backend(self.state, missing=True).launch_error(SID)
+        text = err["text"]
+        self.assertTrue(err["dep"])
+        self.assertNotIn("isn't installed", text, "it IS installed; the interpreter changed")
+        self.assertIn("3.99", text, "what the venv was built for")
+        self.assertIn(self.RUNNING, text, "what romp is running on")
+        self.assertIn("ROMP_PYTHON=" + interp, text, "the interpreter is still there: point romp at it")
+        self.assertIn("restart", text)
+        self.assertNotIn("romp-sdk-setup", text, "one remedy, the one that fits")
+        self.assertIn("tmux", text)
+
+    def test_recorded_interpreter_gone_names_the_rebuild(self):
+        self._cfg(os.path.join(self.state, "gone", "python3.99"))
+        text = _backend(self.state, missing=True).launch_error(SID)["text"]
+        self.assertNotIn("isn't installed", text)
+        self.assertIn("3.99", text)
+        self.assertIn("romp-sdk-setup", text, "the old interpreter is gone: rebuild for the new one")
+        self.assertNotIn("ROMP_PYTHON", text, "a pin to a missing interpreter would not help")
+
+    def test_no_pyvenv_cfg_still_says_mismatch(self):
+        # the lib/python3.99 directory alone proves the mismatch; without a cfg the rebuild is the remedy
+        text = _backend(self.state, missing=True).launch_error(SID)["text"]
+        self.assertIn("3.99", text)
+        self.assertIn("romp-sdk-setup", text)
+
+    def test_a_matching_venv_that_still_fails_is_the_plain_missing_text(self):
+        # a venv for THIS python with no importable SDK is a broken/half-built venv: the install remedy
+        shutil.rmtree(self.venv)
+        (self.venv / "lib" / ("python" + self.RUNNING) / "site-packages").mkdir(parents=True)
+        text = _backend(self.state, missing=True).launch_error(SID)["text"]
+        self.assertEqual(text, sb.SDK_MISSING_TEXT)
+
+    def test_no_venv_is_the_plain_missing_text(self):
+        shutil.rmtree(self.venv)
+        text = _backend(self.state, missing=True).launch_error(SID)["text"]
+        self.assertEqual(text, sb.SDK_MISSING_TEXT)
+
+    def test_a_late_import_error_records_the_same_mismatch_text(self):
+        # the dependency check passed at construction but a session's own import failed: the record
+        # written onto the session reads the disk at that moment, not a stale construction-time verdict
+        be = _backend(self.state, missing=False)
+        be._record_launch_error(_FakeSess(), ImportError("No module named 'pydantic_core._pydantic_core'"))
+        rec = (sb.read_reg(Path(self.state), SID) or {})["launchError"]
+        self.assertTrue(rec["dep"])
+        self.assertIn("3.99", rec["text"])
+        self.assertNotIn("isn't installed", rec["text"])
 
 
 class RecordedLaunchFailures(unittest.TestCase):
