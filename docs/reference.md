@@ -278,11 +278,32 @@ against your pick, never against stale doctrine.
 The usage rail reflects a mixed machine: the window bars (5 hours / 7 days /
 Fable 5) are drawn once, aggregated across every connected host's login as the
 worst reading per window, and an `API` cell beside them carries the
-key-billed dollars (5-hour burn and month-to-date, numbers only). Hovering
+key-billed dollars (the last day and the last 30 days, numbers only). Hovering
 breaks both down per host — one column per host, side by side — and a host
 can show its login's windows and its key's spend together. Only turns whose
 session billed the key count toward the API numbers — a login turn's computed
 cost is dollars nobody pays.
+
+What the API cell measures: the Claude Code CLI's own cost figure. At the end
+of every turn the CLI reports the session's cost so far (`total_cost_usd`, at
+list price, fast mode included). romp records the difference from the previous
+turn into a ledger of hour and day buckets (`spend.json`), with the turn's
+token counts from the CLI's per-model usage totals, which cover subagents and
+sidechains. The hover's windows sum those buckets: `1 hour`, `1 day` and `1
+week` from the hour buckets, `1 month` as a rolling 30 days from the day
+buckets, and `this month` as the calendar month so far. Two kinds of spend
+never reach the cell: the CLI's own permission-classifier and token-count
+calls, which the CLI leaves out of its report, and a turn cut short by a
+kernel restart, which never reports a cost. The judge pipeline's cost is
+recorded separately (`judge-usage.jsonl`) and is not part of this cell. Day
+buckets recorded before 2026-08-10 predate the per-turn fold and are inflated;
+they stay as recorded, and a window that includes one says so in the hover.
+
+The gear's analytics modal (the Sessions and Judges bars) shows the same
+ledger figure for the session dollars wherever the ledger covers the chosen
+period. Where it does not, the modal prices the transcripts' tokens with a
+per-model table and its footnote says so; that estimate misses fast mode's
+premium and any model the table lacks.
 
 ### Self-scheduled work wakes an idle session
 
