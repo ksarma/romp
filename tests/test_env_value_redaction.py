@@ -21,9 +21,10 @@ for the assertion nobody wrote that way. Pinned here:
     quoted per-element lines and its diff of a container spread over lines, and the fragments of a
     value pytest ellipsized at default verbosity or unittest shortened with `[N chars]`); a JWT by its
     shape wherever it sits, cut or whole; the dotted rest of a token that qualifies; the head of a cut
-    key bounded at the widest cut a tool makes; and the fragment rule's documented costs (a camelCase
-    name or a digit-bearing run against a cut is redacted, a Capitalised word or a single-case
-    identifier is not).
+    key bounded at the widest cut a tool makes, and a wider head taken with its cut and tail by the
+    format rule, quoted or bare; the `hf_` and `rpa_` rules' letters-and-digits class and its cost;
+    and the fragment rule's documented costs (a camelCase name or a digit-bearing run against a cut is
+    redacted, a Capitalised word or a single-case identifier is not).
   ScrubCost: the scrub is linear: a 200 KB adversarial line (a run of repeated prefixes, of one case,
     of digits, of dashes, of dots) is scrubbed within a generous budget; the first of them took 80
     seconds before the cut-key rule's head was bounded.
@@ -402,8 +403,8 @@ class CredentialPattern(_WithConftest):
         # `...`: a --showlocals line, a traceback's arguments, the operands on a `+  where` line; unittest's
         # `[N chars]` leaves at most 63 (a common prefix of up to 22 it does not shorten, then 41); the `==`
         # operands 13. The bound is what keeps the scrub linear (ScrubCost). A head beyond it (pytest at -v
-        # keeps 1198) is the format rule's own match and the tail a fragment: two markers, nothing of the
-        # key between them
+        # keeps 1198) is the format rule's own match, and that rule takes the cut and the tail with the run:
+        # one marker at every width, quoted or bare
         red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
         self.assertEqual(self.cf._credpat.CUT_HEAD_MAX, 120)
         k = "sk-ant-api03-" + uuid.uuid4().hex * 5                  # 173 characters
@@ -412,12 +413,56 @@ class CredentialPattern(_WithConftest):
         h = "hf_" + uuid.uuid4().hex * 5
         self.assertEqual(red("E        +  where '%s...%s' = f()" % (h[:117], h[-118:])), "E        +  where '%s' = f()" % R)
         self.assertEqual(red("['%s[90 chars]%s']" % (k[:61], k[-5:])), "['%s']" % R, "unittest's widest head, 22 + 41")
-        # the bound counts the run after the prefix: 120 is one marker, 121 two; 1191 is pytest's -v cut
+        # the head counted after the prefix, within the bound and past it (1191 is pytest's -v cut), quoted
         run = uuid.uuid4().hex * 80
-        self.assertEqual(red("key = 'sk-ant-%s...%s'" % (run[:120], k[-100:])), "key = '%s'" % R)
-        for n in (121, 130, 1191):
-            self.assertEqual(red("key = 'sk-ant-%s...%s'" % (run[:n], k[-100:])), "key = '%s...%s'" % (R, R), n)
+        for n in (1, 19, 20, 120, 121, 130, 1191):
+            self.assertEqual(red("key = 'sk-ant-%s...%s'" % (run[:n], k[-100:])), "key = '%s'" % R, n)
         self.assertEqual(red("'sk-ant-a...'"), "'%s'" % R, "one character of head is a head")
+        # and past the bound in bare text, the shape a test or a child process prints itself: the tail ends
+        # at the end of the text, a space, a newline or a sentence's dot, with no quote for the fragment rule
+        # to see. The head was redacted and the tail showed whole until the format rules took both
+        # (2026-09-06); unittest's form and a JWT cut deep in its payload are the same shape
+        wide = "sk-ant-api03-" + uuid.uuid4().hex * 10               # 333 characters
+        g = "AIza" + run[:136] + "..." + run[-100:]
+        hdr, pay, sig = _jwt_parts(claims=6)
+        jwt = "%s.%s.%s" % (hdr, pay, sig)
+        self.assertGreater(len(pay), 170)
+        for text, want, secret in (("cut: %s...%s" % (wide[:135], wide[-118:]), "cut: %s" % R, wide),
+                                   ("%s...%s " % (wide[:135], wide[-118:]), "%s " % R, wide),
+                                   ("%s...%s\n" % (wide[:135], wide[-118:]), "%s\n" % R, wide),
+                                   ("%s...%s. Next" % (wide[:135], wide[-118:]), "%s. Next" % R, wide),
+                                   ("%s[88 chars]%s" % (wide[:135], wide[-5:]), R, wide),
+                                   ("E         - %s...%s" % (h[:133], h[-40:]), "E         - %s" % R, h),
+                                   ("k=%s" % g, "k=%s" % R, run),
+                                   ("%s...%s" % (jwt[:len(hdr) + 150], jwt[-118:]), R, jwt),
+                                   ("key %s... more" % wide, "key %s more" % R, wide)):   # a sentence's ellipsis after a whole key
+            out = red(text)
+            self.assertEqual(out, want, text[:20])
+            for i in range(0, len(secret) - 8 + 1):
+                self.assertFalse(secret[i:i + 8] in out, "a piece of the key reached the output")
+
+    def test_the_hf_and_rpa_rules_match_the_letters_and_digits_a_real_token_has(self):
+        # a Hugging Face token is `hf_` and 34 letters and digits; RunPod publishes the `rpa_` prefix and no
+        # body format, and its rule is the same class. A token of that shape is one marker whole, cut within
+        # the bound and cut past it, bare or quoted. The class is narrow so an `hf_`-prefixed identifier is
+        # not redacted; its cost is a body no real token has, with `_` or `-` in it: the format rule stops at
+        # that character, so past the bound the rest of such a head shows, while within it the cut rule's
+        # head class takes the whole head. Pinned so that widening the class is a deliberate change
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        for prefix in ("hf_", "rpa_"):
+            tok = prefix + (uuid.uuid4().hex[:17] + uuid.uuid4().hex.upper()[:17])
+            self.assertEqual(len(tok), len(prefix) + 34)
+            long = prefix + (uuid.uuid4().hex + uuid.uuid4().hex.upper()) * 5     # past the bound: no real token is
+            for text, want in (("token %s here" % tok, "token %s here" % R), ("'%s...%s'" % (tok[:12], tok[-13:]), "'%s'" % R),
+                               ("%s...%s" % (long[:135], long[-118:]), R), ("'%s[88 chars]%s'" % (long[:135], long[-5:]), "'%s'" % R)):
+                self.assertEqual(red(text), want, text[:12])
+        self.assertEqual(red("at hf_hub_download_to_cache_dir()"), "at hf_hub_download_to_cache_dir()")
+        body = uuid.uuid4().hex * 10
+        fake = "hf_%s_%s" % (body[:40], body[41:])                  # an underscore after 40 letters and digits
+        tail = body[-40:]
+        self.assertEqual(red("'%s...%s'" % (fake[:123], tail)), "'%s'" % R, "120 of head: the cut rule's")
+        self.assertEqual(red("'%s...%s'" % (fake[:124], tail)), "'%s_%s...%s'" % (R, fake[44:124], R), "121: the rest of the head shows")
+        self.assertEqual(red("%s...%s" % (fake[:124], tail)), "%s_%s...%s" % (R, fake[44:124], tail), "and bare, the tail too")
 
     def test_a_cut_identifier_or_date_is_redacted_when_it_has_a_digit_or_an_interior_capital(self):
         # the fragment rule cannot tell a camelCase or PascalCase name from a base64 tail without a digit
@@ -565,6 +610,10 @@ class ScrubCost(_WithConftest):
             "hex on a cut diff line": "E         - " + hexrun + "...",
             "dotted segments": rep(".a"), "dotted after =": "=" + hexrun[:24] + rep(".a") + " x",
             "repeated cuts": rep("..."), "repeated [N chars]": rep("[1 chars]"),
+            # a format match and then a cut, or a `..` or `[x chars]` that is not one, repeated; one huge key cut once
+            "sk-ant- + 121 + ...": rep("sk-ant-" + "a" * 121 + "..."), "hf_ + 121 + [1 chars]": rep("hf_" + "a" * 121 + "[1 chars]"),
+            "sk-ant- + 20 + ..": rep("sk-ant-" + "a" * 20 + ".."), "sk-ant- + 20 + [x chars]": rep("sk-ant-" + "a" * 20 + "[x chars]"),
+            "eyJ + 300 + ...": rep("eyJ" + "a" * 300 + ".b" + "..."), "one huge cut key": "sk-ant-" + "a" * (n // 2) + "..." + "b" * (n // 2),
         }
         for name, line in lines.items():
             t0 = time.perf_counter()
