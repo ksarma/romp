@@ -2517,7 +2517,9 @@ def _norm_timeline_views(d, tag_cap=_VIEWS_MAX_TAGS):
     junk quietly, clamps sizes, and falls back active→"all" when the named tag does not exist.
     `tag_cap` bounds the tag list (the store's cap by default); the write door reads a posted blob
     under a wider bound so ITS cap pass can refuse the excess with a reason instead of this slice
-    dropping a posted create in silence (round 6 of the 2026-09-05 review).
+    dropping a posted create in silence (round 6 of the 2026-09-05 review), and whatever a blob
+    carries past the bound is listed by _views_unread, so the door and the reader's re-stamp can
+    say what this slice left unread (round 7).
     "all" and "untagged" are the two built-in sentinels; "untagged" must pass the whitelist below,
     or a picked untagged view silently reverts on the next read (the client's optimistic hold makes
     that failure read as flicker three pushes later, not as an error).
@@ -2611,6 +2613,33 @@ def _norm_timeline_views(d, tag_cap=_VIEWS_MAX_TAGS):
             out["seq"] = int(d["seq"])
     except (TypeError, ValueError):
         pass
+    return out
+
+
+def _views_unread(d, kept):
+    """The tag entries of a blob that a normalization under a bound left UNREAD — every entry carrying
+    a valid id that none of the `kept` (normalized) tags has — as (id, name, member count) triples in
+    array order, one per id (round 7 of the 2026-09-05 review). The write door lists them in the ack
+    as refusal rows and the reader's re-stamp names them in a notice; neither stores them. Until now
+    the normalizer's slice was the one place a posted tag could vanish with nothing said: the door
+    reads a blob under twice the cap, and a client whose `edited` named only ids past that bound was
+    acked ok with a blob missing its own creates (a duplicate entry consumes a slot too, so 33
+    distinct tags posted twice reach it). Junk entries (no id, not a dict) drop quietly here as in
+    the normalizer; the name is on the stored basis, "tag" when empty."""
+    if not isinstance(d, dict):
+        return []
+    raw = d.get("tags") if isinstance(d.get("tags"), list) else d.get("groups")
+    have = {t["id"] for t in kept if isinstance(t, dict) and t.get("id")}
+    out = []
+    for g in (raw if isinstance(raw, list) else []):
+        if not isinstance(g, dict) or not g.get("id") or not isinstance(g.get("id"), str):
+            continue
+        i = g["id"][:64]
+        if i in have:
+            continue
+        have.add(i)
+        m = g.get("members")
+        out.append((i, _tag_name_basis(g.get("name")) or "tag", len(m) if isinstance(m, list) else 0))
     return out
 
 
@@ -2896,10 +2925,13 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     # mark only the kernel puts on a tag: an mtime. A tag the store lacks that carries one existed
     # in a store once — the writer's copy of a tag deleted since — and is not re-created; one
     # without is the writer's own create (a client-minted row) and lands.
-    # read under a wider bound than the store's cap (twice it: a client can hold at most the store's
-    # 32 plus its own creates; more is junk), so a posted 33rd tag reaches the cap pass below and is
-    # refused with a reason — the normalizer's own slice dropped it before the judge saw it
-    v = _norm_timeline_views(blob, tag_cap=_VIEWS_MAX_TAGS * 2)
+    # Read under a wider bound than the store's cap (twice it: a client holds at most the store's 32
+    # plus its own creates), so a posted 33rd tag reaches the cap pass below and is refused with a
+    # reason — the normalizer's own slice dropped it before the judge saw it. Whatever the blob
+    # carries PAST that bound is unread, and listed (`unread`, below) rather than dropped in silence.
+    bound = _VIEWS_MAX_TAGS * 2
+    v = _norm_timeline_views(blob, tag_cap=bound)
+    unread = _views_unread(blob, v["tags"])
     ed = set(x for x in edited if isinstance(x, str)) if isinstance(edited, list) else None
     if base is None:
         try:
@@ -2989,6 +3021,26 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
             kept.append(json.loads(json.dumps(pt)))       # the store's newer truth stands
         else:
             kept.append(t)
+    for tid, nm, _n in ([] if lens_only else unread):
+        # PAST THE DOOR'S BOUND (round 7 of the 2026-09-05 review): an entry the normalizer's slice
+        # left unread is neither a create nor a deletion — it was not read. A store tag whose copy
+        # fell past the bound is KEPT (its absence from `incoming` would have read as a deletion
+        # below); anything else is not created. Each gets a row, so a client whose `edited` names
+        # only ids past the bound is acked not-ok with the reason, where it was acked ok with a
+        # blob missing its own creates. Rows only, never stored — the bound stands.
+        pt = prev.get(tid)
+        if pt is not None:
+            incoming.add(tid)
+            kept.append(json.loads(json.dumps(pt)))
+            refused.append(('"%s" (unread)' % pt.get("name"), tid))
+            rows.append({"tid": tid, "name": pt.get("name"),
+                         "reason": "a write is read to %d tags and its copy was past that bound, "
+                                   "so the store's copy was kept" % bound})
+        else:
+            refused.append(('"%s" (unread)' % nm, tid))
+            rows.append({"tid": tid, "name": nm,
+                         "reason": "a write is read to %d tags and it was past that bound, "
+                                   "so it was not created" % bound})
     for tid, pt in prev.items():
         if tid in incoming:
             continue
@@ -3091,9 +3143,9 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     quiet = sorted(set(lb for lb, tid in refused if ed is not None and tid not in ed))
     if loud:
         why = ("%s was partially refused: its copy of %s was not applied — each predates a newer edit, "
-               "takes a name another tag holds, or would put the store over its %d-tag cap (the store's "
-               "state was kept; %s)"
-               % (foreign or "a stale dashboard write", ", ".join(loud), _VIEWS_MAX_TAGS,
+               "takes a name another tag holds, would put the store over its %d-tag cap, or was past the "
+               "%d tags a write is read to (the store's state was kept; %s)"
+               % (foreign or "a stale dashboard write", ", ".join(loud), _VIEWS_MAX_TAGS, bound,
                   "reload the panel that wrote it to resync" if foreign else "reload that dashboard to resync"))
         sys.stderr.write("romp-kernel: %s\n" % why)
         try:

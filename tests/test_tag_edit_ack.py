@@ -1634,6 +1634,92 @@ class CapNeverDropsAKeptStoreTag(_Wire):
         self.assertEqual(len(km._timeline_views()["tags"]), km._VIEWS_MAX_TAGS)
 
 
+class PastTheDoorBoundNothingVanishesSilently(_Wire):
+    """Round 7 of the 2026-09-05 review: the door reads a posted blob under twice the cap so a 33rd
+    tag reaches the cap pass (round 6) — but the normalizer's slice still dropped everything past
+    the 64th BEFORE the judge saw it: no row, absent from the ack's blob, invisible to the ack's
+    `ok` (computed from rows), so a client whose `edited` named only ids past the bound was acked
+    ok and adopted a blob missing its own creates. Now every posted entry the slice leaves unread
+    gets a row — "not created" for a new id, "the store's copy was kept" for a store tag whose copy
+    fell past the bound (it is not a deletion either) — and nothing is stored past the bound."""
+
+    def _seed_many(self, n):
+        tags = [{"id": "g%d" % i, "name": "t%d" % i, "color": "", "members": []} for i in range(n)]
+        ack = self.post({"type": "setTimelineViews", "writeId": "w0", "views": {"active": "all", "tags": tags}})
+        self.assertEqual((ack["ok"], ack["refused"], len(ack["views"]["tags"])), (True, [], n))
+        return ack["views"]
+
+    def test_seventy_creates_all_edited_every_posted_id_is_in_the_ack_blob_or_in_a_row(self):
+        many = [{"id": "g%d" % i, "name": "t%d" % i, "color": "", "members": []} for i in range(70)]
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": {"active": "all", "tags": many},
+                       "edited": [t["id"] for t in many]})
+        self.assertFalse(a["ok"])
+        in_blob = {t["id"] for t in a["views"]["tags"]}
+        rows = {r["tid"]: r["reason"] for r in a["refused"]}
+        self.assertEqual(in_blob, {"g%d" % i for i in range(32)})
+        self.assertEqual(set(rows), {"g%d" % i for i in range(32, 70)}, "every posted id is in the blob or in a row")
+        self.assertEqual(rows["g32"], "the views blob caps at 32 tags, so it was not created")
+        self.assertEqual(rows["g64"], "a write is read to 64 tags and it was past that bound, so it was not created")
+        self.assertEqual(rows["g69"], rows["g64"])
+        self.assertEqual(len(km._timeline_views()["tags"]), 32, "nothing past the bound is stored")
+        self.assertEqual(len(self.notices), 1)
+        self.assertIn('"t69" (unread)', self.notices[0][0])
+        self.assertIn("past the 64 tags a write is read to", self.notices[0][0])
+
+    def test_creates_past_the_bound_that_edited_names_are_refused_never_acked_ok(self):
+        served = self._seed_many(km._VIEWS_MAX_TAGS)
+        w = json.loads(json.dumps(served))
+        w["tags"] += [{"id": "h%d" % i, "name": "h%d" % i, "color": "", "members": []} for i in range(38)]
+        tail = ["h%d" % i for i in range(32, 38)]
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": w, "edited": tail})
+        self.assertFalse(a["ok"], "the client's own creates were refused, so the ack is not ok")
+        rows = {r["tid"]: r["reason"] for r in a["refused"]}
+        for h in tail:
+            self.assertEqual(rows[h], "a write is read to 64 tags and it was past that bound, so it was not created")
+        self.assertEqual(rows["h0"], "it was deleted after your copy was taken, so it was not re-created",
+                         "h0..h31 sat within the bound and were not in `edited`: re-creations, quietly")
+        self.assertEqual([t["id"] for t in a["views"]["tags"]], [t["id"] for t in served["tags"]])
+        self.assertEqual(len(self.notices), 1, "the refused creates were the poster's: loud")
+        self.assertIn("(unread)", self.notices[0][0])
+
+    def test_a_duplicate_entry_consumes_a_slot_and_the_create_it_pushes_past_the_bound_gets_a_row(self):
+        served = self._seed_many(km._VIEWS_MAX_TAGS)
+        w = json.loads(json.dumps(served))
+        w["tags"] = w["tags"] + json.loads(json.dumps(w["tags"])) \
+            + [{"id": "h0", "name": "mine", "color": "", "members": []}]        # the 65th entry
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": w, "edited": ["h0"]})
+        self.assertEqual((a["ok"], [(r["tid"], r["name"]) for r in a["refused"]]), (False, [("h0", "mine")]))
+        self.assertIsNone(store_tag("mine"))
+
+    def test_a_store_tags_copy_past_the_bound_is_kept_not_deleted(self):
+        served = self._seed_many(km._VIEWS_MAX_TAGS)
+        creates = [{"id": "n%d" % i, "name": "n%d" % i, "color": "", "members": []} for i in range(33)]
+        w = json.loads(json.dumps(served))
+        w["tags"] = creates + w["tags"]                    # 65 entries: the store's g31 is the 65th
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": w})   # no `edited`: an older client
+        self.assertFalse(a["ok"])
+        rows = {r["tid"]: r["reason"] for r in a["refused"]}
+        self.assertEqual(rows["g31"],
+                         "a write is read to 64 tags and its copy was past that bound, so the store's copy was kept")
+        self.assertEqual(sorted(k for k in rows if k.startswith("n")), sorted("n%d" % i for i in range(33)),
+                         "every create is refused by the cap: the store is full")
+        ids = [t["id"] for t in km._timeline_views()["tags"]]
+        self.assertEqual(sorted(ids), sorted(t["id"] for t in served["tags"]), "the store is intact, g31 included")
+        self.assertIn('"t31" (unread)', self.notices[0][0])
+
+    def test_a_lens_only_write_touches_no_tag_whatever_the_blob_carries_by_design(self):
+        served = self._seed_many(3)
+        w = json.loads(json.dumps(served))
+        w["tags"] += [{"id": "h%d" % i, "name": "h%d" % i, "color": "", "members": []} for i in range(70)]
+        w["actives"] = {"timeline": {"tags": ["t1"]}, "chat": {"all": True}, "outline": {"all": True}}
+        a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": w, "edited": []})
+        self.assertEqual((a["ok"], a["refused"]), (True, []),
+                         "edited=[] is the client's word that it changed no tag (docs/read-side.md): no rows")
+        self.assertEqual(len(km._timeline_views()["tags"]), 3)
+        self.assertEqual(km._timeline_views()["actives"]["timeline"], {"tags": ["t1"]})
+        self.assertEqual(self.notices, [])
+
+
 class WebBootWiring(unittest.TestCase):
     """The kernel-served timeline page: the inline _TIMELINE_BOOT twin of timeline-boot.ts exposes
     the targeted-edit bridge and routes both acks to the panel (timeline-boot.test.ts pins the two
