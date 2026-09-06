@@ -18599,6 +18599,15 @@ def _fold_tasks(session):
                     continue
                 inp = b.get("input") or {}
                 if b.get("name") == "TaskCreate":
+                    # The BACKGROUND-AGENT form of TaskCreate ({agent_hint, prompt}, no `subject`; its
+                    # result is an agent id, not "Task #N") is not a to-do checklist item.
+                    # Folding it as a pending task gave a session whose only Task calls were background-agent
+                    # launches a phantom open task, which tripped the card's "can't read the task store"
+                    # error the moment the store was unresolvable. A create with no `subject` that carries a
+                    # `prompt` or `agent_hint` is skipped; checklist creates (they carry a `subject`) fold as
+                    # before, and the background task has its own rendering (bgTasks / TaskStop).
+                    if not str(inp.get("subject") or "").strip() and ("prompt" in inp or "agent_hint" in inp):
+                        continue
                     m = re.search(r"Task #(\d+)", out.get(b.get("id"), "") or "")
                     tid = m.group(1) if m else "c%d" % order
                     af = inp.get("activeForm")
