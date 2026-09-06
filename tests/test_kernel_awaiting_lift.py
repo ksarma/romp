@@ -630,11 +630,23 @@ class LiftGate(unittest.TestCase):
         km._lift_spent_awaiting(now, {SID: ({"state": ""} if snap is None else snap)})
         return len(self.calls) - before
 
-    def _seed_unstamped(self):
+    def _seed_unstamped(self, size=None):
+        """An unstamped store, written in place. `size` pads the node's text so the file is exactly that
+        many bytes: a same-size rewrite holds st_size still, so only the key's other components can move."""
         nd = {"id": self.gid, "text": "a goal", "parentId": None, "nodeComplete": False,
               "blocked": False, "cleared": False, "trail": [], "t": BORN, "mt": BORN, "log": []}
-        (km.jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
-            {"rompUuid": SID, "seq": 1, "placements": {}, "status": {}, "nodes": {self.gid: nd}}))
+        store = {"rompUuid": SID, "seq": 1, "placements": {}, "status": {}, "nodes": {self.gid: nd}}
+        if size is not None:
+            pad = size - len(json.dumps(store).encode())
+            self.assertGreaterEqual(pad, 0, "the stamped store must be the longer one")
+            nd["text"] += " " * pad                      # one ASCII byte per space, inside the JSON string
+            self.assertEqual(len(json.dumps(store).encode()), size)
+        (km.jd.GOALDIR / (SID + ".json")).write_text(json.dumps(store))
+
+    def _stamped_bytes(self):
+        """The bytes of a stamped store (the node _stamped_node builds), for a same-size rewrite."""
+        return json.dumps({"rompUuid": SID, "seq": 1, "placements": {}, "status": {},
+                           "nodes": {self.gid: self._stamped_node()}}).encode()
 
     def _stamped_node(self, why="waiting on a dispatched investigation"):
         return {"id": self.gid, "text": "a goal", "parentId": None, "nodeComplete": False,
@@ -725,16 +737,43 @@ class LiftGate(unittest.TestCase):
         self.assertIn(self.gid, nodes, "the restore now re-inserted the node")
         self.assertIsNone(nodes[self.gid].get("awaitingWhy") or None, "…and the lift proceeded")
 
-    def test_an_in_place_rewrite_reloads(self):
+    def test_a_same_size_in_place_rewrite_reloads(self):
+        """st_mtime_ns is in the key: a rewrite that keeps the inode AND the byte count (the store's own
+        path opened for writing, stamped bytes exactly as long as the unstamped ones) still moves the
+        identity. The utime stands in for the clock on a coarse-mtime filesystem (CI)."""
         self._returned_dispatch()
-        self._seed_unstamped()
+        stamped = self._stamped_bytes()
+        self._seed_unstamped(size=len(stamped))
+        gp = km.jd.GOALDIR / (SID + ".json")
+        old = gp.stat()
         self.assertEqual(self._tick(), 1)
         self.assertEqual(self._tick(), 0)
-        self._seed()                                     # same path, new bytes
+        gp.write_bytes(stamped)                          # same path, same inode, same byte count
+        os.utime(gp, ns=(old.st_atime_ns, old.st_mtime_ns + 1_000_000))
+        new = gp.stat()
+        self.assertEqual((new.st_ino, new.st_size), (old.st_ino, old.st_size), "only the mtime moved")
+        self.assertGreaterEqual(self._tick(), 1, "the mtime alone moved the identity: reloaded")
+        self.assertIsNone(self._stamp())
+
+    def test_a_same_size_rename_with_the_old_mtime_reloads(self):
+        """st_ino is in the key: a rename publish of the same byte count whose mtime is set back to the
+        old file's (a restored backup keeps its timestamps; save_goals publishes by rename) still moves
+        the identity."""
+        self._returned_dispatch()
+        stamped = self._stamped_bytes()
+        self._seed_unstamped(size=len(stamped))
         gp = km.jd.GOALDIR / (SID + ".json")
-        st = gp.stat()
-        os.utime(gp, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))   # a coarse-mtime CI still moves
-        self.assertGreaterEqual(self._tick(), 1, "the identity moved: reloaded")
+        old = gp.stat()
+        self.assertEqual(self._tick(), 1)
+        self.assertEqual(self._tick(), 0)
+        tmp = gp.with_name(gp.name + ".tmp")
+        tmp.write_bytes(stamped)
+        tmp.rename(gp)                                   # a new inode under the same path
+        os.utime(gp, ns=(old.st_atime_ns, old.st_mtime_ns))
+        new = gp.stat()
+        self.assertNotEqual(new.st_ino, old.st_ino, "the rename brought a new inode")
+        self.assertEqual((new.st_mtime_ns, new.st_size), (old.st_mtime_ns, old.st_size), "only the inode moved")
+        self.assertGreaterEqual(self._tick(), 1, "the inode alone moved the identity: reloaded")
         self.assertIsNone(self._stamp())
 
     # ---- what the gate never touches ----
