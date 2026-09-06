@@ -43,6 +43,14 @@ class Txt {
   constructor(public data: string) {}
   get textContent(): string { return this.data; }
   get parentElement(): El | null { return this.parentNode; }
+  // the change painters (Slice 2) split a row's text at a change's edges, as the comment painters do
+  splitText(off: number): Txt {
+    const tail = new Txt(this.data.slice(off));
+    this.data = this.data.slice(0, off);
+    const p = this.parentNode;
+    if (p) { const i = p.childNodes.indexOf(this); p.childNodes.splice(i + 1, 0, tail); tail.parentNode = p; }
+    return tail;
+  }
 }
 type Compound = { tag: string | null; id: string | null; classes: string[]; attrs: Array<[string, string | null]> };
 /** Comma groups of descendant chains (`A B`), each link a compound `tag#id.class[attr="v"]`. */
@@ -105,7 +113,15 @@ class El {
   removeChild<T extends El | Txt>(n: T): T { this.detach(n); return n; }
   replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes = []; for (const x of c) this.appendChild(x); }
   remove(): void { this.detach(this); }
-  normalize(): void { /* no adjacent text nodes are built here */ }
+  normalize(): void {   // unpainting a mark leaves adjacent text nodes; join them, as the browser does
+    const out: Array<El | Txt> = [];
+    for (const c of this.childNodes) {
+      if (c instanceof Txt) { if (!c.data) { c.parentNode = null; continue; } const last = out[out.length - 1]; if (last instanceof Txt) { last.data += c.data; c.parentNode = null; continue; } }
+      else c.normalize();
+      out.push(c);
+    }
+    this.childNodes = out;
+  }
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
   getAttribute(k: string): string | null { return this.attrs.has(k) ? (this.attrs.get(k) as string) : null; }
   hasAttribute(k: string): boolean { return this.attrs.has(k); }
@@ -238,7 +254,7 @@ const DOC = "# Report\n\n## Findings\nThe api session cut p95 latency by 40%.\n\
 const PY = "def main():\n    return 0\n";
 const MT = "1757145600000000001";
 const T0 = 1757145600000;
-const hunk = (id: string): Hunk => ({ id, author: "api", ts: T0, kind: "replace", curFrom: 28, curTo: 31, baseFrom: 28, baseTo: 31, oldText: "p95", newText: "p99", anchor: null });
+const hunk = (id: string): Hunk => ({ id, author: "api", ts: T0, kind: "sub", curFrom: 28, curTo: 31, baseFrom: 28, baseTo: 31, oldText: "p95", newText: "p99", anchor: null });
 function status(hunks: Hunk[]): Status {
   return {
     verb: "status", root: ROOT, storePath: ROOT + "/.trackchanges/docs%2Freport.md.json", trackedBy: { kind: "file", entry: "docs/report.md" },
