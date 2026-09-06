@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""File comments (plans/file-review.md, Slices 1 to 4) — end to end, with nothing stubbed below the wire.
+"""File comments (plans/file-review.md, Slices 1 to 5) — end to end, with nothing stubbed below the wire.
 
 tests/test_file_comments.py proves the kernel's half against a STUB host script; the host's own node
 tests prove its half against the vendored CLIs. This module joins the pieces the way the dashboard
@@ -693,6 +693,83 @@ def test_reject_reverts_the_file_tells_the_owning_session_once_and_a_stale_file_
     assert s3["unsent"] == dict(EMPTY_UNSENT, watermark=watermark), "the send entry resets the counts"
     assert s3["log"][-1]["kind"] == "send" and (s3["log"][-1]["accepted"], s3["log"][-1]["rejected"]) == (1, 1)
     assert len(world.traced) == 1, "a send is not a trace"
+
+
+def fingerprint_of(file):
+    """The vendored store layer's fingerprint of a file's current text — what the sidecar must carry for a
+    later load to take its records as they are (no rebase, no detaching)."""
+    src = ("const s = await import(process.argv[1]); const fs = await import('node:fs');"
+           " console.log(JSON.stringify(s.fingerprintOf(fs.readFileSync(process.argv[2], 'utf8'))));")
+    r = _node(["--input-type=module", "-e", src, "--", Path(os.path.join(VENDOR, "store-io.mjs")).as_uri(), str(file)])
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def test_a_save_from_the_editor_writes_the_file_and_the_remapped_change_together_tells_the_session_logs_the_edit_and_a_stale_file_fence_writes_nothing(world):
+    """Slice 5: the editor's Save over a tracked file with one pending change. The person typed a line ABOVE
+    the change, so the editor's field (track-cm, remapping through every keystroke) holds the record at an
+    offset moved by the insertion's length; the `save` verb carries the new text and that record, and the
+    real host writes the sidecar (the record at its new offset, the fingerprint over the new text) and the
+    file together, logs the edit in the kernel's direct-edit shape, and the kernel tells the owning session
+    with the SAME trace a saveFile sends. A stale fileMtimeNs refuses file-moved first and writes nothing.
+    The remap is the engine's rule applied by hand: an insertion before a record adds its length to `from`."""
+    s0 = world.ok("status", world.fp)
+    world.ok("set-tracked", world.fp, {"on": True, "scope": "file"}, world.fence_of(s0))
+    world.track_edit("cut p95 latency by 40%", "cut p95 latency by 45%")
+    s = world.ok("status", world.fp)
+    assert len(s["hunks"]) == 1
+    rec = s["store"]["suggestions"][0]
+    assert EDITED[rec["from"]:rec["from"] + len(rec["newText"])] == rec["newText"], "the record indexes the file's text"
+    inserted = "A line the person typed above the change.\n"
+    at = EDITED.index("The api session")
+    content = EDITED[:at] + inserted + EDITED[at:]
+    remapped = dict(rec, **{"from": rec["from"] + len(inserted)})
+    assert content[remapped["from"]:remapped["from"] + len(rec["newText"])] == rec["newText"], "the remapped record fits the new text"
+    args = {"content": content, "suggestions": [remapped], "accepted": [], "rejected": []}
+    text_before, sidecar_before = world.fp.read_bytes(), Path(s["storePath"]).read_bytes()
+    # a stale file fence refuses file-moved: nothing written, nothing logged, nothing told
+    stale = world.op("save", world.fp, args, dict(world.fence_of(s, file=True), fileMtimeNs="1"))
+    assert (stale["type"], stale["code"]) == ("fileCommentsFailed", "file-moved")
+    assert "reload" in stale["error"]
+    assert world.fp.read_bytes() == text_before and Path(s["storePath"]).read_bytes() == sidecar_before
+    assert [e["kind"] for e in world.log_lines(s)] == ["set-tracked"]
+    assert world.traced == []
+    # the save: the sidecar's record moved with the text, the fingerprint is the new text's, the file holds the new text
+    r = world.ok("save", world.fp, args, world.fence_of(s, file=True))
+    assert world.fp.read_text() == content
+    assert r["fileMtimeNs"] == str(world.fp.stat().st_mtime_ns) and r["fileMtimeNs"] != s["fileMtimeNs"], "the file's mtime moved"
+    assert r["storeMtimeNs"] == str(Path(r["storePath"]).stat().st_mtime_ns) and r["storeMtimeNs"] != s["storeMtimeNs"], "the sidecar's too"
+    assert r["logged"] is True
+    store = json.loads(Path(r["storePath"]).read_text())
+    saved = store["suggestions"]
+    assert len(saved) == 1 and saved[0]["id"] == rec["id"]
+    assert (saved[0]["from"], saved[0]["oldText"], saved[0]["newText"]) == (remapped["from"], rec["oldText"], rec["newText"]), "the record moved by the insertion"
+    assert store["fingerprint"] == fingerprint_of(world.fp), "the sidecar describes the file as saved"
+    h = r["hunks"][0]
+    assert (h["id"], h["curFrom"], h["newText"]) == (rec["id"], remapped["from"], rec["newText"]), "the reply's hunks index the new text"
+    assert content[h["curFrom"]:h["curTo"]] == h["newText"]
+    # exactly one trace, the direct edit's, to the session whose tree holds the file, after the reply (contract H4)
+    real = os.path.realpath(str(world.fp))
+    assert world.traced == [(SID, km._edit_trace_body(real))]
+    assert "I just edited `%s` directly on disk" % km._tilde(real) in world.traced[0][1]
+    assert world.injected == [], "a trace is a direct backend send: nothing parked, no todo stamped"
+    assert world.order[-2:] == ["reply", "trace"], "the fileCommentsResult is on the wire before the trace goes"
+    # the log has the edit entry, written by the host in the kernel's direct-edit shape; nothing decided, so no other entry
+    entries = world.log_lines(r)
+    assert [e["kind"] for e in entries] == ["set-tracked", "edit"]
+    e = entries[1]
+    assert e["author"] == "you"
+    assert (e["mtimeBeforeNs"], e["mtimeAfterNs"]) == (s["fileMtimeNs"], r["fileMtimeNs"])
+    assert (e["bytesBefore"], e["bytesAfter"]) == (len(EDITED.encode()), len(content.encode()))
+    assert "+" + inserted in e["diff"] and e["truncated"] is False
+    assert r["log"] == entries, "the panel's Log is current in the reply"
+    # a later track-edit still succeeds: the session's tooling loads the saved sidecar as it is
+    world.track_edit("shipping the cache", "shipping the response cache")
+    s3 = world.ok("status", world.fp)
+    assert [x["oldText"] for x in s3["hunks"]] == ["cut p95 latency by 40%", "shipping the cache"], "two changes, the saved one first"
+    assert world.fp.read_text() == content.replace("shipping the cache", "shipping the response cache")
+    assert s3["hunks"][0]["curFrom"] == remapped["from"], "the saved change kept its place"
+    assert len(world.traced) == 1, "a track-edit is the session's own write: no trace"
 
 
 def test_accept_all_on_a_sidecar_with_no_comments_prunes_it_and_the_log_keeps_the_decision(world):
