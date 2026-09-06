@@ -64,7 +64,7 @@ test("the gear has a Thinking summaries checkbox among the kernel-side toggles, 
     "the copy says the toggle also turns adaptive thinking on where it was off");
   assert.ok(/Compact transcript still hides them/.test(row),
     "…and that the compact view (default on) keeps hiding thinking, summaries included");
-  assert.ok(GEAR.includes("post({ type: 'setThinkingSummaries', enabled: ths.checked, gt: Date.now() })"),
+  assert.ok(GEAR.includes("post({ type: 'setThinkingSummaries', enabled: ths.checked, gt: gclock.stamp('thinking-summaries') })"),
     "the click posts the kernel's designed message with the gesture stamp minted in the literal");
   assert.ok(GEAR.includes("ths.checked = !!v.thinkingSummaries"),
     "the box always shows the kernel's persisted answer, never a page default");
