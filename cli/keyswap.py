@@ -409,8 +409,10 @@ def _mode_mismatch(body, local_mode, out):
         out("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in this shell's")
         out("            environment only, not in service.env, so a restarted kernel would not see it either. A running")
         out("            kernel keeps the mode it started in. Put the line in service.env, then `romp refresh` restarts the")
-        out("            kernels into command mode; a line in the unit's own Environment= reaches them at the next manager")
-        out("            restart (`systemctl --user restart romp-manager`). Until then the kernel injects no set.")
+        out("            kernels into command mode; a line in the unit's own Environment= or the plist's EnvironmentVariables")
+        out("            reaches them at the manager restart that follows a reload of the definition (`systemctl --user")
+        out("            daemon-reload`, then `systemctl --user restart romp-manager`; on macOS `launchctl bootout` then")
+        out("            `launchctl bootstrap` of the job). Until then the kernel injects no set.")
     return 1
 
 
@@ -548,12 +550,13 @@ def _kernel_lines(body, st, out):
             % (ksel or "(none)", lsel or "(none)"))
         out("            makes the kernel re-run it now.")
     else:
-        out("            Usual causes: the service environment (service.env, or the unit) carries other")
+        out("            Usual causes: the service environment (service.env, the unit or the plist) carries other")
         out("            ROMP_CREDENTIAL_* values than this shell (a line added to service.env reaches the kernel at")
         out("            its next start, `romp refresh`; a line changed or removed there, or one in the unit, at the")
-        out("            next manager restart, whose environment holds the copy loaded at its start), the two")
-        out("            resolve different selector files, or CLAUDE_CONFIG_DIR differs (the apiKeyHelper the")
-        out("            kernel fingerprints is the one its own settings name).")
+        out("            next manager restart, whose environment holds the copy loaded at its start, and a unit or")
+        out("            plist line reaches that restart only once the definition is reloaded: daemon-reload on Linux,")
+        out("            bootout then bootstrap on macOS), the two resolve different selector files, or CLAUDE_CONFIG_DIR")
+        out("            differs (the apiKeyHelper the kernel fingerprints is the one its own settings name).")
     return 1
 
 

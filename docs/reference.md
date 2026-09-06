@@ -336,7 +336,10 @@ Set these if something else on the machine already holds the default. Both have
 to agree across everything that talks to the kernel, so export them where the
 whole environment sees them rather than for one command.
 
-Run `romp-service install` again after changing one. The service unit bakes in
+Run `romp-service install` again after changing one, and on Linux restart the
+manager after it (`systemctl --user restart romp-manager`): the install
+rewrites the unit and reloads systemd but leaves a running manager as it is,
+while on macOS it reloads the job, which restarts it. The service unit bakes in
 whatever is set at install time, so a renumbered port that only lives in your
 shell leaves the supervised manager on the old one, and the two collide.
 
@@ -680,11 +683,17 @@ when the line was added to `service.env` (the kernel reads the file at its
 start); nothing, when the line is set in your shell's environment only, until
 it is in `service.env`. When the kernel is in command mode and your shell
 reads no line, the kernel's answer cannot say where the kernel got the line,
-so the report lists the three places, each with its remedy:
+so the report lists the places, each with its remedy:
 
-- the manager's environment (a `service.env` line it loaded at its start, or
-  the unit's own `Environment=` lines), which every kernel inherits: a manager
-  restart
+- `service.env` as the manager loaded it at its start, which every kernel
+  inherits: a manager restart, which re-reads the file
+- the unit's own `Environment=`, a drop-in, or the profile a shell-wrapped
+  `ExecStart` sources (Linux), or the plist's `EnvironmentVariables` (macOS):
+  a manager restart re-applies these, so remove the line there, reload the
+  definition, then restart (the commands are under [Two things still need a
+  restart](#two-things-still-need-a-restart))
+- another `service.env`, when the kernel's environment names a different file
+  through `ROMP_SERVICE_ENV_FILE`: run `romp keyswap` with the same variable
 - `service.env`, edited since the kernel read it at its start: `romp refresh`
 - the shell that ran `romp up`, which exported the line: start it again from a
   shell without the line
@@ -729,11 +738,14 @@ Per session the cycle reports one of:
 `romp refresh --quiet` is the alternative that restarts every kernel once the
 sessions are quiet: every session's CLI is a new process. The manager itself
 keeps running, so a `ROMP_CREDENTIAL_COMMAND` line added to `service.env` is
-applied by that restart, while a line removed from it, and an edit to the
-unit's own `Environment=` lines, still need a manager restart, because the
-manager's environment carries what it loaded at its start:
-`systemctl --user restart romp-manager`, or on macOS
-`launchctl kickstart -k gui/$(id -u)/com.romp.manager`.
+applied by that restart, while a line removed from it still needs a manager
+restart, because the manager's environment carries what it loaded at its
+start: `systemctl --user restart romp-manager`, or on macOS `launchctl
+kickstart -k gui/$(id -u)/com.romp.manager`. A line in the unit's own
+`Environment=` or in the plist's `EnvironmentVariables` is re-applied by that
+restart: remove it where it is, reload the definition, then restart (the
+commands per platform are under [Two things still need a
+restart](#two-things-still-need-a-restart)).
 
 No key value is ever printed, logged, or sent over a socket. The command's
 output, the Log panel entry when the kernel's credential changes, and the

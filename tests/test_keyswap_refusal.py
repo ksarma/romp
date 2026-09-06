@@ -384,6 +384,31 @@ class HelpAndDocsAgree(unittest.TestCase):
             self.assertIn("`%s`" % escaped, text, rel)
         self.assertIn("`romp keyswap <name>`", self._read("bin/README.md"))
 
+    def test_every_restart_advice_about_a_unit_or_plist_line_names_the_reload(self):
+        # a unit Environment= line or a plist EnvironmentVariables pair is part of the loaded service
+        # definition, which a manager restart re-applies; advice that says "restart" about one and not
+        # "reload" sends the reader to a restart that changes nothing. Two paragraphs of the reference did
+        # (the `romp refresh --quiet` paragraph and the keyswap section's list of places named a bare
+        # restart), so the property is pinned over every paragraph rather than the two that were fixed
+        import re
+        ref = self._read("docs/reference.md")
+        hits = [p for p in re.split(r"\n\s*\n", ref) if re.search(r"Environment=|EnvironmentVariables", p) and "restart" in p]
+        self.assertGreaterEqual(len(hits), 3, "the paragraphs this covers")
+        for p in hits:
+            self.assertIn("reload", p, p[:160])
+        # the same for the CLI's three hints about such a line: the mode MISMATCH under a command-mode kernel,
+        # the one under a shell whose environment alone carries the line, and the fingerprint MISMATCH's causes
+        src = self._read("cli/keyswap.py")
+        for phrase in ("the unit's Environment=, a drop-in, or the profile a shell-wrapped ExecStart sources (Linux), or the",
+                       "a line in the unit's own Environment= or the plist's EnvironmentVariables",
+                       "a line changed or removed there, or one in the unit, at the"):
+            self.assertIn(phrase, src, phrase)
+        for phrase in ("first, reload the definition, then restart the manager.",
+                       "reaches them at the manager restart that follows a reload of the definition",
+                       "plist line reaches that restart only once the definition is reloaded: daemon-reload on Linux,"):
+            self.assertIn(phrase, src, phrase)
+        self.assertNotIn("reaches them at the next manager restart (`systemctl --user restart romp-manager`)", src)
+
     def test_the_docs_show_the_command_mode_report_with_placeholder_fingerprints(self):
         ref = self._read("docs/reference.md")
         for line in ("key source  command (ROMP_CREDENTIAL_COMMAND is set)", "candidates  hp <- selected, lp",
