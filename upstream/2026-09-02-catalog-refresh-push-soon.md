@@ -3,7 +3,7 @@ title: `_refresh_model_catalog` called `_push_soon()` after a fetch added versio
 status: merged
 where: FIXED on the fork in the `upfold0902` reconciliation (2026-09-02): the fetch that adds ids emits the models frame (`_models_changed` — the `{type:"models", rev}` frame fork PR #140 gave every picker a listener for: chat/comment `loadModelChoices`, the timeline lanes' `refreshModels`, the gear's `adoptChoices`/`paintChoices`), so every open picker re-reads `/models` on the event; the comment names the real mechanism. Pinned in `tests/test_model_catalog.py` (`FetchAndFallback::test_a_fetch_that_adds_ids_tells_every_open_picker_to_re_read_models`, silent when a fetch adds nothing)
 added: 2026-09-02
-pr: 140
+pr: 143
 tier:
 offered: their PR #882
 closed: 2026-09-02

@@ -4,7 +4,7 @@ status: candidate
 where: upstream code (the fork carries the same module); surfaced by the batch-12 sweeps (2026-09-06); not yet built
 added: 2026-09-06
 pr:
-tier:
+tier: tests-only
 offered:
 closed:
 ---

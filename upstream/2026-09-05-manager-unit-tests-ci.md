@@ -6,7 +6,7 @@ added: 2026-09-05
 pr:
 tier:
 offered:
-closed: 2026-09-02
+closed: 2026-09-06
 ---
 CLOSED 2026-09-06 without an offer: upstream’s ci.yml already runs `node --test tests/manager-*.test.js` (their T224 follow-up to our #868); the gap was fork-side only. Upstream's `ci.yml` has the same three suites and the same gap for its three manager suites. One step, no new pin: the job's Node 22 runs them from the repo root.
 

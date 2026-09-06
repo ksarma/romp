@@ -4,7 +4,7 @@ status: candidate
 where: leak fix: fork branch `tmpleak`, commit `e98c8c79` (the detached call honours `ROMP_POSTAL_BIN` like the mail and refresh paths, and romp.bats stands in for the service; fork PR pending, 2026-09-06). Their #944's exit-time sweep cannot catch it (the write happens in a detached process after cleanup). SIGPIPE flake: fork main `835a0a4a` (2026-09-04); still open upstream
 added: 2026-09-06
 pr:
-tier:
+tier: tests-only
 offered:
 closed:
 ---
