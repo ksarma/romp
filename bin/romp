@@ -802,6 +802,14 @@ _romp_token_cfg() {
 # `romp status` and `romp up`, by romp-service status, and by romp-manager's ensure/up.
 _romp_state_dir() { printf '%s' "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; }
 
+# A `romp down` whose stop did not land: release the quiesce hold so turns resume now, not at the
+# lease's end, and take the marker back, since a running kernel must not read as down on purpose.
+_romp_down_release() {   # <state-dir> <kernel-port> <now-flag>
+    [[ -z "$3" ]] && { _romp_token_cfg | curl -s -m 5 --config - -H 'Content-Type: application/json' \
+        -d '{"cancel": true}' -o /dev/null "http://127.0.0.1:$2/down" 2>/dev/null || true; }
+    rm -f "$1/down-by-romp"
+}
+
 # CALLER ATTRIBUTION for anything that stops or restarts the kernel (the user 2026-07-16): a refresh
 # cuts SDK turns, kills pickers and sprays restart notices, and on 2026-07-16 three staged-demo
 # teardowns were untraceable — kernel-downtime.jsonl has only {start,end}, agents leave no shell
@@ -2315,8 +2323,10 @@ fi
 #   romp refresh     restart EVERYTHING — the postal bus AND every kernel (picks up new code after an update)
 #   romp status      manager + kernel status; a kernel stopped by `romp down` says so
 # `romp down` has to go THROUGH the supervisor (romp-service stop): the manager exiting on its own is a
-# crash to Restart=always / KeepAlive, respawned within seconds. Only when no login service is installed
-# (a foreground `romp up`) does it use the manager's own /stop. Before stopping it asks the kernel to
+# crash to Restart=always / KeepAlive, respawned within seconds. A manager the service does not own (no
+# login service installed, or one installed but not running, and a foreground `romp up` beside it) is
+# stopped through its own /stop; either way the command ends with a manager that no longer answers, or
+# a loud failure naming the one that does. Before stopping it asks the kernel to
 # QUIESCE (POST /down): new turn starts and session creates hold, and the turns in flight get up to
 # --wait seconds (default 5) to reach a turn boundary; what is still mid-turn is cut, exactly as under
 # `romp refresh`, and the next start resumes it with its history (the boot reconcile). `--now` skips
@@ -2327,6 +2337,20 @@ fi
 case "${1:-}" in
     up)
         shift
+        _up_fg=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --foreground) _up_fg=1 ;;
+                -h|--help)
+                    echo "usage: romp up [--foreground]"
+                    echo "  start the kernel manager: through the login service when one is installed, else in"
+                    echo "  the foreground. --foreground runs it in this terminal either way (Ctrl+C stops it"
+                    echo "  and its kernels). Undoes a \`romp down\`."
+                    exit 0 ;;
+                *) echo "romp up: unknown option '$1' (usage: romp up [--foreground])" >&2; exit 2 ;;
+            esac
+            shift
+        done
         _up_state="$(_romp_state_dir)"
         if [[ -f "$_up_state/down-by-romp" ]]; then
             rm -f "$_up_state/down-by-romp"
@@ -2334,7 +2358,7 @@ case "${1:-}" in
         fi
         # `--foreground` keeps the old behavior with a service installed (watching the manager's own
         # log in a terminal); the manager refuses to start beside a running one either way.
-        if [[ "${1:-}" != "--foreground" ]]; then
+        if [[ -z "$_up_fg" ]]; then
             if "${ROMP_SERVICE_BIN:-romp-service}" start; then
                 echo "[romp] the login service is starting the manager — \`romp status\` to check"
                 exit 0
@@ -2364,7 +2388,12 @@ case "${1:-}" in
             esac
             shift
         done
-        if ! [[ "$_dn_wait" =~ ^[0-9]+(\.[0-9]+)?$ ]] || (( $(printf '%.0f' "$_dn_wait") > 600 )); then
+        # the bound is the kernel's (DOWN_WAIT_MAX_S, 600.0) on the value AS SENT: a rounded compare let
+        # 600.4 through, which the kernel refused with a 400 and the CLI then stopped without any wait
+        _dn_wait_int="${_dn_wait%%.*}" _dn_wait_frac=""
+        [[ "$_dn_wait" == *.* ]] && _dn_wait_frac="${_dn_wait#*.}"
+        if ! [[ "$_dn_wait" =~ ^[0-9]+(\.[0-9]+)?$ ]] || (( 10#$_dn_wait_int > 600 )) \
+            || { (( 10#$_dn_wait_int == 600 )) && [[ "$_dn_wait_frac" =~ [1-9] ]]; }; then
             echo "romp down: --wait takes a number of seconds, 0 to 600 (got '$_dn_wait')" >&2; exit 2
         fi
         _dn_state="$(_romp_state_dir)"
@@ -2373,7 +2402,7 @@ case "${1:-}" in
         #    hold for the wait plus a grace, so the stop below lands on a still-quiet kernel; if the
         #    stop never comes the hold lapses on its own.
         if [[ -z "$_dn_now" ]]; then
-            _dn_out="$(_romp_token_cfg | curl -s -m "$(( $(printf '%.0f' "$_dn_wait") + 15 ))" --config - \
+            _dn_out="$(_romp_token_cfg | curl -s -m "$(( 10#$_dn_wait_int + 16 ))" --config - \
                         -H 'Content-Type: application/json' -d "{\"wait\": $_dn_wait}" \
                         -w '\n%{http_code}' "http://127.0.0.1:$_dn_kport/down" 2>/dev/null)" || true
             _dn_code="${_dn_out##*$'\n'}"
@@ -2407,29 +2436,49 @@ PYEOF
         DN_CMD="$_dn_cmd" python3 -c 'import json,os,time; print(json.dumps({"t": int(time.time()), "cmd": os.environ["DN_CMD"]}))' \
             > "$_dn_state/down-by-romp.tmp" && mv -f "$_dn_state/down-by-romp.tmp" "$_dn_state/down-by-romp"
         _romp_restart_audit down "${_dn_now:+--now}"
-        # 3. stop through the supervisor; without one, through the manager's own /stop
-        if "${ROMP_SERVICE_BIN:-romp-service}" stop; then
-            echo "[romp] down — \`romp up\` starts it again"
-            exit 0
-        else
-            _dn_rc=$?
+        # 3. stop through the supervisor. 3 = no login service installed, 4 = installed but not running:
+        #    either way the manager, if one runs, is outside the service (a foreground `romp up`, a hand
+        #    `romp-manager up`, the auto-start) and step 4 stops it through its own /stop. Any other
+        #    failure is the service refusing to stop, and the kernel is most likely still up.
+        _dn_rc=0
+        "${ROMP_SERVICE_BIN:-romp-service}" stop || _dn_rc=$?
+        case $_dn_rc in
+            0|3|4) ;;
+            *)
+                _romp_down_release "$_dn_state" "$_dn_kport" "$_dn_now"
+                echo "romp down: the login service did not stop — the kernel keeps running" >&2
+                exit 1 ;;
+        esac
+        # 4. whatever the service did, "down" is checked against the manager itself, never taken from
+        #    the service's word: one may still answer on the control port (started outside the service,
+        #    or one the service did not take down). Stop it through its own /stop, then wait, bounded,
+        #    for it to leave: the manager answers /stop first and exits under a second later.
+        _dn_mport="${ROMP_MANAGER_PORT:-7432}"
+        _dn_mgr=""
+        if "${ROMP_MANAGER_BIN:-romp-manager}" status >/dev/null 2>&1; then
+            _dn_mgr=1
+            "${ROMP_MANAGER_BIN:-romp-manager}" down >/dev/null 2>&1 || true
+            for _ in $(seq 1 12); do
+                "${ROMP_MANAGER_BIN:-romp-manager}" status >/dev/null 2>&1 || break
+                sleep 0.25
+            done
         fi
-        if [[ $_dn_rc -eq 3 ]]; then
-            # no login service: a foreground manager, or nothing at all
-            if "${ROMP_MANAGER_BIN:-romp-manager}" down >/dev/null 2>&1; then
-                echo "[romp] down — the manager and its kernels are stopping; \`romp up\` starts them again"
-            else
-                echo "[romp] nothing was running (no login service installed, no manager on :${ROMP_MANAGER_PORT:-7432}); the auto-start stays held until \`romp up\`"
-            fi
-            exit 0
+        if _dn_st="$("${ROMP_MANAGER_BIN:-romp-manager}" status 2>/dev/null)"; then
+            # still answering: the stop did not land. Release the hold, take the marker back (it would
+            # report a running kernel as down on purpose) and name what is still up and where.
+            _dn_pid="$(DN_ST="$_dn_st" python3 -c 'import json, os; print((json.loads(os.environ["DN_ST"]).get("manager") or {}).get("pid") or "")' 2>/dev/null || true)"
+            _romp_down_release "$_dn_state" "$_dn_kport" "$_dn_now"
+            echo "romp down: a manager is still running on :$_dn_mport${_dn_pid:+ (pid $_dn_pid)} after being asked to stop; the kernel keeps running. Stop it by hand, then run romp down again" >&2
+            exit 1
         fi
-        # the service stop itself failed: the kernel is most likely still up. Release the hold so
-        # turns resume, take the marker back (it would misreport a running kernel as down), and say so.
-        [[ -z "$_dn_now" ]] && { _romp_token_cfg | curl -s -m 5 --config - -H 'Content-Type: application/json' \
-            -d '{"cancel": true}' -o /dev/null "http://127.0.0.1:$_dn_kport/down" 2>/dev/null || true; }
-        rm -f "$_dn_state/down-by-romp"
-        echo "romp down: the login service did not stop — the kernel keeps running" >&2
-        exit 1 ;;
+        case "$_dn_rc:$_dn_mgr" in
+            0:)  echo "[romp] down — \`romp up\` starts it again" ;;
+            0:1) echo "[romp] down: the login service stopped, and so did a manager running outside it; \`romp up\` starts it again" ;;
+            *:1) echo "[romp] down — the manager and its kernels are stopping; \`romp up\` starts them again" ;;
+            3:)  echo "[romp] nothing was running (no login service installed, no manager on :$_dn_mport); the auto-start stays held until \`romp up\`" ;;
+            4:)  echo "[romp] nothing was running (the login service was already stopped, no manager on :$_dn_mport); the auto-start stays held until \`romp up\`" ;;
+        esac
+        exit 0 ;;
     refresh)   # restart EVERYTHING (the user 2026-06-29): the postal bus too, not just the kernels — the bus
                # is a separate long-lived singleton the manager doesn't own, so a kernel-only refresh left it
                # serving stale code. Bounce the bus first (best-effort), then exec the kernel restart.
