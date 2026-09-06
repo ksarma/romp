@@ -77,7 +77,7 @@ test("every push entry point re-asserts (or retires) the optimistic tail", () =>
 
 test("retire needs a NEW landed atom (after the send's anchor); kernel provisionals only suppress", () => {
   // the entry is minted by the module (unanchored until the first reconcile stamps where the send sits)
-  assert.match(RENDER, /arr\.push\(newPending\(text, imgPaths\)\);/);
+  assert.match(RENDER, /const p = newPending\(text, imgPaths\);\s*\n\s*arr\.push\(p\);/);
   assert.equal(newPending("x", undefined, 5).at, undefined);
   // the decision is the module's, read off KERNEL truth after our injections are stripped — the whole
   // resident array from the anchor on, never a tail count (2026-09-06 review)
@@ -100,7 +100,7 @@ test("an optimistic echo is a tail-appended, kernel-invisible QUEUED event — n
   const SP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "send-pending.ts"), "utf8");
   assert.match(SP, /export const OPT_PREFIX = "optimistic:";/);
   assert.match(RENDER, /const isOptimistic = \(e: ChatEvent\): boolean => isOptimisticUuid\(e\.uuid\);/);
-  assert.match(RENDER, /const mk = \(p: PendingSend\) => \(\{ md: p\.text, optimistic: true, cancelable: true, imgPaths: p\.imgPaths, lost: p\.lost \}\);/);   // the echo carries its dragged-image paths (2026-08-25); cancelable from the press (2026-08-30); `lost` after a connection drop (2026-09-06)
+  assert.match(RENDER, /const mk = \(p: PendingSend\) => \(\{ md: p\.text, optimistic: true, cancelable: true, imgPaths: p\.imgPaths, lost: p\.lost, qts: p\.ts \}\);/);   // the echo carries its dragged-image paths (2026-08-25); cancelable from the press (2026-08-30); `lost` after a connection drop, `qts` its identity for the ✕ (2026-09-06)
   // stale ones pop cheaply off the end (always tail-appended)
   assert.match(RENDER, /while \(s\.events\.length && isOptimistic\(s\.events\[s\.events\.length - 1\]\)\) s\.events\.pop\(\);/);
   // the abandoned dim/pending idiom is FULLY gone: render, guard fields, and stylesheet — the last
@@ -154,7 +154,9 @@ test("EVERY ✕ stops our re-injection first; the optimistic one cancels by body
   // body (ws ordering puts it after the send it names); a miss comes back through the same loud
   // cancelResult, and the composer restore reverts (pendingCancelRestores).
   assert.match(RENDER, /if \(qmd\) \{/);
-  assert.match(RENDER, /const i = list\.findIndex\(\(p\) => p\.text === qmd\);/);
+  // …by the bubble's OWN identity when it has one (data-qts) — send-pending.test.ts runs the lookup
+  assert.match(RENDER, /const qts = el\.dataset\.qts !== undefined \? Number\(el\.dataset\.qts\) : undefined;\s*\n\s*if \(dropPending\(list, qmd, qts\)\)/);
+  assert.doesNotMatch(RENDER, /list\.findIndex\(\(p\) => p\.text === qmd\)/, "never 'the first entry with this text' for a bubble that names its entry");
   assert.match(RENDER, /echoShownSig\.delete\(sidQ\);/);
   assert.match(RENDER, /const msg: Record<string, unknown> = \{ type: "cancelQueued", id: sidQ, md: qmd \};/);
 });
@@ -188,8 +190,11 @@ test("reconcile: inject on nothing, suppress on kernel provisionals, retire only
   r = reconcile([{ kind: "user", md: "test the continue button", uuid: "u-old" }]);
   assert.equal(r.inject.length, 1, "substring-of-history must not count as landed");
 
-  // kernel shows its QUEUED bubble → suppressed for this push, but NOT retired…
+  // kernel shows its QUEUED bubble for THIS send → suppressed for this push, but NOT retired… The press
+  // stamped a tail without the copy: a copy already listed AT the press is an older send's, background,
+  // and covers nothing (send-pending.test.ts, "what was already there at the press is background")
   const p = fresh();
+  reconcile([{ kind: "assistant", md: "working on the prior turn" }], p);   // the press
   r = reconcile([{ kind: "queued", texts: [{ md: "continue" }] }], p);
   assert.equal(r.keep.length, 1);
   assert.equal(r.inject.length, 0, "no double render beside the kernel's own copy");

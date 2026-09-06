@@ -37,7 +37,7 @@ import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindi
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
 import { StagedStack } from "./staged-messages";
-import { type PendingSend, type TailEvent, OPT_PREFIX, isOptimisticUuid, newPending, reconcilePending, cueAnchor, bareGroupLabel } from "./send-pending";
+import { type PendingSend, type TailEvent, OPT_PREFIX, isOptimisticUuid, newPending, reconcilePending, dropPending, cueAnchor, bareGroupLabel } from "./send-pending";
 import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional, focusResolvesProvisional } from "./provisional";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { numberDiff, type DiffRow } from "./diff-lines";
@@ -161,7 +161,7 @@ type ChatEvent = (
   // `held` DOES come from the kernel (_limit_hold): the queue is stuck on the ACCOUNT rather than on this
   // session — a usage limit or a monthly spend cap holds every send — so the head names what it is waiting
   // for, and how long is left when the API reported a reset (the user 2026-07-24).
-  | { kind: "queued"; texts: { md: string; followUp?: boolean; goal?: string; fuCtx?: string; idx?: number; park?: number; cancelable?: boolean; optimistic?: boolean; imgPaths?: string[]; lost?: string }[]; ts?: string; uuid?: string; bare?: boolean; held?: { reason: string; resetsAt?: number | null; what: string; detail?: string } }   // imgPaths: an optimistic echo's dragged-image attachments → thumbnails, the landed form's own renderer (the user 2026-08-25); lost: client-only, the connection dropped after this unconfirmed send (send-pending.ts)
+  | { kind: "queued"; texts: { md: string; followUp?: boolean; goal?: string; fuCtx?: string; idx?: number; park?: number; cancelable?: boolean; optimistic?: boolean; imgPaths?: string[]; lost?: string; qts?: number }[]; ts?: string; uuid?: string; bare?: boolean; held?: { reason: string; resetsAt?: number | null; what: string; detail?: string } }   // imgPaths: an optimistic echo's dragged-image attachments → thumbnails, the landed form's own renderer (the user 2026-08-25); lost: client-only, the connection dropped after this unconfirmed send; qts: client-only, the pending entry's identity (its press time) so the ✕ removes ITS entry (send-pending.ts)
   // The turn stopped on an API error (event-based: transcript isApiErrorMessage). The session is BLOCKED
   // until retried — a red-dot card at the bottom with a Retry button (the user 2026-06-16).
   | { kind: "apiError"; text: string; status?: number; ts?: string; uuid?: string }
@@ -372,7 +372,9 @@ function reconcileOptimistic(s: Session): void {
   // uncancellable beat until the kernel's park round-tripped): the ✕ on an optimistic bubble drops our
   // re-injection and asks the kernel to cancel by body wherever the send landed (see the qx handler).
   // `lost` rides along so the bubble can say "not confirmed" after a connection drop (markPendingLost).
-  const mk = (p: PendingSend) => ({ md: p.text, optimistic: true, cancelable: true, imgPaths: p.imgPaths, lost: p.lost });
+  // `qts` is the entry's identity: the ✕ removes THAT entry, never the first with the same text (two
+  // identical sends can sit in different states — one lost, one received).
+  const mk = (p: PendingSend) => ({ md: p.text, optimistic: true, cancelable: true, imgPaths: p.imgPaths, lost: p.lost, qts: p.ts });
   const qj = tailQueuedIdx(s.events);
   if (qj >= 0) {
     // something IS queued here → ours queues behind it: show it in that group, under its header, counted
@@ -388,10 +390,15 @@ function reconcileOptimistic(s: Session): void {
 // Record a composer send as in-flight and show its optimistic bubble NOW (before any kernel push).
 function registerOptimistic(id: string, text: string, imgPaths?: string[]): void {
   const arr = pendingSent.get(id) || [];
-  arr.push(newPending(text, imgPaths));   // the anchor (`at`) is stamped by the reconcile just below
+  const p = newPending(text, imgPaths);
+  arr.push(p);   // the anchor (`at`) is stamped by the reconcile just below
   pendingSent.set(id, arr);
   const s = sessions.get(id);
-  if (!s) return;
+  // No resident frame to stamp against: the active tab is a PLACEHOLDER (its meta arrived, its payload
+  // is pending — selectable, composer live). The first upsert stamps the entry, against a frame that may
+  // already hold this send's own echo or landing; `late` tells stampBase to read the events' own stamps,
+  // so only what the kernel stamped before the press is background (send-pending.ts).
+  if (!s) { p.late = true; return; }
   reconcileOptimistic(s);
   // The reconcile can mutate the tail IN PLACE — merging into an existing queued group, or pop+push
   // on a repeat send — which leaves s.events.length unchanged, and syncView's no-op fast path
@@ -3747,6 +3754,7 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
       if (t.idx !== undefined) x.dataset.qidx = String(t.idx);
       if (t.park !== undefined) x.dataset.qpark = String(t.park);
       if (t.optimistic) x.dataset.qopt = "1";   // ✕ before confirmation → cancel-by-body (no park/idx yet)
+      if (t.qts !== undefined) x.dataset.qts = String(t.qts);   // OUR entry's identity: the ✕ removes this bubble's entry, not the first with its text
       if (isCmd) x.dataset.qcmd = "1";
       (x as any)._qmd = t.md;   // the bubble's body — the kernel's drift guard + the composer restore read it
       bubble.appendChild(x);
@@ -14492,9 +14500,11 @@ setupSettings();
         // PARKED/backend ✕ it is just as load-bearing: the kernel bubble had been SUPPRESSING our
         // still-live entry (shownProvisional), so cancelling only the kernel op resurrected the
         // cancelled message as a dashed bubble until the TTL (caught by this fix's served-page probe).
+        // OUR bubble's ✕ names its entry (data-qts, the press time); a kernel bubble's ✕ names none, and
+        // drops the first pending send with the text — the one the kernel's first copy covers.
         const list = pendingSent.get(sidQ) || [];
-        const i = list.findIndex((p) => p.text === qmd);
-        if (i >= 0) { list.splice(i, 1); if (list.length) pendingSent.set(sidQ, list); else pendingSent.delete(sidQ); }
+        const qts = el.dataset.qts !== undefined ? Number(el.dataset.qts) : undefined;
+        if (dropPending(list, qmd, qts)) { if (list.length) pendingSent.set(sidQ, list); else pendingSent.delete(sidQ); }
         echoShownSig.delete(sidQ);
       }
       const msg: Record<string, unknown> = { type: "cancelQueued", id: sidQ, md: qmd };

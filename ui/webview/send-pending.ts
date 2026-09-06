@@ -12,9 +12,11 @@
 //   - the kernel's NEVER-DELIVERED verdict on it, placed after the same anchor (its dropped-echo bubble
 //     takes over, with the copy-to-composer and dismiss actions),
 //   - the user's ✕ (render.ts's qx delegate drops the entry).
-// A kernel PROVISIONAL (its echo atom, its queued bubble) only SUPPRESSES ours for the push it is visible
-// on — the durable record is the kernel's (a persisted echo, the dropped marking, the fed-text guard in
-// prune_live), but if it blinks, ours steps straight back in. Nothing here reads a clock.
+// A kernel PROVISIONAL (its echo atom, its queued bubble) only COVERS one of ours for the push it is
+// visible on — the durable record is the kernel's (a persisted echo, the dropped marking, the fed-text
+// guard in prune_live), but if it blinks, ours steps straight back in; a copy seen after the press also
+// proves the kernel RECEIVED that one send (`received`, attributed per send like a landing). Nothing here
+// reads a clock: the one comparison of stamps (a late stamp, stampBase) orders two events.
 //
 // THE ANCHOR (2026-09-06 review): every decision is read from the events AFTER the send, never from a
 // count of tail events. At the first reconcile after the press the entry records the uuid of the last
@@ -37,14 +39,18 @@ export type PendingSend = {
   text: string;        // the sent body, byte for byte — what the kernel echoes and the transcript lands
   body: string;        // `text` minus its image paths, whitespace-collapsed: an image send lands with the
                        //   paths rewritten to "[Image #N]" and stripped, so `text` itself can never match
-  ts: number;          // press time (ms) — the bubble's identity in the events array, never a lifetime
+  ts: number;          // press time (ms) — the bubble's identity (the ✕ names it), never a lifetime
   at?: SendBase;       // the send's place in the events (stamped by the first reconcile after the press)
+  late?: boolean;      // the press found NO resident frame for the session (a placeholder tab, still
+                       //   loading), so the stamp is taken at the first frame — which may already hold this
+                       //   send's own echo or landing; stampBase then reads the events' own stamps
   imgPaths?: string[]; // dragged images → the bubble's thumbnails, and the image-aware landing match
   lost?: string;       // an event after the press that makes non-delivery LIKELY ("connection": the
                        //   socket dropped) — the bubble says "not confirmed" instead of "sending…"
-  received?: boolean;  // the kernel has shown its OWN copy of this send (an echo atom or a queued bubble
-                       //   that appeared after the press): the send reached it, so a connection drop
-                       //   before or after cannot have lost it — `lost` is cleared and never set again
+  received?: boolean;  // the kernel has shown a copy of the text attributed to THIS send (an echo atom or
+                       //   a queued copy after the press that no earlier same-text send claimed): the send
+                       //   reached it, so a connection drop before or after cannot have lost it — `lost` is
+                       //   cleared and never set again
 };
 
 /** The slice of a chat event the decisions read (render.ts's ChatEvent is a superset). */
@@ -52,6 +58,7 @@ export type TailEvent = {
   kind: string;
   md?: string;
   uuid?: string;
+  ts?: string;          // the kernel's stamp for the event, ISO-8601 UTC (kernel.py `iso(t)`, whole seconds)
   absorbed?: boolean;
   undelivered?: boolean;
   images?: unknown[];
@@ -121,15 +128,45 @@ export function lostIn(e: TailEvent, p: PendingSend): boolean {
  *  uuid) the moment its text lands, so it is not a stable place. */
 const stableUuid = (e: TailEvent): boolean => !!e.uuid && !isOptimisticUuid(e.uuid) && !isKernelEchoUuid(e.uuid);
 
-/** Where this send sits among the kernel's events, read once at the first reconcile after the press. */
+/** The kernel's second for an event, off its ISO stamp (kernel.py `iso(t)`); null when it carries none. */
+const eventSecond = (e: TailEvent): number | null => {
+  if (!e.ts) return null;
+  const ms = Date.parse(e.ts);
+  return isNaN(ms) ? null : Math.floor(ms / 1000);
+};
+
+/** Where this send sits among the kernel's events, read once at the first reconcile after the press.
+ *
+ *  At a PRESS-TIME stamp (the normal path) everything resident predates the send by construction — the
+ *  frame arrived before the keystroke — so the whole frame is background and no stamp is read. A LATE
+ *  stamp (`p.late`: the press found no frame — a placeholder tab, still loading) reads a frame that may
+ *  already hold this send's own echo or landing, and it used to read them as background: our dashed
+ *  bubble sat beside the kernel's echo, or a landed send's bubble never ended (2026-09-06 review, round
+ *  3). So a late stamp reads the events' own stamps: an event the kernel stamped at or after the press's
+ *  second is not before the send — neither the anchor nor background. Events with no stamp keep the
+ *  press-time reading.
+ *
+ *  THE CLOCK ASSUMPTION, stated once: the press is the client's clock (ms); the events wear the kernel
+ *  host's clock in whole seconds — the echo atom is stamped `int(time.time())` at the kernel's receipt
+ *  of the send (sdk_backend.py `send`, before the CLI can see the text), the landed atom by the CLI's
+ *  transcript record, at or after that (T237b), and both reach the client as `ts = iso(t)`. The bound
+ *  holds when the two clocks agree to the second: exactly for a client on the kernel's machine (the
+ *  VS Code webview, the served page there), and for a phone as well as its clock is set. A client
+ *  running BEHIND the kernel reads an older identical message stamped inside the skew as this send's;
+ *  one running AHEAD reads this send's own copy as background, which is the pre-fix reading. The bound
+ *  is confined to the late stamp because that is the only stamp that can meet the send's own records,
+ *  and because at a press-time stamp it could only misfire (an identical message that landed within
+ *  the press's second would read as this send's). */
 export function stampBase(events: TailEvent[], p: PendingSend): SendBase {
+  const pressS = p.late ? Math.floor(p.ts / 1000) : Infinity;
+  const beforeSend = (e: TailEvent): boolean => { const s = eventSecond(e); return s === null || s < pressS; };
   let after: string | null = null;
-  for (let i = events.length - 1; i >= 0; i--) if (stableUuid(events[i])) { after = events[i].uuid!; break; }
+  for (let i = events.length - 1; i >= 0; i--) if (stableUuid(events[i]) && beforeSend(events[i])) { after = events[i].uuid!; break; }
   const seen: string[] = [];
   let queued = 0;
   for (const e of events) {
     if (e.kind === "queued") { queued += queuedCopies(e, p); continue; }
-    if (e.kind !== "user" || !e.uuid || isOptimisticUuid(e.uuid)) continue;
+    if (e.kind !== "user" || !e.uuid || isOptimisticUuid(e.uuid) || !beforeSend(e)) continue;
     if (landedIn(e, p) || lostIn(e, p) || provisionalIn(e, p)) seen.push(e.uuid);
   }
   return { after, seen, queued };
@@ -151,10 +188,24 @@ export type Reconciled = {
 };
 
 /** One push's decision for a session's pending sends, read off the KERNEL's events (the caller has
- *  already stripped its own injections). Entries are read in registration order, and ONE landing retires
- *  ONE entry: the k-th landing after the anchor retires the k-th pending send with that text, and a
- *  landing an earlier entry took is background (`seen`) for every later entry with the same text — two
- *  identical sends in flight used to both retire on the first landing (2026-09-06 review). */
+ *  already stripped its own injections). Entries are read in registration order, and ONE kernel record
+ *  accounts for ONE entry — the same rule for a landing and for the kernel's provisional copy:
+ *   - the k-th landing after the anchor retires the k-th pending send with that text, and a landing an
+ *     earlier entry took is background (`seen`) for every later entry with the same text — two
+ *     identical sends in flight used to both retire on the first landing (2026-09-06 review);
+ *   - the k-th kernel copy of the text after the anchor — an echo atom no earlier entry claimed, or a
+ *     queued copy beyond the entry's press-time count — covers the k-th pending send with that text: it
+ *     hides that send's bubble for this push and proves the kernel received THAT send (`received`). A
+ *     claimed echo joins later same-text entries' `seen` for good; queued copies carry no identity, so
+ *     they are handed out by position within a push (the copies an entry's press listed are its
+ *     background). One echo used to mark every same-text entry received and clear every "not confirmed"
+ *     (2026-09-06 review, round 3): with two identical sends in flight and one of them lost, the lost
+ *     one read "sending…" for good, and nothing could ever mark it.
+ *  Identical texts carry no identity of their own, so WHICH send a copy belongs to is attributed by
+ *  order, exactly as landings are; the COUNT of confirmed sends is what the kernel's records support.
+ *  When the kernel hides a fed send's echo behind a same-text queued copy (its chat dedups by text), a
+ *  received send can read "not confirmed" after a drop until a copy of its own shows; that clears on the
+ *  next kernel copy, and the error is toward "not confirmed", never toward a false "sending…". */
 export function reconcilePending(events: TailEvent[], list: PendingSend[]): Reconciled {
   // First reconcile after the send: whatever the events ALREADY hold for this text is background — an
   // older identical message, an old echo, an undismissed never-delivered bubble — not this send. Only
@@ -163,23 +214,35 @@ export function reconcilePending(events: TailEvent[], list: PendingSend[]): Reco
   // never-delivered message retired as lost by the old verdict).
   for (const p of list) if (!p.at) p.at = stampBase(events, p);
   const r: Reconciled = { keep: [], inject: [], landed: [], lost: [] };
-  const claimed = new Set<number>();          // landing indices taken by an earlier entry THIS push
+  const claimed = new Set<number>();                   // landing indices taken by an earlier entry THIS push
+  const takenCopies = new Map<string, Set<number>>();  // text → queued-copy positions taken by an earlier entry THIS push
   for (const p of list) {
     const at = p.at!;
     const from = scanFrom(events, at);
-    let landedIdx = -1, lostIdx = -1, provisional = false, copies = 0;
+    let landedIdx = -1, lostIdx = -1, echoIdx = -1, copies = 0;
     for (let i = from; i < events.length; i++) {
       const e = events[i];
       if (e.uuid && at.seen.includes(e.uuid)) continue;
-      if (e.kind === "queued") { const n = queuedCopies(e, p); copies += n; if (n) provisional = true; continue; }
+      if (e.kind === "queued") { copies += queuedCopies(e, p); continue; }
       if (landedIdx < 0 && !claimed.has(i) && landedIn(e, p)) { landedIdx = i; continue; }
       if (lostIdx < 0 && lostIn(e, p)) { lostIdx = i; continue; }
-      if (provisionalIn(e, p)) {
-        provisional = true;
-        p.received = true;                    // an echo the kernel minted for THIS send: it has the text
-      }
+      if (echoIdx < 0 && provisionalIn(e, p)) echoIdx = i;   // the first echo no earlier entry claimed (`seen`)
     }
-    if (copies > at.queued) p.received = true;  // the kernel's queue lists a copy it did not list at the press
+    // ONE kernel copy covers ONE send: an unclaimed echo atom first — its uuid is then background for
+    // every later same-text entry, this push and every push after (the claim must outlive the claimant:
+    // a ✕ on it must not hand its echo to the next entry) — else the first queued copy beyond this
+    // entry's press-time count that no earlier entry took this push.
+    let covered = false;
+    if (echoIdx >= 0) {
+      covered = true;
+      const u = events[echoIdx].uuid;
+      if (u) for (const q of list) if (q !== p && q.at && q.text === p.text && !q.at.seen.includes(u)) q.at.seen.push(u);
+    } else if (copies > at.queued) {
+      const taken = takenCopies.get(p.text) || new Set<number>();
+      for (let k = at.queued; k < copies; k++) if (!taken.has(k)) { taken.add(k); covered = true; break; }
+      takenCopies.set(p.text, taken);
+    }
+    if (covered) p.received = true;             // the kernel holds this send: proven once, latched
     if (p.received) p.lost = undefined;         // the drop is older news than the kernel's own copy
     if (landedIdx >= 0) {
       claimed.add(landedIdx);
@@ -192,9 +255,22 @@ export function reconcilePending(events: TailEvent[], list: PendingSend[]): Reco
     }
     if (lostIdx >= 0) { r.lost.push(p); continue; }
     r.keep.push(p);
-    if (!provisional) r.inject.push(p);
+    if (!covered) r.inject.push(p);
   }
   return r;
+}
+
+/** The entry a ✕ on a pending bubble removes: the one the bubble NAMES (`ts`, ridden on the ✕ as
+ *  data-qts) — or, for a ✕ on the KERNEL's own queued/parked copy, which names no entry of ours, the
+ *  first pending send with that text, the one the kernel's first copy covers. Same-text entries carry
+ *  different states (lost, received), and the first-with-the-text lookup the ✕ used for every bubble
+ *  dropped the wrong one from a "not confirmed · sending…" pair: the next push brought the dismissed
+ *  bubble back and the other was gone without a gesture (2026-09-06 review, round 3). Returns the removed
+ *  entry; undefined when none matched — a bubble whose entry a push already retired removes nothing,
+ *  never a neighbour with the same text. */
+export function dropPending(list: PendingSend[], text: string, ts?: number): PendingSend | undefined {
+  const i = ts !== undefined ? list.findIndex((p) => p.ts === ts && p.text === text) : list.findIndex((p) => p.text === text);
+  return i >= 0 ? list.splice(i, 1)[0] : undefined;
 }
 
 /** Where the pending bubble SAT when its message landed higher up: the uuid of the last RENDERED kernel

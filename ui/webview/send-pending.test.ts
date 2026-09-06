@@ -10,12 +10,14 @@
 // events AFTER the send's anchor, never from a 30-event tail count; (5) the cue anchors on a RENDERED
 // event; (6) the lost verdict shares the anchor; (7) exact text, one landing per send; (8) a connection
 // drop repaints once; (9) the bare label is per bubble; (10) the kernel's own copy clears "not confirmed".
+// Round 3 of that review: (11) receipt is attributed per send, like landings; (12) the ✕ removes the
+// bubble's own entry; (13) a stamp taken late reads the events' own times.
 // The decisions are executed through send-pending.ts; the DOM half is pinned in render.ts/styles.css.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { newPending, pendingBody, reconcilePending, cueAnchor, landedIn, provisionalIn, bareGroupLabel, type TailEvent, type PendingSend } from "./send-pending";
+import { newPending, pendingBody, reconcilePending, dropPending, cueAnchor, landedIn, provisionalIn, bareGroupLabel, type TailEvent, type PendingSend } from "./send-pending";
 
 const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const RENDER = read("render.ts");
@@ -150,6 +152,7 @@ test("what was already there at the press is background: an older identical mess
   const r = reconcilePending(tail, list);
   assert.equal(r.keep.length, 1, "not retired by the older copy");
   assert.equal(list[0].received, undefined, "the old echo and the old queued copy prove nothing about THIS send");
+  assert.equal(r.inject.length, 1, "…and cover nothing: our bubble shows beside the older copies (two sends, two bubbles)");
 });
 
 // ── (5) the cue anchors on a rendered event ──────────────────────────────────────────────────────
@@ -298,6 +301,154 @@ test("the kernel's echo or queued copy seen after the press proves receipt: 'not
   assert.equal(list2[0].lost, undefined, "a second copy is this send's");
   // a later drop leaves a received send alone (render.ts markPendingLost's guard)
   assert.match(RENDER, /if \(!p\.lost && !p\.received\) \{ p\.lost = why; changed = true; \}/);
+});
+
+// ── (11) receipt is attributed per send, like landings ───────────────────────────────────────────
+
+test("two identical sends, one kernel echo: the first is received and covered; the second still shows, still unconfirmed", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  const list = press(tail, "continue", "continue");
+  let r = reconcilePending([...tail, { kind: "user", md: "continue", uuid: "echo:1" }], list);
+  assert.deepEqual(list.map((p) => p.received), [true, undefined], "one echo is one send's receipt");
+  assert.deepEqual(r.inject, [list[1]], "the kernel's copy covers one bubble; ours shows for the other");
+  assert.deepEqual(list[1].at?.seen, ["echo:1"], "the claimed echo is background for the later send");
+  // the drop (as render.ts markPendingLost writes it): only the unconfirmed send is marked
+  for (const p of list) if (!p.lost && !p.received) p.lost = "connection";
+  assert.deepEqual(list.map((p) => p.lost), [undefined, "connection"]);
+  // the same echo on later pushes proves nothing new — even once the first entry is gone (its ✕)
+  r = reconcilePending([...tail, { kind: "user", md: "continue", uuid: "echo:1" }], [list[1]]);
+  assert.equal(list[1].received, undefined);
+  assert.equal(list[1].lost, "connection", "the bubble the kernel never received keeps saying so");
+  assert.equal(r.inject.length, 1);
+  // a second echo is the second send's
+  reconcilePending([...tail, { kind: "user", md: "continue", uuid: "echo:1" }, { kind: "user", md: "continue", uuid: "echo:2" }], list);
+  assert.deepEqual(list.map((p) => p.received), [true, true]);
+  assert.equal(list[1].lost, undefined);
+  // the claimed echo's verdict is the claimant's too: its never-delivered flag ends the first send only
+  const list2 = press(tail, "continue", "continue");
+  reconcilePending([...tail, { kind: "user", md: "continue", uuid: "echo:1" }], list2);
+  r = reconcilePending([...tail, { kind: "user", md: "continue", uuid: "echo:1", undelivered: true }], list2);
+  assert.deepEqual(r.lost, [list2[0]]);
+  assert.deepEqual(r.keep, [list2[1]]);
+});
+
+test("both 'not confirmed', one echo arrives: one label clears, the other stays — and the landing retires the received one", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  const list = press(tail, "continue", "continue");
+  list[0].lost = list[1].lost = "connection";
+  reconcilePending([...tail, { kind: "user", md: "continue", uuid: "echo:1" }], list);
+  assert.deepEqual(list.map((p) => p.lost), [undefined, "connection"]);
+  const r = reconcilePending([...tail, { kind: "user", md: "continue", uuid: "u1" }], list);   // the echo→landed handoff
+  assert.deepEqual(r.landed.map((l) => l.p), [list[0]]);
+  assert.deepEqual(r.keep, [list[1]]);
+  assert.equal(list[1].lost, "connection", "still unconfirmed: the kernel has shown one copy, and it landed");
+});
+
+test("queued copies are handed out by position: one new copy confirms one send; the copies a press listed are its background", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  const list = press(tail, "continue", "continue");
+  let r = reconcilePending([...tail, { kind: "queued", texts: [{ md: "continue" }] }], list);
+  assert.deepEqual(list.map((p) => p.received), [true, undefined]);
+  assert.deepEqual(r.inject, [list[1]], "one kernel copy, one of ours: two bubbles for two sends");
+  r = reconcilePending([...tail, { kind: "queued", texts: [{ md: "continue" }, { md: "continue" }] }], list);
+  assert.deepEqual(list.map((p) => p.received), [true, true]);
+  assert.equal(r.inject.length, 0);
+  // a second press that already saw the first send's copy counts it as background, not as its own
+  const a = press(tail, "continue");
+  reconcilePending([...tail, { kind: "queued", texts: [{ md: "continue" }] }], a);
+  const b = newPending("continue", undefined, T0 + 1);
+  const both = [a[0], b];
+  reconcilePending([...tail, { kind: "queued", texts: [{ md: "continue" }] }], both);   // b's press: one copy listed already
+  assert.equal(b.at?.queued, 1);
+  assert.equal(b.received, undefined, "the copy b's press listed is a's");
+  reconcilePending([...tail, { kind: "queued", texts: [{ md: "continue" }, { md: "continue" }] }], both);
+  assert.deepEqual(both.map((p) => p.received), [true, true]);
+});
+
+// ── (12) the ✕ removes the bubble's OWN entry ────────────────────────────────────────────────────
+
+test("✕ on one of two identical bubbles removes that bubble's entry, never the first with the text", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  const A = newPending("continue", undefined, T0), B = newPending("continue", undefined, T0 + 5000);
+  const list = [A, B];
+  reconcilePending(tail, list);
+  A.lost = "connection";                                   // A dropped; B was sent after the reconnect
+  let r = reconcilePending(tail, list);
+  assert.deepEqual(r.inject.map((p) => p.lost), ["connection", undefined], "the group reads 'not confirmed · sending…'");
+  // the ✕ on B's bubble names B (data-qts) — the first-with-the-text lookup took A
+  assert.equal(dropPending(list, "continue", B.ts), B);
+  assert.deepEqual(list, [A]);
+  r = reconcilePending(tail, list);
+  assert.deepEqual(r.inject.map((p) => p.lost), ["connection"], "the dismissed bubble stays gone; the lost one stays put");
+  // the ✕ on the LOST bubble of the pair
+  const C = newPending("continue", undefined, T0), D = newPending("continue", undefined, T0 + 5000);
+  const list2 = [C, D];
+  reconcilePending(tail, list2);
+  C.lost = "connection";
+  assert.equal(dropPending(list2, "continue", C.ts), C);
+  assert.deepEqual(list2, [D]);
+  // a bubble whose entry a push already retired removes nothing — never a neighbour with the same text
+  assert.equal(dropPending(list2, "continue", T0 + 999), undefined);
+  assert.deepEqual(list2, [D]);
+  // a ✕ on the KERNEL's own queued copy names no entry of ours: the first pending send with the text goes
+  assert.equal(dropPending(list2, "continue"), D);
+  assert.deepEqual(list2, []);
+  // render.ts: the identity rides the bubble's ✕, and the handler removes by it
+  assert.match(RENDER, /const mk = \(p: PendingSend\) => \(\{ md: p\.text, optimistic: true, cancelable: true, imgPaths: p\.imgPaths, lost: p\.lost, qts: p\.ts \}\);/);
+  assert.match(RENDER, /if \(t\.qts !== undefined\) x\.dataset\.qts = String\(t\.qts\);/);
+  assert.match(RENDER, /const qts = el\.dataset\.qts !== undefined \? Number\(el\.dataset\.qts\) : undefined;\s*\n\s*if \(dropPending\(list, qmd, qts\)\) \{ if \(list\.length\) pendingSent\.set\(sidQ, list\); else pendingSent\.delete\(sidQ\); \}/);
+  assert.doesNotMatch(RENDER, /list\.findIndex\(\(p\) => p\.text === qmd\)/);
+});
+
+// ── (13) a late stamp reads the events' own times ────────────────────────────────────────────────
+
+test("a send pressed against no frame (a placeholder tab): the first frame's copy of it is this send's, not background", () => {
+  const isoAt = (s: number) => new Date(s * 1000).toISOString();   // kernel.py iso(t): ISO-8601 UTC, whole seconds
+  const pressMs = T0 + 250;                                          // the press, on the client's clock
+  const S = Math.floor(pressMs / 1000);
+  const late = (): PendingSend => ({ ...newPending(TEXT, undefined, pressMs), late: true });   // registerOptimistic, no resident session
+  // the first frame holds an older identical message, the last step before the send, this send's own
+  // echo, and a step after it
+  const frame: TailEvent[] = [
+    { kind: "user", md: TEXT, uuid: "u-old", ts: isoAt(S - 3600) },
+    { kind: "assistant", md: "…", uuid: "a1", ts: isoAt(S - 2) },
+    { kind: "user", md: TEXT, uuid: "echo:1", ts: isoAt(S) },     // the kernel stamps the echo at its receipt: the press's second, or later
+    { kind: "assistant", md: "…", uuid: "a2", ts: isoAt(S + 1) },
+  ];
+  let list = [late()];
+  let r = reconcilePending(frame, list);
+  assert.equal(list[0].at?.after, "a1", "the anchor is the last stable event stamped BEFORE the press — not a2");
+  assert.deepEqual(list[0].at?.seen, ["u-old"], "the old message is background; this send's echo is not");
+  assert.equal(list[0].received, true);
+  assert.equal(r.inject.length, 0, "the kernel's echo covers our bubble: no double bubble");
+  const landed: TailEvent[] = [frame[0], frame[1], { kind: "user", md: TEXT, uuid: "u1", ts: isoAt(S) }, frame[3]];
+  r = reconcilePending(landed, list);
+  assert.equal(r.keep.length, 0, "the echo→landed handoff retires it");
+  // the CLI was idle: the first frame already holds the LANDED atom
+  list = [late()];
+  r = reconcilePending(landed, list);
+  assert.equal(list[0].at?.after, "a1", "…and the landed atom is not the anchor either");
+  assert.deepEqual(r.landed.map((l) => l.idx), [2], "it is the landing: the bubble ends, instead of never ending");
+  // a first frame that predates the send entirely stamps exactly as a press-time stamp would
+  list = [late()];
+  reconcilePending([frame[0], frame[1]], list);
+  assert.deepEqual(list[0].at, { after: "a1", seen: ["u-old"], queued: 0 });
+  // a press-time stamp reads no stamp: its frame predates the press by construction, so an identical
+  // message that landed within the press's own second is still background
+  const prompt = press([frame[1], { kind: "user", md: TEXT, uuid: "u-same-second", ts: isoAt(Math.floor(T0 / 1000)) }], TEXT);
+  assert.deepEqual(prompt[0].at?.seen, ["u-same-second"]);
+  assert.equal(prompt[0].at?.after, "u-same-second");
+  // render.ts marks the entry when the press finds no resident session, and stamps it nowhere else
+  assert.match(RENDER, /const p = newPending\(text, imgPaths\);\s*\n\s*arr\.push\(p\);/);
+  assert.match(RENDER, /if \(!s\) \{ p\.late = true; return; \}/);
+  // the clock the bound compares against: the kernel stamps the echo atom at its receipt of the send, in
+  // whole seconds, and the chat builder ships every event's stamp as iso(t)
+  const SDK = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "sdk_backend.py"), "utf8");
+  assert.match(SDK, /sent_t = int\(time\.time\(\)\)/);
+  assert.match(SDK, /"type": "user", "uuid": key, "session_id": sid, "t": sent_t,/);
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(KERNEL, /t = a\.get\("t"\); ts = iso\(t\) if t else None/);
+  assert.match(KERNEL, /def iso\(t\):\s*\n\s*"""Epoch → the ISO-8601 UTC/);
 });
 
 // ── (2) the absorbed header and the mid-turn cue ─────────────────────────────────────────────────
