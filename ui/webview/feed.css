@@ -1620,6 +1620,17 @@ a.fileview-gh-note { border-style: dashed; }
   -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .fc-float { position: fixed; z-index: 1300; user-select: none; -webkit-user-select: none; background: var(--surface-raised); box-shadow: var(--shadow-menu); }
 .fc-float[hidden] { display: none; }
+/* change marks, both views (Slice 2; painted by anchor-map.ts paintChangesRaw / paintChangesRendered): an insertion is
+   its new text under a tint; a deletion is a ZERO-WIDTH point whose struck label is generated from data-fc-text — no text
+   node enters a row, so the Raw walks' row verification, the selection mapping and unpaint are untouched, and, like the
+   row number, the label never enters a selection; a substitution is the point followed by the tint. Both wear the
+   author's session colour as a 2px underline (--fc-author, set inline per mark; the accent when no session matches).
+   The tint and the struck wash are the chat diff's own tokens (.diff-add / .diff-del). */
+.fc-ins { background: color-mix(in srgb, var(--green) 12%, transparent); border-bottom: 2px solid var(--fc-author, var(--accent));
+  color: inherit; cursor: pointer; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.fc-del { border-bottom: 2px solid var(--fc-author, var(--accent)); cursor: pointer; user-select: none; -webkit-user-select: none; }
+.fc-del::before { content: attr(data-fc-text); text-decoration: line-through; color: var(--dim);
+  background: color-mix(in srgb, var(--err) 9%, transparent); }
 /* ── end file comments panel ── */
 
 /* ── the viewer's image + PDF bodies (a .png used to open as line-numbered mojibake). The <img>
