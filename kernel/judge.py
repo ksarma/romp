@@ -255,8 +255,9 @@ def _adaptive_thinking(model):
             sys.stderr.write("romp-judge: model %r is not one I can place (family + version) — the CLI "
                              "treats an unlisted model as adaptive and drops thinking:disabled for it, so "
                              "the index tier passes --effort (%s unless the gear's Indexing effort says "
-                             "otherwise) and leaves the thinking-off env var unset; extend _EFFORT_FLOOR "
-                             "when the CLI's catalog places it\n" % (model, INDEX_EFFORT_DEFAULT))
+                             "otherwise); the thinking-off env var rides the tier regardless, a no-op the "
+                             "CLI drops for such a model; extend _EFFORT_FLOOR when the CLI's catalog places "
+                             "it\n" % (model, INDEX_EFFORT_DEFAULT))
         return True
     if ver is None:                                # a bare alias: the version the CLI served for it, else the
         ver = _ALIAS_SERVED.get(fam) or _ALIAS_HEAD.get(fam, _EFFORT_FLOOR[fam])   # catalog head we assume
@@ -1229,25 +1230,23 @@ def _codex_effort(effort, tier):
 
 def _judge_env(tier, auth="login", model=None):
     """The subprocess env for ONE judge call. Drops the TMUX vars (so the child isn't taken for a live
-    pane) and trips the Stop-hook recursion guard. For the INDEX tier it also applies the cost lever the
-    MODEL can take (2026-09-01): on a model WITHOUT adaptive thinking (Haiku, Sonnet 4.5, Opus 4.5 and
-    older — _adaptive_thinking, the CLI's own denylist) it disables extended thinking
-    (MAX_THINKING_TOKENS=0): the captioner + archiver do mechanical one-shot summarization, where the
-    default thinking is pure waste — a Haiku probe showed a ~385-token thinking block emitted before a
-    ~15-token caption (722 -> 24 output tokens, 7.1s -> 0.9s per call, ~92% cheaper, identical caption).
-    On a model WITH adaptive thinking (Fable, Mythos, Opus 4.6+, Sonnet 4.6+, and any model the CLI does
-    not place) the env var is NOT set and `--effort low` is the lever (_judge_run, INDEX_EFFORT_DEFAULT,
-    the gear's Indexing effort pick overriding): the CLI (2.1.257 and 2.1.258) drops the thinking parameter
-    for a model carrying its `rejects_disabled_thinking` capability — Fable and Mythos, and its first-party
-    default grants it to every unlisted model (the API refuses thinking:disabled on them) — so there the
-    var was a silent no-op and every "thinking-off" call ran FULL-COST adaptive thinking. (Opus 4.6+ and
-    Sonnet 4.6+ do honor the var; the tier still takes effort on them — one lever for every adaptive
-    model, the gear pick the knob.) `model` is the call's model; None resolves the tier's configured pick
-    (_index_model), so a bare _judge_env("index") answers about the tier as configured rather than
-    assuming Haiku. TRIAGE keeps thinking on every model: the planner / closer / grouper / distiller make
-    real placement + closure judgments. Output is the expensive half (Haiku $5/Mtok out) AND the latency
-    driver (~58 tok/s, serial), so this is the captioner's biggest single lever — and it's what makes any
-    future batching latency-safe.
+    pane) and trips the Stop-hook recursion guard. For the INDEX tier it also disables extended thinking
+    (MAX_THINKING_TOKENS=0), on EVERY model (2026-09-01; unconditional since the PR #880 review): the
+    captioner + archiver do mechanical one-shot summarization, where the default thinking is pure waste —
+    a Haiku probe showed a ~385-token thinking block emitted before a ~15-token caption (722 -> 24 output
+    tokens, 7.1s -> 0.9s per call, ~92% cheaper, identical caption). Where the CLI (2.1.257 and 2.1.258)
+    honors thinking:disabled — Haiku, Sonnet/Opus 4.5 and older, and Sonnet/Opus 4.6+, which run adaptive
+    thinking yet still take it — the var is the lever; where it drops the parameter for a model carrying
+    its `rejects_disabled_thinking` capability — Fable and Mythos, and every unlisted model under its
+    first-party default (the API refuses thinking:disabled on them) — the var is a harmless no-op and
+    `--effort low` in _judge_run (INDEX_EFFORT_DEFAULT, the gear's Indexing effort pick overriding;
+    _adaptive_thinking decides which models) is the lever that lands. Both ride together; neither can
+    hurt the other. `model` is the call's model, accepted for the call shape and not consulted here since
+    the var became unconditional — the model-keyed half of the lever lives in _judge_run. TRIAGE keeps
+    thinking on every model: the planner / closer / grouper / distiller make real placement + closure
+    judgments. Output is the expensive half (Haiku $5/Mtok out) AND the latency driver (~58 tok/s,
+    serial), so this is the captioner's biggest single lever — and it's what makes any future batching
+    latency-safe.
 
     `auth` is the call's resolved billing (_judge_auth). The ambient ANTHROPIC_API_KEY is stripped
     unconditionally — in the kernel process the SDK backend already claimed it out of os.environ, and

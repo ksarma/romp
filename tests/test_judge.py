@@ -6389,14 +6389,13 @@ class JudgeUsageLog(unittest.TestCase):
 
 
 class JudgeEnv(unittest.TestCase):
-    """The INDEX tier (captioner + archiver) keeps its cost lever, but the lever follows the MODEL
-    (2026-09-01) — by GENERATION, read from the CLI's (2.1.257 / 2.1.258) adaptive-thinking rule, not by
-    family. A model without adaptive thinking (Haiku, Sonnet 4.5, Opus 4.5 and older) otherwise emits a
-    long thinking block before the trivial caption — pure output waste — so it runs with
-    MAX_THINKING_TOKENS=0. A model with it (Fable, Opus 4.6+, Sonnet 4.6+) takes `--effort low` instead
-    (IndexTierLever below) and the env var is NOT set: on Fable the CLI drops the thinking parameter
-    outright (its rejects_disabled_thinking capability), so the var was a silent no-op that ran full-cost
-    thinking. TRIAGE keeps thinking on every model."""
+    """The INDEX tier (captioner + archiver) runs with MAX_THINKING_TOKENS=0 on EVERY model (2026-09-01;
+    unconditional since the PR #880 review). A model without adaptive thinking (Haiku, Sonnet 4.5, Opus
+    4.5 and older — the CLI's 2.1.257 / 2.1.258 denylist) otherwise emits a long thinking block before the
+    trivial caption — pure output waste — and Sonnet/Opus 4.6+ honor the var too. Where the CLI drops the
+    parameter outright (Fable, Mythos: its rejects_disabled_thinking capability) the var is a harmless
+    no-op and `--effort low` is the lever that lands (IndexTierLever below). The model-keyed half of the
+    lever lives in _judge_run; _judge_env reads no model. TRIAGE keeps thinking on every model."""
 
     def test_index_tier_sets_thinking_off_for_every_model(self):
         self.assertEqual(jd._judge_env("index", model="haiku").get("MAX_THINKING_TOKENS"), "0",
@@ -6422,14 +6421,6 @@ class JudgeEnv(unittest.TestCase):
             # 4.6+ honors thinking:disabled too — withholding the var there traded a measured thinking-off
             # path for unmeasured adaptive-low; it rides everywhere now, effort decides the rest
             self.assertEqual(jd._judge_env("index", model=m).get("MAX_THINKING_TOKENS"), "0", m)
-
-    def test_index_tier_with_no_model_resolves_the_tier_pick(self):
-        # the tier's configured model decides (INDEX_MODEL is haiku out of the box); a bare
-        # _judge_env("index") answers about that pick rather than assuming Haiku
-        jd._state_cache.clear()
-        self.assertEqual(jd._index_model(), jd.INDEX_MODEL)
-        self.assertEqual(jd._judge_env("index").get("MAX_THINKING_TOKENS"), "0",
-                         "the var rides the index tier whatever the pick resolves to")
 
     def test_every_tier_disables_prompt_caching(self):
         # One-shot judge calls never read the cache back — the per-call security mark re-rolls the
@@ -6536,10 +6527,11 @@ class IndexTierLever(unittest.TestCase):
     and effort is the lever those models honor. _judge_run resolves the tier's model first, then: no
     adaptive thinking (Haiku, Sonnet 4.5, Opus 4.5 and older) → MAX_THINKING_TOKENS=0 and no --effort
     flag; adaptive thinking (Fable, Mythos, Opus 4.6+, Sonnet 4.6+, and any model the CLI's catalog does
-    not place — its first-party default) → `--effort <index-effort setting, default low>` and NO env
-    var. The gear's existing Indexing effort pick (STATE/index-effort) is the configurability; the tier
-    logs which lever applied, once per model. The subprocess is stubbed and its argv + env captured —
-    nothing runs."""
+    not place — its first-party default) → `--effort <index-effort setting, default low>`, with the env
+    var riding beside it (unconditional on the index tier since the PR #880 review: honored on 4.6+
+    Sonnet/Opus, a no-op where the CLI drops it). The gear's existing Indexing effort pick
+    (STATE/index-effort) is the configurability; the tier logs which lever applied, once per model. The
+    subprocess is stubbed and its argv + env captured — nothing runs."""
 
     def setUp(self):
         self.calls = []
