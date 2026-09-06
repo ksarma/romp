@@ -79,6 +79,20 @@ def _bin_on_path_env(environ) -> dict:
 # ppid 1.
 CLI_SCOPE_PROBE = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--", "true"]
 CLI_SCOPE_PROBE_TIMEOUT = 10.0
+# The two commands the boot probe of the per-session limits runs besides `true` (cli_scope_limits):
+#   * inside a probe scope carrying the memory properties, whether the scope's cgroup has the memory
+#     interface files. systemd takes MemoryMax= and the others from a user manager WITHOUT the memory
+#     controller (not delegated: an admin drop-in on user@.service, the legacy cgroup hierarchy, a kernel
+#     booted with the controller off, a container whose subtree lacks it), records them, reports them
+#     from `systemctl --user show`, and applies nothing; the only sign is that memory.max is absent from
+#     the cgroup. `cut -d: -f3` is the cgroup v2 path (one `0::` line); on the legacy hierarchy the path
+#     is garbage and the test fails, which is the right verdict there (an unprivileged manager gets no
+#     controllers on it);
+#   * a throwaway child writing the adjustment to ITS OWN oom_score_adj. A value below the floor this
+#     process inherited (the user manager's own oom_score_adj; 100 on a stock box) fails with EACCES for
+#     the wrapper too, which is spawned from here with the same floor. The kernel's own value is untouched.
+CLI_SCOPE_MEMORY_PROBE_CMD = ["sh", "-c", 'test -e "/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.max"']
+CLI_SCOPE_ADJ_PROBE_CMD = ["sh", "-c", 'echo "$1" > /proc/self/oom_score_adj', "sh"]   # + the value
 # What every line bin/romp-cli-scope writes to stderr starts with. The wrapper writes only when the
 # CLI did NOT get its scope, and the line's second word says which of its two messages it is:
 #   CLI_SCOPE_FALLBACK_PREFIX — the pre-flight scope failed and it ran the CLI directly. The CLI starts,
@@ -89,9 +103,11 @@ CLI_SCOPE_PROBE_TIMEOUT = 10.0
 #     is a launch failure on its own, reported by _record_launch_error like any other; it is not a
 #     fallback and is not counted as one.
 #   CLI_SCOPE_IGNORED_PREFIX — a per-session limit (CLI_SCOPE_LIMITS) was not applied: a value that did
-#     not parse, or a property this systemd does not know. The CLI starts, in its scope, so as with the
-#     fallback nothing would ever drain the line from the tail; _on_cli_stderr logs it at once
-#     (_note_cli_scope_ignored) and launch_failure_text drops it. Not a fallback: the scope is there.
+#     not parse, a property this systemd rejected, or an adjustment that parsed but Linux would not let
+#     the wrapper write. The CLI starts, in its scope, so as with the fallback nothing would ever drain
+#     the line from the tail; _on_cli_stderr logs it at once (_note_cli_scope_ignored) and
+#     launch_failure_text drops it. Not a fallback: the scope is there. One launch can write more than
+#     one, so the count is of lines, not launches.
 CLI_SCOPE_NOTICE_PREFIX = "romp-cli-scope:"
 CLI_SCOPE_FALLBACK_PREFIX = CLI_SCOPE_NOTICE_PREFIX + " fallback:"
 CLI_SCOPE_REFUSAL_PREFIX = CLI_SCOPE_NOTICE_PREFIX + " refused:"
@@ -109,7 +125,14 @@ CLI_SCOPE_IGNORED_PREFIX = CLI_SCOPE_NOTICE_PREFIX + " ignored:"
 # a scope's default `stop` would end the whole scope on one OOM kill) and writes the adjustment to its
 # own /proc/self/oom_score_adj before the exec. The same syntax rules live in the wrapper (size_ok,
 # adj_ok): the kernel's check is what /api-health and the boot log report from, and what keeps a bad
-# value from reaching the wrapper at all (it goes down empty); the wrapper's is its own guard.
+# value from reaching the wrapper at all (it goes down empty); the wrapper's is its own guard. The
+# syntax is not the whole check: a value this systemd or this Linux refuses (OOMPolicy= on scopes
+# before systemd 253; an adjustment below the inherited floor) would pass it and be refused on every
+# launch, one `ignored:` line each, while the boot log and /api-health called it in force. So with the
+# scopes on, the kernel also runs the wrapper's own steps once, at its start, against this box
+# (_cli_scope_settle): the property probe scope, the memory-controller check inside it, and the
+# adjustment write in a throwaway child. What that refuses lands in `rejected` and goes down empty, so
+# a per-launch `ignored:` line marks a change since boot, not a standing condition.
 # Rows: (environment variable, /api-health key, validator, the rule in words, JSON type).
 # ASCII digits only ([0-9], never \d, which in a str pattern also matches other scripts' digits that
 # the wrapper's [!0-9] and systemd reject). A leading zero is refused for the adjustment: Linux parses
@@ -135,17 +158,122 @@ CLI_SCOPE_LIMITS = (
     ("ROMP_CLI_SCOPE_MEMORY_SWAP_MAX", "memorySwapMax", _cli_scope_size_ok, CLI_SCOPE_SIZE_RULE, str),
     ("ROMP_CLI_SCOPE_OOM_SCORE_ADJ", "oomScoreAdj", _cli_scope_adj_ok, CLI_SCOPE_ADJ_RULE, int),
 )
+# The systemd property each memory key becomes on the scope (the wrapper's own mapping; the adjustment
+# is a /proc write, not a property).
+CLI_SCOPE_MEMORY_PROPS = {"memoryMax": "MemoryMax", "memoryHigh": "MemoryHigh", "memorySwapMax": "MemorySwapMax"}
 
 
-def cli_scope_limits(environ=None, log=None, scope_on=True) -> tuple[dict, dict]:
-    """The per-session limits (CLI_SCOPE_LIMITS) from `environ` (the manager's environment): a pair
-    (in_force, rejected). `in_force` maps each set variable's /api-health key to its value, as the
-    string the wrapper receives; `rejected` maps each variable whose value fails its rule to that
-    value — such a variable is NOT handed to the wrapper (an unparsable size makes systemd-run refuse
-    the whole scope and start no CLI) and is logged once, as a problem naming the variable and the
-    rule. An unset or empty variable is neither. `log`, when given, takes (message, problem=bool);
-    with `scope_on` false the in-force line says the limits apply to nothing, since no scope is
-    started for them to apply to. Pure on its inputs, so the rules are testable on any OS."""
+def _cli_scope_props(in_force: dict) -> list[str]:
+    """The `-p Name=value` words the wrapper adds to systemd-run for the memory limits in `in_force`
+    (api keys → values): CLI_SCOPE_LIMITS order, then `-p OOMPolicy=continue` when any is set — the
+    words bin/romp-cli-scope builds, so the boot probe starts the scope a session would get."""
+    words = []
+    for _var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
+        if key in CLI_SCOPE_MEMORY_PROPS and key in in_force:
+            words += ["-p", "%s=%s" % (CLI_SCOPE_MEMORY_PROPS[key], in_force[key])]
+    if words:
+        words += ["-p", "OOMPolicy=continue"]
+    return words
+
+
+def _cli_scope_probe(run, argv) -> tuple:
+    """One boot probe: (returncode or None when `run` raised, the first line of stderr or the
+    exception's text). Bounded like the scope verdict's probe; never raises."""
+    try:
+        r = run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=CLI_SCOPE_PROBE_TIMEOUT)
+    except Exception as e:      # timeout, a missing binary, anything else
+        return None, str(e)
+    err = r.stderr or b""
+    err = err.decode("utf-8", "replace") if isinstance(err, bytes) else str(err)
+    err = err.strip()
+    return r.returncode, err.split("\n", 1)[0].strip() if err else ""
+
+
+def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None]:
+    """The boot probe behind cli_scope_limits: does THIS box take the values the syntax passed? Each
+    of the wrapper's own steps, run once here so a refusal that would otherwise repeat on every launch
+    (one `ignored:` line and one problem each, while the boot log and /api-health called the value in
+    force) is settled once, lands in `rejected`, and goes down to the wrapper empty:
+      * the memory properties, on a probe scope (`systemd-run … -p … -- true`), with the wrapper's own
+        retry chain: a failure is retried bare, a bare pass is followed by one more try with the
+        properties, and only that second failure rejects them, quoting the deciding failure. A bare
+        failure too means the bus is away (the scope verdict is moments old): nothing is settled, one
+        plain line says so, and the wrapper reports per launch (its fallback line);
+      * the memory controller, inside a probe scope carrying the properties (CLI_SCOPE_MEMORY_PROBE_CMD),
+        since systemd accepts the properties from a user manager without the controller and applies
+        nothing. A missing memory.max there is a problem line; the values stay in `in_force` (they are
+        set, and systemd holds them) and the verdict rides /api-health as memoryControllerDelegated;
+      * the adjustment, written by a throwaway child (CLI_SCOPE_ADJ_PROBE_CMD): a failed write is the
+        floor (a value below the user manager's own oom_score_adj), and rejects it.
+    Returns (rejected: variable → value, memory_delegated: True/False, None when not settled). `run` is
+    subprocess.run or a stand-in; `log`, when given, takes (message, problem=bool)."""
+    rejected, delegated = {}, None
+    props = _cli_scope_props(in_force)
+    if props:
+        base = CLI_SCOPE_PROBE[:-2]
+        rc, err = _cli_scope_probe(run, base + props + ["--", "true"])
+        if rc != 0:
+            bare_rc, bare_err = _cli_scope_probe(run, CLI_SCOPE_PROBE)
+            if bare_rc != 0:
+                rc = None
+                if log:
+                    log("cli scope: the per-session memory limits could not be settled at start — a probe scope "
+                        "with them failed (%s) and so did one without (%s); the values stand as read, and the "
+                        "wrapper reports each launch" % (err or "no detail", bare_err or "no detail"))
+            else:
+                rc, err = _cli_scope_probe(run, base + props + ["--", "true"])
+        if rc is not None and rc != 0:
+            for var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
+                if key in CLI_SCOPE_MEMORY_PROPS and key in in_force:
+                    rejected[var] = in_force[key]
+            if log:
+                log("cli scope: systemd-run rejected the per-session memory limits (%s: %s) — not applied; "
+                    "sessions run in their scopes without them (OOMPolicy= on scopes needs systemd 253)"
+                    % (" ".join(props), err or "no detail"), problem=True)
+        elif rc == 0:
+            d_rc, d_err = _cli_scope_probe(run, base + props + ["--"] + CLI_SCOPE_MEMORY_PROBE_CMD)
+            if d_rc is None:
+                if log:
+                    log("cli scope: the memory-controller check could not run (%s); whether the memory limits "
+                        "apply is unknown" % (d_err or "no detail"))
+            else:
+                delegated = d_rc == 0
+                if not delegated and log:
+                    log("cli scope: the memory controller is not delegated to the systemd user manager — systemd "
+                        "accepts the memory limits (%s) and applies nothing; a probe scope had no memory.max in "
+                        "its cgroup. `systemctl show user@$(id -u).service -p DelegateControllers` should list "
+                        "memory" % " ".join(props), problem=True)
+    adj = in_force.get("oomScoreAdj")
+    if adj is not None:
+        a_rc, a_err = _cli_scope_probe(run, CLI_SCOPE_ADJ_PROBE_CMD + [adj])
+        if a_rc is None:
+            if log:
+                log("cli scope: the oom_score_adj check could not run (%s); ROMP_CLI_SCOPE_OOM_SCORE_ADJ=%s stands "
+                    "as read, and the wrapper reports each launch" % (a_err or "no detail", adj))
+        elif a_rc != 0:
+            rejected["ROMP_CLI_SCOPE_OOM_SCORE_ADJ"] = adj
+            if log:
+                log("cli scope: ROMP_CLI_SCOPE_OOM_SCORE_ADJ=%s cannot be written by this process — a value below "
+                    "the systemd user manager's own oom_score_adj (the floor every process under it inherits; "
+                    "100 on a stock box) needs a privilege it does not have — not applied; sessions run in their "
+                    "scopes without it" % adj, problem=True)
+    return rejected, delegated
+
+
+def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[dict, dict, bool | None]:
+    """The per-session limits (CLI_SCOPE_LIMITS) from `environ` (the manager's environment): a triple
+    (in_force, rejected, memory_delegated). `in_force` maps each set variable's /api-health key to its
+    value, as the string the wrapper receives; `rejected` maps each variable whose value is refused to
+    that value — such a variable is handed to the wrapper EMPTY (so a bad value in the manager's
+    environment never reaches it) and is logged once, as a problem naming the variable and the reason.
+    An unset or empty variable is neither. Two kinds of refusal: a value that fails its rule (the
+    syntax; pure, checked on every OS), and — with `run` given (subprocess.run or a stand-in) and the
+    scopes on — a value this box refuses (_cli_scope_settle): memory properties systemd rejects, an
+    adjustment below the inherited floor. `memory_delegated` is that probe's verdict on the memory
+    controller (True/False), None when it did not run or could not be settled. `log`, when given, takes
+    (message, problem=bool); the in-force line comes last, after every refusal, and with `scope_on`
+    false says the limits apply to nothing, since no scope is started for them to apply to. Without
+    `run` the check is the syntax alone, so the rules are testable on any OS."""
     env = os.environ if environ is None else environ
     in_force, rejected = {}, {}
     for var, key, ok, rule, _typ in CLI_SCOPE_LIMITS:
@@ -159,14 +287,23 @@ def cli_scope_limits(environ=None, log=None, scope_on=True) -> tuple[dict, dict]
             if log:
                 log("cli scope: %s=%r is not %s — not applied; sessions run in their scopes without that "
                     "limit" % (var, v, rule), problem=True)
+    delegated = None
+    if in_force and scope_on and run is not None:
+        refused, delegated = _cli_scope_settle(in_force, run, log)
+        for var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
+            if var in refused:
+                rejected[var] = in_force.pop(key)
     if in_force and log:
         listed = " ".join("%s=%s" % (k, v) for k, v in in_force.items())
-        if scope_on:
-            log("cli scope: per-session limits in force — %s" % listed)
-        else:
+        if not scope_on:
             log("cli scope: per-session limits are set (%s) but the scopes are off, so they apply to nothing"
                 % listed)
-    return in_force, rejected
+        elif delegated is False:
+            log("cli scope: per-session limits set — %s; the memory limits among them apply to nothing until "
+                "the memory controller is delegated to the user manager" % listed)
+        else:
+            log("cli scope: per-session limits in force — %s" % listed)
+    return in_force, rejected, delegated
 
 
 def cli_scope_wrapper() -> str:
@@ -6105,10 +6242,14 @@ class SdkBackend:
         self.cli_scope_fallbacks = 0
         self.cli_scope_fallback_at: float | None = None
         # The per-session limits (cli_scope_limits): the values the wrapper applies, keyed as /api-health
-        # reports them, and the variables refused (each logged once, as a problem, in there). Read once
-        # per backend, like the verdict; _options hands them down at every connect. `cli_scope_ignored`
-        # counts the wrapper's `ignored:` lines since boot (_note_cli_scope_ignored).
-        self.cli_scope_limits, self.cli_scope_rejected = cli_scope_limits(log=self._log, scope_on=self.cli_scope)
+        # reports them; the variables refused (each logged once, as a problem, in there) — by their rule,
+        # or by this box, which the boot probe settles once here (subprocess.run, with the scopes on) so
+        # the wrapper does not report the same refusal on every launch; and the probe's verdict on the
+        # memory controller (None when it did not run). Read once per backend, like the verdict; _options
+        # hands them down at every connect. `cli_scope_ignored` counts the wrapper's `ignored:` lines
+        # since boot (_note_cli_scope_ignored).
+        self.cli_scope_limits, self.cli_scope_rejected, self.cli_scope_memory_delegated = cli_scope_limits(
+            log=self._log, scope_on=self.cli_scope, run=subprocess.run)
         self.cli_scope_ignored = 0
         self._heal_attempts: dict[str, int] = {}  # sid -> crash-resume attempts since its last COMPLETED turn
         #                                           (bounds _heal_cut_session to one resume per cut; a completed
@@ -7243,13 +7384,16 @@ class SdkBackend:
         # afterwards — CLI launches the wrapper reported running without a scope (_note_cli_scope_fallback).
         # Plus the per-session limits (cli_scope_limits): each /api-health key carries the value in force
         # — null when unset, refused, or when the scopes are off (nothing is started for a limit to apply
-        # to); `rejected` names the variables whose values failed their rule; `limitsIgnored` counts the
-        # wrapper's `ignored:` lines since boot (_note_cli_scope_ignored).
+        # to); `rejected` names the variables whose values were refused, by their rule or by this box at
+        # the boot probe; `memoryControllerDelegated` is the boot probe's verdict on the memory controller
+        # (null when no memory limit is set, the scopes are off, or it could not be settled); `limitsIgnored`
+        # counts the wrapper's `ignored:` lines since boot (_note_cli_scope_ignored) — lines, not launches.
         with self._lock:
             n, at, ign = self.cli_scope_fallbacks, self.cli_scope_fallback_at, self.cli_scope_ignored
         out["cliScope"] = {"on": bool(self.cli_scope), "fallbacks": n,
                            "lastFallbackAt": int(at) if at else None,
-                           "limitsIgnored": ign, "rejected": sorted(self.cli_scope_rejected)}
+                           "limitsIgnored": ign, "rejected": sorted(self.cli_scope_rejected),
+                           "memoryControllerDelegated": self.cli_scope_memory_delegated if self.cli_scope else None}
         for _var, key, _ok, _rule, typ in CLI_SCOPE_LIMITS:
             v = self.cli_scope_limits.get(key) if self.cli_scope else None
             out["cliScope"][key] = typ(v) if v is not None else None
@@ -7328,12 +7472,17 @@ class SdkBackend:
             if os.access(wrapper, os.X_OK):
                 kw["cli_path"] = wrapper
                 kw["env"]["ROMP_CLI_REAL"] = self.claude_bin
-                # The per-session limits (cli_scope_limits): every variable goes down explicitly — the
-                # vetted value, or EMPTY for one unset or refused. options.env merges over the manager's
-                # environment, which is where a refused value came from; sent down empty, the wrapper
-                # reads it as unset and reports nothing a second time (the boot log has it).
+                # The per-session limits (cli_scope_limits): a vetted value goes down as itself; a refused
+                # one goes down EMPTY — options.env merges over the manager's environment, which is where
+                # the refused value came from, and empty reads as unset to the wrapper, which then reports
+                # nothing a second time (the boot log has it). An unset variable is not sent at all: there
+                # is nothing to mask, and a session's environment is then what it was before the limits
+                # existed (a review found all four names set-empty in every tool shell, 2026-09-06).
                 for var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
-                    kw["env"][var] = self.cli_scope_limits.get(key, "")
+                    if key in self.cli_scope_limits:
+                        kw["env"][var] = self.cli_scope_limits[key]
+                    elif var in self.cli_scope_rejected:
+                        kw["env"][var] = ""
             elif not self._cli_scope_wrapper_logged:
                 self._cli_scope_wrapper_logged = True
                 self._log("cli scope: the wrapper %s is missing or not executable (a packaging bug) — "
