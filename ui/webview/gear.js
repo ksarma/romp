@@ -1147,6 +1147,7 @@ function initGear(post) {
       // so a fast session's real draw is HIGHER than the estimate (the user 2026-08-08 asked that the gap
       // be written down where someone would meet it).
       + (raCost() ? (led ? ' · session $ is the CLI\'s own per-turn cost' + (led.since ? ' (ledger since ' + led.since + ')' : '')
+                             + (led.preFix ? '; includes days recorded before the per-turn fix' : '')
                          : ' · session $ estimated from token prices; fast mode draws more than shown') : ''); }
   function raFetch() { raState.loading = true; raRender();
     fetch(ku('/analytics?window=' + raState.window), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) { raState.loading = false; raState.data = d; raRender(); }).catch(function () { raState.loading = false; raChart.innerHTML = '<div class=ra-empty>analytics unavailable</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; }); }

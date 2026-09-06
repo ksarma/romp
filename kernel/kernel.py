@@ -27382,6 +27382,20 @@ def _spend_recorded_at():
         return None
 
 
+# Day buckets dated before this were recorded by a recorder that folded the CLI's CUMULATIVE
+# total_cost_usd raw on every result — each turn re-added the whole session-so-far — until the per-turn
+# delta fold landed (2026-08-08/09; the buckets for 08-07..08-09 carry the inflation). The ledger keeps
+# those buckets as recorded (the user's data is never rewritten), and every reading that sums one says
+# so: the window carries `preFix: True` and the rail's hover names it (2026-09-05). Applied at READ
+# time, so the flag needs no migration and follows the buckets out of the 90-day ledger on its own.
+SPEND_PRE_FIX_DATE = "2026-08-10"
+
+
+def _spend_pre_fix(key):
+    """True for a day ("%Y-%m-%d") or hour ("%Y-%m-%dT%H") bucket key dated before the per-turn fix."""
+    return isinstance(key, str) and key[:10] < SPEND_PRE_FIX_DATE
+
+
 def _spend_windows(keyed_only=False):
     """API-mode usage windows MIRRORING the subscription bars (the user 2026-08-04, who wanted the two
     auth modes to read identically at a glance): rolling 5h and 7d summed from spend.json's hour
@@ -27401,10 +27415,14 @@ def _spend_windows(keyed_only=False):
     days = d.get("days") if isinstance(d.get("days"), dict) else {}
     hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
 
-    def _sum(entries):
+    def _sum(items):
+        """Sum (bucket key, bucket) pairs; a window that folds a bucket dated before the per-turn fix
+        says so (`preFix`, see SPEND_PRE_FIX_DATE) — the figure stays as recorded."""
         out = {"usd": 0.0, "tok": 0, "turns": 0}
-        for e in entries:
+        for k, e in items:
             if isinstance(e, dict):
+                if _spend_pre_fix(k):
+                    out["preFix"] = True
                 if keyed_only:
                     e = e.get("key") if isinstance(e.get("key"), dict) else {}
                     out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
@@ -27420,7 +27438,7 @@ def _spend_windows(keyed_only=False):
 
     def _rolling(hrs):
         keys = {time.strftime("%Y-%m-%dT%H", time.localtime(now - i * 3600)) for i in range(hrs + 1)}
-        return _sum(v for k, v in hours.items() if k in keys)
+        return _sum((k, v) for k, v in hours.items() if k in keys)
 
     def _rolling_days(n):
         # the recorder keys day buckets by LOCAL date — build the key set as DATES, not seconds (T235b,
@@ -27430,7 +27448,7 @@ def _spend_windows(keyed_only=False):
         # keeps "the last n local dates through today" exact on every host regardless of its zone.
         today = datetime.fromtimestamp(now).date()
         keys = {(today - timedelta(days=i)).isoformat() for i in range(n + 1)}
-        return _sum(v for k, v in days.items() if k in keys), keys
+        return _sum((k, v) for k, v in days.items() if k in keys), keys
 
     month = time.strftime("%Y-%m", time.localtime(now))   # explicit clock: the frozen-clock tests govern it
     # day/week are the API-key cell's windows (the user 2026-08-13: pay-per-token has no reset windows,
@@ -27449,7 +27467,7 @@ def _spend_windows(keyed_only=False):
            "hour": _rolling(1),   # the last hour, same rolling bucket math as day (the user 2026-08-15)
            "day": _rolling(24), "week": _rolling(7 * 24),
            "month": rolling_month,
-           "monthToDate": _sum(v for k, v in days.items() if isinstance(k, str) and k.startswith(month))}
+           "monthToDate": _sum((k, v) for k, v in days.items() if isinstance(k, str) and k.startswith(month))}
     oldest = min((k for k in days if isinstance(k, str) and len(k) == 10), default=None)
     if oldest and oldest > min(month_keys):
         win["month"]["since"] = oldest          # the ledger is younger than the window — say how far it reaches
@@ -28516,6 +28534,8 @@ def _spend_ledger_window(now, window):
         e = buckets.get(k)
         if not isinstance(e, dict):
             continue
+        if _spend_pre_fix(k):
+            out["preFix"] = True   # a bucket from before the per-turn fix is in this sum (see the constant)
         out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
         out["turns"] += int(e.get("turns") or 0)
         out["tok"] += sum(int(e.get(kk) or 0) for kk in ("tokIn", "tokOut", "tokCacheR", "tokCacheW"))
@@ -34125,7 +34145,8 @@ if(legacy){det._spendLegacyMonth=true;}
 SPEND_WINS.forEach(function(w){var k=w[0];if(legacy&&k==='monthToDate')k='month';else if(legacy&&k==='month')return;
 var seg=sp[k];if(!seg||typeof seg.usd!=='number')return;
 var row=(det._spend=det._spend||{})[w[0]]={label:w[1],usd:seg.usd,tok:seg.tok||0,turns:seg.turns||0};
-if(w[0]==='month'&&typeof seg.since==='string')row.since=seg.since;});   // a ledger younger than the window says so
+if(w[0]==='month'&&typeof seg.since==='string')row.since=seg.since;   // a ledger younger than the window says so
+if(seg.preFix)row.preFix=true;});   // the window folds a day recorded before the per-turn fix (inflated as recorded)
 if(u.spendSeries&&u.spendSeries.usd)det._spendSeries=u.spendSeries;}   // $/hour, for the hover graph (the user 2026-08-13)
 // One payload's WINDOW detail for the hover (used/elapsed/reset per window). Detail only, no markup:
 // the rail no longer draws each account's own bars (they aggregate, below), but the tip still tells
@@ -34324,6 +34345,7 @@ if(sp.week&&typeof sp.week.usd==='number')per.push({host:e.host,usd:sp.week.usd}
 SPEND_WINS.forEach(function(w){var v=sp[w[0]];if(!v)return;
 var t=(sum[w[0]]=sum[w[0]]||{label:w[1],usd:0,tok:0,turns:0});
 t.usd+=v.usd;t.tok+=v.tok;t.turns+=v.turns;
+if(v.preFix)t.preFix=true;   // any host's pre-fix day in the sum marks the summed row
 if(v.since&&(!t.since||v.since>t.since))t.since=v.since;});   // the YOUNGEST ledger bounds the sum (T235b): it is complete only from there
 if(e.det._spendLegacyMonth)legacyN++;
 var ss=e.det._spendSeries;
@@ -34343,6 +34365,9 @@ var h='<div class="ru-tip-win ru-tip-fleetspend"><div class=ru-tip-name><span>AP
 var lab=v.label;
 if(k==='month'&&v.since)lab+=' \u00b7 complete since '+esc(v.since);
 if(k==='month'&&legacyN)lab+=' \u00b7 '+legacyN+' machine'+(legacyN>1?'s':'')+' not counted (older build)';
+// days before the per-turn fix were recorded inflated (each result re-added the session so far) and
+// are kept as recorded; a window that folds one says so instead of reading as a clean figure
+if(v.preFix)lab+=' \u00b7 includes days recorded before the per-turn fix';
 return '<div class=ru-tip-row><span class=ru-tip-k>'+lab+'</span>'
 +'<span class=ru-tip-v>'+fmtUsd(v.usd)+' \u00b7 '+fmtTok(v.tok)+' tok \u00b7 '+(v.turns||0)+' turns</span></div>';}).join('');
 // every machine in the sum, BY NAME (the user 2026-08-13: a host with no login \u2014 the devbox \u2014 vanished

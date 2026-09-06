@@ -327,8 +327,11 @@ class TokenAnalytics(unittest.TestCase):
         1.55x that over a day). Hour buckets for a window inside the 8-day hour ledger, day buckets
         beyond; a ledger that starts inside the window says `since`."""
         jd.discover = lambda now, window=None, forks=True: []
-        hk = lambda n: time.strftime("%Y-%m-%dT%H", time.localtime(NOW - n * 3600))
-        dk = lambda n: (datetime.fromtimestamp(NOW).date() - timedelta(days=n)).isoformat()
+        # a clock AFTER the per-turn fix (NOW is June 2026, before it): the ledger's `preFix` caveat is
+        # exercised on its own below, with one deliberately old bucket
+        later = time.mktime((2026, 10, 15, 12, 0, 0, 0, 0, -1))
+        hk = lambda n: time.strftime("%Y-%m-%dT%H", time.localtime(later - n * 3600))
+        dk = lambda n: (datetime.fromtimestamp(later).date() - timedelta(days=n)).isoformat()
         hours = {hk(0): {"usd": 1.5, "turns": 2, "tokIn": 10, "tokCacheR": 90},
                  hk(1): {"usd": 2.0, "turns": 1, "tokOut": 5},
                  hk(5): {"usd": 100.0, "turns": 9}}                        # outside a 1h window
@@ -336,24 +339,32 @@ class TokenAnalytics(unittest.TestCase):
                 dk(20): {"usd": 40.0, "turns": 7, "tokIn": 1000},
                 dk(45): {"usd": 999.0, "turns": 1}}                          # outside a 30d window
         (jd.STATE / "spend.json").write_text(json.dumps({"days": days, "hours": hours}))
-        a = km._token_analytics(NOW, 3600)
+        a = km._token_analytics(later, 3600)
         self.assertEqual(a["sessions"]["ledger"], {"usd": 3.5, "turns": 3, "tok": 105},
                          "this hour + the previous one, the rail's rolling math")
         km._ANALYTICS_MEMO.clear()
-        a = km._token_analytics(NOW, 30 * 86400)
+        a = km._token_analytics(later, 30 * 86400)
         self.assertEqual(a["sessions"]["ledger"], {"usd": 43.5, "turns": 10, "tok": 1105},
                          "a 30-day window reads the day ledger and leaves the 45-day-old bucket out")
         # a ledger younger than the window names how far back it reaches
         km._ANALYTICS_MEMO.clear()
         (jd.STATE / "spend.json").write_text(json.dumps({"days": {dk(0): days[dk(0)], dk(20): days[dk(20)]}, "hours": hours}))
-        self.assertEqual(km._token_analytics(NOW, 30 * 86400)["sessions"]["ledger"]["since"], dk(20))
+        self.assertEqual(km._token_analytics(later, 30 * 86400)["sessions"]["ledger"]["since"], dk(20))
         km._ANALYTICS_MEMO.clear()
-        self.assertNotIn("since", km._token_analytics(NOW, 3600)["sessions"]["ledger"],
+        self.assertNotIn("since", km._token_analytics(later, 3600)["sessions"]["ledger"],
                          "hour buckets older than the window exist → no caveat")
+        # a day recorded before the per-turn fix inside the window flags the sum (kept as recorded)
+        km._ANALYTICS_MEMO.clear()
+        aug = time.mktime((2026, 8, 20, 12, 0, 0, 0, 0, -1))
+        adk = lambda n: (datetime.fromtimestamp(aug).date() - timedelta(days=n)).isoformat()
+        (jd.STATE / "spend.json").write_text(json.dumps({"days": {adk(0): {"usd": 1.0, "turns": 1},
+                                                                  adk(12): {"usd": 500.0, "turns": 4}}, "hours": {}}))
+        led = km._token_analytics(aug, 30 * 86400)["sessions"]["ledger"]
+        self.assertEqual((led["usd"], led["preFix"]), (501.0, True), "2026-08-08 is before the fix → flagged, not dropped")
         # an empty ledger is no ledger
         km._ANALYTICS_MEMO.clear()
         (jd.STATE / "spend.json").write_text(json.dumps({"days": {}, "hours": {}}))
-        self.assertNotIn("ledger", km._token_analytics(NOW, 3600)["sessions"])
+        self.assertNotIn("ledger", km._token_analytics(later, 3600)["sessions"])
 
 
 class CostWeighting(unittest.TestCase):

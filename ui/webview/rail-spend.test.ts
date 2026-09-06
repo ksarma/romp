@@ -239,6 +239,21 @@ test("the cost view shows the CLI's own cost where the ledger reaches, and calls
   assert.match(KERNEL, /"claude-fable-5-1":\s+\{"in": 10e-6, "out": 50e-6, "cache_w": 12\.5e-6, "cache_r": 0\.25e-6\}/);
 });
 
+// Day buckets from before the per-turn delta fix (2026-08-07..09) hold inflated figures — each result
+// re-added the whole session so far. They stay in the ledger as recorded (never rewritten), and every
+// window that folds one says so: the kernel flags the window at read time, the hover names it on the
+// row, and the analytics footnote carries the same words when its ledger figure includes such a day.
+test("windows that fold a pre-fix day say so, on the rail's hover and in the analytics footnote", () => {
+  assert.match(KERNEL, /SPEND_PRE_FIX_DATE = "2026-08-10"/);
+  assert.match(KERNEL, /def _spend_pre_fix\(key\):/);
+  assert.match(KERNEL, /if _spend_pre_fix\(k\):\s+out\["preFix"\] = True/, "flagged at read time, in both the windows and the ledger sum");
+  assert.match(KERNEL, /if\(seg\.preFix\)row\.preFix=true;/, "spendDet carries the flag per window");
+  assert.match(KERNEL, /if\(v\.preFix\)t\.preFix=true;/, "any host's pre-fix day marks the summed row");
+  assert.match(KERNEL, /if\(v\.preFix\)lab\+=' \\u00b7 includes days recorded before the per-turn fix';/);
+  const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
+  assert.match(GEAR, /led\.preFix \? '; includes days recorded before the per-turn fix' : ''/);
+});
+
 test("the price table records the fast-mode gap for whoever maintains it", () => {
   const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
   assert.match(KERNEL, /KNOWN GAP — fast mode is not priced here/);

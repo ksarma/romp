@@ -98,6 +98,28 @@ class SpendWindows(unittest.TestCase):
         self.assertEqual(w["month"], {"usd": 0.0, "tok": 0, "turns": 0})
         self.assertEqual(w["monthToDate"], {"usd": 0.0, "tok": 0, "turns": 0})
 
+    def test_a_window_that_folds_a_day_recorded_before_the_per_turn_fix_says_so(self):
+        """Day buckets before 2026-08-10 were recorded by the raw fold (each result re-added the whole
+        session so far) and are inflated. They stay as recorded — never rewritten or dropped — and a
+        window that sums one carries `preFix`, applied at read time (no migration; the flag leaves with
+        the buckets as the 90-day ledger ages them out). FROZEN is 2026-09-03, so the rolling month
+        reaches back to 08-04 and folds the 08-04..08-09 days; the calendar month does not."""
+        days = {_day(n): self._bucket(1.0) for n in range(35)}   # 2026-07-30 .. 09-03
+        self._ledger(days, {_hour(n): self._bucket(1.0) for n in range(3)})
+        w = km._spend_windows()
+        self.assertTrue(w["month"].get("preFix"), "the rolling month folds pre-fix days")
+        self.assertEqual(w["month"]["usd"], 31.0, "…and its figure is exactly what was recorded")
+        for k in ("hour", "day", "week", "monthToDate"):
+            self.assertNotIn("preFix", w[k], k + " holds no pre-fix bucket")
+        self.assertTrue(km._spend_windows(keyed_only=True)["month"].get("preFix"), "the keyed split says it too")
+        # a ledger that starts after the fix carries no flag anywhere
+        self._ledger({_day(n): self._bucket(1.0) for n in range(20)}, {})
+        self.assertFalse(any("preFix" in v for v in km._spend_windows().values()))
+        self.assertTrue(km._spend_pre_fix("2026-08-09"))
+        self.assertTrue(km._spend_pre_fix("2026-08-09T23"), "hour keys compare on their date")
+        self.assertFalse(km._spend_pre_fix("2026-08-10"))
+        self.assertFalse(km._spend_pre_fix(None))
+
 
 
 class RollingMonthAcrossDst(SpendWindows):
@@ -154,6 +176,12 @@ class DisplayCaveatsFollowTheData(unittest.TestCase):
         cell = self.JS[self.JS.index("function apiCellHTML"):self.JS.index("// The collapsed rail is the AGGREGATE story")]
         self.assertIn("_spendLegacyMonth", cell, "the cell counts the hosts whose month it cannot fold in")
         self.assertIn("var monthCav=legacyN>0;", cell, "…and the month segment wears the caveat glyph (no native title — the rich tip explains)")
+
+    def test_the_hover_names_a_window_that_folds_pre_fix_days(self):
+        self.assertIn("if(seg.preFix)row.preFix=true;", self.JS, "spendDet carries the kernel's read-time flag per window")
+        self.assertIn("if(v.preFix)t.preFix=true;", self.JS, "one host's pre-fix day marks the summed row")
+        self.assertIn("if(v.preFix)lab+=' \\u00b7 includes days recorded before the per-turn fix';", self.JS,
+                      "the row says it in words, beside the since/older-build caveats")
 
 
 if __name__ == "__main__":
