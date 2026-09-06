@@ -1174,8 +1174,8 @@ kernel; `docs/install.md` names the tooling the installer links into `~/.claude/
 `SECURITY.md`'s output-sanitization bullet names the PDF renderer (pdf.js parsing on the
 dashboard's origin, in a Worker, with pixels as its only sink, as Security posture states it),
 and the `pdf-chunk.ts` header says the same in a sentence, so a session upgrading pdfjs-dist
-reads the boundary where it edits. The slice's merge carried neither (its review, 2026-09-06):
-the bullet landed with the review's fixes; the `pdf-chunk.ts` header is not yet landed.
+reads the boundary where it edits. The slice's merge carried neither (its review, 2026-09-06);
+both landed with the review's fixes.
 `ui/webview/file-review-docs.test.ts` holds this paragraph to the two files: an item it calls not
 yet landed must be absent from its file and every other present, so the paragraph and the files
 move together.
