@@ -15,7 +15,10 @@
 
 ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 
+load git-hermetic
+
 setup() {
+    git_hermetic
     command -v gitleaks >/dev/null || skip "gitleaks not installed"
     TEST_DIR="$(mktemp -d)"
     CFG="$ROMP_DIR/.gitleaks.toml"
