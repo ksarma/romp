@@ -269,7 +269,7 @@ class CourierEpisodeFloor(unittest.TestCase):
         jd.courier_llm = lambda *a, **k: self.calls.append(1) or '{"verdict": "delegating", "goal": 0, "text": "x"}'
         jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         jd._discover_cache.clear()
-        jd._postal_from_memo["key"] = None
+        jd._postal_from_memo[0] = (None, {})
         # the marker rides the comment-wrapped wire form (see test_courier_origin_host)
         recs = [uline(self.T0, "what subnet is the new box on?\n<!-- romp-msg-id: %s -->" % self.MID, "u1"),
                 aline(self.T0 + 30, "It's on the flat /24.", "a1", "u1")]
@@ -279,7 +279,7 @@ class CourierEpisodeFloor(unittest.TestCase):
     def tearDown(self):
         (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.CAPDIR, jd.ARCHDIR, jd.PCACHE,
          jd.MESSAGES, jd.ERRORS, jd.EPIDIR, jd.courier_llm) = self.saved
-        jd._postal_from_memo["key"] = None
+        jd._postal_from_memo[0] = (None, {})
         jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         jd._discover_cache.clear()
         self.td.cleanup()

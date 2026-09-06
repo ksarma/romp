@@ -86,12 +86,12 @@ class CourierKindDemoteOnly(unittest.TestCase):
         jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         jd._discover_cache["fp"] = None
         jd._discover_cache["result"] = None
-        jd._postal_from_memo["key"] = None
+        jd._postal_from_memo[0] = (None, {})
 
     def tearDown(self):
         (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.CAPDIR, jd.ARCHDIR, jd.PCACHE,
          jd.MESSAGES, jd.ERRORS, jd.courier_llm) = self.saved
-        jd._postal_from_memo["key"] = None
+        jd._postal_from_memo[0] = (None, {})
         self.td.cleanup()
 
     def _deliver(self, kind):

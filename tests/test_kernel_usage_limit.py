@@ -306,12 +306,12 @@ class JudgeFailureBanner(unittest.TestCase):
         jd.STATE = Path(self.td.name)
         jd.GOALDIR = jd.STATE / "goals"
         self._u, self._jf = km._usage, km._judge_failures
-        km._jf_cache["fp"] = None; km._jf_cache["val"] = None
+        km._jf_cache[0] = (None, None)
 
     def tearDown(self):
         jd.STATE, jd.GOALDIR = self.saved
         km._usage, km._judge_failures = self._u, self._jf
-        km._jf_cache["fp"] = None; km._jf_cache["val"] = None
+        km._jf_cache[0] = (None, None)
         self.td.cleanup()
 
     def test_usage_for_client_attaches_judge_failures(self):

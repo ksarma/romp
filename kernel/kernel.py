@@ -1388,6 +1388,10 @@ _learned_announced = set()   # ids already announced on stderr as outside the ca
 # high-water mark a LOWER rev, or that page would ignore every re-read until the count caught up — a silent
 # stale list. Milliseconds leave room for one bump per ms across a restart.
 _models_rev = [int(time.time() * 1000)]
+_COUNTER_LOCK = threading.Lock()   # the small read-modify-write counters (`x[0] += 1`, `d[k] += 1`: this one,
+#                                    _nonce, _POSTAL_UNRESOLVED, _DRAIN_REFUSED) are three bytecodes each; two
+#                                    threads lose an increment, and the counts are asserted exact (the
+#                                    2026-09-06 free-threading review). Held for the increment only.
 
 # ── the LIVE model catalog (T222, the user 2026-09-01: romp must stop needing a hand edit when
 # Anthropic ships a model). The table above is the SEED and the loud fallback. The kernel queries the
@@ -1882,7 +1886,8 @@ def _models_changed():
     rail gear and VS Code's settings command both open it in the feed pane). The feed shim and the VS Code
     pipe hand every non-keepalive frame to the window as a message; feed.ts's own listener ignores a type
     it does not know."""
-    _models_rev[0] += 1
+    with _COUNTER_LOCK:
+        _models_rev[0] += 1
     frame = {"type": "models", "rev": _models_rev[0]}
     for app in ("chat", "timeline", "feed"):
         _send_to_app(app, frame)
@@ -4310,7 +4315,11 @@ def _forward_tag_edit(host, body):
 # only on evidence (the cards-move rule): the remote copy is fetched fresh at apply time, and a
 # same-named tag CREATED there after the ruling (tag ids encode their creation ms) — or the same
 # tag EDITED there after the ruling (the v2 mtime stamp) — is new information and survives, loudly.
-_PENDING_TAG_LOCK = threading.Lock()
+_PENDING_TAG_LOCK = threading.RLock()        # re-entrant: a writer holds it across its whole read-modify-write
+#                                              (below) while the read and the save each take it too. Two lock
+#                                              sections let a second queue land between a caller's read and its
+#                                              save and be overwritten after its client was told "queued" (the
+#                                              2026-09-06 free-threading review, race 9).
 _PENDING_TAG_CACHE = {"rows": None}          # None = not loaded; kept in sync under the lock
 
 
@@ -4362,29 +4371,30 @@ def _queue_pending_tag_edit(host, body):
         return False
     tid = next((str(t.get("id") or "") for t in (cached.get("tags") or [])
                 if isinstance(t, dict) and _tag_name_basis(t.get("name")) == name), "")
-    rows = _pending_tag_rows()
-    same = lambda x: x.get("host") == host and _tag_name_basis(x.get("name")) == name   # a journal from before the basis may hold a padded name
-    mine = [x for x in rows if same(x)]
-    if any(x.get("delete") for x in mine):
-        return True                              # the delete already rules this name; nothing to add
-    row = {"host": host, "name": name, "tagId": tid, "ruledAt": int(time.time()), "at": int(time.time())}
-    if body.get("delete"):
-        rows = [x for x in rows if not same(x)]
-        row["delete"] = True
-    else:
-        if isinstance(body.get("rename"), str) and body["rename"].strip():
-            row["rename"] = body["rename"]
-            rows = [x for x in rows if not (same(x) and x.get("rename"))]
-        if isinstance(body.get("remove"), list) and body.get("remove"):
-            merged = []
-            for x in mine:
-                if x.get("remove") and not x.get("rename"):
-                    merged += [m for m in x["remove"] if m not in merged]
-                    rows = [y for y in rows if y is not x]
-            row["remove"] = merged + [m for m in body["remove"] if m not in merged]
-            row["tagId"] = row["tagId"] or next((x.get("tagId") or "" for x in mine), "")
-    rows.append(row)
-    _save_pending_tag_rows(rows)
+    with _PENDING_TAG_LOCK:                      # read, coalesce and save as ONE step (see the lock's note)
+        rows = _pending_tag_rows()
+        same = lambda x: x.get("host") == host and _tag_name_basis(x.get("name")) == name   # a journal from before the basis may hold a padded name
+        mine = [x for x in rows if same(x)]
+        if any(x.get("delete") for x in mine):
+            return True                          # the delete already rules this name; nothing to add
+        row = {"host": host, "name": name, "tagId": tid, "ruledAt": int(time.time()), "at": int(time.time())}
+        if body.get("delete"):
+            rows = [x for x in rows if not same(x)]
+            row["delete"] = True
+        else:
+            if isinstance(body.get("rename"), str) and body["rename"].strip():
+                row["rename"] = body["rename"]
+                rows = [x for x in rows if not (same(x) and x.get("rename"))]
+            if isinstance(body.get("remove"), list) and body.get("remove"):
+                merged = []
+                for x in mine:
+                    if x.get("remove") and not x.get("rename"):
+                        merged += [m for m in x["remove"] if m not in merged]
+                        rows = [y for y in rows if y is not x]
+                row["remove"] = merged + [m for m in body["remove"] if m not in merged]
+                row["tagId"] = row["tagId"] or next((x.get("tagId") or "" for x in mine), "")
+        rows.append(row)
+        _save_pending_tag_rows(rows)
     return True
 
 
@@ -4466,8 +4476,9 @@ def _apply_pending_tag_edits(r):
         retired.append(row)                      # a refusal is the host's own answer — terminal
         applied += 1 if ok else 0
     if retired:
-        keep = [x for x in _pending_tag_rows() if x not in retired]
-        _save_pending_tag_rows(keep)
+        with _PENDING_TAG_LOCK:                  # read-filter-save as one step, like the queue side
+            keep = [x for x in _pending_tag_rows() if x not in retired]
+            _save_pending_tag_rows(keep)
         r.pop("_views_at", None)                 # re-read the post-apply truth next pass
         _mark_views_dirty()
     return applied
@@ -12504,7 +12515,27 @@ def _comment_markers(sid):
 # this in-memory park). The typed transient nack keeps the client's optimistic mark alive meanwhile.
 ANCHOR_LAG_ERR = "that message isn't in the transcript yet; try again in a moment"
 _parked_creates = []                       # [{sid,uuid,exact,text,name,model,effort,fast,color,tries}]
+_parked_lock = threading.Lock()            # the list is shared by the pusher's cycle and a connect push on a WS
+#                                            thread: both iterated it and re-ran the same create, and the loser's
+#                                            .remove raised ValueError (the 2026-09-06 free-threading review,
+#                                            race 5). A pass CLAIMS each entry under the lock before acting on it
+#                                            and re-parks under it; the create itself runs unlocked.
 _PARK_MAX_TRIES = 30                       # pusher cycles (~15-90s) — past this the record isn't coming
+
+
+def _park_create(pk):
+    with _parked_lock:
+        _parked_creates.append(pk)
+
+
+def _claim_parked(pk):
+    """Take `pk` off the parked list for this pass; False when another pass already has it."""
+    with _parked_lock:
+        for i, x in enumerate(_parked_creates):
+            if x is pk:
+                del _parked_creates[i]
+                return True
+    return False
 
 
 def _retry_parked_creates():
@@ -12513,16 +12544,22 @@ def _retry_parked_creates():
     chat client (the creating client's socket may be gone — the adopt keys on the uuid, and clients
     without a matching pending simply ignore it). Still lagging → keep, bounded; any OTHER error →
     drop (the client's own attempt cap surfaces the failure honestly)."""
-    if not _parked_creates:
-        return
-    for pk in list(_parked_creates):
+    with _parked_lock:
+        batch = list(_parked_creates)
+    for pk in batch:
+        if not _claim_parked(pk):
+            continue                                  # a concurrent pass owns this one
         pk["tries"] += 1
-        err, tid = _comment_create(pk["sid"], pk["uuid"], pk["exact"], pk["text"], name=pk["name"],
-                                   model=pk["model"], effort=pk["effort"], fast=pk.get("fast", ""),
-                                   color=pk["color"])
+        try:
+            err, tid = _comment_create(pk["sid"], pk["uuid"], pk["exact"], pk["text"], name=pk["name"],
+                                       model=pk["model"], effort=pk["effort"], fast=pk.get("fast", ""),
+                                       color=pk["color"])
+        except Exception:
+            _park_create(pk)                          # not this pass's to lose: the next cycle retries it
+            raise
         if err == ANCHOR_LAG_ERR and pk["tries"] < _PARK_MAX_TRIES:
+            _park_create(pk)
             continue
-        _parked_creates.remove(pk)
         if not err:
             fr = _comments_frame(pk["sid"])
             with _clients_lock:
@@ -13502,6 +13539,10 @@ RETRY_MSG = "retry\n\n<!-- romp-injected -->"
 # sid → the error-record uuid its last retry was sent FOR (the one-retry-per-error-episode gate in the
 # apiRetry route). A new error record = a new episode = one more retry; recovery = no key = no retries.
 _auto_retried = {}
+_auto_retry_lock = threading.Lock()   # _fire_api_retry's episode check-and-stamp: the pusher's tick and a client's
+#                                       apiRetry ask both passed the gate at once and injected two retries (the
+#                                       2026-09-06 free-threading review, race 8). Held for the gate only, never
+#                                       across the send.
 # ...and how long to WAIT before that next episode's retry (the user 2026-07-29, whose usage-limited thread
 # collected a ridiculous number of attempts). One-per-episode alone slows nothing down when every attempt
 # fails instantly: each failure writes a new error record, which is a new episode, so a blocked session
@@ -13603,14 +13644,16 @@ def _fire_api_retry(sid, be, manual=False):
                       or _rerr.get("modelLimit") or _rerr.get("authErr")
                       or _rerr.get("refusal")):
             return
-        if _auto_retried.get(sid) == _rk:
-            return                                        # this episode already got its retry
-        if time.time() < _retry_gate_state(sid)[1]:
-            return                                        # backing off: this outage's next rung isn't due
-    if _rk is not None:
-        if len(_auto_retried) > 256:
-            _auto_retried.clear()
-        _auto_retried[sid] = _rk
+    with _auto_retry_lock:
+        if not manual:
+            if _auto_retried.get(sid) == _rk:
+                return                                    # this episode already got its retry
+            if time.time() < _retry_gate_state(sid)[1]:
+                return                                    # backing off: this outage's next rung isn't due
+        if _rk is not None:
+            if len(_auto_retried) > 256:
+                _auto_retried.clear()
+            _auto_retried[sid] = _rk
     # ALWAYS mark the retry romp-injected → GRAY romp bubble on BOTH backends (the user 2026-06-30): an
     # auto-retry is romp's action, not the human's. Without the marker the SDK retry was authored 'human'
     # (promptSource 'sdk' + sdk_human → blue bubble) AND the planner mis-read each bare "retry" as a user
@@ -14008,7 +14051,7 @@ def _drive(msg, client):
             _push_soon()
     elif t == "interrupt":
         be.interrupt(sid)                                 # Esc/stop AND settle idle (in the backend)
-        _interrupt_clicked[str(sid)] = time.time()        # chip → "interrupting" NOW (event-cleared on settle)
+        _mark_interrupt_clicked(sid)                      # chip → "interrupting" NOW (event-cleared on settle)
         _suppress_session_retry(sid)                      # interrupting a thread STOPS romp's auto-retry into it until a
                                                           # successful turn re-arms (the user 2026-07-06) — the interrupt
                                                           # already aborted any in-flight CLI retry; this stops the relapse
@@ -14300,12 +14343,12 @@ def _drive(msg, client):
             # keeps the client's optimistic mark alive; no toast for plumbing the retry makes moot.
             # Every real refusal stays loud (fail loudly).
             if err == ANCHOR_LAG_ERR:
-                _parked_creates.append({"sid": sid, "uuid": str(msg["uuid"]), "exact": str(msg["exact"]),
-                                        "text": str(msg["text"]), "name": str(msg.get("name") or ""),
-                                        "model": str(msg.get("model") or ""),
-                                        "effort": str(msg.get("effort") or ""),
-                                        "fast": str(msg.get("fast") or ""),
-                                        "color": str(msg.get("color") or ""), "tries": 0})
+                _park_create({"sid": sid, "uuid": str(msg["uuid"]), "exact": str(msg["exact"]),
+                              "text": str(msg["text"]), "name": str(msg.get("name") or ""),
+                              "model": str(msg.get("model") or ""),
+                              "effort": str(msg.get("effort") or ""),
+                              "fast": str(msg.get("fast") or ""),
+                              "color": str(msg.get("color") or ""), "tries": 0})
             else:
                 client["send"](json.dumps({"type": "warn", "text": err}))
             client["send"](json.dumps({"type": "commentCreateFailed", "id": sid,
@@ -15076,18 +15119,19 @@ class TmuxBackend(sb.SessionBackend):
         Matched exactly as sdk_backend.dismiss_echo matches — store key first, else the echo's send time,
         as an OR so a client whose handle came from a different paint still lands. Returns the dismissed
         text (idempotent: None when it's already gone)."""
-        d = _tmux_echo.get(str(sid))
-        if not d:
+        with _tmux_echo_lock:
+            d = _tmux_echo.get(str(sid))
+            if not d:
+                return None
+            for k, a in list(d.items()):
+                if not (a.get("_echo_text") and a.get("dropped")):
+                    continue
+                if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
+                    d.pop(k, None)
+                    if not d:
+                        _tmux_echo.pop(str(sid), None)
+                    return a.get("_echo_text")
             return None
-        for k, a in list(d.items()):
-            if not (a.get("_echo_text") and a.get("dropped")):
-                continue
-            if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
-                d.pop(k, None)
-                if not d:
-                    _tmux_echo.pop(str(sid), None)
-                return a.get("_echo_text")
-        return None
 
     # ask picker — translate a webview action into pane keystrokes (AskDriver); current_ask SCRAPES the pane
     # (the SDK answers its own callback / reads its stored ask instead).
@@ -22347,18 +22391,20 @@ def _hydrate_postal(events, index, sid=None):
                 # build; a repeat is a count, a NEW pair is news.
                 _unres = [m for m in _mids if m not in {c["mid"] for c in cards}]
                 _skey = sid or ev.get("uuid") or "?"
-                _new = [m for m in _unres if (_skey, m) not in _POSTAL_UNRESOLVED["seen"]]
+                with _COUNTER_LOCK:                           # check-and-record as one step across builders
+                    _new = [m for m in _unres if (_skey, m) not in _POSTAL_UNRESOLVED["seen"]]
+                    if _new:
+                        if len(_POSTAL_UNRESOLVED["seen"]) >= _POSTAL_UNRESOLVED_CAP:
+                            _POSTAL_UNRESOLVED["seen"].clear()       # bounded: wrap, re-warn once
+                        _POSTAL_UNRESOLVED["seen"].update((_skey, m) for m in _new)
+                        _POSTAL_UNRESOLVED["warned"] += 1
+                    else:
+                        _POSTAL_UNRESOLVED["suppressed"] += 1
                 if _new:
-                    if len(_POSTAL_UNRESOLVED["seen"]) >= _POSTAL_UNRESOLVED_CAP:
-                        _POSTAL_UNRESOLVED["seen"].clear()           # bounded: wrap, re-warn once
-                    _POSTAL_UNRESOLVED["seen"].update((_skey, m) for m in _new)
-                    _POSTAL_UNRESOLVED["warned"] += 1
                     sys.stderr.write("postal hydrate: %d of %d message id(s) unresolved on %s (%s) - said "
                                      "once per id; repeats are counted on /version postalUnresolved\n"
                                      % (len(ids) - len(cards), len(ids), ev.get("uuid") or "?",
                                         ",".join(_unres)))
-                else:
-                    _POSTAL_UNRESOLVED["suppressed"] += 1
         out.append(ev)
     return out
 
@@ -23710,6 +23756,25 @@ _interrupt_clicked = {}       # sid -> ts; event-cleared the moment the turn is 
 # its own (more precise, event-resolved) modelPending — _model_pending_now ORs the two so a session on
 # either backend, switched from either surface, shows the SAME cue at the SAME moment on both surfaces.
 _model_switch_pending = {}
+_ui_stamp_lock = threading.Lock()   # the three stamps above: a builder's "read the stamp, then pop it once
+#                                     settled" and a fresh click's write race across threads (builders on the
+#                                     pusher and connect pushes, clicks on WS/HTTP handlers), and the pop took
+#                                     the new click's cue with it (the 2026-09-06 free-threading review, race
+#                                     10). A pop retires only the stamp it ruled on; writes take the lock too.
+
+
+def _pop_stamp_if(stamps, sid, seen):
+    """Retire `stamps[sid]` only if it is still the very value the caller ruled on; a newer click stands."""
+    with _ui_stamp_lock:
+        if stamps.get(sid) is seen:
+            stamps.pop(sid, None)
+
+
+def _mark_interrupt_clicked(sid):
+    """An interrupt WE just sent (the stop button, the Ctrl+C relay): the chip reads 'interrupting' from
+    now until the settle — the one writer behind both callers."""
+    with _ui_stamp_lock:
+        _interrupt_clicked[str(sid)] = time.time()
 
 
 def _interrupting(sid, session, now, tm):
@@ -23753,13 +23818,13 @@ def _interrupting(sid, session, now, tm):
     snap_t = (tm or {}).get("snapT")
     if inflight is not None and not (snap_t is not None and snap_t < t0):
         if not inflight or now - t0 > 120:
-            _interrupt_clicked.pop(sid, None)
+            _pop_stamp_if(_interrupt_clicked, sid, t0)
             return False
         return True
     landed = any(em.is_interrupt_record(a) and (a.get("t") or 0) >= int(t0)
                  for turn in session.get("turns", []) for a in turn.get("atoms") or [])
     if landed or now - t0 > 120:
-        _interrupt_clicked.pop(sid, None)
+        _pop_stamp_if(_interrupt_clicked, sid, t0)
         return False
     return True
 
@@ -23783,7 +23848,8 @@ def _mark_model_pending(sid, value):
     NOW (mirrors _mark_compacting), so both the chat statusline and the timeline lane's dots appear at the
     same instant regardless of which UI's click fired."""
     if sid:
-        _model_switch_pending[sid] = {"target": value, "until": time.time() + 20}
+        with _ui_stamp_lock:
+            _model_switch_pending[sid] = {"target": value, "until": time.time() + 20}
         _mark_views_dirty()           # the stamp lives in memory — the timeline's dots need a dirty rebuild
 
 
@@ -23798,7 +23864,7 @@ def _model_pending_now(sid, tm):
     if not p:
         return False
     if _alias_reflects((tm or {}).get("model") or "", p["target"]) or time.time() > p["until"]:
-        _model_switch_pending.pop(sid, None)
+        _pop_stamp_if(_model_switch_pending, sid, p)
         return False
     return True
 # Dead-lane dismissals (the user 2026-07-02; DURABLE since 2026-08-14): a DEAD session lingers in the
@@ -23853,7 +23919,8 @@ def _undismiss_lanes(sids):
 def _mark_compacting(sid):
     """A compact we just sent /compact for → show 'compacting' on every surface AT ONCE, now."""
     if sid:
-        _compact_clicked[sid] = time.time()
+        with _ui_stamp_lock:
+            _compact_clicked[sid] = time.time()
         _mark_views_dirty()           # in-memory stamp: dirty-rebuild the views so 'compacting' shows at once
 
 
@@ -23869,10 +23936,10 @@ def _compacting_optimistic(sid, session, now):
     for turn in session["turns"]:
         for a in turn["atoms"]:
             if a.get("type") == "system" and a.get("subtype") == "compact_boundary" and (a.get("t") or 0) >= t0:
-                _compact_clicked.pop(sid, None)
+                _pop_stamp_if(_compact_clicked, sid, t0)
                 return False
     if now - t0 > 180:
-        _compact_clicked.pop(sid, None)
+        _pop_stamp_if(_compact_clicked, sid, t0)
         return False
     return True
 
@@ -25454,18 +25521,28 @@ def _atom_user_texts(a):
 # turn lands. A SUCCESSFUL send's echo prunes when the turn writes; a DROPPED send's echo PERSISTS, so the
 # lost message stays visible (no response) instead of vanishing silently.
 _tmux_echo = {}                                       # sid -> {key -> synthetic user atom}
+_tmux_echo_lock = threading.Lock()                    # every compound step on the store runs under it: senders
+#                                                       (WS/HTTP handler threads) add while builders (the pusher,
+#                                                       connect pushes) prune and settle, and "snapshot the keys,
+#                                                       then d[k]" or "if not d: pop(sid)" lost a fresh echo to a
+#                                                       concurrent pop or add (the 2026-09-06 free-threading review,
+#                                                       race 4). Never held across I/O; nothing under it takes
+#                                                       another lock.
 
 def _tmux_echo_add(sid, text, author="human"):
     key = "echo:" + uuid.uuid4().hex
-    _tmux_echo.setdefault(sid, {})[key] = {
+    atom = {
         "type": "user", "uuid": key, "session_id": sid, "t": int(time.time()), "parentUuid": None,
         # author drives the bubble: "human" → blue (a typed message), "romp" → gray (a nudge/auto-follow-up).
         # Matches the real transcript atom's author so the optimistic echo reads identically until it lands.
         "author": author, "_echo_text": text,
         "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
+    with _tmux_echo_lock:
+        _tmux_echo.setdefault(sid, {})[key] = atom
 
 def _tmux_echo_atoms(sid):
-    return list(_tmux_echo.get(sid, {}).values())
+    with _tmux_echo_lock:
+        return list(_tmux_echo.get(sid, {}).values())
 
 def _tmux_echo_prune(sid, tx_uuids, tx_texts):
     """Drop an echo once the transcript has its real user atom (by uuid or text); pop the sid when empty.
@@ -25474,17 +25551,17 @@ def _tmux_echo_prune(sid, tx_uuids, tx_texts):
     trailing-newline send (`romp send` passes its argument verbatim): the delivered echo stayed, hidden by
     the display dedup, and the settle then marked it `dropped` once a later human turn landed — a "never
     delivered" bubble for a message the transcript holds (2026-09-06 review, round 4)."""
-    d = _tmux_echo.get(sid)
-    if not d:
-        return
-
     def _landed(a):
         et = sb.echo_text_key(a.get("_echo_text"))
         return a.get("uuid") in tx_uuids or (et and et in tx_texts)
-    for k in [k for k, a in d.items() if _landed(a)]:
-        d.pop(k, None)
-    if not d:
-        _tmux_echo.pop(sid, None)
+    with _tmux_echo_lock:
+        d = _tmux_echo.get(sid)
+        if not d:
+            return
+        for k in [k for k, a in d.items() if _landed(a)]:
+            d.pop(k, None)
+        if not d:
+            _tmux_echo.pop(sid, None)
 
 
 def _human_turn_floor(session):
@@ -25537,23 +25614,23 @@ def _tmux_echo_settle(sid, human_floor, still_queued=()):
     misdiagnosis the dropped field exists to prevent. The queue ledger is the authoritative "still
     owed" record, so it outranks the floor here; once the ledger releases the text (delivery or
     recall), the next settle rules on it normally."""
-    d = _tmux_echo.get(sid)
-    if not d:
-        return
     owed = {t.strip() for t in still_queued if isinstance(t, str)}
     path_bearing = getattr(sys.modules.get("romp_sdk_backend"), "_path_bearing", None)
-    for k in list(d.keys()):
-        a = d[k]
-        if not _echo_overtaken(a, human_floor):
-            continue
-        if (a.get("_echo_text") or "").strip() in owed:
-            continue                                     # still owed by the queue ledger → waiting, not lost
-        if path_bearing is not None and path_bearing(a.get("_echo_text") or ""):
-            d.pop(k, None)
-        else:
-            a["dropped"] = True
-    if not d:
-        _tmux_echo.pop(sid, None)
+    with _tmux_echo_lock:
+        d = _tmux_echo.get(sid)
+        if not d:
+            return
+        for k, a in list(d.items()):
+            if not _echo_overtaken(a, human_floor):
+                continue
+            if (a.get("_echo_text") or "").strip() in owed:
+                continue                                 # still owed by the queue ledger → waiting, not lost
+            if path_bearing is not None and path_bearing(a.get("_echo_text") or ""):
+                d.pop(k, None)
+            else:
+                a["dropped"] = True
+        if not d:
+            _tmux_echo.pop(sid, None)
 
 
 def _sendvis_diag(sid):
@@ -29890,7 +29967,10 @@ def _usage():
     return out
 
 
-_jf_cache = {"fp": None, "val": None}                 # judge-failure scan, mtime-fingerprinted over the goals dir
+_jf_cache = [(None, None)]                            # judge-failure scan, mtime-fingerprinted over the goals dir:
+#                                                       (fingerprint, value) as ONE tuple rebound whole — two slots
+#                                                       stored one after the other let a reader pair a new fingerprint
+#                                                       with the old value (the 2026-09-06 free-threading review)
 
 
 def _judge_failures():
@@ -29902,13 +29982,14 @@ def _judge_failures():
         fp = tuple(sorted((p.name, int(p.stat().st_mtime)) for p in gd.glob("*.json"))) if gd.exists() else ()
     except Exception:
         fp = None
-    if fp is not None and _jf_cache["fp"] == fp:
-        return _jf_cache["val"]
+    fp0, val0 = _jf_cache[0]
+    if fp is not None and fp0 == fp:
+        return val0
     try:
         val = jd.judge_failure_scan()
     except Exception:
         val = None
-    _jf_cache["fp"], _jf_cache["val"] = fp, val
+    _jf_cache[0] = (fp, val)
     return val
 
 
@@ -30148,6 +30229,7 @@ def _usage_for_client():
 
 
 _msg_sum_cache = {}                               # {"per": {sid: (mtime, submap)}, "map": union {mid: caption}}
+_msg_sum_lock = threading.Lock()                  # guards the two slots' read and swap only — never a scan
 
 
 def _msg_sum_scan_session(sid, path, now):
@@ -30186,7 +30268,14 @@ def _msg_summaries():
         sess = _sessions(now)
     except Exception:
         return _msg_sum_cache.get("map", {})
-    per = _msg_sum_cache.setdefault("per", {})       # sid -> (mtime, submap)
+    # Builders run on several threads at once (the pusher, a connect push on a WS thread). Each works on
+    # its OWN copy of the per-session table and publishes it by one swap under the lock, so a peer's
+    # insert or eviction can never land mid-iteration here — "dictionary changed size during iteration"
+    # out of _hydrate_postal / _postal_messages aborted a whole build (the 2026-09-06 free-threading
+    # review, race 2). The scans run outside the lock: two builders may scan one changed session once
+    # each (the same bytes; the later swap wins) and no lock is ever held across a parse.
+    with _msg_sum_lock:
+        per = dict(_msg_sum_cache.get("per") or {})  # sid -> (mtime, submap), this builder's copy
     live = set()
     dirty = False
     for s in sess:
@@ -30204,12 +30293,13 @@ def _msg_summaries():
     for sid in [k for k in per if k not in live]:    # forget dead sessions so `per` can't grow unbounded
         del per[sid]
         dirty = True
-    if dirty or "map" not in _msg_sum_cache:         # rebuild the union only when a submap changed
-        m = {}
-        for _mt, sub in per.values():
-            m.update(sub)
-        _msg_sum_cache["map"] = m
-    return _msg_sum_cache["map"]
+    with _msg_sum_lock:
+        if dirty or "map" not in _msg_sum_cache:     # rebuild the union only when a submap changed
+            m = {}
+            for _mt, sub in per.values():
+                m.update(sub)
+            _msg_sum_cache["per"], _msg_sum_cache["map"] = per, m
+        return _msg_sum_cache["map"]
 
 
 _postal_log_cache = {}        # messages.jsonl -> _fold_records entry; every timeline rebuild used to re-parse the whole log
@@ -31020,13 +31110,24 @@ def _session_tokens(path, t0):
 # a fresh install) resets cleanly.
 _JUDGE_USAGE_RETAIN = 31 * 86400
 _JUDGE_USAGE_CACHE = {"path": None, "size": -1, "mtime": 0.0, "rows": []}
+_JUDGE_USAGE_LOCK = threading.Lock()   # the seek-read-append-advance below is ONE transaction: the pusher's build
+#                                        and an HTTP analytics call each read from the shared offset and appended,
+#                                        double-counting every row of the chunk (the 2026-09-06 free-threading
+#                                        review, race 6). The file it covers is a local append-only log; nothing
+#                                        under it takes another lock.
 
 
 def _judge_usage_rows():
     """Every parsed judge-usage row from the last ~31 days, incrementally maintained. Fully defensive —
     a missing or garbled log never breaks a build; a mid-append partial line is left for the next read.
     Keyed on the PATH too (a test repointing jd.STATE must never inherit another dir's offset — the
-    overrides-sandbox lesson) and reset on a same-size mtime change (an in-place rewrite)."""
+    overrides-sandbox lesson) and reset on a same-size mtime change (an in-place rewrite). Returns a
+    snapshot list: the cached one keeps growing and pruning under later reads."""
+    with _JUDGE_USAGE_LOCK:
+        return list(_judge_usage_rows_locked())
+
+
+def _judge_usage_rows_locked():
     p = jd.STATE / "judge-usage.jsonl"
     c = _JUDGE_USAGE_CACHE
     try:
@@ -32728,8 +32829,9 @@ _nonce = [0]
 
 
 def _next_nonce():
-    _nonce[0] += 1
-    return _nonce[0]
+    with _COUNTER_LOCK:
+        _nonce[0] += 1
+        return _nonce[0]
 
 
 def _goal_segments(item_id):
@@ -35638,32 +35740,41 @@ def _pin_assoc_dir():
     return d
 
 
+def _pin_assoc_memo(sid):
+    """This sid's association memo, loaded from the sidecar on first use. Two builders resolving one
+    session at once each load a copy; setdefault keeps the FIRST published, so an append that landed on
+    it between a peer's file read and its store is never displaced by the peer's older copy — the memo
+    is what _pin_assoc reads until the next reload, and a row missing there re-pins the file's CURRENT
+    bytes, the history rewrite this store exists to prevent (the 2026-09-06 free-threading review, race
+    10). No lock: the read runs unlocked and the publish is one step."""
+    memo = _PIN_ASSOC_MEMO.get(sid)
+    if memo is not None:
+        return memo
+    memo = {}
+    try:
+        with open(_pin_assoc_dir() / (str(sid) + ".jsonl"), encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                    memo.setdefault(str(row["u"]), {})[str(row["t"])] = str(row["p"])
+                except (ValueError, KeyError, TypeError):
+                    continue                         # a torn tail line loses one row, never the file
+    except OSError:
+        pass
+    if len(_PIN_ASSOC_MEMO) > 2048:                  # sid-count bound; reloads are one small file read
+        _PIN_ASSOC_MEMO.clear()
+    return _PIN_ASSOC_MEMO.setdefault(sid, memo)
+
+
 def _pin_assoc(sid, uuid):
     """The durable pins already latched for this message — {target: pin id}, {} when none."""
-    memo = _PIN_ASSOC_MEMO.get(sid)
-    if memo is None:
-        memo = {}
-        try:
-            with open(_pin_assoc_dir() / (str(sid) + ".jsonl"), encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        row = json.loads(line)
-                        memo.setdefault(str(row["u"]), {})[str(row["t"])] = str(row["p"])
-                    except (ValueError, KeyError, TypeError):
-                        continue                     # a torn tail line loses one row, never the file
-        except OSError:
-            pass
-        if len(_PIN_ASSOC_MEMO) > 2048:              # sid-count bound; reloads are one small file read
-            _PIN_ASSOC_MEMO.clear()
-        _PIN_ASSOC_MEMO[sid] = memo
-    return memo.get(uuid) or {}
+    return _pin_assoc_memo(sid).get(uuid) or {}
 
 
 def _pin_assoc_append(sid, uuid, target, pid):
     """Record a first-ever latch durably (append + memo). Best-effort: a failed write degrades to
     the old in-memory behavior for this message, never blocks the build."""
-    memo = _PIN_ASSOC_MEMO.setdefault(sid, {})
-    memo.setdefault(uuid, {})[target] = pid
+    _pin_assoc_memo(sid).setdefault(uuid, {})[target] = pid
     try:
         with open(_pin_assoc_dir() / (str(sid) + ".jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps({"u": uuid, "t": target, "p": pid}) + "\n")
@@ -35746,6 +35857,9 @@ def _path_links(md, sid, uuid, memo):
                {})
     links, misses, pins = hit if len(hit) == 3 else (hit[0], hit[1], {})
     if misses:
+        links, pins = dict(links), dict(pins)             # copy-on-write: the cached tuple's dicts are read by
+        #                                                   other builders (_path_pins, the fold's pl_pending
+        #                                                   check) — resolve into copies, publish a new tuple
         still = []
         for tok in misses:
             r = _resolve_path_token(tok, sid, memo)
@@ -36252,10 +36366,15 @@ def _push(targets, connect=False, tmux=None):
     feed_ms = feed_sig = feed_parts = bars = bars_ms = bars_sig = bars_parts = None
     feed_down = bars_down = False                        # this cycle's fill raised: the slot's clients are skipped
     _t_stage = time.monotonic()
+    if want_feed and feed is None:
+        # Not expected (_cached_feed returns a build or raises inside the try above) — but this loop is
+        # OUTSIDE that try, and a None here raised on feed.get and ended the pusher thread. A logged skip;
+        # the next cycle rebuilds.
+        sys.stderr.write("push: no feed build this cycle; feed clients skipped\n")
     for c in targets:
         try:
             if c["app"] in ("feed", "fleet", "waiting"):   # the feed pane, the Fleet view AND the Waiting-on-you pane ride the feed payload (Fleet reads feed.ledgers; waiting reads feed.userTodoRows)
-                if feed_down:
+                if feed_down or feed is None:                # a fill that raised, or no build came back (logged above)
                     continue
                 if feed_ms is None:
                     w = _feed_wire                           # tuple snapshot — rebound whole, never mutated (torn reads)
@@ -36350,13 +36469,16 @@ _DRAIN_REFUSED = {"count": 0, "episodeCount": 0, "episode": False, "lastT": 0}
 
 def _note_drain_refused():
     try:
-        _DRAIN_REFUSED["count"] += 1
-        _DRAIN_REFUSED["lastT"] = int(time.time())
-        if _DRAIN_REFUSED["episode"]:
-            _DRAIN_REFUSED["episodeCount"] += 1
-        else:
-            _DRAIN_REFUSED["episode"] = True
-            _DRAIN_REFUSED["episodeCount"] = 1     # a fresh episode starts its own count
+        with _COUNTER_LOCK:
+            _DRAIN_REFUSED["count"] += 1
+            _DRAIN_REFUSED["lastT"] = int(time.time())
+            fresh = not _DRAIN_REFUSED["episode"]
+            if fresh:
+                _DRAIN_REFUSED["episode"] = True
+                _DRAIN_REFUSED["episodeCount"] = 1     # a fresh episode starts its own count
+            else:
+                _DRAIN_REFUSED["episodeCount"] += 1
+        if fresh:
             sys.stderr.write("romp-kernel: REFUSED a drain hold — /busy?drain=1 arrived without a valid "
                              "serve token (an old manager, or a drive-by client): new turn starts are NOT "
                              "held while it polls; the exempt count still answers. Said once per refusal "
@@ -36367,11 +36489,15 @@ def _note_drain_refused():
 
 def _note_drain_armed():
     try:
-        if _DRAIN_REFUSED["episode"]:
-            _DRAIN_REFUSED["episode"] = False
+        with _COUNTER_LOCK:
+            closing = _DRAIN_REFUSED["episode"]
+            if closing:
+                _DRAIN_REFUSED["episode"] = False
+                ep, total = _DRAIN_REFUSED["episodeCount"], _DRAIN_REFUSED["count"]
+        if closing:
             sys.stderr.write("romp-kernel: drain hold armed again after %d refused request(s) — the "
                              "refusal episode above is over (%d refused in total this kernel life)\n"
-                             % (_DRAIN_REFUSED["episodeCount"], _DRAIN_REFUSED["count"]))
+                             % (ep, total))
     except Exception:
         pass
 
@@ -36694,6 +36820,11 @@ def _cached_feed(now, tmux, sig, connect=False):
     # UNLESS an optimistic kernel-side mutation postdates the build (_views_dirty): that state is invisible
     # to the sig AND must not wait out REBUILD_MIN_S, or the push meant to show it serves the stale payload.
     e = _built_feed
+    built = e[1]                          # read ONCE: the parse-warm thread (_warm_fleet_bg) sets this slot to None
+    #                                       to force a rebuild, and two reads straddling that write returned None to
+    #                                       _push, whose wire loop raised on feed.get OUTSIDE its build try and ended
+    #                                       the pusher thread for the rest of the process. A live race under the GIL;
+    #                                       a likely one without it (the 2026-09-06 free-threading review, race 1).
     # The dirty mark compares against build START, not finish (the user 2026-07-28): a build takes
     # ~1-1.6s and reads the stores one session at a time, so a mutation landing MID-build may or may
     # not have been read — its payload can predate the gesture while its finish time postdates it.
@@ -36703,9 +36834,9 @@ def _cached_feed(now, tmux, sig, connect=False):
     # back to Completed. REBUILD_MIN_S stays keyed on the FINISH (e[2]): it rate-limits build COST,
     # so back-to-back starts must not shrink its window.
     dirty = not connect and _views_dirty[0] > e[3]        # connect still serves the warmed build (never rebuilds)
-    if e[1] is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
+    if built is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
         _PERF_STATS.build("feed", True)
-        return e[1]
+        return built
     bid = _next_feed_build_id()          # claimed BEFORE the read, so an ack issued during this build outranks it
     started = time.time()                # …and the dirty floor for the NEXT check: mutations after this
     _t0 = time.monotonic()
@@ -37238,10 +37369,11 @@ def _consume_pending_reveal(client):
 
 def _cached_timeline(now, tmux, sig, connect=False):
     e = _built_timeline
+    built = e[1]                                          # read once, as _cached_feed does
     dirty = not connect and _views_dirty[0] > e[3]        # start-keyed, same as _cached_feed above
-    if e[1] is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
+    if built is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
         _PERF_STATS.build("timeline", True)
-        return e[1]
+        return built
     started = time.time()
     _t0 = time.monotonic()
     tl = build_timeline(now, tmux)
@@ -42577,7 +42709,7 @@ class Handler(BaseHTTPRequestHandler):
                 be = Sessions.backend_for(sid)
                 if u.path == "/interrupt":
                     be.interrupt(sid)                           # Esc/stop AND settle idle (in the backend)
-                    _interrupt_clicked[str(sid)] = time.time()  # chip → "interrupting" NOW, same as the WS op
+                    _mark_interrupt_clicked(sid)                # chip → "interrupting" NOW, same as the WS op
                 elif isinstance(b, dict) and b.get("when") == "idle":
                     # SELF-CLOSE deferral (the user 2026-08-15): record the wish; the pusher's sweep
                     # kills at the turn's settle, so a session ending itself finishes its goodbye first

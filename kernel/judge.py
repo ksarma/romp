@@ -6529,8 +6529,13 @@ def _discover_fingerprint():
         fp.append((f.name, mt, pm, _sdk_last_sid(f.name) or ""))
     if len(_namefp_memo) > len(fp):                             # a retired session's entry is gone from the
         live = {row[0] for row in fp}                           # walk → evict it, so the memo stays bounded
-        for name in [k for k in _namefp_memo if k not in live]:  # by the sessions that currently EXIST
-            del _namefp_memo[name]
+        for name in [k for k in _namefp_memo.copy() if k not in live]:  # by the sessions that currently EXIST.
+            _namefp_memo.pop(name, None)
+        # Over a COPY, and pop rather than del: both tiers call discover() at the same instant every
+        # pass, so a peer's insert landed mid-walk and this raised "dictionary changed size during
+        # iteration" out of the tier (the 2026-09-06 free-threading review, race 3). copy() is one
+        # operation on the dict; a live name a peer inserted after the walk is evicted by mistake at
+        # worst and re-read on the next call.
     # the Codex namespace: a session add/rename/kill rewrites registry.json (its mtime is the
     # signal) — the same add-not-append semantics as the Claude roots above.
     try:
@@ -13506,7 +13511,10 @@ def courier_llm(message_text, menu_text, declared=""):
     return _judge_run(_triage_model(), COURIER_SYS, user, judge="courier", mark=mk).strip()[:300]
 
 
-_postal_from_memo = {"key": None, "map": {}}   # messages.jsonl (mtime,size) -> {mid: (from, from_host, tracked)}
+_postal_from_memo = [(None, {})]   # ((messages.jsonl mtime, size), {mid: (from, from_host, tracked, ...)}) as ONE
+#                                    tuple, rebound whole: stored as two slots, a reader between the stores paired
+#                                    the new key with the old map and missed a mid the new log has (the 2026-09-06
+#                                    free-threading review, race 7). Tests reset it to (None, {}).
 
 
 def _postal_row(mid):
@@ -13530,7 +13538,8 @@ def _postal_row(mid):
         key = (st.st_mtime, st.st_size)
     except OSError:
         return ("", "", False, "", None, "")
-    if _postal_from_memo["key"] != key:
+    k0, mp = _postal_from_memo[0]
+    if k0 != key:
         mp = {}
         try:
             for line in MESSAGES.read_text(errors="replace").splitlines():
@@ -13546,8 +13555,8 @@ def _postal_row(mid):
                                    str(r.get("originMid") or ""))
         except OSError:
             return ("", "", False, "", None, "")
-        _postal_from_memo["key"], _postal_from_memo["map"] = key, mp
-    return _postal_from_memo["map"].get(mid, ("", "", False, "", None, ""))
+        _postal_from_memo[0] = (key, mp)
+    return mp.get(mid, ("", "", False, "", None, ""))
 
 
 def _frame_head(s):
