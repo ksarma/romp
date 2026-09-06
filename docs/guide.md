@@ -314,8 +314,9 @@ The kernel runs as a login service, so it is up whenever you are logged in. To
 stop it on purpose, run `romp down`: it gives the agents a few seconds to
 finish the turn they are on, then stops the kernel and keeps it stopped, and
 `romp status` says so. `romp up` starts it again, and every session comes back
-with its history; a session that was cut mid-turn is told so and picks its work
-back up. `romp down --now` skips the wait; `romp down --wait 60` lengthens it.
+with its history; a session that was cut mid-turn is told so, and when, and
+picks its work back up. `romp down --now` skips the wait; `romp down --wait 60`
+lengthens it.
 
 ### Linking kernels on other machines
 

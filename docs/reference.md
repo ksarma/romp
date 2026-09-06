@@ -21,7 +21,7 @@ update` starts a session called "update".
 | `romp resume` | Resume a past conversation, chosen from a full-screen picker |
 | `romp status` | Manager and kernel status |
 | `romp refresh` | Restart the postal bus and every kernel immediately, picking up new code (cut turns resume with their history) |
-| `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them |
+| `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them; a remote stopped by `romp down` is synced and left stopped |
 | `romp up` | Start the kernel: through the login service when one is installed, in the foreground otherwise. Clears a `romp down` marker |
 | `romp down` | Stop the kernel and keep it stopped until `romp up`. Turns in flight get 5 seconds to finish first; sessions resume with their history at the next start. See [Stopping the kernel on purpose](#stopping-the-kernel-on-purpose) |
 | `romp version` | Version report across the moving parts |
@@ -724,15 +724,23 @@ kernel or manager that merely exits is back within seconds. `romp down` instead
 stops the login service itself (`systemctl --user stop romp-manager.service`;
 on macOS `launchctl bootout` of the agent), which nothing respawns. With no
 login service installed, it stops the foreground manager through the manager's
-own control endpoint. With a login service installed, the unit stays enabled:
-the next login starts it again, as does `romp up`.
+own control endpoint. With a login service installed, the unit stays enabled,
+so it comes back at `romp up` or when the service manager next starts it. On
+Linux that is the next boot, not the next login: `romp-service install` enables
+linger, so your `systemd --user` instance outlives your logins and a stopped
+unit stays stopped through them (where the linger call failed, the instance
+ends at logout and the next login starts the unit again). On macOS the
+booted-out agent loads again at the next login.
 
 Before stopping, `romp down` gives the turns in flight `--wait` seconds
 (default 5, up to 600) to reach a turn boundary; `--now` skips the quiesce
 altogether (no wait, no hold). Otherwise it asks the kernel to quiesce
-(`POST /down`), which holds new turn starts and new
-session creation, and then reports whether the kernel went quiet or which
-sessions are still mid-turn and about to be cut. If the stop never lands, the
+(`POST /down`), which holds new turn starts and new session creation, and then
+reports whether the kernel went quiet or which sessions are still mid-turn and
+about to be cut. A `romp new` or a dashboard create during the hold is refused
+with one line saying the kernel is being stopped on purpose and no new session
+can start; the line names no command, because inside a session its reader is an
+agent, and an agent told to run `romp up` would undo the stop. If the stop never lands, the
 kernel carries on by itself: the hold is a lease, and it lapses a short grace
 after the wait. The stop then cuts what a `romp refresh` cuts, and it comes
 back the same way (see [What survives a restart](#what-survives-a-restart)).
@@ -741,11 +749,18 @@ The stop leaves a marker, `down-by-romp` under the state directory (with the
 time and the command), so the stopped kernel reads as stopped on purpose. While
 the marker exists, `romp status` prints
 `down (romp down at HH:MM; romp up to start)` and exits 0 instead of the
-manager's not-running error, `romp-service status` says the same, and
-`romp-manager ensure` (the auto-start a session's SessionStart hook runs)
-refuses to bring the manager back. `romp up` clears the marker and starts the
-service; a manager started any other deliberate way (the login service at the
-next login, a hand `systemctl --user start`) clears it too. `romp down` also
+manager's not-running error (a marker from an earlier day shows its date:
+`down (romp down at 2026-09-04 17:12; romp up to start)`), `romp-service
+status` says the same, and `romp-manager ensure` refuses to bring the manager
+back. `ensure` is the supervised start that `romp update <host>` and the
+dashboard's remote restart run on the far host, so a remote stopped by
+`romp down` is left stopped: `romp update` syncs its code, restarts nothing,
+and says so, and `romp up` there boots the new code. The dashboard's
+Start button and an attach's bootstrap, which boot a bare kernel on a host with
+no manager, decline the same way and name `romp up` on that host. `romp up`
+clears the marker and starts the service; a manager started any other
+deliberate way (the login service at the next boot, a hand
+`systemctl --user start`) clears it too. `romp down` also
 appends a row to `restart-audit.jsonl` that names the action, so the kernel's
 restart-cut ledger records the cut as a `down`, not an anonymous SIGTERM.
 
@@ -753,12 +768,25 @@ Sessions come back at the next `romp up` from what is already on disk: the
 kernel's boot reconcile reads each session's registry entry and state tail and
 needs nothing written at shutdown. A session whose turn had ended before the
 stop is revived on demand, with its history, the next time something reaches it;
-a session cut mid-turn is resumed at boot and told its turn was cut. Terminal
-(tmux) sessions are not affected: their CLIs run in the tmux server, which lives
-outside the service and keeps running.
+a session cut mid-turn is resumed at boot and told its turn was cut. When the
+stop was a `romp down` (the newest `restart-audit.jsonl` row, later than the
+turn), the notice also gives the stop time, the start time and the gap, so a
+model resumed hours later re-checks what it was running before relying on it.
+Terminal (tmux) sessions survive the stop where they survive a service restart
+(see [What survives a restart](#what-survives-a-restart)): on
+Linux `systemctl --user stop` kills everything in the service's cgroup, so the
+tmux server and its sessions live on only when the manager started it in its
+own transient scope (the default under the service since 2026-09-05; off with
+`ROMP_CLI_SCOPE=0`, and not yet true of a tmux server that predates the scopes).
+On macOS there is no cgroup kill and the tmux server keeps its launchd lineage.
 
-The postal bus is left running: it holds mail and costs nothing idle, and
-`romp up` reaches it as before. `romp refresh` bounces it; `romp down` does not.
+Only `romp refresh` stops the postal bus on purpose; `romp down` leaves it
+alone, but on Linux a bus the kernel started dies with the service anyway: the
+kernel runs `romp-postal-service ensure` at boot, which spawns the bus in a
+process session of its own but inside the service's cgroup, and the service stop
+kills that cgroup. A bus started from a session's postal MCP server lives in
+that session's scope and keeps running. Either way the next kernel boot runs
+`ensure` again, so at worst mail parks until `romp up`.
 
 ### What survives a restart
 
