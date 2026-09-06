@@ -37,6 +37,11 @@ you are caught rather than quietly carried. When several sessions work in the sa
 repository, or in worktrees of it, the viewer's title bar says which one you opened the
 file from: a chip with the session's name, in the same color as its tab.
 
+**Sending while the session is working.** The session takes your message at its next
+step, and the chat places it at the time you sent it, above the steps that were already
+running: the bubble says "joined mid-turn", and where it had been waiting at the bottom a
+note says when the session took it, with a link that jumps to it.
+
 **Tags and groups.** A tag is a named, colored set of sessions; a session can be in
 several. Right-click a tab and open **Tags** to add or remove them. Tags filter every
 surface (the tag button in the strip narrows the tabs to the tags you pick), and they group

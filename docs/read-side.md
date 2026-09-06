@@ -239,6 +239,27 @@ widget per block), with **no second transcript parser** — the event model alre
 produced the tree. Plus the live chip from the state read, and the TOC ledger below
 the tabs.
 
+**A send stays visible from the press until its record lands, and each layer
+retires on an event, never a timer.** The kernel keeps an input echo (a synthetic
+user atom in the backend's live store, mirrored to the registry so a restart cannot
+lose it) from `send()` until the transcript carries the same text. For a message fed
+into a running turn that record is the `queued_command` attachment the CLI writes
+when it splices the message in at its next tool boundary, and until then no floor
+retires the echo: the session has fed the text (`SdkSession.fed_texts`) and the CLI
+holds it. The one echo a later human record may retire on its own is an image-path
+echo, because the CLI rewrites the path to `[Image #N]` and the text can never
+match. If the CLI dies holding the message, the echo is flagged `undelivered` and
+the chat offers copy-to-composer and dismiss. The client keeps its own pending
+bubble (dashed, "sending…") from the press until the kernel's payload accounts for
+the text: a landed user atom ends it, the `undelivered` verdict ends it, and the
+kernel's echo or queued bubble only hides it for that push (`ui/webview/send-pending.ts`).
+It has no lifetime; a connection drop relabels it "not confirmed". An absorbed atom
+sits at its send time, above the steps that were already running, so its event
+carries `absorbed` and `landedAt` (the boundary the CLI took it at): the bubble
+wears "joined mid-turn", and when the landing retired a pending bubble at the tail,
+a cue stays where the bubble was ("delivered into the running turn at HH:MM", with
+a jump) until jump or ✕.
+
 **The ledger is a table of contents** (pure projection of captions + archive):
 - top: the archiver's one-sentence headline for the session,
 - then **turn captions** as top-level bullets, the whole session (not just recent),
