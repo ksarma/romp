@@ -2674,6 +2674,16 @@ def _views_cache_put(p, key, d):
         pass
 
 
+def _views_lost_notice(note, members):
+    """The reader's file-fact notice — a views file over the cap, read under it (_timeline_views): one
+    stderr line carrying the notice and every dropped tag's members, and the sync notice, red."""
+    sys.stderr.write("romp-kernel: %s [%s]\n" % (note, members))
+    try:
+        _sync_notice(note, ok=False)
+    except Exception:
+        pass
+
+
 def _timeline_views():
     p = _views_path()
     try:
@@ -2747,34 +2757,38 @@ def _timeline_views():
                 d2, base=base, seq_floor=floor,
                 foreign="a stale write to the views file from outside the kernel" if judge else None,
                 writer=None if judge else "the views file's re-stamp on read")
+            names, members, fact = [], "", ""
+            if lost:
+                # No dashboard wrote this — the file itself was over the cap (an edit outside the
+                # kernel, or a kernel from before the cap that held 32 tags plus hidden entries,
+                # which the migration's archived tag then puts over). Said once, as a fact about the
+                # file, whether or not the stamp below lands (round 8 of the 2026-09-05 review: it
+                # was said only after a successful write, so an unwritable store served the capped
+                # blob in silence and the next RMW write, built from that cache, made the drop
+                # permanent with nothing ever said). Cause and count first, the dropped tags after,
+                # as many as fit the served notice (_notice_list — the same review found the cause
+                # clause LAST, after one entry per tag, cut away by the dashboard's bell on any drop
+                # of two or more); stderr lists every dropped tag with its members.
+                held = len(d2["tags"]) + len(lost)
+                names = ['"%s" (%d member%s)' % (nm, n, "" if n == 1 else "s") for _i, nm, n in lost]
+                fact = ("the views file held %d tags, over the store's %d-tag cap; no dashboard wrote this."
+                        % (held, _VIEWS_MAX_TAGS))
+                ids = set(i for i, _nm, _n in lost)
+                raw = [g for g in (d2raw.get("tags") or []) if isinstance(g, dict)
+                       and isinstance(g.get("id"), str) and g["id"][:64] in ids]
+                members = "; ".join('"%s": %s' % (_tag_name_basis(g.get("name")) or "tag",
+                                                   ", ".join(_member_str(m) for m in
+                                                             (_member_pair(x) for x in (g.get("members") or []))
+                                                             if m) or "no members")
+                                    for g in raw)
             try:
                 _write_timeline_views(judged)
                 sys.stderr.write("romp-kernel: views store re-stamped on read: %s\n" % why)
                 if lost:
-                    # No dashboard wrote this — the file itself was over the cap (an edit outside the
-                    # kernel, or a kernel from before the cap that held 32 tags plus hidden entries,
-                    # which the migration's archived tag then puts over). The drop is permanent once
-                    # the stamp is written, so it is said once, here, with the member count of each
-                    # tag dropped; stderr also lists the members.
-                    held = len(d2["tags"]) + len(lost)
-                    names = ", ".join('"%s" (%d member%s)' % (nm, n, "" if n == 1 else "s") for _i, nm, n in lost)
-                    note = ("the views file held %d tags, over the store's %d-tag cap: %s %s dropped when the "
-                            "file was re-stamped on read (%s). No dashboard wrote this: the file itself was "
-                            "over the cap." % (held, _VIEWS_MAX_TAGS, names,
-                                               "was" if len(lost) == 1 else "were", why))
-                    ids = set(i for i, _nm, _n in lost)
-                    raw = [g for g in (d2raw.get("tags") or []) if isinstance(g, dict)
-                           and isinstance(g.get("id"), str) and g["id"][:64] in ids]
-                    members = "; ".join('"%s": %s' % (_tag_name_basis(g.get("name")) or "tag",
-                                                       ", ".join(_member_str(m) for m in
-                                                                 (_member_pair(x) for x in (g.get("members") or []))
-                                                                 if m) or "no members")
-                                        for g in raw)
-                    sys.stderr.write("romp-kernel: %s [%s]\n" % (note, members))
-                    try:
-                        _sync_notice(note, ok=False)
-                    except Exception:
-                        pass
+                    # the drop is permanent once the stamp is written
+                    _views_lost_notice(_notice_list(
+                        "%s %d tag%s dropped when it was re-stamped on read (%s)"
+                        % (fact, len(lost), " was" if len(lost) == 1 else "s were", why), ": ", names), members)
             except OSError as e:
                 # The state dir is unwritable or full: a READ must still answer (every frame builds
                 # on it), so a blob is served and cached under the file's key — the next read is a
@@ -2795,8 +2809,20 @@ def _timeline_views():
                     _VIEWS_RESTAMP_ERR[0] = kind
                     sys.stderr.write("romp-kernel: views store could not be re-stamped on read (%s) — "
                                      "serving %s: %s: %s\n"
-                                     % (why, "the judged blob, unwritten" if judge else "the file as read, unstamped",
+                                     % (why, "the judged blob, unwritten" if judge
+                                        else "the file as read, under the cap, unstamped",
                                         type(e).__name__, e))
+                if lost:
+                    # The file still holds the excess and the served blob does not, and the next
+                    # write that lands (a RMW built from this cache) persists the served blob: the
+                    # drop becomes permanent THEN, unless the file is brought under the cap first.
+                    # Named now, once per file state (the cache entry below keeps every further read
+                    # a hit), with that consequence in the notice.
+                    _views_lost_notice(_notice_list(
+                        "%s Its re-stamp could not be written — %d tag%s not served and %s lost at the next "
+                        "write unless the file is brought under the cap first"
+                        % (fact, len(lost), " is" if len(lost) == 1 else "s are",
+                           "is" if len(lost) == 1 else "are"), ": ", names), members)
                 d = _norm_timeline_views(json.loads(json.dumps(judged)) if judge else d2)
                 _views_cache_put(p, key, d)
                 return d
@@ -2870,7 +2896,11 @@ def _views_restamp(d, hit):
         d2 = json.loads(json.dumps(d))                     # a parsed file: the round trip is a deep copy
         raw = d2.get("tags") if isinstance(d2.get("tags"), list) else (d2.get("groups") if isinstance(d2.get("groups"), list) else [])
         tags = [t for t in raw if isinstance(t, dict)]
-        arch = next((t for t in tags if t.get("name") == "archived"), None)
+        # on the STORED basis (round 8 of the 2026-09-05 review): the file's raw spelling can be padded
+        # ("archived "), which the normalizer reads as "archived" — compared raw, the lookup missed it,
+        # a second archived tag was minted, the door's collision pass refused that one, and the hidden
+        # entries migrated into nothing
+        arch = next((t for t in tags if _tag_name_basis(t.get("name")) == "archived"), None)
         if arch is None:
             arch = {"id": "archived", "name": "archived", "color": "#6b7280", "members": []}   # muted slate — never a status color
             tags = tags + [arch]
@@ -3061,7 +3091,10 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
                                    "so the store's copy was kept"})
             kept.append(json.loads(json.dumps(pt)))
         elif not same and pt.get("mtime") and int(pt["mtime"]) > ev:
-            refused.append(('"%s"' % pt.get("name"), t["id"]))
+            # the label carries its cause like every other (round 8 of the 2026-09-05 review): the
+            # loud notice no longer spells the causes out — it puts the count and the remedy first and
+            # the labels after, as many as fit the served text, so each label must say why on its own
+            refused.append(('"%s" (stale copy)' % pt.get("name"), t["id"]))
             # the reason names no tag: the ack composes '"<name>": <reason>' once (_ack_views_write),
             # so a toast or notice never says the name twice (the 2026-09-05 review)
             rows.append({"tid": t["id"], "name": pt.get("name"),
@@ -3070,17 +3103,32 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
             kept.append(json.loads(json.dumps(pt)))       # the store's newer truth stands
         else:
             kept.append(t)
-    for tid, nm, _n in ([] if lens_only else unread):
+    more, more_ed = 0, 0
+    for k, (tid, nm, _n) in enumerate([] if lens_only else unread):
         # PAST THE DOOR'S BOUND (round 7 of the 2026-09-05 review): an entry the normalizer's slice
         # left unread is neither a create nor a deletion — it was not read. A store tag whose copy
         # fell past the bound is KEPT (its absence from `incoming` would have read as a deletion
         # below); anything else is not created. Each gets a row, so a client whose `edited` names
         # only ids past the bound is acked not-ok with the reason, where it was acked ok with a
         # blob missing its own creates. Rows only, never stored — the bound stands.
+        # ROWS ARE BOUNDED to `bound` of them (round 8 of the 2026-09-05 review): the rows, the loud
+        # notice and the ack's `error` were O(N) in the posted array, so a 100k-entry post (a client
+        # bug, or any page holding the socket) drew a ~22 MB ack that overran WS_QUEUE_BYTES and
+        # dropped the poster's own socket before the ack was queued. Every unread store tag is still
+        # kept, however far past the bound its copy sat (at most the store's 32); past the first
+        # `bound` unread entries the rest are ONE summary row carrying their count and how many of
+        # them `edited` names (`moreEdited`), which the door's ok rule reads — a client whose own
+        # create sits past both bounds is still acked not ok.
         pt = prev.get(tid)
         if pt is not None:
             incoming.add(tid)
             kept.append(json.loads(json.dumps(pt)))
+        if k >= bound:
+            more += 1
+            if ed is not None and tid in ed:
+                more_ed += 1
+            continue
+        if pt is not None:
             refused.append(('"%s" (unread)' % pt.get("name"), tid))
             rows.append({"tid": tid, "name": pt.get("name"),
                          "reason": "a write is read to %d tags and its copy was past that bound, "
@@ -3090,6 +3138,10 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
             rows.append({"tid": tid, "name": nm,
                          "reason": "a write is read to %d tags and it was past that bound, "
                                    "so it was not created" % bound})
+    if more:
+        rows.append({"reason": "and %d more entries past that bound were not read%s"
+                               % (more, (" (%d of them this write edited)" % more_ed) if more_ed else ""),
+                     "more": more, "moreEdited": more_ed})
     for tid, pt in prev.items():
         if tid in incoming:
             continue
@@ -3190,24 +3242,35 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     # RMW callers, the reader's re-stamp) every refusal reads as loud, as before.
     loud = sorted(set(lb for lb, tid in refused if ed is None or tid in ed))
     quiet = sorted(set(lb for lb, tid in refused if ed is not None and tid not in ed))
-    if loud:
-        # the sentence names the writer: a foreign file's panel, the reader's own re-stamp (`writer`,
-        # nothing to reload — no dashboard wrote it), else a dashboard
+    # the summary row's entries (past the row bound, never labelled) fall on the same two sides
+    loud_more = more if ed is None else more_ed
+    quiet_more = 0 if ed is None else more - more_ed
+    loud_n = len(set(tid for lb, tid in refused if ed is None or tid in ed)) + loud_more
+    if loud_n:
+        # The sentence names the writer — a foreign file's panel, the reader's own re-stamp (`writer`,
+        # nothing to reload: no dashboard wrote it), else a dashboard — and puts the count and the
+        # remedy FIRST, the refused tags after, as many as fit the served notice (_notice_list). Round
+        # 8 of the 2026-09-05 review: the remedy sat last, after one label per tag and a clause
+        # spelling out every cause, and the dashboard's bell cut it away; each label now carries its
+        # own cause instead, and the ack's rows carry the reasons in full.
         remedy = ("reload the panel that wrote it to resync" if foreign
                   else None if writer else "reload that dashboard to resync")
-        why = ("%s was partially refused: its copy of %s was not applied — each predates a newer edit, "
-               "takes a name another tag holds, would put the store over its %d-tag cap, or was past the "
-               "%d tags a write is read to (the store's state was kept%s)"
-               % (foreign or writer or "a stale dashboard write", ", ".join(loud), _VIEWS_MAX_TAGS, bound,
-                  ("; " + remedy) if remedy else ""))
+        why = _notice_list("%s was partially refused: its changes to %d tag%s were not applied and the store's "
+                           "state was kept%s."
+                           % (foreign or writer or "a stale dashboard write", loud_n, "" if loud_n == 1 else "s",
+                              ("; " + remedy) if remedy else ""),
+                           " Refused: ", loud, extra=loud_more)
         sys.stderr.write("romp-kernel: %s\n" % why)
         try:
             _sync_notice(why, ok=False)
         except Exception:
             pass
-    if quiet:
-        sys.stderr.write("romp-kernel: kept the store's copy of %s over a dashboard's stale copy of it "
-                         "(a tag that dashboard did not edit; the ack carries the newer state)\n" % ", ".join(quiet))
+    if quiet or quiet_more:
+        quiet_n = len(set(tid for lb, tid in refused if ed is not None and tid not in ed)) + quiet_more
+        sys.stderr.write("romp-kernel: %s\n" % _notice_list(
+            "kept the store's copy of %d tag%s over a dashboard's stale copy (tags that dashboard did not edit; "
+            "the ack carries the newer state)" % (quiet_n, "" if quiet_n == 1 else "s"),
+            ": ", quiet, extra=quiet_more, cap=2000))
     for t in v["tags"]:
         pt = prev.get(t["id"])
         if pt is None or (pt.get("name"), pt.get("color"), pt.get("members")) != \
@@ -3808,6 +3871,9 @@ def _apply_tag_edit(e):
     return err is None, err, info
 
 
+_ACK_ERROR_CAP = 1000   # the ack's one-line `error`: the rows carry every reason in full; this is the toast's copy
+
+
 def _ack_views_write(client, kind, write_id, ok, error=None, refused=None, info=None):
     """Answer a dashboard's views write ON ITS OWN SOCKET: {type: kind, writeId, ok, views, seq,
     error?, refused?, tid?, name?}. `views` is the post-write client blob (stamped), which the poster
@@ -3835,7 +3901,11 @@ def _ack_views_write(client, kind, write_id, ok, error=None, refused=None, info=
         # then its name-free reason. An ok ack with refusals listed (stale copies of tags the client
         # did not edit) carries no `error` — there is nothing to tell the user.
         if not ok:
-            error = error or "; ".join('"%s": %s' % (r.get("name") or "?", r.get("reason") or "refused") for r in refused)
+            # bounded (round 8 of the 2026-09-05 review — it was one entry per row, O(N) in the posted
+            # array); a row without a name (the past-the-bound summary) is its reason alone
+            error = error or _notice_list("", "", [(('"%s": ' % r["name"]) if r.get("name") else "")
+                                                    + (r.get("reason") or "refused") for r in refused],
+                                          cap=_ACK_ERROR_CAP, joiner="; ") or "refused"
     if error:
         ack["error"] = str(error)
     try:
@@ -16798,6 +16868,32 @@ def _sync_notice_rows(limit=20, cap=300):
         rows = list(_SYNC_NOTICES[-limit:])
     return [{"sig": "sync|%d|%d" % (int(_STARTED), r["seq"]), "t": float(r["t"]),
              "text": r["text"][:cap], "ok": bool(r["ok"])} for r in rows]
+
+
+# A notice built to this length reaches the user whole: the dashboard's bell shows a sync notice cut
+# at 240 characters (ui/webview/badge-mirror.ts), under the 300 _sync_notice_rows serves. A notice
+# that names a list puts its point first and bounds the list to fit (_notice_list) — round 8 of the
+# 2026-09-05 review found the views re-stamp's cause clause LAST, after one entry per dropped tag,
+# so with two or more dropped the served text never reached it.
+SYNC_NOTICE_FIT = 240
+
+
+def _notice_list(head, sep, items, extra=0, cap=SYNC_NOTICE_FIT, joiner=", "):
+    """`head`, then `sep` and as many of `items` (joined by `joiner`) as keep the whole text within
+    `cap`, then " and N more" for the items left unnamed plus `extra` — things the caller counted but
+    never listed. When not even the first item fits, `head` alone: a head carries its own count, so
+    the point of the notice is never what gets cut."""
+    out, named = head, 0
+    for i, it in enumerate(items):
+        cand = out + (sep if i == 0 else joiner) + it
+        rest = len(items) - i - 1 + extra
+        if len(cand) + (len(" and %d more" % rest) if rest else 0) > cap:
+            break
+        out, named = cand, i + 1
+    rest = len(items) - named + extra
+    if named and rest:
+        out += " and %d more" % rest
+    return out
 
 
 def _auto_push_remote(host):
@@ -30793,12 +30889,15 @@ KERNEL_WS_CAPS = ("tagEdit",)
 # tabOrder frame's for a chat page, the timeline skeleton's (`data.views`), the feed frame's — read from
 # the frames that push enqueued (_VIEWS_SERVED, captured in _send_client on the handler's thread), never
 # from a fresh cache read, so a write landing between the push and this frame cannot skew it; the highest
-# when the push carried more than one; null when it carried none (a sentinel cycle sends no tabOrder). A
-# client that kept a blob its seq gate turned away adopts it on this frame only when the kept blob's seq
-# equals viewsSeq: the restore case (the store's seq fell behind what the page holds, and the connect push
-# IS the kept blob), and never a pusher-thread frame built before a concurrent write and enqueued between
-# the connect push and this frame — its seq is older than the connect push's, so it does not match, and
-# the next pusher cycle carries the newer blob.
+# when the push carried more than one. When the push carried NONE (a chat page on a sentinel cycle gets no
+# tabOrder frame) it is the store's current seq at caps time — the seq the next push serves (round 8 of
+# the same review); null only when there is no store at all, which has no seq. A client that kept a blob
+# its seq gate turned away adopts it on this frame only when the kept blob's seq equals viewsSeq — the
+# restore case (the store's seq fell behind what the page holds, and the connect push IS the kept blob) —
+# and adopts a LATER frame whose seq equals viewsSeq even when that is below the seq it holds (the same
+# restore, met on a sentinel cycle); never a pusher-thread frame built before a concurrent write and
+# enqueued between the connect push and this frame — its seq is older than the connect push's, so it does
+# not match, and the next pusher cycle carries the newer blob.
 
 _VIEWS_SERVED = threading.local()   # .seqs: a list while the ready handler captures its connect push, else absent/None
 
@@ -30823,7 +30922,8 @@ def _send_caps(client, views_seq=None):
     """The caps frame, on the client's own socket: {type: "caps", caps, viewsSeq} (the comment on
     KERNEL_WS_CAPS has the field). Sent AFTER the ready handler's pushes: the shim clears its stale banner
     on the first non-keepalive frame after a reconnect, which must stay the resync frame itself and not
-    this one. `views_seq` is the seq of the views blob those pushes served, None when they served none."""
+    this one. `views_seq` is the seq of the views blob those pushes served, else the store's current seq
+    (the comment on KERNEL_WS_CAPS), None only with no store."""
     try:
         client["send"](json.dumps({"type": "caps", "caps": list(KERNEL_WS_CAPS),
                                    "viewsSeq": views_seq if isinstance(views_seq, int) else None}))
@@ -39630,8 +39730,21 @@ class Handler(BaseHTTPRequestHandler):
             # What this kernel can do for the page (KERNEL_WS_CAPS), after the pushes above and on every
             # `ready` — so a reconnected socket learns them again, and a page whose views writes were
             # in flight across the drop learns, by this frame, that their answers may never come. It
-            # carries the seq of the views blob those pushes served (viewsSeq), read above.
-            _send_caps(client, views_seq=(max(seqs) if seqs else None))
+            # carries the seq of the views blob those pushes served (viewsSeq), read above — or, when
+            # they served none (a chat page on a sentinel cycle gets no tabOrder frame), the STORE's
+            # current seq, the seq the next push serves (round 8 of the 2026-09-05 review: with null
+            # here nothing re-armed a page's gate after a restart over a restored older store, and it
+            # rejected every later push under the old seq until the next write). Null only when there
+            # is no store at all — a fresh install, or a legacy store whose first stamp could not be
+            # written — which has no seq.
+            if seqs:
+                views_seq = max(seqs)
+            else:
+                try:
+                    views_seq = _timeline_views().get("seq")
+                except Exception:
+                    views_seq = None
+            _send_caps(client, views_seq=views_seq)
             # The tab order rides the connect push (chat clients, through the _tab_list_tmux collapse
             # guard). This handler used to send a SECOND tabOrder built from a raw _tmux_sessions() read,
             # bypassing that guard — and the client treats an omitted id as an authoritative teardown
@@ -39679,7 +39792,9 @@ class Handler(BaseHTTPRequestHandler):
                 with _views_lock:
                     refused = _set_timeline_views(msg["views"], edited=edited)   # the setter files the notice by the same rule
                 if edited is not None:
-                    ok = not any(r.get("tid") in edited for r in refused)
+                    # …or the past-the-bound summary row counts an edited id among the entries it
+                    # stands for (`moreEdited`, round 8 of the 2026-09-05 review)
+                    ok = not any(r.get("tid") in edited or r.get("moreEdited") for r in refused)
                 else:
                     ok = not refused
                 err = None
