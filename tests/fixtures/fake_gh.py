@@ -20,6 +20,16 @@ named so the fake does not pass as evidence):
   - `--auto` is accepted and, with no ruleset, merges at once (nothing is required, so nothing
     waits); with a ruleset it also merges at once, which stands in for "when the checks pass".
   - `--jq` is supported for the two expressions the shell scripts use, and refused otherwise.
+  - A MERGED or CLOSED PR keeps the head SHA it had at that moment, as GitHub reports it; only an
+    OPEN PR's head follows its branch (a branch name reused after a merge is a different PR).
+  - `api` serves the repository (`repos/{owner}/{repo}`: `allow_auto_merge` from the state's
+    `repo.allowAutoMerge`, off by default like the fork's, and the merge settings), the rulesets
+    list, the rules that apply to main (`rules/branches/main`, the same rows), classic protection
+    (`branches/main/protection`: the `protection` object, or the 404 GitHub returns when there is
+    none), and `-X DELETE .../git/refs/heads/<ref>` (deletes the branch and retargets its
+    dependents to main, as GitHub does).
+  - FAKE_GH_FAIL (`|`-separated argv prefixes) makes the matching calls fail with an HTTP 502, so
+    a test can see what the tool does when a call does not land.
 
 Synthetic data only: PR numbers, titles and branches are the tests' inventions.
 """
@@ -62,6 +72,11 @@ def git(state, *args, check=True):
 
 
 def live_head(state, pr):
+    """An OPEN PR's head follows its branch; a MERGED or CLOSED PR keeps the head it had at that
+    moment (GitHub reports the SHA as of the merge), so a branch name reused after the merge does
+    not move the old PR's head. A closed PR with no recorded head reads the branch once."""
+    if pr.get("state", "OPEN") != "OPEN" and pr.get("headRefOid"):
+        return pr["headRefOid"]
     proc = git(state, "rev-parse", "--verify", "--quiet", "refs/heads/" + pr["headRefName"], check=False)
     if proc.returncode == 0:
         pr["headRefOid"] = proc.stdout.strip()
@@ -308,16 +323,67 @@ def repo_view(state, argv):
 
 
 def api(state, argv):
+    """Three read-only endpoints. `rulesets` is the repository-wide list; `rules/branches/<b>` the
+    rules that apply to branch b (this fake serves the same `rulesets` rows for main, none for any
+    other branch); `branches/<b>/protection` is classic branch protection: the `protection` object
+    when set, else GitHub's 404 ("Branch not protected") as gh reports it, exit 1."""
     o = opts(argv, {"--jq", "-q", "--method", "-X", "-f", "-F"})
     path = o["_"][0]
-    if path.endswith("/rulesets"):
-        rows = state.get("rulesets", [])
+    method = (o.get("--method") or o.get("-X") or ["GET"])[0].upper()
+    if method == "DELETE" and "/git/refs/heads/" in path:
+        ref = path.split("/git/refs/heads/", 1)[1]
+        if git(state, "rev-parse", "--verify", "--quiet", "refs/heads/" + ref, check=False).returncode != 0:
+            print(json.dumps({"message": "Reference does not exist", "status": "422"}))
+            sys.stderr.write("gh: Reference does not exist (HTTP 422)\n")
+            sys.exit(1)
+        delete_branch_and_retarget(state, ref, "main")
+        save(state)
+        return
+    if path in ("repos/{owner}/{repo}", "repos/{owner}/{repo}/"):
+        repo = state.get("repo", {})
+        info = {"allow_auto_merge": bool(repo.get("allowAutoMerge", False)),
+                "allow_merge_commit": repo.get("mergeCommitAllowed", True),
+                "allow_squash_merge": repo.get("squashMergeAllowed", True),
+                "allow_rebase_merge": repo.get("rebaseMergeAllowed", True),
+                "delete_branch_on_merge": bool(repo.get("deleteBranchOnMerge", False))}
+        if o.get("--jq"):
+            expr = o["--jq"][0]
+            if expr.startswith(".") and expr[1:] in info:
+                print(json.dumps(info[expr[1:]]))
+                return
+            die("unsupported --jq expression %r" % expr)
+        print(json.dumps(info))
+        return
+    if path.endswith("/rulesets") or "/rules/branches/" in path:
+        rows = state.get("rulesets", []) if (path.endswith("/rulesets") or path.endswith("/rules/branches/main")) else []
         if o.get("--jq"):
             print(apply_jq(rows, o["--jq"][0]))
         else:
             print(json.dumps(rows))
         return
+    if "/branches/" in path and path.endswith("/protection"):
+        prot = state.get("protection")
+        if prot:
+            print(json.dumps(prot))
+            return
+        print(json.dumps({"message": "Branch not protected", "status": "404"}))
+        sys.stderr.write("gh: Branch not protected (HTTP 404)\n")
+        sys.exit(1)
     die("unsupported api path %s" % path)
+
+
+def maybe_fail(argv):
+    """Failure injection: FAKE_GH_FAIL holds `|`-separated argv prefixes (words separated by spaces);
+    a call that starts with one of them exits 1 with an HTTP-502-shaped error, the way a flaky gh
+    would, so tests can see what the tool does when a call does not land."""
+    spec = os.environ.get("FAKE_GH_FAIL")
+    if not spec:
+        return
+    for prefix in spec.split("|"):
+        words = prefix.split()
+        if words and argv[:len(words)] == words:
+            sys.stderr.write("fake gh: HTTP 502: Bad Gateway (FAKE_GH_FAIL matched %r)\n" % prefix)
+            sys.exit(1)
 
 
 def run_list(state, argv):
@@ -326,6 +392,7 @@ def run_list(state, argv):
 
 def main(argv):
     log_call(argv)
+    maybe_fail(argv)
     state = load()
     if argv[:2] == ["pr", "list"]:
         pr_list(state, argv[2:])
