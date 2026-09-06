@@ -27,8 +27,10 @@
 //     the kernel that owns the disk with no new relay code.
 //   • Change awareness by POLLING (2.5 s while the panel is open and the tab visible): HEAD /file on
 //     the file, the sidecar the kernel named, and the project's config.json, comparing X-Romp-Mtime-Ns
-//     as STRINGS. The Files pane has no filesystem watcher; the poll stands in for that event, and the
-//     person's own writes never fire it because every verb reply re-baselines it. Replies land in the
+//     as STRINGS — and on every figure a text file's region comments name, against the poll's own last
+//     reading (a regenerated figure moves none of the three; tick). The Files pane has no filesystem
+//     watcher; the poll stands in for that event, and the person's own writes never fire it because every
+//     verb reply re-baselines it. Replies land in the
 //     order their asks were issued (applyStatus): the kernel runs each ask concurrently and answers when
 //     it finishes, and a status that read the disk before a write — asked before it, or asked while it was
 //     in flight — must not put the panel back a step once the write's reply is showing.
@@ -55,7 +57,7 @@ import {
   type Status, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, actionLabel, cardModel, changeCards, changeGroups,
   foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, sendParts, sendCounts, buildSendMessage, unsentCount,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
-  regionTarget, regionState, type PollBaseline,
+  regionTarget, regionState, figureTargets, figuresMoved, type PollBaseline, type FigureBaseline, type HeadVerdict,
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5)
 import { regionDesc, type Region } from "./region-geometry";
@@ -375,7 +377,12 @@ class Panel {
   busyVerb = new Map<string, string>();     // slot → the verb in flight, so a card's Accept/Reject relabels itself (ui/CLAUDE.md)
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
   regionLayers = new Map<HTMLImageElement, RegionLayer>();   // the overlays, one per picture in view (Slice 3; paintRegions)
+  // what each overlay last painted (its marks, the pending region, the re-place cue), so a pass that brings it nothing
+  // new leaves its rectangles standing: a rebuild detaches the node a click just flashed, and the keyboard's focus with
+  // it — openPanel's own paint did that to the rectangle whose Enter opened it (CLAUDE.md: a move on no new information)
+  paintedKey = new WeakMap<RegionLayer, string>();
   cropWait = new WeakSet<HTMLImageElement>();                 // pictures whose load will re-render the cards for their thumbnails
+  figureBase: FigureBaseline = {};                            // the poll's last reading of each figure a region comment names (tick)
   resolvedOpen = false;
   trackChoice = false;                      // the on-toggle's scope row (file / folder) is showing
   trackStop = false;                        // the folder-off confirm is showing
@@ -408,6 +415,16 @@ class Panel {
   float = el("button", "fileview-btn fc-float", "Comment") as HTMLButtonElement;
   catchUp = () => { if (this.tickSkipped) void this.tick(); };
   hideFloatOnDown = (ev: Event) => { if (ev.target !== this.float) { this.float.hidden = true; this.imageTarget = null; } };
+  // Esc cancels a Re-place. Every other composer kind focuses the input, whose own keydown catches Esc; a re-place hides
+  // the input (it takes a drag, not words), so nothing in the box holds focus and the key fell through to the viewer's
+  // document-level Escape, which closed the WHOLE viewer — the panel, the open card and the pending re-place with it, when
+  // the person meant only to think again. Caught at the document in the capture phase, ahead of the viewer's handler,
+  // wherever the focus sits (the re-rendered Re-place button, or the body); only while a re-place is pending.
+  escapeReplace = (ev: KeyboardEvent) => {
+    if (ev.key !== "Escape" || !this.composer || this.composer.kind !== "replace") return;
+    ev.preventDefault(); ev.stopPropagation();
+    this.closeComposer();
+  };
 
   constructor(readonly ctx: FileViewActionCtx, readonly button: HTMLButtonElement, readonly unit: HTMLElement) {
     ensureListener();
@@ -441,6 +458,7 @@ class Panel {
     this.float.addEventListener("touchend", (e) => { e.preventDefault(); act(); });
     document.body.appendChild(this.float);
     for (const ev of ["mousedown", "touchstart"]) document.addEventListener(ev, this.hideFloatOnDown, true);   // a press anywhere else hides it, mouse or finger
+    document.addEventListener("keydown", this.escapeReplace, true);   // Esc during a re-place: see escapeReplace
     ctx.onSelection((sel) => this.onSelection(sel));
     ctx.onRendered(() => { this.float.hidden = true; this.retargetComposer(); this.paintAll(); });
     ctx.onSaved((info) => {
@@ -704,6 +722,7 @@ class Panel {
     this.regionLayers.clear();
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
+    document.removeEventListener("keydown", this.escapeReplace, true);
     this.failAll("the file viewer closed");
     if (live === this) live = null;
   }
@@ -724,8 +743,10 @@ class Panel {
         }
       }
     } catch { /* the chips fall back to their labels */ }
-    // the change marks carry the author's colour too (paintChanges): repaint when any are up, else just the chips
-    if (this.status && (this.status.hunks || []).length) this.paintAll(); else this.render();
+    // the change marks and the region rectangles carry the author's colour too (paintChanges, paintRegions): repaint
+    // when any are up — a rectangle painted before this answer wears the sheet's fallback until then — else just the chips
+    const s = this.status;
+    if (s && ((s.hunks || []).length || this.cards().some((c) => c.target))) this.paintAll(); else this.render();
   }
   sessionName(): string {
     const id = this.ctx.identity();
@@ -757,30 +778,53 @@ class Panel {
       const checks: Array<[keyof PollBaseline, string]> = [["file", t.file]];
       if (t.store) checks.push(["store", t.store]);
       if (t.config) checks.push(["config", t.config]);
+      // `fileMoved`: the bytes the VIEW shows moved — the file's own, or (below) an embedded figure's, drawn in it
       let fileMoved = false, moved = false;
       for (const [key, target] of checks) {
-        if (this.stopped.has(target)) continue;
-        let r: Response;
-        try { r = await fetch(fileUrl(target, this.ctx.sid), { method: "HEAD", cache: "no-store" }); }
-        catch { continue; }                          // a network blip: the next tick tries again
-        const v = headVerdict(r.status, r.headers.get("X-Romp-Mtime-Ns"));
-        if (v.kind === "stop") {
-          this.stopped.add(target);
-          // "checking … for changes", the guide's own words for this loop — never "watching": the row sits under
-          // the Track changes toggle, and a tracked file whose refresh stopped is still tracked
-          this.errors.set("poll", { text: "Stopped checking " + target + " for changes: the kernel answered " + v.status
-            + (v.status === 413 ? " (too large to serve)" : " (not a type it serves)") + ". Reload to try again.", reload: true });
-          this.render();
-          continue;
-        }
-        if (v.kind !== "value") continue;
+        const v = await this.head(target);
+        if (!v) continue;
         if (mtimeMoved(base[key], v.value)) { moved = true; if (key === "file") fileMoved = true; }
       }
+      // the figures (Slice 3): a region comment on a figure embedded in a text file goes stale when the FIGURE's bytes
+      // change, and a session that regenerates one touches none of the three targets above — so they are HEADed too.
+      // The status carries their hashes, not their mtimes, so the reply gives them no baseline: each is compared with the
+      // poll's own last reading of it (figuresMoved; a first reading is an observation, never a move). A move re-asks
+      // status, whose embeddedHashes flip the comment to stale by hash, and reloads the view so the new picture shows:
+      // the kernel serves /file with Cache-Control: no-cache, so the re-rendered <img> revalidates instead of reusing
+      // the old bytes. Nothing here re-baselines on a reply: no verb of the panel's writes a figure.
+      const figs = figureTargets(this.status, this.ctx.path);
+      const seen: FigureBaseline = {};
+      for (const target of figs) {
+        const v = await this.head(target);
+        if (v) seen[target] = v.value;
+      }
+      const fm = figuresMoved(this.figureBase, figs, seen);
+      this.figureBase = fm.next;
+      if (fm.moved.length) { moved = true; fileMoved = true; }
       if (moved) {
         if (fileMoved) this.ctx.reload();            // the bytes changed under the view — repaint them
         await this.refresh();                        // fresh sidecar, log, and a new baseline
       }
     } finally { this.polling = false; }
+  }
+  /** One HEAD of the poll: the target's mtime verdict, or null when it says nothing this tick — a network blip (the next
+   *  tick tries again), an unknown answer, or a 413/415, which retires the target (`stopped`) under the poll's row. */
+  private async head(target: string): Promise<{ kind: "value"; value: string } | null> {
+    if (this.stopped.has(target)) return null;
+    let r: Response;
+    try { r = await fetch(fileUrl(target, this.ctx.sid), { method: "HEAD", cache: "no-store" }); }
+    catch { return null; }                           // a network blip: the next tick tries again
+    const v: HeadVerdict = headVerdict(r.status, r.headers.get("X-Romp-Mtime-Ns"));
+    if (v.kind === "stop") {
+      this.stopped.add(target);
+      // "checking … for changes", the guide's own words for this loop — never "watching": the row sits under
+      // the Track changes toggle, and a tracked file whose refresh stopped is still tracked
+      this.errors.set("poll", { text: "Stopped checking " + target + " for changes: the kernel answered " + v.status
+        + (v.status === 413 ? " (too large to serve)" : " (not a type it serves)") + ". Reload to try again.", reload: true });
+      this.render();
+      return null;
+    }
+    return v.kind === "value" ? v : null;
   }
 
   // ── verbs ──────────────────────────────────────────────────────────────────────────────────────
@@ -1047,12 +1091,13 @@ class Panel {
    *  over the new text, deletions struck at their point in Raw and card-only in Rendered, each mark
    *  carrying the change's id and the author's session colour. The composer's pending target is painted last. */
   paintAll(): void {
+    const keep = this.bodyFocusKey();                  // a highlight or rectangle holding the keyboard: re-found after the pass
     this.located = new Map();
     this.paintedChanges = new Set();
     unpaintChanges(this.ctx.body());                   // before each repaint (D5): the marks are unwrapped, never stacked
     this.unpaint(".fc-hl, .fc-presel");                // a status refresh repaints the SAME body: never wrap twice
     const src = this.ctx.text(); const root = this.contentRoot();
-    if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint
+    if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
     const rendered = this.ctx.mode() === "rendered";
     for (const card of this.cards()) {
       if (card.resolved || !card.anchor) continue;
@@ -1074,9 +1119,26 @@ class Panel {
       this.located.set(card.id, { ...loc, painted });
     }
     this.paintChanges(root, src, rendered);
+    this.refocusBody(keep);                            // the highlights and change marks are rebuilt; the rectangles keep their own (paintRegions)
     this.paintPresel(root, src, rendered);
     this.paintRegions();
     this.render();
+  }
+  // The marks in the BODY are controls too (KEY_ACTS: a highlight, a change mark, a rectangle), and every paint pass
+  // rebuilds them — so a status landing while the keyboard was on one left it on the body, the way Enter on a card's
+  // head once did in the aside (render's refocus mends the aside alone). The focused mark is re-found by what it IS,
+  // the action plus the id of its subject, never by its node; the first match, since a highlight may span several.
+  private bodyFocusKey(): { act: string; id: string } | null {
+    const a = document.activeElement as HTMLElement | null;
+    if (!a || !this.marks.has(a) || !a.dataset || !a.dataset.act || !a.dataset.id) return null;
+    return { act: a.dataset.act, id: a.dataset.id };
+  }
+  private refocusBody(k: { act: string; id: string } | null): void {
+    if (!k) return;
+    const a = document.activeElement;
+    if (a && this.ctx.body().contains(a)) return;     // the mark survived the pass (paintedKey), or the focus moved on its own
+    const n = this.ctx.body().querySelector('[data-act="' + k.act + '"][data-id="' + k.id + '"]') as HTMLElement | null;
+    if (n && this.owns(n)) n.focus({ preventScroll: true });
   }
   /** The change marks, after the comment highlights (D5): stylesFor hands each mark the author's session colour
    *  from the Slice 1 colour map as `--fc-author` (nothing when unknown: the sheet's neutral). Every painted
@@ -1186,8 +1248,11 @@ class Panel {
    *  is open and the pointer is fine (E5: a coarse pointer reads, and the whole-file comment stands in); the
    *  rectangles show whenever the highlights do. A painted rectangle is the comment's mark (located, painted): the
    *  card's reference links to it and offers no Reveal. A pending region whose picture was repainted is re-found
-   *  (the media body's one picture; a figure by its embed's src). */
+   *  (the media body's one picture; a figure by its embed's src). A layer is rebuilt only when what it would show
+   *  changed (paintedKey): opening the panel, a status that moved nothing, a presel repaint elsewhere leave every
+   *  rectangle — and the click pulse and keyboard focus on one — standing. */
   private paintRegions(): void {
+    const keep = this.bodyFocusKey();
     const imgs = this.regionImages();
     for (const [img, layer] of this.regionLayers) if (!imgs.includes(img)) { layer.dispose(); this.regionLayers.delete(img); }
     if (!imgs.length) return;
@@ -1212,6 +1277,9 @@ class Panel {
     for (const img of imgs) {
       let layer = this.regionLayers.get(img);
       if (!layer) {
+        // onClick is a PLAIN picture's click; a framed picture's (an embed-line comment's highlight, data-act="fcopen")
+        // the layer hands to the picture itself (handOn), so the delegate's fcopen and the row's IMG listener hear it as
+        // they did before the overlay stood over it
         layer = new RegionLayer(img, {
           onDraw: (i, r) => this.onRegionDrawn(i, r), onClick: (i) => this.onImageClick(i),
           onPress: () => { this.float.hidden = true; this.imageTarget = null; },   // what hideFloatOnDown does for a mousedown the overlay cancels
@@ -1221,8 +1289,12 @@ class Panel {
       layer.setActive(active);
       const pending = c && c.kind === "region" && c.img === img && !c.refusal ? c.region : null;
       const replacing = !!c && c.kind === "replace" && this.replaceTarget(c.commentId) === img;
+      const key = JSON.stringify([per.get(img) || [], pending, replacing]);
+      if (this.paintedKey.get(layer) === key) continue;   // nothing new for this picture: its rectangles stand (paintedKey)
+      this.paintedKey.set(layer, key);
       for (const r of layer.paint(per.get(img) || [], pending, replacing)) this.marks.add(r);
     }
+    this.refocusBody(keep);
   }
   /** Whether any overlay in view takes a drag (the panel open, a fine pointer): the empty state names the gesture
    *  and the cards offer Re-place only then. */
@@ -1571,8 +1643,13 @@ class Panel {
       return list;
     }
     if (!cards.length && !view.cards.length) {
+      // the gesture is named wherever an overlay in view takes it (drawsRegions): the media body's picture, or a figure in
+      // rendered markdown — the panel's guidance is the one place the drag is discoverable from; the overlay's own label
+      // reaches assistive tech alone, and the crosshair names nothing
+      const draws = this.drawsRegions();
       list.appendChild(el("div", "fc-empty", this.ctx.mode() === "media"
-        ? (this.drawsRegions() ? "No comments yet. Drag a rectangle on the image, or comment on this file." : "No comments yet. Comment on this file to leave one.")
+        ? (draws ? "No comments yet. Drag a rectangle on the image, or comment on this file." : "No comments yet. Comment on this file to leave one.")
+        : draws ? "No comments yet. Select a passage and press Comment, drag a rectangle on a figure, or comment on this file."
         : "No comments yet. Select a passage and press Comment, or comment on this file."));
       return list;
     }

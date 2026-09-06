@@ -19,7 +19,8 @@ import { regionDesc, staleness, type Region, type Staleness } from "./region-geo
 export type Anchor = { quote: string; prefix: string; suffix: string };
 /** A region on an image or a PDF page (Slice 3; contract E1): fractions of the natural size, the page for a PDF,
  *  the sha256 of the file's bytes the HOST stamped when the region was drawn (staleness compares it with the
- *  file's current hash), and for a figure embedded in markdown `src` exactly as the embed writes it. */
+ *  file's current hash), and for a figure embedded in markdown `src` exactly as the embed writes it — the name
+ *  the sent message and the card call the figure by (describeComment), and the key of `embeddedHashes`. */
 export type Target = { kind: "image" | "pdf"; region: Region; page?: number; hash?: string; src?: string };
 export type StoreReply = { author: string; authorId?: string; ts: number; body?: string; kind?: string; oldText?: string; newText?: string };
 export type StoreComment = {
@@ -90,7 +91,13 @@ export function decidedChange(log: LogEntry[] | null | undefined, id: string): {
 
 /** The parenthetical the kernel prints after "Comment <id>", without parentheses (C2). A comment bound to a
  *  change describes the change while it is pending, and from the log's accept or reject entry after a decision
- *  (a manual Accept before the send would otherwise describe it as "on this file"). */
+ *  (a manual Accept before the send would otherwise describe it as "on this file"). A region comment names the
+ *  region — "the region at x, y, w, h", "… of page N" on a PDF — and on a figure embedded in a text file ALSO the
+ *  figure, by its `src` as the embed writes it ("… of figs/latency.png"): such a comment carries the embed line's
+ *  anchor as well, but the region wins over the anchor, and the fractions alone say which part of a picture without
+ *  saying which picture — on a page with several figures the session would have to open the sidecar to learn which
+ *  one, and the message is what it reads. A person would name the picture (CLAUDE.md, the injected voice). The
+ *  standalone forms are the plan's own; the figure's name is this module's addition to them. */
 export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] = []): string {
   if (c.suggestionId) {
     const h = hunks.find((x) => x.id === c.suggestionId);
@@ -98,7 +105,10 @@ export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] 
     const d = decidedChange(log, c.suggestionId);
     if (d) return 'on your change "' + d.oldText + '" to "' + d.newText + '"';
   }
-  if (c.target && c.target.region) return "on " + regionDesc(c.target.region, c.target.kind === "pdf" ? c.target.page : null);
+  if (c.target && c.target.region) {
+    const at = regionDesc(c.target.region, c.target.kind === "pdf" ? c.target.page : null);
+    return "on " + (typeof c.target.src === "string" && c.target.src ? at + " of " + c.target.src : at);
+  }
   if (c.anchor && typeof c.anchor.quote === "string" && c.anchor.quote) return 'on "' + c.anchor.quote.slice(0, 40) + '"';
   return "on this file";
 }
@@ -478,9 +488,72 @@ export function headVerdict(status: number, mtimeNs: string | null): HeadVerdict
 }
 
 /** The three HEAD targets: the file, the sidecar the kernel named (never a client-computed sidecar path),
- *  and the project's config.json beside it; a file with no project root polls the file alone. */
+ *  and the project's config.json beside it; a file with no project root polls the file alone. The figures a text
+ *  file's region comments name are a fourth set with a baseline of their own (figureTargets, figuresMoved). */
 export function pollTargets(s: Status, path: string): { file: string; store: string | null; config: string | null } {
   return { file: path, store: s.storePath || null, config: s.root ? s.root.replace(/\/$/, "") + "/.trackchanges/config.json" : null };
+}
+
+// ── the figures the poll watches (Slice 3) ─────────────────────────────────────────────────────────
+// A region comment on a figure embedded in a text file goes stale when the FIGURE's bytes change (E2), and a
+// session that regenerates the figure touches neither the text file, the sidecar, nor config.json — none of the
+// three targets above moves, so a poll over them alone never re-asks status, and the card and rectangle keep
+// showing the figure current until a Reload. So the poll HEADs the figures too. The status reply carries their
+// hashes (embeddedHashes), not their mtimes, so the reply gives them no baseline: the baseline is the poll's own
+// previous reading of each, and a figure's first reading is an observation with nothing to compare to. A move
+// re-asks status, whose embeddedHashes then flip the comment to stale by hash — the flip stays the hash's call.
+
+/** A src with a URL scheme (http:, https:, data:, …) names no file the kernel serves — the same test the viewer
+ *  and the host apply (file-view.ts rewriteFigureSrcs, file-comments-host.mjs resolveSrc). */
+const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+
+/** Where an embedded figure's `src` points, for the /file route: decoded as the viewer decodes it before loading the
+ *  picture and as the host decodes it before hashing (decodeURI; a malformed escape is taken as written); an absolute
+ *  path is itself; a relative one is joined to the text file's directory, `.` and `..` left as written for the kernel
+ *  to resolve (a client-side normalization would be a second opinion on what it serves). Null for a URL. */
+export function figurePath(filePath: string, src: string): string | null {
+  if (!src || URL_SCHEME_RE.test(src)) return null;
+  let rel = src;
+  try { rel = decodeURI(src); } catch { /* a malformed escape: the spelling as written */ }
+  if (rel.startsWith("/")) return rel;
+  return filePath.slice(0, filePath.lastIndexOf("/") + 1) + rel;
+}
+
+/** The figures to HEAD: one path per distinct `target.src` in the sidecar, in order of first appearance, resolved
+ *  by figurePath — resolved comments included, since their cards still wear the stale tag. Empty with no sidecar or
+ *  no embedded regions; a standalone image is the poll's `file` target already. */
+export function figureTargets(s: Pick<Status, "store"> | null | undefined, path: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const c of (s && s.store ? s.store.comments : []) || []) {
+    const src = c && c.target ? c.target.src : undefined;
+    if (typeof src !== "string" || !src || seen.has(src)) continue;
+    seen.add(src);
+    const p = figurePath(path, src);
+    if (p !== null && !out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+/** The figures' baseline: path → the mtime string (or ABSENT) the poll last read for it. */
+export type FigureBaseline = Record<string, string>;
+
+/** One tick's verdict over the figures. `seen` is this tick's readings (only the HEADs that answered with a value);
+ *  a figure MOVED when it had a baseline and the reading differs (string inequality, as mtimeMoved). `next` is what the
+ *  following tick compares against: every reading taken, a figure that did not answer this tick keeping its last
+ *  reading, and a figure no longer among `targets` dropped. A first reading is never a move. */
+export function figuresMoved(prev: FigureBaseline, targets: string[], seen: FigureBaseline): { moved: string[]; next: FigureBaseline } {
+  const moved: string[] = [];
+  const next: FigureBaseline = {};
+  for (const t of targets) {
+    if (Object.prototype.hasOwnProperty.call(seen, t)) {
+      if (Object.prototype.hasOwnProperty.call(prev, t) && mtimeMoved(prev[t], seen[t])) moved.push(t);
+      next[t] = seen[t];
+    } else if (Object.prototype.hasOwnProperty.call(prev, t)) {
+      next[t] = prev[t];
+    }
+  }
+  return { moved, next };
 }
 
 /** Mtimes are compared as STRINGS: ~1.7e18 ns exceeds JS's safe integers, so a number would round two

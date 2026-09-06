@@ -28,15 +28,45 @@ export const CLICK_THRESHOLD_PX = 4;
 const round4 = (v: number): number => Math.round(v * 10 ** FRACTION_DECIMALS) / 10 ** FRACTION_DECIMALS;
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
-/** The box the image's pixels are DRAWN in, inside the element's client rect: `object-fit: contain`
- *  letterboxes an image whose aspect differs from the element's, and a fraction of the natural size is a
- *  fraction of this box, not of the element. Equal to `rect` when the natural size is unknown (an SVG
- *  with no intrinsic size, a picture still loading) or either box is empty. */
-export function drawnBox(rect: Box, natural: Size | null | undefined): Box {
+/** The `object-fit` keywords a browser computes for an <img>. `fill` is the CSS initial value: an image
+ *  with no `object-fit` rule is stretched over its element. */
+export type ObjectFit = "fill" | "contain" | "cover" | "none" | "scale-down";
+/** What the caller omits: the media body's `.fileview-img` has `object-fit: contain`. See drawnBox. */
+export const DEFAULT_FIT: ObjectFit = "contain";
+
+/** The box the image's pixels are DRAWN in, relative to the element's client rect: a fraction of the
+ *  natural size is a fraction of THIS box, not of the element, and the two differ whenever the element's
+ *  aspect is not the picture's. Which box depends on the element's `object-fit`, so `fit` is its COMPUTED
+ *  value (`getComputedStyle(img).objectFit`): `contain` letterboxes the picture inside the element;
+ *  `fill` stretches it over the whole element, so the box IS the rect; `cover` and `none` can overflow the
+ *  element (the element clips what falls outside); `scale-down` is `none` for a picture that fits and
+ *  `contain` otherwise. A word that is none of the five (a stand-in with no computed style) is treated as
+ *  `fill`, the initial value. Omitted, `fit` is DEFAULT_FIT — the media body's rule — which is WRONG for a
+ *  figure in rendered markdown: `.fileview-md img` sets no `object-fit`, so a figure with `width` and
+ *  `height` that disagree with its aspect (raw HTML, or a correct pair squeezed by `max-width: 100%` in a
+ *  narrow column) is drawn stretched, and a letterbox computed for it places the overlay over pixels that
+ *  hold no picture. Callers pass the measured value. Centered placement (`object-position`'s initial
+ *  `50% 50%`) is assumed: no romp stylesheet moves it. Equal to `rect` when the natural size is unknown
+ *  (an SVG with no intrinsic size, a picture still loading) or either box is empty. */
+export function drawnBox(rect: Box, natural: Size | null | undefined, fit: string = DEFAULT_FIT): Box {
   if (!natural || !(natural.width > 0) || !(natural.height > 0) || !(rect.width > 0) || !(rect.height > 0)) return { ...rect };
-  const scale = Math.min(rect.width / natural.width, rect.height / natural.height);
+  const scale = drawnScale(rect, natural, fit);
+  if (scale === null) return { ...rect };
   const width = natural.width * scale, height = natural.height * scale;
   return { left: rect.left + (rect.width - width) / 2, top: rect.top + (rect.height - height) / 2, width, height };
+}
+
+/** The factor the natural size is drawn at under `fit`; null when the picture is stretched to the element
+ *  (`fill`, or a word that is not an object-fit keyword), where no single factor applies. */
+function drawnScale(rect: Box, natural: Size, fit: string): number | null {
+  const contain = Math.min(rect.width / natural.width, rect.height / natural.height);
+  switch (fit) {
+    case "contain": return contain;
+    case "cover": return Math.max(rect.width / natural.width, rect.height / natural.height);
+    case "none": return 1;
+    case "scale-down": return Math.min(1, contain);
+    default: return null;
+  }
 }
 
 /** Where the overlay sits inside its wrapper, in pixels, when the drawn image does not fill the wrapper —

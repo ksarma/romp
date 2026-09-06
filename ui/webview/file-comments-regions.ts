@@ -16,6 +16,13 @@
 // pointer (`(pointer: coarse)`) the overlay never takes pointer events, so the picture behaves as before
 // and the whole-file comment stands in; the rectangles stay clickable in both cases, since they open cards.
 //
+// While the overlay is armed it stands over everything the picture used to offer a click: the rectangles,
+// and the picture itself when an embed-line comment's frame made it a control. It captures every pointer it
+// takes (so a drag that leaves the picture stays alive), and a captured pointer's click is dispatched to the
+// CAPTURING element (Pointer Events, event dispatch) — the overlay, which carries no action, so the delegate
+// root would drop it. A press that does not move is therefore handed on by the layer: it clicks the control
+// the press began on (handOn), and swallows the browser's own click after it.
+//
 // Nothing here adds a TEXT node under the image: the rendered-markdown mapper aligns each block's text
 // against the source, and a chip's label as a text node would misalign the paragraph holding the figure.
 // The author chip is drawn from `data-label` by the sheet (`content: attr(data-label)`), the way the
@@ -69,12 +76,20 @@ function styleAttr(decls: Record<string, string>): string {
   return out.join("; ") + (out.length ? ";" : "");
 }
 const mk = (doc: Document, tag: string, cls: string): HTMLElement => { const e = doc.createElement(tag); e.className = cls; return e; };
+/** An element's client rect as a plain box. A DOMRect's fields are prototype getters, so a spread of one is an empty
+ *  object — and the geometry returns `{ ...rect }` where the box is the element (a picture drawn `fill`, a natural size
+ *  not known yet): passed the DOMRect itself, that came back as a box of undefineds and a NaN style on the overlay. */
+const boxOf = (el: Element): Box => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
 
 export class RegionLayer {
   readonly wrap: HTMLElement;
   readonly overlay: HTMLElement;
-  private press: { id: number; start: Point; fromRegion: boolean } | null = null;
+  /** the pointer held down on the overlay: its id, where it began, and the rectangle it began on (with the
+   *  comment id that rectangle carried, since a paint pass may rebuild it before the release) */
+  private press: { id: number; start: Point; rect: HTMLElement | null; rectId: string | undefined } | null = null;
   private band: HTMLElement | null = null;
+  /** the press did its work here — a region drawn, or the click handed on to the control under the overlay — so
+   *  the click the browser synthesizes after it is not an activation of its own and is swallowed (arm) */
   private drew = false;
   /** whether a drag draws here: the panel is open and the pointer is fine (setActive) */
   active = false;
@@ -109,24 +124,37 @@ export class RegionLayer {
   }
 
   private natural(): Size { return { width: this.img.naturalWidth || 0, height: this.img.naturalHeight || 0 }; }
-  /** The drawn image's box in client coordinates: the element's rect, less any letterbox `object-fit: contain` adds. */
-  box(): Box { return drawnBox(this.img.getBoundingClientRect(), this.natural()); }
+  /** How the picture is fitted into its element: the COMPUTED `object-fit`, read rather than assumed. The media
+   *  body's `.fileview-img` has `contain` (a letterbox when the aspects differ); a figure in rendered markdown has
+   *  no rule, so CSS's initial `fill` stretches it over a `width`/`height` pair the author wrote (the sanitizer keeps
+   *  both), and a letterbox computed for THAT figure put the overlay over the middle of the element while the picture
+   *  filled all of it. A document with no computed style to read (a stand-in) reads as `fill`, the initial value. */
+  private fit(): string {
+    const w = typeof window !== "undefined" ? window : null;
+    if (!w || typeof w.getComputedStyle !== "function") return "fill";
+    const v = w.getComputedStyle(this.img).objectFit;
+    return typeof v === "string" && v ? v : "fill";
+  }
+  /** The drawn image's box in client coordinates: the element's rect, adjusted for how its `object-fit` draws the
+   *  picture in it (drawnBox: the letterbox under `contain`, the element itself under `fill`). */
+  box(): Box { return drawnBox(boxOf(this.img), this.natural(), this.fit()); }
 
   /** Size the overlay to the drawn image. The wrapper hugs the <img>, so the sheet's `inset: 0` is right
-   *  whenever the image fills its element; a letterboxed image gets pixel offsets, re-measured on the
-   *  image's load and on every resize. A wrapper with no size yet (not laid out) claims nothing. */
+   *  whenever the picture fills its element (`fill`, or `contain` at the picture's own aspect); a picture drawn
+   *  smaller than its element (the `contain` letterbox) gets pixel offsets, re-measured on the image's load and
+   *  on every resize. A wrapper with no size yet (not laid out) claims nothing. */
   place(): void {
-    const w = this.wrap.getBoundingClientRect();
+    const w = boxOf(this.wrap);
     const off = w.width > 0 && w.height > 0 ? overlayOffsets(w, this.box()) : null;
     if (!off) { this.overlay.removeAttribute("style"); return; }
     this.overlay.setAttribute("style", styleAttr({ left: off.left + "px", top: off.top + "px", width: off.width + "px", height: off.height + "px" }));
   }
 
   /** Pointer events on the overlay (while active): a press that moves past the click threshold draws
-   *  a rubber band and, on release, becomes a region; a press that does not move is the picture click the
-   *  viewer already had (the embed-line Comment offer), unless it began on a rectangle — that click opens
-   *  the card through the delegate root and needs nothing from here. Pointer capture keeps a drag that
-   *  leaves the picture alive; the region is clamped to the image. */
+   *  a rubber band and, on release, becomes a region; a press that does not move is a click on what the
+   *  overlay covers, handed on by handOn — the rectangle it began on, a picture that is itself a control,
+   *  or the picture click the viewer already had (onClick: the embed-line Comment offer). Pointer capture
+   *  keeps a drag that leaves the picture alive; the region is clamped to the image. */
   private arm(): void {
     const o = this.overlay;
     o.addEventListener("pointerdown", (ev: PointerEvent) => {
@@ -134,8 +162,8 @@ export class RegionLayer {
       if (this.hooks.onPress) this.hooks.onPress();
       this.drew = false;
       const t = ev.target as Element | null;
-      const fromRegion = !!(t && typeof t.closest === "function" && t.closest(".fc-region"));
-      this.press = { id: ev.pointerId, start: { x: ev.clientX, y: ev.clientY }, fromRegion };
+      const rect = t && typeof t.closest === "function" ? (t.closest(".fc-region") as HTMLElement | null) : null;
+      this.press = { id: ev.pointerId, start: { x: ev.clientX, y: ev.clientY }, rect, rectId: rect ? rect.dataset.id : undefined };
       try { o.setPointerCapture(ev.pointerId); } catch { /* a pointer the browser will not capture: leaving the picture ends the drag */ }
       ev.preventDefault();                               // no native image drag, no selection behind the overlay
     });
@@ -157,7 +185,7 @@ export class RegionLayer {
       if (this.band) { this.band.remove(); this.band = null; }
       if (cancelled) return;
       const cur = { x: ev.clientX, y: ev.clientY };
-      if (dragIsClick(p.start, cur)) { if (!p.fromRegion) this.hooks.onClick(this.img); return; }
+      if (dragIsClick(p.start, cur)) { this.handOn(p.rect, p.rectId); return; }
       const r = regionFromPoints(this.box(), p.start, cur);
       if (!r) return;
       this.drew = true;
@@ -165,8 +193,39 @@ export class RegionLayer {
     };
     o.addEventListener("pointerup", (ev: PointerEvent) => end(ev, false));
     o.addEventListener("pointercancel", (ev: PointerEvent) => end(ev, true));
-    // the click a browser synthesizes after the drag must not reach the delegate root as an activation
+    // the click a browser synthesizes after the drag, or after a click the layer handed on, must not reach the
+    // delegate root as an activation
     o.addEventListener("click", (ev: Event) => { if (this.drew) { this.drew = false; ev.stopPropagation(); ev.preventDefault(); } });
+  }
+
+  /** A press that did not move is a click on what the overlay covers, and the layer hands it on: the pointer was
+   *  captured, so the browser's own click goes to the overlay (the capturing element), where the delegate root
+   *  finds no action. Began on a rectangle: that rectangle is clicked — or, when a paint pass rebuilt the
+   *  rectangles mid-press, the one now carrying the same comment id (click-safe across re-renders, ui/CLAUDE.md);
+   *  a pending region carries no id and opens nothing. Began on the picture while the picture is itself a control
+   *  (the frame an embed-line comment wears, data-act="fcopen"): the picture is clicked, so the delegate root opens
+   *  its card and the panel's own picture listener hears the click it heard before the overlay stood there — the
+   *  Comment offer follows as before. A plain picture's click reaches no control, and goes to the panel through
+   *  onClick. A click dispatched here IS the activation, so the browser's own is swallowed after it (drew). */
+  private handOn(rect: HTMLElement | null, rectId: string | undefined): void {
+    if (rect) {
+      if (rectId === undefined) return;
+      const o = this.overlay;
+      const now = o.contains(rect) ? rect
+        : (Array.from(o.querySelectorAll(".fc-region")) as HTMLElement[]).find((r) => r.dataset.id === rectId) || null;
+      if (now) this.activate(now);                      // gone with its comment mid-press: nothing left to open
+      return;
+    }
+    if (this.img.dataset.act) { this.activate(this.img); return; }
+    this.hooks.onClick(this.img);
+  }
+  /** Click a control the overlay covered, the way Enter on a focused highlight does (the panel's KEY_ACTS path):
+   *  a synthetic click bubbles to the delegate root with the control as its target. An element with no click()
+   *  (a DOM stand-in) cannot be activated from here, and then the click the browser dispatches is left alone. */
+  private activate(el: HTMLElement): void {
+    if (typeof el.click !== "function") return;
+    el.click();
+    this.drew = true;
   }
 
   /** Rebuild the rectangles: one per mark (a control: data-act="fcopen", data-id, a Tab stop), the
