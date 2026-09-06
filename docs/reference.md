@@ -1484,6 +1484,16 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   whole dump for their signature), and `default_str` (values no wire encoder
   could serialize as JSON and shipped as `str()`, one per encode; the kernel's
   stderr names each such type once).
+  `intr_marks` is the interrupt-marks memo, one entry per (session, parse
+  family) keyed on the parse object's identity and the machine-cut stamp:
+  `hit` and `miss` (reads served from memory against re-tallied), `evict`
+  (entries dropped for sessions that left the alive set, or the whole memo
+  cleared once it holds 512 entries), and the gauge `entries`.
+  `sessions_scope` is the pusher cycle's discover memo, one sweep per
+  (window, forks) key per cycle: `hit` and `miss` (session-row reads inside a
+  cycle served from the cycle's rows against swept) and `wide_hit` and
+  `wide_miss` (the wide walk taken for a live session idle longer than the
+  caption window); the memo lives for one cycle, so it has no occupancy gauge.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
