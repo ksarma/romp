@@ -56,6 +56,10 @@ es = SourceFileLoader("romp_envsource", str(ROOT / "kernel" / "envsource.py")).l
 
 KPORTS = ["http://127.0.0.1:29855", "http://127.0.0.1:7878", "http://127.0.0.1:7432"]
 
+# The column every hint line stays within, indent included. One exception, deliberate: a path is never
+# broken, so a service.env path too long for its sentence goes whole on a line of its own (_other_file).
+WIDTH = 100
+
 # `romp keyswap <name>` is refused in FILE mode on this fork (the user 2026-09-05). The exit code is 2,
 # the class the other usage refusals use; the file is never opened for writing. One string, so a
 # reword is a deliberate edit and the bats/python tests pin the same text the operator reads.
@@ -232,8 +236,9 @@ def _compare(kfp, path, out, refreshed=None):
     out("MISMATCH    the kernel is not reading this file's key. Usual causes: the file is unreadable to the")
     out("            kernel, the file has no %s line and the kernel still holds its startup" % ks.KEY_VAR)
     out("            key, or the kernel reads another service.env:")
-    for line in _other_file(path) + _restart_block():
-        out("            " + line)
+    pad = " " * 12
+    for line in _other_file(path, len(pad)) + _restart_block():
+        out(pad + line)
     return 1
 
 
@@ -343,7 +348,7 @@ def _explain(status):
     }.get(status, status)
 
 
-def _other_file(path):
+def _other_file(path, indent=0):
     """The one explanation the three MISMATCH hints share for a kernel that reads ANOTHER service.env
     (the file-mode fingerprint MISMATCH, the command-mode MISMATCH's other-file cause, and the file-mode
     MISMATCH under a shell whose file carries the line). The kernel resolves its path from
@@ -360,10 +365,21 @@ def _other_file(path):
     the path); if not found, the kernel reads the default path, so unset the variable in this shell or
     install from this shell. The restart itself, the reload a unit, drop-in or plist line takes first
     and the install's cost are _restart_block's, which every hint renders once after its causes. Never
-    a value. Unindented; the caller's lead-in ends with "another service.env:"."""
+    a value. Unindented; the caller's lead-in ends with "another service.env:", and `indent` is the
+    width of the pad the caller prints before each line. The path is the one part not written here,
+    and it can be any length: when it would carry its sentence past WIDTH columns, pad included, the
+    sentence stops at "reads" and the path follows whole on a line of its own, four columns deeper, so
+    a path is never broken and every prose line stays within WIDTH (a long TMPDIR made the line 124
+    columns in the tests, 2026-09-06). The words are the same either way."""
+    reads = "in their own environment; this shell reads"
+    inline = "%s %s." % (reads, path)
+    if indent + len(inline) <= WIDTH:
+        where = (inline,)
+    else:
+        where = (reads, "    %s." % path)
     return (
         "the kernel and this shell each resolve the service.env path from ROMP_SERVICE_ENV_FILE",
-        "in their own environment; this shell reads %s." % path,
+    ) + where + (
         "Look for it where the kernel's environment comes from: the unit's Environment= and its",
         "drop-ins (Linux) or the plist's EnvironmentVariables (macOS), where `romp-service",
         "install` writes it when the installing shell's path is not the default (and rewrites",
@@ -406,10 +422,13 @@ def _restart_block():
     )
 
 
-def _mode_mismatch(body, out):
+def _mode_mismatch(body, out, path=None):
     """The kernel and this shell resolve DIFFERENT modes: ROMP_CREDENTIAL_COMMAND is set for one and not
     the other. The caller established that; the kernel's mode is read from the answer (`keySource`) and
-    this shell's is the other one, so nothing else is passed in. The kernel decides its mode ONCE, when
+    this shell's is the other one, so nothing else is passed in. `path` is the service.env path the hints
+    name for this shell: every caller in the command leaves it None, and it is resolved the way the
+    kernel resolves it (ks.service_env_path); the tests pass one so the hints render around a path of a
+    chosen length while the mode is still read from the temp file. The kernel decides its mode ONCE, when
     it starts (envsource.pin_mode), from its environment and then service.env; this shell reads its own
     environment and then service.env now. Under the installed service the kernel's environment is the
     manager's, which holds every service.env line as of the MANAGER's start (systemd's
@@ -441,7 +460,7 @@ def _mode_mismatch(body, out):
     variable, the places and this shell's file path; never a value."""
     kmode = body.get("keySource") or "file"
     out("kernel      reads %s in %s mode" % (_sha(body.get("keyFp") or ""), kmode.upper()))
-    path = ks.service_env_path()
+    path = path or ks.service_env_path()
     if kmode == "command":
         out("MISMATCH    the kernel is in command mode and this shell is not: the kernel pinned command mode")
         out("            when it started; this shell reads no ROMP_CREDENTIAL_COMMAND now. The kernel got the")
@@ -453,8 +472,9 @@ def _mode_mismatch(body, out):
         out("              (Linux), or the plist's EnvironmentVariables (macOS): a manager restart re-applies")
         out("              these, so remove the line there first, reload the definition, then restart (below)")
         out("            - another service.env:")
-        for line in _other_file(path):
-            out("              " + line)
+        pad = " " * 14
+        for line in _other_file(path, len(pad)):
+            out(pad + line)
         out("            - service.env, edited since the kernel read it at its start: `romp refresh`")
         out("            - the shell that ran `romp up`, which exported it: stop that `romp up`; start it again")
         out("              from a shell without the line")
@@ -470,8 +490,9 @@ def _mode_mismatch(body, out):
         out("            service.env at its start, so a line added there needs no manager restart). Until then")
         out("            the kernel injects no set.")
         out("            If the kernel is still in file mode after `romp refresh`, it reads another service.env:")
-        for line in _other_file(path) + _restart_block():
-            out("            " + line)
+        pad = " " * 12
+        for line in _other_file(path, len(pad)) + _restart_block():
+            out(pad + line)
     else:
         out("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in this")
         out("            shell's environment only, not in service.env, so a restarted kernel would not see it")

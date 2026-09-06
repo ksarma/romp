@@ -74,6 +74,9 @@ SID = "11111111-2222-3333-4444-555555555501"
 # word, each with its own indent. Pinned here so a rewording of one hint that leaves the others behind fails.
 # The remedy is given in BOTH directions: the variable found where the kernel's environment comes from, and
 # found nowhere (the kernel reads the default path; an install from before the installer wrote the line).
+# The path line is the one line the CLI renders two ways: inline while its sentence fits WIDTH under the
+# hint's indent, else the sentence stops at "reads" and the path follows whole on a line of its own
+# (other_file_lines mirrors the rule, so a long temp directory changes nothing asserted here).
 OTHER_FILE = (
     "the kernel and this shell each resolve the service.env path from ROMP_SERVICE_ENV_FILE",
     "in their own environment; this shell reads %s.",
@@ -110,9 +113,29 @@ RESTART_BLOCK = (
 INSTALL_COST = "Either rewrite drops a line added to the unit or the plist by hand; drop-ins survive, so put your own lines in service.env or a drop-in."
 
 
+# the column every hint line stays within, indent included; the CLI's own pin is held to it below
+WIDTH = 100
+
+
+def other_file_lines(path, indent):
+    """OTHER_FILE as the CLI lays it out under a pad `indent` wide, unindented: the path inline while its
+    sentence fits WIDTH, else the sentence to "reads" and the path whole, four columns deeper, on its own
+    line (cli._other_file's rule)."""
+    lines = []
+    for line in OTHER_FILE:
+        if "%s" not in line:
+            lines.append(line)
+        elif len(indent) + len(line % path) <= WIDTH:
+            lines.append(line % path)
+        else:
+            lines.append(line.split(" %s.")[0])
+            lines.append("    %s." % path)
+    return lines
+
+
 def other_file_block(path, indent):
     """The shared lines as one hint renders them: this shell's path filled in, each line under `indent`."""
-    return "\n".join(indent + (line % path if "%s" in line else line) for line in OTHER_FILE)
+    return "\n".join(indent + line for line in other_file_lines(path, indent))
 
 
 def restart_block(indent):
@@ -120,17 +143,22 @@ def restart_block(indent):
     return "\n".join(indent + line for line in RESTART_BLOCK)
 
 
-def render_shapes(env):
+def render_shapes(env, path=None):
     """Every MISMATCH shape the CLI can print, rendered by CALLING its report functions with fabricated
     inputs (a temp env file, a made-up kernel answer), so the text asserted on is the text a reader sees,
     format arguments and concatenations included. `env` is an _Env with its temp file at `env.path`.
-    Returns {shape name: rendered text}; leaves the file and the environment as they were."""
+    `path`, when given, is the service.env path the hints NAME in place of the temp file's — fabricated,
+    of a chosen length, never opened — so a width check does not depend on where the temp directory is;
+    the mode is still read from the temp file (es.command), which is why the path is passed to the report
+    functions rather than put in the environment. Returns {shape name: rendered text}; leaves the file
+    and the environment as they were."""
+    named = path or env.path
     shapes = {}
     said = []
-    cli._compare(ks.fingerprint(NEW_KEY), env.path, said.append)
+    cli._compare(ks.fingerprint(NEW_KEY), named, said.append)
     shapes["file-mode fingerprint"] = "\n".join(said)
     said = []
-    cli._mode_mismatch({"keySource": "command", "keyFp": ks.fingerprint(NEW_KEY)}, said.append)
+    cli._mode_mismatch({"keySource": "command", "keyFp": ks.fingerprint(NEW_KEY)}, said.append, path)
     shapes["command-mode kernel"] = "\n".join(said)
     body = open(env.path).read()
     had = os.environ.pop("ROMP_CREDENTIAL_COMMAND", None)
@@ -138,13 +166,13 @@ def render_shapes(env):
         env.write_env("ROMP_PERF=1\nROMP_CREDENTIAL_COMMAND=romp-test-fixture-cmd \"$1\"\n")
         es._reset()
         said = []
-        cli._mode_mismatch({"keySource": "file", "keyFp": ""}, said.append)
+        cli._mode_mismatch({"keySource": "file", "keyFp": ""}, said.append, path)
         shapes["file-mode kernel, the file carries the line"] = "\n".join(said)
         env.write_env("ROMP_PERF=1\n")
         os.environ["ROMP_CREDENTIAL_COMMAND"] = "romp-test-fixture-cmd \"$1\""
         es._reset()
         said = []
-        cli._mode_mismatch({"keySource": "file", "keyFp": ""}, said.append)
+        cli._mode_mismatch({"keySource": "file", "keyFp": ""}, said.append, path)
         shapes["file-mode kernel, this shell's environment carries the line"] = "\n".join(said)
         # the command-mode fingerprint MISMATCH (_kernel_lines): the kernel's run and this shell's disagree
         # and the selectors agree, so the hint lists the two environments' differences
@@ -722,7 +750,8 @@ class HelpAndDocsAgree(unittest.TestCase):
 
 class RenderedMismatches(_Env):
     """Every MISMATCH shape the CLI prints, rendered by calling its report functions with fabricated inputs
-    (render_shapes), held to what a reader depends on: at most 100 columns; the two shared blocks once each,
+    (render_shapes), held to what a reader depends on: at most 100 columns, the one exception a service.env
+    path too long for its sentence, which goes whole on a line of its own; the two shared blocks once each,
     so no report gives the reload, the restart and the install twice; the install's cost beside every
     install remedy, on both platforms; the other-file cause in both directions; the reload rule the
     reference is held to; never the bare launchd pair; never a key value. Round 7's file-mode fingerprint
@@ -748,11 +777,63 @@ class RenderedMismatches(_Env):
         self.assertEqual(ks.read_key(self.path), OLD_KEY, "rendering leaves the file as it was")
         self.assertNotIn("ROMP_CREDENTIAL_COMMAND", os.environ)
 
+    # the hints name this shell's service.env path, whose length is the environment's (the temp directory
+    # under a long TMPDIR made the line 124 columns), so the width is held around a FABRICATED path of a
+    # known length: short, and inline; long, and on a line of its own
+    SHORT_PATH = "/srv/romp/service.env"
+    LONG_PATH = "/srv/" + "/".join(["romp-" + "x" * 27] * 5) + "/" + "y" * 18 + "/service.env"
+
     def test_every_line_is_at_most_100_columns(self):
-        for name, text in self.shapes.items():
+        self.assertEqual(len(self.SHORT_PATH), 21)
+        self.assertEqual(cli.WIDTH, WIDTH, "the CLI's pin is the one this test holds it to")
+        shapes = render_shapes(self, self.SHORT_PATH)
+        self.assertEqual(sorted(shapes), sorted(self.shapes), "the same five shapes")
+        for name, text in shapes.items():
             for line in text.split("\n"):
                 self.assertLessEqual(len(line), 100, "%s: %r" % (name, line))
             self.assertLessEqual(len(text.split("\n")), 35, name)
+        for name in sorted(self.shared):
+            self.assertIn("in their own environment; this shell reads %s.\n" % self.SHORT_PATH, shapes[name] + "\n",
+                          name + ": a path that fits stays in its sentence")
+
+    def test_a_path_too_long_for_its_sentence_goes_whole_on_its_own_line(self):
+        # only the line that IS the path may pass 100 columns; every prose line stays within, the sentence
+        # keeps its words, and the path is never broken. Under a real temp directory the same shapes are
+        # asserted word for word by the other tests through other_file_block, which mirrors the rule
+        self.assertEqual(len(self.LONG_PATH), 200)
+        shapes = render_shapes(self, self.LONG_PATH)
+        short = render_shapes(self, self.SHORT_PATH)          # the inline layout, whatever the temp directory
+        self.assertEqual(sorted(shapes), sorted(self.shapes))
+        for name, text in shapes.items():
+            lines = text.split("\n")
+            wide = [line for line in lines if len(line) > 100]
+            if name in self.shared:
+                self.assertEqual([w.strip() for w in wide], [self.LONG_PATH + "."], "%s: %r" % (name, wide))
+                at = lines.index(wide[0])
+                self.assertTrue(lines[at - 1].endswith("in their own environment; this shell reads"), lines[at - 1])
+                self.assertEqual(len(wide[0]) - len(wide[0].lstrip()), len(lines[at - 1]) - len(lines[at - 1].lstrip()) + 4,
+                                 name + ": the path sits four columns deeper than its sentence")
+                self.assertTrue(lines[at + 1].lstrip().startswith("Look for it where"), lines[at + 1])
+                self.assertEqual(len(lines), len(short[name].split("\n")) + 1, name + ": one line more than inline")
+                self.assertIn("this shell reads %s. Look for it" % self.LONG_PATH, " ".join(text.split()),
+                              name + ": the sentence reads the same flattened")
+            else:
+                self.assertEqual(wide, [], name)
+                self.assertNotIn(self.LONG_PATH, text, name)
+                self.assertEqual(text, short[name], name + ": no path named, so the length changes nothing")
+            self.assertEqual(reload_violations(text), [], name)
+        for indent in (" " * 12, " " * 14):
+            self.assertIn(other_file_block(self.LONG_PATH, indent), shapes["command-mode kernel" if len(indent) == 14
+                                                                              else "file-mode fingerprint"])
+        # the rule's edge: the longest path that still fits its sentence under the 12-column indent, and one
+        # character more
+        room = 100 - 12 - len("in their own environment; this shell reads .")
+        fits = "/" + "p" * (room - 1)
+        self.assertEqual(cli._other_file(fits, 12)[1], "in their own environment; this shell reads %s." % fits)
+        self.assertEqual(cli._other_file(fits + "p", 12)[1:3],
+                         ("in their own environment; this shell reads", "    %sp." % fits))
+        self.assertEqual(cli._other_file(fits, 14)[1:3], ("in their own environment; this shell reads", "    %s." % fits),
+                         "the same path under the deeper indent no longer fits")
 
     def test_the_shared_blocks_render_once_each_and_the_mechanics_never_twice(self):
         of = " ".join(other_file_block(self.path, "").split())
