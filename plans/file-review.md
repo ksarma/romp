@@ -488,9 +488,12 @@ in the same directory and outside the v3 contract: the other hosts' directory sc
 the VS Code host reads only the sidecar path. One JSON object per line, each with `ts` (stamped
 by the host script on the owning kernel), `kind`, and `author`:
 
-- `send`: the message as sent, with `sid`, the comment ids, the `desc` and `body` of each, the
-  counts accepted and rejected since the previous send, `queued`, and `watermark`, the largest
-  `ts` among the `you` comments and replies it carried.
+- `send`: the message as sent, with `sid`, the session's display name as `sessionName` when the
+  kernel knows one (so the panel's Log row can name the session after it is renamed or ended and
+  the sid maps to nothing; the same name already reaches the sidecar as the author label of every
+  reply the session writes), the comment ids, the `desc` and `body` of each, the counts accepted
+  and rejected since the previous send, `queued`, and `watermark`, the largest `ts` among the
+  `you` comments and replies it carried.
 - `accept` and `reject`: the change ids and their `oldText` and `newText` at the time, so a
   decision survives the change leaving the sidecar.
 - `set-tracked`: the entry written or removed.
@@ -738,7 +741,8 @@ four reply types.
 - From the viewer: the Comments action, on any file, on a machine whose kernel has node. If the
   action is missing, the gear's row beside "File links open in" names the machine and the reason
   (`no-node`), and the same row warns when the agent-side tooling is not linked and offers to run
-  the link step; the guide says to look there.
+  the link step; the guide says to look there. (Slice 1 ships the row naming the reason and the
+  command to run, without the one-click link step; see decision 39.)
 - From the chat: a file link opens the viewer as today; Comments is one click further.
 - From the session's side: romp's default session prompt (`claude/romp-session-prompt.md`,
   symlinked by `install.sh:173` and appended to the system prompt by both backends) gains one
@@ -1212,6 +1216,15 @@ document stands on its own, each with the reasoning it was given.
     file starts a project of its own. The tracked list, the comments of every file in the project,
     and the commit-or-ignore choice have one home; a file moved within the project keeps its
     comments; and the agent CLIs, the guard, and the other editors look in the same place.
+39. **The gear row names the reason and the command; the one-click link step waits** (the Slice 1
+    build, 2026-09-06). When the agent-side tooling is not linked on a machine, the File comments
+    row says so, says that its sessions cannot reply until it is, and names the command to run
+    (romp's `install.sh` on that machine); it does not offer to run it. Getting into it promised a
+    button. Running the installer from the dashboard needs a kernel op that executes `install.sh`,
+    and Security posture enumerates what the feature may write: the sidecar, the comments log,
+    `config.json`, and the commented file. An installer run writes `~/.claude` and `settings.json`
+    and is outside that list, so the button adds a server-side surface the posture does not name.
+    It awaits the user's ruling; until then the row's sentence is the offer.
 
 ## Open questions for the user
 
