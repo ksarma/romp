@@ -1592,6 +1592,64 @@ def last_state_value(state_dir: Path, sid: str) -> str:
     return str(rec["state"]) if rec else ""
 
 
+# The states a restart CUTS: the CLI is mid-turn in each (working; retrying, waiting out an API
+# error; compacting). "permission" and "picker" are turns already waiting on the user, so a cut
+# there leaves blocked-on-you the truth (the boot reconcile's cut-turn detector).
+MACHINE_ACTIVE_STATES = ("working", "retrying", "compacting")
+
+
+def cut_turn_start(state_dir: Path, sid: str) -> int | None:
+    """The stamp the session's CUT turn started at, or None when its state tail is not a
+    machine-active state (nothing was cut). Reads states/<sid>.jsonl back from the end through the
+    trailing run of machine-active records (one turn's marks, however many it wrote) to the last
+    TURN BOUNDARY: a state record that is not machine-active (the turn before ended there), or a
+    machineCut marker (a boot resumed an earlier cut of this session, so the marks below it belong
+    to that earlier turn). The first machine-active record after the boundary is the start; a
+    marker with no state record after it (a resumed session that never marked again) answers its
+    own stamp. Overlays, other keyed rows and corrupt lines are skipped.
+
+    The boot reconcile compares the `romp down` audit row against THIS, not the newest state stamp
+    (review find, round 2, 2026-09-06): `romp down` files its row after the wait, a moment before
+    the service stop, and a mark written in that window (an api_retry storm's `retrying`, a
+    mid-turn forward's `working`) postdated the row and demoted the turn to the plain restart
+    notice, with no stop time or gap. A turn begun AFTER the row (its hold lapsed with no stop) is
+    still not the down's: its start postdates the row."""
+    p = Path(state_dir) / "states" / (sid + ".jsonl")
+    start: int | None = None
+    boundary: int | None = None     # a machineCut newer than every state record
+    tail_seen = False
+    try:
+        for line in _lines_from_end(p):              # newest first
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if "state" in rec:
+                active = str(rec.get("state") or "") in MACHINE_ACTIVE_STATES
+                if not tail_seen:
+                    tail_seen = True
+                    if not active:
+                        return None                  # the tail is a turn's end: nothing was cut
+                    if boundary is not None:
+                        return boundary              # nothing marked since the boot that wrote the marker
+                elif not active:
+                    break                            # the turn before this one ended here
+                start = int(rec.get("t") or 0)
+            elif rec.get("machineCut"):
+                if tail_seen:
+                    break                            # the marks below belong to the turn that boot resumed
+                if boundary is None:
+                    boundary = int(float(rec.get("t") or 0))
+    except OSError:
+        pass
+    return start
+
+
 def last_awaiting(state_dir: Path, sid: str) -> bool | None:
     """The latest awaiting-OVERLAY value in states/<sid>.jsonl — the most recent line carrying an
     "awaiting" key (state records interleave with overlays, so the very last line isn't necessarily one).
@@ -8117,11 +8175,15 @@ class SdkBackend:
                     # the session. "permission"/"picker" stay excluded: those turns were already
                     # waiting on the user, so blocked-on-you is the truth there.
                     tail = last_state_record(self.state_dir, sid)
-                    cut = str(tail.get("state") or "") in ("working", "retrying", "compacting")
-                    # a turn `romp down` cut hears so, with the stop and start times (the `down` audit
-                    # row must postdate the turn's own state stamp: an older row belongs to an
-                    # earlier stop, and this boot is a crash respawn or a refresh)
-                    stop_t = down_t if (cut and down_t is not None and down_t >= int(tail.get("t") or 0)) else None
+                    cut = str(tail.get("state") or "") in MACHINE_ACTIVE_STATES
+                    # a turn `romp down` cut hears so, with the stop and start times. The `down` audit
+                    # row must be no older than the START of the cut turn (cut_turn_start), not its
+                    # newest mark: a mark written in the stop window between the row and the SIGTERM
+                    # is still this turn, while a row older than the turn belongs to an earlier stop
+                    # (this boot is a crash respawn or a refresh), and a row followed by any other
+                    # row, `down-failed` included, is no stop at all (newest_down_stop)
+                    start_t = cut_turn_start(self.state_dir, sid) if cut else None
+                    stop_t = down_t if (down_t is not None and start_t is not None and down_t >= start_t) else None
                     nudge = down_resume_nudge(stop_t, boot_t) if stop_t is not None else BOOT_RESUME_NUDGE
                     # bg tasks the dead kernel's CLI took with it (the reg mirror, _on_task_event):
                     # the session must HEAR about them or it waits forever on a dead timer/watcher.
@@ -8492,7 +8554,7 @@ class SdkBackend:
             # quiesce the hold is the longer going-down one, and a 12.5s timer here would fire
             # under a still-held lease and then never again, leaving held fresh turns waiting on an
             # unrelated event once the quiesce lapsed with no stop (review find, 2026-09-06)
-            self._drain_wake_timer = threading.Timer(self._drain_hold_until - now + 0.5, self._wake_all_inputs)
+            self._drain_wake_timer = threading.Timer(self._drain_hold_until - now + 0.5, self._drain_wake_fired)
             self._drain_wake_timer.daemon = True
             nt = self._drain_wake_timer
         if t is not None:
@@ -8532,10 +8594,17 @@ class SdkBackend:
             if self._drain_hold_until <= now:      # a fresh episode: the deploy poll's "still parked"
                 self._drain_hold_since = now       # clock starts here, not at a stale earlier episode
                 self._drain_hold_rang = False
-            self._quiesce_until = now + ttl
+            # never SHORTEN either lease, and arm the wake for the HOLD's lapse: a second, shorter
+            # quiesce inside a longer one (a `romp down --wait 300` abandoned mid-wait, then a
+            # `romp down --wait 30` abandoned too) used to reopen the create doors at its own lapse
+            # while turn starts stayed held to the longer one, with the only wake fired under the
+            # hold and none at its end, so held fresh turns waited on an unrelated event (review
+            # find, round 2, 2026-09-06; the defect refresh_drain_hold had, one function up)
+            self._quiesce_until = max(self._quiesce_until, now + ttl)
             self._drain_hold_until = max(self._drain_hold_until, now + ttl)
+            hold_s = self._drain_hold_until - now
             t = self._drain_wake_timer
-            self._drain_wake_timer = threading.Timer(ttl + 0.5, self._wake_all_inputs)
+            self._drain_wake_timer = threading.Timer(hold_s + 0.5, self._drain_wake_fired)
             self._drain_wake_timer.daemon = True
             nt = self._drain_wake_timer
             n = sum(1 for s in self.sessions.values() if s.inflight and not s.ended)
@@ -8544,7 +8613,7 @@ class SdkBackend:
         nt.start()
         self._log("going down: %d in-flight turn(s); new turn starts and session creates held for up "
                   "to %ds while they finish (sessions resume with their history at the next start)"
-                  % (n, int(ttl)))
+                  % (n, int(hold_s)))
 
     def quiescing(self) -> bool:
         """Whether a `romp down` quiesce is in force (the create doors refuse while it is)."""
@@ -8570,6 +8639,30 @@ class SdkBackend:
         with self._lock:
             sessions = list(self.sessions.values())
         return [s.name for s in sessions if s.inflight and not s.ended]
+
+    def _drain_wake_fired(self) -> None:
+        """The lease's wake timer fired. Held inputs are woken only once the hold has LAPSED: a timer
+        that fires under a hold still in force (armed for a lease a later quiesce or poll extended)
+        re-arms for what remains, so the lapse always has a wake and no held fresh turn waits on an
+        unrelated event (review find, round 2, 2026-09-06). A fire with no hold left wakes now and
+        arms nothing."""
+        now = time.time()
+        with self._lock:
+            remaining = self._drain_hold_until - now
+            t = self._drain_wake_timer
+            if remaining > 0:
+                nt = threading.Timer(remaining + 0.5, self._drain_wake_fired)
+                nt.daemon = True
+                self._drain_wake_timer = nt
+            else:
+                nt = None
+                self._drain_wake_timer = None
+        if nt is not None:
+            if t is not None:
+                t.cancel()                 # a finished timer's cancel is a no-op; a newer one is replaced
+            nt.start()
+            return
+        self._wake_all_inputs()
 
     def _wake_all_inputs(self) -> None:
         """Nudge every session's input generator to re-check its gate — the lease just expired

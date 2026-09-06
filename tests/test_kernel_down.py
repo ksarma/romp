@@ -289,6 +289,50 @@ class QuiesceLease(unittest.TestCase):
                                msg="no quiesce: the wake is the lease TTL plus the half-second, as before")
         be._drain_wake_timer.cancel()
 
+    def test_a_second_shorter_quiesce_keeps_the_doors_and_the_wake_at_the_longer_lapse(self):
+        # quiesce() overwrote _quiesce_until and armed its wake at its OWN ttl, so a second, shorter
+        # quiesce inside a longer one (a `romp down --wait 300` abandoned at Ctrl-C, then a
+        # `romp down --wait 30` abandoned too) reopened the create doors at the short lapse while
+        # the hold kept turn starts to the long one, the only wake fired under the hold, and none
+        # fired at its lapse: held fresh turns waited on an unrelated event (review find, round 2,
+        # 2026-09-06). The same defect refresh_drain_hold had, one function down.
+        be = self._backend()
+        wakes = []
+        t0 = time.monotonic()
+        be._wake_all_inputs = lambda: wakes.append(round(time.monotonic() - t0, 2))
+        be.quiesce(1.6)
+        be.quiesce(0.4)
+        self.assertGreater(be._drain_hold_until, time.time() + 1.3, "the hold is the longer lease's")
+        self.assertGreater(be._quiesce_until, time.time() + 1.3, "and so are the create doors")
+        self.assertGreater(be._drain_wake_timer.interval, 1.6, "the wake covers the hold, not the shorter ttl")
+        time.sleep(1.0)
+        self.assertTrue(be.quiescing() and be.drain_holding(), "mid-lease: the doors and the hold agree")
+        self.assertEqual(wakes, [], "no wake fires under the hold")
+        time.sleep(1.4)
+        self.assertFalse(be.quiescing() or be.drain_holding(), "both lapsed together")
+        self.assertEqual(len(wakes), 1, "one wake, at the lapse: %r" % (wakes,))
+        self.assertGreaterEqual(wakes[0], 1.6)
+
+    def test_a_wake_that_fires_under_the_hold_re_arms_to_the_remaining_time(self):
+        # the timer's own callback checks the hold at the moment it fires: still held (a timer armed
+        # for a lease that has since been extended) means re-arm for what remains, not wake now and
+        # never again
+        be = self._backend()
+        wakes = []
+        be._wake_all_inputs = lambda: wakes.append(time.monotonic())
+        be.quiesce(5.0)
+        be._drain_wake_timer.cancel()
+        be._drain_wake_fired()                       # an early fire, by hand
+        self.assertEqual(wakes, [], "no wake while the hold is in force")
+        self.assertIsNotNone(be._drain_wake_timer, "re-armed")
+        self.assertAlmostEqual(be._drain_wake_timer.interval, 5.5, delta=0.3, msg="for the remaining hold plus the half-second")
+        be._drain_wake_timer.cancel()
+        be.cancel_quiesce()
+        self.assertEqual(len(wakes), 1, "the cancel wakes at once, as before")
+        be._drain_wake_fired()                       # a fire with no hold left: wake, arm nothing
+        self.assertEqual(len(wakes), 2)
+        self.assertIsNone(be._drain_wake_timer)
+
     # ── the resume notice after `romp down` + a later start ──────────────────
     def _cut_session(self, d, sid, working_t):
         sb = self.sb
@@ -354,6 +398,79 @@ class QuiesceLease(unittest.TestCase):
         self._audit(d2, now - 3600, "down", cmd="romp down")
         self._audit(d2, now - 50, "refresh")               # the newest row is the refresh that cut this
         self.assertEqual(self._reconcile(d2, self._backend(d2), sid), [self.sb.BOOT_RESUME_NUDGE])
+
+    def test_a_mark_written_between_the_down_row_and_the_stop_still_hears_the_stop(self):
+        # `romp down` files its row and the service stop lands a moment later; a session that marked
+        # mid-turn in that window (an api_retry storm's `retrying`, a mid-turn forward's `working`)
+        # stamped a state NEWER than the row, and the compare against the newest stamp demoted it to
+        # the plain notice, with no stop time or gap (review find, round 2, 2026-09-06). The row is
+        # compared against the turn's START now: the first machine-active record after the last
+        # turn boundary, however many marks the turn wrote after it.
+        sb = self.sb
+        d = tempfile.mkdtemp()
+        sid = "11111111-2222-3333-4444-000000000004"
+        now = int(time.time())
+        self._cut_session(d, sid, working_t=now - 3 * 3600 - 300)      # the turn began here
+        sb.append_state(Path(d), sid, "retrying", t=now - 3 * 3600 - 20)
+        self._audit(d, now - 3 * 3600, "down", cmd="romp down --wait 5")
+        sb.append_state(Path(d), sid, "working", t=now - 3 * 3600 + 1)  # the stop window
+        self.assertEqual(sb.cut_turn_start(Path(d), sid), now - 3 * 3600 - 300, "the start, not the newest mark")
+        q = self._reconcile(d, self._backend(d), sid)
+        self.assertEqual(len(q), 1)
+        self.assertIn("The stop was on purpose: romp down at ", q[0])
+        self.assertIn("(3 h later)", q[0])
+        # the reconcile itself writes the machineCut boundary for the resume it queued, so the next
+        # cut of this session starts a fresh count from there
+        self.assertEqual(sb.cut_turn_start(Path(d), sid), int(self.sb.last_state(Path(d), sid)["t"]))
+
+    def test_a_failed_down_then_an_unrelated_cut_keeps_the_plain_notice(self):
+        # a `romp down` whose stop did not land files a superseding `down-failed` row and leaves the
+        # kernel running; whatever cuts that kernel later is not the down, and the newest row being
+        # the failure says so (any newest row that is not `down` reads as not deliberate)
+        d = tempfile.mkdtemp()
+        sid = "11111111-2222-3333-4444-000000000005"
+        now = int(time.time())
+        self._cut_session(d, sid, working_t=now - 7200)
+        self._audit(d, now - 3600, "down", cmd="romp down")
+        self._audit(d, now - 3590, "down-failed", cmd="romp down")
+        self.assertEqual(self._reconcile(d, self._backend(d), sid), [self.sb.BOOT_RESUME_NUDGE])
+
+    def test_a_down_then_an_up_then_a_later_cut_keeps_the_plain_notice(self):
+        # `romp down` cut this turn; `romp up` resumed it (that boot wrote the machineCut boundary
+        # and the resumed turn marked working); a crash cut THAT turn. The newest row is still the
+        # down (`romp up` files none): the boundary is what keeps the old down off the new cut, since
+        # the two working records are otherwise one unbroken machine-active run
+        sb = self.sb
+        d = tempfile.mkdtemp()
+        sid = "11111111-2222-3333-4444-000000000006"
+        now = int(time.time())
+        self._cut_session(d, sid, working_t=now - 4000)
+        self._audit(d, now - 3600, "down", cmd="romp down")
+        sb.append_machine_cut(Path(d), sid, "restart", t=now - 3000)    # the up's boot reconcile
+        sb.append_state(Path(d), sid, "working", t=now - 2900)          # the resumed turn
+        self.assertEqual(sb.cut_turn_start(Path(d), sid), now - 2900)
+        self.assertEqual(self._reconcile(d, self._backend(d), sid), [self.sb.BOOT_RESUME_NUDGE])
+
+    def test_cut_turn_start_reads_back_to_the_last_boundary(self):
+        sb = self.sb
+        d = tempfile.mkdtemp()
+        sid = "11111111-2222-3333-4444-000000000007"
+        self.assertIsNone(sb.cut_turn_start(Path(d), sid), "no file: no cut turn")
+        sb.append_state(Path(d), sid, "working", t=100)
+        sb.append_state(Path(d), sid, "idle", t=200)
+        self.assertIsNone(sb.cut_turn_start(Path(d), sid), "an idle tail is no cut turn")
+        sb.append_state(Path(d), sid, "working", t=300)
+        sb.append_awaiting(Path(d), sid, False)                        # an overlay, skipped
+        sb.append_state(Path(d), sid, "compacting", t=310)
+        sb.append_state(Path(d), sid, "working", t=320)
+        self.assertEqual(sb.cut_turn_start(Path(d), sid), 300, "the first active record after the idle")
+        sb.append_machine_cut(Path(d), sid, "crash", t=400.7)
+        self.assertEqual(sb.cut_turn_start(Path(d), sid), 400, "a boundary with nothing after it: its own stamp")
+        sb.append_state(Path(d), sid, "retrying", t=500)
+        self.assertEqual(sb.cut_turn_start(Path(d), sid), 500)
+        with open(os.path.join(d, "states", sid + ".jsonl"), "a") as f:
+            f.write("not json\n")
+        self.assertEqual(sb.cut_turn_start(Path(d), sid), 500, "a corrupt line is skipped, never a raise")
 
     def test_the_down_notice_names_dates_across_days_and_the_constant_is_unchanged(self):
         sb = self.sb
