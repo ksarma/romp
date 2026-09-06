@@ -2436,7 +2436,15 @@ class TimelinePanel {
     const i = (this._vis || []).findIndex((s) => s.id === sid);
     if (i < 0) return;
     const y = g.top + i * LANE_GAP + LANE_GAP * 0.5;
-    const X = (tt) => g.ml + ((g.compress ? g.compress(tt) : tt) - g.cT0) / g.winSec * g.plotW;   // compressed-time x
+    // The outline goes INTO the live plot group when the last build left one (_tickPlot): the tick translates
+    // that group, so the outline rides along with its target instead of drifting off it. It is positioned in
+    // the group's own frame (the build's cT0), the translate carrying the rest; with no group (the loader, or
+    // a build with a glyph riding the live edge) it goes on the svg in the screen frame, as before.
+    const tp = this._tickPlot, grp = (tp && tp.g && tp.g.parentNode) ? tp : null;
+    const host = grp ? grp.g : this.svg;
+    const cT0 = grp ? grp.cT0 : g.cT0;
+    const X = (tt) => g.ml + ((g.compress ? g.compress(tt) : tt) - cT0) / g.winSec * g.plotW;   // compressed-time x, in the host's frame
+    const gone = (node) => !node.parentNode || (node.parentNode !== this.svg && !node.parentNode.parentNode);   // detached, or its group left the svg (a rebuild)
     const startMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : null;
     const DUR = 1400;
     if (workTurn) {
@@ -2444,10 +2452,10 @@ class TimelinePanel {
       const xs = X(workTurn.t), xe = X(workTurn.end != null && workTurn.end > workTurn.t ? workTurn.end : workTurn.t);
       const bw = Math.max(6, xe - xs), h = BAR_H + 6;
       const box = el('rect', { x: xs - 3, y: y - h / 2, width: bw + 6, height: h, rx: h / 2, fill: 'none', stroke: '#ffd166', 'stroke-width': 2.5, opacity: 0.95 });
-      this.svg.appendChild(box);
+      host.appendChild(box);
       try { box.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
       const step = (nowMs) => {
-        if (!box.parentNode) return;
+        if (gone(box)) return;
         const p = startMs != null ? Math.min(1, (nowMs - startMs) / DUR) : 1;
         const ph = (p * 2) % 1;                        // two pulses
         box.setAttribute('stroke-width', String(2.5 + ph * 2.5));
@@ -2460,10 +2468,10 @@ class TimelinePanel {
     }
     const cx = X(t);
     const ring = el('circle', { cx, cy: y, r: 5, fill: 'none', stroke: '#ffd166', 'stroke-width': 2.5, opacity: 0.95 });
-    this.svg.appendChild(ring);
+    host.appendChild(ring);
     try { ring.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
     const step = (nowMs) => {
-      if (!ring.parentNode) return;                  // a poll redraw cleared it → stop
+      if (gone(ring)) return;                        // a poll redraw cleared it → stop
       const p = startMs != null ? Math.min(1, (nowMs - startMs) / DUR) : 1;
       const ph = (p * 2) % 1;                         // two expanding pulses
       ring.setAttribute('r', String(5 + ph * 16));

@@ -262,3 +262,27 @@ test("a rider's floor applies to the grown extent: a just-opened bar grows as a 
   const hit = tp.riders.find((r: any) => r.el === run.el);
   assert.ok(hit, "one rider carries both the run and its hit");
 });
+
+test("the focus pulse is drawn into the live plot group, in the group's frame, so it rides the tick with its target", () => {
+  const panel = livePanel(liveData(), 3600);
+  const plot = plotOf(panel);
+  advance(panel, 3);
+  panel._tickLive();
+  assert.ok(panel._tickPlot.applied > 0, "the plot is translated");
+  const n0 = plot.children.length;
+  panel._pulseFocus(SID2, NOW - 600, null);   // api's closed turn c: a prompt focus rings its start dot
+  const ring = plot.children[plot.children.length - 1];
+  assert.equal(plot.children.length, n0 + 1, "the ring went into the plot group, not onto the svg");
+  assert.ok(ring.tag === "circle" && ring._attrs.stroke === "#ffd166");
+  const dotC = plot.children.find((c: any) => c.tag === "circle" && c !== ring && c._attrs.fill === "#7aa2f7" && Math.abs(c._attrs.cx - ring._attrs.cx) < 1e-6);
+  assert.ok(dotC, "positioned in the build's frame: it sits on the prompt dot it rings (both then move by the translate)");
+  panel._pulseFocus(SID1, NOW - 900, { t: NOW - 900, end: NOW - 700 });   // a work focus outlines the bar
+  const box = plot.children[plot.children.length - 1];
+  assert.ok(box.tag === "rect" && box._attrs.stroke === "#ffd166" && box.parentNode === plot);
+  const barA = plot.children.filter((c: any) => c.tag === "rect" && c._attrs.fill === "#7aa2f7").reduce((a: any, b: any) => (a._attrs.x < b._attrs.x ? a : b));
+  assert.ok(Math.abs((box._attrs.x + 3) - barA._attrs.x) < 1e-6, "the outline hugs the bar in the group's frame");
+  // with no live group (the loader wiped the svg) the pulse goes on the svg as before
+  panel.drawMessage("no lanes");
+  panel._pulseFocus(SID2, NOW - 600, null);
+  assert.equal(panel.svg.children[panel.svg.children.length - 1].parentNode, panel.svg);
+});
