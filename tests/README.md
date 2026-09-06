@@ -56,10 +56,12 @@ fixture — so a fixture is gone when its test is, not at exit; bats suites use
 `mktemp -d` in `setup` and `rm -rf` it in `teardown`, and stand in for any
 subject that detaches work (bin/romp's resume picker-check, reached through
 `ROMP_POSTAL_BIN`, re-created four to six test dirs per run by minting a
-serve-token after the teardown). Never give a tempfile
-call a literal directory as `dir=` (or `mktemp` a path under `/tmp`): that
-bypasses the redirect, and the hygiene test reads every test file for the
-shape. The one test that must leave the root — an AF_UNIX socket whose path
+serve-token after the teardown). Never give a tempfile call a literal
+directory as its `dir` — by keyword or position, composed (`f"/tmp/{x}"`,
+`os.path.join("/tmp", x)`) or through a name bound to one — and never point
+`mktemp` (`-p`, `--tmpdir`, a `TMPDIR=` prefix) at a path under `/tmp`: that
+bypasses the redirect, and the hygiene test reads every test file for those
+shapes. The one test that must leave the root — an AF_UNIX socket whose path
 would not fit `sun_path` under a nested root — falls back to
 `ROMP_TESTS_SYSTEM_TMPDIR`, the system temp dir conftest recorded once per run
 before redirecting (an xdist worker inherits the controller's record), and

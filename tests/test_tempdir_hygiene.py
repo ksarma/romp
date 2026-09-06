@@ -125,40 +125,231 @@ class PrivateTempRoot(unittest.TestCase):
         self.assertTrue(all(p.startswith("romp-tests-") for p in between), between)
         self.assertEqual(len(between), 2 if os.environ.get("PYTEST_XDIST_WORKER") else 1, between)
 
-    TEMPFILE_CALLS = ("mkdtemp", "mkstemp", "mktemp", "TemporaryDirectory", "NamedTemporaryFile",
-                      "TemporaryFile", "SpooledTemporaryFile")
-
     def test_no_test_pins_a_temp_path_to_a_literal_directory(self):
-        # A string literal as the `dir=` of a tempfile call bypasses the redirect: the socket tests
+        # A literal directory as a tempfile call's `dir` bypasses the redirect: the socket tests
         # carried dir="/tmp" and left three rompsock* directories in the real /tmp per run, where the
         # nested-run check below could not see them. Static, so it covers every module whether or
-        # not a run exercises it. Python files are read as syntax (a call's keyword, so
-        # parse_session(dir="/TESTDIR") is not a hit and a call split over lines is), after a text
-        # prefilter that keeps the parse to the files that could match; a bats `mktemp` naming /tmp
-        # is the shell shape.
+        # not a run exercises it; the rule and its shapes are _python_pins' and _shell_pins' (the
+        # LiteralPinChecker class pins them on synthetic sources), this applies them to the tree.
         bad = []
-        might = re.compile(r"\bdir\s*=")
         for path in sorted(glob.glob(os.path.join(HERE, "*.py"))):
             src = open(path, encoding="utf-8").read()
-            if not (might.search(src) and any(c in src for c in self.TEMPFILE_CALLS)):
-                continue
-            for node in ast.walk(ast.parse(src)):
-                if not isinstance(node, ast.Call):
-                    continue
-                f = node.func
-                name = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else None
-                if name in self.TEMPFILE_CALLS and any(
-                        kw.arg == "dir" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)
-                        for kw in node.keywords):
-                    bad.append("%s:%d: %s" % (os.path.relpath(path, ROOT), node.lineno,
-                                              ast.get_source_segment(src, node).splitlines()[0]))
-        sh_pin = re.compile(r"\bmktemp\b[^\n|;&#]*(?:\s-p\s*|\s)/(?:tmp|var/tmp|private/tmp)\b")
+            if any(c in src for c in TEMPFILE_DIR_POSITION):     # a text prefilter keeps the parse to candidates
+                bad += _python_pins(src, os.path.relpath(path, ROOT))
         for path in sorted(glob.glob(os.path.join(HERE, "*.bats")) + glob.glob(os.path.join(HERE, "*.bash"))):
-            for n, line in enumerate(open(path, encoding="utf-8"), 1):
-                if sh_pin.search(line) and not line.lstrip().startswith("#"):
-                    bad.append("%s:%d: %s" % (os.path.relpath(path, ROOT), n, line.strip()))
+            bad += _shell_pins(open(path, encoding="utf-8").read(), os.path.relpath(path, ROOT))
         self.assertEqual(bad, [], "temp paths take the process temp dir (the private root); a test that "
                          "must leave it falls back to ROMP_TESTS_SYSTEM_TMPDIR — see _socket_dir")
+
+
+# The literal-directory rule, one function per language. Python: the `dir` argument of a tempfile
+# call — the keyword, or the positional slot the module's signatures give it (the third of mkdtemp,
+# mkstemp, mktemp and TemporaryDirectory; the seventh of NamedTemporaryFile and TemporaryFile; the
+# eighth of SpooledTemporaryFile) — is a pin when it is a string literal of any value, when any
+# string literal inside its expression is an absolute path (an f-string piece, an operand of `+`,
+# an os.path.join argument, the default of os.environ.get), or when it is a name or attribute the
+# same file assigns such an expression to (followed through assignments a few levels deep). A
+# relative literal inside a composed expression (os.path.join(self.dir, "sub")) is a component, not
+# a pin; a call that names no absolute path (tempfile.gettempdir(), str(home), self.td.name,
+# os.environ.get("X") or ...) is where a dir should come from. Only the tempfile names are read, so
+# parse_session(dir="/TESTDIR") is not a hit and a call split over lines is. Shell: `mktemp` handed
+# a path under a system temp dir on the same command — as the template, as `-p`'s or `--tmpdir`'s
+# value, spaced, attached or `=`-joined, quoted or bare — and any `TMPDIR=` assignment to one (the
+# `TMPDIR=/tmp mktemp -d` prefix and an `export` alike: both redirect every child there). A trailing
+# comment is not reached and a comment line is skipped. The round-2 review (2026-09-06) found the
+# first version reading only the keyword form and only an unquoted, space-separated shell path.
+TEMPFILE_DIR_POSITION = {"mkdtemp": 2, "mkstemp": 2, "mktemp": 2, "TemporaryDirectory": 2,
+                         "NamedTemporaryFile": 6, "TemporaryFile": 6, "SpooledTemporaryFile": 7}
+_SYSTEM_TEMP = r"/(?:tmp|var/tmp|private/tmp|var/folders|dev/shm)\b"
+_SH_PIN = re.compile(r"\bmktemp\b[^\n|;&#]*(?:\s-p\s*|[\s=])[\"']?" + _SYSTEM_TEMP
+                     + r"|\bTMPDIR=[\"']?" + _SYSTEM_TEMP)
+
+
+def _dir_argument(call):
+    """The `dir` argument's node, from the keyword or the positional slot; None when absent or when a
+    starred argument makes the positions unknowable."""
+    for kw in call.keywords:
+        if kw.arg == "dir":
+            return kw.value
+    pos = TEMPFILE_DIR_POSITION[_call_name(call)]
+    if len(call.args) > pos and not any(isinstance(a, ast.Starred) for a in call.args):
+        return call.args[pos]
+    return None
+
+
+def _call_name(call):
+    f = call.func
+    return f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else None
+
+
+def _assignments(tree):
+    """Every `name = value`, `self.name = value` (annotated or augmented too) in the module, keyed by
+    the target's source text — one scope, since a test module's names are few."""
+    out = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
+            continue
+        for t in targets:
+            if isinstance(t, (ast.Name, ast.Attribute)):
+                out.setdefault(ast.unparse(t), []).append(value)
+    return out
+
+
+def _pinned(node, assigned, depth=3):
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str)
+    if any(isinstance(sub, ast.Constant) and isinstance(sub.value, str) and sub.value.startswith("/")
+           for sub in ast.walk(node)):
+        return True
+    if depth and isinstance(node, (ast.Name, ast.Attribute)):
+        return any(_pinned(v, assigned, depth - 1) for v in assigned.get(ast.unparse(node), ()))
+    return False
+
+
+def _python_pins(src, label):
+    """`label:line: call` for every tempfile call in `src` whose dir is a literal directory."""
+    tree = ast.parse(src)
+    assigned = _assignments(tree)
+    bad = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _call_name(node) in TEMPFILE_DIR_POSITION:
+            d = _dir_argument(node)
+            if d is not None and _pinned(d, assigned):
+                bad.append("%s:%d: %s" % (label, node.lineno, ast.get_source_segment(src, node).splitlines()[0]))
+    return bad
+
+
+def _shell_pins(text, label):
+    """`label:line: text` for every line of a shell source that points mktemp, or TMPDIR, at a
+    literal system temp dir."""
+    return ["%s:%d: %s" % (label, n, line.strip()) for n, line in enumerate(text.splitlines(), 1)
+            if not line.lstrip().startswith("#") and _SH_PIN.search(line)]
+
+
+class LiteralPinChecker(unittest.TestCase):
+    """The rule on synthetic sources: every shape the round-2 review listed as passing the first
+    version is a hit, and every legitimate spelling in the tree is not."""
+
+    PREAMBLE = textwrap.dedent('''\
+        import os, tempfile
+        from tempfile import mkdtemp
+        PINNED = "/tmp"
+        VIA = PINNED
+        root = tempfile.mkdtemp()
+        home = root
+
+        class T:
+            def setUp(self):
+                self.pinned = "/tmp/" + "x"
+                self.dir = os.path.realpath(tempfile.mkdtemp())
+                self.td = tempfile.TemporaryDirectory()
+                name = "x"
+                CALL
+    ''')
+
+    PINNED_PY = [
+        'tempfile.mkdtemp(dir="/tmp")',
+        'tempfile.mkdtemp(prefix="x",\n                 dir="/tmp")',                 # split over lines
+        'mkdtemp(dir="/tmp")',                                                       # the bare name
+        'tempfile.mkdtemp("", "x", "/tmp")',                                         # by position
+        'tempfile.mkstemp("", "x", "/tmp")',
+        'tempfile.mktemp("", "x", "/tmp")',
+        'tempfile.TemporaryDirectory(None, None, "/tmp")',
+        'tempfile.NamedTemporaryFile("w", -1, None, None, ".jsonl", "x", "/tmp")',  # the seventh
+        'tempfile.TemporaryFile("w+b", -1, None, None, None, None, "/var/tmp")',
+        'tempfile.SpooledTemporaryFile(0, "w+b", -1, None, None, None, None, "/tmp")',
+        'tempfile.mkdtemp(dir=f"/tmp/{name}")',                                       # composed
+        'tempfile.mkdtemp(dir="/tmp/" + name)',
+        'tempfile.mkdtemp(dir=os.path.join("/tmp", name))',
+        'tempfile.mkdtemp(dir=os.environ.get("TMPDIR", "/tmp"))',
+        'tempfile.mkdtemp(dir=PINNED)',                                              # a name bound to one
+        'tempfile.mkdtemp(dir=VIA)',
+        'tempfile.mkdtemp(dir=self.pinned)',
+        'tempfile.mkdtemp(dir="fixtures")',                                          # any plain literal
+        'tempfile.mkdtemp(dir="/TESTDIR")',
+    ]
+    UNPINNED_PY = [
+        'tempfile.mkdtemp()',
+        'tempfile.mkdtemp(prefix="rompsock")',
+        'tempfile.mkdtemp(dir=tempfile.gettempdir())',
+        'tempfile.mkdtemp(prefix="rompsock", dir=os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir())',
+        'tempfile.TemporaryDirectory(dir=str(home))',
+        'tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, dir=self.td.name)',
+        'tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)',
+        'tempfile.mkdtemp(dir=os.path.join(self.dir, "sub"))',                       # a relative component
+        'tempfile.mkdtemp(dir=None)',
+        'tempfile.mkdtemp("", "x", None)',
+        'tempfile.mkdtemp(dir=root)',                                                # bound to a mkdtemp
+        'tempfile.mkdtemp(dir=self.dir)',
+        'tempfile.mkdtemp(dir=home)',
+        'parse_session(dir="/TESTDIR")',                                             # not a tempfile call
+        'shutil.rmtree("/tmp/x")',
+        'open("/tmp/x").read()',
+    ]
+
+    def _pins(self, call):
+        src = self.PREAMBLE.replace("CALL", textwrap.indent(call, " " * 8).lstrip())
+        return _python_pins(src, "t.py")
+
+    def test_python_shapes_that_pin_are_hits(self):
+        for call in self.PINNED_PY:
+            with self.subTest(call=call):
+                pins = self._pins(call)
+                self.assertEqual(len(pins), 1, pins)
+                self.assertTrue(pins[0].startswith("t.py:%d: " % (self.PREAMBLE[:self.PREAMBLE.index("CALL")].count("\n") + 1)), pins)
+                self.assertIn(call.splitlines()[0], pins[0])
+
+    def test_python_shapes_that_do_not_pin_are_clean(self):
+        for call in self.UNPINNED_PY:
+            with self.subTest(call=call):
+                self.assertEqual(self._pins(call), [])
+
+    PINNED_SH = [
+        'TEST_DIR="$(mktemp -d /tmp/x.XXXX)"',
+        'TEST_DIR="$(mktemp -d "/tmp/x.XXXX")"',                # quoted
+        "TEST_DIR=\"$(mktemp -d '/tmp/x.XXXX')\"",
+        'd=$(mktemp -p /tmp)',
+        'd=$(mktemp -p "/tmp")',
+        'd=$(mktemp -p/tmp -d)',                                 # attached
+        'd=$(mktemp -d --tmpdir=/tmp)',                          # =-joined
+        'd=$(mktemp --tmpdir="/var/tmp" -d)',
+        'd=$(mktemp --tmpdir /private/tmp)',
+        'd=$(TMPDIR=/tmp mktemp -d)',                            # the prefix form
+        'd=$(TMPDIR="/tmp" mktemp -d)',
+        'export TMPDIR=/tmp',                                    # redirects every child there
+        'TMPDIR=/var/folders/x/T',
+        '    mktemp -d /var/tmp/x.XXXX',
+        'run mktemp -d /dev/shm/x.XXXX',
+    ]
+    UNPINNED_SH = [
+        'TEST_DIR="$(mktemp -d)"',
+        'TEST_DIR="$(mktemp -d "$TMPDIR/x.XXXX")"',
+        'd=$(mktemp -p "$TMPDIR")',
+        'd=$(mktemp --tmpdir="$TEST_DIR")',
+        'd=$(TMPDIR="$TEST_DIR" mktemp -d)',
+        'export TMUX_TMPDIR="$TEST_DIR/tmux"',
+        'export TMPDIR=/nonexistent',
+        'TEST_DIR="$(mktemp -d -u)"',
+        '# mktemp -d /tmp/x.XXXX',                               # a comment line
+        '    # d=$(TMPDIR=/tmp mktemp -d)',
+        'TEST_DIR="$(mktemp -d)"   # not /tmp',                  # a trailing comment
+        '[ -d /tmp ]',
+        'grep -qxF "TMUX_TMPDIR=$TEST_DIR/tmux" "$FAKE_TMUX_ENV"',
+    ]
+
+    def test_shell_shapes_that_pin_are_hits(self):
+        for line in self.PINNED_SH:
+            with self.subTest(line=line):
+                self.assertEqual(_shell_pins("setup() {\n" + line + "\n}\n", "t.bats"), ["t.bats:2: " + line.strip()])
+
+    def test_shell_shapes_that_do_not_pin_are_clean(self):
+        for line in self.UNPINNED_SH:
+            with self.subTest(line=line):
+                self.assertEqual(_shell_pins("setup() {\n" + line + "\n}\n", "t.bats"), [])
 
 
 @under_conftest
