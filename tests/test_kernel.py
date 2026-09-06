@@ -5,6 +5,7 @@ consume). The WS transport + HTTP serving aren't unit-tested; the projection —
 UUIDs; no real session data.
 """
 import inspect
+import io
 import json
 import os
 import re
@@ -5062,6 +5063,245 @@ class ViewBuilder(unittest.TestCase):
                              "the reopen is applied once, no matter how many builds replay the journal")
         finally:
             km._end_goals_pass()
+
+    # ── the pass snapshot's stat-keyed store memo (performance plan B5, 2026-09-06) ──
+    OTHER_SID = "11111111-2222-3333-4444-666666666666"
+
+    def _publish_store(self, sid, store):
+        """Write a store the way every real writer does: a temp file renamed into place. The temp file
+        is created while the old one still exists, so ONE publish between passes is a new inode and the
+        memo's (ino, mtime_ns, size) key moves on any clock; an in-place write_text keeps the inode and
+        can land inside the same coarse mtime tick on a CI kernel. (Inode numbers do recycle across two
+        publishes; the key-component tests below isolate each component with os.utime.)"""
+        path, tmp = jd.GOALDIR / (sid + ".json"), jd.GOALDIR / (sid + ".json.tmp")
+        tmp.write_text(json.dumps(store))
+        os.replace(tmp, path)
+        return path
+
+    def _count_decodes(self):
+        """Wrap the memo's own decode hook (not json.loads: the punch and _apply_rewind_hold call that
+        for their copies). Returns the call list; the caller restores km._goals_memo_decode."""
+        real, calls = km._goals_memo_decode, []
+        km._goals_memo_decode = lambda data: (calls.append(1), real(data))[1]
+        return real, calls
+
+    def test_a_second_pass_decodes_only_the_stores_whose_file_changed(self):
+        # The pass used to json.loads EVERY goals/*.json at its start (72 files of up to 1.3 MB, about 3%
+        # of the kernel's interpreter time) although a pass changes a few of them. Every writer publishes
+        # by rename, so a file version is named exactly by (ino, mtime_ns, size): a later pass decodes only
+        # the stores whose key moved and serves the rest as the very object an earlier pass parsed.
+        km._user_goal_write.pop(SID, None)                 # no punch pending from another test's gesture
+        g = self._store_with_status("working")
+        self._publish_store(self.OTHER_SID, {"rompUuid": self.OTHER_SID, "seq": 0, "nodes": {},
+                                             "placements": {}, "status": {}})
+        real, calls = self._count_decodes()
+        try:
+            km._begin_goals_pass()
+            first_sid, first_other = km._feed_goals(SID), km._feed_goals(self.OTHER_SID)
+            km._end_goals_pass()
+            self.assertEqual(len(calls), 2, "a cold memo decodes both stores")
+            self._publish_store(self.OTHER_SID, {"rompUuid": self.OTHER_SID, "seq": 1, "nodes": {},
+                                                 "placements": {}, "status": {}})
+            del calls[:]
+            km._begin_goals_pass()
+            try:
+                self.assertEqual(len(calls), 1, "one file changed → exactly one decode")
+                self.assertIs(km._feed_goals(SID), first_sid, "the unchanged store is served by identity")
+                served = km._feed_goals(self.OTHER_SID)
+                self.assertIsNot(served, first_other)
+                self.assertEqual(served["seq"], 1, "the changed store is served at its new version")
+                card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
+                self.assertEqual(card["column"], "working")
+            finally:
+                km._end_goals_pass()
+            km._begin_goals_pass()                         # a third pass with nothing changed: no decode at all
+            try:
+                self.assertEqual(len(calls), 1)
+                self.assertIs(km._feed_goals(SID), first_sid)
+            finally:
+                km._end_goals_pass()
+        finally:
+            km._goals_memo_decode = real
+
+    def test_a_user_punch_copies_the_entry_and_never_mutates_the_memoized_store(self):
+        # A snapshot entry is a memo reference shared with every later pass that finds the file
+        # unchanged, so the punch (the gesture's replay + rollup, both in place) must land on a copy:
+        # otherwise the reopen would be baked into the object the NEXT pass serves for a file that does
+        # not hold it. Contract: the memoized object always equals a fresh raw parse of its file
+        # version; the served copy carries the reopen; a second gesture in the same pass works the same
+        # copy; build_feed reads and never writes.
+        g = self._settled_store()
+        path = jd.GOALDIR / (SID + ".json")
+        raw = json.loads(path.read_bytes())                # the version this pass memoizes
+        km._begin_goals_pass()
+        try:
+            memo_obj = km._goals_memo[0][str(path)][1]
+            self.assertEqual(memo_obj, raw)
+            km._user_goal_write.pop(SID, None)
+            self.assertIs(km._feed_goals(SID), memo_obj, "no gesture yet: served by identity")
+            self.assertTrue(jd.optimistic_followup(SID, g, text="also handle the empty case", now=NOW))
+            km._note_user_goal_write(SID)
+            served = km._feed_goals(SID)
+            self.assertIsNot(served, memo_obj, "the punch worked on a copy")
+            self.assertEqual(served["status"].get(g), "working", "the served copy carries the reopen")
+            self.assertTrue(any(e.get("src") == "user" and e.get("kind") == "reopen"
+                                for e in served["nodes"][g].get("log") or []))
+            self.assertEqual(memo_obj, raw, "the memoized object is untouched: still the raw parse")
+            self.assertIs(km._feed_goals(SID), served, "later reads in the pass serve that one copy")
+            self.assertTrue(jd.optimistic_followup(SID, g, text="and the null case", now=NOW + 1))
+            km._note_user_goal_write(SID)
+            self.assertIs(km._feed_goals(SID), served, "a second gesture punches the copy already made")
+            self.assertEqual(memo_obj, raw)
+            card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
+            self.assertEqual(card["column"], "working")
+            self.assertEqual(memo_obj, raw, "build_feed reads the store; it never writes it")
+        finally:
+            km._end_goals_pass()
+        km._begin_goals_pass()                             # the gesture's own save published a new version
+        try:
+            self.assertIsNot(km._goals_memo[0][str(path)][1], memo_obj, "…so the next pass re-decodes it")
+            self.assertEqual(km._feed_goals(SID)["status"].get(g), "working")
+        finally:
+            km._end_goals_pass()
+
+    def test_a_store_that_does_not_decode_is_served_live_and_retried_only_when_it_changes(self):
+        # A version that fails to decode stays out of the snapshot (the feed falls to live load_goals,
+        # as before) and is said on stderr — once per file VERSION, not per pass: the failure is
+        # remembered under the same key, so a corrupt megabyte is not re-decoded and re-reported every
+        # 3 s. The file's next publish is a new key and is decoded again.
+        path = jd.GOALDIR / (SID + ".json")
+        tmp = jd.GOALDIR / (SID + ".json.tmp")
+        tmp.write_text("{not json")
+        os.replace(tmp, path)
+        real, calls = self._count_decodes()
+        err, saved_err = io.StringIO(), sys.stderr
+        sys.stderr = err
+        try:
+            km._begin_goals_pass()
+            try:
+                self.assertNotIn(SID, km._goals_snap[0], "no snapshot entry for a version that did not decode")
+                live = km._feed_goals(SID)
+                self.assertIn("_baseRev", live, "the feed falls to the live loader's object")
+                self.assertEqual(live.get("nodes"), {}, "…a fresh store, as load_goals answers for an unreadable file")
+            finally:
+                km._end_goals_pass()
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(err.getvalue().count("goals-pass: "), 1, "said once, naming the file")
+            self.assertIn(SID + ".json", err.getvalue())
+            km._begin_goals_pass()
+            km._end_goals_pass()
+            self.assertEqual(len(calls), 1, "the same version is not decoded again")
+            self.assertEqual(err.getvalue().count("goals-pass: "), 1, "…and not said again")
+            g = self._store_with_status("working")         # a new version (its size differs, so the key moves on any clock)
+            km._begin_goals_pass()
+            try:
+                self.assertEqual(len(calls), 2, "a changed file is decoded again")
+                self.assertIn(SID, km._goals_snap[0])
+                card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
+                self.assertEqual(card["column"], "working")
+            finally:
+                km._end_goals_pass()
+        finally:
+            sys.stderr = saved_err
+            km._goals_memo_decode = real
+
+    def test_the_memo_forgets_a_store_whose_file_is_gone(self):
+        # Entries are keyed by path; a file gone from the directory (a test's unlink, a state rebind)
+        # leaves the memo at the next pass, so it cannot grow across the paths a process has seen.
+        path = self._publish_store(self.OTHER_SID, {"rompUuid": self.OTHER_SID, "seq": 0, "nodes": {},
+                                                    "placements": {}, "status": {}})
+        km._begin_goals_pass()
+        km._end_goals_pass()
+        self.assertIn(str(path), km._goals_memo[0])
+        path.unlink()
+        before = km._goals_memo_stats["evict"]
+        km._begin_goals_pass()
+        try:
+            self.assertNotIn(str(path), km._goals_memo[0], "evicted at the next pass")
+            self.assertNotIn(self.OTHER_SID, km._goals_snap[0])
+            self.assertEqual(km._goals_memo_stats["evict"] - before, 1)
+            self.assertIn("_baseRev", km._feed_goals(self.OTHER_SID), "a sid without an entry reads live")
+        finally:
+            km._end_goals_pass()
+
+    # Each component of the memo key is load-bearing on its own, and none of the tests above pins one:
+    # they publish by rename AND change the content's length, so every version differs in two components
+    # at once, and a key missing any one component still passes them. The three tests below isolate one
+    # component each. They rewrite in place or pin mtimes with os.utime, which no real writer does (every
+    # writer publishes by rename): synthetic isolation of one signal, not a model of a writer. mtimes are
+    # moved by os.utime and never by letting the clock run (a same-tick flake on a coarse kernel).
+    def _memo_key_probe(self, mutate):
+        """Publish a seq-0 store, run a pass so the memo holds it, apply mutate(path, st, store) (st is
+        the memoized version's stat, store a copy of its content), and run a second pass. Returns the
+        second pass's decode count, the store it served, and the key before and after."""
+        store = {"rompUuid": self.OTHER_SID, "seq": 0, "nodes": {}, "placements": {}, "status": {}}
+        path = self._publish_store(self.OTHER_SID, store)
+        real, calls = self._count_decodes()
+        try:
+            km._begin_goals_pass()
+            km._end_goals_pass()
+            st = path.stat()
+            old_key = km._goals_memo[0][str(path)][0]
+            mutate(path, st, dict(store))
+            del calls[:]
+            km._begin_goals_pass()
+            try:
+                served = km._feed_goals(self.OTHER_SID)
+                new_key = km._goals_memo[0][str(path)][0]
+            finally:
+                km._end_goals_pass()
+            return len(calls), served, old_key, new_key
+        finally:
+            km._goals_memo_decode = real
+
+    def test_the_memo_key_re_decodes_on_a_size_change_alone(self):
+        # st_size: the inode and the mtime held (in-place rewrite, mtime pinned back); only the length
+        # moved. A key without st_size would serve the seq-0 parse for a file that holds seq 1.
+        def mutate(path, st, store):
+            store["seq"], store["note"] = 1, "a longer version of the same store"
+            path.write_text(json.dumps(store))                          # same inode
+            os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))        # same mtime_ns
+            now = path.stat()
+            self.assertEqual((now.st_ino, now.st_mtime_ns), (st.st_ino, st.st_mtime_ns))
+            self.assertNotEqual(now.st_size, st.st_size)
+        decodes, served, old_key, new_key = self._memo_key_probe(mutate)
+        self.assertEqual(decodes, 1, "the size moved → decoded again")
+        self.assertEqual(served["seq"], 1, "…and the new version is what the pass serves")
+        self.assertNotEqual(old_key, new_key)
+
+    def test_the_memo_key_re_decodes_on_an_mtime_change_alone(self):
+        # st_mtime_ns: same inode, same length (seq 0 → 1 swaps one digit for one digit); only the mtime
+        # moved. This is the component the key rests on in production: inode numbers recycle and equal
+        # sizes are common (the memo note in kernel.py).
+        def mutate(path, st, store):
+            store["seq"] = 1
+            data = json.dumps(store)
+            self.assertEqual(len(data.encode()), st.st_size, "same length by construction")
+            path.write_text(data)                                        # same inode, same size
+            os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))   # moved by 1 ms, deterministically
+            now = path.stat()
+            self.assertEqual((now.st_ino, now.st_size), (st.st_ino, st.st_size))
+            self.assertNotEqual(now.st_mtime_ns, st.st_mtime_ns)
+        decodes, served, old_key, new_key = self._memo_key_probe(mutate)
+        self.assertEqual(decodes, 1, "the mtime moved → decoded again")
+        self.assertEqual(served["seq"], 1, "…and the new version is what the pass serves")
+        self.assertNotEqual(old_key, new_key)
+
+    def test_the_memo_key_re_decodes_on_an_inode_change_alone(self):
+        # st_ino: a real rename publish of same-length content with its mtime pinned to the old value, so
+        # only the inode moved — the shape of a same-tick publish on a coarse-timestamp kernel. One
+        # publish between passes always lands on a fresh inode (the temp file coexists with the old one).
+        def mutate(path, st, store):
+            store["seq"] = 1
+            self._publish_store(self.OTHER_SID, store)                  # new inode, same size
+            os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))        # same mtime_ns
+            now = path.stat()
+            self.assertEqual((now.st_mtime_ns, now.st_size), (st.st_mtime_ns, st.st_size))
+            self.assertNotEqual(now.st_ino, st.st_ino)
+        decodes, served, old_key, new_key = self._memo_key_probe(mutate)
+        self.assertEqual(decodes, 1, "the inode moved → decoded again")
+        self.assertEqual(served["seq"], 1, "…and the new version is what the pass serves")
+        self.assertNotEqual(old_key, new_key)
 
     def test_the_feed_payload_carries_a_build_id_that_advances_per_build(self):
         # buildId is what lets a client tell "this payload predates my click" from "this is the kernel's

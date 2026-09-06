@@ -208,7 +208,12 @@ class _PerfStats:
                                    under "other"). A deduped frame was built and compared, not sent
       goals                        loads, saves, writes: judge.load_goals calls, save_goals calls,
                                    and the saves that reached the disk (a byte-identical republish
-                                   is a save without a write)
+                                   is a save without a write); disk_hits / disk_misses / disk_seeds:
+                                   the no-op check's disk-side memo (identity matched; file read and
+                                   parsed, or attempted; entry filled from a publish's own temp);
+                                   scans / scan_hits /
+                                   scan_parses: judge_failure_scan's per-store memo (calls, stores
+                                   served from the memo, stores read and parsed)
       judge                        passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
@@ -217,6 +222,14 @@ class _PerfStats:
                                    chain_memo {hit, miss, populate, bypass}: the write-moment chain
                                    memo's counters (judge.chain_memo_stats), so its hit rate is
                                    read from the live kernel rather than assumed
+      memos                        one entry per memo the kernel keeps, each a flat dict of counters:
+                                   goals_snap (the judge pass's stat-keyed goal-store snapshot, see
+                                   _begin_goals_pass) -> hit / miss (stores served from the memo vs
+                                   decoded, summed over passes), fail (versions that did not
+                                   decode), evict (entries dropped for files gone from the
+                                   directory), punch (snapshot entries copied for a user gesture),
+                                   and the gauges entries / bytes (memoized paths and their summed
+                                   file size)
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -361,10 +374,15 @@ class _PerfStats:
             goals = jd.goal_io_stats()
         except Exception:
             goals = {}
+        try:
+            memos = {"goals_snap": _goals_memo_report()}
+        except Exception:
+            memos = {}
         now = time.time()
         return {"now": now, "since": since, "uptime_s": now - _STARTED, "log": _PERF,
                 "process": _process_stats(), "pusher": pusher, "stages_ms": stages,
-                "builds": builds, "sends": sends, "goals": goals, "judge": judge, "http": http}
+                "builds": builds, "sends": sends, "goals": goals, "judge": judge, "http": http,
+                "memos": memos}
 
 
 _PERF_STATS = _PerfStats()
@@ -866,6 +884,9 @@ def _version_info():
     return {"kernel_sha": _kernel_sha(), "kernel_ver": _kernel_ver(), "pid": os.getpid(), "started": int(_STARTED),
             "boot": _BOOT_ID,   # lets a page retire update offers from a previous kernel life (2026-08-15)
             "uptime_s": int(time.time() - _STARTED), "dist_ver": _dist_ver(), "bundles": bundles,
+            # the WS ops beyond the base protocol this kernel answers (KERNEL_WS_CAPS) — the same list
+            # the `caps` frame carries at `ready`; `romp version` and a curl can read it here
+            "caps": list(KERNEL_WS_CAPS),
             # THIS kernel process's transcript-assembly counters (event_model._ASM_STATS: full/fold/
             # serve/bypass/fallback + per-gate g:<reason> demotes + ts-repair) — the designed home for
             # runtime observability: /healthz's body is a frozen liveness contract ("ok"), while this
@@ -1413,6 +1434,18 @@ def _models_api_credential():
     designated for nothing here and is left alone. A login-only box (Claude Code's OAuth, no key) has
     no HTTP credential the kernel can borrow: the refresh says so once and serves the seed — the CLI's
     own alias table still tracks each family's newest there."""
+    # The command source's set first (2026-09-05): its ANTHROPIC_LP_API_KEY line is the direct-call
+    # key on an installation that keeps every credential out of files and out of the manager's
+    # environment. Read through the judges' wire (jd._ENV_SET_FN → sdk_backend.credential_set), so
+    # like the work key it is never read here before the backend exists; {} in file mode.
+    setfn = getattr(jd, "_ENV_SET_FN", None)
+    if setfn is not None:
+        try:
+            lp = (setfn() or {}).get("ANTHROPIC_LP_API_KEY") or ""
+        except Exception:
+            lp = ""
+        if lp.strip():
+            return ("x-api-key", lp.strip())
     lp = (os.environ.get("ANTHROPIC_LP_API_KEY") or "").strip()
     if lp:
         return ("x-api-key", lp)
@@ -1429,6 +1462,27 @@ def _models_api_credential():
     if tok:
         return ("Authorization", "Bearer " + tok)
     return None
+
+
+def _credential_accepted(cred) -> bool:
+    """The Models API accepted `cred`. When that credential is the command source's own direct-call
+    key (the set's ANTHROPIC_LP_API_KEY, the first rung of _models_api_credential), this is a success
+    of the set, and the event that re-arms envsource's once-per-credential refusal path: through the
+    judges' wire (jd._ENV_OK_FN, sdk_backend.credential_auth_ok), as the set itself arrives. A
+    credential from any other rung (the environment's key, the claimed work key, a bearer) says
+    nothing about the set and re-arms nothing. Compares values inside this process only; nothing is
+    rendered. Returns whether the path was re-armed."""
+    okfn = getattr(jd, "_ENV_OK_FN", None)
+    setfn = getattr(jd, "_ENV_SET_FN", None)
+    if okfn is None or setfn is None or not cred:
+        return False
+    try:
+        lp = ((setfn() or {}).get("ANTHROPIC_LP_API_KEY") or "").strip()
+        if lp and tuple(cred) == ("x-api-key", lp):
+            return bool(okfn(""))
+    except Exception:
+        pass
+    return False
 
 
 def _fetch_models_api(cred, timeout=8):
@@ -1487,6 +1541,7 @@ def _refresh_model_catalog(reason, _async=True):
                                  % (reason, _catalog_status["lastError"], _catalog_status["source"],
                                     len(_catalog_status["added"])))
                 return
+            _credential_accepted(cred)
             added = _apply_model_catalog(merge_model_catalog(_MODEL_SEED, rows), "api")
             now = int(time.time())
             _catalog_status["fetchedAt"] = now
@@ -2733,6 +2788,16 @@ def _ordered_alive(now, tmux):
 _VIEWS_MAX_TAGS = 32
 _VIEWS_MAX_NAME = 40
 _views_lock = threading.Lock()   # read-modify-write on the views blob from handler threads (_comments_lock precedent)
+# The store's write door — judgment AND file write, as one step (_set_timeline_views) — and the
+# reader's re-stamp of a file it found changed under it (_timeline_views), serialized together, so
+# a re-stamp is judged against the file as it is at that moment and can never land over an edit
+# written in between, and no writer's blob, judged against the store before a re-stamp, lands over
+# the re-stamp (round 6 of the 2026-09-05 review: the door judged outside this lock and took it for
+# the write alone). Re-entrant: the judge's own read of the store may re-stamp the file, taking it
+# again on the same thread. Readers never take _views_lock (a plain Lock a locked writer already
+# holds when it reads), so the order is always _views_lock → _views_file_lock and nothing waits
+# the other way.
+_views_file_lock = threading.RLock()
 
 
 def _views_path():
@@ -2764,6 +2829,21 @@ def _member_str(m):
 _LENS_SURFACES = ("chat", "timeline", "outline")   # per-surface selections (the user 2026-08-25); the feed's is client-local
 
 
+def _tag_name_basis(n):
+    """The STORED spelling of a tag name — clamped to _VIEWS_MAX_NAME, then stripped (round 5 of the
+    2026-09-05 review gave the tag rows this basis; round 6 gives it to every name-keyed field). A
+    lens entry or an order entry read on any other basis names nothing: a store that already held a
+    padded twin ("web " beside "web") read both rows as "web" on the first post-upgrade read while
+    its lens and order still carried "web ", so the surface filtered to it showed no session and the
+    tag fell to the end of the order. A REMOTE tag's rendered name is on it too (_views_client), and
+    so is a pending edit's name (_queue_pending_tag_edit): a remote kernel on an older build, or a
+    padded remote store, serves "web " raw, and a lens stored as "web" — every entry is — never
+    matched the rendered "web ", so the surface filtered to that tag showed none of its members and
+    the name-keyed union kept the padded twin apart from the local tag. Every name a client sees or
+    a lens compares is on this one basis. "" for a non-string or an all-whitespace name."""
+    return str(n)[:_VIEWS_MAX_NAME].strip() if isinstance(n, str) else ""
+
+
 def _norm_lens(x, tags):
     """One surface's selection in the shared TagLens shape ({all} | {none?, tags?:[names]} — the
     feed-authored model, manager-sanctioned as the shared shape 2026-08-25). Tag entries are NAMES
@@ -2774,8 +2854,9 @@ def _norm_lens(x, tags):
         return {"all": True}
     names = []
     for n in (x.get("tags") if isinstance(x.get("tags"), list) else []):
-        if isinstance(n, str) and n[:_VIEWS_MAX_NAME] not in names:
-            names.append(n[:_VIEWS_MAX_NAME])
+        nm = _tag_name_basis(n)                  # the stored basis, so the entry names the stored tag
+        if nm and nm not in names:
+            names.append(nm)
     lens = {}
     if x.get("none"):
         lens["none"] = True
@@ -2795,9 +2876,14 @@ def _lens_seed(active, tags):
     return {"tags": [t["name"]]} if t else {"all": True}
 
 
-def _norm_timeline_views(d):
+def _norm_timeline_views(d, tag_cap=_VIEWS_MAX_TAGS):
     """Validate + normalize a views blob from disk or a client: always returns the full shape, drops
     junk quietly, clamps sizes, and falls back active→"all" when the named tag does not exist.
+    `tag_cap` bounds the tag list (the store's cap by default); the write door reads a posted blob
+    under a wider bound so ITS cap pass can refuse the excess with a reason instead of this slice
+    dropping a posted create in silence (round 6 of the 2026-09-05 review), and whatever a blob
+    carries past the bound is listed by _views_unread, so the door and the reader's re-stamp can
+    say what this slice left unread (round 7).
     "all" and "untagged" are the two built-in sentinels; "untagged" must pass the whitelist below,
     or a picked untagged view silently reverts on the next read (the client's optimistic hold makes
     that failure read as flicker three pushes later, not as an error).
@@ -2820,14 +2906,22 @@ def _norm_timeline_views(d):
     # echoed hidden array is tolerated and dropped; _timeline_views migrated existing entries into
     # the "archived" tag once. Nothing hides from All anymore: that is All's meaning now.)
     tags = []
+    seen = set()   # ids are addresses: a blob carrying one id twice reads as the first entry (round 4 of the 2026-09-05 review)
     raw = d.get("tags") if isinstance(d.get("tags"), list) else d.get("groups")
-    for g in _lst(raw)[:_VIEWS_MAX_TAGS]:
+    for g in _lst(raw)[:tag_cap]:
         if not isinstance(g, dict) or not g.get("id") or not isinstance(g.get("id"), str):
             continue
+        if g["id"][:64] in seen:
+            continue
+        seen.add(g["id"][:64])
         members = [m for m in (_member_pair(x) for x in _lst(g.get("members"))) if m]
         dedup = {(m["host"], m["sid"]): m for m in members}
+        # the NAME BASIS (round 5 of the 2026-09-05 review): clamped to _VIEWS_MAX_NAME and stripped,
+        # the spelling the targeted door already gives a rename (_edit_tag) — a whole-blob write
+        # carrying "web " beside "web" passed the door's collision pass as two names and the store
+        # held a padded twin every name-keyed surface showed as one. Empty after the strip → "tag".
         rec = {"id": g["id"][:64],
-               "name": str(g.get("name") or "tag")[:_VIEWS_MAX_NAME],
+               "name": str(g.get("name") or "")[:_VIEWS_MAX_NAME].strip() or "tag",
                "color": str(g.get("color") or "")[:16],
                "members": [dedup[k] for k in sorted(dedup)]}
         if g.get("mtime"):                       # v2's edit stamp survives the rebuild (absent = 0 = legacy)
@@ -2853,14 +2947,16 @@ def _norm_timeline_views(d):
     # TAG ORDER (the user 2026-08-25): the union DISPLAY order — a NAME list, viewer-side, so a
     # remote-homed tag holds its dragged position without any cross-kernel write (a display
     # preference must not need another kernel up; the lane order's viewer-side philosophy). Local
-    # tags ALSO keep their array order (the drag rewrites both); this list extends the same order
+    # tags' ARRAY order follows it too: the write door sorts the stored array by the write's
+    # tagOrder under an empty `edited` (the drag's write); this list extends the same order
     # across the whole name-keyed union. Names are not validated against the local store — a
     # remote name is unknowable here by design; junk entries cost nothing and age out on the next
     # drag. Absent stays absent, so pre-order blobs round-trip byte-identical.
     order = []
     for n in _lst(d.get("tagOrder"))[:_VIEWS_MAX_TAGS * 2]:
-        if isinstance(n, str) and n and n[:_VIEWS_MAX_NAME] not in order:
-            order.append(n[:_VIEWS_MAX_NAME])
+        nm = _tag_name_basis(n)                  # the stored basis, so the entry ranks the stored tag
+        if nm and nm not in order:
+            order.append(nm)
     if order:
         out["tagOrder"] = order
     # `at` — the store's write stamp, served to every client and echoed back with its blob: the
@@ -2871,7 +2967,85 @@ def _norm_timeline_views(d):
             out["at"] = int(d["at"])
     except (TypeError, ValueError):
         pass
+    # `seq` — the store's WRITE SEQUENCE (2026-09-05): strictly increasing across writes, stamped
+    # by _set_timeline_views and carried on every frame and ack the blob rides. Clients adopt a
+    # blob only when its seq is at least the one they hold, so a frame built before a write (the
+    # pusher's warmed cache, a federation re-emit) can never replace the ack's newer blob. Preserved
+    # through the rebuild like `at`; absent stays absent (a blob from before the stamp).
+    try:
+        if d.get("seq"):
+            out["seq"] = int(d["seq"])
+    except (TypeError, ValueError):
+        pass
     return out
+
+
+def _views_unread(d, kept):
+    """The tag entries of a blob that a normalization under a bound left UNREAD — every entry carrying
+    a valid id that none of the `kept` (normalized) tags has — as (id, name, member count) triples in
+    array order, one per id (round 7 of the 2026-09-05 review). The write door lists them in the ack
+    as refusal rows and the reader's re-stamp names them in a notice; neither stores them. Until now
+    the normalizer's slice was the one place a posted tag could vanish with nothing said: the door
+    reads a blob under twice the cap, and a client whose `edited` named only ids past that bound was
+    acked ok with a blob missing its own creates (a duplicate entry consumes a slot too, so 33
+    distinct tags posted twice reach it). Junk entries (no id, not a dict) drop quietly here as in
+    the normalizer; the name is on the stored basis, "tag" when empty."""
+    if not isinstance(d, dict):
+        return []
+    raw = d.get("tags") if isinstance(d.get("tags"), list) else d.get("groups")
+    have = {t["id"] for t in kept if isinstance(t, dict) and t.get("id")}
+    out = []
+    for g in (raw if isinstance(raw, list) else []):
+        if not isinstance(g, dict) or not g.get("id") or not isinstance(g.get("id"), str):
+            continue
+        i = g["id"][:64]
+        if i in have:
+            continue
+        have.add(i)
+        m = g.get("members")
+        out.append((i, _tag_name_basis(g.get("name")) or "tag", len(m) if isinstance(m, list) else 0))
+    return out
+
+
+_VIEWS_RESTAMP_ERR = [None]   # the last OSError the reader's re-stamp write hit, as text — one stderr line per distinct error
+# The highest seq this kernel has served or written (round 5 of the 2026-09-05 review), kept apart
+# from the read cache: a store read as MISSING forgets its cache entry (rightly — a file that then
+# appears must not be judged against a store that no longer exists), and with it forgot the seq
+# floor, so a file restored from an older copy was served under its old seq and every dashboard
+# holding a higher one ignored it until the next kernel write. The floor outlives the entry: a
+# recreated file whose seq fell behind it is re-stamped past it (ordered, not judged), and every
+# write orders past it. Set wherever a blob is cached (_views_cache_put); never lowered. KEYED BY
+# STORE PATH like the read cache (round 6 of the 2026-09-05 review): one process can serve more
+# than one state dir (a test suite; a kernel rebound to another root), and a floor shared across
+# them made a cold read of a small-seq file in a fresh state dir a re-stamp write, ordered past
+# another store's seq. The live kernel has one store, so one entry.
+_VIEWS_SEQ_FLOOR = {}
+
+
+def _views_seq_floor(p=None):
+    """The seq floor of the store at `p` (the current store by default): the highest seq this process
+    has served or written from THAT file, 0 for one it has not touched."""
+    return _VIEWS_SEQ_FLOOR.get(str(p if p is not None else _views_path()), 0)
+
+
+def _views_cache_put(p, key, d):
+    """Cache a served or written blob under the file's (mtime, size) key and raise the seq floor to
+    its seq — the two facts every later read and write order themselves against."""
+    _flags_cache[str(p)] = (key, d)
+    try:
+        _VIEWS_SEQ_FLOOR[str(p)] = max(_views_seq_floor(p), int(d.get("seq") or 0))
+    except (TypeError, ValueError):
+        pass
+
+
+def _views_lost_notice(note, members):
+    """The reader's file-fact notice — a views file over the cap, read under it (_timeline_views): one
+    stderr line carrying the notice and every dropped tag's members, and the sync notice, red."""
+    sys.stderr.write("romp-kernel: %s [%s]\n" % (note, members))
+    try:
+        _sync_notice(note, ok=False)
+    except Exception:
+        pass
 
 
 def _timeline_views():
@@ -2879,50 +3053,347 @@ def _timeline_views():
     try:
         st = p.stat(); key = (st.st_mtime_ns, st.st_size)
     except OSError:
+        # No store: nothing served before it describes this one. The cache entry is the last blob
+        # this kernel served or wrote, and a file written outside the kernel after a delete or a
+        # restore is judged against it (_views_restamp's third case) — forgetting it here is what
+        # keeps a recreated store from being judged against a store that no longer exists. The seq
+        # floor is kept (_VIEWS_SEQ_FLOOR): a recreated file is still ORDERED past what was served.
+        _flags_cache.pop(str(p), None)
         return _norm_timeline_views({})
     hit = _flags_cache.get(str(p))
     if hit is not None and hit[0] == key:
         return hit[1]
     try:
         d = json.loads(p.read_text())
+        parsed = isinstance(d, dict)
     except Exception:
+        d, parsed = {}, False
+    if not parsed:
         d = {}
-    # ONE-TIME MIGRATION (the user 2026-08-24, retiring hide-from-chat outright: "we want to get
-    # rid of that hide from chat thing"): a stored blob still carrying hidden entries maps them
-    # into an "archived" TAG on THIS kernel — preserving the user's intent record and keeping them
-    # out of the untagged view. They WILL show under All: nothing can hide from All
-    # post-retirement — that is All's meaning now, and the feed's needs-you machinery carries
-    # anything that matters. Minted only when hidden entries exist; idempotent (the write drops the
-    # hidden key, so the next read has nothing to migrate).
-    hid = [str(x) for x in (d.get("hidden") or []) if isinstance(x, str) and x] if isinstance(d, dict) else []
+    fix = _views_restamp(d, hit) if parsed else None
+    if fix is not None:
+        # The file goes back through the write door BEFORE it is served (the cases in
+        # _views_restamp), as ONE write: the setter is handed its diff base explicitly, because
+        # reading it through this function would find the same un-stamped file and re-enter here
+        # (until 2026-09-05 the hidden migration did exactly that — 321 nested writes for one read,
+        # ending only when Python's recursion limit tripped inside the setter's own try). The base
+        # is the file's OWN content for the migration and the first stamp: those order the file
+        # (its seq moves past the last one this kernel served or wrote, the floor) without judging
+        # it — the stale-writer guard rules on dashboard writes at the door. A write outside the
+        # kernel whose seq fell behind is the exception (round 4 of the 2026-09-05 review): the
+        # writer held an older copy by its own seq, so the guard judges the file against the LAST
+        # SERVED blob (the cache entry it missed against) — a tag it deleted since is not brought
+        # back, a member added since is not lost, and each refusal is reported (the setter's
+        # notice, naming the tag). With nothing served (a fresh kernel; a store deleted and read
+        # as missing, which forgets the entry) there is nothing to judge against and the file is
+        # ordered as written. Under the file lock, with a re-check: a writer may have replaced
+        # the file since the stat above — its own edit, or this same re-stamp from another
+        # thread — and that newer content is judged afresh rather than written over.
+        why, d2, judge = fix
+        with _views_file_lock:
+            try:
+                st2 = p.stat()
+            except OSError:
+                return _norm_timeline_views({})
+            if (st2.st_mtime_ns, st2.st_size) != key:
+                return _timeline_views()
+            hit2 = _flags_cache.get(str(p))
+            if hit2 is not None and hit2[0] == key:
+                # The same file state, served and cached by a reader that held the lock while this one
+                # waited (round 9 of the 2026-09-05 review): the failed-write path below caches the
+                # served blob under the file's UNCHANGED key — a write that never reached its replace
+                # leaves the stat alone — so the re-check above could not tell that read had happened,
+                # and two cold readers racing on a full disk each judged the file, each failed the
+                # write, and each filed the file-fact notice. The check the function opens with, run
+                # again under the lock; it serves nothing that check would not.
+                return hit2[1]
+            try:
+                floor = int(hit[1].get("seq") or 0) if hit is not None else 0
+            except (TypeError, ValueError):
+                floor = 0
+            floor = max(floor, _views_seq_floor(p))
+            base = hit[1] if (judge and hit is not None) else _norm_timeline_views(d)
+            lost = []
+            if not judge:
+                # The file's OWN content, under the DISK cap (round 7 of the 2026-09-05 review): the
+                # migration and the first stamp are reads, not writes, and the door's wider read
+                # bound is for a dashboard's posted creates — read through it, a file holding more
+                # than the cap had its excess (the migration's appended "archived" tag first) judged
+                # as creates and refused by the cap pass, under a notice blaming a stale dashboard
+                # write. The normalizer bounds every read to the cap, so the file's tags past it were
+                # never served; the stamp writes what every read served, as it did before the door
+                # bound — and what the cap leaves out is NAMED (`lost`, below), as a fact about the
+                # file, where until now it was dropped with nothing said.
+                d2n = _norm_timeline_views(d2)
+                lost = _views_unread(d2, d2n["tags"])
+                d2raw, d2 = d2, d2n
+            judged, _rows = _judge_timeline_views(
+                d2, base=base, seq_floor=floor,
+                foreign="a stale write to the views file from outside the kernel" if judge else None,
+                writer=None if judge else "the views file's re-stamp on read")
+            names, members, fact = [], "", ""
+            if lost:
+                # No dashboard wrote this — the file itself was over the cap (an edit outside the
+                # kernel, or a kernel from before the cap that held 32 tags plus hidden entries,
+                # which the migration's archived tag then puts over). Said once, as a fact about the
+                # file, whether or not the stamp below lands (round 8 of the 2026-09-05 review: it
+                # was said only after a successful write, so an unwritable store served the capped
+                # blob in silence and the next RMW write, built from that cache, made the drop
+                # permanent with nothing ever said). Cause and count first, the dropped tags after,
+                # as many as fit the served notice (_notice_list — the same review found the cause
+                # clause LAST, after one entry per tag, cut away by the dashboard's bell on any drop
+                # of two or more); stderr lists every dropped tag with its members.
+                held = len(d2["tags"]) + len(lost)
+                names = ['"%s" (%d member%s)' % (nm, n, "" if n == 1 else "s") for _i, nm, n in lost]
+                fact = ("the views file held %d tags, over the store's %d-tag cap; no dashboard wrote this."
+                        % (held, _VIEWS_MAX_TAGS))
+                ids = set(i for i, _nm, _n in lost)
+                raw = [g for g in (d2raw.get("tags") or []) if isinstance(g, dict)
+                       and isinstance(g.get("id"), str) and g["id"][:64] in ids]
+                members = "; ".join('"%s": %s' % (_tag_name_basis(g.get("name")) or "tag",
+                                                   ", ".join(_member_str(m) for m in
+                                                             (_member_pair(x) for x in (g.get("members") or []))
+                                                             if m) or "no members")
+                                    for g in raw)
+            try:
+                _write_timeline_views(judged)
+                sys.stderr.write("romp-kernel: views store re-stamped on read: %s\n" % why)
+                if lost:
+                    # the drop is permanent once the stamp is written
+                    _views_lost_notice(_notice_list(
+                        "%s %d tag%s dropped when it was re-stamped on read (%s)"
+                        % (fact, len(lost), " was" if len(lost) == 1 else "s were", why), ": ", names), members)
+            except OSError as e:
+                # The state dir is unwritable or full: a READ must still answer (every frame builds
+                # on it), so a blob is served and cached under the file's key — the next read is a
+                # hit, not another failing write — and the failure is logged once per distinct
+                # error (a full disk would otherwise log on every read). The next write that
+                # succeeds clears the note, so a recurrence is logged again. WHICH blob: the JUDGED
+                # one when the file was judged (round 5 of the 2026-09-05 review — serving the file
+                # as read served the foreign copy the judgment had just refused, cached it, and
+                # the next RMW write, built from that cache, persisted it: the deleted tag back,
+                # the newer member gone); the file as read, unstamped, for the migration and the
+                # first stamp, whose write changes no tag's state. The judged blob carries a seq
+                # past the floor that the file does not, which is the point: dashboards adopt it,
+                # and the next write that lands (a RMW built from this cache) persists it.
+                # the key is the error's kind, not its text: the atomic write's temp name differs
+                # per call, so the text would read as a new error every time
+                kind = "%s errno=%s" % (type(e).__name__, getattr(e, "errno", None))
+                if _VIEWS_RESTAMP_ERR[0] != kind:
+                    _VIEWS_RESTAMP_ERR[0] = kind
+                    sys.stderr.write("romp-kernel: views store could not be re-stamped on read (%s) — "
+                                     "serving %s: %s: %s\n"
+                                     % (why, "the judged blob, unwritten" if judge
+                                        else "the file as read, under the cap, unstamped",
+                                        type(e).__name__, e))
+                if lost:
+                    # The file still holds the excess and the served blob does not, and the next
+                    # write that lands (a RMW built from this cache) persists the served blob: the
+                    # drop becomes permanent THEN, unless the file is brought under the cap first.
+                    # Named now, once per file state (the cache entry below keeps every further read
+                    # a hit, and a reader that raced this one to the lock finds it there), with that
+                    # consequence in the notice.
+                    _views_lost_notice(_notice_list(
+                        "%s Its re-stamp could not be written — %d tag%s not served and %s lost at the next "
+                        "write unless the file is brought under the cap first"
+                        % (fact, len(lost), " is" if len(lost) == 1 else "s are",
+                           "is" if len(lost) == 1 else "are"), ": ", names), members)
+                d = _norm_timeline_views(json.loads(json.dumps(judged)) if judge else d2)
+                _views_cache_put(p, key, d)
+                return d
+        return _timeline_views()          # the write refreshed the cache under the file's new key
+    d = _norm_timeline_views(d)
+    _views_cache_put(p, key, d)
+    return d
+
+
+def _views_stamp_legacy_tags(tags, d):
+    """Every tag of a file going through the first-read stamp or the migration is given an mtime if
+    it lacks one — the file's `at` (the last write the store recorded), else now (round 5 of the
+    2026-09-05 review). The mtime is the one mark that tells a tag a store once held from a client's
+    own create in a write the kernel cannot otherwise judge (the `foreign` rule in
+    _judge_timeline_views: an unknown tag carrying one existed in a store and is not re-created). The
+    write door stamps changed tags only, and a first-read stamp changes nothing, so a tag from before
+    the per-tag stamp never got one and, once deleted, could come back through a file written outside
+    the kernel. Mutates and returns `tags` (a copy at every call site)."""
+    try:
+        at = int(d.get("at") or 0)
+    except (TypeError, ValueError):
+        at = 0
+    stamp = at or int(time.time())
+    for t in tags:
+        if isinstance(t, dict) and not t.get("mtime"):
+            t["mtime"] = stamp
+    return tags
+
+
+def _views_restamp(d, hit):
+    """Why a views file just read (a parsed dict) must go back through the write door before it is
+    served, and the dict to write — or None when it is fine as-is. Each case is one write and then
+    never again for that content, so a clean store round-trips byte-identical.
+    - ONE-TIME MIGRATION (the user 2026-08-24, retiring hide-from-chat outright): a stored blob
+      still carrying hidden entries maps them into an "archived" TAG on THIS kernel — preserving
+      the user's intent record and keeping them out of the untagged view. They WILL show under
+      All: nothing can hide from All post-retirement — that is All's meaning now, and the feed's
+      needs-you machinery carries anything that matters. Minted only when hidden entries exist;
+      idempotent (the write drops the hidden key, so the next read has nothing to migrate). The
+      archived tag is appended LAST, so a store already at the cap loses it to the disk cap when
+      the reader stamps the file — named in the reader's notice as a fact about the file (round 7
+      of the 2026-09-05 review), never dropped in silence.
+    - A STORE WITHOUT A WRITE SEQUENCE (every install upgrading to the 2026-09-05 stamp): served
+      seq-less, it would leave every client on the null rule — adopt anything — until the first
+      write, so the seq gate could not protect that first write against a frame the pusher built
+      before it. Stamped once, on the first read; a store that does not exist stays unstamped (the
+      null rule is right for a deleted or recreated store, which starts past what any client holds
+      on its first write).
+    - A WRITE OUTSIDE THE KERNEL whose seq fell BEHIND the last one served (round 3 of the
+      2026-09-05 review): the timeline's Electron branch writes the file itself with the seq it
+      holds, and a panel holding an older frame publishes a seq lower than what every dashboard
+      holds — they would all ignore the file until the next kernel write. `hit` is the cache entry
+      the changed file missed against: the last blob this kernel served or wrote, whose seq is the
+      floor the re-stamp moves past. Equal seqs are left alone (a writer holding the newest frame
+      writes the newest seq back; every client adopts an equal seq), so an mtime-only change never
+      costs a write. This is the one case JUDGED (the third element, True): the file goes through
+      the stale-writer guard against that last served blob, since by its own seq the writer held
+      an older copy than the store.
+    - A FILE THAT APPEARED with a seq behind the last one served and NO cache entry to judge it
+      against (round 5 of the 2026-09-05 review): a store read as missing forgets its entry, so a
+      file restored from an older copy would be served under its old seq and ignored by every
+      dashboard holding a higher one. The seq floor outlives the entry (_VIEWS_SEQ_FLOOR), and the
+      file is re-stamped past it, as written — ordered, not judged.
+    Returns (why, dict-to-write, judge). The dict is a COPY: `d` is also the diff base the migration
+    is stamped against, and mutating its tag dicts in place (the aliasing bug of round 3) left the
+    base already migrated — an existing "archived" tag gained its members with no fresh mtime, and
+    a whole-blob post from a dashboard holding the pre-migration copy stripped them again with no
+    refusal (round 4 of the 2026-09-05 review)."""
+    hid = [str(x) for x in (d.get("hidden") or []) if isinstance(x, str) and x]
     if hid:
-        raw = d.get("tags") if isinstance(d.get("tags"), list) else (d.get("groups") if isinstance(d.get("groups"), list) else [])
+        d2 = json.loads(json.dumps(d))                     # a parsed file: the round trip is a deep copy
+        raw = d2.get("tags") if isinstance(d2.get("tags"), list) else (d2.get("groups") if isinstance(d2.get("groups"), list) else [])
         tags = [t for t in raw if isinstance(t, dict)]
-        arch = next((t for t in tags if t.get("name") == "archived"), None)
+        # on the STORED basis (round 8 of the 2026-09-05 review): the file's raw spelling can be padded
+        # ("archived "), which the normalizer reads as "archived" — compared raw, the lookup missed it,
+        # a second archived tag was minted, the door's collision pass refused that one, and the hidden
+        # entries migrated into nothing
+        arch = next((t for t in tags if _tag_name_basis(t.get("name")) == "archived"), None)
         if arch is None:
             arch = {"id": "archived", "name": "archived", "color": "#6b7280", "members": []}   # muted slate — never a status color
             tags = tags + [arch]
         arch["members"] = [m for m in (arch.get("members") or []) if m] + hid
-        d = dict(d); d["tags"] = tags; d.pop("groups", None); d.pop("hidden", None)
-        _set_timeline_views(d)                       # persist the mapping; the fresh mtime re-keys the cache
-    d = _norm_timeline_views(d)
-    _flags_cache[str(p)] = (key, d)
-    return d
+        d2["tags"] = _views_stamp_legacy_tags(tags, d); d2.pop("groups", None); d2.pop("hidden", None)
+        return "hidden entries migrated into the archived tag", d2, False
+    try:
+        seq = int(d.get("seq") or 0)
+    except (TypeError, ValueError):
+        seq = 0
+    if not seq:
+        # a copy, like the migration's: `d` is the diff base, and every tag the file holds is given
+        # an mtime here (_views_stamp_legacy_tags) — the base keeps none, so the stamp is the one
+        # change the setter sees, and it preserves the given mtime on an otherwise unchanged tag
+        d2 = json.loads(json.dumps(d))
+        raw = d2.get("tags") if isinstance(d2.get("tags"), list) else (d2.get("groups") if isinstance(d2.get("groups"), list) else [])
+        d2["tags"] = _views_stamp_legacy_tags([t for t in raw if isinstance(t, dict)], d); d2.pop("groups", None)
+        return "a store from before the write sequence, stamped once", d2, False
+    floor = _views_seq_floor()                     # this store's own floor (the reader reads _views_path())
+    if hit is None and floor and seq < floor:
+        # no served blob to judge against (the store was read as missing, or the cache is cold),
+        # but a floor to order past (round 5 of the 2026-09-05 review): a file restored from an
+        # older copy is re-stamped past the last seq this kernel served, as written — every
+        # dashboard holding that seq adopts it, where under its own seq they all ignored it
+        return ("a file with seq %d appeared behind the last served %d" % (seq, floor)), d, False
+    if hit is not None:
+        try:
+            last = int(hit[1].get("seq") or 0)
+        except (TypeError, ValueError):
+            last = 0
+        if last and seq < last:
+            return ("a write outside the kernel carried seq %d, behind the last served %d" % (seq, last)), d, True
+    return None
 
 
-def _set_timeline_views(blob):
+def _set_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None):
+    """The views store's ONE write door: judge the blob against the store (_judge_timeline_views —
+    the stale-writer guard, the `edited` bound, the name-collision pass, the stamps), then write
+    what stands (_write_timeline_views). Returns the refused rows. The judgment is a separate step
+    (round 5 of the 2026-09-05 review) so the reader's re-stamp can serve the JUDGED blob when the
+    write itself fails: serving the file as read served, cached, and let the next write persist, the
+    foreign copy the judgment had refused. Both steps run under _views_file_lock (round 6 of the
+    2026-09-05 review): the reader's re-stamp holds that lock across its own judge and write, but this
+    door took it for the write alone, so a re-stamp landing between the judge here and the write here
+    was written over by a blob judged against the pre-re-stamp store — the foreign write's lens
+    change and its creates gone, under a seq no higher than the re-stamp's (both computed from the
+    same base), with no refusal filed. The lock is re-entrant, and every caller holding _views_lock
+    takes it first, so the documented order stands."""
+    with _views_file_lock:
+        v, rows = _judge_timeline_views(blob, base=base, seq_floor=seq_floor, edited=edited, foreign=foreign)
+        _write_timeline_views(v)
+    return rows
+
+
+def _write_timeline_views(v):
+    """Write a judged, stamped blob (from _judge_timeline_views) to the store and refresh the read
+    cache with it. Raises the OSError of an unwritable or full state dir to the caller."""
+    text = json.dumps(v, sort_keys=True)
+    with _views_file_lock:
+        _atomic_write(_views_path(), text)
+        _views_cache_refresh(text)
+    _VIEWS_RESTAMP_ERR[0] = None      # the store is writable again: a later failure logs afresh
+
+
+def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None, writer=None):
+    # The write door's judgment, without the write: returns (blob-to-store, refused rows). The blob
+    # carries every stamp a write puts on it (per-tag mtimes, `at`, `seq`) so the caller stores it
+    # as is — or, when it cannot (the reader's re-stamp of an unwritable store), serves it as is.
     # Per-tag mtime, stamped at the store's ONE write door by diffing against the previous blob
     # (tag federation v2, the user 2026-08-29): a pending edit queued for an unreachable host must
     # be able to tell, at late-apply time, whether the host's copy changed AFTER the user's ruling —
     # a writer whose evidence predates newer information stands down (the cards-move corollary).
-    # The stamp rides /views to every peer for free. Only set when a tag actually changes, so
-    # untouched legacy stores round-trip byte-identical; a client echoing a blob without mtimes
+    # The stamp rides /views to every peer for free. Set when a tag changes — and once for every tag
+    # a legacy store holds, when its first read stamps it (_views_stamp_legacy_tags, round 5 of the
+    # 2026-09-05 review), so every stored tag carries one; a client echoing a blob without mtimes
     # merely resets the field, which reads as "no newer information" — the safe direction.
-    v = _norm_timeline_views(blob)
-    try:
-        prev = {t["id"]: t for t in (_timeline_views().get("tags") or [])}
-    except Exception:
-        prev = {}
+    # `base` — the previous blob to diff against, when the caller already holds it: the reader's
+    # re-stamp path (_timeline_views) passes the file's own content, since reading it here would
+    # find the same un-stamped file and re-enter the reader; `seq_floor` is the last seq that path
+    # served, so the re-stamped file orders after it. Every other caller leaves both alone.
+    # `edited` — the WS door's whole-blob path passes the tag ids the posting client CHANGED; None
+    # from every other caller and from an older client. It bounds what the write may change (round 5
+    # of the 2026-09-05 review): an EMPTY list is a lens or order write and changes NO tag — the
+    # store's tags stand whole, whatever tags the blob carries, and only its other fields land; a
+    # list of ids may change those tags only, and a differing copy of any other tag is the store's
+    # to keep, quietly (the ack lists it, nothing is said to the user — round 3: the benign case
+    # still filed a red "reload that dashboard" notice); a kept tag the poster DID edit is a LOST
+    # EDIT (the notice below fires, the ack is not ok). Until round 5 the empty list was judged like
+    # any whole blob, by the second-resolution `at` stamp, so a lens write built from a copy taken in
+    # the same second as a targeted edit reverted it (the rename undone, the create deleted, the
+    # member lost) with nothing said.
+    # `foreign` — set by the reader's re-stamp of a file written OUTSIDE the kernel whose seq fell
+    # behind the last served blob (round 4 of the 2026-09-05 review), as the words the notice uses
+    # for the writer. Such a write carries no `edited`, so its unknown tags are judged by the one
+    # mark only the kernel puts on a tag: an mtime. A tag the store lacks that carries one existed
+    # in a store once — the writer's copy of a tag deleted since — and is not re-created; one
+    # without is the writer's own create (a client-minted row) and lands.
+    # `writer` — the words the loud notice below uses for the writer when it is not a dashboard and
+    # not a foreign file: the reader's re-stamp of the file's own content (round 7 of the 2026-09-05
+    # review — its refusals, when the cap pass fired on a file over the cap, were filed as "a stale
+    # dashboard write ... reload that dashboard", on a read, blaming a dashboard that wrote nothing).
+    # Separate from `foreign` on purpose: `foreign` is also the judging mode for unknown tags above,
+    # and a re-stamp under it would refuse every freshly stamped tag as a re-creation.
+    # Read under a wider bound than the store's cap (twice it: a client holds at most the store's 32
+    # plus its own creates), so a posted 33rd tag reaches the cap pass below and is refused with a
+    # reason — the normalizer's own slice dropped it before the judge saw it. Whatever the blob
+    # carries PAST that bound is unread, and listed (`unread`, below) rather than dropped in silence.
+    bound = _VIEWS_MAX_TAGS * 2
+    v = _norm_timeline_views(blob, tag_cap=bound)
+    unread = _views_unread(blob, v["tags"])
+    ed = set(x for x in edited if isinstance(x, str)) if isinstance(edited, list) else None
+    if base is None:
+        try:
+            base = _timeline_views()
+        except Exception:
+            base = {}
+    prev_blob = base
+    prev = {t["id"]: t for t in (prev_blob.get("tags") or [])}
     now = int(time.time())
     # ── the stale-writer guard (the user 2026-08-31: a tag silently lost all 7 of its members) ──
     # The full-blob path (setTimelineViews) is last-writer-wins by design, so a dashboard whose
@@ -2944,30 +3415,242 @@ def _set_timeline_views(blob):
             ev = 0
     ev = max([ev] + [int(t.get("mtime") or 0) for t in v["tags"]])
     incoming = {t["id"] for t in v["tags"]}
-    refused, kept = [], []
-    for t in v["tags"]:
+    refused, kept, rows = [], [], []
+    # `rows` — the same refusals as (name, plain reason) pairs, RETURNED to the caller: the WS
+    # door answers the posting dashboard with them (the user 2026-09-05, who lost a batch of
+    # renames and assignments the dialog kept re-posting from a refused copy, because the refusal
+    # reached stderr and the sync notices but never the client that needed to revert).
+    lens_only = ed is not None and not ed
+    if lens_only:
+        # A LENS OR ORDER WRITE (round 5 of the 2026-09-05 review): `edited` is an empty list, the
+        # client's word that it changed no tag — so no tag changes. The store's tags stand whole,
+        # mtimes with them, whatever tags the blob carries; the write's other fields (the lenses,
+        # the order, the active) land below. Nothing to judge, nothing to log: this is the normal
+        # lens path. The judged path below is for a write that names the tags it changed, or for a
+        # writer that cannot say (an older client, a file written outside the kernel).
+        kept = [json.loads(json.dumps(pt)) for pt in prev.values()]
+        # …in the write's ORDER (round 6 of the 2026-09-05 review): the array order is an order
+        # field, this write's to set like `tagOrder` itself — the pill drag's contract is that the
+        # stored array reads in the dragged order too, since a reader without this kernel's tagOrder
+        # (a peer's dashboard, whose own order lacks these names) falls back to the array. Until now
+        # the store's order was copied and the posted array order discarded, so a drag reordered
+        # tagOrder and left the array as it was. Names the order lacks follow, in store order.
+        ord_ix = {n: i for i, n in enumerate(v.get("tagOrder") or [])}
+        kept.sort(key=lambda t: ord_ix.get(t.get("name"), len(ord_ix)))
+        incoming = set(prev)
+    for t in ([] if lens_only else v["tags"]):
         pt = prev.get(t["id"])
-        if pt and pt.get("mtime") and int(pt["mtime"]) > ev and \
-                (pt.get("name"), pt.get("color"), pt.get("members")) != \
-                (t.get("name"), t.get("color"), t.get("members")):
-            refused.append('"%s"' % pt.get("name"))
+        if pt is None and ((ed is not None and t["id"] not in ed) or (ed is None and foreign and t.get("mtime"))):
+            # A tag the store does not have, from a client that says it did not create it: the
+            # client's copy predates a DELETION made elsewhere, and posting the whole blob would
+            # re-create the deleted tag (round 3 of the 2026-09-05 review — the guard refused a
+            # stale deletion but not a stale resurrection; only with `edited` can the two creates
+            # be told apart: a legacy-path create names its new id there). Kept OUT, with a reason
+            # the ack carries; a write without `edited` keeps the old reading (every unknown tag
+            # is new), since an older client cannot say which it meant — except a file written
+            # outside the kernel (`foreign`), whose unknown tags are told apart by the mtime only a
+            # kernel stamps (the comment on `foreign` above).
+            refused.append(('"%s" (re-creation)' % t.get("name"), t["id"]))
+            rows.append({"tid": t["id"], "name": t.get("name"),
+                         "reason": "it was deleted after your copy was taken, so it was not re-created"})
+            continue
+        same = pt is None or (pt.get("name"), pt.get("color"), pt.get("members")) == \
+            (t.get("name"), t.get("color"), t.get("members"))
+        if not same and ed is not None and t["id"] not in ed:
+            # A differing copy of a tag this write did not claim to edit (round 5): the change is
+            # not the client's, whatever the stamps say — the same-second race the empty list
+            # closes above would otherwise land it here too. The store's copy stands, quietly, under
+            # a label that carries its cause like every other (round 9 of the 2026-09-05 review: this
+            # was the one bare label, beside "(deletion)" and "(unread)" on the quiet stderr line).
+            refused.append(('"%s" (differing copy)' % pt.get("name"), t["id"]))
+            rows.append({"tid": t["id"], "name": pt.get("name"),
+                         "reason": "your copy of it differs from the store's and this write did not edit it, "
+                                   "so the store's copy was kept"})
+            kept.append(json.loads(json.dumps(pt)))
+        elif not same and pt.get("mtime") and int(pt["mtime"]) > ev:
+            # the label carries its cause like every other (round 8 of the 2026-09-05 review): the
+            # loud notice no longer spells the causes out — it puts the count and the remedy first and
+            # the labels after, as many as fit the served text, so each label must say why on its own
+            refused.append(('"%s" (stale copy)' % pt.get("name"), t["id"]))
+            # the reason names no tag: the ack composes '"<name>": <reason>' once (_ack_views_write),
+            # so a toast or notice never says the name twice (the 2026-09-05 review)
+            rows.append({"tid": t["id"], "name": pt.get("name"),
+                         "reason": "your copy predates a newer edit to it, so your change was not applied "
+                                   "and the newer state was kept"})
             kept.append(json.loads(json.dumps(pt)))       # the store's newer truth stands
         else:
             kept.append(t)
+    more, more_ed = 0, 0
+    for k, (tid, nm, _n) in enumerate([] if lens_only else unread):
+        # PAST THE DOOR'S BOUND (round 7 of the 2026-09-05 review): an entry the normalizer's slice
+        # left unread is neither a create nor a deletion — it was not read. A store tag whose copy
+        # fell past the bound is KEPT (its absence from `incoming` would have read as a deletion
+        # below); anything else is not created. Each gets a row, so a client whose `edited` names
+        # only ids past the bound is acked not-ok with the reason, where it was acked ok with a
+        # blob missing its own creates. Rows only, never stored — the bound stands.
+        # ROWS ARE BOUNDED to `bound` of them (round 8 of the 2026-09-05 review): the rows, the loud
+        # notice and the ack's `error` were O(N) in the posted array, so a 100k-entry post (a client
+        # bug, or any page holding the socket) drew a ~22 MB ack that overran WS_QUEUE_BYTES and
+        # dropped the poster's own socket before the ack was queued. Every unread store tag is still
+        # kept, however far past the bound its copy sat (at most the store's 32); past the first
+        # `bound` unread entries the rest are ONE summary row carrying their count and how many of
+        # them `edited` names (`moreEdited`), which the door's ok rule reads — a client whose own
+        # create sits past both bounds is still acked not ok.
+        pt = prev.get(tid)
+        if pt is not None:
+            incoming.add(tid)
+            kept.append(json.loads(json.dumps(pt)))
+        if k >= bound:
+            more += 1
+            if ed is not None and tid in ed:
+                more_ed += 1
+            continue
+        if pt is not None:
+            refused.append(('"%s" (unread)' % pt.get("name"), tid))
+            rows.append({"tid": tid, "name": pt.get("name"),
+                         "reason": "a write is read to %d tags and its copy was past that bound, "
+                                   "so the store's copy was kept" % bound})
+        else:
+            refused.append(('"%s" (unread)' % nm, tid))
+            rows.append({"tid": tid, "name": nm,
+                         "reason": "a write is read to %d tags and it was past that bound, "
+                                   "so it was not created" % bound})
+    if more:
+        # the reason is self-contained (round 10 of the 2026-09-05 review): since round 9 this row can
+        # LEAD the ack's error line, where a continuation clause ("and N more ... past that bound")
+        # continued nothing and named a bound the reader had not been told
+        rows.append({"reason": "%d more entries past the %d-tag read bound were not read%s"
+                               % (more, bound, (" (%d of them this write edited)" % more_ed) if more_ed else ""),
+                     "more": more, "moreEdited": more_ed})
     for tid, pt in prev.items():
-        if tid not in incoming and pt.get("mtime") and int(pt["mtime"]) > ev:
-            refused.append('"%s" (deletion)' % pt.get("name"))
+        if tid in incoming:
+            continue
+        if ed is not None and tid not in ed:
+            # absent from a write that did not claim to edit it (round 5): not a deletion the
+            # client made, so not one — the store's copy stands, quietly
+            refused.append(('"%s" (deletion)' % pt.get("name"), tid))
+            rows.append({"tid": tid, "name": pt.get("name"),
+                         "reason": "this write did not edit it, so it was not deleted"})
+            kept.append(json.loads(json.dumps(pt)))
+        elif pt.get("mtime") and int(pt["mtime"]) > ev:
+            refused.append(('"%s" (deletion)' % pt.get("name"), tid))
+            rows.append({"tid": tid, "name": pt.get("name"),
+                         "reason": "it was edited after your copy was taken, so it was not deleted"})
             kept.append(json.loads(json.dumps(pt)))       # a stale writer cannot delete newer state
-    v["tags"] = kept[:_VIEWS_MAX_TAGS]
-    if refused:
-        why = ("a stale dashboard write was partially refused: its copy of %s predates newer "
-               "edits (the newer state was kept — reload that dashboard to resync)"
-               % ", ".join(sorted(set(refused))))
+    # NAME COLLISIONS (round 4 of the 2026-09-05 review): a whole-blob write can carry a tag
+    # renamed to, or created under, a name another tag in the resulting set already has — the
+    # verifier's reproduction was a lens write built from a dialog's pending copy, still carrying
+    # a rename the targeted op had refused as a duplicate; the door let it through and the store
+    # held two tags with one name, which every name-keyed surface then showed as one. Names
+    # address edits here (the /tag route, the union), so the door refuses the colliding CHANGE:
+    # a tag whose name the write did not change keeps its claim on that name; a renamed or new tag
+    # whose name is already claimed is refused with a reason naming the collision — a renamed tag
+    # stands as the store has it, a new one is kept out. Two unchanged tags sharing a name (a
+    # store already holding twins) are left as they are: nothing in this write changed them.
+    # Run to a FIXPOINT (round 5 of the 2026-09-05 review): `settled` holds the names this write
+    # does not change — a tag's stored name it keeps, and, after a refusal, the stored name a
+    # renamed tag returns to; `takers` are the tags whose resulting name is new to them (renamed
+    # or created), in array order. A taker whose name is settled, or granted to an earlier taker,
+    # is refused; a refused RENAME settles its stored name and the pass runs again from the top,
+    # so a taker that had been granted that very name is refused too. Until round 5 the pass ran
+    # once and a refused rename never claimed the name it kept: B (api → web, refused against A =
+    # web) stood as "api" while a new C named "api" in the same write landed beside it — twins.
+    # Each pass either refuses one taker or ends, so the loop is bounded by the taker count.
+    by_id = {t["id"]: t for t in kept}
+    settled = {}
+    for t in kept:
+        pt = prev.get(t["id"])
+        if pt is not None and pt.get("name") == t.get("name"):
+            settled.setdefault(t["name"], t["id"])
+    takers = [t["id"] for t in kept if prev.get(t["id"]) is None or prev[t["id"]].get("name") != t.get("name")]
+    while True:
+        granted, struck = {}, None
+        for tid in takers:
+            nm = by_id[tid]["name"]
+            holder = settled.get(nm, granted.get(nm))
+            if holder is not None and holder != tid:
+                struck = tid
+                break
+            granted[nm] = tid
+        if struck is None:
+            break
+        takers.remove(struck)
+        t, pt = by_id[struck], prev.get(struck)
+        refused.append(('"%s" (name collision)' % (pt.get("name") if pt else t.get("name")), struck))
+        rows.append({"tid": struck, "name": pt.get("name") if pt else t.get("name"),
+                     "reason": 'a tag named "%s" already exists, so it was not %s'
+                               % (t["name"], "renamed to it" if pt else "created")})
+        if pt is not None:
+            by_id[struck] = json.loads(json.dumps(pt))     # the store's copy, under its own name…
+            settled.setdefault(pt["name"], struck)          # …which no taker in this write can have
+        else:
+            del by_id[struck]                               # a new tag under a taken name is kept out
+    stands = [by_id[t["id"]] for t in kept if t["id"] in by_id]
+    # THE CAP (round 6 of the 2026-09-05 review): the set that stands can exceed _VIEWS_MAX_TAGS when
+    # the store's kept copies join the blob's tags — the store-only keeps sit at the END of `kept`
+    # (blob order first), so a slice here dropped exactly the tag the ack had just said was kept,
+    # and the client's own create took its place, acked ok. A kept store tag always survives: the
+    # write's CREATES are refused instead, last in array order first, with a reason naming the cap
+    # (_edit_tag refuses its 33rd the same way). With no create left to refuse, what stands is the
+    # store's own set, which the normalizer bounds to the cap on every read — so a remaining excess
+    # is a broken invariant, and the write fails loudly (the door acks the error) rather than
+    # truncating a tag somebody holds.
+    while len(stands) > _VIEWS_MAX_TAGS:
+        i = next((i for i in range(len(stands) - 1, -1, -1) if prev.get(stands[i]["id"]) is None), None)
+        if i is None:
+            raise ValueError("the views store would hold %d tags, over its cap of %d, with no new tag to refuse"
+                             % (len(stands), _VIEWS_MAX_TAGS))
+        t = stands.pop(i)
+        refused.append(('"%s" (over the cap)' % t.get("name"), t["id"]))
+        rows.append({"tid": t["id"], "name": t.get("name"),
+                     "reason": "the views blob caps at %d tags, so it was not created" % _VIEWS_MAX_TAGS})
+    v["tags"] = stands
+    # `active` is validated against the tags that STAND, not the blob's (round 6 of the 2026-09-05
+    # review): the normalizer checked it against the posted set, so a stale copy whose active named
+    # a tag deleted since — kept out above, or standing aside for the store's set under an empty
+    # `edited` — stored a dangling id; every read re-normalized it to "all", so nothing showed, but
+    # the file was wrong. The lens, order and active fields themselves are the write's to set, whole
+    # and unjudged (last writer wins across dashboards; docs/read-side.md states the trade).
+    act = v.get("active") or "all"
+    if act not in ("all", "untagged") and ":" not in act and not any(t["id"] == act for t in stands):
+        v["active"] = "all"
+    # The refusal's two audiences: a kept tag the poster EDITED is a lost edit — stderr plus a red
+    # dashboard notice (the user 2026-08-31's silent loss, never again silent). A kept tag the
+    # poster did not edit (`edited` names the ones it did) is a stale copy of an untouched tag,
+    # acked ok with the refusal listed and adopted from the ack: nothing the user did was refused,
+    # so no notice — one stderr line is the whole record. Without `edited` (an older client, the
+    # RMW callers, the reader's re-stamp) every refusal reads as loud, as before.
+    loud = sorted(set(lb for lb, tid in refused if ed is None or tid in ed))
+    quiet = sorted(set(lb for lb, tid in refused if ed is not None and tid not in ed))
+    # the summary row's entries (past the row bound, never labelled) fall on the same two sides
+    loud_more = more if ed is None else more_ed
+    quiet_more = 0 if ed is None else more - more_ed
+    loud_n = len(set(tid for lb, tid in refused if ed is None or tid in ed)) + loud_more
+    if loud_n:
+        # The sentence names the writer — a foreign file's panel, the reader's own re-stamp (`writer`,
+        # nothing to reload: no dashboard wrote it), else a dashboard — and puts the count and the
+        # remedy FIRST, the refused tags after, as many as fit the served notice (_notice_list). Round
+        # 8 of the 2026-09-05 review: the remedy sat last, after one label per tag and a clause
+        # spelling out every cause, and the dashboard's bell cut it away; each label now carries its
+        # own cause instead, and the ack's rows carry the reasons in full.
+        remedy = ("reload the panel that wrote it to resync" if foreign
+                  else None if writer else "reload that dashboard to resync")
+        why = _notice_list("%s was partially refused: its changes to %d tag%s were not applied and the store's "
+                           "state was kept%s."
+                           % (foreign or writer or "a stale dashboard write", loud_n, "" if loud_n == 1 else "s",
+                              ("; " + remedy) if remedy else ""),
+                           " Refused: ", loud, extra=loud_more)
         sys.stderr.write("romp-kernel: %s\n" % why)
         try:
             _sync_notice(why, ok=False)
         except Exception:
             pass
+    if quiet or quiet_more:
+        quiet_n = len(set(tid for lb, tid in refused if ed is not None and tid not in ed)) + quiet_more
+        sys.stderr.write("romp-kernel: %s\n" % _notice_list(
+            "kept the store's copy of %d tag%s over a dashboard's stale copy (tags that dashboard did not edit; "
+            "the ack carries the newer state)" % (quiet_n, "" if quiet_n == 1 else "s"),
+            ": ", quiet, extra=quiet_more, cap=2000))
     for t in v["tags"]:
         pt = prev.get(t["id"])
         if pt is None or (pt.get("name"), pt.get("color"), pt.get("members")) != \
@@ -2976,7 +3659,36 @@ def _set_timeline_views(blob):
         elif pt.get("mtime"):
             t["mtime"] = pt["mtime"]
     v["at"] = now
-    _atomic_write(_views_path(), json.dumps(v, sort_keys=True))
+    # The write sequence (2026-09-05): every accepted write — targeted or whole-blob, partially
+    # refused or clean — moves it forward, and every frame and ack that carries the blob carries
+    # it, so a client can order what it receives (the ack's blob against a frame the pusher built
+    # from its warmed cache before the write; a federation re-emit of a stored blob). Seeded from
+    # the clock and then +1 per write: a store recreated from nothing (a deleted file, a new state
+    # dir) starts past anything a connected client can hold, so no client is left ignoring every
+    # frame until it reloads. The comparison is on this one number everywhere.
+    try:
+        prev_seq = int(prev_blob.get("seq") or 0)
+    except (TypeError, ValueError):
+        prev_seq = 0
+    v["seq"] = max(prev_seq + 1, int(seq_floor or 0) + 1, _views_seq_floor() + 1, int(time.time() * 1000))
+    return v, rows
+
+
+def _views_cache_refresh(text):
+    """After a write of the views store: the read cache holds the blob just written, keyed on the
+    file's new (mtime, size), so the very next read — the ack's blob, the pusher's frame — is this
+    write and never a stale hit (2026-09-05 round 3: the (mtime, size) key was never invalidated on
+    write, and the kernel's mtime clock is coarse, so two same-size writes a few ms apart shared a
+    key and the second's ack could serve the first's blob). Replacing the entry rather than popping
+    it keeps the LAST blob this kernel wrote or served in the cache, which is what the reader
+    compares a changed file against (a write outside the kernel, _timeline_views). A stat failure
+    (the file vanished under us) drops the entry instead — the next read starts from the file."""
+    p = _views_path()
+    try:
+        st = p.stat()
+        _views_cache_put(p, (st.st_mtime_ns, st.st_size), _norm_timeline_views(json.loads(text)))
+    except Exception:
+        _flags_cache.pop(str(p), None)
 
 
 def _remote_tag_member_str(owner_host, m):
@@ -3072,7 +3784,10 @@ def _queue_pending_tag_edit(host, body):
     for its (host, name) and refuses later ones (the delete already rules); removes merge; a
     rename replaces a prior rename. Only ATTACHED hosts queue — a detached host has no reattach
     event coming, and detach was its own intent."""
-    name = str(body.get("name") or "")
+    # the NAME BASIS (round 7 of the 2026-09-05 review): the row's name is matched against the
+    # host's tag names at capture and at late-apply, and joined to the rendered row for the
+    # pending badge — every one of those is on the stored basis, so the row is too
+    name = _tag_name_basis(body.get("name"))
     qual = bool(body.get("delete")) or isinstance(body.get("rename"), str) \
         or (isinstance(body.get("remove"), list) and body.get("remove"))
     if not (host and name and qual):
@@ -3083,20 +3798,20 @@ def _queue_pending_tag_edit(host, body):
     if r is None:
         return False
     tid = next((str(t.get("id") or "") for t in (cached.get("tags") or [])
-                if isinstance(t, dict) and t.get("name") == name), "")
+                if isinstance(t, dict) and _tag_name_basis(t.get("name")) == name), "")
     rows = _pending_tag_rows()
-    mine = [x for x in rows if x.get("host") == host and x.get("name") == name]
+    same = lambda x: x.get("host") == host and _tag_name_basis(x.get("name")) == name   # a journal from before the basis may hold a padded name
+    mine = [x for x in rows if same(x)]
     if any(x.get("delete") for x in mine):
         return True                              # the delete already rules this name; nothing to add
     row = {"host": host, "name": name, "tagId": tid, "ruledAt": int(time.time()), "at": int(time.time())}
     if body.get("delete"):
-        rows = [x for x in rows if not (x.get("host") == host and x.get("name") == name)]
+        rows = [x for x in rows if not same(x)]
         row["delete"] = True
     else:
         if isinstance(body.get("rename"), str) and body["rename"].strip():
             row["rename"] = body["rename"]
-            rows = [x for x in rows if not (x.get("host") == host and x.get("name") == name
-                                            and x.get("rename"))]
+            rows = [x for x in rows if not (same(x) and x.get("rename"))]
         if isinstance(body.get("remove"), list) and body.get("remove"):
             merged = []
             for x in mine:
@@ -3140,13 +3855,13 @@ def _apply_pending_tag_edits(r):
                     pending=len(rows))
         return 0
     r["views"] = rv
-    by_name = {}
+    by_name = {}                                 # keyed on the name basis: the host's raw name may be padded
     for t in (rv.get("tags") or []):
         if isinstance(t, dict):
-            by_name.setdefault(str(t.get("name") or ""), []).append(t)
+            by_name.setdefault(_tag_name_basis(t.get("name")), []).append(t)
     retired, applied = [], 0
     for row in rows:
-        cand = by_name.get(row.get("name") or "") or []
+        cand = by_name.get(_tag_name_basis(row.get("name"))) or []
         t = next((x for x in cand if row.get("tagId") and x.get("id") == row["tagId"]), None)
         if t is None and cand:
             # same name, different identity: NEW if its id says it was created after the ruling;
@@ -3220,8 +3935,11 @@ def _views_client():
             if not isinstance(t, dict) or not t.get("id"):
                 continue
             members = [m for m in (_member_pair(x) for x in (t.get("members") or [])) if m]
+            # the NAME BASIS (round 7 of the 2026-09-05 review): an older remote build, or a padded
+            # remote store, serves "web " raw; rendered raw, no lens entry (all on the basis) could
+            # pick it and the union kept it apart from a local "web" — see _tag_name_basis
             remote.append({"id": host + ":" + str(t["id"])[:64], "host": host,
-                           "name": str(t.get("name") or "tag")[:_VIEWS_MAX_NAME],
+                           "name": _tag_name_basis(t.get("name")) or "tag",
                            "color": str(t.get("color") or "")[:16],
                            "members": [_remote_tag_member_str(host, m) for m in members]})
     if remote:
@@ -3232,9 +3950,11 @@ def _views_client():
     # still surfaces.
     pend = _pending_tag_rows()
     if pend:
-        v["pendingTagEdits"] = [{"host": x.get("host") or "", "name": x.get("name") or "",
+        v["pendingTagEdits"] = [{"host": x.get("host") or "", "name": _tag_name_basis(x.get("name")),
                                  "op": _row_op(x)} for x in pend]
-        by_hn = {(x.get("host"), x.get("name")): _row_op(x) for x in pend}
+        # joined on the name basis, like the rendered row (a journal from before the basis may hold
+        # a padded name; the row's name is the client's word, the rendered name the remote's)
+        by_hn = {(x.get("host"), _tag_name_basis(x.get("name"))): _row_op(x) for x in pend}
         for t in (v.get("remoteTags") or []):
             op = by_hn.get((t.get("host"), t.get("name")))
             if op:
@@ -3354,24 +4074,58 @@ def _b36(n):
     return out or "0"
 
 
-def _edit_tag(name, add=(), remove=(), color=None, delete=False, rename=None):
-    """Targeted edit of ONE named tag in the views blob — the merge op behind POST /tag. The WS
-    setTimelineViews op replaces the whole blob, which is right for the dashboard (it holds the
-    current one) and wrong for an agent: replaying a stale read would clobber the active view and
-    every tag it never looked at. So: read, edit the one tag, write back through the
-    normalizer. The tag is addressed by NAME (the id is a UI-internal mint); two same-named
-    tags refuse rather than guess. Members are stored ids — the route resolves live names before
-    calling. A missing tag is created on any edit, never on delete. Returns
-    (tag-or-None, error-or-None); the returned row is the post-normalize one."""
+_TAG_GONE = "that tag no longer exists — it may have been deleted from another dashboard"
+
+
+def _default_tag_name(tags):
+    """The name a create without one gets: the lowest "tag N" no existing tag carries. Minted HERE,
+    never by the dialog from a count of its rows (the 2026-09-05 review: a leftover default-named
+    tag made the dialog's next "tag N" collide, and the create was refused as a duplicate)."""
+    taken = {t.get("name") for t in tags}
+    n = 1
+    while "tag %d" % n in taken:
+        n += 1
+    return "tag %d" % n
+
+
+def _edit_tag(name=None, add=(), remove=(), color=None, delete=False, rename=None, tid=None, exists=None):
+    """Targeted edit of ONE tag in the views blob — the merge op behind POST /tag and, since
+    2026-09-05, behind the dashboards' WS tagEdit op (_apply_tag_edit). The WS setTimelineViews op
+    replaces the whole blob, which is right for a lens or order edit (the client holds the current
+    one) and wrong for a tag edit from ANY client: an agent replaying a stale read would clobber the
+    active view and every tag it never looked at, and a dashboard mid-burst posts its own un-echoed
+    copy, which the stale-writer guard then refuses against the dashboard's own previous write. So:
+    read, edit the one tag, write back through the normalizer — a writer built from the store always
+    carries the newest evidence.
+    Addressing: `tid` names the tag by its stored id (the dashboards, whose rows carry the id — a
+    refused rename must leave no window in which a follow-up gesture addresses SOME OTHER tag by the
+    name the rename would have given it); else `name` (the /tag route, where the user types names;
+    two same-named tags refuse rather than guess). Members are stored ids — the route resolves live
+    names before calling. By name, a missing tag is created on any edit, never on delete — unless
+    `exists` says otherwise: True refuses a missing tag (a rename of a tag another dashboard just
+    deleted must not resurrect it), False refuses an existing one (a create). By tid, a missing tag is
+    always refused (a tid is never minted by a client). A create with no name gets the kernel's
+    default (_default_tag_name). Returns (tag-or-None, error-or-None); the returned row is the
+    post-normalize one, so a create's caller learns the minted id and name from it."""
     # Clamp the name into the STORED basis before the lookup: the normalizer clamps names to
-    # _VIEWS_MAX_NAME on write, so matching on the raw name would miss the stored tag and mint an
-    # unaddressable same-named duplicate on every subsequent edit.
-    name = str(name)[:_VIEWS_MAX_NAME]
+    # _VIEWS_MAX_NAME and strips them on write (round 5 of the 2026-09-05 review), so matching on
+    # the raw name would miss the stored tag and mint an unaddressable same-named duplicate on every
+    # subsequent edit. A name that is empty after the strip is no name: a create takes the default.
+    name = (str(name)[:_VIEWS_MAX_NAME].strip() or None) if name is not None else None
     with _views_lock:   # the server is threaded; two unlocked merges would both copy the same pre-state
         v = json.loads(json.dumps(_timeline_views()))     # deep copy: never mutate the cached blob
-        hits = [t for t in v["tags"] if t["name"] == name]
-        if len(hits) > 1:
-            return None, 'two tags are named "%s" — rename one in the dashboard first' % name
+        if tid is not None:
+            hits = [t for t in v["tags"] if t["id"] == tid]
+            if not hits:
+                return None, _TAG_GONE
+        else:
+            hits = [t for t in v["tags"] if t["name"] == name] if name is not None else []
+            if len(hits) > 1:
+                return None, 'two tags are named "%s" — rename one in the dashboard first' % name
+            if exists is True and not hits:
+                return None, 'no tag named "%s"' % name
+            if exists is False and hits:
+                return None, 'a tag named "%s" already exists' % name
         if delete:
             if not hits:
                 return None, 'no tag named "%s"' % name
@@ -3387,7 +4141,7 @@ def _edit_tag(name, add=(), remove=(), color=None, delete=False, rename=None):
             taken = {t2["id"] for t2 in v["tags"]}
             while "g" + _b36(n) in taken:   # same-ms creates must not share an id — delete filters by id
                 n += 1
-            t = {"id": "g" + _b36(n), "name": name, "color": "", "members": []}
+            t = {"id": "g" + _b36(n), "name": name if name else _default_tag_name(v["tags"]), "color": "", "members": []}
             v["tags"].append(t)
         if rename is not None:
             rn = str(rename)[:_VIEWS_MAX_NAME].strip()
@@ -3409,6 +4163,154 @@ def _edit_tag(name, add=(), remove=(), color=None, delete=False, rename=None):
         out = json.loads(json.dumps(next(t2 for t2 in v["tags"] if t2["id"] == t["id"])))
         out["members"] = [_member_str(m) for m in out["members"]]   # the route's reply speaks strings
         return out, None
+
+
+def _move_tag_member(tid_from, tid_to, sids):
+    """A session's MOVE between two local tags — off `tid_from`, onto `tid_to` — as ONE write under
+    _views_lock: both halves land or neither does (the 2026-09-05 review: as two targeted ops, a
+    refused second half left the session in no group, and the tab strip showed the half-moved state
+    until the user noticed). The strip's "Move to <tag>" posts this. Members arrive as the
+    viewer-relative id strings every client posts (_member_pair canonicalizes). Returns
+    (tag-or-None, error-or-None) like _edit_tag; the tag is the destination's post-write row."""
+    with _views_lock:
+        v = json.loads(json.dumps(_timeline_views()))     # deep copy: never mutate the cached blob
+        by_id = {t["id"]: t for t in v["tags"]}
+        src, dst = by_id.get(tid_from), by_id.get(tid_to)
+        if src is None:
+            return None, "the tag to move out of no longer exists — it may have been deleted from another dashboard"
+        if dst is None:
+            return None, "the tag to move into no longer exists — it may have been deleted from another dashboard"
+        pairs = [m for m in (_member_pair(x) for x in sids) if m]
+        keys = {(m["host"], m["sid"]) for m in pairs}
+        src["members"] = [m for m in src["members"] if (m["host"], m["sid"]) not in keys]
+        have = {(m["host"], m["sid"]) for m in dst["members"]}
+        dst["members"] = list(dst["members"]) + [m for m in pairs if (m["host"], m["sid"]) not in have]
+        v = _norm_timeline_views(v)
+        _set_timeline_views(v)
+        out = json.loads(json.dumps(next(t for t in v["tags"] if t["id"] == tid_to)))
+        out["members"] = [_member_str(m) for m in out["members"]]
+        return out, None
+
+
+_TAG_EDIT_OPS = ("create", "rename", "recolor", "addMember", "removeMember", "delete", "move")
+
+
+def _apply_tag_edit(e):
+    """One targeted tag edit from a dashboard — the WS tagEdit message's `edit`: {op, tid?, name?,
+    newName?, color?, sid?|sids?} — applied through _edit_tag. Every op but create addresses the tag
+    by `tid`, the stored id the dashboard's rows carry (the 2026-09-05 review: addressed by name, a
+    recolor queued behind a refused rename went looking for the name the rename would have given
+    the tag, and found the OTHER tag that already had it). A create takes an optional `name`; with
+    none the kernel mints the default. Returns (ok, error, info): the error is a plain sentence the
+    dialog shows as-is; info carries the tag's `tid` and `name` after the edit (a create's caller
+    learns both from it). Every dashboard tag gesture posts this instead of the whole blob (the user
+    2026-09-05: a create followed by typing the tag's name lost the name, because the second
+    whole-blob post was judged stale against the first). Members arrive as the viewer-relative id
+    strings every client already posts; _member_pair canonicalizes them."""
+    if not isinstance(e, dict):
+        return False, "the edit is missing", None
+    op = str(e.get("op") or "")
+    if op not in _TAG_EDIT_OPS:
+        return False, 'unknown tag edit "%s"' % op[:20], None
+    tid = e.get("tid") if isinstance(e.get("tid"), str) and e.get("tid") else None
+    sids = [str(x) for x in (e.get("sids") if isinstance(e.get("sids"), list) else [])
+            if isinstance(x, str) and x.strip()]
+    if isinstance(e.get("sid"), str) and e["sid"].strip():
+        sids.append(e["sid"])
+    color = e.get("color") if isinstance(e.get("color"), str) else None
+    if op == "create":
+        name = str(e.get("name") or "").strip() or None
+        t, err = _edit_tag(name, add=sids, color=color or "", exists=False)
+    elif op == "move":
+        # {tid_from, tid_to, sid|sids}: off one tag, onto another, as ONE write — both or neither
+        tf, tt = e.get("tid_from"), e.get("tid_to")
+        if not (isinstance(tf, str) and tf and isinstance(tt, str) and tt):
+            return False, "the edit named no tag", None
+        if not sids:
+            return False, "the edit named no session", None
+        t, err = _move_tag_member(tf, tt, sids)
+        return err is None, err, ({"tid": t["id"], "name": t["name"]} if t else {"tid": tt})
+    elif tid is None:
+        return False, "the edit named no tag", None
+    elif op == "rename":
+        t, err = _edit_tag(tid=tid, rename=str(e.get("newName") or ""))
+    elif op == "recolor":
+        if color is None:
+            return False, "no color given", None
+        t, err = _edit_tag(tid=tid, color=color)
+    elif op == "delete":
+        t, err = _edit_tag(tid=tid, delete=True)
+    else:
+        if not sids:
+            return False, "the edit named no session", None
+        if op == "addMember":
+            t, err = _edit_tag(tid=tid, add=sids)
+        else:
+            t, err = _edit_tag(tid=tid, remove=sids)
+    info = {"tid": t["id"], "name": t["name"]} if t else ({"tid": tid} if tid else None)
+    return err is None, err, info
+
+
+_ACK_ERROR_CAP = 1000   # the ack's one-line `error`: the rows carry every reason in full; this is the toast's copy
+
+
+def _refusal_is_the_posters(row, edited):
+    """Whether a refusal row is the POSTER'S OWN: a tag `edited` names, or the past-the-bound summary
+    row counting one (`moreEdited`). The door's `ok` rule and the ack's one-line `error` read the rows
+    by this one predicate — `ok` is false when any row is the poster's, and the line names those first."""
+    return row.get("tid") in edited or bool(row.get("moreEdited"))
+
+
+def _ack_views_write(client, kind, write_id, ok, error=None, refused=None, info=None, edited=None):
+    """Answer a dashboard's views write ON ITS OWN SOCKET: {type: kind, writeId, ok, views, seq,
+    error?, refused?, tid?, name?}. `views` is the post-write client blob (stamped), which the poster
+    adopts as its new base — clearing its optimistic copy on this event rather than on a frame
+    count — and reverts to when ok is false. `refused` (the whole-blob path) lists the tags the
+    stale-writer guard kept the store's copy of, each with its reason; `error` is the one-line form
+    of either. `info` (a targeted edit) names the tag the edit touched — a create's caller learns the
+    kernel-minted `tid` and `name` here and opens its rename input on that id. `edited` is the
+    write's own list (the whole-blob path): it orders the not-ok `error`, the poster's own refusals
+    first. A dead socket is the client's problem, never the write's: the edit landed before this
+    runs."""
+    if not client or not callable(client.get("send")):
+        return
+    views = _views_client()
+    ack = {"type": kind, "writeId": write_id if isinstance(write_id, str) else None,
+           "ok": bool(ok), "views": views,
+           # the store's write sequence after this write (the blob carries it too): the poster
+           # orders this against the frames it receives — a frame with a lower seq predates the
+           # write and is ignored, whatever order the socket delivered them in
+           "seq": views.get("seq")}
+    for k in ("tid", "name"):
+        if isinstance(info, dict) and info.get(k):
+            ack[k] = info[k]
+    if refused is not None:                    # the whole-blob path: always a list, empty when clean
+        ack["refused"] = [dict(r) for r in refused]
+        # the one-line form, ONLY when the write is refused (ok false): each refused tag named ONCE,
+        # then its name-free reason. An ok ack with refusals listed (stale copies of tags the client
+        # did not edit) carries no `error` — there is nothing to tell the user.
+        if not ok:
+            # bounded (round 8 of the 2026-09-05 review — it was one entry per row, O(N) in the posted
+            # array); a row without a name (the past-the-bound summary) is its reason alone.
+            # THE POSTER'S OWN ROWS FIRST (round 9 of the same review): the judge appends the quiet rows
+            # (copies of tags the poster did not edit, acked ok on their own) before the cap pass, so
+            # in judge order the bound cut the one row that made `ok` false — a refused create behind
+            # eight quiet rows — and the toast named only refusals the user never made. With `edited`,
+            # the rows it names (or the summary row counting one, _refusal_is_the_posters) lead, in
+            # judge order among themselves, and the quiet rows follow as far as the cap allows; with
+            # none of the poster's among them, or no `edited` (every row is loud), judge order stands.
+            mine, rest = [], []
+            for r in refused:
+                (mine if edited is not None and _refusal_is_the_posters(r, edited) else rest).append(r)
+            error = error or _notice_list("", "", [(('"%s": ' % r["name"]) if r.get("name") else "")
+                                                    + (r.get("reason") or "refused") for r in mine + rest],
+                                          cap=_ACK_ERROR_CAP, joiner="; ") or "refused"
+    if error:
+        ack["error"] = str(error)
+    try:
+        client["send"](json.dumps(ack))
+    except Exception:
+        pass
 
 
 def _resolve_parent_sid(raw, live):
@@ -11451,6 +12353,12 @@ def _sdk_locked():
             # the unwired judges inherited the post-claim env on a login-less host and every call
             # refused "Not logged in" for 13 hours while the cards sat parked in Working).
             jd._WORK_KEY_FN = sbmod.work_api_key
+            # The command source's set (kernel/envsource.py, 2026-09-05) reaches the judges and the
+            # catalog fetch through the same kind of wire: the set for a call's environment (minus the
+            # key, which rides the billing decision), and the invalidation a credential refusal fires.
+            jd._ENV_SET_FN = sbmod.credential_set
+            jd._ENV_INVALIDATE_FN = sbmod.credential_invalidate
+            jd._ENV_OK_FN = sbmod.credential_auth_ok        # a served call re-arms that invalidation
             # T222: the live model catalog — the last fetched list installs before any picker asks,
             # then the BOOT event refreshes it (async; the key is claimable from here on)
             try:
@@ -16367,6 +17275,32 @@ def _sync_notice_rows(limit=20, cap=300):
              "text": r["text"][:cap], "ok": bool(r["ok"])} for r in rows]
 
 
+# A notice built to this length reaches the user whole: the dashboard's bell shows a sync notice cut
+# at 240 characters (ui/webview/badge-mirror.ts), under the 300 _sync_notice_rows serves. A notice
+# that names a list puts its point first and bounds the list to fit (_notice_list) — round 8 of the
+# 2026-09-05 review found the views re-stamp's cause clause LAST, after one entry per dropped tag,
+# so with two or more dropped the served text never reached it.
+SYNC_NOTICE_FIT = 240
+
+
+def _notice_list(head, sep, items, extra=0, cap=SYNC_NOTICE_FIT, joiner=", "):
+    """`head`, then `sep` and as many of `items` (joined by `joiner`) as keep the whole text within
+    `cap`, then " and N more" for the items left unnamed plus `extra` — things the caller counted but
+    never listed. When not even the first item fits, `head` alone: a head carries its own count, so
+    the point of the notice is never what gets cut."""
+    out, named = head, 0
+    for i, it in enumerate(items):
+        cand = out + (sep if i == 0 else joiner) + it
+        rest = len(items) - i - 1 + extra
+        if len(cand) + (len(" and %d more" % rest) if rest else 0) > cap:
+            break
+        out, named = cand, i + 1
+    rest = len(items) - named + extra
+    if named and rest:
+        out += " and %d more" % rest
+    return out
+
+
 def _auto_push_remote(host):
     """Run ONE automatic update of `host` in the background, publishing phase as it goes. Never called for a
     non-fast-forward (see _is_fast_forward). Failures are kept VISIBLE on the row rather than swallowed
@@ -20795,7 +21729,49 @@ _judge_gen = [0]                                 # bumped each producer pass →
 _goals_snap = [None]                             # {sid: store} while a judge pass is mid-flight, else None
 _goals_snap_at = [0.0]                           # when that snapshot's file reads STARTED (see _feed_goals)
 _goals_snap_done = {}                            # sid → the user-write mark already punched onto THIS snapshot
+_goals_snap_owned = set()                        # sids whose snapshot entry is THIS pass's private copy (copy-on-punch)
 _goals_snap_lock = threading.Lock()
+# STAT-KEYED STORE MEMO (2026-09-06, performance plan B5). The snapshot used to json.loads EVERY
+# goals/<fsid>.json at the start of every pass — 72 files of up to 1.3 MB, about 3% of the kernel's
+# interpreter time, most of the producer thread's cost — although a pass changes only a few of them.
+# Every writer publishes by rename (save_goals), so the bytes under an inode never change once it is at
+# its path. The memo keeps the parsed object per path under (st_ino, st_mtime_ns, st_size); a pass
+# stats every file, decodes only the ones whose key moved, and builds the snapshot from memo
+# REFERENCES. Consequence: a snapshot entry is shared with later passes, so nothing may mutate it —
+# _feed_goals copies an entry before punching a user gesture onto it (the _apply_rewind_hold idiom),
+# and build_feed only reads. A version that fails to decode is remembered under its key too, so a
+# corrupt store is decoded (and reported) once per file version rather than once per pass; its sid
+# stays out of the snapshot and the feed reads it live. Entries for paths gone from the directory are
+# evicted at the next pass.
+# WHAT THE KEY RESTS ON: st_mtime_ns moving between publishes, not the inode. Inode numbers recycle
+# (on ext4, consecutive tmp+rename publishes of one path alternate between two numbers, so the third
+# version can sit on the first's inode), and equal sizes are common (a digit bump, a same-length
+# status word). On Linux 6.13+ (multigrain timestamps) the move is guaranteed: the pass's own stat
+# marks the inode as queried, so the next publish gets a fine-grained stamp. On a coarse-timestamp
+# kernel, two equal-size publishes of one store inside one clock tick after the pass's stat reproduce
+# the memoized key and pin the earlier parse until the store's next publish — a known blind spot; the
+# byte compare on a stat hit in plan C1 closes it. Superseded by that shared read-only store cache
+# (plan C1) when it lands.
+_goals_memo = [{}]                               # path → ((st_ino, st_mtime_ns, st_size), parsed store | _GOALS_MEMO_BAD)
+_GOALS_MEMO_BAD = object()                       # a file version that did not decode: no snapshot entry, no retry until it changes
+_goals_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0, "punch": 0}   # observability + tests (/perf memos)
+
+
+def _goals_memo_decode(data):
+    """The memo's one decode: a raw parse of the file's bytes, exactly what the snapshot always held
+    (no _guard_nodes, no replay — those are load_goals' business). A module function so tests count
+    decodes here rather than by patching json.loads."""
+    return json.loads(data)
+
+
+def _goals_memo_report():
+    """The memo's counters plus its current occupancy, for /perf: `entries` memoized paths and `bytes`
+    their summed on-disk size (a proxy for the parsed objects' footprint; plan D3)."""
+    memo = _goals_memo[0]
+    out = dict(_goals_memo_stats)
+    out["entries"] = len(memo)
+    out["bytes"] = sum(k[2] for k, v in memo.values() if v is not _GOALS_MEMO_BAD)
+    return out
 # A USER gesture (card reply, Move to Working, resolve) must NEVER wait out a pass (the user 2026-07-21).
 # The snapshot above exists to hide half-applied JUDGE writes; it was also hiding the user's own, because
 # optimistic_followup writes the LIVE store while the feed reads the frozen copy. A reply landing
@@ -20810,27 +21786,74 @@ def _note_user_goal_write(sid):
     _user_goal_write[str(sid)] = time.time()
 
 def _begin_goals_pass():
-    """Capture the PRE-pass goal stores so build_feed serves a pass-boundary-consistent view for the pass."""
-    at = time.time()          # stamped BEFORE the reads: a write racing this loop must count as AFTER them,
-    snap = {}                 # so it gets replayed onto the snapshot rather than lost to the read order
+    """Capture the PRE-pass goal stores so build_feed serves a pass-boundary-consistent view for the pass.
+
+    Stat-keyed (see the memo note above): each store is decoded only when its (ino, mtime_ns, size)
+    moved since the last pass; an unchanged one is served as the memoized object. The key is taken by
+    fstat on the fd the bytes are read from, so key and content are the same file version: a rename
+    landing between the listing's stat and the open is read whole from the new inode and keyed as
+    such. Any race the other way (content newer than its key) only costs one extra decode next pass;
+    it can never pin a stale parse, because the next stat sees a moved key. The one way a stale parse
+    CAN pin is the coarse-timestamp blind spot in the memo note above (equal size, recycled inode, same
+    clock tick); on a multigrain-timestamp kernel it does not occur."""
+    # ui/webview/feed-move-ack.test.ts pins the next line's comment text ("stamped BEFORE the reads").
+    at = time.time()          # stamped BEFORE the reads and the stats that gate them: a write racing this loop
+    snap = {}                 # must count as AFTER them, so it is replayed onto the snapshot, not lost to the read order
+    prev = _goals_memo[0]
+    memo = {}
+    hit = miss = fail = 0
     try:
-        for p in jd.GOALDIR.glob("*.json"):
-            try:
-                snap[p.stem] = json.loads(p.read_text())
-            except Exception:
-                pass
-    except Exception:
-        pass
+        entries = [e for e in os.scandir(jd.GOALDIR) if e.name.endswith(".json") and e.is_file()]
+    except OSError:
+        entries = []
+    for ent in entries:
+        path, sid = ent.path, ent.name[:-5]
+        key = None
+        try:
+            st = ent.stat()
+            key = (st.st_ino, st.st_mtime_ns, st.st_size)
+            old = prev.get(path)
+            if old is not None and old[0] == key:
+                hit += 1                                   # same file version → the memoized parse (or its
+                memo[path] = old                           # remembered decode failure) stands
+                if old[1] is not _GOALS_MEMO_BAD:
+                    snap[sid] = old[1]
+                continue
+            with open(path, "rb") as fh:
+                st = os.fstat(fh.fileno())
+                key = (st.st_ino, st.st_mtime_ns, st.st_size)
+                data = fh.read()
+            store = _goals_memo_decode(data)
+        except FileNotFoundError:
+            continue                                       # gone between the listing and the read: no store
+        except Exception as e:                             # unreadable or undecodable: out of the snapshot (the
+            fail += 1                                      # feed reads it live, as before), said once per version
+            if key is not None:
+                memo[path] = (key, _GOALS_MEMO_BAD)
+            sys.stderr.write("goals-pass: %s: %s: %s (not in the pass snapshot; served live until the file changes)\n"
+                             % (ent.name, type(e).__name__, e))
+            continue
+        miss += 1
+        memo[path] = (key, store)
+        snap[sid] = store
+    _goals_memo[0] = memo
+    _goals_memo_stats["hit"] += hit
+    _goals_memo_stats["miss"] += miss
+    _goals_memo_stats["fail"] += fail
+    _goals_memo_stats["evict"] += len(prev.keys() - memo.keys())
     with _goals_snap_lock:
         _goals_snap[0] = snap
         _goals_snap_at[0] = at
         _goals_snap_done.clear()
+        _goals_snap_owned.clear()
 
 def _end_goals_pass():
-    """Pass over — drop the snapshot so reads go live again (post-pass results + any user writes show now)."""
+    """Pass over — drop the snapshot so reads go live again (post-pass results + any user writes show now).
+    The memo keeps its parsed stores: they are the next pass's cache hits."""
     with _goals_snap_lock:
         _goals_snap[0] = None
         _goals_snap_done.clear()
+        _goals_snap_owned.clear()
 
 def _feed_goals(sid):
     """Goal store for the FEED, frozen at the pre-pass snapshot while a judge pass is mid-flight (so a card
@@ -20849,6 +21872,14 @@ def _feed_goals(sid):
         if snap is not None and sid in snap:
             store, mark = snap[sid], _user_goal_write.get(str(sid), 0.0)
             if mark >= _goals_snap_at[0] and _goals_snap_done.get(sid) != mark:
+                if sid not in _goals_snap_owned:
+                    # COPY-ON-PUNCH: the entry is the memo's object, shared with every later pass that
+                    # finds the file unchanged, so the replay and rollup below must land on a copy of it
+                    # (the _apply_rewind_hold idiom). Once per pass per sid: a second gesture in the
+                    # same pass punches the copy this one made.
+                    store = snap[sid] = json.loads(json.dumps(store))
+                    _goals_snap_owned.add(sid)
+                    _goals_memo_stats["punch"] += 1
                 try:
                     jd._replay_overrides(sid, store)   # the reopen/move/resolve/unclear event, applied by the judge's own code
                     jd.rollup_status(store, False)     # …and the card's column follows it (the user just acted → working)
@@ -25378,6 +26409,10 @@ def _compact_goal_stores():
     import glob
     moved = 0
     try:
+        jd._disk_memo_evict_absent()                   # save_goals' disk-side memo: drop removed stores' entries
+    except Exception:
+        pass
+    try:
         paths = glob.glob(str(jd.GOALDIR / "*.json"))
     except Exception:
         return 0
@@ -27243,10 +28278,18 @@ WIN_WEEK = 7 * 86400                           # The footer shows tokens per win
 
 def _state_intervals(sid, want, now):
     """Every [start,end] the session sat in `want` ('permission'/'picker' → awaiting candy-stripes,
-    'compacting' → cross-hatch), from states/<sid>.jsonl: an entry runs until the next transition
-    (or `now` if still in it). `want` is a single state or any collection of them (the awaiting band
-    passes both needs-input states). Forward-only — periods predating the log don't appear. File-based
-    port of the obsidian timeline's stateIntervals (the kernel reads states/, never tmux).
+    'compacting' → cross-hatch), from states/<sid>.jsonl: an entry runs until the next transition, or to
+    `now` (the build's clock) if the session is still in it. That open end IS the wire contract the
+    renderer reads (romp-timeline-view.js, 2026-09-06): an end within 2 s of the payload's `now` means
+    open, and an open span is drawn to the pane's live edge the way barEndT draws an open work bar, so
+    the stripe glides with the edge instead of sitting at the build clock until the next rebuild. The end
+    stays numeric on purpose: a null end was a wire break — every already-loaded renderer (an open
+    dashboard, an installed extension) took Math.min(null, t1) = 0 and dropped the stripe for a lane
+    blocked or compacting right now. The clock-stamped end costs nothing on the wire since the lanes frame
+    is deduped per rebuild (_skeleton_sig keeps the build clock). `want` is a single state or any
+    collection of them (the awaiting band passes both needs-input states). Forward-only — periods
+    predating the log don't appear. File-based port of the obsidian timeline's stateIntervals (the kernel
+    reads states/, never tmux).
     Folds the states log append-incrementally since 2026-09-03 (_fold_records): every timeline
     rebuild used to re-read and re-parse the whole file, twice per session (once per `want`); the
     intervals themselves are cheap."""
@@ -27256,7 +28299,7 @@ def _state_intervals(sid, want, now):
     for i, (t, st) in enumerate(ev):
         if st not in want:
             continue
-        end = ev[i + 1][0] if i + 1 < len(ev) else now
+        end = ev[i + 1][0] if i + 1 < len(ev) else now     # still in it: the build clock, which the renderer reads as open
         if end < cutoff:
             continue
         out.append([max(t, cutoff), end])
@@ -28983,11 +30026,13 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
     Message connectors (need the courier) and cross-pane focus/hover are later increments — emitted
     empty/null so the render's conditional paths hide them.
 
-    with_bars=False builds only the LANES SKELETON (sessions + tokens + status) — the heavy per-segment
-    bars, the judging band, the message connectors and the nudge marks are left empty. The push sends this
-    skeleton FIRST so the lanes paint instantly, then ships the bars as a separate {type:"bars"} message
-    (the user 2026-06-25, who wanted everything else loaded and the bars loaded after). build_timeline is ~95%
-    bars+judging by payload and the dominant startup cost, so the skeleton is cheap and lands immediately."""
+    with_bars=False builds only the LANES SKELETON (sessions + status) — the heavy per-segment bars, the
+    judging band and the message connectors are left empty. The push ships the lanes as a {type:"data"}
+    frame FIRST and the bars as a separate {type:"bars"} message (the user 2026-06-25, who wanted everything
+    else loaded and the bars loaded after); build_timeline is ~95% bars+judging by payload. Since 2026-09-06
+    the skeleton BUILD runs only on the cold live-first connect (no cached full build yet): every warm push
+    projects the lanes frame from the cached full build instead (_timeline_skeleton; the WARM note in _push
+    has the contract and its lag), so the with_bars=False branches below are the cold-connect path."""
     if tmux is None:
         tmux = _tmux_sessions()
     alive = _timeline_sessions(now, tmux, live_only=live_only)   # living + window-dead (≤12h) lanes; per-session `live` below marks the dead ones (struck). live_only → live sessions only (cold-start first paint)
@@ -29017,7 +30062,10 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         tm = tmux.get(sid)
         live = tm is not None
         hexcol = (tm and tm["color"]) or (_name_color(sid) or {}).get("bg", "#888888")
-        goals = jd.load_goals(sid)
+        # The SKELETON reads the goal store for a DEAD lane only (its blocked badge, in the dead branch
+        # below): its segment loop runs over no turns and it derives no judging marks, so a live lane's
+        # load — the largest per-lane cost of the skeleton build — was never read (2026-09-06).
+        goals = jd.load_goals(sid) if with_bars else None
         if with_bars:
             try:
                 session = _parse(s["path"], sid, now)
@@ -29051,16 +30099,14 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             # ONE derivation with the chat chip (the user 2026-07-03: after an API error the chat read
             # API ERROR → READY while the lane sat on raw-snapshot 'working'): the lane state IS
             # _session_chip — same event-model working, api-error gate, compacting corroboration,
-            # interrupt stamp. The SKELETON build has no fresh parse, so it uses the CACHED one (no cold
-            # cost; the {type:"bars"} build refines a beat later); a COLD cache falls back to the raw
-            # snapshot state — the only moment the two surfaces may briefly differ, self-healing on the
-            # next build (the 2026-06-26 fast-first-paint contract).
-            # Same INPUT, not just the same formula (the user 2026-07-03): the chat chip computes over the
-            # LIVE-MERGED session, and the lane badge rides the SKELETON build (the {type:"bars"} message
-            # carries no states) — so the skeleton must merge the live tail onto the cached parse too, or
-            # a live atom that changes the answer splits the two surfaces on EVERY push (chat WORKING /
-            # lane READY, the phantom-working divergence). The merge is dict work on in-memory atoms — no
-            # parse, so the fast-first-paint contract holds.
+            # interrupt stamp. Same INPUT, not just the same formula (the user 2026-07-03): the chip
+            # computes over the LIVE-MERGED session, so the full build's lane does too (`session` above is
+            # merged). The SKELETON build — the cold live-first connect only, since 2026-09-06 — has no
+            # fresh parse: it uses the CACHED one with the live tail merged the same way, and a COLD cache
+            # falls back to the raw snapshot state, the one moment the two surfaces may briefly differ,
+            # self-healing on the next build (the 2026-06-26 fast-first-paint contract). Warm pushes
+            # project the lanes from the cached full build, so the lane's state trails the chat chip by at
+            # most REBUILD_MIN_S or the 5 s bucket (the WARM note in _push).
             comp_sess = session if with_bars else _parse_cached(s["path"])
             if not with_bars and comp_sess is not None:
                 try:
@@ -29084,6 +30130,8 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         else:                             # dead lane: NEVER "working" — a turn left open at death (e.g. a stalled API
                                           # turn that never returned a ResultMessage, then ended) must not read as
                                           # active (the user 2026-06-23); badgeFor dims a dead lane anyway.
+            if goals is None:
+                goals = jd.load_goals(sid)                  # the skeleton's one store read: a dead lane's badge
             blocked = "blocked" in goals.get("status", {}).values() and not _session_flag(sid, "hideFromFeed")
             state = "needsInput" if blocked else "idle"   # muted → no awaiting/background-task badge on the lane
             aw_open = open_now                          # unused (awaitingBg is None for a dead lane) — kept defined
@@ -30303,6 +31351,14 @@ def _send_client(c, key, msg, pre=None, sig=None, kind="full"):
     Returns whether a frame went out (False: deduped, or the client is dead)."""
     s = pre if pre is not None else json.dumps(msg)
     sig = sig if sig is not None else _dedup_sig(msg, s)
+    seqs = getattr(_VIEWS_SERVED, "seqs", None)
+    if seqs is not None:
+        # the ready handler is capturing ITS connect push (the caps frame's viewsSeq, see KERNEL_WS_CAPS):
+        # a frame this thread enqueues, deduped or not — a deduped frame is one the client already holds
+        # byte-for-byte, so its blob is what the client has either way
+        sq = _views_seq_of(msg)
+        if sq is not None:
+            seqs.append(sq)
     with _client_lock(c):    # the dedup dict is shared with the handler thread's `ready`
         prev = c.setdefault("sent", {}).get(key)      # reset (_client_reset_chat_base) — one writer at a time
         now = time.time()
@@ -30414,6 +31470,92 @@ FEED_DELTA_CAP = "feedDelta"   # the capability a client announces (ws ?caps=fee
 # themselves), an older dashboard federating this kernel. Keepalives and the restart notice still reach a
 # held client — the shim consumes both itself.
 READY_GATE_CAP = "readyGate"
+
+# What THIS kernel can do for a dashboard beyond the base protocol, announced on the socket in reply to
+# every `ready` (the page's own at load, and the shim's re-send on a reconnected socket) as
+# {type: "caps", caps: [...]} and listed on /version. The caps a client announces on its ws URL
+# (FEED_DELTA_CAP, READY_GATE_CAP) go the other way; until 2026-09-05 nothing went this way, and a
+# dashboard newer than its kernel posted ops the kernel silently dropped. A client uses a targeted op
+# only when the cap is present and takes the pre-cap path otherwise.
+#   tagEdit — the targeted `tagEdit` op (create / rename / recolor / addMember / removeMember /
+#             delete / move, by tag id), the `tagEditAck` / `viewsAck` answers on the poster's socket,
+#             and the write sequence (`seq`) on every views blob.
+KERNEL_WS_CAPS = ("tagEdit",)
+# The caps frame: {type: "caps", caps: [...], viewsSeq: int|null}. `viewsSeq` (round 7 of the 2026-09-05
+# review) is the write seq of the views blob the READY HANDLER'S OWN connect push served this client — the
+# tabOrder frame's for a chat page, the timeline skeleton's (`data.views`), the feed frame's — read from
+# the frames that push enqueued (_VIEWS_SERVED, captured in _send_client on the handler's thread), never
+# from a fresh cache read, so a write landing between the push and this frame cannot skew it; the highest
+# when the push carried more than one. When the push carried NONE (a chat page on a sentinel cycle gets no
+# tabOrder frame) it is the store's current seq at caps time — the seq the next push serves (round 8 of
+# the same review); null only when there is no store at all, which has no seq. A client that kept a blob
+# its seq gate turned away adopts it on this frame only when the kept blob's seq equals viewsSeq — the
+# restore case (the store's seq fell behind what the page holds, and the connect push IS the kept blob) —
+# and adopts a LATER frame whose seq equals viewsSeq even when that is below the seq it holds (the same
+# restore, met on a sentinel cycle); never a pusher-thread frame built before a concurrent write and
+# enqueued between the connect push and this frame — its seq is older than the connect push's, so it does
+# not match, and the next pusher cycle carries the newer blob.
+
+_VIEWS_SERVED = threading.local()   # .seqs: a list while the ready handler captures its connect push, else absent/None
+
+
+def _views_seq_of(msg):
+    """The write seq of the views blob a frame carries, or None: `views` rides at the top level of the
+    tabOrder and feed frames and under `data` in the timeline skeleton."""
+    if not isinstance(msg, dict):
+        return None
+    v = msg.get("views")
+    if not isinstance(v, dict) and isinstance(msg.get("data"), dict):
+        v = msg["data"].get("views")
+    if not isinstance(v, dict) or v.get("seq") is None:
+        return None
+    try:
+        return int(v["seq"])
+    except (TypeError, ValueError):
+        return None
+
+
+def _send_caps(client, views_seq=None):
+    """The caps frame, on the client's own socket: {type: "caps", caps, viewsSeq} (the comment on
+    KERNEL_WS_CAPS has the field). Sent AFTER the ready handler's pushes: the shim clears its stale banner
+    on the first non-keepalive frame after a reconnect, which must stay the resync frame itself and not
+    this one. `views_seq` is the seq of the views blob those pushes served, else the store's current seq
+    (the comment on KERNEL_WS_CAPS), None only with no store."""
+    try:
+        client["send"](json.dumps({"type": "caps", "caps": list(KERNEL_WS_CAPS),
+                                   "viewsSeq": views_seq if isinstance(views_seq, int) else None}))
+    except Exception:
+        pass
+
+
+# Ops the browser's panes post for a HOST to consume (the VS Code extension takes them; the kernel-served
+# page has no host, so they reach the kernel, which has nothing to do with them). Not unknown, not the
+# kernel's: the terminal arm below neither logs nor answers them.
+_HOST_ONLY_OPS = frozenset({"openLink", "readClipboard", "usageData", "colorSync", "settingsSync",
+                            "editorSelection", "answerPickerChoice"})
+_UNKNOWN_OPS_SEEN = set()
+
+
+def _note_unknown_op(msg, client):
+    """_dispatch_ws's terminal arm: a message no handler took — an op this kernel does not know (a
+    dashboard newer than its kernel), or a known op missing the field its arm requires. Logged ONCE per
+    type (one line of version skew, not one per gesture) and ANSWERED on the poster's socket with
+    {type: "unknownOp", op, writeId?}: a client waiting on an ack for that writeId learns the op is
+    unsupported and treats the answer as a refusal, instead of pinning its optimistic copy on an
+    answer that never comes (the 2026-09-05 review). An undecodable frame (msg None) was already
+    reported by the recv loop; a host-directed op is not the kernel's to answer."""
+    t = msg.get("type") if isinstance(msg, dict) else None
+    if not isinstance(t, str) or not t or t in _HOST_ONLY_OPS:
+        return
+    op = t[:40]
+    if op not in _UNKNOWN_OPS_SEEN:
+        _UNKNOWN_OPS_SEEN.add(op)
+        sys.stderr.write("ws: no handler took op %r from a %s client (unknown type, or a required field missing) "
+                         "— answered unknownOp; logged once per type\n" % (op, (client or {}).get("app") or "?"))
+    reply = {"type": "unknownOp", "op": op}
+    if isinstance(msg.get("writeId"), str):
+        reply["writeId"] = msg["writeId"]
+    _reply(client, reply)
 
 # A client that announces THIS cap has no live kernel-pushed view: its content is fetched over HTTP on
 # demand and its socket carries keepalives and request/response replies only (the Files pane, app=files).
@@ -31477,7 +32619,7 @@ def _path_pins(sid, uuid):
 
 
 # ── verified path links (the user 2026-08-09) ──────────────────────────────────────────────────────
-# The chat linkifies path-shaped tokens by SHAPE alone (render.ts CLICKABLE_PATH_RE), so a bare
+# The chat linkifies path-shaped tokens by SHAPE alone (path-links.ts CLICKABLE_PATH_RE), so a bare
 # `render.js` in a reply became a blue link that 404'd on click — the token resolved against the
 # session's cwd, where no such file lives. The kernel is the machine that HAS the filesystem, so it
 # verifies at message-build time and, when a shortened mention names exactly one real file, FIXES the
@@ -31490,9 +32632,9 @@ def _path_pins(sid, uuid):
 # The repo list is `git ls-files -co --exclude-standard` in the SESSION's cwd (each session may be a
 # different repo), re-run per build pass — ~6ms here, and any mtime-keyed cache would miss the
 # untracked files agents create constantly. Ignored files are deliberately invisible to tiers 2/3.
-_PATH_TOKEN_RE = re.compile(          # Python port of render.ts CLICKABLE_PATH_RE — parity pinned in
-    r"file:///?[^\s<>\"'`)]+"         #   tests/test_path_links.py + chat-path-links.test.ts over the
-    r"|[~.\w\-]*/[~.\w\-/]*[\w\-]"    #   shared tests/fixtures/path_token_parity.json
+_PATH_TOKEN_RE = re.compile(          # Python port of ui/webview/path-links.ts CLICKABLE_PATH_RE — parity
+    r"file:///?[^\s<>\"'`)]+"         #   pinned in tests/test_path_links.py + chat-path-links.test.ts over
+    r"|[~.\w\-]*/[~.\w\-/]*[\w\-]"    #   the shared tests/fixtures/path_token_parity.json
     r"|[\w\-][\w\-.]*\.[A-Za-z0-9]{1,8}",
     re.IGNORECASE)
 _PATH_TRAIL_RE = re.compile(r"[.,;:!?)\]}>\"'`]+$")   # the client's trailing-punctuation strip, mirrored
@@ -31585,9 +32727,9 @@ def _resolve_path_token(tok, sid, memo):
 
 
 def _path_tokens(md):
-    """CLICKABLE_PATH_RE's matches over `md`, trailing punctuation stripped, deduped — the exact token
-    strings the client will look up in pathLinks. Resumes after the STRIPPED token, as the client's
-    exec loop does. Parity with the client regex is pinned over tests/fixtures/path_token_parity.json
+    """path-links.ts CLICKABLE_PATH_RE's matches over `md`, trailing punctuation stripped, deduped — the
+    exact token strings the client will look up in pathLinks. Resumes after the STRIPPED token, as the
+    client's scan does. Parity with the client regex is pinned over tests/fixtures/path_token_parity.json
     (tests/test_path_links.py here, chat-path-links.test.ts there)."""
     toks, pos = [], 0
     while True:
@@ -32129,10 +33271,38 @@ def _push(targets, connect=False, tmux=None):
         # TIMELINE in two messages (the user 2026-06-25): the LANES SKELETON ({type:"data"}) flushes FIRST —
         # cheap, so the lanes/status paint instantly — THEN the heavy bars+judging ride a {type:"bars"} message
         # (the ~95% of the payload). On a COLD connect the skeleton is on the wire before the expensive
-        # _cached_timeline build even runs, so the user sees the fleet at once instead of a blank wait.
+        # _cached_timeline build even runs, so the user sees their sessions at once instead of a blank wait.
         # LIVE-FIRST (the user 2026-06-26): the very first paint after a kernel start reads NO dead session — it
         # builds live sessions only (lanes + bars) so the main UI is up at once; the producer warms the full
         # build (live + dead-within-12h) and the next pusher push folds the dead lanes in, in the background.
+        # WARM (2026-09-06): once a full build is cached, the skeleton is PROJECTED from it (_timeline_skeleton)
+        # instead of built again. Every cycle used to run build_timeline(with_bars=False) — no transcript
+        # parse, but the same per-lane derivation the full build had just done (store loads, the chip over
+        # the cached parse plus the live merge, the awaiting overlay), re-deriving lanes the cached build
+        # already held: 5.3% of the kernel's GIL samples and 7.4% of the pusher thread on the saturated
+        # 2026-09-06 profile (kernel3-gil-120s; 4.0% and 12% on the earlier live-now profile). A cache hit
+        # now serves lanes identical to the last rebuild, so no lane moves without a rebuild, and rebuilds
+        # still come on every view-sig change, on _views_dirty and at the 5 s bucket: the lanes lag a rebuild
+        # by at most REBUILD_MIN_S, the lag the bars always had. Two visible differences from the built
+        # skeleton: the lanes' `compactions` come from the full build's parse (the built skeleton parsed
+        # nothing and always shipped []), and a dead lane's `since` is its last work end rather than the
+        # transcript mtime. Accepted too: the first regular cycle after boot serves the full build before
+        # the lanes frame (the connect push took the cold path and cached nothing), so the DEAD lanes reach
+        # the client one build later than the per-cycle skeleton showed them; the live lanes painted on the
+        # connect.
+        # The frame is serialized once per BUILD (_skel_wire, keyed on the cached object's identity like
+        # _bars_wire) and deduped PER REBUILD, not per cycle: the skeleton carries the cached build's clock
+        # and _skeleton_sig keeps it, so a new build — a view-sig change, _views_dirty, or the 5 s bucket —
+        # sends one frame and the cycles between builds send nothing. The clock sits inside `data`, out of
+        # reach of _dedup_sig's top-level strip, so before this every cycle's frame compared as new and
+        # 27 KB went to every timeline client every 0.5 s cycle. The frame stays the pane's clock source
+        # (review 2026-09-06): the bars frame dedups with its `now` stripped, so an unchanged rebuild sends
+        # no bars, and the view's live edge glides at most 30 s past its last `data.now` sample before it
+        # waits — deduping the lanes frame on content alone starved a quiet timeline until the 60 s repost.
+        # One frame per bucket keeps a sample flowing at least every 5 s. A CONNECT push is the exception:
+        # it stamps the cached lanes with the cycle's clock (below), since the pane anchors on its first
+        # sample and the cache can be hours old when no timeline client kept it warm.
+        global _skel_wire
         _PERF_STATS.stage("push.feed", time.monotonic() - _t_stage)
         _t_stage = time.monotonic()
         timeline = None
@@ -32140,16 +33310,36 @@ def _push(targets, connect=False, tmux=None):
         if want_tl:
             tl_clients = [c for c in targets if c["app"] == "timeline"]
             live_first = connect and _built_timeline[1] is None     # cold start, nothing warmed yet → live only
-            skel = build_timeline(now, tmux, with_bars=False, live_only=live_first)
-            for c in tl_clients:
-                _send_client(c, ("timeline",), {"type": "data", "data": skel})
             if live_first:
+                skel = build_timeline(now, tmux, with_bars=False, live_only=True)
+                for c in tl_clients:
+                    _send_client(c, ("timeline",), {"type": "data", "data": skel})
                 timeline = build_timeline(now, tmux, with_bars=True, live_only=True)   # live bars now (no dead reads)
                 tl_warming = True                                   # this is the PARTIAL cold build — the client keeps its loader up
                 _producer_wake.set()                                # ...if it lands empty (SDK/federation not yet merged), rather than flashing
                 #                                                     "no activity"; a later warmed push (tl_warming False) settles it (the user 2026-07-03)
             else:
                 timeline = _cached_timeline(now, tmux, fsig, connect)
+                if connect:
+                    # A CONNECT serves the cached lanes under the CYCLE's clock (review 2026-09-06): the pane
+                    # anchors its live edge and its window fit on the first data.now it sees, and the cache is
+                    # as old as the last cycle that had a timeline client — a bucket on a reload, hours after
+                    # the pane was closed — so the build clock made the axis hop forward on the next cycle's
+                    # frame. One serialization per connect; the new client's dedup slot is empty, so the frame
+                    # always goes. Its sig differs from _skel_wire's, so the next identity-hit cycle re-sends
+                    # that client the build-clock frame once (the pane ignores the older clock: isFreshNowSample).
+                    frame = {"type": "data", "data": {**_timeline_skeleton(timeline), "now": now}}
+                    skel_pre, skel_sig = json.dumps(frame), None
+                else:
+                    w = _skel_wire                                  # tuple snapshot — rebound whole, never mutated
+                    if w is not None and w[0] is timeline:
+                        frame, skel_pre, skel_sig = w[1], w[2], w[3]
+                    else:
+                        frame = {"type": "data", "data": _timeline_skeleton(timeline)}
+                        skel_pre, skel_sig = json.dumps(frame), _skeleton_sig(frame["data"])
+                        _skel_wire = (timeline, frame, skel_pre, skel_sig)
+                for c in tl_clients:
+                    _send_client(c, ("timeline",), frame, pre=skel_pre, sig=skel_sig)
         _PERF_STATS.stage("push.timeline", time.monotonic() - _t_stage)
     except Exception:
         sys.stderr.write("push build: %s\n" % traceback.format_exc())
@@ -32467,6 +33657,7 @@ _built_timeline = [None, None, 0.0, 0.0]          # [fleet_sig, payload, built_a
 # torn entry; the identity keys stay alive because these tuples (and the build caches above) hold them.
 _feed_wire = None   # (feed_src, ledgers, wire_feed, body, sig, parts) — body = _feed_body(wire_feed): the frame's serialization MINUS its top-level `now`; _feed_ms splices the clock in at send time (a raw send of it ships a frame with no `now`, which the pane anchors every age on); parts = _feed_parts(wire_feed)
 _bars_wire = None   # (timeline, warming, bars, ms, sig)
+_skel_wire = None   # (timeline, frame, pre, sig) — the lanes {type:"data"} frame projected from the same cached build (2026-09-06)
 # Each build is intrinsically ~1-1.6s (re-segments every session); the IDEAL is a per-session lane/card cache
 # (only the changed session rebuilds), but that's a big refactor of build_feed/build_timeline. Interim cap: a
 # minimum rebuild interval. With an ACTIVE fleet the fleet_sig busts on every push (the watched session keeps
@@ -32511,15 +33702,53 @@ def _fleet_view_sig(now, tmux):
                  # bust the FEED cache the way it already busts the owning session's chat cache
                  (jd.STATE / "user-todos.json", "__utodos__"),
                  # …and the feature switch (2026-09-03): a flip changes every one of those reads
-                 (jd.STATE / USER_TODOS_SWITCH_FILE, "__utswitch__")):
+                 (jd.STATE / USER_TODOS_SWITCH_FILE, "__utswitch__"),
+                 # the timeline's own file inputs (2026-09-06): the lanes frame is projected from the
+                 # cached build, so what the lanes read must bust the cache — the usage bars
+                 # (usage.json, via _usage_for_client) and the views blob (timeline-views.json, via
+                 # _views_client). Before the projection the per-cycle skeleton carried both fresh every
+                 # cycle; with the frame projected from the cache, these mtimes bring a change forward
+                 # from the bucket, and the helpers' non-file inputs (remote tags from the supervisor's
+                 # /views poll, judge failures) still wait for it.
+                 (jd.STATE / "usage.json", "__usage__"),
+                 (_views_path(), "__views__"),
+                 # …the lanes' comment squares (STATE/comments/<sid>.json, _comment_markers: every write is
+                 # an _atomic_write into this directory, so its mtime moves on a create AND a rewrite) and
+                 # the kernel watches (WATCH_FILE, read by _watch_awaiting for the awaiting badge): a
+                 # resolve on a dormant thread or a watch firing changes only the store, and used to reach
+                 # the lane at the bucket (review 2026-09-06)
+                 (jd.STATE / "comments", "__comments__"),
+                 (WATCH_FILE, "__watches__")):
         try:
             sig[k] = os.stat(p).st_mtime
         except OSError:
             pass
     for s in sorted(tmux):
         t = tmux[s]
-        sig["t:" + s] = (t.get("state"), t.get("model"), t.get("ctx"), t.get("effort"), t.get("mode"), t.get("fast"), t.get("since"))
+        # Every row field the lanes and the chat chip derive from (2026-09-06). `context` is the row's
+        # key (the tmux vars and the SDK merge both write it); the sig read `ctx`, which no row carries,
+        # so a context-% change never busted the cache and the lane's battery waited on the bucket.
+        # The rest were never keyed: the fast-mode refusal reason (the lane's `fast` blanks on it), the
+        # model-switch bit (the chip's switching dots), the subagent pill, and the background-task ids
+        # behind the awaiting badge. Not keyed on purpose: `snapT` (the snapshot's clock, not a fact
+        # about the session) and `interrupting` (the merged row never carries it — the SDK merge copies
+        # an explicit key list — and the stop click marks the views dirty itself).
+        sig["t:" + s] = (t.get("state"), t.get("model"), t.get("context"), t.get("effort"), t.get("mode"),
+                         t.get("fast"), t.get("since"), t.get("fastReason"), bool(t.get("modelPending")),
+                         _row_items_sig(t.get("subagents")), _row_ids_sig(t.get("bgTasks")))
     return tuple(sorted(sig.items()))
+
+
+def _row_items_sig(rows):
+    """A liveness row's list of dicts (the live subagents) as an immutable, comparable value for the view
+    signature: each dict's sorted items. The lane ships the whole list, so any field change counts."""
+    return tuple(tuple(sorted(r.items())) if isinstance(r, dict) else r for r in (rows or ()))
+
+
+def _row_ids_sig(tasks):
+    """The background-task ids off a liveness row, for the view signature: the awaiting badge and its task
+    list key on which tasks exist (toolUseId), not on a task's progress fields."""
+    return tuple(str(t.get("toolUseId") or "") for t in (tasks or ()) if isinstance(t, dict))
 
 
 def _cached_feed(now, tmux, sig, connect=False):
@@ -33081,6 +34310,26 @@ def _cached_timeline(now, tmux, sig, connect=False):
     _PERF_STATS.build("timeline", False, time.monotonic() - _t0)
     _built_timeline[:] = [sig, tl, time.time(), started]
     return tl
+
+
+def _timeline_skeleton(tl):
+    """The {type:"data"} lanes frame's body, PROJECTED from a full timeline build (2026-09-06): the same
+    dict minus the heavy time-plotted detail — turns, judging, messages, which ride the {type:"bars"}
+    message. It keeps the BUILD's clock (`now`), not the cycle's: the frame is deduped per rebuild
+    (_skeleton_sig) and is the pane's clock sample; the bars frame carries the same clock. A shallow copy,
+    never a mutation: `tl` is the cached build (_built_timeline[1]), shared with every later cycle and the
+    identity key of the bars and lanes wire caches."""
+    return {**tl, "turns": {}, "judging": [], "messages": []}
+
+
+def _skeleton_sig(skel):
+    """The lanes frame's dedup signature: the whole skeleton, build clock included. The frame nests the
+    skeleton under `data`, so _dedup_sig's TOP-LEVEL strip never reached its `now` — and here it must not:
+    a new build stamps a new clock, and that is the event the frame goes on (once per rebuild, so at most
+    once per 5 s bucket on a quiet timeline, never on an unchanged cycle). The first cut stripped the clock
+    the way tests/test_payload_dedup_invariant.py has the top level do, and left a quiet timeline with no
+    clock sample until the 60 s repost (review 2026-09-06; the WARM note in _push)."""
+    return json.dumps(skel, sort_keys=True, default=str)
 
 
 def _run_tier(fn):
@@ -34066,6 +35315,9 @@ else if(m.type==="hover"&&panel.setHover)panel.setHover(m);
 // timeline-boot.test.ts pins the pair.
 else if(m.type==="revealEvent"&&panel.revealEvent)panel.revealEvent(m.sid,m.t,m.id);
 else if(m.type==="models"&&panel.refreshModels)panel.refreshModels();
+else if((m.type==="tagEditAck"||m.type==="viewsAck")&&panel.viewsAck)panel.viewsAck(m);
+else if(m.type==="caps"&&panel.setCaps)panel.setCaps(m);
+else if(m.type==="unknownOp"&&panel.unknownOp)panel.unknownOp(m);
 else if(m.type==="tagEditFailed"&&panel.tagEditFailed)panel.tagEditFailed(m);
 else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);};
 window.addEventListener("message",(window.__rompPerf&&window.__rompPerf.wrapFrameHandler)?window.__rompPerf.wrapFrameHandler(onFrame):onFrame);
@@ -34076,7 +35328,8 @@ window.__rompTimelineWriteOrder=function(order){if(window.__rompWriteOrder)windo
 window.__rompTimelineCompact=function(name){post({type:"compact",name:name});};
 window.__rompTimelineSendCommand=function(name,cmd,extra){post(Object.assign({type:"sendCommand",name:name,cmd:cmd},extra||{}));};
 window.__rompTimelineSetFlag=function(id,flag,value){post({type:"setSessionFlag",id:id,flag:flag,value:!!value});};
-window.__rompTimelineSetViews=function(views){post({type:"setTimelineViews",views:views});};
+window.__rompTimelineSetViews=function(views,writeId,edited){post({type:"setTimelineViews",views:views,writeId:writeId,edited:edited||[]});};
+window.__rompTimelineTagEdit=function(writeId,edit){post({type:"tagEdit",writeId:writeId,edit:edit});};
 window.__rompTimelineEditTag=function(edit){post({type:"editTag",edit:edit});};
 window.__rompTimelineDismiss=function(id){post({type:"dismissLane",id:id});};
 window.__rompTimelineHover=function(sid,segIds,t0,t1){post(sid?{type:"timelineHover",sid:sid,segIds:segIds||[],t0:t0,t1:t1}:{type:"timelineHover",off:true});};
@@ -34914,8 +36167,11 @@ if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElem
 // A chat file-link click routed to the FILES pane (fileLinkPane "pane", 2026-09-03: the viewer as its own
 // column) posts viewFile up with pane:'pane'; the shell brings that pane forward and forwards the click
 // with the session's identity the chat resolved (name + colour — the pane has no session list to name
-// the file's session by; files.ts caches it for the viewer's chip). The pane STAYS up — nothing to put
-// back — so none of the feed route's was-off / ack / restore machinery below applies to this branch.
+// the file's session by; files.ts caches it for the viewer's chip). The Waiting-on-you pane's detail
+// links post the same message (plans/file-review.md, Slice 0) with todoId — the user todo the path came
+// from — which is forwarded as-is so the viewer can tie its work back to the todo; a chat click carries
+// none and the pane sees null. The pane STAYS up — nothing to put back — so none of the feed route's
+// was-off / ack / restore machinery below applies to this branch.
 if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');
   try{window.__rompPaneToggle&&window.__rompPaneToggle('files',true);}catch(e){}
   // phone (one pane at a time): bring the Files tab forward ONLY in the mobile layout — on desktop the column
@@ -34923,7 +36179,7 @@ if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files
   // remember the tab the click came from, so the viewer's close puts the person back (filesViewerClosed below)
   try{if(window.__rompMobileOn&&window.__rompMobileOn()){var cur=document.body.getAttribute('data-tab')||'chat';
     if(cur!=='files'){window.__rompFilesTabFrom=cur;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
-  try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}}
+  try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null},'*');}catch(e){}}
 // A chat file-link click with the cards-pane preference set (fileLinkPane — gear.js; the user
 // 2026-08-20) posts viewFile up instead of opening in-document; the shell forwards it to the FEED
 // pane, whose initFileView (file-view.ts) opens the viewer there. The GATE lives at the click site
@@ -38230,7 +39486,17 @@ class Handler(BaseHTTPRequestHandler):
                 # re-read it. So the door cannot be used to point a session at a key of the caller's
                 # choosing, and the response carries only a FINGERPRINT (sha256 head) so the caller can
                 # confirm that the kernel reads what it just wrote without either side printing a key.
-                # Body: {"sessions": [<id-or-name>…]} or {"all": true}.
+                # Body: {"sessions": [<id-or-name>…]} or {"all": true}, plus "refresh": true to make the
+                # kernel re-run its credential command FIRST (the command source, kernel/envsource.py;
+                # a plain re-read in file mode) — `romp keyswap --refresh`, and the first step of every
+                # cycle there. The answer adds keySource ("file"|"command"), keyKind ("key"|"helper"|
+                # "login"|"": what keyFp is of — "login" is a command-mode set with no key and no
+                # apiKeyHelper configured, so there is nothing to fingerprint and no error), keyErr (why
+                # there is no fingerprint, or the last run's failure; ""), setFp (the command's whole set,
+                # role variables included), selector (the declared token, or "(undeclared, N chars)"),
+                # launched ({fingerprint: live sessions on it}), refreshed ({"from","to"} when asked) and
+                # each row's `from` (the fingerprint its CLI launched on) — fingerprints and reasons with
+                # counts, never a value.
                 try:
                     b = json.loads(raw_body or b"{}")
                 except Exception:
@@ -38240,7 +39506,19 @@ class Handler(BaseHTTPRequestHandler):
                 if be is None:
                     return self._send(503, json.dumps({"ok": False, "error": "no SDK backend"}),
                                       "application/json")
+                refreshed = None
+                if b.get("refresh"):
+                    fn = getattr(be, "refresh_key_source", None)
+                    if fn is not None:
+                        try:
+                            refreshed = fn()
+                        except Exception as e:
+                            refreshed = {"error": str(e)[:80]}
                 keyfp = _work_key_fp()
+                try:
+                    kstat = getattr(be, "key_source_status", lambda: {})() or {}
+                except Exception as e:
+                    kstat = {"err": "status failed: %s" % str(e)[:80]}
                 rows = []
                 if b.get("all"):
                     # every LIVE SDK session: the dormant ones need nothing (their next launch reads
@@ -38255,14 +39533,23 @@ class Handler(BaseHTTPRequestHandler):
                                           "application/json")
                     who_list = [(str(w), _sid_of(str(w))) for w in raw if str(w or "").strip()]
                 for who, sid in who_list:
+                    live = (getattr(be, "sessions", None) or {}).get(sid)
+                    frm = str(getattr(live, "_launched_key_fp", "") or "") if live is not None else ""
                     try:
                         status = be.cycle_key(sid)
                     except Exception as e:
                         status = "error: %s" % str(e)[:80]
-                    rows.append({"session": _name_of(sid) or who, "status": status})
+                    rows.append({"session": _name_of(sid) or who, "status": status, "from": frm})
                 if any(r["status"] == "cycling" for r in rows):
                     _push_soon()                      # something changed; a fingerprint READ ({"sessions": []}) did not
-                return self._send(200, json.dumps({"ok": True, "keyFp": keyfp, "rows": rows}),
+                return self._send(200, json.dumps({"ok": True, "keyFp": keyfp, "rows": rows,
+                                                   "keySource": kstat.get("source") or "file",
+                                                   "keyKind": kstat.get("fpKind") or "",
+                                                   "keyErr": kstat.get("err") or "",
+                                                   "launched": kstat.get("launched") or {},
+                                                   "setFp": kstat.get("setFp") or "",
+                                                   "selector": kstat.get("selector") or "",
+                                                   "refreshed": refreshed}),
                                   "application/json")
             if u.path in ("/interrupt", "/end"):
                 # Headless session control (2026-07-05): interrupt/end existed ONLY as WS drive ops, so
@@ -39358,14 +40645,39 @@ class Handler(BaseHTTPRequestHandler):
                 _client_reset_feed_base(client)     # both protocols' bases and the dedup slot, under the slot lock
             client["ready"] = True
             client["readySeen"] = True
-            served = client.get("app") in ("feed", "fleet", "waiting") and _send_feed_now(client)
-            # The connect push serves the pusher-warmed caches for everything else. A feed client that was
-            # just served skips it: the push could add nothing for that pane (its warmed cache IS what was
-            # served), and a feed-only push re-serializes the wire cache ledger-less for the pusher to redo.
-            # The Waiting-on-you pane is a feed client in this sense too: it reads the frame's userTodoRows
-            # and needs no ledgers, so the served frame is all the push could give it.
-            if not (served and client.get("app") in ("feed", "waiting")):
-                self._push_one(client)
+            # Capture the seq of the views blob the pushes below serve — from the frames THIS thread
+            # enqueues, so a pusher-thread frame landing meanwhile is not mistaken for the connect push's
+            # (the caps frame's viewsSeq, see KERNEL_WS_CAPS)
+            _VIEWS_SERVED.seqs = []
+            try:
+                served = client.get("app") in ("feed", "fleet", "waiting") and _send_feed_now(client)
+                # The connect push serves the pusher-warmed caches for everything else. A feed client that was
+                # just served skips it: the push could add nothing for that pane (its warmed cache IS what was
+                # served), and a feed-only push re-serializes the wire cache ledger-less for the pusher to redo.
+                # The Waiting-on-you pane is a feed client in this sense too: it reads the frame's userTodoRows
+                # and needs no ledgers, so the served frame is all the push could give it.
+                if not (served and client.get("app") in ("feed", "waiting")):
+                    self._push_one(client)
+            finally:
+                seqs, _VIEWS_SERVED.seqs = _VIEWS_SERVED.seqs, None
+            # What this kernel can do for the page (KERNEL_WS_CAPS), after the pushes above and on every
+            # `ready` — so a reconnected socket learns them again, and a page whose views writes were
+            # in flight across the drop learns, by this frame, that their answers may never come. It
+            # carries the seq of the views blob those pushes served (viewsSeq), read above — or, when
+            # they served none (a chat page on a sentinel cycle gets no tabOrder frame), the STORE's
+            # current seq, the seq the next push serves (round 8 of the 2026-09-05 review: with null
+            # here nothing re-armed a page's gate after a restart over a restored older store, and it
+            # rejected every later push under the old seq until the next write). Null only when there
+            # is no store at all — a fresh install, or a legacy store whose first stamp could not be
+            # written — which has no seq.
+            if seqs:
+                views_seq = max(seqs)
+            else:
+                try:
+                    views_seq = _timeline_views().get("seq")
+                except Exception:
+                    views_seq = None
+            _send_caps(client, views_seq=views_seq)
             # The tab order rides the connect push (chat clients, through the _tab_list_tmux collapse
             # guard). This handler used to send a SECOND tabOrder built from a raw _tmux_sessions() read,
             # bypassing that guard — and the client treats an omitted id as an authoritative teardown
@@ -39397,9 +40709,53 @@ class Handler(BaseHTTPRequestHandler):
             # creation event) read-then-write inside the lock, and this full-blob write landing
             # INSIDE that window either clobbered their edit or had its own clobbered — with the lock
             # it lands before or after, and the stale-writer guard in the setter judges it whole.
-            with _views_lock:
-                _set_timeline_views(msg["views"])
+            # ANSWERED on the poster's socket (viewsAck) with the guard's refusals, if any: until
+            # 2026-09-05 a refusal reached stderr and the sync notices but never the client, which
+            # kept building its next post from the refused copy. Tag edits themselves no longer come
+            # through here from the dashboards — see tagEdit below; this door serves lens and order.
+            # `edited` — the tag ids the client CHANGED in this write (a lens or order write names none):
+            # a refusal on a tag the client did not touch is a stale copy of an unedited tag, not a lost
+            # edit — the write is acked ok with the refusal listed, and the client adopts the newer blob
+            # without a notice (the 2026-09-05 review: a lens change from a dashboard that had slept
+            # through another's tag edit toasted a refusal for a tag the user never edited). A write
+            # without `edited` (an older client) keeps the strict reading: any refusal, ok false.
+            edited = msg.get("edited")
+            edited = [x for x in edited if isinstance(x, str)] if isinstance(edited, list) else None
+            try:
+                with _views_lock:
+                    refused = _set_timeline_views(msg["views"], edited=edited)   # the setter files the notice by the same rule
+                if edited is not None:
+                    # …or the past-the-bound summary row counts an edited id among the entries it
+                    # stands for (`moreEdited`, round 8 of the 2026-09-05 review); the ack orders its
+                    # one-line `error` by the same predicate
+                    ok = not any(_refusal_is_the_posters(r, edited) for r in refused)
+                else:
+                    ok = not refused
+                err = None
+            except Exception as e:
+                sys.stderr.write("setTimelineViews: %s\n" % traceback.format_exc())
+                refused, ok, err = [], False, "the write failed on the kernel: %s" % (str(e) or type(e).__name__)
             _mark_views_dirty()
+            _ack_views_write(client, "viewsAck", msg.get("writeId"), ok, error=err, refused=refused or [], edited=edited)
+        elif msg and msg.get("type") == "tagEdit":
+            # a dashboard's tag gesture — {writeId, edit: {op, tid, …}}: create / rename / recolor /
+            # addMember / removeMember / delete, by the tag's stored id — as a TARGETED edit through
+            # _edit_tag, the /tag route's merge, which deep-copies the store and so is never judged
+            # stale; answered on the same socket (tagEditAck) with the post-write blob, the tag's tid
+            # and name, or a plain refusal. The op rides NESTED under `edit` so the message has no
+            # top-level `name` or `session` for the dashboard's federation router to mistake for a
+            # remote session's address (views are per kernel; the router sends tagEdit local).
+            # _edit_tag takes _views_lock itself. Frames pushed to every other client are unchanged
+            # (the dirty mark below). A handler exception is ACKED as a refusal rather than left to
+            # the recv loop's log: an unanswered write would pin the poster's optimistic copy.
+            try:
+                ok, err, info = _apply_tag_edit(msg.get("edit"))
+            except Exception as e:
+                sys.stderr.write("tagEdit: %s\n" % traceback.format_exc())
+                ok, err, info = False, "the edit failed on the kernel: %s" % (str(e) or type(e).__name__), None
+            if ok:
+                _mark_views_dirty()
+            _ack_views_write(client, "tagEditAck", msg.get("writeId"), ok, error=err, info=info)
         elif msg and msg.get("type") == "openTagsDialog":
             # any pane's "Configure tags…" opens THE tags dialog — which lives on the timeline pane
             # (one dialog, one implementation; the user 2026-08-25). Routed to the SAME dashboard's
@@ -40117,6 +41473,9 @@ class Handler(BaseHTTPRequestHandler):
                                  args=({"commentFast": str(msg["fast"]), "gt": _jgt},), daemon=True).start()
             else:
                 _tell_stale_gesture(client)
+        else:
+            # no arm took it: say so once per type, and answer the poster (see _note_unknown_op)
+            _note_unknown_op(msg, client)
 
     def _ws(self):
         key = self.headers.get("Sec-WebSocket-Key")

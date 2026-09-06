@@ -754,7 +754,8 @@ four reply types.
   board lists living sessions only and gates ended ones (`kernel.py:25731, 26082-26087`; the
   chat's own card gate is at `24047-24062`), so a todo can vanish; the file is still on disk and
   Comments works on it without a todo. The guide says: if a todo you expected is missing, check
-  the session list for an ended session.
+  for an ended session (revive it) or for a session hidden from the feed (Show in feed on its tab
+  menu); the Slice 0 review found the hidden case was missing from the first wording.
 
 ## Build slices
 

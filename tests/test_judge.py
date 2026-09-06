@@ -6547,7 +6547,7 @@ class JudgeEnv(unittest.TestCase):
     def test_triage_tier_does_not_force_thinking_off(self):
         had = os.environ.pop("MAX_THINKING_TOKENS", None)   # isolate from an inherited cap
         try:
-            self.assertNotIn("MAX_THINKING_TOKENS", jd._judge_env("triage"),
+            self.assertFalse("MAX_THINKING_TOKENS" in jd._judge_env("triage"), 
                              "planner/closer/grouper/distiller keep thinking (real judgments)")
         finally:
             if had is not None:
@@ -6560,7 +6560,7 @@ class JudgeEnv(unittest.TestCase):
         finally:
             os.environ.pop("TMUX", None)
         self.assertEqual(env.get("ROMP_SUMMARIZING"), "1")
-        self.assertNotIn("TMUX", env)
+        self.assertFalse("TMUX" in env, "TMUX present")
 
 
 class EffortCapability(unittest.TestCase):
