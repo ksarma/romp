@@ -13,9 +13,14 @@
 // (shWord = _sh_word) and the second "To respond" bullet follows the kernel's text allowlist
 // (isTextPath = _is_text_path), never the viewer's own verdict.
 
+import { regionDesc, staleness, type Region, type Staleness } from "./region-geometry";   // pure, like this module
+
 // ── the sidecar and reply shapes (track-changents v3 + the host script's status fields) ────────────
 export type Anchor = { quote: string; prefix: string; suffix: string };
-export type Target = { kind: "image" | "pdf"; region: { x: number; y: number; w: number; h: number }; page?: number; hash?: string };
+/** A region on an image or a PDF page (Slice 3; contract E1): fractions of the natural size, the page for a PDF,
+ *  the sha256 of the file's bytes the HOST stamped when the region was drawn (staleness compares it with the
+ *  file's current hash), and for a figure embedded in markdown `src` exactly as the embed writes it. */
+export type Target = { kind: "image" | "pdf"; region: Region; page?: number; hash?: string; src?: string };
 export type StoreReply = { author: string; authorId?: string; ts: number; body?: string; kind?: string; oldText?: string; newText?: string };
 export type StoreComment = {
   id: string; author: string; authorId?: string; ts: number; body: string;
@@ -39,6 +44,10 @@ export type Status = {
   verb: string; root: string | null; storePath: string | null; trackedBy: TrackedBy;
   agentTooling: "present" | "absent"; fileMtimeNs: string; storeMtimeNs: string | null; configMtimeNs: string | null;
   store: Store | null; hunks: Hunk[]; unsent: Unsent; log: LogEntry[]; logTruncated?: boolean;
+  /** a non-text file's sha256 (E2); null when the host could not compute it (over its cap); absent from an older host */
+  fileHash?: string | null;
+  /** a text file: the current sha256 of every figure its region comments name, by `src` as written (E2) */
+  embeddedHashes?: Record<string, string | null> | null;
 };
 
 const EMPTY_UNSENT: Unsent = { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null };
@@ -61,7 +70,6 @@ export function actionLabel(s: Status | null): string {
 }
 
 // ── the send parts (C2) ────────────────────────────────────────────────────────────────────────────
-const num = (v: number): string => (Number.isInteger(v) ? String(v) : v.toFixed(2));
 
 /** A decision the comments log remembers for change `id`: the accept or reject entry's texts, newest first.
  *  Accept drops the change from the sidecar, so once decided the log is the only place its old and new text
@@ -90,11 +98,7 @@ export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] 
     const d = decidedChange(log, c.suggestionId);
     if (d) return 'on your change "' + d.oldText + '" to "' + d.newText + '"';
   }
-  if (c.target && c.target.region) {
-    const r = c.target.region;
-    const at = "on the region at " + num(r.x) + ", " + num(r.y) + ", " + num(r.w) + ", " + num(r.h);
-    return c.target.kind === "pdf" && c.target.page ? at + " of page " + c.target.page : at;
-  }
+  if (c.target && c.target.region) return "on " + regionDesc(c.target.region, c.target.kind === "pdf" ? c.target.page : null);
   if (c.anchor && typeof c.anchor.quote === "string" && c.anchor.quote) return 'on "' + c.anchor.quote.slice(0, 40) + '"';
   return "on this file";
 }
@@ -244,6 +248,24 @@ export function buildSendMessage(o: MessageOpts): string {
     "naming the file.",
   );
   return lines.join("\n") + "\n";
+}
+
+// ── region comments (Slice 3) ──────────────────────────────────────────────────────────────────────
+/** The `target` a `comment` or `retarget` sends: the kind, the fractions, and for an embedded figure the embed's
+ *  `src` as written. Never a hash — the host stamps that from the bytes it reads (E1). */
+export function regionTarget(region: Region, src: string | null): Target {
+  const t: Target = { kind: "image", region };
+  if (src) t.src = src;
+  return t;
+}
+
+/** Whether a region comment's image still has the bytes it was drawn on (E2): a standalone image compares the
+ *  stored hash with the status's `fileHash`; an embedded figure with `embeddedHashes[src]`. Unknown when either
+ *  side is missing — an older host, a file over the hash cap, a comment written without a hash. */
+export function regionState(target: Target | null | undefined, s: Pick<Status, "fileHash" | "embeddedHashes"> | null | undefined): Staleness {
+  if (!target || !s) return "unknown";
+  const current = target.src ? (s.embeddedHashes ? s.embeddedHashes[target.src] : undefined) : s.fileHash;
+  return staleness(target.hash, current);
 }
 
 // ── the card model ─────────────────────────────────────────────────────────────────────────────────
