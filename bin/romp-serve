@@ -68,15 +68,45 @@ host="${host:-127.0.0.1}"
 
 [[ -x "$KERNEL" ]] || { echo "romp-serve: kernel not found/executable at $KERNEL" >&2; exit 1; }
 
-# The kernel runs on the best python available, not blindly `python3`: the Agent SDK backend is
-# imported INTO the kernel process and needs >= 3.10, while some hosts pin the system python3 older
-# (Ubuntu 20.04 = 3.8) with a newer one alongside (e.g. a uv-managed 3.12 in ~/.local/bin — probed
-# explicitly because a non-login ssh shell doesn't have it on PATH). ROMP_PYTHON overrides.
+# The kernel runs on the python its SDK venv was built with, not blindly `python3` and not whatever
+# is newest: the Agent SDK backend is imported INTO the kernel process (the venv's site-packages join
+# sys.path), so interpreter and venv must agree. Order: ROMP_PYTHON, then the interpreter the venv's
+# pyvenv.cfg records, then the newest pythonX.Y found (the SDK needs >= 3.10, and some hosts pin the
+# system python3 older, Ubuntu 20.04 = 3.8, with a newer one alongside, e.g. a uv-managed 3.12 in
+# ~/.local/bin, probed explicitly because a non-login ssh shell doesn't have it on PATH).
 # KEEP IN SYNC with bin/romp-sdk-setup's pick_python — the SDK venv must be built with the SAME
-# interpreter the kernel runs (its site-packages are added to the kernel's sys.path).
+# interpreter the kernel runs.
 pick_python() {
     if [[ -n "${ROMP_PYTHON:-}" ]]; then echo "$ROMP_PYTHON"; return; fi
     local v c
+    # THE VENV FIRST. bin/romp-sdk-setup builds the SDK venv with the interpreter this function picked at
+    # the time, and pyvenv.cfg records it. Running anything else imports 3.X-compiled extensions into a
+    # 3.Y process: on 2026-09-06 a `uv python install 3.14` in an unrelated shell put a python3.14 into
+    # ~/.local/bin, the next kernel respawn picked it over the venv's 3.12, and every SDK session died at
+    # import for two hours while the message blamed a missing install. So a box that HAS a venv runs the
+    # venv's interpreter, however old, and the newest-first walk below is only for a box without one
+    # (or whose recorded interpreter is gone; then we say so and romp-sdk-setup rebuilds to match).
+    # Builtins only in here: the unit tests run it on a bare PATH. Kept in sync with romp-sdk-setup.
+    local state="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
+    local cfg="$state/sdkvenv/pyvenv.cfg"
+    if [[ -r "$cfg" ]]; then
+        local key val exe="" home="" ver="" mm=""
+        while IFS='=' read -r key val || [[ -n "$key" ]]; do
+            key="${key%%[[:space:]]*}"
+            val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
+            case "$key" in
+                executable)           exe="$val" ;;    # python >= 3.11 writes the binary itself
+                home)                 home="$val" ;;   # older venvs: the bin dir plus a version line
+                version|version_info) ver="$val" ;;    # `version` from venv, `version_info` from uv
+            esac
+        done < "$cfg"
+        [[ "$ver" =~ ^([0-9]+\.[0-9]+) ]] && mm="${BASH_REMATCH[1]}"
+        for c in "$exe" "${home:+$home/python$mm}" "${home:+$home/python3}"; do
+            [[ -n "$c" && -x "$c" ]] || continue
+            if "$c" -c pass >/dev/null 2>&1; then echo "$c"; return; fi
+        done
+        echo "romp: the SDK venv at $state/sdkvenv was built with ${exe:-${home:-?}/python$mm}, which is gone or will not run; picking the newest python instead. Re-run bin/romp-sdk-setup to rebuild the venv for it." >&2
+    fi
     # Newest first. The list has to GROW with each release: a machine whose only python is newer than
     # everything named here falls through to `python3`, which is right when that IS the new one and wrong
     # when python3 points at something ancient. Seen on a 3.14-only box, 2026-07-28.

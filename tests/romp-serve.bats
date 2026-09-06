@@ -172,6 +172,100 @@ extract_pick() { sed -n '/^pick_python()/,/^}/p' "$1"; }
     [ "$output" = "$fakebin/python3" ]
 }
 
+# ─── pick_python: the SDK venv names the interpreter; the newest install is only the fallback ────
+# A stray `uv python install 3.14` put a python3.14 into ~/.local/bin, and the next kernel respawn
+# ran on it while the venv's compiled extensions were still 3.12's: every SDK session died at
+# import with a message blaming a missing install (2026-09-06). The venv's pyvenv.cfg records the
+# interpreter it was built with, so a box with a venv runs THAT; newest-first is for boxes without one.
+
+write_venv_cfg() {   # $1 = state root, then the pyvenv.cfg lines
+    local root="$1"; shift
+    mkdir -p "$root/sdkvenv"
+    printf '%s\n' "$@" > "$root/sdkvenv/pyvenv.cfg"
+}
+
+@test "pick_python: a venv's recorded interpreter (executable key) beats a newer python on PATH" {
+    fakebin="$TEST_DIR/fakebin-venv"; mkdir -p "$fakebin" "$TEST_DIR/venvpy"
+    printf '#!/bin/sh\n' > "$fakebin/python3.14"; chmod +x "$fakebin/python3.14"
+    printf '#!/bin/sh\n' > "$TEST_DIR/venvpy/python3.12"; chmod +x "$TEST_DIR/venvpy/python3.12"
+    write_venv_cfg "$XDG_STATE_HOME/romp" "home = $TEST_DIR/venvpy" "version = 3.12.3" \
+        "executable = $TEST_DIR/venvpy/python3.12"
+    eval "$(extract_pick "$ROMP_SERVE")"
+    ROMP_PYTHON= PATH="$fakebin" run pick_python
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_DIR/venvpy/python3.12" ]
+}
+
+@test "pick_python: an older venv with only home + version still names its interpreter" {
+    # python < 3.11 wrote no `executable =` line; home + version reach the same binary.
+    fakebin="$TEST_DIR/fakebin-venv2"; mkdir -p "$fakebin" "$TEST_DIR/venvpy2"
+    printf '#!/bin/sh\n' > "$fakebin/python3.14"; chmod +x "$fakebin/python3.14"
+    printf '#!/bin/sh\n' > "$TEST_DIR/venvpy2/python3.10"; chmod +x "$TEST_DIR/venvpy2/python3.10"
+    write_venv_cfg "$XDG_STATE_HOME/romp" "home = $TEST_DIR/venvpy2" "include-system-site-packages = false" \
+        "version = 3.10.12"
+    eval "$(extract_pick "$ROMP_SERVE")"
+    ROMP_PYTHON= PATH="$fakebin" run pick_python
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_DIR/venvpy2/python3.10" ]
+}
+
+@test "pick_python: ROMP_STATE_DIR is where the venv is looked for" {
+    fakebin="$TEST_DIR/fakebin-venv3"; mkdir -p "$fakebin" "$TEST_DIR/venvpy3"
+    printf '#!/bin/sh\n' > "$fakebin/python3.14"; chmod +x "$fakebin/python3.14"
+    printf '#!/bin/sh\n' > "$TEST_DIR/venvpy3/python3.12"; chmod +x "$TEST_DIR/venvpy3/python3.12"
+    write_venv_cfg "$TEST_DIR/altstate" "home = $TEST_DIR/venvpy3" "version = 3.12.3" \
+        "executable = $TEST_DIR/venvpy3/python3.12"
+    eval "$(extract_pick "$ROMP_SERVE")"
+    ROMP_PYTHON= ROMP_STATE_DIR="$TEST_DIR/altstate" PATH="$fakebin" run pick_python
+    [ "$output" = "$TEST_DIR/venvpy3/python3.12" ]
+}
+
+@test "pick_python: a venv whose interpreter is gone falls back to newest-first and SAYS so" {
+    fakebin="$TEST_DIR/fakebin-gone"; mkdir -p "$fakebin"
+    printf '#!/bin/sh\n' > "$fakebin/python3.13"; chmod +x "$fakebin/python3.13"
+    write_venv_cfg "$XDG_STATE_HOME/romp" "home = $TEST_DIR/no-such-dir" "version = 3.12.3" \
+        "executable = $TEST_DIR/no-such-dir/python3.12"
+    eval "$(extract_pick "$ROMP_SERVE")"
+    # stderr to a file rather than `run --separate-stderr`: that flag needs mktemp, and PATH is bare here.
+    out="$(ROMP_PYTHON= PATH="$fakebin" pick_python 2>"$TEST_DIR/stderr")"
+    err="$(cat "$TEST_DIR/stderr")"
+    [ "$out" = "$fakebin/python3.13" ]
+    [[ "$err" == *"$TEST_DIR/no-such-dir/python3.12"* ]]    # names the interpreter it could not run
+    [[ "$err" == *"romp-sdk-setup"* ]]                       # and the way to make the venv match again
+}
+
+@test "pick_python: a venv with a broken interpreter (present, will not run) also falls back" {
+    fakebin="$TEST_DIR/fakebin-broken"; mkdir -p "$fakebin" "$TEST_DIR/brokenpy"
+    printf '#!/bin/sh\n' > "$fakebin/python3.13"; chmod +x "$fakebin/python3.13"
+    printf '#!/bin/sh\nexit 127\n' > "$TEST_DIR/brokenpy/python3.12"; chmod +x "$TEST_DIR/brokenpy/python3.12"
+    write_venv_cfg "$XDG_STATE_HOME/romp" "executable = $TEST_DIR/brokenpy/python3.12"
+    eval "$(extract_pick "$ROMP_SERVE")"
+    out="$(ROMP_PYTHON= PATH="$fakebin" pick_python 2>"$TEST_DIR/stderr")"
+    err="$(cat "$TEST_DIR/stderr")"
+    [ "$out" = "$fakebin/python3.13" ]
+    [[ "$err" == *"$TEST_DIR/brokenpy/python3.12"* ]]
+}
+
+@test "pick_python: no venv means newest-first, silently (a fresh box before romp-sdk-setup)" {
+    fakebin="$TEST_DIR/fakebin-fresh"; mkdir -p "$fakebin"
+    printf '#!/bin/sh\n' > "$fakebin/python3.13"; chmod +x "$fakebin/python3.13"
+    printf '#!/bin/sh\n' > "$fakebin/python3.12"; chmod +x "$fakebin/python3.12"
+    [ ! -e "$XDG_STATE_HOME/romp/sdkvenv" ]
+    eval "$(extract_pick "$ROMP_SERVE")"
+    out="$(ROMP_PYTHON= PATH="$fakebin" pick_python 2>"$TEST_DIR/stderr")"
+    [ "$out" = "$fakebin/python3.13" ]
+    [ ! -s "$TEST_DIR/stderr" ]
+}
+
+@test "pick_python: ROMP_PYTHON wins over the venv's recorded interpreter too" {
+    mkdir -p "$TEST_DIR/venvpy4"
+    printf '#!/bin/sh\n' > "$TEST_DIR/venvpy4/python3.12"; chmod +x "$TEST_DIR/venvpy4/python3.12"
+    write_venv_cfg "$XDG_STATE_HOME/romp" "executable = $TEST_DIR/venvpy4/python3.12"
+    eval "$(extract_pick "$ROMP_SERVE")"
+    ROMP_PYTHON=/opt/custom/python run pick_python
+    [ "$output" = "/opt/custom/python" ]
+}
+
 @test "pick_python: romp-serve and romp-sdk-setup carry the SAME picker (venv must match the kernel)" {
     diff <(sed -n '/^pick_python()/,/^}/p' "$ROMP_SERVE") \
          <(sed -n '/^pick_python()/,/^}/p' "$BIN/romp-sdk-setup")
