@@ -16,9 +16,9 @@
 // hook, not a way to register anything: the record-list field is the vendored track-changents
 // field (vendor/track-changents/obsidian/src/track-cm.js, bundled unchanged), the marks are romp's
 // derived track-decorations.ts, and both are curated here like every other extension. The handle
-// hands back the remapped records and a net ledger of decisions so a Save can send both, and the
-// one rule romp adds over the field's ids keeps those two lists disjoint: an id the ledger holds is
-// never minted again (the id rule in trackSetup).
+// hands back the remapped records and the decisions taken since the mount, net of undo, so a Save
+// can send both, and the one rule romp adds over the field's ids keeps those two lists disjoint: a
+// decided id is never minted again (the id rule in trackSetup).
 //
 // The SAVE PATH IS NOT THIS MODULE'S: the consent gate, the nanosecond conflict floor, and the
 // edit trace all live behind file-view's saveFile op — this is the text surface only, handing the
@@ -111,28 +111,43 @@ function rompTheme(): Extension {
   }, { dark: !light });
 }
 
-// ── the track option: pending changes as marks, decisions as a ledger ────────────────────────────
+// ── the track option: pending changes as marks, the decisions kept net of undo ───────────────────
+//
+// Naming (the 2026-09-06 review): what the person accepted or rejected in the editor is its `decisions`, the
+// plan's word for the save verb's two lists and file-view.ts's EditDecisions. The slice's first name for it, the
+// old spelling below (a ledger), is a word CONTEXT.md lists under Avoid for the comments log, and the host writes
+// these same decisions into that log — so a reader of a save trace had to work out which of the two records was meant.
+// Each line marked "old spelling" below is an alias for a caller that has not moved (file-view.ts passes and reads
+// the old spelling, onLedger and ledger(); the chunk's tests import the old names); every alias goes with its
+// last caller, and editor-chunk-decisions.test.ts confines the word to those lines.
 
 /** One decision on one record: its id and the two texts as the record held them at that moment. */
-export interface TrackLedgerEntry { id: string; oldText: string; newText: string }
+export interface TrackDecision { id: string; oldText: string; newText: string }
 /** The decisions taken inside the editor since the mount, NET of undo: an undone accept or reject leaves no
  *  entry, a redone one puts it back. A later save sends this beside the remapped records. */
-export interface TrackLedger { accepted: TrackLedgerEntry[]; rejected: TrackLedgerEntry[] }
+export interface TrackDecisions { accepted: TrackDecision[]; rejected: TrackDecision[] }
+export type TrackLedgerEntry = TrackDecision;   // old spelling of TrackDecision
+export type TrackLedger = TrackDecisions;       // old spelling of TrackDecisions
 
 export interface TrackOpts {
   /** The file's pending changes, as the sidecar's status returned them (the storage format's records). */
   suggestions: unknown[];
   /** The author's session colour for the marks' `--fc-author`, or null for none. */
   authorColor?: (author: string) => string | null;
-  /** Called with the new ledger whenever a decision lands, is undone, or is redone. */
-  onLedger?: (ledger: TrackLedger) => void;
+  /** Called with the decisions whenever one lands, is undone, or is redone. */
+  onDecisions?: (decisions: TrackDecisions) => void;
+  onLedger?: TrackOpts["onDecisions"];   // old spelling of onDecisions; file-view.ts still passes it
 }
 
 /** What the mount handle exposes when `track` was given. Both read the LIVE state: the records as the field
- *  holds them now (remapped through every keystroke since the mount), and the net ledger. No id is in both: a
- *  decided id is never minted again for a later split (trackSetup's id rule), which is what the host's save
- *  requires of the two lists it is sent. */
-export interface TrackHandle { suggestions(): unknown[]; ledger(): TrackLedger }
+ *  holds them now (remapped through every keystroke since the mount), and the decisions net of undo. No id is in
+ *  both: a decided id is never minted again for a later split (trackSetup's id rule), which is what the host's
+ *  save requires of the two lists it is sent. */
+export interface TrackHandle {
+  suggestions(): unknown[];
+  decisions(): TrackDecisions;
+  ledger: TrackHandle["decisions"];   // old spelling of decisions; file-view.ts still reads it
+}
 
 export interface EditorHandle {
   value(): string;
@@ -145,55 +160,59 @@ export interface MountOpts {
   text: string;               // the buffer, LF-normalized by the caller (same as the textarea got)
   ext: string;                // file extension, picks the highlighter
   onChange: () => void;       // any doc change — the caller derives dirty from value() (an accept changes no
-                              // text and fires onLedger instead; a reject changes text and fires both)
+                              // text and fires onDecisions instead; a reject changes text and fires both)
   onSave: () => void;         // Mod-s inside the editor — same chord the textarea honored
   track?: TrackOpts;          // the file's pending changes; absent for an untracked file
 }
 
-export const EMPTY_LEDGER: TrackLedger = { accepted: [], rejected: [] };
+export const EMPTY_DECISIONS: TrackDecisions = { accepted: [], rejected: [] };
+export const EMPTY_LEDGER = EMPTY_DECISIONS;   // old spelling of EMPTY_DECISIONS (the same object, so identity checks hold)
 
-type Decision = { side: "accepted" | "rejected"; entries: TrackLedgerEntry[] };
+/** One gesture's worth, as the decide/undecide effects carry it: the side, and the TrackDecision rows it put there
+ *  (one per record the clicked display item stood for). */
+type Decision = { side: "accepted" | "rejected"; entries: TrackDecision[] };
 // A decision and its inverse are a pair of effects: a decision transaction carries `decide`, history stores
 // `undecide` as its inverse (invertedEffects), so an undo REMOVES the entries and the redo of that undo puts
-// them back. The ledger is a fold over these effects and nothing else — no counter, no diff of id sets (a
+// them back. The decisions are a fold over these effects and nothing else — no counter, no diff of id sets (a
 // record the person types over vanishes from the field with no decision, and a split record gets new ids).
 const decide = StateEffect.define<Decision>();
 const undecide = StateEffect.define<Decision>();
 
-/** Pure: the ledger with `d`'s entries added (`add`) or removed. Returns the SAME object when nothing changes,
- *  so a listener can key on identity. An id sits on one side at most: a decision on an id replaces any earlier
- *  entry for it on either side. */
-export function applyDecision(ledger: TrackLedger, d: Decision, add: boolean): TrackLedger {
+/** Pure: the decisions with `d`'s entries added (`add`) or removed. Returns the SAME object when nothing
+ *  changes, so a listener can key on identity. An id sits on one side at most: a decision on an id replaces any
+ *  earlier entry for it on either side. */
+export function applyDecision(decisions: TrackDecisions, d: Decision, add: boolean): TrackDecisions {
   const ids = new Set(d.entries.map((e) => e.id));
-  const strip = (list: TrackLedgerEntry[]) => list.filter((e) => !ids.has(e.id));
+  const strip = (list: TrackDecision[]) => list.filter((e) => !ids.has(e.id));
   const other: Decision["side"] = d.side === "accepted" ? "rejected" : "accepted";
-  const same = strip(ledger[d.side]);
-  const next: TrackLedger = { accepted: ledger.accepted, rejected: ledger.rejected };
-  next[other] = strip(ledger[other]);
+  const same = strip(decisions[d.side]);
+  const next: TrackDecisions = { accepted: decisions.accepted, rejected: decisions.rejected };
+  next[other] = strip(decisions[other]);
   next[d.side] = add ? [...same, ...d.entries] : same;
   const unchanged = (["accepted", "rejected"] as const).every((k) =>
-    next[k].length === ledger[k].length && next[k].every((e, i) => e === ledger[k][i]));
-  return unchanged ? ledger : next;
+    next[k].length === decisions[k].length && next[k].every((e, i) => e === decisions[k][i]));
+  return unchanged ? decisions : next;
 }
 
-/** The pure half of a mount's track option: the vendored field, the ledger, the marks and the decision
+/** The pure half of a mount's track option: the vendored field, the decisions, the marks and the decision
  *  transactions, built without a view so a test can drive them through EditorState + history alone. */
 export interface TrackSetup {
   extensions: Extension[];
   /** Apply ONCE to the fresh state, before any view exists: the records and the meta, outside history. */
   seed: TransactionSpec;
   suggestions(state: EditorState): TrackRecord[];
-  ledger(state: EditorState): TrackLedger;
+  decisions(state: EditorState): TrackDecisions;
+  ledger: TrackSetup["decisions"];   // old spelling of decisions; the chunk's tests still read it
   /** The transaction that accepts (or, with `reject`, rejects) the change whose display item starts at `from`:
-   *  the engine's remapped records, the buffer edits of a reject, and the ledger entries, in ONE transaction
+   *  the engine's remapped records, the buffer edits of a reject, and the decision entries, in ONE transaction
    *  isolated in history, so one undo reverses the whole decision. null when nothing starts at `from`. */
   resolve(state: EditorState, from: number, reject: boolean): TransactionSpec | null;
 }
 
 export function trackSetup(opts: TrackOpts): TrackSetup {
   const field = makeSuggestionField();
-  const ledgerField = StateField.define<TrackLedger>({
-    create: () => EMPTY_LEDGER,
+  const decisionsField = StateField.define<TrackDecisions>({
+    create: () => EMPTY_DECISIONS,
     update(value, tr) {
       let out = value;
       for (const e of tr.effects) {
@@ -203,7 +222,7 @@ export function trackSetup(opts: TrackOpts): TrackSetup {
       return out;
     },
   });
-  const ledgerInvert = invertedEffects.of((tr) => {
+  const decisionsInvert = invertedEffects.of((tr) => {
     const out: StateEffect<Decision>[] = [];
     for (const e of tr.effects) {
       if (e.is(decide)) out.push(undecide.of(e.value));
@@ -211,13 +230,13 @@ export function trackSetup(opts: TrackOpts): TrackSetup {
     }
     return out;
   });
-  // Romp's one rule over the field's ids (2026-09-06): an id the ledger holds is never minted again. The engine
+  // Romp's one rule over the field's ids (2026-09-06): a decided id is never minted again. The engine
   // mints a split's right half against the ids in play NOW (`X~1` for the first split of X) and the vendored field
   // passes it no `mint` — sound where every decision persists at once, as upstream's does, but here a decided
-  // fragment leaves the field for the ledger, so the next split of the same parent minted `X~1` a second time: a
+  // fragment leaves the field for the decisions, so the next split of the same parent minted `X~1` a second time: a
   // save then named one id as decided AND pending, which the host refuses (requireDecisions) though the records fit
   // the text, and a decision on the new `X~1` replaced the earlier entry by id, so the first was never logged. This
-  // extender reads what the field made of the transaction's changes and renames any id the ledger holds to the
+  // extender reads what the field made of the transaction's changes and renames any decided id to the
   // parent's next free suffix (the engine's own scheme); the renamed list rides as an explicit setSuggestions on the
   // same transaction, which the field takes verbatim and history snapshots as it does any list. It is a
   // transactionExtender, not a transactionFilter, because the list must be computed over the changes the transaction
@@ -227,15 +246,15 @@ export function trackSetup(opts: TrackOpts): TrackSetup {
   // existed and the field took a list describing another text (found 2026-09-06, the round-2 review). An extender can
   // add effects only, which is all the rule needs; it also sees the filter:false transactions undo and redo dispatch,
   // which carry the recorded lists as explicit effects and return at the first check. Only a doc change can mint, an
-  // explicit list never does, and an empty ledger has nothing to collide with, so those three are checked before the
-  // transaction's state is read; when no id collides the transaction stands as it is.
-  const ledgerIds = (l: TrackLedger) => new Set([...l.accepted, ...l.rejected].map((e) => e.id));
+  // explicit list never does, and with no decisions there is nothing to collide with, so those three are checked
+  // before the transaction's state is read; when no id collides the transaction stands as it is.
+  const decidedIds = (d: TrackDecisions) => new Set([...d.accepted, ...d.rejected].map((e) => e.id));
   const freshIds = EditorState.transactionExtender.of((tr) => {
     if (!tr.docChanged || tr.effects.some((e) => e.is(setSuggestions))) return null;
-    const start = tr.startState.field(ledgerField);
+    const start = tr.startState.field(decisionsField);
     if (!start.accepted.length && !start.rejected.length) return null;
     const ops = tr.state.field(field);
-    const decided = ledgerIds(tr.state.field(ledgerField));
+    const decided = decidedIds(tr.state.field(decisionsField));
     if (!ops.some((o) => decided.has(String(o.id)))) return null;
     const taken = new Set([...decided, ...ops.map((o) => String(o.id))]);
     const renamed = ops.map((o) => {
@@ -259,7 +278,8 @@ export function trackSetup(opts: TrackOpts): TrackSetup {
       annotations: [Transaction.addToHistory.of(false), syncAnnotation.of(true)],
     },
     suggestions: (state) => state.field(field),
-    ledger: (state) => state.field(ledgerField),
+    decisions: (state) => state.field(decisionsField),
+    ledger: (state) => state.field(decisionsField),   // old spelling of decisions
     resolve(state, from, reject) {
       const ops = state.field(field);
       const ids = idsAtPosition(ops, state.doc.toString(), from);
@@ -284,17 +304,22 @@ export function trackSetup(opts: TrackOpts): TrackSetup {
       if (spec) view.dispatch(spec);
     },
     hasResolvableAt: (view, from) => idsAtPosition(view.state.field(field, false) || [], view.state.doc.toString(), from).length > 0,
-    // Nothing persists mid-edit: a save reads the field and the ledger through the handle.
+    // Nothing persists mid-edit: a save reads the field and the decisions through the handle.
     onOpsChanged: () => {},
     // The seed is applied to the initial state before the view exists, so there is nothing to load here.
     hydrateView: () => {},
   };
   setup.extensions = [
     field, makeInvertedEffects(field),
-    ledgerField, ledgerInvert, freshIds,
+    decisionsField, decisionsInvert, freshIds,
     ...trackDecorations(field, host, { authorColor: opts.authorColor }),
+    // keyed on the field's identity: the reducer returns the same object when nothing changed, so a decision
+    // that lands, is undone or is redone reports once, and a keystroke (which remaps records, not decisions) never does
     EditorView.updateListener.of((u) => {
-      if (opts.onLedger && u.startState.field(ledgerField) !== u.state.field(ledgerField)) opts.onLedger(u.state.field(ledgerField));
+      const next = u.state.field(decisionsField);
+      if (u.startState.field(decisionsField) === next) return;
+      if (opts.onDecisions) opts.onDecisions(next);
+      if (opts.onLedger) opts.onLedger(next);   // old spelling of onDecisions
     }),
   ];
   return setup;
@@ -341,7 +366,11 @@ export function mount(host: HTMLElement, opts: MountOpts): EditorHandle {
     focus: () => view.focus(),
     destroy: () => view.destroy(),
   };
-  if (track) handle.track = { suggestions: () => track.suggestions(view.state), ledger: () => track.ledger(view.state) };
+  if (track) handle.track = {
+    suggestions: () => track.suggestions(view.state),
+    decisions: () => track.decisions(view.state),
+    ledger: () => track.decisions(view.state),   // old spelling of decisions
+  };
   return handle;
 }
 

@@ -25,7 +25,8 @@
 //   • Edit over pending changes (Slice 5): the viewer's editor carries the changes as marks of its own, so while it is
 //     up the paint pass stands down and the poll's file reload does too (a row in the head says the bytes moved). Save
 //     goes through this panel (`save`: the text, the records as the editor remapped them, the decisions taken in it),
-//     fenced on the sidecar the records came from and on the file the editor loaded; a refused save keeps the buffer.
+//     fenced on the sidecar the records came from (the status at Edit, or the last landed save's reply when the editor stayed
+//     up past it) and on the file the editor loaded; a refused save keeps the buffer.
 //     The change cards stay up meanwhile, but a decision from one is refused in place (DECIDE_IN_EDITOR): it would move
 //     the sidecar the editor's records came from, and the buffer could then never be saved. When a decision lands from
 //     elsewhere anyway (another browser, a session's CLI) the head says so from the status that shows it, before Save
@@ -83,12 +84,28 @@ const FILE_VERBS = new Set(["reject", "reject-all"]);
 // card's accept or reject meanwhile would drop a record from that sidecar (and, for reject, rewrite the file) while the
 // editor still holds it, so every later Save could only refuse `store-moved`, and the typed text would sit in a buffer
 // nothing can land, with Reload and Cancel, which both discard it, the only offers. The decision belongs in the editor
-// then: its click accepts, its modifier-click rejects, and Save carries both. The cards keep real buttons rather than
-// disabled ones so the reason reaches touch and keyboard users (the Edit button's idiom, file-view.ts), and the foot
-// says it once without a click (renderChangesFoot).
+// then: its click accepts, its modifier-click rejects, and Save carries both. A tap or a keyboard decides nothing in the
+// editor (the editor chunk's marks, departure 6), so the words also name the route that needs no mouse: Save or Cancel,
+// then these buttons, which are live again once the editor is closed. The cards keep real buttons rather than disabled ones
+// so the reason reaches touch and keyboard users (the Edit button's idiom, file-view.ts), and the foot says it once
+// without a click — as a caption, or as the row a click gets, never both at once (renderChangesFoot).
 const DECIDES = new Set(["accept", "reject", "accept-all", "reject-all"]);
 export const DECIDE_IN_EDITOR = "While you edit, decide in the editor: click a change to accept it, Alt-click (Cmd-click on a Mac, Ctrl-click elsewhere) to reject it. "
-  + "Save writes the decisions with your text.";
+  + "Save writes the decisions with your text. To use Accept and Reject instead, Save or Cancel first: they work again once the editor is closed.";
+/** What the editor's records are fenced on: the sidecar of the status they came from — at Edit (trackedEdit.begin) or, once
+ *  a save landed and the editor stayed up, that save's reply, which the host wrote them back to (saveThroughComments). Null
+ *  when nothing is pending: an editor with no marks has nothing to fence on, and Save then follows the status (routesSave). */
+type EditSeed = { records: unknown[]; storeMtimeNs: string; configMtimeNs: string };
+function seedOf(s: Status): EditSeed | null {
+  if (!(s.hunks || []).length) return null;
+  return { records: pendingRecords(s.store), storeMtimeNs: s.storeMtimeNs ?? "", configMtimeNs: s.configMtimeNs ?? "" };
+}
+/** The host's `logWarning` on a reply — its account of a comments-log append that failed, or a sidecar it could not read
+ *  back after writing — as text; "" when the reply carries none. */
+function warningOf(r: unknown): string {
+  const w = (r as { logWarning?: unknown }).logWarning;
+  return typeof w === "string" && w ? w : "";
+}
 // The head's row when the sidecar's pending changes stop being the ones the editor carries while it is up (Slice 5): a
 // decision landed since Edit — another browser's card, a session's CLI, or a card's own click that was still in flight
 // when Edit began (the gate above reads editing() at the click, and the editor can open during the round trip) — and
@@ -433,11 +450,12 @@ class Panel {
   colors: Map<string, FileViewIdentity> | null = null;
   located = new Map<string, Located & { painted: boolean }>();
   base: PollBaseline | null = null;
-  // editing over pending changes (Slice 5): what rode into the editor at Edit — the records and the sidecar/config fence
-  // of the status they came from, which the save fences on (a change a session records mid-edit moves the sidecar, and a
-  // fence from the poll's later status would let the save write over it); null when nothing rode in. `lastSaveNs` is the
-  // fileMtimeNs of a save reply this panel applied as its status itself, so onSaved skips the re-read it does for saveFile.
-  editSeed: { records: unknown[]; storeMtimeNs: string; configMtimeNs: string } | null = null;
+  // editing over pending changes (Slice 5): what the editor's records came from — the status at Edit, or the last landed
+  // save's reply once the editor stayed up past it — as the records and the sidecar/config fence the save fences on (a
+  // change a session records mid-edit moves the sidecar, and a fence from the poll's later status would let the save write
+  // over it); null when nothing rode in (EditSeed). `lastSaveNs` is the fileMtimeNs of a save reply this panel applied as
+  // its status itself, so onSaved skips the re-read it does for saveFile.
+  editSeed: EditSeed | null = null;
   lastSaveNs: string | null = null;
   // the file's bytes moved under an edit (noteMovedUnderEdit) and the view has not re-read them yet: the first paint after
   // the edit ends re-reads (paintAll). A latch of its own, not the head row's presence: the row's ✕ dismisses the words,
@@ -914,8 +932,9 @@ class Panel {
         // begin() is the panel's one event at Edit (the viewer's renderBody fires no onRendered in edit mode), so the cards
         // take their edit-mode state here: decisions answered in place, no Reveal or link into a read view that is gone
         if (!s || !hunks.length) { this.editSeed = null; this.render(); return null; }
-        const records = pendingRecords(s.store);
-        this.editSeed = { records, storeMtimeNs: s.storeMtimeNs ?? "", configMtimeNs: s.configMtimeNs ?? "" };
+        const seed = seedOf(s)!;                       // changes are pending: never null here
+        const records = seed.records;
+        this.editSeed = seed;
         this.changesMovedUnderEdit = false;            // a new edit, a new latch: the records are the sidecar's own again
         this.render();
         return {
@@ -940,8 +959,12 @@ class Panel {
    *  file as the viewer loaded it. One retry, as every mutating verb gets (mutateOnce), when the sidecar or config moved
    *  but the records the editor carries are still the sidecar's own — a reply a session wrote mid-edit, a toggle from
    *  another browser; never for a moved file (the editor's text is from the old bytes) or a sidecar whose records
-   *  changed. The reply is applied as the status (it is one), so onSaved has nothing left to re-read. */
-  async saveThroughComments(content: string, records: unknown[], decided: EditDecisions): Promise<{ mtimeNs: string; logged: boolean }> {
+   *  changed. The reply is applied as the status (it is one), so onSaved has nothing left to re-read — and it re-seeds the
+   *  fence, since the editor may stay up past a landed save (the viewer keeps it over keystrokes typed during the round trip,
+   *  or a decision clicked then) and its next Save must meet the sidecar THIS save wrote, not the poll's latest: a decision
+   *  landed elsewhere between two saves would pass that fence and be written back as pending. The host's `logWarning`
+   *  (the comments log did not take the edit) rides the resolved value for the viewer's note bar and is said in the head. */
+  async saveThroughComments(content: string, records: unknown[], decided: EditDecisions): Promise<{ mtimeNs: string; logged: boolean; logWarning?: string }> {
     const seed = this.editSeed;
     const fenceOf = (s: Status | null): Record<string, string> => ({
       storeMtimeNs: s && s.storeMtimeNs !== null ? s.storeMtimeNs : "", configMtimeNs: s && s.configMtimeNs !== null ? s.configMtimeNs : "",
@@ -952,10 +975,19 @@ class Panel {
       try {
         const r = await this.request("save", args, fence);
         this.markOverlapped();                         // the status asks still out may have read the disk before this write
-        this.editSeed = null;
+        // the reply's sidecar is the one the editor's records now came from (the host wrote them back and read them again):
+        // the next Save, should the editor stay up, is fenced on it, and noteChangesMovedUnderEdit compares against it —
+        // nothing pending, no seed, as at begin(); the first paint after the edit ends clears it either way (paintAll)
+        this.editSeed = seedOf(r);
+        this.changesMovedUnderEdit = false;            // a new seed, a new latch (a latched row would have refused this save)
         this.lastSaveNs = r.fileMtimeNs;
-        this.applyStatus(r);
-        return { mtimeNs: r.fileMtimeNs, logged: (r as { logged?: unknown }).logged === true };
+        // the save landed, but the Log this panel shows lacks the entry the edit owed (or the host could not read the sidecar
+        // back): said in the head, in the host's words, where the Log lives — silence there would read as "nothing happened"
+        // (CLAUDE.md, never degrade silently). A clean save retires an earlier row; the ✕ dismisses it.
+        const logWarning = warningOf(r);
+        if (logWarning) this.errors.set("save", { text: logWarning, reload: false, warn: true }); else this.errors.delete("save");
+        if (!this.applyStatus(r)) this.render();
+        return { mtimeNs: r.fileMtimeNs, logged: (r as { logged?: unknown }).logged === true, ...(logWarning ? { logWarning } : {}) };
       } catch (err) {
         const e = err as { code: string; error: string };
         if (attempt === 0 && (e.code === "store-moved" || e.code === "config-moved")) {
@@ -1694,6 +1726,7 @@ class Panel {
       head.appendChild(stop);
     }
     for (const n of [this.loader("track"), this.errRow("track"), this.errRow("head"), this.errRow("poll"), this.errRow("edit")]) if (n) head.appendChild(n);
+    const sv = this.errRow("save"); if (sv) head.appendChild(sv);   // a landed save's logWarning (saveThroughComments): the Log below lacks the entry
     // a Reload from the head's or the poll's row: the slot wears the loader where the row was, until the answer (refresh)
     for (const n of [this.loader("head"), this.loader("poll")]) if (n) head.appendChild(n);
     if (s && s.agentTooling === "absent") {
@@ -1973,7 +2006,9 @@ class Panel {
   /** Accept all · Reject all, while any change is pending. Reject all rewrites the file, so it asks once,
    *  pane-locally (the folder-off confirm's idiom), naming the count. While the editor is up (Slice 5) both stay as
    *  real buttons that answer in place (DECIDES), and a caption under them says where to decide without a click, the
-   *  way a disabled Send says why (renderSend): a tooltip never reaches touch. */
+   *  way a disabled Send says why (renderSend): a tooltip never reaches touch. A click's row (refuseDecision) says the
+   *  same sentence under the same buttons, so the caption stands down while that row shows: the words once, as the row
+   *  with its ✕ or as the caption, never stacked; the ✕ hands back to the caption. */
   private renderChangesFoot(n: number): HTMLElement {
     const foot = el("div", "fc-foot");
     const row = el("div", "fc-actions");
@@ -1987,7 +2022,7 @@ class Panel {
     if (editing) { all.classList.add("fileview-btn-blocked"); none.classList.add("fileview-btn-blocked"); }
     row.appendChild(all); row.appendChild(none);
     foot.appendChild(row);
-    if (editing) foot.appendChild(el("div", "fc-note fc-decide-edit", DECIDE_IN_EDITOR));
+    if (editing && this.errors.get("changes")?.text !== DECIDE_IN_EDITOR) foot.appendChild(el("div", "fc-note fc-decide-edit", DECIDE_IN_EDITOR));
     if (this.rejectAllConfirm && !editing) {
       const ask = el("div", "fc-row fc-choice");
       ask.appendChild(el("span", "fc-note", "Put the old text back for " + (n === 1 ? "the change" : "all " + n + " changes") + "?"));

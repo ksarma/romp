@@ -33,6 +33,11 @@
 //     later track-edit) refuses `no-change` by id, so the caller reloads instead of deciding a
 //     different change under the same name; and accept never drops a comment bound to the change
 //     (`suggestionId`), it marks it resolved, so the ids in a sent message stay addressable;
+//   * the same for the decisions a `save` carries from the editor: every accepted or rejected id must
+//     be rooted in a change the sidecar holds or the comments log already records as decided — the id
+//     itself or a fragment of it (`<id>~n`, the engine's split scheme) — else `no-change` by id and
+//     nothing written; an id the sidecar never held would otherwise stand in the append-only log as a
+//     decision nobody took and be counted to the session (decisionRoots, doSave);
 //   * a region comment's `target.hash` is this script's sha256 of the figure's BYTES (Slice 3), never
 //     the client's value and never a hash of the lossy text: for a standalone image or PDF the file's
 //     own, for a figure embedded in a markdown file the bytes of the `src` the embed names, resolved
@@ -51,7 +56,8 @@
 //   * the verbs that write the file refuse what the kernel's saveFile refuses, before any write, so
 //     `save` widens nothing: a name outside the viewer's text scope (TEXT_EXT and TEXT_NAMES — the
 //     kernel's _is_text_path, pinned against its source by test) and a file past the 2 MB cap on
-//     disk (checkTextPath, checkDiskSize);
+//     disk, refused on the stat before its bytes are read, as _save_file refuses (checkTextPath,
+//     readFile's `cannot`, checkDiskSize);
 //   * nothing is written on a client's word that the kernel cannot carry back: the reply a verb would
 //     send is built and measured before the write (checkReplyFits, REPLY_MAX_BYTES — the kernel's
 //     _FILE_COMMENTS_REPLY_MAX) and refuses `too-large` past it. Over that cap the kernel kills this
@@ -261,6 +267,13 @@ export function readLog(logPath) {
     } catch { bad++; }
   }
   return { entries, bad };
+}
+
+// The refusal for a comments log that exists but cannot be read, before any write: the log is the
+// only state for what is unsent and for what was decided, so a verb that cannot read it neither
+// answers from a guess nor writes past it.
+function logUnreadable(ctx, paths, e) {
+  return new Refusal('unreadable', `cannot read the comments log for ${ctx.shown} (${tilde(paths.logPath)}): ${errText(e)}; nothing was changed`);
 }
 
 // One line per entry, appended; the directory must already exist (the caller makes sure).
@@ -488,9 +501,21 @@ function openRegular(ctx) {
 // byte, no invalid sequence — track-edit's decodeTextOrNull, the same judgement the CLI makes):
 // when they are not, `text` is the lossy decode the fingerprint needs, and the verbs that write
 // the file refuse (`not-text`) rather than write that decode back over the bytes. `bytes` is the
-// size on disk, the "before" half of the edit entry a save logs.
-function readFile(ctx) {
+// size on disk, the "before" half of the edit entry a save logs. `cannot` is set by the verbs
+// that WRITE the file (reject, reject-all, save; their clause, "cannot save" / "cannot write"):
+// the same fstat that takes the mtime then refuses `too-large` past the text cap BEFORE the bytes
+// are read — the kernel's _save_file discipline (refusing on the stat keeps the file out of
+// memory). Read first and checked after, a save aimed at a 96 MB file under a .trackchanges/ tree
+// loaded it whole into this process to refuse it, a file past V8's string limit crashed the host
+// (ERR_STRING_TOO_LONG, the kernel's `host-error`) and one past Node's 2 GiB read limit answered
+// `unreadable` — three answers for one fact the stat already held (the review, 2026-09-06). The
+// viewer never loads a file past the cap (a 413), so nothing legitimate reaches the read.
+function readFile(ctx, cannot) {
   const { fd, st } = openRegular(ctx);
+  if (cannot && st.size > BigInt(TEXT_MAX_BYTES)) {
+    try { fs.closeSync(fd); } catch { /* ignore */ }
+    throw tooLargeOnDisk(ctx, Number(st.size), cannot);
+  }
   let buf;
   try {
     buf = fs.readFileSync(fd);
@@ -723,19 +748,21 @@ export function underTrackchanges(abs) {
 
 // Two refusals the kernel's _save_file makes that the verbs writing the file (reject, save) make
 // too, before any write, so this script writes no file saveFile would refuse: a name outside the
-// viewer's text scope, and a file past the text cap on disk — readFile read it whole, since a
-// sidecar's rebase and fingerprint need the text, but the viewer never loaded it (a 413), so no
-// text a client sends about it is text the person saw. `cannot` is the verb's clause: "cannot
-// save", "cannot write".
+// viewer's text scope, and a file past the text cap on disk — the viewer never loaded it (a 413),
+// so no text a client sends about it is text the person saw. The size is refused on the stat,
+// before the bytes are read (readFile's `cannot`); checkDiskSize is the backstop over the bytes
+// actually read, for a file that grew between the fstat and the read. `cannot` is the verb's
+// clause: "cannot save", "cannot write".
 function checkTextPath(ctx, cannot) {
   if (!isTextPath(ctx.abs)) {
     throw new Refusal('not-text', `${cannot} ${ctx.shown}: not a text file the viewer edits; nothing was changed`);
   }
 }
+function tooLargeOnDisk(ctx, bytes, cannot) {
+  return new Refusal('too-large', `${cannot} ${ctx.shown}: the file on disk is ${human(bytes)}, past the ${human(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
+}
 function checkDiskSize(ctx, file, cannot) {
-  if (file.bytes > TEXT_MAX_BYTES) {
-    throw new Refusal('too-large', `${cannot} ${ctx.shown}: the file on disk is ${human(file.bytes)}, past the ${human(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
-  }
+  if (file.bytes > TEXT_MAX_BYTES) throw tooLargeOnDisk(ctx, file.bytes, cannot);
 }
 
 // `not-text`: the verbs that write the file refuse a file whose bytes are not UTF-8 text, before
@@ -971,9 +998,7 @@ function reply(ctx, state, extra, opts) {
     try {
       read = readLog(paths.logPath);
     } catch (e) {
-      if (!o.landed) {
-        throw new Refusal('unreadable', `cannot read the comments log for ${ctx.shown} (${tilde(paths.logPath)}): ${errText(e)}; nothing was changed`);
-      }
+      if (!o.landed) throw logUnreadable(ctx, paths, e);
       read = { entries: [], bad: 0 };
       landedProblem(o.landed, `the comments log for ${ctx.shown} could not be read back: ${errText(e)}`);
     }
@@ -1214,12 +1239,15 @@ function requireIds(ctx) {
 // The file and its sidecar for a decision, checked in the order every fenced verb uses: the
 // request's shape (a missing fence key is a caller bug whatever the disk says), the file, the
 // sidecar fence, for the file-writing verbs the file fence too, the config, then the load. `store`
-// is null when there is no sidecar, which for a decision means nothing is pending.
+// is null when there is no sidecar, which for a decision means nothing is pending. `writesFile`
+// is false for the sidecar-only verbs and the verb's clause ("cannot write", "cannot save") for
+// the ones that write the file: those fence on the file too, and their read refuses `too-large`
+// on the stat, before the bytes (readFile).
 function loadForDecision(ctx, writesFile) {
   for (const k of writesFile ? ['storeMtimeNs', 'fileMtimeNs'] : ['storeMtimeNs']) {
     if (typeof ctx.fence[k] !== 'string') throw new BadRequest(`fence.${k} is required for ${ctx.verb}`);
   }
-  const file = readFile(ctx);
+  const file = readFile(ctx, writesFile);
   const root = findVaultRoot(ctx.abs);
   const paths = root ? pathsFor(root, ctx.abs) : null;
   requireFence(ctx, 'storeMtimeNs', paths ? statNs(paths.storePath) : null, 'store-moved', `the comments for ${ctx.shown}`);
@@ -1304,7 +1332,7 @@ function restoreSidecar(storePath, prior) {
 // the new text re-verifies them the way every later load will.
 function doReject(ctx, all) {
   checkTextPath(ctx, 'cannot write');
-  const { file, root, paths, store } = loadForDecision(ctx, true);
+  const { file, root, paths, store } = loadForDecision(ctx, 'cannot write');
   const decided = decidedChanges(ctx, store, all);
   const ids = decided.map((h) => h.id);
   checkDiskSize(ctx, file, 'cannot write');
@@ -1360,7 +1388,9 @@ function checkContentText(shown, content) {
 // log entries keep (changesOf). Malformed is a caller bug; so is an id decided twice, or decided
 // AND still among the records being saved (a decision drops its record from the editor's field,
 // and undo takes the decision back with it, so the two never name one id together). `taken`
-// collects the decided ids across both lists for the comment resolve pass.
+// collects the decided ids across both lists, for the membership check against the sidecar and
+// the log once they are loaded (decisionRoots, in doSave) and for the comment resolve pass. The
+// shape is all this checks: whether an id names a change that was pending needs the disk.
 function requireDecisions(list, name, submitted, taken) {
   if (!Array.isArray(list)) throw new BadRequest(`save needs ${name}: an array of {id, oldText, newText}`);
   const out = [];
@@ -1375,6 +1405,35 @@ function requireDecisions(list, name, submitted, taken) {
     out.push({ id: d.id, oldText: d.oldText, newText: d.newText });
   }
   return out;
+}
+
+// The ids a save's decisions may be rooted in: every change the sidecar holds, and every change
+// the comments log records as accepted or rejected (the log outlives the sidecar's memory of a
+// decided change — The comments log — and an editor kept alive past a landed save may decide one of
+// those again after an undo). The log is read the way reply() reads it; unreadable refuses before
+// any write, as it would there.
+function decisionRoots(ctx, store, paths) {
+  const roots = new Set();
+  for (const s of (store && store.suggestions) || []) if (s && s.id != null && s.id !== '') roots.add(String(s.id));
+  if (paths) {
+    let read;
+    try { read = readLog(paths.logPath); } catch (e) { throw logUnreadable(ctx, paths, e); }
+    for (const e of read.entries) {
+      if (!e || (e.kind !== 'accept' && e.kind !== 'reject') || !Array.isArray(e.changes)) continue;
+      for (const c of e.changes) if (c && c.id != null && c.id !== '') roots.add(String(c.id));
+    }
+  }
+  return roots;
+}
+
+// A decided id is rooted when it IS a root or descends from one by the engine's split scheme —
+// `<id>~n`, nested for a fragment split again (`<id>~1~1`), and the editor's re-mint of a decided
+// fragment's suffix keeps the parent (`<id>~2`) — the prefix rule the engine itself uses to tell a
+// change's fragments from strangers (supersededOps).
+function rootedIn(roots, id) {
+  if (roots.has(id)) return true;
+  for (const r of roots) if (id.startsWith(r + '~')) return true;
+  return false;
 }
 
 // Every change record the editor holds, checked against `content` the way the engine's load checks
@@ -1546,10 +1605,26 @@ function doSave(ctx) {
   const accepted = requireDecisions(a.accepted, 'accepted', submitted, taken);
   const rejected = requireDecisions(a.rejected, 'rejected', submitted, taken);
   checkTextPath(ctx, 'cannot save');
-  const { file, root, paths, store } = loadForDecision(ctx, true);
-  if (!store) {
-    if (a.suggestions.length) throw new BadRequest('save with no sidecar takes no suggestions: there was nothing to remap');
-    if (accepted.length || rejected.length) throw new BadRequest('save with no sidecar takes no accepted or rejected changes: nothing was pending');
+  // Fenced on the sidecar the records came from and on the file the editor loaded — the two things
+  // this verb writes. Not on config.json: save only READS it, to decide below whether the edit is
+  // logged, and reads the disk as it is at the save, so a config that moved since Edit changes
+  // nothing written on a client's word; set-tracked, which writes it, is the verb that fences on
+  // it (plans/file-review.md, the wire section). A `configMtimeNs` a client sends is not read.
+  const { file, root, paths, store } = loadForDecision(ctx, 'cannot save');
+  if (!store && a.suggestions.length) throw new BadRequest('save with no sidecar takes no suggestions: there was nothing to remap');
+  if (taken.size) {
+    // Every decided id must name a change that WAS pending: one the sidecar holds, one the comments
+    // log already records as decided (an editor kept alive past a landed save re-decides an id that
+    // save carried — undo, then the other gesture — and the log then reads accept, reject: what
+    // happened), or a fragment of either (`<id>~n`, the engine's split scheme: the person typed inside
+    // the change and decided one half). Anything else is a decision nobody took: logged, it would
+    // stand in the append-only log as fact and be counted to the session (the kernel tells it how many
+    // changes the save rejected, from this ledger), so it refuses `no-change` by id, as accept and
+    // reject do (decidedChanges), and nothing is written.
+    const roots = decisionRoots(ctx, store, paths);
+    if (!store && !roots.size) throw new BadRequest('save with no sidecar takes no accepted or rejected changes: nothing was pending');
+    const ghosts = [...taken].filter((id) => !rootedIn(roots, id));
+    if (ghosts.length) throw noChange(ctx, ghosts);
   }
   checkDiskSize(ctx, file, 'cannot save');
   checkIsText(ctx.shown, file, 'it cannot be saved from the dashboard: the text the editor holds is a lossy decode of its bytes, and writing that back would destroy them');

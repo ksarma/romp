@@ -31408,7 +31408,9 @@ _FILE_COMMENTS_HOST = ROOT / "tools" / "file-comments-host.mjs"   # tests point 
 _FILE_COMMENTS_TIMEOUT = 10                                        # seconds: one verb is one load-mutate-write
 _FILE_COMMENTS_REPLY_MAX = 16 * 1024 * 1024                        # bytes of host stdout the kernel will hold for ONE
 #   reply — WS_QUEUE_BYTES's default, past which _mk_ws_send drops the client anyway, so a bigger answer could never
-#   arrive; the biggest legitimate reply (a 2 MB baseline as JSON, plus a sidecar and 200 log rows) sits well under it
+#   arrive; the biggest legitimate reply (a 2 MB baseline as JSON, plus a sidecar and 200 log rows) sits well under it.
+#   Also the bound on ONE serialized request (_file_comments_call): what a request puts on disk comes back in the reply,
+#   so a request past this cap asks for an answer the host refuses — refused here before node runs
 _AGENT_TOOLING_PROBE = "~/.claude/hooks/track-reply.mjs"           # linked by install.sh from the vendored copy
 _TRACK_ROOT_MARKERS = (".obsidian", ".git", ".trackchanges")       # store-io's ROOT_MARKERS: the nearest ancestor
 #   holding one is a file's project root (findVaultRoot, up to forty parents) — mirrored for the no-node edit-log verdict
@@ -31544,7 +31546,7 @@ def _file_comments_call(path, verb, args=None, fence=None):
     start) with the stderr tail. Every caller tests `err` first. argv is a list and the request rides
     stdin: no shell, nothing of the request in a command line.
 
-    Three bounds on what one call can pull through the kernel (the review, 2026-09-06: a `status
+    Four bounds on what one call can pull through the kernel (the review, 2026-09-06: a `status
     {baseline: true}` frame — any authenticated socket, no consent, since status is read-only — made
     the host read a 45 MB file and the kernel hold, parse and re-serialize a 46 MB reply on its own
     thread, one per frame, on the kernel that self-hosts every session; the /file route stats and
@@ -31558,9 +31560,22 @@ def _file_comments_call(path, verb, args=None, fence=None):
     reader admits up to _WS_MAX_MESSAGE, so every byte of an oversized save was paid for on the kernel
     that self-hosts the sessions before the refusal (the review, 2026-09-06); nothing legitimate is
     lost, since the viewer never loads a file past the cap and the host refuses the same text the same
-    way. And the host's stdout is read through _run_bounded, which kills the child past
-    _FILE_COMMENTS_REPLY_MAX instead of buffering — a backstop for any verb, present or future, whose
-    answer outgrows what one socket frame may carry."""
+    way. The serialized REQUEST, any verb, is refused `too-large` past _FILE_COMMENTS_REPLY_MAX before
+    node is spawned or a byte piped: the content bound covers the one argument that is text by design,
+    but a save's `suggestions`, `accepted` and `rejected` — and a comment's note, a reply's turn — had
+    no bound short of the frame reader's, so a save carrying a million fake ledger entries (43 MB) was
+    serialized and piped whole, and node parsed and walked every entry at half a gigabyte before the
+    host's own reply estimate refused it (the review, 2026-09-06, round 2). The reply cap is the right
+    number because everything a request puts on disk comes back in the reply — the sidecar as `store`
+    and again as `hunks`, the ledger in the log's newest rows — so a request past it asks for an answer
+    the host refuses (checkReplyFits) after all the work; the kernel's refusal is that verdict, taken
+    first. Measured on the serialization itself (json.dumps with ensure_ascii, so the string's length is
+    the byte count _run_bounded would pipe): the C encoder is the cheapest exact measure this runtime
+    has, and it is the one cost the check keeps — the pipe, the spawn and node's parse are what it saves.
+    Nothing legitimate is lost: the editor's records and ledger describe text the viewer showed, a file
+    under the 2 MB cap, and come nowhere near it. And the host's stdout is read through _run_bounded,
+    which kills the child past _FILE_COMMENTS_REPLY_MAX instead of buffering — a backstop for any verb,
+    present or future, whose answer outgrows what one socket frame may carry."""
     node = _file_comments_node()
     if not node:
         return None, ("no-node", "cannot open the comments for %s: node is not installed on this machine, "
@@ -31587,8 +31602,15 @@ def _file_comments_call(path, verb, args=None, fence=None):
                           % (_tilde(path), "at least " if over else "", _human_bytes(size),
                              _human_bytes(_TEXT_MAX_BYTES)))
     req = {"verb": verb, "path": path, "args": args, "fence": fence if isinstance(fence, dict) else None}
+    payload = json.dumps(req)                    # ASCII-only by default, so len() is the byte count piped
+    if len(payload) > _FILE_COMMENTS_REPLY_MAX:
+        lead = ("cannot save %s: the text, change records and decisions come to" if verb == "save" else
+                "cannot open the comments for %s: the request comes to" if verb == "status" else
+                "cannot write the comments for %s: the request comes to") % _tilde(path)
+        return None, ("too-large", "%s %s as one request, past the %s the dashboard can carry back"
+                      % (lead, _human_bytes(len(payload)), _human_bytes(_FILE_COMMENTS_REPLY_MAX)))
     try:
-        rc, out_b, err_b, overflow = _run_bounded([node, str(_FILE_COMMENTS_HOST)], json.dumps(req),
+        rc, out_b, err_b, overflow = _run_bounded([node, str(_FILE_COMMENTS_HOST)], payload,
                                                   _FILE_COMMENTS_TIMEOUT, _FILE_COMMENTS_REPLY_MAX,
                                                   env=_file_comments_host_env(), cwd=str(ROOT))
     except subprocess.TimeoutExpired as ex:
@@ -31664,7 +31686,8 @@ def _file_comments_op(msg):
     .trackchanges/ holding a log for a file with nothing tracked, which the plan's rule for the
     `edit` entry excludes (The comments log; the plain Save is the door for such a file); `no-node`
     when node is absent (status too: the panel hides the action on it); then the host script. The
-    save's size bound sits in _file_comments_call beside the baseline's."""
+    size bounds — the save's content, and any verb's serialized request — sit in _file_comments_call
+    beside the baseline's."""
     rid, verb = msg.get("reqId"), str(msg.get("verb") or "")
 
     def fail(code, error):

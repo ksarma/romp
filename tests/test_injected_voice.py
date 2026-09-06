@@ -165,6 +165,13 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # voice like the edit trace, for one change and for several
             "reject trace": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 2),
             "reject trace (one change)": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 1),
+            # the save trace (plans/file-review.md, Slice 5; the review round, 2026-09-06): the editor's
+            # Save wrote the file AND its ledger rejected some of the session's tracked changes, so the
+            # session hears the direct edit and the count in one body — told as the edit trace alone it
+            # read as an overwrite. A save that rejected nothing sends the edit trace above. The same
+            # voice, tail and neutralized path as its two siblings, rendered for several and for one
+            "save trace": km._save_trace_body("/TESTDIR/notes-api/docs/report.md", 2),
+            "save trace (one change)": km._save_trace_body("/TESTDIR/notes-api/docs/report.md", 1),
             # the compaction suggestion (the user 2026-08-30): idle + a lot of context → the person
             # suggests a /compact at a natural boundary; /compact is a CLI feature the session
             # already knows, and the thresholds behind the timing are never mentioned
@@ -288,6 +295,34 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                          "the note DESCRIBES the markers without naming the product — naming it would "
                          "explain nothing to a model that has never heard of it")
 
+    def test_the_index_renders_every_trace_body(self):
+        # the trace family — one `_<verb>_trace_body` per verb that changes a file's bytes under a
+        # session (edit, reject, save so far) — grows a builder per slice of plans/file-review.md,
+        # and the save trace shipped (2026-09-06) with its voice check in its own module only, so this
+        # index no longer rendered every injected body: the awaiting backstop's drift again, in
+        # miniature. Pin the shape rather than the list: every trace builder the kernel defines is
+        # rendered by _bodies(), so the next verb's trace cannot skip the index-wide checks, and every
+        # rendered trace wears the ONE shared tail (_TRACE_MARKER_TAIL) that keeps them from drifting
+        import inspect
+        builders = sorted(n for n in dir(km)
+                          if re.fullmatch(r"_[a-z]+_trace_body", n) and callable(getattr(km, n)))
+        self.assertLessEqual({"_edit_trace_body", "_reject_trace_body", "_save_trace_body"}, set(builders),
+                             "the enumeration finds the three known builders — otherwise the loop is vacuous")
+        index = inspect.getsource(InjectedBodiesSpeakAsTheUser._bodies)
+        for name in builders:
+            with self.subTest(builder=name):
+                self.assertTrue("km.%s(" % name in index,          # not assertIn: it would dump the source
+                                "%s is a message romp injects into a session, but this index never renders "
+                                "it — add a row to _bodies() (and, if it is an FYI, to the four-verdicts "
+                                "exemption list) so the index-wide checks reach it" % name)
+        traces = {n: b for n, b in self._bodies().items() if n.split(" (")[0].endswith(" trace")}
+        self.assertEqual(sorted(traces), ["edit trace", "reject trace", "reject trace (one change)",
+                                          "save trace", "save trace (one change)"])
+        for name, body in traces.items():
+            with self.subTest(message=name):
+                self.assertTrue(body.endswith(km._TRACE_MARKER_TAIL), "%r wears the shared trace tail" % name)
+                self.assertEqual(body.count("<!--"), 2, "%r carries the tail's two markers and no other" % name)
+
     def test_the_asks_still_elicit_the_planners_four_verdicts(self):
         # the rule is about VOCABULARY, not content: dropping the labeled reply slots must not drop the
         # question. Each nudge still asks for progress, for what is owed by the user, and permits "drop it".
@@ -301,7 +336,8 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # a memory aid with a withdraw invitation, not a status ask
             # …and the edit trace is an FYI about something the user already DID (a file changed under
             # the session) — telling, not asking; a status question bolted on would be noise; the reject
-            # trace is the same class (the person rejected the session's changes and the file changed)
+            # trace is the same class (the person rejected the session's changes and the file changed),
+            # and the save trace is both at once (the person edited the file AND rejected some changes)
             # …and the MERGE handoff is a record handed over with direction ("account for it"),
             # never a status ask — bolting a progress question onto it would be noise
             # …and the file-comments message is the person's own comments with instructions on how
@@ -310,6 +346,7 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                         "debt reminder (question)", "debt reminder (handoff)",
                         "debt reminder (several)", "comment thread opener", "user-todo answer",
                         "user-todo context block", "edit trace", "reject trace", "reject trace (one change)",
+                        "save trace", "save trace (one change)",
                         "comment-thread merge", "compaction suggestion",
                         "file comments message", "file comments message (untracked, several)",
                         "file comments message (image)"):

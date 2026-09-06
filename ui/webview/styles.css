@@ -3643,10 +3643,18 @@ body.filebrowse-open { overflow: hidden; }
 /* the editor's marks over pending changes (Slice 5; ui/webview/track-decorations.ts, whose CLS names these classes): while a
    tracked file is edited, CodeMirror draws each change itself — an insertion as a mark over its new text (tc-diff-ins), a
    deletion as a widget holding the struck old text in place (tc-diff-del), a substitution as the struck text right before the
-   new run (tc-diff-sub on both halves; a hair of space keeps the two apart), a whole-paragraph substitution as the struck rows
-   stacked above the new paragraph (tc-diff-del-block, one tc-diff-del-line per row). A click on either half accepts, a
-   modifier-click rejects, and both halves light together under the pointer (tc-diff-hover). The tint, the struck wash and
-   the --fc-author underline are the panel's own marks' (.fc-ins / .fc-del above), so a change reads the same edited as read. */
+   new run (tc-diff-sub on both halves: a 3px right margin on the struck half and 1px on the new run keep the two apart), a
+   whole-paragraph substitution as the struck rows stacked above the new paragraph (tc-diff-del-block, one tc-diff-del-line
+   per row). A click on either half accepts, a modifier-click rejects, and both halves light together under the pointer
+   (tc-diff-hover). The tint, the struck wash and the --fc-author underline are the panel's own marks' (.fc-ins / .fc-del
+   above), so a change reads the same edited as read.
+   A block row holding a KEPT embed — an ![[embed]] token of the old paragraph that the current text still holds verbatim, so
+   it moved or stayed rather than went — is split into spans (track-decorations.ts, departure 4): tc-diff-del-seg over each
+   removed run, tc-diff-del-kept-embed over the token. The seg spans have no rule: the wrapper's line-through propagates to
+   every in-flow inline descendant, and a descendant's own text-decoration cannot undo a propagated one. The kept span is an
+   inline-block, the one inline display a propagated decoration does not enter, so the token reads un-struck (struck, it
+   reads as the picture being deleted) in a dashed ring, the cue fc-hl-context gives a passage that moved, with a short tag
+   after it. styles-kept-embed.test.ts pins the mechanism and, in a browser, the pixels. */
 .tc-diff-ins { background: color-mix(in srgb, var(--green) 12%, transparent); border-bottom: 2px solid var(--fc-author, var(--accent));
   cursor: pointer; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .tc-diff-del { text-decoration: line-through; color: var(--dim); background: color-mix(in srgb, var(--err) 9%, transparent);
@@ -3655,6 +3663,9 @@ body.filebrowse-open { overflow: hidden; }
 .tc-diff-del.tc-diff-sub { margin-right: 3px; }
 .tc-diff-del-block { display: block; padding: 0 4px; border-left: 2px solid var(--fc-author, var(--accent)); border-bottom: none; }
 .tc-diff-del-line { display: block; min-height: 1.2em; }
+.tc-diff-del-kept-embed { display: inline-block; text-decoration: none; border: 1px dashed color-mix(in srgb, var(--dim) 60%, transparent);
+  border-radius: 4px; padding: 0 3px; }
+.tc-diff-del-kept-embed::after { content: " still in the file"; font-style: italic; }
 .tc-diff-hover { background: color-mix(in srgb, var(--fc-author, var(--accent)) 24%, transparent); }
 /* region comments on images (Slice 3; file-comments-regions.ts): a wrapper hugs the <img> — inline-block, so it sits in the
    flow where the picture was, the picture a block inside it so no line-height gap widens the box — an overlay the drawn

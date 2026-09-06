@@ -578,6 +578,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // side: an accept undone and redone after the save sends nothing; an accept undone and turned into a reject sends the
   // reject, and the log then reads accept, reject — what happened. A landed save moves each id it carried to that side
   // (mergeApplied), so a third flip is sent again. Reset with the editor (exitEdit): a fresh mount is a fresh ledger.
+  // An undo that reaches back past a landed save and stops there is the one thing the fold cannot express: see
+  // undoneLanded below.
   let applied: EditDecisions = { accepted: [], rejected: [] };
   const beyond = (all: EditDecision[], done: EditDecision[]): EditDecision[] => all.filter((e) => !done.some((d) => d.id === e.id));
   const unsent = (): EditDecisions => {
@@ -589,9 +591,38 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const keep = (l: EditDecision[]) => l.filter((e) => !ids.has(e.id));
     applied = { accepted: [...keep(applied.accepted), ...sent.accepted], rejected: [...keep(applied.rejected), ...sent.rejected] };
   };
-  // the decisions the editor holds that no landed save has carried (an accept changes no text, so the text comparison
-  // alone would call the buffer clean)
-  const decided = (): boolean => { const u = unsent(); return u.accepted.length + u.rejected.length > 0; };
+  // The records the editor holds that a landed save from this editor ALREADY decided: an undo reached back past that
+  // save (the chunk's history has no boundary at a save; undoing a decision puts the record back in the field and takes
+  // the ledger entry with it, editor-chunk.ts). The disk does not follow — the host applied and logged the decision and
+  // has no verb that takes one back — so such a record is neither pending nor sendable: among a save's suggestions the
+  // host would write it back as pending over a log that says accepted (and count a later accept of it twice), or refuse
+  // outright when that save pruned the sidecar (the review's undo-past-a-landed-save finding). So `dirty` counts it (no
+  // Save exits over it as "nothing changed": decided() below counts it), the ack that first shows one keeps the editor
+  // and says so (hooks.saved — before, an accept undone during the round-trip exited with the accept standing on disk
+  // and not a word), and Save refuses in words instead of sending (doSave). The ways out are the person's: redo the
+  // decision, decide the change again here (the reversal goes out, and the log reads accept, reject — what happened),
+  // or Cancel.
+  const undoneLanded = (): { accepted: number; rejected: number } => {
+    const recs = cm && cm.track ? cm.track.suggestions() : [];
+    const ids = new Set(recs.map((r) => String((r as { id?: unknown }).id)));
+    const n = (l: EditDecision[]) => l.filter((e) => ids.has(e.id)).length;
+    return { accepted: n(applied.accepted), rejected: n(applied.rejected) };
+  };
+  const anyUndoneLanded = (u: { accepted: number; rejected: number }): boolean => u.accepted + u.rejected > 0;
+  // The words for it, at the ack (`landed`: this save carried the decision) and at a refused Save (an earlier one did).
+  const undoneLandedNote = (u: { accepted: number; rejected: number }, landed: boolean): string => {
+    const total = u.accepted + u.rejected;
+    const what = total > 1 ? "the " + total + " decisions you undid" : u.accepted ? "the accept you undid" : "the reject you undid";
+    const again = total > 1 ? "decide the changes again here" : u.accepted ? "reject the change here instead" : "accept the change here instead";
+    const it = total > 1 ? "them" : "it";
+    const ways = "redo " + it + " (Ctrl/Cmd+Shift+Z), " + again + ", or Cancel to see the file as it was saved.";
+    return landed
+      ? "Saved, but " + what + " had already landed with this save and cannot be taken back: " + ways
+      : "Not saved: " + what + " had already landed with an earlier save and cannot be taken back. " + ways[0].toUpperCase() + ways.slice(1);
+  };
+  // the decisions the editor holds that disagree with the landed saves: one no save carried (an accept changes no text,
+  // so the text comparison alone would call the buffer clean), or one a save carried that an undo took back (undoneLanded)
+  const decided = (): boolean => { const u = unsent(); return u.accepted.length + u.rejected.length > 0 || anyUndoneLanded(undoneLanded()); };
   const isMd = langFor(path) === "markdown";  // .md/.markdown — the only kind with a Rendered form
   const segBtns: Array<["rendered" | "raw", HTMLButtonElement]> = [];
   if (isMd) {
@@ -1064,6 +1095,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const buf = bufValue();
     if (!editing || buf === null || saveBtn.disabled) return;
     if (!dirty) { exitEdit(); return; }         // nothing changed — leaving is the honest ack
+    // A record back in the field that a landed save already decided (undoneLanded): the host cannot take that decision
+    // back, so this Save sends nothing and says so, in place, with the buffer and the button as they were.
+    const undone = undoneLanded();
+    if (anyUndoneLanded(undone)) { noteBar(undoneLandedNote(undone, false)); return; }
     saveBtn.disabled = true; saveBtn.textContent = "Saving…";   // acknowledge before the round-trip
     // restore the file's own line endings — an untouched CRLF file must round-trip byte-identical
     const content = eolCRLF ? buf.replace(/\n/g, "\r\n") : buf;
@@ -1118,6 +1153,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
           saveBtn.disabled = false; saveBtn.textContent = "Save";
           return;
         }
+        // A decision UNDONE during the round-trip that this save carried: the record is back in the field with no
+        // text moved and nothing beyond `applied`, so the text check above and the exit below would leave with the
+        // decision standing on disk and the undo lost without a word. The ack is the moment the undo became
+        // irreversible: stay, and say so above the editor (undoneLanded; the person redoes it, decides it again, or
+        // cancels). Checked before decided(), which answers true for this too but says nothing.
+        const undoneAtAck = undoneLanded();
+        if (anyUndoneLanded(undoneAtAck)) {
+          dirty = true; saveBtn.disabled = false; saveBtn.textContent = "Save";
+          noteBar(undoneLandedNote(undoneAtAck, true));
+          return;
+        }
         // A decision clicked during the round-trip is the same stay with no text moved (an accept changes
         // none): it is in the ledger beyond what this save carried, and leaving would destroy it with the editor.
         if (decided()) { dirty = true; saveBtn.disabled = false; saveBtn.textContent = "Save"; return; }
@@ -1151,7 +1197,24 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       const decisions = unsent();
       sent = decisions;
       trackedEdit.save(content, records, decisions).then(
-        (r) => { if (editHooks !== hooks) return; editHooks = null; hooks.saved(r.mtimeNs, r.logged); },
+        (r) => {
+          if (editHooks !== hooks) {
+            // The edit ended while the host was writing (Cancel, Escape — confirmed, since the buffer was dirty), so
+            // the ack finds no editor to tell: `saved` must not run over whatever is up now. But the write landed all
+            // the same, and the panel applied the reply as its status before resolving — its poll's baseline is the
+            // saved file already, so no later tick would notice that the view still shows the bytes from before (the
+            // poll healed saveFile's dropped ack this way; a reply that re-bases the baseline takes that away — the
+            // review's cancel-during-save finding). The late ack is the event: tell the panel's onSaved (it clears its
+            // own bookkeeping for this reply) and read the file as it is now — at once if the view is showing it, at
+            // the exit if a new editor already holds the truth (the fetch-under-edit rule). Nothing if the viewer is
+            // gone: the next open reads the disk.
+            if (!wrap.isConnected) return;
+            for (const cb of savedHooks) { try { cb({ mtimeNs: r.mtimeNs, logged: r.logged }); } catch { /* a hook must never cost the heal */ } }
+            if (editing) refetchAfterEdit = true; else fetchFile();
+            return;
+          }
+          editHooks = null; hooks.saved(r.mtimeNs, r.logged);
+        },
         (e: { code?: unknown; error?: unknown }) => {
           if (editHooks !== hooks) return; editHooks = null;
           hooks.failed(String(e && e.error || "the save failed"), typeof (e && e.code) === "string" ? String(e.code) : undefined);
