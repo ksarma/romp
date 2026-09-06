@@ -332,6 +332,95 @@ class TimelineViews(unittest.TestCase):
         finally:
             km._remotes.clear(); km._remotes.update(saved)
 
+    def test_a_padded_remote_name_renders_on_the_stored_basis_so_a_lens_can_pick_it(self):
+        """Round 7 of the 2026-09-05 review: round 6 put every lens and order entry on the stored name
+        basis (cap, then strip) while a REMOTE tag's name still rendered clamped only — so a remote
+        kernel on an older build (or a padded remote store) serving "web " rendered "web ", the lens
+        that picked it stored "web", and _lens_visible (exact equality, mirrored by tag-lens.ts)
+        admitted none of its members: the surface filtered to that tag showed no session, silently."""
+        saved = dict(km._remotes)
+        try:
+            km._remotes.clear()
+            self._attach("peer", {"tags": [
+                {"id": "r1", "name": "web ", "color": "", "members": [{"host": "", "sid": "s9"}]},
+                {"id": "r2", "name": "x" * 60 + "  ", "color": "", "members": []},
+                {"id": "r3", "name": "   ", "color": "", "members": []}]})
+            km._set_timeline_views({"active": "all",
+                                    "tags": [{"id": "gL", "name": "api", "color": "", "members": ["s1"]}],
+                                    "actives": {"timeline": {"tags": ["web "]}}, "tagOrder": ["web ", "api"]})
+            km._flags_cache.clear()
+            v = km._views_client()
+            self.assertEqual([t["name"] for t in v["remoteTags"]], ["web", "x" * km._VIEWS_MAX_NAME, "tag"],
+                             "cap, then strip — the rows' own basis; empty after the strip is the default name")
+            self.assertEqual(v["actives"]["timeline"], {"tags": ["web"]})
+            self.assertTrue(km._view_visible(v, "peer:s9", "timeline"),
+                            "the lens stored as \"web\" admits the remote tag's member")
+            self.assertFalse(km._view_visible(v, "s1", "timeline"), "…and only it")
+            self.assertEqual(v["tagOrder"], ["web", "api"], "the order entry ranks the rendered remote name")
+        finally:
+            km._remotes.clear(); km._remotes.update(saved)
+
+    def test_the_union_joins_a_padded_remote_twin_to_the_local_tag(self):
+        saved = dict(km._remotes)
+        try:
+            km._remotes.clear()
+            self._attach("peer", {"tags": [{"id": "r1", "name": "web ", "color": "",
+                                            "members": [{"host": "", "sid": "s9"}]}]})
+            km._set_timeline_views({"active": "all",
+                                    "tags": [{"id": "gL", "name": "web", "color": "", "members": ["local1"]}]})
+            km._flags_cache.clear()
+            v = km._views_client()
+            v["active"] = "gL"
+            self.assertTrue(km._view_visible(v, "peer:s9"),
+                            "a tag is its name: the padded remote twin joins the local tag's view")
+            v["active"] = "peer:r1"
+            self.assertTrue(km._view_visible(v, "local1"), "…from either id")
+            self.assertTrue(km._lens_visible(v, {"tags": ["web"]}, "peer:s9"))
+            self.assertFalse(km._lens_visible(v, {"none": True}, "peer:s9"), "its member is tagged, so not untagged")
+        finally:
+            km._remotes.clear(); km._remotes.update(saved)
+
+    def test_a_pending_edit_on_a_padded_remote_name_is_captured_joined_and_applied_on_the_basis(self):
+        """The pending-edit journal (tag federation v2) matched a row's name to the host's raw tag name
+        at capture and at late-apply, and joined it to the rendered row for the `pending` badge —
+        every one of those is on the stored basis now, so a padded remote name is one name there too."""
+        saved = dict(km._remotes)
+        seams = (km._poll_remote_views, km._remote_forward)
+
+        def fresh_journal():
+            try:
+                km._pending_tag_path().unlink()
+            except OSError:
+                pass
+            with km._PENDING_TAG_LOCK:
+                km._PENDING_TAG_CACHE["rows"] = None
+        fresh_journal()
+        try:
+            km._remotes.clear()
+            r = {"host": "peer", "status": "up", "local_port": 1, "token": "",
+                 "views": {"tags": [{"id": "r1", "name": "web ", "color": "", "members": []}]}}
+            km._remotes["peer"] = r
+            self.assertTrue(km._queue_pending_tag_edit("peer", {"name": " web", "delete": True}),
+                            "the user's spelling, padded differently again")
+            row = km._pending_tag_rows()[-1]
+            self.assertEqual((row["name"], row["tagId"]), ("web", "r1"),
+                             "journaled on the basis, with the cached tag's id")
+            v = km._views_client()
+            self.assertEqual(v["remoteTags"][0].get("pending"), "delete", "the badge joins the rendered row")
+            self.assertEqual(v["pendingTagEdits"], [{"host": "peer", "name": "web", "op": "delete"}])
+            forwarded = []
+            km._poll_remote_views = lambda r: {"tags": [{"id": "r1", "name": "web ", "color": "", "members": []}]}
+            km._remote_forward = lambda r, path, body: (forwarded.append((path, body))
+                                                        or {"ok": True, "deleted": True})
+            self.assertEqual(km._apply_pending_tag_edits(r), 1, "the late apply finds the padded tag by its basis")
+            self.assertEqual(forwarded, [("/tag", {"name": "web ", "delete": True})],
+                             "…and addresses the host in its own spelling, which its door strips")
+            self.assertEqual(km._pending_tag_rows(), [])
+        finally:
+            km._poll_remote_views, km._remote_forward = seams
+            km._remotes.clear(); km._remotes.update(saved)
+            fresh_journal()
+
     def test_a_down_kernels_CACHE_keeps_contributing_and_active_hidden_stay_local(self):
         # REVERSED from v0 (the user 2026-08-24, the untagged-view bug): visibility must not flap
         # with a peer's restart, so the last-known tags keep excluding from untagged and keep their

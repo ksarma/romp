@@ -2471,7 +2471,12 @@ def _tag_name_basis(n):
     lens entry or an order entry read on any other basis names nothing: a store that already held a
     padded twin ("web " beside "web") read both rows as "web" on the first post-upgrade read while
     its lens and order still carried "web ", so the surface filtered to it showed no session and the
-    tag fell to the end of the order. "" for a non-string or an all-whitespace name."""
+    tag fell to the end of the order. A REMOTE tag's rendered name is on it too (_views_client), and
+    so is a pending edit's name (_queue_pending_tag_edit): a remote kernel on an older build, or a
+    padded remote store, serves "web " raw, and a lens stored as "web" — every entry is — never
+    matched the rendered "web ", so the surface filtered to that tag showed none of its members and
+    the name-keyed union kept the padded twin apart from the local tag. Every name a client sees or
+    a lens compares is on this one basis. "" for a non-string or an all-whitespace name."""
     return str(n)[:_VIEWS_MAX_NAME].strip() if isinstance(n, str) else ""
 
 
@@ -3231,7 +3236,10 @@ def _queue_pending_tag_edit(host, body):
     for its (host, name) and refuses later ones (the delete already rules); removes merge; a
     rename replaces a prior rename. Only ATTACHED hosts queue — a detached host has no reattach
     event coming, and detach was its own intent."""
-    name = str(body.get("name") or "")
+    # the NAME BASIS (round 7 of the 2026-09-05 review): the row's name is matched against the
+    # host's tag names at capture and at late-apply, and joined to the rendered row for the
+    # pending badge — every one of those is on the stored basis, so the row is too
+    name = _tag_name_basis(body.get("name"))
     qual = bool(body.get("delete")) or isinstance(body.get("rename"), str) \
         or (isinstance(body.get("remove"), list) and body.get("remove"))
     if not (host and name and qual):
@@ -3242,20 +3250,20 @@ def _queue_pending_tag_edit(host, body):
     if r is None:
         return False
     tid = next((str(t.get("id") or "") for t in (cached.get("tags") or [])
-                if isinstance(t, dict) and t.get("name") == name), "")
+                if isinstance(t, dict) and _tag_name_basis(t.get("name")) == name), "")
     rows = _pending_tag_rows()
-    mine = [x for x in rows if x.get("host") == host and x.get("name") == name]
+    same = lambda x: x.get("host") == host and _tag_name_basis(x.get("name")) == name   # a journal from before the basis may hold a padded name
+    mine = [x for x in rows if same(x)]
     if any(x.get("delete") for x in mine):
         return True                              # the delete already rules this name; nothing to add
     row = {"host": host, "name": name, "tagId": tid, "ruledAt": int(time.time()), "at": int(time.time())}
     if body.get("delete"):
-        rows = [x for x in rows if not (x.get("host") == host and x.get("name") == name)]
+        rows = [x for x in rows if not same(x)]
         row["delete"] = True
     else:
         if isinstance(body.get("rename"), str) and body["rename"].strip():
             row["rename"] = body["rename"]
-            rows = [x for x in rows if not (x.get("host") == host and x.get("name") == name
-                                            and x.get("rename"))]
+            rows = [x for x in rows if not (same(x) and x.get("rename"))]
         if isinstance(body.get("remove"), list) and body.get("remove"):
             merged = []
             for x in mine:
@@ -3299,13 +3307,13 @@ def _apply_pending_tag_edits(r):
                     pending=len(rows))
         return 0
     r["views"] = rv
-    by_name = {}
+    by_name = {}                                 # keyed on the name basis: the host's raw name may be padded
     for t in (rv.get("tags") or []):
         if isinstance(t, dict):
-            by_name.setdefault(str(t.get("name") or ""), []).append(t)
+            by_name.setdefault(_tag_name_basis(t.get("name")), []).append(t)
     retired, applied = [], 0
     for row in rows:
-        cand = by_name.get(row.get("name") or "") or []
+        cand = by_name.get(_tag_name_basis(row.get("name"))) or []
         t = next((x for x in cand if row.get("tagId") and x.get("id") == row["tagId"]), None)
         if t is None and cand:
             # same name, different identity: NEW if its id says it was created after the ruling;
@@ -3379,8 +3387,11 @@ def _views_client():
             if not isinstance(t, dict) or not t.get("id"):
                 continue
             members = [m for m in (_member_pair(x) for x in (t.get("members") or [])) if m]
+            # the NAME BASIS (round 7 of the 2026-09-05 review): an older remote build, or a padded
+            # remote store, serves "web " raw; rendered raw, no lens entry (all on the basis) could
+            # pick it and the union kept it apart from a local "web" — see _tag_name_basis
             remote.append({"id": host + ":" + str(t["id"])[:64], "host": host,
-                           "name": str(t.get("name") or "tag")[:_VIEWS_MAX_NAME],
+                           "name": _tag_name_basis(t.get("name")) or "tag",
                            "color": str(t.get("color") or "")[:16],
                            "members": [_remote_tag_member_str(host, m) for m in members]})
     if remote:
@@ -3391,9 +3402,11 @@ def _views_client():
     # still surfaces.
     pend = _pending_tag_rows()
     if pend:
-        v["pendingTagEdits"] = [{"host": x.get("host") or "", "name": x.get("name") or "",
+        v["pendingTagEdits"] = [{"host": x.get("host") or "", "name": _tag_name_basis(x.get("name")),
                                  "op": _row_op(x)} for x in pend]
-        by_hn = {(x.get("host"), x.get("name")): _row_op(x) for x in pend}
+        # joined on the name basis, like the rendered row (a journal from before the basis may hold
+        # a padded name; the row's name is the client's word, the rendered name the remote's)
+        by_hn = {(x.get("host"), _tag_name_basis(x.get("name"))): _row_op(x) for x in pend}
         for t in (v.get("remoteTags") or []):
             op = by_hn.get((t.get("host"), t.get("name")))
             if op:
