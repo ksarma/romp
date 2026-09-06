@@ -76,7 +76,16 @@ const webview = {
   loader: { ".woff2": "file" },
   assetNames: "fonts/[name]-[hash]",
   sourcemap: !production,
-  minify: production,
+  // Whitespace and syntax are minified for a release; identifiers are NOT (2026-09-06): the browser's
+  // long-animation-frame reports name the callback it ran by its compile-time name, and perf-telemetry.ts
+  // keys its attribution on that, so a mangled build reported `feed.js:Qe` and a different letter after
+  // every rebuild (the ten-minute fold in `romp perf client` then split one function across keys). Stack
+  // traces and DevTools profiles read better for the same reason. Measured cost (2026-09-06, esbuild 0.21):
+  // +27% raw over all webview bundles (feed.js 372 KB to 464 KB, render.js 817 KB to 1046 KB) and +13.5%
+  // gzipped, which is what the kernel serves (feed.js 119 KB to 134 KB, render.js 252 KB to 288 KB).
+  minifyWhitespace: production,
+  minifySyntax: production,
+  minifyIdentifiers: false,
   logLevel: "info",
 };
 

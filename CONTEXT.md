@@ -40,6 +40,49 @@ A class of state the judges and the unblocker cannot clear — only designated a
 agentTask nodes were the first (an agent's open task vetoes an inferred done); user todos are
 the second (cleared only by answer, dismiss, or withdraw).
 
+### File comments and changes
+
+**File comment**:
+A comment a person leaves on a file: on a passage of its text, on a region of an image or a
+page, or on the file as a whole. It is stored beside the file, carries its replies, and can be
+resolved. It belongs to the file, not to a session or a conversation, and outlives both.
+_Avoid_: thread (a comment thread is a forked side session anchored to the chat), annotation,
+note, review comment (a file comment needs no review to exist)
+
+**Change**:
+An edit a session made to a file that awaits the person's accept or reject; the file already
+reads as if it were accepted. Accepting keeps the text and drops the record; rejecting reverts
+the text.
+_Avoid_: suggestion (the storage format's word, not the person's), diff, op, edit (which also
+means the person's own direct edits)
+
+**Tracked file**:
+A file whose changes by a session are recorded for accept or reject instead of landing
+silently. Tracking is turned on per file or per folder; it is off unless someone turns it on.
+_Avoid_: watched, reviewed
+
+**Direct edit**:
+The person's own edit to a file from the dashboard. Never a change: it lands at once, and the
+session working in that folder is told.
+
+**Project (of a file)**:
+The nearest git repository, vault, or folder that already holds comments above a file; a file
+with none starts a project of its own on its first comment. Every file in a project keeps its
+comments, changes, and comments log together at the project's root, never scattered per folder.
+_Avoid_: repo (a project need not be one), root alone (ambiguous with the filesystem root)
+
+**Comments log**:
+The append-only record kept beside a file's comments of what was sent to a session, what the
+person accepted or rejected, when tracking was turned on or off, and the person's direct edits.
+Where the comments themselves forget a decision, the log remembers it.
+_Avoid_: history (reads as git history), log alone (the chat has logs), ledger
+
+**Send to session**:
+The one gesture that hands a file's unsent comments, replies, and decisions to the session that
+owns the file, as a single message in the person's voice; it may also answer the user todo the
+file was opened from.
+_Avoid_: send review, ping, submit
+
 ### Pre-existing attention vocabulary
 
 **Agent to-do checklist**:

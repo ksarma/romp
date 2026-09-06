@@ -79,7 +79,7 @@ class CommentBase(unittest.TestCase):
         jd._rebind_state(Path(self._td))
         jd.PROJECTS = Path(self._td) / "projects"
         jd._discover_cache.clear()
-        jd._PARSE_CACHE.clear()
+        jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         km._thread_msgs_cache.clear()
         self.now = int(time.time())
         self.cdir = str(Path(self._td) / "work")
@@ -427,7 +427,7 @@ class ThreadProjection(CommentBase):
 
     def _frame_thread(self, records, state=""):
         self._write(THREAD, records)
-        km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear()
+        km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         km._sdk = lambda: self._State(state)
         return km._comments_frame(PARENT)["threads"][0]
 
@@ -848,7 +848,7 @@ class ThreadProjection(CommentBase):
         # it now rides the frame's error channel, in the user's words
         self._seed_thread()
         (self.proj / (THREAD + ".jsonl")).unlink()
-        km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear()
+        km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         km._thread_unreadable_warned.clear()
         km._sdk = lambda: self._State("")
         th = km._comments_frame(PARENT)["threads"][0]
@@ -862,7 +862,7 @@ class ThreadProjection(CommentBase):
         import contextlib, io
         self._seed_thread()
         (self.proj / (THREAD + ".jsonl")).unlink()
-        km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear()
+        km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         km._thread_unreadable_warned.clear()
         km._sdk = lambda: self._State("working")
         err = io.StringIO()
@@ -931,7 +931,7 @@ class ThreadProjection(CommentBase):
         import contextlib, io
         self._seed_thread()
         (self.proj / (THREAD + ".jsonl")).unlink()
-        km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear()
+        km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         km._thread_unreadable_warned.clear()
         km._sdk = lambda: self._State("")
         err = io.StringIO()
