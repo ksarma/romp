@@ -53,16 +53,13 @@ function viewsAdopts(held, incoming) {
   const h = viewsSeq(held), i = viewsSeq(incoming);
   return h === null || i === null || i >= h;
 }
-// the held blob with its seq forgotten (a copy; null for none) — the hand-mirror of views-writes.ts
-// forgetSeq (round 6 of the 2026-09-05 review): done on the kernel's `caps` frame, the reconnect
-// event, so a store the restarted kernel serves under an OLDER seq (restored while it was down; its
-// seq floor lives for its process) is adopted on the next frame instead of ignored until the next write
-function viewsForgetSeq(held) {
-  if (!held) return null;
-  const v = JSON.parse(JSON.stringify(held));
-  delete v.seq;
-  return v;
-}
+// the base after the kernel's `caps` frame, the reconnect event — the hand-mirror of views-writes.ts
+// adoptOnCaps (round 6 of the 2026-09-05 review): the blob the gate last REJECTED since its last
+// adoption, when there is one, else the held blob unchanged. The connect push precedes the caps frame,
+// so a push a restarted kernel served under an OLDER seq (a store restored while it was down; its seq
+// floor lives for its process) was turned away a frame ago and is adopted here; a healthy reconnect's
+// push was adopted, nothing is retained, and the gate stands
+function viewsAdoptOnCaps(held, rejected) { return rejected || held || null; }
 // The hand-mirror of views-writes.ts applyTagEdit / rederiveViews (round 3 of the 2026-09-05
 // review): one targeted op applied to a blob's LOCAL tags the way the gesture applied it (a copy;
 // an unknown tid is a no-op — the kernel refuses it), and the optimistic copy rebuilt from the base
@@ -960,6 +957,7 @@ class TimelinePanel {
     this._pendingFlags = {};     // sid → {flag: value}: an optimistic eye-toggle held STICKY across pushes until the kernel's data confirms it (no flicker-back)
     this._dismissed = new Set(); // sids cleared via the dead-lane Clear pill, held STICKY the same way (see _reconcileDismissed)
     this._views = null;          // the kernel-echoed views blob (data.views); null until the first push
+    this._rejectedViews = null;  // the last blob the seq gate turned away since it last adopted one — what the caps frame adopts (setCaps)
     this._pendingViews = null;   // an optimistic edit held until the kernel ACKS the write (viewsAck) or echoes it exactly (_reconcileViews)
     this._viewsWrites = [];      // the writes in flight, oldest first: {id, name, tid, op, openRename} — the pending copy clears when the LAST one is acked
     this._viewsWriteSeq = 0;     // writeId mint — a per-page counter beside the ms stamp, so two same-ms gestures never share one
@@ -3121,10 +3119,14 @@ class TimelinePanel {
   // least the held one (the hand-mirror of views-writes.ts adoptViews, 2026-09-05): the pusher builds
   // frames from a warmed cache that can predate a write whose ack already arrived, and federation
   // re-emits stored blobs, so wire order decides nothing — the store's own order does. An ignored
-  // blob logs once per page, so a kernel serving stale frames is a visible fact.
+  // blob logs once per page, so a kernel serving stale frames is a visible fact. The last ignored blob
+  // is KEPT (and let go by the next adoption): a kernel restarted over a store restored from an older
+  // copy serves it under the old seq, so its connect push is turned away here — and the caps frame
+  // that follows it adopts it (setCaps; round 6 of the 2026-09-05 review).
   _takeViews(v) {
     if (!v) return false;
-    if (viewsAdopts(this._views, v)) { this._views = v; return true; }
+    if (viewsAdopts(this._views, v)) { this._views = v; this._rejectedViews = null; return true; }
+    this._rejectedViews = v;
     if (!this._staleViewsLogged) {
       this._staleViewsLogged = true;
       try { console.warn('romp timeline: ignored a views blob older than the one held (seq ' + viewsSeq(v) + ' < ' + viewsSeq(this._views) + ')'); } catch (e) {}
@@ -3154,13 +3156,21 @@ class TimelinePanel {
   // can lose an ack (the socket died between the write and its answer), so writes still in flight
   // when this frame arrives are unknowable: they are dropped, the copy reverts to what the kernel's
   // frames show, and the dialog says so — never a pinned copy faking success, never a silent revert.
-  // The held seq is forgotten on it too (viewsForgetSeq): the next blob is adopted whatever its seq.
+  // It is also the event that adopts the blob the gate last turned away, when there is one
+  // (viewsAdoptOnCaps): the connect push a restarted kernel served under an OLDER seq (a store
+  // restored while it was down) was rejected a frame ago and is adopted here, the gate re-arming at
+  // its seq; a healthy reconnect's push was adopted, nothing is retained, and the gate stands. A write
+  // in flight is dropped whatever the base became: its ack cannot reach this socket, and one that
+  // somehow did is an ack for a write this page no longer tracks — its blob meets the gate like any
+  // other arrival, and nothing is re-pinned (viewsAck).
   setCaps(m) {
     this._caps = new Set((m && Array.isArray(m.caps)) ? m.caps.filter((c) => typeof c === 'string') : []);
-    this._views = viewsForgetSeq(this._views);
-    if (!this._viewsWrites.length) return;
-    this._viewsWrites = []; this._pendingViews = null;
-    this._tagEditErr = { host: '', name: '', error: 'the connection was re-established; an edit made just before it may not have landed — check the list' };
+    const adopted = this._rejectedViews !== null;
+    this._views = viewsAdoptOnCaps(this._views, this._rejectedViews); this._rejectedViews = null;
+    if (this._viewsWrites.length) {
+      this._viewsWrites = []; this._pendingViews = null;
+      this._tagEditErr = { host: '', name: '', error: 'the connection was re-established; an edit made just before it may not have landed — check the list' };
+    } else if (!adopted) return;   // nothing in flight, nothing adopted: the caps changed, nothing shown did
     this._repaintTagSurfaces();
     this.draw();
   }

@@ -14,7 +14,7 @@
 import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder, pruneViewOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
 import { applyFeedDelta } from "./feed-delta";
-import { adoptViews, forgetSeq } from "./views-writes";
+import { adoptViews, adoptOnCaps } from "./views-writes";
 import { hostOf, bareId } from "./host-prefix";
 
 export const SEP = ":";
@@ -665,6 +665,8 @@ export class FederationManager {
   private perHostOrder: Record<string, string[]> = {};
   private perHostTabs: Record<string, any[]> = {};
   private localViews: any = null;   // the LOCAL kernel's session-views blob, carried on merged tabOrder re-emits
+  private localViewsRejected: any = null;   // the last LOCAL tabOrder blob the seq gate turned away since it last adopted one — the caps frame adopts it (inbound)
+  private tlViewsRejected: any = null;      // the same for the LOCAL lanes payload's blob (perHostTl[LOCAL].views)
   private perHostSids: Record<string, Set<string>> = {};
   private perHostFeed: Record<string, any> = {}; // last feed snapshot per host — merged so they don't clobber
   private perHostFeedAt: Record<string, number> = {}; // host -> local ms its snapshot ARRIVED (feed or the delta that updated it): the merged frame's clock anchor (mergeHostFeeds `nowAt`), so a re-emit anchors exactly as the arrival did
@@ -760,14 +762,24 @@ export class FederationManager {
     // a kernel's `caps` frame describes THAT kernel; the panes hold only the LOCAL kernel's (its views
     // store is the one they write). A remote's would read as the local kernel's — dropped here.
     if (m && m.type === "caps" && host !== LOCAL) return;
-    // the local kernel's caps frame is the reconnect event: the two replayed views stores forget their
-    // seq with it (round 6 of the 2026-09-05 review), as the panes do — a kernel restarted over a store
-    // restored from an older copy serves it under the old seq, and a store here holding the higher one
-    // would keep replaying the pre-restore blob to panes that had just let it go
+    // The local kernel's caps frame is the reconnect event: each replayed views store adopts the blob its
+    // gate last turned away, when there is one (round 6 of the 2026-09-05 review; adoptOnCaps), as the
+    // panes do — the kernel sends its connect push before this frame, so a push a restarted kernel served
+    // under an OLDER seq (a store restored while it was down) was rejected a frame ago and is adopted here;
+    // a healthy reconnect's push was adopted, nothing is retained, and the stores stand. A store that
+    // adopted RE-EMITS before the caps frame is handed on: the panes see the local blob only through these
+    // re-emits (a rejected push reached them wearing the stored blob), so the restored blob must meet their
+    // own gate — and be turned away there — before their caps door adopts it. Nothing is re-emitted otherwise.
     if (m && m.type === "caps") {
-      this.localViews = forgetSeq(this.localViews);
+      if (this.localViewsRejected) {
+        this.localViews = adoptOnCaps(this.localViews, this.localViewsRejected); this.localViewsRejected = null;
+        this.emitMergedOrder();
+      }
       const tl = this.perHostTl[LOCAL];
-      if (tl && tl.views) this.perHostTl[LOCAL] = { ...tl, views: forgetSeq(tl.views) };
+      if (this.tlViewsRejected && tl) {
+        this.perHostTl[LOCAL] = { ...tl, views: adoptOnCaps(tl.views, this.tlViewsRejected) }; this.tlViewsRejected = null;
+        this.emitMergedTimeline(false);
+      }
     }
     // A kernel's `closed` frame is ITS OWN report that the session is gone — the one other writer allowed
     // to touch the per-host store (T233, the user 2026-09-03). The 2026-08-02 rule below forbids
@@ -798,8 +810,11 @@ export class FederationManager {
       // dashboard's chat never learned the views at all. Kept ONLY when its write sequence is at
       // least the stored one (2026-09-05): the re-emit below replays this copy on every merged order,
       // and a frame the kernel built before a write must not roll the replayed blob back behind an
-      // ack the pane already adopted.
-      if (host === LOCAL && m.views && typeof m.views === "object" && adoptViews(this.localViews, m.views)) this.localViews = m.views;
+      // ack the pane already adopted. The last blob turned away is kept for the caps frame (above).
+      if (host === LOCAL && m.views && typeof m.views === "object") {
+        if (adoptViews(this.localViews, m.views)) { this.localViews = m.views; this.localViewsRejected = null; }
+        else this.localViewsRejected = m.views;
+      }
       this.ensureHost(host);
       this.absorbHostReport(host, prevOrder, prevTabs);   // a host just reported its sessions → the one
       this.emitMergedOrder(true, host);                   //   moment the stored arrangement may be touched
@@ -836,10 +851,15 @@ export class FederationManager {
     if (m && m.type === "data" && m.data && typeof m.data === "object") {
       // the LOCAL lanes payload carries the views blob the merged re-emit replays: a payload whose blob
       // has a LOWER write sequence than the stored one keeps the stored blob (its lanes still land) —
-      // the same rule the tabOrder store applies above (2026-09-05)
+      // the same rule the tabOrder store applies above (2026-09-05), and the same keep of the last blob
+      // turned away, for the caps frame
       const held = host === LOCAL ? this.perHostTl[LOCAL] : null;
-      this.perHostTl[host] = (held && held.views && m.data.views && !adoptViews(held.views, m.data.views))
-        ? { ...m.data, views: held.views } : m.data;
+      if (held && held.views && m.data.views && !adoptViews(held.views, m.data.views)) {
+        this.perHostTl[host] = { ...m.data, views: held.views }; this.tlViewsRejected = m.data.views;
+      } else {
+        this.perHostTl[host] = m.data;
+        if (host === LOCAL && m.data.views) this.tlViewsRejected = null;
+      }
       this.ensureHost(host);
       this.emitMergedTimeline(false);
       return;

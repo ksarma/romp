@@ -542,25 +542,81 @@ test("executed: a lost ack — the caps frame the kernel sends at every ready (a
   assert.equal(panel._tagEditErr, before);
 });
 
-test("executed: the caps frame forgets the held seq — a kernel restarted over a store restored from an older copy is adopted on the next frame, not ignored until its next write", () => {
-  const panel = drawnPanel();                       // the load: S0's frame, then the caps frame (which forgets the seq)…
-  frame(panel, S0);                                 // …and the next push holds seq 1000 again
-  assert.equal(panel._views.seq, 1000);
+// ── ROUND 6 of the 2026-09-05 review, the refuters' F6/F7: the caps frame adopts the blob the gate last
+// turned away (the connect push precedes it), and never opens the gate.
+test("executed: a restored store lands on the caps frame itself — the connect push the restarted kernel serves under an older seq is turned away, then adopted on caps, with nothing to wait for", () => {
+  const panel = drawnPanel();                       // the load: S0's frame (adopted), then the caps frame (nothing retained: inert)
+  assert.equal(panel._views.seq, 1000, "the load-time caps frame leaves the held seq alone");
   const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
   try {
-    const restored = copy(S0); restored.seq = 900; restored.tags[0].name = "site";   // the store as the restarted kernel serves it
+    // the kernel was down; timeline-views.json was restored from an older copy (seq 900) while this page held 1000;
+    // the kernel restarted; the shim reconnected and re-sent `ready`: the kernel's connect push comes FIRST…
+    const restored = copy(S0); restored.seq = 900; restored.tags[0].name = "site";
     frame(panel, restored);
-    assert.equal(panel._views.seq, 1000, "before the reconnect event an older seq is ignored, as the gate says");
+    assert.equal(panel._views.seq, 1000, "…and the gate turns it away, as it must before the reconnect event");
     assert.equal(warned.length, 1);
-    panel.setCaps({ type: "caps", caps: ["tagEdit"] });   // the shim reconnected and re-sent `ready`; the kernel answered with its caps
-    assert.equal(panel._views.seq, undefined, "the held seq is forgotten on it");
-    assert.equal(panel._curViews().tags[0].name, "web", "…and nothing else changes until the next blob arrives");
-    frame(panel, restored);
-    assert.equal(panel._views.seq, 900, "the next frame is adopted whatever its seq");
-    assert.equal(panel._curViews().tags[0].name, "site");
-    frame(panel, Object.assign(copy(restored), { seq: 899 }));
-    assert.equal(panel._views.seq, 900, "and the store's own order gates again after it");
+    panel.setCaps({ type: "caps", caps: ["tagEdit"] });   // …then its caps frame
+    assert.equal(panel._views.seq, 900, "the caps frame adopts exactly the blob the gate turned away — no repost to wait for");
+    assert.equal(panel._curViews().tags[0].name, "site", "the page shows the restored store at once");
     assert.equal(panel._tagEditErr, null, "nothing was in flight: nothing is said");
+    frame(panel, Object.assign(copy(restored), { seq: 899 }));
+    assert.equal(panel._views.seq, 900, "and the store's own order gates again from its seq");
+    frame(panel, restored);
+    assert.equal(panel._views.seq, 900);
+    // the pre-restore blob, should some late frame of the old process ever turn up, would pass the gate (1000 >= 900):
+    // the gate knows one order, not two lineages — but nothing from the old socket can arrive after the new one's caps
+  } finally { console.warn = cw; }
+});
+
+test("executed: a healthy reconnect keeps the gate — the connect push is adopted, the caps frame retains nothing, and a pusher frame built before a concurrent write is still turned away", () => {
+  const panel = drawnPanel();
+  const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
+  try {
+    // the socket dropped and came back on the same kernel; meanwhile another dashboard's write landed (seq 1001)
+    const S1 = copy(S0); S1.seq = 1001; S1.tags[0].members = [SID1, SID2];
+    frame(panel, S1);                                 // the connect push: current, adopted
+    panel.setCaps({ type: "caps", caps: ["tagEdit"] });
+    assert.equal(panel._views.seq, 1001, "nothing was turned away, so the caps frame changes nothing: the seq is held, not forgotten");
+    frame(panel, S0);                                 // the pusher thread's frame, built from its cache before that write, enqueued after caps
+    assert.equal(panel._views.seq, 1001, "turned away: the gate never opened, so there is no one-cycle flap");
+    assert.deepEqual(panel._curViews().tags[0].members, [SID1, SID2]);
+    assert.equal(warned.length, 1);
+    frame(panel, S1);
+    assert.equal(panel._views.seq, 1001, "the next cycle's frame is the same write, seen again");
+    // the kept blob (S0) was let go by that adoption: a later caps frame has nothing to adopt
+    panel.setCaps({ type: "caps", caps: ["tagEdit"] });
+    assert.equal(panel._views.seq, 1001);
+    assert.deepEqual(panel._curViews().tags[0].members, [SID1, SID2]);
+  } finally { console.warn = cw; }
+});
+
+test("executed: a write in flight at a restored-store reconnect is dropped and said so, and the copy reverts to the ADOPTED base, not the pre-restore one", () => {
+  const panel = drawnPanel();
+  panel._openViewsDialog(null);
+  const u = viewTagUnion(panel._curViews()).find((x: any) => x.name === "web");
+  panel._editTagUnion(u, { rename: "notes" });
+  assert.equal(panel._viewsWrites.length, 1, "the rename is in flight");
+  assert.equal(panel._curViews().tags[0].name, "notes", "…and shows");
+  const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
+  try {
+    const restored = copy(S0); restored.seq = 900; restored.tags[0].name = "site";   // the store the restarted kernel serves
+    frame(panel, restored);                            // the connect push, turned away
+    assert.equal(panel._curViews().tags[0].name, "notes", "the copy still shows until the reconnect event");
+    panel.setCaps({ type: "caps", caps: ["tagEdit"] });
+    assert.deepEqual(panel._viewsWrites, [], "the write is dropped: its ack cannot reach this socket");
+    assert.equal(panel._pendingViews, null);
+    assert.equal(panel._views.seq, 900, "the base is the restored store…");
+    assert.equal(panel._curViews().tags[0].name, "site", "…and that is what shows — never the pre-restore blob the copy was drawn over");
+    assert.match(panel._tagEditErr.error, /re-established.*may not have landed/, "the user is told");
+    const shown = walk(panel._viewsDialog).map(textOf).find((s) => s.startsWith("⚠ "));
+    assert.ok(shown, "…in the open dialog, rebuilt over the adopted base");
+    // an ack for the dropped write — unreachable on the socket it was posted on; if one arrived it is an ack for
+    // a write this page no longer tracks: its blob meets the gate like any arrival (899 < 900: turned away), and
+    // nothing is re-pinned
+    const late = copy(restored); late.seq = 899; late.tags[0].name = "notes";
+    panel.viewsAck({ type: "tagEditAck", writeId: "w-dropped", ok: true, tid: "gA", seq: 899, views: late });
+    assert.equal(panel._views.seq, 900); assert.equal(panel._curViews().tags[0].name, "site");
+    assert.deepEqual(panel._viewsWrites, []); assert.equal(panel._pendingViews, null);
   } finally { console.warn = cw; }
 });
 
@@ -755,7 +811,6 @@ test("pins: no frame count settles a stamped kernel's write; the legacy exact ec
 // ── ROUND 4 of the 2026-09-05 review ──────────────────────────────────────────────────────────────────
 test("executed: a lens or order write is built from the STORE's blob — a rename still in flight never rides it, and its refusal reverts only the rename", () => {
   const panel = drawnPanel();
-  frame(panel, S0);                                 // the load's caps frame forgot the seq (round 6); the next push holds it again
   const web = viewTagUnion(panel._curViews()).find((g: any) => g.name === "web");
   panel._editTagUnion(web, { rename: "notes" });
   assert.deepEqual([tagOps().length, tagOps()[0].op, tagOps()[0].newName], [1, "rename", "notes"]);
