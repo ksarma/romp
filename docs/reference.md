@@ -206,7 +206,10 @@ most four parts. RGI membership, whether fonts draw a joined sequence as one
 glyph, is not checked: it needs the sequence list rather than the property
 tables, so a well-formed chain of up to four emoji is accepted as typed. The
 code-point tables come from Unicode 16.0; an emoji from a newer release is
-refused until the tables are updated. An accepted emoji is drawn with the
+refused until the tables are updated. The tables alone decide, not the Python
+interpreter's own Unicode database, which may be older (Python 3.12 and 3.13
+ship Unicode 15): a Unicode 16.0 emoji is accepted, and quoted in a refusal,
+on every supported Python. An accepted emoji is drawn with the
 viewing machine's own emoji font, so one from the newest Unicode release can
 still show as an empty box on a machine whose font predates it.
 

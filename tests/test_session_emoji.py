@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import types
+import unicodedata
 import unittest
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -97,6 +98,15 @@ class Validator(unittest.TestCase):
         ("\u2764" + TAGS_GB, "black flag"),                          # a tag run on a text-default heart
         ("‍".join(["\U0001F600"] * 7), "at most 4 parts"),         # seven joined grins, 46 bytes, under the cap
         ("‍".join([MOON] * 5), "at most 4 parts"),
+        # a Unicode 16.0 emoji beside junk: the reason quotes the emoji and names the junk, on every
+        # interpreter — Python 3.12/3.13's Unicode database (15.0/15.1) calls U+1FAE9 unassigned, and
+        # the validator's invisibility test used to defer to it (review round 2, 2026-09-06)
+        ("\U0001FAE9x", 'not an emoji: "\U0001FAE9x"'),
+        ("x\U0001FADC", 'not an emoji: "x\U0001FADC"'),
+        ("\U0001FAE9\U0001F3FD", "does not take a skin tone"),   # a tone on a face with bags under its eyes
+        (MOON + "\U0001FAE9", "one emoji only"),
+        ("\U0001FAE9" + MOON, "one emoji only"),
+        ("\uFEFF\U0001FAE9", 'comes before "\U0001FAE9"'),      # the BOM is the stray, not the emoji
     ]
 
     def test_accepted_table(self):
@@ -161,6 +171,27 @@ class Validator(unittest.TestCase):
                 self.assertNotIn("not an emoji", err, "the emoji the user typed is not the culprit")
                 self.assertIn("remove it", err)
         self.assertIn("not an emoji", km._emoji_check(grin + "x")[1], "visible junk is still visible junk")
+
+    def test_table_code_points_are_never_invisible_whatever_the_interpreters_unicode_database(self):
+        # invisible() fell through to str.isprintable(), which follows the Python release's own Unicode
+        # tables (3.12: 15.0, 3.13: 15.1; only 3.14 has 16.0); every Unicode 16.0 emoji the kernel's
+        # tables accept was unassigned there, so U+1FAE9 + "x" was refused as 'an invisible character
+        # (U+1FAE9) comes before "x"' and no reason ever quoted the emoji. The tables decide: a code
+        # point in them is never invisible, so the reason for any of them beside a letter is the same.
+        cps = [cp for table in (km._EMOJI_PRESENTATION, km._EMOJI_TEXT_DEFAULT)
+               for lo, hi in table for cp in range(lo, hi + 1)]
+        self.assertGreater(len(cps), 1000, "the two tables together")
+        for cp in cps:
+            ch = chr(cp)
+            self.assertEqual(km._emoji_check(ch + "x"), ("", 'not an emoji: "%sx"' % ch), "U+%04X" % cp)
+        unassigned_here = sorted(cp for cp in cps if not chr(cp).isprintable())
+        db = tuple(int(x) for x in unicodedata.unidata_version.split(".")[:2])
+        if db < (16, 0):
+            self.assertTrue(unassigned_here, "this interpreter's Unicode database (%s) predates the tables, "
+                            "so the sweep above exercised the rule" % unicodedata.unidata_version)
+        if db[0] == 15:
+            self.assertEqual(unassigned_here, [0x1FA89, 0x1FA8F, 0x1FABE, 0x1FAC6, 0x1FADC, 0x1FADF, 0x1FAE9],
+                             "the seven emoji code points Unicode 16.0 added are the ones a 15.x database lacks")
 
     def test_surrounding_whitespace_is_trimmed_not_refused(self):
         self.assertEqual(km._emoji_check(" " + MOON + "\n"), (MOON, None))
