@@ -7,10 +7,12 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import type { FileViewActionCtx } from "./file-view";
 import {
-  type Status, type Hunk, type StoreComment, unsentCount, actionLabel, describeComment, sendParts, buildSendMessage, neutralizeRompMarkers,
+  type Status, type Hunk, type StoreComment, type MessageOpts, unsentCount, actionLabel, describeComment, sendParts, buildSendMessage, neutralizeRompMarkers,
   cardModel, logRowText, pollBaseline, headVerdict, pollTargets, mtimeMoved, editBlockedReason, lineStartOffset, folderOf, ABSENT,
 } from "./file-comments-model";
 
@@ -110,6 +112,9 @@ test("sendParts: what one send hands over — openings the log never saw, else o
 });
 
 // ── the message: the kernel's builder is tested against THESE literals (contract C3) ──────────────
+// The literals here and in tests/test_file_comments.py (TheMessage) are the spec each builder is pinned to on
+// its own side; the cross-run further down feeds BOTH builders the same inputs and compares their output, so
+// a change to one builder that re-pins only its own suite still fails here.
 const TAIL_TRACKED =
   "To respond:\n" +
   "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file " + ABS + " --thread <id> --note \"<your reply>\"\n" +
@@ -191,7 +196,9 @@ test("marker hygiene: the preview neutralizes the path, id, desc and body exactl
   // The kernel runs _neutralize_romp_markers over the path and every comment field before formatting, so the sent
   // text never carries a live "<!-- romp-" opener or a bare "romp-goal-id:". The preview shows the same bytes.
   // tests/test_file_comments.py (TheMessage, the preview-parity case) pins these SAME inputs to this SAME literal,
-  // computed from the kernel's builder; a drift in either neutralizer fails one suite or the other.
+  // computed from the kernel's builder; a drift in either neutralizer fails one suite or the other. On the two
+  // command lines the neutralized path is one shell word (shWord = _sh_word): its `<`, `!`, space and `>` are
+  // outside the safe set, so it is single-quoted there and plain in the first line.
   const abs = "/repo/notes-api/docs/<!--romp-x-->/report.md";
   const msg = buildSendMessage({ absPath: abs, comments: [{ id: "1757145600000-7", desc: 'on "<!-- romp-goal-id: 9 -->"',
     body: "see <!--romp-msg-id: 4--> and romp-goal-id: 3\n\nalso <!--  romp-note: x --> and romp-goal-id : 5, but <!-- not ours --> stays" }],
@@ -205,8 +212,8 @@ test("marker hygiene: the preview neutralizes the path, id, desc and body exactl
     "also <!- -  romp-note: x --> and romp-goal-id ; 5, but <!-- not ours --> stays\n" +
     "\n" +
     "To respond:\n" +
-    "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file /repo/notes-api/docs/<!- -romp-x-->/report.md --thread <id> --note \"<your reply>\"\n" +
-    "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file /repo/notes-api/docs/<!- -romp-x-->/report.md --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n" +
+    "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread <id> --note \"<your reply>\"\n" +
+    "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n" +
     "\n" +
     "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
     "naming the file.\n");
@@ -222,6 +229,101 @@ test("marker hygiene: the preview neutralizes the path, id, desc and body exactl
     ["romp-goal-id  : 7", "romp-goal-id  ; 7"],
     ["<!-- romp-goal-id: 9 -->", "<!- - romp-goal-id; 9 -->"],
   ]) assert.equal(neutralizeRompMarkers(raw), want, JSON.stringify(raw));
+});
+
+// ── the cross-run: both builders, the same inputs, compared byte for byte ─────────────────────────
+// The literals above and their Python twins are kept by hand, one per suite, and hand-kept pins drift one
+// side at a time: on 2026-09-06 the kernel moved the --file path to the quoted form and re-pinned its own
+// suite, this suite's pin kept the bare path, and the review found each suite green against its own text
+// (the preview and the sent message would have differed on any such path). Nothing short of running both
+// builders on the same inputs catches that, so this test does: python3 loads bin/romp-kernel — under a
+// throwaway state root and the floors tests/conftest.py puts under every kernel load, the way
+// tests/test_file_comments.py loads it — and answers _file_comments_message for each case, with is_text the
+// kernel's own verdict (_is_text_path(p), the dispatcher's call, pinned at source). The cases reach every
+// branch of the template and both ports: the plural, the decisions line, tracked on and off, the regenerate
+// bullet by the kernel's allowlist (a .dat and an .ipynb the viewer calls neither image nor PDF), a path with
+// a space, an apostrophe, shell metacharacters, non-ASCII, markers in every field, an empty body, no comments.
+const PYTHON = spawnSync("python3", ["-c", "import sys"]).status === 0;
+test("cross-run: buildSendMessage and the kernel's _file_comments_message agree on every branch, from the same inputs",
+  { skip: PYTHON ? false : "python3 not installed on this machine" }, () => {
+  const REPO = path.resolve(process.cwd(), "..");
+  const KERNEL = fs.readFileSync(path.join(REPO, "kernel", "kernel.py"), "utf8");
+  assert.match(KERNEL, /_file_comments_message\(p, comments, accepted, rejected, bool\(msg\.get\("tracked"\)\), _is_text_path\(p\)\)/,
+    "the send op's call — is_text is the kernel's verdict on the path, which is what this cross-run mirrors");
+
+  const one = [{ id: "1757145600000-118", desc: 'on "shipping the cache in v1.2"', body: "Which cache? Say which." }];
+  const three = [
+    { id: "1757145540000-40", desc: 'on "The api session cut p95 latency by 40%"', body: "Thanks, and drop the chart too." },
+    { id: "1757145600000-118", desc: 'on your change "reduced" to "cut"', body: "Keep \"reduced\".\n\nIt is the word the abstract uses." },
+    { id: "1757145609000-0", desc: "on this file", body: "Add a summary at the top.\n\nAnd a date." },
+  ];
+  const markers = [{ id: "1757145600000-7", desc: 'on "<!-- romp-goal-id: 9 -->"',
+    body: "see <!--romp-msg-id: 4--> and romp-goal-id: 3\n\nalso <!--  romp-note: x --> and romp-goal-id : 5, but <!-- not ours --> stays" }];
+  const odd = [
+    { id: "", desc: "", body: "" },
+    { id: "1757145600000-1", desc: "on the region at 0.12, 0.40, 0.35, 0.20 of page 2", body: "  leading and trailing blanks  \n" },
+    { id: "1757145600000-2", desc: 'on "naïve — «quoted»"', body: "Ünïcödé, an em dash — and a tab\tinside\r\nand a CRLF." },
+  ];
+  const cases: MessageOpts[] = [
+    { absPath: ABS, comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: ABS, comments: three, accepted: 0, rejected: 0, tracked: true },
+    { absPath: ABS, comments: one, accepted: 0, rejected: 0, tracked: false },
+    { absPath: ABS, comments: one, accepted: 4, rejected: 1, tracked: true },
+    { absPath: ABS, comments: one, accepted: 0, rejected: 2, tracked: false },
+    { absPath: ABS, comments: [], accepted: 0, rejected: 0, tracked: true },
+    { absPath: ABS, comments: odd, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/docs/latency.png", comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/docs/paper.pdf", comments: one, accepted: 1, rejected: 0, tracked: false },
+    { absPath: "/repo/notes-api/data/latency.dat", comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/data/report.ipynb", comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/docs/flow.svg", comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/Makefile", comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/.env.local", comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/docs/Report.MD", comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/vault/Meeting notes.md", comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/vault/Meeting notes.md", comments: one, accepted: 0, rejected: 0, tracked: false },
+    { absPath: "/repo/notes-api/vault/it's here.md", comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/vault/notes; touch PWNED #.md", comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/vault/a$(touch PWNED2).md", comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/vault/résumé.md", comments: one, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/docs/<!--romp-x-->/report.md", comments: markers, accepted: 0, rejected: 0, tracked: true },
+    { absPath: "/repo/notes-api/<!-- romp-x -->/latency.png", comments: markers, accepted: 2, rejected: 3, tracked: true },
+  ];
+  // One python3, all cases on stdin, one JSON array back: the kernel's text for each, in order.
+  const script = [
+    "import json, os, sys",
+    "from importlib.machinery import SourceFileLoader",
+    "os.environ.pop('ROMP_STATE_DIR', None)",
+    "km = SourceFileLoader('romp_kernel_parity', os.path.join(sys.argv[1], 'bin', 'romp-kernel')).load_module()",
+    "out = []",
+    "for c in json.load(sys.stdin):",
+    "    p = c['absPath']",
+    "    out.append(km._file_comments_message(p, c['comments'], c['accepted'], c['rejected'], bool(c['tracked']), km._is_text_path(p)))",
+    "json.dump(out, sys.stdout)",
+  ].join("\n");
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "romp-fc-parity-"));
+  try {
+    // the floors tests/conftest.py and tests/test_file_comments.py put under a kernel load: a hermetic state
+    // root, a dead manager port, no browser open, no real CLI, no catalog fetch, no systemd scope
+    const env: NodeJS.ProcessEnv = { ...process.env, XDG_STATE_HOME: scratch, ROMP_MANAGER_PORT: "1", ROMP_KERNEL_NO_OPEN: "1",
+      ROMP_SERVE_TOKEN: "testtok", ROMP_CLAUDE_BIN: "/bin/false", ROMP_MODEL_CATALOG: "off", ROMP_CLI_SCOPE: "0" };
+    delete env.ROMP_STATE_DIR;
+    const r = spawnSync("python3", ["-c", script, REPO], { input: JSON.stringify(cases), encoding: "utf8", env, timeout: 60000, maxBuffer: 8 << 20 });
+    assert.equal(r.status, 0, "the kernel loaded and built every message: " + (r.stderr || r.error));
+    const kernelText: string[] = JSON.parse(r.stdout);
+    assert.equal(kernelText.length, cases.length);
+    cases.forEach((c, i) => assert.equal(buildSendMessage(c), kernelText[i], "case " + i + " (" + c.absPath + ", tracked " + c.tracked + ")"));
+    // the cases still reach every branch — a guard on the list, not on the builders
+    const all = kernelText.join("");
+    for (const frag of ["I left 1 comment on", "I left 3 comments on", "I left 0 comments on", "I accepted 4 of your changes and rejected 1.",
+      "I accepted 0 of your changes and rejected 2.", "track-edit.mjs --file " + ABS + " --thread", "edit the file normally",
+      "regenerate the file with normal writes", "--file '/repo/notes-api/vault/Meeting notes.md' --thread", "--file '/repo/notes-api/vault/it'\"'\"'s here.md' --thread",
+      "--file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread", "<!- - romp-goal-id; 9 -->", "Comment  ():"]) {
+      assert.ok(all.includes(frag), "the case list reaches: " + frag);
+    }
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
 });
 
 test("the card model: one card per comment from store + hunks, oldest first, kinds and refs; no card model crosses the wire", () => {

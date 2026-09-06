@@ -18,7 +18,11 @@
 //     as STRINGS. The Files pane has no filesystem watcher; the poll stands in for that event, and the
 //     person's own writes never fire it because every verb reply re-baselines it. Replies land in the
 //     order their asks were issued (applyStatus): the kernel runs each ask concurrently and answers when
-//     it finishes, and an older status arriving after a newer write's reply must not put the panel back a step.
+//     it finishes, and a status that read the disk before a write — asked before it, or asked while it was
+//     in flight — must not put the panel back a step once the write's reply is showing.
+//   • The panel's controls hang off the viewer's body row, which also holds the FILE's rendered markup; an
+//     activation is routed only when the panel made the element (own / owns), never for a data-act the
+//     file's author wrote.
 //   • What is unsent is derived from the comments log on the owning kernel, never from browser state
 //     (decision 10): the `status` reply carries it, the button's count is that number.
 //   • Every write sits behind the one file-editing consent, shared with Save (decision 5).
@@ -28,7 +32,7 @@
 // This module imports only TYPES from file-view.ts and is registered there (registerFileViewAction
 // in file-view.ts), so the two never form a runtime import cycle.
 import type { FileViewAction, FileViewActionCtx, FileViewIdentity } from "./file-view";
-import { delegate, flash } from "./actions";
+import { delegate, flash, type ActionHandler } from "./actions";
 import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
 import { hostOf, bareId } from "./host-prefix";
@@ -182,9 +186,12 @@ const clock = (t: number | string): string => {
 // Sessions pane's gate, reused: skip the tick while hidden, catch up once on the first visible moment
 const paneHidden = (): boolean => document.hidden || window.innerWidth === 0 || window.innerHeight === 0;
 
-type Pending = { verb: string; ok: (m: Record<string, unknown>) => void; fail: (e: { code: string; error: string }) => void; deadline?: ReturnType<typeof setTimeout> };
-/** A status reply as the panel applies it: the kernel's fields plus the reqId of the ask it answers. */
-type Reply = Status & { reqId: number };
+// `overlapped`: a status ask still unanswered when a write's reply landed (markOverlapped) — its host run may
+// have read the disk before that write, whatever its place in line
+type Pending = { verb: string; ok: (m: Record<string, unknown>) => void; fail: (e: { code: string; error: string }) => void; deadline?: ReturnType<typeof setTimeout>; overlapped?: boolean };
+/** A status reply as the panel applies it: the kernel's fields plus the reqId of the ask it answers, and
+ *  whether that ask overlapped a write (see Pending). */
+type Reply = Status & { reqId: number; overlapped?: boolean };
 
 // ── which of two status replies read the disk later ────────────────────────────────────────────────
 // Mtimes are decimal nanosecond strings (~1.7e18 exceeds JS's safe integers, so they never become numbers):
@@ -291,6 +298,7 @@ class Panel {
   status: Status | null = null;
   statusRefusal: { code: string; error: string } | null = null;   // why there is no status, when the kernel refused one
   root: HTMLElement | null = null;          // the aside, built on first open
+  marks = new WeakSet<Element>();           // the highlights and picture frames THIS panel painted into the body (owns)
   open = false;
   pending = new Map<number, Pending>();
   appliedReq = 0;                           // the reqId of the newest ask whose reply is showing (applyStatus)
@@ -371,37 +379,45 @@ class Panel {
     });
     ctx.onClose(() => this.dispose());
     // every control the panel ever renders hangs off ONE stable root (ui/CLAUDE.md, click-safe): the
-    // viewer's body row, which also holds the painted highlights — so a highlight click routes here too
+    // viewer's body row, which also holds the painted highlights — so a highlight click routes here too.
+    // The same row holds the FILE's rendered markdown, and the sanitizer keeps data-* attributes (DOMPurify's
+    // ALLOW_DATA_ATTR default), so a file's author can write `<span data-act="fcsendgo">` or a
+    // `data-act="fctrackstop"` into prose the session produced: a click there must not send the comments
+    // or turn the guard off for a folder. `own` routes an activation only when the panel MADE the element —
+    // a control in its aside, or a highlight it painted (owns) — never the file's own markup.
     const row = ctx.body().parentElement || ctx.body();
     delegate(row, {
-      fctrack: () => this.onTrackClick(),
-      fctrackfile: () => { this.trackChoice = false; void this.mutate("set-tracked", { on: true, scope: "file" }, "track"); },
-      fctrackfolder: () => { this.trackChoice = false; void this.mutate("set-tracked", { on: true, scope: "folder" }, "track"); },
-      fctrackcancel: () => { this.trackChoice = false; this.trackStop = false; this.render(); },
-      fctrackstop: () => { this.trackStop = false; void this.mutate("set-tracked", { on: false, scope: "folder" }, "track"); },
-      fcfile: () => this.startFileComment(),
-      fcsave: () => { void this.saveComposer(); },
-      fccancel: () => this.closeComposer(),
-      fcraw: () => this.switchToRaw(),
-      fccard: (x) => { const id = x.dataset.id!; if (this.openCards.has(id)) this.openCards.delete(id); else this.openCards.add(id); this.render(); },
-      fcgoto: (x, ev) => { ev.stopPropagation(); this.goTo(x.dataset.id!); },
-      fcreveal: (x, ev) => { ev.stopPropagation(); this.reveal(x.dataset.id!); },
-      fcreply: (x, ev) => { ev.stopPropagation(); this.startReply(x.dataset.id!); },
-      fcresolve: (x, ev) => { ev.stopPropagation(); void this.mutate("resolve", { commentId: x.dataset.id!, on: x.dataset.on === "1" }, "card:" + x.dataset.id!); },
-      fcresolved: () => { this.resolvedOpen = !this.resolvedOpen; this.render(); },
-      fcsend: () => { this.sendConfirm = true; this.sentNote = null; this.render(); },
-      fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
-      fcsendgo: () => { void this.doSend(); },
-      fcpreview: () => { this.previewOpen = !this.previewOpen; this.render(); },
-      fclog: () => { this.logOpen = !this.logOpen; this.render(); },
-      fclogrow: (x) => { const k = x.dataset.key!; if (this.openLog.has(k)) this.openLog.delete(k); else this.openLog.add(k); this.render(); },
-      fcreload: (x) => { this.errors.delete(x.dataset.slot || ""); this.stopped.clear(); void this.refresh(); this.ctx.reload(); },
-      fcerrx: (x) => { this.errors.delete(x.dataset.slot || ""); this.render(); },
-      fcopen: (x) => { this.openPanel(); const id = x.dataset.id!; this.openCards.add(id); this.render(); this.scrollCard(id); },
+      ...this.own({
+        fctrack: () => { void this.onTrackClick(); },
+        fctrackfile: () => { this.trackChoice = false; void this.mutate("set-tracked", { on: true, scope: "file" }, "track"); },
+        fctrackfolder: () => { this.trackChoice = false; void this.mutate("set-tracked", { on: true, scope: "folder" }, "track"); },
+        fctrackcancel: () => { this.trackChoice = false; this.trackStop = false; this.render(); },
+        fctrackstop: () => { this.trackStop = false; void this.mutate("set-tracked", { on: false, scope: "folder" }, "track"); },
+        fcfile: () => this.startFileComment(),
+        fcsave: () => { void this.saveComposer(); },
+        fccancel: () => this.closeComposer(),
+        fcraw: () => this.switchToRaw(),
+        fccard: (x) => { const id = x.dataset.id!; if (this.openCards.has(id)) this.openCards.delete(id); else this.openCards.add(id); this.render(); },
+        fcgoto: (x, ev) => { ev.stopPropagation(); this.goTo(x.dataset.id!); },
+        fcreveal: (x, ev) => { ev.stopPropagation(); this.reveal(x.dataset.id!); },
+        fcreply: (x, ev) => { ev.stopPropagation(); this.startReply(x.dataset.id!); },
+        fcresolve: (x, ev) => { ev.stopPropagation(); void this.mutate("resolve", { commentId: x.dataset.id!, on: x.dataset.on === "1" }, "card:" + x.dataset.id!); },
+        fcresolved: () => { this.resolvedOpen = !this.resolvedOpen; this.render(); },
+        fcsend: () => { this.sendConfirm = true; this.sentNote = null; this.render(); },
+        fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
+        fcsendgo: () => { void this.doSend(); },
+        fcpreview: () => { this.previewOpen = !this.previewOpen; this.render(); },
+        fclog: () => { this.logOpen = !this.logOpen; this.render(); },
+        fclogrow: (x) => { const k = x.dataset.key!; if (this.openLog.has(k)) this.openLog.delete(k); else this.openLog.add(k); this.render(); },
+        // Reload re-reads under the row that offered it: the slot wears the loader for the wait (refresh)
+        fcreload: (x) => { const slot = x.dataset.slot || "head"; this.errors.delete(slot); this.stopped.clear(); void this.refresh(slot); this.ctx.reload(); },
+        fcerrx: (x) => { this.errors.delete(x.dataset.slot || ""); this.render(); },
+        fcopen: (x) => { this.openPanel(); const id = x.dataset.id!; this.openCards.add(id); this.render(); this.scrollCard(id); },
+      }),
     });
     row.addEventListener("change", (ev) => {
       const t = ev.target as HTMLInputElement | null;
-      if (!t || t.dataset.opt !== "todo" && t.dataset.opt !== "track") return;
+      if (!t || t.dataset.opt !== "todo" && t.dataset.opt !== "track" || !this.owns(t)) return;   // a checkbox the file's markup carries flips nothing
       this.sendOpts[t.dataset.opt as "todo" | "track"] = t.checked;
     });
     // a click on a rendered picture offers Comment on its embed line (the plan's Images and PDFs) — the same
@@ -410,17 +426,34 @@ class Panel {
       const t = ev.target as HTMLElement | null;
       if (t && typeof t.tagName === "string" && t.tagName.toUpperCase() === "IMG") this.onImageClick(t);
     });
-    // Enter or Space on a focused non-button control (KEY_ACTS) is its click, so it lands on the same root
+    // Enter or Space on a focused non-button control (KEY_ACTS) is its click, so it lands on the same root —
+    // for the panel's own elements only, as with the clicks
     row.addEventListener("keydown", (ev) => {
       if (ev.key !== "Enter" && ev.key !== " ") return;
       const t = ev.target as HTMLElement | null;
       if (!t || typeof t.tagName !== "string" || t.tagName.toUpperCase() === "BUTTON" || t.tagName.toUpperCase() === "INPUT" || typeof t.closest !== "function") return;
       const x = t.closest("[data-act]") as HTMLElement | null;
-      if (!x || !KEY_ACTS.has(x.dataset.act || "")) return;
+      if (!x || !KEY_ACTS.has(x.dataset.act || "") || !this.owns(x)) return;
       ev.preventDefault();
       x.click();
     });
     this.button.addEventListener("click", () => { flash(this.button); if (this.open) this.closePanel(); else this.openPanel(); });
+  }
+
+  // ── provenance: which activations are the panel's ──────────────────────────────────────────────
+  /** Whether the panel made `x`: a control inside its aside (none before the first open), or a highlight or
+   *  picture frame it painted into the body (marks). Anything else under the delegate root is the file's own
+   *  markup, whatever data-act it carries — the sanitizer keeps data-* attributes, and a class name proves
+   *  nothing either. */
+  owns(x: Element): boolean {
+    return (this.root !== null && this.root.contains(x)) || this.marks.has(x);
+  }
+  /** The handlers, each routed only for an element the panel owns. The delegate helper has already flashed
+   *  the element by then (a cosmetic pulse); nothing else happens for the file's markup. */
+  private own(acts: Record<string, ActionHandler>): Record<string, ActionHandler> {
+    const out: Record<string, ActionHandler> = {};
+    for (const k of Object.keys(acts)) out[k] = (x, ev) => { if (this.owns(x)) acts[k](x, ev); };
+    return out;
   }
 
   // ── the wire ───────────────────────────────────────────────────────────────────────────────────
@@ -431,8 +464,9 @@ class Panel {
     if (args) msg.args = args;
     if (fence) msg.fence = fence;
     return new Promise<Reply>((ok, fail) => {
-      // the reply carries the ask's own reqId (the client's, not the echo) so applyStatus can order it
-      const p: Pending = { verb, ok: (m) => ok({ ...m, reqId } as unknown as Reply), fail };
+      // the reply carries the ask's own reqId (the client's, not the echo) so applyStatus can order it, and
+      // whether the ask overlapped a write (set on the pending record by markOverlapped, read when it settles)
+      const p: Pending = { verb, ok: (m) => ok({ ...m, reqId, overlapped: p.overlapped === true } as unknown as Reply), fail };
       if (verb === "status") p.deadline = setTimeout(() => this.expire(reqId), STATUS_DEADLINE_MS);   // STATUS_DEADLINE_MS: why, and why status only
       this.pending.set(reqId, p);
       ctx.post(msg);
@@ -496,11 +530,17 @@ class Panel {
    *  send's refresh) can be answered after a later comment or toggle whose reply already carried the
    *  post-write state — and applying it as it came put the panel back a step (the new card gone, Send's count
    *  down) until the next tick saw the store moved against that regressed baseline and re-read it: a card
-   *  move on no new information (CLAUDE.md). An older ask's reply is dropped, unless its own clocks say it
-   *  read a NEWER disk than what is showing (its run started late and saw a write the applied reply
-   *  predates): then it IS new information and lands. Returns whether it was applied. */
+   *  move on no new information (CLAUDE.md). Two asks are suspect: one OLDER than the applied reply, and one
+   *  issued after a write's ask but still unanswered when that write's reply landed (`overlapped`,
+   *  markOverlapped) — the kernel runs the two concurrently and the host reads the sidecar without a lock,
+   *  so the later ask's run can read the disk before the write and answer after it, and its reqId
+   *  alone would have let it land. Either is dropped, unless its own clocks say it read a NEWER disk than what
+   *  is showing (its run started late and saw a write the applied reply predates): then it IS new information
+   *  and lands. Clocks alone cannot decide the overlapped case: a sidecar gone is a later reading that reads
+   *  as older (laterNs), and the vendored CLIs do delete sidecars. Returns whether it was applied. */
   applyStatus(s: Reply): boolean {
-    if (this.status && s.reqId < this.appliedReq && !newerStatus(s, this.status)) return false;
+    const suspect = s.reqId < this.appliedReq || s.overlapped === true;
+    if (this.status && suspect && !newerStatus(s, this.status)) return false;
     this.appliedReq = Math.max(this.appliedReq, s.reqId);
     this.status = s;
     this.statusRefusal = null;
@@ -515,15 +555,27 @@ class Panel {
   }
   /** Re-ask status. While the ask is out and no status has ever landed, the cards section shows the romp
    *  loader (ui/CLAUDE.md: a wait wears the loader, never a line claiming a read); a refusal leaves the
-   *  head's row with Reload, the one way back in — nothing re-asks on its own while status is null. */
-  async refresh(): Promise<void> {
-    this.busy.add("status"); this.render();
+   *  head's row with Reload, the one way back in — nothing re-asks on its own while status is null.
+   *  `slot`: the row whose Reload asked. Over a showing status the cards stay up, so that wait would show
+   *  nowhere (the row is gone, the click's pulse goes with its rebuilt button, and the ask may run to
+   *  STATUS_DEADLINE_MS) — the slot wears the loader instead, where the row was. The poll's and onSaved's own
+   *  re-reads pass no slot: nobody is waiting on those, and a swirl in the head per change the session
+   *  makes would only pull the eye. */
+  async refresh(slot?: string): Promise<void> {
+    const mark = slot && this.status ? slot : null;   // with no status the cards' own loader is the wait
+    this.busy.add("status"); if (mark) this.busy.add(mark); this.render();
     try { this.applyStatus(await this.request("status")); }
     catch (err) {
       const e = err as { code: string; error: string };
       this.statusRefusal = e;
       this.errors.set("head", { text: e.error, reload: true });
-    } finally { this.busy.delete("status"); this.render(); }
+    } finally { this.busy.delete("status"); if (mark) this.busy.delete(mark); this.render(); }
+  }
+  /** A write's reply just landed: every status ask still out was issued before it and may have read the disk
+   *  before the write (applyStatus). The flag rides the pending record, so a failed or expired ask needs no
+   *  cleanup. */
+  private markOverlapped(): void {
+    for (const p of this.pending.values()) if (p.verb === "status") p.overlapped = true;
   }
   /** A mutating verb needs a status behind it: the fence comes from there, and `""` for an unknown sidecar
    *  would claim it must not exist, so the host would refuse `store-moved` — a reason that is not the reason
@@ -626,7 +678,9 @@ class Panel {
         const v = headVerdict(r.status, r.headers.get("X-Romp-Mtime-Ns"));
         if (v.kind === "stop") {
           this.stopped.add(target);
-          this.errors.set("poll", { text: "Stopped watching " + target + ": the kernel answered " + v.status
+          // "checking … for changes", the guide's own words for this loop — never "watching": the row sits under
+          // the Track changes toggle, and a tracked file whose refresh stopped is still tracked
+          this.errors.set("poll", { text: "Stopped checking " + target + " for changes: the kernel answered " + v.status
             + (v.status === 413 ? " (too large to serve)" : " (not a type it serves)") + ". Reload to try again.", reload: true });
           this.render();
           continue;
@@ -663,6 +717,7 @@ class Panel {
     const fence = { storeMtimeNs: s && s.storeMtimeNs !== null ? s.storeMtimeNs : "", configMtimeNs: s && s.configMtimeNs !== null ? s.configMtimeNs : "" };
     try {
       const r = await this.request(verb, args, fence);
+      this.markOverlapped();                           // the status asks still out may have read the disk before this write
       this.applyStatus(r);
       return r;
     } catch (err) {
@@ -679,9 +734,24 @@ class Panel {
   }
 
   // ── Track changes ──────────────────────────────────────────────────────────────────────────────
-  onTrackClick(): void {
-    const s = this.status;
-    if (!s) return;
+  /** With no status behind it (refused, or never answered) the toggle showed "off" on nothing: re-ask under
+   *  this control the way every other mutating control does (requireStatus: a second refusal is the row under
+   *  the toggle, "Nothing written: …"), with the slot's loader for the wait. On an answer, act on what the
+   *  click meant — turning tracking ON, since off is what showed: an untracked file gets the scope row; one
+   *  that turns out tracked now reads so, which was the ask, and a second click stops it as usual. Never a
+   *  click that only pulses (ui/CLAUDE.md: the result follows the acknowledgement). */
+  async onTrackClick(): Promise<void> {
+    let s = this.status;
+    if (!s) {
+      if (this.busy.has("track")) return;
+      this.busy.add("track"); this.errors.delete("track"); this.render();
+      try { if (!(await this.requireStatus("track"))) return; }
+      finally { this.busy.delete("track"); this.render(); }
+      s = this.status;
+      if (!s) return;
+      if (!s.trackedBy) { this.trackChoice = true; this.trackStop = false; this.render(); }
+      return;
+    }
     if (!s.trackedBy) { this.trackChoice = !this.trackChoice; this.trackStop = false; this.render(); return; }
     if (s.trackedBy.kind === "folder") { this.trackStop = !this.trackStop; this.trackChoice = false; this.render(); return; }
     // a file entry turns off directly; an inherited one is refused by the kernel naming the parent — the row shows it
@@ -842,11 +912,12 @@ class Panel {
         const out = rendered ? paintRendered(root, src, loc.range, cls, { act: "fcopen", id: card.id })
           : paintRaw(root, src, loc.range, cls, { act: "fcopen", id: card.id });
         painted = !!out && out.length > 0;
-        // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS)
-        for (const m of out || []) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open the comment on this passage"; }
+        // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
+        // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup
+        for (const m of out || []) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open the comment on this passage"; this.marks.add(m); }
         if (!painted && rendered) {                    // an embed line renders no text: the frame goes on its picture
           const img = imgForRange(root, src, loc.range);
-          if (img) { frameImage(img, cls, { act: "fcopen", id: card.id }); painted = true; }
+          if (img) { frameImage(img, cls, { act: "fcopen", id: card.id }); this.marks.add(img); painted = true; }
         }
       }
       this.located.set(card.id, { ...loc, painted });
@@ -905,6 +976,20 @@ class Panel {
   scrollCard(id: string): void {
     this.root?.querySelector('.fc-card[data-id="' + id + '"]')?.scrollIntoView({ block: "nearest" });
   }
+  /** The absolute path the kernel acts on, as far as the panel can know it. The kernel resolves the viewer's
+   *  path (`~`, a relative chat or todo token against the session's cwd, then realpath) and builds the sent
+   *  message from THAT, so the preview and the folder label must name it too (contract C3: identical text).
+   *  No reply carries the resolved path itself; the store's own `path` is the file relative to the project
+   *  root, written by the host from the resolved path (store-io's relPathFor, corrected on every load), so
+   *  root + path IS it whenever a sidecar exists — and a preview needs unsent comments, so one does. With no
+   *  sidecar, an absolute viewer path is the kernel's up to a symlink; a relative one names nothing, and the
+   *  caller then says less rather than something wrong. */
+  filePath(): string | null {
+    const s = this.status;
+    const rel = s && s.store ? s.store.path : null;
+    if (s && s.root && typeof rel === "string" && rel && !rel.startsWith("/")) return s.root.replace(/\/$/, "") + "/" + rel;
+    return this.ctx.path.startsWith("/") ? this.ctx.path : null;
+  }
 
   // ── Send to session ────────────────────────────────────────────────────────────────────────────
   /** Fixed sequence (the plan's UX): the message is built from the CURRENT status, then set-tracked
@@ -929,6 +1014,7 @@ class Panel {
       };
       if (answerTodo) msg.todoId = this.ctx.todoId;
       const reply = await this.requestSend(msg);
+      this.markOverlapped();                           // the send appended to the comments log: a status out meanwhile may predate it
       // the latch is the STAMP, not the attempt: a send the kernel warned it could not mark (user todos off,
       // the todo already settled) leaves the checkbox, so the todo is answerable from here once the switch
       // is back on; the settled case re-warns on a later send, honestly, until the kernel says which it was
@@ -1020,8 +1106,11 @@ class Panel {
       const pick = el("div", "fc-row fc-choice");
       pick.appendChild(el("span", "fc-note", "Track:"));
       pick.appendChild(btn("This file", "fctrackfile"));
-      const f = btn("Its folder ", "fctrackfolder");
-      appendPath(f, folderOf(this.ctx.path)); shrinkable(f);
+      // the folder of the path the kernel acts on (filePath); when the panel cannot name it, the label says
+      // "Its folder" and no more — the host computes the entry from the real path either way
+      const abs = this.filePath();
+      const f = btn(abs ? "Its folder " : "Its folder", "fctrackfolder");
+      if (abs) { appendPath(f, folderOf(abs)); shrinkable(f); }
       f.title = "Everything under the folder, files not written yet included";
       pick.appendChild(f);
       pick.appendChild(btn("Cancel", "fctrackcancel"));
@@ -1037,6 +1126,8 @@ class Panel {
       head.appendChild(stop);
     }
     for (const n of [this.loader("track"), this.errRow("track"), this.errRow("head"), this.errRow("poll")]) if (n) head.appendChild(n);
+    // a Reload from the head's or the poll's row: the slot wears the loader where the row was, until the answer (refresh)
+    for (const n of [this.loader("head"), this.loader("poll")]) if (n) head.appendChild(n);
     if (s && s.agentTooling === "absent") {
       head.appendChild(el("div", "fc-warn", "The session cannot reply to comments yet: the track-changents tooling is not linked into ~/.claude on the file's machine. Run romp's install.sh there."));
     }
@@ -1191,7 +1282,11 @@ class Panel {
       if (this.previewOpen) {
         const media = this.ctx.media() === "image" || this.ctx.media() === "pdf";
         const tracked = !!s.trackedBy || this.sendOpts.track;   // the post-toggle verdict the send will carry
-        cf.appendChild(el("pre", "fc-msg", buildSendMessage({ absPath: this.ctx.path, comments: parts.comments, accepted: parts.accepted, rejected: parts.rejected, tracked, media })));
+        // the path the kernel will name (filePath), never the spelling the viewer was opened with: a relative
+        // todo token or a `~/` link would preview a header and two --file arguments the session never receives
+        const abs = this.filePath();
+        if (abs === null) cf.appendChild(el("div", "fc-note", "The message names this file by its absolute path, which the kernel resolves from " + this.ctx.path + "; this panel cannot show it."));
+        else cf.appendChild(el("pre", "fc-msg", buildSendMessage({ absPath: abs, comments: parts.comments, accepted: parts.accepted, rejected: parts.rejected, tracked, media })));
       }
       const acts = el("div", "fc-actions");
       acts.appendChild(btn("Send", "fcsendgo", "fileview-btn fc-primary"));

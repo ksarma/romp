@@ -31327,7 +31327,13 @@ def _edit_trace(path, sid):
 #      direct edit to the log.
 _FILE_COMMENTS_HOST = ROOT / "tools" / "file-comments-host.mjs"   # tests point this at a stub
 _FILE_COMMENTS_TIMEOUT = 10                                        # seconds: one verb is one load-mutate-write
+_FILE_COMMENTS_REPLY_MAX = 16 * 1024 * 1024                        # bytes of host stdout the kernel will hold for ONE
+#   reply — WS_QUEUE_BYTES's default, past which _mk_ws_send drops the client anyway, so a bigger answer could never
+#   arrive; the biggest legitimate reply (a 2 MB baseline as JSON, plus a sidecar and 200 log rows) sits well under it
 _AGENT_TOOLING_PROBE = "~/.claude/hooks/track-reply.mjs"           # linked by install.sh from the vendored copy
+_TRACK_ROOT_MARKERS = (".obsidian", ".git", ".trackchanges")       # store-io's ROOT_MARKERS: the nearest ancestor
+#   holding one is a file's project root (findVaultRoot, up to forty parents) — mirrored for the no-node edit-log verdict
+_TRACK_LOG_SUFFIX = ".comments-log.jsonl"                          # the host's LOG_SUFFIX, beside the sidecar's .json
 _TRACKCHANGES_DIR = ".trackchanges"                                # the sidecar directory, one per project root
 _EDIT_DIFF_MAX_LINES, _EDIT_DIFF_MAX_BYTES = 200, 16 * 1024       # the comments log's cap on a direct edit's diff
 _FILE_COMMENTS_KERNEL_VERBS = frozenset(("log-edit", "log-send"))   # the kernel's own follow-ups (after a save, after a
@@ -31374,6 +31380,78 @@ def _file_comments_tail(s, n=400):
     return (": " + s[-n:]) if s else ""
 
 
+def _run_bounded(argv, stdin_text, timeout, cap, env=None, cwd=None, err_tail=4096):
+    """subprocess.run(capture_output=True, timeout=...) with a BOUND on stdout: run `argv` (a list, no
+    shell) with `stdin_text` on its stdin and return (returncode, stdout_bytes, stderr_tail_bytes,
+    overflow). stdout is collected only up to `cap` bytes — one byte more and the child is killed, its
+    output dropped, and `overflow` is True with returncode None; stderr keeps its last `err_tail`
+    bytes. The deadline raises subprocess.TimeoutExpired (stderr tail attached) after killing the
+    child, as subprocess.run does; a child that cannot start raises OSError. One selectors loop over
+    the three pipes, the way communicate() itself is built, so a child that exits before reading its
+    stdin (EPIPE) or that writes stderr before draining stdin cannot deadlock the caller. The point
+    is memory: communicate() buffers whatever the child writes, and a reply the size of a file on
+    disk is a copy of that file in the kernel per request (_file_comments_call)."""
+    import selectors
+    data = stdin_text.encode("utf-8") if isinstance(stdin_text, str) else bytes(stdin_text or b"")
+    proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            env=env, cwd=cwd)
+    out, err, n_out, sent, overflow = [], bytearray(), 0, 0, False
+    deadline = time.monotonic() + timeout
+    sel = selectors.DefaultSelector()
+    try:
+        sel.register(proc.stdout, selectors.EVENT_READ)
+        sel.register(proc.stderr, selectors.EVENT_READ)
+        if data:
+            sel.register(proc.stdin, selectors.EVENT_WRITE)
+        else:
+            proc.stdin.close()
+        while sel.get_map() and not overflow:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise subprocess.TimeoutExpired(argv, timeout, stderr=bytes(err))
+            for key, _ev in sel.select(left):
+                f = key.fileobj
+                if f is proc.stdin:
+                    try:
+                        sent += os.write(f.fileno(), data[sent:sent + 65536])
+                    except OSError:                  # EPIPE: the child stopped reading (exited, or crashed)
+                        sent = len(data)
+                    if sent >= len(data):
+                        sel.unregister(f)
+                        f.close()
+                    continue
+                chunk = os.read(f.fileno(), 65536)
+                if not chunk:
+                    sel.unregister(f)
+                elif f is proc.stdout:
+                    n_out += len(chunk)
+                    if n_out > cap:
+                        overflow = True
+                        break
+                    out.append(chunk)
+                else:
+                    err += chunk
+                    del err[:-err_tail]
+        if overflow:
+            return None, b"", bytes(err), True
+        try:
+            rc = proc.wait(timeout=max(0.001, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            raise subprocess.TimeoutExpired(argv, timeout, stderr=bytes(err))
+        return rc, b"".join(out), bytes(err), False
+    finally:
+        sel.close()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        for f in (proc.stdin, proc.stdout, proc.stderr):
+            try:
+                if f is not None and not f.closed:
+                    f.close()
+            except OSError:
+                pass
+
+
 def _file_comments_call(path, verb, args=None, fence=None):
     """Run the host script for ONE verb on an already-resolved absolute `path`. Returns
     (reply, None) on an ok:true answer; (refusal, (code, error)) on the host's own refusal (`ok:false`,
@@ -31382,36 +31460,61 @@ def _file_comments_call(path, verb, args=None, fence=None):
     `logged: true` when a corrupt or newer sidecar then stopped the read that fills the status fields,
     so a caller that reports on the log reads `logged` off the refusal instead of inferring it from the
     code (the review, 2026-09-06: every refusal was reported as an entry never written); and
-    (None, (code, error)) for the kernel's own `no-node` / `host-error` (a non-zero exit, the deadline,
-    no JSON on stdout, or node itself failing to start) with the stderr tail. Every caller tests `err`
-    first. argv is a list and the request rides stdin: no shell, nothing of the request in a command
-    line."""
+    (None, (code, error)) for the kernel's own `no-node` / `too-large` / `host-error` (a non-zero exit,
+    the deadline, a reply past _FILE_COMMENTS_REPLY_MAX, no JSON on stdout, or node itself failing to
+    start) with the stderr tail. Every caller tests `err` first. argv is a list and the request rides
+    stdin: no shell, nothing of the request in a command line.
+
+    Two bounds on what one call can pull through the kernel (the review, 2026-09-06: a `status
+    {baseline: true}` frame — any authenticated socket, no consent, since status is read-only — made
+    the host read a 45 MB file and the kernel hold, parse and re-serialize a 46 MB reply on its own
+    thread, one per frame, on the kernel that self-hosts every session; the /file route stats and
+    refuses above _TEXT_MAX_BYTES and streams downloads in fixed chunks for exactly this reason).
+    `baseline` is the whole file in the reply, so it is refused `too-large` on a STAT before node
+    runs when the file is past the text cap: the viewer never loads such a file (/file answers 413),
+    so no consumer of the baseline exists above it. And the host's stdout is read through
+    _run_bounded, which kills the child past _FILE_COMMENTS_REPLY_MAX instead of buffering — a
+    backstop for any verb, present or future, whose answer outgrows what one socket frame may carry."""
     node = _file_comments_node()
     if not node:
         return None, ("no-node", "cannot open the comments for %s: node is not installed on this machine, "
                                  "and the comments helper runs under it" % _tilde(path))
-    req = {"verb": verb, "path": path, "args": args if isinstance(args, dict) else {},
-           "fence": fence if isinstance(fence, dict) else None}
+    args = args if isinstance(args, dict) else {}
+    if args.get("baseline") is True:
+        try:
+            size = os.stat(path).st_size
+        except OSError:
+            size = 0                     # missing or unreadable: the host answers `unreadable` with the OS text
+        if size > _TEXT_MAX_BYTES:
+            return None, ("too-large", "cannot return the baseline of %s: the file on disk is %s, past the %s "
+                                       "text cap the viewer loads" % (_tilde(path), _human_bytes(size),
+                                                                     _human_bytes(_TEXT_MAX_BYTES)))
+    req = {"verb": verb, "path": path, "args": args, "fence": fence if isinstance(fence, dict) else None}
     try:
-        r = subprocess.run([node, str(_FILE_COMMENTS_HOST)], input=json.dumps(req), capture_output=True,
-                           text=True, timeout=_FILE_COMMENTS_TIMEOUT, env=_file_comments_host_env(),
-                           cwd=str(ROOT))
+        rc, out_b, err_b, overflow = _run_bounded([node, str(_FILE_COMMENTS_HOST)], json.dumps(req),
+                                                  _FILE_COMMENTS_TIMEOUT, _FILE_COMMENTS_REPLY_MAX,
+                                                  env=_file_comments_host_env(), cwd=str(ROOT))
     except subprocess.TimeoutExpired as ex:
         return None, ("host-error", "the comments helper did not answer within %s s for %s%s"
                       % (_FILE_COMMENTS_TIMEOUT, _tilde(path), _file_comments_tail(ex.stderr)))
     except OSError as ex:
         return None, ("host-error", "could not run the comments helper for %s: %s"
                       % (_tilde(path), getattr(ex, "strerror", None) or ex))
-    if r.returncode != 0:
+    if overflow:
+        return None, ("host-error", "the comments helper's answer for %s ran past %s, more than one reply may "
+                                    "carry, so it was cut off and discarded — reload to see what it did%s"
+                      % (_tilde(path), _human_bytes(_FILE_COMMENTS_REPLY_MAX), _file_comments_tail(err_b)))
+    if rc != 0:
         return None, ("host-error", "the comments helper failed for %s (exit %d)%s"
-                      % (_tilde(path), r.returncode, _file_comments_tail(r.stderr)))
+                      % (_tilde(path), rc, _file_comments_tail(err_b)))
+    stdout = out_b.decode("utf-8", "replace")
     try:
-        out = json.loads((r.stdout or "").strip())
+        out = json.loads(stdout.strip())
         if not isinstance(out, dict):
             raise ValueError("not a JSON object")
     except ValueError:
         return None, ("host-error", "the comments helper answered with something other than one JSON "
-                                    "object for %s%s" % (_tilde(path), _file_comments_tail(r.stderr or r.stdout)))
+                                    "object for %s%s" % (_tilde(path), _file_comments_tail(err_b or stdout)))
     if not out.get("ok"):
         return out, (str(out.get("code") or "host-error"),
                      str(out.get("error") or "the comments helper refused %s without saying why" % _tilde(path)))
@@ -31573,19 +31676,34 @@ def _send_watermark(value):
 
 def _file_comments_send_op(msg):
     """The fileCommentsSend WS op → fileCommentsSent {reqId, queued, warning?, logWarning?} or
-    fileCommentsSendFailed {reqId, error}. Builds the message, delivers it through
-    _deliver_todo_reply (the todo Reply's own gates and stamp moment, in its lenient mode: the
-    comments are the point and the stamp a convenience, so a switched-off or settled todo sends
-    with a warning, while an ended session refuses and sends nothing), then appends the `send`
-    entry to the comments log through the host script — after a sent or queued verdict only,
-    never after a refusal. A failed append is a warning on the reply, never a failed send: the
-    message is already in the session. Handled in _dispatch_ws, not _drive (the frame carries
+    fileCommentsSendFailed {reqId, error, code?}. Refuses while the file-editing consent is off
+    (`editing-off`, BEFORE the message is built or sent — see below), builds the message, delivers
+    it through _deliver_todo_reply (the todo Reply's own gates and stamp moment, in its lenient
+    mode: the comments are the point and the stamp a convenience, so a switched-off or settled todo
+    sends with a warning, while an ended session refuses and sends nothing), then appends the
+    `send` entry to the comments log through the host script — after a sent or queued verdict
+    only, never after a refusal. A failed append is a warning on the reply, never a failed send:
+    the message is already in the session. Handled in _dispatch_ws, not _drive (the frame carries
     `sid`, not `id`), so the op checks _kernel_knows itself. The comments are on disk before any
-    send, so a refusal loses nothing."""
+    send, so a refusal loses nothing.
+
+    Why the consent gates the SEND and not just the append: a send is a disk write — its `send`
+    entry is the comments log's only record of what went, and the panel's unsent list is derived
+    from that log (plans/file-review.md, The comments log) — so a send the log cannot record must
+    not go. The first build delivered the message and then skipped the append (decision 5 read as
+    gating the write alone): the session got the message, the todo was stamped, the log stayed
+    empty, every comment stayed listed as unsent, and the next click delivered the identical
+    message again (the review, 2026-09-06). Now the one gate every disk-writing verb stands behind
+    (Security posture: checked before anything else) is checked once, ahead of delivery, and the
+    refusal's text carries the phrase the viewer's regex matches so the panel can offer the
+    consent and retry — nothing sent, nothing stamped, the comments still on disk."""
     rid = msg.get("reqId")
 
-    def fail(error):
-        return {"type": "fileCommentsSendFailed", "reqId": rid, "error": error}
+    def fail(error, code=None):
+        rep = {"type": "fileCommentsSendFailed", "reqId": rid, "error": error}
+        if code:
+            rep["code"] = code
+        return rep
     sid = str(msg.get("sid") or "")
     if not sid or not _kernel_knows(sid):
         return fail("nothing was sent: this kernel has no session with id %s (on a board showing more than "
@@ -31594,6 +31712,12 @@ def _file_comments_send_op(msg):
     p = _file_comments_path(raw, sid)             # the real file: the sidecar and the CLIs key on it
     if not p:
         return fail("nothing was sent: cannot resolve %s to an absolute path" % _tilde(str(raw or "")))
+    if not _file_editing_on():
+        # THE consent, ahead of the send (docstring): the log entry this send must leave is a write to a
+        # file in the user's project, and without it the send is unrecorded and repeats
+        return fail("nothing was sent: the send would not be recorded in the comments log for %s while dashboard "
+                    "file editing is off on this machine — the viewer's Edit button asks to turn it on" % _tilde(p),
+                    code="editing-off")
     rc = msg.get("comments") or []
     if not isinstance(rc, list) or not all(isinstance(c, dict) for c in rc):
         return fail("nothing was sent: the request's comments were not a list")
@@ -31633,13 +31757,9 @@ def _file_comments_send_op(msg):
         # reaches .trackchanges/ as the author label of every reply the session writes (ROMP_SESSION_NAME
         # in the vendored CLIs), so a committed log widens nothing the sidecar does not.
         entry["sessionName"] = name
-    if not _file_editing_on():
-        # the comments log is a file in the user's project: every write to disk stands behind the one
-        # file-editing consent (decision 5); the message itself is not a disk write and has gone
-        out, err = None, (None, "dashboard file editing is off on this machine — the viewer's Edit button asks "
-                                "to turn it on")
-    else:
-        out, err = _file_comments_call(p, "log-send", entry)
+    # the append rides the consent checked at the top of this op, the way _save_file checks once and
+    # then writes: one gate per op, ahead of everything the op does
+    out, err = _file_comments_call(p, "log-send", entry)
     if err and out and out.get("logged"):
         # the entry landed before the host refused: log-send appends first, and a corrupt or newer sidecar
         # stops the read that follows, not the append. The log IS current and the send must not be repeated,
@@ -31709,39 +31829,148 @@ def _edit_diff(old, new, name):
     return "".join(out), truncated
 
 
+def _track_root(p):
+    """store-io's findVaultRoot, mirrored: the nearest directory at or above `p`'s own that holds one
+    of _TRACK_ROOT_MARKERS (any entry kind, as fs.existsSync sees it), up to forty parents; None when
+    there is none. Used ONLY when node is absent (the host is the authority whenever it can run)."""
+    d = os.path.dirname(os.path.abspath(p))
+    for _ in range(40):
+        if any(os.path.exists(os.path.join(d, m)) for m in _TRACK_ROOT_MARKERS):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return None
+
+
+def _track_paths(root, p):
+    """The sidecar, the comments log and config.json for `p` under `root`, where store-io's storePathFor
+    and the host's logPathFor put them: `<root>/.trackchanges/<encodeURIComponent(rel)>.json`, the same
+    stem with _TRACK_LOG_SUFFIX, and `<root>/.trackchanges/config.json`. urllib's quote with the four
+    extra safe characters IS encodeURIComponent (both leave A-Za-z0-9 - _ . ! ~ * ' ( ) alone and
+    percent-encode everything else as uppercase UTF-8 bytes; `/` is encoded, so one flat directory
+    holds every file's sidecar)."""
+    tdir = os.path.join(root, _TRACKCHANGES_DIR)
+    enc = quote(os.path.relpath(p, root), safe="!*'()")
+    return (os.path.join(tdir, enc + ".json"), os.path.join(tdir, enc + _TRACK_LOG_SUFFIX),
+            os.path.join(tdir, "config.json"))
+
+
+def _track_listed(entries, rel):
+    """engine.isTracked, mirrored: is `rel` named by the config list `entries` — an exact
+    vault-relative file path, or under a `dir/` prefix entry — a leading `./` or `/` ignored on both
+    sides. The explicit half of the tracked verdict only; link inheritance is the host's."""
+    if not isinstance(entries, list) or not isinstance(rel, str):
+        return False
+    r = re.sub(r"^\.?/", "", rel)
+    for e in entries:
+        if not isinstance(e, str) or not e:
+            continue
+        e = re.sub(r"^\.?/", "", e)
+        if (r.startswith(e) if e.endswith("/") else r == e):
+            return True
+    return False
+
+
+def _edit_log_stake(p):
+    """Without node, what would the host's log-edit have done with a save of `p`? → "logged" (it would
+    have appended: a sidecar or a comments log exists at the deterministic path, or config.json names
+    the file or a folder over it), None (it would not have: no root, no .trackchanges/ at the root, no
+    config or an empty tracked list, or the file vetoed by `untracked` — every one of these an EXACT
+    reading of the host's own rule, exists(store) || exists(log) || tracked), or "maybe" (the config
+    has entries and the file is not named: tracking also inherits through [[links]] from a tracked
+    note (store-io's trackedClosure), which only the host resolves, or the config could not be read
+    at all — the host would have refused it and the reply would have warned). The kernel-side mirror
+    exists so a no-node kernel can tell the person whether the record they committed is missing an
+    entry, instead of answering logged:false as if nothing were owed (the review, 2026-09-06: a repo
+    with a committed config.json tracking the file, saved on a node-less machine, lost the entry with
+    no word); where the mirror cannot be exact it says so rather than guessing (CLAUDE.md,
+    authoritative sources)."""
+    root = _track_root(p)
+    if not root or not os.path.isdir(os.path.join(root, _TRACKCHANGES_DIR)):
+        return None
+    store, log, cfg_path = _track_paths(root, p)
+    if os.path.exists(store) or os.path.exists(log):
+        return "logged"
+    if not os.path.exists(cfg_path):
+        return None
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        if not isinstance(cfg, dict):
+            raise ValueError("not a JSON object")
+        tracked, untracked, v = cfg.get("tracked"), cfg.get("untracked"), cfg.get("v")
+        if ((isinstance(v, (int, float)) and not isinstance(v, bool) and v > 2)
+                or (tracked is not None and not isinstance(tracked, list))
+                or (untracked is not None and not isinstance(untracked, list))):
+            raise ValueError("not the config shape the host reads")   # its configStatus: unsupported / corrupt
+    except (OSError, ValueError):
+        return "maybe"                          # the host refuses such a config; its reply would have warned
+    rel = os.path.relpath(p, root)
+    if _track_listed(untracked or [], rel):
+        return None                             # the veto wins, as in store-io's isTrackedFile
+    if _track_listed(tracked or [], rel):
+        return "logged"
+    return "maybe" if tracked else None
+
+
+# The fileSaved logWarning when node is absent and _edit_log_stake says the log is (or may be) owed an
+# entry: named after the verdict; %s is the tilde-collapsed path. Shown by the viewer's note bar.
+_NO_NODE_EDIT_WARN = {
+    "logged": ("saved, but not written to the comments log for %s: node is not installed on this machine, and "
+               "the comments helper that keeps the log runs under it — this edit is missing from the log"),
+    "maybe": ("saved, but the comments log for %s could not be checked or updated: node is not installed on this "
+              "machine, and the comments helper that keeps the log runs under it — if the file is tracked, this "
+              "edit is missing from the log"),
+}
+
+
 def _edit_log_before(raw, sid):
-    """Is this save one the comments log may record? → {path} (the absolute REAL path the log-edit
-    call names — _file_comments_path, the path _save_file writes through, so the entry lands in the
-    .trackchanges/ the sidecar lives in) or None: a path inside .trackchanges/ itself, a tree with no
-    .trackchanges/ anywhere above (no sidecar, log or config entry can exist for it), or no node to run
-    the host script. Path predicates and a PATH probe only — it opens nothing. The text the save replaces comes
-    out of _save_file's own read (its `prior` argument), made only once every refusal there has been
-    passed: the first build read the whole file HERE, ahead of the consent gate, the text-name check,
-    the size cap and the mtime fence, so a frame naming a multi-GB blob under a tracked tree was read
-    into memory and then refused (the review, 2026-09-06). Called ahead of _save_file so an ordinary
-    save on an untracked tree costs no node process."""
+    """Is this save one the comments log may record? → {path, noNode?} (the absolute REAL path the
+    log-edit call names — _file_comments_path, the path _save_file writes through, so the entry lands
+    in the .trackchanges/ the sidecar lives in) or None: a path inside .trackchanges/ itself, a tree
+    with no .trackchanges/ anywhere above (no sidecar, log or config entry can exist for it), or — with
+    no node to run the host script — a file the kernel-side mirror says the host would not have logged
+    either (_edit_log_stake). When node is absent and the mirror says the log is or may be owed an
+    entry, `noNode` carries that verdict so _edit_log_after can warn instead of answering logged:false
+    as if nothing were owed: the panel is gone on such a machine, but the viewer's own note bar shows
+    the warning, and the log the project committed is read on machines that do have node (the review,
+    2026-09-06). Path predicates, a PATH probe and — no node only — a few stats and a config.json read;
+    the file itself is never opened here. The text the save replaces comes out of _save_file's own read
+    (its `prior` argument), made only once every refusal there has been passed: the first build read
+    the whole file HERE, ahead of the consent gate, the text-name check, the size cap and the mtime
+    fence, so a frame naming a multi-GB blob under a tracked tree was read into memory and then refused
+    (the review, 2026-09-06). Called ahead of _save_file so an ordinary save on an untracked tree costs
+    no node process."""
     try:
         p = _file_comments_path(raw, sid)
-        if (not p or _under_trackchanges(p) or not _trackchanges_above(p)
-                or not _file_comments_node()):
+        if not p or _under_trackchanges(p) or not _trackchanges_above(p):
             return None
-        return {"path": p}
+        if _file_comments_node():
+            return {"path": p}
+        stake = _edit_log_stake(p)
+        return {"path": p, "noNode": stake} if stake else None
     except Exception:
         return None
 
 
 def _edit_log_after(pre, prior, content, new_ns):
     """After a successful save: append the `edit` entry through the host script's log-edit verb →
-    (logged, warning). `pre` is _edit_log_before's answer (None: not a logged save, quietly false);
-    `prior` is the dict _save_file filled with the replaced text and its mtime. The host decides
-    whether the file has a sidecar, a log or a tracked flag — log-edit never creates one — and answers
-    logged:true|false; on a refusal it still says whether the entry landed first (a corrupt sidecar
-    stops the read that follows the append, not the append), and that verdict is honored: the warning
-    then names what failed instead of claiming the log was not written. A failed append is reported,
-    never a failed save."""
+    (logged, warning). `pre` is _edit_log_before's answer (None: not a logged save, quietly false;
+    `noNode` set: node is absent and the host would have — or might have — logged this save, so the
+    answer is logged:false WITH the warning that says so, _NO_NODE_EDIT_WARN); `prior` is the dict
+    _save_file filled with the replaced text and its mtime. The host decides whether the file has a
+    sidecar, a log or a tracked flag — log-edit never creates one — and answers logged:true|false; on
+    a refusal it still says whether the entry landed first (a corrupt sidecar stops the read that
+    follows the append, not the append), and that verdict is honored: the warning then names what
+    failed instead of claiming the log was not written. A failed append is reported, never a failed
+    save."""
     if pre is None:
         return False, None
     p = pre["path"]
+    if pre.get("noNode"):
+        return False, _NO_NODE_EDIT_WARN[pre["noNode"]] % _tilde(p)
     if not isinstance(prior, dict) or "bytes" not in prior:
         return False, ("saved, but not written to the comments log: %s was not read before the save, so there "
                        "is no diff to record" % _tilde(p))

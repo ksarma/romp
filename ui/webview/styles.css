@@ -3618,11 +3618,14 @@ body.filebrowse-open { overflow: hidden; }
 /* highlights, both views (painted by anchor-map.ts): a comment is a RING around its passage, never a fill a diff
    colour would occlude, each wrapped line its own rounded box; the text-changed state (quote gone, context found)
    wears a dashed ring; the composer's pending target wears the accent. Adapted from the Obsidian host's stylesheet
-   with romp's tokens in place of its palette. */
+   with romp's tokens in place of its palette. Each highlight is a <mark>, and the UA sheet gives a mark its own ink
+   (`mark { color: MarkText }`, black in every engine) — a declaration on the element, so it beats whatever the
+   passage inherits; without `color: inherit` the passage's glyphs went black over the wash, and a code token or a
+   link lost its colour (the chat's mark.cmt-hl sets the same). */
 .fc-hl { background: color-mix(in srgb, var(--warn) 14%, transparent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--warn) 85%, transparent);
-  border-radius: 5px; padding: 0 2px; -webkit-box-decoration-break: clone; box-decoration-break: clone; cursor: pointer; }
+  color: inherit; border-radius: 5px; padding: 0 2px; -webkit-box-decoration-break: clone; box-decoration-break: clone; cursor: pointer; }
 .fc-hl-context { box-shadow: none; outline: 1.5px dashed color-mix(in srgb, var(--warn) 70%, transparent); outline-offset: -1.5px; }
-.fc-presel { background: var(--accent-wash); box-shadow: inset 0 0 0 1.5px var(--accent); border-radius: 5px; padding: 0 2px;
+.fc-presel { background: var(--accent-wash); box-shadow: inset 0 0 0 1.5px var(--accent); color: inherit; border-radius: 5px; padding: 0 2px;
   -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .fc-float { position: fixed; z-index: 1300; user-select: none; -webkit-user-select: none; background: var(--surface-raised); box-shadow: var(--shadow-menu); }
 .fc-float[hidden] { display: none; }

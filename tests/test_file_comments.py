@@ -58,7 +58,8 @@ process.stdin.on('end', () => {
     else process.stdout.write(JSON.stringify(CFG.reply));
     process.exit(CFG.exit);
   };
-  if (CFG.sleep) setTimeout(finish, CFG.sleep * 1000); else finish();
+  const tick = () => { if (fs.existsSync(CFG.waitFor)) finish(); else setTimeout(tick, 20); };
+  if (CFG.sleep) setTimeout(finish, CFG.sleep * 1000); else if (CFG.waitFor) tick(); else finish();
 });
 """
 
@@ -89,8 +90,10 @@ class _Harness(unittest.TestCase):
         km._set_file_editing(False)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def stub(self, reply=None, exit=0, stderr="", stdout=None, sleep=0):
-        """(Re)write the stub host script: answer `reply` as JSON (or raw `stdout`), exit `exit`."""
+    def stub(self, reply=None, exit=0, stderr="", stdout=None, sleep=0, wait_for=None):
+        """(Re)write the stub host script: answer `reply` as JSON (or raw `stdout`), exit `exit`. `sleep`
+        stalls the answer for that many seconds; `wait_for` holds it until that path exists (a gate the
+        test opens, so a test about the wait itself needs no clock)."""
         if reply is None:
             reply = {"ok": True, "verb": "status", "root": self.root, "storePath": None, "trackedBy": None,
                      "agentTooling": "absent", "fileMtimeNs": str(self.ns), "storeMtimeNs": None,
@@ -98,7 +101,7 @@ class _Harness(unittest.TestCase):
                      "unsent": {"comments": [], "replies": [], "accepted": 0, "rejected": 0, "watermark": None},
                      "log": [], "logTruncated": False}
         cfg = {"seen": self.seen_path, "reply": reply, "exit": exit, "stderr": stderr, "stdout": stdout,
-               "sleep": sleep}
+               "sleep": sleep, "waitFor": wait_for}
         with open(self.stub_path, "w") as f:
             f.write(_STUB % json.dumps(cfg))
         try:
@@ -116,25 +119,46 @@ class _Harness(unittest.TestCase):
 
 
 class _Wire(_Harness):
-    """The real dispatcher with a fake client whose send() flips an Event — the file-comments ops
-    answer from their own thread, so the test waits for the reply instead of indexing sent[-1]."""
+    """The real dispatcher with a fake client whose send() records the reply and wakes the test — the
+    file-comments ops answer from their own thread, so the test waits for the reply instead of indexing
+    sent[-1]. `dispatch` is what the recv loop does per frame and returns whenever the dispatcher does;
+    `answered`/`wait_for` read the replies by reqId, so a test can hold an op open and look at what the
+    dispatcher did meanwhile."""
 
     def setUp(self):
         super().setUp()
-        self.sent, self.got = [], threading.Event()
+        self.sent, self.got, self.cv = [], threading.Event(), threading.Condition()
 
         def _send(s):
-            self.sent.append(json.loads(s))
-            self.got.set()
+            with self.cv:
+                self.sent.append(json.loads(s))
+                self.got.set()
+                self.cv.notify_all()
         self.client = {"app": "feed", "alive": True, "send": _send}
         self.handler = object.__new__(km.Handler)
 
+    def dispatch(self, msg):
+        """One frame through the dispatcher, no waiting — what the recv loop does per frame."""
+        km.Handler._dispatch_ws(self.handler, msg, self.client)
+
     def send(self, msg, wait=True):
         self.got.clear()
-        km.Handler._dispatch_ws(self.handler, msg, self.client)
+        self.dispatch(msg)
         if wait:
             self.assertTrue(self.got.wait(20), "the op never answered")
         return self.sent[-1] if self.sent else None
+
+    def answered(self, req_id):
+        """Has a reply carrying this reqId reached the client yet?"""
+        with self.cv:
+            return any(r.get("reqId") == req_id for r in self.sent)
+
+    def wait_for(self, req_id, timeout=20):
+        """The reply carrying this reqId, waited for."""
+        with self.cv:
+            self.assertTrue(self.cv.wait_for(lambda: any(r.get("reqId") == req_id for r in self.sent), timeout),
+                            "reqId %r never answered" % (req_id,))
+            return next(r for r in self.sent if r.get("reqId") == req_id)
 
 
 class TheDiskOp(_Harness):
@@ -267,27 +291,90 @@ class TheDiskOpOnTheWire(_Wire):
         self.assertEqual(r["type"], "fileCommentsResult")
         self.assertEqual((r["reqId"], r["verb"]), (41, "status"))
 
-    def test_the_op_runs_off_the_recv_loop_like_fileGitLink(self):
-        src = inspect.getsource(km.Handler._dispatch_ws)
-        self.assertIn('_file_comments_reply(client, msg, _file_comments_op, "fileCommentsFailed")', src)
-        self.assertIn('_file_comments_reply(client, msg, _file_comments_send_op, "fileCommentsSendFailed")', src)
-        self.assertIn("threading.Thread(target=_run, daemon=True).start()",
-                      inspect.getsource(km._file_comments_reply))
+    def test_a_host_that_has_not_answered_holds_the_ops_thread_not_the_dispatcher(self):
+        # The plan's reason for the thread (plans/file-review.md, Kernel: the receive loop never blocks
+        # on the host script), end to end: the real op, a real node host that answers only once a gate
+        # file exists. The reply cannot land before the gate opens, so a dispatcher that is back
+        # BEFORE it opens was never waiting on the host — no clock in the assertion. A dispatcher that
+        # ran the op inline would sit here until the host's 10 s deadline and come back with the
+        # host-error already delivered.
+        gate = os.path.join(self.tmp, "release")
+        self.stub(wait_for=gate)
+        try:
+            self.dispatch({"type": "fileComments", "reqId": 43, "sid": SID, "path": self.fp, "verb": "status"})
+            self.assertFalse(self.answered(43), "the dispatcher is back while the host is still running")
+        finally:
+            Path(gate).touch()
+        r = self.wait_for(43)
+        self.assertEqual((r["type"], r["reqId"], r["verb"]), ("fileCommentsResult", 43, "status"))
+        self.assertEqual(self.seen()["request"]["verb"], "status", "the host ran and answered once released")
+
+
+class TheOpsAnswerOffTheRecvLoop(_Wire):
+    """Both frame types answer from their own thread, the fileGitLink shape (the contract sheet, C2; the
+    plan: the host script is a subprocess with a deadline and the receive loop never waits on it).
+    Pinned by BEHAVIOUR, not by the source text: a rewrite that ran the op before starting the thread,
+    the thread only sending the reply, keeps every line a source pin looks for and every reply a
+    waiting harness accepts, and holds the socket's recv loop for the full deadline on every verb (the
+    review, 2026-09-06). So the op is swapped for one that cannot finish until the test lets it: the
+    dispatcher must be back while the op is held, a second frame dispatched meanwhile must be answered
+    while the first is still held, and the held one must still answer once released. Faked at the op,
+    so the send frame needs no session world: what is under test is the reply helper's threading, the
+    same for both frame types."""
+
+    def frames(self):
+        """(op attribute on km, success type, failure type, frame) for both frame types."""
+        yield ("_file_comments_op", "fileCommentsResult", "fileCommentsFailed",
+               {"type": "fileComments", "sid": SID, "path": self.fp, "verb": "status"})
+        yield ("_file_comments_send_op", "fileCommentsSent", "fileCommentsSendFailed",
+               {"type": "fileCommentsSend", "sid": SID, "path": self.fp, "tracked": True, "comments": ONE,
+                "accepted": 0, "rejected": 0, "watermark": None, "todoId": None})
+
+    def test_the_dispatcher_is_back_while_the_op_is_still_held(self):
+        for attr, ok_type, _, frame in self.frames():
+            with self.subTest(attr):
+                self.sent.clear()
+                release = threading.Event()
+                real = getattr(km, attr)
+
+                def held(m, ok_type=ok_type, release=release):
+                    if m.get("reqId") == 1:
+                        # A dispatcher that ran the op inline would wait here forever; the bound turns
+                        # that hang into a failure (the reply is already in when dispatch returns).
+                        release.wait(20)
+                    return {"type": ok_type, "reqId": m.get("reqId"), "verb": "status"}
+                setattr(km, attr, held)
+                try:
+                    self.dispatch(dict(frame, reqId=1))
+                    self.assertFalse(self.answered(1), "%s: the dispatcher returned before the op finished" % attr)
+                    self.dispatch(dict(frame, reqId=2))
+                    r2 = self.wait_for(2)
+                    self.assertFalse(self.answered(1), "%s: a later frame is served while the op is held" % attr)
+                    release.set()
+                    r1 = self.wait_for(1)
+                finally:
+                    release.set()
+                    setattr(km, attr, real)
+                self.assertEqual((r1["type"], r1["reqId"]), (ok_type, 1), "the held op still answers once released")
+                self.assertEqual((r2["type"], r2["reqId"]), (ok_type, 2))
 
     def test_an_exception_inside_the_op_still_answers(self):
-        # the saveFile lesson: a handler that raises sends nothing and the client hangs forever
-        real = km._file_comments_op
+        # the saveFile lesson: a handler that raises sends nothing and the client hangs forever — for
+        # both frame types, each with its own failure type
+        for attr, _, fail_type, frame in self.frames():
+            with self.subTest(attr):
+                real = getattr(km, attr)
 
-        def boom(m):
-            raise RuntimeError("kernel bug")
-        km._file_comments_op = boom
-        try:
-            r = self.send({"type": "fileComments", "reqId": 42, "sid": SID, "path": self.fp, "verb": "status"})
-        finally:
-            km._file_comments_op = real
-        self.assertEqual(r["type"], "fileCommentsFailed")
-        self.assertEqual((r["reqId"], r["code"]), (42, "host-error"))
-        self.assertIn("kernel bug", r["error"])
+                def boom(m):
+                    raise RuntimeError("kernel bug")
+                setattr(km, attr, boom)
+                try:
+                    r = self.send(dict(frame, reqId=42))
+                finally:
+                    setattr(km, attr, real)
+                self.assertEqual(r["type"], fail_type)
+                self.assertEqual((r["reqId"], r["code"]), (42, "host-error"))
+                self.assertIn("kernel bug", r["error"])
 
 
 class SidecarOnlyVerbsTellTheSessionNothing(_Wire):
@@ -720,12 +807,32 @@ class TheSendOp(_SendWorld):
 
 
 class TheSendOpOnTheWire(_Wire, _SendWorld):
+    def frame(self, req_id):
+        return {"type": "fileCommentsSend", "reqId": req_id, "sid": SID, "path": self.fp, "tracked": True,
+                "comments": ONE, "accepted": 0, "rejected": 0, "watermark": None, "todoId": self.tid}
+
     def test_the_send_op_answers_the_sending_socket_with_the_request_id(self):
-        r = self.send({"type": "fileCommentsSend", "reqId": 51, "sid": SID, "path": self.fp, "tracked": True,
-                       "comments": ONE, "accepted": 0, "rejected": 0, "watermark": None, "todoId": self.tid})
+        r = self.send(self.frame(51))
         self.assertEqual(r["type"], "fileCommentsSent")
         self.assertEqual(r["reqId"], 51)
         self.assertEqual(len(self.injected), 1)
+
+    def test_the_log_append_holds_the_ops_thread_not_the_dispatcher(self):
+        # The send op's own host call — log-send after the message went — is the wait the dispatcher's
+        # comment names as the reason this frame is threaded. The real op, a real node host held by a
+        # gate file: the dispatcher is back before the gate opens, and the send still completes.
+        gate = os.path.join(self.tmp, "release")
+        self.stub(reply={"ok": True, "verb": "log-send", "logged": True}, wait_for=gate)
+        try:
+            self.dispatch(self.frame(52))
+            self.assertFalse(self.answered(52), "the dispatcher is back while the log append is still running")
+        finally:
+            Path(gate).touch()
+        r = self.wait_for(52)
+        self.assertEqual((r["type"], r["reqId"], r["queued"]), ("fileCommentsSent", 52, False))
+        self.assertNotIn("logWarning", r, "the append completed once released")
+        self.assertEqual(len(self.injected), 1)
+        self.assertEqual(self.seen()["request"]["verb"], "log-send")
 
 
 class TheTodoReplyIsUnchanged(_SendWorld):

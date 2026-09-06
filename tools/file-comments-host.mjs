@@ -363,33 +363,54 @@ function checkConfig(ctx, paths) { refuseConfig(ctx, paths, configStatus(paths))
 
 // ── the file ────────────────────────────────────────────────────────
 
-// Every file is read as UTF-8 text, images and PDFs included, exactly as the CLIs read it, so
-// the fingerprint this script stamps equals theirs.
-function readFile(ctx) {
-  let text;
+// The one way this script opens the file: a non-blocking open, then fstat through the descriptor,
+// and a refusal (`unreadable`) for anything but a regular file — a missing path, a directory, a
+// FIFO, a device, a file this process may not open — with the OS error for the person to read.
+// Both readFile and statFile go through here so the check cannot be skipped by the route a verb
+// takes. A plain open() of a FIFO with no writer blocks until one arrives, which used to pin the
+// host until the kernel's deadline killed it and reported a hang where a refusal was due; and a
+// stat-then-open pair checks one inode and opens whatever the path names by then. O_NONBLOCK
+// returns the descriptor at once, the fstat says what it is, and a regular file reads the same
+// through it. Returns the open descriptor (the caller closes it) and the bigint stat.
+function openRegular(ctx) {
+  let fd;
   try {
-    text = fs.readFileSync(ctx.abs, 'utf8');
+    fd = fs.openSync(ctx.abs, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+    const st = fs.fstatSync(fd, { bigint: true });
+    if (!st.isFile()) throw new Error(`${ctx.abs} is not a regular file`);
+    return { fd, st };
   } catch (e) {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
     throw new Refusal('unreadable', `cannot read ${ctx.shown}: ${tildeText(e && e.message ? e.message : String(e))}`);
   }
-  return { text, fileMtimeNs: statNs(ctx.abs) };
 }
 
-// The file stat'ed and opened, not read: for the verbs that need no text when no sidecar exists
-// (nothing to rebase, no fingerprint to stamp). `status` runs on every viewer open, so reading
-// the whole file into a V8 string there loaded a 300 MB log for nothing and failed outright
-// above V8's string limit. Refuses exactly what readFile would — a missing path, a directory, a
-// file this process may not open — as `unreadable` with the OS error, so a caller sees no
-// difference but the bytes not moved.
-function statFile(ctx) {
-  let st;
+// Every file is read as UTF-8 text, images and PDFs included, exactly as the CLIs read it, so
+// the fingerprint this script stamps equals theirs. The mtime comes from the same descriptor the
+// text is read through, taken before the read: a file that changes between the two then carries
+// the older stamp, so the next fenced write refuses and the caller reloads, rather than a newer
+// stamp over text the caller never saw.
+function readFile(ctx) {
+  const { fd, st } = openRegular(ctx);
+  let text;
   try {
-    st = fs.statSync(ctx.abs, { bigint: true });
-    if (!st.isFile()) throw new Error(`${ctx.abs} is not a regular file`);
-    fs.closeSync(fs.openSync(ctx.abs, 'r'));
+    text = fs.readFileSync(fd, 'utf8');
   } catch (e) {
     throw new Refusal('unreadable', `cannot read ${ctx.shown}: ${tildeText(e && e.message ? e.message : String(e))}`);
+  } finally {
+    try { fs.closeSync(fd); } catch { /* ignore */ }
   }
+  return { text, fileMtimeNs: st.mtimeNs.toString() };
+}
+
+// The file opened and stat'ed, not read: for the verbs that need no text when no sidecar exists
+// (nothing to rebase, no fingerprint to stamp). `status` runs on every viewer open, so reading
+// the whole file into a V8 string there loaded a 300 MB log for nothing and failed outright
+// above V8's string limit. Refuses exactly what readFile would (both go through openRegular), so
+// a caller sees no difference but the bytes not moved.
+function statFile(ctx) {
+  const { fd, st } = openRegular(ctx);
+  try { fs.closeSync(fd); } catch { /* ignore */ }
   return { text: null, fileMtimeNs: st.mtimeNs.toString() };
 }
 

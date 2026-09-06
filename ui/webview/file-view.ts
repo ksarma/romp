@@ -494,7 +494,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let isPdf = false;                          // application/pdf → the lightbox's iframe treatment
   let isSvgImage = false;                     // image/svg+xml exactly — unlocks the Source toggle
   let svgSource = false;                      // the SVG Source view is up (the highlighted XML)
-  let svgText: string | null = null;          // the decoded SVG bytes, read once on first toggle
+  let svgText: string | null = null;          // the decoded SVG bytes: read on the first toggle, a reload's replace or drop it
   let mediaBlob: Blob | null = null;          // the fetched bytes — the Source toggle decodes THESE
   let objUrl: string | null = null;           // this open's object URL (registered as mediaUrlLive)
   // The text the CURRENT view shows: the SVG Source view reads the decoded blob, every other text
@@ -988,7 +988,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         mediaBlob = t;
         objUrl = URL.createObjectURL(t);
         mediaUrlLive = objUrl;                   // registered so close/replace can revoke (dropMediaUrl)
-        if (svgSource) { svgText = null; void t.text().then((s) => { svgText = s; renderBody(); }); }   // the Source view re-reads the new bytes
+        if (svgSource && svgText !== null) {
+          // A reload under the Source view: the XML swaps in when the new bytes decode, and the old
+          // text stands until then — nulling it first would flap mode() to "media" and flash the image
+          // for the decode's duration. A decode a newer reload overtook, or one landing after the
+          // viewer closed, paints nothing: the newest bytes are what show, and a drained panel hears
+          // no onRendered.
+          void t.text().then((s) => { if (mediaBlob !== t || !wrap.isConnected) return; svgText = s; renderBody(); });
+          return;
+        }
+        svgText = null;   // any decode on hand was the OLD bytes': the next Source toggle decodes this blob
         renderBody();
         return;
       }
