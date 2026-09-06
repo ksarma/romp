@@ -3707,6 +3707,11 @@ def _matches_disk(fsid, store, mine=None):
 # own load_goals) and raises, so the shared object is never corrupted and /perf (memos.goals_shared)
 # shows `off`. copy.copy / copy.deepcopy of a frozen container hand back plain, writable ones.
 #
+# Documented drift, forensic only: record_verdict's `at` on a row the replay appends and a replay-
+# triggered seam's `t` are stamped at fill time and then shared, where every load_goals re-stamps them;
+# both are arrival stamps no writer persists from a read-only load, and the view's content (verdicts,
+# flags, status) is identical.
+#
 # Invalidation is exact by construction: a store publish is a rename to a new inode (save_goals), a
 # journal write an append, an archive publish a rename. save_goals also pops its path after the rename
 # (the writer's object is never the shared one), _rebind_state and migrate_all_stores clear, and the
