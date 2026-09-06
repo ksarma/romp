@@ -116,7 +116,7 @@ class Collector(unittest.TestCase):
                                               "disk_hits", "disk_misses", "disk_seeds",
                                               "absent_hits", "absent_misses"},
                          "read through jd.goal_io_stats")
-        self.assertEqual(set(snap["memos"]), {"goals_snap", "lift_gate", "goals_shared"},
+        self.assertEqual(set(snap["memos"]), {"goals_snap", "lift_gate", "goals_shared", "wire"},
                          "one block per memo the kernel keeps (plan D4)")
         self.assertEqual(set(snap["memos"]["goals_snap"]),
                          {"hit", "miss", "fail", "evict", "punch", "entries", "bytes"},
@@ -132,6 +132,12 @@ class Collector(unittest.TestCase):
                           "evict", "fallback", "poisoned", "entries", "bytes", "off"},
                          "the shared read-only goal-store cache: counters plus its occupancy (jd.shared_store_stats)")
         for k, v in snap["memos"]["goals_shared"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["wire"]),
+                         {"feed_cards_hit", "feed_cards_miss", "feed_body", "bars_body", "bars_sig_fallback", "default_str"},
+                         "the pusher's wire caches (2026-09-06): the per-card memo, the whole frames actually made, "
+                         "the unkeyable bars fallback, the values a wire encoder shipped as str()")
+        for k, v in snap["memos"]["wire"].items():
             self.assertIsInstance(v, int, k)
         for k in ("rss_kb", "threads", "cpu_s", "pid"):
             self.assertIn(k, snap["process"])

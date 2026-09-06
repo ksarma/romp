@@ -114,7 +114,8 @@ test("the recency tint is computed client-side from `t` on a live clock; deltas 
   assert.equal(/\.trgb\b|trgb[?]?:/.test(FEED), false, "no reader or type of a per-card colour remains — present or absent on the wire, it is ignored");
   assert.ok(KERNEL.includes('"trgb": list(cm.age_rgb('), "full frames keep the tint: an older bundle destructures it unguarded");
   assert.match(KERNEL, /def _strip_trgb\(card\):/);
-  assert.match(KERNEL, /cards = \{a\["itemId"\]: json\.dumps\(_strip_trgb\(a\), default=str\)/, "deltas are built from tint-less cards");
+  assert.match(KERNEL, /cards = \{a\["itemId"\]: json\.dumps\(_strip_trgb\(a\), default=dflt\)/, "deltas are built from tint-less cards");
+  assert.match(KERNEL, /dflt = _wire_default_in\("_feed_parts"\)/, "…encoded through the wire default that counts a non-JSON value and names its type once, not a bare str");
   assert.match(KERNEL, /stable\["asks"\] = \[_strip_trgb\(a\) for a in stable\["asks"\]\]/, "…and the dedup signature ignores the tint");
   assert.match(FEED, /applyTint\(card, nowSec\(\) - it\.t\);/);
   assert.match(FEED, /applyTint\(card, nowSec\(\) - g\.t\);/);

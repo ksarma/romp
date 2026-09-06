@@ -1477,6 +1477,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   gauges `entries`, `bytes` (the raw store bytes held for the compare) and
   `off` (1 once a write attempt switched the cache off, until the kernel
   restarts).
+  `wire` is the pusher's per-build wire caches: `feed_cards_hit` and
+  `feed_cards_miss` (the per-card encode served from its memo against run),
+  `feed_body` and `bars_body` (whole frames serialized, at most once per build
+  each), `bars_sig_fallback` (bars builds that could not be keyed and took the
+  whole dump for their signature), and `default_str` (values no wire encoder
+  could serialize as JSON and shipped as `str()`, one per encode; the kernel's
+  stderr names each such type once).
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
