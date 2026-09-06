@@ -73,6 +73,7 @@ These are for scripting and for agents rather than daily use:
 | `romp compact <session> [--wait] [--timeout <s>]` | Compact a session's context in place (Claude's `/compact`: summarize the history, keep the session's name, id, mailbox, and watches) — the alternative to ending and recreating a long-lived session, and the external hand a session needs since it cannot `/compact` itself mid-turn. Quiet session → compacts now; open turn → queued, fires alone the moment the turn ends (the same safe path the chat's compact button uses). `--wait` blocks until the compaction has started and cleared, polling the kernel's own `compacting` signal on the `/sessions` rows (also the field to point a `romp watch` predicate at for scripted recycling); exits 1 honestly on timeout. A remote session's compaction is requested on its own kernel — `--wait` can't follow it from here and says so |
 | `romp end <session>` | End a session |
 | `romp move <session> <dir>` | Move an SDK session's working directory to `<dir>` (the folder must already exist); the conversation, name, mail and history stay with the session. Quiet session → moves now; open turn → queued, fires when the turn ends. See [Moving a session to another folder](#moving-a-session-to-another-folder) |
+| `romp emoji <session> [<emoji>\|--clear]` | Put one emoji before the session's name on its tab; `--clear` removes it; with no argument, print the current one (an empty line when there is none). Exactly one emoji is accepted; a refusal prints the kernel's reason. Works on a dormant session by id. See [A session's tab emoji](#a-sessions-tab-emoji) |
 | `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it |
 | `romp default-dir [PATH]` | The default working directory for new sessions; no argument prints it, `""` clears it |
 | `romp debug [on\|off\|status]` | Judge debug mode, where rejection rows carry the full input and reply |
@@ -153,6 +154,49 @@ interactive `/cd`), with Romp moving its own records alongside. It fires Claude
 Code's `CwdChanged` hook, not `SessionStart`; Romp registers no `CwdChanged`
 hook, so nothing on Romp's side re-runs.
 
+### A session's tab emoji
+
+A session's tab can carry one emoji before its name, so you can tell the
+sessions apart at a glance by role or state. It can be set from three places,
+which share one validator and one store:
+
+- **The tab.** Right-click it and choose **Emoji…**. The dialog's **Set** sends
+  the `setSessionEmoji` WebSocket op (`{type: "setSessionEmoji", id, emoji}`;
+  `emoji: ""` clears, and **Clear** sends exactly that). The kernel answers with
+  `{type: "emojiSet", id, emoji}` when the store has it, and the strip changes
+  on that confirm, the way a rename changes on `renamed`; a refusal comes back
+  as a `warn` with the reason.
+- **The session itself.** The `set_emoji(emoji)` tool, beside `set_working`, so
+  a session can mark what it is doing (a moon while it runs unattended).
+- **The shell.** `romp emoji <session> <emoji>`, `romp emoji <session> --clear`,
+  and `romp emoji <session>` to read. The tool and the command both go through
+  `POST /emoji` with `{"target": <live name or id>, "emoji": <emoji | "">}`; the
+  reply is `{"ok": true, "id", "emoji"}` or `{"ok": false, "error": <one line>}`.
+  The `emoji` key must be present: a body without it is a 400, never a clear.
+  For a session an attached machine owns, the kernel forwards the request to
+  that machine's kernel and relays its answer.
+
+What is accepted: exactly one emoji as a keyboard offers it. A base emoji, with
+or without the emoji presentation selector (U+FE0F); a skin-tone form; a joined
+(ZWJ) sequence such as a family or a profession; a keycap; a two-letter flag; a
+tag-sequence flag. What is refused, each with a one-line reason: letters,
+digits, punctuation, whitespace inside, a second emoji, a lone skin tone or
+joiner, and a text-default symbol without the selector (`©`, `☺`, `♥` as bare
+characters, which would render as text). The value is at most 48 bytes (the
+longest standard sequence is 35). The code-point tables come from Unicode 16.0;
+an emoji from a newer release is refused until the tables are updated. Empty
+input clears.
+
+The emoji is stored as the fifth field of the session's entry in the names
+registry (`names/<id>`: name, directory, colors, emoji), beside the name and
+color it decorates, so it survives restarts and follows a dormant session. It
+reaches the browser inside the per-tab metadata of the same push a rename or
+recolor rides, for this machine's sessions and for those of attached machines,
+whose kernels ship it in their own frames; nothing polls. On the tab the emoji
+is decorative for assistive technology (`aria-hidden`): the name is the tab's
+label, and a screen reader spelling out the glyph would put an ornament ahead
+of the identity.
+
 ## The Romp Postal Service
 
 How sessions message each other, from either side. Inside a session it is an MCP
@@ -182,6 +226,7 @@ romp mail remote                 # connect this remote machine to your laptop's 
 | `check_inbox()` | Read messages sent to you (also delivered at the end of each turn) |
 | `list_agents()` | The live sessions, each with its branch and working-note |
 | `set_working(text)` | Publish what you hold so peers steer clear |
+| `set_emoji(emoji)` | Put one emoji before your own session's name on its tab; `''` clears it. Refused, with the reason, for anything but exactly one emoji |
 | `check_sent()` | Whether your sent messages were read yet |
 | `recall_message(to, id?)` | Unsend a message the recipient hasn't read |
 

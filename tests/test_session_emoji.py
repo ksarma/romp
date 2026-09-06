@@ -254,6 +254,14 @@ class Frames(unittest.TestCase):
         self.assertIn("_mark_views_dirty()", block)
 
 
+    def test_the_intent_and_doc_surfaces_name_the_op(self):
+        root = Path(os.path.dirname(HERE))
+        self.assertIn('"setSessionEmoji"', (root / "vscode-extension" / "src" / "pipe-intent.ts").read_text(),
+                      "the VS Code pipe holds it across a reconnect like setSessionColor")
+        self.assertIn("setSessionEmoji", (root / "docs" / "reference.md").read_text())
+        self.assertIn("set_emoji", (root / "docs" / "reference.md").read_text())
+        self.assertIn("romp emoji", (root / "docs" / "guide.md").read_text())
+
 class EmojiRoute(unittest.TestCase):
     """POST /emoji: the door `romp emoji` and the postal set_emoji tool share."""
 
