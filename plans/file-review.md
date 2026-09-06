@@ -1184,7 +1184,8 @@ document stands on its own, each with the reasoning it was given.
     no git operation; a `.gitignore` line is the opt-out.
 26. **Phone**: reading and commenting work there; region drawing waits.
 27. **Renames** rely on the store layer's content-hash healing; no rename UI, and the log keeps
-    the record.
+    the record. (The Slice 1 build found that healing runs only when a host calls it, and the host
+    script does not; see the rename bullet under Risks for the actual behavior and the follow-up.)
 28. **One send per file**, sending everything unsent in it; a todo naming several files is
     answered by the first send.
 29. **Done** means the per-slice criteria pass and the user completes the motivating loop end to
