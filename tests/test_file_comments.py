@@ -839,6 +839,30 @@ class TheSendOp(_SendWorld):
         self.assertNotIn("resolved", self.todo(), "nothing stamped")
         self.assertIsNone(self.seen(), "no host call without consent")
 
+    def test_a_log_send_refusal_after_the_append_says_the_log_was_updated(self):
+        # log-send appends FIRST, then reads the sidecar to fill the status fields; a corrupt sidecar
+        # stops the read, not the append, and the host says so with `logged: true` beside its refusal.
+        # The kernel used to drop the refusal's fields and report the entry as never written — and the
+        # panel then offered the same comments again (the review, 2026-09-06).
+        self.stub(reply={"ok": False, "code": "corrupt", "logged": True,
+                         "error": "the comments for ~/notes-api/docs/report.md are unreadable JSON; the send was recorded in the comments log"})
+        r = self.send()
+        self.assertEqual(r["type"], "fileCommentsSent")
+        self.assertIn("comments log", r["logWarning"])
+        self.assertIn("was updated", r["logWarning"])
+        self.assertIn("unreadable JSON", r["logWarning"])
+        self.assertNotIn("was not updated", r["logWarning"])
+        self.assertEqual(self.todo()["resolved"]["kind"], "answered")
+
+    def test_a_log_send_refusal_before_the_append_says_the_log_was_not_updated(self):
+        # the other `logged` the real host answers: false, when the refusal came before the append
+        self.stub(reply={"ok": False, "code": "unreadable", "logged": False,
+                         "error": "cannot read ~/notes-api/docs/report.md: EACCES"})
+        r = self.send()
+        self.assertEqual(r["type"], "fileCommentsSent")
+        self.assertIn("was not updated", r["logWarning"])
+        self.assertIn("EACCES", r["logWarning"])
+
     def test_no_node_still_sends_and_warns_about_the_log(self):
         real = km.shutil.which
         km.shutil.which = lambda name, *a, **k: None
@@ -1016,12 +1040,28 @@ class TheSaveLogsTheEdit(_Wire):
         self.assertIn("cannot append", r["logWarning"])
         self.assertEqual(open(self.fp).read(), "# Findings\n\nThe api session cut p95 latency by 45%.\n")
 
-    def test_a_host_refusal_is_reported_the_same_way(self):
-        self.stub(reply={"ok": False, "code": "corrupt", "error": "the comments for ~/notes-api/docs/report.md are unreadable JSON"})
+    def test_a_host_refusal_after_the_append_reports_logged_true_with_the_refusal(self):
+        # what the real host answers on a corrupt sidecar: log-edit appends first, then the read that fills
+        # the status fields refuses, so the refusal carries `logged: true` (tools/file-comments-host.mjs,
+        # recordedDespite; pinned in its own tests). The kernel reads `logged` off the refusal instead of
+        # inferring it from the code: the entry IS in the log, and the ack says so.
+        self.stub(reply={"ok": False, "code": "corrupt", "logged": True,
+                         "error": "the comments for ~/notes-api/docs/report.md are unreadable JSON; the edit was recorded in the comments log"})
+        r = self.save()
+        self.assertEqual(r["type"], "fileSaved")
+        self.assertIs(r["logged"], True)
+        self.assertIn("written to the comments log", r["logWarning"])
+        self.assertIn("could not be read back", r["logWarning"])
+        self.assertIn("unreadable JSON", r["logWarning"])
+
+    def test_a_host_refusal_before_the_append_reports_logged_false(self):
+        self.stub(reply={"ok": False, "code": "unreadable", "logged": False,
+                         "error": "cannot read ~/notes-api/docs/report.md: EACCES"})
         r = self.save()
         self.assertEqual(r["type"], "fileSaved")
         self.assertIs(r["logged"], False)
-        self.assertIn("unreadable JSON", r["logWarning"])
+        self.assertIn("not written to the comments log", r["logWarning"])
+        self.assertIn("EACCES", r["logWarning"])
 
     def test_no_node_saves_and_reports_logged_false_quietly(self):
         real = km.shutil.which
