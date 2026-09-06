@@ -36,9 +36,20 @@
 // anchor, to stamp a fingerprint. `status` runs on every viewer open, a file the viewer refuses
 // above 2 MB included, so on a file with no sidecar it stats the file and reads nothing (statFile).
 // The verbs that change the FILE (reject, reject-all) fence on its mtime too, refuse a file that is
-// not UTF-8 text (`not-text`) or would exceed the 2 MB cap (`too-large`) before any write, write the
-// sidecar first and the file second, and put the prior sidecar back if the file write fails — the
-// order track-edit uses, so a reader never finds a file whose changes its sidecar does not describe.
+// not UTF-8 text (`not-text`) or would exceed the 2 MB cap (`too-large`) before any write, land the
+// sidecar before the file (the order track-edit uses, so a reader never finds a file whose changes
+// its sidecar does not describe), and put the prior sidecar back if the file write fails.
+//
+// A decision is recorded before it lands, never after. Accept and reject each end in one rename
+// that makes them true, and the comments-log entry is appended BEFORE that rename, with every other
+// fallible step (the temp file's bytes, the sidecar's bytes) done earlier still: a failed append
+// refuses with nothing changed, and a kill after the append leaves the record. Appending after the
+// writes left a landed decision with no record when the append failed (the log holds the only state
+// for what is unsent, so the next send omitted it), and for a reject it inverted track-edit's safety
+// property: a record without its text detaches loudly on the next load, but a rejected change whose
+// text is still in the file, with no op and no log entry, reads as accepted. What remains: a kill
+// between the sidecar's rename and the append (no fsync between them) still reads that way, and a
+// kill after the last rename lands the decision while the kernel hears no reply.
 //
 // Vendored code: vendor/track-changents (MIT, LICENSE beside it).
 
@@ -469,11 +480,15 @@ export function applyEdits(text, edits) {
   return out;
 }
 
-// Atomic write of a file's new text, for the verbs that change file bytes (reject, save): a
-// temp file in the same directory whose name does not end in .json (so the other hosts' sidecar
-// scans skip it), written through the realpath (never over a symlink), mode preserved, renamed
-// into place. Returns the new mtime string. Reject writes through it; Slice 5's save will too.
-export function writeFileAtomic(absPath, text) {
+// Atomic write of a file's new text, for the verbs that change file bytes (reject, save), in two
+// halves so a verb can land other writes between them (doReject puts the sidecar and the log entry
+// there). `prepareFileWrite` does every step that can fail for a reason of its own — the realpath
+// (never over a symlink), the temp file in the same directory with a name that does not end in
+// .json (so the other hosts' sidecar scans skip it), the bytes, fsync, the mode preserved — and
+// nothing under the file's own name changes until `commitFileWrite` renames the temp into place
+// and returns the new mtime string; `discardFileWrite` removes a temp that will not land.
+// writeFileAtomic is the two in one call; Slice 5's save will write through it.
+function prepareFileWrite(absPath, text) {
   const real = fs.realpathSync(absPath);
   const st = fs.statSync(real);
   const mode = st.mode & 0o7777;
@@ -486,13 +501,33 @@ export function writeFileAtomic(absPath, text) {
     fs.closeSync(fd);
     fd = undefined;
     fs.chmodSync(tmp, mode);
-    fs.renameSync(tmp, real);
   } catch (e) {
     if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
     try { fs.unlinkSync(tmp); } catch { /* ignore */ }
     throw e;
   }
-  return statNs(real);
+  return { tmp, real };
+}
+function commitFileWrite(prepared) {
+  fs.renameSync(prepared.tmp, prepared.real);
+  return statNs(prepared.real);
+}
+function discardFileWrite(prepared) {
+  try { fs.unlinkSync(prepared.tmp); } catch { /* ignore */ }
+}
+export function writeFileAtomic(absPath, text) {
+  const prepared = prepareFileWrite(absPath, text);
+  try {
+    return commitFileWrite(prepared);
+  } catch (e) {
+    discardFileWrite(prepared);
+    throw e;
+  }
+}
+
+// The OS text of a failed write, tilde-collapsed, for a refusal.
+function whyOf(e) {
+  return tildeText(e && e.message ? e.message : String(e));
 }
 
 // ── the sidecar ─────────────────────────────────────────────────────
@@ -836,11 +871,44 @@ function afterDecision(ctx, paths, store, text) {
   return reloadSaved(ctx, paths, text);
 }
 
+// The sidecar's next bytes written by saveStore — the format stays store-io's — under a temp name
+// beside it that no .json scan matches, so the log entry can be appended before the one rename that
+// lands them (commitSidecar). Until that rename the disk holds the prior sidecar. saveStore itself
+// writes `<tmp>.tmp` and renames it to `<tmp>`; a failure leaves neither behind.
+function stageSidecar(root, storePath, store, text) {
+  const tmp = `${storePath}.romp-fc-${process.pid}-${Date.now()}.tmp`;
+  try {
+    saveStore(root, tmp, store, text);
+  } catch (e) {
+    discardSidecar(tmp);
+    throw e;
+  }
+  return tmp;
+}
+function commitSidecar(tmp, storePath) { fs.renameSync(tmp, storePath); }
+function discardSidecar(tmp) {
+  try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  try { fs.unlinkSync(`${tmp}.tmp`); } catch { /* ignore */ }
+}
+
+// The refusals a decision's writes can end in, each naming what the disk holds afterwards.
+function cannotWriteSidecar(ctx, paths, e) {
+  return new Refusal('unreadable', `cannot write the comments for ${ctx.shown} (${tilde(paths.storePath)}): ${whyOf(e)}; nothing was changed`);
+}
+function cannotRecord(ctx, paths, e, then) {
+  return new Refusal('unreadable', `cannot record the decision in the comments log for ${ctx.shown} (${tilde(paths.logPath)}): ${whyOf(e)}; ${then}`);
+}
+
 // accept / accept-all: the engine drops the records and the file is untouched (a change's effect
 // is already in the text). Every comment bound to an accepted change by `suggestionId` is marked
 // resolved and KEPT — a stated divergence from the Obsidian host, which drops them — so the ids a
 // sent message named still answer to track-reply. The match is on the field alone, anchor or not:
 // track-edit --thread gives a passage comment a suggestionId while it keeps its anchor.
+// The writes, in order: the sidecar's bytes staged beside it, the log entry, the rename that lands
+// the sidecar. A failed stage or append refuses with nothing changed (the change is still pending,
+// the log says nothing); the rename is the one step after the append, and its failure — a
+// destination made immutable, a race on the directory — refuses saying the log already holds the
+// decision (`logged: true`), so the person knows the entry counts a decision that did not land.
 function doAccept(ctx, all) {
   const { file, root, paths, store } = loadForDecision(ctx, false);
   const decided = decidedChanges(ctx, store, all);
@@ -850,28 +918,62 @@ function doAccept(ctx, all) {
   for (const c of store.comments) {
     if (c && c.suggestionId != null && set.has(String(c.suggestionId))) c.resolved = true;
   }
-  saveStore(root, paths.storePath, store, file.text);
-  appendLog(paths.logPath, logEntry('accept', { changes: changesOf(decided) }));
+  let staged;
+  try {
+    staged = stageSidecar(root, paths.storePath, store, file.text);
+  } catch (e) {
+    throw cannotWriteSidecar(ctx, paths, e);
+  }
+  try {
+    appendLog(paths.logPath, logEntry('accept', { changes: changesOf(decided) }));
+  } catch (e) {
+    discardSidecar(staged);
+    throw cannotRecord(ctx, paths, e, 'nothing was changed');
+  }
+  try {
+    commitSidecar(staged, paths.storePath);
+  } catch (e) {
+    discardSidecar(staged);
+    throw new Refusal('unreadable', `cannot write the comments for ${ctx.shown} (${tilde(paths.storePath)}): ${whyOf(e)}; the decision was recorded in the comments log but did not land — reload and retry`, { logged: true });
+  }
   return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, file.text), ...file }, { accepted: ids });
 }
 
-// Put the sidecar back as it was before a reject whose file write failed: the prior bytes, or
-// nothing when there were none (a reject always finds a sidecar, so that branch is a guard).
-// Replaced by temp-and-rename like every other sidecar write, with a name no .json scan matches.
+// Put the sidecar back as it was before a reject that landed it and then could not finish: the
+// prior bytes, or nothing when there were none (a reject always finds a sidecar, so that branch is
+// a guard). Replaced by temp-and-rename like every other sidecar write, with a name no .json scan
+// matches. Returns the clause the refusal ends with: put back, or not, and why.
 function restoreSidecar(storePath, prior) {
   if (prior == null) { fs.unlinkSync(storePath); return; }
   const tmp = `${storePath}.romp-fc-restore-${process.pid}.tmp`;
   fs.writeFileSync(tmp, prior);
   fs.renameSync(tmp, storePath);
 }
+function putBack(storePath, prior, then) {
+  try {
+    restoreSidecar(storePath, prior);
+  } catch (e2) {
+    return `the comments file could not be put back either (${whyOf(e2)}) — reload before doing anything else`;
+  }
+  return `the comments file was put back as it was${then ? `, ${then}` : ' and nothing was changed'}`;
+}
 
 // reject / reject-all: the engine's reverse edits give the new text, applied by applyEdits and
-// checked against the file before anything is written (not-text, too-large). Then the order
-// track-edit uses: the sidecar first, saved against the NEW text so its fingerprint describes the
-// file about to exist, then the file through writeFileAtomic; if the file write fails the prior
-// sidecar bytes go back and the verb refuses `unreadable` with the OS text. The survivors come
-// back from the engine remapped into post-reject coordinates; reloading the saved sidecar against
-// the new text re-verifies them the way every later load will.
+// checked against the file before anything is written (not-text, too-large). The writes, in order:
+//   1. the file's new bytes, staged in a temp beside it (prepareFileWrite: the realpath, the
+//      directory, the mode — everything that can refuse for a reason of its own — with nothing
+//      under the file's name changed; a failure here touches neither the sidecar nor the log);
+//   2. the sidecar, saved against the NEW text so its fingerprint describes the file about to
+//      exist — the order track-edit uses, the sidecar landing before the file;
+//   3. the log entry; a failure puts the prior sidecar bytes back and refuses with nothing changed;
+//   4. the rename that lands the file. The one step after the append: if it fails (a destination
+//      made immutable, a race on the directory) the sidecar goes back and the refusal says the log
+//      already holds the decision (`logged: true`).
+// Between 2 and 3 a kill leaves the rejected change's text in the file with no op and no record —
+// a rename and an append apart, no fsync between them; the plan's sidecar-first order keeps that
+// window and this order makes it as narrow as it can be. Every refusal is `unreadable` with the OS
+// text. The survivors come back from the engine remapped into post-reject coordinates; reloading
+// the saved sidecar against the new text re-verifies them the way every later load will.
 function doReject(ctx, all) {
   const { file, root, paths, store } = loadForDecision(ctx, true);
   const decided = decidedChanges(ctx, store, all);
@@ -889,20 +991,33 @@ function doReject(ctx, all) {
   checkTooLarge(ctx.shown, newText);
   let prior = null;
   try { prior = fs.readFileSync(paths.storePath); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+  let prepared;
+  try {
+    prepared = prepareFileWrite(ctx.abs, newText);
+  } catch (e) {
+    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; nothing was changed: the comments file was not touched, so there was nothing to put back`);
+  }
   store.suggestions = res.suggestions;
-  saveStore(root, paths.storePath, store, newText);
+  try {
+    saveStore(root, paths.storePath, store, newText);
+  } catch (e) {
+    discardFileWrite(prepared);
+    throw cannotWriteSidecar(ctx, paths, e);
+  }
+  try {
+    appendLog(paths.logPath, logEntry('reject', { changes: changesOf(decided) }));
+  } catch (e) {
+    discardFileWrite(prepared);
+    throw cannotRecord(ctx, paths, e, putBack(paths.storePath, prior));
+  }
   let fileMtimeNs;
   try {
-    fileMtimeNs = writeFileAtomic(ctx.abs, newText);
+    fileMtimeNs = commitFileWrite(prepared);
   } catch (e) {
-    const why = tildeText(e && e.message ? e.message : String(e));
-    let restored = 'the comments file was put back as it was and nothing was changed';
-    try { restoreSidecar(paths.storePath, prior); } catch (e2) {
-      restored = `the comments file could not be put back either (${tildeText(e2 && e2.message ? e2.message : String(e2))}) — reload before doing anything else`;
-    }
-    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${why}; ${restored}`);
+    discardFileWrite(prepared);
+    const back = putBack(paths.storePath, prior, 'but the decision had already been recorded in the comments log — reload and retry');
+    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; ${back}`, { logged: true });
   }
-  appendLog(paths.logPath, logEntry('reject', { changes: changesOf(decided) }));
   return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, newText), text: newText, fileMtimeNs }, { rejected: ids });
 }
 

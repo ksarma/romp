@@ -31630,6 +31630,12 @@ def _sh_word(s):
     return shlex.quote(str(s))
 
 
+# The closing both shapes of the sent message end on, after their own lead-in ("When you have addressed
+# these, " / "When you have made more changes, "): the loop's return signal, one constant so the two
+# shapes cannot drift apart. The line break before "naming the file." is the plan's own.
+_SEND_ASK_AGAIN = ("ask me for another look the same way you asked for this one,", "naming the file.")
+
+
 def _file_comments_message(path, comments, accepted, rejected, tracked, is_text):
     """The message Send to session hands the owning session: the [obsidian-diff] shape the vendored
     skill handles, in the person's voice (tests/test_injected_voice.py renders it). `comments` are
@@ -31641,8 +31647,25 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
     an untracked one, regenerate-with-normal-writes for an image or PDF (track-edit would destroy
     it). The accepted/rejected line appears only when there was a decision. The closing sentence
     is the loop's return signal: the session asks for another look the way it asked for this one.
-    The webview's preview builder produces this text byte for byte, so change both or neither."""
+    The webview's preview builder produces this text byte for byte, so change both or neither.
+
+    With NO comments the message is decisions only (Slice 2: a manual Accept or Reject, or Accept
+    all, is unsent until a send carries it, and the send op admits an empty list when a decision
+    is pending) and wears the shape below instead. The comments shape would have said "I left 0
+    comments", printed the two `--thread <id>` command lines with no id to put in them, and asked
+    the session to address a list that was not there (the review, 2026-09-06): a template speaking,
+    and a pointer at a thread that does not exist. So the decisions-only shape names the file and
+    the decisions, says outright that nothing needs a reply, and keeps the closing ask so the loop
+    still comes back. The prefix stays: to the vendored skill it means "you are the editor
+    for the file named here", which is as true of a decision as of a comment."""
     ap = _neutralize_romp_markers(str(path or ""))
+    if not comments:
+        lines = ["[obsidian-diff] I went over %s." % ap, ""]
+        if (accepted or 0) + (rejected or 0) > 0:
+            lines += ["I accepted %d of your changes and rejected %d." % (accepted or 0, rejected or 0), ""]
+        lines += ["No comments this time, so nothing needs a reply.",
+                  "When you have made more changes, " + _SEND_ASK_AGAIN[0], _SEND_ASK_AGAIN[1]]
+        return "\n".join(lines) + "\n"
     word = _sh_word(ap)                  # the command lines: what a shell hands the CLI as --file's value
     n = len(comments)
     lines = ["[obsidian-diff] I left %d comment%s on %s." % (n, "" if n == 1 else "s", ap), ""]
@@ -31666,8 +31689,8 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
         lines.append("  • to revise the text: edit the file normally, then say what you changed with the "
                      "reply command above")
     lines.append("")
-    lines.append("When you have addressed these, ask me for another look the same way you asked for this one,")
-    lines.append("naming the file.")
+    lines.append("When you have addressed these, " + _SEND_ASK_AGAIN[0])
+    lines.append(_SEND_ASK_AGAIN[1])
     return "\n".join(lines) + "\n"
 
 

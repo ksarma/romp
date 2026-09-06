@@ -60,6 +60,10 @@ const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
 // instead of reverting over it, and after one succeeds the panel reloads the view — the bytes changed under
 // it, and the poll will never notice, since every reply re-baselines it (the plan's own rule).
 const FILE_VERBS = new Set(["reject", "reject-all"]);
+// The verbs that carry no id: they decide whatever is pending when the host runs them. A moved fence on one is not
+// retried (mutateOnce) — the plan's fence rule retries by stable change or comment id, and a retry here would decide
+// the changes that landed since the click, which the person has not seen. The list is re-read and the choice is theirs again.
+const BULK_VERBS = new Set(["accept-all", "reject-all"]);
 // How long a `status` ask may stay unanswered before the panel says so. A kernel that has the op answers
 // within its own bound: the host script is cut off at 10 s (contract C2, _FILE_COMMENTS_TIMEOUT) and the
 // refusal is sent then, so an ask still open past that plus the relay was never received by a kernel with
@@ -253,6 +257,10 @@ type Composer =
   | { kind: "reply"; commentId: string; ref: string }
   | { kind: "change"; changeId: string; ref: string };   // a comment bound to a change (comment {suggestionId, note})
 type Err = { text: string; reload: boolean; warn?: boolean };
+/** A focused control by what it IS (focusKey / refocus): its action and the id, key or slot naming its subject, plus,
+ *  for one in the cards list, the card it sat on and that card's place — where the keyboard goes when the control
+ *  comes back disabled or not at all. */
+type FocusKey = { act: string; id?: string; key?: string; slot?: string; card?: string; at?: number };
 
 // ── the wire: ONE window listener for the module, dispatching to the live panel by reqId ───────────
 // A reply is matched by reqId only — a REMOTE kernel's reply comes back with its sid host-prefixed
@@ -338,6 +346,7 @@ class Panel {
   todoAnswered = false;                     // one send answers the todo; later sends show no checkbox (seeded from answeredTodos)
   previewOpen = false;
   colors: Map<string, FileViewIdentity> | null = null;
+  wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED, and where the keyboard went meanwhile (refocus)
   located = new Map<string, Located & { painted: boolean }>();
   base: PollBaseline | null = null;
   stopped = new Set<string>();              // poll targets a 413/415 retired
@@ -730,8 +739,10 @@ class Panel {
   // ── verbs ──────────────────────────────────────────────────────────────────────────────────────
   /** A mutating verb: consent first (decision 5), then the request with the fence from the current
    *  status; an `editing-off` refusal re-offers the consent and retries once; a moved fence re-issues
-   *  status and retries once by the same args; a second refusal shows verbatim, with Reload when the
-   *  store, file, or config moved. Resolves the fresh status, or null when nothing was written. */
+   *  status and retries once by the same args — except for the id-less accept-all and reject-all
+   *  (BULK_VERBS), which re-issue status and stop, saying nothing was decided; a second refusal shows
+   *  verbatim, with Reload when the store, file, or config moved. Resolves the fresh status, or null
+   *  when nothing was written. */
   async mutate(verb: string, args: Record<string, unknown>, slot: string): Promise<Status | null> {
     // one write in flight per control: a second Enter or click during the round trip is not a second
     // write (the host mints a fresh id per `comment`, so a repeat would land twice); Save disables and
@@ -760,6 +771,15 @@ class Panel {
       const e = err as { code: string; error: string };
       if (!retried && e.code === "editing-off") {
         if (await this.ctx.ensureEditingAllowed(e.error)) return this.mutateOnce(verb, args, slot, true);
+      } else if (MOVED.has(e.code) && BULK_VERBS.has(verb)) {
+        // no id says what the person chose: the whole pending set did, and it moved. Fresh status (and the file's bytes
+        // when the file moved) so the list shows the current changes, and the row under the control says nothing was
+        // decided — the choice is theirs to make again over what they can now see. A retry would decide changes that
+        // were not on screen at the click (BULK_VERBS).
+        await this.refresh();
+        if (e.code === "file-moved") this.ctx.reload();
+        this.errors.set(slot, { text: "Nothing decided: " + e.error + ". The list of changes was re-read; look it over and try again.", reload: false });
+        return null;
       } else if (!retried && MOVED.has(e.code)) {
         await this.refresh();
         if (e.code === "file-moved") this.ctx.reload();   // the file itself moved under the view: repaint its bytes (the poll's own moved branch)
@@ -1017,7 +1037,10 @@ class Panel {
     const s = this.status;
     if (!s || !(s.hunks || []).length || !this.textCurrent(s)) return;
     const store = s.store;
-    const changes: ChangePaint[] = (s.hunks || []).map((h) => ({ id: h.id, kind: h.kind, curFrom: h.curFrom, curTo: h.curTo, oldText: h.oldText, author: h.author }));
+    // newText rides along so the painters verify that each change's new text sits at its offsets before painting the
+    // batch: the hunks index the string the HOST read, and the viewer's text can differ from it — a BOM the fetch
+    // stripped puts every mark one character off. Refused, the changes stay card-only, each with Reveal (D4).
+    const changes: ChangePaint[] = (s.hunks || []).map((h) => ({ id: h.id, kind: h.kind, curFrom: h.curFrom, curTo: h.curTo, oldText: h.oldText, newText: h.newText, author: h.author }));
     const stylesFor = (c: ChangePaint): Record<string, string> => {
       const aid = authorIdOf(store, c.id);
       const col = aid && this.colors ? this.colors.get(aid) : null;
@@ -1025,9 +1048,13 @@ class Panel {
     };
     let marks: Element[];
     if (rendered) {
+      // the Rendered painter reports ids, not elements, so the marks are told from the file's own markup by what the
+      // paint ADDED: a `data-act="fcchange"` the file's author wrote survives the sanitizer, and swept in it would pass
+      // owns() and act as a control (the delegate root's rule above)
+      const before = new Set(Array.from(root.querySelectorAll('[data-act="fcchange"]')));
       const r = paintChangesRendered(root, src, changes, stylesFor);
       for (const id of r.painted) this.paintedChanges.add(id);
-      marks = Array.from(root.querySelectorAll('[data-act="fcchange"]'));
+      marks = Array.from(root.querySelectorAll('[data-act="fcchange"]')).filter((m) => !before.has(m));
     } else {
       marks = paintChangesRaw(root, src, changes, stylesFor);
       for (const m of marks) { const id = (m as HTMLElement).dataset.id; if (id) this.paintedChanges.add(id); }
@@ -1069,10 +1096,11 @@ class Panel {
     const loc = locateComment(src, makeAnchor(c.text, c.range), c.range.start);
     if (loc.state === "located" && loc.range) { c.range = loc.range; c.text = src; }
   }
+  /** Scroll to a card's mark — the panel's OWN (owns): the file's markup may carry the same attributes earlier in the
+   *  document, and a body-wide first match would scroll to that. No mark of ours in the view: Reveal. */
   goTo(key: string): void {
-    const mark = key.startsWith("chg:")
-      ? this.ctx.body().querySelector('[data-act="fcchange"][data-id="' + key.slice(4) + '"]')
-      : this.ctx.body().querySelector('.fc-hl[data-id="' + key + '"]');
+    const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + key.slice(4) + '"]' : '.fc-hl[data-id="' + key + '"]';
+    const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m));
     if (mark) { mark.scrollIntoView({ block: "center" }); return; }
     this.reveal(key);
   }
@@ -1114,13 +1142,13 @@ class Panel {
   /** Fixed sequence (the plan's UX, D5): the message is built from the CURRENT status FIRST (a bound
    *  comment's desc needs the change's old and new text, which accept-all removes), then set-tracked when
    *  asked, then accept-all when asked, then fileCommentsSend with `tracked` set to the post-toggle verdict
-   *  and `accepted` = what the log says is unsent plus the N the accept-all just decided; a refusal at any
-   *  step aborts before the send. The comments are already on disk, so a refusal loses nothing. */
+   *  and `accepted` = what the log says is unsent plus the N the accept-all just decided, read off its reply;
+   *  a refusal at any step aborts before the send. The comments are already on disk, so a refusal loses nothing. */
   async doSend(): Promise<void> {
     const s = this.status;
     if (!s || this.statusRefusal || this.sending || !this.ctx.sid) return;   // statusRefusal: renderSend says why
     const parts: SendParts = sendParts(s);
-    const pending = (s.hunks || []).length;
+    let pending = (s.hunks || []).length;              // the changes the confirm named; once the accept-all answers, the N it decided
     const acceptAll = this.sendOpts.accept && pending > 0;
     let tracked = !!s.trackedBy;
     this.sending = true; this.errors.delete("send"); this.render();
@@ -1133,6 +1161,17 @@ class Panel {
       if (acceptAll) {
         const a = await this.mutate("accept-all", {}, "send");
         if (!a) return;                                // a refused accept-all sends nothing: the message would claim decisions never made
+        // A is what the accept-all DECIDED, read off its reply — never the count the confirm was built from: the
+        // set-tracked reply just applied, or a change landing between the two, grows the set the accept-all then
+        // decides, and the message and the log's send entry would state fewer accepts than the accept entry beside
+        // it (CLAUDE.md, the authoritative source). A reply that does not say sends nothing: the decisions are in
+        // the log already, and the next Send carries them.
+        const decided = (a as unknown as { accepted?: unknown }).accepted;
+        if (!Array.isArray(decided)) {
+          this.errors.set("send", { text: "Nothing sent: the reply to the accept did not list what it accepted, so the message could not state the count. The decisions are recorded; Send again to carry them.", reload: false });
+          return;
+        }
+        pending = decided.length;
       }
       const counts = sendCounts(parts, acceptAll, pending);
       const answerTodo = !!this.ctx.todoId && this.sendOpts.todo && !this.todoAnswered;
@@ -1178,12 +1217,15 @@ class Panel {
     const { head, cards, send, log } = this.sections;
     if (!this.root.contains(head)) this.root.replaceChildren(head, this.composerBox, cards, send, log);   // built once per open
     const keep = this.focusKey();                      // the control holding focus, by identity: the rebuild detaches it
+    // a control an earlier render rebuilt disabled is wanted back only while the keyboard is still where that render put it
+    const want = this.wanted && document.activeElement === this.wanted.at ? this.wanted.key : null;
+    this.wanted = null;
     head.replaceChildren(this.renderHead(s));
     this.renderComposer();
     cards.replaceChildren(this.renderCards(s));
     send.replaceChildren(this.renderSend(s));
     log.replaceChildren(this.renderLog(s));
-    if (keep) this.refocus(keep);
+    if (keep) this.refocus(keep, want);
   }
   // Every section's children are rebuilt per render, and a removed element loses its focus to the body — so
   // Enter on a card's head opened the card and left the keyboard nowhere: the second Enter did nothing (or
@@ -1191,22 +1233,70 @@ class Panel {
   // input persists for the same reason (the sections comment); the rebuilt controls are re-found instead, by
   // what they ARE — the action plus the id, key or slot that names its subject — never by their node, the way
   // render.ts refocuses the active tab after `#tabs` is rebuilt.
-  private focusKey(): { act: string; id?: string; key?: string; slot?: string } | null {
+  // A control rebuilt DISABLED — Accept, Reject, Accept all and Reject all relabel and disable for their round trip
+  // (ui/CLAUDE.md) — cannot take the focus back, and the card it sat on may be gone when the reply lands. The keyboard
+  // then goes to the nearest place in the panel (focusNear: its card's head, the head of the card now at its place in
+  // the list, the changes foot, Send, the head row's Comment button), and the control is remembered (wanted) and
+  // re-found the moment a render shows it enabled again — so a refusal that keeps the card puts the keyboard back on
+  // the button it left, and a decision that removes the card leaves it on the next card, never on the body.
+  private focusKey(): FocusKey | null {
     const a = document.activeElement as HTMLElement | null;
     if (!a || !this.root || !this.root.contains(a) || !a.dataset) return null;
-    if (a.dataset.act) return { act: a.dataset.act, id: a.dataset.id, key: a.dataset.key, slot: a.dataset.slot };
-    if (a.dataset.opt) return { act: "opt", key: a.dataset.opt };   // a confirm checkbox, re-found by its option
-    return null;
+    const k: FocusKey | null = a.dataset.act ? { act: a.dataset.act, id: a.dataset.id, key: a.dataset.key, slot: a.dataset.slot }
+      : a.dataset.opt ? { act: "opt", key: a.dataset.opt } : null;   // a confirm checkbox, re-found by its option
+    if (!k) return null;
+    const cards = this.sections.cards;
+    if (cards.contains(a) && typeof a.closest === "function") {
+      // where in the list it sat: its card and that card's place; for the foot (Accept all, Reject all, the confirm),
+      // the change card before it — the comment cards follow the foot, and Accept all's keyboard belongs with the changes
+      const all = Array.from(cards.querySelectorAll(".fc-card"));
+      const card = a.closest(".fc-card"), foot = a.closest(".fc-foot");
+      if (card) { k.card = (card as HTMLElement).dataset.id; k.at = all.indexOf(card); }
+      else if (foot) k.at = Math.max(0, Array.from(cards.querySelectorAll(".fc-card, .fc-foot")).indexOf(foot) - 1);
+    }
+    return k;
   }
-  private refocus(k: { act: string; id?: string; key?: string; slot?: string }): void {
-    if (!this.root || this.root.contains(document.activeElement)) return;   // still focused (the input): nothing to mend
-    if (k.act === "opt") { (this.root.querySelector('[data-opt="' + k.key + '"]') as HTMLElement | null)?.focus({ preventScroll: true }); return; }
+  /** The first FOCUSABLE control with `k`'s identity, disabled or not: a collapsed card carries the head's act and id
+   *  too, but no tabindex. */
+  private findControl(k: FocusKey): HTMLElement | null {
+    if (!this.root) return null;
+    if (k.act === "opt") return this.root.querySelector('[data-opt="' + k.key + '"]') as HTMLElement | null;
     for (const n of Array.from(this.root.querySelectorAll("[data-act]")) as HTMLElement[]) {
       const d = n.dataset;
-      if (d.act !== k.act || d.id !== k.id || d.key !== k.key || d.slot !== k.slot) continue;
-      // the first FOCUSABLE match: a collapsed card carries the head's act and id too, but no tabindex
-      if ((n.tabIndex >= 0 || n.tagName.toUpperCase() === "BUTTON") && !(n as HTMLButtonElement).disabled) { n.focus({ preventScroll: true }); return; }
+      if (d.act === k.act && d.id === k.id && d.key === k.key && d.slot === k.slot && (n.tabIndex >= 0 || n.tagName.toUpperCase() === "BUTTON")) return n;
     }
+    return null;
+  }
+  private refocus(k: FocusKey, want: FocusKey | null): void {
+    if (!this.root || this.root.contains(document.activeElement)) return;   // still focused (the input): nothing to mend
+    const enabled = (n: HTMLElement | null): HTMLElement | null => (n && !(n as HTMLButtonElement).disabled ? n : null);
+    const w = want ? enabled(this.findControl(want)) : null;
+    if (w) { w.focus({ preventScroll: true }); return; }   // the button that was busy is back: the keyboard returns to it
+    const n = this.findControl(k);
+    if (enabled(n)) { n!.focus({ preventScroll: true }); return; }
+    // disabled, or gone. A control of the cards list (the change cards, the foot): the nearest place, remembering the
+    // control still to come back to — this one, or the wanted one. Elsewhere (the head row's confirms), a control the
+    // rebuild removed lets the focus fall to the body, quietly: there is no place of its own to stand in for it.
+    if (typeof k.at !== "number") return;
+    const pending = n ? k : want && this.findControl(want) ? want : null;
+    const at = this.focusNear(k);
+    if (at && pending) this.wanted = { key: pending, at };
+  }
+  /** Focus the nearest enabled control to where `k` sat — its card's head, the head of the card now at its place, a
+   *  button of the changes foot, Send, Comment on this file — and return it; null when the panel offers none. */
+  private focusNear(k: FocusKey): HTMLElement | null {
+    if (!this.root) return null;
+    const cards = this.sections.cards;
+    const head = (c: Element | null | undefined): HTMLElement | null => (c ? (c.querySelector(".fc-card-head") as HTMLElement | null) : null);
+    const picks: Array<HTMLElement | null> = [];
+    if (k.card) picks.push(head(cards.querySelector('.fc-card[data-id="' + k.card + '"]')));
+    if (typeof k.at === "number") { const all = Array.from(cards.querySelectorAll(".fc-card")); picks.push(head(all[Math.min(k.at, all.length - 1)])); }
+    picks.push(...(Array.from(cards.querySelectorAll(".fc-foot button")) as HTMLElement[]));
+    picks.push(this.root.querySelector('[data-act="fcsend"]') as HTMLElement | null, this.root.querySelector('[data-act="fcfile"]') as HTMLElement | null);
+    for (const n of picks) {
+      if (n && !(n as HTMLButtonElement).disabled) { n.focus({ preventScroll: true }); return n; }
+    }
+    return null;
   }
   private errRow(slot: string): HTMLElement | null {
     const e = this.errors.get(slot);
@@ -1438,6 +1528,12 @@ class Panel {
   private renderChangeCard(c: ChangeCard): HTMLElement {
     const isOpen = this.openCards.has(c.key);
     const painted = this.paintedChanges.has(c.id);
+    // the view's bytes are not the status's — a reject's reply landed and its reload has not, or the poll's reload landed
+    // and its status has not — so nothing was painted, and nothing is known yet about what the view will show once the
+    // two agree. Neither the "not shown" tag nor a Reveal is claimed on that: a tag and a button that appear for one
+    // fetch and vanish with it would move on no new information (CLAUDE.md). A deletion's Reveal is constant and stays.
+    const s = this.status;
+    const inFlux = !!s && !this.textCurrent(s);
     const slot = "change:" + c.id;
     const card = el("div", "fc-card fc-change" + (isOpen ? " open" : ""));
     card.dataset.id = c.key; card.dataset.change = c.id; card.dataset.kind = c.kind;
@@ -1454,7 +1550,7 @@ class Panel {
     }
     head.appendChild(ref);
     const src = this.ctx.text();
-    if (!painted && src !== null && this.ctx.mode() !== "media") {
+    if (!painted && !inFlux && src !== null && this.ctx.mode() !== "media") {
       const t = el("span", "fc-tag", "not shown");
       t.title = this.ctx.mode() === "rendered" && c.kind === "del" ? "The Rendered view cannot show a deletion; Reveal opens it in Raw" : "This view does not show the change; Reveal opens it in Raw";
       head.appendChild(t);
@@ -1479,8 +1575,8 @@ class Panel {
     }
     if (c.kind === "del" || !painted) {
       const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;
-      rv.title = "Show the change in the Raw view" + (src !== null ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "");
-      acts.appendChild(rv);
+      rv.title = "Show the change in the Raw view" + (src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "");
+      if (c.kind === "del" || !inFlux) acts.appendChild(rv);   // inFlux: an unpainted insertion's Reveal waits for the bytes
     }
     card.appendChild(acts);
     for (const n of [this.loader(slot), this.errRow(slot)]) if (n) card.appendChild(n);
