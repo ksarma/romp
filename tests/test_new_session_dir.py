@@ -384,7 +384,7 @@ class CreateSessionTags(_Wire):
     def test_the_op_and_the_docs_say_how_the_live_name_case_differs_from_post_new(self):
         # the two doors disagree on a running name ON PURPOSE — /new's `tags` is always an explicit
         # --in (re-asserted like model/effort); the picker's is a prefill (warned, not applied). The
-        # op's comment and the UPSTREAM.md row both state the difference, not a match.
+        # op's comment and the ledger entry both state the difference, not a match.
         src = inspect.getsource(km.Handler._dispatch_ws)
         op = src[src.index('msg.get("type") == "createSession"'):src.index('msg.get("type") == "cancelCreate"')]
         live_arm = op[op.index("elif nm in live:"):op.index("elif _thread_name_refusal(nm, _thread_names())")]
@@ -392,7 +392,7 @@ class CreateSessionTags(_Wire):
         self.assertIn("existing:true arm differs on purpose", live_arm)
         self.assertNotIn("the same contract as", op)
         root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-        up = open(os.path.join(root, "UPSTREAM.md")).read()
+        up = open(os.path.join(root, "upstream", "2026-09-04-tab-groups-on-tags.md")).read()
         self.assertIn("a name that already runs: `/new` re-asserts an explicit `--in`, the picker's op warns instead", up)
         guide = open(os.path.join(root, "docs", "guide.md")).read()
         self.assertIn("from\nthe picker, a name that already runs is focused and the Tags row is not applied", guide)

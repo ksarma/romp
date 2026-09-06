@@ -556,11 +556,12 @@ def import_rows(rows, dir_path, root, report):
         what, where, status_cell, notes = cells
         header, body, plan_status = derive(what, where, status_cell, notes)
         prev = by_prefix.get(what[:TITLE_PREFIX])
+        kept = ""
         if prev is not None:
             header["added"] = prev.get("added")
             path = prev.path
             if not header["status"] and prev.get("status"):
-                header["status"] = prev.get("status")
+                header["status"] = kept = prev.get("status")
         else:
             header["added"], _how = added_date(root, row)
             slug = slugify(what)
@@ -577,6 +578,9 @@ def import_rows(rows, dir_path, root, report):
         tail = []
         if not header["status"]:
             tail.append("SET BY HAND")
+            unmatched.append(i)
+        elif kept:
+            tail.append(f"no keyword; kept the file's hand-set {kept}")
             unmatched.append(i)
         if plan_status and header["status"] and plan_status != header["status"]:
             tail.append(f"plan order: {plan_status}")
@@ -610,22 +614,22 @@ def round_trip(rows, dir_path):
     return lines, not missing and not extra
 
 
-def import_file(front_path, dir_path):
+def import_file(front_path, dir_path, root):
     front_path = Path(front_path)
-    root = front_path.resolve().parent
     text = front_path.read_text(encoding="utf-8")
     rows = table_rows(text)
     report = [f"import: {len(rows)} rows from {front_path} into {dir_path}/", ""]
     written, unmatched, disagree = import_rows(rows, dir_path, root, report)
     report.append("")
     report.append(f"{len(written)} files written; {len(unmatched)} rows matched no status keyword"
-                  + (": " + ", ".join(f"{i:04d}" for i in unmatched) + " (status left blank; set by hand)" if unmatched else ""))
+                  + (": " + ", ".join(f"{i:04d}" for i in unmatched) + " (set by hand: blank on a first run, kept on a re-run)" if unmatched else ""))
     if disagree:
         report.append(f"{len(disagree)} rows where the plan's keyword order would differ: " + ", ".join(f"{i:04d}" for i in disagree))
     report.append("")
     lines, ok = round_trip(rows, dir_path)
     report += lines
-    return report, ok and not unmatched
+    blank = [e for e in load_entries(dir_path)[1] if "`status` is blank" in e]
+    return report, ok and not blank
 
 
 def import_row(row, dir_path, root):
@@ -645,7 +649,7 @@ def import_row(row, dir_path, root):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="upstream-ledger.py", description=__doc__.split("\n\n")[0])
-    ap.add_argument("--root", default=None, help="repository root (default: the directory holding this script's parent)")
+    ap.add_argument("--root", default=None, help="repository root (default: this script's grandparent directory)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("new", help="write upstream/<today>-<slug>.md")
@@ -717,7 +721,7 @@ def main(argv=None):
         else:
             if not a.source or not a.dir:
                 ap.error("import needs <UPSTREAM.md> <dir>, or --row '<row text>'")
-            report, ok = import_file(a.source, a.dir)
+            report, ok = import_file(a.source, a.dir, root)
             print("\n".join(report))
             return 0 if ok else 1
     return 0

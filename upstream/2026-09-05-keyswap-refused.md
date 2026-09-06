@@ -1,0 +1,13 @@
+---
+title: `romp keyswap <name>` is refused on this fork. Upstream's swap (their `b4ca13e7` / `d177a8a8` / `60051794`, 2026-09-04) rewrites the `ANTHROPIC_API_KEY=` line of `service.env` from a sibling `service.env.<name>`, which presumes API keys in files; this fork does not write API keys to files — keys reach the sessions through Claude Code's `apiKeyHelper` or the manager's environment. The named form exits 2 with one fixed message, reads and writes nothing, and has no flag that lets it through. The bare report and `--cycle` / `--cycle-all` stay, and the cycle also reconnects a session the kernel handed no key but whose CLI reported one at init (`cycle_key` → `"helper"`): upstream read such a session as login-billed and skipped it, which made `--cycle-all` a no-op on a box whose every session bills through the helper. At backend construction a credential-shaped line in the env file (`ANTHROPIC_API_KEY`, `*_API_KEY`, `*_TOKEN`, non-empty) under a declared `ROMP_EXPECTED_AUTH` is logged once as a problem, naming the file and the variable name only — the billing consequence for `ANTHROPIC_API_KEY` (the variable the launch injects), a plain contradiction line for any other credential-shaped name. The cycle report's re-run hint names only the rows skipped for in-flight work and says a helper-billed session reconnects again on every run that names it (there is no fingerprint to converge on), and a second positional argument is counted, never echoed (round 2, 2026-09-05)
+status: divergence
+where: `cli/keyswap.py` (`REFUSAL`, `main`, `_candidates`, `_explain`), `bin/romp` (help row), `kernel/sdk_backend.py` (`cycle_key`'s helper arm, `_credential_names_in_env_file`, `_warn_credential_lines_in_env_file`), `docs/reference.md` (the keyswap section); tests in `tests/test_keyswap_refusal.py`, the adapted `tests/test_keyswap.py` and `tests/romp.bats`
+added: 2026-09-05
+pr:
+tier:
+offered:
+closed:
+---
+Fold upfold0905 (2026-09-05). Not for offering as-is: the refusal encodes the fork's policy. Two pieces upstream might take on their own: the helper arm of the cycle (a session on an `apiKeyHelper` cannot pick a rotated key up without a new process, and upstream's cycle never gives it one), and the boot warning, which fires only under a declaration and so stays silent on upstream's ordinary file-key box. `kernel/keysource.py` is carried unchanged (its `write_key` is no longer called by anything here); the kernel's live read of a `service.env` key line stays for installations that keep one there. The runtime auth strings now point at the manager's environment first and name `service.env` as the file-key installation's case.
+
+Status detail (migrated from the table): divergence

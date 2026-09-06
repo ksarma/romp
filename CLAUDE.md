@@ -125,9 +125,14 @@ repos are in play and only ONE of them is ours to write to:
   upstream maintainer extended to the user's PRs was earned by that pipeline's
   rigor, not a reason to relax it. Offering stays as before (a PR opened from a
   fork branch); who merges it is the user's call, PR by PR.
-- **`UPSTREAM.md` is the queue for those decisions** (user ask, 2026-08-07).
-  When you land something upstream-worthy — a fix in code upstream ships too,
-  not fork-only infrastructure — add a row there; the user prunes or promotes.
+- **The ledger under `upstream/` is the queue for those decisions** (user ask,
+  2026-08-07; one file per candidate since 2026-09-06). When you land something
+  upstream-worthy — a fix in code upstream ships too, not fork-only
+  infrastructure — add an entry with `scripts/upstream-ledger.py new <slug>
+  --title '...' --where '...'` and commit it with the change. Never edit
+  `UPSTREAM.md` per change: it is prose only, and a table row there fails the
+  test. The user prunes (`declined`, `keep-private`) or promotes (`approved`)
+  by editing the entry's `status:` line.
 - **The guard is configuration, not care.** `scripts/fork-remotes.sh` sets
   `upstream`'s push URL to a dead sentinel, so a stray `git push upstream` fails
   loudly instead of landing on someone else's project, and points
