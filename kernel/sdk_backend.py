@@ -111,22 +111,30 @@ def cli_scope_supported(environ=None, which=shutil.which, run=subprocess.run, lo
     plist sets ROMP_SUPERVISED too, and without this check every kernel start there logged
     "systemd-run is not on PATH" as if something were missing), only if `systemd-run` is on PATH, and
     only if a probe scope actually starts (a user manager that cannot start scopes would otherwise
-    fail every session start). `log`, when given, receives the one-line verdict either way."""
+    fail every session start).
+
+    `log`, when given, receives the one-line verdict either way, as `log(line, problem=<bool>)` —
+    SdkBackend._log's signature. `problem` is True only when the switch was WANTED on Linux and could
+    not be honoured (systemd-run missing, or the probe failing): every session this backend starts
+    then runs inside the service cgroup, which the error center should show the way the launch-time
+    fallbacks (_note_cli_scope_fallback, the missing-wrapper line in _options) already do; a log line
+    nobody tails is not a report (2026-09-06). The other off verdicts are ordinary — the environment
+    asked for off, or the platform has no systemd — and stay plain lines."""
     env = os.environ if environ is None else environ
     plat = sys.platform if platform is None else platform
     want = env.get("ROMP_CLI_SCOPE", "")
-    ok, reason = False, ""
+    ok, reason, problem = False, "", False
     if want == "1" or (env.get("ROMP_SUPERVISED") and want != "0"):
         if not plat.startswith("linux"):
             reason = "not Linux (transient scopes are a systemd feature)"
         elif not which("systemd-run"):
-            reason = "systemd-run is not on PATH"
+            reason, problem = "systemd-run is not on PATH", True
         else:
             try:
                 r = run(CLI_SCOPE_PROBE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                         timeout=CLI_SCOPE_PROBE_TIMEOUT)
             except Exception as e:      # timeout, missing binary raced away, anything else
-                reason = "the probe (%s) failed: %s" % (" ".join(CLI_SCOPE_PROBE), e)
+                reason, problem = "the probe (%s) failed: %s" % (" ".join(CLI_SCOPE_PROBE), e), True
             else:
                 if r.returncode == 0:
                     ok = True
@@ -135,6 +143,7 @@ def cli_scope_supported(environ=None, which=shutil.which, run=subprocess.run, lo
                     err = err.decode("utf-8", "replace") if isinstance(err, bytes) else str(err)
                     reason = "the probe (%s) exited %s%s" % (" ".join(CLI_SCOPE_PROBE), r.returncode,
                                                              (": " + err.strip()) if err.strip() else "")
+                    problem = True
     elif want == "0":
         reason = "ROMP_CLI_SCOPE=0"
     else:
@@ -142,9 +151,12 @@ def cli_scope_supported(environ=None, which=shutil.which, run=subprocess.run, lo
     if log:
         if ok:
             log("cli scope: on — each session's CLI runs in its own transient systemd scope; a manager "
-                "restart leaves session-spawned tmux/setsid work alive")
+                "restart leaves session-spawned tmux/setsid work alive", problem=False)
+        elif problem:
+            log("cli scope: off — %s; sessions start with the CLI directly, inside the service cgroup, "
+                "and a service restart takes their background work down" % reason, problem=True)
         else:
-            log("cli scope: off — %s" % reason)
+            log("cli scope: off — %s" % reason, problem=False)
     return ok
 
 

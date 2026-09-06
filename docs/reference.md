@@ -463,7 +463,10 @@ cgroup. The guarantee holds from the following restart on.
 session CLIs and the tmux server alike. A manager run outside the service
 (`romp up`) scopes nothing unless `ROMP_CLI_SCOPE=1` is set, which turns both
 on. The kernel logs which it chose at start (`cli scope: on` or `off`, with the
-reason). The macOS launchd path is unchanged: there is no cgroup kill there,
+reason); when the scopes were wanted on Linux and the box cannot provide them
+(no `systemd-run`, or a user manager that refuses to start one), that verdict
+also appears in the dashboard's error center, since every session then runs
+inside the service cgroup. The macOS launchd path is unchanged: there is no cgroup kill there,
 and the tmux server keeps its launchd lineage.
 
 ## Where things live
