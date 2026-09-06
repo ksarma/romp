@@ -11629,7 +11629,9 @@ def _default_backend():
 # session just behaved oddly. The feed payload carries the ring and the feed mirrors it into the bell,
 # the same path card badges and /clear boundaries already take (badge-mirror.ts).
 # _SDK_BOOT_PROBLEMS covers the window where there is no backend to hold a ring — the construction itself
-# failed — which is exactly when the user most needs to be told.
+# failed — which is exactly when the user most needs to be told. It also carries the kernel's own one-off
+# problems, which have no ring of their own: a spend-ledger bucket the analytics cannot place
+# (_ledger_key_unplaced), reported once per key.
 _SDK_BOOT_PROBLEMS = []
 
 
@@ -27699,11 +27701,36 @@ def _series_index(hour_key, h0):
     builds with no new turn behind it (2026-09-06). The bucket holds both clock hours' turns; its slot is
     the first of them and the second stays an honest zero, as the modal's period edges read it. The rule,
     key by key; _spend_series takes the slots of the keys in its span from one walk (_first_instants) and
-    applies this to a key outside it."""
+    applies this to a key outside it. Raises ValueError, as _bucket_start does, for a well-formed key no
+    instant names and no gap places."""
     if not isinstance(hour_key, str) or "T" not in hour_key:
         return None
     st = _bucket_start(hour_key)
     return None if st is None else int(st // 3600) - h0
+
+
+_LEDGER_UNPLACED = set()   # spend.json bucket keys already reported to the error center: one row per key per kernel
+
+
+def _ledger_key_unplaced(key, err, effect):
+    """A spend.json bucket key the rule cannot place — _bucket_start raised for a well-formed key that
+    names no instant in this zone and lies in no gap (a Feb 31), which the recorder never writes, so a
+    hand edit or a file gone bad — is reported to the error center ONCE per key, naming the key, the
+    file and what the reading leaves out; the reading goes on without the bucket. The raise itself
+    stays (a wrong key is a wrong period cut, and a caller whose keys come from real instants wants to
+    be stopped by it). Letting it through here — which this file did for a few hours on 2026-09-06, from
+    _series_index's delegation to _bucket_start until this; the strptime rule before it skipped such a
+    key with no word at all — stopped the whole timeline instead: _spend_series runs in every usage
+    build, a usage build in every timeline push, and the push tick's catch logged the traceback and sent
+    nothing, on every tick, to every client, for as long as the key stayed in the file. That is the
+    fail-loudly rule (2026-07-03) at the wrong grain: a dashboard that stops updating and a stderr line
+    naming a spend bucket. This row is the visible error the rule asks for, and the graph missing one
+    bucket is what the row says it is."""
+    if key in _LEDGER_UNPLACED:
+        return
+    _LEDGER_UNPLACED.add(key)
+    _sdk_problem("The spend ledger %s holds a bucket the kernel cannot place on a clock (%s); %s until the "
+                 "bucket is removed." % (jd.STATE / "spend.json", err, effect))
 
 
 def _spend_series(keyed_only=False, now=None):
@@ -27713,7 +27740,9 @@ def _spend_series(keyed_only=False, now=None):
     shared key. Zero IS the honest value for an hour with no turns (money, unlike pct, has a true
     zero). None when nothing is recorded at all. Same keyed_only split as _spend_windows, for the same
     reason. `now` anchors h0 — injectable so a caller with a frozen evidence clock (tests) can't
-    straddle an hour boundary between writing a bucket and reading its index (the 23:00 UTC CI run)."""
+    straddle an hour boundary between writing a bucket and reading its index (the 23:00 UTC CI run). A
+    key the rule cannot place is left out and reported once (_ledger_key_unplaced): this runs in every
+    usage build, and a raise here took the whole timeline down with it."""
     try:
         d = json.loads((jd.STATE / "spend.json").read_text())
     except Exception:
@@ -27736,7 +27765,11 @@ def _spend_series(keyed_only=False, now=None):
         elif k < oldest:              # no instant in the span, and a wall hour before the span's oldest: before h0
             continue
         else:
-            i = _series_index(k, h0)  # past now (a clock that stepped back) or a key no instant names: the rule itself
+            try:
+                i = _series_index(k, h0)  # past now (a clock that stepped back) or a key no instant names: the rule itself
+            except ValueError as err:     # a well-formed key nothing places: told once, left out, and the build goes on
+                _ledger_key_unplaced(k, err, "its dollars are left out of the hover graph")
+                continue
         if i is None or not (0 <= i < _SERIES_HOURS) or not isinstance(e, dict):
             continue
         if keyed_only:
@@ -29153,19 +29186,29 @@ def _hour_window(now, secs, walked=None, starts=None):
     back to the earliest first instant among the keys and every key with an instant in [t0, now] joins,
     until nothing widens.
 
-    That closure costs a _bucket_start per key, so it runs only where it widens: where a key of the span
-    owns an instant before the oldest run's start (_splitting_fall_back, which finds the change that
-    split it off the walk's own offsets or in the 26 hours before the oldest run, and checks that its
-    replay reaches the window). About 26 localtime calls and no _bucket_start on the common path; New
-    York, London and Lord Howe never run the closure, and Chatham and Troll run it only in the hours a
-    window's start lies inside a replay. Until 2026-09-06 the gate fired on any fall-back at a walked run
-    boundary and any fall-back in the two hours before the oldest run — so New York's inside-run
-    fall-back ran the closure for 45 minutes after its change, Chatham's ran it for a week on the rail's
-    7d window with nothing to widen, and a replay longer than two hours (Antarctica/Casey's three) was
-    not looked for; before that, the gate was two shapes read off the runs — a key walked twice, or an
-    oldest run that does not start at its key's first instant — and missed Troll's third: with now in
-    the first replayed hour the walk is T01's standard run then T02's daylight run, each key once, T02's
-    run its key's first, yet T01's bucket also holds the daylight hour before that.
+    That closure costs a _bucket_start per key it asks, so it runs only where it widens — where a key of
+    the span owns an instant before the oldest run's start (_splitting_fall_back, which finds the change
+    that split it off the walk's own offsets or in the 26 hours before the oldest run, and checks that
+    its replay reaches the window) — and asks only the keys that change can have split. The gate returns
+    the end of the replay stretch, the first instant past the last one a split key names. A key whose
+    walked run starts at or past that end owns no instant before t0: a split key's instants all lie
+    inside the stretch, and any other key's form one run, the one the walk found, whose start is its
+    first instant already. Widening moves t0 down and the stretch not at all, and a change whose replay
+    reaches the new t0 but not the old one ended at or before the old t0, inside the same bound, so one
+    bound serves every pass. About 26 localtime calls and no _bucket_start on the common path; New York,
+    London and Lord Howe never run the closure, and Chatham, Troll and Casey run it only in the hours a
+    window's start lies inside a replay (two, three and five hours a year), for the stretch's two or
+    three keys. The rail's 7d window crosses the stretch a week after the change and costs those two or
+    three first instants there; until 2026-09-06 the closure asked every key of the window, 170 first
+    instants and 8-9 ms per rail build against 1.5 elsewhere, for those same hours. Until 2026-09-06 the
+    gate also fired on any fall-back at a walked run boundary and any fall-back in the two hours before
+    the oldest run — so New York's inside-run fall-back ran the closure for 45 minutes after its change,
+    Chatham's ran it for a week on the rail's 7d window with nothing to widen, and a replay longer than
+    two hours (Antarctica/Casey's three) was not looked for; before that, the gate was two shapes read
+    off the runs — a key walked twice, or an oldest run that does not start at its key's first instant —
+    and missed Troll's third: with now in the first replayed hour the walk is T01's standard run then
+    T02's daylight run, each key once, T02's run its key's first, yet T01's bucket also holds the
+    daylight hour before that.
 
     `walked` lets the rail pass one long walk for its several windows — each is a prefix of the same
     walk, cut by the walker's own rule — and `starts` a dict the caller shares across them, so a key's
@@ -29181,11 +29224,14 @@ def _hour_window(now, secs, walked=None, starts=None):
         walked = runs = _hour_buckets_back(now, secs)
     keys = list(dict.fromkeys(k for k, _st, _off0, _off1 in runs))
     t0 = runs[-1][1]
-    if not _splitting_fall_back(runs):
+    reach = _splitting_fall_back(runs)
+    if reach is None:
         return keys, t0
     while True:
         first = t0
-        for k in keys:
+        for k, st, _off0, _off1 in runs:
+            if st >= reach:       # not one of the split keys: its instants are one run, and the walk has its start
+                continue
             if k not in starts:
                 starts[k] = _bucket_start(k)
             if starts[k] is not None and starts[k] < first:
@@ -29200,38 +29246,49 @@ def _hour_window(now, secs, walked=None, starts=None):
 
 
 def _replay_reaches(x, o_old, o_new, t0):
-    """True where the fall-back at instant x — UTC offset o_old before it, o_new after, seconds east —
-    splits keys and one of them owns instants on both sides of t0. A fall-back replays the wall times
+    """Where the fall-back at instant x — UTC offset o_old before it, o_new after, seconds east — splits
+    keys and one of them owns instants on both sides of t0: the END of the stretch those keys' instants
+    cover (the first instant past the last of them); None otherwise. A fall-back replays the wall times
     between where the clock landed and where it left; the keys of that stretch are split (each names
     instants before x and again after it) iff the stretch crosses a clock-hour boundary — the clock lands
     in an earlier hour than the one it left (Chatham's 03:45 -> 02:45; New York's 02:00 -> 01:00 stays
     in the hour it left, so its T01 is one run). Their instants run from the top of the landing hour
     read at the old offset to the top of the hour after the one left, read at the new, and a key among
-    them has an instant before t0 and one at or after it iff t0 lies strictly inside that stretch."""
+    them has an instant before t0 and one at or after it iff t0 lies strictly inside that stretch. Every
+    instant of a split key lies inside the stretch, so a key whose run starts at or past its end is not
+    one of them: _hour_window's closure asks a first instant of no such key."""
     left = (x - 1 + o_old) // 3600 * 3600        # the top of the wall hour the clock left
     landed = (x + o_new) // 3600 * 3600          # the top of the wall hour it landed in
-    return landed < left and landed - o_old < t0 < left + 3600 - o_new
+    end = left + 3600 - o_new
+    return end if landed < left and landed - o_old < t0 < end else None
 
 
 def _splitting_fall_back(runs):
-    """True where a key of the span a walk covers (_hour_buckets_back's runs, newest first) owns an
-    instant BEFORE the oldest run's start t0 — the one case in which the walk's keys and t0 are not the
-    window's, and _hour_window widens. Only a fall-back whose replay crosses a clock-hour boundary splits
-    a key (_replay_reaches), and the change is in one of two places. At a walked run boundary: the walk
-    carries each run's offsets at its first and last instant, so a boundary whose older side sits above
-    (east of) its newer side is a fall-back at that instant; a fall-back inside a run (New York's) shows
-    only as one run's two offsets and splits nothing, and a spring-forward at a boundary replays nothing.
-    Or before t0: hourly localtime samples over the _OFFSET_REACH before it — longer than any replay
-    reaches past its change — find a change between two samples that differ, bisected to the second.
-    Either way the change fires the gate only where its replay's keys straddle t0. The one assumption is
-    that no two clock changes fall within an hour of each other, so a change lies between two consecutive
-    hourly samples that differ and a run's two ends see at most one; tzdata's closest pair is six days 23
-    hours apart (Brazil, 2000: states that entered daylight time on 8 October left it on the 15th), and
-    the samples see both of those."""
+    """Where a key of the span a walk covers (_hour_buckets_back's runs, newest first) owns an instant
+    BEFORE the oldest run's start t0 — the one case in which the walk's keys and t0 are not the window's,
+    and _hour_window widens — the end of the replay stretch that split it (_replay_reaches), the bound
+    past which no key of the window can be one of the split; None where no key owns such an instant.
+    Only a fall-back whose replay crosses a clock-hour boundary splits a key, and the change is in one of
+    two places. At a walked run boundary: the walk carries each run's offsets at its first and last
+    instant, so a boundary whose older side sits above (east of) its newer side is a fall-back at that
+    instant; a fall-back inside a run (New York's) shows only as one run's two offsets and splits
+    nothing, and a spring-forward at a boundary replays nothing. Or before t0: hourly localtime samples
+    over the _OFFSET_REACH before it — longer than any replay reaches past its change — find a change
+    between two samples that differ, bisected to the second. Either way the change counts only where its
+    replay's keys straddle t0. Every change in reach is read and the latest end returned, so were two
+    replays to reach one t0 the bound would cover both; tzdata has no such pair (the samples, which the
+    common path reads in full anyway, are what this costs). The one assumption is that no two clock
+    changes fall within an hour of each other, so a change lies between two consecutive hourly samples
+    that differ and a run's two ends see at most one; tzdata's closest pair is six days 23 hours apart
+    (Brazil, 2000: states that entered daylight time on 8 October left it on the 15th), and the samples
+    see both of those."""
     t0 = runs[-1][1]
+    reach = None
     for (_k, st, off0, _off1), (_ok, _ost, _ooff0, older) in zip(runs, runs[1:]):
-        if off0 < older and _replay_reaches(st, older, off0, t0):
-            return True
+        if off0 < older:
+            end = _replay_reaches(st, older, off0, t0)
+            if end is not None and (reach is None or end > reach):
+                reach = end
     newer = runs[-1][2]           # the offset at t0
     t = t0
     for _i in range(_OFFSET_REACH // 3600):
@@ -29245,24 +29302,33 @@ def _splitting_fall_back(runs):
                     lo = mid
                 else:
                     hi = mid
-            if newer < off and _replay_reaches(hi, off, newer, t0):
-                return True
+            if newer < off:
+                end = _replay_reaches(hi, off, newer, t0)
+                if end is not None and (reach is None or end > reach):
+                    reach = end
             newer = off
-    return False
+    return reach
 
 
 def _first_instants(walked):
     """{key: first instant} for every key with an instant in the span a walk covers (_hour_buckets_back's
     runs, newest first): each key's earliest walked run start — exact wherever no key of the span owns
-    an instant before the oldest run's start (_splitting_fall_back) — else _bucket_start per key. The
-    hover series' slots come from this (one walk for 192 keys), the modal's and the rail's windows from
-    _hour_window, which reads the same gate."""
-    if _splitting_fall_back(walked):
-        return {k: _bucket_start(k) for k in dict.fromkeys(k for k, _st, _off0, _off1 in walked)}
+    an instant before the oldest run's start (_splitting_fall_back) — else _bucket_start for the keys
+    whose run starts inside the replay stretch the gate found, the only ones it can have split (see
+    _hour_window), and the run start for the rest. The hover series' slots come from this (one walk for
+    192 keys), the modal's and the rail's windows from _hour_window, which reads the same gate. The
+    series' span, 192 hours, has its start inside a stretch about eight days after the change, for the
+    same two to five hours a year as the rail's 7d window a day earlier, and asks two or three first
+    instants there (until 2026-09-06, one per key of the span: 192, 8 ms per build)."""
+    reach = _splitting_fall_back(walked)
     first = {}
     for k, st, _off0, _off1 in walked:
         if k not in first or st < first[k]:
             first[k] = st
+    if reach is not None:
+        for k, st in first.items():
+            if st < reach:
+                first[k] = _bucket_start(k)
     return first
 
 
@@ -29371,7 +29437,11 @@ def _spend_ledger_window(now, window, keyed_only=False):
     oldest = min(k for k in buckets if isinstance(k, str))   # one ledger's keys sort chronologically
     if oldest > min(keys):
         out["since"] = oldest
-        st = _bucket_start(oldest)
+        try:
+            st = _bucket_start(oldest)
+        except ValueError as err:     # the ledger's oldest key is one nothing places: no cut for the estimate before it
+            _ledger_key_unplaced(oldest, err, "the analytics leave out the estimate for the part of the period before the ledger")
+            st = None
         if st is not None:
             out["sinceT"] = st
         if kind == "days":

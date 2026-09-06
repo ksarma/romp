@@ -1136,23 +1136,57 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
         self.assertEqual(km._bucket_start("1993-08-21"), calendar.timegm((1993, 8, 21, 12, 0, 0)),
                          "Kwajalein's skipped date, where the STANDARD arm is the one that raises")
 
+    def test_a_ledger_whose_oldest_bucket_nothing_places_still_gives_the_period_its_sum(self):
+        """spend.json's oldest hour key is a well-formed key no instant names (a Feb 31: a hand edit, never the
+        recorder's), and it sorts inside the window, so _spend_ledger_window asks its first instant for the
+        estimate's cut — and _bucket_start raises, by design. The window keeps its sum and names the key as
+        `since`, drops `sinceT` (no cut, so no estimate for the part before the ledger), and the analytics
+        build finishes; the error center gets one row naming the key and the file, and a second build adds
+        none. Until this, the raise went through _token_analytics to the /analytics handler's catch-all."""
+        now = calendar.timegm((2026, 3, 4, 12, 0, 0))                                  # 07:00 EST; the 7d window reaches back to Feb 25
+        (jd.STATE / "spend.json").write_text(json.dumps({"hours": {
+            "2026-02-31T05": {"usd": 9.0, "turns": 1}, "2026-03-03T10": {"usd": 2.0, "turns": 2}}, "days": {}}))
+        jd.discover = lambda now, window=None, forks=True: []
+        km._SDK_BOOT_PROBLEMS.clear()
+        km._LEDGER_UNPLACED.clear()
+        self.addCleanup(km._SDK_BOOT_PROBLEMS.clear)
+        self.addCleanup(km._LEDGER_UNPLACED.clear)
+        with self.assertRaises(ValueError):
+            km._bucket_start("2026-02-31T05")                                          # the rule still raises for callers that want it
+        led = km._spend_ledger_window(now, 7 * 86400)
+        self.assertEqual((led["usd"], led["turns"], led["since"]), (2.0, 2, "2026-02-31T05"))
+        self.assertNotIn("sinceT", led)
+        rows = [r["text"] for r in km._sdk_problem_rows() if "2026-02-31T05" in r["text"]]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn(str(jd.STATE / "spend.json"), rows[0])
+        self.assertIn("estimate", rows[0])
+        a = km._token_analytics(now, 7 * 86400)
+        self.assertEqual(a["sessions"]["ledger"]["usd"], 2.0)
+        self.assertNotIn("estBefore", a["sessions"]["ledger"])
+        km._ANALYTICS_MEMO.clear()
+        km._token_analytics(now, 7 * 86400)
+        self.assertEqual(len([r for r in km._sdk_problem_rows() if "2026-02-31T05" in r["text"]]), 1, "once per key, not once per build")
+
     def test_the_closure_computes_a_keys_first_instant_once_per_build_and_only_where_a_window_widens(self):
         """Cost, both ways. Where a window widens, the rail's five windows share one memo, so a key's first
-        instant is computed once per build, and only for the windows that widen (the fall-back week on
-        Chatham once cost 510 calls for 170 keys, 2.2 ms per build; round 6 brought that to 168, one per key
-        of the 7d window, on every build of the week after the change, none of which widened). Where no split
-        key reaches a window's start — a whole-hour fall-back sets the clock back inside a run (New York,
-        London), a 30-minute one too (Lord Howe), a spring-forward splits nothing, a zone without DST changes
-        nothing, and any zone once its replay is behind every window's start — the gate reads the offsets
-        the walk carried and computes no first instant at all."""
+        instant is computed once per build, only for the windows that widen, and only for the keys of the
+        replay stretch — the ones the change can have split; a key whose run starts at or past the stretch's
+        end is not asked (the fall-back week on Chatham once cost 510 calls for 170 keys, 2.2 ms per build;
+        round 6 brought that to 168, one per key of the 7d window, on every build of the week after the
+        change, none of which widened; round 7 to one per key of the window in the hours it widens, which for
+        the 7d window a week after the change is 170 keys and 8-9 ms per rail build against 1.5). Where no
+        split key reaches a window's start — a whole-hour fall-back sets the clock back inside a run (New
+        York, London), a 30-minute one too (Lord Howe), a spring-forward splits nothing, a zone without DST
+        changes nothing, and any zone once its replay is behind every window's start — the gate reads the
+        offsets the walk carried and computes no first instant at all."""
         calls = []
         real = km._bucket_start
         km._bucket_start = lambda k: calls.append(k) or real(k)
         self.addCleanup(setattr, km, "_bucket_start", real)
-        for zone, label, now, widened in (("Pacific/Chatham", "the fall-back day, 04:15 standard", self.CH_CHANGE_FALL + 90 * 60,
-                                           {"2026-04-05T04", "2026-04-05T03", "2026-04-05T02"}),
-                                          ("Antarctica/Troll", "the fall-back day, 01:30 standard", self.TR_CHANGE + 1800,
-                                           {"2026-10-25T01", "2026-10-25T02"})):
+        for zone, label, now, widened, asked in (("Pacific/Chatham", "the fall-back day, 04:15 standard", self.CH_CHANGE_FALL + 90 * 60,
+                                                  {"2026-04-05T04", "2026-04-05T03", "2026-04-05T02"}, {"2026-04-05T03", "2026-04-05T02"}),
+                                                 ("Antarctica/Troll", "the fall-back day, 01:30 standard", self.TR_CHANGE + 1800,
+                                                  {"2026-10-25T01", "2026-10-25T02"}, {"2026-10-25T01", "2026-10-25T02"})):
             os.environ["TZ"] = zone
             time.tzset()
             self.assertEqual(set(km._hour_window(now, 3600)[0]), widened, "the 1h window widens to these keys")
@@ -1161,10 +1195,32 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
                 build()
                 with self.subTest(zone=zone, label=label):
                     self.assertEqual(len(calls), len(set(calls)), "no key computed twice: %r" % calls)
-                    self.assertEqual(set(calls), widened, "one call per key of the window that widened, none for the others")
+                    self.assertEqual(set(calls), asked, "one call per key of the replay stretch, none for the others (Chatham's T04 starts where the stretch ends)")
             del calls[:]
             km._analytics_edges(now, 7 * 86400)
             self.assertEqual(calls, [], "%s: the 7d window's start is a week before the replay; nothing to widen, nothing computed" % zone)
+        # a week on, the rail's 7d window and the modal's 7d edges have their start inside the stretch (for two,
+        # five and three hours), and the series' 192-hour span a day after that: the closure asks the stretch's
+        # keys, two or three, and none of the other 167-190 keys of the span
+        for zone, x, stretch in (("Pacific/Chatham", self.CH_CHANGE_FALL, {"2026-04-05T02", "2026-04-05T03"}),
+                                 ("Antarctica/Casey", calendar.timegm((2023, 3, 8, 16, 0, 0)), {"2023-03-09T00", "2023-03-09T01", "2023-03-09T02"}),
+                                 ("Antarctica/Troll", self.TR_CHANGE, {"2026-10-25T01", "2026-10-25T02"})):
+            os.environ["TZ"] = zone
+            time.tzset()
+            now = x + 7 * 86400 + 1800
+            for build in (lambda: km._spend_windows(now=now), lambda: km._analytics_edges(now, 7 * 86400)):
+                del calls[:]
+                build()
+                with self.subTest(zone=zone, label="7d, half an hour after its start entered the stretch"):
+                    self.assertEqual(len(calls), len(set(calls)), "no key computed twice: %r" % calls)
+                    self.assertEqual(set(calls), stretch)
+            self.assertEqual(km._hour_window(now, 7 * 86400)[1], min(real(k) for k in stretch), "and t0 is the stretch's first instant")
+            now = x + (km._SERIES_HOURS - 1) * 3600 + 1800        # the series' span begins at the change, inside the stretch
+            (jd.STATE / "spend.json").write_text(json.dumps({"hours": {time.strftime("%Y-%m-%dT%H", time.localtime(now)): {"usd": 1.0}}, "days": {}}))
+            del calls[:]
+            km._spend_series(now=now)
+            with self.subTest(zone=zone, label="the series' eighth day, its span's start inside the stretch"):
+                self.assertEqual(set(calls), stretch)
         for zone, label, now, window in (("Pacific/Chatham", "7d three days after the fall-back", self.CH_CHANGE_FALL + 3 * 86400 + 90 * 60, 7 * 86400),
                                          ("Antarctica/Troll", "24h three days after the fall-back", self.TR_CHANGE + 3 * 86400 + 1800, 86400),
                                          ("America/New_York", "1h at 02:30 EST on the fall-back day", calendar.timegm((2026, 11, 1, 7, 30, 0)), 3600),
@@ -1184,10 +1240,15 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
 
     def test_the_gate_fires_exactly_where_a_window_widens(self):
         """_splitting_fall_back is exact, not a bound: every quarter hour from two hours before a change to nine
-        after, for 1h/5h/24h, it fires iff the closure then moves t0 or adds a key. So New York, London and
-        Lord Howe — a fall-back inside a run — never run the closure (round 6's t0 - 7200 leg ran it for the
-        45 minutes after their changes), and Chatham, Troll and Casey run it only while a window's start
-        lies inside the replay."""
+        after, for 1h/5h/24h, it fires iff a key of the walked runs has a first instant before the oldest run's
+        start. The truth is read from _bucket_start, key by key — never from _hour_window, which runs the
+        closure only when the gate says so: read off that, `widened` was False by construction wherever the
+        gate stayed quiet, the two sides agreed there whatever the gate had missed, and a gate with only its
+        walked-boundary leg passed (until 2026-09-06). So New York, London and Lord Howe — a fall-back inside
+        a run — never run the closure (round 6's t0 - 7200 leg ran it for the 45 minutes after their
+        changes), and Chatham, Troll and Casey run it only while a window's start lies inside the replay.
+        Where it fires it returns the stretch's end, and every key that reaches before t0 has its walked run
+        start inside that end — the bound the closure asks no other key past."""
         for zone, x in (("Pacific/Chatham", self.CH_CHANGE_FALL), ("Antarctica/Troll", self.TR_CHANGE), ("Antarctica/Casey", calendar.timegm((2023, 3, 8, 16, 0, 0))),
                         ("America/New_York", self.SECOND_0100), ("Europe/London", calendar.timegm((2026, 10, 25, 1, 0, 0))), ("Australia/Lord_Howe", calendar.timegm((2026, 4, 4, 15, 0, 0)))):
             os.environ["TZ"] = zone
@@ -1197,12 +1258,18 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
                 walked = km._hour_buckets_back(now, 7 * 86400)
                 for window in (3600, 5 * 3600, 86400):
                     runs = km._runs_through(walked, now - window)
-                    keys, t0 = km._hour_window(now, window, walked, {})
-                    widened = t0 < runs[-1][1] or set(keys) != {k for k, _st, _off0, _off1 in runs}
-                    fired = km._splitting_fall_back(runs)
+                    t0 = runs[-1][1]
+                    starts = {k: km._bucket_start(k) for k, _st, _off0, _off1 in runs}
+                    widened = min(starts.values()) < t0
+                    reach = km._splitting_fall_back(runs)
+                    fired = reach is not None
                     fired_any = fired_any or fired
                     with self.subTest(zone=zone, now=time.strftime("%m-%d %H:%M %Z", time.localtime(now)), window=window):
                         self.assertEqual(fired, widened)
+                        if fired:
+                            self.assertGreater(reach, t0)
+                            self.assertEqual([k for k, st, _off0, _off1 in runs if starts[k] < t0 and st >= reach], [],
+                                             "a key that reaches before t0 starts inside the stretch the gate named")
             self.assertEqual(fired_any, zone in ("Pacific/Chatham", "Antarctica/Troll", "Antarctica/Casey"), zone)
 
     # ── the Antarctic stations: base-offset shifts between two STANDARD times, replaying up to seven hours ──
