@@ -79,6 +79,18 @@ test("executed: the pending copy re-derives from the store's blob plus the write
   assert.equal(createInFlight([B, W1]), true, "a create in flight gates the next New tag…");
 });
 
+test("executed: a refusal's nameless summary row (the entries past the door's row bound, round 8 of the 2026-09-05 review) renders as its reason alone, after the named rows", () => {
+  const rows = [
+    { tid: "g9", name: "qa", reason: "a write is read to 64 tags and it was past that bound, so it was not created" },
+    { reason: "and 3 more entries past that bound were not read (1 of them this write edited)", more: 3, moreEdited: 1 },
+  ];
+  const out = ackOutcome([W2], { type: "viewsAck", writeId: "w2", ok: false, refused: rows });
+  assert.equal(out.refusal, '"qa": a write is read to 64 tags and it was past that bound, so it was not created; and 3 more entries past that bound were not read (1 of them this write edited)',
+    "no name prefix on the summary row — the same shape the kernel's own bounded `error` line has");
+  assert.equal(ackOutcome([W2], { type: "viewsAck", writeId: "w2", ok: false, error: "bounded by the kernel", refused: rows }).refusal, "bounded by the kernel",
+    "the kernel's one-line error wins when present");
+});
+
 test("executed: an ack for a write this page never made counts as information — nothing stays pinned", () => {
   assert.deepEqual(ackOutcome([], { type: "viewsAck", writeId: "w-from-a-previous-load", ok: true, views: S1 }),
     { inflight: [], clearPending: true, rederive: false, refusal: null });

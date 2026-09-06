@@ -37,8 +37,10 @@ export interface ViewsAck {
   /** the store's write sequence after this write — the blob's own `seq`, repeated for the poster */
   seq?: number | null;
   error?: string;
-  /** the whole-blob path: each tag the stale-writer guard kept the store's copy of, with its reason */
-  refused?: { tid?: string; name?: string; reason?: string }[];
+  /** the whole-blob path: each tag the stale-writer guard kept the store's copy of, with its reason —
+   *  and, past the door's row bound, ONE nameless summary row whose reason counts the rest (`more`) and
+   *  how many of them the write edited (`moreEdited`); a row without a name renders as its reason alone */
+  refused?: { tid?: string; name?: string; reason?: string; more?: number; moreEdited?: number }[];
   /** a targeted edit: the tag it touched — a create's caller learns the kernel-minted id and name here */
   tid?: string;
   name?: string;
