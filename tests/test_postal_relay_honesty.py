@@ -305,9 +305,9 @@ class PresenceBlinkHonesty(_RelayBase):
         # self-update path) boots with an empty in-memory cache and would gossip the blink as
         # authoritative emptiness — the disk twin primes it
         _set_live([{"id": ALPHA, "name": "web"}])
-        pm.STATE.mkdir(parents=True, exist_ok=True)              # the twin's dir: serve() makes it; in a worker
-        pm._local_presence()                                     # answered → disk twin written   where no earlier
-        # test had, the swallowed write failure read as "no twin" (ordering flake, 2026-09-06)
+        # serve() makes STATE; alone in a fresh worker nothing had, and the twin's swallowed write read as "no twin"
+        pm.STATE.mkdir(parents=True, exist_ok=True)
+        pm._local_presence()                                     # answered → disk twin written
         pm._LOCAL_PRESENCE_GOOD[0], pm._LOCAL_PRESENCE_GOOD[1] = [], False   # a fresh bus process
         os.environ.pop("ROMP_SESSIONS_FILE", None)
         pm.KERNEL_BASE = "http://127.0.0.1:9"

@@ -96,8 +96,12 @@ class PushThroughKernel(unittest.TestCase):
         # A kernel mid-restart leaves the listing UNANSWERED: the bus must not tell anyone it is local
         # (a remote session that heard that would stop beating for good), and it records the beat
         # exactly as before, so presence survives the restart the way it always did.
-        self._with_bus_listing([], answered=False)
-        self.assertFalse(pm._record_heartbeat(self.LOCAL, "mysess"))
+        # The rows are NON-empty and hold the sid on purpose: only the answered bit can make this
+        # False, so dropping the `answered and` guard fails here (the seam never returns rows with
+        # answered=False today; the guard is the docstring's promise, and this is its test).
+        self._with_bus_listing([{"id": self.LOCAL, "name": "mysess"}], answered=False)
+        self.assertFalse(pm._record_heartbeat(self.LOCAL, "mysess"),
+                         "the sid is in the rows, but the rows did not ANSWER: never local")
         self.assertIn(self.LOCAL, pm.HEARTBEATS, "an unanswered listing records the beat, as before")
 
     def test_heartbeat_from_a_thread_row_is_local(self):

@@ -14,6 +14,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -44,9 +45,12 @@ class Counting(unittest.TestCase):
     def setUp(self):
         # os.environ is process-wide: other modules in the same pytest worker pop or repoint the seam
         # between tests, so pin both env halves here and put them back after (the self-identity test's idiom)
-        self._env = (os.environ.get("CLAUDE_CODE_SESSION_ID"), os.environ.get("ROMP_SESSIONS_FILE"))
+        self._env = (os.environ.get("CLAUDE_CODE_SESSION_ID"), os.environ.get("ROMP_SESSIONS_FILE"),
+                     os.environ.get("ROMP_POSTAL_PEERS"))
         os.environ["CLAUDE_CODE_SESSION_ID"] = WEB
         os.environ["ROMP_SESSIONS_FILE"] = _SESS
+        os.environ.pop("ROMP_POSTAL_PEERS", None)               # peer mode, the default; legacy tests set 0
+        pm._LOCAL_CONFIRMED[0] = False                          # a fresh MCP process
         self._saved = (pm._kernel_sessions_checked, pm._http, pm.ensure)
         self.fetches, self.posts = [], []
         real = self._saved[0]
@@ -59,7 +63,8 @@ class Counting(unittest.TestCase):
 
     def tearDown(self):
         pm._kernel_sessions_checked, pm._http, pm.ensure = self._saved
-        for key, val in zip(("CLAUDE_CODE_SESSION_ID", "ROMP_SESSIONS_FILE"), self._env):
+        pm._LOCAL_CONFIRMED[0] = False
+        for key, val in zip(("CLAUDE_CODE_SESSION_ID", "ROMP_SESSIONS_FILE", "ROMP_POSTAL_PEERS"), self._env):
             if val is None:
                 os.environ.pop(key, None)
             else:
@@ -141,28 +146,150 @@ class Counting(unittest.TestCase):
         answers = [{"ok": True, "local": False}, {"ok": True}, {"ok": True, "local": True},
                    {"ok": True, "local": True}]
         pm._http = lambda method, path, payload=None: (self.posts.append(path) or answers.pop(0))
-        t = threading.Thread(target=pm._heartbeat_loop, kwargs={"interval": 0.01}, daemon=True)
+        stop = threading.Event()
+        self.addCleanup(stop.set)              # a regression that never returns must not leave a beating thread
+        t = threading.Thread(target=pm._heartbeat_loop, kwargs={"interval": 0.01, "stop": stop}, daemon=True)
         t.start()
         t.join(5)
         self.assertFalse(t.is_alive(), "the loop ends once the bus says local")
+        self.assertFalse(stop.is_set(), "and it ended on its own, before the cleanup's stop")
         self.assertEqual(self.posts, ["/heartbeat"] * 3, "two non-local answers kept it beating")
         self.assertEqual(self.fetches, [True] * 3, "one listing fetch per beat")
 
+    def _run_loop_until(self, n_posts, stop):
+        """Start the loop on a fast cadence and wait until it has posted n_posts beats (5 s cap)."""
+        self.addCleanup(stop.set)              # whatever the assertions do, the thread ends with the test
+        t = threading.Thread(target=pm._heartbeat_loop, kwargs={"interval": 0.005, "stop": stop}, daemon=True)
+        t.start()
+        deadline = time.time() + 5
+        while len(self.posts) < n_posts and time.time() < deadline:
+            time.sleep(0.005)
+        return t
+
     def test_repeated_non_local_answers_never_end_the_loop(self):
         # the remote-session shape: the hub's bus never lists this sid and answers local=false on every
-        # beat, so each iteration is a full resolution plus a post, exactly as before this change
+        # beat, so the loop keeps beating and each beat is a full resolution — no memo of the sid or the
+        # verdict between beats; the external stop is the only thing that ends it here
         self.answer = {"ok": True, "local": False}
-        for _ in range(4):
-            self.assertFalse(pm._heartbeat_once())
-        self.assertEqual(len(self.posts), 4)
-        self.assertEqual(self.fetches, [True] * 4, "no memo of the sid or the verdict between beats")
-        # and the loop body is exactly that test: it returns on True and on nothing else
-        import inspect
-        src = inspect.getsource(pm._heartbeat_loop)
-        self.assertIn("if _heartbeat_once():\n                return", src)
-        self.assertEqual(src.count("return"), 1, "the loop has one exit and it is the bus's local answer")
+        stop = threading.Event()
+        t = self._run_loop_until(4, stop)
+        self.assertTrue(t.is_alive(), "four non-local answers and the loop is still running")
+        stop.set(); t.join(5)
+        self.assertFalse(t.is_alive())
+        self.assertGreaterEqual(len(self.posts), 4)
+        self.assertEqual(self.fetches, [True] * len(self.posts), "one full resolution per beat")
+        self.assertFalse(pm._LOCAL_CONFIRMED[0], "a false answer never latches")
+
+    def test_legacy_mode_keeps_the_loop_through_a_local_answer(self):
+        # ROMP_POSTAL_PEERS=0: `romp mail remote` can swap the local bus for the hub's under a running
+        # session, so a `local: true` from the bus of the moment must not end the beats (review, 2026-09-06)
+        os.environ["ROMP_POSTAL_PEERS"] = "0"
+        self.answer = {"ok": True, "local": True}
+        stop = threading.Event()
+        t = self._run_loop_until(3, stop)
+        self.assertTrue(t.is_alive(), "local:true in legacy mode: still beating")
+        stop.set(); t.join(5)
+        self.assertFalse(t.is_alive())
+        self.assertGreaterEqual(len(self.posts), 3)
+        self.assertFalse(pm._LOCAL_CONFIRMED[0], "and the per-call beat is not spared either")
+
+    def test_peer_mode_ends_the_loop_without_an_external_stop(self):
+        # the same answer in peer mode (the default): the loop returns on its own, once
+        self.answer = {"ok": True, "local": True}
+        stop = threading.Event()
+        self.addCleanup(stop.set)
+        t = threading.Thread(target=pm._heartbeat_loop, kwargs={"interval": 0.005, "stop": stop}, daemon=True)
+        t.start(); t.join(5)
+        self.assertFalse(t.is_alive())
+        self.assertFalse(stop.is_set(), "returned on its own")
+        self.assertEqual(self.posts, [("POST", "/heartbeat", {"id": WEB, "name": "web"})])
+        self.assertTrue(pm._LOCAL_CONFIRMED[0])
+
+    # ── the per-call beat ─────────────────────────────────────────────────────────────────────
+
+    def test_confirmed_local_session_skips_the_per_call_beat(self):
+        self.assertTrue(pm._heartbeat_once())                    # peer mode, local:true → latched
+        self.posts.clear(); self.fetches.clear()
+        pm._mcp_call("list_agents", {})
+        self.assertEqual([p[1] for p in self.posts], ["/agents?me=web"], "no /heartbeat for a confirmed-local session")
+        self.assertEqual(self.fetches, [True], "the tool call still resolves identity once")
+
+    def test_remote_session_beats_on_every_call(self):
+        self.answer = {"ok": True, "local": False}
+        self.assertFalse(pm._heartbeat_once())
+        for _ in range(3):
+            self.posts.clear()
+            pm._mcp_call("list_agents", {})
+            self.assertEqual(self.posts[0][1], "/heartbeat", "local:false never spares the beat")
+
+    def test_unanswered_bus_never_latches(self):
+        self.answer = {"ok": True}                                # an older bus: no bit
+        self.assertFalse(pm._heartbeat_once())
+        pm._http = lambda *a, **k: (_ for _ in ()).throw(pm.BusError("down"))
+        self.assertFalse(pm._heartbeat_once())
+        self.assertFalse(pm._LOCAL_CONFIRMED[0])
 
     # ── the bus's retry pass ──────────────────────────────────────────────────────────────────
+
+    def _dead_boxes(self, names):
+        """Mailboxes for sessions the listing does not hold, each with an empty new/ and a names entry."""
+        pm.NAMES_DIR.mkdir(parents=True, exist_ok=True)
+        sids = []
+        for i, name in enumerate(names):
+            sid = "99999999-8888-7777-6666-%012d" % i
+            (pm.MAILROOT / sid / "new").mkdir(parents=True, exist_ok=True)
+            (pm.NAMES_DIR / sid).write_text("%s\t\t#111111\t#ffffff\n" % name)
+            sids.append(sid)
+        self.addCleanup(lambda: [__import__("shutil").rmtree(pm.MAILROOT / sid, ignore_errors=True) for sid in sids])
+        return sids
+
+    def test_orphan_sweep_fetches_once_per_poll(self):
+        # every dead mailbox used to cost its own GET /sessions to learn a name the listing could not
+        # hold (the box is dead by construction); the registry names it, and the sweep's one listing
+        # is the only fetch (28 per 30 s poll on a box with 58 mailboxes, review 2026-09-06)
+        self._dead_boxes(["ghost-a", "ghost-b", "ghost-c"])
+        pm._sweep_orphans()
+        self.assertEqual(self.fetches, [False], "one listing for the whole sweep")
+
+    def test_recall_by_a_dead_name_fetches_once(self):
+        dead = self._dead_boxes(["ghost-a", "ghost-b", "ghost-c"])
+        (pm.MAILROOT / dead[1] / "new" / "m3").write_text("From: web\nFrom-Id: %s\nX-Park: 1\n\nparked body" % WEB)
+        removed = pm._recall(WEB, "ghost-b", None)
+        self.assertEqual([(r["id"], r["to"]) for r in removed], [("m3", "ghost-b")])
+        self.assertEqual(self.fetches, [True], "one listing for the whole recall, shared by every name lookup")
+
+    def test_recall_by_a_live_name_fetches_once(self):
+        (pm.MAILROOT / API / "new").mkdir(parents=True, exist_ok=True)
+        (pm.MAILROOT / API / "new" / "m4").write_text("From: web\nFrom-Id: %s\n\nthe body" % WEB)
+        try:
+            removed = pm._recall(WEB, "api", None)
+            self.assertEqual([(r["id"], r["to"]) for r in removed], [("m4", "api")])
+            self.assertEqual(self.fetches, [True])
+        finally:
+            for f in (pm.MAILROOT / API / "new").iterdir():
+                f.unlink()
+
+    def test_sent_receipts_fetch_once_for_every_unnamed_row(self):
+        # check_sent names each row's recipient; rows without a stored toName used to cost one
+        # GET /sessions each — one listing per call now, fetched only when a row needs it
+        pm.TLDIR.mkdir(parents=True, exist_ok=True)
+        log = pm.TLDIR / "messages.jsonl"
+        had = log.read_text() if log.exists() else None
+        self.addCleanup(lambda: log.write_text(had) if had is not None else log.unlink(missing_ok=True))
+        dead = "99999999-8888-7777-6666-000000000009"
+        log.write_text("".join(json.dumps(e) + "\n" for e in (
+            {"t": 5, "ev": "sent", "id": "m1", "from_id": WEB, "to_id": API},
+            {"t": 6, "ev": "sent", "id": "m2", "from_id": WEB, "to_id": THREAD},
+            {"t": 7, "ev": "sent", "id": "m3", "from_id": WEB, "to_id": dead},
+            {"t": 8, "ev": "sent", "id": "m4", "from_id": WEB, "to_id": "peer:farhost", "toName": "farhost:api"})))
+        rows = pm._sent_receipts(WEB)
+        self.assertEqual([r["to"] for r in rows], ["api", "web-t1", dead[:8], "farhost:api"])
+        self.assertEqual(self.fetches, [True], "one listing for the whole call (was one per unnamed row)")
+        self.fetches.clear()
+        log.write_text(json.dumps({"t": 8, "ev": "sent", "id": "m4", "from_id": WEB, "to_id": "peer:farhost",
+                                   "toName": "farhost:api"}) + "\n")
+        pm._sent_receipts(WEB)
+        self.assertEqual(self.fetches, [], "no row needed a name: no fetch at all")
 
     def test_retry_pending_fetches_nothing_without_pending_mail(self):
         pm.MAILPENDING.mkdir(parents=True, exist_ok=True)
