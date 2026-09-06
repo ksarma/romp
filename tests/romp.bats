@@ -91,6 +91,13 @@ MOCK
     printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_DIR/romp-postal-service"
     chmod +x "$MOCK_DIR/romp-postal-service"
     export ROMP_POSTAL_BIN="$MOCK_DIR/romp-postal-service"
+    # `romp up` / `romp down` go through romp-service (start/stop) first and fall back to the manager
+    # when it answers 3 (no login service installed). Default that answer here, so no test ever reaches
+    # the real romp-service — and through it the machine's systemctl. The down/up tests below overwrite
+    # it with a recording mock.
+    printf '#!/usr/bin/env bash\nexit 3\n' > "$MOCK_DIR/romp-service"
+    chmod +x "$MOCK_DIR/romp-service"
+    export ROMP_SERVICE_BIN="$MOCK_DIR/romp-service"
 
     export PATH="$MOCK_DIR:$PATH"
     # Two tests below start a REAL bin/romp-manager, whose startup runs `tmux start-server`, and `romp
@@ -117,6 +124,7 @@ teardown() {
     # Tests that launch a background romp-manager record its pid in MGR_PID so we
     # always reap it (and its child kernels), even if an assertion aborted the test.
     [[ -n "${MGR_PID:-}" ]] && kill "$MGR_PID" 2>/dev/null
+    [[ -n "${KERNEL_PID:-}" ]] && kill "$KERNEL_PID" 2>/dev/null   # the down tests' fake kernel
     tmux_private_kill            # before the rm: a server the real tmux started must not outlive the test
     rm -rf "$TEST_DIR"
 }
@@ -1616,6 +1624,7 @@ MOCK
     grep -q '"sid": "11111111-2222-3333-4444-555555555555"' "$audit"
     grep -q '"name": "demo_agent"' "$audit"          # sid resolved to the session's NAME
     grep -q '"parent":' "$audit"                     # the caller's parent argv rides along
+    grep -q '"action": "refresh"' "$audit"           # the kernel's cut ledger joins on this
     grep -q 'romp-manager called: restart-all' "$MOCK_LOG"   # ...and the restart still ran
 }
 
@@ -1655,16 +1664,304 @@ MOCK
     [ "$status" -ne 0 ]
 }
 
-@test "'on', 'serve', 'down', 'launch', 'open' are unknown commands: loud exit 2, no session" {
-    # These words never became round-3 commands (up replaced on; serve was removed;
-    # there is no down; the dashboard is bare romp). Each must fail naming the fix.
-    for word in on serve down launch open; do
+@test "'on', 'serve', 'launch', 'open' are unknown commands: loud exit 2, no session" {
+    # These words never became round-3 commands (up replaced on; serve was removed; the
+    # dashboard is bare romp). Each must fail naming the fix. (`down` joined the commands
+    # on 2026-09-06 — see the romp down tests below.)
+    for word in on serve launch open; do
         : > "$MOCK_LOG"
         run run_romp "$word"
         [ "$status" -eq 2 ]
         [[ "$output" == *"romp new ${word}"* ]]
         [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
     done
+}
+
+# ─── romp down / romp up / romp status with a romp down marker (2026-09-06) ──────────
+# `romp down` quiesces the kernel through POST /down, leaves the down-by-romp marker, writes an
+# audit row, and stops THROUGH the supervisor (romp-service stop); only when no login service is
+# installed (exit 3) does it fall back to the manager's own /stop. A fake kernel (python
+# http.server, alive until teardown) answers POST /down from $TEST_DIR/down-reply and logs every
+# request (path, token ok?, body) to $TEST_DIR/kreq; recording mocks stand in for romp-service and
+# romp-manager, so nothing here can reach the machine's systemctl or its live manager.
+
+start_down_kernel() {   # $1 = the /down reply body
+    printf '%s' "$1" > "$TEST_DIR/down-reply"
+    export ROMP_SERVE_TOKEN="test-token-DO-NOT-USE"
+    python3 - "$TEST_DIR" "$ROMP_SERVE_TOKEN" <<'PY' &
+import http.server, sys
+tdir, tok = sys.argv[1], sys.argv[2]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(n).decode()
+        ok = self.headers.get("X-Romp-Token") == tok
+        with open(tdir + "/kreq", "a") as f:
+            f.write("%s token=%s %s\n" % (self.path, "ok" if ok else "BAD", body))
+        if not ok:
+            self.send_response(403); self.send_header("Content-Length", "0"); self.end_headers(); return
+        reply = open(tdir + "/down-reply", "rb").read() if self.path == "/down" else b'{"ok": true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(reply)))
+        self.end_headers()
+        self.wfile.write(reply)
+    def log_message(self, *a):
+        pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+with open(tdir + "/kport", "w") as f:
+    f.write(str(s.server_address[1]))
+s.serve_forever()
+PY
+    KERNEL_PID=$!
+    until [ -s "$TEST_DIR/kport" ]; do sleep 0.05; done
+    export ROMP_KERNEL_PORT="$(cat "$TEST_DIR/kport")"
+}
+
+mock_service() {   # $1 = exit code for stop/start (0 done, 3 not installed, 1 failed)
+    cat > "$MOCK_DIR/romp-service" <<MOCK
+#!/usr/bin/env bash
+echo "romp-service called: \$*" >> "$MOCK_LOG"
+exit $1
+MOCK
+    chmod +x "$MOCK_DIR/romp-service"
+    export ROMP_SERVICE_BIN="$MOCK_DIR/romp-service"
+}
+
+mock_manager() {   # $1 = exit code
+    cat > "$MOCK_DIR/romp-manager" <<MOCK
+#!/usr/bin/env bash
+echo "romp-manager called: \$*" >> "$MOCK_LOG"
+[ "\$1" = status ] && [ "$1" -ne 0 ] && echo "romp manager is not running on :7432 — start it with \\\`romp up\\\`." >&2
+[ "\$1" = status ] && [ "$1" -eq 0 ] && echo '{"ok": true, "kernels": [{"id": "main"}]}'
+exit $1
+MOCK
+    chmod +x "$MOCK_DIR/romp-manager"
+    export ROMP_MANAGER_BIN="$MOCK_DIR/romp-manager"
+}
+
+@test "romp down: quiesces through POST /down, leaves the marker + audit row, stops through the service" {
+    start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 1.2}'
+    mock_service 0
+    mock_manager 0
+    run run_romp down
+    [ "$status" -eq 0 ]
+    # the kernel was asked to quiesce with the default wait, under the serve token
+    grep -q '^/down token=ok {"wait": 5}$' "$TEST_DIR/kreq"
+    [[ "$output" == *"quiet: no turn in flight (waited 1.2s)"* ]]
+    # the marker: time + the command, so status/ensure/up can read a deliberate stop
+    local marker="$XDG_STATE_HOME/romp/down-by-romp"
+    [ -f "$marker" ]
+    grep -q '"cmd": "romp down"' "$marker"
+    grep -Eq '"t": [0-9]{9,}' "$marker"
+    # the audit row names the action (the kernel's cut ledger joins on the newest row)
+    grep -q '"action": "down"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
+    # the stop went THROUGH the supervisor, never the manager's own /stop
+    grep -q 'romp-service called: stop' "$MOCK_LOG"
+    [[ "$output" == *"down — \`romp up\` starts it again"* ]]
+    run grep -q 'romp-manager called' "$MOCK_LOG"     # (`run` replaces $output — assert on it above)
+    [ "$status" -ne 0 ]
+}
+
+@test "romp down --now: no quiesce, the marker and audit say --now, the stop still goes through the service" {
+    start_down_kernel '{"ok": true, "quiet": true}'
+    mock_service 0
+    run run_romp down --now
+    [ "$status" -eq 0 ]
+    [ ! -e "$TEST_DIR/kreq" ]                        # the kernel was never asked
+    grep -q '"cmd": "romp down --now"' "$XDG_STATE_HOME/romp/down-by-romp"
+    grep -q '"action": "down"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
+    grep -q '"reason": "--now"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
+    grep -q 'romp-service called: stop' "$MOCK_LOG"
+}
+
+@test "romp down --wait N: passes the wait through and names what a still-busy kernel is about to cut" {
+    start_down_kernel '{"ok": true, "quiet": false, "busy": 2, "inflight": ["web", "api"], "waited": 2.0}'
+    mock_service 0
+    run run_romp down --wait 2
+    [ "$status" -eq 0 ]
+    grep -q '^/down token=ok {"wait": 2}$' "$TEST_DIR/kreq"
+    [[ "$output" == *"2 session(s) still mid-turn after 2.0s (web, api) — stopping anyway"* ]]
+    [[ "$output" == *"pick up where they stopped at the next romp up"* ]]
+    grep -q '"cmd": "romp down --wait 2"' "$XDG_STATE_HOME/romp/down-by-romp"
+    grep -q 'romp-service called: stop' "$MOCK_LOG"
+    # the = spelling too
+    : > "$MOCK_LOG"; rm -f "$TEST_DIR/kreq"
+    run run_romp down --wait=0.5
+    [ "$status" -eq 0 ]
+    grep -q '^/down token=ok {"wait": 0.5}$' "$TEST_DIR/kreq"
+}
+
+@test "romp down: bad options are loud exit 2 and touch nothing" {
+    mock_service 0
+    for args in "--wait abc" "--wait 601" "--wait -1" "--bogus" "--wait"; do
+        # shellcheck disable=SC2086
+        run run_romp down $args
+        [ "$status" -eq 2 ]
+        [[ "$output" == *"romp down"* ]]
+    done
+    [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]
+    run grep -q 'romp-service called' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
+    run run_romp down --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"usage: romp down [--now] [--wait <seconds>]"* ]]
+}
+
+@test "romp down: with no login service installed it stops the manager directly (its own /stop)" {
+    start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}'
+    mock_service 3
+    mock_manager 0
+    run run_romp down
+    [ "$status" -eq 0 ]
+    grep -q 'romp-service called: stop' "$MOCK_LOG"     # asked first...
+    grep -q 'romp-manager called: down' "$MOCK_LOG"     # ...then the manager's own /stop
+    [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
+    [[ "$output" == *"the manager and its kernels are stopping"* ]]
+}
+
+@test "romp down: nothing running and nothing installed is a no-op that still holds the auto-start" {
+    mock_service 3
+    mock_manager 1
+    export ROMP_KERNEL_PORT=1                          # a dead port: nothing to quiesce
+    run run_romp down
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"isn't answering on :1 — nothing to quiesce"* ]]
+    [[ "$output" == *"nothing was running"* ]]
+    [[ "$output" == *"auto-start stays held until \`romp up\`"* ]]
+    [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
+}
+
+@test "romp down: a failed service stop releases the hold, takes the marker back, exits 1" {
+    start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}'
+    mock_service 1
+    mock_manager 0
+    run run_romp down
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"did not stop — the kernel keeps running"* ]]
+    grep -q '^/down token=ok {"cancel": true}$' "$TEST_DIR/kreq"   # turns resume now, not at the lease's end
+    [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]                    # a running kernel must not read as down
+    run grep -q 'romp-manager called' "$MOCK_LOG"                  # no fallback: the service IS installed
+    [ "$status" -ne 0 ]
+}
+
+@test "romp down: an older kernel without /down, or a refused token, stops without waiting" {
+    mock_service 0
+    # 404: a kernel from before the route
+    python3 - "$TEST_DIR" <<'PY' &
+import http.server, sys
+tdir = sys.argv[1]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers()
+    def log_message(self, *a): pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(tdir + "/kport", "w").write(str(s.server_address[1]))
+s.serve_forever()
+PY
+    KERNEL_PID=$!
+    until [ -s "$TEST_DIR/kport" ]; do sleep 0.05; done
+    export ROMP_KERNEL_PORT="$(cat "$TEST_DIR/kport")"
+    run run_romp down
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"predates the quiesce route — stopping without waiting"* ]]
+    grep -q 'romp-service called: stop' "$MOCK_LOG"
+    kill "$KERNEL_PID"; KERNEL_PID=""; rm -f "$TEST_DIR/kport"
+    # 403: the token the CLI holds is not this kernel's
+    : > "$MOCK_LOG"
+    start_down_kernel '{"ok": true}'
+    export ROMP_SERVE_TOKEN="some-other-token"
+    run run_romp down
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"refused the serve token — stopping without waiting"* ]]
+    grep -q '^/down token=BAD' "$TEST_DIR/kreq"
+    grep -q 'romp-service called: stop' "$MOCK_LOG"
+}
+
+@test "romp up: clears the marker and starts through the login service when one is installed" {
+    mock_service 0
+    mock_manager 0
+    mkdir -p "$XDG_STATE_HOME/romp"
+    printf '{"t": %s, "cmd": "romp down"}\n' "$(date +%s)" > "$XDG_STATE_HOME/romp/down-by-romp"
+    run run_romp up
+    [ "$status" -eq 0 ]
+    [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]
+    [[ "$output" == *"cleared the romp down marker"* ]]
+    grep -q 'romp-service called: start' "$MOCK_LOG"
+    [[ "$output" == *"login service is starting the manager"* ]]
+    run grep -q 'romp-manager called' "$MOCK_LOG"      # the service owns the manager; no foreground one
+    [ "$status" -ne 0 ]
+    # no marker: the same start, nothing said about a marker
+    : > "$MOCK_LOG"
+    run run_romp up
+    [ "$status" -eq 0 ]
+    grep -q 'romp-service called: start' "$MOCK_LOG"
+    run grep -q 'marker' <<< "$output"
+    [ "$status" -ne 0 ]
+}
+
+@test "romp up: no login service (3) → the foreground manager, marker cleared; --foreground skips the service" {
+    mock_service 3
+    mock_manager 0
+    mkdir -p "$XDG_STATE_HOME/romp"
+    printf '{"t": %s, "cmd": "romp down"}\n' "$(date +%s)" > "$XDG_STATE_HOME/romp/down-by-romp"
+    run run_romp up
+    [ "$status" -eq 0 ]
+    [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]
+    grep -q 'romp-service called: start' "$MOCK_LOG"
+    grep -q 'romp-manager called: up' "$MOCK_LOG"
+    : > "$MOCK_LOG"
+    mock_service 0
+    run run_romp up --foreground
+    [ "$status" -eq 0 ]
+    grep -q 'romp-manager called: up' "$MOCK_LOG"
+    run grep -q 'romp-service called' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
+}
+
+@test "romp up: a failing service start is the exit code, and no second manager is started" {
+    mock_service 1
+    mock_manager 0
+    run run_romp up
+    [ "$status" -eq 1 ]
+    run grep -q 'romp-manager called' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
+}
+
+@test "romp status: a marker with no manager answering reads as down on purpose, exit 0" {
+    mock_manager 1
+    mkdir -p "$XDG_STATE_HOME/romp"
+    printf '{"t": %s, "cmd": "romp down"}\n' "$(date +%s)" > "$XDG_STATE_HOME/romp/down-by-romp"
+    run run_romp status
+    [ "$status" -eq 0 ]                       # a health check must not read a deliberate stop as a failure
+    [[ "$output" =~ ^down\ \(romp\ down\ at\ [0-9]{2}:[0-9]{2}\;\ romp\ up\ to\ start\)$ ]]
+    # the manager's own "not running" line is not repeated under it
+    run grep -q 'not running' <<< "$output"
+    [ "$status" -ne 0 ]
+}
+
+@test "romp status: an old marker carries its date; a running manager outranks a stale marker" {
+    mock_manager 1
+    mkdir -p "$XDG_STATE_HOME/romp"
+    printf '{"t": %s, "cmd": "romp down"}\n' "$(( $(date +%s) - 2 * 86400 ))" > "$XDG_STATE_HOME/romp/down-by-romp"
+    run run_romp status
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ ^down\ \(romp\ down\ at\ [0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}\; ]]
+    mock_manager 0
+    run run_romp status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"id": "main"'* ]]
+    run grep -q 'romp down' <<< "$output"
+    [ "$status" -ne 0 ]
+    [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]   # status never writes
+}
+
+@test "romp status without a marker is the manager's status, exit code and all" {
+    mock_manager 1
+    run run_romp status
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not running"* ]]
 }
 
 @test "romp-manager: control verbs error cleanly when no manager is running" {
