@@ -1,7 +1,8 @@
 # Comments and tracked changes in the file viewer
 
-**Status: PROPOSED, NOT COMMITTED** (the user's reviews of 2026-09-05 and 2026-09-06 applied,
-including a structured design interview; one question still open, see the end). Nothing is
+**Status: PROPOSED, NOT COMMITTED** (the user's reviews of 2026-09-05 and 2026-09-06 applied, including a
+structured design interview; every question ruled; awaiting the user's word to hand it to the
+implementing session). Nothing is
 scheduled and nothing should be built from it unbidden. Once approved, the implementing romp
 session merges this plan to main with the header changed to the build status, moves the
 `plans/README.md` entry out of the proposed list, and builds all six slices in one push. File and
@@ -30,8 +31,8 @@ The motivating story is the morning review of an overnight report, told in the n
 nothing here is specific to reports or to reviews: a session can file a user todo naming any file
 it wants the person to look at, and the person can comment on any file for any reason.
 
-The user ruled on every question this document and its reviews raised but one (open question 1);
-the rulings are recorded under Decisions. The plan keeps its original file name, `file-review.md`,
+The user ruled on every question this document and its reviews raised; the rulings are recorded
+under Decisions. The plan keeps its original file name, `file-review.md`,
 since the todo and README already point at it; every name inside follows the new vocabulary. A committed **comments log** beside each file's comments, added at the user's
 request, gives git a durable record of what was said, sent, and decided.
 
@@ -169,8 +170,8 @@ two-column minimum. Five structural choices, each with a precedent in this repo:
    Obsidian host's 2 s sidecar poll.
 5. **Any file, anywhere the viewer can show it.** Comments are not tied to a project type or a
    review: every text format gets passage comments, every file gets a whole-file comment, images
-   and PDFs get regions, and a file with no repository or vault above it gets a `.trackchanges/`
-   folder created beside it on first comment (pending the user's ruling, open question 1).
+   and PDFs get regions, and a file with no repository or vault above it gets a `.trackchanges/` folder created beside it
+   on the first comment, which then serves as its project's root (decision 37).
 
 ## The contract: the track-changents sidecar
 
@@ -188,9 +189,11 @@ comment keeps its anchor and gains a `suggestionId` when the agent answers it wi
 --thread`, and is then shown on the change's card. The VS Code host classifies on the absent
 anchor instead (`vscode/src/panel.ts:206`), so it shows such a comment as a passage comment; a
 comment written by the CLIs has exactly one of the two fields until then. The file on disk is
-always the current text with every change applied. The root is the nearest `.obsidian/`, `.git/`,
-or `.trackchanges/` ancestor; nothing reads git, the folder is only a landmark for where the one
-`.trackchanges/` directory of a project lives. The single on/off control is
+always the current text with every change applied. The root is the nearest `.obsidian/`, `.git/`, or `.trackchanges/` ancestor; nothing reads git,
+the folder is only a landmark for where the one `.trackchanges/` directory of a project lives.
+One `.trackchanges/` per project, at its root, never one per directory (decision 38): the tracked
+list, the comments of every file in the project, and the commit-or-ignore choice have one home,
+and a file moved within the project keeps its comments. The single on/off control is
 `.trackchanges/config.json` `{v: 2, tracked: [...]}`: a path tracks one file, a `folder/` entry
 tracks everything under it, and an optional `untracked: [...]` veto with the same shapes wins over
 both the list and the link-closure inheritance (`store-io.mjs:87-98, 190-192`).
@@ -296,8 +299,8 @@ containing the phrase "file editing is off", the regex the viewer already matche
 comments: cannot write the comments for the file, dashboard file editing is off on this machine),
 `store-moved`, `file-moved`, `config-moved`, `unsupported-version`, `corrupt`, `unreadable` (with
 the OS error text), `anchor-not-found`, `anchor-ambiguous`, `tracked-inherited`, `no-comment`,
-`too-large`. There is no `no-root` code if open question 1 is answered as recommended: a file with
-no landmark above it gets `.trackchanges/` created beside it on the first mutating verb.
+`too-large`. There is no `no-root` code: a file with no landmark above it gets `.trackchanges/` created beside
+it on the first mutating verb other than `log-edit` (decision 37).
 
 Kernel work, about 160 lines including the send op below: resolve `path` with
 `_resolve_open_path` (`kernel.py:30654`); refuse mutating verbs while `_file_editing_on()` is
@@ -349,8 +352,7 @@ write is atomic (temp file and rename in the same directory, through the realpat
 preserved, with a temporary name that does not end in `.json` so the other hosts' scans skip it) and applies the same 2 MB and UTF-8 checks as `_save_file`, refusing `too-large`
 before any write. When `findVaultRoot` finds no landmark above the file (`store-io.mjs:43-54` walks up to forty
 parents and returns null), `status` answers `root: null, storePath: null, trackedBy: null, store:
-null` and the panel still offers Comment on this file and Track changes; if open question 1 is
-answered as recommended, `comment` and `set-tracked` then create `.trackchanges/` beside the file
+null` and the panel still offers Comment on this file and Track changes; `comment` and `set-tracked` then create `.trackchanges/` beside the file
 and call `findVaultRoot` again, which now returns the file's directory, and the CLIs resolve the
 same root from then on with no `TRACKCHANGES_ROOT`; `log-edit` never creates it. The host script's
 accept verbs never drop a comment bound by `suggestionId`;
@@ -1179,16 +1181,19 @@ document stands on its own, each with the reasoning it was given.
 36. **The three Send checkboxes** keep their generic wording: answer the todo; turn on tracking so
     the session's edits come back as changes; accept the N pending changes.
 
+37. **A file with no repository or vault above it** (2026-09-06) gets `.trackchanges/` created
+    beside it on the first comment or tracking toggle, and that folder is its project's root from
+    then on; the loose-file case refuses nothing.
+38. **One `.trackchanges/` per project, at its root** (2026-09-06), never one per directory: the
+    nearest git repository, vault, or folder that already holds one is the project, and a loose
+    file starts a project of its own. The tracked list, the comments of every file in the project,
+    and the commit-or-ignore choice have one home; a file moved within the project keeps its
+    comments; and the agent CLIs, the guard, and the other editors look in the same place.
+
 ## Open questions for the user
 
-1. **A file with no repository or vault above it.** The storage layer places a project's one
-   `.trackchanges/` folder at the nearest `.git`, `.obsidian`, or `.trackchanges` folder above the
-   file; nothing reads git, the folder is only a landmark. For a file with no such landmark:
-   refuse with a message naming the fix, or create `.trackchanges/` beside the file on the first
-   comment, which then serves as the landmark? Recommended: create it. The user's model is that these are their own files, whether or not
-   they are committed, and that model has no reason to refuse a loose file; the one cost, a
-   folder appearing beside it, is visible and expected. The design above assumes this
-   answer and drops the `no-root` refusal.
+None remain. Every question raised by this document, by its reviews, or in the design interview
+has been ruled on; see Decisions.
 
 ## Upstream
 

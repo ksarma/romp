@@ -65,6 +65,12 @@ _Avoid_: watched, reviewed
 The person's own edit to a file from the dashboard. Never a change: it lands at once, and the
 session working in that folder is told.
 
+**Project (of a file)**:
+The nearest git repository, vault, or folder that already holds comments above a file; a file
+with none starts a project of its own on its first comment. Every file in a project keeps its
+comments, changes, and comments log together at the project's root, never scattered per folder.
+_Avoid_: repo (a project need not be one), root alone (ambiguous with the filesystem root)
+
 **Comments log**:
 The append-only record kept beside a file's comments of what was sent to a session, what the
 person accepted or rejected, when tracking was turned on or off, and the person's direct edits.
