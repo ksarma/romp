@@ -23,7 +23,7 @@ update` starts a session called "update".
 | `romp refresh` | Restart the postal bus and every kernel immediately, picking up new code (cut turns resume with their history) |
 | `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them |
 | `romp up` | Start the kernel: through the login service when one is installed, in the foreground otherwise. Clears a `romp down` marker |
-| `romp down` | Stop the kernel and keep it stopped until `romp up`. Turns in flight get five seconds to finish first; sessions resume with their history at the next start. See [Stopping the kernel on purpose](#stopping-the-kernel-on-purpose) |
+| `romp down` | Stop the kernel and keep it stopped until `romp up`. Turns in flight get 5 seconds to finish first; sessions resume with their history at the next start. See [Stopping the kernel on purpose](#stopping-the-kernel-on-purpose) |
 | `romp version` | Version report across the moving parts |
 | `romp keyswap [<name>] [--refresh] [--cycle <session,…>\|--cycle-all]` | Which API key the sessions bill, by fingerprint, and whether the kernel reads what your shell reads. With `ROMP_CREDENTIAL_COMMAND` set, `<name>` selects a declared credential and `--refresh` makes the kernel re-run the command; after a rotation, `--cycle` or `--cycle-all` reconnects the quiet running sessions so their new processes pick up the new credential, with no manager restart. Where the key lives in a file, `<name>` (upstream's rewrite of `service.env`) is refused: this fork does not write API keys to files. See [Switching which API key the sessions bill](#switching-which-api-key-the-sessions-bill-romp-keyswap) |
 | `romp help` | The same list, from the terminal |
@@ -80,7 +80,7 @@ These are for scripting and for agents rather than daily use:
 | `romp debug [on\|off\|status]` | Judge debug mode, where rejection rows carry the full input and reply |
 | `romp resume <id> [--name <n>] [--detach]` | Resume one exact conversation by UUID |
 | `romp refresh --quiet` | Refresh at the next quiet window instead — waits for sessions to finish their turns (15-min backstop) |
-| `romp down --wait <s>`, `romp down --now` | How long `romp down` gives turns in flight to finish (0 to 600 seconds; default 5), or no wait at all |
+| `romp down --wait <s>`, `romp down --now` | How long `romp down` waits for turns in flight to finish (0 to 600 seconds; default 5), or no wait at all |
 | `romp up --foreground` | Run the manager in this terminal even with a login service installed (its log in front of you); the manager refuses to start beside a running one |
 
 `--env` gives one session its own environment, so two sessions in the same
@@ -720,37 +720,38 @@ it finds in the unit or in `service.env`.
 
 `romp down` stops the kernel and keeps it stopped until `romp up`. The manager
 is supervised (`Restart=always` under systemd, `KeepAlive` under launchd), so a
-kernel or manager that merely exits is back within seconds; `romp down` instead
+kernel or manager that merely exits is back within seconds. `romp down` instead
 stops the login service itself (`systemctl --user stop romp-manager.service`;
 on macOS `launchctl bootout` of the agent), which nothing respawns. With no
-login service installed it stops the foreground manager through the manager's
-own control endpoint. Either way the unit stays enabled: the next login starts
-it again, as does `romp up`.
+login service installed, it stops the foreground manager through the manager's
+own control endpoint. With a login service installed, the unit stays enabled:
+the next login starts it again, as does `romp up`.
 
-Before stopping, `romp down` asks the kernel to quiesce (`POST /down`): new
-turn starts and new session creates are held, and the turns in flight get
-`--wait` seconds (default 5, up to 600) to reach a turn boundary; the command
-then reports whether the kernel went quiet or which sessions are still mid-turn
-and about to be cut. `--now` skips the wait. The hold is a lease that outlives
-the wait by a short grace, so if the stop never lands the kernel carries on by
-itself. What the stop then cuts is what a `romp refresh` cuts, and it comes back
-the same way (next section).
+Before stopping, `romp down` gives the turns in flight `--wait` seconds
+(default 5, up to 600) to reach a turn boundary; `--now` skips the quiesce
+altogether (no wait, no hold). Otherwise it asks the kernel to quiesce
+(`POST /down`), which holds new turn starts and new
+session creation, and then reports whether the kernel went quiet or which
+sessions are still mid-turn and about to be cut. If the stop never lands, the
+kernel carries on by itself: the hold is a lease, and it lapses a short grace
+after the wait. The stop then cuts what a `romp refresh` cuts, and it comes
+back the same way (see [What survives a restart](#what-survives-a-restart)).
 
-The stop leaves a marker (`down-by-romp` under the state directory, with the
-time and the command) so the stopped kernel reads as stopped on purpose:
-`romp status` prints `down (romp down at HH:MM; romp up to start)` and exits 0
-instead of the manager's not-running error, `romp-service status` says the same,
-and `romp-manager ensure` (the auto-start a session's SessionStart hook runs)
-refuses to bring the manager back while the marker exists. `romp up` clears the
-marker and starts the service; a manager started any other deliberate way (the
-login service at the next login, a hand `systemctl --user start`) clears it too.
-The audit row `romp down` appends to `restart-audit.jsonl` names the action, so
-the kernel's restart-cut ledger records the cut as a `down`, not an anonymous
-SIGTERM.
+The stop leaves a marker, `down-by-romp` under the state directory (with the
+time and the command), so the stopped kernel reads as stopped on purpose. While
+the marker exists, `romp status` prints
+`down (romp down at HH:MM; romp up to start)` and exits 0 instead of the
+manager's not-running error, `romp-service status` says the same, and
+`romp-manager ensure` (the auto-start a session's SessionStart hook runs)
+refuses to bring the manager back. `romp up` clears the marker and starts the
+service; a manager started any other deliberate way (the login service at the
+next login, a hand `systemctl --user start`) clears it too. `romp down` also
+appends a row to `restart-audit.jsonl` that names the action, so the kernel's
+restart-cut ledger records the cut as a `down`, not an anonymous SIGTERM.
 
 Sessions come back at the next `romp up` from what is already on disk: the
-kernel's boot reconcile reads each session's registry entry and state tail, and
-nothing written at shutdown is needed. A session whose turn had ended before the
+kernel's boot reconcile reads each session's registry entry and state tail and
+needs nothing written at shutdown. A session whose turn had ended before the
 stop is revived on demand, with its history, the next time something reaches it;
 a session cut mid-turn is resumed at boot and told its turn was cut. Terminal
 (tmux) sessions are not affected: their CLIs run in the tmux server, which lives
