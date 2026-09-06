@@ -849,6 +849,22 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(m["ledger"]["summary"], "Fixing the feed")
         self.assertNotIn("bullets", m["ledger"], "the bullets list retired with its readers (2026-07-07 audit)")
 
+    def test_ledger_carries_the_working_note(self):
+        """The postal set_working note rides the per-session ledger (the chat's section snapshot leads its
+        "now" line with it; the ledgers attach carries it to the Outline for free). Read from the
+        backend-agnostic store (working/<sid>); "" when the session published none."""
+        saved = km.WORKING_DIR
+        km.WORKING_DIR = jd.STATE / "working"
+        try:
+            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "", "no note → an empty string, never a missing key")
+            km.WORKING_DIR.mkdir(parents=True, exist_ok=True)
+            (km.WORKING_DIR / SID).write_text("  editing the notes-api tests  \n")
+            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "editing the notes-api tests", "the note, stripped")
+            (km.WORKING_DIR / SID).unlink()
+            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "", "cleared → empty again")
+        finally:
+            km.WORKING_DIR = saved
+
     def test_ledger_tree_and_current(self):
         # The overview's goal TREE: top-level goals, done nodes kept as timed leaves, open nodes expanded.
         # Fixture: g1 done ("Fix the feed flicker"), g2 open+blocked ("Awaiting a decision"). An idle

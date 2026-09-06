@@ -26565,7 +26565,12 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     if _session_flag(sid, "hideFromFeed"):       # muted → out of task tracking: the ledger shows no goal tree / current task
         tree, current, recent_tops = [], None, []
     ledger = {"summary": arch.get("headline", ""), "tree": tree[:80],
-              "current": current, "recent": recent_tops}
+              "current": current, "recent": recent_tops,
+              # the session's own claim of what it is doing (the postal set_working note, the store
+              # list_agents reads) — the chat's section snapshot leads its "now" line with it
+              # (ui/webview/tab-snapshot.ts nowLine; the user 2026-09-06). A muted session keeps it:
+              # the note is the session's statement, not task tracking. "" when none.
+              "workingNote": Sessions.working_note(sid)}
     # work-timer base, in MILLISECONDS (render's elapsedMs does Date.now()ms - sinceEpoch; a seconds
     # value showed ~494,000h — the user's "400,000 hours" bug): the current open turn's start while
     # working, else the last activity; None when unknown (render then shows no timer).
