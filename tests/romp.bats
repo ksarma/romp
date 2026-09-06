@@ -250,7 +250,7 @@ MOCK
     [[ "$output" == *"comment thread"* ]]
     [[ "$output" != *"already running"* ]]
     grep '/send' "$MOCK_LOG" | grep -q '"id": "66666666-7777-8888-9999-000000000000"'
-    ! grep '/send' "$MOCK_LOG" | grep -q '"name": "web-comment-1"'
+    [ "$(grep '/send' "$MOCK_LOG" | grep -c '"name": "web-comment-1"')" -eq 0 ]
 }
 
 @test "fork: POST /fork with parent, new name and optional --at cut" {
@@ -466,6 +466,380 @@ MOCK
     [ "$status" -eq 1 ]
     [[ "$output" == *"kernel isn't running"* ]]
     [ "$(grep -Ec '/(color|group)' "$MOCK_LOG")" -eq 0 ]
+}
+
+@test "emoji: POST /emoji with target and the emoji; --clear posts an empty string; prints the outcome" {
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    run run_romp emoji exp-web '🌙'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"exp-web" now shows 🌙'* ]]
+    grep '/emoji' "$MOCK_LOG" | grep -q '"target": *"exp-web"'
+    grep '/emoji' "$MOCK_LOG" | grep -q '"emoji": *"🌙"'
+    run run_romp emoji exp-web --clear
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"exp-web" shows no emoji now'* ]]
+    grep '/emoji' "$MOCK_LOG" | grep -q '"emoji": *""'
+}
+
+@test "emoji: a refusal prints the kernel's reason; a bare name reads the current one off GET /emoji; usage and no-token are loud" {
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    # the read form asks GET /emoji?target= (the read half of the POST — review round 3, 2026-09-06; it
+    # asked GET /sessions, which lists this machine's live sessions only) and reads the status off -w
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
+url=""; wfmt=0; for a in "$@"; do [[ "$a" == http* ]] && url="$a"; [[ "$a" == "-w" ]] && wfmt=1; done
+if [[ "$url" == */emoji?target=* ]]; then
+  case "${url##*target=}" in
+    exp-web) printf '{"ok": true, "id": "11111111-2222-3333-4444-555555555555", "emoji": "🌙"}' ;;
+    exp-api) printf '{"ok": true, "id": "22222222-3333-4444-5555-666666666666", "emoji": ""}' ;;
+    *)       printf '{"ok": false, "error": "no live session named \\"%s\\" (a dormant one is read by its id)"}' "${url##*target=}" ;;
+  esac
+  [[ $wfmt -eq 1 ]] && printf '\n200'
+  exit 0
+fi
+echo '{"ok": false, "error": "one emoji only"}'
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    # the kernel is the validator; its one-line reason is the whole refusal
+    run run_romp emoji exp-web '🌙🌙'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refused — one emoji only"* ]]
+    # no emoji argument READS: the current one, or an empty line when there is none
+    run run_romp emoji exp-web
+    [ "$status" -eq 0 ]
+    [ "$output" = "🌙" ]
+    grep -q 'curl -s -m 10 --config - -w .*/emoji?target=exp-web' "$MOCK_LOG"   # a GET (no -X POST, no -d), the target in the query
+    run run_romp emoji exp-api
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run run_romp emoji ghost
+    [ "$status" -eq 1 ]
+    [[ "$output" == *'no live session named "ghost"'* ]]
+    [[ "$output" == *"read by its id"* ]]
+    run run_romp emoji
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp emoji"* ]]
+    run run_romp emoji exp-web --bogus
+    [ "$status" -eq 2 ]
+    run run_romp emoji exp-web '🌙' extra
+    [ "$status" -eq 2 ]
+    unset ROMP_SERVE_TOKEN
+    run run_romp emoji exp-web '🌙'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel isn't running"* ]]
+    run run_romp emoji exp-web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel isn't running"* ]]
+    [ "$(grep -c 'POST .*/emoji' "$MOCK_LOG")" -eq 1 ]         # the one refused set; no call without a token
+    [ "$(grep -c '/emoji?target=' "$MOCK_LOG")" -eq 3 ]        # the three reads
+}
+
+@test "names map: the tab emoji (5th field) survives the rename hook's rewrite; an entry without one keeps four fields" {
+    # the kernel stores a session's tab emoji as the names entry's 5th tab field; the shell-side rewrite
+    # (the tmux after-rename-session hook → _romp_rename_record → _romp_record) must carry it, and must
+    # not swallow it into the fg word (a 4-variable `read` hands the rest of the line to the last one)
+    touch "$MOCK_LOG"
+    cat > "$MOCK_DIR/tmux" << 'MOCK'
+#!/usr/bin/env bash
+echo "tmux $*" >> "$MOCK_LOG"
+if [[ "$1" == "show" && "$5" == "@romp-session-id" ]]; then
+  case "$3" in
+    exp-api) echo 11111111-2222-3333-4444-555555555555 ;;
+    exp-y)   echo 22222222-3333-4444-5555-666666666666 ;;
+  esac
+fi
+exit 0
+MOCK
+    chmod +x "$MOCK_DIR/tmux"
+    ndir="$XDG_STATE_HOME/romp/names"
+    mkdir -p "$ndir"
+    printf 'exp-web\t%s\t#1EA1EB\twhite\t🌙\n' "$WORK_DIR" > "$ndir/11111111-2222-3333-4444-555555555555"
+    printf 'exp-x\t%s\t#1EA1EB\twhite\n' "$WORK_DIR" > "$ndir/22222222-3333-4444-5555-666666666666"
+    run run_romp _renamed exp-api
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ndir/11111111-2222-3333-4444-555555555555")" = "$(printf 'exp-api\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
+    run run_romp _renamed exp-y
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ndir/22222222-3333-4444-5555-666666666666")" = "$(printf 'exp-y\t%s\t#1EA1EB\twhite' "$WORK_DIR")" ]
+    grep -q 'send-keys -t exp-api /rename exp-api Enter' "$MOCK_LOG"
+}
+
+@test "emoji: an empty or blank emoji argument is a usage error, never a clear; the success line prints what the kernel stored" {
+    # `--clear` is the only clear: `romp emoji web "$EMOJI"` with EMOJI unset must not wipe the label
+    # (the same guard `romp color` has); and the success line shows the kernel's stored value — the
+    # validator trims, so a padded argument used to be echoed with its padding (review, 2026-09-06)
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
+printf '{"ok": true, "id": "11111111-2222-3333-4444-555555555555", "emoji": "%s"}\n' "${MOCK_EMOJI_REPLY-}"
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    run run_romp emoji exp-web ''
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"use --clear"* ]]
+    [[ "$output" == *"usage: romp emoji"* ]]
+    run run_romp emoji exp-web '   '
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"use --clear"* ]]
+    [ "$(grep -c '/emoji' "$MOCK_LOG")" -eq 0 ]
+    export MOCK_EMOJI_REPLY='🌙'
+    run run_romp emoji exp-web ' 🌙 '
+    [ "$status" -eq 0 ]
+    [ "$output" = 'romp emoji: "exp-web" now shows 🌙' ]
+    export MOCK_EMOJI_REPLY=''
+    run run_romp emoji exp-web --clear
+    [ "$status" -eq 0 ]
+    [ "$output" = 'romp emoji: "exp-web" shows no emoji now' ]
+    [ "$(grep -c '/emoji' "$MOCK_LOG")" -eq 2 ]
+}
+
+@test "emoji: a dormant session is read by id from the names registry; a dormant name is not found, and says so" {
+    # a name can only mean a LIVE session (the kernel's GET /emoji resolves it against the live set), and
+    # no route lists dormant records — so the read form answers a sid with a record here from the names
+    # entry itself (the store the set form labels) before it asks anything (review, 2026-09-06)
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+[[ " $* " == *" --config - "* ]] && cat >/dev/null
+url=""; wfmt=0; for a in "$@"; do [[ "$a" == http* ]] && url="$a"; [[ "$a" == "-w" ]] && wfmt=1; done
+t="${url##*target=}"
+if [[ "$t" =~ ^[0-9a-f-]{36}$ ]]; then
+  printf '{"ok": false, "error": "no names record for that session — is it known to this kernel?"}'
+else
+  printf '{"ok": false, "error": "no live session named \\"%s\\" (a dormant one is read by its id)"}' "$t"
+fi
+[[ $wfmt -eq 1 ]] && printf '\n200'
+exit 0
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    ndir="$XDG_STATE_HOME/romp/names"
+    mkdir -p "$ndir"
+    printf 'worker\t%s\t#1EA1EB\twhite\t🌙\n' "$WORK_DIR" > "$ndir/22222222-3333-4444-5555-666666666666"
+    printf 'quiet\t%s\t\t\t🚀\n' "$WORK_DIR" > "$ndir/33333333-4444-5555-6666-777777777777"    # colorless: read tab-exactly
+    printf 'plain\t%s\t#1EA1EB\twhite\n' "$WORK_DIR" > "$ndir/44444444-5555-6666-7777-888888888888"
+    run run_romp emoji 22222222-3333-4444-5555-666666666666
+    [ "$status" -eq 0 ]
+    [ "$output" = "🌙" ]
+    run run_romp emoji 33333333-4444-5555-6666-777777777777
+    [ "$status" -eq 0 ]
+    [ "$output" = "🚀" ]
+    run run_romp emoji 44444444-5555-6666-7777-888888888888
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run run_romp emoji worker
+    [ "$status" -eq 1 ]
+    [[ "$output" == *'no live session named "worker"'* ]]
+    [[ "$output" == *"read by its id"* ]]
+    run run_romp emoji 55555555-6666-7777-8888-999999999999
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no names record for that session"* ]]
+    [ "$(grep -c '/emoji?target=' "$MOCK_LOG")" -eq 2 ]   # the three registry reads dialed nothing
+}
+
+@test "emoji: a session an attached machine owns is read by id through the kernel's GET /emoji, which forwards like the set" {
+    # the read form asked GET /sessions, which lists THIS machine's live sessions only, so a sid an
+    # attached host owns read as 'no session named …' right after `romp emoji <sid> 🌙` had set it through
+    # the POST's forward (review round 3, 2026-09-06). GET /emoji?target= resolves and forwards the way
+    # the POST does; the CLI prints its answer — the emoji, or the kernel's one-line error — and reads
+    # the HTTP status off -w, so a kernel from before the route is named, not called unreachable.
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+[[ " $* " == *" --config - "* ]] && cat >/dev/null
+wfmt=0; for a in "$@"; do [[ "$a" == "-w" ]] && wfmt=1; done
+printf '%s' "${MOCK_GET_BODY-}"
+[[ $wfmt -eq 1 ]] && printf '\n%s' "${MOCK_GET_CODE:-200}"
+exit 0
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    rid=66666666-7777-8888-9999-000000000000            # no record under this machine's names dir
+    export MOCK_GET_BODY='{"ok": true, "id": "66666666-7777-8888-9999-000000000000", "emoji": "🌙"}'
+    run run_romp emoji "$rid"
+    [ "$status" -eq 0 ]
+    [ "$output" = "🌙" ]
+    grep -q "/emoji?target=$rid" "$MOCK_LOG"
+    [ "$(grep -c 'sessions' "$MOCK_LOG")" -eq 0 ]       # never the live list
+    # the owning kernel's own words come back through the hub, whatever they are
+    export MOCK_GET_BODY='{"ok": false, "error": "that host'"'"'s kernel (gpu1) predates tab emoji — update romp there and restart it"}'
+    run run_romp emoji "$rid"
+    [ "$status" -eq 1 ]
+    [ "$output" = "romp emoji: that host's kernel (gpu1) predates tab emoji — update romp there and restart it" ]
+    export MOCK_GET_BODY='{"ok": false, "error": "the session'"'"'s own kernel (gpu1) did not answer"}'
+    run run_romp emoji "$rid"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"did not answer"* ]]
+    # THIS kernel from before the route: a 404 names the skew instead of 'not reachable'
+    export MOCK_GET_BODY='not found' MOCK_GET_CODE=404
+    run run_romp emoji "$rid"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"predates this command's read route"* ]]
+    [[ "$output" != *"not reachable"* ]]
+    export MOCK_GET_BODY='forbidden' MOCK_GET_CODE=403
+    run run_romp emoji "$rid"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refused the serve token (HTTP 403)"* ]]
+    unset MOCK_GET_BODY MOCK_GET_CODE
+}
+
+@test "emoji: an id is read from the names registry with no kernel running; a name or an unknown id still needs the kernel" {
+    # the registry is the store the kernel's own /sessions emoji field is read from, and the only place a
+    # dormant record lives, so a read by id needs no kernel. It used to run only after GET /sessions had
+    # missed: with the kernel down a dormant id got 'kernel not reachable' though the record held the
+    # answer, and docs/reference.md promised otherwise (review round 2, 2026-09-06)
+    touch "$MOCK_LOG"
+    unset ROMP_SERVE_TOKEN          # no token file under the hermetic state dir either: no kernel
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+exit 7
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    ndir="$XDG_STATE_HOME/romp/names"
+    mkdir -p "$ndir"
+    printf 'worker\t%s\t#1EA1EB\twhite\t🌙\n' "$WORK_DIR" > "$ndir/22222222-3333-4444-5555-666666666666"
+    printf 'quiet\t%s\t\t\t🚀\n' "$WORK_DIR" > "$ndir/33333333-4444-5555-6666-777777777777"
+    printf 'plain\t%s\t#1EA1EB\twhite\n' "$WORK_DIR" > "$ndir/44444444-5555-6666-7777-888888888888"
+    run run_romp emoji 22222222-3333-4444-5555-666666666666
+    [ "$status" -eq 0 ]
+    [ "$output" = "🌙" ]
+    run run_romp emoji 33333333-4444-5555-6666-777777777777
+    [ "$status" -eq 0 ]
+    [ "$output" = "🚀" ]
+    run run_romp emoji 44444444-5555-6666-7777-888888888888
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    # a name, or an id with no record here, can only be answered by the kernel: loud, not a guess
+    run run_romp emoji worker
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel isn't running"* ]]
+    run run_romp emoji 55555555-6666-7777-8888-999999999999
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel isn't running"* ]]
+    [ "$(grep -c '^curl' "$MOCK_LOG")" -eq 0 ]   # the registry reads never dialed anything
+}
+
+@test "resume: the tab emoji (5th field) survives every tmux resume shape" {
+    # the kernel stores a session's tab emoji as the names entry's 5th field; each resume/revive shape
+    # rewrites the record and must carry it — before the review (2026-09-06) every one of them read the
+    # field into `_` and wrote four fields back, so a tmux session lost its emoji on every resume
+    ndir="$XDG_STATE_HOME/romp/names"
+    mkdir -p "$ndir"
+    printf 'myproject\t%s\t#1EA1EB\twhite\t🌙\n' "$WORK_DIR" > "$ndir/abc123-uuid"
+    run run_romp resume abc123-uuid
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ndir/abc123-uuid")" = "$(printf 'myproject\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
+    grep -q 'status-style bg=#1EA1EB,fg=white' "$MOCK_LOG"      # the recorded color was reused, not the emoji
+    # the kernel's own reviver shape
+    run run_romp resume abc123-uuid --name myproject --detach
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ndir/abc123-uuid")" = "$(printf 'myproject\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
+    # the old-kernel revive shape (a rename rides along; the emoji stays)
+    run run_romp web --resume abc123-uuid --detach
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ndir/abc123-uuid")" = "$(printf 'web\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
+    # the skill-conversion shape
+    run run_romp --resume abc123-uuid --detach
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ndir/abc123-uuid")" = "$(printf 'myproject\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
+}
+
+@test "names map: a record with no colors and an emoji is read tab-exactly by the launch and the title-freeing rewrite" {
+    # the kernel can label a dormant pre-color (or Codex launch-error) record by sid: `name\tcwd\t\t\t🌙`.
+    # bash's `IFS=$'\t' read` folds the run of tabs and took the emoji for the color — tmux got
+    # `status-style bg=🌙` (an invalid style, fatal under set -e) and the rewrite stored the emoji as bg
+    ndir="$XDG_STATE_HOME/romp/names"
+    mkdir -p "$ndir"
+    printf 'myproject\t%s\t\t\t🌙\n' "$WORK_DIR" > "$ndir/abc123-uuid"
+    run run_romp resume abc123-uuid
+    [ "$status" -eq 0 ]
+    run grep -q 'bg=🌙' "$MOCK_LOG"
+    [ "$status" -ne 0 ]   # never a bare `! grep` here: set -e and the ERR trap skip an inverted command, so mid-test it checks nothing
+    grep -qE 'status-style bg=#[0-9A-Fa-f]{6},fg=[a-z]+' "$MOCK_LOG"   # a palette color, as for any colorless record
+    rec="$(cat "$ndir/abc123-uuid")"
+    [ "$(awk -F'\t' '{print NF}' <<<"$rec")" -eq 5 ]
+    [ "$(awk -F'\t' '{print $1}' <<<"$rec")" = "myproject" ]
+    [[ "$(awk -F'\t' '{print $3}' <<<"$rec")" == "#"?????? ]]
+    [ "$(awk -F'\t' '{print $5}' <<<"$rec")" = "🌙" ]
+    # freeing a reused title suffixes the STALE holder's record through the same reader: the colorless
+    # shape round-trips (colors stay empty, the emoji stays the 5th field)
+    printf 'exp-free\t%s\t\t\t🚀\n' "$WORK_DIR" > "$ndir/22222222-3333-4444-5555-666666666666"
+    run run_romp new -t --detach exp-free
+    [ "$status" -eq 0 ]
+    rec="$(cat "$ndir/22222222-3333-4444-5555-666666666666")"
+    [ "$(awk -F'\t' '{print NF}' <<<"$rec")" -eq 5 ]
+    [[ "$(awk -F'\t' '{print $1}' <<<"$rec")" =~ ^exp-free-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+    [ "$(awk -F'\t' '{print $2}' <<<"$rec")" = "$WORK_DIR" ]
+    [ -z "$(awk -F'\t' '{print $3 $4}' <<<"$rec")" ]
+    [ "$(awk -F'\t' '{print $5}' <<<"$rec")" = "🚀" ]
+}
+
+@test "names map: the record writer is atomic — a temp moved into place, and a reader racing the rename hook never sees an empty record" {
+    # _romp_record (launch, the rename hook, the title-freeing rewrite) wrote with `printf > file`: truncate,
+    # then write. The kernel's names writers read the file between those two steps and published a record
+    # with no name and no cwd over it, and the kernel's atomic write won (review round 3, 2026-09-06). The
+    # rule: write a temp in the same directory, mv it into place — pinned at the source (no redirect into
+    # the record's path, one temp name, one mv) and exercised: a reader polling the record while the hook
+    # rewrites it must never find it empty, and no temp may be left behind.
+    [ "$(grep -c '> "\$ROMP_NAMES_DIR/\$sid"' "$ROMP_SCRIPT")" -eq 0 ]
+    grep -q 'local tmp="\$ROMP_NAMES_DIR/\.\$sid\.tmp\.\$\$"' "$ROMP_SCRIPT"
+    grep -q 'mv -f "\$tmp" "\$ROMP_NAMES_DIR/\$sid"' "$ROMP_SCRIPT"
+    [ "$(grep -c '> "\$tmp"' "$ROMP_SCRIPT")" -eq 2 ]     # the five-field and the four-field printf, nothing else
+    cat > "$MOCK_DIR/tmux" << 'MOCK'
+#!/usr/bin/env bash
+if [[ "$1" == "show" && "$5" == "@romp-session-id" ]]; then echo 11111111-2222-3333-4444-555555555555; fi
+exit 0
+MOCK
+    chmod +x "$MOCK_DIR/tmux"
+    ndir="$XDG_STATE_HOME/romp/names"
+    mkdir -p "$ndir"
+    f="$ndir/11111111-2222-3333-4444-555555555555"
+    printf 'exp-web\t%s\t#1EA1EB\twhite\t🌙\n' "$WORK_DIR" > "$f"
+    # the writer: the rename hook, 40 times over; the reader: as many looks as fit meanwhile
+    ( for i in $(seq 1 40); do "$ROMP_SCRIPT" _renamed exp-web >/dev/null 2>&1; done ) &
+    wpid=$!
+    empty=0; reads=0
+    while kill -0 "$wpid" 2>/dev/null; do
+        reads=$((reads + 1))
+        [ -s "$f" ] || empty=$((empty + 1))
+    done
+    wait "$wpid"
+    [ "$reads" -gt 100 ]
+    [ "$empty" -eq 0 ]
+    [ "$(cat "$f")" = "$(printf 'exp-web\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
+    [ "$(ls -A "$ndir" | grep -vc '^11111111-2222-3333-4444-555555555555$')" -eq 0 ]   # no temp left behind
+}
+
+@test "names map: the rename hook reads a colorless record with an emoji tab-exactly" {
+    touch "$MOCK_LOG"
+    cat > "$MOCK_DIR/tmux" << 'MOCK'
+#!/usr/bin/env bash
+echo "tmux $*" >> "$MOCK_LOG"
+if [[ "$1" == "show" && "$5" == "@romp-session-id" ]]; then
+  case "$3" in
+    exp-api) echo 11111111-2222-3333-4444-555555555555 ;;
+  esac
+fi
+exit 0
+MOCK
+    chmod +x "$MOCK_DIR/tmux"
+    ndir="$XDG_STATE_HOME/romp/names"
+    mkdir -p "$ndir"
+    printf 'exp-web\t%s\t\t\t🌙\n' "$WORK_DIR" > "$ndir/11111111-2222-3333-4444-555555555555"
+    run run_romp _renamed exp-api
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ndir/11111111-2222-3333-4444-555555555555")" = "$(printf 'exp-api\t%s\t\t\t🌙' "$WORK_DIR")" ]
 }
 
 @test "fork: usage errors exit 2; no kernel token is a loud exit 1" {
@@ -801,7 +1175,8 @@ MOCK
     run run_romp new -t myproject
     [ "$status" -eq 0 ]
     grep -qE 'tmux respawn-pane -k -t myproject exec ROMP_SID=\S+ ROMP_SESSION_NAME="myproject" claude' "$MOCK_LOG"
-    ! grep -qE 'send-keys.*exec (ROMP_SID=\S+ ROMP_SESSION_NAME="[^"]*" )?claude' "$MOCK_LOG"
+    run grep -qE 'send-keys.*exec (ROMP_SID=\S+ ROMP_SESSION_NAME="[^"]*" )?claude' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "old tmux without copy-mode-position-style still launches claude (no set -e abort)" {
@@ -820,7 +1195,8 @@ MOCK
     # Default hermetic HOME has no romp-session-prompt.md, so the -f guard skips it.
     run run_romp new -t myproject
     [ "$status" -eq 0 ]
-    ! grep -q -- '--append-system-prompt' "$MOCK_LOG"
+    run grep -q -- '--append-system-prompt' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "append-system-prompt: appended (deferred \$(cat ...)) when the prompt is installed" {
@@ -893,7 +1269,8 @@ MOCK
     grep -F 'bind -n C-c' "$MOCK_LOG"    | grep -qF 'romp-interrupt-reset #{q:session_name}'
     grep -F 'bind -n Escape' "$MOCK_LOG" | grep -qF 'romp-interrupt-reset #{q:session_name}'
     # the unquoted (injectable) form must be gone
-    ! grep -qF 'romp-interrupt-reset #{session_name}' "$MOCK_LOG"
+    run grep -qF 'romp-interrupt-reset #{session_name}' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "resume: a session id with shell metacharacters is refused before any launch" {
@@ -972,7 +1349,8 @@ MOCK
     [[ "$output" != *"retired"* ]]
     grep -q 'tmux new-session -d -s web' "$MOCK_LOG"
     grep -qE 'tmux respawn-pane -k -t web exec ROMP_SID=abc123-uuid ROMP_SESSION_NAME="web" claude --resume abc123-uuid --name "web"' "$MOCK_LOG"
-    ! grep -q 'tmux attach-session' "$MOCK_LOG"
+    run grep -q 'tmux attach-session' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "resume: explicit session id resumes that conversation" {
@@ -1051,7 +1429,8 @@ MOCK
     [ "$status" -eq 0 ]
     [[ "$output" != *"retired"* ]]
     grep -q 'tmux new-session -d -s oldk' "$MOCK_LOG"
-    ! grep -q 'tmux attach-session' "$MOCK_LOG"
+    run grep -q 'tmux attach-session' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "new: usage errors are loud — missing name, two names, dangling -d" {
@@ -1203,7 +1582,8 @@ MOCK
     run run_romp status
     [ "$status" -eq 0 ]
     grep -q 'romp-manager called: status' "$MOCK_LOG"
-    ! grep -q 'romp-postal-service called' "$MOCK_LOG"   # status does not touch the bus
+    run grep -q 'romp-postal-service called' "$MOCK_LOG"
+    [ "$status" -ne 0 ]   # status does not touch the bus
 }
 
 @test "refresh appends a caller-attribution line to restart-audit.jsonl before restarting" {
@@ -1271,7 +1651,8 @@ MOCK
     run run_romp up restart main
     [ "$status" -eq 0 ]
     grep -q 'romp-manager called: up' "$MOCK_LOG"   # starts the manager; trailing words are NOT forwarded
-    ! grep -q 'restart' "$MOCK_LOG"
+    run grep -q 'restart' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "'on', 'serve', 'down', 'launch', 'open' are unknown commands: loud exit 2, no session" {
@@ -1374,7 +1755,8 @@ MOCK
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage:"* ]]
     [[ "$output" == *"romp new"* ]]
-    ! grep -q 'tmux new-session' "$MOCK_LOG"
+    run grep -q 'tmux new-session' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "help, -h and --help all print usage" {
@@ -1545,7 +1927,8 @@ _resume_rows_fn() {   # writes the extracted function to $1
     run run_romp resume abc123-uuid
     [ "$status" -eq 0 ]
     grep -q 'tmux new-session -d -s scratchpad' "$MOCK_LOG"
-    ! grep -qE 'tmux new-session -d -s home( |$| -)' "$MOCK_LOG"
+    run grep -qE 'tmux new-session -d -s home( |$| -)' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "ROMPHOME: a launch from a normal project dir is unaffected" {

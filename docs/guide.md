@@ -251,6 +251,21 @@ a subproject that became its own repository, right-click its tab and choose
 name, mail and history stay with the session, and from the next turn on the
 agent works in the new folder and reads its `CLAUDE.md`.
 
+A session's tab can carry one emoji before its name, so you can tell the
+sessions apart at a glance by role or state: a moon on the one left running
+overnight, a flag on the release manager. Right-click the tab and choose **Emoji…**, or run
+`romp emoji <session> <emoji>` (`romp emoji <session> --clear` removes it; with
+no emoji argument it prints the current one). A session can also set or change
+its own, with the `set_emoji` tool it gets alongside its mail tools, so you can
+ask one to show a moon while it works unattended and a checkmark when it is
+done. Exactly one emoji is accepted (a skin tone, a flag or a joined sequence
+counts as one); letters, digits, a bare text symbol such as `©`, or a second
+emoji are refused with the reason. The tab draws the emoji with the viewing
+machine's own emoji font, so one from the newest Unicode release, accepted by
+Romp, can still show as an empty box on a machine whose font predates it. The
+emoji is stored with the session's name and color, so every dashboard shows the
+same one, including a dashboard on another machine that has linked to this one.
+
 A session started from another one joins its tags. Forking a session, breaking
 a comment thread out into its own session, and running `romp new` inside a
 session's shell all put the new session in the parent's groups, so a session's

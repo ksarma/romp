@@ -422,6 +422,12 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab.tab-peek .tab-label { font-style: italic; opacity: 0.85; }
 .tab.tab-awaiting, .tab.tab-blocked, .tab.tab-retrying { outline: 2px dashed var(--state); outline-offset: -2px; }
 /* WORKING: a small yellow dot left of the name (replaces the old yellow outline). */
+/* The tab's emoji label (the user 2026-09-06): one glyph before the name, its own element so the identity
+   color and the fade stay on the name alone. EXPOSED to assistive technology — not aria-hidden (review,
+   2026-09-06): two same-named tabs may differ only by it, so a reader speaks the glyph's own name ahead of
+   the session name; render.ts tabEmojiNode has the reasoning. The tab MENU's copy of the glyph is the
+   hidden one — there the row's text "Emoji…" is the label and the icon only repeats it. */
+.tab-emoji { flex: 0 0 auto; line-height: 1; }
 .tab-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--st-working-bg); }   /* solid — dot oscillation was distracting (the user 2026-06-16) */
 .tab-dot.await { background: var(--st-awaitbg-bg); }   /* awaiting-bg: the dot matches the await-green chip (the user 2026-07-13) */
 /* state UNKNOWN: the same language the feed's .fwork-dot and the sessions pane's .fl-workdot speak.
@@ -631,6 +637,12 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    gray + slashed. So the same blue marks "enabled" in both the menu and the timeline. */
 .ctx-item-toggle .ctx-icon { flex: 0 0 auto; margin-top: 1px; color: var(--accent); display: flex; }
 .ctx-item-toggle .ctx-icon.off { color: var(--dim); }
+/* the Emoji… row wears the current emoji as its icon. The box sizes to its glyph up to the sibling SVG
+   icons' 16px and CLIPS the rest horizontally — clip-path, not overflow: a glyph's ink can stand taller than
+   the 14px line and must keep its top and bottom. A well-formed ZWJ chain the font does not join, or an RGI
+   sequence the font predates, draws as three or four glyphs; over the fixed 14px box this was, they spilled
+   into the row text on the right and the menu padding on the left (review round 3, 2026-09-06). */
+.ctx-item-toggle .ctx-icon.glyph { min-width: 14px; max-width: 16px; line-height: 14px; clip-path: inset(-50% 0); }
 /* the tab menu's Tags flyout (the user 2026-08-24): identity dot per union tag, ✕ = remove-
    everywhere, an inline New tag… input — all in the menu vocabulary, no new font sizes */
 .ctx-tag-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; }
@@ -1727,6 +1739,9 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
 .move-dir-hint { min-height: 1.2em; font-family: var(--sans); font-size: 0.82em; color: var(--dim); }
 .move-dir-hint.warn { color: #e0a030; }
 .move-dir-hint.bad { color: #e5484d; }
+/* the emoji dialog's reason line (2026-09-06), the same dress: empty and dim until the kernel refuses, then red */
+.emoji-hint { min-height: 1.2em; font-family: var(--sans); font-size: 0.82em; color: var(--dim); }
+.emoji-hint.bad { color: #e5484d; }
 /* pending-rewind overlay: turns after an edited message belong to the branch being abandoned — they
    dim until the kernel's rewound payload replaces them (reconcileRewind retires the flag then). */
 .turn.rewound { opacity: 0.35; transition: opacity 0.2s ease; }
@@ -2741,6 +2756,12 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
   font-family: var(--sans); font-size: 0.92em;
 }
 .picker-action:hover { background: rgba(255, 255, 255, 0.1); }
+/* Disabled — the emoji dialog's Clear with nothing to clear, a Move/Set while the kernel answers: dimmed,
+   default cursor, no hover lift. Without these the button kept the live pointer cursor and hover wash and read
+   as one whose click did nothing (review 2026-09-06; the lesson .picker-browse:disabled learned 2026-08-08).
+   The same 0.55 / default-cursor pair as .bg-stop:disabled and .apierror-retry:disabled. */
+.picker-action:disabled { opacity: 0.55; cursor: default; }
+.picker-action:disabled:hover { background: transparent; }
 /* armed (auto-selected) when the typed name matches no session — Enter creates it;
    same focus-color accent as .picker-row.active so the highlight reads as "selected" */
 .picker-action.active {

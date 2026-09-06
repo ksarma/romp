@@ -1610,14 +1610,25 @@ def last_awaiting(state_dir: Path, sid: str) -> bool | None:
     return val
 
 
-def write_name(state_dir: Path, sid: str, name: str, cwd: str, bg: str = "", fg: str = "") -> None:
+def write_name(state_dir: Path, sid: str, name: str, cwd: str, bg: str = "", fg: str = "",
+               emoji: str | None = None) -> None:
     """Write the shared identity/discovery file `names/<sid>` in the kernel's
-    tab-delimited format (name\\tcwd\\tbg\\tfg), so discover() finds the
-    transcript and the UI gets the identity colour."""
+    tab-delimited format (name\\tcwd\\tbg\\tfg[\\temoji]), so discover() finds the
+    transcript and the UI gets the identity colour. The fifth field is the tab
+    emoji the kernel stores (2026-09-06): None (the default) carries whatever the
+    file already holds, so a rename, move or revive rewriting the first four
+    never drops it; "" clears it explicitly. Written only while set, so a record
+    without one keeps the four-field shape."""
     p = Path(state_dir) / "names" / sid
     p.parent.mkdir(parents=True, exist_ok=True)
+    if emoji is None:
+        try:
+            old = p.read_text().rstrip("\n").split("\t")
+        except (OSError, UnicodeDecodeError):
+            old = []
+        emoji = old[4] if len(old) > 4 else ""
     tmp = p.with_suffix(".tmp")
-    tmp.write_text("\t".join([name, cwd, bg, fg]) + "\n")
+    tmp.write_text("\t".join([name, cwd, bg, fg] + ([emoji] if emoji else [])) + "\n")
     os.replace(tmp, p)
 
 

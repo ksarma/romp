@@ -98,8 +98,10 @@ _romp_claude_floor_nudge() {
     return 0
 }
 
-_romp_record() {   # <sid> <name> <dir> [bg] [fg] — write/replace the map entry
-    local sid="$1" nm="$2" dir="$3" bg="${4:-}" fg="${5:-}"
+_romp_record() {   # <sid> <name> <dir> [bg] [fg] [emoji] — write/replace the map entry
+    # The optional 5th field is the tab emoji the kernel stores (romp emoji / set_emoji, 2026-09-06);
+    # it is written only while set, so an entry without one keeps the four-field shape.
+    local sid="$1" nm="$2" dir="$3" bg="${4:-}" fg="${5:-}" emoji="${6:-}"
     [[ -n "$sid" ]] || return 0
     mkdir -p "$ROMP_NAMES_DIR"
     # Keep the romp state root private — it holds session names, prompts,
@@ -107,14 +109,50 @@ _romp_record() {   # <sid> <name> <dir> [bg] [fg] — write/replace the map entr
     # users from reading anything beneath it (the traverse bit is enough).
     # Idempotent; best-effort.
     chmod 700 "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}" 2>/dev/null || true
-    printf '%s\t%s\t%s\t%s\n' "$nm" "$dir" "$bg" "$fg" > "$ROMP_NAMES_DIR/$sid"
+    # ATOMIC (review round 3, 2026-09-06): the line goes to a temp file in the same directory and is
+    # moved into place — one rename(2), so no reader ever sees the file empty or half-written. The old
+    # `printf > file` truncated first and wrote second, and the kernel's names writers (a rename from
+    # the tab, a recolor, set_emoji — the first one an agent drives) read the file between the two: a
+    # read in that window published a record with no name and no cwd, and the kernel's own atomic write
+    # then won over this one. This is the ONE shell writer of a names record (_romp_rename_record and
+    # _romp_free_title both come through here). The temp is dot-prefixed: bash globs skip it
+    # (_romp_free_title's loop) and the resume picker's listing does too, so it never shows as a session.
+    local tmp="$ROMP_NAMES_DIR/.$sid.tmp.$$"
+    if [[ -n "$emoji" ]]; then
+        printf '%s\t%s\t%s\t%s\t%s\n' "$nm" "$dir" "$bg" "$fg" "$emoji" > "$tmp" || { rm -f "$tmp"; return 1; }
+    else
+        printf '%s\t%s\t%s\t%s\n' "$nm" "$dir" "$bg" "$fg" > "$tmp" || { rm -f "$tmp"; return 1; }
+    fi
+    mv -f "$tmp" "$ROMP_NAMES_DIR/$sid" || { rm -f "$tmp"; return 1; }
 }
 
-_romp_rename_record() {   # <sid> <name> — update name, keep dir + identity color
-    local sid="$1" nm="$2" dir="" bg="" fg=""
+# Read one names entry into _rf=(name dir bg fg emoji) EXACTLY, empty fields kept. Never `IFS=$'\t' read`
+# a record: bash treats tab as IFS whitespace and folds a run of tabs into ONE delimiter, so a record
+# with no colors and an emoji (`name\tcwd\t\t\t<emoji>`, a pre-color or Codex launch-error entry the
+# kernel labeled by sid) read as bg=<emoji> — tmux then got `status-style bg=<emoji>` (an invalid
+# style, fatal under set -e) and the rewrite stored the emoji as the color (review, 2026-09-06).
+# Parameter expansion only: no fork, and bash 3.2 (macOS) has no readarray -d.
+_romp_split_record() {   # <file> — returns 1 when the file is missing or empty
+    local line="" rest i
+    _rf=("" "" "" "" "")
+    IFS= read -r line < "$1" || [[ -n "$line" ]] || return 1
+    rest="$line"
+    for i in 0 1 2 3; do
+        if [[ "$rest" == *$'\t'* ]]; then
+            _rf[$i]="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+        else
+            _rf[$i]="$rest"; rest=""
+        fi
+    done
+    _rf[4]="${rest%%$'\t'*}"   # the emoji; a sixth field (none is written) never rides into it
+    return 0
+}
+
+_romp_rename_record() {   # <sid> <name> — update name, keep dir + identity color + tab emoji (atomic: via _romp_record)
+    local sid="$1" nm="$2"
     [[ -n "$sid" && -f "$ROMP_NAMES_DIR/$sid" ]] || return 0
-    IFS=$'\t' read -r _ dir bg fg < "$ROMP_NAMES_DIR/$sid" || true
-    _romp_record "$sid" "$nm" "$dir" "$bg" "$fg"
+    _romp_split_record "$ROMP_NAMES_DIR/$sid" || return 0
+    _romp_record "$sid" "$nm" "${_rf[1]}" "${_rf[2]}" "${_rf[3]}" "${_rf[4]}"
 }
 
 # mtime of a file as YYYY-MM-DD (today if unknown). Portable across BSD/macOS
@@ -135,22 +173,22 @@ _romp_date_of() {   # <file> -> YYYY-MM-DD
 # from the old transcript's mtime (fallback: the names-file's). Caller guards this
 # to NON-resume launches — reviving an old one deliberately keeps its title.
 _romp_free_title() {   # <new-sid> <name>
-    local keep="$1" nm="$2" f bsid ename edir ebg efg tp d live _c
+    local keep="$1" nm="$2" f bsid tp d live _c
     [[ -n "$nm" && -d "$ROMP_NAMES_DIR" ]] || return 0
     live="$(tmux list-sessions -F '#{@romp-session-id}' 2>/dev/null | grep -v '^$' || true)"
     for f in "$ROMP_NAMES_DIR"/*; do
         [[ -f "$f" ]] || continue
         bsid="$(basename "$f")"
         [[ "$bsid" == "$keep" ]] && continue
-        IFS=$'\t' read -r ename edir ebg efg < "$f" || continue
-        [[ "$ename" == "$nm" ]] || continue
+        _romp_split_record "$f" || continue
+        [[ "${_rf[0]}" == "$nm" ]] || continue
         if grep -qxF "$bsid" <<<"$live"; then continue; fi   # never rename a running session's entry
         # last-use date from the (uniquely-named) transcript's mtime; the [[ -f ]]
         # guard tolerates an unmatched glob under any shell glob setting.
         tp=""
         for _c in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"/*/"$bsid".jsonl; do [[ -f "$_c" ]] && { tp="$_c"; break; }; done
         d="$(_romp_date_of "${tp:-$f}")"
-        _romp_record "$bsid" "${nm}-${d}" "$edir" "$ebg" "$efg"
+        _romp_record "$bsid" "${nm}-${d}" "${_rf[1]}" "${_rf[2]}" "${_rf[3]}" "${_rf[4]}"
     done
 }
 
@@ -668,6 +706,7 @@ EOF
     _romp_cmd "romp rename <session> <name>" -          "Rename a session (uuid-keyed: mailboxes, goals and history all follow)"
     _romp_cmd "romp move <session> <dir>"   -           "Move an SDK session's working directory (its conversation follows; mid-turn it waits for the turn to end)"
     _romp_cmd "romp color <session> [<#hex|slot>]" -    "Recolor a session's identity swatch (palette hex or slot number; no color arg reads bg/fg)"
+    _romp_cmd "romp emoji <session> [<emoji>|--clear]" - "Put one emoji before the session's name on its tab (a session can set its own with the set_emoji tool); --clear removes it (the only clear); no argument prints the current one — a live session by name or id, a dormant one by id"
     _romp_cmd "romp tag [<name>] [--add ...]" -         "Session tags: bare lists them; <name> with --add/--remove/--color/--delete merges one (a tagged session leaves the no-tags view); --host <kernel> edits an attached kernel's tag; --rename renames"
     _romp_cmd "romp watch-pr <n> [--repo o/r]" -        "One mail here when the PR lands or fails — the kernel owns the watch, so it survives restarts (replaces the mortal shell loop)"
     _romp_cmd "romp watch --cmd '<pred>' [...]" -       "One mail when the command exits 0 (or the timeout passes) — kernel-owned like watch-pr, for ANY background wait (--every Ns --timeout Ns --note '...' | --list | --cancel <id>)"
@@ -1449,6 +1488,97 @@ for r in rows:
     fi
     _err="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error") or sys.argv[1])' "$_resp" 2>/dev/null || printf '%s' "$_resp")"
     echo "romp color: refused — $_err" >&2
+    exit 1
+fi
+
+# A session's tab emoji (the user 2026-09-06): one emoji shown before the name on its tab, so a
+# glance tells a session's state or role apart — a moon on the one left running overnight, a flag
+# on the release manager. The kernel's POST /emoji, the exact sibling of `romp color`: a
+# names-registry write, so a dormant session takes it by sid, and the same validator (exactly one
+# emoji, nothing textual) answers every door — the tab menu, the session's own set_emoji tool, and
+# this command — so a refusal prints the kernel's one-line reason. With no argument it READS the
+# current emoji (an empty line when there is none): an id with a record here straight from the names
+# registry — the store the kernel reads too, and the only place a dormant record lives, so that read
+# needs no kernel — and anything else (a name, an id an attached machine owns) off the kernel's GET
+# /emoji, the read half of the POST, which forwards to the owning kernel the way the POST does. `--clear`
+# is the ONLY clear: an empty or blank positional is
+# a usage error, never a clear (an unset variable in a script must not wipe a label; `romp color`
+# has the same guard).
+if [[ "${1:-}" == "emoji" ]]; then
+    shift
+    _em_usage="usage: romp emoji <session> [<emoji>|--clear]"
+    if [[ $# -lt 1 || $# -gt 2 || -z "$1" || "$1" == -* ]]; then echo "$_em_usage" >&2; exit 2; fi
+    if [[ $# -eq 2 && "$2" == -* && "$2" != "--clear" ]]; then echo "$_em_usage" >&2; exit 2; fi
+    if [[ $# -eq 2 && "$2" != "--clear" && -z "${2//[[:space:]]/}" ]]; then
+        echo "romp emoji: an empty emoji is not a clear — use --clear to remove one" >&2
+        echo "$_em_usage" >&2; exit 2
+    fi
+    if [[ $# -eq 1 && "$1" =~ ^[0-9a-fA-F-]{32,36}$ && -f "$ROMP_NAMES_DIR/$1" ]] && _romp_split_record "$ROMP_NAMES_DIR/$1"; then
+        # READ by id: straight from the names record — the store the kernel's own GET /sessions `emoji`
+        # field is read from, and the only place a dormant session's record lives — so no kernel is
+        # needed. This read ran only after GET /sessions had missed, so with the kernel down a dormant
+        # id got 'kernel not reachable' though the record held the answer (review round 2, 2026-09-06).
+        printf '%s\n' "${_rf[4]}"
+        exit 0
+    fi
+    _tok="$(_romp_token)"
+    _kport="${ROMP_KERNEL_PORT:-29855}"
+    if [[ -z "$_tok" ]]; then
+        echo "romp emoji: the kernel isn't running (no serve token). Start romp (the login service, or \`romp up\`) first." >&2
+        exit 1
+    fi
+    if [[ $# -eq 1 ]]; then
+        # READ by name, or by an id with no record here: the kernel's GET /emoji?target=, the read half
+        # of the POST the set form uses — it resolves a live name or a sid, and forwards a sid an
+        # attached machine owns to that machine's kernel. It replaced a GET /sessions lookup, which
+        # lists THIS machine's live sessions only, so an attached machine's session read as 'no session
+        # named' right after a set for the same id had succeeded (review round 3, 2026-09-06). The
+        # status rides -w, not -f: a 404 is a kernel from before the route, which -f folded into 'not
+        # reachable' and sent the user to check a kernel that was up (the `romp perf` precedent).
+        _tq="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1")"
+        _out="$(_romp_token_cfg | curl -s -m 10 --config - -w '\n%{http_code}' "http://127.0.0.1:$_kport/emoji?target=$_tq")" \
+            || { echo "romp emoji: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+        _code="${_out##*$'\n'}"; _resp="${_out%$'\n'*}"
+        case "$_code" in
+            2??) ;;
+            404)     echo "romp emoji: the kernel on :$_kport predates this command's read route (GET /emoji) — restart romp so the kernel matches this command" >&2; exit 1 ;;
+            401|403) echo "romp emoji: the kernel on :$_kport refused the serve token (HTTP $_code); is ROMP_KERNEL_PORT pointing at another kernel?" >&2; exit 1 ;;
+            *)       echo "romp emoji: the kernel on :$_kport answered HTTP $_code: $_resp" >&2; exit 1 ;;
+        esac
+        _hit="$(python3 -c '
+import json, sys
+r = json.loads(sys.argv[1])
+if isinstance(r, dict) and r.get("ok"):
+    print("found\t%s" % (r.get("emoji") or ""))
+else:
+    print("error\t%s" % ((r.get("error") if isinstance(r, dict) else "") or sys.argv[1]))
+' "$_resp" 2>/dev/null || printf 'error\t%s' "$_resp")"
+        if [[ "$_hit" == error* ]]; then
+            echo "romp emoji: ${_hit#error	}" >&2
+            exit 1
+        fi
+        printf '%s\n' "${_hit#found	}"
+        exit 0
+    fi
+    _em_val="$2"
+    [[ "$_em_val" == "--clear" ]] && _em_val=""
+    _payload="$(python3 -c 'import json,sys; print(json.dumps({"target": sys.argv[1], "emoji": sys.argv[2]}, ensure_ascii=False))' "$1" "$_em_val")"
+    _resp="$(_romp_token_cfg | curl -sf -m 15 --config - -X POST "http://127.0.0.1:$_kport/emoji" \
+                  -H 'Content-Type: application/json; charset=utf-8' -d "$_payload")" \
+        || { echo "romp emoji: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+    if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
+        # print what the kernel STORED (its reply's `emoji`, trimmed by the validator), not the raw
+        # argument; a reply without the field (an older kernel) falls back to the argument
+        _em_shown="$(python3 -c 'import json,sys; r = json.loads(sys.argv[1]); print(r["emoji"] if "emoji" in r else sys.argv[2])' "$_resp" "$_em_val" 2>/dev/null || printf '%s' "$_em_val")"
+        if [[ -z "$_em_shown" ]]; then
+            echo "romp emoji: \"$1\" shows no emoji now"
+        else
+            echo "romp emoji: \"$1\" now shows $_em_shown"
+        fi
+        exit 0
+    fi
+    _err="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error") or sys.argv[1])' "$_resp" 2>/dev/null || printf '%s' "$_resp")"
+    echo "romp emoji: refused — $_err" >&2
     exit 1
 fi
 
@@ -2868,9 +2998,12 @@ else
     # Obsidian dashboard renders (see vault/styles.css --palette-N; other selectable palettes
     # diverge from the vault's fixed semantic colors). The ghostty tab dot is separate — it
     # tracks Claude's live status; see @romp-emoji below.
-    bg=""; fg=""
-    if [[ -n "$sid" && -f "$ROMP_NAMES_DIR/$sid" ]]; then
-        IFS=$'\t' read -r _ _ bg fg < "$ROMP_NAMES_DIR/$sid" || true
+    # The 5th field is the tab emoji the kernel stores; a resume/revive rewrites the record below and
+    # must carry it (every tmux resume dropped it before the review, 2026-09-06). Tab-EXACT read: see
+    # _romp_split_record for why `IFS=$'\t' read` cannot parse a record with empty color fields.
+    bg=""; fg=""; emoji=""
+    if [[ -n "$sid" && -f "$ROMP_NAMES_DIR/$sid" ]] && _romp_split_record "$ROMP_NAMES_DIR/$sid"; then
+        bg="${_rf[2]}"; fg="${_rf[3]}"; emoji="${_rf[4]}"   # copied out here: _romp_free_title below re-splits other records into the same _rf
     fi
     if [[ -z "$bg" ]]; then
         # Identity palette — SELECTABLE now (the user 2026-07-12): the ACTIVE set lives in
@@ -2951,7 +3084,7 @@ else
         # Reused title on a fresh launch → the new session claims it; suffix any
         # stale holder with its last-use date (resume keeps its own title).
         $resume || _romp_free_title "$sid" "$display"
-        _romp_record "$sid" "$display" "$work_dir" "$bg" "$fg"
+        _romp_record "$sid" "$display" "$work_dir" "$bg" "$fg" "$emoji"
     fi
 
     # Launch claude via exec so quitting it ends the session. We hand the command

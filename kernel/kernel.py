@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, calendar
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from importlib.machinery import SourceFileLoader
@@ -1974,6 +1974,63 @@ _MODEL_VALUES = {m["value"] for m in MODEL_CHOICES}
 _EFFORT_VALUES = {e["value"] for e in EFFORT_CHOICES}
 
 
+# ONE lock for the kernel's names-registry read-modify-write spans (review, 2026-09-06): _set_name,
+# _set_session_color, _set_session_emoji and _set_palette each read names/<sid>, edit one field and
+# publish the whole line, on independent threads (a WS handler, an HTTP handler for POST /emoji, the
+# pusher) — two overlapping spans lose whichever landed first, and the emoji is the first field an
+# AGENT writes (set_emoji), so a collision no longer needs two simultaneous human gestures. The spans
+# are a read, an edit and an atomic write; one module lock covers them. Out of its reach, and stated
+# as such: the SDK backend's write_name and the Codex backend's _write_name (their own module locks,
+# same process) and bin/romp's rename hook (another process) — each re-reads at write time, which
+# narrows but does not close the window.
+_NAMES_LOCK = threading.RLock()
+_NAMES_REREAD_S = 0.05   # the pause before the one re-read of a record that read with no name (see below)
+
+
+def _names_problem(text):
+    """A names-registry problem, reported where someone sees it: the kernel log AND the dashboard's error
+    center (the bell), the path SDK problems take — never a silent degrade (the fail-loudly rule)."""
+    sys.stderr.write("[names] %s\n" % text)
+    _sdk_problem("names registry: %s" % text)
+
+
+def _names_fields_for_edit(sid, what):
+    """The tab fields of names/<sid> for a read-edit-publish span (the caller holds _NAMES_LOCK), or None
+    when there is nothing to edit: no record, or a record that reads with NO NAME. Every writer puts the
+    name first, so an empty first field is never a real record — it is another writer's window (a
+    launcher or rename hook that truncated the file before its bytes landed: bin/romp's writer is atomic
+    since review round 3, but an older copy of it may still be running its tmux hook) or a damaged file.
+    Publishing over it would erase the session's name and cwd for good — the kernel's os.replace wins
+    over the other writer's pending bytes, the tab falls back to a sid prefix and discover loses the
+    transcript (review round 3, 2026-09-06; set_emoji is the first names write an agent drives, so the
+    collision no longer needs two human gestures). One re-read after a short pause (the window is a
+    printf's worth of time) tells a window from damage; if the record still has no name it is left
+    EXACTLY as it is and the problem is reported, naming the sid."""
+    p = NAMES / str(sid)
+    for attempt in (0, 1):
+        try:
+            text = p.read_text()
+        except Exception:
+            return None
+        parts = text.rstrip("\n").split("\t")
+        if parts[0]:
+            return parts
+        if attempt == 0:
+            time.sleep(_NAMES_REREAD_S)
+    _names_problem("names/%s reads with no name (%d bytes, twice) — %s not written; the record is being "
+                   "rewritten or is damaged" % (sid, len(text), what))
+    return None
+
+
+def _names_refusal(sid):
+    """Why a names write returned False, for the caller's one-line answer: no record at all, or a record
+    that reads with no name (_names_fields_for_edit left it alone and reported it)."""
+    if not (NAMES / str(sid)).exists():
+        return "no names record for that session — is it known to this kernel?"
+    return ("that session's names record reads with no name (being rewritten, or damaged) — nothing written; "
+            "try again, and see the kernel log")
+
+
 def _set_session_color(sid, bg):
     """Override a session's identity color: rewrite the names registry's bg (3rd field) + fg word (4th),
     preserving the name + cwd. Only a value from a known palette is accepted (its own palette supplies
@@ -1982,13 +2039,322 @@ def _set_session_color(sid, bg):
     on the session's next resume."""
     if not pal.find(bg):
         return False
+    with _NAMES_LOCK:
+        parts = _names_fields_for_edit(sid, "the color")
+        if parts is None:
+            return False
+        parts += [""] * (4 - len(parts))
+        parts[2], parts[3] = bg, pal.fg_for(bg)
+        _atomic_write(NAMES / sid, _names_line(parts))     # name, cwd and the tab emoji ride along
+    return True
+
+
+def _names_line(parts):
+    """One names-registry line from its tab fields: the four identity fields always, the fifth (the tab
+    emoji, 2026-09-06) only while it is set — so a record without one stays byte-identical to the
+    four-field shape every reader grew up on. Every kernel-side writer joins through here."""
+    parts = list(parts) + [""] * (5 - len(parts))
+    fields = parts[:5] if parts[4] else parts[:4]
+    return "\t".join(fields) + "\n"
+
+
+# ── session emoji (the user 2026-09-06): one emoji per session, shown before the name on its tab ─────
+# Stored as the names registry's FIFTH tab field (name\tcwd\tbg\tfg\temoji), beside the name and the
+# identity color it decorates, so it persists and replicates exactly as they do: every writer of the
+# file preserves it, the pusher's tab_meta carries it to every dashboard on the same push a rename or
+# recolor rides (a federated viewer receives it inside the remote kernel's own tabOrder frame), and a
+# dormant session keeps it by sid. Three doors — the tab menu's setSessionEmoji WS op, the postal
+# set_emoji tool and `romp emoji`, the latter two through POST /emoji — all land in _set_session_emoji,
+# and _emoji_check is the ONE validator they share.
+#
+# What passes: exactly one emoji as a person picks it from a keyboard — a base emoji (with or without
+# the emoji presentation selector U+FE0F), a skin-tone form, a ZWJ sequence (families, professions,
+# hearts, flags built on the white flag), a keycap, a two-letter flag, or a tag-sequence flag. What
+# is refused: anything textual — letters, digits, punctuation, whitespace, a second emoji, and a
+# text-default symbol shown without the emoji selector (©, ☺, ♥ as bare code points), which would
+# render as a character of the name rather than a glyph before it. A lone skin tone or joiner is a
+# fragment, refused too; so is a value that is not text at all (null, a number) or not valid text
+# (an unpaired surrogate) — the validator never raises. The grammar follows UTS #51 as far as the
+# property tables reach (review, 2026-09-06): a skin tone goes only on an Emoji_Modifier_Base code
+# point and straight after it (no selector between), tag characters only build a subdivision flag on
+# the black flag U+1F3F4, and a ZWJ sequence has at most four parts (no RGI sequence has more). What
+# the tables cannot decide is RGI membership itself — that needs emoji-zwj-sequences.txt — so a
+# well-formed ZWJ chain of up to four emoji is accepted even when no font ligates it into one glyph.
+# The code-point tables are Unicode 16.0's emoji-data.txt: Emoji_Presentation (minus the modifiers
+# and regional indicators the grammar handles itself), Emoji minus Emoji_Presentation for the
+# text-default set (minus the keycap bases), and Emoji_Modifier_Base. They are regenerated by hand
+# when a Unicode release adds emoji; until then a brand-new emoji is refused with a reason, never
+# stored as tofu on the tab. The tables, not the interpreter's Unicode database, decide both what is an
+# emoji and what is a glyphless stray: str.isprintable() follows the Python release's own tables (3.12
+# ships Unicode 15.0, 3.13 15.1), which call every 16.0 emoji unassigned.
+EMOJI_MAX_BYTES = 48   # the longest RGI sequence (a kiss with two skin tones) is 35 UTF-8 bytes; a hard cap bounds the field and the frame
+
+_EMOJI_PRESENTATION = (
+    (0x231A, 0x231B), (0x23E9, 0x23EC), (0x23F0, 0x23F0), (0x23F3, 0x23F3), (0x25FD, 0x25FE), (0x2614, 0x2615),
+    (0x2648, 0x2653), (0x267F, 0x267F), (0x2693, 0x2693), (0x26A1, 0x26A1), (0x26AA, 0x26AB), (0x26BD, 0x26BE),
+    (0x26C4, 0x26C5), (0x26CE, 0x26CE), (0x26D4, 0x26D4), (0x26EA, 0x26EA), (0x26F2, 0x26F3), (0x26F5, 0x26F5),
+    (0x26FA, 0x26FA), (0x26FD, 0x26FD), (0x2705, 0x2705), (0x270A, 0x270B), (0x2728, 0x2728), (0x274C, 0x274C),
+    (0x274E, 0x274E), (0x2753, 0x2755), (0x2757, 0x2757), (0x2795, 0x2797), (0x27B0, 0x27B0), (0x27BF, 0x27BF),
+    (0x2B1B, 0x2B1C), (0x2B50, 0x2B50), (0x2B55, 0x2B55), (0x1F004, 0x1F004), (0x1F0CF, 0x1F0CF), (0x1F18E, 0x1F18E),
+    (0x1F191, 0x1F19A), (0x1F201, 0x1F201), (0x1F21A, 0x1F21A), (0x1F22F, 0x1F22F), (0x1F232, 0x1F236), (0x1F238, 0x1F23A),
+    (0x1F250, 0x1F251), (0x1F300, 0x1F320), (0x1F32D, 0x1F335), (0x1F337, 0x1F37C), (0x1F37E, 0x1F393), (0x1F3A0, 0x1F3CA),
+    (0x1F3CF, 0x1F3D3), (0x1F3E0, 0x1F3F0), (0x1F3F4, 0x1F3F4), (0x1F3F8, 0x1F3FA), (0x1F400, 0x1F43E), (0x1F440, 0x1F440),
+    (0x1F442, 0x1F4FC), (0x1F4FF, 0x1F53D), (0x1F54B, 0x1F54E), (0x1F550, 0x1F567), (0x1F57A, 0x1F57A), (0x1F595, 0x1F596),
+    (0x1F5A4, 0x1F5A4), (0x1F5FB, 0x1F64F), (0x1F680, 0x1F6C5), (0x1F6CC, 0x1F6CC), (0x1F6D0, 0x1F6D2), (0x1F6D5, 0x1F6D7),
+    (0x1F6DC, 0x1F6DF), (0x1F6EB, 0x1F6EC), (0x1F6F4, 0x1F6FC), (0x1F7E0, 0x1F7EB), (0x1F7F0, 0x1F7F0), (0x1F90C, 0x1F93A),
+    (0x1F93C, 0x1F945), (0x1F947, 0x1F9FF), (0x1FA70, 0x1FA7C), (0x1FA80, 0x1FA89), (0x1FA8F, 0x1FAC6), (0x1FACE, 0x1FADC),
+    (0x1FADF, 0x1FAE9), (0x1FAF0, 0x1FAF8),
+)
+_EMOJI_TEXT_DEFAULT = (
+    (0x00A9, 0x00A9), (0x00AE, 0x00AE), (0x203C, 0x203C), (0x2049, 0x2049), (0x2122, 0x2122), (0x2139, 0x2139),
+    (0x2194, 0x2199), (0x21A9, 0x21AA), (0x2328, 0x2328), (0x23CF, 0x23CF), (0x23ED, 0x23EF), (0x23F1, 0x23F2),
+    (0x23F8, 0x23FA), (0x24C2, 0x24C2), (0x25AA, 0x25AB), (0x25B6, 0x25B6), (0x25C0, 0x25C0), (0x25FB, 0x25FC),
+    (0x2600, 0x2604), (0x260E, 0x260E), (0x2611, 0x2611), (0x2618, 0x2618), (0x261D, 0x261D), (0x2620, 0x2620),
+    (0x2622, 0x2623), (0x2626, 0x2626), (0x262A, 0x262A), (0x262E, 0x262F), (0x2638, 0x263A), (0x2640, 0x2640),
+    (0x2642, 0x2642), (0x265F, 0x2660), (0x2663, 0x2663), (0x2665, 0x2666), (0x2668, 0x2668), (0x267B, 0x267B),
+    (0x267E, 0x267E), (0x2692, 0x2692), (0x2694, 0x2697), (0x2699, 0x2699), (0x269B, 0x269C), (0x26A0, 0x26A0),
+    (0x26A7, 0x26A7), (0x26B0, 0x26B1), (0x26C8, 0x26C8), (0x26CF, 0x26CF), (0x26D1, 0x26D1), (0x26D3, 0x26D3),
+    (0x26E9, 0x26E9), (0x26F0, 0x26F1), (0x26F4, 0x26F4), (0x26F7, 0x26F9), (0x2702, 0x2702), (0x2708, 0x2709),
+    (0x270C, 0x270D), (0x270F, 0x270F), (0x2712, 0x2712), (0x2714, 0x2714), (0x2716, 0x2716), (0x271D, 0x271D),
+    (0x2721, 0x2721), (0x2733, 0x2734), (0x2744, 0x2744), (0x2747, 0x2747), (0x2763, 0x2764), (0x27A1, 0x27A1),
+    (0x2934, 0x2935), (0x2B05, 0x2B07), (0x3030, 0x3030), (0x303D, 0x303D), (0x3297, 0x3297), (0x3299, 0x3299),
+    (0x1F170, 0x1F171), (0x1F17E, 0x1F17F), (0x1F202, 0x1F202), (0x1F237, 0x1F237), (0x1F321, 0x1F321), (0x1F324, 0x1F32C),
+    (0x1F336, 0x1F336), (0x1F37D, 0x1F37D), (0x1F396, 0x1F397), (0x1F399, 0x1F39B), (0x1F39E, 0x1F39F), (0x1F3CB, 0x1F3CE),
+    (0x1F3D4, 0x1F3DF), (0x1F3F3, 0x1F3F3), (0x1F3F5, 0x1F3F5), (0x1F3F7, 0x1F3F7), (0x1F43F, 0x1F43F), (0x1F441, 0x1F441),
+    (0x1F4FD, 0x1F4FD), (0x1F549, 0x1F54A), (0x1F56F, 0x1F570), (0x1F573, 0x1F579), (0x1F587, 0x1F587), (0x1F58A, 0x1F58D),
+    (0x1F590, 0x1F590), (0x1F5A5, 0x1F5A5), (0x1F5A8, 0x1F5A8), (0x1F5B1, 0x1F5B2), (0x1F5BC, 0x1F5BC), (0x1F5C2, 0x1F5C4),
+    (0x1F5D1, 0x1F5D3), (0x1F5DC, 0x1F5DE), (0x1F5E1, 0x1F5E1), (0x1F5E3, 0x1F5E3), (0x1F5E8, 0x1F5E8), (0x1F5EF, 0x1F5EF),
+    (0x1F5F3, 0x1F5F3), (0x1F5FA, 0x1F5FA), (0x1F6CB, 0x1F6CB), (0x1F6CD, 0x1F6CF), (0x1F6E0, 0x1F6E5), (0x1F6E9, 0x1F6E9),
+    (0x1F6F0, 0x1F6F0), (0x1F6F3, 0x1F6F3),
+)
+
+_EMOJI_MODIFIER_BASE = (   # Emoji_Modifier_Base: the hands, faces and people a skin tone may follow (134 code points)
+    (0x261D, 0x261D), (0x26F9, 0x26F9), (0x270A, 0x270D), (0x1F385, 0x1F385), (0x1F3C2, 0x1F3C4), (0x1F3C7, 0x1F3C7),
+    (0x1F3CA, 0x1F3CC), (0x1F442, 0x1F443), (0x1F446, 0x1F450), (0x1F466, 0x1F478), (0x1F47C, 0x1F47C),
+    (0x1F481, 0x1F483), (0x1F485, 0x1F487), (0x1F48F, 0x1F48F), (0x1F491, 0x1F491), (0x1F4AA, 0x1F4AA),
+    (0x1F574, 0x1F575), (0x1F57A, 0x1F57A), (0x1F590, 0x1F590), (0x1F595, 0x1F596), (0x1F645, 0x1F647),
+    (0x1F64B, 0x1F64F), (0x1F6A3, 0x1F6A3), (0x1F6B4, 0x1F6B6), (0x1F6C0, 0x1F6C0), (0x1F6CC, 0x1F6CC),
+    (0x1F90C, 0x1F90C), (0x1F90F, 0x1F90F), (0x1F918, 0x1F91F), (0x1F926, 0x1F926), (0x1F930, 0x1F939),
+    (0x1F93C, 0x1F93E), (0x1F977, 0x1F977), (0x1F9B5, 0x1F9B6), (0x1F9B8, 0x1F9B9), (0x1F9BB, 0x1F9BB),
+    (0x1F9CD, 0x1F9CF), (0x1F9D1, 0x1F9DD), (0x1FAC3, 0x1FAC5), (0x1FAF0, 0x1FAF8),
+)
+
+_EMOJI_RI = (0x1F1E6, 0x1F1FF)          # regional indicators: a flag is exactly two of them
+_EMOJI_MODIFIER = (0x1F3FB, 0x1F3FF)    # skin tones: one may follow a modifier base, never stand alone
+_EMOJI_TAG = (0xE0020, 0xE007E)         # tag characters (subdivision flags), closed by the cancel tag
+_EMOJI_TAG_END = 0xE007F
+_EMOJI_TAG_BASE = 0x1F3F4               # the black flag: the one base a tag sequence builds on (England, Scotland, Wales)
+_EMOJI_ZWJ_MAX = 4                      # parts in the longest RGI ZWJ sequences (a family of four, a kiss)
+_EMOJI_KEYCAP_BASES = frozenset([0x23, 0x2A] + list(range(0x30, 0x3A)))
+_ZWJ, _VS16, _KEYCAP = 0x200D, 0xFE0F, 0x20E3
+
+
+def _cp_in(cp, table):
+    """Is code point cp inside one of table's sorted, disjoint (lo, hi) ranges?"""
+    i = bisect.bisect_right(table, (cp, 0x10FFFF)) - 1
+    return i >= 0 and table[i][0] <= cp <= table[i][1]
+
+
+def _emoji_table_cp(cp):
+    """Is cp a code point the emoji tables know: one that draws a glyph on its own, or (a skin tone, the
+    keycap mark) alters the glyph before it? Decided from the tables alone, never from the interpreter's
+    Unicode database, which lags them (see the header)."""
+    return (_cp_in(cp, _EMOJI_PRESENTATION) or _cp_in(cp, _EMOJI_TEXT_DEFAULT)
+            or _EMOJI_RI[0] <= cp <= _EMOJI_RI[1] or _EMOJI_MODIFIER[0] <= cp <= _EMOJI_MODIFIER[1]
+            or cp in _EMOJI_KEYCAP_BASES or cp == _KEYCAP)
+
+
+def _emoji_check(text):
+    """The ONE validator for a session's tab emoji. Returns (emoji, None) when text is exactly one emoji
+    (whitespace around it trimmed), ("", None) when it is empty (a clear), or ("", reason) with a
+    one-line reason when refused — the reason is what every door shows the caller, verbatim. It never
+    raises: a value that is not a string, or a string no UTF-8 output can carry, is a refusal too."""
+    if not isinstance(text, str):
+        # a present-but-null key (json.dumps(None), a JS null) used to coerce to a CLEAR; only a
+        # string can mean anything here, and a malformed call must never wipe a label
+        kind = {"NoneType": "null", "bool": "a boolean", "int": "a number", "float": "a number",
+                "list": "a list", "dict": "an object"}.get(type(text).__name__, type(text).__name__)
+        return "", "emoji must be text (a string), not %s" % kind
+    s = text.strip()
+    if not s:
+        return "", None
     try:
-        parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
-    except Exception:
-        return False
-    name = parts[0] if parts else ""
-    cwd = parts[1] if len(parts) > 1 else ""
-    _atomic_write(NAMES / sid, "\t".join([name, cwd, bg, pal.fg_for(bg)]) + "\n")
+        if len(s.encode("utf-8")) > EMOJI_MAX_BYTES:
+            return "", "too long — one emoji is at most %d bytes" % EMOJI_MAX_BYTES
+    except UnicodeEncodeError as e:
+        # a JSON "\ud83c" decodes to a lone surrogate — half an emoji cut by a selection edit — which
+        # strict UTF-8 refuses; unguarded it was a 500 with a traceback body on POST /emoji and
+        # silence on the WS op (review, 2026-09-06)
+        return "", "not valid text: an unpaired surrogate (U+%04X) — half of a character" % ord(s[e.start])
+
+    def invisible(cp):
+        """A code point with no glyph of its own: a joiner, a variation selector, a tag, a control. A
+        code point the tables know is never one, whatever str.isprintable() says of it — Python 3.12 and
+        3.13 ship a Unicode database that predates the tables and calls every Unicode 16.0 emoji
+        unassigned, so on them U+1FAE9 + "x" was refused as 'an invisible character (U+1FAE9) comes
+        before "x"', with the emoji itself dropped from every quote (review round 2, 2026-09-06). Nor is
+        a code point that database calls UNASSIGNED (category Cn): that is a character this kernel does
+        not know — an emoji from a release after its tables, or one the interpreter has not caught up
+        with — not a stray with no glyph; `unknown` below names it by code point (review round 3)."""
+        if cp == _ZWJ or 0xFE00 <= cp <= 0xFE0F or 0xE0020 <= cp <= 0xE007F:
+            return True
+        return (not _emoji_table_cp(cp) and not chr(cp).isprintable()
+                and unicodedata.category(chr(cp)) != "Cn")
+
+    def unknown(cp):
+        """Outside the tables AND unassigned in the interpreter's database: a character this kernel's
+        tables do not reach. Refused by code point — quoting it would show a box on most machines, and
+        calling it invisible (as the isprintable fallback did) hid the one fact the caller can act on."""
+        return not _emoji_table_cp(cp) and unicodedata.category(chr(cp)) == "Cn"
+
+    def unknown_reason(cp):
+        return "not an emoji: U+%04X (not in this kernel's emoji tables)" % cp
+
+    # what a refusal quotes back: the visible characters only — a joiner, selector, tag or control
+    # character has no glyph, and echoing one would show an empty pair of quotes
+    shown = "".join(ch for ch in s[:12] if not invisible(ord(ch)))
+    shown = '"%s"' % shown if shown else "an invisible character"
+    cps = [ord(ch) for ch in s]
+    n = len(cps)
+    lo_ri, hi_ri = _EMOJI_RI
+    lo_mod, hi_mod = _EMOJI_MODIFIER
+    lo_tag, hi_tag = _EMOJI_TAG
+    if invisible(cps[0]) and not all(invisible(c) for c in cps):
+        # a stray leading joiner, BOM or selector in front of a real emoji: name the stray, so the
+        # caller can act on it, instead of calling the emoji they typed "not an emoji"
+        return "", "an invisible character (U+%04X) comes before %s — remove it" % (cps[0], shown)
+
+    def element(i):
+        """Parse one ZWJ element at cps[i] → (next index, reason, qualified). `qualified` is False for a
+        text-default symbol with no emoji selector, tone or tag after it; the caller decides whether
+        that is fine (inside a ZWJ sequence, where the joiner already forces emoji presentation)."""
+        c = cps[i]
+        if c in _EMOJI_KEYCAP_BASES:
+            j = i + 1
+            if j < n and cps[j] == _VS16:
+                j += 1
+            if j < n and cps[j] == _KEYCAP:
+                return j + 1, None, True
+            if j < n and _KEYCAP in cps[j:]:
+                # the mark IS there, behind something that is not the one optional emoji selector — a
+                # doubled selector, a text selector (U+FE0E), a zero-width space: the stray is the
+                # problem, not a missing mark, and it is named like every other stray (review round 3,
+                # 2026-09-06; this branch answered 'carries the keycap mark' to a value that carried it)
+                if invisible(cps[j]):
+                    return -1, ("an invisible character (U+%04X) comes before the keycap mark in %s — remove it"
+                                % (cps[j], shown)), False
+                return -1, "not an emoji: %s" % shown, False
+            return -1, "%s is text — a keycap emoji carries the keycap mark (U+20E3)" % shown, False
+        if lo_mod <= c <= hi_mod:
+            return -1, "a skin tone needs an emoji to go on", False
+        if lo_ri <= c <= hi_ri:
+            return -1, "a flag is two regional-indicator letters and nothing else", False
+        presentation = _cp_in(c, _EMOJI_PRESENTATION)
+        if not presentation and not _cp_in(c, _EMOJI_TEXT_DEFAULT):
+            if unknown(c):
+                return -1, unknown_reason(c), False
+            return -1, "not an emoji: %s" % shown, False
+        j, qualified = i + 1, presentation
+        if j < n and cps[j] == _VS16:
+            j, qualified = j + 1, True
+            if j < n and lo_mod <= cps[j] <= hi_mod:
+                # UTS #51 ED-13: emoji_modifier_base emoji_modifier — nothing between them
+                return -1, "a skin tone goes right after its base, with no emoji selector (U+FE0F) between", False
+        if j < n and lo_mod <= cps[j] <= hi_mod:
+            if not _cp_in(c, _EMOJI_MODIFIER_BASE):
+                # a tone on a moon renders as a moon and a brown swatch: two glyphs, not one emoji
+                return -1, '"%s" does not take a skin tone — only hands, faces and people do' % chr(c), False
+            j, qualified = j + 1, True
+        if j < n and lo_tag <= cps[j] <= hi_tag:
+            if c != _EMOJI_TAG_BASE:
+                return -1, "tag characters only build a subdivision flag on the black flag (U+1F3F4)", False
+            while j < n and lo_tag <= cps[j] <= hi_tag:
+                j += 1
+            if j < n and cps[j] == _EMOJI_TAG_END:
+                j, qualified = j + 1, True
+            else:
+                return -1, "a tag-sequence flag must end with the cancel tag (U+E007F)", False
+        return j, None, qualified
+
+    def trailing(i):
+        """The reason for what follows a complete emoji ending at cps[i] (i < n): a tail of invisible
+        characters (a text-presentation selector from a document paste, a doubled emoji selector, a
+        zero-width space, a control) is named by code point; a second emoji is 'one emoji only'; a
+        character the tables do not know is named as such; anything else is visible junk. The ONE tail
+        rule, shared by the flag path and the element path (review round 3, 2026-09-06: the flag path
+        answered a flag with a trailing zero-width space 'one emoji only', and a flag is one emoji)."""
+        k = i
+        while k < n and invisible(cps[k]):
+            k += 1
+        if k == n:
+            return "%s is followed by an invisible character (U+%04X) — remove it" % (shown, cps[i])
+        c = cps[k]
+        if unknown(c):
+            return unknown_reason(c)
+        more_emoji = (_cp_in(c, _EMOJI_PRESENTATION) or _cp_in(c, _EMOJI_TEXT_DEFAULT) or lo_ri <= c <= hi_ri
+                      or (c in _EMOJI_KEYCAP_BASES and _KEYCAP in cps[k + 1:k + 3]))   # a bare digit after it is text
+        return "one emoji only" if more_emoji else "not an emoji: %s" % shown
+
+    if lo_ri <= cps[0] <= hi_ri:                       # flags: exactly two regional indicators
+        if n == 1:
+            return "", "a flag needs two regional-indicator letters"
+        if not (lo_ri <= cps[1] <= hi_ri):
+            if invisible(cps[1]):
+                # a selector or a zero-width space between the two letters (an editor's paste): name it
+                return "", ("an invisible character (U+%04X) sits between the letters of %s — remove it"
+                            % (cps[1], shown))
+            return "", "a flag needs two regional-indicator letters"
+        if n == 2:
+            return s, None
+        return "", trailing(2)
+    i, err, qualified = element(0)
+    if err:
+        return "", err
+    joined, parts = False, 1
+    while i < n and cps[i] == _ZWJ:
+        joined = True
+        if i + 1 >= n:
+            return "", "not an emoji: a joiner with nothing after it"
+        parts += 1
+        if parts > _EMOJI_ZWJ_MAX:
+            return "", "one emoji only — a joined sequence has at most %d parts" % _EMOJI_ZWJ_MAX
+        i, err, _q = element(i + 1)
+        if err:
+            return "", err
+    if i != n:
+        return "", trailing(i)
+    if not qualified and not joined:
+        return "", "%s is a text symbol — pick an emoji, or add the emoji selector (U+FE0F)" % shown
+    return s, None
+
+
+def _name_emoji(sid):
+    """The session's tab emoji from the names registry (5th tab field), or ""."""
+    parts = _names_parts(sid)
+    return parts[4] if parts and len(parts) > 4 else ""
+
+
+def _set_session_emoji(sid, emoji):
+    """Store a session's tab emoji — the names registry's 5th field — preserving name, cwd and color; ""
+    clears. The value is _emoji_check's output (every door validates before it gets here); this is the
+    one write the WS op, POST /emoji and the CLI share. Returns True on a real write; a session with no
+    names record is False (nothing to decorate), which the caller reports.
+
+    A record with no identity color (a pre-color two-field entry, a Codex launch-error entry) gets one
+    first, the way a launch would (an unused palette color), so a FIVE-field record always carries all
+    four identity fields: `name\tcwd\t\t\t<emoji>` is a shape no reader can get wrong (bin/romp's
+    IFS-tab reads folded the empty run and took the emoji for the color; its readers are tab-exact now
+    too — review, 2026-09-06). Clearing an emoji leaves a colorless record colorless. A record that reads
+    with no name is left alone and reported (_names_fields_for_edit): False, like a missing one."""
+    with _NAMES_LOCK:
+        parts = _names_fields_for_edit(sid, "the emoji")
+        if parts is None:
+            return False
+        parts += [""] * (5 - len(parts))
+        if emoji and not parts[2]:
+            parts[2], parts[3] = _pick_identity_color()
+        parts[4] = emoji
+        _atomic_write(NAMES / sid, _names_line(parts))
     return True
 
 
@@ -2011,21 +2377,21 @@ def _set_palette(name):
     except OSError:
         sids = []
     for sid in sids:
-        try:
-            parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
-        except Exception:
-            continue
-        loc = pal.find(parts[2]) if len(parts) > 2 else None
-        if loc:
-            # palettes may differ in LENGTH now (the romp set grows append-only, 2026-08-28): a
-            # session on a slot the new set lacks wraps modulo — a total, deterministic mapping
-            # beats an IndexError or a stale off-palette color surviving the switch
-            _slot = loc[1] % len(new_bg)
-        if not loc or (parts[2], parts[3] if len(parts) > 3 else "") == (new_bg[_slot], new_fg[_slot]):
-            continue
-        parts += [""] * (4 - len(parts))
-        parts[2], parts[3] = new_bg[_slot], new_fg[_slot]
-        _atomic_write(NAMES / sid, "\t".join(parts[:4]) + "\n")
+        with _NAMES_LOCK:   # one record's read-edit-publish span; the loop yields between records
+            parts = _names_fields_for_edit(sid, "the palette recolor")
+            if parts is None:
+                continue
+            loc = pal.find(parts[2]) if len(parts) > 2 else None
+            if loc:
+                # palettes may differ in LENGTH now (the romp set grows append-only, 2026-08-28): a
+                # session on a slot the new set lacks wraps modulo — a total, deterministic mapping
+                # beats an IndexError or a stale off-palette color surviving the switch
+                _slot = loc[1] % len(new_bg)
+            if not loc or (parts[2], parts[3] if len(parts) > 3 else "") == (new_bg[_slot], new_fg[_slot]):
+                continue
+            parts += [""] * (4 - len(parts))
+            parts[2], parts[3] = new_bg[_slot], new_fg[_slot]
+            _atomic_write(NAMES / sid, _names_line(parts))    # a tab emoji (5th field) rides along
     _write_palette_mirror()
     _send_to_app("chat", {"type": "palette", "colors": new_bg})   # fresh swatches for open right-click menus
     _mark_views_dirty()                                           # tabs/cards/lanes repaint in the new colors
@@ -14701,13 +15067,13 @@ def _tmux_name_of(sid):
 def _set_name(sid, name):
     """Rewrite a session's names-registry DISPLAY name (1st tab field), preserving its dir + identity
     color. Used for a DEAD (read-only) tab, which has no tmux session for the rename hook to sync."""
-    try:
-        parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
-    except Exception:
-        return
-    parts += [""] * (4 - len(parts))
-    parts[0] = name
-    _atomic_write(NAMES / sid, "\t".join(parts[:4]) + "\n")   # atomic publish
+    with _NAMES_LOCK:
+        parts = _names_fields_for_edit(sid, "the name")
+        if parts is None:
+            return
+        parts += [""] * (4 - len(parts))
+        parts[0] = name
+        _atomic_write(NAMES / sid, _names_line(parts))   # atomic publish; a tab emoji (5th field) rides along
 
 
 def _rename_session(sid, name):
@@ -16525,19 +16891,39 @@ def _remote_forward(r, path, body):
     a remote session the kernel forwards the wake here so the remote, idle session starts working immediately
     (not at its next turn). Only the tiny control signal crosses — never the bulk session-data stream. Returns
     the parsed JSON response, or None on failure (caller degrades; the bus re-delivers via the maildir)."""
+    return _remote_forward_status(r, path, body)[1]
+
+
+def _remote_forward_status(r, path, body, method="POST"):
+    """_remote_forward with the HTTP status kept: (status, parsed JSON on a 200 else None). Status 0 means
+    the call never landed (a dead tunnel — the redial is demanded here, as before). A caller that has to
+    tell "answered no" from "did not answer" reads the status: a 404 from a remote kernel that predates a
+    route is an ANSWER — version skew, not a tunnel fault — and folding it to None sent the user to check
+    the tunnel instead of updating the remote (the /emoji review, 2026-09-06). `method="GET"` forwards a
+    READ (GET /emoji?target=…, review round 3): `path` carries its own query, `body` is ignored, and the
+    token joins the query with & — the same tunnel, the same status contract."""
     import urllib.parse
     try:
         c = http.client.HTTPConnection("127.0.0.1", int(r["local_port"]), timeout=8)
-        p = path + (("?token=" + urllib.parse.quote(r["token"])) if r.get("token") else "")
-        c.request("POST", p, json.dumps(body), {"Content-Type": "application/json"})
+        sep = "&" if "?" in path else "?"
+        p = path + ((sep + "token=" + urllib.parse.quote(r["token"])) if r.get("token") else "")
+        if method == "GET":
+            c.request("GET", p)
+        else:
+            c.request("POST", p, json.dumps(body), {"Content-Type": "application/json"})
         resp = c.getresponse()
         data = resp.read()
         c.close()
-        return json.loads(data.decode("utf-8") or "{}") if resp.status == 200 else None
     except Exception as e:
         # a forwarded op hitting a dead tunnel is USER DEMAND — re-send the connect signal
         _demand_redial(r.get("host") or "", "refused" if isinstance(e, ConnectionRefusedError) else "timeout")
-        return None
+        return 0, None
+    if resp.status != 200:
+        return resp.status, None
+    try:
+        return 200, json.loads(data.decode("utf-8") or "{}")
+    except (ValueError, UnicodeDecodeError):
+        return 200, None   # answered, with something that is not JSON: not a tunnel fault, no redial
 
 
 def _poll_remote_version(r):
@@ -18558,6 +18944,7 @@ def _session_rows():
             bg, fg = _identity_of(sid)
             out.append({"id": sid, "name": _name_of(sid) or sid[:8], "state": meta.get("state", ""),
                         "dir": _cwd_of(sid), "bg": bg, "fg": fg,
+                        "emoji": _name_emoji(sid),         # the tab's emoji label (`romp emoji <session>` reads it here)
                         # lastSid: the session's CURRENT transcript fsid (SDK registry join, mtime-memoized).
                         # CLAUDE_CODE_SESSION_ID inside a forked session carries THIS id, not the stable sid,
                         # so the postal bus resolves self-identity through it (the user 2026-07-27: a
@@ -18575,7 +18962,7 @@ def _session_rows():
             sys.stderr.write("session row for %s failed (kept minimal): %s\n"
                              % (sid, traceback.format_exc()))
             out.append({"id": sid, "name": sid[:8], "state": meta.get("state", ""), "dir": "",
-                        "bg": "", "fg": "", "lastSid": sid, "compacting": False,
+                        "bg": "", "fg": "", "emoji": "", "lastSid": sid, "compacting": False,
                         "working": "", "backend": meta.get("backend", "")})
     return out
 
@@ -26385,6 +26772,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     _be_fk = _sdk()
     _kids = (_be_fk.fork_children().get(sid) if _be_fk and hasattr(_be_fk, "fork_children") else None) or None
     return {"type": "session", "id": sid, "name": sess["name"], "color": _name_color(sid),
+            "emoji": _name_emoji(sid),                # the tab's emoji label (2026-09-06); tab_meta carries it too
             "branch": branch, "branches": _kids,
             "cwd": _tilde(scwd),   # the CURRENT dir (a move rewrites it); lane tab shows it (the user 2026-06-22)
             # git branch as a TOP-LEVEL session field, NOT just inside the head system event: the status-bar
@@ -34242,7 +34630,8 @@ def _push(targets, connect=False, tmux=None):
             # as placeholders up front (no tab popping in one-by-one as each build_session lands). The full
             # session fills the placeholder in when it arrives below.
             if tab_order is not None:
-                tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in chat_list]
+                tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
+                             "emoji": _name_emoji(s["sid"])} for s in chat_list]
             else:
                 tab_meta = None                          # a sentinel cycle ships no tab strip at all
             for c in chat_clients:                       # tab strip first → the shell paints before any build
@@ -34620,7 +35009,8 @@ def _push_session_now(sid):
             return                                   # hidden / raced a teardown — the periodic pusher owns the rest
         if trusted_order:
             tab_order = [s["sid"] for s in chat_list]
-            tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in chat_list]
+            tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
+                             "emoji": _name_emoji(s["sid"])} for s in chat_list]
         m = build_session(sid, now, tmux)
         if not m:
             return
@@ -34674,7 +35064,8 @@ def _confirm_close_now(sid):
             return False
         chat_list = _chat_tab_sessions(now, guarded)
         tab_order = [s["sid"] for s in chat_list]
-        tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in chat_list]
+        tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
+                             "emoji": _name_emoji(s["sid"])} for s in chat_list]
         frame = _tab_order_frame(tab_order, tab_meta)
         with _clients_lock:
             # alive and ready, as _push_session_now filters: a chat page that announced READY_GATE_CAP is
@@ -39918,6 +40309,44 @@ class Handler(BaseHTTPRequestHandler):
                 if (q.get("threads") or [""])[0] == "1":       # opt-in: comment-thread rows for the postal
                     rows = rows + _thread_rows()               # bus (the user 2026-08-22); every existing
                 return self._send(200, json.dumps(rows), "application/json", cache="no-cache")   # consumer unchanged
+            if p == "/emoji":
+                # READ a session's tab emoji (review round 3, 2026-09-06): the read half of POST /emoji,
+                # for `romp emoji <session>`. ?target=<live name | sid>; answers {ok, id, emoji} ("" when
+                # none) or {ok: false, error}. It exists because GET /sessions lists THIS machine's live
+                # sessions only: a session an attached host owns read as 'no session named' while the
+                # same id SET fine through the POST's forward. This route resolves a target the way the
+                # POST does — a sid an attached host owns forwards over its tunnel to the kernel that
+                # holds the record, an older remote's 404 is version skew — so the two forms agree.
+                target = (q.get("target") or [""])[0].strip()
+                if not target:
+                    return self._send(400, json.dumps({"ok": False, "error": "target required"}), "application/json")
+                r = _host_for_sid(target)
+                if r is not None:
+                    st, res = _remote_forward_status(r, "/emoji?target=" + quote(target, safe=""), None, method="GET")
+                    if not isinstance(res, dict):
+                        host = r.get("host") or "that host"
+                        if st == 404:
+                            res = {"ok": False, "error": "that host's kernel (%s) predates tab emoji — "
+                                                          "update romp there and restart it" % host}
+                        else:
+                            res = {"ok": False, "error": "the session's own kernel (%s) did not answer" % host}
+                    return self._send(200, json.dumps(res), "application/json", cache="no-cache")
+                live = _live_names(_tmux_sessions())
+                tsid = live.get(target) or ""
+                if not tsid and re.fullmatch(r"[0-9a-fA-F-]{32,36}", target):
+                    tsid = target
+                if not tsid:
+                    return self._send(200, json.dumps({"ok": False, "error":
+                        'no live session named "%s" (a dormant one is read by its id)' % target}),
+                                      "application/json", cache="no-cache")
+                parts = _names_parts(tsid)
+                if parts is None:
+                    return self._send(200, json.dumps({"ok": False, "error":
+                        "no names record for that session — is it known to this kernel?"}),
+                                      "application/json", cache="no-cache")
+                return self._send(200, json.dumps({"ok": True, "id": tsid,
+                                                   "emoji": parts[4] if len(parts) > 4 else ""}),
+                                  "application/json", cache="no-cache")
             if p == "/perf":                                  # the kernel's performance counters (`romp perf`); shape: _PerfStats
                 return self._send(200, json.dumps(_PERF_STATS.snapshot()), "application/json", cache="no-cache")
             if p == "/commands":                              # slash-command list for the composer's "/" autocomplete (SDK get_server_info, per-cwd cached)
@@ -41049,12 +41478,63 @@ class Handler(BaseHTTPRequestHandler):
                         '"%s" is not a swatch of any palette — GET /palette lists the choosable ones' % bg}),
                                       "application/json")
                 if not _set_session_color(tsid, bg):
-                    return self._send(200, json.dumps({"ok": False, "error":
-                        "no names record for that session — is it known to this kernel?"}),
+                    return self._send(200, json.dumps({"ok": False, "error": _names_refusal(tsid)}),
                                       "application/json")
                 _mark_views_dirty()
                 return self._send(200, json.dumps({"ok": True, "id": tsid, "bg": bg,
                                                    "fg": pal.fg_for(bg)}), "application/json")
+            if u.path == "/emoji":
+                # Headless tab emoji (the user 2026-09-06): the setSessionEmoji WS op as a one-shot POST,
+                # sibling of /color — the door `romp emoji` and the postal set_emoji tool share. Body:
+                # {"target": <live name or sid>, "emoji": <one emoji | "">}; "" clears, and the key must
+                # be PRESENT (a body that forgot it is a 400, never a silent clear — the set_working
+                # fold-in's lesson). _emoji_check is the one validator, and its one-line reason is the
+                # whole refusal. The write is a names-registry write, so a dormant session works by sid.
+                # A sid an attached remote owns forwards over its tunnel (the /working shape), so a
+                # session on that machine can set its own through the kernel it reaches; the remote's
+                # own verdict rides back.
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = {}
+                b = b if isinstance(b, dict) else {}
+                target = str(b.get("target") or b.get("id") or "").strip()
+                if not target or "emoji" not in b:
+                    return self._send(400, json.dumps({"ok": False, "error":
+                        'target and emoji required ("" clears)'}), "application/json")
+                if not isinstance(b.get("emoji"), str):
+                    # a present-but-null (or numeric, or list) value is a malformed body, not a clear
+                    return self._send(400, json.dumps({"ok": False, "error":
+                        'emoji must be a string ("" clears)'}), "application/json")
+                emoji, err = _emoji_check(b.get("emoji"))
+                if err:
+                    return self._send(200, json.dumps({"ok": False, "error": err}), "application/json")
+                r = _host_for_sid(target)
+                if r is not None:
+                    st, res = _remote_forward_status(r, "/emoji", {"target": target, "emoji": emoji})
+                    if not isinstance(res, dict):
+                        host = r.get("host") or "that host"
+                        if st == 404:
+                            # the remote ANSWERED — its kernel has no /emoji route (version skew)
+                            res = {"ok": False, "error": "that host's kernel (%s) predates tab emoji — "
+                                                          "update romp there and restart it" % host}
+                        else:
+                            res = {"ok": False, "error": "the session's own kernel (%s) did not answer" % host}
+                    return self._send(200, json.dumps(res), "application/json")
+                live = _live_names(_tmux_sessions())
+                tsid = live.get(target) or ""
+                if not tsid and re.fullmatch(r"[0-9a-fA-F-]{32,36}", target):
+                    tsid = target
+                if not tsid:
+                    return self._send(200, json.dumps({"ok": False, "error":
+                        'no live session named "%s" (a dormant one can be labeled by sid)' % target}),
+                                      "application/json")
+                if not _set_session_emoji(tsid, emoji):
+                    return self._send(200, json.dumps({"ok": False, "error": _names_refusal(tsid)}),
+                                      "application/json")
+                _mark_views_dirty()
+                return self._send(200, json.dumps({"ok": True, "id": tsid, "emoji": emoji}),
+                                  "application/json")
             if u.path == "/watch-pr":
                 # Register a PR-landing watch (the user 2026-08-24, both teams' surveys): one [romp]
                 # mail to the registering session when the PR reaches a terminal state — MERGED,
@@ -41927,6 +42407,19 @@ class Handler(BaseHTTPRequestHandler):
             # registry); re-broadcast so every tab/lane/card repaints in the new color at once.
             if _set_session_color(str(msg["id"]), str(msg["bg"])):
                 _mark_views_dirty()
+        elif msg and msg.get("type") == "setSessionEmoji" and msg.get("id") and "emoji" in msg:
+            # tab right-click → Emoji… (the user 2026-09-06): the same store write POST /emoji and the
+            # postal tool make, through the one validator. The kernel confirms with {emojiSet id emoji}
+            # — the renamed-ack shape: the strip changes once the store has it, never on the click —
+            # or says why not in a warn; "" clears, and the key must be present.
+            emoji, err = _emoji_check(msg.get("emoji"))
+            if err:
+                client["send"](json.dumps({"type": "warn", "text": err}))
+            elif _set_session_emoji(str(msg["id"]), emoji):
+                client["send"](json.dumps({"type": "emojiSet", "id": str(msg["id"]), "emoji": emoji}))
+                _mark_views_dirty()
+            else:
+                client["send"](json.dumps({"type": "warn", "text": _names_refusal(str(msg["id"]))}))
         elif msg and msg.get("type") == "loginStart":
             # the in-dashboard login (T157): spawn the PTY flow; the gear polls /version for state
             err = _login_start()

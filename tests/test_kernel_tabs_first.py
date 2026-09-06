@@ -26,8 +26,9 @@ km = SourceFileLoader("romp_kernel", KPATH).load_module()
 class TabsFirst(unittest.TestCase):
     def test_push_taborder_carries_name_and_color_per_tab(self):
         src = inspect.getsource(km._push)
-        self.assertIn('tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])}', src,
-                      "the periodic push builds a name+color list per tab")
+        self.assertIn('tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),\n'
+                      '                             "emoji": _name_emoji(s["sid"])} for s in chat_list]', src,
+                      "the periodic push builds a name+color+emoji list per tab")
         self.assertIn('_send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta))', src,
                       "and ships it as the tabs field alongside the sid order, in the frame's one spelling")
 
