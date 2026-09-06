@@ -3111,6 +3111,11 @@ class SdkSession:
     # …and one line per SystemMessage subtype the handler has no branch for (per kernel life), so a
     # CLI that starts forwarding a new frame kind is noticed in the log instead of silently dropped.
     _sys_subtypes_seen: set = set()
+    # …and per-message handler failures (_handle_stream_message): (exception type, message kind,
+    # innermost frame) → count, per kernel life. The first of a signature logs its frame chain; every
+    # repeat logs one short counted line, so a handler failing on each message stays visible.
+    _stream_fail_seen: dict = {}
+    _stream_fail_lock = threading.Lock()
 
     def __init__(self, backend: "SdkBackend", reg: dict):
         self.backend = backend
@@ -4157,15 +4162,10 @@ class SdkSession:
                 yield {"type": "user",
                        "message": {"role": "user", "content": [{"type": "text", "text": item}]}}
 
-        async def drain(client):
-            # Feed turns and receive messages CONCURRENTLY: query() with a streaming input iterable BLOCKS
-            # until the iterable ends (it writes each turn to stdin), and our input generator never ends —
-            # so awaiting it before receiving would starve the receive loop. The control channel
-            # (can_use_tool) has its own reader; the message stream does not, so it's drained here.
-            async for msg in client.receive_messages():
-                if self.ended:
-                    break
-                self._on_message(msg, AssistantMessage, ResultMessage, SystemMessage)
+        # Feed turns and receive messages CONCURRENTLY: query() with a streaming input iterable BLOCKS
+        # until the iterable ends (it writes each turn to stdin), and our input generator never ends —
+        # so awaiting it before receiving would starve the receive loop. The control channel
+        # (can_use_tool) has its own reader; the message stream does not, so _drain drains it.
 
         # Reconnect loop: one persistent client per iteration. A connect-time option change (effort, a CLI
         # flag with no runtime control) reconnects with fresh options — resume_sid continues the conversation
@@ -4250,20 +4250,25 @@ class SdkSession:
                     # this, nothing showed after a kernel restart until each session's next turn.
                     asyncio.ensure_future(self._do_adopt_server_info())
                     feeder = asyncio.ensure_future(client.query(inputs()))
-                    recv = asyncio.ensure_future(drain(client))
+                    recv = asyncio.ensure_future(self._drain(client, AssistantMessage, ResultMessage, SystemMessage))
                     waker = asyncio.ensure_future(self._wake.wait())
                     try:
                         await asyncio.wait({recv, waker}, return_when=asyncio.FIRST_COMPLETED)
                     finally:
                         for tk in (feeder, recv, waker):
                             tk.cancel()
-                        for tk in (feeder, recv, waker):
+                        for tk, role in ((feeder, "input feeder"), (recv, "message receiver"), (waker, "waker")):
                             try:
                                 await tk
                             except asyncio.CancelledError:
                                 pass
                             except Exception as e:                 # a genuine stream/transport error — surface it
-                                self.backend._log(f"sdk session {self.name}: {type(e).__name__}: {e}")
+                                # Per-message failures stop inside _handle_stream_message, so what reaches
+                                # here is the stream itself failing (the CLI exiting on an error, a
+                                # transport fault) or the feeder. Named with its task and frame chain: the
+                                # old bare `type: text` line left a session death with nothing to fix by.
+                                self.backend._log("sdk session %s: the %s ended on %s: %s, at %s"
+                                                  % (self.name, role, type(e).__name__, _mask_ids(e), _compact_tb(e)))
                         self.client = None
                         self._connected.clear()
             except Exception as e:
@@ -4530,6 +4535,55 @@ class SdkSession:
             _lg = getattr(self.backend, "_log", None)
             if _lg:
                 _lg("api-health: give-up ingest failed: %s" % e)
+
+    async def _drain(self, client, AssistantMessage, ResultMessage, SystemMessage):
+        """The receive loop. Every streamed message goes through _handle_stream_message, which keeps
+        a handler's failure to that one message; what ends this loop is the STREAM ending — the CLI
+        exiting, a transport fault the SDK re-raises, our own `ended` — never a message the kernel
+        mishandled. (_amain drains this concurrently with the input feeder: query() with a streaming
+        input blocks until the iterable ends, and ours never does.)"""
+        async for msg in client.receive_messages():
+            if self.ended:
+                break
+            self._handle_stream_message(msg, AssistantMessage, ResultMessage, SystemMessage)
+
+    def _handle_stream_message(self, msg, AssistantMessage, ResultMessage, SystemMessage) -> bool:
+        """_on_message, with its failures contained to the message that caused them. Until 2026-09-06
+        any exception in a handler propagated out of the receive loop, and the client teardown that
+        followed treated it as the stream ending: the CLI process was closed — killing its in-flight
+        turn, every subagent and every background task — and the session came back as a crash resume,
+        all over ONE message the kernel could not file (a `KeyError` on a message uuid, from a
+        live-tail sweep racing the kernel thread; see SdkBackend._note_live_tail_race). A malformed or
+        unexpected message now costs its own handling and nothing else: the transcript keeps the
+        message, the CLI keeps running. Returns whether the handler ran clean."""
+        try:
+            self._on_message(msg, AssistantMessage, ResultMessage, SystemMessage)
+            return True
+        except Exception as e:
+            self._note_message_failure(msg, e)
+            return False
+
+    def _note_message_failure(self, msg, e) -> None:
+        """One problem line per failure, with enough to fix by: the exception type, the message's type
+        and subtype (never its content), and — the first time a signature is seen this kernel life —
+        the frame chain (file:line function, no locals). Repeats of a signature log one short counted
+        line, so a handler that fails on every message is visible without burying the log. A bare
+        `KeyError: '<uuid>'` with none of this is what the last such failure left to diagnose from."""
+        kind = _describe_msg(msg)
+        chain = _compact_tb(e)
+        sig = (type(e).__name__, kind, chain.rsplit(" > ", 1)[-1])
+        with SdkSession._stream_fail_lock:
+            n = SdkSession._stream_fail_seen.get(sig, 0) + 1
+            SdkSession._stream_fail_seen[sig] = n
+        if n == 1:
+            self.backend._log("sdk session %s: %s while handling a %s message; that message's handling "
+                              "stopped there (the transcript keeps it) and the stream continues. %s: %s, at %s"
+                              % (self.name, type(e).__name__, kind, type(e).__name__, _mask_ids(e), chain),
+                              problem=True)
+        else:
+            self.backend._log("sdk session %s: %s while handling a %s message (repeat %d this kernel life; "
+                              "the frame chain was logged with the first); handling stopped, stream continues"
+                              % (self.name, type(e).__name__, kind, n), problem=True)
 
     def _on_message(self, msg, AssistantMessage, ResultMessage, SystemMessage):
         if getattr(self, "_ping_feeding", False):   # getattr: __new__-built test doubles skip __init__
@@ -5907,24 +5961,62 @@ def _path_bearing(text: str) -> bool:
     return bool(_PATHY_RE.search(text or ""))
 
 
-def _evict_live_overflow(d: dict, cap: int = LIVE_TAIL_CAP) -> None:
+_UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def _mask_ids(text, cap: int = 160) -> str:
+    """A log-safe rendering of an exception's text: every uuid-shaped token keeps its first 8
+    characters, and the whole thing is clipped. A KeyError's text IS the key, and a message uuid or
+    session id in the log is more than a diagnosis needs — the site and the key's KIND are what fix
+    it (the failure this was written for left a bare `KeyError: '<full uuid>'` and nothing else)."""
+    s = _UUID_RE.sub(lambda m: m.group(0)[:8] + "…", str(text))
+    return s if len(s) <= cap else s[:cap] + "…"
+
+
+def _compact_tb(exc) -> str:
+    """The exception's frame chain as `file:line function` steps, outermost first — no locals, no
+    source lines: enough to name the site on the next occurrence, small enough for one log line."""
+    frames = traceback.extract_tb(getattr(exc, "__traceback__", None))
+    return " > ".join("%s:%d %s" % (os.path.basename(f.filename), f.lineno, f.name) for f in frames) or "?"
+
+
+def _describe_msg(msg) -> str:
+    """`SystemMessage/task_notification`, `AssistantMessage`, … — the message's type and, where the
+    type carries one, its subtype. Never its content."""
+    n = type(msg).__name__
+    st = getattr(msg, "subtype", None)
+    return "%s/%s" % (n, st) if isinstance(st, str) and st else n
+
+
+def _evict_live_overflow(d: dict, cap: int = LIVE_TAIL_CAP) -> int:
     """Bound a session's in-memory live tail when no client ever drains/prunes it — but never at the
     cost of an INPUT ECHO or a command-feedback line. A stream WORK atom is disposable (the transcript
     supersedes it by uuid within a second), but an echo is the ONLY record of a send the transcript
     hasn't caught up on — evicting it makes an in-flight or dropped message silently invisible (the
     user 2026-07-20: a reply vanished from the chat with no trace). Oldest work atoms go first; only
     in the pathological all-echo case does the cap fall back to evicting oldest-regardless, because a
-    bounded store still beats an unbounded leak."""
+    bounded store still beats an unbounded leak.
+
+    Sweeps a SNAPSHOT of the items and pops with a default: the tail is shared with the kernel thread
+    (see SdkBackend._note_live_tail_race), which may retire a key between the snapshot and the pop.
+    Returns how many keys had vanished that way, for the caller to report."""
     if len(d) <= cap:
-        return
-    for k in list(d.keys()):
+        return 0
+    vanished = 0
+    for k, a in list(d.items()):
         if len(d) <= cap:
-            return
-        a = d[k]
+            return vanished
         if not a.get("_echo_text") and not a.get("command"):
-            del d[k]
+            if d.pop(k, None) is None:
+                vanished += 1
     while len(d) > cap:
-        del d[next(iter(d))]
+        try:
+            k = next(iter(d))
+        except StopIteration:        # emptied under us
+            break
+        if d.pop(k, None) is None:
+            vanished += 1
+    return vanished
 
 
 # ---------------------------------------------------------------------------
@@ -9299,6 +9391,30 @@ class SdkBackend:
         replays durably to chat clients — and so the poll never clobbers it with an askLiveClear."""
         return self._pending_ask.get(sid)
 
+    _live_tail_race_seen: set = set()          # sweep sites that saw a key vanish mid-sweep, per kernel life
+    _live_tail_race_lock = threading.Lock()
+
+    def _note_live_tail_race(self, site: str) -> None:
+        """A live-tail sweep found a message-uuid key gone between its snapshot and its pop. The tail
+        (`self._live[sid]`) is a plain dict shared by two threads without a lock: the session's loop
+        thread adds atoms (_forward) and retires them at the settle (retire_live_work), and the kernel
+        thread prunes landed ones during a chat build (prune_live). Each sweep used to walk a stale
+        key list and read `d[k]` — so when the kernel thread pruned a just-landed reply while the
+        settle sweep still held its uuid, `KeyError: '<message uuid>'` escaped _on_message and ended
+        the receive loop, which tore the CLI down mid-work (a peer session lost its turn, a Workflow
+        run and a background agent to it, 2026-09-06). The sweeps now iterate a snapshot of items and
+        pop with a default, so the collision costs nothing — and it is still reported, ONCE per site
+        per kernel life: the race is real, and a fix that made it invisible would hide the next thing
+        that shares this dict."""
+        with SdkBackend._live_tail_race_lock:
+            if site in SdkBackend._live_tail_race_seen:
+                return
+            SdkBackend._live_tail_race_seen.add(site)
+        self._log("live tail (%s): a message-uuid key vanished mid-sweep; another thread retired the "
+                  "atom first (the kernel-thread prune racing the session thread). Harmless: the sweep "
+                  "continued. Before 2026-09-06 this KeyError ended the session's receive loop and its "
+                  "CLI. Reported once per site per kernel life." % site, problem=True)
+
     def _forward(self, sess: SdkSession, msg):
         # LIVE TAIL: translate the streamed message to an atom and stash it in memory, AHEAD of the
         # transcript on disk (the SDK stream leads the disk write), then wake the kernel's pusher for an
@@ -9310,7 +9426,8 @@ class SdkBackend:
         _note_skill_tool_ids(atom, sess._skill_tool_ids)   # a Skill tool_use arms its payload's classification
         d = self._live.setdefault(sess.sid, {})
         d[atom["uuid"]] = atom
-        _evict_live_overflow(d)                  # safety cap if no client ever drains/prunes — never an echo
+        if _evict_live_overflow(d):              # safety cap if no client ever drains/prunes — never an echo
+            self._note_live_tail_race("_evict_live_overflow")
         # The stream is the AUTHORITATIVE busy signal: a genuine WORK atom (streamed assistant/tool
         # output — not an input echo, not a /model-style command line) means the CLI is producing RIGHT
         # NOW, so re-assert 'working' if a prior state write settled ahead of it (e.g. a separate turn
@@ -9379,8 +9496,8 @@ class SdkBackend:
                 return et in tx_user_texts
             return et in text_t and float(text_t[et] or 0) >= float(a.get("t") or 0)
         echo_removed = False
-        for k in list(d.keys()):
-            a = d[k]
+        vanished = 0
+        for k, a in list(d.items()):   # a SNAPSHOT — the session thread may pop under us (_note_live_tail_race)
             et = a.get("_echo_text")
             landed = a.get("uuid") in tx_uuids or _by_text(a, et)
             stale_echo = (bool(et) and human_floor and a.get("t", 0) <= human_floor
@@ -9392,7 +9509,10 @@ class SdkBackend:
             stale_cmd = bool(a.get("command")) and human_floor and a.get("t", 0) <= human_floor
             if landed or stale_echo or stale_cmd:
                 echo_removed = echo_removed or bool(et and not a.get("command"))
-                del d[k]
+                if d.pop(k, None) is None:
+                    vanished += 1
+        if vanished:
+            self._note_live_tail_race("prune_live")
         if not d:
             self._live.pop(sid, None)
         if echo_removed:
@@ -9410,8 +9530,8 @@ class SdkBackend:
         d = self._live.get(sid)
         if not d:
             return
-        for k in list(d.keys()):
-            a = d[k]
+        vanished = 0
+        for k, a in list(d.items()):   # a SNAPSHOT — the kernel thread may prune under us (_note_live_tail_race)
             if not a.get("_echo_text") and not a.get("command"):
                 # An assistant atom carrying real TEXT that never landed on disk is a reply the user WATCHED
                 # stream but the transcript dropped (an API-errored try — the CLI discards the partial and the
@@ -9440,7 +9560,10 @@ class SdkBackend:
                             append_orphan_reply(self.state_dir, sid, a.get("uuid") or "", txt, t=a.get("t"))
                         except Exception:
                             self._log("orphan-reply persist failed: %s" % traceback.format_exc())
-                del d[k]
+                if d.pop(k, None) is None:
+                    vanished += 1
+        if vanished:
+            self._note_live_tail_race("retire_live_work")
         if not d:
             self._live.pop(sid, None)
 

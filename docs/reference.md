@@ -407,6 +407,18 @@ check whether each is still running before relaunching it. A kernel restart has
 never touched work a session deliberately detached: tmux servers, `setsid`
 children and other processes that outlive their shell.
 
+A message the kernel cannot handle does not end the session's CLI. The kernel
+handles each streamed message on its own: when a handler raises, it logs the
+exception type, the message's type and subtype, and the frame chain (file, line
+and function, never message content) to the kernel log and the dashboard's
+error center, then goes on to the next message. Before 2026-09-06 one such
+exception ended the receive loop, which closed the CLI in the middle of its work
+(the in-flight turn, its subagents, its background tasks) and resumed the
+session as after a crash. A fault of the stream itself, such as the CLI exiting
+or its transport closing, still ends the loop; the log names the failing task
+and its frame chain, and the session resumes with its history, told what was
+cut.
+
 A service restart (`systemctl --user restart romp-manager`, or the machine's
 own service management) kills everything in the service's cgroup, so on Linux
 under systemd Romp runs each session's CLI, and the default tmux server the
