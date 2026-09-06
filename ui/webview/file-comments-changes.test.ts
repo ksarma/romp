@@ -242,10 +242,16 @@ test("the data-act names, all in the one delegate map; the file-writing verbs' f
   assert.match(SRC, /const FILE_VERBS = new Set\(\["reject", "reject-all"\]\);/);
   const once = SRC.split("private async mutateOnce(")[1].split("\n  }\n")[0];
   assert.match(once, /if \(FILE_VERBS\.has\(verb\)\) fence\.fileMtimeNs = s \? s\.fileMtimeNs : "";/);
-  assert.equal((once.match(/fileMtimeNs/g) || []).length, 4, "fileMtimeNs enters the fence in that one place; the other reads compare the reply's against the view's");
-  assert.match(once, /if \(FILE_VERBS\.has\(verb\) && r\.fileMtimeNs && this\.ctx\.mtimeNs\(\) && mtimeMoved\(this\.ctx\.mtimeNs\(\), r\.fileMtimeNs\)\) this\.ctx\.reload\(\);/,
-    "after a reject the file's bytes changed under the view: re-fetch them (the poll never will — the reply re-baselined it)");
-  assert.match(once, /if \(e\.code === "file-moved"\) this\.ctx\.reload\(\);/, "a file-moved refusal repaints the bytes before the one retry");
+  assert.equal((once.match(/fileMtimeNs/g) || []).length, 2, "fileMtimeNs enters the fence in that one place; mutateOnce reads nothing else off it — the re-fetch is applyStatus's");
+  // the re-fetch after a reject (and after any status whose file mtime is not the view's) is ONE rule, in applyStatus:
+  // the poll never will — every reply re-baselines it
+  const apply = SRC.split("applyStatus(s: Reply): boolean {")[1].split("\n  }\n")[0];
+  assert.match(apply, /this\.base = pollBaseline\(s\);[\s\S]*this\.syncBytes\(s\);[\s\S]*this\.paintAll\(\);/, "every applied status brings the bytes to its text, then paints");
+  const sync = SRC.split("private syncBytes(s: Status): void {")[1].split("\n  }\n")[0];
+  assert.match(sync, /if \(!vm \|\| !s\.fileMtimeNs \|\| vm === s\.fileMtimeNs\) return;\n\s*this\.askReload\(s\.fileMtimeNs\);\n\s*this\.awaitBytes\(s\);/,
+    "the view's mtime against the status's: a re-fetch keyed on the mtime, and the loader until the paint shows it");
+  assert.doesNotMatch(once, /this\.ctx\.reload\(\)/, "mutateOnce asks no fetch of its own: a moved fence's fresh status carries the file's mtime");
+  assert.match(once, /await this\.refreshAfterMoved\(e\.code\);/, "a moved fence: the fresh status (and the bytes, when the file is what moved and no status lands)");
   // the send: parts first, set-tracked, accept-all, then the send with A = unsent.accepted + N and R = unsent.rejected
   const send = SRC.split("async doSend(): Promise<void> {")[1].split("\n  }\n")[0];
   const pos = (s: string) => { const i = send.indexOf(s); assert.ok(i >= 0, s); return i; };
@@ -796,7 +802,7 @@ test("Reveal on a deletion: Raw, then the change's start; the fold past three gr
 });
 
 test("repaints over the SAME body leave one mark per change: the open (status twice, then the colours), a store-only poll tick, and an accept's reply stack nothing", async (t: TestContext) => {
-  // applyStatus repaints without rebuilding the rows — only a reject or the poll's file-moved branch reloads them — so
+  // applyStatus repaints without rebuilding the rows — only a status whose file mtime is not the view's reloads them — so
   // every status reply paints over marks already there (D5: unwrapped before each repaint, never stacked). Counted by what
   // any conforming painter yields, an element carrying data-act="fcchange" and the change's id: exactly one for an
   // insertion inside a row, at most one for a deletion's point, and for every change the same number after each repaint.

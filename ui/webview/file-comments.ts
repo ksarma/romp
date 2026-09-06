@@ -399,12 +399,16 @@ class Panel {
   timer: ReturnType<typeof setInterval> | null = null;
   polling = false;
   tickSkipped = false;
-  // the reload the panel asked for after a reject (mutateOnce) is out: the body shows the bytes the reject changed,
-  // with no marks over them, until the fetch lands. The wait wears the loader at the head of the cards (the "bytes"
-  // busy slot, ui/CLAUDE.md), ending on the paint that shows the status's text (paintAll → bytesLanded). The seam
-  // reports no failed fetch — the viewer shows its own error in the body and fires no onRendered — so the loader
-  // has the same backstop a status ask has: after STATUS_DEADLINE_MS it yields to a row with Reload (bytesLate).
+  // the reload the panel asked for (syncBytes: a status whose file mtime is not the view's) is out: the body shows
+  // the bytes from before, with no marks over them, until the fetch lands. The wait wears the loader at the head of
+  // the cards (the "bytes" busy slot, ui/CLAUDE.md), ending on the paint that shows the status's text (paintAll →
+  // bytesLanded). The seam reports no failed fetch — the viewer shows its own error in the body and fires no
+  // onRendered — so the loader has the same backstop a status ask has: after STATUS_DEADLINE_MS it yields to a row
+  // with Reload (bytesLate). `reloadFor` is the file mtime the last ask was for: one ask per mtime, so a second
+  // status carrying the same mtime while that fetch is out (the moved-fence retry: the refresh's status, then the
+  // retry's reply) asks nothing.
   bytesWait: ReturnType<typeof setTimeout> | null = null;
+  reloadFor: string | null = null;
   // persistent section wrappers: render() swaps each section's CHILDREN, never the aside's own children —
   // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
   // loses focus, so a poll-triggered re-render would drop the input's focus mid-word
@@ -646,8 +650,31 @@ class Panel {
     this.button.textContent = actionLabel(s);
     this.button.title = s.store ? "Comments and changes kept beside this file" : "Comment on this file, or track a session's changes to it";
     this.ctx.setEditBlocked(editBlockedReason(s.hunks || []));
+    this.syncBytes(s);                                 // the view shows the text these hunks index, or is asked to
     this.paintAll();                                   // repaints the highlights and renders the panel
     return true;
+  }
+  /** Bring the view's bytes to the text a status describes: its hunks and anchors are offsets into the file the
+   *  host read, so when the file mtime the status carries is not the view's, the view is asked to re-fetch and the
+   *  cards wear the loader until a paint shows that text (awaitBytes). Every status lands through applyStatus, so
+   *  every way the two can diverge is this one rule: a reject's reply (the host rewrote the file); the fresh status
+   *  a moved fence asked for, when a track-edit landed under the click and moved the sidecar AND the file (the
+   *  refusal named only the sidecar, so a reload keyed on `file-moved` alone left the old bytes up with no marks on
+   *  them — the review's finding); an accept's reply whose file mtime moved since the poll last looked; the poll's
+   *  own re-read. Nothing else re-fetches: every reply re-baselines the poll to the mtime it carries, so the poll
+   *  never sees a move a status already reported. A view with no text yet (its first fetch out) is left alone. */
+  private syncBytes(s: Status): void {
+    const vm = this.ctx.mtimeNs();
+    if (!vm || !s.fileMtimeNs || vm === s.fileMtimeNs) return;
+    this.askReload(s.fileMtimeNs);
+    this.awaitBytes(s);
+  }
+  /** One re-fetch per file mtime (`reloadFor`): the poll and the status that follows it both know the same mtime, and
+   *  a status landing while the fetch it asked for is still out must not ask twice. Null asks unconditionally. */
+  private askReload(mtimeNs: string | null): void {
+    if (mtimeNs !== null && this.reloadFor === mtimeNs) return;
+    this.reloadFor = mtimeNs;
+    this.ctx.reload();
   }
   /** Re-ask status. While the ask is out and no status has ever landed, the cards section shows the romp
    *  loader (ui/CLAUDE.md: a wait wears the loader, never a line claiming a read); a refusal leaves the
@@ -657,14 +684,15 @@ class Panel {
    *  STATUS_DEADLINE_MS) — the slot wears the loader instead, where the row was. The poll's and onSaved's own
    *  re-reads pass no slot: nobody is waiting on those, and a swirl in the head per change the session
    *  makes would only pull the eye. */
-  async refresh(slot?: string): Promise<void> {
+  async refresh(slot?: string): Promise<boolean> {
     const mark = slot && this.status ? slot : null;   // with no status the cards' own loader is the wait
     this.busy.add("status"); if (mark) this.busy.add(mark); this.render();
-    try { this.applyStatus(await this.request("status")); }
+    try { return this.applyStatus(await this.request("status")); }
     catch (err) {
       const e = err as { code: string; error: string };
       this.statusRefusal = e;
       this.errors.set("head", { text: e.error, reload: true });
+      return false;
     } finally { this.busy.delete("status"); if (mark) this.busy.delete(mark); this.render(); }
   }
   /** A write's reply just landed: every status ask still out was issued before it and may have read the disk
@@ -767,7 +795,7 @@ class Panel {
       const checks: Array<[keyof PollBaseline, string]> = [["file", t.file]];
       if (t.store) checks.push(["store", t.store]);
       if (t.config) checks.push(["config", t.config]);
-      let fileMoved = false, moved = false;
+      let fileNow: string | null = null, moved = false;
       for (const [key, target] of checks) {
         if (this.stopped.has(target)) continue;
         let r: Response;
@@ -784,10 +812,12 @@ class Panel {
           continue;
         }
         if (v.kind !== "value") continue;
-        if (mtimeMoved(base[key], v.value)) { moved = true; if (key === "file") fileMoved = true; }
+        if (mtimeMoved(base[key], v.value)) { moved = true; if (key === "file") fileNow = v.value; }
       }
       if (moved) {
-        if (fileMoved) this.ctx.reload();            // the bytes changed under the view — repaint them
+        // the bytes changed under the view: repaint them — asked here, not left to the status, so a refused status
+        // (a corrupt sidecar, say) still gets the file re-read; the status that follows knows the same mtime and asks nothing
+        if (fileNow !== null) this.askReload(fileNow);
         await this.refresh();                        // fresh sidecar, log, and a new baseline
       }
     } finally { this.polling = false; }
@@ -829,11 +859,9 @@ class Panel {
     try {
       const r = await this.request(verb, args, fence);
       this.markOverlapped();                           // the status asks still out may have read the disk before this write
+      // a reject's reply carries the mtime of the file the host rewrote: applyStatus (syncBytes) re-fetches the bytes
+      // and holds the loader until they paint — the poll will not, the reply just re-baselined it
       this.applyStatus(r);
-      // the file's bytes changed under the view: re-fetch them (the hunks and anchors in this reply index the NEW
-      // text, and the poll will not do it — the reply just re-baselined it). The repaint arrives through onRendered.
-      if (FILE_VERBS.has(verb) && r.fileMtimeNs && this.ctx.mtimeNs() && mtimeMoved(this.ctx.mtimeNs(), r.fileMtimeNs)) this.ctx.reload();
-      if (FILE_VERBS.has(verb)) this.awaitBytes(r);    // the loader for that fetch, while the view's text is not the reply's
       return r;
     } catch (err) {
       const e = err as { code: string; error: string };
@@ -844,13 +872,11 @@ class Panel {
         // when the file moved) so the list shows the current changes, and the row under the control says nothing was
         // decided — the choice is theirs to make again over what they can now see. A retry would decide changes that
         // were not on screen at the click (BULK_VERBS).
-        await this.refresh();
-        if (e.code === "file-moved") this.ctx.reload();
+        await this.refreshAfterMoved(e.code);
         this.errors.set(slot, { text: "Nothing decided: " + e.error + ". The list of changes was re-read; look it over and try again.", reload: false });
         return null;
       } else if (!retried && MOVED.has(e.code)) {
-        await this.refresh();
-        if (e.code === "file-moved") this.ctx.reload();   // the file itself moved under the view: repaint its bytes (the poll's own moved branch)
+        await this.refreshAfterMoved(e.code);
         return this.mutateOnce(verb, args, slot, true);
       }
       this.errors.set(slot, { text: e.error, reload: MOVED.has(e.code) });
@@ -858,10 +884,20 @@ class Panel {
     }
   }
 
-  // ── the bytes a reject changed: the wait for the reload ────────────────────────────────────────
-  /** A file-writing verb's reply just applied and the view was asked to re-fetch: hold the "bytes" slot busy (the
-   *  loader at the head of the cards) until a paint shows the reply's text, or the deadline. Nothing to wait for
-   *  when the view already shows it (the stand-in's synchronous reload, or a reject that changed no bytes). */
+  /** After a moved fence: the fresh status, whose file mtime tells applyStatus (syncBytes) whether the file moved
+   *  too and the bytes need re-fetching — a `store-moved` from a track-edit moved both, and the code names only the
+   *  sidecar. When no status lands (refused, or dropped as suspect) and the FILE is what moved, the bytes are
+   *  re-fetched anyway: the refusal is the one evidence there is, and the old text with no marks is worse than a
+   *  fetch nothing awaits. */
+  private async refreshAfterMoved(code: string): Promise<void> {
+    const landed = await this.refresh();
+    if (!landed && code === "file-moved") this.askReload(null);
+  }
+
+  // ── the bytes a status describes but the view does not show yet: the wait for the reload ───────
+  /** A status whose file mtime is not the view's just applied and the view was asked to re-fetch (syncBytes): hold
+   *  the "bytes" slot busy (the loader at the head of the cards) until a paint shows the status's text, or the
+   *  deadline. Nothing to wait for when the view already shows it (the stand-in's synchronous reload). */
   private awaitBytes(r: Status): void {
     if (this.textCurrent(r)) return;
     if (this.bytesWait) clearTimeout(this.bytesWait);
@@ -882,7 +918,7 @@ class Panel {
     if (!this.busy.has("bytes")) return;
     this.busy.delete("bytes");
     this.errors.set("bytes", { text: "The file's new contents have not arrived after " + STATUS_DEADLINE_MS / 1000
-      + " s; the view still shows the text from before your decision, with no change marked on it. Reload to read the file again.", reload: true });
+      + " s; the view still shows the earlier text, with no change marked on it. Reload to read the file again.", reload: true });
     this.render();
   }
 

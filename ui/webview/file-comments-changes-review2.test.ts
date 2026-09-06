@@ -634,7 +634,7 @@ test("between a reject's reply and its reload the cards wear the romp loader at 
   const row = a2.querySelector('.fc-cards .fc-err[data-slot="bytes"]')!;
   assert.ok(row, "…to a row where it was");
   assert.match(row.textContent, /have not arrived after 15 s/);
-  assert.match(row.textContent, /text from before your decision, with no change marked/, "it says what the person is looking at");
+  assert.match(row.textContent, /the earlier text, with no change marked/, "it says what the person is looking at");
   const reload = act(row, "fcreload")!;
   assert.ok(reload, "with Reload");
   const asks = countOf(w2, "fileComments", "status");
@@ -645,6 +645,74 @@ test("between a reject's reply and its reload the cards wear the romp loader at 
   w2.landReload!(); answer(w2, after); await flush(); await flush();
   assert.equal(a2.querySelectorAll(".fc-load").length, 0);
   assert.equal(marksOf(w2, "h5").length, 1);
+});
+
+// ── every status brings the view's bytes to the text it describes (the review: stale bytes after a store-moved) ──
+
+test("an accept whose reply carries a file mtime the view does not show re-fetches the bytes: the session wrote the file between the poll's last look and the click, and the reply re-baselined the poll", async (t: TestContext) => {
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ hunks: [h1, h3, h5] }));
+  act(card(aside, "chg:h1")!, "fcaccept", "h1")!.click(); await flush();
+  const m = lastOf(w, "fileComments", "accept");
+  // a plain write landed under the sidecar fence (the sidecar did not move, the file did): the host reads the new file
+  w.disk = DOC.replace("Risks remain", "Risks still remain"); w.diskMtime = F11;
+  const after = status({ fileMtimeNs: F11, storeMtimeNs: S12, hunks: [h3, shifted(h5, 6)],
+    store: { ...NO_COMMENTS, suggestions: [SUGG[1]], comments: [passage] }, unsent: { comments: [passage.id], replies: [], accepted: 1, rejected: 0, watermark: null } });
+  answer(w, after, m, { accepted: ["h1"] }); await flush(); await flush();
+  assert.equal(w.reloads, 1, "the reply's file mtime is not the view's: the bytes are re-fetched (before, only a reject's reply did this)");
+  assert.equal(w.viewMtime, F11);
+  assert.ok(marksOf(w, "h5").some((x) => x.textContent === " again"), "the marks are painted over the NEW text");
+  assert.equal(aside.querySelectorAll(".fc-load").length, 0, "the bytes landed: no wait");
+  // the poll, re-baselined to F11 by the reply, sees no move and asks nothing more
+  const asks = countOf(w, "fileComments", "status");
+  await flush();
+  assert.equal(countOf(w, "fileComments", "status"), asks);
+});
+
+test("Accept refused store-moved by a track-edit that ALSO rewrote the file: the fresh status re-fetches the bytes (the refusal named only the sidecar), and the retry's reply, carrying the same mtime, asks no second fetch", async (t: TestContext) => {
+  const w = world({ deferReload: true }); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ hunks: [h1, h3, h5] }));
+  act(card(aside, "chg:h1")!, "fcaccept", "h1")!.click(); await flush();
+  const first = lastOf(w, "fileComments", "accept");
+  // the session's track-edit on ANOTHER passage: the sidecar and the file both moved; h1 reads as it did
+  w.disk = DOC.replace("Next steps", "Next step"); w.diskMtime = F11;
+  refuse(w, first, "store-moved", MOVED_STORE); await flush();
+  const fresh = status({ fileMtimeNs: F11, storeMtimeNs: S9, hunks: [h1, h3, { ...h5, curFrom: h5.curFrom - 1, curTo: h5.curTo - 1 }],
+    store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage] } });
+  answer(w, fresh); await flush(); await flush();
+  assert.equal(w.reloads, 1, "the file moved too: its bytes are asked for on the fresh status's mtime, not on the refusal's code");
+  assert.ok(w.landReload, "…and are still in flight");
+  assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the wait wears the loader");
+  assert.equal(marksOf(w).length, 0, "nothing is painted over the old bytes meanwhile");
+  const retry = lastOf(w, "fileComments", "accept");
+  assert.notEqual(retry.reqId, first.reqId, "h1 reads as the card showed it: the one retry goes");
+  assert.equal(retry.fence.storeMtimeNs, S9);
+  answer(w, status({ fileMtimeNs: F11, storeMtimeNs: S12, hunks: [h3, { ...h5, curFrom: h5.curFrom - 1, curTo: h5.curTo - 1 }],
+    store: { ...NO_COMMENTS, suggestions: [SUGG[1]], comments: [passage] }, unsent: { comments: [passage.id], replies: [], accepted: 1, rejected: 0, watermark: null } }),
+    retry, { accepted: ["h1"] }); await flush(); await flush();
+  assert.equal(w.reloads, 1, "the same file mtime again: one fetch, not two (the retry path used to issue two un-sequenced ones)");
+  w.landReload!(); await flush();
+  assert.equal(w.viewMtime, F11);
+  assert.equal(aside.querySelectorAll(".fc-load").length, 0, "the wait is over");
+  assert.equal(card(aside, "chg:h1"), null, "decided");
+  assert.ok(marksOf(w, "h5").some((x) => x.textContent === " again"), "the remaining change is marked over the new text");
+});
+
+test("the poll's file move: the HEAD asks the fetch on the mtime it saw, and the status that follows, knowing the same mtime, asks no second one", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const w = world({ deferReload: true }); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ hunks: [h1, h3, h5] }));
+  w.disk = DOC.replace("Risks remain", "Risks still remain"); w.diskMtime = F11; w.mtimes[ABS] = F11;
+  const asks = countOf(w, "fileComments", "status");
+  t.mock.timers.tick(2500); await flush(); await flush(); await flush();
+  assert.equal(countOf(w, "fileComments", "status"), asks + 1, "the poll re-read status");
+  assert.equal(w.reloads, 1, "the poll asked for the bytes");
+  answer(w, status({ fileMtimeNs: F11, storeMtimeNs: S2, hunks: [h1, h3, shifted(h5, 6)] })); await flush(); await flush();
+  assert.equal(w.reloads, 1, "the status knows the same mtime: no second fetch");
+  assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the status's text is not on screen yet: the wait wears the loader");
+  w.landReload!(); await flush();
+  assert.equal(aside.querySelectorAll(".fc-load").length, 0);
+  assert.ok(marksOf(w, "h5").some((x) => x.textContent === " again"));
 });
 
 // ── the keyboard on a painted mark ─────────────────────────────────────────────────────────────────

@@ -470,7 +470,7 @@ test("the poll's HEAD targets: the file, the sidecar the kernel named, config.js
   assert.match(SRC, /if \(paneHidden\(\)\) \{ this\.tickSkipped = true; return; \}/);
   assert.match(SRC, /document\.addEventListener\("visibilitychange", this\.catchUp\);\n\s*window\.addEventListener\("resize", this\.catchUp\);/);
   assert.match(SRC, /this\.base = pollBaseline\(s\);/, "every fileCommentsResult re-baselines the poll — the person's own writes never fire it");
-  assert.match(SRC, /if \(fileMoved\) this\.ctx\.reload\(\);/);
+  assert.match(SRC, /if \(fileNow !== null\) this\.askReload\(fileNow\);/, "the file moved: one fetch, keyed on the mtime the HEAD saw, so the status that follows asks no second");
   assert.match(SRC, /this\.stopped\.add\(target\);/);
 });
 
@@ -730,8 +730,8 @@ test("every mutating verb: consent first, a fence from the current status, one r
     '"" means the file must not exist yet — two browsers cannot both create it');
   assert.match(once, /if \(FILE_VERBS\.has\(verb\)\) fence\.fileMtimeNs = s \? s\.fileMtimeNs : "";/, "the file-writing verbs (reject, reject-all) also fence on the file's mtime (Slice 2)");
   assert.match(once, /if \(!retried && e\.code === "editing-off"\) \{\n\s*if \(await this\.ctx\.ensureEditingAllowed\(e\.error\)\) return this\.mutateOnce\(verb, args, slot, true\);/);
-  assert.match(once, /\} else if \(!retried && MOVED\.has\(e\.code\)\) \{\n\s*await this\.refresh\(\);\n\s*if \(e\.code === "file-moved"\) this\.ctx\.reload\(\);[^\n]*\n\s*return this\.mutateOnce\(verb, args, slot, true\);/,
-    "a moved fence: fresh status (and the file's bytes when the file moved), then one retry");
+  assert.match(once, /\} else if \(!retried && MOVED\.has\(e\.code\)\) \{\n\s*await this\.refreshAfterMoved\(e\.code\);\n\s*return this\.mutateOnce\(verb, args, slot, true\);/,
+    "a moved fence: fresh status (whose file mtime re-fetches the bytes when they moved — applyStatus), then one retry");
   assert.match(once, /this\.errors\.set\(slot, \{ text: e\.error, reload: MOVED\.has\(e\.code\) \}\);/, "a second refusal shows verbatim; moved fences offer Reload");
   assert.match(SRC, /const MOVED = new Set\(\["store-moved", "file-moved", "config-moved"\]\);/);
   for (const verb of ['"set-tracked", { on: true, scope: "file" }', '"set-tracked", { on: true, scope: "folder" }', '"set-tracked", { on: false, scope: "folder" }',

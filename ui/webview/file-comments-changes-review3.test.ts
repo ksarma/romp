@@ -383,7 +383,7 @@ test("seenChanges and changedSince: a change is 'grown' when its id is still pen
 
 // ── a by-id decision over a change that grew ───────────────────────────────────────────────────────
 
-test("Accept refused store-moved, the change grown under its id by the session's coalesced track-edit: no retry, the row under the card says nothing was decided, the card shows the new reading, and a second click decides over it", async (t: TestContext) => {
+test("Accept refused store-moved, the change grown under its id by the session's coalesced track-edit: no retry, the row under the card says nothing was decided, the card shows the new reading over the re-fetched bytes, and a second click decides over it", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
   assert.equal(card(aside, "chg:h1")!.querySelector(".fc-ref")!.textContent, "reduced → cut", "what the person clicked on");
@@ -391,10 +391,15 @@ test("Accept refused store-moved, the change grown under its id by the session's
   const first = lastOf(w, "fileComments", "accept");
   assert.deepEqual(first.args, { ids: ["h1"] });
   assert.equal(first.fence.storeMtimeNs, S2);
+  // the session's track-edit landed: the sidecar h1 grown AND the file holding "cut sharply" — the refusal names the sidecar
+  w.disk = DOC_GROWN; w.diskMtime = F11;
   refuse(w, first, "store-moved", MOVED_STORE); await flush();
   // the fresh status: h1 still pending under its id, its new text now "cut sharply"
   answer(w, grownStatus()); await flush(); await flush();
   assert.equal(countOf(w, "fileComments", "accept"), 1, "no retry: the id names a change the person has not seen");
+  assert.equal(w.reloads, 1, "the file moved with the sidecar: the fresh status's mtime re-fetches the bytes (before, a store-moved left the old text up with no marks)");
+  assert.equal(w.viewMtime, F11);
+  assert.ok(marksOf(w, "h1").some((m) => m.textContent === "cut sharply"), "the grown change is marked over the new bytes");
   const c1 = card(aside, "chg:h1")!;
   assert.equal(c1.querySelector(".fc-ref")!.textContent, "reduced → cut sharply", "the card shows the new reading");
   const row = rowOf(aside, "change:h1")!;
