@@ -187,6 +187,52 @@ export function trackedClosure(vaultRoot) {
   return out;
 }
 
+// Files a TRACKED EDIT must never touch. track-edit reads a file as UTF-8 text and
+// writes the text back, which destroys any file that is not text (an image
+// decoded with replacement characters is re-encoded over the original). So
+// track-edit refuses these by name before reading a byte, and the guard hook
+// lets the raw tools through for them instead of steering the agent to
+// track-edit — a tracked image or PDF can only be regenerated, never edited as
+// text. The list is names only, because the guard runs on every Edit/Write in
+// every session and must stay cheap; hasNulBytes is the byte-level check for a
+// binary file under a text-looking name, used once a file is known to be tracked.
+export const NON_TEXT_EXTENSIONS = new Set((
+  // images
+  'png jpg jpeg gif webp bmp ico tif tiff heic heif avif psd'
+  // documents and books
+  + ' pdf doc docx xls xlsx ppt pptx odt ods odp odg epub pages numbers key'
+  // archives
+  + ' zip gz tgz bz2 tbz xz zst lz4 7z rar tar jar war ear'
+  // audio and video
+  + ' mp3 mp4 m4a m4v aac wav ogg oga ogv flac mov avi mkv webm wmv'
+  // fonts
+  + ' ttf otf woff woff2 eot'
+  // executables, objects, bundles
+  + ' exe dll so dylib o a bin class pyc pyo pyd wasm iso dmg'
+  // binary data and model files
+  + ' sqlite sqlite3 db parquet arrow feather npy npz pkl pickle h5 hdf5 pt pth onnx safetensors ckpt gguf'
+).split(' '));
+
+export function isNonTextPath(file) {
+  const ext = path.extname(String(file == null ? '' : file)).slice(1).toLowerCase();
+  return ext !== '' && NON_TEXT_EXTENSIONS.has(ext);
+}
+
+// True when the first 8 KB of an EXISTING file contain a NUL byte — text never
+// does, binaries almost always do. Absent or unreadable → false: the caller's
+// own read then decides.
+export function hasNulBytes(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(8192);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, n).includes(0);
+  } catch { return false; } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
+  }
+}
+
 export function isTrackedFile(vaultRoot, file) {
   const rel = relPathFor(vaultRoot, file);
   if (engine.isTracked(untrackedPaths(vaultRoot), rel)) return false;   // veto wins
@@ -542,22 +588,38 @@ export function recordAgentEdit(vaultRoot, file, preText, ch, author, now, autho
 // thread into a fresh live store so the conversation continues;
 // everything else in the park stays archived. Returns the store or null.
 export function reviveThreadFromSuperseded(vaultRoot, file, threadId, currentText) {
-  const storePath = storePathFor(vaultRoot, file);
-  let parked = null;
-  try { parked = JSON.parse(fs.readFileSync(storePath + '.superseded', 'utf8')); }
-  catch { return null; }
-  const thread = ((parked && parked.comments) || [])
-    .find((c) => c && String(c.id) === String(threadId));
-  if (!thread) return null;
   const store = {
     v: 3,
     path: relPathFor(vaultRoot, file),
     suggestions: [],
-    comments: [{ ...thread, resolved: false }],
+    comments: [],
     detached: [],
   };
-  saveStore(vaultRoot, storePath, store, currentText == null ? '' : currentText);
+  if (!reviveThreadInto(vaultRoot, file, threadId, store)) return null;
+  saveStore(vaultRoot, storePathFor(vaultRoot, file), store, currentText == null ? '' : currentText);
   return store;
+}
+
+// The same revive INTO a store that is already live, in place and without
+// saving: the parked thread is appended to `store.comments` (reopened) and
+// everything else in the store — its pending suggestions, its other
+// comments — is kept. Use this when a live store exists but lacks the
+// thread; reviveThreadFromSuperseded is only for the no-live-store case,
+// because it builds a fresh store with an EMPTY suggestion list, and saving
+// that over a live sidecar erased every pending change (a track-edit
+// --thread reply used to erase the very op it had just recorded). Returns
+// true when the thread was found in the park and added, false otherwise.
+export function reviveThreadInto(vaultRoot, file, threadId, store) {
+  const storePath = storePathFor(vaultRoot, file);
+  let parked = null;
+  try { parked = JSON.parse(fs.readFileSync(storePath + '.superseded', 'utf8')); }
+  catch { return false; }
+  const thread = ((parked && parked.comments) || [])
+    .find((c) => c && String(c.id) === String(threadId));
+  if (!thread) return false;
+  if (!Array.isArray(store.comments)) store.comments = [];
+  store.comments.push({ ...thread, resolved: false });
+  return true;
 }
 
 export function addThreadEditTurn(vaultRoot, file, threadId, author, oldText, newText, now, currentText, opId, authorId) {

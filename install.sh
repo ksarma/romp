@@ -85,6 +85,39 @@ for h in romp-summarize.sh romp-postal-drain.sh romp-postal-ensure.sh \
 done
 echo "  Symlinked romp hooks into ~/.claude/hooks/"
 
+# The agent-side tooling for file comments and tracked changes, from the track-changents copy
+# vendored under vendor/track-changents/ (its README lists the pin and the patches): the four CLIs
+# and the guard hook into ~/.claude/hooks/, the skill into ~/.claude/skills/. The skill and the
+# messages romp sends to a session name the CLIs by these exact ~/.claude/hooks/ paths, so the
+# links are load-bearing; node resolves each CLI's relative imports through the link's realpath, so
+# they find the vendored store-io.mjs. A link left by track-changents' own installer points at a
+# checkout of that project: it is re-pointed at the vendored copy, which carries fixes the checkout
+# lacks, and the change is reported. A real file or directory of the same name is someone's own
+# and is left alone, with a notice. Registered as a PreToolUse hook by the merge below.
+_tc="$ROMP_DIR/vendor/track-changents"
+_tc_replaced=""
+_link_tc() {   # $1 = target in the vendored copy, $2 = link path under ~/.claude
+    local target="$1" link="$2" was
+    if [ -e "$link" ] && [ ! -L "$link" ]; then
+        echo "  NOTE: ~/${link#"$HOME/"} is a real file, not a link — left alone (romp's copy: $target)"
+        return
+    fi
+    if [ -L "$link" ]; then
+        was="$(readlink "$link")"
+        [ "$was" = "$target" ] || _tc_replaced="$_tc_replaced $(basename "$link") (was $was)"
+    fi
+    ln -sfn "$target" "$link"
+}
+for tc in track-edit track-comment track-reply track-config; do
+    _link_tc "$_tc/cli/$tc.mjs" "$HOME/.claude/hooks/$tc.mjs"
+done
+_link_tc "$_tc/hooks/track-guard.mjs" "$HOME/.claude/hooks/track-guard.mjs"
+_link_tc "$_tc/skill" "$HOME/.claude/skills/tracked-changes"
+echo "  Symlinked the tracked-changes tooling (track-edit/comment/reply/config, the guard, the skill) from vendor/track-changents/"
+if [[ -n "$_tc_replaced" ]]; then
+    echo "  Replaced links from another track-changents install with romp's vendored copy:$_tc_replaced"
+fi
+
 # Install the git pre-push identifier hook. Symlinked into the SHARED git hooks
 # dir (git rev-parse --git-common-dir), so it fires from every worktree; the hook
 # self-locates the tree being pushed. ROMP_GITHOOK_DIR overrides the target (the
@@ -133,6 +166,11 @@ WANT = {  # event -> [(hook script, timeout secs, async)]
     "PostCompact":      [("tmux-status.sh", 5, False),
                          ("romp-wake.sh", 5, True)],     # compaction ended → wake the drain; the op behind a /compact fires once
                                                           # the compaction is corroborated in the transcript
+    # The tracked-changes guard (vendor/track-changents/hooks/track-guard.mjs, linked above): denies
+    # a raw Write/Edit on a tracked file and points the session at track-edit. Its fourth field is a
+    # MATCHER, so it lands in a group of its own; a deny must block, so it is synchronous; and it
+    # exits at once in any session romp did not launch (no ROMP_SID in the environment).
+    "PreToolUse":       [("track-guard.mjs", 10, False, "Write|Edit|MultiEdit")],
 }
 
 try:
@@ -145,17 +183,24 @@ hooks = settings.setdefault("hooks", {})
 added = []
 for event, entries in WANT.items():
     groups = hooks.setdefault(event, [])
-    registered = {h.get("command") for g in groups for h in g.get("hooks", [])}
-    target = next((g for g in groups if not g.get("matcher")), None)
-    if target is None:
-        target = {"hooks": []}
-        groups.append(target)
-    for name, timeout, is_async in entries:
-        cmd = "~/.claude/hooks/" + name
-        if cmd in registered:
+    # Presence is judged by the script's basename, so an entry another installer wrote with an
+    # expanded home path (track-changents' own writes $HOME/.claude/hooks/track-guard.mjs) counts as
+    # registered and is not doubled. Every whitespace token of a command contributes its basename,
+    # so `node <path>` forms count too.
+    registered = {os.path.basename(tok) for g in groups for h in g.get("hooks", [])
+                  for tok in str(h.get("command", "")).split()}
+    for name, timeout, is_async, *rest in entries:
+        matcher = rest[0] if rest else None
+        if name in registered:
             continue
+        # The group is chosen by matcher: the matcher-less one for romp's own hooks, the group with
+        # exactly this matcher for a matched entry — created only when something is added to it.
+        target = next((g for g in groups if (g.get("matcher") or None) == matcher), None)
+        if target is None:
+            target = {"matcher": matcher, "hooks": []} if matcher else {"hooks": []}
+            groups.append(target)
         target.setdefault("hooks", []).append(
-            {"type": "command", "command": cmd, "timeout": timeout, "async": is_async})
+            {"type": "command", "command": "~/.claude/hooks/" + name, "timeout": timeout, "async": is_async})
         added.append(event + ":" + name)
 
 if added:

@@ -96,13 +96,17 @@ no diff syntax, nothing but prose — but it is NOT unmodified: `track-edit` wri
 your replacement into the file and records the op alongside it, and the editor
 renders that op as an accept/reject diff in its review panel.
 
-**One session at a time per file.** There is no locking and no merge. If another
-session wrote to the file after you read it, `track-edit` REFUSES the change
-rather than applying it — recording against text that stale would discard the
-other session's suggestion, so it fails loudly instead ("The note changed since it
-was read…"). Nothing is written when that happens: re-read the file and redo your
-edit against its current contents. If you know another session is editing the same
-file, coordinate with it rather than interleaving edits.
+**One session at a time per file.** There is no locking and no merge. `track-edit`
+reads the file at run time, so `--old` is matched against the file AS IT STANDS, not
+against what you read earlier: after another session's write your `--old` may no
+longer be found (an error, nothing written), or may still match and land against
+text you have not seen. When the file changed under changes pending in the sidecar,
+`track-edit` usually DETACHES the displaced changes (they stay in the sidecar,
+shown as stale) and applies your edit anyway. It REFUSES ("The note changed since
+it was read…", nothing written) only when a displaced change is seconds old, since
+the other writer's file write may still be in flight; re-read the file and redo
+your edit against its current contents. If you know another session is editing
+the same file, coordinate with it rather than interleaving edits.
 
 The CLIs locate the project root by `.obsidian/` / `.git/` / `.trackchanges/`, so
 they work in a vault OR a plain code repo; set `TRACKCHANGES_ROOT` only if a file is
@@ -118,8 +122,10 @@ for the file named here":
   user's selection, then their message. No thread id, so answer in words in your
   normal reply and make any requested change with the right tool for that file's
   mode.
-- **`[obsidian-diff]`** — a review-panel ping about one specific change or comment:
-  the file by ABSOLUTE path, the reviewer's message, and a THREAD id.
+- **`[obsidian-diff]`** — a review-panel ping about a change or a comment: the file
+  by ABSOLUTE path, the reviewer's message, and a THREAD id. One message may list
+  several comments on the same file, each with its own thread id; address each one
+  and reply into each by its own id.
 
 A thread ping can arrive in EITHER mode — answering a thread is a conversation,
 separate from how your edits land. Respond so it lands back in that same thread:
@@ -131,6 +137,9 @@ separate from how your edits land. Respond so it lands back in that same thread:
   even when it lands away from the anchor); in normal (`off`) mode just edit the
   file directly with Edit/Write, then optionally `track-reply --thread <id>` to note
   what you changed so the thread keeps a record.
+
+When you have addressed everything in a message, ask me for another look the same
+way you asked for this one, naming the file.
 
 ## Starting fresh (a new session opened to edit a file)
 

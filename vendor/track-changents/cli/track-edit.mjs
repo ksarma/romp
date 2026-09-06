@@ -20,7 +20,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  findVaultRoot, recordAgentEdit, addThreadEditTurn, storePathFor, reviveThreadFromSuperseded,
+  findVaultRoot, recordAgentEdit, addThreadEditTurn, storePathFor, loadStore, saveStore, reviveThreadInto,
+  isNonTextPath,
 } from '../store-io.mjs';
 import { parseArgs } from './cli-args.mjs';
 
@@ -38,6 +39,17 @@ export function applyTrackedEdit(text, oldStr, newStr) {
   }
   if (oldStr === newStr) return { error: 'The --old and --new text are identical.' };
   return { text: text.slice(0, idx) + newStr + text.slice(idx + oldStr.length), from: idx, to: idx + oldStr.length };
+}
+
+// Decode a file's bytes as UTF-8 text, or return null when they are not text: a
+// NUL byte or an invalid sequence means a binary file, and applying old→new to a
+// lossy decode (what readFileSync(abs, 'utf8') returns, replacement characters
+// and all) and writing it back would destroy the file. A leading BOM is kept,
+// as readFileSync's decode kept it, so the written text equals the read text
+// outside the edited span.
+export function decodeTextOrNull(buf) {
+  if (buf.includes(0)) return null;
+  try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buf); } catch { return null; }
 }
 
 // ── CLI ─────────────────────────────────────────────────────────────
@@ -62,6 +74,14 @@ function run(argv) {
   const abs = path.resolve(args.file);
   const vaultRoot = process.env.TRACKCHANGES_ROOT || findVaultRoot(abs);
   if (!vaultRoot) fail(`Not inside an Obsidian vault: ${abs}`);
+  // A tracked edit is a text operation; on an image, a PDF or any other binary it
+  // would rewrite the file from a lossy decode. Refuse by name before reading a
+  // byte (this also covers creating one), and by content after the read below.
+  if (isNonTextPath(abs)) {
+    fail(`Refusing to edit ${abs}: ${path.extname(abs)} is not a text format, and track-edit `
+      + `rewrites a file from its UTF-8 text, which would destroy this one. Nothing was written. `
+      + `Regenerate the file with a normal write instead.`);
+  }
   let text;
   let res;
   if (!fs.existsSync(abs)) {
@@ -84,7 +104,14 @@ function run(argv) {
     text = '';
     res = { text: args.new, from: 0, to: 0 };
   } else {
-    try { text = fs.readFileSync(abs, 'utf8'); } catch { fail(`Could not read ${abs}`); }
+    let buf;
+    try { buf = fs.readFileSync(abs); } catch { fail(`Could not read ${abs}`); }
+    text = decodeTextOrNull(buf);
+    if (text == null) {
+      fail(`Refusing to edit ${abs}: its contents are not UTF-8 text (${buf.includes(0) ? 'it contains a NUL byte' : 'invalid UTF-8'}), `
+        + `so a tracked edit would rewrite it from a lossy decode and destroy it. Nothing was written. `
+        + `Regenerate the file with a normal write instead.`);
+    }
     res = applyTrackedEdit(text, args.old, args.new);
     if (res.error) fail(res.error);
   }
@@ -135,9 +162,13 @@ function run(argv) {
         // The review may have CLOSED under this edit (last change
         // accepted → store parked as .superseded, thread dropped) —
         // revive the thread and retry, so the conversation continues
-        // (agent-session report 2026-08-27).
-        const revived = reviveThreadFromSuperseded(vaultRoot, abs, args.thread, res.text);
-        if (revived) {
+        // (agent-session report 2026-08-27). The live sidecar now holds
+        // the op recordAgentEdit just saved (and any other pending
+        // change), so the thread is revived INTO it: reviving into a
+        // fresh store and saving that over the sidecar erased them all.
+        const live = loadStore(storePath, res.text);
+        if (live && reviveThreadInto(vaultRoot, abs, args.thread, live)) {
+          saveStore(vaultRoot, storePath, live, res.text);
           addThreadEditTurn(vaultRoot, abs, args.thread, author, args.old, args.new, now, res.text,
             recorded && recorded.lastOpId, authorId);
         }

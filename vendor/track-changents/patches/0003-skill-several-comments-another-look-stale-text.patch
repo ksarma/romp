@@ -1,0 +1,66 @@
+# Patch 0003 — skill: several comments per message, how to ask for another look, and what track-edit does with stale text
+# Offered back: yes
+# Files: skill/SKILL.md
+#
+# Reason: three corrections to what the skill tells the agent. (1) A `[obsidian-diff]` message
+# may list SEVERAL comments on one file, each with its own thread id (romp sends one message
+# per file); the skill described a ping about one comment. (2) It never said how a round ends;
+# one sentence in the reviewer's voice asks the agent to ask for another look the same way it
+# asked for this one, naming the file. (3) The skill said track-edit REFUSES an edit when
+# another session wrote the file after the agent read it, and that nothing is written. The
+# code (store-io.mjs recordAgentEdit) reads the file at run time, matches --old against the
+# current text, usually DETACHES changes the file's new state displaces and applies the edit,
+# and refuses only when a displaced change is seconds old (a racing writer). The paragraph now
+# describes that behaviour. Pinned by the drift test only (prose).
+diff --git a/skill/SKILL.md b/skill/SKILL.md
+index 80afe4cd..e9a9bb60 100644
+--- a/skill/SKILL.md
++++ b/skill/SKILL.md
+@@ -96,13 +96,17 @@ no diff syntax, nothing but prose — but it is NOT unmodified: `track-edit` wri
+ your replacement into the file and records the op alongside it, and the editor
+ renders that op as an accept/reject diff in its review panel.
+ 
+-**One session at a time per file.** There is no locking and no merge. If another
+-session wrote to the file after you read it, `track-edit` REFUSES the change
+-rather than applying it — recording against text that stale would discard the
+-other session's suggestion, so it fails loudly instead ("The note changed since it
+-was read…"). Nothing is written when that happens: re-read the file and redo your
+-edit against its current contents. If you know another session is editing the same
+-file, coordinate with it rather than interleaving edits.
++**One session at a time per file.** There is no locking and no merge. `track-edit`
++reads the file at run time, so `--old` is matched against the file AS IT STANDS, not
++against what you read earlier: after another session's write your `--old` may no
++longer be found (an error, nothing written), or may still match and land against
++text you have not seen. When the file changed under changes pending in the sidecar,
++`track-edit` usually DETACHES the displaced changes (they stay in the sidecar,
++shown as stale) and applies your edit anyway. It REFUSES ("The note changed since
++it was read…", nothing written) only when a displaced change is seconds old, since
++the other writer's file write may still be in flight; re-read the file and redo
++your edit against its current contents. If you know another session is editing
++the same file, coordinate with it rather than interleaving edits.
+ 
+ The CLIs locate the project root by `.obsidian/` / `.git/` / `.trackchanges/`, so
+ they work in a vault OR a plain code repo; set `TRACKCHANGES_ROOT` only if a file is
+@@ -118,8 +122,10 @@ for the file named here":
+   user's selection, then their message. No thread id, so answer in words in your
+   normal reply and make any requested change with the right tool for that file's
+   mode.
+-- **`[obsidian-diff]`** — a review-panel ping about one specific change or comment:
+-  the file by ABSOLUTE path, the reviewer's message, and a THREAD id.
++- **`[obsidian-diff]`** — a review-panel ping about a change or a comment: the file
++  by ABSOLUTE path, the reviewer's message, and a THREAD id. One message may list
++  several comments on the same file, each with its own thread id; address each one
++  and reply into each by its own id.
+ 
+ A thread ping can arrive in EITHER mode — answering a thread is a conversation,
+ separate from how your edits land. Respond so it lands back in that same thread:
+@@ -132,6 +138,9 @@ separate from how your edits land. Respond so it lands back in that same thread:
+   file directly with Edit/Write, then optionally `track-reply --thread <id>` to note
+   what you changed so the thread keeps a record.
+ 
++When you have addressed everything in a message, ask me for another look the same
++way you asked for this one, naming the file.
++
+ ## Starting fresh (a new session opened to edit a file)
+ 
+ If you're a new session and the first thing you're handed is a request to edit a
