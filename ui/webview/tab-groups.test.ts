@@ -190,7 +190,7 @@ test("executed + pinned: the section holding the ACTIVE tab is unfoldable while 
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
   assert.match(head, /function makeGroupHead\(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string\[\]\): HTMLElement \{/);
   assert.match(head, /head\.dataset\.act = holdsActive \? "group-active" : "toggle-group";/);
-  assert.match(head, /\? `\$\{name\} — this group holds the active tab; drag to reorder the groups`/);
+  assert.match(head, /\? `\$\{name\} — \$\{total\} session\$\{total === 1 \? "" : "s"\}; holds the active tab, so it stays open; drag to reorder the groups`/);
   assert.match(head, /\+ \(holdsActive \? " holds-active" : ""\)\);/);
   assert.match(head, /head\.draggable = true;/, "it still drags to reorder the groups");
   const del = RENDER.slice(RENDER.indexOf('"group-active": () => {'), RENDER.indexOf('"group-active": () => {') + 120);
@@ -239,19 +239,19 @@ test("executed: the header click sets the fold state from what it RENDERED — n
     "rendered open → fold; rendered folded → open");
 });
 
-test("a folded section renders its header alone with a count + one pip by the TAB's state rule; cycling skips folded ids", () => {
+test("a folded section renders its header alone with the folded-away count and NO pip — a label, not a session; cycling skips folded ids", () => {
   assert.match(RENDER, /function visibleOrder\(\): string\[\] \{ return order\.filter\(\(id\) => tabInView\(id\) && !collapsedTabIds\.has\(id\)\); \}/,
     "every cycling path walks visibleOrder (session-views.test pins the three callers)");
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
-  assert.match(head, /n\.textContent = String\(hidden\.length\);/, "the count: the folded-away members");
-  assert.match(head, /const kind = sectionPip\(hidden\.map\(\(id\) => sessions\.get\(id\)\?\.status\)\);/,
-    "one summary pip, classified by tab-state.ts — the same rule the tab itself wears (tab-state.test)");
-  assert.match(head, /pip\.title = SECTION_PIP_TITLE\[kind\];/);
+  assert.match(head, /n\.textContent = String\(collapsed \? hidden\.length : total\);/, "the count: every member when open, the folded-away members when folded");
+  assert.ok(!head.includes("sectionPip(") && !head.includes("tab-group-pip"),
+    "no summary pip: a status dot beside a name is a session's dress (the user 2026-09-06); a member's state shows on its own tab, and a need under the fold is the flag's job");
   assert.ok(!head.includes('"tab-dot"'), "never a .tab-dot — the kernel's mobile scrape keys on the tab pips' vocabulary");
   assert.match(head, /const sep = el\("div", "tab-group-sep"\);/, "the untagged trail is UNLABELED (the ruling): a separator, not a header");
-  // the tab's own class comes from the same function
+  // the tab's own class comes from tab-state.ts, which no longer exports a header rule
   assert.match(RENDER, /const stateCls = tabStateClass\(s\.status\);\s*\n\s*if \(stateCls\) tab\.classList\.add\(stateCls\);/);
-  assert.match(CSS, /\.tab-group-pip\.retrying \{ background: #e67e22; \}/, "amber, the tab's .tab-retrying hue");
+  assert.doesNotMatch(ui("webview", "tab-state.ts"), /sectionPip|SECTION_PIP_TITLE/, "the pip rule went with the pip");
+  assert.doesNotMatch(CSS, /\.tab-group-pip/, "and no pip rule remains in the sheet");
 });
 
 test("row hairlines count section headers and the separator as row members (T134's floating look must not return)", () => {
@@ -334,115 +334,56 @@ test("the picker's Tags row: prefilled from the ACTIVE tab, visible and editable
   assert.match(RENDER, /tgWrapEl\.style\.display = pick \|\| !unions\.length \? "none" : "";/, "hidden with no tags to offer, and in pick-mode");
 });
 
-test("the section chrome reuses the strip's type sizes — labels match labels (font-size rule)", () => {
+test("the section chrome is a LABEL's (the user 2026-09-06): the surface's sub-line size, letter-spaced, ONE size for its text, a bar not a dot", () => {
   const head = CSS.match(/\.tab-group-head \{[^}]*\}/)![0];
-  const tab = CSS.match(/^\.tab \{[\s\S]*?\n\}/m)![0];
-  assert.equal(head.match(/font-size: ([\d.]+em)/)![1], tab.match(/font-size: ([\d.]+em)/)![1], "the header wears the tab's size");
-  assert.match(CSS, /\.tab-group-count \{ font-size: 0\.82em; opacity: 0\.7; \}/, "the count at the sub-line size every menu uses");
-  assert.match(CSS, /\.tab-group-dot \{ flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%;/, "the tab pip's 7px dot");
-  assert.match(CSS, /\.tab-group-pip\.blocked \{ background: var\(--st-blocked-bg\); \}/, "status colours keep their meaning");
+  assert.match(head, /font-size: 0\.82em;/, "0.82em is already on the surface (the menus' sub-lines, the ctx-item sub-line) — no new size (ui/CLAUDE.md)");
+  assert.match(head, /letter-spacing: 0\.04em;/);
+  assert.match(head, /color: var\(--dim\);/);
+  assert.match(CSS, /\.tab-group-count \{ opacity: 0\.7; \}/, "the count inherits the header's size — no em nested inside an em");
+  assert.match(CSS, /\.tab-group-name \{ font-weight: 600; \}/);
+  assert.match(CSS, /\.tab-group-swatch \{ flex: 0 0 auto; width: 3px; height: 12px; border-radius: 1px; background: var\(--dim\); \}/,
+    "the tag's colour as a short bar — a 7px dot beside a name is a session pip");
+  assert.doesNotMatch(CSS, /\.tab-group-dot/, "the dot is gone");
+  const sizes = new Set(Array.from(CSS.matchAll(/\n\.tab-group-[^{\n]*\{[^}]*font-size: ([^;]+);/g)).map((m) => m[1]));
+  assert.deepEqual([...sizes], ["0.82em"], "one font-size across every section rule (the flag's glyph keeps the tab glyph's own class)");
   assert.match(CSS, /\.tab-group-sep \{ flex: 0 0 auto; box-sizing: border-box; width: 13px; padding: 8px 6px;/, "a 1px line inside 6px gutters (padding, so its rect is its footprint)");
 });
 
-// SHOW WHEN FOLDED (the user 2026-09-06): a member pinned to its section keeps its tab on the strip
-// under the folded header, in strip order; the header stands in for the HIDDEN members alone — its
-// count and its user-todo flag read those, never a tab already on screen. A view preference like the
-// fold, stored beside it under romp:tabgroups, keyed by (tag id, sid). The toggle is a row in the tab
-// menu's Tags flyout beside the "Move to" rows.
-const VP = { ...V, tags: [...V.tags, { id: "g4", name: "archived", color: "#6b7280", members: ["old1", "old2", "old3"] }] };
-const headsOf = (p: ReturnType<typeof planStrip>) =>
-  p.items.filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[] } => "head" in i);
-
-test("executed: a folded section with one PINNED member renders the header, then that member; the hidden ids alone fold away", () => {
-  const unions = viewTagUnion(VP);
-  const st = setPinned(parseTabGroups(null), "g4", "old2", true);
-  assert.equal(isPinned(st, "g4", "old2"), true);
-  assert.deepEqual(st.pinned, [{ tag: "g4", sid: "old2" }], "keyed by (tag id, sid)");
-  const p = planStrip(["web", "old1", "old2", "old3", "loose"], unions, st, "web", false);
-  assert.deepEqual(p.items.map((i) => ("head" in i ? `#${i.head.name}${i.folded ? "(folded)" : ""}` : i.id)),
-    ["#infra", "web", "#archived(folded)", "old2", "#null", "loose"], "the header, then the pinned member in its place; old1/old3 stay folded");
-  const arch = headsOf(p).find((h) => h.head.name === "archived")!;
-  assert.deepEqual(arch.hidden, ["old1", "old3"], "what the header stands in for");
-  assert.deepEqual([...p.folded], ["old1", "old3"], "keyboard cycling skips the hidden ones only — the pinned tab is reachable");
-  // the section key is the tag's stored id, so a pin follows the tag and not its spelling
-  assert.equal(arch.head.key, "g4");
-  assert.equal(sectionKey(unions.find((u) => u.name === "archived")!), "g4");
-  assert.equal(sectionKey({ name: "remotepool", color: "", members: [], ids: ["TESTHOST-A:r1"], localId: null, remotes: [] }), "TESTHOST-A:r1",
-    "a remote-only tag keys by its first remote id");
-  // an open section: nothing hidden, pins irrelevant
-  assert.deepEqual(headsOf(planStrip(["old1", "old2"], unions, st, "old1", false))[0].hidden, []);
-});
-
-test("executed: the folded header's user-todo flag counts HIDDEN members only — a pinned member's own tab shows its glyph", () => {
-  const unions = viewTagUnion(VP);
-  const sessions = new Map([
-    ["old1", { name: "old1", userTodos: [] as { id: string; text: string }[] }],
-    ["old2", { name: "old2", userTodos: [{ id: "t1", text: "synthetic need" }] }],
-    ["old3", { name: "old3", userTodos: [{ id: "t2", text: "another synthetic need" }] }],
-  ]);
-  const st0 = parseTabGroups(null);
-  const all = headsOf(planStrip(["web", "old1", "old2", "old3"], unions, st0, "web", false)).find((h) => h.head.name === "archived")!;
-  assert.deepEqual(sectionTodoFlag(all.hidden.map((id) => sessions.get(id))), { count: 2, names: ["old2", "old3"] }, "nothing pinned: both count");
-  const st = setPinned(st0, "g4", "old2", true);
-  const some = headsOf(planStrip(["web", "old1", "old2", "old3"], unions, st, "web", false)).find((h) => h.head.name === "archived")!;
-  assert.deepEqual(sectionTodoFlag(some.hidden.map((id) => sessions.get(id))), { count: 1, names: ["old3"] }, "old2 is on the strip: its own tab carries the glyph");
-  const both = setPinned(st, "g4", "old3", true);
-  const none = headsOf(planStrip(["web", "old1", "old2", "old3"], unions, both, "web", false)).find((h) => h.head.name === "archived")!;
-  assert.equal(sectionTodoFlag(none.hidden.map((id) => sessions.get(id))), null, "every flagged member shown → no header flag");
-  // render.ts reads the plan's hidden list for the count, the pip and the flag alike
+test("the header's structure and gestures read as a label: chevron (flips with the fold) → colour bar → name → count; a keyboard button; hover/focus say fold, never open; tokens only (the user 2026-09-06)", () => {
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
-  assert.match(head, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => sessions\.get\(id\)\)\);/);
-  assert.match(head, /n\.textContent = String\(hidden\.length\);/);
-  assert.match(head, /\$\{hidden\.length\} session\$\{hidden\.length === 1 \? "" : "s"\} folded; click to open/, "the title counts the folded-away members too");
-});
-
-test("executed: the pin persists with the fold state under romp:tabgroups, survives the fold writes, and junk entries drop; unpin hides the tab again", () => {
-  const d = parseTabGroups(null);
-  const on = togglePinned(d, "g4", "old2");
-  assert.deepEqual(on, { on: true, collapsed: [], expanded: [], pinned: [{ tag: "g4", sid: "old2" }] });
-  assert.deepEqual(setSectionCollapsed(on, "infra", true).pinned, on.pinned, "a fold write carries the pins through");
-  assert.deepEqual(toggleSectionCollapsed(on, "archived").pinned, on.pinned);
-  const off = togglePinned(on, "g4", "old2");
-  assert.deepEqual(off, d, "toggling back drops the entry");
-  assert.deepEqual(setPinned(setPinned(d, "g4", "old2", true), "g4", "old2", true).pinned, [{ tag: "g4", sid: "old2" }], "set on twice: one entry");
-  assert.deepEqual(parseTabGroups('{"pinned":[{"tag":"g4","sid":"old2"},{"tag":3,"sid":"x"},"junk",null,{"tag":"g1"}]}').pinned,
-    [{ tag: "g4", sid: "old2" }], "only well-formed (tag, sid) pairs survive a read");
-  assert.deepEqual(parseTabGroups('{"pinned":"nope"}').pinned, []);
-  // round trip through the store
-  const store = new Map<string, string>();
-  const g: any = globalThis;
-  const savedLS = g.localStorage;
-  g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
-  try {
-    writeTabGroups(on);
-    assert.deepEqual(readTabGroups().pinned, [{ tag: "g4", sid: "old2" }]);
-    writeTabGroups(off);
-    assert.deepEqual(readTabGroups().pinned, [], "unpinned: gone from the store");
-  } finally {
-    g.localStorage = savedLS;
-  }
-  // unpin → the plan hides the tab again
-  const unions = viewTagUnion(VP);
-  const shown = planStrip(["web", "old1", "old2"], unions, on, "web", false);
-  assert.ok(shown.items.some((i) => "id" in i && i.id === "old2"), "pinned: on the strip");
-  const hidden = planStrip(["web", "old1", "old2"], unions, off, "web", false);
-  assert.ok(!hidden.items.some((i) => "id" in i && i.id === "old2"), "unpinned: folded away again");
-  assert.deepEqual([...hidden.folded], ["old1", "old2"]);
-});
-
-test("the toggle is a row in the tab menu's Tags flyout beside the Move-to rows: the home tag's chip, ✓ when on, the fold's own write and render path (source pins)", () => {
-  const fly = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), RENDER.indexOf("// New tag… — an inline input"));
-  const pin = fly.slice(fly.indexOf("// SHOW WHEN FOLDED"));
-  assert.ok(fly.indexOf('lb.textContent = "Move to " + g.name') < fly.indexOf("// SHOW WHEN FOLDED"), "after the Move-to rows, before New tag…");
-  assert.match(pin, /if \(home\) \{\s*\n\s*const key = sectionKey\(home\);\s*\n\s*const on = isPinned\(readTabGroups\(\), key, id\);/,
-    "only with a home tag (there is no fold to show through otherwise); keyed by the home tag's id");
-  assert.match(pin, /const row = el\("div", "ctx-item ctx-item-toggle ctx-item-pin" \+ \(on \? " current" : ""\)\);/, "the menus' ✓ mark when on");
-  assert.match(pin, /chip\.style\.background = home\.color \|\| "var\(--dim\)"; row\.appendChild\(chip\);/, "the home tag's chip, like its neighbours");
-  assert.match(pin, /lb\.textContent = "Show when folded";/);
-  assert.match(pin, /writeTabGroups\(togglePinned\(readTabGroups\(\), key, id\)\); build\(\);/,
-    "the write notifies (TABGROUPS_EVENT → renderTabs) and the flyout repaints its ✓ — no renderTabs() call of its own");
-  assert.doesNotMatch(pin, /renderTabs\(\)|setTimeout/);
-  // the phone layout's flat strip has no fold to show through: the plan ignores pins there (no-op by construction)
-  const p = planStrip(["web", "old1", "old2"], viewTagUnion(VP), setPinned(parseTabGroups(null), "g4", "old2", true), "web", true);
-  assert.deepEqual(p.items, [{ id: "web" }, { id: "old1" }, { id: "old2" }]);
+  const at = (t: string) => { const i = head.indexOf(t); assert.ok(i >= 0, "present: " + t); return i; };
+  assert.ok(at('el("span", "tab-group-caret")') < at('el("span", "tab-group-swatch")')
+    && at('el("span", "tab-group-swatch")') < at('el("span", "tab-group-name")')
+    && at('el("span", "tab-group-name")') < at('el("span", "tab-group-count")'), "chevron, bar, name, count");
+  assert.match(head, /caret\.textContent = "▸";/);
+  assert.match(CSS, /\.tab-group-head:not\(\.collapsed\) \.tab-group-caret \{ transform: rotate\(90deg\); \}/,
+    "the fold state flips it — the sheet's fold-caret idiom, a CSS transition, no timer");
+  assert.match(CSS, /\.tab-group-caret \{[^}]*transition: transform 0\.12s ease;/);
+  assert.match(head, /if \(sec\.color\) swatch\.style\.background = sec\.color;/, "the tag's colour from the views store");
+  // none of a tab's affordances
+  assert.ok(!head.includes("tab-close") && !head.includes("tabStateClass(") && !head.includes("tab-dot") && !head.includes("tabCtxGauge("),
+    "no close, no state class, no pip, no gauge");
+  // keyboard: a button to the keyboard, through the same click → delegate path as the pointer; the active
+  // tab's header (no fold action) is not a tab stop
+  assert.match(head, /head\.setAttribute\("role", "button"\);\s*\n\s*head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);/);
+  assert.match(head, /if \(!holdsActive\) \{\s*\n\s*head\.tabIndex = 0;\s*\n\s*head\.addEventListener\("keydown", \(e\) => \{ if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \} \}\);/);
+  // a push mid-read must not kick focus off the header: renderTabs re-focuses the same group after the rebuild
+  assert.match(RENDER, /const focusedGroup = \(\(document\.activeElement as HTMLElement \| null\)\?\.closest\("\.tab-group-head"\) as HTMLElement \| null\)\?\.dataset\.group;\s*\n\s*const refocusTab = bar\.contains\(document\.activeElement\);/,
+    "captured before the tab rule (chat-focus-model.test pins that rule's two-line shape)");
+  assert.match(RENDER, /if \(h && h\.tabIndex >= 0\) h\.focus\(\); else focusActiveTab\(\);/, "…falling back to the active tab when the group is gone or now holds it");
+  // hover/focus: the label brightens and the chevron takes the accent — no row wash (that reads "select me")
+  assert.match(CSS, /\.tab-group-head:hover, \.tab-group-head:focus-visible \{ color: var\(--fg\); \}/);
+  assert.match(CSS, /\.tab-group-head:hover \.tab-group-caret, \.tab-group-head:focus-visible \.tab-group-caret \{ color: var\(--accent\); \}/);
+  for (const m of CSS.matchAll(/\n\.tab-group-head:hover[^{\n]*\{([^}]*)\}/g)) assert.doesNotMatch(m[1], /background/, "no wash on hover");
+  assert.match(CSS, /\.tab-group-head:focus-visible \{ outline: 1px solid var\(--accent\); outline-offset: -1px; \}/);
+  assert.match(head, /head\.draggable = true;/, "still drags to reorder the groups");
+  assert.match(head, /head\.dataset\.act = holdsActive \? "group-active" : "toggle-group";/, "…and still folds through the delegate");
+  // theme: every section rule resolves through tokens — no raw hex or rgba — so the light theme needs no
+  // override, and the tokens are ones the strip already wears (theme-parity.test.ts checks --fg/--dim/
+  // --accent against --bg in both themes)
+  const rules = Array.from(CSS.matchAll(/\n(\.tab-group-[^{\n]*)\{([^}]*)\}/g));
+  assert.ok(rules.length >= 12, "the section rules were found: " + rules.length);
+  for (const [, sel, body] of rules) assert.doesNotMatch(body.replace(/var\([^)]*\)/g, "V"), /#[0-9a-fA-F]{3,8}\b|rgba?\(/, "a raw colour in " + sel.trim());
+  const toks = new Set((rules.map((m) => m[2]).join(" ").match(/var\((--[a-z-]+)/g) || []).map((m) => m.slice(4)));
+  for (const t of toks) assert.ok(["--fg", "--dim", "--accent", "--accent-wash", "--box-border"].includes(t), "a token the strip does not already wear: " + t);
 });

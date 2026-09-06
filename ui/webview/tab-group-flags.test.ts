@@ -149,11 +149,10 @@ test("the flag wears the tab glyph's class and the header's count size; the butt
   assert.match(CSS, /\.tab-group-flag \{[^}]*color: var\(--fg\);[^}]*\}/, "the prose tone: a step above the header's dim label, in every theme");
   assert.match(CSS, /\.tab-group-flag \.tab-usertodo \{ color: inherit; \}/, "the glyph follows: its soft white was chosen for a coloured chip, and a header has none");
   assert.match(CSS, /\.tab-group-flag:focus-visible \{ outline: 1px solid var\(--accent\); outline-offset: 1px; \}/, "focus chrome is the accent, keyboard only");
-  const wash = CSS.match(/\.tab-close:hover \{[^}]*background: (rgba\([^)]*\));/)![1];
-  assert.match(CSS, new RegExp(`\\.tab-group-flag:hover \\{ background: ${wash.replace(/[()]/g, "\\$&")}; \\}`), "the ✕'s hover wash");
+  assert.match(CSS, /\.tab-group-flag:hover \{ background: var\(--accent-wash\); \}/, "the accent wash — the one action hover (button-vocab), themed");
   assert.doesNotMatch(CSS.match(/\.tab-group-flag \{[^}]*\}/)![0], /font-size/, "no new font-size: the glyph and count keep their own");
 });
 
 test("docs: the guide's tab-groups paragraph says a folded section keeps the flag and the click opens it", () => {
-  assert.match(GUIDE, /A folded section also keeps the ⚑ flag of any\nsession inside it that has asked you for something, with a count when several have and their\nnames on hover; click the flag to open the section\./);
+  assert.match(GUIDE, /A folded header keeps the ⚑ flag\s+of any session in it that has asked you for something; when several have, the flag shows how\s+many, and hovering it names them\. Click the flag to open the section\./);
 });

@@ -33,7 +33,7 @@ import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionKey, isPinned, togglePinned,
          reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
-import { tabStateClass, sectionPip, SECTION_PIP_TITLE, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
+import { tabStateClass, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
@@ -4718,15 +4718,18 @@ function releaseTabStrip(): void {
   if (renderPendingWhilePressed) { renderPendingWhilePressed = false; setTimeout(() => renderTabs(), 0); }
 }
 
-// A SECTION HEADER for the tab strip (tab groups on tags, the user 2026-09-04): the tag's dot and
-// name at the tab's own type size; folded, the count and one pip for the gist. It carries
-// data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip rebuilds on every
-// push) and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted union
-// order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The untagged
-// trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the loose ones
-// never read as one run. `hidden` is what a folded header stands in for — its members less the ones
-// pinned to show through the fold (planStrip) — so its count and its flag read those, never a member
-// whose own tab is on screen.
+// A SECTION HEADER for the tab strip (tab groups on tags, the user 2026-09-04). It reads as a LABEL,
+// not a session (the user 2026-09-06): a disclosure chevron that flips with the fold, the tag's colour
+// as a short bar, the name in the strip's small letter-spaced label style, and the member count — the
+// folded-away count while folded. No pip and none of a tab's affordances: no close, no state class,
+// no dot. It carries data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip
+// rebuilds on every push), is a button to the keyboard too (Enter or Space fold and open; the chevron
+// says which), and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted
+// union order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The
+// untagged trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the
+// loose ones never read as one run. `hidden` is what a folded header stands in for — its members less
+// the ones pinned to show through the fold (planStrip) — so its count and its flag read those, never a
+// member whose own tab is on screen.
 function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string[]): HTMLElement {
   if (sec.name === null) {
     const sep = el("div", "tab-group-sep");
@@ -4745,30 +4748,34 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   // (data-folded), never from the store.
   head.dataset.act = holdsActive ? "group-active" : "toggle-group";
   head.dataset.folded = collapsed ? "1" : "0";
+  const total = sec.ids.length;
   head.title = holdsActive
-    ? `${name} — this group holds the active tab; drag to reorder the groups`
+    ? `${name} — ${total} session${total === 1 ? "" : "s"}; holds the active tab, so it stays open; drag to reorder the groups`
     : collapsed
       ? `${name} — ${hidden.length} session${hidden.length === 1 ? "" : "s"} folded; click to open`
-      : `${name} — click to fold this group; drag to reorder the groups`;
-  const dot = el("span", "tab-group-dot");
-  if (sec.color) dot.style.background = sec.color;
-  head.appendChild(dot);
+      : `${name} — ${total} session${total === 1 ? "" : "s"}; click to fold this group; drag to reorder the groups`;
+  // a label the keyboard can fold: Enter or Space go through the same click → delegate path as the
+  // pointer. The active tab's header has no fold action, so it is not a tab stop — a stop that does
+  // nothing is noise in the tab order.
+  head.setAttribute("role", "button");
+  head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  if (!holdsActive) {
+    head.tabIndex = 0;
+    head.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); head.click(); } });
+  }
+  const caret = el("span", "tab-group-caret");
+  caret.textContent = "▸";                       // turned down by CSS while open (.tab-group-head:not(.collapsed))
+  head.appendChild(caret);
+  const swatch = el("span", "tab-group-swatch");  // the tag's colour as a short bar — a dot beside a name is a session pip
+  if (sec.color) swatch.style.background = sec.color;
+  head.appendChild(swatch);
   const label = el("span", "tab-group-name");
   label.textContent = name;
   head.appendChild(label);
+  const n = el("span", "tab-group-count");
+  n.textContent = String(collapsed ? hidden.length : total);   // folded: the folded-away members — a pinned one shows itself
+  head.appendChild(n);
   if (collapsed) {
-    const n = el("span", "tab-group-count");
-    n.textContent = String(hidden.length);   // the folded-away members: a pinned one shows itself
-    head.appendChild(n);
-    // the folded gist: one pip by the TAB's own state rule (tab-state.ts) — red for a member blocked
-    // on you or waiting for you, gold for working, amber for an API error retrying on its own (the
-    // tab strip renders that amber too; a red pip there was a false interrupt)
-    const kind = sectionPip(hidden.map((id) => sessions.get(id)?.status));
-    if (kind) {
-      const pip = el("span", "tab-group-pip" + (kind === "working" ? "" : " " + kind));
-      pip.title = SECTION_PIP_TITLE[kind];
-      head.appendChild(pip);
-    }
     // the USER-TODO flag (the user 2026-09-06): a member tab's ⚑ — "this session flagged something
     // it needs from you" — must not vanish under a fold. Derived from the field the tab itself reads
     // (the session's userTodos, refreshed by every chat delta → renderTabs), so the frame that
@@ -4791,7 +4798,7 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
       glyph.textContent = "⚑";
       b.appendChild(glyph);
       if (flag.count > 1) {
-        const c = el("span", "tab-group-count");   // the header's own count size
+        const c = el("span", "tab-group-count");   // the header's text size (font: inherit)
         c.textContent = String(flag.count);
         b.appendChild(c);
       }
@@ -4964,6 +4971,10 @@ function renderTabs() {
   // of the chat iframe entirely), which silently killed ←/→/Enter nav after a send or any push: you were left
   // focused on nothing, so the keyboard model was dead until you clicked again. If a tab held focus, re-focus
   // the active tab after the rebuild so "tab mode" survives the repaint.
+  // A focused section HEADER (a label the keyboard folds; headers live only in this bar) re-focuses by
+  // its group name after the rebuild, so a push mid-read does not kick the user from the header onto
+  // the active tab. Captured before the tab rule below, which keeps its pinned two-line shape.
+  const focusedGroup = ((document.activeElement as HTMLElement | null)?.closest(".tab-group-head") as HTMLElement | null)?.dataset.group;
   const refocusTab = bar.contains(document.activeElement);
   bar.replaceChildren();
   // TABS-FIRST (the user 2026-06-26): render the WHOLE strip up front, in `order` — the kernel's order
@@ -5245,7 +5256,10 @@ function renderTabs() {
   paintTabRowLines(bar);
   ensureTabRowObserver(bar);
   // Restore tab-mode focus if a tab held it before this rebuild (see the top of renderTabs).
-  if (refocusTab) focusActiveTab();
+  if (focusedGroup !== undefined) {
+    const h = Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).find((x) => x.dataset.group === focusedGroup);
+    if (h && h.tabIndex >= 0) h.focus(); else focusActiveTab();   // the group is gone, or now holds the active tab (no stop): the old rule
+  } else if (refocusTab) focusActiveTab();
   // The rebuild destroyed every old tab node: a still-up tip's owner is detached and its mouseleave
   // can never fire. Re-show for the tab under the (unmoved) pointer or close — covers every rebuild
   // source, including one that REMOVED the hovered tab (view-hidden, closed): no tab there → close.
