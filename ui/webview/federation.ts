@@ -17,6 +17,14 @@ import { applyFeedDelta } from "./feed-delta";
 import { hostOf, bareId } from "./host-prefix";
 import { installPerfTelemetry, classifyFrame, type RompPerf } from "./perf-telemetry";
 
+/** The page's performance collector (ui/webview/perf-telemetry.ts), installed on the pages the kernel pushes
+ *  frames to; null on the Files pane, whose content is fetched on demand with no frames pushed to it, so there
+ *  is nothing to time and a long frame there would only add an unexplained pane to `romp perf client`.
+ *  start() installs through this; exported so the test can check the decision without start()'s timers. */
+export function perfCollectorFor(app: string): RompPerf | null {
+  return app === "files" ? null : installPerfTelemetry(app);
+}
+
 export const SEP = ":";
 export const LOCAL = ""; // the local kernel's host key — no prefix, so the single-kernel path is untouched
 
@@ -676,10 +684,8 @@ export class FederationManager {
     this.app = w.__rompApp || "chat";
     // the page's performance collector (perf-telemetry.ts), published as window.__rompPerf: the pane bundle
     // installs its own on load, but the kernel-served timeline page has no bundle beyond this one, and its
-    // view (ui/romp-timeline-view.js, inlined raw) reaches the collector through the window slot. Not on the
-    // Files pane: its content is fetched on demand and no frames are pushed to it, so there is nothing to time
-    // and a long frame there would only add an unexplained pane to `romp perf client`.
-    if (this.app !== "files") this.perf = installPerfTelemetry(this.app);
+    // view (ui/romp-timeline-view.js, inlined raw) reaches the collector through the window slot
+    this.perf = perfCollectorFor(this.app);
     w.__rompFed = {
       inbound: (h: string, m: any) => this.inbound(h, m),
       outbound: (m: any) => this.outbound(m),

@@ -15,7 +15,7 @@ import {
   createPerfTelemetry, installPerfTelemetry, perfFrameHandler,
   HIST_EDGES, HIST_BUCKETS, MAX_FRAME_TYPES, MAX_TOP_KEYS, SLOW_FRAME_MS, SLOW_ROWS_PER_MINUTE, FREE_RING, type PerfDeps,
 } from "./perf-telemetry";
-import { FederationManager } from "./federation";
+import { FederationManager, perfCollectorFor } from "./federation";
 
 const PAGE = "http://h:1/feed";
 
@@ -574,6 +574,30 @@ test("federation times its inbound work as fed:<wire type> around the pane's han
   } finally {
     if (hadWindow) g.window = prevWindow; else delete g.window;
     if (hadLS) g.localStorage = prevLS; else delete g.localStorage;
+  }
+});
+
+test("federation installs no collector on the Files pane (no frames are pushed to it), and the page's collector elsewhere", () => {
+  const g: any = globalThis;
+  const win: any = new EventTarget();
+  win.performance = { now: () => 0 };
+  win.navigator = { userAgent: "Mozilla/5.0 (Macintosh) Chrome/128.0.0.0 Safari/537.36", maxTouchPoints: 0 };
+  win.location = { href: "http://h:1/files?token=abc" };
+  win.parent = win;
+  const hadWindow = "window" in g, prevWindow = g.window;
+  const hadDoc = "document" in g, prevDoc = g.document;
+  g.window = win;
+  g.document = new EventTarget();
+  try {
+    assert.equal(perfCollectorFor("files"), null);
+    assert.equal(win.__rompPerf, undefined, "nothing published on the Files page");
+    const c = perfCollectorFor("timeline");
+    assert.ok(c, "a page the kernel pushes frames to gets the collector");
+    assert.equal(win.__rompPerf, c);
+    assert.equal((c!.snapshot() as any).app, "timeline");
+  } finally {
+    if (hadWindow) g.window = prevWindow; else delete g.window;
+    if (hadDoc) g.document = prevDoc; else delete g.document;
   }
 });
 

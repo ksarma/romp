@@ -71,7 +71,7 @@ chat = {"app": "chat", "since": (now - 100) * 1000, "span_ms": 60000,
         "loaf": {"n": 0, "blocking_ms": 0, "worst_ms": 0, "top": [], "src": "none"},
         "slow": NOSLOW, "heap_mb": 90.0, "dom": 3000, "visible": True, "hidden_pane": True, "ua": "chrome-desktop"}
 phone = {"app": "feed", "since": (now - 80) * 1000, "span_ms": 60000,
-         "frames": {"feed": st(2, 50, 30, 2, 0, H(b4=1, b5=1))},
+         "frames": {"feed": st(2, 50, 30, 2, 0, H(b5=2))},       # 20 and 30 ms: both in the 16-32 bucket, both over 16.7
          "free": {"n": 2, "p50": 40, "p90": 45, "max": 45},
          "loaf": {"n": 0, "blocking_ms": 0, "worst_ms": 0, "top": [], "src": "none"},
          "slow": NOSLOW, "dom": 5000, "visible": True, "hidden_pane": False, "ua": "safari-ios"}
@@ -105,10 +105,13 @@ teardown() { rm -rf "$TEST_DIR"; }
     [[ "$output" == *"feed           14.4/min    360 ms/min   p50 <4   p90 <32   p99 <128 ms   max 130   >16.7 ms 25%   >=100 ms 6%"* ]]
     [[ "$output" == *"fed:feed        4.0/min     16 ms/min   p50 <2   p90 <8   p99 <8 ms   max 8   >16.7 ms 0%   >=100 ms 0%"* ]]
     [[ "$output" == *"chatTail        0.4/min      1 ms/min"* ]]
-    # feed before fed:feed before chatTail: sorted by handler time, not by count
-    feed_line="$(echo "$output" | grep -n '^    feed ' | head -1 | cut -d: -f1)"
-    fed_line="$(echo "$output" | grep -n '^    fed:feed ' | head -1 | cut -d: -f1)"
-    chat_line="$(echo "$output" | grep -n '^    chatTail ' | head -1 | cut -d: -f1)"
+    # feed before fed:feed before chatTail: sorted by handler time, not by count. Panes print in (dashboard,
+    # app) order, so the chat pane and its own chatTail line come first; the check is within the feed pane's block.
+    feed_block="$(echo "$output" | sed -n '/^dashboard 11111111 · feed/,/^dashboard 22222222/p')"
+    feed_line="$(echo "$feed_block" | grep -n '^    feed ' | head -1 | cut -d: -f1)"
+    fed_line="$(echo "$feed_block" | grep -n '^    fed:feed ' | head -1 | cut -d: -f1)"
+    chat_line="$(echo "$feed_block" | grep -n '^    chatTail ' | head -1 | cut -d: -f1)"
+    [ -n "$feed_line" ] && [ -n "$fed_line" ] && [ -n "$chat_line" ]
     [ "$feed_line" -lt "$fed_line" ] && [ "$fed_line" -lt "$chat_line" ]
     [[ "$output" == *"free after a frame p90 61 ms"* ]]
     [[ "$output" == *"long frames 3.6/min   blocking 492 ms/min   worst 320 ms"* ]]
@@ -124,7 +127,7 @@ teardown() { rm -rf "$TEST_DIR"; }
     [[ "$output" == *"long frames: not reported by this browser"* ]]
     # the phone: its hour-old row is outside the window, and a row without heap says so
     [[ "$output" == *"dashboard 22222222 · feed   safari-ios   1 min reported   heap n/a   dom 5000   visible"* ]]
-    [[ "$output" == *"feed            2.0/min     50 ms/min   p50 <32   p90 <64   p99 <64 ms   max 30"* ]]
+    [[ "$output" == *"feed            2.0/min     50 ms/min   p50 <32   p90 <32   p99 <32 ms   max 30   >16.7 ms 100%   >=100 ms 0%"* ]]
     [[ "$output" != *"999"* ]]
     [[ "$output" == *"slow frames  none"* ]]
     [ ! -f "$CURL_LOG" ]                                 # no kernel round trip

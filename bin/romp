@@ -889,15 +889,18 @@ if [[ "${1:-}" == "perf" ]]; then
         echo "romp perf: refused — $_resp" >&2
         exit 1
     fi
-    # `romp perf client [--minutes <n>] [--json]` — the BROWSER side of the same question (2026-09-06): every
-    # pane bundle posts one clientDiag row a minute (surface "perf", what "minute"; ui/webview/perf-telemetry.ts)
-    # with its frame counts and handler times by type, the main-thread-free gap after a frame, the browser's
-    # long-animation-frame reports with their attributed functions, heap and DOM size — plus a "slowframe"
-    # row the moment one handler runs 100 ms or more. The kernel appends them to $STATE/client-diag.jsonl
-    # with the dashboard id (wid) and its clock; this folds the last <n> minutes per dashboard and pane and
-    # prints one screen. No kernel round trip: the file is read directly, so it works with the kernel down.
-    # An absent file or one with no perf rows is said plainly: the bundles predate the telemetry, or no
-    # dashboard has been open since.
+    # `romp perf client [--minutes <n>] [--json]` — the BROWSER side of the same question (2026-09-06): each
+    # pane that receives frames (feed, Outline, Waiting on you, chat, timeline) posts one clientDiag row a
+    # minute (surface "perf", what "minute"; ui/webview/perf-telemetry.ts) with its frame counts and handler
+    # times by type (a log2 histogram per type, additive across minutes), the main-thread-free gap after a
+    # frame, the browser's long-animation-frame reports with the callbacks they name, heap and DOM size — plus
+    # a "slowframe" row the moment a frame's whole handling runs 100 ms or more, five a minute at most, the
+    # rest counted in the minute row. The kernel appends them to $STATE/client-diag.jsonl with the dashboard
+    # id (wid) and its clock, and rotates that file to .1 past 8 MB; this reads both, folds the last <n>
+    # minutes per dashboard and pane (window percentiles from the summed histograms, the worst minute, the
+    # slowest frames) and prints one screen. No kernel round trip: the files are read directly, so it works
+    # with the kernel down. An absent file or one with no perf rows is said plainly: the bundles predate the
+    # telemetry, or no dashboard has been open since.
     if [[ "${1:-}" == "client" ]]; then
         shift
         _cusage="usage: romp perf client [--minutes <n>] [--json]"
