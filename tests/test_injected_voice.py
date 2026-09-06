@@ -160,6 +160,11 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the dashboard-edit trace (the user 2026-08-22): the file viewer saved over a file in this
             # session's tree, and the session is told in the person's voice — never edited under silently
             "edit trace": km._edit_trace_body("/TESTDIR/notes-api/README.md"),
+            # the reject trace (plans/file-review.md, Slice 2): the person rejected some of the session's
+            # tracked changes in the viewer, which rewrote the file and its sidecar — told in the person's
+            # voice like the edit trace, for one change and for several
+            "reject trace": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 2),
+            "reject trace (one change)": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 1),
             # the compaction suggestion (the user 2026-08-30): idle + a lot of context → the person
             # suggests a /compact at a natural boundary; /compact is a CLI feature the session
             # already knows, and the thresholds behind the timing are never mentioned
@@ -295,7 +300,8 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the user-todo context block is the agent's OWN notes handed back after context loss —
             # a memory aid with a withdraw invitation, not a status ask
             # …and the edit trace is an FYI about something the user already DID (a file changed under
-            # the session) — telling, not asking; a status question bolted on would be noise
+            # the session) — telling, not asking; a status question bolted on would be noise; the reject
+            # trace is the same class (the person rejected the session's changes and the file changed)
             # …and the MERGE handoff is a record handed over with direction ("account for it"),
             # never a status ask — bolting a progress question onto it would be noise
             # …and the file-comments message is the person's own comments with instructions on how
@@ -303,7 +309,7 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             if name in ("typed follow-up on a summary",
                         "debt reminder (question)", "debt reminder (handoff)",
                         "debt reminder (several)", "comment thread opener", "user-todo answer",
-                        "user-todo context block", "edit trace",
+                        "user-todo context block", "edit trace", "reject trace", "reject trace (one change)",
                         "comment-thread merge", "compaction suggestion",
                         "file comments message", "file comments message (untracked, several)",
                         "file comments message (image)"):

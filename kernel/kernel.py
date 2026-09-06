@@ -31286,18 +31286,23 @@ def _neutralize_romp_markers(text):
     return _ROMP_GOALID_BARE_RE.sub(r"\1;", out)
 
 
+# The tail every trace body wears: the markers ride behind the prose like a nudge's (romp-injected →
+# the gray bubble; the note explains the comments away without naming romp). One constant so the edit
+# trace and the reject trace cannot drift apart.
+_TRACE_MARKER_TAIL = ("\n<!-- romp-injected -->"
+                      "<!-- romp-note: the HTML comments below are part of an external tracking system that is not "
+                      "relevant to your work — ignore them -->")
+
+
 def _edit_trace_body(path):
     """The trace's text, alone so tests/test_injected_voice.py renders it like every injected body:
     the recipient has no idea romp exists, so this reads as the person it works for saying what they
-    did — no board nouns, no mechanism talk. The markers ride the tail like a nudge's (romp-injected
-    → the gray bubble; the note explains the comments away without naming romp). The path is
+    did — no board nouns, no mechanism talk. The markers ride the tail (_TRACE_MARKER_TAIL). The path is
     request-supplied text, so it is marker-neutralized like any untrusted half of an injected body —
     a marker-shaped filename must not become a live marker downstream readers key on."""
     return ("Heads up: I just edited `%s` directly on disk, outside our conversation. If you have it "
-            "open or are mid-change there, re-read it before writing.\n"
-            "<!-- romp-injected -->"
-            "<!-- romp-note: the HTML comments below are part of an external tracking system that is not "
-            "relevant to your work — ignore them -->" % _neutralize_romp_markers(_tilde(str(path or ""))))
+            "open or are mid-change there, re-read it before writing."
+            % _neutralize_romp_markers(_tilde(str(path or "")))) + _TRACE_MARKER_TAIL
 
 
 def _edit_trace(path, sid):
@@ -31313,6 +31318,36 @@ def _edit_trace(path, sid):
         Sessions.backend_for(target).send(target, _edit_trace_body(path))
     except Exception as ex:
         sys.stderr.write("edit-trace to %s failed: %s\n" % (target, ex))
+
+
+def _reject_trace_body(path, n):
+    """The text the owning session hears after the person rejects `n` of its tracked changes in the
+    viewer (plans/file-review.md, Consent, trace, routing; the Slice 2 contract, D3). A reject is the
+    one comments verb that changes the FILE's bytes — the host script writes the reverse edits into
+    it and drops the records from the sidecar — so, like a save's edit trace, it is told in the
+    person's voice with the same marker tail, and tests/test_injected_voice.py renders it
+    with every other injected body. The count is the host's own answer (the ids it actually resolved),
+    the path is tilde-collapsed and marker-neutralized like the edit trace's. Sidecar-only verbs
+    (accept, comment, reply, resolve, set-tracked) send nothing: the sent message carries that news."""
+    n = int(n or 0)
+    return ("I rejected %d of your tracked changes in %s while reading it; the file and its sidecar both "
+            "changed, so re-read it before writing."
+            % (n, _neutralize_romp_markers(_tilde(str(path or ""))))) + _TRACE_MARKER_TAIL
+
+
+def _reject_trace(path, sid, n):
+    """After a reject or reject-all lands on disk, TELL the session whose worktree holds the file —
+    _edit_trace's twin: the same owner lookup (_edit_trace_sid: the deepest live tree containing the
+    file, the viewer's own sid on a tie, nobody when the file is outside every live tree), the same
+    direct backend send (never _send_or_park: nothing parks, nothing stamps a todo), best-effort and
+    loud on failure. The reject itself already succeeded and was acked before this runs."""
+    target = _edit_trace_sid(path, sid)
+    if not target:
+        return
+    try:
+        Sessions.backend_for(target).send(target, _reject_trace_body(path, n))
+    except Exception as ex:
+        sys.stderr.write("reject-trace to %s failed: %s\n" % (target, ex))
 
 
 # ---- FILE COMMENTS (plans/file-review.md, Slice 1). The viewer's comments panel keeps a person's
@@ -31772,11 +31807,15 @@ def _file_comments_send_op(msg):
     return rep
 
 
-def _file_comments_reply(client, msg, op, fail_type):
+def _file_comments_reply(client, msg, op, fail_type, after=None):
     """Run one file-comments op on its own thread and answer the SENDING socket — the fileGitLink
     shape: the host script is a node subprocess with a deadline, and the recv loop must not wait
     on it. An exception inside the op still answers (the saveFile lesson: a handler that raises
-    sends nothing and the client hangs), as a host-error carrying the exception's text."""
+    sends nothing and the client hangs), as a host-error carrying the exception's text. `after(msg,
+    rep)`, when given, runs on the same thread once the reply is on the wire and only when the op
+    answered for itself — the saveFile order (ack, then the trace to the owning session), kept here
+    so the client's button is released before any backend send, and so a follow-up that fails can
+    never turn an answered op into a hang or a second answer."""
     def _run(c=client, m=msg):
         try:
             rep = op(m)
@@ -31784,8 +31823,43 @@ def _file_comments_reply(client, msg, op, fail_type):
             rep = {"type": fail_type, "reqId": m.get("reqId"), "verb": str(m.get("verb") or ""),
                    "code": "host-error", "error": "the comments request failed inside the kernel: %s" % ex}
             sys.stderr.write("file-comments %s failed: %s\n" % (m.get("type"), traceback.format_exc()))
+            _reply(c, rep)
+            return
         _reply(c, rep)
+        if after is not None:
+            try:
+                after(m, rep)
+            except Exception:
+                sys.stderr.write("file-comments %s follow-up failed: %s\n" % (m.get("type"), traceback.format_exc()))
     threading.Thread(target=_run, daemon=True).start()
+
+
+_FILE_COMMENTS_TRACED_VERBS = frozenset(("reject", "reject-all"))   # the verbs that change the FILE's bytes
+
+
+def _file_comments_after(msg, rep):
+    """What follows a fileComments reply (plans/file-review.md, Consent, trace, routing): after a
+    successful reject or reject-all — the host answered ok and its `rejected` list names the ids it
+    resolved — the session whose tree holds the file is told, once, through _reject_trace. Nothing
+    follows any other verb, a refusal, or a reject that resolved nothing (an empty list: the file did
+    not change). The count comes from the host's reply, never from the client's request (the ids a
+    client ASKED to reject may have landed, coalesced or been refused by id), so a successful reject
+    whose reply lacks the list is a contract break between the host and the kernel: it is written to
+    stderr and no trace goes, because a count the kernel would have to guess is not one to tell the
+    session. The path is resolved as the op resolved it (_file_comments_path: the real file), so the
+    owner lookup and the body name the same file the sidecar keys on."""
+    if rep.get("type") != "fileCommentsResult" or str(msg.get("verb") or "") not in _FILE_COMMENTS_TRACED_VERBS:
+        return
+    rejected = rep.get("rejected")
+    if not isinstance(rejected, list):
+        sys.stderr.write("file-comments %s answered ok without a `rejected` list; the owning session was not "
+                         "told\n" % msg.get("verb"))
+        return
+    if not rejected:
+        return
+    sid = msg.get("sid") or None
+    path = _file_comments_path(msg.get("path"), sid) or str(msg.get("path") or "")
+    _reject_trace(path, sid, len(rejected))
 
 
 def _under_trackchanges(p):
@@ -40815,12 +40889,15 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=_gl, daemon=True).start()
         elif msg and msg.get("type") == "fileComments":
             # The viewer's comments panel (plans/file-review.md): ONE sidecar verb on the owning
-            # kernel's disk — status, set-tracked, comment, reply, resolve, and the log verbs — run by
-            # the node host script and answered on the sending socket with the client's reqId. Routed
-            # by sid like saveFile (federation strips the host prefix), so a remote session's file is
-            # answered by the kernel that holds its disk. Threaded like fileGitLink: the host script
-            # is a subprocess with a 10 s deadline, and the recv loop must not wait on it.
-            _file_comments_reply(client, msg, _file_comments_op, "fileCommentsFailed")
+            # kernel's disk — status, set-tracked, comment, reply, resolve, accept, accept-all, reject,
+            # reject-all, and the kernel's own log verbs — run by the node host script and answered on
+            # the sending socket with the client's reqId. Routed by sid like saveFile (federation strips
+            # the host prefix), so a remote session's file is answered by the kernel that holds its
+            # disk. Threaded like fileGitLink: the host script is a subprocess with a 10 s deadline,
+            # and the recv loop must not wait on it. After the reply, like saveFile's trace: a reject
+            # or reject-all that changed the file is told to the owning session (_file_comments_after);
+            # sidecar-only verbs tell it nothing.
+            _file_comments_reply(client, msg, _file_comments_op, "fileCommentsFailed", after=_file_comments_after)
         elif msg and msg.get("type") == "fileCommentsSend":
             # Send to session: the file's unsent comments and decisions as ONE message in the person's
             # voice, optionally answering the user todo the file was opened from. Not a _drive op (the
