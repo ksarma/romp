@@ -103,8 +103,8 @@ test("a comment bound to a detached change rides its card: hunk set (the op in h
   assert.equal(describeComment(onD1, [h1]), "on this file", "without the sidecar's detached ops the model cannot know the change — which is why sendParts passes them");
   const parts = sendParts(status({ store: st, hunks: [h1], unsent: { comments: [onD1.id, onD2.id], replies: [], accepted: 0, rejected: 0, watermark: null } }));
   assert.deepEqual(parts.comments.map((c) => c.desc), ['on your change "cold starts were slow" to "cold starts stay slow"', 'on the text you added "Cold starts stay slow."']);
-  assert.match(MODEL, /describeComment\(c, s\.hunks \|\| \[\], s\.log \|\| \[\], \{ detached: store\.detached, logTruncated: s\.logTruncated === true \}\)/,
-    "sendParts reads the status alone: its hunks, the sidecar's detached ops, its log and whether that log is a tail");
+  assert.match(MODEL, /describeComment\(c, s\.hunks \|\| \[\], s\.log \|\| \[\], \{ detached: store\.detached, logTruncated: s\.logTruncated === true, decided: s\.decided \}\)/,
+    "sendParts reads the status alone: its hunks, the sidecar's detached ops, its log, whether that log is a tail, and the decisions the whole log holds");
   // the lookup order is the sidecar's own: a change still in it (pending, then detached) is never read from an older log entry
   const old: LogEntry = { ts: "2026-09-06T08:00:00Z", kind: "accept", author: "you", changes: [{ id: "d1", oldText: "older", newText: "entry" }, { id: "h1", oldText: "older", newText: "entry" }] };
   assert.equal(boundChange("h1", [h1], st.detached, [old])!.state, "pending");
@@ -153,7 +153,7 @@ test("the glance counts them: 'Comments · N · M changes · K detached changes'
 });
 
 test("pinned at source: the panel renders the model's cards and groups (so a detached card renders) and its empty line yields to them; store-io keeps detached ops and the sidecar for them", () => {
-  assert.match(SRC, /const cards = s \? changeCards\(s\.store, s\.hunks \|\| \[\], s\.log \|\| \[\]\) : \[\];/, "the panel's change cards are the model's");
+  assert.match(SRC, /const cards = s \? changeCards\(s\.store, s\.hunks \|\| \[\], s\.log \|\| \[\], s\.decided\) : \[\];/, "the panel's change cards are the model's");
   assert.match(SRC, /const groups = changeGroups\(cards, /, "…grouped by the model");
   assert.match(SRC, /if \(!cards\.length && !view\.cards\.length\) \{/, "the 'No comments yet' line only when there is no card at all");
   // the engine side of the contract this leans on

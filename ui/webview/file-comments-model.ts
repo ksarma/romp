@@ -35,10 +35,14 @@ export type Hunk = {
 export type Unsent = { comments: string[]; replies: Array<{ commentId: string; ts: number }>; accepted: number; rejected: number; watermark: number | null };
 export type TrackedBy = { kind: "file" | "folder" | "inherited"; entry: string } | null;
 export type LogEntry = { ts: string; kind: string; author: string; [k: string]: unknown };
+/** The host's `decided`: for each change a comment is bound to that the sidecar no longer holds, the accept or reject
+ *  the FULL log remembers, with the texts at the time — read off the whole log on the owning kernel, so a decision older
+ *  than the `log` tail (the host's LOG_TAIL) still reaches the card and the message. Keyed by change id. */
+export type Decided = Record<string, { decision: "accepted" | "rejected"; oldText: string; newText: string }>;
 export type Status = {
   verb: string; root: string | null; storePath: string | null; trackedBy: TrackedBy;
   agentTooling: "present" | "absent"; fileMtimeNs: string; storeMtimeNs: string | null; configMtimeNs: string | null;
-  store: Store | null; hunks: Hunk[]; unsent: Unsent; log: LogEntry[]; logTruncated?: boolean;
+  store: Store | null; hunks: Hunk[]; unsent: Unsent; log: LogEntry[]; logTruncated?: boolean; decided?: Decided;
 };
 
 const EMPTY_UNSENT: Unsent = { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null };
@@ -132,18 +136,20 @@ function detachedHunk(d: DetachedChange): Hunk {
 }
 
 /** Where a bound comment's change is now, with its texts: pending (a hunk), detached (the sidecar keeps it
- *  unplaced), or decided (the log's accept or reject entry) — looked up in that order, so a change that is
- *  still in the sidecar is never read from an older log entry. `hunk` is set for the two states the sidecar
- *  still holds, which is what puts the comment on the change's card. */
+ *  unplaced), or decided (the log's accept or reject entry, else the host's `decided`, which reads the whole log
+ *  where the reply's `log` is a tail) — looked up in that order, so a change that is still in the sidecar is never
+ *  read from an older log entry. `hunk` is set for the two states the sidecar still holds, which is what puts the
+ *  comment on the change's card. */
 export type BoundChange = {
   state: "pending" | "detached" | "accepted" | "rejected"; kind: HunkKind; oldText: string; newText: string; hunk: Hunk | null;
 };
-export function boundChange(id: string, hunks: Hunk[], detached: unknown[] | null | undefined, log: LogEntry[] | null | undefined): BoundChange | null {
+export function boundChange(id: string, hunks: Hunk[], detached: unknown[] | null | undefined, log: LogEntry[] | null | undefined,
+                            decided?: Decided | null): BoundChange | null {
   const h = hunks.find((x) => x.id === id);
   if (h) return { state: "pending", kind: h.kind, oldText: h.oldText, newText: h.newText, hunk: h };
   const d = readDetached(detached).find((x) => x.id === id);
   if (d) return { state: "detached", kind: d.kind, oldText: d.oldText, newText: d.newText, hunk: detachedHunk(d) };
-  const e = decidedChange(log, id);
+  const e = decidedChange(log, id) || (decided && decided[id]) || null;
   if (e) return { state: e.decision, kind: kindOf(e.oldText, e.newText), oldText: e.oldText, newText: e.newText, hunk: null };
   return null;
 }
@@ -160,20 +166,22 @@ export function changeDesc(h: { kind: HunkKind; oldText: string; newText: string
 }
 
 /** What describeComment reads beyond the hunks and the log: the sidecar's detached ops (a comment bound to a
- *  detached change is still on that change), and whether the log it was given is the host's tail of a longer
- *  log (`Status.logTruncated`), in which case a decision the tail lacks may sit in the part not sent. */
-export type DescribeOpts = { detached?: unknown[] | null; logTruncated?: boolean };
+ *  detached change is still on that change), the host's `decided` (the decisions the whole log holds for changes
+ *  the sidecar no longer does), and whether the log it was given is the host's tail of a longer log
+ *  (`Status.logTruncated`), in which case a decision the tail lacks may sit in the part not sent. */
+export type DescribeOpts = { detached?: unknown[] | null; logTruncated?: boolean; decided?: Decided | null };
 
 /** The parenthetical the kernel prints after "Comment <id>", without parentheses (C2). A comment bound to a
- *  change describes the change while it is pending or detached, and from the log's accept or reject entry
- *  after a decision (a manual Accept before the send would otherwise describe it as "on this file"). When the
- *  log given is a truncated tail and the decision is not in it, the comment is still on a change — the host
- *  did not send the entry, and "on this file" would claim something false — so it names the change by id; a
- *  full log with no entry means the change left the sidecar with no decision the log knows, and the comment
- *  falls back to its anchor, its region, or the file like any other. */
+ *  change describes the change while it is pending or detached, and from the accept or reject entry after a
+ *  decision (a manual Accept before the send would otherwise describe it as "on this file") — the log's own when
+ *  the tail carries it, else the host's `decided`, read off the whole log. When the log given is a truncated tail
+ *  and neither holds the decision (a host from before `decided`), the comment is still on a change — "on this file"
+ *  would claim something false — so it names the change by id; a full log with no entry means the change left the
+ *  sidecar with no decision the log knows, and the comment falls back to its anchor, its region, or the file like
+ *  any other. */
 export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] = [], opts: DescribeOpts = {}): string {
   if (c.suggestionId) {
-    const b = boundChange(c.suggestionId, hunks, opts.detached, log);
+    const b = boundChange(c.suggestionId, hunks, opts.detached, log, opts.decided);
     if (b) return changeDesc(b);
   }
   if (c.target && c.target.region) {
@@ -213,7 +221,7 @@ export function sendParts(s: Status): SendParts {
       if (turns.length) {
         // the status is the one source: its hunks, the sidecar's detached ops, and its log — a tail when the host
         // says so, which is when a decision the tail lacks must not be read as "no decision"
-        const desc = describeComment(c, s.hunks || [], s.log || [], { detached: store.detached, logTruncated: s.logTruncated === true });
+        const desc = describeComment(c, s.hunks || [], s.log || [], { detached: store.detached, logTruncated: s.logTruncated === true, decided: s.decided });
         out.push({ id: c.id, desc, body: turns.join("\n\n") });
       }
     }
@@ -378,14 +386,15 @@ const oneLine = (s: string, max: number): string => {
  *  region, or "this file"); the message's `desc` is describeComment's job, kept separate on purpose.
  *  A comment bound to a change the sidecar still holds — PENDING, or DETACHED (`hunk` set either way) — is
  *  shown on that change's card (changeCards), not in the comment list; once the change is decided, `hunk`
- *  is null, `decision` says which way from the log, and the card stands on its own again with the change's
- *  texts as its reference, worded as the change card words them (changeRef). */
-export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = []): Card[] {
+ *  is null, `decision` says which way from the log (the tail's entry, else the host's `decided`), and the card
+ *  stands on its own again with the change's texts as its reference, worded as the change card words them
+ *  (changeRef). */
+export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = [], decided?: Decided | null): Card[] {
   if (!store) return [];
   return [...store.comments].sort((a, b) => (a.ts || 0) - (b.ts || 0)).map((c) => {
-    const b = c.suggestionId ? boundChange(c.suggestionId, hunks, store.detached, log) : null;
+    const b = c.suggestionId ? boundChange(c.suggestionId, hunks, store.detached, log, decided) : null;
     const hunk = b ? b.hunk : null;
-    const decided = b && (b.state === "accepted" || b.state === "rejected") ? b.state : null;
+    const verdict = b && (b.state === "accepted" || b.state === "rejected") ? b.state : null;
     const target = c.target && c.target.region ? c.target : null;
     const anchor = c.anchor && typeof c.anchor.quote === "string" ? c.anchor : null;
     let kind: CardKind; let ref: string;
@@ -395,7 +404,7 @@ export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = 
     else { kind = "file"; ref = "this file"; }
     return {
       id: c.id, author: c.author, authorId: c.authorId || null, ts: c.ts, body: c.body, resolved: !!c.resolved,
-      kind, ref, anchor, hunk, target, decision: decided,
+      kind, ref, anchor, hunk, target, decision: verdict,
       replies: (c.replies || []).map((r): CardTurn | null => {
         if (typeof r.body === "string") return { kind: "msg", author: r.author, authorId: r.authorId || null, ts: r.ts, body: r.body };
         if (r.kind === "edit") return { kind: "rev", author: r.author, authorId: r.authorId || null, ts: r.ts, oldText: r.oldText || "", newText: r.newText || "" };
@@ -451,8 +460,8 @@ export function changeRef(h: { kind: HunkKind; oldText: string; newText: string 
   return oneLine(h.oldText, 30) + " → " + oneLine(h.newText, 30);
 }
 
-export function changeCards(store: Store | null, hunks: Hunk[], log: LogEntry[] = []): ChangeCard[] {
-  const bound = cardModel(store, hunks, log).filter((c) => c.hunk !== null);
+export function changeCards(store: Store | null, hunks: Hunk[], log: LogEntry[] = [], decided?: Decided | null): ChangeCard[] {
+  const bound = cardModel(store, hunks, log, decided).filter((c) => c.hunk !== null);
   const pending: ChangeCard[] = [...hunks].sort((a, b) => a.curFrom - b.curFrom || (a.ts || 0) - (b.ts || 0)).map((h) => ({
     key: "chg:" + h.id, id: h.id, kind: h.kind, author: h.author, authorId: authorIdOf(store, h.id), ts: h.ts,
     curFrom: h.curFrom, curTo: h.curTo, oldText: h.oldText, newText: h.newText, ref: changeRef(h),

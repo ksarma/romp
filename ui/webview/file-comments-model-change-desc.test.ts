@@ -123,6 +123,22 @@ test("a truncated log: when the host's tail lacks the decision, a bound comment 
   const msg = buildSendMessage({ absPath: ABS, comments: truncated.comments, accepted: 0, rejected: 0, tracked: true });
   assert.ok(msg.includes("Comment " + onH1.id + " (on your change h1):\nSay cut, not reduced.\n"), msg);
   assert.doesNotMatch("on your change h1", ROMP_NOUNS);
+  // the host's `decided` (tools/file-comments-host.mjs decidedFor): the decision read off the WHOLE log for a change a
+  // comment is bound to that the sidecar no longer holds — so the card and the message have the texts however old the
+  // decision is, and the by-id fallback above is left for a host from before the field
+  const decided = { h1: { decision: "accepted" as const, oldText: "reduced", newText: "cut" } };
+  const viaDecided = sendParts(status({ store: st, hunks: [], log: [EDIT, EDIT], logTruncated: true, decided, unsent: unsentAll(onH1) }));
+  assert.equal(viaDecided.comments[0].desc, 'on your change "reduced" to "cut"', "the message names the texts, not the id");
+  assert.equal(describeComment(onH1, [], [EDIT], { logTruncated: true, decided }), 'on your change "reduced" to "cut"');
+  const cards = cardModel(st, [], [EDIT, EDIT], decided);
+  assert.deepEqual(cards.map((c) => [c.kind, c.ref, c.decision, c.hunk]), [["change", "reduced → cut", "accepted", null]], "the card reads as a decided change, not as a comment on the file");
+  assert.deepEqual(cardModel(st, [], [EDIT, EDIT]).map((c) => [c.kind, c.ref]), [["file", "this file"]], "without it, the standing fallback — the truncation the field exists for");
+  // the lookup order is the sidecar's own, then the tail's entry, then decided: a pending hunk wins, and the tail's own
+  // entry is read before the host's (same texts by construction; the order says whose word it is)
+  const grown = { h1: { decision: "rejected" as const, oldText: "reduced", newText: "cut, later" } };
+  assert.equal(describeComment(onH1, [h1], [], { decided: grown }), 'on your change "reduced" to "cut"', "pending: the hunk");
+  assert.equal(describeComment(onH1, [], [ACCEPT_SUB], { decided: grown }), 'on your change "reduced" to "cut"', "the tail's entry before the host's field");
+  assert.equal(cardModel(st, [], [], grown)[0].decision, "rejected", "decided alone: its verdict");
 });
 
 // The kernel's decisions-only shape (kernel.py _file_comments_message, `if not comments:`), which

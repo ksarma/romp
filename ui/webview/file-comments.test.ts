@@ -419,7 +419,7 @@ test("the card model: one card per comment from store + hunks, oldest first, kin
   assert.equal(cards[3].ref, "this file"); assert.equal(cards[3].anchor, null);
   assert.deepEqual(cardModel(null, []), []);
   assert.doesNotMatch(SRC, /\.cards\b\s*[:=]/, "the panel derives cards from store + hunks in the reply, never a `cards` field");
-  assert.match(SRC, /cardModel\(this\.status\.store, this\.status\.hunks \|\| \[\], this\.status\.log \|\| \[\]\)/, "…and the log, which remembers a decided change's texts");
+  assert.match(SRC, /cardModel\(this\.status\.store, this\.status\.hunks \|\| \[\], this\.status\.log \|\| \[\], this\.status\.decided\)/, "…and the log, which remembers a decided change's texts, with the host's `decided` for a decision older than the tail");
 });
 
 test("Log rows: one line per comments-log entry, in the person's terms", () => {

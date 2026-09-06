@@ -806,6 +806,39 @@ export function buildComment(text, args, now, suggestions) {
 
 // ── the reply ───────────────────────────────────────────────────────
 
+// The decisions the panel needs that the log TAIL may not carry: for every comment bound (suggestionId) to a
+// change the sidecar no longer holds — not pending, not detached — the newest accept or reject entry naming
+// that id, with the texts recorded at the time. The panel reads a decided change's texts from the log
+// (plans/file-review.md, The comments log: a decision survives the change leaving the sidecar), and the
+// reply's `log` is the newest LOG_TAIL entries; a decision older than that fell out of what the panel saw,
+// and its comment's card said "this file" (the review, 2026-09-06). Read from the FULL entries, keyed by
+// change id, so a card and a message describe the change however old the decision is.
+export function decidedFor(store, entries) {
+  const out = {};
+  if (!store) return out;
+  const held = new Set();
+  for (const s of store.suggestions || []) if (s && s.id != null) held.add(String(s.id));
+  for (const d of store.detached || []) if (d && d.id != null) held.add(String(d.id));
+  const want = new Set();
+  for (const c of store.comments || []) {
+    if (c && c.suggestionId != null && !held.has(String(c.suggestionId))) want.add(String(c.suggestionId));
+  }
+  for (let i = entries.length - 1; i >= 0 && want.size; i--) {
+    const e = entries[i];
+    if (!e || (e.kind !== 'accept' && e.kind !== 'reject') || !Array.isArray(e.changes)) continue;
+    for (const ch of e.changes) {
+      if (!ch || ch.id == null || !want.has(String(ch.id))) continue;
+      want.delete(String(ch.id));
+      out[String(ch.id)] = {
+        decision: e.kind === 'accept' ? 'accepted' : 'rejected',
+        oldText: typeof ch.oldText === 'string' ? ch.oldText : '',
+        newText: typeof ch.newText === 'string' ? ch.newText : '',
+      };
+    }
+  }
+  return out;
+}
+
 function reply(ctx, state, extra) {
   const { root, paths, store, text, fileMtimeNs } = state;
   let log = [];
@@ -833,6 +866,7 @@ function reply(ctx, state, extra) {
     unsent: deriveUnsent(store, entries),
     log,
     logTruncated,
+    decided: decidedFor(store, entries),
   };
   if (ctx.args.baseline === true) out.baseline = engine.baselineOf(text, store ? store.suggestions : []);
   return Object.assign(out, extra || {});

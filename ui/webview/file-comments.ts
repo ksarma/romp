@@ -1095,11 +1095,11 @@ class Panel {
   }
 
   // ── highlights ─────────────────────────────────────────────────────────────────────────────────
-  cards(): Card[] { return this.status ? cardModel(this.status.store, this.status.hunks || [], this.status.log || []) : []; }
+  cards(): Card[] { return this.status ? cardModel(this.status.store, this.status.hunks || [], this.status.log || [], this.status.decided) : []; }
   /** The change cards, their paragraph groups over the current text, and the fold (GROUP_LIMIT). */
   changeView(): { cards: ChangeCard[]; groups: ChangeGroup[]; shown: ChangeGroup[]; hidden: ChangeGroup[]; hiddenChanges: number } {
     const s = this.status;
-    const cards = s ? changeCards(s.store, s.hunks || [], s.log || []) : [];
+    const cards = s ? changeCards(s.store, s.hunks || [], s.log || [], s.decided) : [];
     const groups = changeGroups(cards, this.ctx.mode() === "media" ? null : this.ctx.text());
     return { cards, groups, ...foldGroups(groups, this.moreChangesOpen) };
   }
