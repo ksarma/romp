@@ -471,6 +471,25 @@ service unit bakes in whatever is set at install time, so a renumbered port
 that only lives in your shell leaves the supervised manager on the old one, and
 the two collide.
 
+### The kernel's Python
+
+The kernel and its Agent SDK venv (`sdkvenv` under the state directory) must
+run the same Python: the venv's compiled extensions import into the kernel
+process. `bin/romp-serve` picks the interpreter in this order: `ROMP_PYTHON` if
+set; otherwise the interpreter the venv's `pyvenv.cfg` records, if it still
+runs; otherwise the newest `pythonX.Y` on `PATH` or in `~/.local/bin`, the rule
+for a machine with no venv yet. So installing a newer Python does not change
+what the kernel runs at its next restart. On a machine that runs romp as a
+service, pin it anyway: `ROMP_PYTHON=/usr/bin/python3.12` in `service.env`
+makes the choice explicit and holds if the venv is deleted or rebuilt. Moving
+romp to another Python takes four steps, and skipping any one of them leaves a
+kernel that cannot start sessions: set `ROMP_PYTHON` to the new interpreter in
+`service.env`, run `bin/romp-sdk-setup` with the same value (it rebuilds the
+venv and says so), run the test suite on that interpreter, then restart the
+manager. A kernel that does come up on a Python the venv was not built for logs
+one line naming both versions, and each SDK session reports the mismatch and
+the remedy that fits.
+
 ### API keys on disk: the file mode
 
 `~/.config/romp/service.env` holds non-secret settings only
@@ -1597,6 +1616,20 @@ into the pane.
 State is written under `${XDG_STATE_HOME:-~/.local/state}/romp/`. Transcripts
 are read in place from where Claude Code writes them (`~/.claude/projects/`)
 and never copied.
+
+Two ledgers there record restarts. `restart-audit.jsonl` gets a row from
+whatever asks for one: `romp refresh`, the dashboard's restart button, the
+kernel's own update, and the manager before each SIGTERM it sends (action
+`manager-sigterm`). A SIGTERM that reaches the kernel with no such row in the
+last 90 seconds came from somewhere else, and the kernel writes a row with
+action `signal` for it: the signal name, its pid and its parent's pid, the
+manager pid it was started with, whether a manager restart was pending, and
+`managerRequested: false`. The sender's pid is not recorded; a Python signal
+handler does not receive it. `restart-cuts.jsonl` gets one row per restart
+naming the turns the drain cut and the reason from the audit row, which for
+that case reads `signal, not requested through the manager`. The manager's log
+says the same when a kernel it did not ask to stop exits: `exited without a
+restart request (signal or crash); respawning`.
 
 ## Switches
 
