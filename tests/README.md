@@ -49,7 +49,15 @@ tempfile.TemporaryDirectory()`, `self.addCleanup(shutil.rmtree, ...)`, or the
 module-level `atexit.register(shutil.rmtree, ...)` line after a preamble's
 `mkdtemp()` — so a module is also correct under a bare unittest run, where
 conftest never loads; bats suites use `mktemp -d` in `setup` and `rm -rf` it in
-`teardown`. The same conftest gives git no global or system config
+`teardown`. Never give a tempfile call a literal directory as `dir=` (or
+`mktemp` a path under `/tmp`): that bypasses the redirect, and the hygiene test
+reads every test file for the shape. The one test that must leave the root — an
+AF_UNIX socket whose path would not fit `sun_path` under a nested root — falls
+back to `ROMP_TESTS_SYSTEM_TMPDIR`, the temp dir conftest recorded before
+redirecting, and removes what it made. A root that cannot be removed at run end
+(a child still writing under it, a 000-mode directory a test left behind) is
+named on stderr: `[tests] not removed at run end: <path>`, instead of the run
+ending green over it. The same conftest gives git no global or system config
 (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`) and a synthetic identity through
 `GIT_AUTHOR_*` / `GIT_COMMITTER_*`; bats suites that run git get the same from
 `load git-hermetic` + `git_hermetic` in `setup`. A fixture must not depend on
