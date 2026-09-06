@@ -20,11 +20,16 @@ All deterministic: no SDK import, no real claude processes (ps/os.kill are patch
 """
 import json
 import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import signal
 import threading
 import time
+import types
 import unittest
+import uuid
 from pathlib import Path
 from unittest import mock
 from importlib.machinery import SourceFileLoader
@@ -185,6 +190,83 @@ class QueuePersistence(unittest.TestCase):
                          "restores strings only — junk entries never wedge delivery")
 
 
+def _procps() -> bool:
+    """Whether this box's ps is procps (Linux; BSD ps has no --version). The truncation control below
+    pins procps behaviour, so it runs only there."""
+    try:
+        return "procps" in subprocess.run(["ps", "--version"], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return False
+
+
+class PsArgv(unittest.TestCase):
+    """The `ps` both process scans run. `-ww` is the point: procps truncates every line to $COLUMNS
+    when that variable is exported (BSD ps does by default), and an SDK CLI's sid sits ~2 KB into its
+    argv behind --append-system-prompt, so a kernel started with COLUMNS exported reaped nothing and
+    could not find its own child to signal, silently (2026-09-05; `COLUMNS=80 ps -axo` cut a 3200-char
+    argv at 80 columns on procps-ng 4.0.4, `-axwwo` printed it whole). The first three tests pin the
+    argv and its two call sites through mocks; the last two run this box's ps against a real long argv,
+    on Linux only, so the width property itself has an executable check."""
+
+    def test_the_argv_asks_for_unlimited_width(self):
+        self.assertEqual(sb.PS_ARGV, ["ps", "-axwwo", "pid=,ppid=,command="])
+
+    # GNU sleep rejects a non-numeric argument, so the sleeper with the >3000-character argv is this
+    # interpreter, given the marker as an argument it ignores; it is killed on the way out. The marker is
+    # minted per test so nothing else on the box (this process's own argv included) can carry it.
+    def _sleeper_with_a_long_argv(self):
+        marker = "romp-ps-ww-tail-" + uuid.uuid4().hex
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "x" * 3000 + marker],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(child.wait, timeout=10)
+        self.addCleanup(child.kill)
+        return child, marker
+
+    def _ps_line_for(self, pid, argv):
+        out = subprocess.run(argv, env={**os.environ, "COLUMNS": "80"}, capture_output=True, text=True,
+                             timeout=10).stdout
+        mine = [ln for ln in out.splitlines() if ln.split()[:1] == [str(pid)]]
+        self.assertEqual(len(mine), 1, "one line for the sleeper's pid: %r" % (mine,))
+        return mine[0]
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("ps"), "a real ps on Linux")
+    def test_a_real_ps_under_columns_80_prints_a_3000_character_argv_whole(self):
+        child, marker = self._sleeper_with_a_long_argv()
+        line = self._ps_line_for(child.pid, sb.PS_ARGV)
+        self.assertIn(marker, line, "the argv's tail survived COLUMNS=80 (line is %d chars)" % len(line))
+        self.assertGreater(len(line), 3000)
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and _procps(), "procps ps on Linux")
+    def test_without_ww_the_same_ps_cuts_the_argv_at_columns(self):
+        # the control: the argv PS_ARGV replaced (-axo) loses the marker on procps, so the test above
+        # passes because of -ww and not because this box's ps never truncates
+        child, marker = self._sleeper_with_a_long_argv()
+        line = self._ps_line_for(child.pid, ["ps", "-axo", "pid=,ppid=,command="])
+        self.assertNotIn(marker, line)
+        self.assertLessEqual(len(line), 80)
+
+    def test_the_interrupt_escalation_reads_ps_with_it(self):
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        sid = "11111111-aaaa-0000-0000-00000000000f"
+        _reg(d, sid)
+        # our own child (ppid = this process), its sid 2 KB into the argv — what -ww keeps intact
+        ps = "  4242 %d /x/claude --append-system-prompt %s --resume %s --input-format stream-json\n" % (
+            os.getpid(), "p" * 2100, sid)
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout=ps)) as run:
+            pid = be._session_cli_pid(types.SimpleNamespace(sid=sid, name="web"))
+        self.assertEqual(pid, 4242)
+        self.assertEqual(run.call_args_list[0][0][0], sb.PS_ARGV)
+
+    def test_the_boot_reaper_reads_ps_with_it(self):
+        # the reaper's own reap test (BootReconcile.test_reaps_orphans_but_never_tmux) pins the same
+        # argv on its call; this one pins that the two sites share ONE constant, so neither can drift
+        with open(sb.__file__) as f:
+            src = f.read()
+        self.assertNotIn('"-axo"', src, "every ps scan goes through PS_ARGV (-ww)")
+        self.assertEqual(src.count("subprocess.run(PS_ARGV"), 2, "the reaper and the escalation")
+
+
 class BootReconcile(unittest.TestCase):
     def _setup(self):
         d = tempfile.mkdtemp()
@@ -298,12 +380,13 @@ class BootReconcile(unittest.TestCase):
               "  557 90210 /x/claude --output-format stream-json --resume %s --input-format stream-json\n"
               ) % (sid, sid, sid)
         killed = []
-        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout=ps)), \
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout=ps)) as run, \
              mock.patch.object(sb.os, "kill", side_effect=lambda p, s: killed.append((p, s))):
             be._boot_reconcile([sb.read_reg(Path(d), sid)])
         self.assertEqual(killed, [(555, sb.signal.SIGTERM)],
                          "the SDK orphan is reaped; the tmux CLI and the live (parented) CLI "
                          "on the same sid are untouched")
+        self.assertEqual(run.call_args_list[0][0][0], sb.PS_ARGV, "the listing is read with PS_ARGV")
 
     def test_reconcile_is_opt_in(self):
         # Constructing the backend plain (tests, ad-hoc) must NOT spawn a reconcile thread; the
