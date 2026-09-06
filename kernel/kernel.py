@@ -920,6 +920,22 @@ def _version_info():
             # /defaults route instead, where the gear already fetches them.
 
 
+# client-diag.jsonl held rare breadcrumbs (a wsclose, a stale-banner raise) until the pane bundles began posting
+# a performance row per pane per active minute (ui/webview/perf-telemetry.ts, 2026-09-06): about 1 KB each, so
+# an open dashboard adds several MB a day and nothing pruned it. Past this many bytes the file is renamed to
+# client-diag.jsonl.1 (replacing the previous .1) and a new file starts, so at most two files, about 16 MB,
+# are ever kept; `romp perf client` reads both. Checked on every append: one stat.
+CLIENT_DIAG_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _rotate_client_diag(fp):
+    try:
+        if fp.stat().st_size >= CLIENT_DIAG_MAX_BYTES:
+            os.replace(str(fp), str(fp) + ".1")
+    except OSError:
+        pass   # a missing file is the common case; a failed rename leaves the append to the current file
+
+
 def _dist_ver():
     """A cache-bust token = the newest mtime across the built bundles (dist/*.js + *.css). Appended as
     `?v=<token>` to every <script>/<link> URL so a rebuilt bundle gets a NEW url → the browser is
@@ -39603,7 +39619,9 @@ class Handler(BaseHTTPRequestHandler):
                 rec = {"t": int(time.time()), "wid": str(client.get("wid") or ""),
                        "surface": str(msg.get("surface") or ""), "what": str(msg.get("what") or ""),
                        "data": msg.get("data")}
-                with open(jd.STATE / "client-diag.jsonl", "a", encoding="utf-8") as f:
+                fp = jd.STATE / "client-diag.jsonl"
+                _rotate_client_diag(fp)   # past the size cap the file becomes .1 and a new one starts
+                with open(fp, "a", encoding="utf-8") as f:
                     f.write(json.dumps(rec) + "\n")
             except OSError:
                 pass
