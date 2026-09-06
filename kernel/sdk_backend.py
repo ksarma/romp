@@ -89,7 +89,7 @@ CLI_SCOPE_PROBE_TIMEOUT = 10.0
 #     is garbage and the test fails, which is the right verdict there (an unprivileged manager gets no
 #     controllers on it);
 #   * a throwaway child writing the adjustment to ITS OWN oom_score_adj. A value below the floor this
-#     process inherited (the user manager's own oom_score_adj; 100 on a stock box) fails with EACCES for
+#     process inherited (the user manager's own oom_score_adj; 100 on a typical machine) fails with EACCES for
 #     the wrapper too, which is spawned from here with the same floor. The kernel's own value is untouched.
 CLI_SCOPE_MEMORY_PROBE_CMD = ["sh", "-c", 'test -e "/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.max"']
 CLI_SCOPE_ADJ_PROBE_CMD = ["sh", "-c", 'echo "$1" > /proc/self/oom_score_adj', "sh"]   # + the value
@@ -256,7 +256,7 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None]
             if log:
                 log("cli scope: ROMP_CLI_SCOPE_OOM_SCORE_ADJ=%s cannot be written by this process — a value below "
                     "the systemd user manager's own oom_score_adj (the floor every process under it inherits; "
-                    "100 on a stock box) needs a privilege it does not have — not applied; sessions run in their "
+                    "100 on a typical machine) needs a privilege it does not have — not applied; sessions run in their "
                     "scopes without it" % adj, problem=True)
     return rejected, delegated
 
