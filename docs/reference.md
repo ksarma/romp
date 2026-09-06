@@ -921,7 +921,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
   was built and compared, then not sent.
 - `goals`: `loads`, `saves`, `writes` on the goal stores. A save that would
-  rewrite identical bytes is a save without a write.
+  rewrite identical bytes is a save without a write. `scans`, `scan_hits`,
+  `scan_parses` count the give-up scan behind the judge-failure notice: calls,
+  stores served from its per-store memo, and stores read and parsed (or
+  attempted) because they were new, changed, or failed to parse on the
+  previous call.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the workers' share is `cpu_ms_workers`).

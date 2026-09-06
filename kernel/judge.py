@@ -2868,19 +2868,22 @@ def _guard_nodes(store):
 # How often the stores are read and written is the first question when the kernel is busy: every
 # judge stage, the feed build and the nudge tick load stores, so the load rate says whether a change
 # added a pass over every session. Plain counters, one lock, no formatting on the path.
-_GOAL_IO = {"loads": 0, "saves": 0, "writes": 0}
+_GOAL_IO = {"loads": 0, "saves": 0, "writes": 0, "scans": 0, "scan_hits": 0, "scan_parses": 0}
 _GOAL_IO_LOCK = threading.Lock()
 
 
-def _goal_io_bump(key):
+def _goal_io_bump(key, n=1):
     with _GOAL_IO_LOCK:
-        _GOAL_IO[key] += 1
+        _GOAL_IO[key] += n
 
 
 def goal_io_stats():
     """A copy of the goal-store I/O counters: load_goals calls (`loads`), save_goals calls (`saves`),
-    and the saves that wrote a file (`writes`; save_goals skips a byte-identical republish). The
-    counters stay private to this module; readers get a copy."""
+    and the saves that wrote a file (`writes`; save_goals skips a byte-identical republish), plus the
+    give-up scan's memo counters (judge_failure_scan): calls (`scans`), stores served from the memo
+    (`scan_hits`) and stores read and parsed, or attempted, because they were new, changed, or failed
+    to parse on the previous call (`scan_parses`). The counters stay private to this module; readers
+    get a copy."""
     with _GOAL_IO_LOCK:
         return dict(_GOAL_IO)
 
@@ -12013,22 +12016,79 @@ def _failed_nodes(store):
                 yield nid, nd, w["kind"]
 
 
+_jf_store_memo = {}             # {store path: ((st_ino, st_mtime_ns, st_size), failed count)} — see judge_failure_scan
+_jf_cause_memo = (None, None)   # (the store keys the cause was named against, (cause, ratelimited))
+
+
 def judge_failure_scan():
-    """Fleet-wide give-up state for the top banner (the user 2026-07-03): every card whose summary/brief/
-    stall note GAVE UP carries a live "*-failed" warn; count them across all goal stores and name the CAUSE (an
-    account usage limit if one is maxed, else errors/timeouts). Returns {count, cause, ratelimited} or None
-    when nothing is failing. Cheap: read-only, one parse per store; the kernel mtime-caches it."""
+    """Give-up state across every session for the top banner (the user 2026-07-03): every card whose
+    summary/brief/stall note GAVE UP carries a live "*-failed" warn; count them across all goal stores and
+    name the CAUSE (an account usage limit if one is maxed, else errors/timeouts). Returns {count, cause,
+    ratelimited} or None when nothing is failing. Read-only.
+
+    Per-store memo (2026-09-06, perf plan B9): the kernel calls this from every timeline build and every
+    dashboard connect push once its goals-dir fingerprint moves, and one saved store made it parse EVERY
+    store again (13 MB live). Each store's failed count is memoized on the identity of the file it was
+    counted from, (st_ino, st_mtime_ns, st_size) taken by fstat on the fd that is read, so a call stats
+    every store and parses only the ones whose key changed. A store's failed count changes only when its
+    file changes, so the key must change whenever the file does, and the inode number alone does not
+    guarantee that: save_goals publishes by tmp+rename, and on ext4 (measured) consecutive publishes of one
+    path alternate between two inode numbers, so the version two publishes back reuses the inode number
+    the memo recorded. The inode distinguishes one publish only; past that, soundness depends on
+    st_mtime_ns strictly increasing across publishes of one path. Linux 6.13+ guarantees that with
+    multigrain timestamps: this scan's own stat marks the prior inode as queried, so its unlink by the
+    next rename takes a fine-grained ctime and every file created after it gets a strictly greater
+    mtime_ns. A kernel with coarse timestamps (Linux < 6.13; macOS unmeasured) aliases two publishes of
+    the same size inside one clock tick, and the store's memoized count then stays stale until its next
+    publish. That is the same failure class as, and a narrower window than, kernel.py's _jf_cache gate in
+    front of this function, keyed on int(st_mtime), which already serves a stale value for a store
+    re-saved within one second. No stat-only key closes the residual window; comparing content would cost
+    the read the memo exists to avoid. The memo is rebuilt from this call's glob and swapped in with one
+    assignment: a deleted store drops out, and concurrent callers never mutate a shared dict.
+    A store that fails to parse counts nothing and is not memoized, so it is retried next call. The cause
+    is named again only when some store key changed, the cadence the kernel's fingerprint cache already
+    imposed, so the notification center's count|cause signature does not churn per call. Counts RAW file
+    content, never a load_goals-replayed store."""
     import glob
-    count = 0
+    global _jf_store_memo, _jf_cause_memo
+    old, new = _jf_store_memo, {}
+    count = hits = parses = 0
     for fp in glob.glob(str(GOALDIR / "*.json")):
         try:
-            store = json.loads(Path(fp).read_text())
-        except Exception:
-            continue
-        count += sum(1 for _ in _failed_nodes(store))
+            st = os.stat(fp)
+        except OSError:
+            continue                                   # gone between the glob and the stat
+        key = (st.st_ino, st.st_mtime_ns, st.st_size)
+        hit = old.get(fp)
+        if hit is not None and hit[0] == key:
+            n = hit[1]
+            hits += 1
+        else:
+            parses += 1
+            try:
+                with open(fp, "rb") as f:              # one fd: the key describes exactly the bytes read
+                    st = os.fstat(f.fileno())
+                    key = (st.st_ino, st.st_mtime_ns, st.st_size)
+                    store = json.loads(f.read())
+            except Exception:
+                continue
+            n = sum(1 for _ in _failed_nodes(store))
+        new[fp] = (key, n)
+        count += n
+    _jf_store_memo = new
+    _goal_io_bump("scans")
+    if hits:
+        _goal_io_bump("scan_hits", hits)
+    if parses:
+        _goal_io_bump("scan_parses", parses)
     if not count:
         return None
-    cause, ratelimited = _giveup_cause()
+    keys = tuple(sorted((fp, k) for fp, (k, _n) in new.items()))
+    cm = _jf_cause_memo
+    if cm[0] != keys:
+        cm = (keys, _giveup_cause())
+        _jf_cause_memo = cm
+    cause, ratelimited = cm[1]
     return {"count": count, "cause": cause, "ratelimited": ratelimited}
 
 

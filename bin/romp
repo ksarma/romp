@@ -983,8 +983,10 @@ for kind in ("full", "delta", "deduped"):
                        for sl in top if dl("sends", kind, sl, "count"))
     parts.append("%s %s%s" % (kind, kb(tot), (" (%s)" % detail) if detail else ""))
 print("sends     " + "   ".join(parts))
-print("goals     %.1f loads/s   %.1f saves/s   %.1f writes/s"
-      % (dl("goals", "loads") / dt, dl("goals", "saves") / dt, dl("goals", "writes") / dt))
+seen = dl("goals", "scan_hits") + dl("goals", "scan_parses")
+print("goals     %.1f loads/s   %.1f saves/s   %.1f writes/s   scan %.1f parses/s (%s memo hits)"
+      % (dl("goals", "loads") / dt, dl("goals", "saves") / dt, dl("goals", "writes") / dt,
+         dl("goals", "scan_parses") / dt, ("%.0f%%" % (100.0 * dl("goals", "scan_hits") / seen)) if seen else "no"))
 jp = dl("judge", "passes")
 print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms"
       % (jp, jp / dt, g(b, "judge", "ms_last"), ("%.0f" % (dl("judge", "ms_sum") / jp)) if jp else "-"))
