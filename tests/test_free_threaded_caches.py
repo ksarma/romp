@@ -13,6 +13,11 @@ observable step runs the concurrent writer, a monkeypatched callee that parks th
 second one arrives, or a gated open(). A test that only checks lost increments runs eight threads and
 asserts an exact count; on the GIL build that rarely fails without the fix, on the free-threaded build it
 does. Synthetic fixtures only: placeholder ids, invented text, hermetic state.
+
+The kernel here is a private module object (romp_kernel_ftcaches), so its caches are nobody else's; the
+judge, the event model and the session backend are the shared fixed-name modules, and every value of
+theirs a test touches (the state root and the paths derived from it, the memos, the counters, the echo
+key) goes back in tearDown.
 """
 import contextlib
 import io
@@ -38,10 +43,30 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 km = load_source("romp_kernel_ftcaches", os.path.join(BIN, "romp-kernel"))
 jd, em = km.jd, km.em
 
-SID = "11111111-2222-3333-4444-555555555555"
-PEER = "22222222-3333-4444-5555-666666666666"
+# Private synthetic sids (the repo's goal-store fixture rule): jd and em are shared with every module on
+# the worker, and a click stamp, a names entry, a pin sidecar or a journaled row filed under the shared
+# placeholder sid can land on another module's fixture mid-test. Nothing else uses these two.
+SID = "44444444-5555-6666-7777-888888888888"
+PEER = "55555555-6666-7777-8888-999999999999"
 WAIT = 5            # every gate in this file: a stuck thread fails the test, never hangs the run
 SETTLE = 0.3        # how long the second arriver gets to reach the shared step (or block on the lock)
+
+_JD_PATHS = ("STATE", "NAMES", "CAPDIR", "ARCHDIR", "GOALDIR", "GOALARCHDIR", "STATESDIR", "PCACHE", "MESSAGES",
+             "ERRORS", "USAGE", "SDKDIR", "EPIDIR", "GONEDIR", "JUDGE_AUTH", "CODEXDIR", "JUDGE_SCRATCH",
+             "JUDGE_LIMIT", "PROJECTS")
+
+
+def _jd_paths():
+    """One snapshot of every path the judge derives from its state root (plus PROJECTS). A test that rebinds
+    the root restores THESE, not STATE alone: a peer module may have aimed one of them elsewhere (a bare
+    GOALDIR reassignment is the suite's other isolation style), and _rebind_state would re-derive it."""
+    return {k: getattr(jd, k) for k in _JD_PATHS}
+
+
+def _restore_jd(saved):
+    jd._rebind_state(saved["STATE"])       # clears the per-root memos too
+    for k, v in saved.items():
+        setattr(jd, k, v)
 
 
 def _run(fn, *a):
@@ -137,12 +162,13 @@ class _PeerWritesDuringUnion(dict):
 
 class MsgSummariesPrivateTable(unittest.TestCase):
     def setUp(self):
-        self._saved = (km._sessions, km._msg_sum_scan_session)
+        self._saved = (km._sessions, km._msg_sum_scan_session, dict(km._msg_sum_cache))
         km._msg_sum_cache.clear()
 
     def tearDown(self):
-        km._sessions, km._msg_sum_scan_session = self._saved
+        km._sessions, km._msg_sum_scan_session = self._saved[:2]
         km._msg_sum_cache.clear()
+        km._msg_sum_cache.update(self._saved[2])
 
     def test_a_peer_insert_mid_union_neither_aborts_nor_corrupts_the_build(self):
         def peer_insert():
@@ -177,8 +203,9 @@ class _PeerInsertsOnHash(str):
 
 class NamesMemoSweep(unittest.TestCase):
     def setUp(self):
-        self._saved = (jd.STATE, jd.PROJECTS)
-        self.td = tempfile.mkdtemp()
+        self._saved = (_jd_paths(), dict(jd._namefp_memo))
+        self.tdo = tempfile.TemporaryDirectory()
+        self.td = self.tdo.name
         jd._rebind_state(Path(self.td))
         jd.PROJECTS = Path(self.td) / "projects"
         jd._namefp_memo.clear()
@@ -188,9 +215,10 @@ class NamesMemoSweep(unittest.TestCase):
         (jd.NAMES / SID).write_text("web\t%s" % cdir)
 
     def tearDown(self):
-        jd._rebind_state(self._saved[0])
-        jd.PROJECTS = self._saved[1]
+        _restore_jd(self._saved[0])
         jd._namefp_memo.clear()
+        jd._namefp_memo.update(self._saved[1])
+        self.tdo.cleanup()
 
     def test_a_peer_insert_mid_sweep_does_not_abort_the_fingerprint(self):
         def peer_insert():
@@ -271,13 +299,13 @@ class ParkedCreates(unittest.TestCase):
 class JudgeUsageReader(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
-        self._saved = jd.STATE
+        self._saved = (jd.STATE, dict(km._JUDGE_USAGE_CACHE))
         jd.STATE = Path(self.td.name)
         km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
 
     def tearDown(self):
-        jd.STATE = self._saved
-        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
+        jd.STATE = self._saved[0]
+        km._JUDGE_USAGE_CACHE.update(self._saved[1])
         self.td.cleanup()
 
     def test_rows_are_counted_once_under_concurrent_readers(self):
@@ -331,14 +359,15 @@ class JudgeUsageReader(unittest.TestCase):
 # ── race 7: the postal sender memo is one tuple, rebound whole ──
 class PostalRowMemo(unittest.TestCase):
     def setUp(self):
-        self._saved = jd.STATE
-        self.td = tempfile.mkdtemp()
-        jd._rebind_state(Path(self.td))
+        self._saved = (_jd_paths(), jd._postal_from_memo[0])
+        self.tdo = tempfile.TemporaryDirectory()
+        jd._rebind_state(Path(self.tdo.name))
         jd._postal_from_memo[0] = (None, {})
 
     def tearDown(self):
-        jd._rebind_state(self._saved)
-        jd._postal_from_memo[0] = (None, {})
+        _restore_jd(self._saved[0])
+        jd._postal_from_memo[0] = self._saved[1]
+        self.tdo.cleanup()
 
     def test_key_and_map_are_published_as_one_value(self):
         jd.MESSAGES.parent.mkdir(parents=True, exist_ok=True)
@@ -371,7 +400,7 @@ class RetryEpisodeGate(unittest.TestCase):
     def setUp(self):
         self.be = _FakeBackend()
         self._saved = (km._api_error, km._path_of, km._retry_paused_on, km._session_retry_suppressed,
-                       km._retry_gate_state, dict(km._auto_retried))
+                       km._retry_gate_state, dict(km._auto_retried), dict(km._auto_retry_state))
         km._path_of = lambda sid, now=None: "/TESTDIR/x.jsonl"
         km._retry_paused_on = lambda: False
         km._session_retry_suppressed = lambda sid: False
@@ -381,9 +410,9 @@ class RetryEpisodeGate(unittest.TestCase):
 
     def tearDown(self):
         (km._api_error, km._path_of, km._retry_paused_on, km._session_retry_suppressed,
-         km._retry_gate_state, saved) = self._saved
-        km._auto_retried.clear(); km._auto_retried.update(saved)
-        km._auto_retry_state.clear()
+         km._retry_gate_state, retried, state) = self._saved
+        km._auto_retried.clear(); km._auto_retried.update(retried)
+        km._auto_retry_state.clear(); km._auto_retry_state.update(state)
 
     def test_two_concurrent_askers_inject_one_retry(self):
         entered, gate = threading.Event(), threading.Event()
@@ -411,19 +440,19 @@ class PendingTagJournal(unittest.TestCase):
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
-        self._saved = (jd.STATE, km._tag_name_basis)
-        jd.STATE = Path(self.td.name)
         with km._PENDING_TAG_LOCK:
+            self._saved = (jd.STATE, km._tag_name_basis, km._PENDING_TAG_CACHE["rows"])
             km._PENDING_TAG_CACHE["rows"] = None
+        jd.STATE = Path(self.td.name)
         with km._remotes_lock:
             km._remotes["ft-test"] = {"host": self.HOST, "views": {"tags": []}}
 
     def tearDown(self):
         with km._remotes_lock:
             km._remotes.pop("ft-test", None)
-        jd.STATE, km._tag_name_basis = self._saved
+        jd.STATE, km._tag_name_basis = self._saved[:2]
         with km._PENDING_TAG_LOCK:
-            km._PENDING_TAG_CACHE["rows"] = None
+            km._PENDING_TAG_CACHE["rows"] = self._saved[2]
         self.td.cleanup()
 
     def test_both_edits_are_journaled(self):
@@ -515,12 +544,14 @@ class _LinesThenWriter:
 
 class PinAssociationMemo(unittest.TestCase):
     def setUp(self):
+        self._saved = dict(km._PIN_ASSOC_MEMO)
         km._PIN_ASSOC_MEMO.clear()
         self.path = km._pin_assoc_dir() / (SID + ".jsonl")
         self.path.write_text(json.dumps({"u": "u1", "t": "/x/a.png", "p": "pinA"}) + "\n")
 
     def tearDown(self):
         km._PIN_ASSOC_MEMO.clear()
+        km._PIN_ASSOC_MEMO.update(self._saved)
         self.path.unlink(missing_ok=True)
 
     def test_an_append_during_a_peer_load_is_not_displaced_by_the_peers_store(self):
