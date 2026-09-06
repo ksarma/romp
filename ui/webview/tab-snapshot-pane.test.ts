@@ -100,6 +100,16 @@ test("snapshot rows are click-safe (review finding 7): a press latches the strip
   for (const ev of ["pointerup", "pointercancel", "blur"]) assert.match(RENDER, new RegExp(`window\\.addEventListener\\("${ev}", releaseTabStrip\\)`), "released on " + ev);
 });
 
+test("a row whose session left the strip mid-press opens nothing (round 2): the delegate checks the row's session is still on the strip before setActive", () => {
+  // the rule executes in tab-snapshot-view.test.ts (rowStillOpen); this pins that the one delegate applies it, with
+  // the row's own loading flag (a placeholder's row is allowed its meta alone), the maps, and the close suppression
+  const open = SNAP.slice(SNAP.indexOf("delegate(host, {"), SNAP.indexOf("host.addEventListener(\"pointerdown\""));
+  assert.match(open, /const id = node\.dataset\.id;\s*\n\s*if \(!id\) return;/, "the id off the row");
+  assert.match(open, /if \(!rowStillOpen\(snapModel\?\.rows\.find\(\(r\) => r\.id === id\), sessions\.has\(id\), tabMeta\.has\(id\), closingTabs\.has\(id\)\)\) return;\s*\n\s*setActive\(id\); focusActiveTab\(\);/,
+    "the row's session must still be on the strip; otherwise nothing moves (the release's flush repaints without the row)");
+  assert.equal(SNAP.split("delegate(host").length - 1, 1, "still one delegate, on the stable host");
+});
+
 test("a remote row's host prefix is quiet metadata, not part of the bold name (review finding 2)", () => {
   assert.match(SNAP, /const name = el\("span", "snap-sess"\); name\.replaceChildren\(\.\.\.hostNameNodes\(r\.name, r\.id\)\);/, "the tab's helper (host-prefix.ts), one class for every surface");
   assert.doesNotMatch(SNAP, /name\.textContent = r\.name;/, "the raw frame name is not written as one text node");

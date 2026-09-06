@@ -34,6 +34,7 @@ import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned, reachableFrom, headWords,
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, type SnapModel, type SnapRow } from "./tab-snapshot";
+import { rowStillOpen } from "./tab-snapshot-view";
 import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
@@ -10148,7 +10149,18 @@ function snapshotHost(): HTMLElement | null {
   content.appendChild(host);
   // a row opens its session: setActive unfolds the section when the tab is folded away and clears
   // snapView; focus follows onto the tab (the strip's own select does the same)
-  delegate(host, { open: (node) => { const id = node.dataset.id; if (id) { setActive(id); focusActiveTab(); } } });
+  delegate(host, { open: (node) => {
+    const id = node.dataset.id;
+    if (!id) return;
+    // A ROW WHOSE SESSION LEFT MID-PRESS (the round-2 review): click safety keeps the pressed row until the
+    // release, so a session dismissed between mousedown and mouseup is still under the click, and setActive
+    // on its id put up an "opening…" loader, composer enabled, for a session that never arrives (the strip's
+    // meta lingers until the next tabOrder frame). The row's session must still be on the strip
+    // (tab-snapshot-view.ts rowStillOpen); otherwise nothing moves. The removal is that frame's event, and
+    // the release's flush (releaseTabStrip → renderTabs → renderSnapshot) repaints the rows without it.
+    if (!rowStillOpen(snapModel?.rows.find((r) => r.id === id), sessions.has(id), tabMeta.has(id), closingTabs.has(id))) return;
+    setActive(id); focusActiveTab();
+  } });
   // CLICK-SAFE (ui/CLAUDE.md; the 2026-09-06 review): the rows are rebuilt by renderTabs on every push that
   // changes one, and a rebuild between mousedown and mouseup leaves the click with no row under it. A press
   // on the snapshot latches the STRIP's hold (tabPointerHeld): renderTabs, and renderSnapshot's own rebuild,
