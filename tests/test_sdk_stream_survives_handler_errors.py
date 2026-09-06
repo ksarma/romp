@@ -20,10 +20,14 @@ and out of the session thread at reconnect (_mark_dropped_echoes), and the two-s
     _evict_live_overflow report a key that vanishes anyway once per site per kernel life — under the
     lock that means a mutator bypassed it;
   * the receive loop (_drain) runs each message through _handle_stream_message, which keeps a
-    handler's exception to that message — logged with its type, the message kind, a bounded frame
-    chain and what that class of message losing its handling costs, deduped in the error-center ring
-    — with the reporter itself guarded and the settle's turn-end plumbing in a finally; a fault of
-    the stream itself still ends the loop as before.
+    handler's exception to that message — logged with its type, the message kind, a frame chain
+    bounded from the OUTER end (the failing frame is always kept, and is the dedupe key) and what
+    that message losing its handling cost, by its shape (for a result: read from whether the settle
+    actually ran) — deduped in the error-center ring and re-entering with the full line once
+    evicted; the reporter itself is guarded; the ResultMessage branch is ONE try whose finally is
+    the whole settle (state resets, 'waiting', the queue wake, the poke, the rename ping, the
+    deferred reconnect), so a raise anywhere in the result's bookkeeping still closes the turn; a
+    fault of the stream itself still ends the loop as before.
 
 Every id here is synthetic (the placeholder uuid family); no message content is real.
 """
@@ -65,6 +69,10 @@ class _UserMessage:
 class _ResultMessage:
     uuid = "r1"
     num_turns = 1
+def _result(**fields):
+    """A ResultMessage double carrying result fields (total_cost_usd, usage, …). Built as a subclass so
+    the handler's isinstance and the reporter's class-name checks both see a ResultMessage."""
+    return type("ResultMessage", (_ResultMessage,), dict(fields))()
 class _SystemMessage:
     def __init__(self, subtype, data=None, uuid=None):
         self.subtype, self.data, self.uuid = subtype, (data or {}), uuid
@@ -216,9 +224,14 @@ class TheLiveTailLock(unittest.TestCase):
     an echo at send, land it in prune_live, mirror it). On the lock-free tail the reviewers' probes
     raised RuntimeError out of prune_live on 1412 of 1500 calls, out of _mark_dropped_echoes on 8 of
     3000, and orphaned 343 of 60000 stashes in the sid-level pop's window; under the lock nothing
-    raises and nothing is orphaned. Bounded by a call count on the kernel side and a wall-clock cap."""
+    raises and nothing is orphaned. Each hammer runs until BOTH sides have done their floor of
+    iterations (the kernel keeps hammering until the session thread has completed its turns), so the
+    overlap asserted on is guaranteed by construction rather than sampled — under a lock convoy the
+    session thread's count for a fixed 1500 kernel calls varied 10–447 run to run, and a `> 2` floor
+    on it was a margin by luck (round-2 review). A wall-clock cap is the only other stop, and hitting
+    it FAILS the test: the work takes about a second idle, so the cap means a wedge, not load."""
     SEEDED = 60          # unlanded echoes sitting in the tail (the _persist_echoes walk's length)
-    CAP_S = 6.0          # a hammer that runs longer than this stops and still asserts on what it saw
+    CAP_S = 20.0         # ~20x the idle runtime of the longest hammer
 
     def setUp(self):
         self._interval = sys.getswitchinterval()
@@ -235,12 +248,13 @@ class TheLiveTailLock(unittest.TestCase):
             be._stash_live(SID, "echo:seed%03d" % i, _echo("echo:seed%03d" % i, "seed %d" % i, 5))
         return be
 
-    def _hammer(self, session_body, kernel_body, n_kernel):
-        """kernel_body(i) runs n_kernel times on one thread while session_body(i) loops on another; both
-        start on a barrier. Returns (errors, session_iterations, kernel_iterations)."""
+    def _hammer(self, session_body, kernel_body, n_kernel, n_session):
+        """Two threads off one barrier: kernel_body(i) runs on one until BOTH floors are met — n_kernel
+        calls of its own and n_session completed session_body(i) iterations on the other — then stops
+        the session thread. Returns (errors, session_iterations, kernel_iterations, timed_out)."""
         barrier = threading.Barrier(2)
         stop = threading.Event()
-        errors, iters = [], [0, 0]
+        errors, iters, timed_out = [], [0, 0], [False]
         deadline = time.monotonic() + self.CAP_S
         def session():
             barrier.wait()
@@ -254,21 +268,34 @@ class TheLiveTailLock(unittest.TestCase):
                 iters[0] = i
         def kernel():
             barrier.wait()
-            for i in range(n_kernel):
+            i = 0
+            while i < n_kernel or iters[0] < n_session:
                 if time.monotonic() > deadline:
+                    timed_out[0] = True
                     break
                 try:
                     kernel_body(i)
                 except Exception as e:
                     errors.append(("kernel", repr(e), _chain(e)))
-                iters[1] = i + 1
+                i += 1
+                iters[1] = i
             stop.set()
         ts = threading.Thread(target=session, name="session"), threading.Thread(target=kernel, name="kernel")
         for t in ts:
             t.start()
         for t in ts:
             t.join(self.CAP_S + 5)
-        return errors, iters[0], iters[1]
+        return errors, iters[0], iters[1], timed_out[0]
+
+    def _assert_overlap(self, res, n_session, n_kernel):
+        """No exception on either thread, and both floors met — the interleaving happened."""
+        errors, si, ki, timed_out = res
+        self.assertEqual(errors, [], "no exception on either thread: %r" % errors[:3])
+        self.assertFalse(timed_out, "the hammer hit its %.0fs cap at %d session / %d kernel iterations"
+                         % (self.CAP_S, si, ki))
+        self.assertGreaterEqual(si, n_session, "the session thread ran its floor (%d of %d, against %d kernel calls)"
+                                % (si, n_session, ki))
+        self.assertGreaterEqual(ki, n_kernel, "the kernel thread ran its floor (%d of %d)" % (ki, n_kernel))
 
     def test_prune_live_and_the_echo_mirror_survive_the_session_threads_stash_and_retire(self):
         """Refuter finding 1: prune_live (kernel thread) lands an echo → _persist_echoes walks the tail
@@ -287,10 +314,7 @@ class TheLiveTailLock(unittest.TestCase):
             be._stash_live(SID, "echo:k%d" % i, _echo("echo:k%d" % i, text, 5))   # send(): the echo
             be._persist_echoes(SID)                                                # …and its mirror
             be.prune_live(SID, set(), {text: 6.0}, 0)  # the echo lands by text → echo_removed → the mirror walk
-        errors, si, ki = self._hammer(session_body, kernel_body, 1500)
-        self.assertEqual(errors, [], "no exception on either thread: %r" % errors[:3])
-        self.assertGreater(si, 2, "the session thread ran (%d turns against %d kernel calls)" % (si, ki))
-        self.assertGreater(ki, 100, "the kernel thread ran")
+        self._assert_overlap(self._hammer(session_body, kernel_body, 1500, 20), 20, 1500)
         tail = be._live.get(SID) or {}
         self.assertTrue(all(("echo:seed%03d" % i) in tail for i in range(self.SEEDED)), "no seeded echo was lost")
         self.assertFalse([k for k in tail if k.startswith("echo:k")], "every landed echo was pruned")
@@ -309,10 +333,7 @@ class TheLiveTailLock(unittest.TestCase):
             be._stash_live(SID, "echo:k%d" % i, _echo("echo:k%d" % i, text, 5))
             be._persist_echoes(SID)
             be.prune_live(SID, set(), {text: 6.0}, 0)  # land it, so the tail stays bounded
-        errors, si, ki = self._hammer(session_body, kernel_body, 3000)
-        self.assertEqual(errors, [], "no exception on either thread: %r" % errors[:3])
-        self.assertGreater(si, 2, "the session thread ran (%d passes against %d kernel calls)" % (si, ki))
-        self.assertGreater(ki, 100)
+        self._assert_overlap(self._hammer(session_body, kernel_body, 3000, 20), 20, 3000)
         tail = be._live.get(SID) or {}
         self.assertTrue(all(tail["echo:seed%03d" % i].get("dropped") for i in range(self.SEEDED)),
                         "the seeded echoes were marked (the marking still does its job)")
@@ -350,11 +371,9 @@ class TheLiveTailLock(unittest.TestCase):
                             orphans.append(key)
                         with be._live_lock:
                             (be._live.get(SID) or {}).pop(key, None)
-                errors, si, ki = self._hammer(session_body, kernel_body, 20000)
-                self.assertEqual(errors, [], "no exception on either thread: %r" % errors[:3])
-                self.assertGreater(si, 10, "the sweeper ran (%d sweeps against %d stashes)" % (si, ki))
-                self.assertGreater(ki, 1000)
-                self.assertEqual(orphans, [], "%d of %d stashes landed in an unreachable dict" % (len(orphans), ki))
+                res = self._hammer(session_body, kernel_body, 20000, 50)
+                self._assert_overlap(res, 50, 20000)
+                self.assertEqual(orphans, [], "%d of %d stashes landed in an unreachable dict" % (len(orphans), res[2]))
 
     def test_the_lock_is_never_held_across_io_or_a_callback(self):
         """The rule's other half: copy under the lock, act outside. The reg write (the echo mirror), the
@@ -422,30 +441,48 @@ class HandlerFailuresStayWithTheirMessage(unittest.TestCase):
         self.assertIn("stream continues", txt)
         self.assertIn(txt, lines, "the same line reached the kernel log")
 
-    def test_the_line_says_what_that_message_class_lost(self):
-        """'(the transcript keeps it)' was true for assistant/user records only; a SystemMessage frame or
-        a ResultMessage exists on the stream alone, and the line has to say so for the message it is about."""
+    def test_the_line_says_what_that_message_lost_by_its_shape(self):
+        """'(the transcript keeps it)' was true for assistant/user records only; a SystemMessage frame
+        or a ResultMessage exists on the stream alone, and the line has to say so for the message it is
+        about. By SHAPE, not class (round-2 review): a compact_boundary IS a transcript record, a
+        `<local-command-stdout>` UserMessage from a control request is not, and a ResultMessage's turn
+        'still closed' only if the settle ran — here the whole handler is replaced, so it did not."""
         lines = []
         be = _backend(lines)
         s = _session(be)
         def boom(msg, *a):
             raise ValueError("v")
         s._on_message = boom
+        stdout = "<local-command-stdout>Set model to sonnet (claude-sonnet-x)</local-command-stdout>"
         cases = ((_SystemMessage("task_notification", {"task_id": "t1"}), "stream-only frame"),
-                 (_ResultMessage(), "the turn still closed"),
+                 (_ResultMessage(), "the turn did NOT settle"),
                  (_AssistantMessage([_TextBlock("x")]), "the transcript keeps the message"),
+                 (_UserMessage([_TextBlock("a typed prompt")]), "the transcript keeps the message"),
+                 (_UserMessage([_TextBlock(stdout)]), "a command's output line"),
+                 (_SystemMessage("compact_boundary", {"compact_metadata": {"trigger": "manual"}}), "keeps the boundary record"),
                  (_StreamEvent(), "partial-stream event"))
         for msg, phrase in cases:
             sb.SdkSession._stream_fail_seen.clear()        # each case is a first-of-signature line…
             s._handle_stream_message(msg, _AssistantMessage, _ResultMessage, _SystemMessage)
-            self.assertIn(phrase, lines[-1], "%s: %s" % (type(msg).__name__, lines[-1]))
+            self.assertIn(phrase, lines[-1], "%s: %s" % (sb._describe_msg(msg), lines[-1]))
+        self.assertNotIn("Set model", "".join(lines), "the command's output text is matched, never logged")
         # …in the kernel log; the ring folds them (same session, exception type and site), and its one
         # entry keeps the first line's phrase with the repeat count
         self.assertEqual(len(_problems(be)), 1)
         self.assertIn("stream-only frame", _problems(be)[0])
-        self.assertIn("(3 repeats this kernel life", _problems(be)[0])
+        self.assertIn("(6 repeats this kernel life", _problems(be)[0])
         self.assertEqual(sb._failure_consequence(_HookEventMessage("hook_started")),
                          sb._failure_consequence(_SystemMessage("status")), "every other frame: stream-only")
+        # the result's phrase is a fact the caller passes, and the settled form names what did NOT run
+        settled = sb._failure_consequence(_ResultMessage(), settled=True)
+        self.assertIn("the turn still settled", settled)
+        for word in ("spend", "api health", "live-tail sweep"):
+            self.assertIn(word, settled, "the bookkeeping that stopped is named")
+        self.assertIn("did NOT settle", sb._failure_consequence(_ResultMessage(), settled=False))
+        # the stdout wrapper is matched on a plain-string content too, and a string that merely
+        # mentions the tag mid-text is a typed prompt
+        self.assertTrue(sb._is_command_stdout(_UserMessage(stdout)))
+        self.assertFalse(sb._is_command_stdout(_UserMessage([_TextBlock("about " + stdout)])))
 
     def test_repeats_count_on_one_ring_entry_and_bust_the_feed_cache_once(self):
         """Every repeat is a kernel-log line; the error-center RING keeps one entry per (session,
@@ -483,8 +520,14 @@ class HandlerFailuresStayWithTheirMessage(unittest.TestCase):
         self.assertEqual(len(_problems(be)), 2)
         self.assertIn("(5 repeats this kernel life", _problems(be)[0])
 
-    def test_a_ring_entry_evicted_meanwhile_enters_again_as_new(self):
-        be = _backend()
+    def test_a_ring_entry_evicted_meanwhile_enters_again_as_new_with_the_full_line(self):
+        """The first-vs-repeat decision and the ring's dedupe were two independent counters (round-2
+        review): once the ring had evicted the entry, the next repeat logged the short line and the
+        ring built its NEW row from it — no frame chain, no consequence, and a pointer at 'the first'
+        in a kernel log that may have rotated. A repeat whose key is not in the ring now re-enters with
+        the full line, counted; the repeats after it count on that row in the short form again."""
+        lines = []
+        be = _backend(lines)
         s = _session(be)
         def boom(msg, *a):
             raise KeyError("k")
@@ -495,8 +538,31 @@ class HandlerFailuresStayWithTheirMessage(unittest.TestCase):
         self.assertFalse([p for p in _problems(be) if "KeyError" in p], "the entry was evicted")
         seq = be.problem_seq()
         s._handle_stream_message(_ResultMessage(), _AssistantMessage, _ResultMessage, _SystemMessage)
-        self.assertEqual(len([p for p in _problems(be) if "KeyError" in p]), 1, "back in the ring as a new entry")
+        rows = [p for p in _problems(be) if "KeyError" in p]
+        self.assertEqual(len(rows), 1, "back in the ring as a new entry")
         self.assertEqual(be.problem_seq(), seq + 1)
+        self.assertRegex(rows[0], r"at .*\.py:\d+ \w+", "the re-entered row carries the frame chain")
+        self.assertIn("handling stopped there (", rows[0], "…and the consequence")
+        self.assertIn("(repeat 2 this kernel life; its earlier error-center entry was evicted)", rows[0])
+        self.assertEqual(lines[-1], rows[0], "the kernel log got the same full line")
+        s._handle_stream_message(_ResultMessage(), _AssistantMessage, _ResultMessage, _SystemMessage)
+        rows = [p for p in _problems(be) if "KeyError" in p]
+        self.assertEqual(len(rows), 1, "the next repeat counts on the re-entered row")
+        self.assertIn("(1 repeat this kernel life", rows[0])
+        self.assertRegex(rows[0], r"at .*\.py:\d+ \w+", "…which keeps its chain")
+        self.assertIn("repeat 3", lines[-1])
+        self.assertNotRegex(lines[-1], r"\.py:\d+", "…while the log line is the short form again")
+        self.assertEqual(be.problem_seq(), seq + 1)
+
+    def test_problem_keyed_reads_the_ring_now(self):
+        be = _backend()
+        self.assertFalse(be.problem_keyed(("k", 1)))
+        be._log("a keyed problem", problem=True, key=("k", 1))
+        self.assertTrue(be.problem_keyed(("k", 1)))
+        self.assertFalse(be.problem_keyed(("k", 2)))
+        for i in range(be.PROBLEM_RING):
+            be._log("unrelated problem %d" % i, problem=True)
+        self.assertFalse(be.problem_keyed(("k", 1)), "evicted → not in the ring")
 
     def test_a_clean_handler_reports_true_and_logs_nothing(self):
         be = _backend()
@@ -546,70 +612,176 @@ class HandlerFailuresStayWithTheirMessage(unittest.TestCase):
         self.assertIn("(3 repeats this kernel life", probs[1])
 
 
-class TheSettleFinishesItsPlumbingWhenAStepRaises(unittest.TestCase):
-    """With per-message containment, an exception in the ResultMessage settle no longer ends the
-    stream — so the turn-end plumbing that used to follow the failing step in straight-line code (the
-    queue wake, the poke, the rename ping, the deferred effort reconnect) must not be skipped by it, or
-    a gate-held queue stays parked and a deferred reconnect never fires while the session reads 'waiting'."""
+class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
+    """With per-message containment, an exception in the ResultMessage branch no longer ends the
+    stream — so THE SETTLE (inflight 0, the compaction/clear flags, 'waiting', the turn-end count, the
+    queue wake, the poke, the rename ping, the deferred effort reconnect) must run whatever the
+    result's bookkeeping did, or a gate-held queue stays parked and a deferred reconnect never fires
+    while the session reads 'working'. The rule: the branch is ONE try from its first statement, and
+    its finally is the whole settle. The first cut opened the try only ahead of the rewind steps, so
+    the api-health note, the spend fold and even `inflight = 0` sat outside it: a raise there parked
+    the turn while the failure line claimed it had closed (round-2 review — the verifier's probes were
+    a failing spend write and a NaN usage field, both reproduced here)."""
     def setUp(self):
         sb.SdkSession._stream_fail_seen.clear()
 
-    def _settle(self, be, s, ok_expected):
-        pokes = []
+    def _settle(self, be, s, ok_expected, msg=None):
+        pokes, marks, turns = [], [], []
         be._poke_cb = lambda: pokes.append(1)
+        orig_mark, orig_turn = s._mark, be._turn_completed
+        s._mark = lambda state: (marks.append(state), orig_mark(state))
+        be._turn_completed = lambda sid: (turns.append(sid), orig_turn(sid))
         out = {}
         async def run():
             s.loop = asyncio.get_running_loop()
             s._input_wake = asyncio.Event()
             s._wake = asyncio.Event()
-            out["ok"] = s._handle_stream_message(_ResultMessage(), _AssistantMessage, _ResultMessage, _SystemMessage)
+            out["ok"] = s._handle_stream_message(msg if msg is not None else _ResultMessage(),
+                                                 _AssistantMessage, _ResultMessage, _SystemMessage)
             await asyncio.sleep(0)
             out.update(wake=s._input_wake.is_set(), pokes=len(pokes), reconnect=s._reconnect,
-                       still_deferred=s._reconnect_when_idle, wake_event=s._wake.is_set())
+                       still_deferred=s._reconnect_when_idle, wake_event=s._wake.is_set(),
+                       marks=list(marks), turns=len(turns))
         asyncio.run(run())
         self.assertEqual(out["ok"], ok_expected)
         return out
 
-    def test_a_raising_retire_still_wakes_the_queue_pokes_and_fires_the_deferred_reconnect(self):
-        be = _backend()
+    def _busy(self, be):
         s = _session(be)
         s.inflight = 1
         s._interrupted = True                          # the queue is gate-held behind an interrupted turn
         s._pending = ["queued during the interrupted turn"]
         s._reconnect_when_idle = True                  # an /effort change waiting for this turn's end
+        s._compacting = True
+        return s
+
+    def _assert_settled(self, s, out):
+        self.assertEqual(s.inflight, 0, "the turn settled")
+        self.assertFalse(s._compacting or s._clearing or s._interrupted, "the turn's flags are down")
+        self.assertEqual(out["marks"], ["waiting"], "the session reads waiting")
+        self.assertEqual(out["turns"], 1, "the turn-end count moved once")
+        self.assertTrue(out["wake"], "the input feeder was released")
+        self.assertEqual(out["pokes"], 1, "the kernel was poked, once")
+        self.assertTrue(out["reconnect"] and not out["still_deferred"], "the deferred reconnect fired")
+        self.assertTrue(out["wake_event"], "…and the loop was woken for it")
+
+    def test_a_raising_retire_still_settles_the_turn(self):
+        be = _backend()
+        s = self._busy(be)
         def boom(sid):
             raise OSError("the sweep's transcript read failed")
         be.retire_live_work = boom
         out = self._settle(be, s, ok_expected=False)
-        self.assertEqual(s.inflight, 0, "the turn settled")
-        self.assertTrue(out["wake"], "the input feeder was released")
-        self.assertEqual(out["pokes"], 1, "the kernel was poked")
-        self.assertTrue(out["reconnect"] and not out["still_deferred"], "the deferred reconnect fired")
-        self.assertTrue(out["wake_event"], "…and the loop was woken for it")
+        self._assert_settled(s, out)
         probs = _problems(be)
         self.assertEqual(len(probs), 1)
         self.assertIn("OSError while handling a ResultMessage", probs[0])
-        self.assertIn("the turn still closed", probs[0])
+        self.assertIn("the turn still settled", probs[0])
+
+    def test_a_raising_spend_write_still_settles_the_turn(self):
+        """The verifier's probe: _record_spend raising on a result that carries a cost — a step that sat
+        BEFORE the try and before inflight = 0 in the first cut, so the turn never settled."""
+        be = _backend()
+        s = self._busy(be)
+        def bad_spend(*a, **k):
+            raise OSError(28, "No space left on device")
+        be._record_spend = bad_spend
+        out = self._settle(be, s, ok_expected=False, msg=_result(total_cost_usd=0.5, usage={"input_tokens": 10}))
+        self._assert_settled(s, out)
+        probs = _problems(be)
+        self.assertEqual(len(probs), 1)
+        self.assertIn("OSError while handling a ResultMessage", probs[0])
+        self.assertIn("the turn still settled", probs[0])
+        self.assertIn("stopped where it failed", probs[0], "…and says the bookkeeping did not finish")
+
+    def test_a_nan_usage_field_still_settles_the_turn(self):
+        """The other live trigger: json.loads accepts a NaN token and int(float('nan')) raises ValueError
+        inside the fold itself (no stub needed) — the same pre-try position."""
+        import json
+        be = _backend()
+        s = self._busy(be)
+        usage = json.loads('{"input_tokens": NaN, "output_tokens": 5}')
+        out = self._settle(be, s, ok_expected=False, msg=_result(total_cost_usd=0.5, usage=usage))
+        self._assert_settled(s, out)
+        probs = _problems(be)
+        self.assertEqual(len(probs), 1)
+        self.assertIn("ValueError while handling a ResultMessage", probs[0])
+        self.assertIn("the turn still settled", probs[0])
+
+    def test_a_failure_before_the_branch_is_reported_as_not_settled(self):
+        """The one place a ResultMessage's handling can fail OUTSIDE the branch is the elif chain
+        above it (the move-settle check). No finally covers that, so the line must not claim a settle:
+        the phrase is read from the settle's own marker, not from the class."""
+        be = _backend()
+        s = self._busy(be)
+        def boom(msg):
+            raise RuntimeError("the move check broke")
+        s._consume_move_settle = boom
+        out = self._settle(be, s, ok_expected=False)
+        self.assertEqual(s.inflight, 1)
+        self.assertFalse(out["wake"] or out["pokes"] or out["marks"])
+        probs = _problems(be)
+        self.assertEqual(len(probs), 1)
+        self.assertIn("the turn did NOT settle", probs[0])
+        self.assertNotIn("still settled", probs[0])
+
+    def test_a_raising_state_write_skips_nothing_else_and_is_reported(self):
+        """The settle's own raise-prone steps (the 'waiting' write, the turn-end count) are guarded and
+        reported after the flags, so a failing one cannot skip the wake, the poke or the reconnect."""
+        be = _backend()
+        s = self._busy(be)
+        def bad_mark(state):
+            raise OSError(28, "No space left on device")
+        s._mark = bad_mark
+        pokes = []
+        be._poke_cb = lambda: pokes.append(1)
+        async def run():
+            s.loop = asyncio.get_running_loop()
+            s._input_wake = asyncio.Event()
+            s._wake = asyncio.Event()
+            self.assertTrue(s._handle_stream_message(_ResultMessage(), _AssistantMessage, _ResultMessage, _SystemMessage),
+                            "the bookkeeping ran clean; the settle step's failure is its own report")
+            await asyncio.sleep(0)
+            self.assertEqual(s.inflight, 0)
+            self.assertTrue(s._input_wake.is_set())
+            self.assertEqual(len(pokes), 1)
+            self.assertTrue(s._reconnect and not s._reconnect_when_idle)
+        asyncio.run(run())
+        probs = _problems(be)
+        self.assertEqual(len(probs), 1, probs)
+        self.assertIn("settle (web): the 'waiting' state write failed: OSError", probs[0])
 
     def test_a_clean_settle_runs_the_same_plumbing_once(self):
         be = _backend()
-        s = _session(be)
-        s.inflight = 1
-        s._reconnect_when_idle = True
+        s = self._busy(be)
         out = self._settle(be, s, ok_expected=True)
-        self.assertTrue(out["wake"])
-        self.assertEqual(out["pokes"], 1)
-        self.assertTrue(out["reconnect"] and not out["still_deferred"])
+        self._assert_settled(s, out)
         self.assertEqual(_problems(be), [])
 
-    def test_the_plumbing_sits_in_a_finally_by_source(self):
+    def test_the_branch_is_one_try_and_its_finally_is_the_settle_by_source(self):
         src = inspect.getsource(sb.SdkSession._on_message)
-        i_retire = src.index("self.backend.retire_live_work(self.sid)")
-        i_finally = src.index("finally:", i_retire)
-        i_wake = src.index("self._input_wake.set()", i_finally)
-        self.assertLess(i_retire, i_finally, "the sweep is inside the try")
-        self.assertLess(i_finally, i_wake, "the queue wake is in the finally")
-        self.assertIn("self._reconnect_when_idle and not self.ended", src[i_finally:])
+        i_branch = src.index("elif isinstance(msg, ResultMessage):")
+        i_try = src.index("try:", i_branch)
+        i_finally = src.index("finally:", i_try)
+        i_next = src.index("\n        elif ", i_finally)                 # the next branch of the chain
+        head = src[i_branch:i_try]
+        self.assertFalse([l for l in head.splitlines()[1:] if l.strip() and not l.strip().startswith("#")],
+                         "no statement between the branch head and the try: %r" % head)
+        body, settle = src[i_try:i_finally], src[i_finally:i_next]
+        for step in ("self._ah_note_result(msg)", "self.backend._record_spend(", "self.backend.retire_live_work(self.sid)",
+                     "self.backend._complete_rewind_wait(self)", "asyncio.ensure_future(self._do_refresh_usage())"):
+            self.assertIn(step, body, "%s is bookkeeping, inside the try" % step)
+            self.assertNotIn(step, settle)
+        for step in ("self.inflight = 0", "self._inflight_texts.clear()", "self._compacting = False",
+                     "self._clearing = False", "self._interrupted = False", 'self._mark("waiting")',
+                     "self.backend._turn_completed(self.sid)", "self._input_wake.set()", "self.backend._poke()",
+                     "self.backend._deliver_rename_ping(self)", "self._reconnect_when_idle and not self.ended",
+                     "self._settled_msg = msg"):
+            self.assertIn(step, settle, "%s is the settle, in the finally" % step)
+            self.assertNotIn(step, body)
+        # nothing that can raise precedes the flag writes in the finally
+        self.assertLess(settle.index("self._input_wake.set()"), settle.index("step()"))
+        self.assertLess(settle.index("self._input_wake.set()"), settle.index("self.backend._poke()"))
 
 
 class TheDrainLoopOutlivesAHandlerFailure(unittest.TestCase):
@@ -754,7 +926,8 @@ class LogHelpers(unittest.TestCase):
     def test_compact_tb_is_bounded_to_the_innermost_frames_and_a_length_cap(self):
         """A RecursionError's chain ran to 18 KB — into the error-center ring and every feed payload that
         carries it. The chain keeps the innermost COMPACT_TB_FRAMES frames (the failing site is at that
-        end), says how many outer ones it dropped, and is clipped to COMPACT_TB_CHARS."""
+        end), says how many outer ones it dropped, and fits COMPACT_TB_CHARS by dropping MORE outer
+        frames — never by clipping its tail, which is the failing frame."""
         def rec(n):
             return rec(n + 1)
         try:
@@ -768,12 +941,76 @@ class LogHelpers(unittest.TestCase):
         self.assertRegex(chain, r"^…%d outer frames dropped… > " % (depth - sb.COMPACT_TB_FRAMES))
         self.assertEqual(chain.count(" > "), sb.COMPACT_TB_FRAMES, "the prefix plus the kept frames")
         self.assertTrue(chain.endswith(" rec"), "the innermost frame is kept: %r" % chain[-40:])
-        # the cap applies even when the frames are few but their names are long
-        long = sb._compact_tb(e, max_frames=depth, cap=100)
-        self.assertEqual(len(long), 100)
-        self.assertTrue(long.endswith("…"))
-        # one dropped frame reads as one
-        self.assertRegex(sb._compact_tb(e, max_frames=depth - 1), r"^…1 outer frame dropped… > ")
+        # a tight cap with every frame allowed: the cap drops outer frames and the failing one stays
+        # (150: room for the prefix and two of this file's ~50-character frames, not three)
+        tight = sb._compact_tb(e, max_frames=depth, cap=150)
+        self.assertLessEqual(len(tight), 150)
+        self.assertTrue(tight.endswith(" rec"), "the innermost frame survives the cap: %r" % tight)
+        kept = tight.count(" > ")                      # the prefix plus the kept frames
+        self.assertEqual(kept, 2, "two frames fit in 150 characters, and both are kept whole: %r" % tight)
+        self.assertRegex(tight, r"^…%d outer frames dropped… > " % (depth - kept), "the prefix counts every drop")
+        # one dropped frame reads as one (an unbounded cap, so only the frame bound drops)
+        self.assertRegex(sb._compact_tb(e, max_frames=depth - 1, cap=10 ** 6), r"^…1 outer frame dropped… > ")
+
+    @staticmethod
+    def _long_named_chain(depth, tail="a_failing_function_with_a_long_name", module="a_module_name_of_ordinary_length.py"):
+        """An exception raised through `depth` frames whose names are ~40 characters (a plugin, a hook, a
+        test) — eight of them overflow COMPACT_TB_CHARS. Returns (exception, innermost function name)."""
+        names = ["a_handler_frame_with_a_realistic_name_%02d" % i for i in range(depth - 1)] + [tail]
+        src = "".join("def %s(x):\n    return %s(x)\n" % (names[i], names[i + 1]) for i in range(depth - 1))
+        src += "def %s(x):\n    raise KeyError('k')\n" % tail
+        ns = {}
+        exec(compile(src, module, "exec"), ns)
+        try:
+            ns[names[0]](1)
+        except KeyError as e:
+            return e, tail
+
+    def test_the_cap_drops_outer_frames_and_keeps_the_failing_one(self):
+        """Round-2 finding: the first cut clipped the chain's TAIL at the cap — the innermost frame —
+        so a chain through long-named frames lost its failing site."""
+        e, tail = self._long_named_chain(10)
+        frames = traceback.extract_tb(e.__traceback__)          # the builder's own frame + the ten exec'd ones
+        full = " > ".join(sb._frame_step(f) for f in frames[-sb.COMPACT_TB_FRAMES:])
+        self.assertGreater(len(full), sb.COMPACT_TB_CHARS, "the shape engages the cap")
+        chain = sb._compact_tb(e)
+        self.assertLessEqual(len(chain), sb.COMPACT_TB_CHARS)
+        self.assertTrue(chain.endswith(" " + tail), "the failing frame is the chain's last step: %r" % chain[-80:])
+        kept = chain.count(" > ")
+        self.assertRegex(chain, r"^…%d outer frames dropped… > " % (len(frames) - kept))
+        self.assertLess(kept, sb.COMPACT_TB_FRAMES, "the cap dropped frames the frame bound had kept")
+        self.assertNotIn("…", chain[chain.index(" > "):], "no step is clipped")
+        self.assertEqual(sb._failing_frame(e), ("a_module_name_of_ordinary_length.py", 20, tail))
+
+    def test_an_innermost_frame_wider_than_the_cap_keeps_its_file_and_line(self):
+        e, tail = self._long_named_chain(3)
+        site = "%s:%d" % ("a_module_name_of_ordinary_length.py", 6)
+        one = sb._compact_tb(e, cap=80)
+        self.assertEqual(len(one), 80)
+        dropped = len(traceback.extract_tb(e.__traceback__)) - 1
+        self.assertTrue(one.startswith("…%d outer frames dropped… > %s " % (dropped, site)), "prefix and file:line stand: %r" % one)
+        self.assertTrue(one.endswith("…") and tail[:8] in one, "the function name is what gets clipped: %r" % one)
+        self.assertEqual(sb._compact_tb(e, cap=10000), " > ".join(sb._frame_step(f) for f in traceback.extract_tb(e.__traceback__)),
+                         "no cap engaged: the full chain, no prefix")
+        self.assertEqual(sb._failing_frame(ValueError("no traceback")), None)
+
+    def test_two_failing_sites_under_long_chains_are_two_ring_entries(self):
+        """Round-2 finding: with the cap engaged the dedupe key read off the rendering was the literal
+        '…', folding every long-chained failure of one type into one entry. The key is the innermost
+        frame's (file, line, function), read from the traceback."""
+        be = _backend()
+        s = _session(be)
+        for tail in ("a_failing_function_with_a_long_name", "a_completely_different_failing_function"):
+            e, _ = self._long_named_chain(10, tail=tail)
+            s._note_message_failure(_ResultMessage(), e)
+        probs = _problems(be)
+        self.assertEqual(len(probs), 2, "one entry per failing site: %r" % [p[-90:] for p in probs])
+        for p, tail in zip(probs, ("a_failing_function_with_a_long_name", "a_completely_different_failing_function")):
+            self.assertTrue(p.endswith(" " + tail), "each entry names its own failing frame: %r" % p[-90:])
+        e, _ = self._long_named_chain(10)
+        s._note_message_failure(_ResultMessage(), e)
+        self.assertEqual(len(_problems(be)), 2, "the same site again counts on its entry")
+        self.assertIn("(1 repeat this kernel life", _problems(be)[0])
 
     def test_a_recursing_handler_yields_one_bounded_problem_line(self):
         be = _backend()

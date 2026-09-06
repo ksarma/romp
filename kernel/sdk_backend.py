@@ -3111,9 +3111,10 @@ class SdkSession:
     # …and one line per SystemMessage subtype the handler has no branch for (per kernel life), so a
     # CLI that starts forwarding a new frame kind is noticed in the log instead of silently dropped.
     _sys_subtypes_seen: set = set()
-    # …and per-message handler failures (_handle_stream_message): (exception type, message kind,
-    # innermost frame) → count, per kernel life. The first of a signature logs its frame chain; every
-    # repeat logs one short counted line, so a handler failing on each message stays visible.
+    # …and per-message handler failures (_handle_stream_message): (sid, exception type, innermost frame
+    # as (file, line, function)) → count, per kernel life. The first of a signature logs its frame chain;
+    # a repeat logs one short counted line while the ring still holds the signature's entry, and the
+    # full line again once the ring has evicted it — so a handler failing on each message stays visible.
     _stream_fail_seen: dict = {}
     _stream_fail_lock = threading.Lock()
 
@@ -3346,6 +3347,8 @@ class SdkSession:
         self._wake: asyncio.Event | None = None
         self._reconnect = False                 # the current break is a reconnect (not a shutdown)
         self._reconnect_when_idle = False        # a reconnect was requested mid-turn → apply at turn end
+        self._settled_msg = None                 # the ResultMessage whose settle ran last (its finally records
+        #   it) — what _note_message_failure reads to say whether a failed result's turn still settled
         # The handshake as a cross-thread EVENT: set the moment a ClaudeSDKClient is up, cleared when
         # it goes down — what a kernel-thread caller that needs the control channel (SdkBackend.move on
         # a just-revived session) waits on, instead of polling for self.client.
@@ -4583,32 +4586,37 @@ class SdkSession:
     def _note_message_failure(self, msg, e) -> None:
         """One problem line per failure, with enough to fix by: the exception type, the message's type
         and subtype (never its content), the exception's own text (uuid-shaped ids shortened, clipped —
-        _mask_ids), what that class of message losing its handling costs, and — the first time a
-        signature is seen this kernel life — the frame chain (file:line function, no locals, bounded;
-        _compact_tb). A bare `KeyError: '<uuid>'` with none of this is what the last such failure left
-        to diagnose from.
+        _mask_ids), what that message losing its handling cost (_failure_consequence — for a
+        ResultMessage read from whether the settle's finally ran for it, never assumed), and the frame
+        chain (file:line function, no locals, bounded; _compact_tb). A bare `KeyError: '<uuid>'` with
+        none of this is what the last such failure left to diagnose from.
 
-        Repeats: the kernel log gets one short counted line per repeat, so a handler that fails on
-        every message is visible there; the error-center RING keeps one entry per (session, exception
-        type, failing frame) and counts the repeats on it (_log's `key`), so the flood neither evicts
-        every other problem from the ring nor busts the feed cache per message (2026-09-06)."""
+        Repeats: a signature is (session, exception type, the failing frame as file/line/function —
+        _failing_frame, read from the traceback itself, so the chain's length cap cannot change it).
+        The error-center RING keeps one entry per signature and counts the repeats on it (_log's
+        `key`), so a handler failing on every message neither evicts every other problem from the ring
+        nor busts the feed cache per message (2026-09-06); while that entry is in the ring the kernel
+        log gets one short counted line per repeat. Once the ring has evicted the entry, the next
+        repeat re-enters it with the FULL line — chain, consequence and the count — because the short
+        form's "logged with the first" points at a kernel log that may have rotated, and a ring row
+        built from it named no site to fix by (round-2 review, 2026-09-06)."""
         kind = _describe_msg(msg)
-        chain = _compact_tb(e)
-        site = chain.rsplit(" > ", 1)[-1]
-        sig = (self.sid, type(e).__name__, site)
+        sig = (self.sid, type(e).__name__, _failing_frame(e))
         with SdkSession._stream_fail_lock:
             n = SdkSession._stream_fail_seen.get(sig, 0) + 1
             SdkSession._stream_fail_seen[sig] = n
         key = ("stream-fail",) + sig
-        if n == 1:
-            self.backend._log("sdk session %s: %s while handling a %s message; that message's handling "
-                              "stopped there (%s) and the stream continues. %s: %s, at %s"
-                              % (self.name, type(e).__name__, kind, _failure_consequence(msg),
-                                 type(e).__name__, _mask_ids(e), chain), problem=True, key=key)
-        else:
+        if n > 1 and self.backend.problem_keyed(key):
             self.backend._log("sdk session %s: %s while handling a %s message (repeat %d this kernel life; "
                               "the frame chain was logged with the first); handling stopped, stream continues"
                               % (self.name, type(e).__name__, kind, n), problem=True, key=key)
+            return
+        settled = getattr(self, "_settled_msg", None) is msg   # getattr: __new__-built test doubles
+        again = "" if n == 1 else " (repeat %d this kernel life; its earlier error-center entry was evicted)" % n
+        self.backend._log("sdk session %s: %s while handling a %s message%s; that message's handling "
+                          "stopped there (%s) and the stream continues. %s: %s, at %s"
+                          % (self.name, type(e).__name__, kind, again, _failure_consequence(msg, settled=settled),
+                             type(e).__name__, _mask_ids(e), _compact_tb(e)), problem=True, key=key)
 
     def _on_message(self, msg, AssistantMessage, ResultMessage, SystemMessage):
         if getattr(self, "_ping_feeding", False):   # getattr: __new__-built test doubles skip __init__
@@ -4847,53 +4855,36 @@ class SdkSession:
         elif isinstance(msg, ResultMessage) and self._consume_move_settle(msg):
             pass   # the accepted move's turn-less result — nothing ended, so nothing settles (see the def)
         elif isinstance(msg, ResultMessage):
-            # /api-health: the settle names a give-up's status (api_error_status) and ends the turn
-            self._ah_note_result(msg)
-            # total_cost_usd is CUMULATIVE per CLI process (the result event's totalCostUSD counter, beside
-            # total_duration/lines) — fold only THIS turn's delta, or every result re-adds the whole
-            # session-so-far cost and the spend readout compounds into fiction (the user 2026-08-08). A
-            # total below the last seen means a counter we didn't watch reset — fold it whole, never negative.
-            total = getattr(msg, "total_cost_usd", None)
-            if isinstance(total, (int, float)) and total > 0:
-                delta = total - self._last_cost_total if total >= self._last_cost_total else total
-                self._last_cost_total = float(total)
-                # the usage dict is the SAME kind of counter (`usage: this.totalUsage` in the bundle):
-                # per-field deltas, a shrunken field folding whole — see _last_usage_totals in __init__
-                u = getattr(msg, "usage", None)
-                u = u if isinstance(u, dict) else {}
-                turn_u = {}
-                for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
-                    v = u.get(k)
-                    v = int(v) if isinstance(v, (int, float)) else 0
-                    last = self._last_usage_totals.get(k, 0)
-                    turn_u[k] = v - last if v >= last else v
-                    self._last_usage_totals[k] = v
-                self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,
-                                           sid=self.thread_of or self.sid)   # the rail's spend —
-                #   a comment THREAD bills its owning session (T144: whole-session truth for the
-                #   rail and the optimizer; a deliberate fork has no threadOf and bills itself)
-                #   + token readout; keyed = THIS session's init-reported auth, so the API sum stays
-                #   honest on a mixed host (see _record_spend)
-            self.retrying = False
-            self.retry_count = 0                    # turn over → clear the storm count (a turn that errored out without recovering leaves no "recovered" note)
-            self.retry_info = None
-            self._interrupted = False              # this turn's result settled it (whether it finished or was interrupted)
-            self._intr_level = 0                   # settle ends the escalation episode — the next stop starts polite
-            # A ResultMessage is the AUTHORITATIVE turn-end: the CLI has processed everything we handed it
-            # — one message or a stream of mid-turn forwards that folded into this turn — and is now idle.
-            # So settle to idle in ONE step and UNCONDITIONALLY, never gated on a feed-vs-result count.
-            # (The old `inflight -= 1; if inflight == 0:` guard stranded the session 'working' forever
-            # whenever the two diverged: each mid-turn forward did inflight += 1 but the CLI emits ONE
-            # Result for the merged turn, so inflight never returned to 0 and the settle never ran — the
-            # phantom-working bug, the user 2026-07-09.) If a genuinely separate turn is still queued in
-            # the CLI, its next streamed atom re-asserts 'working' via _forward — the stream is the truth.
-            self.inflight = 0
-            self._inflight_texts.clear()           # the CLI processed everything fed — same settle semantics
-            # A /compact that found NOTHING to compact emits no boundary — the turn just settles here. Clear
-            # the authoritative flag so parked ops proceed immediately, instead of waiting out a 180s cap.
-            self._compacting = False
-            self._clearing = False   # /clear backstop: the turn settled, whatever the init did or didn't flip
             try:
+                # /api-health: the settle names a give-up's status (api_error_status) and ends the turn
+                self._ah_note_result(msg)
+                # (This try is the whole branch: its body is the result's BOOKKEEPING, its finally is
+                # THE SETTLE — the finally's comment has the rule.)
+                # total_cost_usd is CUMULATIVE per CLI process (the result event's totalCostUSD counter, beside
+                # total_duration/lines) — fold only THIS turn's delta, or every result re-adds the whole
+                # session-so-far cost and the spend readout compounds into fiction (the user 2026-08-08). A
+                # total below the last seen means a counter we didn't watch reset — fold it whole, never negative.
+                total = getattr(msg, "total_cost_usd", None)
+                if isinstance(total, (int, float)) and total > 0:
+                    delta = total - self._last_cost_total if total >= self._last_cost_total else total
+                    self._last_cost_total = float(total)
+                    # the usage dict is the SAME kind of counter (`usage: this.totalUsage` in the bundle):
+                    # per-field deltas, a shrunken field folding whole — see _last_usage_totals in __init__
+                    u = getattr(msg, "usage", None)
+                    u = u if isinstance(u, dict) else {}
+                    turn_u = {}
+                    for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
+                        v = u.get(k)
+                        v = int(v) if isinstance(v, (int, float)) else 0
+                        last = self._last_usage_totals.get(k, 0)
+                        turn_u[k] = v - last if v >= last else v
+                        self._last_usage_totals[k] = v
+                    self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,
+                                               sid=self.thread_of or self.sid)   # the rail's spend —
+                    #   a comment THREAD bills its owning session (T144: whole-session truth for the
+                    #   rail and the optimizer; a deliberate fork has no threadOf and bills itself)
+                    #   + token readout; keyed = THIS session's init-reported auth, so the API sum stays
+                    #   honest on a mixed host (see _record_spend)
                 if self._rewind_to and getattr(self, "_rewind_wait", False):
                     # delete-while-busy: THIS settle is the interrupted turn ending — the flag is being
                     # ARMED here, not consumed. Second observer of the turn-end fact (the Stop hook is
@@ -4925,35 +4916,69 @@ class SdkSession:
                     # the BRANCH-TAKE event: the settled turn is the new branch's first landed record —
                     # the kernel's held goal cleanup archives on exactly this (two-phase rewind timing)
                     self.backend._rewind_resolved(self.sid, "taken")
-                self.backend._turn_completed(self.sid)   # a landed result re-arms the crash-resume budget
-                self._mark("waiting")
                 self.backend.retire_live_work(self.sid)   # turn over → a work atom that never landed never will
                 asyncio.ensure_future(self._do_refresh_context())   # refresh ctx % + model from the SDK and
                 #   persist them, so the bar reflects the turn that just landed and survives idle/restart.
                 asyncio.ensure_future(self._do_refresh_usage())     # + the exact /usage snapshot (rail bars)
             finally:
-                # THE TURN-END PLUMBING runs whatever the settle steps above did (2026-09-06). With
-                # per-message containment (_handle_stream_message) an exception in _turn_completed,
-                # _mark or retire_live_work no longer ends the stream — so if these sat after it in
-                # straight-line code, a contained failure left the session settled 'waiting' with the
-                # input feeder still parked on _input_wake, no push, a rename ping undelivered and a
-                # deferred effort reconnect that never fired. (Before containment the stream's death
-                # and the reconnect's fresh inputs() re-drained the queue, at the cost of the CLI.)
-                # The exception itself still propagates out of this finally to the containment's report.
+                # THE SETTLE — everything that makes the turn over for the kernel — runs whatever the
+                # bookkeeping above did (api-health, the spend fold, the rewind flags, the live-tail
+                # sweep, the refreshes: any step may raise and stop the rest). The rule (round-2 review,
+                # 2026-09-06): a ResultMessage is the CLI saying the turn ended, so a kernel-side failure
+                # while filing it must never leave the session reading 'working' with its queue parked.
+                # The first cut opened the try only ahead of the rewind steps, so a raise in the spend
+                # fold (a NaN usage field — json.loads accepts the token and int() refuses it — or a
+                # failing spend write) was contained by _handle_stream_message with inflight still 1,
+                # the feeder still parked, no poke and no 'waiting', while the failure line claimed the
+                # turn had closed. Ordered so that nothing that can raise comes before the flag writes:
+                # the state resets and the queue wake are plain assignments; the two steps that touch a
+                # file or a lock are guarded and reported LAST, so a failing log callback cannot skip
+                # the poke, the rename ping or the deferred reconnect. The bookkeeping's exception, if
+                # any, still propagates out of this finally to the containment's report.
+                self.retrying = False
+                self.retry_count = 0                    # turn over → clear the storm count (a turn that errored out without recovering leaves no "recovered" note)
+                self.retry_info = None
+                self._interrupted = False              # this turn's result settled it (whether it finished or was interrupted)
+                self._intr_level = 0                   # settle ends the escalation episode — the next stop starts polite
+                # A ResultMessage is the AUTHORITATIVE turn-end: the CLI has processed everything we handed it
+                # — one message or a stream of mid-turn forwards that folded into this turn — and is now idle.
+                # So settle to idle in ONE step and UNCONDITIONALLY, never gated on a feed-vs-result count.
+                # (The old `inflight -= 1; if inflight == 0:` guard stranded the session 'working' forever
+                # whenever the two diverged: each mid-turn forward did inflight += 1 but the CLI emits ONE
+                # Result for the merged turn, so inflight never returned to 0 and the settle never ran — the
+                # phantom-working bug, the user 2026-07-09.) If a genuinely separate turn is still queued in
+                # the CLI, its next streamed atom re-asserts 'working' via _forward — the stream is the truth.
+                self.inflight = 0
+                self._inflight_texts.clear()           # the CLI processed everything fed — same settle semantics
+                # A /compact that found NOTHING to compact emits no boundary — the turn just settles here. Clear
+                # the authoritative flag so parked ops proceed immediately, instead of waiting out a 180s cap.
+                self._compacting = False
+                self._clearing = False   # /clear backstop: the turn settled, whatever the init did or didn't flip
+                self._settled_msg = msg  # the exact event the failure report reads: the settle ran for THIS result
                 if self._input_wake is not None:   # turn done → release the next queued turn, if any
                     self._input_wake.set()
-                self.backend._poke()
+                failed = []
+                for what, step in (("the turn-end count", lambda: self.backend._turn_completed(self.sid)),
+                                   #   ↑ a landed result re-arms the crash-resume budget + bumps turn_seq
+                                   ("the 'waiting' state write", lambda: self._mark("waiting"))):
+                    try:
+                        step()
+                    except Exception as e:
+                        failed.append((what, e))
+                self.backend._poke()   # (guards its own callback) — the kernel's parked-op drain wakes on this
                 # a pending rename ping delivers HERE, as its own turn (the user answered first; the
                 # empty-queue guard + the feed-hold make its record unfoldable — see _deliver_rename_ping)
                 try:
                     self.backend._deliver_rename_ping(self)
                 except Exception as e:
-                    self.backend._log("rename ping (%s): delivery at the settle failed: %s: %s"
-                                      % (self.name, type(e).__name__, _mask_ids(e)))
+                    failed.append(("the rename ping's delivery", e))
                 if self._reconnect_when_idle and not self.ended:   # an effort change waited for this turn to end
                     self._reconnect_when_idle = False
                     self._reconnect = True
                     self._wake_set()
+                for what, err in failed:
+                    self.backend._log("settle (%s): %s failed: %s: %s"
+                                      % (self.name, what, type(err).__name__, _mask_ids(err)), problem=True)
         elif getattr(msg, "rate_limit_info", None) is not None:
             # A RateLimitEvent: the account-wide /usage limits (5h + weekly) the CLI streams when the limit state
             # changes — the SDK's designed source for the rail usage bars. Duck-typed (no SDK-type import needed).
@@ -6016,21 +6041,57 @@ COMPACT_TB_FRAMES = 8     # the innermost frames a compact chain keeps (the fail
 COMPACT_TB_CHARS = 600    # and its hard length cap
 
 
+def _frame_step(f) -> str:
+    """One traceback frame as the chain renders it: `file:line function` — basename only, no locals,
+    no source line."""
+    return "%s:%d %s" % (os.path.basename(f.filename), f.lineno or 0, f.name)
+
+
+def _failing_frame(exc):
+    """The exception's innermost frame — where it was raised — as (file basename, line, function),
+    read from the traceback itself. This is the recurring-failure dedupe key (_note_message_failure):
+    taken from the frame and not from the rendered chain, so no rendering bound can change it. None
+    when the exception carries no traceback."""
+    frames = traceback.extract_tb(getattr(exc, "__traceback__", None))
+    if not frames:
+        return None
+    f = frames[-1]
+    return (os.path.basename(f.filename), f.lineno or 0, f.name)
+
+
 def _compact_tb(exc, max_frames: int = COMPACT_TB_FRAMES, cap: int = COMPACT_TB_CHARS) -> str:
     """The exception's frame chain as `file:line function` steps, outermost first — no locals, no
     source lines: enough to name the site on the next occurrence, small enough for one log line.
-    BOUNDED: the innermost `max_frames` frames, prefixed with how many outer ones were dropped, and
-    the whole thing clipped to `cap` characters with '…' — a RecursionError's chain ran to 18 KB
-    otherwise, into the error-center ring and every feed payload that carries it (2026-09-06)."""
+    BOUNDED FROM THE OUTER END: at most the innermost `max_frames` frames, then outer frames dropped
+    one at a time until the chain fits `cap` characters, with a prefix saying how many were dropped
+    in all. The innermost frame — the failing site — is always kept; if it alone overflows the cap,
+    its function name is clipped and its file:line stands. (A RecursionError's chain ran to 18 KB
+    before any bound, into the error-center ring and every feed payload that carries it; the first
+    bound then clipped the chain's TAIL, which is the innermost frame, so a chain through long-named
+    frames lost its failing site, and a dedupe key read off the rendering became the literal '…' —
+    every long-chained failure of one type folded into one ring entry. 2026-09-06.)"""
     frames = traceback.extract_tb(getattr(exc, "__traceback__", None))
     if not frames:
         return "?"
-    dropped = max(0, len(frames) - max_frames)
-    s = " > ".join("%s:%d %s" % (os.path.basename(f.filename), f.lineno, f.name) for f in frames[dropped:])
-    if dropped:
-        s = "…%d outer frame%s dropped… > %s" % (dropped, "" if dropped == 1 else "s", s)
-    if len(s) > cap:
-        s = s[:cap - 1] + "…"
+    total = len(frames)
+
+    def render(kept):
+        dropped = total - len(kept)
+        s = " > ".join(kept)
+        return "…%d outer frame%s dropped… > %s" % (dropped, "" if dropped == 1 else "s", s) if dropped else s
+
+    steps = [_frame_step(f) for f in frames[-max(1, max_frames):]]
+    kept = steps[-1:]                        # the innermost frame, unconditionally
+    for step in reversed(steps[:-1]):        # then outward, one frame at a time, while the whole fits
+        if len(render([step] + kept)) > cap:
+            break
+        kept = [step] + kept
+    s = render(kept)
+    if len(s) > cap:                         # the innermost frame alone overflows: clip its function name
+        site, _, func = kept[0].partition(" ")
+        head = render([site + " "])          # the prefix and the file:line — never clipped
+        room = cap - len(head) - 1
+        s = (head + func[:room] + "…") if room >= 0 else s[:cap - 1] + "…"   # (a site wider than the cap: bound it anyway)
     return s
 
 
@@ -6042,21 +6103,58 @@ def _describe_msg(msg) -> str:
     return "%s/%s" % (n, st) if isinstance(st, str) and st else n
 
 
-def _failure_consequence(msg) -> str:
-    """What the kernel lost when this message's handler failed, by message class — the problem line's
-    reassurance has to be true for the message it is about. An assistant or user message is also a
-    transcript record, so the chat rebuilds it from disk. A ResultMessage exists only on the stream,
-    but the settle's turn-end plumbing (the queue wake, the push, the deferred reconnect) runs in a
-    finally, so the turn still closed. A stream event is a partial the full message supersedes. Every
-    other frame (a SystemMessage subtype: task events, compact boundaries, status) exists only on the
-    stream: the kernel's copy of what it carried is gone until the next such frame."""
+def _is_command_stdout(msg) -> bool:
+    """A UserMessage carrying a slash command's `<local-command-stdout>` output — the shape msg_to_atom
+    turns into the turn-closing command atom. Reads the text only to match the wrapper tag; nothing
+    of it is kept or returned."""
+    c = getattr(msg, "content", None)
+    if isinstance(c, str):
+        text = c
+    elif isinstance(c, list):
+        parts = []
+        for b in c:
+            t = b.get("text") if isinstance(b, dict) else getattr(b, "text", None)
+            if isinstance(t, str):
+                parts.append(t)
+        text = " ".join(parts)
+    else:
+        return False
+    return bool(_LOCAL_STDOUT_RE.match(text))
+
+
+def _failure_consequence(msg, settled: bool = True) -> str:
+    """What the kernel lost when this message's handler failed, by the message's SHAPE — the problem
+    line's reassurance has to be true for the message it is about, so the class name alone is not
+    enough (round-2 review, 2026-09-06). An assistant message, and a user message that is a real
+    turn, are also transcript records, so the chat rebuilds them from disk — but a user message
+    carrying a command's `<local-command-stdout>` has a record only when the command was TYPED: a
+    control request (client.set_model, a permission-mode set) streams the same line and the CLI
+    persists nothing for it (msg_to_atom), so that confirmation line is lost to the chat. A
+    ResultMessage exists only on the stream; whether its turn still settled is a FACT the caller
+    passes (`settled`: the settle's finally records the result it ran for — see _on_message), not a
+    property of the class: when it did, the settle ran whole (idle, queue released, poked, any
+    deferred reconnect fired) and only this result's own bookkeeping stopped where it failed; when
+    the failure came before the branch was entered, the turn did not settle, and the line says so. A
+    stream event is a partial the full message supersedes. A compact boundary IS a transcript record
+    (the CLI writes it as a `system` row the event model reads from disk). Every other frame (a
+    SystemMessage subtype: task events, status, hooks) exists only on the stream: the kernel's copy
+    of what it carried is gone until the next such frame."""
     n = type(msg).__name__
+    if n == "ResultMessage":
+        if not settled:
+            return ("the turn did NOT settle (the failure came before the settle ran): the session may read "
+                    "working, with its queue parked, until its next result")
+        return ("the turn still settled — idle, its queue released, the kernel poked, any deferred reconnect "
+                "fired; this result's own bookkeeping (spend, api health, the live-tail sweep) stopped where it failed")
+    if n == "UserMessage" and _is_command_stdout(msg):
+        return ("a command's output line: the transcript keeps it after a typed command, but a control request "
+                "(a model or permission-mode set) leaves no record, and then the confirmation is lost to the chat")
     if n in ("AssistantMessage", "UserMessage"):
         return "the transcript keeps the message"
-    if n == "ResultMessage":
-        return "the turn still closed: its queue wake, push and any deferred reconnect ran"
     if n == "StreamEvent":
         return "a partial-stream event; the full message follows"
+    if getattr(msg, "subtype", None) == "compact_boundary":
+        return "the transcript keeps the boundary record (the chat rebuilds the compaction from disk)"
     return "a stream-only frame the transcript never holds: what it carried is lost to the kernel until the next one"
 
 
@@ -7313,6 +7411,15 @@ class SdkBackend:
         with self._problem_lock:
             rows = list(self._problems)
         return rows[-limit:] if limit else rows
+
+    def problem_keyed(self, key) -> bool:
+        """Whether a keyed problem's entry is in the ring NOW. The reporter of a recurring failure asks
+        before choosing its short repeat form: a repeat whose entry the ring has since evicted must
+        re-enter with the full report (SdkSession._note_message_failure), because the ring row is
+        built from whatever line creates it. A key added by another thread between this answer and
+        the caller's `_log` merely counts the full line on that row — harmless."""
+        with self._problem_lock:
+            return any(row.get("key") == key for row in self._problems)
 
     def _note_cli_scope_fallback(self, sess, text: str) -> None:
         """The scope wrapper wrote its fallback notice on `sess`'s stderr (SdkSession._on_cli_stderr,
