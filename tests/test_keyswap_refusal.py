@@ -303,11 +303,19 @@ class NamedSwapRefused(_Env):
         self.assertIn("systemctl --user daemon-reload\n            systemctl --user enable --now romp-manager.service", svc)
         self.assertNotIn("systemctl --user restart", svc.split("case \"${1:-status}\" in")[1].split("uninstall)")[0],
                          "install restarts no running manager on Linux")
-        # the kernel may read ANOTHER service.env: the installer carries a non-default ROMP_SERVICE_ENV_FILE
-        # into the unit or plist (bin/romp-service), the answer carries no path, and this shell's is named
-        self.assertIn("- another service.env: the installer carries a non-default ROMP_SERVICE_ENV_FILE into the unit or", out)
-        self.assertIn("plist, so the kernel may read a file other than this shell's (%s):" % self.path, out)
-        self.assertIn("run this command with the same ROMP_SERVICE_ENV_FILE, or check the unit for that variable", out)
+        # the kernel may read ANOTHER service.env: kernel/keysource.py resolves the path from ROMP_SERVICE_ENV_FILE
+        # wherever the kernel's environment sets it (the installer's unit or plist line is one source; a drop-in,
+        # a profile or the shell that ran `romp up` are others), the answer carries no path, and this shell's is
+        # named, with the places to look per platform
+        self.assertIn("- another service.env: the kernel resolves the path from ROMP_SERVICE_ENV_FILE wherever its", out)
+        self.assertIn("environment sets it (the installer's line in the unit or the plist for a non-default path, a", out)
+        self.assertIn("drop-in, the profile a shell-wrapped ExecStart sources, the shell that ran `romp up`), so it may", out)
+        self.assertIn("read a file other than this shell's (%s):" % self.path, out)
+        self.assertIn("run this command with the same ROMP_SERVICE_ENV_FILE, or look for the variable in the unit and", out)
+        self.assertIn("its drop-ins on Linux, the plist on macOS", out)
+        self.assertNotIn("the installer carries", out, "the installer is one source of the variable, not the cause")
+        self.assertNotIn("check the unit for that variable", out, "the unit is the Linux place; the plist is the macOS one")
+        self.assertEqual(ks.service_env_path(), self.path, "the CLI names the path the kernel's own resolver gives this environment")
         self.assertIn("- service.env, edited since the kernel read it at its start: `romp refresh`", out)
         self.assertIn("- the shell that ran `romp up`, which exported it: stop that `romp up`; start it from a shell without the line", out)
         # the manager restart is named by the commands that restart one; `romp-service install` appears once,
@@ -324,9 +332,10 @@ class NamedSwapRefused(_Env):
     def test_a_kernel_in_file_mode_under_a_file_that_carries_the_line_names_the_other_file_cause(self):
         # the file this shell reads carries ROMP_CREDENTIAL_COMMAND and the kernel is in file mode. The
         # first cause is a line added since the kernel started, and `romp refresh` is the whole fix; the
-        # second is that the kernel reads ANOTHER service.env (the installer carried a non-default
-        # ROMP_SERVICE_ENV_FILE into the unit or plist), which no kernel restart mends, so the block
-        # names it with this shell's path. Called at the block: the report's header would run the command
+        # second is that the kernel reads ANOTHER service.env (its environment sets ROMP_SERVICE_ENV_FILE to
+        # another path, through the installer's unit or plist line or any other source), which no kernel
+        # restart mends, so the block names it with this shell's path and the places to look per platform.
+        # Called at the block: the report's header would run the command
         self.write_env("ROMP_PERF=1\nROMP_CREDENTIAL_COMMAND=romp-test-fixture-cmd \"$1\"\n")
         cli.es._reset()
         said = []
@@ -339,9 +348,12 @@ class NamedSwapRefused(_Env):
         self.assertIn("kernel      reads (none) in FILE mode", out)
         self.assertIn("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in service.env", out)
         self.assertIn("there needs no manager restart). Until then the kernel injects no set.", out)
-        self.assertIn("If the kernel is still in file mode after `romp refresh`, it reads another service.env: the installer", out)
-        self.assertIn("carries a non-default ROMP_SERVICE_ENV_FILE into the unit or plist, and this shell reads %s." % self.path, out)
-        self.assertIn("Run this command with the same ROMP_SERVICE_ENV_FILE, or check the unit for that variable.", out)
+        self.assertIn("If the kernel is still in file mode after `romp refresh`, it reads another service.env: its environment", out)
+        self.assertIn("sets ROMP_SERVICE_ENV_FILE (the installer's line in the unit or the plist, a drop-in, a profile, or the", out)
+        self.assertIn("shell that ran `romp up`), and this shell reads %s." % self.path, out)
+        self.assertIn("Run this command with the same ROMP_SERVICE_ENV_FILE, or look for the variable in the unit and its", out)
+        self.assertIn("drop-ins on Linux, the plist on macOS.", out)
+        self.assertNotIn("the installer carries", out)
         self.assertNotIn("systemctl", out, "adding the line is never a manager restart")
         self.assertNotIn("set in this shell's", out)
 
