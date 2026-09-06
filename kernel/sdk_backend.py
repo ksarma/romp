@@ -8445,6 +8445,9 @@ class SdkBackend:
         now = time.time()
         ttl = max(0.0, float(ttl))
         with self._lock:
+            if self._drain_hold_until <= now:      # a fresh episode: the deploy poll's "still parked"
+                self._drain_hold_since = now       # clock starts here, not at a stale earlier episode
+                self._drain_hold_rang = False
             self._quiesce_until = now + ttl
             self._drain_hold_until = max(self._drain_hold_until, now + ttl)
             t = self._drain_wake_timer

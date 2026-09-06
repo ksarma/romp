@@ -115,6 +115,16 @@ class GoingDownHold(unittest.TestCase):
         self.assertGreater(be._drain_hold_until, time.time() + 4,
                            "the 12s lease refresh extends a hold, it never cuts a longer one back")
 
+    def test_a_deploy_poll_inside_a_quiesce_does_not_ring_a_stale_clock(self):
+        # refresh_drain_hold's "still parked" escalation clocks from _drain_hold_since; a quiesce that
+        # opened the episode must start that clock, or the first deploy poll inside it reads a 0.0
+        # stamp as a hold minutes old and rings the problems ring for nothing
+        logs = []
+        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None, log=logs.append)
+        be.quiesce(5)
+        be.refresh_drain_hold()
+        self.assertFalse(any("still parked" in str(l) for l in logs), logs)
+
     def test_cancel_releases_at_once_and_wakes_the_held_inputs(self):
         be = _backend()
         woken = []
