@@ -196,6 +196,35 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         self.assertIn("renamed", body)
         self.assertIn("'tests'", body, "…and it names the new name itself")
 
+    def test_the_lost_tasks_notice_asks_for_a_check_in_the_persons_voice(self):
+        # the lost-background-tasks notice (task_death_notice) is the same [romp]-prefixed mechanics
+        # family; past the prefix it speaks plainly. Since 2026-09-05 it says the tasks were CUT OFF
+        # from the session, never that they died: under the per-session scopes a task's shell can
+        # outlive the CLI, so the ask is to check whether each still runs before relaunching it.
+        import os as _os
+        from importlib.machinery import SourceFileLoader as _L
+        sb = _L("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+        for tasks in ([{"desc": "watching the CI run"}],
+                      [{"desc": "watching the CI run"}, {"desc": "tailing the deploy log"}, {}]):
+            text = sb.task_death_notice(tasks)
+            prose = text[text.index("[romp]"):]
+            self.assertNotIn("<!--", prose, "markers lead, prose follows")
+            self.assertNotIn("\n", prose, "one line")
+            body = prose.split("]", 1)[1].lower()
+            for word, why in ROMP_WORDS:
+                self.assertNotIn(word, body, "the notice speaks plainly past its prefix (%r: %s)" % (word, why))
+            self.assertIn("%d background task" % len(tasks), body)
+            self.assertIn("cut off from the session when its claude process ended", body)
+            self.assertIn("will never arrive", body)
+            self.assertIn("still running before relaunching", body)
+            self.assertNotIn("died", body)
+            self.assertIn("watching the ci run", body, "the descriptions name what was lost")
+        # singular and plural agree throughout; an empty description is skipped, not printed
+        self.assertIn("1 background task this session had running was cut off", sb.task_death_notice([{}]))
+        three = sb.task_death_notice([{"desc": "a"}, {"desc": "b"}, {}])
+        self.assertIn("3 background tasks this session had running were cut off", three)
+        self.assertIn("(a restart or crash): a; b. Their completion notifications", three)
+
     def test_the_untitled_fallback_names_no_romp_object(self):
         # a node with no text still renders SOMETHING; that placeholder must not smuggle in "goal"
         nodes = _nodes()
