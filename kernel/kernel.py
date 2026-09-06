@@ -208,7 +208,12 @@ class _PerfStats:
                                    under "other"). A deduped frame was built and compared, not sent
       goals                        loads, saves, writes: judge.load_goals calls, save_goals calls,
                                    and the saves that reached the disk (a byte-identical republish
-                                   is a save without a write)
+                                   is a save without a write); disk_hits / disk_misses / disk_seeds:
+                                   the no-op check's disk-side memo (identity matched; file read and
+                                   parsed, or attempted; entry filled from a publish's own temp);
+                                   scans / scan_hits /
+                                   scan_parses: judge_failure_scan's per-store memo (calls, stores
+                                   served from the memo, stores read and parsed)
       judge                        passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
@@ -25487,6 +25492,10 @@ def _compact_goal_stores():
     hasn't changed since the last sweep (no new clears, no judge write), so the steady state is just stats."""
     import glob
     moved = 0
+    try:
+        jd._disk_memo_evict_absent()                   # save_goals' disk-side memo: drop removed stores' entries
+    except Exception:
+        pass
     try:
         paths = glob.glob(str(jd.GOALDIR / "*.json"))
     except Exception:
