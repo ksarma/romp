@@ -1172,23 +1172,28 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         // and again after exitEdit's repaint on the other path, which takes this bar with the editor.
         const noteLog = () => { if (hooks.logWarning) noteBar(hooks.logWarning); };
         noteLog();
+        // A decision UNDONE during the round-trip that this save carried: the record is back in the field, and the
+        // disk holds the decision (undoneLanded). The ack is the moment the undo became irreversible: stay, and say
+        // so above the editor (the person redoes it, decides it again, or cancels). Checked FIRST, whatever else the
+        // buffer holds. An accept moves no text and leaves nothing beyond `applied`, so the text check below would
+        // exit and drop the undo without a word; and when the buffer HAS moved (the save carried typing the undo took
+        // back too, or the undone decision was a reject, which moves text), that check stays silently, and the person
+        // would hear of the landed decision only at the next Save's refusal (the review's undone-during-round-trip
+        // finding, both cases). decided() answers true for this too but says nothing. The bar carries the comments-log
+        // warning as well when there is one: noteBar paints one bar, and the note must not take the warning down with
+        // it (CLAUDE.md: surface it, never degrade silently).
+        const undoneAtAck = undoneLanded();
+        if (anyUndoneLanded(undoneAtAck)) {
+          dirty = true; saveBtn.disabled = false; saveBtn.textContent = "Save";
+          noteBar(undoneLandedNote(undoneAtAck, true) + (hooks.logWarning ? " Also: " + hooks.logWarning : ""));
+          return;
+        }
         // Keystrokes typed DURING the round-trip survive the ack (the review's in-flight-typing
         // finding): if the live buffer moved past the snapshot we saved, stay in edit mode with the
         // new baseline — never re-render over what the user is still typing.
         if (bufValue() !== null && bufValue() !== norm(content)) {
           dirty = true;
           saveBtn.disabled = false; saveBtn.textContent = "Save";
-          return;
-        }
-        // A decision UNDONE during the round-trip that this save carried: the record is back in the field with no
-        // text moved and nothing beyond `applied`, so the text check above and the exit below would leave with the
-        // decision standing on disk and the undo lost without a word. The ack is the moment the undo became
-        // irreversible: stay, and say so above the editor (undoneLanded; the person redoes it, decides it again, or
-        // cancels). Checked before decided(), which answers true for this too but says nothing.
-        const undoneAtAck = undoneLanded();
-        if (anyUndoneLanded(undoneAtAck)) {
-          dirty = true; saveBtn.disabled = false; saveBtn.textContent = "Save";
-          noteBar(undoneLandedNote(undoneAtAck, true));
           return;
         }
         // A decision clicked during the round-trip is the same stay with no text moved (an accept changes

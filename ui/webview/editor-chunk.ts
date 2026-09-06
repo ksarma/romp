@@ -118,16 +118,17 @@ function rompTheme(): Extension {
 // old spelling below (a ledger), is a word CONTEXT.md lists under Avoid for the comments log, and the host writes
 // these same decisions into that log — so a reader of a save trace had to work out which of the two records was meant.
 // Each line marked "old spelling" below is an alias for a caller that has not moved (file-view.ts passes and reads
-// the old spelling, onLedger and ledger(); the chunk's tests import the old names); every alias goes with its
-// last caller, and editor-chunk-decisions.test.ts confines the word to those lines.
+// the old spelling, onLedger and ledger(); the chunk's tests import the old names). Every alias goes with its
+// last caller: editor-chunk-aliases.test.ts fails on an alias no file outside this one still uses (the one that
+// stood in for TrackDecision had no importer and is gone), and on any module beyond file-view.ts adopting one;
+// editor-chunk-decisions.test.ts confines the word to these lines.
 
 /** One decision on one record: its id and the two texts as the record held them at that moment. */
 export interface TrackDecision { id: string; oldText: string; newText: string }
 /** The decisions taken inside the editor since the mount, NET of undo: an undone accept or reject leaves no
  *  entry, a redone one puts it back. A later save sends this beside the remapped records. */
 export interface TrackDecisions { accepted: TrackDecision[]; rejected: TrackDecision[] }
-export type TrackLedgerEntry = TrackDecision;   // old spelling of TrackDecision
-export type TrackLedger = TrackDecisions;       // old spelling of TrackDecisions
+export type TrackLedger = TrackDecisions;   // old spelling of TrackDecisions; editor-chunk-split-ids.test.ts still imports it
 
 export interface TrackOpts {
   /** The file's pending changes, as the sidecar's status returned them (the storage format's records). */
