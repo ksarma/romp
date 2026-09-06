@@ -20,6 +20,7 @@ bare unittest run, where conftest never loaded and there is nothing to pin.
 """
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -61,7 +62,14 @@ class PrivateTempRoot(unittest.TestCase):
         self.assertEqual(os.path.dirname(sh.stdout.strip()), root, "a shell's mktemp -d lands in it")
 
 
+def _git_version():
+    out = _run(["git", "--version"]).stdout.split()
+    m = re.match(r"(\d+)\.(\d+)", out[2] if len(out) > 2 else "")
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+
 @under_conftest
+@unittest.skipIf(_git_version() < (2, 32), "GIT_CONFIG_GLOBAL needs git >= 2.32")
 class GitFloor(unittest.TestCase):
     def test_git_reads_no_global_config_and_has_the_synthetic_identity(self):
         self.assertEqual(_run(["git", "config", "--global", "--list"]).stdout, "")
@@ -134,7 +142,8 @@ class RunLeavesNothing(unittest.TestCase):
         with open(os.path.join(case, "test_leak.py"), "w") as f:
             f.write(LEAKY_MODULE)
         env = dict(os.environ, TMPDIR=fresh, PYTHONDONTWRITEBYTECODE="1")
-        for var in ("PYTEST_ADDOPTS", "PYTEST_CURRENT_TEST", "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT"):
+        for var in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_CURRENT_TEST",
+            "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT"):
             env.pop(var, None)
         r = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
                             "-q", *extra, os.path.join(case, "test_leak.py")],
@@ -148,7 +157,9 @@ class RunLeavesNothing(unittest.TestCase):
         self._nested()
 
     @unittest.skipUnless(importlib.util.find_spec("xdist"), "pytest-xdist not installed")
-    def test_under_xdist_the_controller_and_every_worker_remove_their_own_root(self):
+    def test_under_xdist_the_run_leaves_nothing_either(self):
+        # Pins the outcome, not each process's hook: a worker's root sits inside the controller's
+        # (it inherits that TMPDIR), so the controller's removal alone would satisfy this.
         self._nested("-n", "2")
 
 

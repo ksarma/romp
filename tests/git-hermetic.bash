@@ -10,8 +10,9 @@
 # url.insteadOf rewrite could reach a real remote. CI has no global git config, so a test that
 # leans on one is already broken there; this makes every run match. GIT_CONFIG_GLOBAL is honoured
 # by git >= 2.32. The identity is synthetic and exported (not defaulted) so a developer's own
-# GIT_AUTHOR_* cannot leak into fixture commits either; a test that wants a specific identity still
-# wins with `git -c user.name=...` or its own exports after this call.
+# GIT_AUTHOR_* cannot leak into fixture commits either. The env identity outranks `git config
+# user.*` and `-c user.*`, so a test that must pin a particular author exports its own
+# GIT_AUTHOR_* / GIT_COMMITTER_* after this call; other config keys still yield to `-c`.
 
 git_hermetic() {
     export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1

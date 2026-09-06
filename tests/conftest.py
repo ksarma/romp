@@ -23,9 +23,11 @@ import pytest
 # is exported so every child the tests spawn — kernels, git, `mktemp -d` in a shell — inherits the
 # same root. Import-time, not pytest_configure: this module's own XDG floor below and every
 # module-level mkdtemp at collection must land inside it. Removed in pytest_unconfigure, which
-# under pytest-xdist runs in the controller and in every worker, each of which imported this file
-# and so owns a root of its own; atexit is the fallback for a process torn down without it.
-# The prefix is what a stray one looks like in the system temp dir.
+# under pytest-xdist runs in the controller and in every worker: each imported this file and so
+# owns a root of its own (a worker's sits inside the controller's, since it inherits that TMPDIR).
+# atexit is the fallback for a normal exit that skipped unconfigure; nothing survives an os._exit
+# (pytest-timeout's thread method ends a hung run that way), so a hang leaks one root. The prefix
+# is what a stray one looks like in the system temp dir.
 _TMP_ROOT = tempfile.mkdtemp(prefix="romp-tests-")
 tempfile.tempdir = _TMP_ROOT
 os.environ["TMPDIR"] = _TMP_ROOT
@@ -49,8 +51,9 @@ def pytest_unconfigure(config):
 # real remote (tests/test_file_github.py pins its own environment for exactly that reason). CI has no
 # global git config, so a test that leans on one is already broken there; this makes every run match.
 # GIT_CONFIG_GLOBAL is honoured by git >= 2.32; the identity is synthetic, and it is set rather than
-# defaulted so a developer's own GIT_AUTHOR_* cannot leak into fixture commits either. Tests that
-# want a specific identity or config still win: `git -c` and a per-call env override these.
+# defaulted so a developer's own GIT_AUTHOR_* cannot leak into fixture commits either. The env
+# identity outranks `git config user.*` and `-c user.*`, so a test that must pin a particular author
+# exports its own GIT_AUTHOR_* / GIT_COMMITTER_* per call; other config keys still yield to `-c`.
 os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
 os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
 os.environ["GIT_AUTHOR_NAME"] = os.environ["GIT_COMMITTER_NAME"] = "romp tests"
