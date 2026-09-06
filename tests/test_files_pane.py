@@ -222,10 +222,9 @@ class Relay(unittest.TestCase):
 
     def test_the_relay_comment_names_the_todo_id_referent_a_user_todo_never_an_ask(self):
         """CONTEXT.md (User todo, Avoid) lists "ask" because the feed payload's `asks` field already means the
-        card list. The relay comment above the pane branch is where the shell defines `todoId`; the round-1
-        review found it saying the viewer ties its work back to "the ask" and the fix commit reworded it to
-        "the todo" (ui/webview/file-view-vocab.test.ts pins the viewer's twin). This pins the shell's, so the
-        two definitions a reader sees side by side cannot drift apart again."""
+        card list. The relay comment above the pane branch is where the shell defines `todoId`, and it must
+        say "the todo", not "the ask" (ui/webview/file-view-vocab.test.ts pins the viewer's twin definition),
+        so the two definitions a reader sees side by side cannot drift apart."""
         js = km._LANDING_SETTINGS_JS
         head = "if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');"
         lines = js.split(head)[0].rstrip("\n").split("\n")
