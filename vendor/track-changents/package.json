@@ -1,0 +1,27 @@
+{
+  "name": "track-changents",
+  "version": "1.0.0",
+  "description": "Editor-agnostic track-changes core: a clean file on disk + a sidecar JSON store, with the diff / per-author blame / comment anchors / accept-reject all DERIVED purely at read time, plus the agent edit/comment/reply CLIs and a PreToolUse guard hook for Claude Code. Editor hosts (an Obsidian plugin, a VS Code extension) read/write the identical sidecar, so this is a cross-tool contract.",
+  "exports": {
+    "./engine": "./engine.js",
+    "./attrib": "./attrib.js",
+    "./display": "./display.js",
+    "./store-io": "./store-io.mjs",
+    "./recency-core": "./recency-core.js",
+    "./protocol": "./protocol.js"
+  },
+  "scripts": {
+    "test": "node --test ./*.test.mjs ./hooks/*.test.mjs"
+  },
+  "bin": {
+    "track-edit": "./cli/track-edit.mjs",
+    "track-comment": "./cli/track-comment.mjs",
+    "track-reply": "./cli/track-reply.mjs",
+    "track-config": "./cli/track-config.mjs"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/romp-on/track-changents.git"
+  }
+}
