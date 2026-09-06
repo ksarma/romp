@@ -45,6 +45,8 @@ import gc
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 import uuid
 import weakref
@@ -593,8 +595,9 @@ class BootAndHealth(unittest.TestCase):
         self.assertEqual(es._runs, 0, "nothing runs in a kernel pinned to file mode")
         self.assertEqual(be.api_health_snapshot()["keySource"]["mode"], "file")
 
-    def test_a_verdict_that_cannot_be_taken_is_a_logged_problem_not_a_failed_construction(self):
-        self.command({"A_TOKEN": fixture_value()})
+    def construct_with_a_raising_verdict(self):
+        """A backend whose boot verdict raises after the command has run (the unit read throws): the
+        verdict is a logged problem, not a failed construction."""
         saved = sb._unit_texts
         sb._unit_texts = lambda environ=None: (_ for _ in ()).throw(RuntimeError("boom"))
         try:
@@ -602,15 +605,63 @@ class BootAndHealth(unittest.TestCase):
         finally:
             sb._unit_texts = saved
         self.assertEqual(be.key_source, {"mode": "command", "lines": []})
-        self.assertTrue(any("boot verdict failed" in p["text"] for p in be.problems()))
+        self.assertEqual(es._runs, 1, "the command ran before the verdict broke")
+        self.assertTrue(any("boot verdict failed" in p["text"] for p in be.problems()), be.problems())
+        return be
+
+    def test_a_verdict_that_cannot_be_taken_is_a_logged_problem_not_a_failed_construction(self):
+        self.command({"A_TOKEN": fixture_value()})
+        be = self.construct_with_a_raising_verdict()
         self.assertEqual(be.api_health_snapshot()["keySource"]["mode"], "command")
+
+    def test_a_verdict_that_cannot_be_taken_leaves_the_run_for_the_next_path_to_say_once(self):
+        # the verdict's lines are the boot's report of the first run, and it hands the record to the noter
+        # as reported only once they are logged. A verdict that raised logged nothing about the run, so it
+        # primes nothing: the guards stay unset, the noter is registered all the same, and the next path to
+        # read the set — a module-level reader or one of the backend's own — says the run, once. Were the
+        # record handed over before the verdict computed (a natural way to shrink the boot's window), a
+        # failing command met at a broken verdict would never be said on any path.
+        self.command({"A_TOKEN": fixture_value()})
+        self.failing(3)
+        be = self.construct_with_a_raising_verdict()
+        self.assertEqual(self.about_failure(be), [], "nothing about the run at boot: the verdict never got to it")
+        self.assertEqual(be._cred_noted_attempt, -1, "the guards are not primed")
+        self.assertIsNone(be._cred_err_said)
+        self.assertIs(sb._credential_noter().__self__, be, "the noter is registered whatever the verdict did")
+        sb.credential_set()                                   # the judges' and the catalog's wire: the next path
+        lines = self.failed_lines(be)
+        self.assertEqual(len(lines), 1, be.problems())
+        self.assertIn("exited 3", lines[0])
+        be.api_health_snapshot()
+        be.key_source_status()
+        sb.credential_set()
+        self.assertEqual(len(self.about_failure(be)), 1, "one line for the episode, however many paths met it")
+        # and a working set: the next path says the set, once, and nothing before it
+        es._reset()
+        self.logged.clear()
+        v = fixture_value()
+        self.command({"ANTHROPIC_LP_API_KEY": v})
+        be = self.construct_with_a_raising_verdict()
+        fp = es.set_fingerprint({"ANTHROPIC_LP_API_KEY": v})
+        self.assertEqual([m for m in self.logged if "sha256:%s" % fp in m], [], "the boot said nothing of the set")
+        self.assertEqual(be._cred_fp_said, None)
+        be.api_health_snapshot()                              # one of the backend's own readers
+        set_lines = [m for m in self.logged if m.startswith("credential command: sessions now launch with the set")]
+        self.assertEqual(len(set_lines), 1, self.logged)
+        self.assertIn("sha256:%s" % fp, set_lines[0])
+        sb.credential_set()
+        be.key_source_status()
+        self.assertEqual(len([m for m in self.logged if m.startswith("credential command:")]), 1)
+        self.assertEqual(es._runs, 1, "a working set is served from the cache: one run for every path")
+        self.assertNotIn(v, "\n".join(self.logged) + json.dumps(be.problems()))
 
     # -- a failed run is one problem line per episode, whichever path first runs the command -------------
 
-    def failing(self, code):
-        """The configured command now exits `code` (its stderr is a fixed line: a byte count, never quoted)."""
+    def failing(self, code, body=""):
+        """The configured command now exits `code` (its stderr is a fixed line: a byte count, never quoted);
+        `body` runs first (a `sleep`, for a run that must still be in flight when something else happens)."""
         with open(os.path.join(self.d, "cmd.sh"), "w") as fh:
-            fh.write("#!/bin/sh\necho 'the store is unreachable' >&2\nexit %d\n" % code)
+            fh.write("#!/bin/sh\n" + (body + "\n" if body else "") + "echo 'the store is unreachable' >&2\nexit %d\n" % code)
 
     def failed_lines(self, be):
         return [p["text"] for p in be.problems() if p["text"].startswith("credential command: failed")]
@@ -768,6 +819,64 @@ class BootAndHealth(unittest.TestCase):
                          "the same dropped list, primed at boot, is not said again")
         self.assertNotIn(v, "\n".join(self.logged))
         self.assertNotIn(w, "\n".join(self.logged))
+
+    def test_a_reader_during_construction_does_not_double_the_boots_report(self):
+        # the kernel starts the model-catalog thread right before it constructs the backend, and that
+        # thread's first act is credential_set(): a module-level read whose take() coalesces with the boot
+        # verdict's on the command's one run, so both return when the command exits. The noter is
+        # registered only AFTER the verdict has logged its lines and primed the guards, so the reader's
+        # record reaches either no noter (a plain read; the verdict is the report) or guards already set
+        # (nothing said). Registered first, as it was, the reader's note landed ahead of the verdict's
+        # lines and the boot said one failure twice (five failing boots gave [1, 2, 2, 2, 1] problem lines;
+        # in the kernel's own ordering, reader first, every boot doubled). Several trials, both orderings,
+        # a failing set and a working one: the command sleeps so the run is in flight when the second
+        # party arrives, whichever that is.
+        def boot_with_reader(reader_first):
+            es._reset()
+            self.logged.clear()
+            sb._CREDENTIAL_NOTER = None                       # the kernel's state: no backend yet
+            th = threading.Thread(target=sb.credential_set)
+            if reader_first:
+                th.start()
+                time.sleep(0.05)
+                be = self.construct()
+            else:
+                started = []
+                def construct():
+                    started.append(self.construct())
+                ct = threading.Thread(target=construct)
+                ct.start()
+                time.sleep(0.05)
+                th.start()
+                ct.join(30)
+                be = started[0]
+            th.join(30)
+            self.assertFalse(th.is_alive(), "the reader returned")
+            self.assertEqual(es._runs, 1, "the reader and the verdict coalesced on one run")
+            self.assertIs(sb._credential_noter().__self__, be)
+            return be
+        for trial in range(3):
+            for reader_first in (True, False):
+                self.command({"A_TOKEN": fixture_value()})
+                self.failing(3, body="sleep 0.3")
+                be = boot_with_reader(reader_first)
+                about = self.about_failure(be)
+                self.assertEqual(len(about), 1, (trial, reader_first, be.problems()))
+                self.assertTrue(about[0].startswith("key source: the credential command failed"), about[0])
+                self.assertEqual(self.failed_lines(be), [], (trial, reader_first, "the noter's line is not a second entry"))
+                sb.credential_set()                           # the same failure on the next path: still primed
+                be.key_source_status()
+                self.assertEqual(len(self.about_failure(be)), 1, (trial, reader_first))
+        for reader_first in (True, False):
+            v = fixture_value()
+            self.command({"ANTHROPIC_LP_API_KEY": v}, body="sleep 0.3")
+            be = boot_with_reader(reader_first)
+            fp = es.set_fingerprint({"ANTHROPIC_LP_API_KEY": v})
+            set_lines = [m for m in self.logged if "sha256:%s" % fp in m]
+            self.assertEqual(len(set_lines), 1, (reader_first, self.logged))
+            self.assertTrue(set_lines[0].startswith("key source: command"), set_lines[0])
+            self.assertEqual([m for m in self.logged if m.startswith("credential command:")], [], reader_first)
+            self.assertNotIn(v, "\n".join(self.logged))
 
     def test_a_record_from_an_older_run_noted_after_a_newer_ones_is_ignored(self):
         # envsource releases its lock when take() returns, before the record reaches the noter, so a thread
