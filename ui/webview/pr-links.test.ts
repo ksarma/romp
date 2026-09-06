@@ -65,7 +65,7 @@ const anchors = (root: E): E[] => {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { prRefSegments, linkifyPrRefs, setLinkedText, senderPrRepo, installPrLinkOpener, validPrRepo, PR_LINK_CLASS } = require("./pr-links") as typeof import("./pr-links");
+const { prRefSegments, linkifyPrRefs, setLinkedText, senderPrRepo, postalSenderHost, installPrLinkOpener, validPrRepo, PR_LINK_CLASS } = require("./pr-links") as typeof import("./pr-links");
 
 const REPO = "example-org/notes-api";
 const url = (n: number | string, repo = REPO) => `https://github.com/${repo}/pull/${n}`;
@@ -145,20 +145,28 @@ test("the cross-repo form follows GitHub's name grammar: owner = alphanumerics a
   assert.equal(links("see " + "a".repeat(39) + "/repo#1").length, 1);
 });
 
-test("`.` and `..` are never a repo: a/..#12 and a/.#12 stay plain, in the text rule and in validPrRepo", () => {
-  for (const t of ["a/..#12", "a/.#12", "example-org/..#7"]) assert.equal(links("see " + t).length, 0, t);
-  assert.equal(validPrRepo("a/.."), null);
-  assert.equal(validPrRepo("a/."), null);
-  assert.equal(validPrRepo("a/..."), "a/...", "three dots are an odd but legal repo name");
+test("a repo name never ends in a dot: a/..#12, a/.#12 and owner/repo.#1 stay plain, in the text rule and in validPrRepo", () => {
+  for (const t of ["a/..#12", "a/.#12", "example-org/..#7", "owner/repo.#1", "owner/repo..#1", "example-org/notes-api.#7"])
+    assert.equal(links("see " + t).length, 0, t);
+  // the number after a refused name does not fall through to a bare #n (the scan resumes after the whole)
+  assert.deepEqual(prRefSegments("see example-org/notes-api.#7", REPO), [{ text: "see example-org/notes-api.#7" }]);
+  // with the space prose actually has, the sentence ends and the bare #7 links against the session repo
+  assert.deepEqual(links("see example-org/notes-api. #7").map((s) => s.href), [url(7)]);
+  for (const bad of ["a/..", "a/.", "a/...", "owner/repo.", "owner/repo.."]) assert.equal(validPrRepo(bad), null, bad);
+  assert.equal(validPrRepo("a/.b"), "a/.b", "a leading dot is fine (dotfile-named repos exist)");
+  assert.equal(validPrRepo("a/b.c"), "a/b.c");
 });
 
 test("a cross-repo form whose repo reads like a filename is a path fragment, not a reference — except a GitHub Pages repo", () => {
   for (const t of ["docs/x.html#12", "src/app.py#3", "notes/todo.md#7", "a/b.c#1"]) assert.equal(links("see " + t).length, 0, t);
   // the documented cost: a repository literally named like a file stays plain in the cross-repo form
   for (const t of ["org/tool.dev#4", "org/something.js#4"]) assert.equal(links("see " + t).length, 0, t);
-  // …but `owner/owner.github.io` is the one standard dotted repo name, and it links (any case)
+  // …but a GitHub Pages repo (`*.github.io`) is the one standard dotted repo name, and it links (any case,
+  // any owner — a fork keeps the original's name)
   assert.equal(links("see org/org.github.io#4")[0]?.href, url(4, "org/org.github.io"));
   assert.equal(links("see Org/Org.GitHub.IO#4")[0]?.href, url(4, "Org/Org.GitHub.IO"));
+  assert.equal(links("see me/them.github.io#4")[0]?.href, url(4, "me/them.github.io"));
+  assert.equal(links("see x/y.github.io.js#4").length, 0, "only as the tail");
   // a dotted repo name whose tail is not extension-shaped still links; and the scan resumes after a refused one
   assert.equal(links("see my-org/my.repo_v2#7")[0].href, url(7, "my-org/my.repo_v2"));
   assert.deepEqual(links("docs/x.html#12 then #13").map((s) => s.text), ["#13"]);
@@ -186,6 +194,34 @@ test("a number glued to letters, another # or a slash after it is not a referenc
   for (const t of ["#12abc", "#12_x", "#12#13", "#12/x"]) assert.equal(links("x " + t).length, 0, t);
   // sentence punctuation after it is fine
   for (const t of ["#12.", "#12,", "#12)", "#12;", "#12!", "#12?"]) assert.equal(links("x " + t)[0]?.text, "#12", t);
+});
+
+test("a slash-separated run of references links each one, as GitHub's own autolinker does", () => {
+  // the exact segments: the slashes between the references stay plain text
+  assert.deepEqual(prRefSegments("landed #12/#13.", REPO), [
+    { text: "landed " },
+    { text: "#12", href: url(12), label: REPO + "#12" },
+    { text: "/" },
+    { text: "#13", href: url(13), label: REPO + "#13" },
+    { text: "." },
+  ]);
+  assert.deepEqual(links("PRs #12/#13/#14 are up").map((s) => s.text), ["#12", "#13", "#14"]);
+  assert.deepEqual(links("(#12/#13)").map((s) => s.href), [url(12), url(13)]);
+  // after a `PR #n` phrase the run continues the same way; the phrase stays the first link's text
+  assert.deepEqual(links("PR #12/#13").map((s) => s.text), ["PR #12", "#13"]);
+  assert.deepEqual(links("PR #12/#13").map((s) => s.href), [url(12), url(13)]);
+  // a run that ends in a path is a path, like `#12/x` — nothing links, not even the first
+  for (const t of ["#12/#13/x", "#12/#13abc", "#12/#13#14"]) assert.equal(links("x " + t).length, 0, t);
+  // `/` alone is still no boundary: a URL's fragment never starts a run, and a space breaks one
+  assert.equal(links("https://example.com/y/#12/#13").length, 0);
+  assert.deepEqual(links("#12/ #13").map((s) => s.text), ["#13"]);
+  // after a cross-repo reference a slash refuses the whole: GitHub reads the second against the context, a
+  // writer means the named repo — two readings, no link
+  assert.equal(links("see example-org/other#12/#13").length, 0);
+  // the applier renders the run as sibling anchors with plain slashes between
+  const p = el("p", "landed #12/#13");
+  assert.equal(linkifyPrRefs(p as unknown as Node, REPO), 2);
+  assert.equal(p.html(), `<p>landed <a class="pr-link" href="${url(12)}">#12</a>/<a class="pr-link" href="${url(13)}">#13</a></p>`);
 });
 
 test("without a GitHub repo for the session NOTHING links — the cross-repo form included", () => {
@@ -348,6 +384,26 @@ test("with the sender's host named (the feed's held-mail cards): exactly that ho
   assert.equal(senderPrRepo(rows, "web", "OTHERHOST"), null, "a host not in the frame");
 });
 
+test("postalSenderHost: the chat's inbound card names the sender's host, and the sender resolves to exactly one session or none", () => {
+  const SELF = "SELFHOST";
+  assert.equal(postalSenderHost("", SELF), "", "mail from this kernel's own sessions → the local rows");
+  assert.equal(postalSenderHost("TESTHOST", SELF), "TESTHOST", "mail from an attached peer → that host's federated rows");
+  assert.equal(postalSenderHost(SELF, SELF), "", "relayed mail stamped with this kernel's own name → the local rows");
+  assert.equal(postalSenderHost(undefined, SELF), undefined, "a card from a kernel that predates the field → the name-only fallback");
+  assert.equal(postalSenderHost("?", SELF), undefined, "an unknown origin → the name-only fallback, as the feed reads blocked.origin");
+  assert.equal(postalSenderHost(null, SELF), undefined);
+  assert.equal(postalSenderHost(7, SELF), undefined);
+  // through senderPrRepo: the local `api` is no longer shadowed by the attached homonym, and a sender on a
+  // host NOT in the frame is plain text — never the local homonym's repo, which the name alone produced
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost("", SELF)), "example-org/notes-api");
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost("TESTHOST", SELF)), "other-org/api");
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost("UNATTACHED", SELF)), null, "the sender's host is not in the frame: no guess");
+  assert.equal(senderPrRepo(rows, "web", postalSenderHost("UNATTACHED", SELF)), null);
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost(undefined, SELF)), null, "legacy card: the homonym keeps it plain");
+  assert.equal(senderPrRepo(rows, "web", postalSenderHost(undefined, SELF)), "example-org/notes-web", "legacy card: one session answers to the name");
+  assert.equal(senderPrRepo(rows, "TESTHOST:aaaaaaaa", postalSenderHost("TESTHOST", SELF)), null, "the kernel's host:sid stub for a nameless sender matches no row");
+});
+
 test("senderPrRepo tolerates malformed rows and an invalid repo value", () => {
   assert.equal(senderPrRepo([{ sid: U, name: "web", githubRepo: "https://github.com/x/y" }], "web"), null);
   assert.equal(senderPrRepo([null as any, { sid: 5 as any, name: "web" }, { sid: U, name: "web", githubRepo: "x/y" }], "web"), "x/y");
@@ -376,8 +432,14 @@ function fakeDoc() {
   };
 }
 /** a fresh node standing for a pr-link anchor with `href` — a new object each call, as a rebuilt node is */
-const prAnchor = (href: string) => ({ closest: (sel: string) => sel.startsWith("a.pr-link") ? { getAttribute: (k: string) => k === "href" ? href : null } : null });
-const plain = { closest: () => null };
+const prAnchor = (href: string) => {
+  const node = { closest: (sel: string) => sel.startsWith("a.pr-link") ? { getAttribute: (k: string) => k === "href" ? href : null } : null, contains: (n: unknown) => n === node };
+  return node;
+};
+/** a node that is not a link and contains nothing (a button, a card body far from the pressed link) */
+const plain = { closest: () => null, contains: () => false };
+/** a node that is not a link and contains exactly `kids` — the common ancestor a native click lands on */
+const ancestorOf = (...kids: unknown[]) => ({ closest: () => null, contains: (n: unknown) => kids.includes(n) });
 const SPENT = ["preventDefault", "stopPropagation"];
 
 function install(protocol = "https:") {
@@ -396,14 +458,34 @@ test("press and release on a pr-link with the same href open it ONCE — through
   const { f, opened, posted } = install();
   assert.deepEqual(f.fire("pointerdown", prAnchor(url(12))), []);
   assert.deepEqual(opened, [], "nothing opens on the press");
-  f.fire("pointerup", prAnchor(url(12)));            // a DIFFERENT node object: the push rebuilt the anchor
+  const twin = prAnchor(url(12));                    // a DIFFERENT node object: the push rebuilt the anchor
+  f.fire("pointerup", twin);
   assert.deepEqual(opened, [url(12)]);
   // the native click (here on the common ancestor, the pressed node being gone) is spent: the card's modal never opens
-  assert.deepEqual(f.fire("click", plain), SPENT);
+  assert.deepEqual(f.fire("click", ancestorOf(twin)), SPENT);
   assert.deepEqual(opened, [url(12)], "no second open");
   assert.deepEqual(posted, []);
   // the next click is an ordinary click again
-  assert.deepEqual(f.fire("click", plain), []);
+  assert.deepEqual(f.fire("click", ancestorOf(twin)), []);
+});
+
+test("the spent click is the one on the released node or its ancestors; a click anywhere else passes untouched and clears the flag", () => {
+  const { f, opened } = install();
+  const twin = prAnchor(url(12));
+  f.fire("pointerdown", prAnchor(url(12))); f.fire("pointerup", twin);
+  assert.deepEqual(opened, [url(12)]);
+  // the browser fired no click (the pressed node was detached); the next click has no press behind it — a
+  // programmatic .click() from a capture-phase key handler, an assistive-technology activation — and it
+  // lands on a card button: it is that button's click, not the link's
+  assert.deepEqual(f.fire("click", plain), [], "an unrelated click is never eaten");
+  assert.deepEqual(f.fire("click", ancestorOf(twin)), [], "and the flag is gone: the released node's ancestor is an ordinary click now");
+  // the same stale state, then an activation of ANOTHER pr-link with no press: it opens
+  f.fire("pointerdown", prAnchor(url(12))); f.fire("pointerup", prAnchor(url(12)));
+  assert.deepEqual(f.fire("click", prAnchor(url(13))), SPENT, "the click path serves it");
+  assert.deepEqual(opened, [url(12), url(12), url(13)]);
+  // a click on a node that is not an ancestor, even though it reports contains() for others, passes
+  f.fire("pointerdown", prAnchor(url(12))); const up = prAnchor(url(12)); f.fire("pointerup", up);
+  assert.deepEqual(f.fire("click", ancestorOf(prAnchor(url(12)))), [], "an ancestor of some OTHER node is unrelated");
 });
 
 test("when the anchor survives, the same press/release/click sequence still opens exactly once", () => {
@@ -479,7 +561,7 @@ const FEED = read("feed.ts");
 const OUTLINE = read("fleet.ts");
 
 test("the chat links inside md(): the sanitized tree is walked before it serializes, against the owning session's repo", () => {
-  assert.match(RENDER, /import \{ linkifyPrRefs, senderPrRepo \} from "\.\/pr-links";/);
+  assert.match(RENDER, /import \{ linkifyPrRefs, senderPrRepo, postalSenderHost \} from "\.\/pr-links";/);
   assert.match(RENDER, /function md\(src: string, repo: string \| null = prRepoFor\(\)\): string \{/);
   const mdFn = RENDER.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.match(mdFn, /RETURN_DOM: true \}\) as HTMLElement;[^\n]*\n\s*linkifyPrRefs\(clean, repo\);\s*\n\s*return clean\.innerHTML;/,
@@ -493,13 +575,15 @@ test("the session frame's githubRepo rides the Session and survives a chatTail d
   assert.match(RENDER, /githubRepo: \("githubRepo" in msg\) \? \(msg\.githubRepo \?\? null\) : \(prev \? prev\.githubRepo : null\),/);
 });
 
-test("postal bodies link against the SENDER's frame-known repo only: outbound = the writer's own, inbound = senderPrRepo over the session map, never the reader's as a fallback", () => {
+test("postal bodies link against the SENDER's frame-known repo only: outbound = the writer's own, inbound = senderPrRepo over the session map by the card's host and name, never the reader's as a fallback", () => {
   assert.match(RENDER, /full\.innerHTML = md\(ev\.body, postalRepoFor\(ev\)\)/);
   assert.match(RENDER, /body\.innerHTML = md\(ev\.body, postalRepoFor\(ev\)\);/);
   const fn = RENDER.match(/function postalRepoFor\([\s\S]*?\n\}/)?.[0] || "";
   assert.match(fn, /if \(ev\.direction === "out"\) return prRepoFor\(\);/);
-  assert.match(fn, /return senderPrRepo\(Array\.from\(sessions\.values\(\), \(s\) => \(\{ sid: s\.id, name: s\.name, githubRepo: s\.githubRepo \}\)\), ev\.peer\);/);
+  assert.match(fn, /return senderPrRepo\(Array\.from\(sessions\.values\(\), \(s\) => \(\{ sid: s\.id, name: s\.name, githubRepo: s\.githubRepo \}\)\), ev\.peer, postalSenderHost\(ev\.peerHost, localSelfHost\)\);/,
+    "the sender's host rides the card (peerHost) and is compared against this kernel's own name");
   assert.equal((fn.match(/prRepoFor\(/g) || []).length, 1, "the reading session's repo is used for OUTBOUND mail only");
+  assert.match(RENDER, /kind: "postal-service";\s*\n\s*direction: "in" \| "out";\s*\n\s*peer: string;\s*\n(?:\s*\/\/[^\n]*\n)*\s*peerHost\?: string;/, "the event type carries the optional host");
 });
 
 test("the chat's plain-text surfaces link too: user-todo rows, their detail folds, and the reply prompt's quote", () => {

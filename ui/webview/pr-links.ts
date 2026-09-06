@@ -17,17 +17,27 @@
 // The ASCII hyphen is deliberately NOT a boundary: it ends URL paths and identifiers
 // (`https://example.com/a-#12` must stay plain); the dashes appear in neither.
 //
+// A slash-separated RUN of bare references (`#12/#13`, `PRs #12/#13/#14`) links each one — GitHub's own
+// autolinker does (checked against its markdown renderer, 2026-09-06) — every reference in the run
+// against the session's repository; `/` is still no boundary on its own, so a `/#13` links only as the
+// continuation of a reference before it, never inside a URL, and a run that ends in a path (`#12/#13/x`)
+// stays plain like `#12/x`. After a cross-repo reference a `/` refuses the whole (GitHub would read the
+// `#13` in `owner/repo#12/#13` against the CONTEXT, a writer means owner/repo: two readings, no link).
+//
 // The cross-repo form follows GitHub's own name grammar. An owner (a user or organization login) is
 // alphanumerics and single hyphens — never leading, trailing or doubled — at most 39 characters; a
-// repository name may also carry `.` and `_`, at most 100 characters, and is never `.` or `..`. So
-// `my.org/repo#1` (a dotted owner) and `a/..#12` are not references. Two plain words around a slash
+// repository name may also carry `.` and `_`, at most 100 characters, and never ENDS in `.` (`.` and
+// `..` are the path names, and GitHub serves no `owner/repo.` — a trailing dot is sentence punctuation
+// glued to a `#`, as in `notes-api.#7`). So `my.org/repo#1` (a dotted owner), `a/..#12` and
+// `owner/repo.#1` are not references. Two plain words around a slash
 // (`src/lib#3`) ARE one — that is GitHub's syntax byte for byte, and a directory path never carries a
 // bare numeric fragment (a line reference is `file.py#L12`, which fails the number shape) — so it
 // links. The one refusal beyond the grammar is a "repo" that reads like a FILENAME (`docs/x.html#12`,
 // `src/app.py#3` — an extension-shaped tail after a dot): that is a path with a fragment, and a wrong
 // link is worse than none. The cost is a repository named like a file (`something.js`, `tool.dev`),
-// which stays plain text in the cross-repo form — except GitHub Pages repos (`owner/owner.github.io`),
-// the one standard dotted repo name, which link. A session's OWN repo is never filtered this way: the
+// which stays plain text in the cross-repo form — except GitHub Pages repos (any `*.github.io`, the one
+// standard dotted repo name; a fork keeps the original's), which link. A session's OWN repo is never
+// filtered this way: the
 // kernel shipped it, so a bare `#12` links in a `user.github.io` or `something.js` checkout too.
 //
 // What never links: text inside code-like elements (<code>, <pre>, <kbd>, <samp>, <var>, <tt> — a
@@ -53,22 +63,24 @@ export const PR_LINK_CLASS = "pr-link";
 const OWNER = "[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}";
 const REPO = "[A-Za-z0-9_.-]{1,100}";
 const NUM = "[1-9]\\d{0,6}";
-const DOT_NAME = /^\.{1,2}$/;                  // `.` and `..`: inside the character class, never a repo
+const DOT_TAIL = /\.$/;                        // `.`, `..`, `repo.`: inside the character class, never a repo
 // group 1 = the boundary character (re-emitted as text; empty at the start of the text)
 // groups 2/3/4 = owner / repo / number of the cross-repo form
-// group 5 = the number of a `PR #n` / `pull #n` phrase; group 6 = the number of a bare `#n`
-// the trailing lookahead refuses a word character, another `#` or a `/` right after the number, which
-// is what keeps `#12abc`, `#1EA1EB` and a `#12/x` path fragment out
+// group 5 = the number of a `PR #n` / `pull #n` phrase; group 6 = the number of a bare `#n`;
+// group 7 = the slash-separated run of further bare references after either (`/#13/#14`, or empty)
+// the trailing lookahead refuses a word character, another `#` or a `/` right after the last number,
+// which is what keeps `#12abc`, `#1EA1EB` and a `#12/x` path fragment out — the run is greedy and the
+// lookahead follows it, so `#12/#13/x` backtracks to nothing rather than to `#12`
+const RUN = "((?:/#" + NUM + ")*)";
 const REF_SRC =
   "(^|[\\s(\\[{<,;:\"'“‘«—–])(?:" +
   "(" + OWNER + ")/(" + REPO + ")#(" + NUM + ")" +
-  "|(?:PR|pull)\\s?#(" + NUM + ")" +
-  "|#(" + NUM + ")" +
+  "|(?:(?:PR|pull)\\s?#(" + NUM + ")|#(" + NUM + "))" + RUN +
   ")(?![\\w#/])";
 
 const REPO_SHAPE = new RegExp("^" + OWNER + "/" + REPO + "$");
 const FILENAME_TAIL = /\.[A-Za-z0-9]{1,5}$/;   // `x.html`, `app.py`, `notes.md`: a path fragment, not a repo
-const PAGES_REPO = /\.github\.io$/i;            // GitHub Pages: the one standard dotted repo name
+const PAGES_REPO = /\.github\.io$/i;            // GitHub Pages: the one standard dotted repo name (any owner's)
 
 /** The cross-repo form's refusal beyond the grammar: a repo that reads like a filename (see the header). */
 function filenameShaped(repo: string): boolean {
@@ -79,7 +91,7 @@ function filenameShaped(repo: string): boolean {
  *  GitHub's grammar — a URL is only ever built from a value that passed this. */
 export function validPrRepo(repo: string | null | undefined): string | null {
   if (typeof repo !== "string" || !REPO_SHAPE.test(repo)) return null;
-  if (DOT_NAME.test(repo.slice(repo.indexOf("/") + 1))) return null;
+  if (DOT_TAIL.test(repo)) return null;
   return repo;
 }
 
@@ -100,14 +112,19 @@ export function prRefSegments(text: string, repo: string | null | undefined): Pr
     const end = m.index + m[0].length;
     let target: string, n: string;
     if (m[4]) {
-      // `a/..#12` is no repo; `docs/x.html#12` is a path's fragment — the scan resumes after either
-      if (DOT_NAME.test(m[3]) || filenameShaped(m[3])) continue;
+      // `a/..#12` and `a/repo.#12` are no repo; `docs/x.html#12` is a path's fragment — the scan resumes after either
+      if (DOT_TAIL.test(m[3]) || filenameShaped(m[3])) continue;
       target = m[2] + "/" + m[3]; n = m[4];
     }
-    else if (m[5]) { target = r; n = m[5]; }
-    else { target = r; n = m[6]; }
+    else { target = r; n = m[5] || m[6]; }
     if (start > last) out.push({ text: text.slice(last, start) });
-    out.push({ text: text.slice(start, end), href: prUrl(target, n), label: target + "#" + n });
+    const run = m[7] || "";                        // `/#13/#14` after a bare or `PR #n` reference, else ""
+    const first = end - run.length;
+    out.push({ text: text.slice(start, first), href: prUrl(target, n), label: target + "#" + n });
+    for (const more of run.split("/").slice(1)) {  // each `#n` of the run, the slashes between them plain
+      out.push({ text: "/" });
+      out.push({ text: more, href: prUrl(target, more.slice(1)), label: target + more });
+    }
     last = end;
   }
   if (!out.length) return [{ text }];
@@ -204,14 +221,13 @@ export interface SessionRepoRow { sid: string; name: string; githubRepo?: string
 
 /** The repository of the ONE session in `rows` that is the named sender of a message — the frame's own
  *  githubRepo for that session, never a guess (the reading session's repo is never substituted for the
- *  sender's; a wrong link is worse than none). `host` is the sender's host when the frame names it
- *  ("" = the viewing kernel's own; the feed's held-mail cards carry `blocked.origin`); undefined when it
- *  does not (the chat's postal cards carry only the sender's NAME, and the kernel writes a remote
- *  sender's bare name too), in which case every row is a candidate — a local one by its name, a
- *  federated one by its bare name — so a homonym on any attached host makes the sender ambiguous.
- *  Zero or several candidates, or a candidate the kernel gave no repo → null: the text stays plain.
- *  (A remote homonym on a host NOT attached to this dashboard is invisible here; only the kernel
- *  naming the sender's sid on the card could close that.) */
+ *  sender's; a wrong link is worse than none). `host` is the sender's host when the card names it
+ *  ("" = the viewing kernel's own; the feed's held-mail cards carry `blocked.origin`, the chat's postal
+ *  cards `peerHost` — postalSenderHost); undefined when it does not (a card from a kernel that predates
+ *  the field), in which case every row is a candidate — a local one by its name, a federated one by
+ *  its bare name — so a homonym on any attached host makes the sender ambiguous, and a homonym on a
+ *  host NOT attached to this dashboard is invisible, which is why the host-named form exists. Zero or
+ *  several candidates, or a candidate the kernel gave no repo → null: the text stays plain. */
 export function senderPrRepo(rows: readonly SessionRepoRow[], sender: string, host?: string): string | null {
   if (!sender) return null;
   const hit = rows.filter((s) => {
@@ -221,6 +237,19 @@ export function senderPrRepo(rows: readonly SessionRepoRow[], sender: string, ho
     return s.sid.startsWith(host + ":") && s.name === host + ":" + sender;
   });
   return hit.length === 1 ? validPrRepo(hit[0].githubRepo) : null;
+}
+
+/** senderPrRepo's `host` for an inbound postal card, from the `peerHost` the kernel stamps on it — the
+ *  sender's host as its message log recorded the delivery: "" for mail from the viewing kernel's own
+ *  sessions, a peer's name for mail from that host (the same name federation prefixes that host's rows
+ *  with), so the sender resolves to exactly one session or to none — a sender on a host this dashboard
+ *  has not attached is plain text, never a local homonym's repo. The viewing kernel's own name folds to
+ *  "" (relayed mail can come back stamped with it) and an unknown origin ("?") to undefined, as the feed
+ *  reads `blocked.origin`; a card from a kernel that predates the field has no peerHost at all →
+ *  undefined, the name-only resolution senderPrRepo keeps for it. */
+export function postalSenderHost(peerHost: unknown, selfHost: string): string | undefined {
+  if (typeof peerHost !== "string" || peerHost === "?") return undefined;
+  return peerHost === "" || peerHost === selfHost ? "" : peerHost;
 }
 
 /** Follow a PR link the way the chat follows its links (render.ts's a[href] delegate): on the web
@@ -235,11 +264,15 @@ export function senderPrRepo(rows: readonly SessionRepoRow[], sender: string, ho
  *  needs the press and the release on one node, so a push mid-press would drop it (or hand it to the
  *  card underneath). So the press is followed by attribute: `pointerdown` remembers the href under the
  *  primary button, `pointerup` on a pr-link with the SAME href opens it — the rebuilt twin counts, the
- *  node's identity does not — and the native click that may follow (on the anchor, or on the common
- *  ancestor when the pressed node is gone) is spent, so the card's own handler never sees it. The
- *  click path itself stays for a keyboard activation (Enter on a focused link fires click alone).
- *  Every flag clears on the next press or key — an event, never a timer. The chat pane does NOT install
- *  this — its own delegate already opens every absolute-scheme anchor the same way. */
+ *  node's identity does not — and the native click that may follow is spent, so the card's own handler
+ *  never sees it. That click can land only on the released node or one of its ancestors (the anchor
+ *  itself, or the common ancestor when the pressed node is gone), so only a click there is spent: one
+ *  arriving anywhere else with no press behind it — the browser fired none, then a programmatic
+ *  .click() or an assistive-technology activation came — passes as the ordinary click it is (the flag
+ *  ate one such click before; review find, 2026-09-06). The click path itself stays for a keyboard
+ *  activation (Enter on a focused link fires click alone). Every flag clears on the next press, key or
+ *  click — an event, never a timer. The chat pane does NOT install this — its own delegate already opens
+ *  every absolute-scheme anchor the same way. */
 export function installPrLinkOpener(
   doc: { addEventListener(type: string, fn: (e: Event) => void, capture?: boolean): void },
   post: ((msg: { type: string; href: string }) => void) | undefined,
@@ -264,20 +297,25 @@ export function installPrLinkOpener(
     const pe = e as PointerEvent;
     return (pe.button === undefined || pe.button === 0) && pe.isPrimary !== false;
   };
-  let pressed: string | null = null;   // the pr-link href under the primary button since pointerdown
-  let spent = false;                    // the click that follows an open at pointerup is already served
-  doc.addEventListener("pointerdown", (e) => { spent = false; pressed = primary(e) ? hrefAt(e.target) : null; }, true);
+  /** is `t` `node` or one of its ancestors — the only targets the click after a release on `node` can have */
+  const inclusiveAncestor = (t: EventTarget | null, node: EventTarget): boolean =>
+    t === node || (!!t && typeof (t as Node).contains === "function" && (t as Node).contains(node as Node));
+  let pressed: string | null = null;        // the pr-link href under the primary button since pointerdown
+  let served: EventTarget | null = null;    // the node released on when pointerup opened a link: its click is already served
+  doc.addEventListener("pointerdown", (e) => { served = null; pressed = primary(e) ? hrefAt(e.target) : null; }, true);
   doc.addEventListener("pointercancel", () => { pressed = null; }, true);
-  doc.addEventListener("keydown", () => { spent = false; pressed = null; }, true);
+  doc.addEventListener("keydown", () => { served = null; pressed = null; }, true);
   doc.addEventListener("pointerup", (e) => {
     const was = pressed;
     pressed = null;
     if (!was || !primary(e) || hrefAt(e.target) !== was) return;   // released elsewhere: no click
     open(was);
-    spent = true;
+    served = e.target;
   }, true);
   doc.addEventListener("click", (e) => {
-    if (spent) { spent = false; e.preventDefault(); e.stopPropagation(); return; }
+    const node = served;
+    served = null;
+    if (node && inclusiveAncestor(e.target, node)) { e.preventDefault(); e.stopPropagation(); return; }
     const href = hrefAt(e.target);
     if (!href) return;
     e.preventDefault();

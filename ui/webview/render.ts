@@ -56,7 +56,7 @@ import { mathBlock, mathInline } from "./math";
 import { setTip, pruneTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 import { dragSlotIndex } from "./dragslot";
-import { linkifyPrRefs, senderPrRepo } from "./pr-links";
+import { linkifyPrRefs, senderPrRepo, postalSenderHost } from "./pr-links";
 import { perfFrameHandler } from "./perf-telemetry";
 
 for (const [name, lang] of Object.entries({
@@ -131,6 +131,10 @@ type ChatEvent = (
       kind: "postal-service";
       direction: "in" | "out";
       peer: string;
+      // incoming: the sender's host as the kernel's message log stamped it ("" = this kernel's own, a peer's
+      // name for mail from that host) — with `peer`, names the ONE session whose repo the body's PR
+      // references link against (postalRepoFor); absent on cards from a kernel that predates the field
+      peerHost?: string;
       color: { bg: string; fg: string } | null;
       body: string;
       summary?: string;  // incoming Haiku caption (≤9 words) — shown instead of the verbose body; body on hover
@@ -794,14 +798,17 @@ function prRepoFor(sid?: string | null): string | null {
 // A postal body was written by its SENDER, so its `#123` means the sender's repository — and only a
 // repository the frame actually names for that sender is used; nothing is guessed (a wrong link is worse
 // than none). An OUTBOUND message was written by the reading session: its own repo, as the frame ships
-// it. An INBOUND message names its sender by NAME only (the same name its chip navigates by; the kernel
-// writes a remote sender's bare name too), so the sender is the one session in the frame — local, or
-// federated compared on its bare name — that answers to that name, and the link uses ITS githubRepo. No
-// such session, more than one (a homonym on any attached host), or one the kernel gave no repo: the
-// text stays plain. The reading session's repo is never substituted for the sender's.
-function postalRepoFor(ev: { direction: "in" | "out"; peer: string }): string | null {
+// it. An INBOUND message names its sender by host AND name (`peerHost` + `peer`, the host as the kernel's
+// message log stamped it), so the sender is exactly the session in the frame that answers to that pair —
+// a local row for the kernel's own host, that host's federated row otherwise — and the link uses ITS
+// githubRepo. A sender on a host this dashboard has not attached, or one the kernel gave no repo: the
+// text stays plain (the name alone once resolved it, and a remote homonym borrowed a local session's
+// repo; review find, 2026-09-06). Only a card from a kernel that predates the field falls back to the
+// name — the one session, local or federated by its bare name, answering to it; a homonym leaves it
+// plain. The reading session's repo is never substituted for the sender's.
+function postalRepoFor(ev: { direction: "in" | "out"; peer: string; peerHost?: string }): string | null {
   if (ev.direction === "out") return prRepoFor();
-  return senderPrRepo(Array.from(sessions.values(), (s) => ({ sid: s.id, name: s.name, githubRepo: s.githubRepo })), ev.peer);
+  return senderPrRepo(Array.from(sessions.values(), (s) => ({ sid: s.id, name: s.name, githubRepo: s.githubRepo })), ev.peer, postalSenderHost(ev.peerHost, localSelfHost));
 }
 
 function highlight(container: HTMLElement, lineNos = true) {
