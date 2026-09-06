@@ -16,10 +16,13 @@
 //   - makeAnchor / locateComment delegate to the vendored track-changents engine, so the browser's anchor
 //     is byte-identical to the one `track-comment` would build.
 //   - paintRaw / paintRendered wrap exactly the text nodes of a source range in mark elements.
+//   - paintChangesRaw / paintChangesRendered / unpaintChanges (Slice 2) paint a session's pending changes:
+//     an insertion is its new text wrapped, a deletion a ZERO-WIDTH point whose struck label is CSS
+//     content, so no text node is ever added under a row and every Raw walk above stays exact.
 //
 // Everything walks a MINIMAL structural DOM (nodeType, childNodes, parentNode, data, splitText,
-// ownerDocument.createElement/createTextNode, getAttribute/setAttribute, insertBefore/appendChild), so
-// anchor-map.test.ts runs it under node against a small stand-in with no jsdom.
+// ownerDocument.createElement/createTextNode, getAttribute/setAttribute, insertBefore/appendChild/
+// removeChild), so anchor-map.test.ts runs it under node against a small stand-in with no jsdom.
 //
 // Offsets are UTF-16 code-unit indexes into the source string the viewer fetched (the same units the
 // engine, the fingerprint, and the host script use); `end` is exclusive.
@@ -73,6 +76,7 @@ type DElement = DNode & {
   setAttribute(name: string, value: string): void;
   insertBefore(node: DNode, ref: DNode | null): DNode;
   appendChild(node: DNode): DNode;
+  removeChild(node: DNode): DNode;
   ownerDocument: { createElement(tag: string): DElement; createTextNode(s: string): DText } | null;
 };
 
@@ -975,4 +979,224 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
   if (!hit) return null;
   const marks = wrapSlices(nodes, hit.start, hit.end, className, data, skipBlockWs);
   return marks.length ? (marks as unknown as Element[]) : null;
+}
+
+// ── change marks (plans/file-review.md Slice 2; contract D4) ───────────────────────────────────────
+//
+// A session's pending changes arrive as hunks in CURRENT-text coordinates: an `ins` occupies
+// [curFrom, curTo) and its old text is empty; a `del` is a point (curFrom === curTo) whose old text is
+// gone from the file; a `sub` is both, the new text at [curFrom, curTo) and the old text beside it.
+// Raw view paints all three; Rendered paints the new text of an ins or sub and leaves a deletion to its
+// card (the plan: a deletion cannot be placed in rendered prose; Reveal switches to Raw).
+//
+// The deleted text is NOT in the file, so it must never become a text node under a `.fv-cl` row: every
+// Raw walk above (rawIndex's row verification, boundaryIndex's counting, the selection self-check) reads
+// the rows' text nodes as the source line. A deletion is therefore an EMPTY inline element at its offset
+// whose visible label is CSS-generated from `data-fc-text` (`.fc-del::before { content: attr(...) }`);
+// generated content is not a node and never enters a selection, the same way the row number is drawn.
+
+export type ChangePaint = {
+  id: string;
+  kind: "ins" | "del" | "sub";
+  curFrom: number;
+  curTo: number;
+  oldText: string;
+  author: string;
+  /** The change's new text, when the caller has it (a hunk's `newText`). With it present the painters
+   *  verify the source slice at [curFrom, curTo) equals it before painting anything: hunks are computed
+   *  over the host's string, and a file whose bytes the browser decodes differently (a BOM the fetch
+   *  strips) would otherwise paint the wrong passages. One failure refuses the whole batch (offsetsIndex). */
+  newText?: string;
+};
+
+/** The struck label of a deletion: the old text with the line endings the rows themselves show (the HTML
+ *  parser turns a CR into an LF), capped at 80 characters with an ellipsis when cut; the card carries the
+ *  whole text. */
+export const DEL_LABEL_MAX = 80;
+export function deletionLabel(oldText: string): string {
+  const t = oldText.replace(/\r\n?/g, "\n");
+  if (t.length <= DEL_LABEL_MAX) return t;
+  let cut = DEL_LABEL_MAX - 1;
+  if (/[\uD800-\uDBFF]/.test(t[cut - 1])) cut--;   // never split a surrogate pair
+  return t.slice(0, cut) + "…";
+}
+
+/** Inline styles on a mark, `{"--fc-author": "<css color>"}` and the like, written as one `style`
+ *  attribute so the structural DOM needs no CSSOM. A pair whose name is not a property or custom
+ *  property name, or whose value could end the declaration, is skipped: the mark still paints, in the
+ *  sheet's fallback colour. */
+function applyStyles(el: DElement, styles: Record<string, string> | undefined): void {
+  if (!styles) return;
+  const decls: string[] = [];
+  for (const k of Object.keys(styles)) {
+    const v = styles[k];
+    if (!/^-{0,2}[A-Za-z_][\w-]*$/.test(k) || typeof v !== "string" || /[;{}\r\n]/.test(v)) continue;
+    decls.push(k + ": " + v);
+  }
+  if (decls.length) el.setAttribute("style", decls.join("; ") + ";");
+}
+
+const CHANGE_ACT = "fcchange";
+const changeData = (c: ChangePaint): Record<string, string> => ({ act: CHANGE_ACT, id: c.id, author: c.author });
+
+/** Whether a change's offsets index `source`: inside the text, a `del` a point, and, when the caller
+ *  supplied the new text, exactly that text at [curFrom, curTo). The painters apply it to the BATCH: the
+ *  hunks were computed over one string, so one offset that does not index `source` means none of them
+ *  do, and a deletion alone has no text to check. Then nothing is painted and every change is left to
+ *  its card (the panel sees no painted id), rather than some marks landing on the wrong passages. */
+function offsetsIndex(c: ChangePaint, source: string): boolean {
+  if (!(c.curFrom >= 0 && c.curFrom <= c.curTo && c.curTo <= source.length)) return false;
+  if (c.kind === "del" && c.curFrom !== c.curTo) return false;
+  return c.newText === undefined || source.slice(c.curFrom, c.curTo) === c.newText;
+}
+const batchIndexes = (changes: ChangePaint[], source: string): boolean => changes.every((c) => offsetsIndex(c, source));
+
+/**
+ * A zero-width marker element at source `offset` in the Raw view: inserted between the row's text nodes,
+ * splitting one when the offset falls inside it, never adding a text node. The label is carried in
+ * `data-fc-text` for the sheet's `::before` to draw. An offset on a line ending sits at the end of its
+ * row; the end of the file sits at the end of the last row. Returns null when the rows do not match
+ * `source` (nothing is trusted then) or the file has no rows.
+ */
+export function paintRawPoint(codeRoot: Element, source: string, offset: number, className: string,
+                              data: Record<string, string>, label: string, styles?: Record<string, string>): Element | null {
+  const idx = rawIndex(codeRoot as unknown as DElement, source);
+  if ("error" in idx || !idx.rows.length) return null;
+  let lo = 0, hi = idx.rows.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (idx.rows[mid].srcStart <= offset) lo = mid; else hi = mid - 1;
+  }
+  const row = idx.rows[lo];
+  let col = Math.max(0, Math.min(offset - row.srcStart, row.text.length));
+  // a CRLF row's DOM text ends in the "\n" the parser made of its CR: an offset on the line ending sits
+  // before it, at the end of the visible text, so the label never opens a new line under the row
+  if (col === row.text.length && col > 0 && row.text[col - 1] === "\n") col--;
+  const doc = row.el.ownerDocument;
+  if (!doc) throw new Error("anchor-map: node has no ownerDocument");
+  const m = doc.createElement("span");
+  m.setAttribute("class", className);
+  for (const k of Object.keys(data)) m.setAttribute("data-" + k, data[k]);
+  m.setAttribute("data-fc-text", label);
+  applyStyles(m, styles);
+  const nodes = textNodes(row.el);
+  let cum = 0;
+  for (const t of nodes) {
+    const len = t.data.length;
+    if (col < cum + len) {
+      const parent = t.parentNode as DElement;
+      if (col === cum) parent.insertBefore(m, t);
+      else parent.insertBefore(m, t.splitText(col - cum));
+      return m as unknown as Element;
+    }
+    cum += len;
+  }
+  if (nodes.length) {
+    // at the end of the row's text: right after its last text node
+    const t = nodes[nodes.length - 1];
+    const parent = t.parentNode as DElement;
+    let i = 0;
+    while (i < parent.childNodes.length && parent.childNodes[i] !== t) i++;
+    parent.insertBefore(m, i + 1 < parent.childNodes.length ? parent.childNodes[i + 1] : null);
+    return m as unknown as Element;
+  }
+  // an empty row: the point goes into the row's text cell (its `.fv-ct`), else the row itself
+  let host: DElement = row.el;
+  for (let i = 0; i < row.el.childNodes.length; i++) {
+    const c = row.el.childNodes[i];
+    if (isElement(c) && hasClass(c, "fv-ct")) { host = c; break; }
+  }
+  host.appendChild(m);
+  return m as unknown as Element;
+}
+
+/**
+ * Paint pending changes over the Raw rows. `ins`: the new text wrapped in `mark.fc-ins`, one mark per
+ * text-node slice, so a range crossing rows paints each row's slice. `del`: a `span.fc-del` point at
+ * curFrom labelled with the old text (deletionLabel). `sub`: the point first, then the wrap. Every
+ * painted element carries data-act="fcchange", data-id, data-author, and the inline styles `stylesFor`
+ * returns for the change (`{"--fc-author": colour}` colours the mark by session). Returns every element
+ * painted, so the caller reads which ids got paint from the elements' data-id; a batch whose offsets do
+ * not index `source` (offsetsIndex) paints nothing and returns [].
+ */
+export function paintChangesRaw(codeRoot: Element, source: string, changes: ChangePaint[],
+                                stylesFor: (c: ChangePaint) => Record<string, string>): Element[] {
+  const out: Element[] = [];
+  if (!batchIndexes(changes, source)) return out;
+  for (const c of changes) {
+    const data = changeData(c);
+    const styles = stylesFor(c);
+    if (c.kind === "del" || c.kind === "sub") {
+      const p = paintRawPoint(codeRoot, source, c.curFrom, "fc-del", data, deletionLabel(c.oldText), styles);
+      if (p) out.push(p);
+    }
+    if (c.kind === "ins" || c.kind === "sub") {
+      const marks = paintRaw(codeRoot, source, { start: c.curFrom, end: c.curTo }, "fc-ins", data);
+      for (const m of marks) { applyStyles(m as unknown as DElement, styles); out.push(m); }
+    }
+  }
+  return out;
+}
+
+/**
+ * Paint pending changes over the Rendered view: an `ins` or `sub` through paintRendered over its new
+ * text (the source-offset path, the text-match fallback inside a refused block), class `fc-ins`, with the
+ * same data attributes and styles as the Raw marks. A `del` is never painted here; its card offers
+ * Reveal. Returns which ids got paint and which did not, so the panel can mark the rest card-only; a
+ * batch whose offsets do not index `source` (offsetsIndex) paints nothing and reports every id unpainted.
+ */
+export function paintChangesRendered(renderedRoot: Element, source: string, changes: ChangePaint[],
+                                     stylesFor: (c: ChangePaint) => Record<string, string>): { painted: string[]; unpainted: string[] } {
+  const painted: string[] = [], unpainted: string[] = [];
+  if (!batchIndexes(changes, source)) return { painted, unpainted: changes.map((c) => c.id) };
+  for (const c of changes) {
+    if (c.kind === "del" || c.curFrom === c.curTo) { unpainted.push(c.id); continue; }
+    const marks = paintRendered(renderedRoot, source, { start: c.curFrom, end: c.curTo }, "fc-ins", changeData(c));
+    if (!marks || !marks.length) { unpainted.push(c.id); continue; }
+    const styles = stylesFor(c);
+    for (const m of marks) applyStyles(m as unknown as DElement, styles);
+    painted.push(c.id);
+  }
+  return { painted, unpainted };
+}
+
+/** Adjacent text nodes under `p` merged and empty ones dropped (Node.normalize for one parent), so the
+ *  splits a paint made close back up. */
+function mergeText(p: DElement): void {
+  let i = 0;
+  while (i < p.childNodes.length) {
+    const c = p.childNodes[i];
+    if (!isText(c)) { i++; continue; }
+    if (c.data === "") { p.removeChild(c); continue; }
+    while (i + 1 < p.childNodes.length && isText(p.childNodes[i + 1])) {
+      const next = p.childNodes[i + 1] as DText;
+      c.data += next.data;
+      p.removeChild(next);
+    }
+    i++;
+  }
+}
+
+/**
+ * Remove every change mark under `root`: an `fc-ins` wrapper is unwrapped (its text nodes go back in
+ * its place) and an `fc-del` point is removed, then the parent's text nodes are merged, so the DOM is
+ * what it was before paintChangesRaw / paintChangesRendered ran. Comment highlights (`fc-hl`,
+ * `fc-presel`) are left alone, nested either way round.
+ */
+export function unpaintChanges(root: Element): void {
+  const marks: DElement[] = [];
+  const visit = (n: DNode) => {
+    if (isElement(n) && (hasClass(n, "fc-ins") || hasClass(n, "fc-del"))) marks.push(n);
+    for (let i = 0; i < n.childNodes.length; i++) visit(n.childNodes[i]);
+  };
+  visit(root as unknown as DNode);
+  // innermost first, so an unwrapped mark's children are already plain when its ancestor unwraps
+  for (let k = marks.length - 1; k >= 0; k--) {
+    const m = marks[k];
+    const p = m.parentNode as DElement | null;
+    if (!p) continue;
+    while (m.childNodes.length) p.insertBefore(m.childNodes[0], m);
+    p.removeChild(m);
+    mergeText(p);
+  }
 }
