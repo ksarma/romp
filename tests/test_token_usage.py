@@ -608,8 +608,11 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
         self.assertEqual(km._bucket_start("2026-11-01T01"), self.FIRST_0100, "the daylight 01:00, not the standard one")
         self.assertEqual(km._bucket_start("2026-11-01T02"), calendar.timegm((2026, 11, 1, 7, 0, 0)), "02:00 exists once (EST)")
         self.assertEqual(km._bucket_start("2026-11-01"), calendar.timegm((2026, 11, 1, 4, 0, 0)), "midnight EDT")
-        # the spring-forward gap: no instant formats to 02, so the library's normalized answer stands
-        self.assertEqual(km._bucket_start("2026-03-08T02"), time.mktime((2026, 3, 8, 2, 0, 0, 0, 0, -1)))
+        # the spring-forward gap: no instant formats to 02, so the key starts where the gap ends (03:00 EDT),
+        # the same whichever offset the library's previous call left it on
+        for isdst in (0, 1, 0):
+            time.mktime((2026, 3, 8, 1, 0, 0, 0, 0, isdst))
+            self.assertEqual(km._bucket_start("2026-03-08T02"), calendar.timegm((2026, 3, 8, 7, 0, 0)), "primed isdst=%d" % isdst)
         self.assertIsNone(km._bucket_start("not-a-key"))
         os.environ["TZ"] = "UTC"
         time.tzset()
@@ -804,7 +807,7 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
         self.assertEqual(set(keys), self._recorder_keys(t0, now), "every key the recorder would write in the period, and no other")
         # the walker's own starts (its cheap top-of-hour path or the library's two-arm rule, whichever a bucket
         # took) are the library's answer for every key — the modal's t0 rule, bucket by bucket
-        self.assertEqual(km._hour_buckets_back(now, window), [(k, km._bucket_start(k)) for k in keys])
+        self.assertEqual([(k, s) for k, s, _off in km._hour_buckets_back(now, window)], [(k, km._bucket_start(k)) for k in keys])
         return keys, t0
 
     def _ledger_rows_and_judges_agree(self, now, window):
@@ -908,15 +911,17 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
         02:45-02:59 standard between the two. The ledger's per-key sums hold every one of those turns, so
         the period starts at the earliest first instant among its keys (02:00 daylight) and takes in every
         key with an instant since: T04, T03, T02 — five turns, five rows, five judge calls, and the rail's
-        `1 hour` sums the same three buckets."""
+        `1 hour` sums the same three buckets. So this `1h` view spans 3h15m (04:15 standard back to 02:00
+        daylight, which is 12:15Z to 15:30Z), and the modal says so through `from`."""
         os.environ["TZ"] = "Pacific/Chatham"
         time.tzset()
         ch = self.CH_CHANGE_FALL
         first_t02, first_t03 = ch - 105 * 60, ch - 45 * 60             # 02:00 and 03:00 daylight
         self.assertEqual((km._bucket_start("2026-04-05T02"), km._bucket_start("2026-04-05T03")), (first_t02, first_t03))
         now = ch + 90 * 60                                              # 04:15 standard
-        self.assertEqual(km._hour_buckets_back(now, 3600), [("2026-04-05T04", ch + 75 * 60), ("2026-04-05T03", ch + 15 * 60)],
-                         "the walk alone: T04, then T03's second run — its start is not the key's first instant")
+        self.assertEqual(km._hour_buckets_back(now, 3600), [("2026-04-05T04", ch + 75 * 60, 45900), ("2026-04-05T03", ch + 15 * 60, 45900)],
+                         "the walk alone: T04, then T03's second run — its start is not the key's first instant; both end at +12:45")
+        self.assertEqual(now - km._analytics_edges(now, 3600)[2], 195 * 60, "the 1h view spans 3h15m here")
         kind, keys, t0 = km._analytics_edges(now, 3600)
         self.assertEqual((kind, keys, t0), ("hours", ["2026-04-05T04", "2026-04-05T03", "2026-04-05T02"], first_t02))
         (jd.STATE / "spend.json").write_text(json.dumps({"hours": {
@@ -976,6 +981,189 @@ class AnalyticsEdgesUnderDst(unittest.TestCase):
             time.mktime((2026, 11, 1, 1, 0, 0, 0, 0, isdst))
             ss = km._spend_series(now=now)
             self.assertEqual((ss["h0"], ss["usd"][first_slot], ss["usd"][first_slot + 1]), (h0, 2.0, 0.0), "isdst primed %d" % isdst)
+
+    # ── Antarctica/Troll (+00/+02): the one two-hour fall-back in tzdata, 03:00 +02 -> 01:00 +00 ─────────
+    # 2026-10-25 at 01:00Z. The replay crosses the 02:00 boundary, so T01 and T02 each own two runs, and the
+    # runs INTERLEAVE: T01 daylight [23:00Z, 00:00Z), T02 daylight [00:00Z, 01:00Z), T01 standard [01:00Z,
+    # 02:00Z), T02 standard [02:00Z, 03:00Z). T02's standard run starts exactly one hour after the change.
+    TR_CHANGE = calendar.timegm((2026, 10, 25, 1, 0, 0))
+
+    def test_a_two_hour_fall_back_names_each_buckets_first_instant_whatever_mktime_did_last(self):
+        """_bucket_start compared the offset at a run's start with the offset one hour earlier, and T02's
+        standard run starts one hour after the change, where the new offset already applies: the arms never
+        ran, and the key followed glibc's previous call — 00:00Z or 02:00Z, two hover slots apart. The span
+        checked is two hours now, the longest replay in tzdata. Every fall-back this file names, under
+        alternating primings."""
+        x = self.TR_CHANGE
+        cases = (("Antarctica/Troll", (2026, 10, 25, 2), {"2026-10-25T00": x - 3 * 3600, "2026-10-25T01": x - 2 * 3600,
+                                                          "2026-10-25T02": x - 3600, "2026-10-25T03": x + 2 * 3600,
+                                                          "2026-10-25": x - 3 * 3600}),
+                 ("Pacific/Chatham", (2026, 4, 5, 3), {"2026-04-05T02": self.CH_CHANGE_FALL - 105 * 60, "2026-04-05T03": self.CH_CHANGE_FALL - 45 * 60,
+                                                       "2026-04-05T04": self.CH_CHANGE_FALL + 75 * 60}),
+                 ("America/New_York", (2026, 11, 1, 1), {"2026-11-01T01": self.FIRST_0100, "2026-11-01T02": self.SECOND_0100 + 3600}),
+                 ("Australia/Lord_Howe", (2026, 4, 5, 1), {"2026-04-05T01": calendar.timegm((2026, 4, 4, 14, 0, 0)),
+                                                           "2026-04-05T02": calendar.timegm((2026, 4, 4, 15, 30, 0))}))
+        for zone, reading, want in cases:
+            os.environ["TZ"] = zone
+            time.tzset()
+            for isdst in (0, 1, 0, 1):
+                time.mktime(reading + (0, 0, 0, 0, isdst))                   # the library's last resolution
+                for key, first in want.items():
+                    with self.subTest(zone=zone, key=key, isdst=isdst):
+                        self.assertEqual(km._bucket_start(key), first)
+        os.environ["TZ"] = "Antarctica/Troll"
+        time.tzset()
+        h0 = int((x + 3 * 3600) // 3600) - (km._SERIES_HOURS - 1)
+        slots = set()
+        for isdst in (0, 1, 0, 1):
+            time.mktime((2026, 10, 25, 2, 0, 0, 0, 0, isdst))
+            slots.add(km._series_index("2026-10-25T02", h0))
+        self.assertEqual(slots, {int((x - 3600) // 3600) - h0}, "the hover slot of T02 is its daylight hour's, in every state")
+
+    def test_a_two_hour_fall_back_interleaves_two_keys_and_the_window_reaches_both_buckets_first_instants(self):
+        """1h at 01:30 standard (01:30Z): the walk is T01's standard run, then T02's daylight run — each key
+        once, and T02's run IS its key's first — the shape the old fast path took for contiguous buckets, with
+        t0 at 00:00Z. But the T01 bucket also holds the daylight hour [23:00Z, 00:00Z), and the ledger sums
+        it whole: an hour of session dollars with no rows against it. The gate is a fall-back at a run
+        boundary now (T01's standard run starts at the change), so the period reaches back to 23:00Z: five
+        turns in the two buckets, five rows, five judge calls, and the rail's `1 hour` sums the same two."""
+        os.environ["TZ"] = "Antarctica/Troll"
+        time.tzset()
+        x = self.TR_CHANGE
+        now = x + 30 * 60
+        self.assertEqual([(k, s) for k, s, _off in km._hour_buckets_back(now, 3600)], [("2026-10-25T01", x), ("2026-10-25T02", x - 3600)],
+                         "the walk alone: T01's standard run, then T02's daylight run, which is T02's first")
+        for isdst in (0, 1):
+            time.mktime((2026, 10, 25, 2, 0, 0, 0, 0, isdst))
+            with self.subTest(isdst=isdst):
+                self.assertEqual(km._analytics_edges(now, 3600), ("hours", ["2026-10-25T01", "2026-10-25T02"], x - 2 * 3600))
+        (jd.STATE / "spend.json").write_text(json.dumps({"hours": {
+            "2026-10-25T00": {"usd": 50.0, "turns": 1}, "2026-10-25T01": {"usd": 2.0, "turns": 2},
+            "2026-10-25T02": {"usd": 3.0, "turns": 3}}, "days": {}}))
+        rows = [x - 2 * 3600 + 900, x - 3600 + 900, x - 3600 + 1800, x - 3600 + 2700, x + 900]   # 01:15 dl, 02:15 dl, 02:30 dl, 02:45 dl, 01:15 std
+        p1 = pathlib.Path(self.td.name) / "s1.jsonl"
+        p1.write_text("".join(_asst({"input_tokens": 1000, "output_tokens": 0}, iso(t), model="claude-opus-4-8") + "\n"
+                              for t in rows + [x - 2 * 3600 - 900]))         # 00:45 daylight: out
+        jd.discover = lambda now, window=None, forks=True: [("fs1", p1, "a1", "s1")]
+        (jd.STATE / "judge-usage.jsonl").write_text("".join(
+            json.dumps({"t": t, "judge": "captioner", "tier": "index", "in": 10, "out": 4, "cost": 1.0, "ms": 5}) + "\n"
+            for t in rows + [x - 2 * 3600 - 900]))
+        a = km._token_analytics(now, 3600)
+        self.assertEqual(a["from"], x - 2 * 3600)
+        self.assertEqual((a["sessions"]["ledger"]["usd"], a["sessions"]["ledger"]["turns"]), (5.0, 5), "T01 (both runs) and T02 (its daylight run so far); T00 is out")
+        self.assertEqual(a["sessions"]["in"], 5000, "one row per ledger turn — the daylight rows included")
+        self.assertEqual(a["judges"]["total"]["calls"], 5)
+        self.assertEqual(km._spend_windows(now=now)["hour"]["turns"], 5, "the rail's `1 hour` sums the same two buckets")
+
+    def _closure_rule_holds(self, now, window):
+        """The rule _hour_window states, as an oracle: t0 is the earliest first instant among the keys, the keys
+        are exactly the buckets the recorder would write in [t0, now] (each once), t0 <= now - window, and the
+        rail's prefix of one long walk gives the same answer as the standalone walk."""
+        kind, keys, t0 = km._analytics_edges(now, window)
+        self.assertEqual(kind, "hours")
+        self.assertEqual(len(keys), len(set(keys)), "each key once: %r" % keys)
+        self.assertLessEqual(t0, now - window)
+        self.assertEqual(t0, min(km._bucket_start(k) for k in keys), "t0 is the earliest first instant among the keys")
+        self.assertEqual(set(keys), self._recorder_keys(t0, now), "every key the recorder would write in [t0, now], no other")
+        self.assertEqual(km._hour_window(now, window, km._hour_buckets_back(now, 7 * 86400), {}), (keys, t0), "the rail's prefix agrees")
+
+    def test_every_window_across_the_two_hour_fall_back_holds_the_closure_rule(self):
+        """Every quarter hour from two hours before the change to four after, for 1h, 5h and 24h, priming the
+        library the other way before each: the closure rule holds, wherever the window's edges fall against
+        the four interleaved runs. A week on, the 7d view holds it too."""
+        os.environ["TZ"] = "Antarctica/Troll"
+        time.tzset()
+        x = self.TR_CHANGE
+        isdst = 0
+        for now in range(x - 2 * 3600, x + 4 * 3600 + 1, 900):
+            for window in (3600, 5 * 3600, 86400):
+                isdst ^= 1
+                time.mktime((2026, 10, 25, 2, 0, 0, 0, 0, isdst))
+                with self.subTest(now=time.strftime("%H:%M %Z", time.localtime(now)), window=window):
+                    self._closure_rule_holds(now, window)
+        self._closure_rule_holds(x + 7 * 86400 + 1800, 7 * 86400)
+        # the same sweep in the zone this file's other split-key tests use, and in one with no split at all
+        os.environ["TZ"] = "Pacific/Chatham"
+        time.tzset()
+        for now in range(self.CH_CHANGE_FALL - 3600, self.CH_CHANGE_FALL + 3 * 3600 + 1, 900):
+            for window in (3600, 5 * 3600):
+                with self.subTest(zone="Chatham", now=time.strftime("%H:%M %Z", time.localtime(now)), window=window):
+                    self._closure_rule_holds(now, window)
+        os.environ["TZ"] = "America/New_York"
+        time.tzset()
+        for now in range(self.FIRST_0100 - 3600, self.SECOND_0100 + 3 * 3600 + 1, 900):
+            with self.subTest(zone="New York", now=time.strftime("%H:%M %Z", time.localtime(now))):
+                self._closure_rule_holds(now, 3600)
+
+    def test_a_date_the_zone_skipped_starts_the_period_where_the_gap_ends(self):
+        """Samoa skipped 2011-12-30 (24:00 -10 on the 29th became 00:00 +14 on the 31st). No instant formats to
+        that date, glibc has no daylight reading for it, and mktime(isdst=1) raises — through the one except
+        that also wrapped _bucket_start's fallback, so the 30d view on 2012-01-29 handed _token_analytics t0
+        None. The library's own normalized reading is no answer either: it follows the previous call, and
+        named the start of Dec 29 in one state (a day of rows the ledger's keys do not cover). The bucket
+        starts where the gap ends now, in every state, and the period's rows are cut there."""
+        os.environ["TZ"] = "Pacific/Apia"
+        time.tzset()
+        change = calendar.timegm((2011, 12, 30, 10, 0, 0))                 # 00:00 +14 on Dec 31
+        for isdst in (0, 1, 0):
+            time.mktime((2011, 12, 28, 12, 0, 0, 0, 0, isdst))
+            with self.subTest(isdst=isdst):
+                self.assertEqual(km._bucket_start("2011-12-30"), change, "the skipped date starts where the gap ends")
+                self.assertEqual(km._bucket_start("2011-12-30T12"), change, "an hour inside it too")
+                self.assertEqual(km._bucket_start("2011-12-31"), change, "which is Dec 31's first instant")
+        now = calendar.timegm((2012, 1, 28, 22, 0, 0))                     # noon +14 on Jan 29: the 30d view's oldest date is the skipped one
+        self.assertEqual(km._analytics_edges(now, 30 * 86400)[1:], ([(datetime(2012, 1, 29).date() - timedelta(days=i)).isoformat() for i in range(31)], change))
+        (jd.STATE / "spend.json").write_text(json.dumps({"days": {
+            "2011-12-29": {"usd": 50.0, "turns": 1}, "2011-12-31": {"usd": 1.0, "turns": 1}, "2012-01-29": {"usd": 1.0, "turns": 1}}, "hours": {}}))
+        rows = [change + 1800, now - 3600]                                  # 00:30 +14 Dec 31; 11:00 Jan 29
+        p1 = pathlib.Path(self.td.name) / "s1.jsonl"
+        p1.write_text("".join(_asst({"input_tokens": 1000, "output_tokens": 0}, iso(t), model="claude-opus-4-8") + "\n"
+                              for t in rows + [change - 1800]))              # 23:30 -10 Dec 29: out
+        jd.discover = lambda now, window=None, forks=True: [("fs1", p1, "a1", "s1")]
+        a = km._token_analytics(now, 30 * 86400)
+        self.assertEqual((a["from"], a["fromDate"], a["buckets"]), (change, "2011-12-30", "days"))
+        self.assertEqual((a["sessions"]["ledger"]["usd"], a["sessions"]["ledger"]["turns"]), (2.0, 2))
+        self.assertEqual(a["sessions"]["in"], 2000, "the Dec 29 row is out: the period starts where the gap ends, not a day before")
+        os.environ["TZ"] = "Pacific/Kwajalein"
+        time.tzset()
+        self.assertEqual(km._bucket_start("1993-08-21"), calendar.timegm((1993, 8, 21, 12, 0, 0)),
+                         "Kwajalein's skipped date, where the STANDARD arm is the one that raises")
+
+    def test_the_closure_computes_a_keys_first_instant_once_per_build_and_the_fast_path_never(self):
+        """Cost, both ways. Where a window widens, the rail's five windows share one memo, so a key's first
+        instant is computed once per build (the fall-back week on Chatham cost 510 calls for 170 keys, 2.2 ms
+        per build). Where no fall-back splits a key — a whole-hour fall-back sets the clock back inside a run,
+        a spring-forward splits nothing, a zone without DST changes nothing — the gate reads the offsets the
+        walk carried and computes no first instant at all."""
+        calls = []
+        real = km._bucket_start
+        km._bucket_start = lambda k: calls.append(k) or real(k)
+        self.addCleanup(setattr, km, "_bucket_start", real)
+        for zone, label, now in (("Pacific/Chatham", "7d three days after the fall-back", self.CH_CHANGE_FALL + 3 * 86400 + 90 * 60),
+                                 ("Pacific/Chatham", "the fall-back day, 04:15 standard", self.CH_CHANGE_FALL + 90 * 60),
+                                 ("Antarctica/Troll", "the fall-back day, 01:30 standard", self.TR_CHANGE + 1800),
+                                 ("Antarctica/Troll", "three days after the fall-back", self.TR_CHANGE + 3 * 86400 + 1800)):
+            os.environ["TZ"] = zone
+            time.tzset()
+            keys7 = set(km._hour_window(now, 7 * 86400)[0])
+            for build in (lambda: km._spend_windows(now=now), lambda: km._analytics_edges(now, 7 * 86400)):
+                del calls[:]
+                build()
+                with self.subTest(zone=zone, label=label):
+                    self.assertEqual(len(calls), len(set(calls)), "no key computed twice: %r" % calls)
+                    self.assertEqual(set(calls), keys7, "one call per key of the widest window, none outside it")
+        for zone, label, now, window in (("America/New_York", "1h at 02:30 EST on the fall-back day", calendar.timegm((2026, 11, 1, 7, 30, 0)), 3600),
+                                         ("America/New_York", "24h at 03:30 EST the day after", calendar.timegm((2026, 11, 2, 8, 30, 0)), 86400),
+                                         ("America/New_York", "24h after the spring-forward", calendar.timegm((2026, 3, 8, 12, 0, 0)), 86400),
+                                         ("Australia/Lord_Howe", "24h across the 30-minute fall-back", calendar.timegm((2026, 4, 5, 1, 30, 0)), 86400),
+                                         ("UTC", "24h", calendar.timegm((2026, 11, 1, 8, 30, 0)), 86400)):
+            os.environ["TZ"] = zone
+            time.tzset()
+            del calls[:]
+            km._analytics_edges(now, window)
+            km._spend_windows(now=now)
+            with self.subTest(zone=zone, label=label):
+                self.assertEqual(calls, [], "the fast path: no first instant computed")
 
 
 class CostWeighting(unittest.TestCase):
