@@ -1974,7 +1974,7 @@ PY
     [[ "$output" == *"still running on :7599"* ]]
     [[ "$output" == *"pid 424242"* ]]
     [[ "$output" == *"kernel keeps running"* ]]
-    run grep -q 'down — ' <<< "$output"               # never the success line beside the failure
+    run grep -q '^\[romp\] down' <<< "$output"      # never a success line beside the failure
     [ "$status" -ne 0 ]
     grep -q '^/down token=ok {"cancel": true}$' "$TEST_DIR/kreq"   # the hold is released: turns resume now
     [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]                    # a running kernel must not read as down
