@@ -1058,6 +1058,62 @@ class ReaderRestampUnwritable(_Wire):
             km._atomic_write = real
             km._VIEWS_RESTAMP_ERR[0] = None
 
+    def test_a_judged_foreign_file_on_an_unwritable_store_is_served_judged_and_the_next_write_persists_it(self):
+        """Round 5 of the 2026-09-05 review: the OSError branch served and cached the file AS READ in
+        every case — in the judged case that is the foreign copy the judgment had just refused, so an
+        unwritable store served the deleted tag back and the newer member gone, and the next RMW write,
+        built from that cache, persisted them. The judgment is now a step apart from the write, and
+        the judged blob is what an unwritable store serves and caches."""
+        import contextlib
+        import io
+        if os.geteuid() == 0:
+            self.skipTest("root ignores directory permissions")
+        self.seed()
+        c = self.post({"type": "tagEdit", "writeId": "w1", "edit": {"op": "create", "name": "api", "color": "#54B204", "sids": [SID2]}})
+        api_tid = c["tid"]
+        p = km._views_path()
+        d = p.parent
+        panel = json.loads(p.read_text())                              # the panel's copy: web[SID1], api
+        time.sleep(1.1)
+        self.assertIsNone(km._edit_tag(tid="gA", add=[SID3])[1])       # a member added since
+        self.assertIsNone(km._edit_tag(tid=api_tid, delete=True)[1])   # a tag deleted since
+        s_served = km._timeline_views()["seq"]
+        foreign = json.loads(json.dumps(panel))                        # seq behind: judged on read
+        foreign["actives"] = {"timeline": {"tags": ["web"]}, "chat": {"all": True}, "outline": {"all": True}}
+        time.sleep(0.01)
+        km._atomic_write(p, json.dumps(foreign))
+        os.chmod(d, 0o555)
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                v = km._timeline_views()
+                web = next(t for t in v["tags"] if t["id"] == "gA")
+                self.assertEqual(sorted(m["sid"] for m in web["members"]), sorted([SID1, SID3]), "the newer member is served")
+                self.assertNotIn("api", [t["name"] for t in v["tags"]], "the deleted tag stays absent")
+                self.assertEqual(v["actives"]["timeline"], {"tags": ["web"]}, "the panel's lens change is served")
+                self.assertGreater(v["seq"], s_served, "…under a seq past the last served, so dashboards adopt it")
+                self.assertIs(km._timeline_views(), v, "cached: the judged blob, under the file's key")
+            lines = [ln for ln in err.getvalue().splitlines() if "could not be re-stamped" in ln]
+            self.assertEqual(len(lines), 1)
+            self.assertIn("the judged blob", lines[0])
+            self.assertEqual(json.loads(p.read_text())["tags"], foreign["tags"], "the file is still the foreign copy: nothing landed")
+            self.assertEqual(len(self.notices), 1, "the judgment's refusals are reported once")
+            self.assertFalse(self.notices[0][1])
+            # writable again: the next write is built from the judged cache and persists the judged state
+            os.chmod(d, 0o755)
+            a = self.post({"type": "tagEdit", "writeId": "w2", "edit": {"op": "recolor", "tid": "gA", "color": "#DD42FF"}})
+            self.assertTrue(a["ok"])
+            on_disk = json.loads(p.read_text())
+            web_disk = next(t for t in on_disk["tags"] if t["id"] == "gA")
+            self.assertEqual(sorted(m["sid"] for m in web_disk["members"]), sorted([SID1, SID3]), "the newer member persists")
+            self.assertEqual([t["name"] for t in on_disk["tags"]], ["web"], "the deleted tag does not come back")
+            self.assertEqual(web_disk["color"], "#DD42FF")
+            self.assertEqual(on_disk["actives"]["timeline"], {"tags": ["web"]})
+            self.assertGreater(on_disk["seq"], v["seq"])
+        finally:
+            os.chmod(d, 0o755)
+            km._VIEWS_RESTAMP_ERR[0] = None
+
 
 class ForeignWriteJudged(_Wire):
     """Round 4 of the 2026-09-05 review: the re-stamp of a file written outside the kernel whose seq

@@ -424,9 +424,12 @@ served, the file is ordered as written. A kernel write also refreshes the read
 cache with the blob it wrote, so the ack's blob is never a stale cache hit. The
 hidden-to-archived migration works on a copy of the file, so the tag it fills
 is stamped and a pre-migration copy cannot strip it. When the re-stamp write
-itself fails (an unwritable or full state dir), the read serves the file as
-read, logs once per distinct error, and stops retrying until the file changes
-or a write succeeds.
+itself fails (an unwritable or full state dir), the read serves the judged
+blob when the file was judged (the judgment is a step apart from the write,
+so the refused foreign copy is neither served nor cached, and the next write
+that lands persists the judged state) and the file as read otherwise, logs
+once per distinct error, and stops retrying until the file changes or a
+write succeeds.
 
 The kernel announces what it can do in a `{type: "caps"}` frame in reply to
 every `ready` and lists the same on `/version`; `tagEdit` covers the targeted op,

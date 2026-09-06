@@ -2642,24 +2642,35 @@ def _timeline_views():
             except (TypeError, ValueError):
                 floor = 0
             base = hit[1] if (judge and hit is not None) else _norm_timeline_views(d)
+            judged, _rows = _judge_timeline_views(
+                d2, base=base, seq_floor=floor,
+                foreign="a stale write to the views file from outside the kernel" if judge else None)
             try:
-                _set_timeline_views(d2, base=base, seq_floor=floor,
-                                    foreign="a stale write to the views file from outside the kernel" if judge else None)
+                _write_timeline_views(judged)
                 sys.stderr.write("romp-kernel: views store re-stamped on read: %s\n" % why)
             except OSError as e:
                 # The state dir is unwritable or full: a READ must still answer (every frame builds
-                # on it), so the file is served as read, normalized and cached under ITS key — the
-                # next read is a hit, not another failing write — and the failure is logged once
-                # per distinct error (a full disk would otherwise log on every read). The next
-                # write that succeeds clears the note, so a recurrence is logged again.
+                # on it), so a blob is served and cached under the file's key — the next read is a
+                # hit, not another failing write — and the failure is logged once per distinct
+                # error (a full disk would otherwise log on every read). The next write that
+                # succeeds clears the note, so a recurrence is logged again. WHICH blob: the JUDGED
+                # one when the file was judged (round 5 of the 2026-09-05 review — serving the file
+                # as read served the foreign copy the judgment had just refused, cached it, and
+                # the next RMW write, built from that cache, persisted it: the deleted tag back,
+                # the newer member gone); the file as read, unstamped, for the migration and the
+                # first stamp, whose write changes no tag's state. The judged blob carries a seq
+                # past the floor that the file does not, which is the point: dashboards adopt it,
+                # and the next write that lands (a RMW built from this cache) persists it.
                 # the key is the error's kind, not its text: the atomic write's temp name differs
                 # per call, so the text would read as a new error every time
                 kind = "%s errno=%s" % (type(e).__name__, getattr(e, "errno", None))
                 if _VIEWS_RESTAMP_ERR[0] != kind:
                     _VIEWS_RESTAMP_ERR[0] = kind
                     sys.stderr.write("romp-kernel: views store could not be re-stamped on read (%s) — "
-                                     "serving the file as read, unstamped: %s: %s\n" % (why, type(e).__name__, e))
-                d = _norm_timeline_views(d2)
+                                     "serving %s: %s: %s\n"
+                                     % (why, "the judged blob, unwritten" if judge else "the file as read, unstamped",
+                                        type(e).__name__, e))
+                d = _norm_timeline_views(json.loads(json.dumps(judged)) if judge else d2)
                 _flags_cache[str(p)] = (key, d)
                 return d
         return _timeline_views()          # the write refreshed the cache under the file's new key
@@ -2728,6 +2739,31 @@ def _views_restamp(d, hit):
 
 
 def _set_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None):
+    """The views store's ONE write door: judge the blob against the store (_judge_timeline_views —
+    the stale-writer guard, the `edited` bound, the name-collision pass, the stamps), then write
+    what stands (_write_timeline_views). Returns the refused rows. The judgment is a separate step
+    (round 5 of the 2026-09-05 review) so the reader's re-stamp can serve the JUDGED blob when the
+    write itself fails: serving the file as read served, cached, and let the next write persist, the
+    foreign copy the judgment had refused."""
+    v, rows = _judge_timeline_views(blob, base=base, seq_floor=seq_floor, edited=edited, foreign=foreign)
+    _write_timeline_views(v)
+    return rows
+
+
+def _write_timeline_views(v):
+    """Write a judged, stamped blob (from _judge_timeline_views) to the store and refresh the read
+    cache with it. Raises the OSError of an unwritable or full state dir to the caller."""
+    text = json.dumps(v, sort_keys=True)
+    with _views_file_lock:
+        _atomic_write(_views_path(), text)
+        _views_cache_refresh(text)
+    _VIEWS_RESTAMP_ERR[0] = None      # the store is writable again: a later failure logs afresh
+
+
+def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None):
+    # The write door's judgment, without the write: returns (blob-to-store, refused rows). The blob
+    # carries every stamp a write puts on it (per-tag mtimes, `at`, `seq`) so the caller stores it
+    # as is — or, when it cannot (the reader's re-stamp of an unwritable store), serves it as is.
     # Per-tag mtime, stamped at the store's ONE write door by diffing against the previous blob
     # (tag federation v2, the user 2026-08-29): a pending edit queued for an unreachable host must
     # be able to tell, at late-apply time, whether the host's copy changed AFTER the user's ruling —
@@ -2943,12 +2979,7 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None)
     except (TypeError, ValueError):
         prev_seq = 0
     v["seq"] = max(prev_seq + 1, int(seq_floor or 0) + 1, int(time.time() * 1000))
-    text = json.dumps(v, sort_keys=True)
-    with _views_file_lock:
-        _atomic_write(_views_path(), text)
-        _views_cache_refresh(text)
-    _VIEWS_RESTAMP_ERR[0] = None      # the store is writable again: a later failure logs afresh
-    return rows
+    return v, rows
 
 
 def _views_cache_refresh(text):
