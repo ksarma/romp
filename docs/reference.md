@@ -739,6 +739,16 @@ kernel carries on by itself: the hold is a lease, and it lapses a short grace
 period after the wait. The stop then cuts what a `romp refresh` cuts, and it
 comes back the same way (see [What survives a restart](#what-survives-a-restart)).
 
+`romp down` only ever stops a kernel it has confirmed as its own: a kernel is
+signaled only after it accepted this romp's serve token on `POST /down` and
+the pid in that answer matches the pid `GET /version` reports. A kernel that
+rejects the token (HTTP 401 or 403) is another romp's, or another program's:
+`romp down` prints `romp down: the kernel on :<port> is not the one this romp
+manages (it rejected the serve token); not touching it. Check
+ROMP_KERNEL_PORT and the state dir` and exits 1 before writing the marker or
+stopping anything. `--now` skips the quiesce, so that request is made with a
+wait of 0 at the kernel probe instead, right before the signal.
+
 The exit code of `romp-service stop` decides the first step; the probes after
 it run every time:
 
@@ -758,15 +768,21 @@ it run every time:
   which says to stop it by hand and run `romp down` again, and exits 1.
 - The kernel probe: `GET /healthz` on the kernel port (`:29855` by default). A
   kernel still answering (one that ran with no manager, or one that outlived
-  the manager's SIGTERM) is sent the manager's own stop signal (SIGTERM at the
-  pid its `GET /version` reports) and given up to six seconds to leave; a
-  kernel the earlier steps already asked to stop gets three seconds of drain
-  first. One still answering after that: `romp down` releases the hold, removes
-  the marker, appends a superseding `down-failed` row to `restart-audit.jsonl`,
-  prints `romp down: the kernel on :<port> (pid <pid>) is still running after
-  being asked to stop`, which says to stop it by hand and run `romp down`
-  again, and exits 1. A kernel that answers but reports no pid is not stopped
-  and gets the same loud exit.
+  the manager's SIGTERM) is sent the manager's own stop signal (SIGTERM) and
+  given up to six seconds to leave; a kernel the earlier steps already asked
+  to stop gets three seconds of drain first. The pid signaled is the one the
+  kernel names on `POST /down` under this romp's serve token, and only when
+  `GET /version` names the same pid (the ownership rule above). A kernel that
+  cannot be confirmed that way, because it rejected the token, answered
+  without a pid, or named a pid `GET /version` disagrees with, is not
+  signaled: `romp down` releases the hold, removes the marker, appends a
+  superseding `down-failed` row to `restart-audit.jsonl`, prints
+  `romp down: the kernel on :<port> was not confirmed as the one this romp
+  manages (<why>)` (or the rejected-token line above) and exits 1. One still
+  answering after the signal: the same release and `down-failed` row, then
+  `romp down: the kernel on :<port> (pid <pid>) is still running after being
+  asked to stop`, which says to stop it by hand and run `romp down` again,
+  and exit 1.
 - Nothing left answering: a `[romp] down` line that says what stopped (the
   service, a manager outside it, a kernel the probe found, or a kernel that
   answered the quiesce and has since gone) and names `romp up`, or
