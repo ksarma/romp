@@ -694,7 +694,8 @@ test("every mutating verb: consent first, a fence from the current status, one r
   assert.match(once, /if \(!retried && e\.code === "editing-off"\) \{\n\s*if \(await this\.ctx\.ensureEditingAllowed\(e\.error\)\) return this\.mutateOnce\(verb, args, slot, true\);/);
   assert.match(once, /\} else if \(!retried && MOVED\.has\(e\.code\)\) \{\n\s*await this\.refresh\(\);\n\s*if \(e\.code === "file-moved"\) this\.ctx\.reload\(\);[^\n]*\n\s*return this\.mutateOnce\(verb, args, slot, true\);/,
     "a moved fence: fresh status (and the file's bytes when the file moved), then one retry");
-  assert.match(once, /this\.errors\.set\(slot, \{ text: e\.error, reload: MOVED\.has\(e\.code\) \}\);/, "a second refusal shows verbatim; moved fences offer Reload");
+  assert.match(once, /this\.errors\.set\(slot, \{ text: e\.error, reload: MOVED\.has\(e\.code\) \|\| e\.code === FIGURE_CHANGED \}\);/, "a second refusal shows verbatim; moved fences offer Reload, and so does a figure whose bytes changed (Slice 3: never retried)");
+  assert.match(once, /const fh = FIGURE_VERBS\.has\(verb\) && args\.target \? figureFenceHash\(s, args\.target as Target\) : null;\n\s*if \(fh\) fence\.figureHash = fh;/, "a write about a figure also fences on its bytes, when the status holds a hash for it (Slice 3)");
   assert.match(SRC, /const MOVED = new Set\(\["store-moved", "file-moved", "config-moved"\]\);/);
   for (const verb of ['"set-tracked", { on: true, scope: "file" }', '"set-tracked", { on: true, scope: "folder" }', '"set-tracked", { on: false, scope: "folder" }',
     '"set-tracked", { on: false, scope: "file" }', '"reply", { commentId: c.commentId, note }', '"comment", args', '"resolve", { commentId: x.dataset.id!, on: x.dataset.on === "1" }']) {

@@ -405,7 +405,7 @@ test("a drag on a standalone image opens the composer on the region, Enter saves
   const c = h.last();
   assert.equal(c.verb, "comment");
   assert.deepEqual(c.args, { note: "The axis label is wrong.", target: { kind: "image", region: REGION } });
-  assert.deepEqual(c.fence, { storeMtimeNs: "", configMtimeNs: "" }, "no sidecar yet: the fence says so");
+  assert.deepEqual(c.fence, { storeMtimeNs: "", configMtimeNs: "", figureHash: H1 }, "no sidecar yet: the fence says so — and names the picture's bytes as the status read them");
   await h.ok(withStore([regionComment()]));
   assert.equal(box.hidden, true, "saved: the composer closes");
   assert.equal(overlay.querySelector(".fc-region-pending"), null);
@@ -488,7 +488,7 @@ test("Re-place: the next drag on the picture sends retarget {commentId, target};
   const r = h.last();
   assert.equal(r.verb, "retarget");
   assert.deepEqual(r.args, { commentId: id, target: { kind: "image", region: { x: 0.0333, y: 0.05, w: 0.2667, h: 0.25 } } });
-  assert.deepEqual(r.fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "" }, "fenced on the sidecar (E3)");
+  assert.deepEqual(r.fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "", figureHash: H1 }, "fenced on the sidecar (E3) and on the picture's bytes");
   assert.equal(box.hidden, true, "the composer box closes with the drag");
   assert.equal(h.input().hidden, false, "the input is back for the next note");
   const moved = regionComment({}, { region: { x: 0.0333, y: 0.05, w: 0.2667, h: 0.25 }, hash: H2 });
@@ -516,7 +516,8 @@ test("a press that does not move is not a region: on a standalone image it does 
   assert.equal(h.q(".fc-composer")!.hidden, true, "no composer");
   assert.equal(h.float().hidden, true, "no Comment offer: a standalone image has no embed line");
   assert.equal(h.posted.length, before);
-  // a press on the rectangle: the delegate's click opens the card; the overlay does nothing of its own
+  // a press on the rectangle: the layer hands the click on (nothing of its own is drawn or swallowed), and the delegate's
+  // click opens the card — the browser-driven pins are file-comments-regions-click.test.ts and -browser.test.ts
   const rect = h.q(".fc-region")!;
   rect.dispatch("pointerdown", { clientX: 160, clientY: 250, pointerId: 8, button: 0 });
   rect.dispatch("pointerup", { clientX: 160, clientY: 250, pointerId: 8 });
@@ -559,6 +560,54 @@ test("a coarse pointer: the overlay takes no drag (the whole-file comment stands
   } finally { coarse = null; }
 });
 
+test("a write about a figure is fenced on its bytes: figure-changed is never retried — the comments and the view are re-read, the row offers Reload, the note stays, and the next Enter carries the new hash; a status with no hash fences on the mtimes alone", async () => {
+  drawn.length = 0;
+  let reloads = 0;
+  const h = await harness({ reload: () => { reloads++; } });
+  await h.ok();
+  await h.open();
+  const overlay = h.q(".fc-overlay")!;
+  const asks = () => h.posted.filter((m) => m.type === "fileComments" && m.verb === "status").length;
+  const writes = () => h.posted.filter((m) => m.type === "fileComments" && m.verb === "comment").length;
+  h.drag(overlay, [150, 240], [250, 300]);
+  h.input().value = "The axis label is wrong.";
+  h.input().dispatch("keydown", { key: "Enter" });
+  await tick();
+  assert.equal(h.last().verb, "comment");
+  assert.equal(h.last().fence.figureHash, H1, "the hash the status holds for the picture");
+  const n0 = asks();
+  // the figure was regenerated between the drag and Enter: the host hashed other bytes than the fence names
+  await h.refuse("figure-changed", "docs/figure.png changed on disk since it was shown — reload to see it as it is now, then draw the region again; nothing was changed");
+  assert.equal(writes(), 1, "never retried: a retry would stamp the new bytes with a rectangle drawn on the old ones");
+  assert.equal(asks(), n0 + 1, "the comments are re-read, as after a figure the poll saw move");
+  assert.equal(reloads, 1, "and so is the view, so the new picture shows");
+  await h.ok({ fileHash: H2 });
+  const row = h.q('.fc-composer .fc-err[data-slot="composer"]')!;
+  assert.ok(row, "the refusal shows under the composer");
+  assert.match(row.textContent, /^docs\/figure\.png changed on disk since it was shown/);
+  assert.ok(row.querySelector('[data-act="fcreload"]'), "with Reload, as every moved fence offers");
+  assert.equal(h.q(".fc-composer")!.hidden, false, "the composer stays open");
+  assert.equal(h.input().value, "The axis label is wrong.", "the note stays where it was typed");
+  // drawn again on the new picture: the fence names the bytes the fresh status read
+  h.drag(overlay, [150, 240], [250, 300]);
+  h.input().value = "The axis label is wrong.";
+  h.input().dispatch("keydown", { key: "Enter" });
+  await tick();
+  assert.equal(h.last().verb, "comment");
+  assert.equal(h.last().fence.figureHash, H2);
+  await h.ok(withStore([regionComment({}, { hash: H2 })]));
+  assert.equal(h.q(".fc-composer")!.hidden, true, "saved");
+  // a status with no hash for the picture (past the cap, unreadable, an older host): nothing to fence on, so nothing is sent
+  await h.restatus({ ...withStore([regionComment({}, { hash: H2 })]), fileHash: null });
+  h.drag(overlay, [110, 210], [190, 260]);
+  h.input().value = "Second note.";
+  h.input().dispatch("keydown", { key: "Enter" });
+  await tick();
+  assert.equal(h.last().verb, "comment");
+  assert.deepEqual(h.last().fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "" }, "the mtime keys alone: a fence the panel cannot arm is left off, never guessed");
+  h.dispose();
+});
+
 // ── a figure embedded in rendered markdown ─────────────────────────────────────────────────────────
 const REPORT = "## Findings\n\n![Figure](figure.png)\n\nWe recommend shipping the cache in v1.2.\n";
 const REPORT_HTML = '<h2>Findings</h2>\n<p><img src="figure.png" alt="Figure"></p>\n<p>We recommend shipping the cache in v1.2.</p>\n';
@@ -591,6 +640,7 @@ test("a figure in rendered markdown: the drag's comment carries BOTH the embed l
   assert.deepEqual(c.args.target, { kind: "image", region: REGION, src: "figure.png" }, "src exactly as the embed writes it");
   assert.deepEqual(c.args.anchor, { quote: "![Figure](figure.png)", prefix: "## Findings\n\n", suffix: "\n\nWe recommend shipping " }, "the embed line's anchor, 24 characters of context");
   assert.equal(c.args.hintOffset, REPORT.indexOf("![Figure]"));
+  assert.deepEqual(c.fence, { storeMtimeNs: "", configMtimeNs: "" }, "the first comment on a figure: the status hashes only the figures the sidecar names, so there is no hash to fence on yet");
   await h.ok({ ...withStore([embedded(), passage], "docs/report.md"), embeddedHashes: { "figure.png": H1 } });
   const rect = overlay.querySelector('.fc-region[data-id="' + T0 + '-0"]')!;
   assert.ok(rect, "the rectangle on the figure");
@@ -613,6 +663,13 @@ test("a figure in rendered markdown: the drag's comment carries BOTH the embed l
   overlay.dispatch("pointerdown", { clientX: 150, clientY: 240, pointerId: 8, button: 0 });
   assert.equal(h.float().hidden, true, "a press hides it");
   overlay.dispatch("pointercancel", { clientX: 150, clientY: 240, pointerId: 8 });
+  // Re-place on the stale figure: the retarget is fenced on the bytes the status holds for THIS figure (embeddedHashes[src])
+  h.click('.fc-card[data-id="' + T0 + '-0"] .fc-card-head');
+  h.click('.fc-card.open[data-id="' + T0 + '-0"] [data-act="fcreplace"]');
+  h.drag(overlay, [110, 210], [190, 260]);
+  await tick();
+  assert.equal(h.last().verb, "retarget");
+  assert.deepEqual(h.last().fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "", figureHash: H2 }, "the figure's current hash, by its src");
   h.dispose();
 });
 

@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   describeComment, sendParts, buildSendMessage, cardModel, figurePath, figureTargets, figuresMoved, pollTargets, ABSENT,
-  decodeSrc, regionState, regionTarget,
+  decodeSrc, regionState, regionTarget, figureFenceHash,
   type Status, type StoreComment, type Target,
 } from "./file-comments-model";
 
@@ -208,4 +208,19 @@ test("figuresMoved: a first reading is a baseline, a differing later one is a mo
   assert.deepEqual(figuresMoved({ [A]: "1757145600000000001" }, [A], { [A]: "1757145600000000002" }).moved, [A],
     "~1.7e18 exceeds JS's safe integers: compared as strings, two adjacent writes differ");
   assert.doesNotMatch(MODEL, /Number\([^)]*[mM]time|parseInt\([^)]*[mM]time|BigInt\(/, "no numeric coercion of an mtime in the model");
+});
+
+test("figureFenceHash: the hash the status holds for the figure a write is about — fileHash for a standalone picture, embeddedHashes[src] for an embedded one — and null where it holds none", () => {
+  const png = { fileHash: H("f") };
+  assert.equal(figureFenceHash(png, regionTarget(REGION_A, null)), H("f"), "a standalone image: the file's own hash");
+  assert.equal(figureFenceHash(status(), regionTarget(REGION_A, "figs/latency.png")), H("a"), "an embedded figure: its entry, by src as written");
+  assert.equal(figureFenceHash(status(), regionTarget(REGION_A, "figs/new.png")), null, "a figure no comment names yet: the host hashed nothing for it");
+  assert.equal(figureFenceHash(status({ embeddedHashes: { "figs/latency.png": null } }), regionTarget(REGION_A, "figs/latency.png")), null, "a null hash (past the cap, unreadable) fences nothing");
+  assert.equal(figureFenceHash({ fileHash: null }, regionTarget(REGION_A, null)), null);
+  assert.equal(figureFenceHash({}, regionTarget(REGION_A, null)), null, "an older host: no hash field at all");
+  assert.equal(figureFenceHash(status(), regionTarget(REGION_A, null)), null, "a text file's reply carries no fileHash: a src-less target on it is unfenced");
+  assert.equal(figureFenceHash(null, regionTarget(REGION_A, null)), null);
+  assert.equal(figureFenceHash(png, null), null);
+  // what the panel sends and the host compares are the same reading: the fence's value is regionState's `current`
+  assert.equal(regionState({ ...onLatency.target!, hash: figureFenceHash(status(), onLatency.target!)! }, status()), "current");
 });

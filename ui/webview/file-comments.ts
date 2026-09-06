@@ -59,7 +59,7 @@ import {
   type Status, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, type Target, actionLabel, cardModel, changeCards, changeGroups,
   foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, sendParts, sendCounts, buildSendMessage, unsentCount,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
-  regionTarget, regionState, figureTargets, figuresMoved, type PollBaseline, type FigureBaseline, type HeadVerdict,
+  regionTarget, regionState, figureTargets, figuresMoved, figureFenceHash, type PollBaseline, type FigureBaseline, type HeadVerdict,
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5)
 import { regionDesc, isRegion, type Region } from "./region-geometry";
@@ -71,6 +71,10 @@ const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
 // instead of reverting over it, and after one succeeds the panel reloads the view — the bytes changed under
 // it, and the poll will never notice, since every reply re-baselines it (the plan's own rule).
 const FILE_VERBS = new Set(["reject", "reject-all"]);
+/** The verbs that write ABOUT a figure — a region's comment, a re-place — and so carry `fence.figureHash` when the status
+ *  holds a hash for it (figureFenceHash); the host answers `figure-changed` when the bytes are no longer those. */
+const FIGURE_VERBS = new Set(["comment", "retarget"]);
+const FIGURE_CHANGED = "figure-changed";
 // How long a `status` ask may stay unanswered before the panel says so. A kernel that has the op answers
 // within its own bound: the host script is cut off at 10 s (contract C2, _FILE_COMMENTS_TIMEOUT) and the
 // refusal is sent then, so an ask still open past that plus the relay was never received by a kernel with
@@ -981,6 +985,13 @@ class Panel {
     const s = this.status;
     const fence: Record<string, string> = { storeMtimeNs: s && s.storeMtimeNs !== null ? s.storeMtimeNs : "", configMtimeNs: s && s.configMtimeNs !== null ? s.configMtimeNs : "" };
     if (FILE_VERBS.has(verb)) fence.fileMtimeNs = s ? s.fileMtimeNs : "";   // reject rewrites the file: the file's mtime as last seen (FILE_VERBS)
+    // a write ABOUT a figure — `comment` with a target, `retarget` — is fenced on the figure's bytes too: the hash the
+    // status holds for it (figureFenceHash), which the host compares with the bytes it stamps and refuses `figure-changed`
+    // when they differ. Without it a figure regenerated between the drag and Enter was stamped with the NEW bytes' hash,
+    // which every reply then equalled, so a rectangle drawn on the old picture read as current on the new one — the one
+    // write the hash exists to catch (the Slice 3 review, 2026-09-06; the host's fence stood unarmed until the panel sent this)
+    const fh = FIGURE_VERBS.has(verb) && args.target ? figureFenceHash(s, args.target as Target) : null;
+    if (fh) fence.figureHash = fh;
     try {
       const r = await this.request(verb, args, fence);
       this.markOverlapped();                           // the status asks still out may have read the disk before this write
@@ -997,8 +1008,17 @@ class Panel {
         await this.refresh();
         if (e.code === "file-moved") this.ctx.reload();   // the file itself moved under the view: repaint its bytes (the poll's own moved branch)
         return this.mutateOnce(verb, args, slot, true);
+      } else if (e.code === FIGURE_CHANGED) {
+        // the figure's bytes changed under the drawing: the one refusal the hash fence exists for, and never retried — a
+        // retry would stamp the new bytes with a rectangle drawn on the old ones. It is the event the poll acts on when it
+        // sees a figure move, arrived through the refusal instead (and for a figure only resolved comments name, the poll
+        // is not watching), so the panel does what the poll does: re-read the comments (the hashes flip the cards stale)
+        // and the view (the new picture shows; first, as the poll does — the re-read waits on the kernel, the view need not).
+        // The refusal then shows under the control with Reload, the note kept.
+        this.ctx.reload();
+        await this.refresh();
       }
-      this.errors.set(slot, { text: e.error, reload: MOVED.has(e.code) });
+      this.errors.set(slot, { text: e.error, reload: MOVED.has(e.code) || e.code === FIGURE_CHANGED });
       return null;
     }
   }

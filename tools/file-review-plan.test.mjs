@@ -125,12 +125,20 @@ test('the op names fence.figureHash, optional, checked by the host when carried 
   assert.ok(!/fence\[["']storeMtimeNs["']\]/.test(kernel), 'the kernel does not pick fence keys');
 });
 
-test('the build note says whether the panel sends figureHash, and the panel source agrees', () => {
+test('the build note says the panel sends figureHash on comment-with-target and retarget, and the panel source agrees', () => {
   assert.ok(slice3.includes('when the request\'s fence carries `figureHash`, `figure-changed` unless the bytes hashed are the ones it names'));
   assert.ok(slice3.includes('the same fence applies'), 'retarget is held to the fence too');
-  const panelSends = /figureHash/.test(panel);
-  const planSaysUnsent = slice3.includes('sends the three mtime keys only, so none of its requests is fenced this way yet');
-  assert.equal(planSaysUnsent, !panelSends, 'the plan says the panel does not yet send figureHash exactly while ui/webview/file-comments.ts does not; when the panel sends it, rewrite the build note');
+  assert.ok(slice3.includes('The panel sends `figureHash` on `comment` with a target and on `retarget`'), 'the build note states the panel side');
+  assert.ok(slice3.includes('none when the status holds none'), '…and the case it cannot arm');
+  assert.ok(slice3.includes('A `figure-changed` refusal is never retried'), '…and that the refusal is final for that write');
+  assert.equal(slice3.includes('sends the three mtime keys only, so none of its requests is fenced this way yet'), false, 'the unarmed-fence sentence is gone');
+  // the panel: the two verbs, the hash from the status the model reads (figureFenceHash), no retry on figure-changed
+  assert.ok(/const FIGURE_VERBS = new Set\(\["comment", "retarget"\]\);/.test(panel), 'the verbs that write about a figure');
+  assert.ok(/const fh = FIGURE_VERBS\.has\(verb\) && args\.target \? figureFenceHash\(s, args\.target as Target\) : null;\s*\n\s*if \(fh\) fence\.figureHash = fh;/.test(panel), 'the fence carries the hash the status holds, and only then');
+  assert.ok(/else if \(e\.code === FIGURE_CHANGED\) \{[^}]*this\.ctx\.reload\(\);\s*\n\s*await this\.refresh\(\);\s*\n\s*\}/.test(panel), 'figure-changed: re-read the view and the comments, no retry');
+  assert.ok(!/MOVED = new Set\(\[[^\]]*figure-changed/.test(panel), 'figure-changed is not a moved fence: a retry would stamp the new bytes');
+  assert.ok(/export function figureFenceHash\(/.test(model));
+  assert.ok(/const v = target\.src \? \(s\.embeddedHashes && typeof s\.embeddedHashes === "object" \? s\.embeddedHashes\[target\.src\] : undefined\) : s\.fileHash;/.test(model), 'fileHash for a standalone picture, embeddedHashes[src] for an embedded one — the reading regionState compares with');
 });
 
 // ── the poll: open region comments only ─────────────────────────────

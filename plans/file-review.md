@@ -953,8 +953,14 @@ pinned the host until the kernel's deadline); and last, when the request's fence
 new bytes' hash, which every reply then equalled, so the panel read a rectangle drawn on the old
 picture as current on the new one, the one write the hash exists to catch). The host checks that
 fence whenever a request carries it, and the kernel passes the fence object through whole. The
-panel's Slice 3 build sends the three mtime keys only, so none of its requests is fenced this way
-yet; sending the hash its status holds for the figure is the panel's follow-up. `retarget` is the
+panel sends `figureHash` on `comment` with a target and on `retarget`: the hash its status holds for
+the figure (`fileHash` on a standalone image or PDF, `embeddedHashes[src]` on an embedded figure),
+and none when the status holds none (the first comment on an embedded figure no comment yet names
+has nothing to fence on, since the host hashes only the srcs the sidecar names; a fence the panel
+cannot arm is left off, never guessed). A `figure-changed` refusal is never retried; the panel
+re-reads the comments and the view, as it does when the poll sees a figure move, and shows the
+refusal with Reload, the note kept (the review consolidation, 2026-09-06; the build first sent the
+three mtime keys only, so the host's fence stood unarmed). `retarget` is the
 same path for the same figure: a stored `src` must be named again, unchanged, and the same fence
 applies. The reply's hash fields are described under the op above. A text file's figures are
 hashed under one 200 MB budget per call; past it, or when a src fails a check, the hash is null

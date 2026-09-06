@@ -282,6 +282,19 @@ export function regionState(target: Target | null | undefined, s: Pick<Status, "
   return staleness(target.hash, current);
 }
 
+/** The hash a write ABOUT a figure is fenced with (`fence.figureHash` on `comment` with a target and on `retarget`; the
+ *  host's figureFence + stampTarget refuse `figure-changed` unless the bytes they hash are these): what the status the
+ *  panel holds says the figure's bytes are — `fileHash` for a standalone image or PDF, `embeddedHashes[src]` for an
+ *  embedded figure — the same reading regionState compares a stored hash with. Null when the status holds none (no
+ *  status; a null hash, past the cap or unreadable; an older host; an embedded figure no comment yet names, since the
+ *  host hashes only the srcs the sidecar's comments name), and then the request goes out fenced on the mtimes alone,
+ *  as every request did before the panel sent this key — a fence the panel cannot arm is left off, never guessed. */
+export function figureFenceHash(s: Pick<Status, "fileHash" | "embeddedHashes"> | null | undefined, target: Pick<Target, "src"> | null | undefined): string | null {
+  if (!s || !target) return null;
+  const v = target.src ? (s.embeddedHashes && typeof s.embeddedHashes === "object" ? s.embeddedHashes[target.src] : undefined) : s.fileHash;
+  return typeof v === "string" && v ? v : null;
+}
+
 // ── the card model ─────────────────────────────────────────────────────────────────────────────────
 export type CardKind = "passage" | "file" | "change" | "region";
 /** One turn under a comment: words (a reply), or a revision — the session's `track-edit --thread` records
