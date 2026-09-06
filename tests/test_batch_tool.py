@@ -1458,3 +1458,20 @@ class Helpers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BisectMessageForms(unittest.TestCase):
+    """`git bisect run` names the first bad commit with two spellings across git versions: 2.43 prints
+    "is the first bad commit", newer releases quote the term ("is the first 'bad' commit"). CI's git
+    used the quoted form and bisect reported "did not name a first bad commit" on a run that had."""
+
+    def test_both_spellings_of_the_first_bad_line_parse(self):
+        sha = "b7f4db786e3a83216254c8e9118fc50ca671f8be"
+        for line in ("%s is the first bad commit" % sha, "%s is the first 'bad' commit" % sha):
+            with self.subTest(line=line):
+                m = batch._FIRST_BAD.search("running 'sh' '-c' 'true'\n%s\ncommit %s\n" % (line, sha))
+                self.assertIsNotNone(m, line)
+                self.assertEqual(m.group(1), sha)
+
+    def test_a_line_that_names_no_commit_does_not_parse(self):
+        self.assertIsNone(batch._FIRST_BAD.search("bisect found first 'bad' commit\nbisect run success\n"))

@@ -73,7 +73,7 @@ _FENCE = re.compile(r"^\s*(```|~~~)")
 _PR_TRAILER = re.compile(r"<!--\s*romp-pr:\s*(\{.*?\})\s*-->", re.DOTALL)
 _BATCH_TRAILER = re.compile(r"<!--\s*romp-batch:\s*(\{.*?\})\s*-->", re.DOTALL)
 _CONFLICT_LINE = re.compile(r"^CONFLICT \([^)]*\): Merge conflict in (.+)$", re.MULTILINE)
-_FIRST_BAD = re.compile(r"^([0-9a-f]{40}) is the first bad commit", re.MULTILINE)
+_FIRST_BAD = re.compile(r"^([0-9a-f]{40}) is the first '?bad'? commit", re.MULTILINE)  # git 2.43 says bad; 2.4x+ says 'bad'
 _CONFLICT_MARKER = re.compile(r"^\+(?:<{7} |>{7} |={7}$)", re.MULTILINE)
 
 
