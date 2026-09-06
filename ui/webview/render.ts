@@ -255,7 +255,7 @@ interface BgTasks { count: number; tasks: BgTask[]; }
 // kernel ships only the last WIRE_TAIL events (headFrom > 0) to keep startup light; older history streams in
 // on scroll-back (loadOlder → chatHead prepends, lowering headFrom). headFrom 0 = the whole transcript is
 // resident. chatTail's `from` is GLOBAL and mapped through headFrom.
-interface Session { id: string; name: string; color: Color | null; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; userTodos?: UserTodo[]; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; }
+interface Session { id: string; name: string; color: Color | null; emoji?: string; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; userTodos?: UserTodo[]; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; }
 
 const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
@@ -472,7 +472,7 @@ function reconcileRewind(s: Session): void {
 }
 // Tab name+color from the kernel's tabOrder push (the user 2026-06-26): lets renderTabs paint the WHOLE
 // strip as placeholders BEFORE each session's build_session arrives, so tabs don't pop in one-by-one.
-const tabMeta = new Map<string, { name: string; color: Color | null }>();
+const tabMeta = new Map<string, { name: string; color: Color | null; emoji?: string }>();
 // Tabs the user has just ✕'d, suppressed until the kernel's own tab set agrees. Declared up here beside
 // tabMeta because renderTabs reads it, and renderTabs can run before the module finishes evaluating.
 // The close was ALREADY optimistic (dismissSession runs on click) but nothing recorded that locally — so the
@@ -4289,7 +4289,8 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport) {
     for (const t of tabs) {
       if (t && typeof t.id === "string") {
         tabMeta.set(t.id, { name: typeof t.name === "string" ? t.name : "",
-                            color: (t.color && typeof t.color.bg === "string") ? t.color : null });
+                            color: (t.color && typeof t.color.bg === "string") ? t.color : null,
+                            emoji: typeof t.emoji === "string" ? t.emoji : undefined });   // absent = an older kernel
       }
     }
     // …and apply the same blob to EXISTING sessions (the user 2026-08-24): the label/color used to
@@ -4697,6 +4698,8 @@ function makePlaceholderTab(id: string): HTMLElement {
   const swirl = el("img", "tab-ph-swirl") as HTMLImageElement;
   swirl.src = mediaSrc("romp-swirl-glyph.svg"); swirl.alt = ""; swirl.onerror = () => swirl.remove();
   tab.appendChild(swirl);
+  const phEmoji = tabEmojiNode(meta?.emoji);
+  if (phEmoji) tab.appendChild(phEmoji);
   const label = el("span", "tab-label");
   if (meta?.name) label.replaceChildren(...hostNameNodes(meta.name, id));
   else label.textContent = "…";
@@ -4787,6 +4790,20 @@ function ensureTabRowObserver(bar: HTMLElement): void {
   if (tabRowObserver) return;
   tabRowObserver = new ResizeObserver(() => paintTabRowLines(bar));
   tabRowObserver.observe(bar);
+}
+
+// The tab's emoji label (the user 2026-09-06): one glyph before the name, set from the tab menu, by the
+// session itself (its set_emoji tool) or by `romp emoji`; the kernel stores it beside the name and color
+// and every dashboard reads the same one. DECORATIVE for assistive tech (aria-hidden): the name is the
+// tab's accessible label, and a reader spelling "crescent moon web" would put the ornament ahead of the
+// identity — a remote tab's "host:" prefix is quiet metadata for the same reason. Null when none, so
+// callers append nothing rather than an empty span.
+function tabEmojiNode(emoji: string | undefined): HTMLElement | null {
+  if (!emoji) return null;
+  const e = el("span", "tab-emoji");
+  e.textContent = emoji;
+  e.setAttribute("aria-hidden", "true");
+  return e;
 }
 
 function renderTabs() {
@@ -4954,6 +4971,8 @@ function renderTabs() {
       tab.addEventListener("mouseenter", () => { label.style.color = full; label.classList.remove("name-faded"); });
       tab.addEventListener("mouseleave", () => { label.style.color = fadedColor(full); label.classList.add("name-faded"); });
     }
+    const emojiEl = tabEmojiNode(s.emoji ?? tabMeta.get(id)?.emoji);   // before the name; the pushed meta fills a frame that predates the field
+    if (emojiEl) tab.appendChild(emojiEl);
     tab.appendChild(label);
     // USER-TODO glyph (plans/user-todos.md, slice 2): this session has flagged something it needs
     // from you — a small NON-NUMERIC mark right of the name (tabs deliberately carry no counts);
@@ -5194,9 +5213,17 @@ function setSessionColor(id: string, bg: string) {
   if (vscodeApi) vscodeApi.postMessage({ type: "setSessionColor", id, bg });
 }
 
+// Set or clear a session's tab emoji ("" clears). NOT optimistic, unlike the color swatch: the kernel is
+// the validator (exactly one emoji, nothing textual — its one-line reason comes back as a warn), so the
+// strip changes on its {emojiSet} confirm, the way a rename changes on {renamed}. The dialog that called
+// this has already closed as the click's acknowledgement.
+function setSessionEmoji(id: string, emoji: string) {
+  if (vscodeApi) vscodeApi.postMessage({ type: "setSessionEmoji", id, emoji });
+}
+
 // Small inline-SVG icon for the tab menu's toggle items (trusted constant markup; `off` slashes + dims it,
 // matching the timeline lane toggles). 16-unit viewBox; currentColor so .ctx-icon/.off set the tint.
-function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "pencil", off: boolean): HTMLElement {
+function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "pencil" | "smile", off: boolean): HTMLElement {
   const span = el("span", "ctx-icon" + (off ? " off" : ""));
   const slash = off ? '<line x1="1.6" y1="14.4" x2="14.4" y2="1.6"/>' : "";
   const body = kind === "feed"
@@ -5211,6 +5238,8 @@ function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "p
           ? '<path d="M2 3.4 A1.4 1.4 0 0 1 3.4 2 L7.6 2 A1.4 1.4 0 0 1 8.6 2.4 L13.6 7.4 A1.4 1.4 0 0 1 13.6 9.4 L9.4 13.6 A1.4 1.4 0 0 1 7.4 13.6 L2.4 8.6 A1.4 1.4 0 0 1 2 7.6 Z"/><circle cx="5.4" cy="5.4" r="1.1"/>'  // luggage tag (session tags)
         : kind === "pencil"
           ? '<path d="M3 13 L3.6 10.4 L10.8 3.2 A1.3 1.3 0 0 1 12.8 5.2 L5.6 12.4 Z"/><line x1="9.8" y1="4.2" x2="11.8" y2="6.2"/>'  // pencil (rename)
+        : kind === "smile"
+          ? '<circle cx="8" cy="8" r="6"/><path d="M5.4 9.6 C6.2 11 9.8 11 10.6 9.6"/><circle cx="6" cy="6.6" r="0.7" fill="currentColor"/><circle cx="10" cy="6.6" r="0.7" fill="currentColor"/>'  // smiley (tab emoji)
           : '<path d="M8 2 C5.9 2.2 4.7 3.8 4.7 5.8 L4.7 8 L3.4 9.9 L12.6 9.9 L11.3 8 L11.3 5.8 C11.3 3.8 10.1 2.2 8 2 Z"/><path d="M6.6 11.6 A1.5 1.5 0 0 0 9.4 11.6"/>';  // bell (system notifications)
   span.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" '
     + 'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + body + slash + "</svg>";
@@ -5255,6 +5284,26 @@ function showTabMenu(e: MouseEvent, id: string) {
     mv.appendChild(bodyEl);
     if (!isTmux) mv.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); showMovePrompt(id); });
     menu.appendChild(mv);
+  }
+  // Emoji… sits with Rename too (the user 2026-09-06): one glyph before the name on the tab, the same
+  // dress as its siblings. The icon IS the current emoji when there is one (so the menu shows what the
+  // tab wears), the smiley otherwise; the dialog does the rest (showEmojiPrompt) and the kernel
+  // confirms with {emojiSet} the way a rename confirms with {renamed}.
+  {
+    const curEmoji = sessions.get(id)?.emoji || tabMeta.get(id)?.emoji || "";
+    const em = el("div", "ctx-item ctx-item-toggle");
+    if (curEmoji) {
+      const ic = el("span", "ctx-icon glyph"); ic.textContent = curEmoji; ic.setAttribute("aria-hidden", "true");
+      em.appendChild(ic);
+    } else em.appendChild(ctxIcon("smile", false));
+    const bodyEl = el("span", "ctx-item-body");
+    const l = el("span", "ctx-item-label"); l.textContent = "Emoji…"; bodyEl.appendChild(l);
+    const sb = el("span", "ctx-item-sub");
+    sb.textContent = "one glyph before the name on the tab — the session can set its own too";
+    bodyEl.appendChild(sb);
+    em.appendChild(bodyEl);
+    em.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); showEmojiPrompt(id); });
+    menu.appendChild(em);
   }
   // Colors join Rename in the AESTHETIC section (the user 2026-08-24, the final by-kind grouping:
   // [Rename + colors] / [feed, mail, bell, billing, Tags] / [Browse]). The swatch row itself is
@@ -6927,6 +6976,59 @@ function onMoveDirCompletions(m: any): void {
   movePrompt.hint.title = said.title;
   movePrompt.hint.className = "move-dir-hint" + (said.cls ? " " + said.cls : "");
   movePrompt.input.classList.toggle("bad", said.cls === "bad");
+}
+
+// Emoji… (tab context menu): one input for one emoji, prefilled with the current one. Set posts it,
+// Clear posts "", and either closes the dialog at once — that close is the click's acknowledgement
+// (the repo's button rule); the strip changes on the kernel's {emojiSet}, and a refusal (letters, two
+// emoji, a bare text symbol) arrives as the kernel's one-line warn. Pane-local like the move dialog.
+let emojiPrompt: { overlay: HTMLElement; close: () => void } | null = null;
+function closeEmojiPrompt(): void {
+  if (!emojiPrompt) return;
+  const p = emojiPrompt; emojiPrompt = null;
+  p.close();
+}
+
+function showEmojiPrompt(sid: string): void {
+  closeEmojiPrompt();
+  const sess = sessions.get(sid);
+  const cur = sess?.emoji || tabMeta.get(sid)?.emoji || "";
+  const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "emoji-prompt";
+  const box = el("div", "picker-box confirm-box");
+  const h = el("div", "confirm-title"); h.textContent = `Emoji for “${sess?.name || tabMeta.get(sid)?.name || "session"}”`;
+  const d = el("div", "confirm-detail");
+  d.textContent = "One emoji, shown before the name on the tab. The session can change it too.";
+  const input = document.createElement("input");
+  input.type = "text"; input.className = "fork-name emoji-pick"; input.value = cur;
+  input.placeholder = "one emoji";
+  input.setAttribute("autocapitalize", "off"); input.setAttribute("autocomplete", "off");
+  input.setAttribute("autocorrect", "off"); input.setAttribute("spellcheck", "false");
+  const actions = el("div", "confirm-actions");
+  const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
+  const clear = el("button", "picker-action confirm-btn") as HTMLButtonElement; clear.textContent = "Clear";
+  clear.disabled = !cur;
+  const go = el("button", "picker-action confirm-btn") as HTMLButtonElement; go.textContent = "Set";
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); closeEmojiPrompt(); } };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+  emojiPrompt = { overlay, close };
+  const submit = (value: string) => { closeEmojiPrompt(); setSessionEmoji(sid, value); };
+  const start = () => {
+    const v = input.value.trim();
+    if (!v) { input.classList.add("bad"); input.focus(); return; }   // an empty Set is not a clear — that is the Clear button
+    submit(v);
+  };
+  cancel.addEventListener("click", closeEmojiPrompt);
+  clear.addEventListener("click", () => submit(""));
+  go.addEventListener("click", start);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); start(); } });
+  input.addEventListener("input", () => input.classList.remove("bad"));
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeEmojiPrompt(); });
+  actions.appendChild(cancel); actions.appendChild(clear); actions.appendChild(go);
+  box.appendChild(h); box.appendChild(d); box.appendChild(input); box.appendChild(actions);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKey, true);
+  input.focus(); input.select();
 }
 
 // the kernel's typed outcome: `moved` closes the dialog (a parked move that lands later says so in a
@@ -12395,6 +12497,7 @@ function upsert(msg: any) {
     id: msg.id,
     name: msg.name,
     color: msg.color || null,
+    emoji: ("emoji" in msg) ? String(msg.emoji || "") : (prev ? prev.emoji : undefined),   // the tab's glyph (2026-09-06); "" = none
     events: msg.events || (prev ? prev.events : []),
     status: msg.status || (prev ? prev.status : { state: "idle", sinceEpoch: null }),
     firstSeen: msg.firstSeen ?? (prev ? prev.firstSeen : undefined),
@@ -13249,6 +13352,16 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
     notePendingMeta(pendingTabMeta, m.id, { name: m.name });   // kernel truth — hold it against a push built pre-rename
     const s = sessions.get(m.id);
     if (s && s.name !== m.name) { s.name = m.name; renderTabs(); }
+  }
+  else if (m.type === "emojiSet" && m.id && typeof m.emoji === "string") {
+    // the kernel's confirm for setSessionEmoji (the renamed shape): "" = cleared. Held against a push
+    // built before the store had it, like a rename; the pushed tab meta then echoes it every cycle.
+    notePendingMeta(pendingTabMeta, m.id, { emoji: m.emoji });
+    const meta = tabMeta.get(m.id);
+    if (meta) meta.emoji = m.emoji;
+    const s = sessions.get(m.id);
+    if (s && (s.emoji || "") !== m.emoji) { s.emoji = m.emoji; renderTabs(); }
+    else if (!s) renderTabs();   // a placeholder tab reads the meta directly
   }
   else if (m.type === "droppedPath" && typeof m.path === "string") {   // host-saved drop/paste/pick → a thumbnail, not path text (the user 2026-08-04)
     const ackShip = typeof m.shipId === "string" && m.shipId ? m.shipId : undefined;
