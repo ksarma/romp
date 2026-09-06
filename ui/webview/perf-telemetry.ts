@@ -1,8 +1,9 @@
 // Browser-side performance telemetry for the dashboard panes (2026-09-06). The kernel's own counters
 // (`romp perf`, GET /perf) say what the kernel spent; nothing said what the BROWSER spent on the frames it
 // received, so a dashboard that felt slow could not be attributed to a pane, a frame type or a function.
-// The feed, Outline, Waiting on you and chat bundles wrap their window "message" handler through this
-// module; the timeline view times its update/applyBars through it; federation times its own merge and
+// The feed, Outline, Waiting on you, chat and timeline bundles wrap their window "message" handler through
+// this module (the kernel-served timeline page has no bundle of its own: its inline boot wraps through the
+// window.__rompPerf that federation.js publishes before it runs); federation times its own merge and
 // dispatch of every frame as `fed:<type>`, nested outside the pane's handler, and the collector records
 // each level's OWN time (the outer minus what its inner brackets took), so the per-type figures add up.
 // Per frame type the module keeps a count, the summed and maximum handler time, exact counts over 16.7 ms
@@ -37,7 +38,7 @@ export const LONG_FRAME_MS = 50;       // the browser's own long-frame threshold
 export const DROPPED_FRAME_MS = 16.7;  // one frame at 60 Hz: handlers over this drop at least one paint
 export const SLOW_ROWS_PER_MINUTE = 5; // slowframe rows sent per pane per minute; the rest are counted in the minute row
 export const FREE_RING = 64;           // main-thread-free samples kept for the minute's percentiles
-export const MAX_FRAME_TYPES = 32;     // distinct frame-type keys per minute (fed:<type> included); the rest fold into "other"
+export const MAX_FRAME_TYPES = 32;     // distinct wire frame types per minute, the rest fold into "other"; the federation layer's fed:<type> keys have the same cap of their own (fed:other)
 export const MAX_TOP = 5;              // attributed keys reported per minute
 export const MAX_TOP_KEYS = 64;        // distinct attribution keys tracked per minute; the rest fold into "other"
 export const FLUSH_MS = 60_000;
@@ -73,7 +74,7 @@ export interface PerfDeps {
   documentEvents: EventTarget | null; // visibilitychange cancels a free-thread sample the hide would inflate
 }
 
-/** The object every pane, federation and the timeline view reach through window.__rompPerf. */
+/** The object every pane, federation and the kernel page's timeline boot reach through window.__rompPerf. */
 export interface RompPerf {
   timed<T>(type: string, fn: () => T): T;
   frame<T>(msg: unknown, fn: () => T): T;
@@ -220,6 +221,8 @@ interface Bucket {
   slowSent: number;                    // slowframe rows sent or held this minute
   slowSuppressed: number;              // slow frames past the cap: counted, not sent
   slowSuppressedWorst: number;
+  wireTypes: number;                   // distinct keys in `frames` that are wire types, and fed:<type> keys, for the two caps
+  fedTypes: number;
 }
 interface PendingSlow { type: string; ms: number; dom: number | null; t0: number; t1: number }
 interface Open { t0: number; child: number }   // a bracket in progress: its start, and the time its inner brackets took
@@ -309,10 +312,20 @@ export class PerfTelemetry implements RompPerf {
   private record(type: string, own: number, total: number, t0: number, t1: number, outermost: boolean): void {
     const b = this.bucket;
     b.active = true;
-    let st = b.frames.get(type);
+    // the key the frame is counted under: its type, or the fold key once the minute has its cap of distinct
+    // types. Wire types and the federation layer's fed:<type> keys are capped separately (on a kernel page every
+    // wire type has both), and the fold changes the key only: a slow frame below still names its wire type.
+    const fed = type.startsWith("fed:");
+    let key = type;
+    let st = b.frames.get(key);
     if (!st) {
-      if (b.frames.size >= MAX_FRAME_TYPES && type !== "other") { type = "other"; st = b.frames.get(type); }
-      if (!st) { st = { n: 0, ms_sum: 0, ms_max: 0, n16: 0, n100: 0, hist: new Array(HIST_BUCKETS).fill(0) }; b.frames.set(type, st); }
+      const fold = fed ? "fed:other" : "other";
+      if (key !== fold && (fed ? b.fedTypes : b.wireTypes) >= MAX_FRAME_TYPES) { key = fold; st = b.frames.get(key); }
+      if (!st) {
+        st = { n: 0, ms_sum: 0, ms_max: 0, n16: 0, n100: 0, hist: new Array(HIST_BUCKETS).fill(0) };
+        b.frames.set(key, st);
+        if (fed) b.fedTypes++; else b.wireTypes++;
+      }
     }
     st.n++;
     st.ms_sum += own;
@@ -321,7 +334,7 @@ export class PerfTelemetry implements RompPerf {
     if (own >= SLOW_FRAME_MS) st.n100++;
     st.hist[histBucket(own)]++;
     if (!outermost) return;
-    if (total >= SLOW_FRAME_MS) this.slow(type.startsWith("fed:") ? type.slice(4) : type, total, t0, t1);
+    if (total >= SLOW_FRAME_MS) this.slow(fed ? type.slice(4) : type, total, t0, t1);
     this.scheduleFree(t1);
   }
 
@@ -443,7 +456,7 @@ export class PerfTelemetry implements RompPerf {
   private newBucket(): Bucket {
     return { since: this.d.wallNow(), active: false, frames: new Map(), free: new Ring(FREE_RING),
              loaf: { n: 0, blocking_ms: 0, worst_ms: 0, top: new Map() },
-             slowSent: 0, slowSuppressed: 0, slowSuppressedWorst: 0 };
+             slowSent: 0, slowSuppressed: 0, slowSuppressedWorst: 0, wireTypes: 0, fedTypes: 0 };
   }
 
   private minuteData(b: Bucket): Record<string, unknown> {

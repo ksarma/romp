@@ -10,7 +10,9 @@ one) against a hermetic state directory, with the cap lowered for the test. Synt
 placeholder dashboard id, invented numbers."""
 import json
 import os
+import pathlib
 import tempfile
+import threading
 import unittest
 from importlib.machinery import SourceFileLoader
 
@@ -109,6 +111,92 @@ class ClientDiagRotationTest(unittest.TestCase):
             os.replace = real
         self.assertEqual([r["data"]["i"] for r in self.rows(self.fp)], [1, 2])
         self.assertFalse(self.fp1.exists())
+
+    def test_concurrent_posts_rename_only_a_file_at_the_cap_and_lose_no_row(self):
+        """Every pane's socket is its own handler thread, so rows arrive concurrently. Without one lock across
+        the size check, the rename and the append, two threads at the cap at once both renamed: the second
+        moved the file the first had just started (a row or two) over the run the first had just rotated, and
+        that run was gone. Two properties, checked with os.replace recording what it moved: every rename moves
+        a file at the cap, and every row posted ends up in exactly one place (the current file, .1, or a .1 that
+        a later rotation replaced)."""
+        km.CLIENT_DIAG_MAX_BYTES = 3000
+        real_replace = os.replace
+        renamed_sizes, discarded, book = [], [], threading.Lock()
+        fp, fp1 = self.fp, self.fp1
+
+        def recording_replace(src, dst, *a, **k):
+            if src == str(fp):
+                size = os.stat(src).st_size
+                before = len(self.rows(fp1)) if fp1.exists() else 0
+                with book:
+                    renamed_sizes.append(size)
+                    discarded.append(before)
+            return real_replace(src, dst, *a, **k)
+
+        n_threads, per_thread = 6, 1500
+
+        def worker(k):
+            for j in range(per_thread):
+                self.post(k * per_thread + j)
+
+        os.replace = recording_replace
+        try:
+            threads = [threading.Thread(target=worker, args=(k,), name="poster-%d" % k) for k in range(n_threads)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(60)
+        finally:
+            os.replace = real_replace
+        self.assertGreater(len(renamed_sizes), 20, "the cap tripped many times")
+        self.assertEqual([s for s in renamed_sizes if s < km.CLIENT_DIAG_MAX_BYTES], [],
+                         "a rename of a file below the cap is the race: it moved the just-started file over the rotated run")
+        kept = self.rows(fp1) + self.rows(fp)
+        self.assertEqual(len(kept) + sum(discarded), n_threads * per_thread, "every row is in exactly one place")
+        self.assertGreaterEqual(fp1.stat().st_size, km.CLIENT_DIAG_MAX_BYTES, "the .1 file is a whole rotated run")
+
+    def test_two_threads_at_the_cap_at_once_keep_the_rotated_run(self):
+        """The interleaving that lost a run, forced rather than raced: A and B both see the file at the cap, A
+        rotates it and starts the new file, and B, whose size check predates A's rename, must not rename again.
+        Thread B's stat and thread A's rename are gated on each other with two events, so the order is fixed.
+        The waits end early on their event; their bound only keeps the serialized order (B cannot reach its stat
+        while A holds the lock, so the event never comes) from hanging. Four rows sit in the file before the cap
+        drops to a value one row is under and four rows are over."""
+        for i in range(1, 5):
+            self.post(i)
+        km.CLIENT_DIAG_MAX_BYTES = 300
+        b_statted, a_written = threading.Event(), threading.Event()
+        real_replace, real_stat = os.replace, pathlib.Path.stat
+        fp = self.fp
+
+        def gated_replace(src, dst, *a, **k):
+            if src == str(fp) and threading.current_thread().name == "A":
+                b_statted.wait(2.0)
+            return real_replace(src, dst, *a, **k)
+
+        def gated_stat(self_, *a, **k):
+            st = real_stat(self_, *a, **k)
+            if self_ == fp and threading.current_thread().name == "B":
+                b_statted.set()
+                a_written.wait(2.0)
+            return st
+
+        def post_a():
+            self.post(5)
+            a_written.set()
+
+        os.replace, pathlib.Path.stat = gated_replace, gated_stat
+        try:
+            ta = threading.Thread(target=post_a, name="A")
+            tb = threading.Thread(target=self.post, args=(6,), name="B")
+            ta.start()
+            tb.start()
+            ta.join(10)
+            tb.join(10)
+        finally:
+            os.replace, pathlib.Path.stat = real_replace, real_stat
+        self.assertEqual([r["data"]["i"] for r in self.rows(self.fp1)], [1, 2, 3, 4], "the rotated run is intact")
+        self.assertEqual(sorted(r["data"]["i"] for r in self.rows(self.fp)), [5, 6], "both new rows are in the current file")
 
 
 if __name__ == "__main__":

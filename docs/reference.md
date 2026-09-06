@@ -59,7 +59,7 @@ These are for scripting and for agents rather than daily use:
 | `romp url` | Print only the tokened dashboard URL, for piping |
 | `romp sessions [--json]` | The fleet with each session's state, identity colours, directory and backend |
 | `romp perf [--interval <s>] [--json]`, `romp perf log on\|off` | The kernel's performance counters as rates over two snapshots (below); `--json` prints one raw snapshot; `log on\|off` turns the `romp-perf` stderr log on or off without a restart |
-| `romp perf client [--minutes <n>] [--json]` | What the open dashboards' browsers spent on the frames they received (below): handler milliseconds per minute by frame type with window p50/p90/p99 and max, main-thread-free p90, long animation frames and their attributed callbacks, the worst minute, heap and DOM, the slowest frames — per dashboard and pane over the last `<n>` minutes (default 10) |
+| `romp perf client [--minutes <n>] [--json]` | What the open dashboards' browsers spent on the frames they received (below): handler milliseconds per minute by frame type with window p50/p90/p99 and max, the worst minute's main-thread-free p90, long animation frames and their attributed callbacks, the worst minute, heap and DOM, the slowest frames — per dashboard and pane over the last `<n>` minutes (default 10) |
 | `romp mail …` | The postal service from the shell (below) |
 | `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}` — a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text |
 | `romp new --model <id> <name>` | Model for the SDK session: a family alias such as `fable` (follows the family's newest release) or a full id such as `claude-fable-5` (a pin); re-asserted if `<name>` already runs |
@@ -808,10 +808,11 @@ frames it received is measured in the panes themselves, by
   kernel page loads, times its own prefixing, delta application and merge of
   each frame as `fed:<type>`, nested outside the pane's handler; each level
   records its own time, so `fed:feed` and `feed` add up to the frame's cost.
-  The timeline view times its `update` (recorded as `data`) and `applyBars`
-  (`bars`) through the same collector; its other frames (`hover`,
-  `activeChat`, `revealEvent`, `models`) are not timed. The Files pane installs
-  nothing: no frames are pushed to it.
+  The timeline's listener is wrapped the same way on both hosts (the VS Code
+  bundle directly; the kernel page's inline boot through the `window.__rompPerf`
+  that `federation.js` publishes before it runs), so `data`, `bars`, `hover`,
+  `activeChat`, `revealEvent` and `models` are timed like any pane's frames.
+  The Files pane installs nothing: no frames are pushed to it.
 - Per type and minute: count, summed and maximum handler time, the exact
   number of frames over 16.7 ms (one dropped frame at 60 Hz) and at or over
   100 ms, and a 14-bucket log2 histogram (under 1 ms, 1-2, 2-4, ..., 2048-4096,
@@ -881,17 +882,20 @@ the last `<n>` minutes (default 10) per dashboard id and pane into one screen:
 the pane's total handler milliseconds per minute, then each frame type sorted
 by its share, with frames per minute, milliseconds per minute, p50/p90/p99 as
 histogram bucket upper bounds over the whole window, the maximum, and the
-share of frames over 16.7 ms and at or over 100 ms; the main-thread-free p90;
-long frames and blocking milliseconds per minute with the worst entry; the
-top attributed keys with their invokers; the worst minute (the one with the
-most handler time: its clock time, frame counts and long frames); heap and
-DOM at the last sample; and the five slowest slow frames in the window with
-their attribution, plus how many more there were. An absent file or one
-without perf rows is reported as no browser telemetry yet (the bundles
-predate it or no dashboard has loaded them: rebuild the bundles and reload the
-dashboard); perf rows all older than the window are reported with their age.
-`--json` prints the folded panes, with a per-minute array (`t`, `total_ms`,
-`loaf_n`, `blocking_ms`) so a spike is visible without re-reading the file.
+share of frames over 16.7 ms and at or over 100 ms; the worst minute's
+main-thread-free p90 (each minute row's p90 is over that minute's samples, and
+the screen shows the largest, so it is not a window percentile like the handler
+columns); long frames and blocking milliseconds per minute with the worst
+entry; the top attributed keys with their invokers; the worst minute (the one
+with the most handler time: its span from the minute's start to the row's
+arrival at the kernel, frame counts and long frames); heap and DOM at the last
+sample; and the five slowest slow frames in the window with their attribution,
+plus how many more there were. An absent file or one without perf rows is
+reported as no browser telemetry yet (the bundles predate it or no dashboard
+has loaded them: rebuild the bundles and reload the dashboard); perf rows all
+older than the window are reported with their age. `--json` prints the folded
+panes, with a per-minute array (`t`, `since`, `total_ms`, `loaf_n`,
+`blocking_ms`) so a spike is visible without re-reading the file.
 
 In DevTools, `window.__rompPerf.snapshot()` in a pane's frame is the minute
 in progress in the same shape, plus a derived `p90_le` per type, `active`

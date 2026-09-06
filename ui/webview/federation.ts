@@ -684,7 +684,7 @@ export class FederationManager {
     this.app = w.__rompApp || "chat";
     // the page's performance collector (perf-telemetry.ts), published as window.__rompPerf: the pane bundle
     // installs its own on load, but the kernel-served timeline page has no bundle beyond this one, and its
-    // view (ui/romp-timeline-view.js, inlined raw) reaches the collector through the window slot
+    // inline boot (kernel.py _TIMELINE_BOOT) wraps its message listener through the window slot
     this.perf = perfCollectorFor(this.app);
     w.__rompFed = {
       inbound: (h: string, m: any) => this.inbound(h, m),

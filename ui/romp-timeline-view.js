@@ -820,15 +820,6 @@ function mediaUrl(name) {
   return ((typeof window !== 'undefined' && window.__rompMediaBase) || '/media') + '/' + name;
 }
 
-// The page's performance collector (ui/webview/perf-telemetry.ts), when the page installed one: the kernel
-// page's boot script and the VS Code boot both call update()/applyBars() straight from the frame, so the
-// view times those two itself. No collector, no cost; the collector never throws into the view.
-function _rompPerfTimed(type, fn) {
-  const P = (typeof window !== "undefined") ? window.__rompPerf : null;
-  if (P && typeof P.timed === "function") return P.timed(type, fn);
-  return fn();
-}
-
 class TimelinePanel {
   constructor(host) {
     this.host = host;
@@ -1772,9 +1763,7 @@ class TimelinePanel {
     try { if (window.parent && window.parent !== window) window.parent.postMessage({ romp: 'ready' }, '*'); } catch (e) {}
   }
 
-  update(data) { return _rompPerfTimed("data", () => this._update(data)); }
-
-  _update(data) {
+  update(data) {
     if (!data || data.unavailable || !data.sessions) { this.data = data; this.drawMessage(data && data.unavailable ? 'Timeline needs a desktop Obsidian with tmux.' : 'No romp activity.'); this._signalReady(); return; }
     const _only = _rompOnlyTag();   // demo/recording view filter: keep only matching-name lanes (the user 2026-07-14)
     if (_only) data = Object.assign({}, data, { sessions: data.sessions.filter((s) => _rompMatchesOnly(s.name, _only)) });
@@ -1862,9 +1851,7 @@ class TimelinePanel {
   // The heavy second half of a timeline push (the user 2026-06-25): the per-segment work BARS + the judging
   // band + message connectors + nudge marks — ~95% of the payload, deferred so the lanes (update()) paint
   // first. The skeleton always lands first (TCP-ordered on the one socket), so this.data.sessions is set.
-  applyBars(m) { return _rompPerfTimed("bars", () => this._applyBars(m)); }
-
-  _applyBars(m) {
+  applyBars(m) {
     if (!m || !this.data || !this.data.sessions) return;
     this.data.turns = m.turns || {};
     for (const k of Object.keys(this.data.turns)) this._barsSeen.add(k);

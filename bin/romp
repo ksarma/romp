@@ -927,15 +927,16 @@ EDGES = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]   # perf-telem
 NBUCKETS = len(EDGES) + 1
 TYPES_SHOWN, SLOW_SHOWN = 8, 5
 older = path + ".1"                        # the kernel rotates the file past its size cap; the previous run is .1
-files = [f for f in (older, path) if os.path.exists(f)]
-if not files:
-    sys.stderr.write("romp perf client: %s (%s does not exist)\n" % (RELOAD, path))
-    sys.exit(1)
 now = time.time()
 cutoff = now - minutes * 60
-rows, newest = [], 0
-for fp in files:
-    with open(fp, encoding="utf-8", errors="replace") as f:
+rows, newest, files = [], 0, []
+for fp in (older, path):
+    try:
+        f = open(fp, encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        continue                            # never written, or the kernel is renaming it this instant: the next run sees it
+    files.append(fp)
+    with f:
         for line in f:
             if '"perf"' not in line:        # cheap prefilter: the file also holds the shim's and the panes' breadcrumbs
                 continue
@@ -949,6 +950,9 @@ for fp in files:
             newest = max(newest, t)
             if t >= cutoff:
                 rows.append(r)
+if not files:
+    sys.stderr.write("romp perf client: %s (%s does not exist)\n" % (RELOAD, path))
+    sys.exit(1)
 shown = path + (" and .1" if older in files else "")
 if not newest:
     sys.stderr.write("romp perf client: %s (%s has no surface \"perf\" rows)\n" % (RELOAD, shown))
@@ -1007,6 +1011,11 @@ def edge_num(i):                            # the same for --json: the exclusive
 
 def clock(t):
     return time.strftime("%H:%M:%S", time.localtime(t))
+
+
+def span(m):                                # a minute's span on the clock: its start (the browser's since) to the kernel's receipt of its row
+    s = m.get("since")
+    return (clock(s / 1000.0) + "-" if isinstance(s, (int, float)) and s > 0 else "ending ") + clock(m["t"])
 
 
 panes = []
@@ -1088,7 +1097,7 @@ if as_json:
     for p in panes:
         p["minutes_detail"] = p.pop("minutes_detail")
         if p["worst_minute"]:
-            p["worst_minute"] = {k: p["worst_minute"][k] for k in ("t", "total_ms", "loaf_n", "blocking_ms")}
+            p["worst_minute"] = {k: p["worst_minute"][k] for k in ("t", "since", "total_ms", "loaf_n", "blocking_ms")}
     print(json.dumps({"window_min": minutes, "path": path, "files": files, "panes": panes}, indent=1, sort_keys=True))
     sys.exit(0)
 
@@ -1118,7 +1127,9 @@ for p in panes:
                  f["max"], 100.0 * f["n16"] / f["n"] if f["n"] else 0.0, 100.0 * f["n100"] / f["n"] if f["n"] else 0.0))
     if len(fl) > TYPES_SHOWN:
         print("    and %d more type%s" % (len(fl) - TYPES_SHOWN, "" if len(fl) - TYPES_SHOWN == 1 else "s"))
-    free = ("free after a frame p90 %.0f ms" % p["free_p90"]) if p["free_p90"] is not None else "free after a frame p90 n/a"
+    # each minute row's free p90 is over that minute's samples; the fold keeps the largest, so this is the worst
+    # minute's figure, not a window percentile like the handler columns
+    free = ("free after a frame, worst minute's p90 %.0f ms" % p["free_p90"]) if p["free_p90"] is not None else "free after a frame p90 n/a"
     lo = p["loaf"]
     if lo["src"] == "none":
         longf = "long frames: not reported by this browser"
@@ -1133,7 +1144,7 @@ for p in panes:
         wf = sorted(((typ, st) for typ, st in wm["frames"].items() if isinstance(st, dict)), key=lambda kv: -num(kv[1], "ms_sum"))[:3]
         parts = ["%s %d (p90 %s ms, max %.0f)" % (typ, int(num(st, "n")), edge_label(hist_q(hist_of(st), 0.9)), num(st, "ms_max")) for typ, st in wf]
         print("  worst minute %s   %.0f ms handler   %s   long frames %d, blocking %.0f ms"
-              % (clock(wm["t"]), wm["total_ms"], "   ".join(parts) or "no frames", wm["loaf_n"], wm["blocking_ms"]))
+              % (span(wm), wm["total_ms"], "   ".join(parts) or "no frames", wm["loaf_n"], wm["blocking_ms"]))
     if p["slow"] or p["slow_suppressed"]:
         for sl in p["slow"][:SLOW_SHOWN]:
             dom_s = (" (dom %d)" % sl["dom"]) if isinstance(sl["dom"], (int, float)) else ""

@@ -113,10 +113,12 @@ teardown() { rm -rf "$TEST_DIR"; }
     chat_line="$(echo "$feed_block" | grep -n '^    chatTail ' | head -1 | cut -d: -f1)"
     [ -n "$feed_line" ] && [ -n "$fed_line" ] && [ -n "$chat_line" ]
     [ "$feed_line" -lt "$fed_line" ] && [ "$fed_line" -lt "$chat_line" ]
-    [[ "$output" == *"free after a frame p90 61 ms"* ]]
+    [[ "$output" == *"free after a frame, worst minute's p90 61 ms"* ]]
     [[ "$output" == *"long frames 3.6/min   blocking 492 ms/min   worst 320 ms"* ]]
     [[ "$output" == *"feed.js:render@1200 2100 ms (WebSocket.onmessage)   page:(anonymous)@31245 300 ms (WebSocket.onmessage)"* ]]
-    # the worst minute is the second one: its own counts and percentiles, its long frames
+    # the worst minute is the second one: its span (the browser's minute start to the kernel's receipt), its own
+    # counts and percentiles, its long frames
+    [[ "$output" =~ 'worst minute '[0-9][0-9]:[0-9][0-9]:[0-9][0-9]-[0-9][0-9]:[0-9][0-9]:[0-9][0-9]'   400 ms handler' ]]
     [[ "$output" == *"400 ms handler   feed 14 (p90 <32 ms, max 130)   long frames 6, blocking 820 ms"* ]]
     # the slow frame row, then the ones the pane did not send
     [[ "$output" == *"feed 130 ms (dom 8400)  feed.js:render@1200 110 ms"* ]]
@@ -168,6 +170,7 @@ assert abs(f["loaf"]["per_min"] - 3.6) < 1e-9 and abs(f["loaf"]["blocking_ms_per
 assert f["top"][0] == {"k": "feed.js:render@1200", "ms": 2100, "inv": "WebSocket.onmessage"}
 assert [m["total_ms"] for m in f["minutes_detail"]] == [342, 400, 200], f["minutes_detail"]
 assert f["worst_minute"]["total_ms"] == 400 and f["worst_minute"]["loaf_n"] == 6 and f["worst_minute"]["blocking_ms"] == 820
+assert f["worst_minute"]["t"] - f["worst_minute"]["since"] // 1000 == 60, f["worst_minute"]   # the minute began 60 s before its row arrived
 assert f["slow_suppressed"] == 45 and f["slow_suppressed_worst_ms"] == 380
 assert len(f["slow"]) == 1 and f["slow"][0]["ms"] == 130 and f["slow"][0]["loaf"] == [{"k": "feed.js:render@1200", "ms": 110}]
 c = panes[("11111111", "chat")]

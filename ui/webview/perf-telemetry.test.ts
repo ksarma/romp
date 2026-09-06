@@ -231,15 +231,39 @@ test("a partial minute (pagehide) carries its own span; the histogram is exact o
   assert.equal((p.snapshot() as any).frames.chatTail?.p90_le, undefined, "the bucket rolled over on the flush");
 });
 
-test("distinct frame types are capped per minute; the overflow folds into other", () => {
+test("distinct frame types are capped per minute, wire types and fed: keys each; the overflow folds into other / fed:other", () => {
   const h = harness();
   const p = createPerfTelemetry("chat", h.deps);
   for (let i = 0; i < MAX_FRAME_TYPES + 3; i++) h.frame(p, { type: "t" + i }, 1);
+  for (let i = 0; i < MAX_FRAME_TYPES + 2; i++) p.timed("fed:f" + i, () => { h.clock.t += 1; });
   h.clock.wall += 60_000;
   p.tick();
   const frames = minuteRows(h.posted)[0].data.frames;
-  assert.equal(Object.keys(frames).length, MAX_FRAME_TYPES + 1);
+  assert.equal(Object.keys(frames).length, 2 * (MAX_FRAME_TYPES + 1));
   assert.equal(frames.other.n, 3);
+  assert.equal(frames["fed:other"].n, 2);
+});
+
+test("the type cap does not count the fed: keys against the wire types, and a folded frame's slowframe row names its type", () => {
+  const h = harness();
+  const p = createPerfTelemetry("chat", h.deps);
+  // 20 wire types, each inside its federation bracket: 40 keys, none folded
+  for (let i = 0; i < 20; i++) p.timed("fed:t" + i, () => h.frame(p, { type: "t" + i }, 1));
+  let s: any = p.snapshot();
+  assert.equal(Object.keys(s.frames).length, 40);
+  assert.equal("other" in s.frames, false);
+  // fill the wire-type cap, then a slow frame of a new type: counted under other, reported as itself
+  for (let i = 20; i < MAX_FRAME_TYPES; i++) h.frame(p, { type: "t" + i }, 1);
+  p.timed("fed:zzz", () => h.frame(p, { type: "zzz" }, 150));
+  s = p.snapshot();
+  assert.equal(s.frames.other.n, 1);
+  assert.equal("zzz" in s.frames, false);
+  assert.equal(s.frames["fed:zzz"].n, 1, "the federation key had room of its own");
+  assert.deepEqual(slowRows(h.posted)[0].data, { app: "chat", type: "zzz", ms: 150, dom: 1234 });
+  // the same fold without a federation bracket (VS Code): the slowframe row still names the type
+  h.frame(p, { type: "yyy" }, 120);
+  assert.equal(slowRows(h.posted)[1].data.type, "yyy");
+  assert.equal((p.snapshot() as any).frames.other.n, 2);
 });
 
 test("nested brackets: each level records its own time, and they add up to the frame", () => {
