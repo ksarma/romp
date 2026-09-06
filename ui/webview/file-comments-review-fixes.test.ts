@@ -256,7 +256,7 @@ function world(over: { path?: string; sid?: string | null } = {}): World {
   } as World;
   w.ctx = {
     path: over.path ?? ABS, sid: over.sid === undefined ? SID : over.sid, todoId: null,
-    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => null, mtimeNs: () => F1, media: () => null, mediaElement: () => null, renderedImages: () => [],
+    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => null, mtimeNs: () => F1, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: () => { /* inert */ }, onSelection: () => { /* inert */ },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },

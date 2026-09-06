@@ -11,6 +11,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { GlobalWorkerOptions } from "pdfjs-dist";
 import { render, workerUrlFor, capMessage, fmtBytes, backingScale, DEFAULT_MAX_BYTES, MAX_CANVAS_PIXELS } from "./pdf-chunk";
+import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // pure; file-view.ts imports the same two (pinned below)
 
 const ROOT = path.resolve(process.cwd(), "..");
 const W = (f: string) => fs.readFileSync(path.join(ROOT, "ui", "webview", f), "utf8");
@@ -107,6 +108,47 @@ test("the loader in the API doc derives the chunk URL from every hosting page's 
   // the snippet resolves through the global, and a failed load clears the latch so a later open retries
   assert.match(CHUNK, /^\/\/\s+if \(w\.__rompPdf\) return res\(w\.__rompPdf\);$/m);
   assert.match(CHUNK, /^\/\/\s+sc\.onerror = \(\) => \{ pdfChunk = null; rej\(/m);
+});
+
+// ── the wiring (file-view.ts, Slice 4): the doc's loader, copied — same derivation as the editor's ─
+
+test("file-view loads the PDF chunk exactly as it loads the editor chunk: the same find literal, /pdf-chunk.js in place of /editor-chunk.js, the global first, the latch cleared on failure", () => {
+  const code = (src: string) => src.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+  const live = code(VIEW);
+  // two loaders, one derivation: the editor's literal and the PDF's are the same regex, so the Files pane, the feed and
+  // the chat (and a rebuilt kernel's ?v=) reach both chunks or neither
+  const finds = live.match(/\.find\(\(u\) => (\/[^\n]+?\/)\.test\(u\)\)/g) || [];
+  assert.equal(finds.length, 2, "the editor loader's derivation and the PDF loader's");
+  assert.equal(finds[0], finds[1]);
+  assert.match(live, /sc\.src = self\.replace\(\/\\\/\(render\|feed\|files\)\\\.js\/, "\/editor-chunk\.js"\);/);
+  assert.match(live, /sc\.src = self\.replace\(\/\\\/\(render\|feed\|files\)\\\.js\/, "\/pdf-chunk\.js"\);/);
+  assert.match(live, /if \(w\.__rompPdf\) return res\(w\.__rompPdf\);/, "the global first: a chunk already on the page is not fetched twice");
+  assert.match(live, /sc\.onerror = \(\) => \{ pdfChunk = null; rej\(new Error\("the PDF renderer failed to load"\)\); \};/, "a failed load clears the latch so the next open retries");
+  assert.match(live, /if \(!self\) return rej\(new Error\("no bundle script tag to derive the PDF chunk URL from"\)\);/);
+  assert.match(live, /p \? res\(p\) : rej\(new Error\("PDF chunk loaded but did not register"\)\)/);
+  // the structural type is inline: `import type` from the chunk would still be an import for the discipline pin above
+  assert.match(live, /let pdfChunk: Promise<\{ render: \(bytes: ArrayBuffer, container: HTMLElement, opts\?: object\) =>\n\s*Promise<\{ pages: number; dispose\(\): void \}> \}> \| null = null;/);
+  // the branch: pages only while the Comments panel is open (the seam's aside() is the event), the frame otherwise
+  assert.match(live, /if \(isPdf && asideOpen\) \{ showPdfPages\(\); return; \}/);
+  assert.match(live, /if \(isPdf && objUrl !== null && asideOpen !== was\) renderBody\(\);/);
+  // the bytes are the fetch's own blob, handed to render() with the cap; the loader precedes the pages; both exits dispose
+  assert.match(live, /Promise\.all\(\[pdfChunkLoad\(\), blob\.arrayBuffer\(\)\]\)/);
+  assert.match(live, /maxBytes: PDF_MAX_BYTES,/);
+  assert.match(live, /body\.replaceChildren\(wait, host\);/, "the loader and the chunk's host, the host laid out before render() fits pages to it");
+  assert.match(live, /closeHooks\.push\(dropPdf\);/);
+  // the fallbacks, all through one function, all the frame with a notice in the error dress
+  assert.match(live, /if \(blob\.size > PDF_MAX_BYTES\) \{ fallback\(pdfCapMessage\(blob\.size, PDF_MAX_BYTES\)\); return; \}/, "the cap refuses before the chunk is fetched");
+  assert.match(live, /\.catch\(\(err\) => fallback\(String\(err && \(err as Error\)\.message \|\| err\)\)\);/, "a chunk load failure or a render rejection");
+  assert.match(live, /note\.textContent = why \+ " — showing the browser's PDF viewer instead; comments on the whole file still work\.";/);
+  assert.match(live, /const note = el\("div", "fileview-err"\);/);
+  assert.match(live, /fall\.appendChild\(pdfBlock\(url, path\)\);/);
+});
+
+test("file-view's cap is the chunk's default, and its refusal is the chunk's capMessage word for word", () => {
+  assert.match(VIEW, /import \{ PDF_MAX_BYTES, pdfCapMessage \} from "\.\/pdf-cap";/, "file-view reads the cap from the pure module, not from the chunk");
+  assert.equal(PDF_MAX_BYTES, DEFAULT_MAX_BYTES);
+  assert.equal(pdfCapMessage(26 * 1024 * 1024, PDF_MAX_BYTES), capMessage(26 * 1024 * 1024, DEFAULT_MAX_BYTES));
+  assert.equal(pdfCapMessage(40.5 * 1024 * 1024, PDF_MAX_BYTES), "this PDF is 40.5 MB, over the 25.0 MB cap for rendering pages in the viewer");
 });
 
 // ── the cap: refused by name, before pdf.js or the container sees anything ───────────────────────

@@ -23,6 +23,7 @@ import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction } from "./file-comments";
+import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
 
 // hljs is registered per-bundle. Same language set (and grammar registrations) the chat's fence
 // highlighting uses, dup-guarded, so importing this module alongside render.ts costs nothing.
@@ -205,8 +206,14 @@ export interface FileViewActionCtx {
   media(): "image" | "pdf" | "svg" | null;
   /** the media element the body shows now: the `<img>` for an image (an SVG shown as an image included), the frame
    *  for a PDF; null for every text view (the SVG Source view too), while the loader holds the body, and once a
-   *  decode failure's pane has replaced the picture. Read from the body itself, so it is never a stale handle */
+   *  decode failure's pane has replaced the picture. Read from the body itself, so it is never a stale handle. A PDF
+   *  whose pages the chunk is drawing (Slice 4: the Comments panel is open) answers the pages root, `div.fileview-pdf` */
   mediaElement(): HTMLImageElement | HTMLElement | null;
+  /** a PDF's page shells while the chunk renders its pages (the Comments panel open): each `div.fileview-pdf-page`
+   *  (data-page 1-based, `position: relative`, one `canvas.fileview-pdf-canvas` inside), in page order, as of the latest
+   *  onRendered; [] for the browser's frame, for every other file, and while the loader holds the body. The panel puts
+   *  one region overlay in each (Slice 4) */
+  pdfPages(): HTMLElement[];
   /** the figures inside a Rendered markdown body, in document order, as of the latest onRendered; [] in every other
    *  view. A relative figure's `src` is the kernel's /file URL by then and its authored value rides in `data-fv-src`
    *  (rewriteFigureSrcs); the figures' own load events are the caller's to await */
@@ -214,8 +221,9 @@ export interface FileViewActionCtx {
   /** the session the file was opened from, as the hosting document resolves it (the title-bar chip's source) */
   identity(): FileViewIdentity | null;
   /** runs after every paint of the body: a text body at once (open, view switch, reload), a media body once it shows —
-   *  an image after its load event (at once when it was already complete), a PDF frame at once (whenShown). A Rendered
-   *  body's figures are in the DOM by then with their own loads still pending. The panel re-runs its paint pass */
+   *  an image after its load event (at once when it was already complete), a PDF frame at once (whenShown), a PDF's
+   *  pages once page 1 is drawn and then again after every page the chunk draws (so an overlay can attach to each). A
+   *  Rendered body's figures are in the DOM by then with their own loads still pending. The panel re-runs its paint pass */
   onRendered(cb: () => void): void;
   /** runs on mouseup/touchend with a non-collapsed selection inside the body — BEFORE the quote-chip gate, so it works with no chat pane */
   onSelection(cb: (sel: Selection) => void): void;
@@ -505,8 +513,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let isSvgImage = false;                     // image/svg+xml exactly — unlocks the Source toggle
   let svgSource = false;                      // the SVG Source view is up (the highlighted XML)
   let svgText: string | null = null;          // the decoded SVG bytes: read on the first toggle, a reload's replace or drop it
-  let mediaBlob: Blob | null = null;          // the fetched bytes — the Source toggle decodes THESE
+  let mediaBlob: Blob | null = null;          // the fetched bytes — the Source toggle decodes THESE, the PDF chunk renders them
   let objUrl: string | null = null;           // this open's object URL (registered as mediaUrlLive)
+  // ── the PDF pages (plans/file-review.md Slice 4): with the Comments panel open, a PDF's body is the pages the pdf.js
+  // chunk draws (one canvas per page, so a region comment has a page to sit on); closed, it is the browser's own frame
+  // as before. `asideOpen` follows the seam's aside() — the panel mounting IS the event — and the body re-renders on the
+  // flip. `pdfHandle` is the chunk's render handle (dispose() cancels the draws, releases the worker, removes the root);
+  // `pdfSeq` invalidates a chunk load or a render still in flight when the body moved on (a close, a reload, the panel
+  // closing), so a late resolution never mounts over what shows now — the editSeq guard's shape.
+  let asideOpen = false;
+  let pdfHandle: { pages: number; dispose(): void } | null = null;
+  let pdfSeq = 0;
+  const dropPdf = () => { pdfSeq++; if (pdfHandle) { pdfHandle.dispose(); pdfHandle = null; } };
   // The text the CURRENT view shows: the SVG Source view reads the decoded blob, every other text
   // view reads the fetch pipeline's text. The quote seed's failed-re-read fallback anchors against
   // THIS (a selection in the Source view must find its line in that XML; falling back to `text` —
@@ -612,8 +630,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // both read the LIVE body under the mode gate rather than a handle kept at paint time: a reload swaps the
     // <img>, imgFailed's pane removes it, and a rendered README may itself carry an <img class="fileview-img">
     // through the sanitizer — the gate keeps such a figure from ever answering as the media element
-    mediaElement: () => (ctx.mode() === "media" ? body.querySelector("img.fileview-img, iframe.fileview-frame") as HTMLElement | null : null),
+    mediaElement: () => (ctx.mode() === "media" ? body.querySelector("img.fileview-img, iframe.fileview-frame, .fileview-pdf") as HTMLElement | null : null),
     renderedImages: () => (ctx.mode() === "rendered" ? Array.from(body.querySelectorAll(".fileview-md img")) as HTMLImageElement[] : []),
+    pdfPages: () => (ctx.mode() === "media" && isPdf ? Array.from(body.querySelectorAll(".fileview-pdf .fileview-pdf-page")) as HTMLElement[] : []),
     identity: () => (sid ? identityOf(sid) : null),
     onRendered: (cb) => { renderHooks.push(cb); },
     onSelection: (cb) => { selHooks.push(cb); },
@@ -629,6 +648,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     aside: (node) => {
       main.querySelector(".fileview-aside")?.remove();
       if (node) { node.classList.add("fileview-aside"); main.appendChild(node); }
+      // a PDF's body follows the panel (Slice 4): pages while it is open, the frame when it closes. The bytes not yet
+      // landed: renderBody's fetch continuation reads the flag and chooses then.
+      const was = asideOpen;
+      asideOpen = !!node;
+      if (isPdf && objUrl !== null && asideOpen !== was) renderBody();
     },
     setMode: (mode) => { if (!isMd || editing) return; fmt.md = mode; saveFmt(fmt); renderBody(); },
     scrollToOffset: (n) => {
@@ -742,6 +766,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         fireRendered();                         // a text body: the panel's highlight pass runs on it too
         return;
       }
+      if (isPdf && asideOpen) { showPdfPages(); return; }   // the Comments panel is open: the chunk's pages, not the frame (Slice 4)
+      dropPdf();                              // the frame (or a picture) replaces any pages a closed panel leaves behind
       const shown = isPdf ? pdfBlock(objUrl, path) : imgBlock(objUrl, path, imgFailed);
       body.replaceChildren(shown);
       whenShown(shown, fireRendered);         // the seam's onRendered for a media body: once the picture shows (Slice 3)
@@ -826,6 +852,66 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     sc.onerror = () => { edChunk = null; rej(new Error("the editor bundle failed to load")); };
     document.head.appendChild(sc);
   }));
+  // The PDF renderer is the same kind of chunk (pdf-chunk.ts; plans/file-review.md Slice 4, decision 12): its own
+  // bundle, registered as a window global, loaded by a script tag derived from THIS page's bundle URL exactly as the
+  // editor's is — same directory, same ?v= token, so the kernel serves a matching chunk and, through the chunk's own
+  // src, a matching worker. The structural type is inline on purpose: even `import type` from the chunk would be an
+  // import for the lazy-discipline pin (pdf-lazy.test.ts) to catch. A failed load rejects once and clears the latch.
+  let pdfChunk: Promise<{ render: (bytes: ArrayBuffer, container: HTMLElement, opts?: object) =>
+    Promise<{ pages: number; dispose(): void }> }> | null = null;
+  const pdfChunkLoad = () => pdfChunk || (pdfChunk = new Promise((res, rej) => {
+    const w = window as any;
+    if (w.__rompPdf) return res(w.__rompPdf);
+    const self = Array.from(document.querySelectorAll("script[src]"))
+      .map((n) => (n as HTMLScriptElement).src).find((u) => /\/(render|feed|files)\.js/.test(u));
+    if (!self) return rej(new Error("no bundle script tag to derive the PDF chunk URL from"));
+    const sc = document.createElement("script");
+    sc.src = self.replace(/\/(render|feed|files)\.js/, "/pdf-chunk.js");
+    sc.onload = () => { const p = (window as any).__rompPdf; p ? res(p) : rej(new Error("PDF chunk loaded but did not register")); };
+    sc.onerror = () => { pdfChunk = null; rej(new Error("the PDF renderer failed to load")); };
+    document.head.appendChild(sc);
+  }));
+  // The pages body: the romp loader first (the loading-state rule), the chunk's pages once page 1 is drawn, and the
+  // seam's onRendered then and after every page the chunk draws (the overlays attach per page). Every refusal is LOUD
+  // and the same shape: the browser's frame, with a one-line notice above it saying why and that a comment on the
+  // whole file still works — bytes over the cap (refused HERE, before a megabyte of renderer is fetched for nothing),
+  // a chunk or worker that will not load, a document pdf.js will not open. Never a blank pane, never a silent frame.
+  const showPdfPages = () => {
+    dropPdf();
+    const blob = mediaBlob; const url = objUrl;
+    if (!blob || url === null) return;
+    const my = pdfSeq;
+    const fallback = (why: string) => {
+      if (my !== pdfSeq || !wrap.isConnected) return;   // the body moved on: whatever shows now is not this render's
+      const fall = el("div", "fileview-pdffall");
+      const note = el("div", "fileview-err");
+      note.textContent = why + " — showing the browser's PDF viewer instead; comments on the whole file still work.";
+      fall.appendChild(note);
+      fall.appendChild(pdfBlock(url, path));
+      body.replaceChildren(fall);
+      whenShown(fall, fireRendered);
+    };
+    if (blob.size > PDF_MAX_BYTES) { fallback(pdfCapMessage(blob.size, PDF_MAX_BYTES)); return; }
+    const wait = el("div", "fileview-load");
+    wait.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
+      + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
+    const host = el("div", "fileview-pdfhost");
+    body.replaceChildren(wait, host);          // the host is laid out before render(): the chunk fits pages to its width
+    Promise.all([pdfChunkLoad(), blob.arrayBuffer()]).then(([pdf, bytes]) => {
+      if (my !== pdfSeq || !wrap.isConnected) return;
+      return pdf.render(bytes, host, {
+        maxBytes: PDF_MAX_BYTES,
+        // every draw after the first resolve (a page scrolling in, a redraw at a new width) is a repaint the panel hears
+        onPage: () => { if (my === pdfSeq && pdfHandle) fireRendered(); },
+      }).then((h) => {
+        if (my !== pdfSeq || !wrap.isConnected) { h.dispose(); return; }   // a stale resolution mounts nothing
+        pdfHandle = h;
+        wait.remove();                         // page 1 is drawn: the loader gives way to pixels
+        fireRendered();
+      });
+    }).catch((err) => fallback(String(err && (err as Error).message || err)));
+  };
+  closeHooks.push(dropPdf);                    // both exits (close, replace-open) release the document and its worker
   const enterFallback = () => {                 // the plain textarea: LOUD fallback, never a silent one
     ta = el("textarea", "fileview-editor") as HTMLTextAreaElement;
     ta.value = text!;                           // the browser normalizes CRLF→LF on assignment…
@@ -1226,7 +1312,8 @@ function imgBlock(objUrl: string, path: string, onDecodeFail: () => void): HTMLE
 
 // The PDF body mirrors the lightbox's treatment exactly (openLightbox's pdf arm, preview.ts): the
 // browser's own viewer in a PLAIN iframe — className, src, title, nothing more — aimed at the
-// already-fetched bytes instead of a second network fetch.
+// already-fetched bytes instead of a second network fetch. With the Comments panel closed this is the
+// PDF's body; with it open it is the fallback under showPdfPages's notice (Slice 4).
 function pdfBlock(objUrl: string, path: string): HTMLElement {
   const frame = el("iframe", "fileview-frame") as HTMLIFrameElement;
   frame.src = objUrl;

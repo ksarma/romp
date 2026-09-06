@@ -22,6 +22,8 @@ const RULES = [
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
   ".fileview-imgbox {", ".fileview-img {", ".fileview-frame {",
+  // the PDF pages (Slice 4): the chunk's host, root, page and canvas, and the frame fallback's column
+  ".fileview-pdfhost {", ".fileview-pdf {", ".fileview-pdf-page {", ".fileview-pdf-canvas {", ".fileview-pdffall {", ".fileview-pdffall .fileview-frame {",
   // the comments panel's aside and its chrome (plans/file-review.md Slice 1): the whole block is also
   // pinned byte-equal end to end by file-comments.test.ts; these heads keep it in the same list
   ".fileview-main {", ".fileview-aside {", ".fileview-fc {", ".fileview-fc[hidden] {", ".fc-panel {", ".fc-card {",
