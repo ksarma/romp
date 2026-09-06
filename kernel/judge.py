@@ -3707,10 +3707,13 @@ def _matches_disk(fsid, store, mine=None):
 # own load_goals) and raises, so the shared object is never corrupted and /perf (memos.goals_shared)
 # shows `off`. copy.copy / copy.deepcopy of a frozen container hand back plain, writable ones.
 #
-# Documented drift, forensic only: record_verdict's `at` on a row the replay appends and a replay-
-# triggered seam's `t` are stamped at fill time and then shared, where every load_goals re-stamps them;
-# both are arrival stamps no writer persists from a read-only load, and the view's content (verdicts,
-# flags, status) is identical.
+# Documented drift: record_verdict's `at` on a row the replay appends and a replay-triggered seam's `t`
+# are stamped at fill time and then shared, where every load_goals re-stamps them on each load. `at` is
+# an arrival stamp nothing reads back. The seam's `t` is not: apply_seams splits segments at it, so the
+# shared view and a writer's private load can place that split at different seconds until the next
+# writer publish (which persists the writer's stamp and moves the store's identity) makes the two
+# loaders agree again. The view's verdicts, flags and status are identical throughout, and no writer
+# persists a stamp from a read-only load.
 #
 # Invalidation is exact by construction: a store publish is a rename to a new inode (save_goals), a
 # journal write an append, an archive publish a rename. save_goals also pops its path after the rename
