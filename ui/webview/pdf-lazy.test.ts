@@ -253,7 +253,9 @@ test("each page is a positioned, 1-based-numbered wrapper (the overlay's anchor)
   assert.match(CHUNK, /for \(let i = 1; i <= n; i\+\+\) \{/, "pages are numbered from 1, as PDFs and the wire's target.page do");
   assert.match(CHUNK, /const vp = proxy\.getViewport\(\{ scale: cssW \/ base\.width \}\);/,
     "width-fit: the scale is the root's width over the page's natural width");
-  assert.match(CHUNK, /proxy\.render\(\{ canvas: p\.canvas, viewport: vp, transform: dpr === 1 \? undefined : \[dpr, 0, 0, dpr, 0, 0\] \}\)/);
+  // the draw is STAGED: pdf.js draws into a canvas off the DOM and the page's canvas takes the finished bitmap in one step
+  // (pdf-chunk-staged-draw.test.ts executes it); the viewport and the ratio transform are the same as ever
+  assert.match(CHUNK, /proxy\.render\(\{ canvas: stage, viewport: vp, transform: dpr === 1 \? undefined : \[dpr, 0, 0, dpr, 0, 0\] \}\)/);
   assert.match(CHUNK, /opts\.onPage\?\.\(\{ index: p\.index, canvas: p\.canvas, width: vp\.width, height: vp\.height \}\);/,
     "onPage: the 1-based index, the page's own canvas, and its CSS size after every draw");
 });

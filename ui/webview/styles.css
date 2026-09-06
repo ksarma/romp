@@ -94,10 +94,19 @@ body.scheme-solarized-dark {
                                 PDF page sheet, .fileview-pdf-page): --warn is tuned for the pane's ground and reads
                                 at 2.3:1 on white; this is the light theme's own amber, 4.7:1 there. Identical in
                                 both theme blocks — white is white. (styles-pdf-page-err.test.ts) */
+  --dim-on-white: #5D574E;   /* the dim tier for the same white sheet (the per-page loader's wordmark, pdf-chunk.ts
+                                cue()): --dim is tuned for the pane's ground — 2.8:1 on white here, 2.0:1 under the
+                                high-contrast scheme, which lifts --dim for the DARK ground and so dims it further on
+                                white — and the chat schemes above re-tier --dim, never this. The light theme's own
+                                dim, 7.2:1 on white; identical in both theme blocks. (styles-pdf-page-load.test.ts) */
   /* THE romp accent — light blue (the user 2026-06-24). Use var(--accent) for accent/highlight chrome
      (selected toggles, in-progress loading dots, the Fleet pill, focus) — NOT for STATUS colors, which keep
      their own meaning (--st-working-bg yellow = working, --st-blocked-bg red, etc.). --accent-fg reads on it. */
   --accent: #9cd2ff; --accent-fg: #0c1a2e;
+  --accent-on-white: #C2410C;  /* the accent for chrome on the same white sheet (the per-page loader's dots): --accent
+                                  is tuned for the pane's ground and sits at 1.6:1 on white. The light theme's own
+                                  accent, 5.2:1 on white; identical in both theme blocks — the sheet wears the light
+                                  theme's tiers whatever the pane wears. (styles-pdf-page-load.test.ts) */
   /* THE faint accent wash — the one alpha behind every selected/hovered accent chrome (0.10 and 0.14
      variants drifted in before 2026-08-26). Mirrored in feed.css (own :root). */
   --accent-wash: rgba(156, 210, 255, 0.12);
@@ -224,6 +233,8 @@ body.theme-light {
   --fast: #D45500;
   --warn: #9A6A00;
   --warn-on-white: #9A6A00;   /* the white sheet's amber is the same in both themes */
+  --dim-on-white: #5D574E;    /* the white sheet's dim is the same in both themes — the light theme's own --dim */
+  --accent-on-white: #C2410C; /* the white sheet's accent is the same in both themes — the light theme's own --accent */
   --st-working-bg: #e0b020; --st-working-fg: #332600;   /* status FILLS carry their own fg — same chips, both themes */
   --st-ready-bg: #2b7fb8;   --st-ready-fg: #ffffff;
   --st-awaiting-bg: #c0392b;--st-awaiting-fg: #ffffff;
@@ -3699,6 +3710,16 @@ body.filebrowse-open { overflow: hidden; }
    white sheet in the dark theme — the one loud error of the PDF view was its faintest text. On the sheet the dress
    wears the on-white amber, 4.7:1 in every theme (styles-pdf-page-err.test.ts resolves the cascade and the ratio). */
 .fileview-pdf-page .fileview-err { color: var(--warn-on-white); }
+/* the per-page loader over a sheet whose draw is pending (pdf-chunk.ts cue(): the viewer's own loader markup,
+   div.fileview-load.fileview-pdf-page-load, inside the page wrapper) is the one viewer loader that sits on white,
+   and .fileview-load's --dim and .fileview-dot's --accent are both tuned for the pane's ground: the wordmark sat at
+   2.8:1 on the sheet in the dark theme (2.0:1 under the high-contrast scheme, whose lifted --dim is dimmer still on
+   white) and the accent dots at 1.6:1 — a cue put up so an undrawn page would not look blank, itself near-invisible.
+   On the sheet each wears its on-white twin — the light theme's own dim and accent, the tiers made for a light
+   ground — in every theme and scheme: 7.2:1 for the wordmark, 5.2:1 for the dots. The pane's loader outside a sheet
+   is untouched. (styles-pdf-page-load.test.ts) */
+.fileview-pdf-page .fileview-load { color: var(--dim-on-white); }
+.fileview-pdf-page .fileview-dot { background: var(--accent-on-white); }
 
 /* a MACHINE-sent message's notch (romp injections, ⚙-tagged sends — the same senderKind verdict the
    bubble wears): light gray, visibly quieter than the user's blue, so the scroll map separates "you

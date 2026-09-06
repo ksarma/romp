@@ -25,6 +25,16 @@ import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction } from "./file-comments";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
 
+// How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
+// the browser's frame with a line saying so — ui/CLAUDE.md's loading-state rule: the loader fades on the event, with a
+// backstop timeout so it can never trap the user. Every other end of that attempt is an event; a render that never
+// settles has none (pdf.js puts no deadline on opening a document), so this is the failsafe, sized never to fire in the
+// load path. The bytes are already in memory, so the wait is the chunk and its worker fetched once (about two megabytes,
+// over a tunnel to a phone at worst) plus pdf.js opening the document and drawing page 1: seconds. The pane loader's
+// record sets the floor (kernel.py _pane_spin: an 8 s failsafe fired during normal cold starts, 30 s never has); this
+// wait includes a fetch, so twice that.
+export const PDF_RENDER_BACKSTOP_MS = 60_000;
+
 // hljs is registered per-bundle. Same language set (and grammar registrations) the chat's fence
 // highlighting uses, dup-guarded, so importing this module alongside render.ts costs nothing.
 import bash from "highlight.js/lib/languages/bash";
@@ -528,7 +538,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let asideOpen = false;
   let pdfHandle: { pages: number; dispose(): void } | null = null;
   let pdfSeq = 0;
-  const dropPdf = () => { pdfSeq++; if (pdfHandle) { pdfHandle.dispose(); pdfHandle = null; } };
+  // showPdfPages's backstop timer (PDF_RENDER_BACKSTOP_MS), one per attempt: disarmed wherever the attempt ends — the
+  // pages mounting, a refusal (fallback), or the attempt retired (dropPdf: the panel closing, a reload, both of the
+  // viewer's exits) — so it fires only for an attempt that never settled.
+  let pdfBackstop: ReturnType<typeof setTimeout> | undefined;
+  const disarmBackstop = () => { clearTimeout(pdfBackstop); pdfBackstop = undefined; };
+  const dropPdf = () => { pdfSeq++; disarmBackstop(); if (pdfHandle) { pdfHandle.dispose(); pdfHandle = null; } };
   // The reader's page, 1-based: the last page the PAGES showed, read off the shells each time they leave the body (the
   // panel closing, a reload) — so the frame the close builds opens on it (#page=N) and the pages a reopen draws scroll
   // to it, instead of both starting the document over at page 1. The browser's frame reports nothing back, so a
@@ -850,7 +865,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // pattern naming only the first two sent every Edit there to the textarea with a raw error) — same
   // directory, same ?v= cache token — so it resolves on the kernel pages and the VS Code webview
   // alike, and a rebuilt kernel always serves a matching chunk. A failed load rejects ONCE and clears
-  // the latch so a later attempt retries fresh.
+  // the latch so a later attempt retries fresh — and a tag whose `load` fires with NOTHING registered is a
+  // failed load too: a script the kernel is rewriting mid-fetch (esbuild writes dist/ in place) parses to
+  // nothing and fires `load`, not `error`. Until 2026-09-06 only `onerror` cleared the latch, so one such
+  // delivery left the rejection cached for the viewer's life: every later attempt repeated the notice
+  // without the fetch that would now succeed. Both loaders clear it in both branches now.
   let edChunk: Promise<{ mount: (host: HTMLElement, opts: object) => { value(): string; focus(): void; destroy(): void } }> | null = null;
   const editorChunk = () => edChunk || (edChunk = new Promise((res, rej) => {
     const w = window as any;
@@ -860,7 +879,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (!self) return rej(new Error("no bundle script tag to derive the editor chunk URL from"));
     const sc = document.createElement("script");
     sc.src = self.replace(/\/(render|feed|files)\.js/, "/editor-chunk.js");
-    sc.onload = () => { const e = (window as any).__rompEditor; e ? res(e) : rej(new Error("editor chunk loaded but did not register")); };
+    sc.onload = () => { const e = (window as any).__rompEditor; if (!e) edChunk = null; e ? res(e) : rej(new Error("editor chunk loaded but did not register")); };
     sc.onerror = () => { edChunk = null; rej(new Error("the editor bundle failed to load")); };
     document.head.appendChild(sc);
   }));
@@ -868,7 +887,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // bundle, registered as a window global, loaded by a script tag derived from THIS page's bundle URL exactly as the
   // editor's is — same directory, same ?v= token, so the kernel serves a matching chunk and, through the chunk's own
   // src, a matching worker. The structural type is inline on purpose: even `import type` from the chunk would be an
-  // import for the lazy-discipline pin (pdf-lazy.test.ts) to catch. A failed load rejects once and clears the latch.
+  // import for the lazy-discipline pin (pdf-lazy.test.ts) to catch. A failed load rejects once and clears the latch — in
+  // the load-without-register branch as in onerror (the editor loader's note above says why both), and so does the
+  // backstop in showPdfPages giving up on a load that never answered, so the next open fetches afresh.
   let pdfChunk: Promise<{ render: (bytes: ArrayBuffer, container: HTMLElement, opts?: object) =>
     Promise<{ pages: number; dispose(): void }> }> | null = null;
   const pdfChunkLoad = () => pdfChunk || (pdfChunk = new Promise((res, rej) => {
@@ -888,7 +909,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     }
     const sc = document.createElement("script");
     sc.src = self.replace(/\/(render|feed|files)\.js/, "/pdf-chunk.js");
-    sc.onload = () => { const p = (window as any).__rompPdf; p ? res(p) : rej(new Error("PDF chunk loaded but did not register")); };
+    sc.onload = () => { const p = (window as any).__rompPdf; if (!p) pdfChunk = null; p ? res(p) : rej(new Error("PDF chunk loaded but did not register")); };
     sc.onerror = () => { pdfChunk = null; rej(new Error("the PDF renderer failed to load")); };
     document.head.appendChild(sc);
   }));
@@ -950,7 +971,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // and the same shape: the browser's frame, with a one-line notice above it saying why and that a comment on the
   // whole file still works — bytes over the cap (refused HERE, before a megabyte of renderer is fetched for nothing),
   // an engine too old for the renderer (also before the fetch), a chunk or worker that will not load, a document
-  // pdf.js will not open, a document it opens with no pages in it. Never a blank pane, never a silent frame.
+  // pdf.js will not open, a document it opens with no pages in it, an attempt still unsettled at the backstop
+  // (PDF_RENDER_BACKSTOP_MS — a hung worker, a chunk fetch that stalls). Never a blank pane, never a silent frame.
   // A frame already in the body at these bytes (shownFrame) is the frame those refusals show, IN PLACE: it stays
   // through the attempt, under the loader at the top of its column, and takes the notice above it when the attempt
   // fails; only the pages actually mounting remove it. Before this, every open of the panel over such a PDF (one over
@@ -969,6 +991,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const col = kept ? kept.parentElement : null;
     const fallback = (why: string) => {
       if (my !== pdfSeq || !wrap.isConnected) return;   // the body moved on: whatever shows now is not this render's
+      disarmBackstop();                        // the attempt is over, whichever way it failed
       const note = el("div", "fileview-err");
       note.textContent = why + " — showing the browser's PDF viewer instead; comments on the whole file still work.";
       if (col) {                               // the kept frame: the attempt's loader and host go, the notice goes above it
@@ -993,6 +1016,21 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // frame's column and the host follows the column, so the frame itself is never moved.
     if (col) { col.prepend(wait); body.appendChild(host); }
     else body.replaceChildren(wait, host);
+    // The backstop (ui/CLAUDE.md, loading states; the constant's comment sizes it). Every other end of this attempt is an
+    // event — the resolve, a rejection, the panel or the viewer closing — but a render that never settles fires none: a
+    // worker stuck in a pathological content stream, or a chunk fetch that stalls without erroring, leaves the promise
+    // pending for good, and with no frame kept (the panel opened before the bytes landed; the pages were up and the file
+    // reloaded) the loader would be the whole body, nothing saying why, nothing on screen pointing at a way out. So the
+    // deadline gives up in the fallback's own shape: the frame, told why; the attempt retired (dropPdf), so a resolution
+    // landing later is disposed and mounts nothing, as after a closed panel; and the chunk's latch cleared, so the next
+    // open fetches a stalled chunk afresh (a loaded one is found again through its window global, with no fetch).
+    pdfBackstop = setTimeout(() => {
+      pdfBackstop = undefined;
+      if (my !== pdfSeq || !wrap.isConnected) return;   // dropPdf disarms before either can hold; the guard is the others' shape
+      pdfChunk = null;
+      fallback("the page renderer did not finish within " + PDF_RENDER_BACKSTOP_MS / 1000 + " seconds");
+      dropPdf();
+    }, PDF_RENDER_BACKSTOP_MS);
     Promise.all([pdfChunkLoad(), blob.arrayBuffer()]).then(([pdf, bytes]) => {
       if (my !== pdfSeq || !wrap.isConnected) return;
       return pdf.render(bytes, host, {
@@ -1006,6 +1044,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         onPageError: () => { if (my === pdfSeq && pdfHandle) fireRendered(); },
       }).then((h) => {
         if (my !== pdfSeq || !wrap.isConnected) { h.dispose(); return; }   // a stale resolution mounts nothing
+        disarmBackstop();                      // settled in time
         // pdf.js opens a page-less document (an empty page tree) and resolves with nothing drawn: an empty root would be
         // the blank pane this function exists to prevent, so the frame, told why, and the document released
         if (h.pages === 0) { h.dispose(); fallback("this PDF has no pages"); return; }

@@ -1138,8 +1138,20 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   state), pure tests for the card model, the Raw and Rendered mapping walks over the fixtures
   named in the acceptance criteria, and the message builder against the kernel's text.
 - `ui/webview/user-todo-links.test.ts` rewritten to pin `path-links.ts` and both callers
-  (Slice 0); `editor-lazy.test.ts` extended for the typed `track` option (Slice 5) and for the
-  PDF chunk staying lazy (Slice 4).
+  (Slice 0); `editor-lazy.test.ts` extended for the typed `track` option (Slice 5).
+- `ui/webview/pdf-lazy.test.ts` (Slice 4), on `editor-lazy.test.ts`'s model and in a file of its
+  own, so a Node under pdf.js's floor fails the PDF tests by name and leaves the editor pins
+  standing: the PDF chunk staying lazy (no main-bundle source imports pdfjs-dist or the chunk; the
+  contract is the window global), the chunk and its worker as esbuild entries, `file-view.ts`
+  loading the PDF chunk with the editor chunk's own find literal, the byte cap refused by name,
+  the page shells and the observer-driven draws, and the license named beside romp's own;
+  `pdf-lazy-render.test.ts` executes the draws over pdf.js's legacy build.
+- `ui/webview/file-review-docs.test.ts`: this plan's own record of its tests and docs, held to
+  the tree the way the posture test holds the Security posture section to the code: every test
+  file the Tests section names exists; the file the section credits with the PDF chunk staying
+  lazy holds that test; and each of the Docs section's two Slice 4 items (`SECURITY.md`'s bullet,
+  the `pdf-chunk.ts` header) is in its file unless the section says it is not yet landed, and
+  absent while it does, so whichever side moves first, the test names the other.
 - `ui/webview/file-review-posture.test.ts` (Slice 4): the Security posture section's PDF
   statements held against the code, so the section cannot drift from what ships: the section
   names the boundary; `getDocument` takes `data` only and the chunk fetches nothing; the chunk
@@ -1162,7 +1174,11 @@ kernel; `docs/install.md` names the tooling the installer links into `~/.claude/
 `SECURITY.md`'s output-sanitization bullet names the PDF renderer (pdf.js parsing on the
 dashboard's origin, in a Worker, with pixels as its only sink, as Security posture states it),
 and the `pdf-chunk.ts` header says the same in a sentence, so a session upgrading pdfjs-dist
-reads the boundary where it edits.
+reads the boundary where it edits. The slice's merge carried neither (its review, 2026-09-06):
+the bullet landed with the review's fixes; the `pdf-chunk.ts` header is not yet landed.
+`ui/webview/file-review-docs.test.ts` holds this paragraph to the two files: an item it calls not
+yet landed must be absent from its file and every other present, so the paragraph and the files
+move together.
 `claude/romp-session-prompt.md` gains its one sentence. `CONTEXT.md` already carries the
 vocabulary; `docs/adr/0002` records the storage decision. In track-changents (its author): the
 offers back named under Vendoring, and a README "Hosts" row.

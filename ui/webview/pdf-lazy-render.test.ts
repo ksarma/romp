@@ -17,6 +17,12 @@
 // headless Chromium: the worker fetched at the URL derived from the chunk's own tag, token and all; page 1 drawn
 // before render() resolves; page 2 drawn only once scrolled within the scroller's margin; dispose() emptying the host.
 //
+// What a wrapper holds, in both legs: its canvas, and — while a draw is pending with no bitmap — the romp loader over it
+// (div.fileview-load.fileview-pdf-page-load, the chunk's cue(); pdf-chunk-page-cue.test.ts owns its timing) and nothing
+// else. A drawn page's wrapper is its canvas alone: the cue leaves with the bitmap. The cue's swirl resolves through
+// mediaSrc() — /media on the page origin with no host-injected base — so the browser leg serves the extension's own
+// swirl there, as the kernel does: an unserved swirl is a console error, and the leg asserts a clean console.
+//
 // Synthetic fixtures only: the PDFs are built here as bytes (blank pages with one filled rectangle each, a
 // hand-built cross-reference table), never a recorded document — tools/pdf-smoke.test.mjs builds its fixture the
 // same way, and is not imported because importing a test file registers its tests here too.
@@ -93,6 +99,11 @@ const HOST_WIDTH = 800;                                  // the host's laid-out 
 const H1 = Math.round(HOST_WIDTH * 792 / 612);           // 1035: page 1's CSS height at that width
 const H2 = Math.round(HOST_WIDTH * 612 / 792);           // 618: page 2's
 const BLACK = "0,0,0,255", BLUE = "0,0,255,255", WHITE = "255,255,255,255";
+/** A wrapper's children as `TAG.class.class` — the shape both legs assert a wrapper's contents in. */
+const CANVAS_KID = "CANVAS.fileview-pdf-canvas";
+const CUE_KID = "DIV.fileview-load.fileview-pdf-page-load";
+const kidsOf = (w: { childNodes: ArrayLike<{ tagName: string; className: string }> }): string[] =>
+  Array.from(w.childNodes, (c) => [c.tagName, ...c.className.split(/\s+/).filter(Boolean)].join("."));
 
 /** An event the test waits for, with a backstop so a draw that never comes fails by name instead of hanging. */
 function awaited<T>(what: string, arm: (fire: (v: T) => void) => void): Promise<T> {
@@ -205,8 +216,11 @@ test("node: render() builds the DOM the panel reads — each wrapper pdfPages() 
     for (const w of wrappers) {
       assert.equal(w.parentNode, root, "each wrapper is a child of the root");
       assert.equal(w.style.position, "relative", "the overlay's anchor: inline, load-bearing");
-      assert.equal(w.childNodes.length, 1, "a wrapper holds its canvas and nothing else");
     }
+    // what each wrapper holds at resolve: page 1 drawn, so its canvas alone (the loader left with the bitmap); page 2
+    // asked eagerly (no observer under node) and still drawing, so its canvas with the loader over it — nothing else
+    assert.deepEqual(kidsOf(wrappers[0]), [CANVAS_KID], "a drawn page's wrapper holds its canvas and nothing else");
+    assert.deepEqual(kidsOf(wrappers[1]), [CANVAS_KID, CUE_KID], "a pending page's wrapper holds its canvas, first, and the loader over it");
     // the canvases, as file-comments' regionImages() finds them INSIDE each wrapper — the contract the stubs restate
     const canvases = wrappers.map((w) => w.querySelector(canvasSelector()) as CanvasEl | null);
     assert.ok(canvases.every(Boolean), "regionImages()'s lookup finds a canvas in every wrapper");
@@ -227,6 +241,7 @@ test("node: render() builds the DOM the panel reads — each wrapper pdfPages() 
     // no observer under node: every page draws — page 2 into its own canvas, at its own aspect
     const p2 = await second;
     assert.deepEqual(drawn.map((p) => p.index), [1, 2]);
+    assert.deepEqual(kidsOf(wrappers[1]), [CANVAS_KID], "page 2's bitmap is in: its loader is gone, the canvas alone remains");
     assert.equal(p2.canvas, canvases[1] as unknown as HTMLCanvasElement);
     assert.equal(p2.width, HOST_WIDTH); assert.equal(Math.round(p2.height), H2);
     assert.equal(canvases[1]!.width, HOST_WIDTH); assert.equal(canvases[1]!.height, H2);
@@ -299,6 +314,9 @@ test("chromium: the built chunk and worker — the worker fetched at the chunk's
   try {
     const chunkJs = webviewBundle(path.join(UI, "pdf-chunk.ts"));
     const workerJs = webviewBundle(path.join(EXT, "node_modules", "pdfjs-dist", "build", "pdf.worker.mjs"));
+    // the loader's swirl, as the kernel serves it at /media on the page origin — the URL mediaSrc() resolves to with no
+    // host-injected base; a page cue whose swirl 404s is a console error, and the leg ends on a clean console
+    const swirl = fs.readFileSync(path.join(EXT, "media", "romp-swirl-glyph.svg"));
     const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
     const errors: string[] = [], served: string[] = [];
     page.on("pageerror", (e: Error) => { errors.push(e.message); });
@@ -310,6 +328,7 @@ test("chromium: the built chunk and worker — the worker fetched at the chunk's
       if (u.pathname === "/view") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: VIEW_HTML });
       if (u.pathname === "/dist/pdf-chunk.js") return js(chunkJs);
       if (u.pathname === "/dist/pdf-worker.js") return js(workerJs);
+      if (u.pathname === "/media/romp-swirl-glyph.svg") return route.fulfill({ status: 200, contentType: "image/svg+xml", body: swirl });
       return route.fulfill({ status: 404, body: "" });
     });
     await page.goto("http://romp.test/view");
@@ -324,11 +343,22 @@ test("chromium: the built chunk and worker — the worker fetched at the chunk's
       const wrappers = Array.from(body.querySelectorAll(pagesSel)) as HTMLElement[];
       const canvases = wrappers.map((pg) => pg.querySelector(canvasSel) as HTMLCanvasElement | null);
       const px = (c: HTMLCanvasElement, x: number, y: number) => Array.from(c.getContext("2d")!.getImageData(x, y, 1, 1).data).join(",");
+      // each wrapper's children as TAG.class.class (kidsOf's shape, restated here: the page has no access to the test's scope)
+      const kidOf = (c: Node) => [(c as HTMLElement).tagName, ...String((c as HTMLElement).className).split(/\s+/).filter(Boolean)].join(".");
+      const kids = (p: HTMLElement) => Array.from(p.childNodes, kidOf);
+      w.__kids = kids;
+      // page 2's wrapper, watched from before the scroll: every child added or removed, in order — the loader going up
+      // when the observer asks for its draw and coming down as the bitmap lands (records arrive on microtasks, so the
+      // log is complete before the draw's onPage is seen from outside)
+      const log2: string[][] = []; w.__log2 = log2;
+      new MutationObserver((recs) => {
+        for (const r of recs) { for (const n of Array.from(r.addedNodes)) log2.push(["add", kidOf(n)]); for (const n of Array.from(r.removedNodes)) log2.push(["remove", kidOf(n)]); }
+      }).observe(wrappers[1], { childList: true });
       return {
         pages: h.pages as number, hostChildren: host.childNodes.length, rootClass: (host.firstChild as HTMLElement).className,
         wrappers: wrappers.map((p) => p.dataset.page + " " + getComputedStyle(p).position + " " + p.style.aspectRatio + " " + Math.round(p.getBoundingClientRect().height)),
         canvases: canvases.map((c) => c && (c.dataset.page + " " + c.width + "x" + c.height + " " + Math.round(c.getBoundingClientRect().width))),
-        oneChildEach: wrappers.every((p) => p.childNodes.length === 1),
+        kids: wrappers.map(kids),
         dpr: window.devicePixelRatio, drawn: drawn.slice(),
         p1: [px(canvases[0]!, 10, 10), px(canvases[0]!, canvases[0]!.width - 10, canvases[0]!.height - 15)],
       };
@@ -338,11 +368,16 @@ test("chromium: the built chunk and worker — the worker fetched at the chunk's
     assert.equal(first.hostChildren, 1); assert.equal(first.rootClass, "fileview-pdf");
     // the worker: fetched once, from the chunk's own directory, with the chunk's token — derived from the tag, not configured
     assert.deepEqual(served.filter((s) => s.includes("pdf-worker")), ["/dist/pdf-worker.js" + V], "the worker rode the chunk's URL, ?v= and all");
+    // page 1's cue went up before its draw: its swirl was fetched where mediaSrc() points with no injected base — the
+    // page origin's /media, the kernel's route (once at least; a later cue's identical <img> may come from the image cache)
+    assert.ok(served.includes("/media/romp-swirl-glyph.svg"), "the loader's swirl was fetched from /media on the page origin; served: " + served.join(" "));
     // the shells, as the panel reads them: both wrappers at page 1's aspect until page 2 is read, page 1's canvas drawn at the host's width
     assert.deepEqual(first.wrappers, ["1 relative 612 / 792 " + H1, "2 relative 612 / 792 " + H1]);
     assert.deepEqual(first.canvases, ["1 " + Math.round(HOST_WIDTH * dpr) + "x" + Math.round(H1 * dpr) + " " + HOST_WIDTH, "2 0x0 " + HOST_WIDTH],
       "page 1 drawn (backing store at the display's ratio), page 2 an empty 0×0 canvas the width of the page");
-    assert.equal(first.oneChildEach, true, "each wrapper holds its canvas and nothing else");
+    // page 1 drawn (its loader left with the bitmap); page 2 beyond the scroller's margin with nothing pending, so no
+    // loader over it yet: each wrapper holds its canvas alone
+    assert.deepEqual(first.kids, [[CANVAS_KID], [CANVAS_KID]], "each wrapper holds its canvas and nothing else: page 1 drawn, page 2 not yet asked");
     assert.deepEqual(first.drawn, [{ index: 1, width: HOST_WIDTH, height: HOST_WIDTH * 792 / 612, same: true }], "page 1 before resolve, into the canvas the lookup finds; page 2 is outside the scroller's margin");
     assert.deepEqual(first.p1, [BLACK, WHITE]);
     // scroll the BODY (the viewer's scroller, the observer's root) by a fixed 600px: page 2 comes within the margin
@@ -356,9 +391,11 @@ test("chromium: the built chunk and worker — the worker fetched at the chunk's
       const wrappers = Array.from(document.getElementById("body")!.querySelectorAll(pagesSel)) as HTMLElement[];
       const c = wrappers[1].querySelector(canvasSel) as HTMLCanvasElement;
       const px = (x: number, y: number) => Array.from(c.getContext("2d")!.getImageData(x, y, 1, 1).data).join(",");
-      return { drawn: w.__drawn, aspect2: wrappers[1].style.aspectRatio, size2: c.width + "x" + c.height, p2: [px(c.width - 20, c.height - 20), px(10, 10)] };
+      return { drawn: w.__drawn, aspect2: wrappers[1].style.aspectRatio, size2: c.width + "x" + c.height, p2: [px(c.width - 20, c.height - 20), px(10, 10)], kids2: w.__kids(wrappers[1]) as string[], log2: w.__log2 as string[][] };
     }, [pagesSelector(), canvasSelector()]);
     assert.deepEqual(second.drawn.map((d: any) => [d.index, d.same]), [[1, true], [2, true]], "page 2 drew once, into the canvas its wrapper holds; page 1 was not redrawn");
+    assert.deepEqual(second.log2, [["add", CUE_KID], ["remove", CUE_KID]], "page 2 wore the loader from the moment its draw was asked until its bitmap landed, and nothing else came or went");
+    assert.deepEqual(second.kids2, [CANVAS_KID], "page 2's bitmap is in: the loader it wore while drawing is gone, the canvas alone remains");
     assert.equal(second.aspect2, "792 / 612", "drawn, page 2's shell has its own aspect");
     assert.equal(second.size2, Math.round(HOST_WIDTH * dpr) + "x" + Math.round(H2 * dpr));
     assert.deepEqual(second.p2, [BLUE, WHITE], "page 2's fill is in page 2's canvas");

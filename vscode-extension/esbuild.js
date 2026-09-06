@@ -133,29 +133,71 @@ function testBuild() {
 // just failed to build. A failed build now leaves dist/ byte-for-byte as it was, so "the rebuild
 // failed" and "dist is older than the sources" stay true together. Watch mode and the test build
 // write directly as before: a dev loop wants each rebuild on disk at once.
+//
+// Each output then reaches its served name by RENAME, not by a write into it. The kernel serves /dist/
+// from this directory on other threads while it rebuilds, and a write into the served path truncates
+// the file first and fills it afterwards, so a request in that window got an empty or partial bundle.
+// For most bundles that is one failed page load; for dist/pdf-worker.js, the largest output, the
+// failure lasts past the write: a module Worker whose script fails to parse makes pdf.js disable its
+// Worker path with a flag it never resets, so every PDF opened afterwards failed until the page was
+// reloaded, long after the file on disk was whole (the review, 2026-09-06). So each output is written
+// whole to a hidden sibling in its own directory (`.<name>.tmp-<pid>-<n>`: the same filesystem, so the
+// rename is atomic; a name ending in neither .js nor .css, so the kernel's newest-mtime token never
+// counts it) and then renamed over the served name, and a reader gets the old bytes or the new,
+// complete either way. Every output is staged before any is renamed, so an fs error while staging (no
+// space, a permission) removes the staged files and leaves dist/ unchanged. A staging file an earlier
+// run left behind (killed between its write and its rename) is removed once that run's pid is gone,
+// and kept while the pid runs: two builds on one dist/ each rename their own.
+const STAGING = /^\..+\.tmp-(\d+)-\d+$/;
+
+function stagingPath(final, n) {
+  return path.join(path.dirname(final), "." + path.basename(final) + ".tmp-" + process.pid + "-" + n);
+}
+
+function pidRunning(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return !(e && e.code === "ESRCH"); }
+}
+
+function removeStaleStaging(dir) {
+  for (const name of fs.readdirSync(dir)) {
+    const m = STAGING.exec(name);
+    if (m && !pidRunning(Number(m[1]))) fs.rmSync(path.join(dir, name), { force: true });
+  }
+}
+
 async function buildAll(configs) {
   const results = [];
   for (const cfg of configs) results.push(await esbuild.build({ ...cfg, write: false }));
-  const written = [];
-  for (const r of results) {
-    for (const f of r.outputFiles) {
-      fs.mkdirSync(path.dirname(f.path), { recursive: true });
-      fs.writeFileSync(f.path, f.contents);
-      written.push(f.path);
-    }
+  const outputs = results.flatMap((r) => r.outputFiles);
+  for (const dir of new Set(outputs.map((f) => path.dirname(f.path)))) {
+    fs.mkdirSync(dir, { recursive: true });
+    removeStaleStaging(dir);
   }
-  return written;
+  const staged = [];
+  try {
+    for (const f of outputs) {
+      const tmp = stagingPath(f.path, staged.length);
+      fs.writeFileSync(tmp, f.contents);
+      staged.push(tmp);
+    }
+    outputs.forEach((f, i) => fs.renameSync(staged[i], f.path));
+  } catch (e) {
+    for (const tmp of staged) fs.rmSync(tmp, { force: true });
+    throw e;
+  }
+  return outputs.map((f) => f.path);
 }
 
 // The LAST line on stderr is the one the kernel shows: its in-place rebuild puts the tail of this
 // process's stderr into the notice that tells the person the served UI is stale, and the tail of an
 // esbuild BuildFailure printed whole is its stack through esbuild's own transport (`at Socket.emit`,
-// `errors: [Getter/Setter]`) — no cause, no cure. esbuild has already printed each error with its code
-// frame (logLevel "info"), so this names the cause in one line of at most 300 characters (the kernel's
-// tail) and, for the common cause, the cure: an unresolvable package — a bare specifier or a
-// node_modules/ path that is not a file of this checkout — is a dependency this node_modules lacks,
-// and `npm install` is what fixes it. A relative import or a syntax error gets its text, not that cure.
-// `untouched` names the output dir the atomic write left alone, when that is what failed.
+// `errors: [Getter/Setter]`), which names neither the failing import nor what to do about it. esbuild
+// has already printed each error with its code frame (logLevel "info"), so this names the cause in one
+// line of at most 300 characters (the kernel's tail) and, for the common cause, the fix: an unresolvable
+// package — a bare specifier or a node_modules/ path that is not a file of this checkout — is a
+// dependency this node_modules lacks, and `npm install` is what fixes it. A relative import or a syntax
+// error gets its text and no npm install line. `untouched` names the output dir the failed build left
+// unchanged, when that is what failed.
 function failureSummary(e, untouched) {
   const errors = e && Array.isArray(e.errors) ? e.errors : null;
   if (!errors) return "esbuild.js: build failed: " + (e && e.message ? e.message : String(e));

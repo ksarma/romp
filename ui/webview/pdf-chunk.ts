@@ -27,6 +27,17 @@
 // JavaScript because esbuild emits it as pdf-worker.js, not .mjs. No script tag to derive from means
 // render() throws, again by name.
 //
+// THE BOUNDARY: a PDF is untrusted input — sessions download PDFs into the trees the viewer shows, and the person
+// opens them — and this module parses it on the dashboard's authenticated origin (pdf.js in that same-origin
+// Worker, the pages painted on the main thread), where the browser's own PDF viewer would have parsed it in a
+// process of its own. Pixels are the only sink: pdf.js's core alone is imported, never pdfjs-dist/web, so no text
+// layer, annotation layer, form field, link or script from the file reaches the DOM; getDocument is handed bytes,
+// never a URL, so pdf.js fetches nothing; and the installed build has no eval path. Those properties are stated
+// under "Security posture" in plans/file-review.md and held against this file and the installed package by
+// ui/webview/file-review-posture.test.ts. Upgrading pdfjs-dist re-verifies the no-eval property (it belongs to the
+// installed version, not to the API) and restates it there if the answer changes; anything that would let PDF
+// content become DOM — a text layer over a page, clickable links — widens the sink list and is stated there first.
+//
 // PUBLIC API — the window global `__rompPdf`:
 //
 //   render(bytes: ArrayBuffer, container: HTMLElement, opts?: {
@@ -41,7 +52,15 @@
 //   scroller has its full extent before any pixel is drawn) with one canvas each (canvas.fileview-pdf-canvas,
 //   data-page too, CSS width 100%, the page's aspect-ratio too so its box is the page's whether or not a
 //   bitmap is in it). A canvas with no bitmap is 0×0 — from the start, and again after an eviction — so an
-//   overlay reading its backing store as the page's natural size sees "unknown", never a stray default.
+//   overlay reading its backing store as the page's natural size sees "unknown", never a stray default; and a
+//   canvas with a bitmap holds a COMPLETE one. The draw is STAGED (paint): pdf.js draws each page into a canvas of
+//   its own, off the DOM, and the page's canvas takes the finished bitmap in one synchronous step — sized, then
+//   filled, with nothing else running on the main thread between — so no reader of it (the panel cutting a card's
+//   crop, an overlay measuring it) ever finds it sized and empty, and a sharpening redraw keeps the old bitmap on
+//   screen, CSS-scaled, until the new one replaces it. Drawing in place did neither: assigning a canvas's width or
+//   height resets its bitmap, and pdf.js fills its target white before the first operator runs (a microtask in,
+//   the operators following in animation frames), so every draw blanked the page for its whole length, a redraw
+//   flashed white, and a crop cut meanwhile was blank and kept (the review, 2026-09-06; pdf-chunk-staged-draw.test.ts).
 //   A page whose draw is PENDING — asked of the pump, queued behind the draws ahead of it or in flight — with no
 //   bitmap to show meanwhile carries the romp loader over its sheet (div.fileview-load.fileview-pdf-page-load: the
 //   viewer's own loader markup on the viewer's own classes, absolutely positioned over the wrapper, pointer-events
@@ -102,7 +121,10 @@
 // TESTING IT: `render` is `makeRender(pdfjsLib)` over the modern build imported below, which is what the
 // browsers run. That build needs a newer engine than the Node the tests run on, and pdf.js supports only
 // its legacy build under Node — so a test hands makeRender the legacy build (or a stand-in) and drives the
-// same pump, observer and failure paths against it; the browser test loads the built chunk as shipped.
+// same pump, observer and failure paths against it; the browser test loads the built chunk as shipped. Their canvases
+// are stand-ins — record-only fakes, or elements over @napi-rs/canvas in the legacy-build legs — and the staged draw's
+// copy reads its source through the stage's own context's `.canvas` (the stage itself in a browser), which is what
+// lets a stand-in over the library hand drawImage the library's surface, the one source it takes.
 import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 import { mediaSrc } from "./media";   // the loader's swirl: the host-injected media base, as every asset URL resolves
@@ -265,7 +287,8 @@ export function makeRender(pdfjsLib: PdfLib) {
       canvas.dataset.page = String(i);
       canvas.style.display = "block";
       canvas.style.width = "100%";            // width-fit: the bitmap is drawn at the root's width, and a
-      canvas.style.height = "auto";           // width change scales it at once (a redraw sharpens it after)
+      canvas.style.height = "auto";           // width change scales it at once; the redraw that sharpens it replaces
+                                              // the bitmap only once drawn (paint's staging), never blanking it first
       canvas.style.aspectRatio = aspect;      // the box is the page's with or without a bitmap: an overlay placed on
       canvas.width = 0; canvas.height = 0;    // it before the draw, or after an eviction, covers the page, not a 0-tall
                                               // or default-sized band. No bitmap is 0×0, never the element default.
@@ -352,12 +375,36 @@ export function makeRender(pdfjsLib: PdfLib) {
       const dpr = backingScale(vp.width, vp.height, typeof window !== "undefined" ? window.devicePixelRatio : 1);
       p.wrap.style.aspectRatio = `${base.width} / ${base.height}`;
       p.canvas.style.aspectRatio = p.wrap.style.aspectRatio;
-      p.canvas.width = Math.round(vp.width * dpr);
-      p.canvas.height = Math.round(vp.height * dpr);
-      const task = proxy.render({ canvas: p.canvas, viewport: vp, transform: dpr === 1 ? undefined : [dpr, 0, 0, dpr, 0, 0] });
+      // STAGED (the header): pdf.js draws into a canvas of its own, off the DOM, and the page's canvas takes the finished
+      // bitmap in one synchronous step below — so it is 0×0 or complete, never sized and empty, and a redraw keeps the
+      // old bitmap on screen until the new one is in. Drawn in place, the page was blank for the length of every draw:
+      // assigning width or height resets a canvas's bitmap, and pdf.js fills its target white before its first operator
+      // runs (a microtask in, the operators in animation frames). The panel, reading a sized canvas as a drawn page, cut
+      // a blank crop from that window and kept it; every width change flashed every page on screen (the review, 2026-09-06).
+      const stage = document.createElement("canvas");
+      stage.width = Math.round(vp.width * dpr);
+      stage.height = Math.round(vp.height * dpr);
+      const task = proxy.render({ canvas: stage, viewport: vp, transform: dpr === 1 ? undefined : [dpr, 0, 0, dpr, 0, 0] });
       p.task = task;
-      try { await task.promise; } finally { if (p.task === task) p.task = null; }
-      if (disposed) return;
+      try {
+        await task.promise;
+        // evicted as the draw landed: drop() cancelled a task pdf.js had already finished, so it resolved all the same.
+        // No bitmap for a page beyond the margin — drawnAt stays 0, and the page draws again on return.
+        if (disposed || !p.visible) return;
+        const drawn = stage.getContext("2d");
+        if (!drawn) throw new Error("the staging canvas gave no 2d context after the draw");
+        p.canvas.width = stage.width;            // sized, then filled, with nothing yielding between: from here to the
+        p.canvas.height = stage.height;          // drawImage the main thread runs nothing else, so no reader sees a sized, empty canvas
+        // the context attributes pdf.js gave this canvas when it drew into it directly: opaque (a page is), and marked for
+        // readback — what is taken from this canvas is its pixels (the panel's crops), and a plain context has Chromium
+        // warn on the console at every getImageData
+        const ctx = p.canvas.getContext("2d", { alpha: false, willReadFrequently: true });
+        if (!ctx) throw new Error("the page's canvas gave no 2d context");
+        ctx.drawImage(drawn.canvas, 0, 0);       // drawn.canvas: the stage itself (a test's stand-in hands over the surface behind it)
+      } finally {
+        if (p.task === task) p.task = null;
+        stage.width = 0; stage.height = 0;       // the staging store is released now, not when the collector gets to it
+      }
       p.drawnAt = cssW;
       uncue(p);                                  // the bitmap is in: the loader gives way to pixels, before the caller hears of them
       opts.onPage?.({ index: p.index, canvas: p.canvas, width: vp.width, height: vp.height });

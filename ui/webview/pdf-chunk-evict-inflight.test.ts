@@ -29,6 +29,11 @@ class FakeEl {
   textContent = "";
   clientWidth = 0;
   width = 300; height = 150;
+  /** A canvas's 2D context, as the chunk's staged draw uses one: the stage's, whose `.canvas` it copies from, and the
+   *  page's, which it copies into. Nothing here has pixels — the stand-in pdf.js draws none — so the copy is a no-op. */
+  getContext(kind: string): { canvas: FakeEl; drawImage(): void } | null {
+    return kind === "2d" && this.tagName === "CANVAS" ? { canvas: this, drawImage: () => {} } : null;
+  }
   constructor(tag: string) { this.tagName = tag.toUpperCase(); }
   appendChild(c: FakeEl): FakeEl { c.remove(); c.parentElement = this; this.children.push(c); return c; }
   remove(): void {

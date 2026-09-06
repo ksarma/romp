@@ -167,7 +167,11 @@ export class RegionLayer {
    *  targets the rectangle, whose data-act="fcopen" the row's delegate routes. Capture then waits for the
    *  drag, if one comes: it is taken when the band appears, so a drag begun on a rectangle still survives
    *  leaving the picture. The press's default is still cancelled (no selection starts behind the overlay),
-   *  and with it the focus the mousedown would have given the rectangle — so the rectangle is focused here. */
+   *  and with it the focus the mousedown would have given the rectangle — so the rectangle is focused here,
+   *  without a scroll: a mouse-initiated focus never scrolls, but a scripted focus() brings the element into
+   *  view, and a rectangle straddling the body's edge (a PDF page or a tall image is taller than .fileview-body)
+   *  jumped the content under the held pointer on every first press (2026-09-06). preventScroll keeps the
+   *  emulation faithful, as the panel's refocusRegion already does. */
   private arm(): void {
     const o = this.overlay;
     const capture = (ev: PointerEvent) => {
@@ -197,7 +201,7 @@ export class RegionLayer {
       this.press = { id: ev.pointerId, start: { x: ev.clientX, y: ev.clientY }, fromRegion, captured: !fromRegion };
       if (!fromRegion) capture(ev);
       ev.preventDefault();                               // no native image drag, no selection behind the overlay
-      if (region && typeof region.focus === "function") region.focus();   // the focus the cancelled mousedown would have given it
+      if (region && typeof region.focus === "function") region.focus({ preventScroll: true });   // the focus the cancelled mousedown would have given it, and not the scroll it would not
     });
     o.addEventListener("pointermove", (ev: PointerEvent) => {
       const p = this.press;

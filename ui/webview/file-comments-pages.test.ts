@@ -6,7 +6,8 @@
 //   • a region whose page the regenerated document no longer has: stale, no rectangle, and Re-place STILL offered —
 //     the tag names Re-place as the remedy, and a PDF re-place may land on any page;
 //   • a pending region composer re-found by page number after a reload hands back new canvases;
-//   • keyboard focus on a rectangle kept across a page draw.
+//   • keyboard focus on a rectangle kept across a page draw (the node stays: a repaint updates it in place), and
+//     following the comment's rectangle when a paint pass remakes it on another page.
 // Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -26,6 +27,8 @@ class Doc {
   hidden = false;
   /** the focus model: what holds the keyboard; the body when nothing does */
   activeElement: E | null = null;
+  /** the last focus() that took: the element and the options it was given (a refocus must ask for no scroll) */
+  lastFocus: { el: E; opts: unknown } | null = null;
   listeners = new Map<string, Array<(ev: unknown) => void>>();
   constructor() { this.body = new E(this, "BODY"); this.activeElement = this.body; }
   createElement(tag: string): E { return new E(this, tag.toUpperCase()); }
@@ -194,7 +197,7 @@ class E extends N {
   }
   scrollIntoView(): void { this.scrolled++; }
   /** Focus lands only on a focusable, enabled element — a div with no tabindex ignores focus(), as the browser does. */
-  focus(_opts?: unknown): void { if (this.tabIndex >= 0 && !this.disabled) this.ownerDocument.activeElement = this; }
+  focus(opts?: unknown): void { if (this.tabIndex >= 0 && !this.disabled) { this.ownerDocument.activeElement = this; this.ownerDocument.lastFocus = { el: this, opts }; } }
   blur(): void { if (this.ownerDocument.activeElement === this) this.ownerDocument.activeElement = this.ownerDocument.body; }
 }
 const VOID = new Set(["br", "hr", "img", "input", "meta", "link", "area", "base", "col", "embed", "source", "track", "wbr"]);
@@ -470,7 +473,7 @@ test("a pending region drawn on page 2 survives the pages being redrawn: the com
 
 // ── keyboard focus on a rectangle across a page draw ───────────────────────────────────────────────
 
-test("keyboard focus on a rectangle survives a page draw: the overlays are rebuilt, the rebuilt rectangle is refocused, and Enter opens its card; a focus elsewhere is left alone", async () => {
+test("keyboard focus on a rectangle survives a page draw: the rectangle is the same node, still on its overlay and still focused, and Enter opens its card; a rectangle remade on another page (the comment moved) takes the keyboard with it, without a scroll; a focus elsewhere is left alone", async () => {
   drawn.length = 0;
   const h = await harness();
   const c1 = pageComment(1);
@@ -479,14 +482,34 @@ test("keyboard focus on a rectangle survives a page draw: the overlays are rebui
   const rect = () => h.q('.fc-region[data-id="' + ID + '"]')!;
   const r0 = rect();
   assert.equal(r0.tabIndex, 0, "a Tab stop");
+  assert.equal(r0.parentNode, h.overlays()[0], "on page 1's overlay");
   r0.focus();
   assert.equal(doc.activeElement, r0, "Tab reached the rectangle");
-  h.repaint();                                          // the chunk drew a page (onPage → fireRendered): every overlay's rectangles are rebuilt
-  assert.equal(r0.parentNode, null, "the old rectangle left the DOM");
-  assert.notEqual(rect(), r0, "a new node stands in its place");
-  assert.equal(doc.activeElement, rect(), "…and holds the keyboard, which did not fall to the body");
+  doc.lastFocus = null;
+  h.repaint();                                          // the chunk drew a page (onPage → fireRendered): every overlay's rectangles are brought up to date IN PLACE
+  assert.equal(rect(), r0, "the same node: a repaint updates the rectangle it has, never removes and remakes it (a remade node would take a held click with it)");
+  assert.equal(r0.parentNode, h.overlays()[0], "still on its overlay");
+  assert.equal(h.qa('.fc-region[data-id="' + ID + '"]').length, 1, "one rectangle for the comment");
+  assert.equal(doc.activeElement, r0, "…and it holds the keyboard, which never fell to the body");
+  assert.equal(doc.lastFocus, null, "so nothing had to be refocused");
   doc.activeElement!.dispatch("keydown", { key: "Enter" });
   assert.ok(h.q('.fc-card.open[data-id="' + ID + '"]'), "Enter opens the card, as before the draw");
+  // the comment moved to page 2 (a Re-place, the session's or another's): page 1's pass removes its rectangle, which
+  // drops the keyboard to the body; page 2's pass makes one; the keyboard is put back on that one — the mend that
+  // remains for a rectangle a pass does remake — and asks for no scroll, so the view is not yanked to page 2
+  const moved = pageComment(2, {}, { region: R2 });
+  await h.restatus(withStore([moved]));
+  assert.equal(r0.parentNode, null, "page 1's rectangle left");
+  const r1 = rect();
+  assert.notEqual(r1, r0, "a new rectangle…");
+  assert.equal(r1.parentNode, h.overlays()[1], "…on page 2's overlay");
+  assert.equal(h.qa('.fc-region[data-id="' + ID + '"]').length, 1, "and only there");
+  assert.equal(doc.activeElement, r1, "the keyboard followed the comment's rectangle");
+  assert.equal(doc.lastFocus!.el, r1);
+  assert.deepEqual(doc.lastFocus!.opts, { preventScroll: true }, "a refocus never scrolls");
+  h.repaint();
+  assert.equal(rect(), r1, "and the next draw keeps that node too");
+  assert.equal(doc.activeElement, r1);
   // a redraw while the composer's input holds the keyboard moves nothing: the input is never rebuilt
   h.drag(h.overlays()[1], [150, 656], [250, 716]);
   assert.equal(doc.activeElement, h.input(), "the composer took the keyboard");
@@ -495,8 +518,10 @@ test("keyboard focus on a rectangle survives a page draw: the overlays are rebui
   // nothing focused: a draw focuses nothing
   h.input().blur();
   assert.equal(doc.activeElement, doc.body);
+  doc.lastFocus = null;
   h.repaint();
   assert.equal(doc.activeElement, doc.body, "no stray focus");
+  assert.equal(doc.lastFocus, null, "nothing was focused by the draw");
   h.dispose();
 });
 
@@ -504,8 +529,8 @@ test("keyboard focus on a rectangle survives a page draw: the overlays are rebui
 
 test("source pins: the keep runs before any layer is dropped, the refocus scrolls nothing, and Re-place is gated on the picture OR the vanished page", () => {
   const SRC = web("file-comments.ts");
-  assert.match(SRC, /private paintRegions\(\): void \{\n\s*const keep = this\.focusedRegion\(\);/, "the focused rectangle is read before dispose or paint removes it");
-  assert.match(SRC, /if \(keep\) this\.refocusRegion\(keep\);\n\s*\}/, "…and refocused after every layer has painted");
+  assert.match(SRC, /private paintRegions\(\): void \{\n\s*const keep = this\.focusedRegion\(\);/, "the focused rectangle is read before a layer is dropped or a pass removes a rectangle (a comment moved to another page)");
+  assert.match(SRC, /if \(keep\) this\.refocusRegion\(keep\);\n\s*\}/, "…and refocused after every layer has painted, when the keyboard fell to the body");
   assert.match(SRC, /if \(r\) r\.focus\(\{ preventScroll: true \}\);/, "a page drawing in as it scrolls near must not yank the view back");
   assert.match(SRC, /if \(\(picture \|\| gone\) && !c\.resolved && this\.drawsRegions\(\)\) \{/);
   assert.match(SRC, /const gone = this\.pageGone\(c\);\n\s*const regionSt = c\.target \? regionState\(c\.target, this\.status\) : "current";\n\s*if \(gone \|\| regionSt === "stale"\) \{/, "a vanished page reads stale whatever the hashes say");
