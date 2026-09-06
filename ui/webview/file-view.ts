@@ -185,7 +185,7 @@ let viaRelay = false;
 // answers asynchronously (the GitHub link's kernel ask) mounts hidden and reveals itself when its
 // reply lands. Ordering is registration order, after the built-ins.
 // `todoId`: the user todo the file was opened FROM, when it was (the Waiting-on-you pane's detail link,
-// plans/file-review.md Slice 0) — so an action can tie its work back to the ask; absent for every other open.
+// plans/file-review.md Slice 0) — so an action can tie its work back to the todo; absent for every other open.
 export interface FileViewActionCtx { path: string; sid: string | null; todoId?: string | null; }
 export interface FileViewAction { id: string; mount: (ctx: FileViewActionCtx) => HTMLElement | null; }
 const fileViewActions: FileViewAction[] = [];

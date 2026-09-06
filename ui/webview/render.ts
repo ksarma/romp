@@ -1359,7 +1359,7 @@ function bindPathLink(a: HTMLElement): HTMLElement {
 // your own bubbles) — a relative `design/foo.md` opens too, resolved against the session's cwd (the user
 // 2026-07-06). marked doesn't autolink these and DOMPurify strips the file: scheme, so without this they read
 // as dead text. Deliberately NOT applied to tool-use summaries. The token walk itself is path-links.ts's
-// (shared with the Waiting-on-you pane); this is the chat's dress around it: the code-span URL pass, the
+// (shared with the Waiting-on-you pane); what follows here is chat-only: the code-span URL pass, the
 // kernel-verified spaced spans, the click binding, and the figure previews.
 // `skipThumbs`: paths this turn ALREADY renders as full in-bubble images (a pasted screenshot's
 // ev.images) — they stay clickable links but are excluded from the mentioned-path thumbnail strip,

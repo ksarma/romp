@@ -180,9 +180,14 @@ test("waiting.ts links the detail at BOTH sites — the row fold and the Reply m
   assert.equal((WAITING.match(/linkDetailPaths\(/g) || []).length, 3, "defined once, applied at the two sites");
 });
 
-test("the list's delegate routes openpath from the span's sid and the row's todo id — click-safe across the per-frame rebuild", () => {
+test("the list's delegate routes openpath from the ROW's sid and todo id, never the span's — click-safe across the per-frame rebuild", () => {
   const map = WAITING.slice(WAITING.indexOf("delegate(list, {"), WAITING.indexOf("// A tap anywhere that is NOT an armed Dismiss"));
-  assert.match(map, /\n    openpath: \(x\) => \{\n\s*const p = x\.dataset\.path, sid = x\.dataset\.sid, tid = x\.closest<HTMLElement>\("\.ut-item"\)\?\.dataset\.tid;\n\s*if \(p && sid && tid\) openTodoPath\(p, sid, tid\);\n\s*\},/);
+  // both ids come from the enclosing .ut-item: path-links.ts stamps data-sid on a bare path's span and NOT
+  // on a file:// URI's (an absolute path names no session), so a handler gated on the span's sid dropped
+  // every URI click (the 2026-09-06 review; waiting-detail-link.test.ts clicks all three shapes for real)
+  assert.match(map, /\n    openpath: \(x\) => \{\n\s*const row = x\.closest<HTMLElement>\("\.ut-item"\);\n\s*const p = x\.dataset\.path, sid = row\?\.dataset\.sid, tid = row\?\.dataset\.tid;\n\s*if \(p && sid && tid\) openTodoPath\(p, sid, tid\);\n\s*\},/);
+  const handler = map.slice(map.indexOf("\n    openpath: (x) => {"), map.indexOf("\n    },", map.indexOf("\n    openpath: (x) => {")));
+  assert.doesNotMatch(handler, /x\.dataset\.sid/, "the span's own sid is not the gate — a URI span has none");
   // the row carries both ids the handler reads
   assert.match(WAITING, /item\.dataset\.sid = w\.sid; item\.dataset\.tid = w\.todo\.id;/);
   // no per-node click binding anywhere near the links

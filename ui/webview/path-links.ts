@@ -11,11 +11,12 @@
 // file:// URI (so a resolver uses a session's cwd), and data-sid when the caller named the session the
 // text belongs to. What a click DOES is the hosting document's call: render.ts binds openPath per span
 // (the editor in VS Code; the viewer, or the shell's relay, on the web) and paints its figure previews
-// from the hits; waiting.ts routes the act through its delegate to the shell's viewFile relay. The one
-// listener this module puts on a span is the keyboard's: Enter or Space on a focused link clicks it, so
-// the host's click handler is reached from the keyboard too (pathLinkKey, below). A document that cannot
-// act on a click should not call this — a link that does nothing is worse than text (ui/CLAUDE.md, every
-// control acknowledges).
+// from the hits; waiting.ts routes the act through its delegate to the shell's viewFile relay. The
+// listeners this module puts on a span are about focus, not the action: Enter or Space on a focused link
+// clicks it, so the host's click handler is reached from the keyboard too (pathLinkKey, below), and a
+// mouse press does not focus the link, so a click leaves focus where a click on plain text leaves it
+// (pathLinkPress / pathLinkRelease, below). A document that cannot act on a click should not call this —
+// a link that does nothing is worse than text (ui/CLAUDE.md, every control acknowledges).
 
 export const PATH_LINK_ACT = "openpath";
 
@@ -38,6 +39,34 @@ function pathLinkKey(e: KeyboardEvent): void {
   e.preventDefault();
   (e.currentTarget as HTMLElement).click();
 }
+// A tab stop is focusable by the pointer too, and that is the one thing the plain span it replaced was
+// not: a mouse click left focus on the body, a click on a tabindex span leaves it on the link. The chat's
+// keyboard model reads the difference — Enter from the bare transcript (nothing focused) drops the cursor
+// into the message box (render.ts, the user 2026-06-26) — and the viewer a click opens takes no focus, so
+// after Escape closed it the next Enter found the link still focused and opened the file AGAIN instead of
+// the message box; a selection dragged FROM a link met the same fate on Enter, re-opening the file rather
+// than seeding the quote, and in Chromium the focus change itself ended that drag's selection before it
+// began (2026-09-06). So a mouse press does not focus the link at all: the browser focuses the span as the
+// mousedown's default action, run after its listeners, so the press drops the tabindex attribute — a span
+// without one is not focusable — and focus lands where a click on plain text puts it, the body, as
+// before, with the click and the selection the press starts untouched. The attribute comes back on the
+// events that end the press on this span: mouseup (a click), mouseleave (a drag that goes on elsewhere),
+// contextmenu and dragstart (a menu or a native drag took the pointer, and the mouseup may never reach
+// the page). Between them the link is out of the tab order, for the length of a press; a keyboard focus
+// meets no press and stays — Enter and Space then activate, as an <a> does. Not mousedown.preventDefault(),
+// which would also keep a selection from starting on the link (the text is meant to be selectable in
+// place); not a blur on the focus event, which in Chromium clears the selection the press made (a
+// double-click's word). A span already focused (by Tab, then clicked) is blurred by the press itself,
+// since the browser fires no focus for it.
+function pathLinkPress(e: MouseEvent): void {
+  const a = e.currentTarget as HTMLElement;
+  a.removeAttribute("tabindex");                // not focusable for the rest of this press
+  if (document.activeElement === a) a.blur();   // the press ends a keyboard focus too: the browser would not re-focus it
+}
+function pathLinkRelease(e: Event): void {
+  const a = e.currentTarget as HTMLElement;
+  if (!a.hasAttribute("tabindex")) a.tabIndex = 0;
+}
 // A VERBATIM file link, marked for whoever hosts it. `raw` is shown as written (selectable/copyable in
 // place); `open` is what gets opened. A bare file:// can't be followed by the browser from the http
 // dashboard (blocked scheme) and a VS Code editor won't render a PDF, so it is routed, never navigated.
@@ -52,6 +81,8 @@ export function openPathLink(raw: string, open: string, relative = false, sid?: 
   a.tabIndex = 0;                            // in the tab order, like the <a> it stands in for…
   a.role = "link";                           // …and announced as one (the ARIA IDL attribute)
   a.onkeydown = pathLinkKey;                 // Enter / Space → this span's click, whoever handles it
+  a.onmousedown = pathLinkPress;             // a mouse press does not focus it: the tabindex is off for the press…
+  a.onmouseup = a.onmouseleave = a.oncontextmenu = a.ondragstart = pathLinkRelease;   // …and back once the press has ended on this span
   a.dataset.act = PATH_LINK_ACT;
   a.dataset.path = open;
   if (relative) a.dataset.rel = "1";

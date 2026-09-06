@@ -31477,7 +31477,7 @@ def _path_pins(sid, uuid):
 
 
 # ── verified path links (the user 2026-08-09) ──────────────────────────────────────────────────────
-# The chat linkifies path-shaped tokens by SHAPE alone (render.ts CLICKABLE_PATH_RE), so a bare
+# The chat linkifies path-shaped tokens by SHAPE alone (path-links.ts CLICKABLE_PATH_RE), so a bare
 # `render.js` in a reply became a blue link that 404'd on click — the token resolved against the
 # session's cwd, where no such file lives. The kernel is the machine that HAS the filesystem, so it
 # verifies at message-build time and, when a shortened mention names exactly one real file, FIXES the
@@ -31490,9 +31490,9 @@ def _path_pins(sid, uuid):
 # The repo list is `git ls-files -co --exclude-standard` in the SESSION's cwd (each session may be a
 # different repo), re-run per build pass — ~6ms here, and any mtime-keyed cache would miss the
 # untracked files agents create constantly. Ignored files are deliberately invisible to tiers 2/3.
-_PATH_TOKEN_RE = re.compile(          # Python port of render.ts CLICKABLE_PATH_RE — parity pinned in
-    r"file:///?[^\s<>\"'`)]+"         #   tests/test_path_links.py + chat-path-links.test.ts over the
-    r"|[~.\w\-]*/[~.\w\-/]*[\w\-]"    #   shared tests/fixtures/path_token_parity.json
+_PATH_TOKEN_RE = re.compile(          # Python port of ui/webview/path-links.ts CLICKABLE_PATH_RE — parity
+    r"file:///?[^\s<>\"'`)]+"         #   pinned in tests/test_path_links.py + chat-path-links.test.ts over
+    r"|[~.\w\-]*/[~.\w\-/]*[\w\-]"    #   the shared tests/fixtures/path_token_parity.json
     r"|[\w\-][\w\-.]*\.[A-Za-z0-9]{1,8}",
     re.IGNORECASE)
 _PATH_TRAIL_RE = re.compile(r"[.,;:!?)\]}>\"'`]+$")   # the client's trailing-punctuation strip, mirrored
@@ -31585,9 +31585,9 @@ def _resolve_path_token(tok, sid, memo):
 
 
 def _path_tokens(md):
-    """CLICKABLE_PATH_RE's matches over `md`, trailing punctuation stripped, deduped — the exact token
-    strings the client will look up in pathLinks. Resumes after the STRIPPED token, as the client's
-    exec loop does. Parity with the client regex is pinned over tests/fixtures/path_token_parity.json
+    """path-links.ts CLICKABLE_PATH_RE's matches over `md`, trailing punctuation stripped, deduped — the
+    exact token strings the client will look up in pathLinks. Resumes after the STRIPPED token, as the
+    client's scan does. Parity with the client regex is pinned over tests/fixtures/path_token_parity.json
     (tests/test_path_links.py here, chat-path-links.test.ts there)."""
     toks, pos = [], 0
     while True:

@@ -113,10 +113,27 @@ function linkDetailPaths(node: HTMLElement, sid: string): void {
 // identity is the row's own chip (name + colour — the pane has no session list to name the file's
 // session by; a row with no name sends null and the viewer falls to the kernel's stub); todoId names the
 // ask the file was opened from, so the viewer can tie its work back to it.
+// Then the keyboard goes with the file. A keydown never crosses an iframe boundary, and the viewer's only
+// keyboard close is a document-level Escape in the Files document — so with focus left here, the Escape a
+// keyboard user pressed after opening a file (Enter on a focused link) closed the Reply modal and left the
+// viewer up (the 2026-09-06 review). The panes are same-origin siblings, so this pane focuses the Files
+// pane's window itself, the way the shell's Alt+Arrow nav does (focusPane in _LANDING_FOCUS_JS:
+// contentWindow.focus(), which also moves the shell's focus ring). No text field loses anything: the link
+// already held this document's focus (a click focuses the tabIndex span; Enter came from it). A window
+// focus lands even while the pane is still display:none — the shell's bring-forward runs a task later —
+// so the two calls are not a race (waiting-link-focus.test.ts drives both in a browser). Alt+Left comes
+// back; an open Reply modal then takes the focus back into its box (showReply). The iframe check is against
+// the PARENT document's HTMLIFrameElement: an element of another document is never an instance of this
+// document's constructor, so a check against this one's would focus nothing. A plain instanceof, not a
+// cast, because user-todo-links.test.ts executes this body as it stands.
 function openTodoPath(path: string, sid: string, todoId: string): void {
   const r = rows.find((x) => x.sid === sid);
   const identity = r && r.name ? { name: r.name, color: r.color } : null;
   try { window.parent.postMessage({ romp: "viewFile", pane: "pane", path, sid, identity, todoId }, "*"); } catch { /* not in the shell */ }
+  try {
+    const pd = window.parent.document, ff = pd.getElementById("f-files");
+    if (pd.defaultView && ff instanceof pd.defaultView.HTMLIFrameElement) ff.contentWindow?.focus();
+  } catch { /* a parent this pane cannot read is not the shell */ }
 }
 
 // The kernel's answer to a stale or refused op comes back as {type:"warn"} — the toast the chat shows
@@ -165,7 +182,14 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
   const send = el("button", "picker-action confirm-btn"); send.textContent = "Send";
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
-  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+  // A link in the quoted detail hands the keyboard to the Files pane (openTodoPath). When it comes back —
+  // Alt+Left, a click into this pane — the document's focus has been reset to its body, BEHIND this
+  // overlay, where Tab would walk the covered rows before reaching the box. The modal is the topmost thing
+  // on the pane, so it takes the focus back into its box, where the answer goes (Shift+Tab still reaches
+  // the link). Gone with the modal: close() drops it, and it drops itself if the overlay was removed some
+  // other way (a second Reply replacing this one, above).
+  const onFocus = () => { if (!overlay.isConnected) { window.removeEventListener("focus", onFocus); return; } input.focus(); };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("focus", onFocus); };
   const go = () => {
     const text = input.value.trim();
     if (!text) { input.classList.add("bad"); input.focus(); return; }
@@ -183,6 +207,7 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   overlay.appendChild(box);
   document.body.appendChild(overlay);
   document.addEventListener("keydown", onKey, true);
+  window.addEventListener("focus", onFocus);
   input.focus();
 }
 
