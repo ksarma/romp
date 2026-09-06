@@ -1,13 +1,11 @@
 # Comments and tracked changes in the file viewer
 
-**Status: PROPOSED, NOT COMMITTED** (the user's reviews of 2026-09-05 and 2026-09-06 applied, including a
-structured design interview; every question ruled; awaiting the user's word to hand it to the
-implementing session). Nothing is
-scheduled and nothing should be built from it unbidden. Once approved, the implementing romp
-session merges this plan to main with the header changed to the build status, moves the
-`plans/README.md` entry out of the proposed list, and builds all six slices in one push. File and
-line references describe this fork at its 2026-09-05 merge base and the track-changents repo as
-of the same day; as with every plans/ document, treat them as dated.
+**Status: BUILDING** (approved by the user on 2026-09-06 after reviews on 2026-09-05 and 2026-09-06 and
+a structured design interview; every question ruled). A dedicated romp session is building all
+six slices in one push, one fork PR per slice with an adversarial review pass, in the order under
+Build slices; the ADR is accepted with Slice 1, and one user todo at the end asks for the
+end-to-end walk. File and line references describe this fork at its 2026-09-05 merge base and the
+track-changents repo as of the same day; as with every plans/ document, treat them as dated.
 
 ## Summary
 
