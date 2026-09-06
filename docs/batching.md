@@ -87,11 +87,17 @@ all is noted, not refused.
 
 A chain of two PRs lands in one call with no flag: the lower PR merges first whichever order you
 typed, its branch is deleted, GitHub retargets the upper PR to main, and it merges there. Each PR is
-read again right before its own merge. A head that moved since the check stops the run (exit 2):
-nothing more is merged, and the orphan check still runs. A PR the first merge already marked merged
-is skipped. To merge only the upper PR, into the lower PR's open branch, `--into-open-pr` overrides
-the open-PR's-branch refusal; the content then sits on that branch until the lower PR merges, and
-the orphan check reports it until then.
+read again right before its own merge. GitHub recomputes the upper PR's mergeability after the
+retarget and reports it as not computed meanwhile, so that read is repeated while it says so, ten
+times three seconds apart (`ROMP_LAND_MERGEABLE_POLLS` and `ROMP_LAND_MERGEABLE_POLL` change the
+count and the gap); a value that never settles stops the run. A head that moved since the check
+stops the run too (exit 2): nothing more is merged, and the orphan check still runs. A PR the first
+merge already marked merged is skipped. With `--auto`, a lower PR whose checks are green merges at
+once and the chain lands as above; one whose checks are pending is only armed, so its branch stays
+open and the run stops before the upper PR (exit 2) instead of merging it into that branch. Run
+`scripts/land.sh M` for the upper PR once the lower one is in. To merge only the upper PR, into the
+lower PR's open branch, `--into-open-pr` overrides the open-PR's-branch refusal; the content then
+sits on that branch until the lower PR merges, and the orphan check reports it until then.
 
 It never passes `--delete-branch`: gh's flag also deletes the local branch, which is checked out in
 a session's worktree here; the remote branch is deleted by the repository setting, or through the
