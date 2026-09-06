@@ -28,7 +28,18 @@ passage, and repeat — each staged note remembers its quote and its place. **�
 everything you staged along with whatever is in the box, so the session applies the lot
 in one pass, and you never copy a line out of the document by hand. The line in each
 label is checked against the file at the moment you select, so numbers that moved under
-you are caught rather than quietly carried.
+you are caught rather than quietly carried. The title bar's **GitHub ↗** button opens the
+file on GitHub. When there is nothing to open, the button stays in place, dimmed, and a
+caption beside it says why (the file is not in a git repository or not committed, the
+repository has no origin remote, its origin is not on GitHub, or the path is relative and no
+session's directory resolves it); the button's tooltip repeats the reason. A file on a branch
+that is not on origin keeps its link, drawn with a dashed border, and the caption says the
+branch is not on origin yet. That check trusts your clone's own refs: a branch deleted on
+GitHub reads as present until `git fetch --prune`, and one pushed from another clone reads as
+absent until a fetch. A branch that has never been pushed is asked of origin once and the
+answer kept until a push or fetch from this clone writes its tracking ref; where nothing local
+could refresh the answer (a `--single-branch` clone, or a branch on origin this clone has not
+fetched) origin is asked on each open.
 
 ### The feed
 
