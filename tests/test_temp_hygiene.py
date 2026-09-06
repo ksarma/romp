@@ -14,21 +14,25 @@ at no global or system config (GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM) with a sy
 seed commits had been running the developer's global pre-commit hook.
 
 Pinned here from inside a run (the floors are in place and children inherit them; no test pins a
-temp path to a literal directory) and end to end
+temp path to a literal directory; a root that survives removal is named on stderr) and end to end
 (a nested pytest on a leaking module leaves the system temp dir it was given exactly as it found
 it). This module loads no romp code, so it needs no state-root preamble. Everything skips under a
 bare unittest run, where conftest never loaded and there is nothing to pin.
 """
 import ast
+import contextlib
 import glob
 import importlib.util
+import io
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -106,6 +110,56 @@ class PrivateTempRoot(unittest.TestCase):
                     bad.append("%s:%d: %s" % (os.path.relpath(path, ROOT), n, line.strip()))
         self.assertEqual(bad, [], "temp paths take the process temp dir (the private root); a test that "
                          "must leave it falls back to ROMP_TESTS_SYSTEM_TMPDIR — see _socket_dir")
+
+
+@under_conftest
+class RunEndNotice(unittest.TestCase):
+    """A root that survives the run-end removal is named on stderr, once, rather than left standing
+    with the run green. `shutil.rmtree(..., ignore_errors=True)` swallows a child still writing under
+    the root and a 000-mode directory a test left behind (shutil's fd-based walk cannot open it, so
+    the root's rmdir is never reached); the stand-in here is the latter."""
+
+    def test_the_package_state_dir_is_removed_with_the_root(self):
+        # tests/__init__.py minted it before conftest redirected the temp root, so it is the one
+        # thing outside the root; conftest holds it for the run-end removal rather than leaving it
+        # to __init__'s atexit alone.
+        conftest = sys.modules["tests.conftest"]
+        pkg_dir = conftest._PACKAGE_STATE_DIR
+        self.assertEqual(pkg_dir, sys.modules["tests"].STATE_DIR)
+        self.assertTrue(os.path.isdir(pkg_dir), pkg_dir)
+        self.assertEqual(os.path.realpath(os.path.dirname(pkg_dir)), os.path.realpath(os.environ["ROMP_TESTS_SYSTEM_TMPDIR"]))
+        self.assertNotEqual(os.path.commonpath([tempfile.gettempdir(), pkg_dir]), tempfile.gettempdir())
+
+    @unittest.skipIf(os.geteuid() == 0, "root can remove a 000-mode directory")
+    def test_a_root_that_survives_removal_is_named_on_stderr(self):
+        conftest = sys.modules["tests.conftest"]
+        root = tempfile.mkdtemp()                       # a stand-in root, inside the real one
+        locked = os.path.join(root, "locked")
+        os.mkdir(locked)
+        open(os.path.join(locked, "f"), "w").close()
+        os.chmod(locked, 0)
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        self.addCleanup(lambda: os.path.isdir(locked) and os.chmod(locked, 0o700))
+
+        # The real hook, on the stand-in only (the package state dir is live and not this test's).
+        with patch.object(conftest, "_TMP_ROOT", root), patch.object(conftest, "_PACKAGE_STATE_DIR", None):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                conftest.pytest_unconfigure(None)
+            self.assertTrue(os.path.isdir(root), "the 000-mode child keeps the root standing")
+            self.assertEqual(err.getvalue(), "[tests] not removed at run end: %s\n" % root)
+
+            err = io.StringIO()                          # the atexit fallback: same survivor, silent
+            with contextlib.redirect_stderr(err):
+                conftest._remove_run_dirs()
+            self.assertEqual(err.getvalue(), "")
+
+            os.chmod(locked, 0o700)                      # control: a removable root says nothing
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                conftest.pytest_unconfigure(None)
+            self.assertFalse(os.path.exists(root))
+            self.assertEqual(err.getvalue(), "")
 
 
 def _git_version():

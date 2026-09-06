@@ -10,7 +10,11 @@ import shutil
 import tempfile
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="romp-tests-state-")
-# Removed at exit: under pytest this dir is minted BEFORE conftest.py redirects the temp root
-# (the package imports first), so it is the one state dir the run-wide backstop cannot reach.
-atexit.register(shutil.rmtree, os.environ["XDG_STATE_HOME"], ignore_errors=True)
+# Under pytest this dir is minted BEFORE conftest.py redirects the temp root (the package imports
+# first), so it sits beside the root in the system temp dir rather than inside it; conftest reads
+# STATE_DIR and removes it with the root when the run ends. This atexit is for unittest runs,
+# where conftest never loads. Neither runs after an os._exit (pytest-timeout's thread method), so
+# a hung run leaves this dir beside the root.
+STATE_DIR = os.environ["XDG_STATE_HOME"]
+atexit.register(shutil.rmtree, STATE_DIR, ignore_errors=True)
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor

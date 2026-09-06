@@ -25,9 +25,11 @@ import pytest
 # module-level mkdtemp at collection must land inside it. Removed in pytest_unconfigure, which
 # under pytest-xdist runs in the controller and in every worker: each imported this file and so
 # owns a root of its own (a worker's sits inside the controller's, since it inherits that TMPDIR).
-# atexit is the fallback for a normal exit that skipped unconfigure; nothing survives an os._exit
-# (pytest-timeout's thread method ends a hung run that way), so a hang leaks one root. The prefix
-# is what a stray one looks like in the system temp dir.
+# tests/__init__.py's romp-tests-state-* dir is removed with it: the package imports first, so that
+# dir was minted before the redirect and is the one thing a run puts outside the root. atexit is
+# the silent fallback for a normal exit that skipped unconfigure; nothing runs after an os._exit
+# (pytest-timeout's thread method ends a hung run that way), so a hang leaves two top-level
+# entries in the system temp dir, this root and that state dir, both under the romp-tests- prefix.
 # The temp dir this process was handed is recorded before the redirect: a test that must leave
 # the root (an AF_UNIX socket path that would not fit sun_path under a nested root) falls back to
 # it, and only to it — a literal system path in a `dir=` would bypass the redirect (one did).
@@ -35,17 +37,26 @@ os.environ["ROMP_TESTS_SYSTEM_TMPDIR"] = tempfile.gettempdir()
 _TMP_ROOT = tempfile.mkdtemp(prefix="romp-tests-")
 tempfile.tempdir = _TMP_ROOT
 os.environ["TMPDIR"] = _TMP_ROOT
+_PACKAGE_STATE_DIR = getattr(sys.modules.get("tests"), "STATE_DIR", None)
 
 
-def _remove_tmp_root():
-    shutil.rmtree(_TMP_ROOT, ignore_errors=True)
+def _remove_run_dirs(report=False):
+    """Remove the root and the package state dir. A survivor is named on stderr when asked: rmtree
+    with ignore_errors swallows a child still writing under the root or a 000-mode directory a test
+    left behind, and the run would otherwise end green with the root standing. Only unconfigure
+    asks; the atexit fallback stays silent so it neither repeats the notice nor contradicts it."""
+    for d in (_TMP_ROOT, _PACKAGE_STATE_DIR):
+        if d:
+            shutil.rmtree(d, ignore_errors=True)
+            if report and os.path.isdir(d):
+                print("[tests] not removed at run end: %s" % d, file=sys.stderr)
 
 
-atexit.register(_remove_tmp_root)
+atexit.register(_remove_run_dirs)
 
 
 def pytest_unconfigure(config):
-    _remove_tmp_root()
+    _remove_run_dirs(report=True)
 
 
 # No test's git reads the developer's configuration (2026-09-06). Fixture repos are built by `git
