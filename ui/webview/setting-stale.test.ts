@@ -67,8 +67,8 @@ test("the gear hears the frame: a plain-words toast, and a re-fill only while th
 test("the toast's copy names the setting and the kept value and never claims another device acted", () => {
   // the kernel knows only that it holds a larger stamp — with device clocks minting the stamps,
   // "changed more recently somewhere else" asserted a fact it could not know (#879 review)
-  assert.match(GEAR, /return label \+ ': not applied\. A later pick' \+ \(kept \? ' \(' \+ kept \+ '\)' : ''\) \+ ' is already in place\.';/,
-    "the copy: what was not applied, and what is in force");
+  assert.match(GEAR, /return label \+ ': not applied on ' \+ hosts\.join\(', '\) \+ '\. A later pick'\s*\n\s*\+ \(kept \? ' \(' \+ kept \+ '\)' : ''\) \+ ' is already in place\.';/,
+    "the copy: what was not applied, on which kernels, and what is in force");
   const copy = GEAR.slice(GEAR.indexOf("function staleText("), GEAR.indexOf("if (!p.hidden) fill();"));
   assert.ok(copy.length > 0 && copy.length < 3000, "the copy helper and the listener located");
   for (const claim of ["somewhere else", "another device", "elsewhere", "changed more recently"])
@@ -132,6 +132,22 @@ test("the toast wears the family dismissal: a visible ✕ in the chip-✕ dress,
   assert.match(GEAR_CSS, /\.rs-stale-toast-x:hover \{ color: var\(--fg, #fff\); background: rgba\(255, 255, 255, 0\.08\); \}/);
   assert.match(GEAR_CSS, /\.rs-stale-toast\.fade \{ opacity: 0; \}/, "the fade class actually fades");
   assert.match(GEAR_CSS, /\.rs-stale-toast \{[^}]*transition: opacity/, "…through a real transition");
+});
+
+test("one toast per refused gesture, naming the refusing hosts: the fold key is setting + the gesture's own gt", () => {
+  // N kernels refusing one stale flush used to draw N identical toasts naming no host (#879
+  // review). The frame now carries the refused gesture's own stamp, a remote kernel's frame arrives
+  // host-stamped, and the gear folds by (setting, gt) — an event key, never a time window.
+  // setting-stale-fold.test.ts drives the lifted block; these pin the three-file wiring.
+  assert.match(KERNEL, /_stale_seen\.last = \{"setting": name, "storedGt": applied_gt, "gt": gt\}/, "the stand-down records the refused stamp");
+  assert.ok(KERNEL.includes('"gt": st["gt"],'), "…and the frame carries it");
+  const FED = read("ui", "webview", "federation.ts");
+  assert.ok(FED.includes('if (out.type === "settingStale") out.host = host;'), "a remote kernel's frame is host-stamped on the way in");
+  assert.match(GEAR, /var key = typeof m\.gt === 'number' \? m\.setting \+ ':' \+ m\.gt : '';/, "the fold key; no gt (an older kernel) → no fold");
+  assert.match(GEAR, /staleOpen\[key\]\.t\.parentNode \? staleOpen\[key\] : null/, "liveness is the node's parentNode at lookup — no cleanup on the timers");
+  assert.match(GEAR, /return \(typeof m\.host === 'string' && m\.host\) \? m\.host : 'this machine';/, "the local kernel's frame reads as this machine");
+  assert.doesNotMatch(GEAR.slice(GEAR.indexOf("var staleOpen"), GEAR.indexOf("if (!p.hidden) fill();")), /Date\.now\(|setTimeout|setInterval/,
+    "the fold keys on the gesture, never on a clock or a window");
 });
 
 test("the kept value rides when cheap, and reads as words (booleans become on/off)", () => {

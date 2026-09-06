@@ -3324,7 +3324,7 @@ def _setting_stale(name, gt, applied_gt):
     _stale_seen.last = None
     if gt is None or gt > applied_gt:
         return False
-    _stale_seen.last = {"setting": name, "storedGt": applied_gt}
+    _stale_seen.last = {"setting": name, "storedGt": applied_gt, "gt": gt}
     sys.stderr.write("setting %s: stale gesture stood down (gesture %d <= applied %d) — "
                      "no apply, no propagation\n" % (name, gt, applied_gt))
     return True
@@ -28124,12 +28124,15 @@ def _tell_stale_gesture(client, msg):
     The frame echoes `gesture`: the refused message itself, WITHOUT its stamp, so the toast can
     offer to re-issue it as a new gesture (a fresh click is legitimate new information) stamped
     above the stored one. The stamp is dropped on purpose — a re-issue can never reuse the stale
-    one — and the gear only re-issues a type that matches the setting the frame names."""
+    one — and the gear only re-issues a type that matches the setting the frame names.
+    It also carries `gt`, the refused gesture's OWN stamp: a dashboard's broadcast reaches every
+    linked kernel, so one stale flush draws one refusal per kernel — all sharing this stamp — and
+    the gear folds them into one toast naming the refusing hosts (setting + gt is the fold key)."""
     st = _pop_stale_notice()
     if not st:
         return
     _reply(client, {"type": "settingStale", "setting": st["setting"],
-                    "storedGt": st["storedGt"], "kept": _setting_kept_value(st["setting"]),
+                    "storedGt": st["storedGt"], "gt": st["gt"], "kept": _setting_kept_value(st["setting"]),
                     "gesture": {k: v for k, v in msg.items() if k != "gt"}})
 
 

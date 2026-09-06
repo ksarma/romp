@@ -629,6 +629,8 @@ class StaleGestureAnswersTheDeliveringSocket(_Base):
         self.assertEqual(frames[0]["setting"], "judge-model")
         self.assertEqual(frames[0]["storedGt"], T_NEW)
         self.assertEqual(frames[0]["kept"], "fable", "the kept value rides along (cheap: one store read)")
+        self.assertEqual(frames[0]["gt"], T_OLD, "the refused gesture's own stamp rides the frame — the "
+                         "dashboard folds N kernels' refusals of one flush by it")
 
     def test_the_frame_echoes_the_refused_gesture_without_its_stamp(self):
         # the toast's Apply anyway re-issues exactly this echo with a FRESH stamp (PR #879 follow-up):
@@ -679,6 +681,7 @@ class StaleGestureAnswersTheDeliveringSocket(_Base):
             self.assertEqual(len(frames), 1, store)
             self.assertEqual(frames[0]["setting"], store)
             self.assertEqual(frames[0]["storedGt"], T_NEW)
+            self.assertEqual(frames[0]["gt"], T_OLD, store)
             self.assertEqual(frames[0]["kept"], kept, store)
             self.assertEqual(frames[0]["gesture"], older, "the refused message echoes back minus its gt (%s)" % store)
 

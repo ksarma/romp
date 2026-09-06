@@ -830,12 +830,24 @@ function initGear(post) {
     setTimeout(function () { t.remove(); }, 12000);   // …then the self-clearing backstop; a click/Esc dismisses sooner
     return t;
   }
-  // The copy names the setting and the value in force and says the pick was not applied. It does
-  // NOT say who or where changed it: the kernel knows only that it holds a larger stamp, and with
-  // device clocks in the mix that is not the same as "someone changed it after you" (#879 review).
-  function staleText(label, kept) {
-    return label + ': not applied. A later pick' + (kept ? ' (' + kept + ')' : '') + ' is already in place.';
+  // The copy names the setting, the kernels that refused, and the value in force, and says the pick
+  // was not applied. It does NOT say who or where changed it: the kernel knows only that it holds a
+  // larger stamp, and with device clocks in the mix that is not the same as "someone changed it
+  // after you" (#879 review). The hosts ARE known: each refusal came from one of them.
+  function staleText(label, kept, hosts) {
+    return label + ': not applied on ' + hosts.join(', ') + '. A later pick'
+      + (kept ? ' (' + kept + ')' : '') + ' is already in place.';
   }
+  // One toast per refused GESTURE, not per refusing kernel: a dashboard's broadcast reaches every
+  // linked kernel, so one stale flush used to draw N identical toasts naming no host. The fold key
+  // is the gesture's identity — setting + its own gt, which the frame carries — an event key, never
+  // a time window: N kernels refusing one flush share it, two different gestures never do. A frame
+  // without gt (an older kernel) keeps one toast per frame. Liveness is the node's parentNode at
+  // lookup, so a dismissed or expired toast never absorbs a later frame and no cleanup rides the
+  // timers. A remote kernel's frame arrives host-stamped (federation.ts prefixInbound); the local
+  // kernel's has no host and reads as this machine, the name the gear already uses for it.
+  var staleOpen = {};   // 'setting:gt' → { t: the toast node, hosts: [...] } while the toast is up
+  function staleHost(m) { return (typeof m.host === 'string' && m.host) ? m.host : 'this machine'; }
   // Apply anyway re-issues the frame's echoed gesture as a NEW one, stamped above everything this
   // page has seen (the frame's storedGt included, learned just before): a fresh click is legitimate
   // new information, the event the ordering rule wants — never a clock heuristic. Offered only when
@@ -852,7 +864,16 @@ function initGear(post) {
     var label = STALE_LABELS[m.setting] || String(m.setting || 'A setting');
     var kept = m.kept === true ? 'on' : m.kept === false ? 'off'
       : (typeof m.kept === 'string' && m.kept ? m.kept : '');
-    staleToast(staleText(label, kept), staleAction(m));
+    var key = typeof m.gt === 'number' ? m.setting + ':' + m.gt : '';
+    var live = key && staleOpen[key] && staleOpen[key].t.parentNode ? staleOpen[key] : null;
+    var where = staleHost(m);
+    if (live) {   // the same gesture, refused by one more kernel: add the host to the toast on screen
+      if (live.hosts.indexOf(where) < 0) live.hosts.push(where);
+      live.t.querySelector('.rs-stale-toast-msg').textContent = staleText(label, kept, live.hosts);
+    } else {
+      var t = staleToast(staleText(label, kept, [where]), staleAction(m));
+      if (key) staleOpen[key] = { t: t, hosts: [where] };
+    }
     if (!p.hidden) fill();   // the open modal re-reads the kernel's values so it stops showing the refused pick
   });
   // The model/effort <option>s come from /models — the same single source the
