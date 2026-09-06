@@ -51,7 +51,7 @@ class FiguresNamesReplace(unittest.TestCase):
     def test_the_panel_still_labels_the_control_re_place(self):
         # The premise, checked against its source: the label this test makes the guide carry.
         self.assertIn('btn("Re-place", "fcreplace")', self.panel)
-        self.assertIn("Re-place it, or resolve it", self.panel)
+        self.assertIn("Re-place it where it belongs now, or resolve it", self.panel)
 
     def test_the_paragraph_names_the_label_in_bold(self):
         self.assertIn("**Re-place**", self.figures)

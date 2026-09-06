@@ -265,7 +265,7 @@ test("the paint pass: unpaintChanges before each repaint, the change painters af
   assert.match(pc, /const aid = authorIdOf\(store, c\.id\);/, "the sidecar record's authorId, since toHunks drops it");
   assert.match(pc, /paintChangesRendered\(root, src, changes, stylesFor\)/); assert.match(pc, /paintChangesRaw\(root, src, changes, stylesFor\)/);
   assert.match(pc, /if \(!s \|\| !\(s\.hunks \|\| \[\]\)\.length \|\| !this\.textCurrent\(s\)\) return;/, "offsets index the text the host read: no marks over other bytes");
-  assert.match(pc, /this\.marks\.add\(m\);/, "a change mark is the panel's own (owns), like a comment highlight");
+  assert.match(pc, /this\.mark\(m\);/, "a change mark is the panel's own (mark: owns, and the registry the chat pane's link handler reads), like a comment highlight");
   assert.match(SRC, /const rv = btn\("Reveal", "fcreveal"\); rv\.dataset\.id = c\.key;/, "Reveal on a change card carries the card's key");
   assert.match(SRC, /if \(c\.kind === "del" \|\| !painted\) \{/, "Reveal on a deletion and on any change the view does not show");
   assert.match(SRC, /this\.ctx\.setMode\("raw"\);\n\s*this\.ctx\.scrollToOffset\(c\.curFrom\);/, "Reveal: Raw, then the change's start");
