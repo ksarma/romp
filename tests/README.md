@@ -3,10 +3,11 @@
 Every bug fix or feature change lands with a test (repo rule). Four suites:
 
 - **`test_*.py`** (pytest) — the Python pipeline: event model, judges, kernel,
-  backends, postal. They load the sources by file path through the stable `bin/` names: new
-  tests use `from romp_load import load_source` (`tests/romp_load.py`, the
-  door to `kernel/loadsource.py`); the older `SourceFileLoader(...).load_module()`
-  still works until the sweep that converts it lands and isolate state with `XDG_STATE_HOME`.
+  backends, postal. They load the sources by file path through the stable `bin/` names with
+  `from romp_load import load_source` (`tests/romp_load.py`, the door to
+  `kernel/loadsource.py`). `tools/loadsource-sweep.py` converts a file still on
+  `SourceFileLoader(...).load_module()` (removed in Python 3.15), and
+  `test_state_isolation_order.py` refuses that idiom and isolate state with `XDG_STATE_HOME`.
   Golden transcript fixtures: `test_romp_events_golden.py` + `fixtures/`.
   Run: `python3 -m pytest tests/ -q` (~20s; a stalled run is a hang, not slow).
   The `_HAVE_SDK`-gated classes in `test_sdk_backend.py` (OptionsAssembly, the

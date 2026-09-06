@@ -14,7 +14,8 @@ conftest gives pytest, but neither covers `cd tests && python -m unittest test_x
 script run, so the per-module preamble is the primary defence and this test is the ratchet.
 
 The rule this file enforces, per tests/test_*.py module: if the module loads romp code (any
-load_source or SourceFileLoader call, or an import of the kernel/postal/cli packages), then BEFORE the first
+load_source call, or an import of the kernel/postal/cli packages; SourceFileLoader still counts as a
+load, and a second test below refuses it outright), then BEFORE the first
 such load, at module top level, it must (a) assign os.environ["XDG_STATE_HOME"] (or
 ["ROMP_STATE_DIR"]) and (b) handle ROMP_STATE_DIR (assign it, or pop it — a live kernel exports
 it to its sessions, and it outranks the XDG floor). The canonical preamble:
@@ -125,6 +126,27 @@ class StateIsolationOrder(unittest.TestCase):
             "tests/test_kernel.py overwrote the real remotes.json on 2026-08-12). Put this at\n"
             "module top level, above the first load_source line:\n\n%s\n\n%s"
             % (PREAMBLE, "\n".join(bad)))
+
+    def test_no_test_module_uses_the_removed_loader(self):
+        """Every test module loads by load_source (tests/romp_load.py): SourceFileLoader.load_module() is
+        removed in Python 3.15 and warns before that. tools/loadsource-sweep.py converts a module
+        mechanically, so a file written in the old idiom (a branch from before the sweep) fails here
+        with the command to run rather than surviving as a warning."""
+        stale = []
+        for fn in sorted(os.listdir(HERE)):
+            if not fn.endswith(".py") or fn in ("romp_load.py", "conftest.py", "__init__.py", "credential_patterns.py"):
+                continue
+            tree = ast.parse(open(os.path.join(HERE, fn)).read(), filename=fn)
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.ImportFrom) and node.module == "importlib.machinery"
+                        and any(a.name == "SourceFileLoader" for a in node.names)):
+                    stale.append("%s:%d imports SourceFileLoader" % (fn, node.lineno))
+                elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "load_module"):
+                    stale.append("%s:%d calls load_module()" % (fn, node.lineno))
+        self.assertFalse(stale,
+            "These modules still use SourceFileLoader.load_module(), removed in Python 3.15. Run\n"
+            "tools/loadsource-sweep.py and commit the result:\n%s" % "\n".join(stale))
 
     def test_the_suite_wide_floors_stay_in_place(self):
         # The suspenders: conftest.py (pytest) and __init__.py (unittest package runs) each set the
