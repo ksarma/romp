@@ -49,3 +49,31 @@ export const SECTION_PIP_TITLE: Record<SectionPip, string> = {
   working: "a session in this group is working",
   retrying: "a session in this group hit an API error and is retrying on its own",
 };
+
+// A FOLDED HEADER'S USER-TODO FLAG (the user 2026-09-06): a session tab with an open user todo wears
+// a ⚑ — "this session flagged something it needs from you" — and a fold hid it. The header derives
+// its flag from the SAME field the tab reads, the session payload's userTodos (the kernel's
+// build_session blanks it for an ended session and every chat delta carries it), so the two agree on
+// every frame and the resolve that clears the tab's glyph clears the header's flag in the same render.
+export interface TabTodoLike { name?: string; userTodos?: ReadonlyArray<unknown> | null }
+
+/** The members holding an open user todo, in strip order. The COUNT is sessions, not todos: the
+ *  folded header's other number is a session count too, and the tooltip names exactly those sessions. */
+export interface SectionTodoFlag { count: number; names: string[] }
+
+export function sectionTodoFlag(members: ReadonlyArray<TabTodoLike | null | undefined>): SectionTodoFlag | null {
+  const names: string[] = [];
+  for (const m of members) {
+    if (!m || !Array.isArray(m.userTodos) || !m.userTodos.length) continue;   // no session yet, or nothing open
+    names.push(String(m.name || "").trim() || "(unnamed)");
+  }
+  return names.length ? { count: names.length, names } : null;
+}
+
+/** The flag's hover text: the sessions by name, and what the click does. */
+export function sectionTodoTitle(flag: SectionTodoFlag): string {
+  const who = flag.count === 1
+    ? `${flag.names[0]} flagged something it needs from you`
+    : `${flag.count} sessions flagged something they need from you: ${flag.names.join(", ")}`;
+  return `waiting on you — ${who}; click to open this group`;
+}

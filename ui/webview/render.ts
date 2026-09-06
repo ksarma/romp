@@ -33,7 +33,7 @@ import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed,
          reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
-import { tabStateClass, sectionPip, SECTION_PIP_TITLE } from "./tab-state";
+import { tabStateClass, sectionPip, SECTION_PIP_TITLE, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
@@ -4766,6 +4766,35 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false)
       const pip = el("span", "tab-group-pip" + (kind === "working" ? "" : " " + kind));
       pip.title = SECTION_PIP_TITLE[kind];
       head.appendChild(pip);
+    }
+    // the USER-TODO flag (the user 2026-09-06): a member tab's ⚑ — "this session flagged something
+    // it needs from you" — must not vanish under a fold. Derived from the field the tab itself reads
+    // (the session's userTodos, refreshed by every chat delta → renderTabs), so the frame that
+    // resolves the todo clears both. Only a FOLDED header carries it: open, every member tab wears
+    // its own glyph, and a second flag over the same need would be noise. A real <button> — focusable,
+    // Enter opens the group — with its OWN data-act for the stable #tabs delegate (the nearest data-act
+    // wins, so it never reads as the header's fold click) and its own dragstart guard, so a press that
+    // wanders never starts the header's group drag (tab-state.ts owns the count and the title).
+    const flag = sectionTodoFlag(sec.ids.map((id) => sessions.get(id)));
+    if (flag) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tab-group-flag";
+      b.dataset.act = "open-group";
+      b.dataset.group = name;
+      b.title = sectionTodoTitle(flag);
+      b.setAttribute("aria-label", b.title);
+      const glyph = el("span", "tab-usertodo");   // the tab's own mark, same class
+      glyph.textContent = "⚑";
+      b.appendChild(glyph);
+      if (flag.count > 1) {
+        const c = el("span", "tab-group-count");   // the header's own count size
+        c.textContent = String(flag.count);
+        b.appendChild(c);
+      }
+      b.draggable = true;
+      b.addEventListener("dragstart", (e) => { e.preventDefault(); e.stopPropagation(); });
+      head.appendChild(b);
     }
   }
   head.draggable = true;
@@ -14749,6 +14778,13 @@ setupSettings();
     // the header of the section holding the ACTIVE tab (makeGroupHead): unfoldable while active, so
     // the click stores nothing — the delegate's flash is the whole acknowledgement
     "group-active": () => { /* acknowledged by the flash; nothing to store */ },
+    // the folded header's user-todo flag (makeGroupHead): OPEN that group — explicit, never a toggle.
+    // The flag exists only on a folded header, so a press that lands after a sibling pane already
+    // opened the group must still read as "open", not fold it back. Same render path as toggle-group.
+    "open-group": (el) => {
+      const name = el.dataset.group;
+      if (name) writeTabGroups(setSectionCollapsed(readTabGroups(), name, false));
+    },
     close: (el) => {
       const id = el.dataset.id;
       if (!id || !vscodeApi) return;

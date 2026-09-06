@@ -460,6 +460,17 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-group-pip { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--st-working-bg); }
 .tab-group-pip.blocked { background: var(--st-blocked-bg); }
 .tab-group-pip.retrying { background: #e67e22; }   /* the tab's own amber (.tab.tab-retrying): an API error retrying on its own */
+/* the folded header's user-todo flag (the user 2026-09-06): a member tab's ⚑ must not vanish under a
+   fold. The glyph is the tab's own (.tab-usertodo — same mark, same 10px) and the count, when more than
+   one member has one, wears the header's count size. A real button — focusable, Enter opens the group —
+   with the ✕'s hover wash. It wears the prose tone, a step above the header's dim label in every theme
+   (the tab glyph's soft white sits on a coloured chip; a header has no chip under it), and the ring is
+   the accent, keyboard focus only. */
+.tab-group-flag { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 3px; margin: 0; padding: 1px 3px;
+  border: 0; border-radius: 3px; background: none; color: var(--fg); font: inherit; line-height: 1; cursor: pointer; }
+.tab-group-flag .tab-usertodo { color: inherit; }
+.tab-group-flag:hover { background: rgba(255, 255, 255, 0.12); }
+.tab-group-flag:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 /* the separator's 6px gutters are PADDING, not margin, and the 1px line is the content box: its box
    is then the full 13px it occupies in the row, so the tab drag's virtual layout (which measures
    getBoundingClientRect widths) wraps where the real strip wraps, and paintTabRowLines reads its

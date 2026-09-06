@@ -44,7 +44,9 @@ the tabs: as soon as any session carries a tag, the strip shows one section per 
 tag order, each with a header in the tag's color, and the untagged sessions after a divider
 at the end. A session with several tags sits under the first of them in your tag order; its
 other tags still filter. Click a header to fold that section down to a count, plus one pip
-when a member is working or waiting on you; the section of the tab you are reading never
+when a member is working or waiting on you. A folded section also keeps the ⚑ flag of any
+session inside it that has asked you for something, with a count when several have and their
+names on hover; click the flag to open the section. The section of the tab you are reading never
 folds (its header says so, and a click there changes nothing), and the `archived` section
 starts folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
