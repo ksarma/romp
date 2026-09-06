@@ -136,6 +136,11 @@ class StateIsolationOrder(unittest.TestCase):
                           "%s must keep the temp XDG_STATE_HOME floor" % fn)
             self.assertIn('os.environ.pop("ROMP_STATE_DIR", None)', src,
                           "%s must keep dropping an inherited ROMP_STATE_DIR override" % fn)
+            # ...and the dead-port floors: a shell of a romp session inherits the live manager's and
+            # kernel's ports, and a test that reads one dials the running deployment (2026-09-06)
+            for var in ("ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT"):
+                self.assertIn('os.environ["%s"] = "1"' % var, src,
+                              "%s must keep poisoning %s to a dead port" % (fn, var))
 
 
 if __name__ == "__main__":
