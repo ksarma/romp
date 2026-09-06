@@ -26,6 +26,17 @@ synthetic uuid in a value position and a test method name with a digit in it, so
 comparison may show the marker where a test's placeholder sid was. That is the cost of catching a
 token of unknown format; the failure is still readable.
 
+A value pytest has already cut is a piece of a value. At its default verbosity pytest ellipsizes the
+operands of a failed `==`: the repr keeps its head and its tail, 11 to 13 characters each, joined by
+`...` (`'sk-ant-api03...2c3d4a1b2c3d4'`, `['0123456789a...456789abcdef']`), and the short test
+summary cuts a message at the terminal's width with `...` appended. unittest shortens a long
+container repr with `[N chars]` in place of the middle and keeps up to 41 characters beside it. A
+known prefix against either ellipsis is a truncated key, whatever follows. A run of 8 or more token
+characters against an ellipsis, with a quote or another ellipsis on its far side, is a fragment of an
+unknown-format value when it has a digit, or a lower-case letter and an upper-case one after its
+first (a base64 tail can lack a digit; a Capitalised word such as `'Connecting...'` does not qualify,
+and neither does an identifier).
+
 Nothing here is a credential: the file holds prefixes and character classes only.
 """
 import re
@@ -59,8 +70,20 @@ _GENERIC = (r"(?:(?=" + _TOKEN_CHARS + r"*\d)" + _TOKEN_CHARS + r"{24,}"
 _DIFF_LINE = r"^(?P<pfx>E[ \t]+[-+][ \t]+['\"]?)" + _GENERIC + r"(?=['\"]?[\]),]*$)"
 _QUOTED_LINE = r"^(?P<pfxq>E[ \t]+['\"])" + _GENERIC + r"(?=['\"]$)"
 
+# A value pytest or unittest has already cut (the module docstring measures the widths). The two forms
+# of the cut; a known prefix against one, whatever follows; and a fragment of an unknown-format value: a
+# run of 8 or more token characters against an ellipsis, a quote or another ellipsis on its far side,
+# with a digit, or with a lower-case letter and an upper-case one after its first.
+_ELLIPSIS = r"(?:\.\.\.|\[\d+ chars\])"
+_PREFIX_ELLIPSIZED = r"(?:sk-ant-|sk-or-|sk-proj-|hf_|AIza|rpa_)" + _TOKEN_CHARS + r"+" + _ELLIPSIS + _TOKEN_CHARS + r"*"
+_FRAGMENT = (r"(?:(?=" + _TOKEN_CHARS + r"*\d)" + _TOKEN_CHARS + r"{8,}"
+             r"|(?=" + _TOKEN_CHARS + r"*[a-z])(?=" + _TOKEN_CHARS + r"+[A-Z])" + _TOKEN_CHARS + r"{8,})")
+_ELLIPSIZED = (r"(?:(?<=['\"])" + _FRAGMENT + r"(?=" + _ELLIPSIS + r")"
+               r"|(?:(?<=\.\.\.)|(?<=chars\]))" + _FRAGMENT + r"(?=" + _ELLIPSIS + r"|['\"]))")
+
 TOKEN_RE = re.compile(
-    r"sk-ant-[A-Za-z0-9_\-]{20,}"                   # Anthropic API keys
+    _PREFIX_ELLIPSIZED +                            # a key of a known format that pytest or unittest cut
+    r"|sk-ant-[A-Za-z0-9_\-]{20,}"                  # Anthropic API keys
     r"|sk-or-[A-Za-z0-9_\-]{20,}"                   # OpenRouter
     r"|sk-proj-[A-Za-z0-9_\-]{20,}"                 # OpenAI project keys
     r"|hf_[A-Za-z0-9]{20,}"                         # Hugging Face
@@ -69,7 +92,8 @@ TOKEN_RE = re.compile(
     r"|" + _VALUE_POSITION + _GENERIC +             # a token of unknown format where a value sits...
     r"|^" + _GENERIC + r"$"                         # ...or alone on its line (an apiKeyHelper's stdout)...
     r"|" + _DIFF_LINE +                             # ...or one side of pytest's diff of two compared values...
-    r"|" + _QUOTED_LINE,                            # ...or unittest's quoted rendering of one differing element
+    r"|" + _QUOTED_LINE +                           # ...or unittest's quoted rendering of one differing element...
+    r"|" + _ELLIPSIZED,                             # ...or a fragment of a value pytest or unittest cut
     re.MULTILINE,
 )
 

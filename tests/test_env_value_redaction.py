@@ -18,7 +18,8 @@ for the assertion nobody wrote that way. Pinned here:
     `assert '<a>' == '<b>'`, a --showlocals line `name = '<a>'`, the `+  where '<a>' = f()` and
     `+  and   '<b>' = g()` lines, the haystack of `assert '<a>' in '<b>'` and unittest's `'<a>' not
     found in '<b>'`, the elements of a list, tuple or set repr, unittest's `Lists differ:` line, its
-    quoted per-element lines and its diff of a container spread over lines).
+    quoted per-element lines and its diff of a container spread over lines, and the fragments of a
+    value pytest ellipsized at default verbosity or unittest shortened with `[N chars]`).
   ReportShapes: the hook's work on a report object of each outcome (a failure's longrepr, a skip's
     tuple, a passed test's sections).
   HookEndToEnd: subprocess pytest runs against a copy of the conftest. A test that fails with a probe
@@ -28,7 +29,8 @@ for the assertion nobody wrote that way. Pinned here:
     under -rA, a collection error, a failed comparison of two unknown-format tokens under
     --showlocals (pytest's diff lines, its assert line and the locals all show the marker), and the
     where/and/in/not-found/Lists-differ/Tuples-differ renderings of two such tokens at default
-    verbosity.
+    verbosity, and the ellipsized renderings of two keys and two 64-character tokens compared with
+    `==` (as strings, in a list, in a tuple, and through unittest's `[N chars]` shortening).
 
 Every probe value is synthetic and assembled at run time ("romp-test-fixture-" + a uuid; a
 pattern-shaped probe is a public key prefix joined to uuids), so no literal in this file is a
@@ -328,6 +330,46 @@ class CredentialPattern(_WithConftest):
                      "['%s']" % uuid.uuid4().hex[:23], "the word %s alone" % a):
             self.assertEqual(red(text), text, text[:24])
 
+    def test_an_ellipsized_value_is_redacted_on_both_sides_of_the_ellipsis(self):
+        # at default verbosity pytest keeps the head and the tail of a compared value's repr, 11 to 13
+        # characters each, joined by `...`; the short summary cuts a message with `...` appended and no
+        # closing quote; unittest shortens a long container repr with `[N chars]`. Each fragment is a piece
+        # of the value: a known prefix against the cut is a truncated key whatever follows it, and 8 or more
+        # token characters against the cut are a fragment when they carry a digit or mixed case
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        k = patterned_probe()                                      # a public prefix and 64 hex
+        a = uuid.uuid4().hex + uuid.uuid4().hex                    # 64 hex, no known prefix
+        # pytest's assert line for two keys: the prefix and 5 characters, the cut, 13 of the tail
+        self.assertEqual(red("assert '%s...%s' == '%s...%s'" % (k[:12], k[-13:], k[:12], k[-13:])),
+                         "assert '%s' == '%s'" % (R, R))
+        # two unknown-format tokens: 12 of the head and 13 of the tail, each a fragment
+        self.assertEqual(red("assert '%s...%s' == '%s...%s'" % (a[:12], a[-13:], a[:12], a[-13:])),
+                         "assert '%s...%s' == '%s...%s'" % (R, R, R, R))
+        # in a list or a tuple the fragments are 11 characters
+        self.assertEqual(red("assert ['%s...%s'] == ['%s...%s']" % (a[:11], a[-12:], a[:11], a[-12:])),
+                         "assert ['%s...%s'] == ['%s...%s']" % (R, R, R, R))
+        self.assertEqual(red("assert ('%s...%s',) == ('%s...%s',)" % (a[:11], a[-11:], a[:11], a[-11:])),
+                         "assert ('%s...%s',) == ('%s...%s',)" % (R, R, R, R))
+        # the short summary's cut: a head against the ellipsis with no closing quote; a key's own cut, cut again
+        self.assertEqual(red("FAILED test_x.py::test_y - AssertionError: assert '%s..." % a[:17]),
+                         "FAILED test_x.py::test_y - AssertionError: assert '%s..." % R)
+        self.assertEqual(red("assert '%s....." % k[:12]), "assert '%s.." % R)
+        # unittest's [N chars]: the head beside it, the tail beside it, a fragment between two of them, and a
+        # key's head against it with the tail it keeps
+        self.assertEqual(red("Lists differ: ['%s[88 chars]%s'] != ['%s[88 chars]%s']" % (a[:41], a[-3:], a[:41], a[-3:])),
+                         "Lists differ: ['%s[88 chars]%s'] != ['%s[88 chars]%s']" % (R, a[-3:], R, a[-3:]))
+        self.assertEqual(red("['sk-[13 chars]%s']" % a[-30:]), "['sk-[13 chars]%s']" % R)
+        self.assertEqual(red("'[13 chars]%s[20 chars]%s'" % (a[:12], a[-9:])), "'[13 chars]%s[20 chars]%s'" % (R, R))
+        self.assertEqual(red("['%s[101 chars]%s']" % (k[:54], k[-3:])), "['%s']" % R)
+        # a mixed-case fragment without a digit qualifies when the upper-case letter is not its first
+        self.assertEqual(red("'abcdEfghijk...'"), "'%s...'" % R)
+        # what stays: a Capitalised word, an identifier, words, a fragment under the floor, a bare cut, a
+        # prefix with nothing before the cut, a cut among words
+        for text in ("'Connecting...'", "'Reconnecting...'", "'test_a_long_...ithout_digits'",
+                     "'the quick br...the lazy dog'", "'abc1234...'", "'...'", "'hf_...'", "loading... done",
+                     "'%s'" % a[:12]):
+            self.assertEqual(red(text), text, text)
+
     def test_the_two_nets_are_applied_in_order_and_share_one_pattern_list(self):
         v = probe_value("env")
         tok = patterned_probe()
@@ -517,6 +559,42 @@ class HookEndToEnd(unittest.TestCase):
             # where + its assert line (2), and + its (2), in + where + and (4), not found (2), the lists block
             # (the container line 4, two element lines, four diff lines), the tuples block (2 + 2 + 2)
             self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 26, out[-2000:])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_an_ellipsized_comparison_prints_the_marker_on_every_fragment(self):
+        # at default verbosity pytest ellipsizes the operands of a failed `==`: two keys of a public format
+        # render as the prefix, 5 characters, `...` and 13 of the tail; two unknown-format tokens as 12- and
+        # 13-character fragments; a list or a tuple of them as 11-character ones. unittest shortens a long
+        # list's repr with `[N chars]` and spreads its diff over lines. No 8-character piece of any value
+        # survives on any line
+        d = tempfile.mkdtemp()
+        try:
+            _copy_hook(d)
+            probes = {"k1": patterned_probe(), "k2": patterned_probe(),
+                      "a": uuid.uuid4().hex + uuid.uuid4().hex, "b": uuid.uuid4().hex + uuid.uuid4().hex}
+            with open(os.path.join(d, "probes.json"), "w") as fh:
+                json.dump(probes, fh)
+            with open(os.path.join(d, "test_probe_ellipsis.py"), "w") as fh:
+                fh.write("import json, os, unittest\n"
+                         "P = json.load(open(os.path.join(os.path.dirname(__file__), 'probes.json')))\n\n"
+                         "def test_keys():\n    assert P['k1'] == P['k2']\n\n"
+                         "def test_tokens():\n    assert P['a'] == P['b']\n\n"
+                         "def test_list():\n    assert [P['a']] == [P['b']]\n\n"
+                         "def test_tuple():\n    assert (P['k1'],) == (P['k2'],)\n\n"
+                         "class Cmp(unittest.TestCase):\n"
+                         "    def test_three(self):\n"
+                         "        self.assertEqual([P['a'], P['b'], P['a']], [P['b'], P['a'], P['b']])\n"
+                         "    def test_keys(self):\n        self.assertEqual([P['k1'], P['k2']], [P['k2'], P['k1']])\n")
+            rc, out = self._run(d, "test_probe_ellipsis.py")
+            self.assertNotEqual(rc, 0)
+            self.assertTrue("6 failed" in out, out[-600:])
+            for name, v in probes.items():
+                for i in range(0, len(v) - 8 + 1):
+                    self.assertFalse(v[i:i + 8] in out, "a piece of %s reached the report" % name)
+            # the keys' assert line (2) and diff (2); the tokens' four fragments and diff (6); the list's (6);
+            # the tuple's (4); the three-element block (2 heads, 2 elements, 6 diff lines); the keys' block (8)
+            self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 30, out[-2500:])
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
