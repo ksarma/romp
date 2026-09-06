@@ -376,6 +376,35 @@ test("executed: lens and order edits keep the whole-blob post, now with a writeI
   assert.equal(panel._tagEditErr, null, "nothing the user did was refused, so nothing is said");
 });
 
+// ROUND 9 (the round-8 refuters' coverage gap): the door bounds a whole-blob write's refusal rows to 64 plus ONE
+// nameless summary row whose reason counts the rest (`more`, `moreEdited`). The chat pane's rendering of that row is
+// pinned in views-writes.test.ts (ackOutcome); the dialog's is here, on the real panel: the kernel's bounded `error`
+// line when it comes, the rows' reasons joined without it, and a nameless row alone as its reason — never a name read
+// off a row that has none, and never an exception before the notice is set and the dialog repainted.
+test("executed: a refusal's nameless summary row renders in the dialog as its reason alone — with the kernel's error line, without it, and as the only row", () => {
+  const panel = drawnPanel();
+  const bound = 'a write is read to 64 tags; "qa" lay past that bound and was not read, so the stored copy was kept';
+  const more = "and 3 more entries past that bound were not read (1 of them this write edited)";
+  const summary = { reason: more, more: 3, moreEdited: 1 };
+  panel._viewsDialog = makeNode("div"); let rebuilt = 0; panel._viewsDialogBuild = () => rebuilt++;
+  // the kernel's shape: the bounded `error` names each refused tag once; the rows carry the summary
+  panel._setLens({ tagOrder: ["web"] });
+  panel.viewsAck({ type: "viewsAck", writeId: posted[0].writeId, ok: false, refused: [{ tid: "g9", name: "qa", reason: bound }, summary], error: '"qa": ' + bound + "; " + more, views: copy(S0) });
+  assert.deepEqual(panel._tagEditErr, { host: "", name: "qa", error: '"qa": ' + bound + "; " + more }, "the kernel's line stands; the summary row adds no name");
+  assert.equal(rebuilt, 1, "the open dialog repaints with it");
+  // no `error` line: the rows' reasons, joined — the nameless row's after the named one's
+  panel._setLens({ tagOrder: ["web"] });
+  panel.viewsAck({ type: "viewsAck", writeId: posted[1].writeId, ok: false, refused: [{ tid: "g9", name: "qa", reason: bound }, summary], views: copy(S0) });
+  assert.deepEqual(panel._tagEditErr, { host: "", name: "qa", error: bound + "; " + more });
+  // the nameless row alone: its reason, and no name
+  panel._setLens({ tagOrder: ["web"] });
+  panel.viewsAck({ type: "viewsAck", writeId: posted[2].writeId, ok: false, refused: [summary], views: copy(S0) });
+  assert.deepEqual(panel._tagEditErr, { host: "", name: "", error: more });
+  assert.equal(panel._pendingViews, null, "each refusal reverted its write");
+  assert.deepEqual(panel._viewsWrites, []);
+  assert.equal(rebuilt, 3);
+});
+
 // ── ORDERING (the 2026-09-05 review, findings 1/8/19): the store's write sequence decides which blob is
 // newer, never the order the socket delivered them in. The pusher builds frames from a warmed cache that
 // can predate a write whose ack already arrived; federation re-emits stored blobs; a net-zero burst leaves
