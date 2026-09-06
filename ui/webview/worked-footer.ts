@@ -34,22 +34,19 @@ export function turnWorkedSecs<E extends WorkedEvent>(events: readonly E[], i: n
   return secs > 0 ? secs : null;
 }
 
-/** The footers to reconcile after a tail re-rendered events [from, len): the last reply of the current turn
- *  and of the one before it, when that reply sits BEFORE `from` (a reply at or past `from` was just rendered
- *  with its footer) and inside the rendered window (at or past `winStart`). `secs` null means the reply
- *  carries no footer now (the session went back to work on the same turn — a nudge, say — and the footer it
- *  wore while idle comes off). Only a turn's LAST reply can carry one, so the walk visits one reply per
- *  turn; two turns cover both events that complete a turn: a prompt landing (the previous turn's reply)
- *  and the session going idle (the current turn's reply). */
+/** The footer to reconcile after a tail re-rendered events [from, len): the one reply BEFORE `from` whose
+ *  footer the tail can have changed, and its seconds — null when it carries no footer now. That reply is the
+ *  last non-prompt event before `from`, when it sits inside the rendered window (at or past `winStart`).
+ *  No earlier reply can change: before `from` it is followed either by a non-prompt event (never a footer,
+ *  before or after the tail) or by a genuine prompt (its turn was already complete, and a complete turn's
+ *  footer reads nothing past that prompt). The tail changes that one reply's footer in four ways: a prompt
+ *  landing completes its turn (the footer goes on); the session going idle with an empty suffix (`from` =
+ *  len) completes it too; a reply landing in the same turn demotes it (the footer comes off, the new reply
+ *  having been rendered with its own); the session going back to work on the same turn — a nudge, say —
+ *  takes it off again. Replies at or past `from` were just rendered with their footer and are not named. */
 export function workedFooterPlan<E extends WorkedEvent>(events: readonly E[], from: number, winStart: number, working: boolean, epoch: Epoch<E>): Array<{ unit: number; secs: number | null }> {
-  const out: Array<{ unit: number; secs: number | null }> = [];
-  let prompts = 0, replySeen = false;
-  for (let j = events.length - 1; j >= winStart && prompts < 2; j--) {
-    const ev = events[j];
-    if (ev.kind === "user") { if (ev.human) { prompts++; replySeen = false; } continue; }
-    if (replySeen) continue;      // not the turn's last reply: never a footer
-    replySeen = true;
-    if (j < from) out.push({ unit: j, secs: turnWorkedSecs(events, j, working, epoch) });
+  for (let j = Math.min(from, events.length) - 1; j >= Math.max(0, winStart); j--) {
+    if (events[j].kind !== "user") return [{ unit: j, secs: turnWorkedSecs(events, j, working, epoch) }];
   }
-  return out;
+  return [];
 }
