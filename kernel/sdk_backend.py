@@ -6240,8 +6240,9 @@ LIVE_TAIL_CAP = 100
 # IS a paste into the composer and the hook runs. The SDK route never reaches it: its input is
 # stream-json and the CLI takes the text as typed (counts over 71 SDK sessions' transcripts, 2026-09-06:
 # 0 image blocks in 8,569 user records; every image-path text landed verbatim), which is why prune_live
-# below floors NO echo — see its docstring. Twin of the kernel's _IMG_PATH_RE (_user_images,
-# _injected_img_paths and _paste_landed_texts read the same extraction back);
+# below floors NO echo — see its docstring. Twin of the kernel's _IMG_PATH_RE (_injected_img_paths
+# waits on the CLI's rewrite and _paste_landed_texts reads it back; the kernel's bare-path PREVIEW,
+# _user_images, is romp's own feature on its own set, _PREVIEW_IMG_RE — not bound to the CLI's);
 # tests/test_kernel_fed_echo_absorbed.py pins both twins to the CLI's set.
 _IMG_PATH_RE = re.compile(r"(?:^|[\s'\"`(])((?:~/|/)[^\s'\"`()]+\.(?:png|jpe?g|gif|webp))\b", re.I)
 
