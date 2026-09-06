@@ -63,10 +63,14 @@ class ColorRoute(unittest.TestCase):
         km._pal_cache.update({"name": km.pal.DEFAULT, "mt": None})
 
     def _post(self, body):
+        # km.TOKEN, not os.environ: pytest imports every collected module before any test runs, and
+        # test_kernel.py's import-time ROMP_SERVE_TOKEN write lands AFTER this module's kernel captured
+        # its token, so a request carrying the env value was refused with a 403 whenever the two files
+        # shared a run (found 2026-09-06). The kernel's own token is the one it checks.
         req = urllib.request.Request(
             "http://127.0.0.1:%d/color" % self.port, data=json.dumps(body).encode(),
             headers={"Content-Type": "application/json",
-                     "X-Romp-Token": os.environ["ROMP_SERVE_TOKEN"]})
+                     "X-Romp-Token": km.TOKEN})
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
                 return r.status, json.loads(r.read().decode())
