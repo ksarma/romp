@@ -8672,10 +8672,17 @@ def _stamp_written_at(nd):
 # gated: the clock-dependent part of the job (em._bg_expired), the registry snapshot and the transcript
 # reads all sit behind `stamped or rolled` being non-empty, and they run every cycle exactly as before.
 # The postal read (_peer_answered, cached) is also skipped on a gated cycle; its answer is consulted only
-# for nodes in `stamped`, which that cycle's load would have found empty. A load that raises records nothing (the next cycle retries; an error is never cached as a
-# skip), and entries for sids that left the alive set are dropped at the end of each tick. The key
-# shares the coarse-mtime blind spot of every stat-keyed memo here (two equal-size publishes inside one
-# clock tick on a filesystem without fine-grained timestamps); plan C1's byte compare closes it.
+# for nodes in `stamped`, which that cycle's load would have found empty. A load that raises records
+# nothing, and neither does one that FELL BACK: load_goals answers an empty store when the store file
+# cannot be read or parsed, and _replay_overrides skips an unreadable journal — both swallow the error
+# and mark the store `_unread` (transient, like `_baseRev`), and a cycle whose store carries the mark
+# does not write an entry, so the next cycle retries and an error is never cached as a skip (before the
+# mark, one EMFILE on a stamped store recorded "nothing to lift" against an identity that never moved
+# again, 2026-09-06). The archive's fallback needs no mark: an unreadable archive makes a restore row
+# re-insert its node, which errs toward a candidate, never toward a skip. Entries for sids that left the
+# alive set are dropped at the end of each tick. The key shares the coarse-mtime blind spot of every
+# stat-keyed memo here (two equal-size publishes inside one clock tick on a filesystem without
+# fine-grained timestamps); plan C1's byte compare closes it.
 _LIFT_GATE = {}                              # sid -> (identity key, bool(that load found a lift candidate))
 _lift_gate_stats = {"skip": 0, "load": 0}    # /perf memos.lift_gate: session-cycles skipped vs loaded
 
@@ -8755,8 +8762,10 @@ def _lift_spent_awaiting(now, tmux):
                       if nd.get("awaitingWhy") and nd.get("rolledUp")
                       and not _last_awaiting_is_lift(nd)]
             # recorded here, from the comprehensions alone: the peer-supersede arm below shrinks
-            # `stamped`, and a save moves the key anyway, so the entry says what THIS load found
-            _LIFT_GATE[sid] = (key, bool(stamped or rolled))
+            # `stamped`, and a save moves the key anyway, so the entry says what THIS load found — unless
+            # the load fell back (`_unread`): an empty answer that is not the files' content is not cached
+            if not store.get("_unread"):
+                _LIFT_GATE[sid] = (key, bool(stamped or rolled))
             changed = False
             for nd in rolled:
                 if jd.record_verdict(store, nd, "romp", "awaiting", _lift_ev_t(nd, now), lift=True):

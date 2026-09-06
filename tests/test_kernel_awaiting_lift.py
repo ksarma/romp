@@ -771,6 +771,52 @@ class LiftGate(unittest.TestCase):
         km.jd.load_goals = counted
         self.assertEqual(self._tick(), 1, "the next tick retries the load")
 
+    # ---- a load that FELL BACK is no better than one that raised ----
+    def _read_fails_once(self, target):
+        """Patch Path.read_text so the first read of `target` raises OSError (the EMFILE/EIO shape a busy
+        kernel meets) and every later read is real. load_goals swallows the error and answers an empty
+        store; _replay_overrides logs and skips the journal. Returns the counter of raised reads."""
+        import errno
+        real = Path.read_text
+        state = {"fired": 0}
+        def flaky(p, *a, **k):
+            if p == target and not state["fired"]:
+                state["fired"] += 1
+                raise OSError(errno.EMFILE, "synthetic: too many open files")
+            return real(p, *a, **k)
+        Path.read_text = flaky
+        self.addCleanup(setattr, Path, "read_text", real)
+        return state
+
+    def test_a_swallowed_store_read_failure_is_not_cached_as_nothing_to_lift(self):
+        import contextlib, io
+        self._returned_dispatch()
+        self._seed()                                     # stamped, its dispatch returned: a lift is due
+        state = self._read_fails_once(km.jd.GOALDIR / (SID + ".json"))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self._tick(), 1)            # load_goals swallowed the error: an empty store
+        self.assertEqual(state["fired"], 1)
+        self.assertIsNotNone(self._stamp(), "tick 1 saw the fallback, not the stamp: no lift yet")
+        self.assertNotIn(SID, km._LIFT_GATE, "a fallback answer is not the files' content: no entry")
+        self.assertGreaterEqual(self._tick(), 1, "the file reads fine now and is unchanged: loaded anyway")
+        self.assertIsNone(self._stamp(), "…and the stamp lifts one cycle late, not never")
+
+    def test_a_swallowed_journal_read_failure_is_not_cached_as_nothing_to_lift(self):
+        import contextlib, io
+        self._returned_dispatch()
+        (km.jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
+            {"rompUuid": SID, "seq": 1, "placements": {}, "status": {}, "nodes": {}}))
+        km.jd.append_restore(SID, {self.gid: self._stamped_node()}, {}, BACK + 50)
+        state = self._read_fails_once(km.jd._overrides_dir() / (SID + ".jsonl"))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self._tick(), 1)            # the replay logged history-unreadable and skipped
+        self.assertEqual(state["fired"], 1)
+        self.assertNotIn(SID, km._LIFT_GATE, "the journal was not read: no entry")
+        self.assertGreaterEqual(self._tick(), 1, "the journal reads now, unchanged: loaded anyway")
+        nodes = json.loads((km.jd.GOALDIR / (SID + ".json")).read_text())["nodes"]
+        self.assertIn(self.gid, nodes, "the restore replayed and the node was saved back")
+        self.assertIsNone(nodes[self.gid].get("awaitingWhy") or None, "…with its stamp lifted")
+
     def test_entries_for_sids_that_left_the_alive_set_are_dropped(self):
         self._seed_unstamped()
         self._tick()
