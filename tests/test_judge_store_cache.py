@@ -387,6 +387,7 @@ class SharedStoreCache(unittest.TestCase):
         p = self._seed()
         s = jd.load_goals_shared(SID)
         key0 = jd.store_key(SID)
+        saves0 = jd.goal_io_stats()["saves"]
         with self.assertRaises(jd.FrozenStoreError):
             jd.save_goals(SID, s)
         with self.assertRaises(jd.FrozenStoreError):
@@ -397,7 +398,7 @@ class SharedStoreCache(unittest.TestCase):
         self.assertEqual(jd.store_key(SID), key0, "nothing was published")
         self.assertEqual(self._delta("poisoned"), 0, "a refused save is not a write to the shared object")
         self.assertEqual(jd.shared_store_stats()["off"], 0)
-        self.assertEqual(jd.goal_io_stats()["saves"], jd.goal_io_stats()["saves"], "counters untouched by the refusal")
+        self.assertEqual(jd.goal_io_stats()["saves"], saves0, "the refusal comes before the counter: neither save counted")
         self.assertTrue(p.exists())
 
     def test_a_write_attempt_switches_the_cache_off_loudly_and_readers_keep_reading(self):
