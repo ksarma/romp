@@ -131,9 +131,11 @@ type ChatEvent = (
       kind: "postal-service";
       direction: "in" | "out";
       peer: string;
-      // incoming: the sender's host as the kernel's message log stamped it ("" = this kernel's own, a peer's
-      // name for mail from that host) — with `peer`, names the ONE session whose repo the body's PR
-      // references link against (postalRepoFor); absent on cards from a kernel that predates the field
+      // incoming: the sender's host as the CARD'S kernel's message log stamped it ("" = that kernel's own,
+      // a peer's name for mail from that host — relative to the kernel the card's session lives on) —
+      // with `peer`, names the ONE session whose repo the body's PR references link against
+      // (postalRepoFor); absent on cards from a kernel that predates the field, and on cards whose log
+      // row predates the stamp (the kernel omits it rather than read absence as its own)
       peerHost?: string;
       color: { bg: string; fg: string } | null;
       body: string;
@@ -798,17 +800,21 @@ function prRepoFor(sid?: string | null): string | null {
 // A postal body was written by its SENDER, so its `#123` means the sender's repository — and only a
 // repository the frame actually names for that sender is used; nothing is guessed (a wrong link is worse
 // than none). An OUTBOUND message was written by the reading session: its own repo, as the frame ships
-// it. An INBOUND message names its sender by host AND name (`peerHost` + `peer`, the host as the kernel's
-// message log stamped it), so the sender is exactly the session in the frame that answers to that pair —
-// a local row for the kernel's own host, that host's federated row otherwise — and the link uses ITS
-// githubRepo. A sender on a host this dashboard has not attached, or one the kernel gave no repo: the
-// text stays plain (the name alone once resolved it, and a remote homonym borrowed a local session's
-// repo; review find, 2026-09-06). Only a card from a kernel that predates the field falls back to the
-// name — the one session, local or federated by its bare name, answering to it; a homonym leaves it
-// plain. The reading session's repo is never substituted for the sender's.
+// it. An INBOUND message names its sender by host AND name (`peerHost` + `peer`, the host as the CARD'S
+// kernel's message log stamped it — relative to that kernel, so it is read against the host of the
+// session the card sits in, postalSenderHost), so the sender is exactly the session in the frame that
+// answers to that pair — a local row for this dashboard's own kernel, a host's federated row otherwise —
+// and the link uses ITS githubRepo. A sender on a host this dashboard has not attached, or one the kernel
+// gave no repo: the text stays plain (the name alone once resolved it, and a remote homonym borrowed a
+// local session's repo; then a remote session's card was read as if its kernel were this one, and its own
+// kernel's sender resolved against the LOCAL rows; review finds, 2026-09-06). Only a card from a kernel
+// that predates the field falls back to the name — the one session, local or federated by its bare name,
+// answering to it; a homonym leaves it plain. The reading session's repo is never substituted for the
+// sender's.
 function postalRepoFor(ev: { direction: "in" | "out"; peer: string; peerHost?: string }): string | null {
   if (ev.direction === "out") return prRepoFor();
-  return senderPrRepo(Array.from(sessions.values(), (s) => ({ sid: s.id, name: s.name, githubRepo: s.githubRepo })), ev.peer, postalSenderHost(ev.peerHost, localSelfHost));
+  const cardHost = hostOf(renderingOwnerSid ?? renderingSid ?? activeId ?? "");   // the card's own kernel, as prRepoFor picks the session
+  return senderPrRepo(Array.from(sessions.values(), (s) => ({ sid: s.id, name: s.name, githubRepo: s.githubRepo })), ev.peer, postalSenderHost(ev.peerHost, localSelfHost, cardHost));
 }
 
 function highlight(container: HTMLElement, lineNos = true) {
@@ -8514,8 +8520,9 @@ function pickerKey(e: KeyboardEvent) {
 // prefilled into the dir field when there's no gear default, so "the default path is written in there".
 let kernelDefaultDir = "";
 // This machine's name as the kernel's peers know it (_self_host — short hostname, ROMP_HOST_NAME
-// override), from the same payload. The + picker's Host row labels its first option with it, so the
-// row reads as a list of machines by name rather than named hosts plus a "local" (the user 2026-08-12).
+// override), from the same payload and from every LOCAL session frame (upsert). The + picker's Host row
+// labels its first option with it, so the row reads as a list of machines by name rather than named hosts
+// plus a "local" (the user 2026-08-12); postalRepoFor reads a postal card's sender host against it.
 let localSelfHost = "";
 // Is this session already an open tab in THIS dashboard? (loaded session, or a not-yet-loaded placeholder tab
 // the kernel's order carries.) The + picker uses it to hide sessions you can already reach by a tab-click.
@@ -12427,6 +12434,12 @@ function sharesAnyUuid(a: ChatEvent[], b: ChatEvent[]): boolean {
 
 function upsert(msg: any) {
   retryCmtCreates(String(msg.id || ""));   // a session frame = the kernel re-parsed → retry a lag-refused create (T106)
+  // The LOCAL kernel's own machine name rides its session frames (the kernel's _self_host, as the feed
+  // frame carries it): the chat reads a postal card's sender host against it (postalSenderHost). It was
+  // learned only from the + picker's sessionList reply before, so that reading was inert in any chat whose
+  // picker had not been opened (review find, 2026-09-06). A remote kernel's frame names ITSELF — the id's
+  // host prefix says whose frame this is, and only the local kernel's is this dashboard's own name.
+  if (typeof msg.selfHost === "string" && msg.selfHost && !hostOf(msg.id)) localSelfHost = msg.selfHost;
   const existed = sessions.has(msg.id);
   const prev = sessions.get(msg.id);
   awaitingFull.delete(msg.id);   // a full session landed → this session is re-based; a later gap may ask again

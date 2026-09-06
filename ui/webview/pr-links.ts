@@ -240,16 +240,23 @@ export function senderPrRepo(rows: readonly SessionRepoRow[], sender: string, ho
 }
 
 /** senderPrRepo's `host` for an inbound postal card, from the `peerHost` the kernel stamps on it — the
- *  sender's host as its message log recorded the delivery: "" for mail from the viewing kernel's own
- *  sessions, a peer's name for mail from that host (the same name federation prefixes that host's rows
- *  with), so the sender resolves to exactly one session or to none — a sender on a host this dashboard
- *  has not attached is plain text, never a local homonym's repo. The viewing kernel's own name folds to
- *  "" (relayed mail can come back stamped with it) and an unknown origin ("?") to undefined, as the feed
- *  reads `blocked.origin`; a card from a kernel that predates the field has no peerHost at all →
- *  undefined, the name-only resolution senderPrRepo keeps for it. */
-export function postalSenderHost(peerHost: unknown, selfHost: string): string | undefined {
+ *  sender's host as the CARD'S OWN kernel's message log recorded the delivery, so it is relative to THAT
+ *  kernel: "" for mail from its own sessions, a peer's name for mail from that host. The chat shows the
+ *  sessions of attached kernels too (their ids and names wear `host:`), and federation hands a remote
+ *  session's events over as its kernel wrote them, so `cardHost` — the host of the session the card sits
+ *  in, "" for a local one — anchors the reading: "" means the card's own host (its local rows for a local
+ *  card, that host's federated rows for a remote one); a named host is that kernel's peer, which may be
+ *  THIS dashboard's own kernel (its name, `selfHost`, folds to "" — the local rows) or a host the
+ *  dashboard may or may not have attached (the same name federation prefixes that host's rows with; not
+ *  attached → no row → plain text, never a local homonym's repo). Read as relative to the dashboard, a
+ *  remote card from its own kernel's session resolved against the LOCAL rows by bare name (review find,
+ *  2026-09-06). An unknown origin ("?") is undefined, as the feed reads `blocked.origin`; a card from a
+ *  kernel that predates the field has no peerHost at all → undefined, the name-only resolution
+ *  senderPrRepo keeps for it. */
+export function postalSenderHost(peerHost: unknown, selfHost: string, cardHost = ""): string | undefined {
   if (typeof peerHost !== "string" || peerHost === "?") return undefined;
-  return peerHost === "" || peerHost === selfHost ? "" : peerHost;
+  if (peerHost === "") return cardHost;
+  return peerHost === selfHost ? "" : peerHost;
 }
 
 /** Follow a PR link the way the chat follows its links (render.ts's a[href] delegate): on the web

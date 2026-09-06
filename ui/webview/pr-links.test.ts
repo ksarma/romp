@@ -404,6 +404,36 @@ test("postalSenderHost: the chat's inbound card names the sender's host, and the
   assert.equal(senderPrRepo(rows, "TESTHOST:aaaaaaaa", postalSenderHost("TESTHOST", SELF)), null, "the kernel's host:sid stub for a nameless sender matches no row");
 });
 
+test("postalSenderHost reads peerHost relative to the CARD's kernel: a federated session's card from its own kernel's sender resolves on that host, never against the local rows", () => {
+  const SELF = "SELFHOST";
+  // the card sits in TESTHOST:tests; TESTHOST's log stamped "" for mail from its own `api`
+  assert.equal(postalSenderHost("", SELF, "TESTHOST"), "TESTHOST", "'' means the card's own host");
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost("", SELF, "TESTHOST")), "other-org/api",
+    "TESTHOST's own api, not the local homonym's repo (which relative-to-the-dashboard reading produced)");
+  // the same card's kernel names THIS dashboard's kernel as the sender's host: the local rows
+  assert.equal(postalSenderHost(SELF, SELF, "TESTHOST"), "", "the dashboard's own name folds to the local rows, whatever session the card sits in");
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost(SELF, SELF, "TESTHOST")), "example-org/notes-api");
+  // a third host: matched by name among the frame's rows — attached, its row; not attached, plain text
+  assert.equal(postalSenderHost("OTHERHOST", SELF, "TESTHOST"), "OTHERHOST");
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost("OTHERHOST", SELF, "TESTHOST")), null, "a host this dashboard has not attached: no guess");
+  assert.equal(postalSenderHost("TESTHOST", SELF, "TESTHOST"), "TESTHOST", "a kernel naming itself reads the same as ''");
+  // the legacy and unknown-origin forms are unchanged by the card's host
+  assert.equal(postalSenderHost(undefined, SELF, "TESTHOST"), undefined);
+  assert.equal(postalSenderHost("?", SELF, "TESTHOST"), undefined);
+  // a LOCAL card (cardHost "" — the default) reads exactly as before
+  assert.equal(postalSenderHost("", SELF, ""), "");
+  assert.equal(postalSenderHost("", SELF), "");
+  assert.equal(postalSenderHost("TESTHOST", SELF, ""), "TESTHOST");
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost("", SELF, "")), "example-org/notes-api", "a local card from a local sender: the local row");
+});
+
+test("postalSenderHost with the dashboard's own name not yet known (selfHost ''): the card-host and peer readings hold, and nothing folds by accident", () => {
+  assert.equal(postalSenderHost("", "", ""), "", "a local card, local sender");
+  assert.equal(postalSenderHost("", "", "TESTHOST"), "TESTHOST", "a federated card, its kernel's own sender");
+  assert.equal(postalSenderHost("TESTHOST", "", ""), "TESTHOST", "a named peer stays named — '' as selfHost matches no name");
+  assert.equal(senderPrRepo(rows, "api", postalSenderHost("TESTHOST", "", "")), "other-org/api");
+});
+
 test("senderPrRepo tolerates malformed rows and an invalid repo value", () => {
   assert.equal(senderPrRepo([{ sid: U, name: "web", githubRepo: "https://github.com/x/y" }], "web"), null);
   assert.equal(senderPrRepo([null as any, { sid: 5 as any, name: "web" }, { sid: U, name: "web", githubRepo: "x/y" }], "web"), "x/y");
@@ -580,9 +610,16 @@ test("postal bodies link against the SENDER's frame-known repo only: outbound = 
   assert.match(RENDER, /body\.innerHTML = md\(ev\.body, postalRepoFor\(ev\)\);/);
   const fn = RENDER.match(/function postalRepoFor\([\s\S]*?\n\}/)?.[0] || "";
   assert.match(fn, /if \(ev\.direction === "out"\) return prRepoFor\(\);/);
-  assert.match(fn, /return senderPrRepo\(Array\.from\(sessions\.values\(\), \(s\) => \(\{ sid: s\.id, name: s\.name, githubRepo: s\.githubRepo \}\)\), ev\.peer, postalSenderHost\(ev\.peerHost, localSelfHost\)\);/,
-    "the sender's host rides the card (peerHost) and is compared against this kernel's own name");
+  assert.match(fn, /const cardHost = hostOf\(renderingOwnerSid \?\? renderingSid \?\? activeId \?\? ""\);/,
+    "the card's own kernel is the host of the session it sits in — the chain prRepoFor picks the session by");
+  assert.match(fn, /return senderPrRepo\(Array\.from\(sessions\.values\(\), \(s\) => \(\{ sid: s\.id, name: s\.name, githubRepo: s\.githubRepo \}\)\), ev\.peer, postalSenderHost\(ev\.peerHost, localSelfHost, cardHost\)\);/,
+    "the sender's host rides the card (peerHost), read relative to the card's kernel and against this kernel's own name");
   assert.equal((fn.match(/prRepoFor\(/g) || []).length, 1, "the reading session's repo is used for OUTBOUND mail only");
+  // this dashboard's own name is learned from every LOCAL session frame, not only from the + picker's reply
+  assert.match(RENDER, /if \(typeof msg\.selfHost === "string" && msg\.selfHost && !hostOf\(msg\.id\)\) localSelfHost = msg\.selfHost;/,
+    "a remote kernel's frame names itself; only a frame with no host prefix is this kernel's");
+  const upsertFn = RENDER.match(/function upsert\(msg: any\) \{[\s\S]*?\n\}/)?.[0] || "";
+  assert.match(upsertFn, /localSelfHost = msg\.selfHost;/, "adopted in upsert, the session frame's one ingest point");
   assert.match(RENDER, /kind: "postal-service";\s*\n\s*direction: "in" \| "out";\s*\n\s*peer: string;\s*\n(?:\s*\/\/[^\n]*\n)*\s*peerHost\?: string;/, "the event type carries the optional host");
 });
 
