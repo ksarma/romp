@@ -182,13 +182,22 @@ class Fixture:
             return json.load(f)
 
     def pr(self, n, head, base="main", title=None, body="", labels=(), draft=False, checks="success",
-           state="OPEN", merge_commit=None, mergeable="MERGEABLE"):
+           state="OPEN", merge_commit=None, mergeable="MERGEABLE", head_oid=None):
+        """`head_oid` pins a MERGED or CLOSED PR's head at that moment (the fake reads an OPEN PR's
+        head live from its branch); without it the fake reads the branch once."""
         self.gh_state = self.gh()
         self.gh_state["prs"][str(n)] = {
             "number": n, "title": title or "PR %d on %s" % (n, head), "body": body, "labels": list(labels),
             "baseRefName": base, "headRefName": head, "isDraft": draft, "state": state,
             "mergeCommit": merge_commit, "mergedAt": None, "mergeable": mergeable, "checks": checks,
             "comments": [], "url": "https://example.invalid/pull/%d" % n}
+        if head_oid:
+            self.gh_state["prs"][str(n)]["headRefOid"] = head_oid
+        self._save_gh()
+
+    def set_repo(self, **kw):
+        self.gh_state = self.gh()
+        self.gh_state["repo"].update(kw)
         self._save_gh()
 
     def set_gh(self, **kw):
@@ -211,10 +220,13 @@ class Fixture:
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     # -- the tool ----------------------------------------------------------
-    def run(self, *args, script="batch.py", cwd=None):
+    def run(self, *args, script="batch.py", cwd=None, gh_fail=None):
+        """`gh_fail` is a FAKE_GH_FAIL spec for this one call: `|`-separated argv prefixes the fake
+        gh answers with an HTTP 502."""
         cmd = [sys.executable, os.path.join(self.dev, "scripts", script)] if script.endswith(".py") \
             else [os.path.join(self.dev, "scripts", script)]
-        return subprocess.run([*cmd, *args], cwd=cwd or self.tmp, env=self.env, text=True,
+        env = dict(self.env, FAKE_GH_FAIL=gh_fail) if gh_fail else self.env
+        return subprocess.run([*cmd, *args], cwd=cwd or self.tmp, env=env, text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def ok(self, *args, **kw):
@@ -340,6 +352,52 @@ class Plan(_Base):
         self.assertIn("PREDICTED CONFLICT in notes.txt with #101", p.stdout)
         self.assertEqual(fx.dev_git("status", "--porcelain", "--untracked-files=no"), "", "the prediction touches no worktree")
         self.assertEqual(fx.dev_git("for-each-ref", "--format=%(refname)", "refs/heads/"), "refs/heads/main", "and writes no ref")
+
+    def test_a_dependency_that_already_merged_counts_as_satisfied(self):
+        """`Depends-on: #N` stays in a body after #N lands alone (the docs ask for it there); the
+        dependent must not be stranded out of every batch for it. A closed, unmerged dependency
+        still excludes, by name."""
+        fx = self.fx
+        fx.branch("done", {"done.txt": "d\n"})
+        fx.fake_gh("pr", "create", "--head", "done", "--title", "landed alone")     # #900
+        fx.fake_gh("pr", "merge", "900", "--merge")
+        fx.branch("h", {"h.txt": "h\n"})
+        fx.pr(108, "h", labels=["fix"], body="Depends-on: #900\n\nmore", title="after the landed one")
+        fx.branch("j", {"j.txt": "j\n"})
+        fx.pr(109, "j", labels=["fix"], body="Depends-on: #300\n")
+        fx.pr(300, "nowhere", state="CLOSED")
+        fx.ok("plan", "--name", "b1")
+        st = fx.state("b1")
+        self.assertEqual(st["order"], [108])
+        self.assertEqual(st["members"]["108"]["depends_on"], [])
+        self.assertEqual(st["members"]["108"]["depends_on_merged"], [900])
+        reasons = {row["n"]: row["reason"] for row in st["excluded"]}
+        self.assertEqual(reasons[109], "depends on #300 (closed, not merged)")
+
+    def test_a_reused_base_branch_name_is_an_open_prs_branch_not_the_merged_prs(self):
+        """Branch names recur on the fork. A base that is an open PR's head is a dependency even if a
+        merged PR once used the name; a base whose branch moved on with no open PR is excluded by
+        that reason, not as the merged PR's branch."""
+        fx = self.fx
+        old_head = fx.branch("old", {"old.txt": "old\n"})
+        fx.pr(100, "old", state="MERGED", merge_commit=fx.bare_rev("main"), head_oid=old_head)
+        fx.commit("old", {"old.txt": "old again\n"}, "the name is reused for new work")
+        fx.branch("h", {"h.txt": "h\n"}, base="old")
+        fx.pr(109, "old", labels=["fix"], body=TRAILER, title="new work on a reused name")
+        fx.pr(108, "h", base="old", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        st = fx.state("b1")
+        self.assertEqual(st["order"], [109, 108])
+        self.assertEqual(st["members"]["108"]["depends_on"], [109])
+        fx.ok("assemble", "b1")
+        st = fx.state("b1")
+        self.assertEqual([e["n"] for e in st["assembly"]["merged"]], [109, 108], "assemble does not hold the stacked member back")
+        self.assertEqual(st["assembly"]["held"], [])
+        # The same reused name with NO open PR on it: excluded for that, not as merged PR #100's branch.
+        fx.pr(109, "old", state="CLOSED")
+        fx.ok("plan", "--name", "b2")
+        reasons = {row["n"]: row["reason"] for row in fx.state("b2")["excluded"]}
+        self.assertIn("was merged PR #100's branch and now holds other commits with no open PR", reasons[108])
 
 
 class Assemble(_Base):
@@ -497,6 +555,236 @@ class Assemble(_Base):
         self.assertEqual(st["members"]["101"]["head"], new)
         self.assertEqual(fx.dev_git("rev-parse", "batch/b1^2"), new)
 
+    def conflict_pair(self):
+        """#101 on `a` and #108 on `g`, both editing notes.txt line two."""
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo-a\nthree\n"})
+        fx.branch("g", {"notes.txt": "one\ntwo-g\nthree\n"})
+        fx.pr(101, "a", labels=["fix"], body=TRAILER)
+        fx.pr(108, "g", title="notes: the g version", labels=["fix"], body=TRAILER)
+
+    def test_continue_refuses_a_non_conflicted_file_staged_into_the_resolved_merge(self):
+        """The subset rule: a resolution may change only the files that conflicted. A file staged
+        alongside it would otherwise ride inside the member's merge commit, pass verify as 'carries
+        a recorded resolution', and never appear in the body."""
+        fx = self.fx
+        self.conflict_pair()
+        fx.ok("plan", "--name", "b1")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g\nthree\n")
+        with open(os.path.join(wt, "kernel", "kernel.py"), "w") as f:
+            f.write("VERSION = 1\nSMUGGLED = True\n")
+        fx._git("add", "notes.txt", "kernel/kernel.py", cwd=wt)
+        p = fx.run("assemble", "b1", "--continue", "--reviewed", "subagent: fine")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("also changes kernel/kernel.py, outside the conflicted files (notes.txt)", p.stderr)
+        self.assertTrue(os.path.exists(os.path.join(fx.dev, ".git", "worktrees", "romp-batch-b1", "MERGE_HEAD")), "the merge is left in progress to fix")
+        self.assertEqual(fx.chain("b1"), ["Merge #101: PR 101 on a"], "nothing was committed")
+        m = re.search(r"git restore --source=([0-9a-f]{40}) --staged --worktree -- kernel/kernel.py", p.stderr)
+        self.assertIsNotNone(m, "the refusal names the tree holding the merge's own content: %s" % p.stderr)
+        fx._git("restore", "--source=" + m.group(1), "--staged", "--worktree", "--", "kernel/kernel.py", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "subagent: fine")
+        self.assertEqual(fx.dev_git("show", "batch/b1:kernel/kernel.py"), "VERSION = 1")
+        p = fx.ok("verify", "b1", "--sweep", "x")
+        self.assertIn("#108 merge carries a recorded resolution (resolved by the batcher, per hunk) in notes.txt", p.stdout)
+
+    def test_verify_catches_a_stray_file_amended_into_a_resolved_merge_and_the_body_shows_it(self):
+        fx = self.fx
+        self.conflict_pair()
+        fx.ok("plan", "--name", "b1")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g\nthree\n")
+        fx._git("add", "notes.txt", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "subagent: fine")
+        with open(os.path.join(wt, "kernel", "kernel.py"), "w") as f:
+            f.write("VERSION = 1\nSMUGGLED = True\n")
+        fx._git("add", "kernel/kernel.py", cwd=wt)
+        fx._git("commit", "-q", "--amend", "--no-edit", cwd=wt)
+        p = fx.run("verify", "b1", "--sweep", "x")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL provenance: #108 merge", p.stdout)
+        self.assertIn("changes kernel/kernel.py outside its recorded resolution (notes.txt)", p.stdout)
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        self.assertIn("SMUGGLED", body, "the combined diff covers every path that differs from the clean merge")
+        self.assertIn("NOT VERIFIED", body)
+
+    def test_a_failed_hold_back_comment_is_reported_not_recorded_as_told(self):
+        fx = self.fx
+        self.conflict_pair()
+        fx.ok("plan", "--name", "b1")
+        p = fx.ok("assemble", "b1", gh_fail="pr comment")
+        st = fx.state("b1")
+        held = st["assembly"]["held"][0]
+        self.assertEqual(held["n"], 108)
+        self.assertIs(held["told"], False)
+        self.assertIn("comment failed: fake gh: HTTP 502", held["told_why"])
+        self.assertNotIn("108", st.get("held_notified", {}), "not recorded as told, so the rebuild retries")
+        self.assertIn("gh pr comment failed", p.stdout)
+        self.assertIn("postal (kind: coordinate) to the owner of #108", p.stdout)
+        self.assertEqual(fx.gh()["prs"]["108"]["comments"], [])
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        self.assertIn("- #108: conflicts with #101 in notes.txt; owner NOT told (comment failed: fake gh: HTTP 502", body)
+        fx.ok("assemble", "b1")
+        self.assertEqual(len(fx.gh()["prs"]["108"]["comments"]), 1, "the rebuild posts the comment")
+        self.assertIs(fx.state("b1")["assembly"]["held"][0]["told"], True)
+
+    def test_a_member_conflicting_with_main_is_told_so_not_blamed_on_a_member(self):
+        fx = self.fx
+        old_main = fx.bare_rev("main")
+        fx.branch("s", {"notes.txt": "one\ntwo-s\nthree\n"}, base=old_main)
+        fx.commit_main({"notes.txt": "one\ntwo-m\nthree\n"}, "main moved on")
+        fx.branch("k", {"k.txt": "k\n"})
+        fx.pr(111, "k", labels=["fix"], body=TRAILER)
+        fx.pr(110, "s", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        st = fx.state("b1")
+        held = st["assembly"]["held"]
+        self.assertEqual([h["n"] for h in held], [110])
+        self.assertEqual(held[0]["reason"], "conflicts with origin/main in notes.txt")
+        self.assertEqual(held[0]["with"], [])
+        comment = fx.gh()["prs"]["110"]["comments"][0]
+        self.assertIn("This PR conflicts with origin/main in notes.txt", comment)
+        self.assertNotIn("earlier member", comment)
+        self.assertNotIn("that PR's branch", comment)
+        self.assertIn("Merge origin/main into yours", comment)
+
+    def test_a_rerere_replay_after_pull_keeps_the_recorded_review(self):
+        fx = self.fx
+        self.conflict_pair()
+        fx.branch("k", {"k.txt": "k\n"})
+        fx.pr(111, "k", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g\nthree\n")
+        fx._git("add", "notes.txt", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "subagent: fine")
+        fx.push_batch("b1")
+        fx.ok("verify", "b1", "--sweep", "x")
+        fx.ok("summarize", "b1")
+        fx.ok("pull", "b1", "111")
+        st = fx.state("b1")
+        rec = [e for e in st["assembly"]["merged"] if e["n"] == 108][0]["resolved"]
+        self.assertTrue(rec["replayed"])
+        self.assertEqual(rec["review"], "subagent: fine", "the review carries over with the identical resolution")
+        self.assertEqual(rec["hunks"], 1)
+        self.assertIn("earlier assembly", rec["how"])
+        body = fx.gh()["prs"]["900"]["body"]
+        self.assertIn("- #108 g: conflict resolved in notes.txt (1 hunk); one review round in the earlier assembly, replayed by rerere: subagent: fine. [combined diff below].", body)
+        self.assertNotIn("NOT recorded", body)
+        self.assertEqual(fx.dev_git("show", "batch/b1:notes.txt"), "one\ntwo-a-g\nthree")
+
+    def test_a_member_already_contained_by_an_earlier_member_is_recorded_as_contained(self):
+        """Ordering missed a dependency: #101's branch was built on #102's. `git merge` says
+        'Already up to date' and makes no commit, which must not be recorded as a merge."""
+        fx = self.fx
+        fx.branch("a", {"kernel/kernel.py": "VERSION = 2\n"})
+        fx.branch("b", {"postal/postal_service.py": "def send():\n    return 2\n"}, base="a")
+        fx.pr(101, "b", title="postal: send two", labels=["fix"], body=TRAILER)
+        fx.pr(102, "a", title="kernel: bump the version", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        self.assertEqual(fx.state("b1")["order"], [101, 102])
+        p = fx.ok("assemble", "b1")
+        self.assertIn("#102 is already contained by #101", p.stdout)
+        st = fx.state("b1")
+        self.assertEqual([e["n"] for e in st["assembly"]["merged"]], [101])
+        self.assertEqual(st["assembly"]["contained"], [{"n": 102, "contained_by": "#101"}])
+        self.assertEqual(fx.chain("b1"), ["Merge #101: postal: send two"])
+        fx.push_batch("b1")
+        p = fx.ok("verify", "b1", "--sweep", "x")
+        self.assertIn("ok   head: #102 at %s (already contained by #101, no merge of its own)" % st["members"]["102"]["head"][:10], p.stdout)
+        self.assertIn("ok   provenance: 1 member merge(s), 0 declared batch: commit(s), nothing else", p.stdout)
+        fx.ok("summarize", "b1")
+        gh = fx.gh()
+        body = gh["prs"]["900"]["body"]
+        self.assertTrue(body.startswith("# Batch b1: 2 PRs\n"), body.splitlines()[0])
+        self.assertIn("- #102 a: already contained by #101: no merge commit of its own (add `Depends-on` or reorder next time); touches kernel/.", body)
+        self.assertIn("| #102 | kernel: bump the version | fix | 3 |", body)
+        self.assertIn("contained by #101", body)
+        self.assertEqual(gh["prs"]["102"]["comments"], ["in batch b1 at %s" % st["assembly"]["head"]], "a contained member hears the cut too")
+        # Contained by main (it merged alone): recorded as such; verify then says pull it.
+        fx.fake_gh("pr", "merge", "101", "--merge")
+        fx.ok("assemble", "b1")
+        st = fx.state("b1")
+        self.assertEqual([c["n"] for c in st["assembly"]["contained"]], [101, 102])
+        self.assertEqual(st["assembly"]["contained"][0]["contained_by"], "origin/main")
+        self.assertEqual(st["assembly"]["merged"], [])
+        p = fx.run("verify", "b1", "--sweep", "x")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("FAIL state: #101 is MERGED (pull it", p.stdout)
+
+    def test_merge_main_records_a_clean_merge_and_a_resolved_one(self):
+        """When main moves under an open batch, `assemble --merge-main` merges origin/main into the
+        batch and records it; a conflict stops for a hand resolution the way --resolve does, and the
+        resolution is recorded, shown in the body and checked by provenance."""
+        fx = self.fx
+        self.conflict_pair()
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        head0 = fx.state("b1")["assembly"]["head"]
+        fx.commit_main({"README.md": "# notes-api\n\nmain moved\n"}, "main moved")
+        p = fx.ok("assemble", "b1", "--merge-main")
+        st = fx.state("b1")
+        self.assertEqual(len(st["assembly"]["main_merges"]), 1)
+        self.assertIsNone(st["assembly"]["main_merges"][0]["resolved"])
+        self.assertNotEqual(st["assembly"]["head"], head0)
+        self.assertEqual(st["assembly"]["head"], fx.dev_git("rev-parse", "batch/b1"))
+        self.assertIsNone(st["verified"])
+        self.assertEqual(fx.chain("b1"), ["Merge #101: PR 101 on a", "Merge origin/main into batch/b1"])
+        p = fx.ok("verify", "b1", "--sweep", "x")
+        self.assertIn("ok   provenance: the origin/main merge %s equals the clean merge of its parents" % st["assembly"]["head"][:10], p.stdout)
+        self.assertEqual(fx.ok("assemble", "b1", "--merge-main").stdout.strip(), "origin/main (%s) is already in batch/b1" % fx.bare_rev("main")[:10])
+        # main now conflicts with #101 in notes.txt: stop, resolve, continue.
+        fx.commit_main({"notes.txt": "one\ntwo-m\nthree\n"}, "main edits notes")
+        p = fx.run("assemble", "b1", "--merge-main")
+        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+        self.assertIn("stopped for resolution in notes.txt", p.stdout)
+        st = fx.state("b1")
+        self.assertEqual(st["assembly"]["cursor"], {"n": None, "main": fx.bare_rev("main"), "files": ["notes.txt"]})
+        p = fx.run("verify", "b1", "--sweep", "x")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("the merge of origin/main is still stopped", p.stderr)
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-m\nthree\n")
+        fx._git("add", "notes.txt", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "subagent: ok")
+        st = fx.state("b1")
+        self.assertIsNone(st["assembly"]["cursor"])
+        self.assertEqual(len(st["assembly"]["main_merges"]), 2)
+        self.assertEqual(st["assembly"]["main_merges"][1]["resolved"]["review"], "subagent: ok")
+        self.assertEqual(st["assembly"]["head"], fx.dev_git("rev-parse", "batch/b1"))
+        self.assertEqual([e["n"] for e in st["assembly"]["merged"]], [101], "no member was merged twice")
+        p = fx.ok("verify", "b1", "--sweep", "x")
+        self.assertIn("ok   provenance: the origin/main merge carries a recorded resolution (resolved by the batcher, per hunk) in notes.txt", p.stdout)
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        self.assertIn("- merge of origin/main (%s): conflict resolved in notes.txt (1 hunk); one review round: subagent: ok. [combined diff below]." % st["assembly"]["head"][:10], body)
+        self.assertIn("### merge of origin/main (%s)" % st["assembly"]["head"][:10], body)
+        self.assertIn("two-a-m", body)
+
+    def test_pull_of_a_member_that_merged_alone_keeps_its_dependents_and_repin_refreshes_the_base(self):
+        fx = self.fx
+        self.two_members()
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        fx.fake_gh("pr", "merge", "101", "--merge")     # merged alone; GitHub deletes `a` and retargets #102 to main
+        self.assertEqual(fx.gh()["prs"]["102"]["baseRefName"], "main")
+        p = fx.ok("assemble", "b1", "--repin", "102", "--without", "101")
+        st = fx.state("b1")
+        self.assertEqual(st["pulled"], [101], "#102 is not dropped: its dependency is in main")
+        self.assertEqual([e["n"] for e in st["assembly"]["merged"]], [102])
+        self.assertEqual(st["members"]["102"]["base_ref"], "main", "--repin refreshes the base")
+        self.assertTrue(any("#101 is pulled but already in origin/main; its dependents stay" in l for l in st["assembly"]["log"]))
+        self.assertTrue(any("re-pinned #102: base a -> main" in l for l in st["assembly"]["log"]))
+        fx.push_batch("b1")
+        fx.ok("verify", "b1", "--sweep", "x")
+
 
 class Verify(_Base):
     def assembled(self):
@@ -566,6 +854,102 @@ class Verify(_Base):
         p = fx.run("verify", "b1", "--sweep", "x")
         self.assertEqual(p.returncode, 1)
         self.assertIn("state: #101 is MERGED", p.stdout)
+
+    def test_an_edit_hidden_in_a_merge_of_main_is_caught(self):
+        """A first-parent merge of origin/main is checked like a member merge: its tree must equal
+        the clean merge of its parents unless a resolution was recorded through --merge-main."""
+        fx = self.fx
+        self.assembled()
+        fx.commit_main({"README.md": "# notes-api\n\nmoved\n"}, "main moved")
+        wt = fx.wt("b1")
+        fx._git("fetch", "-q", "origin", cwd=wt)
+        fx._git("merge", "--no-ff", "--no-edit", "origin/main", cwd=wt)
+        with open(os.path.join(wt, "kernel", "kernel.py"), "w") as f:
+            f.write("VERSION = 2\nBACKDOOR = True\n")
+        fx._git("add", "kernel/kernel.py", cwd=wt)
+        fx._git("commit", "-q", "--amend", "--no-edit", cwd=wt)
+        p = fx.run("verify", "b1", "--sweep", "x")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL provenance: the origin/main merge", p.stdout)
+        self.assertIn("differs from the clean merge of its parents (undeclared change in kernel/kernel.py)", p.stdout)
+        self.assertFalse(fx.state("b1")["verified"]["ok"])
+        # An unrecorded hand resolution while merging main in fails too, naming the file.
+        fx._git("reset", "-q", "--hard", "HEAD^", cwd=wt)
+        fx.commit_main({"kernel/kernel.py": "VERSION = 9\n"}, "main edits the kernel")
+        fx._git("fetch", "-q", "origin", cwd=wt)
+        fx._git("merge", "--no-ff", "--no-edit", "origin/main", cwd=wt, check=False)
+        self.assertTrue(os.path.exists(os.path.join(fx.dev, ".git", "worktrees", "romp-batch-b1", "MERGE_HEAD")), "main conflicts with #101 in kernel.py")
+        with open(os.path.join(wt, "kernel", "kernel.py"), "w") as f:
+            f.write("VERSION = 9\n")
+        fx._git("add", "kernel/kernel.py", cwd=wt)
+        fx._git("commit", "-q", "--no-edit", cwd=wt)
+        p = fx.run("verify", "b1", "--sweep", "x")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("resolved a conflict that is not recorded (in kernel/kernel.py)", p.stdout)
+
+    def test_verify_fails_when_an_assembly_did_not_finish(self):
+        """An assembly that dies half-way (a gh error on a later member) leaves `pending` non-empty
+        and no head; verify must not adopt the branch tip and pass with the members missing."""
+        fx = self.fx
+        self.assembled()
+        path = os.path.join(fx.dev, ".git", "batch", "b1.json")
+        with open(path) as f:
+            st = json.load(f)
+        st["assembly"]["merged"] = st["assembly"]["merged"][:1]
+        st["assembly"]["pending"] = [102]
+        st["assembly"]["head"] = None
+        with open(path, "w") as f:
+            json.dump(st, f)
+        p = fx.run("verify", "b1", "--sweep", "x")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("assembly incomplete: #102 never merged; run assemble again", p.stderr)
+        self.assertIsNone(fx.state("b1")["verified"])
+
+    def test_a_declared_batch_commit_is_listed_under_read_these_first(self):
+        fx = self.fx
+        self.assembled()
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "hotfix.py"), "w") as f:
+            f.write("FIX = 1\n")
+        fx._git("add", "hotfix.py", cwd=wt)
+        fx._git("commit", "-q", "-m", "batch: hotfix for the integrated tree", cwd=wt)
+        sha = fx._git("rev-parse", "HEAD", cwd=wt)
+        fx.ok("verify", "b1", "--sweep", "x")
+        self.assertEqual(fx.state("b1")["assembly"]["declared"][0]["subject"], "batch: hotfix for the integrated tree")
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        self.assertIn("- `batch:` commit %s by the batcher: batch: hotfix for the integrated tree; 1 file changed, 1 insertion(+); touches hotfix.py." % sha[:10], body)
+        self.assertTrue(body.splitlines()[1].startswith('Merge with "Create a merge commit". Verified at'))
+
+    def test_a_verify_that_dies_half_way_leaves_no_green_verification(self):
+        fx = self.fx
+        self.assembled()
+        fx.ok("verify", "b1", "--sweep", "x")
+        self.assertTrue(fx.state("b1")["verified"]["ok"])
+        p = fx.run("verify", "b1", gh_fail="pr view 102")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("HTTP 502", p.stderr)
+        self.assertIsNone(fx.state("b1")["verified"], "the earlier green verdict is gone")
+        self.assertIn("NOT VERIFIED", fx.ok("summarize", "b1", "--print-only").stdout)
+
+    def test_the_ledger_check_reads_the_branch_not_the_worktree_directory(self):
+        fx = self.fx
+        prose_only = "# Upstream\n\nProse.\n\nEntries live in upstream/.\n\nWhen offering: tail.\n"
+        fx.commit_main({"UPSTREAM.md": prose_only, "scripts/upstream-ledger.py": FAKE_LEDGER}, "ledger migration")
+        # Cut after the migration, so the merge is clean and the row lands on the branch unconverted.
+        fx.branch("s", {"UPSTREAM.md": prose_only + "\n| row two | fork PR #110 | candidate | why |\n"})
+        fx.pr(110, "s", title="a straggler row after the migration", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        p = fx.run("verify", "b1", "--sweep", "x")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("FAIL ledger: UPSTREAM.md:", p.stdout)
+        fx.dev_git("worktree", "remove", "--force", fx.wt("b1"))
+        self.assertFalse(os.path.isdir(fx.wt("b1")))
+        p = fx.run("verify", "b1", "--sweep", "x")
+        self.assertEqual(p.returncode, 1, "a missing worktree does not turn FAIL into OK:\n" + p.stdout + p.stderr)
+        self.assertIn("FAIL ledger: UPSTREAM.md:", p.stdout)
+        self.assertNotIn("pre-migration", p.stdout)
+        self.assertEqual(fx.dev_git("worktree", "list", "--porcelain").count("worktree "), 1, "the temporary checkout is gone")
 
 
 class Pull(_Base):
@@ -654,16 +1038,40 @@ class LandAndFinish(_Base):
         self.assertTrue(any("finish deleted head branches" in o for o in rep["observations"]))
         self.assertIn("postal (kind: coordinate) to the owners of #101, #102", p.stdout)
 
-    def test_land_uses_auto_only_when_a_ruleset_exists(self):
+    def test_land_auto_needs_the_setting_and_rules_on_main_and_says_which(self):
+        """--auto is refused by name until the repository allows auto-merge AND something is required
+        on main: a ruleset rule (read from the rules that apply to main, not the repository-wide
+        list) or classic branch protection. The refusal and the go-ahead both say what was found."""
         fx = self.fx
         self.ready()
         p = fx.run("land", "b1", "--auto")
         self.assertEqual(p.returncode, 1)
-        self.assertIn("needs a ruleset", p.stderr)
+        self.assertIn('"Allow auto-merge" setting, which is off', p.stderr)
+        self.assertIn("gh repo edit --enable-auto-merge", p.stderr)
         self.assertEqual(fx.calls("pr", "merge"), [])
-        fx.set_gh(rulesets=[{"id": 1, "name": "main"}])
-        fx.ok("land", "b1", "--auto")
+        fx.set_repo(allowAutoMerge=True)
+        p = fx.run("land", "b1", "--auto")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("needs a ruleset or branch protection on main", p.stderr)
+        self.assertIn("no rules apply to main, and it has no classic protection", p.stderr)
+        self.assertEqual(fx.calls("pr", "merge"), [])
+        # Classic protection alone satisfies it, and is named.
+        fx.set_gh(protection={"required_status_checks": {"contexts": ["ci"]}})
+        p = fx.ok("land", "b1", "--auto")
         self.assertIn("--auto", fx.calls("pr", "merge")[0])
+        self.assertIn("merging with --auto: auto-merge is allowed and classic branch protection on main", p.stdout)
+
+    def test_land_auto_names_a_ruleset_that_applies_to_main(self):
+        fx = self.fx
+        self.ready()
+        fx.set_repo(allowAutoMerge=True)
+        fx.set_gh(rulesets=[{"type": "required_status_checks"}])
+        p = fx.ok("land", "b1", "--auto")
+        self.assertIn("--auto", fx.calls("pr", "merge")[0])
+        self.assertIn("a ruleset applies to main (1 rule)", p.stdout)
+        paths = [c[1] for c in fx.calls("api")]
+        self.assertIn("repos/{owner}/{repo}/rules/branches/main", paths, "the rules that apply to main, not the repository-wide list")
+        self.assertNotIn("repos/{owner}/{repo}/rulesets", paths)
 
     def test_land_stops_when_verify_fails(self):
         fx = self.fx
@@ -716,6 +1124,50 @@ class LandAndFinish(_Base):
         self.assertFalse(os.path.exists(os.path.join(fx.dev, ".git", "worktrees", "romp-batch-b1", "BISECT_START")), "bisect is reset")
         self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), fx.dev_git("rev-parse", "batch/b1"))
 
+    def test_bisect_says_so_when_the_command_never_fails_or_fails_at_the_base(self):
+        fx = self.fx
+        self.two_members()
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        wt = fx.wt("b1")
+        p = fx.run("bisect", "b1", "--", "sh", "-c", "true")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("passes at the batch tip", p.stderr)
+        self.assertNotIn("first bad", p.stdout)
+        p = fx.run("bisect", "b1", "--", "sh", "-c", "false")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("fails at the base", p.stderr)
+        self.assertNotIn("first bad", p.stdout)
+        self.assertEqual(fx._git("rev-parse", "--abbrev-ref", "HEAD", cwd=wt), "batch/b1", "the worktree is back on the branch")
+        self.assertFalse(os.path.exists(os.path.join(fx.dev, ".git", "worktrees", "romp-batch-b1", "BISECT_START")))
+
+    def test_finish_keeps_its_first_observations_across_a_re_run(self):
+        """A finish that dies after deleting branches and is run again must not attribute its own
+        deletions to GitHub, forget that #102 was stacked, or comment on #102 twice."""
+        fx = self.fx
+        self.ready()
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0)
+        # The post-deletion recheck of the retargeted #112 fails on the first run.
+        p = fx.run("finish", "b1", gh_fail="pr view 112 --json baseRefName,state")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertEqual(fx.bare_rev("a"), "", "finish had deleted `a` before it died")
+        self.assertNotIn("finished", fx.state("b1"))
+        prog = fx.state("b1")["finish_progress"]
+        self.assertEqual(prog["branches"]["a"], "deleted by finish")
+        self.assertEqual(prog["members"]["102"]["base"], "a", "recorded before the retarget")
+        p = fx.ok("finish", "b1")
+        rep = fx.state("b1")["finished"]["report"]
+        self.assertEqual(rep["deleted"], ["a"])
+        self.assertEqual(rep["already_gone"], [])
+        self.assertTrue(any("finish deleted head branches GitHub left: a" in o for o in rep["observations"]), rep["observations"])
+        self.assertFalse(any("GitHub deleted the head branch" in o for o in rep["observations"]), rep["observations"])
+        self.assertTrue(any("#102 was still based on a member branch; retargeted to main" in o for o in rep["observations"]), rep["observations"])
+        comments = [c for c in fx.gh()["prs"]["102"]["comments"] if "not marked merged" in c]
+        self.assertEqual(len(comments), 1, "told once across both runs")
+        self.assertIn("it was based on another PR's branch", comments[0])
+        self.assertEqual(rep["retargeted"], [112])
+        self.assertIn("retargeted to main: #112", p.stdout)
+
 
 class LandSh(_Base):
     def setUp(self):
@@ -744,21 +1196,33 @@ class LandSh(_Base):
         self.assertEqual(self.fx.gh()["prs"]["108"]["state"], "OPEN")
 
     def test_merges_one_pr_with_a_merge_commit_and_checks_orphans(self):
+        """The merge is a merge commit pinned to the head, with no --delete-branch (gh's flag also
+        deletes the LOCAL branch, which is checked out in a sibling worktree here; the remote branch
+        is the repository setting's to delete). tests/test_land_sh.py holds land.sh to the rest."""
         fx = self.fx
         head = fx.bare_rev("a")
         p = fx.run("101", script="land.sh")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertEqual(fx.calls("pr", "merge"), [["pr", "merge", "101", "--merge", "--delete-branch", "--match-head-commit", head]])
+        self.assertEqual(fx.calls("pr", "merge"), [["pr", "merge", "101", "--merge", "--match-head-commit", head]])
         self.assertEqual(fx.gh()["prs"]["101"]["state"], "MERGED")
         self.assertIn("pr-orphans: clean", p.stdout)
 
-    def test_auto_only_with_a_ruleset(self):
+    def test_auto_is_explicit_and_needs_the_setting_and_a_rule(self):
         fx = self.fx
         fx.set_gh(rulesets=[{"id": 1}])
         p = fx.run("101", script="land.sh")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertIn("--auto", fx.calls("pr", "merge")[0])
-        self.assertIn("a ruleset exists", p.stdout)
+        self.assertNotIn("--auto", fx.calls("pr", "merge")[0], "a ruleset alone does not add --auto; the flag is explicit")
+        fx.branch("a2", {"a2.txt": "a2\n"})
+        fx.pr(114, "a2", labels=["fix"])
+        p = fx.run("--auto", "114", script="land.sh")
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn('"Allow auto-merge" setting, which is off', p.stderr)
+        fx.set_repo(allowAutoMerge=True)
+        p = fx.run("--auto", "114", script="land.sh")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("--auto", fx.calls("pr", "merge")[-1])
+        self.assertIn("merging with --auto", p.stdout)
 
     def test_refuses_a_draft_and_a_bad_argument(self):
         fx = self.fx
@@ -859,13 +1323,65 @@ class Body(unittest.TestCase):
         self.assertIn("| #10 | t | unlabeled | not stated | not stated | success | unlabeled, kernel/, no trailer | - |", body)
 
     def test_held_back_lines_follow_the_template(self):
-        st = self.state([self.member(1)], held=[{"n": 7, "reason": "conflicts with #1 in x.py", "files": ["x.py"], "with": [1]},
-                                                {"n": 8, "reason": "depends on #7 (not in this batch)", "files": [], "with": []}], pulled=[9])
+        """Whether the owner was told is what hold_back RECORDED, never assumed."""
+        st = self.state([self.member(1)], held=[{"n": 7, "reason": "conflicts with #1 in x.py", "files": ["x.py"], "with": [1], "told": True},
+                                                {"n": 8, "reason": "depends on #7 (not in this batch)", "files": [], "with": []},
+                                                {"n": 11, "reason": "conflicts with origin/main in y.py", "files": ["y.py"], "with": [],
+                                                 "told": False, "told_why": "comment failed: HTTP 502"},
+                                                {"n": 12, "reason": "conflicts with the batch in z.py", "files": ["z.py"], "with": []}],
+                        pulled=[9])
         body = batch.render_body(st, {"resolutions": [], "entries": []})
-        self.assertIn("# Batch 2026-01-01a: 1 PR (2 held back, 1 pulled)", body)
+        self.assertIn("# Batch 2026-01-01a: 1 PR (4 held back, 1 pulled)", body)
         self.assertIn("- #7: conflicts with #1 in x.py; owner told.", body)
         self.assertIn("- #8: depends on #7 (not in this batch).", body)
+        self.assertIn("- #11: conflicts with origin/main in y.py; owner NOT told (comment failed: HTTP 502).", body)
+        self.assertIn("- #12: conflicts with the batch in z.py; owner not told.", body)
         self.assertIn("- #9: pulled; the PR stays open against main.", body)
+
+    def test_the_cap_keeps_the_resolution_and_cuts_the_log_that_overflows(self):
+        """A 3000-line assembly log is what pushes this body over the cap; the one resolution (the
+        code nobody else reviewed) keeps all its lines and the log gives up only what does not fit."""
+        members = [self.member(n, title="member %d" % n) for n in range(1, 8)]
+        st = self.state(members, log_lines=3000, resolved={3})
+        res = "\n".join("++ line %d of the resolution diff, kept whole" % i for i in range(300))
+        body = batch.render_body(st, {"resolutions": [{"n": 3, "diff": res}], "entries": []})
+        self.assertLessEqual(len(body), batch.BODY_CAP)
+        self.assertGreater(len(body), batch.BODY_CAP - 200, "the budget is filled, not left unused")
+        self.assertIn("++ line 299 of the resolution diff", body)
+        self.assertNotIn("more lines)", body, "no resolution line was cut")
+        m = re.search(r"\((\d+) earlier lines omitted\)", body)
+        self.assertIsNotNone(m)
+        self.assertLess(int(m.group(1)), 3000 - 100, "far more than the old fixed 40 log lines survive")
+        # A log alone that overflows is cut only as far as needed.
+        body = batch.render_body(self.state([self.member(1)], log_lines=3000), {"resolutions": [], "entries": []})
+        self.assertLessEqual(len(body), batch.BODY_CAP)
+        self.assertGreater(len(body), batch.BODY_CAP - 200)
+        # A resolution is still capped at RESOLUTION_LINES per merge even with room to spare.
+        big = "\n".join("++ line %d" % i for i in range(1000))
+        body = batch.render_body(self.state([self.member(1)], resolved={1}), {"resolutions": [{"n": 1, "diff": big}], "entries": []})
+        self.assertIn("(700 more lines)", body)
+
+    def test_read_these_first_lists_batch_commits_contained_members_and_main_merge_resolutions(self):
+        st = self.state([self.member(1), self.member(2)])
+        st["assembly"]["contained"] = [{"n": 2, "contained_by": "#1"}]
+        st["assembly"]["merged"] = st["assembly"]["merged"][:1]
+        st["assembly"]["declared"] = [{"sha": "a" * 40, "subject": "batch: hotfix for the integrated tree",
+                                       "files": ["hotfix.py"], "stat": "1 file changed, 1 insertion(+)"}]
+        st["assembly"]["main_merges"] = [{"merge": "b" * 40, "main": "c" * 40,
+                                          "resolved": {"files": ["notes.txt"], "how": "resolved by the batcher, per hunk", "hunks": 1, "review": "subagent: ok"}}]
+        body = batch.render_body(st, {"resolutions": [{"n": None, "merge": "b" * 40, "diff": "++ main merge diff"}], "entries": []})
+        self.assertIn("# Batch 2026-01-01a: 2 PRs", body, "a contained member lands too")
+        self.assertIn("- #2 br2: already contained by #1: no merge commit of its own (add `Depends-on` or reorder next time).", body)
+        self.assertIn("| #2 | t | fix | 2 |", body)
+        self.assertIn("| contained by #1 |", body)
+        self.assertIn("- `batch:` commit aaaaaaaaaa by the batcher: batch: hotfix for the integrated tree; 1 file changed, 1 insertion(+); touches hotfix.py.", body)
+        self.assertIn("- merge of origin/main (bbbbbbbbbb): conflict resolved in notes.txt (1 hunk); one review round: subagent: ok. [combined diff below].", body)
+        self.assertIn("### merge of origin/main (bbbbbbbbbb)", body)
+        self.assertIn("++ main merge diff", body)
+        replayed = {"files": ["a.py"], "how": "rerere replayed the resolution recorded in the earlier assembly", "hunks": 1,
+                    "review": "subagent: fine", "replayed": True}
+        self.assertEqual(batch.read_first_reasons(self.member(9), replayed),
+                         ["conflict resolved in a.py (1 hunk); one review round in the earlier assembly, replayed by rerere: subagent: fine. [combined diff below]"])
 
 
 class Helpers(unittest.TestCase):
@@ -894,6 +1410,45 @@ class Helpers(unittest.TestCase):
         self.assertEqual(batch.order_members(cands), [7, 9, 5, 8])
         with self.assertRaises(batch.Fail):
             batch.order_members({1: {"depends_on": [2]}, 2: {"depends_on": [1]}})
+
+    def test_depends_on_parsing(self):
+        d = batch.parse_depends_on
+        self.assertEqual(d("Depends-on: #101\n\nmore"), [101])
+        self.assertEqual(d("Summary.\nDepends-on: #101, #102\nDepends-on: #7"), [7, 101, 102], "a comma list and one per line")
+        self.assertEqual(d("Depends-on: 5, 7"), [5, 7], "a bare number list")
+        self.assertEqual(d("Depends-on: #101 (merged 2026-09-06)"), [101], "only # tokens when any are present")
+        self.assertEqual(d("intro\n```\nDepends-on: #5\n```\nDepends-on: #6\n~~~\nDepends-on: #8\n~~~\n"), [6], "fenced blocks are skipped")
+        late = "\n".join(["line %d" % i for i in range(batch.DEPENDS_ON_LINES)] + ["Depends-on: #9"])
+        self.assertEqual(d(late), [], "only the body's first lines are read")
+        self.assertEqual(d(None), [])
+
+    def test_stray_resolution_paths(self):
+        s = batch.stray_resolution_paths
+        self.assertEqual(s(["notes.txt"], ["notes.txt"]), [])
+        self.assertEqual(s(["notes.txt"], ["kernel/kernel.py", "notes.txt"]), ["kernel/kernel.py"])
+        self.assertEqual(s(["UPSTREAM.md"], ["UPSTREAM.md", "upstream/2026-01-01-x.md"]), [], "a row conversion writes entries")
+        self.assertEqual(s(["notes.txt"], ["upstream/2026-01-01-x.md"]), ["upstream/2026-01-01-x.md"], "but only when UPSTREAM.md conflicted")
+
+    def test_help_names_every_argument_and_describes_every_subcommand(self):
+        """docs/batching.md promises `--help` on each subcommand: every positional and flag carries
+        help text, every subcommand a description, and the top level the subcommand table."""
+        bare = re.compile(r"^  (-{1,2}[\w-]+(?: [\w|<>-]+)?|[a-z]+)\s*$")
+        run = lambda *a: subprocess.run([sys.executable, str(SCRIPTS / "batch.py"), *a], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        top = run("--help")
+        self.assertEqual(top.returncode, 0, top.stderr)
+        self.assertIn("in the order a batch goes through them", top.stdout)
+        expect = {"plan": "Nothing is merged", "assemble": "the branch is the mutex", "verify": "The gate `land` re-runs",
+                  "summarize": "Render the body", "pull": "regenerate the body", "land": "Never squash or rebase",
+                  "finish": "Safe to re-run", "bisect": "never fails, or fails everywhere"}
+        for sub, phrase in expect.items():
+            p = run(sub, "--help")
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertIn(phrase, " ".join(p.stdout.split()), "%s --help has its description" % sub)
+            for line in p.stdout.splitlines():
+                self.assertIsNone(bare.match(line), "%s --help: %r has no help text" % (sub, line.strip()))
+        p = run("pull", "--help")
+        self.assertIn("the member PR's number", p.stdout)
+        self.assertIn("--reason TEXT", p.stdout)
 
 
 if __name__ == "__main__":
