@@ -1703,6 +1703,9 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
 .move-dir-hint { min-height: 1.2em; font-family: var(--sans); font-size: 0.82em; color: var(--dim); }
 .move-dir-hint.warn { color: #e0a030; }
 .move-dir-hint.bad { color: #e5484d; }
+/* the emoji dialog's reason line (2026-09-06), the same dress: empty and dim until the kernel refuses, then red */
+.emoji-hint { min-height: 1.2em; font-family: var(--sans); font-size: 0.82em; color: var(--dim); }
+.emoji-hint.bad { color: #e5484d; }
 /* pending-rewind overlay: turns after an edited message belong to the branch being abandoned — they
    dim until the kernel's rewound payload replaces them (reconcileRewind retires the flag then). */
 .turn.rewound { opacity: 0.35; transition: opacity 0.2s ease; }
@@ -2702,6 +2705,12 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
   font-family: var(--sans); font-size: 0.92em;
 }
 .picker-action:hover { background: rgba(255, 255, 255, 0.1); }
+/* Disabled — the emoji dialog's Clear with nothing to clear, a Move/Set while the kernel answers: dimmed,
+   default cursor, no hover lift. Without these the button kept the live pointer cursor and hover wash and read
+   as one whose click did nothing (review 2026-09-06; the lesson .picker-browse:disabled learned 2026-08-08).
+   The same 0.55 / default-cursor pair as .bg-stop:disabled and .apierror-retry:disabled. */
+.picker-action:disabled { opacity: 0.55; cursor: default; }
+.picker-action:disabled:hover { background: transparent; }
 /* armed (auto-selected) when the typed name matches no session — Enter creates it;
    same focus-color accent as .picker-row.active so the highlight reads as "selected" */
 .picker-action.active {

@@ -16,8 +16,9 @@ const STYLES = ui("webview", "styles.css");
 
 test("render handles kernel warn messages with a toast", () => {
   // (2026-07-30: a warn arriving while a create is in flight IS that create's verdict, so it takes the
-  // dialog and retires the provisional tab. Every other warn still gets the toast.)
-  assert.match(RENDER, /if \(provisionalId\) failProvisional\(m\.text\); else warnToast\(m\.text\);/);
+  // dialog and retires the provisional tab. 2026-09-06: an emoji dialog awaiting the kernel's answer claims
+  // the warn ahead of that, as its refusal. Every other warn still gets the toast.)
+  assert.match(RENDER, /if \(emojiPrompt\?\.pending\) emojiRefusedLocal\(m\.text\);\n\s*else if \(provisionalId\) failProvisional\(m\.text\);\n\s*else warnToast\(m\.text\);/);
   assert.match(RENDER, /function warnToast\(msg: string\)/);
 });
 

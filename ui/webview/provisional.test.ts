@@ -84,8 +84,9 @@ test("the focus handler retires the provisional QUIETLY when the kernel answered
     "…and never dropped: it joins that session's draft (nothing typed is ever just lost)");
   assert.match(res, /if \(activeId === realId && ta\) \{ ta\.value = drafts\.get\(realId\) \?\? ""; growComposer\(ta\); \}/,
     "the reselect may already sit on the real tab (setActive then early-returns): the box is filled here too");
-  // the warn that follows a tagged request finds no create pending → the toast path, unchanged
-  assert.match(RENDER, /if \(provisionalId\) failProvisional\(m\.text\); else warnToast\(m\.text\);/);
+  // the warn that follows a tagged request finds no create pending → the toast path, unchanged (an open
+  // emoji dialog awaiting its answer claims a warn first — 2026-09-06 — and none is open here)
+  assert.match(RENDER, /if \(emojiPrompt\?\.pending\) emojiRefusedLocal\(m\.text\);\n\s*else if \(provisionalId\) failProvisional\(m\.text\);\n\s*else warnToast\(m\.text\);/);
 });
 
 test("creating a session opens the provisional tab instead of a modal", () => {
@@ -123,7 +124,8 @@ test("adoption flushes the held messages FOR REAL and carries the draft across",
 });
 
 test("a failed create says so in a dialog, in the kernel's own words — ON the failed thread", () => {
-  assert.match(RENDER, /if \(provisionalId\) failProvisional\(m\.text\); else warnToast\(m\.text\);/);
+  // the one warn a create-in-flight does NOT own: the emoji dialog's, while it awaits its own answer (2026-09-06)
+  assert.match(RENDER, /if \(emojiPrompt\?\.pending\) emojiRefusedLocal\(m\.text\);\n\s*else if \(provisionalId\) failProvisional\(m\.text\);\n\s*else warnToast\(m\.text\);/);
   assert.match(RENDER, /showConfirm\("Couldn't start " \+ name,/);
   assert.match(RENDER, /What you typed is in this tab's message box\./,
     "losing the text would be the one unrecoverable part");

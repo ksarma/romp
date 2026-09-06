@@ -225,9 +225,11 @@ its own, with the `set_emoji` tool it gets alongside its mail tools, so you can
 ask one to show a moon while it works unattended and a checkmark when it is
 done. Exactly one emoji is accepted (a skin tone, a flag or a joined sequence
 counts as one); letters, digits, a bare text symbol such as `©`, or a second
-emoji are refused with the reason. The emoji is stored with the session's name
-and color, so every dashboard shows the same one, including a dashboard on
-another machine that has linked to this one.
+emoji are refused with the reason. The tab draws the emoji with the viewing
+machine's own emoji font, so one from the newest Unicode release, accepted by
+Romp, can still show as an empty box on a machine whose font predates it. The
+emoji is stored with the session's name and color, so every dashboard shows the
+same one, including a dashboard on another machine that has linked to this one.
 
 A session started from another one joins its tags. Forking a session, breaking
 a comment thread out into its own session, and running `romp new` inside a

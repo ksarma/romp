@@ -4794,15 +4794,21 @@ function ensureTabRowObserver(bar: HTMLElement): void {
 
 // The tab's emoji label (the user 2026-09-06): one glyph before the name, set from the tab menu, by the
 // session itself (its set_emoji tool) or by `romp emoji`; the kernel stores it beside the name and color
-// and every dashboard reads the same one. DECORATIVE for assistive tech (aria-hidden): the name is the
-// tab's accessible label, and a reader spelling "crescent moon web" would put the ornament ahead of the
-// identity — a remote tab's "host:" prefix is quiet metadata for the same reason. Null when none, so
-// callers append nothing rather than an empty span.
+// and every dashboard reads the same one. EXPOSED to assistive technology — NOT aria-hidden (review,
+// 2026-09-06; it shipped hidden as "an ornament ahead of the identity"). The glyph is a label someone put
+// there on purpose, and session names are not unique on a host: when two live tabs both say "web" and one
+// wears a moon, the moon is the only thing besides color that tells them apart, and hidden it left a screen
+// reader announcing "web", "web". Exposed, a reader speaks the character's own name — "crescent moon web" —
+// which is what the sighted user sees, a word or two ahead of the name. The alternative, an aria-label on
+// the tab, was weighed and passed over: it would replace the tab's whole computed name (the host prefix,
+// the ⚑, the ✕'s text) with a synthetic phrase, and ARIA prohibits aria-label on a role-less div — the
+// strip would have to become a real tablist first, which is its own change. The tab menu's copy of the
+// glyph stays hidden (below): there the row's text "Emoji…" is the label and the icon only repeats it.
+// Null when none, so callers append nothing rather than an empty span.
 function tabEmojiNode(emoji: string | undefined): HTMLElement | null {
   if (!emoji) return null;
   const e = el("span", "tab-emoji");
   e.textContent = emoji;
-  e.setAttribute("aria-hidden", "true");
   return e;
 }
 
@@ -5216,7 +5222,7 @@ function setSessionColor(id: string, bg: string) {
 // Set or clear a session's tab emoji ("" clears). NOT optimistic, unlike the color swatch: the kernel is
 // the validator (exactly one emoji, nothing textual — its one-line reason comes back as a warn), so the
 // strip changes on its {emojiSet} confirm, the way a rename changes on {renamed}. The dialog that called
-// this has already closed as the click's acknowledgement.
+// this has already acknowledged the click (its button reads "Setting…") and waits for that answer.
 function setSessionEmoji(id: string, emoji: string) {
   if (vscodeApi) vscodeApi.postMessage({ type: "setSessionEmoji", id, emoji });
 }
@@ -6978,13 +6984,25 @@ function onMoveDirCompletions(m: any): void {
   movePrompt.input.classList.toggle("bad", said.cls === "bad");
 }
 
-// Emoji… (tab context menu): one input for one emoji, prefilled with the current one. Set posts it,
-// Clear posts "", and either closes the dialog at once — that close is the click's acknowledgement
-// (the repo's button rule); the strip changes on the kernel's {emojiSet}, and a refusal (letters, two
-// emoji, a bare text symbol) arrives as the kernel's one-line warn. Pane-local like the move dialog.
-let emojiPrompt: { overlay: HTMLElement; close: () => void } | null = null;
+// Emoji… (tab context menu): one input for one emoji, prefilled with the current one. Set posts it, Clear
+// posts "", and the pressed button acknowledges at once — it reads "Setting…" / "Clearing…" and the input
+// locks (the repo's button rule) — while the dialog STAYS OPEN for the kernel's verdict, the move dialog's
+// shape (review, 2026-09-06; it shipped closing on the click, so a refusal arrived as a toast after the
+// input was gone and retrying meant reopening and finding the value again). The kernel's {emojiSet} for
+// this session closes it; a refusal (letters, two emoji, a bare text symbol) paints the kernel's one-line
+// reason under the input with the typed value still there to fix. The kernel's refusal is a bare warn
+// with no id (the rename precedent), so while a Set is pending the warn router hands warns to THIS dialog
+// first (emojiRefusedLocal), ahead of the create-failure branch that used to claim every warn during a
+// provisional create and so struck the opening tab for a refused emoji; what remains ambiguous — a
+// create's own failure landing in the moment between a Set and its answer — is bounded by that window.
+// Pane-local like the move dialog. The backstop covers a kernel that never answers (the loading rule: a
+// wait never traps); Cancel and Escape work throughout.
+let emojiPrompt: { sid: string; overlay: HTMLElement; input: HTMLInputElement; hint: HTMLElement;
+                   go: HTMLButtonElement; clear: HTMLButtonElement; pending: boolean; close: () => void;
+                   backstop?: number } | null = null;
 function closeEmojiPrompt(): void {
   if (!emojiPrompt) return;
+  if (emojiPrompt.backstop !== undefined) clearTimeout(emojiPrompt.backstop);
   const p = emojiPrompt; emojiPrompt = null;
   p.close();
 }
@@ -7003,32 +7021,67 @@ function showEmojiPrompt(sid: string): void {
   input.placeholder = "one emoji";
   input.setAttribute("autocapitalize", "off"); input.setAttribute("autocomplete", "off");
   input.setAttribute("autocorrect", "off"); input.setAttribute("spellcheck", "false");
+  const hint = el("div", "emoji-hint");   // the kernel's one-line reason for a refused value; empty until then
   const actions = el("div", "confirm-actions");
   const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
   const clear = el("button", "picker-action confirm-btn") as HTMLButtonElement; clear.textContent = "Clear";
+  // nothing to clear → disabled, and DRESSED as disabled (.picker-action:disabled): with the live button's
+  // pointer cursor and hover wash it read as one whose click did nothing (review, 2026-09-06)
   clear.disabled = !cur;
+  if (!cur) clear.title = "nothing to clear — this session has no emoji";
   const go = el("button", "picker-action confirm-btn") as HTMLButtonElement; go.textContent = "Set";
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); closeEmojiPrompt(); } };
   const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
-  emojiPrompt = { overlay, close };
-  const submit = (value: string) => { closeEmojiPrompt(); setSessionEmoji(sid, value); };
+  emojiPrompt = { sid, overlay, input, hint, go, clear, pending: false, close };
+  const submit = (value: string, btn: HTMLButtonElement, busy: string) => {
+    const p = emojiPrompt;
+    if (!p || p.pending) return;   // one answer per press
+    // acknowledge the click before the round trip (the repo's button rule); the kernel's answer — its
+    // emojiSet for this session, or a warn with the reason — is what changes this dialog next
+    p.pending = true;
+    btn.textContent = busy; go.disabled = true; clear.disabled = true; input.disabled = true;
+    hint.textContent = ""; hint.title = ""; hint.className = "emoji-hint";
+    setSessionEmoji(sid, value);
+    p.backstop = window.setTimeout(
+      () => emojiRefusedLocal("still waiting — the kernel has not answered; check the kernel log"), 30000);
+  };
   const start = () => {
     const v = input.value.trim();
     if (!v) { input.classList.add("bad"); input.focus(); return; }   // an empty Set is not a clear — that is the Clear button
-    submit(v);
+    submit(v, go, "Setting…");
   };
   cancel.addEventListener("click", closeEmojiPrompt);
-  clear.addEventListener("click", () => submit(""));
+  clear.addEventListener("click", () => submit("", clear, "Clearing…"));
   go.addEventListener("click", start);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); start(); } });
   input.addEventListener("input", () => input.classList.remove("bad"));
   overlay.addEventListener("click", (e) => { if (e.target === overlay) closeEmojiPrompt(); });
   actions.appendChild(cancel); actions.appendChild(clear); actions.appendChild(go);
-  box.appendChild(h); box.appendChild(d); box.appendChild(input); box.appendChild(actions);
+  box.appendChild(h); box.appendChild(d); box.appendChild(input); box.appendChild(hint); box.appendChild(actions);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
   document.addEventListener("keydown", onKey, true);
   input.focus(); input.select();
+}
+
+// the kernel's answer to the dialog's Set/Clear. `emojiLanded`: its {emojiSet} for this session — the
+// handler has already put it on the strip — closes the dialog; a confirm for another session (that
+// session's own set_emoji) leaves an open dialog alone. `emojiRefusedLocal`: a warn while a Set is pending
+// is the refusal — the reason goes under the input, the buttons come back, the typed value stays to fix.
+function emojiLanded(sid: string): void {
+  if (emojiPrompt && emojiPrompt.pending && emojiPrompt.sid === sid) closeEmojiPrompt();
+}
+
+function emojiRefusedLocal(text: string): void {
+  const p = emojiPrompt;
+  if (!p || !p.pending) return;
+  if (p.backstop !== undefined) { clearTimeout(p.backstop); p.backstop = undefined; }
+  p.pending = false;
+  p.go.disabled = false; p.go.textContent = "Set";
+  p.clear.disabled = !(sessions.get(p.sid)?.emoji || tabMeta.get(p.sid)?.emoji); p.clear.textContent = "Clear";
+  p.input.disabled = false;
+  p.hint.textContent = text; p.hint.title = text; p.hint.className = "emoji-hint bad";
+  p.input.classList.add("bad"); p.input.focus();
 }
 
 // the kernel's typed outcome: `moved` closes the dialog (a parked move that lands later says so in a
@@ -13172,10 +13225,16 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
   else if (m.type === "nextTab") cycleTab(1);
   else if (m.type === "prevTab") cycleTab(-1);
   else if (m.type === "warn" && typeof m.text === "string" && m.text) {
-    // A warn arriving while a create is in flight IS that create's verdict (a name the kernel won't take,
-    // an unreadable parent, the SDK setup hint). It gets a dialog naming the reason and takes the
-    // provisional tab down with it; a toast would slide past the one moment it needed to be read.
-    if (provisionalId) failProvisional(m.text); else warnToast(m.text);
+    // A warn while the emoji dialog awaits its answer is the kernel refusing THAT value (the setSessionEmoji
+    // op answers with emojiSet or a bare warn, nothing else), so it goes under the dialog's input — checked
+    // FIRST, because the branch below used to claim every warn during a provisional create and so struck
+    // the opening tab as failed for a refused emoji (review, 2026-09-06). Otherwise a warn arriving while a
+    // create is in flight IS that create's verdict (a name the kernel won't take, an unreadable parent, the
+    // SDK setup hint). It gets a dialog naming the reason and takes the provisional tab down with it; a
+    // toast would slide past the one moment it needed to be read.
+    if (emojiPrompt?.pending) emojiRefusedLocal(m.text);
+    else if (provisionalId) failProvisional(m.text);
+    else warnToast(m.text);
     // A warn is also the kernel REFUSING a gesture this client may have already painted — the
     // user-todo Reply/Dismiss remove their row optimistically before any verdict. Re-sync the
     // active view from its events so a refused row returns NOW: the kernel's state didn't change
@@ -13362,6 +13421,7 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
     const s = sessions.get(m.id);
     if (s && (s.emoji || "") !== m.emoji) { s.emoji = m.emoji; renderTabs(); }
     else if (!s) renderTabs();   // a placeholder tab reads the meta directly
+    emojiLanded(String(m.id));   // the dialog that asked, if it is still open, closes on the confirm
   }
   else if (m.type === "droppedPath" && typeof m.path === "string") {   // host-saved drop/paste/pick → a thumbnail, not path text (the user 2026-08-04)
     const ackShip = typeof m.shipId === "string" && m.shipId ? m.shipId : undefined;
