@@ -21,7 +21,10 @@ biting; each is named here so the fake is not mistaken for evidence about GitHub
     are retargeted to the merged PR's base (documented). Indirect-merge marking: open PRs against
     the same base whose head is now reachable read MERGED.
   - `pr view` serves `mergeable` (MERGEABLE or CONFLICTING, computed by a real merge-tree of the
-    PR's head against its base's tip; `mergeable` on the PR record overrides, for UNKNOWN),
+    PR's head against its base's tip; `mergeable` on the PR record overrides, for UNKNOWN; with
+    `unknown_after_retarget` N on the state, a PR that a branch deletion retargets answers UNKNOWN
+    to its next N reads of mergeability, the way GitHub recomputes it asynchronously and reports
+    null, which gh maps to UNKNOWN, meanwhile),
     `mergeStateStatus` (DIRTY when conflicting; BLOCKED when a rule on main gates a merge and the
     checks are not green; UNSTABLE when they are not green with no such rule; else CLEAN;
     `mergeStateStatus` on the record overrides) and `statusCheckRollup` (from the record's `checks`:
@@ -129,6 +132,8 @@ def main_gates_merges(state):
 def mergeable_of(state, pr):
     if pr.get("mergeable"):
         return pr["mergeable"]
+    if pr.get("unknown_reads"):
+        return "UNKNOWN"
     base_tip = git(state, "rev-parse", "--verify", "--quiet", "refs/heads/" + pr["baseRefName"], check=False).stdout.strip()
     if not base_tip:
         return "UNKNOWN"
@@ -250,6 +255,9 @@ def pr_view(state, argv):
     pr = get_pr(state, o["_"][0])
     fields = (o.get("--json") or ["number,title,state"])[0].split(",")
     out = project(state, pr, fields)
+    if "mergeable" in fields and pr.get("unknown_reads"):
+        pr["unknown_reads"] -= 1   # one read of mergeability while GitHub is still computing it
+        save(state)
     print(apply_jq(out, o["--jq"][0]) if o.get("--jq") else json.dumps(out))
 
 
@@ -270,6 +278,8 @@ def delete_remote_branch(state, branch, new_base):
     for pr in state["prs"].values():
         if pr.get("state") == "OPEN" and pr.get("baseRefName") == branch:
             pr["baseRefName"] = new_base
+            if state.get("unknown_after_retarget"):
+                pr["unknown_reads"] = state["unknown_after_retarget"]
 
 
 def delete_local_branch(head):

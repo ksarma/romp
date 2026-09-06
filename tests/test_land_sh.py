@@ -180,8 +180,8 @@ class Fixture:
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     # -- the script --------------------------------------------------------
-    def land(self, *args):
-        return subprocess.run([os.path.join(self.dev, "scripts", "land.sh"), *args], cwd=self.tmp, env=self.env,
+    def land(self, *args, env=None):
+        return subprocess.run([os.path.join(self.dev, "scripts", "land.sh"), *args], cwd=self.tmp, env=dict(self.env, **(env or {})),
                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
@@ -677,6 +677,39 @@ class Pairs(_Base):
         self.assertChainLanded(p, head_a, head_b)
         self.assertEqual([c[3] for c in fx.calls("api", "-X", "DELETE")],
                          ["repos/{owner}/{repo}/git/refs/heads/a", "repos/{owner}/{repo}/git/refs/heads/b"])
+
+    FAST_WAIT = {"ROMP_LAND_MERGEABLE_POLLS": "3", "ROMP_LAND_MERGEABLE_POLL": "0"}
+
+    def mergeable_reads(self, n):
+        return [c for c in self.fx.calls("pr", "view", str(n)) if "mergeable" in c[4]]
+
+    def test_a_chain_waits_for_the_upper_prs_mergeability_to_be_recomputed(self):
+        """GitHub recomputes the upper PR's mergeability after the lower merge retargets it, and reads
+        UNKNOWN meanwhile; the fake answers UNKNOWN to the first reads after a retarget. The re-read
+        before the upper merge used to take one look and stop, so the promised one-call chain ended
+        after the lower merge; it now waits, bounded, for the value to settle."""
+        fx = self.fx
+        fx.set_gh(unknown_after_retarget=2)
+        head_a, head_b = fx.bare_rev("a"), fx.bare_rev("b")
+        p = fx.land("201", "203", env=self.FAST_WAIT)
+        self.assertChainLanded(p, head_a, head_b)
+        self.assertIn("#203's mergeability is not computed yet (mergeable: UNKNOWN); waiting for GitHub", p.stdout)
+        self.assertEqual(len(self.mergeable_reads(203)), 4, "the check, the re-read, and two more reads while UNKNOWN")
+
+    def test_a_chain_stops_when_the_upper_prs_mergeability_never_settles(self):
+        fx = self.fx
+        fx.set_gh(unknown_after_retarget=100)
+        p = fx.land("201", "203", env=self.FAST_WAIT)
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("land: stopped: #203's mergeability is not computed yet (mergeable: UNKNOWN, still after 3 more reads)", p.stderr)
+        self.assertIn("#201 merged before the stop", p.stderr)
+        gh = fx.gh()
+        self.assertEqual((gh["prs"]["201"]["state"], gh["prs"]["203"]["state"], gh["prs"]["203"]["baseRefName"]), ("MERGED", "OPEN", "main"))
+        self.assertEqual([c[2] for c in fx.merges()], ["201"], "the upper merge was never attempted")
+        self.assertEqual(len(self.mergeable_reads(203)), 5, "the check, the re-read, and three more reads")
+        self.assertIn("pr-orphans: clean (1 merged PR(s)", p.stdout, "the orphan check still ran")
+        # Without --auto or a chain, a PR that reads UNKNOWN at the first check is refused at once, as before.
+        self.assertEqual(len(self.mergeable_reads(201)), 2)
 
     def test_stops_when_a_head_moved_between_the_check_and_the_merge(self):
         fx = self.fx

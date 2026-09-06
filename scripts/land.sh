@@ -33,8 +33,10 @@
 # which tells "no branch protection" from a read that failed.
 #
 # Env: ROMP_GH names the gh binary (tests stub it); ROMP_ORPHANS_LIMIT passes through to
-# pr-orphans.sh. Exit 2 on a refusal, a stop or a usage error, 1 when gh fails; otherwise
-# pr-orphans.sh's exit (0 clean, 1 when a merged PR's content is not on main).
+# pr-orphans.sh; ROMP_LAND_MERGEABLE_POLLS and ROMP_LAND_MERGEABLE_POLL bound the wait for a
+# mergeability GitHub is still computing (settle_mergeable). Exit 2 on a refusal, a stop or a usage
+# error, 1 when gh fails; otherwise pr-orphans.sh's exit (0 clean, 1 when a merged PR's content is
+# not on main).
 set -euo pipefail
 
 ORPHANS="$(cd "$(dirname "$0")" && pwd)/pr-orphans.sh"
@@ -62,7 +64,10 @@ merge; the second PR of a pair is checked before the first one lands.
   merge commits not allowed      The repository setting (gh repo edit --enable-merge-commit).
   conflicting                    mergeable: CONFLICTING against its base. Resolve on the branch.
   mergeability not computed      mergeable: UNKNOWN. GitHub computes it after a push; re-run in a
-                                 moment.
+                                 moment. Before a merge (pass 2) the read is repeated while UNKNOWN,
+                                 ROMP_LAND_MERGEABLE_POLLS times (10) ROMP_LAND_MERGEABLE_POLL s
+                                 apart (3): GitHub recomputes it when the lower PR's merge
+                                 retargets the upper one.
   checks failing                 A check run or commit status at the head that is not SUCCESS,
                                  NEUTRAL or SKIPPED, with or without --auto.
   checks pending                 Without --auto. Wait for them, or pass --auto to land when they
@@ -107,7 +112,8 @@ Branches: never --delete-branch (gh's flag also deletes the local branch, which 
 session's worktree here). The remote branch is deleted by the repository setting, or through the
 API when that setting is off; local branches are never touched.
 
-Env: ROMP_GH names the gh binary; ROMP_ORPHANS_LIMIT passes through to pr-orphans.sh.
+Env: ROMP_GH names the gh binary; ROMP_ORPHANS_LIMIT passes through to pr-orphans.sh;
+ROMP_LAND_MERGEABLE_POLLS and ROMP_LAND_MERGEABLE_POLL bound the wait for mergeability above.
 Exit 2 on a refusal, a stop or a usage error, 1 when gh fails; otherwise pr-orphans.sh's exit.
 EOF
 }
@@ -226,6 +232,27 @@ read_pr() {
         --jq '(.statusCheckRollup // [])[] | [.__typename, (.name // .context), .status, .conclusion, .state] | map(. // "") | join("\u001f")')"
 }
 
+# settle_mergeable <n>: re-read while mergeable is UNKNOWN, up to ROMP_LAND_MERGEABLE_POLLS more
+# times (default 10) with ROMP_LAND_MERGEABLE_POLL seconds between reads (default 3; about 30 s in
+# all). GitHub recomputes a PR's mergeability when its base changes, as the lower PR's merge of a
+# chain retargets the upper one, and reports it as not computed (UNKNOWN) meanwhile; the re-read
+# before a merge took one look and stopped there, so the one-call chain ended after the lower merge
+# (2026-09-06 review). Pass 2 only: at the first check an UNKNOWN is refused at once, as a push just
+# made is. unknown_reads holds the count for the stop message when the value never settled.
+unknown_reads=0
+settle_mergeable() {
+    local polls="${ROMP_LAND_MERGEABLE_POLLS:-10}" poll="${ROMP_LAND_MERGEABLE_POLL:-3}"
+    unknown_reads=0
+    while [ "$pr_mergeable" != MERGEABLE ] && [ "$pr_mergeable" != CONFLICTING ] && [ "$unknown_reads" -lt "$polls" ]; do
+        if [ "$unknown_reads" = 0 ]; then
+            echo "land: #$1's mergeability is not computed yet (mergeable: $pr_mergeable); waiting for GitHub (up to $polls reads, ${poll}s apart)"
+        fi
+        unknown_reads=$((unknown_reads + 1))
+        sleep "$poll"
+        read_pr "$1"
+    done
+}
+
 # stash_pr <i> / load_pr <i>: the pr_* variables of prs[i], kept from the first pass.
 stash_pr() {
     states[$1]="$pr_state"; drafts[$1]="$pr_draft"; bases[$1]="$pr_base"; head_refs[$1]="$pr_head_ref"
@@ -312,7 +339,10 @@ check_pr() {
     case "$pr_mergeable" in
         MERGEABLE) ;;
         CONFLICTING) fail "$verb" "#$n conflicts with $pr_base (mergeable: CONFLICTING); resolve on the branch and push, then re-run" ;;
-        *) fail "$verb" "#$n's mergeability is not computed yet (mergeable: $pr_mergeable); GitHub computes it after a push, so re-run in a moment" ;;
+        *) if [ "$unknown_reads" -gt 0 ]; then
+               fail "$verb" "#$n's mergeability is not computed yet (mergeable: $pr_mergeable, still after $unknown_reads more reads); re-run once GitHub has computed it"
+           fi
+           fail "$verb" "#$n's mergeability is not computed yet (mergeable: $pr_mergeable); GitHub computes it after a push, so re-run in a moment" ;;
     esac
     classify_checks "$pr_rollup"
     if [ -n "$checks_failing" ]; then
@@ -369,6 +399,7 @@ for i in "${order[@]}"; do
         merged_in_run[i]=1
         continue
     fi
+    settle_mergeable "$n"
     if [ "$pr_head_sha" != "${head_shas[$i]}" ]; then
         fail "$verb" "#$n's head moved since it was checked (${head_shas[$i]:0:10}, now ${pr_head_sha:0:10}); someone pushed. Re-run to check the new head"
     fi
