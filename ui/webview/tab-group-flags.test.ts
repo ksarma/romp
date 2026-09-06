@@ -126,14 +126,14 @@ test("expanding via the flag: its own data-act opens the group explicitly (never
 
 test("click-safe and keyboard: a real button (focusable; Enter and Space click IT — the header's key handler stands down), the action on the delegate, and a drag guard so a press never reorders", () => {
   assert.match(FOLDED, /const b = document\.createElement\("button"\);\s*\n\s*b\.type = "button";/, "a native button: focusable, Enter/Space → its own click → the delegate");
-  // the flag is INSIDE the header, whose keydown handler took the bubbling Enter/Space, cancelled the
+  // the flag is INSIDE the header, whose keydown handler took the bubbling Enter/Space, canceled the
   // button's native activation and clicked the header: toggle-group ran, not open-group (the same fold
   // opened, by luck of the flag riding folded headers only). The handler returns for a key on the flag.
   assert.match(HEAD, /head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n\s*if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}\s*\n\s*\}\);/,
     "the guard comes first, before any preventDefault");
   assert.equal(HEAD.split('addEventListener("keydown"').length - 1, 1, "one key handler on the header, none on the button (native activation is the button's)");
   assert.match(FOLDED, /b\.draggable = true;\s*\n\s*b\.addEventListener\("dragstart", \(e\) => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \}\);/,
-    "the flag is the innermost draggable under the pointer, so ITS dragstart fires first: cancelled, and never reaching the header's (draggedGroup stays null)");
+    "the flag is the innermost draggable under the pointer, so ITS dragstart fires first: canceled, and never reaching the header's (draggedGroup stays null)");
   assert.doesNotMatch(FOLDED, /b\.addEventListener\("click"/, "no per-node click handler — the node is rebuilt on every push");
   assert.match(FOLDED, /b\.title = sectionTodoTitle\(flag\);\s*\n\s*b\.setAttribute\("aria-label", b\.title\);/, "the tooltip names the sessions, and a screen reader hears the same");
   assert.ok(RENDER.indexOf("head.addEventListener(\"dragstart\"") > RENDER.indexOf("head.appendChild(b);"), "the header's own drag wiring stays, after the flag");

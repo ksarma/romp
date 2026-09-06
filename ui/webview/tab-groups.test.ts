@@ -698,7 +698,7 @@ test("executed: a folded section whose EVERY member is pinned stays folded — t
   assert.match(GUIDE, /when every tab in a section is set to\s+show, the folded header shows the full count and its tooltip says nothing is hidden\./);
 });
 
-test("assistive tech hears a label: decoration is aria-hidden, the header's name is words (name, count, the pip's phrase), and the active section's header is a labelled group — never a button it cannot be", () => {
+test("assistive tech hears a label: decoration is aria-hidden, the header's name is words (name, count, the pip's phrase), and the active section's header is a labeled group — never a button it cannot be", () => {
   // a real accessibility tree (the 2026-09-06 review) read the folded header as a button named "▸ archived 2
   // waiting on you — tests flagged … click to open this group" — the caret glyph and the nested flag's
   // label folded into the name — and the active section's header as "button, expanded" with no focus
@@ -709,7 +709,7 @@ test("assistive tech hears a label: decoration is aria-hidden, the header's name
   assert.match(MAKE_HEAD, /let spoken = words\.label;/, "the label starts as headWords' (name and count, in words — executed above)");
   assert.match(MAKE_HEAD, /head\.setAttribute\("aria-label", spoken\);\s*\n\s*head\.draggable = true;/, "set once, after the pip; an aria-label outranks name-from-content, so the flag's label stays the flag's");
   assert.ok(!MAKE_HEAD.includes('b.setAttribute("aria-hidden"') && !MAKE_HEAD.includes('label.setAttribute("aria-hidden"'), "the flag is a control and the name is the name: neither hidden");
-  assert.match(MAKE_HEAD, /if \(holdsActive\) \{[^}]*head\.setAttribute\("role", "group"\);\s*\n\s*\} else \{/, "no action, no stop → a labelled group");
+  assert.match(MAKE_HEAD, /if \(holdsActive\) \{[^}]*head\.setAttribute\("role", "group"\);\s*\n\s*\} else \{/, "no action, no stop → a labeled group");
   assert.equal(MAKE_HEAD.split('"aria-expanded"').length - 1, 1, "aria-expanded only where the fold is — inside the foldable branch");
   assert.equal(MAKE_HEAD.split('"role", "button"').length - 1, 1);
   assert.ok(MAKE_HEAD.indexOf('"role", "group"') < MAKE_HEAD.indexOf('"role", "button"'), "the active branch first, as the source reads");

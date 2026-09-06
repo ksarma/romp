@@ -4753,7 +4753,7 @@ function releaseTabStrip(): void {
 // the color bar and the pip are decoration (aria-hidden — the caret glyph was read aloud before the
 // name), the header's name is an aria-label in words (name and count, plus the pip's phrase when it
 // wears one), so the nested flag's own label no longer runs into it; and the header holding the active
-// tab is a labelled group, not a button — it takes no action and no focus, and "button, expanded"
+// tab is a labeled group, not a button — it takes no action and no focus, and "button, expanded"
 // promised both.
 function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string[]): HTMLElement {
   if (sec.name === null) {
@@ -4779,7 +4779,7 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   let spoken = words.label;
   if (holdsActive) {
     // no fold action and no tab stop (a stop that does nothing is noise in the tab order), so not a
-    // button either: a labelled group, read once, promising nothing
+    // button either: a labeled group, read once, promising nothing
     head.setAttribute("role", "group");
   } else {
     // a label the keyboard can fold: Enter or Space go through the same click → delegate path as the
