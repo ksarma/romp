@@ -16,6 +16,7 @@ import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./ta
 import { ctxFallbackColor, pickTone, readableRgb } from "./ctx-color";
 import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
+import { mintWriteId, ackOutcome, adoptViews, seqOf, capsAdopts, announcedSeq, announcedAfter, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
 import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, emojiConfirmClosesDialog, PendingTabMeta } from "./tab-meta";
@@ -30,9 +31,9 @@ import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from 
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
-import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed,
-         reorderTagOrder, applyTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
-import { tabStateClass, sectionPip, SECTION_PIP_TITLE } from "./tab-state";
+import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned, reachableFrom, headWords,
+         followAdoption, reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
+import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
@@ -43,6 +44,7 @@ import { numberDiff, type DiffRow } from "./diff-lines";
 import { parseAgentNotif, type AgentNotif } from "./agent-notif";
 import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, setLightboxNav, type LightboxNavEntry } from "./preview";
 import { openFileView } from "./file-view";
+import { openPathLink, linkifyPathTokens } from "./path-links";
 // initFileView rides its OWN line: the import above is pinned verbatim by file-view.test.ts
 import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
 import { initFileBrowse, openFileBrowse } from "./file-browse";   // the browser is pane-local here now (the user 2026-08-24)
@@ -498,20 +500,87 @@ const pendingTabMeta = new Map<string, PendingTabMeta>();
 // A hidden session is a BACKGROUND session — still running, judged and carded; the + picker lists it
 // under "Hidden" and the timeline's corner panel counts it, so it is always one glance away.
 // Captured from every tabOrder push; a local gesture (hide from the tab menu, reveal from the
-// picker) applies optimistically and holds sticky until a push echoes it — yielding to the kernel
-// after three silent pushes, the same machinery the timeline's copy runs.
+// picker) applies optimistically and holds until the kernel ANSWERS the write (viewsAck /
+// tagEditAck → onViewsAck below) or echoes it exactly — never yielding on a frame count (the user
+// 2026-09-05: the three-frame yield dropped good edits and kept refused ones alike). The same
+// machinery the timeline's copy runs (views-writes.ts is the shared decision).
 let sessionViews: SessionViews | null = null;
 let pendingSessionViews: SessionViews | null = null;
-let pendingViewsAge = 0;
+let viewsWrites: InflightWrite[] = [];   // this page's views writes in flight, oldest first: {id, edit?|blob?, newId?} — what each did, so a refusal reverts only its own change
+let viewsWriteSeq = 0;
+let legacyViewsAge = 0;           // LEGACY kernels only (no `seq`, no acks): frames since the write — the old three-frame yield (captureViews)
+let kernelCaps = new Set<string>();   // what the LOCAL kernel announced at `ready` ({type:"caps"}); "tagEdit" = targeted ops, acks, seq
 let allHiddenBlanked = false;   // the active transcript was blanked because EVERY session is view-hidden
+let staleViewsDiagSent = false; // one breadcrumb per page load for an out-of-order views blob (below)
+let rejectedViews: SessionViews | null = null;   // the last blob the gate turned away since it last adopted one — what the caps frame adopts (onKernelCaps)
+let announcedViewsSeq: number | null = null;   // the seq the last caps frame announced as the kernel's current store when it adopted no kept blob — a LATER blob at exactly that seq is adopted below the held one (takeViews); cleared by the next adoption that changes the held blob (announcedAfter) — a re-arrival of the blob already held leaves it
 function effViews(): SessionViews | null { return pendingSessionViews ?? sessionViews; }
+// an arriving views blob (a frame's or an ack's) becomes the base only if its write sequence is at
+// least the held one — a frame the pusher built from its warmed cache before a write, delivered
+// after that write's ack, must not put the older blob back (2026-09-05). Ignored blobs leave one
+// breadcrumb per page load (the kernel's client-diag log), so a kernel serving stale frames is a
+// visible fact rather than a flicker nobody can explain. The last ignored blob is KEPT (and let go
+// by the next adoption): a kernel restarted over a store restored from an older copy serves it under
+// the old seq, so its connect push is turned away here — and the caps frame that follows it, naming
+// that push's seq, is the event that adopts it (rounds 6 and 7 of the 2026-09-05 review; capsAdopts).
+// When that push carried no blob to keep (a sentinel cycle sends no tabOrder), the caps frame's
+// viewsSeq is instead REMEMBERED as the kernel's announced store (announcedViewsSeq), and the later
+// blob carrying exactly that seq — the pusher's next frame — is adopted below the held one (round 8 of
+// the review; announcedSeq). The slot clears when an adoption CHANGES the held blob, never on a
+// re-arrival of the blob already held: in the browser this pane sees the local blob only through the
+// federation router, which replays its stored blob on every merged re-emit (a remote host's push, a
+// `closed` frame, a view-order storage event, a host drop), and a slot spent on one of those missed
+// the restored store the router adopted and re-emitted next (round 9; announcedAfter).
+function takeViews(v: SessionViews | null | undefined): boolean {
+  if (!v) return false;
+  if (adoptViews(sessionViews, v, announcedViewsSeq)) { announcedViewsSeq = announcedAfter(sessionViews, v, announcedViewsSeq); adoptBase(v); rejectedViews = null; return true; }
+  rejectedViews = v;
+  if (!staleViewsDiagSent) {
+    staleViewsDiagSent = true;
+    vscodeApi?.postMessage({ type: "clientDiag", surface: "chat", what: "views-stale-blob",
+      data: { held: seqOf(sessionViews), got: seqOf(v) } });
+  }
+  return false;
+}
+// The base moves to `v` — the ONE assignment of sessionViews, reached from the gate above and from
+// the caps frame's adoption below; a caller that reads the held blob (the gate's announcedAfter) does
+// so before this call — and the tab strip's pins follow any tag `v` renames relative to
+// the blob it replaces (tab-groups.ts tagRenames / followTagRenames): a tag that keeps its id under a
+// new name carries its pinned members' entries to that name, so a pinned tab stays pinned to its group
+// through the rename. The store (romp:tabgroups) is rewritten only when an entry changed, and after
+// the base has moved, so the write's TABGROUPS_EVENT render reads the new blob. Renames follow the
+// ADOPTED blob, never the optimistic copy: the kernel's answer is the event, and a refused rename then
+// has nothing to undo here. The follow runs on EVERY adoption, renames or none: its memory of the name
+// each renamed tag's pins were last carried to is checked against the blob each time, so a tag the blob
+// names otherwise — renamed while no pane of this browser watched — has the pins under the remembered
+// name carried to the blob's, the rename this browser owes, and the memory re-stamped (rounds 7 and 8
+// of the 2026-09-06 review: kept, that memory read the tag's next rename to the name as followed;
+// dropped without the carry, a pane two renames stale stamped the last name over a pin the watching
+// pane had left under the middle one). Through followAdoption (round 9): a blob that names every tag as
+// the held one does is no news about names and moves nothing — a pane whose local socket is dead
+// re-adopts its stale blob on every router re-emit, and the check run on it carried a fresher pane's
+// follow back — and the memory is stamped with each tag's store's write seq, a blob older than the
+// stamp standing down on that tag.
+function adoptBase(v: SessionViews): void {
+  const prev = sessionViews;
+  sessionViews = v;
+  const unions = viewTagUnion(v);
+  const st = readTabGroups(unions);
+  const next = followAdoption(st, prev, v, unions);
+  if (next !== st) writeTabGroups(next);
+}
 function captureViews(v: SessionViews | null) {
-  if (v) sessionViews = v;
-  // v null = a tabOrder frame WITHOUT the blob (an older kernel in a mixed-version mesh): it still
-  // ages a pending edit, or the optimistic state would fake success forever against a kernel that
-  // will never confirm it
-  if (pendingSessionViews && ((v && viewsKey(v) === viewsKey(pendingSessionViews)) || ++pendingViewsAge >= 3)) {
-    pendingSessionViews = null; pendingViewsAge = 0;
+  takeViews(v);
+  // LEGACY kernels only (a blob without a write sequence comes from a kernel that acks nothing): the
+  // PRE-2026-09-05 reconciliation stays for that path alone — the write's exact echo clears the copy,
+  // and three silent frames yield it (with no ack ever coming, an unechoed copy would otherwise pin
+  // forever). A kernel that stamps `seq` answers every write, and the ack is the event that settles
+  // the copy — a frame, matching or not, says nothing about a write it cannot name (a net-zero
+  // burst's frames match the copy while its writes are still in flight), and no count of frames is
+  // information. (v null = a tabOrder frame without the blob, an older kernel: nothing to compare.)
+  if (pendingSessionViews && v && seqOf(v) === null
+      && (viewsKey(v) === viewsKey(pendingSessionViews) || ++legacyViewsAge >= 3)) {
+    pendingSessionViews = null; viewsWrites = []; legacyViewsAge = 0;
   }
   // A VIEW CHANGE that excludes the ACTIVE session converts it into the peek instead of bouncing
   // (the user 2026-08-24: open All, pick a session, re-apply the tag filter — keep reading it in
@@ -521,13 +590,136 @@ function captureViews(v: SessionViews | null) {
   // the deferred first-tab bounce never fires (its fire-time revalidation re-checks tabInView).
   if (activeId) assertPeekFor(activeId);
 }
-// (postViews below runs the same re-derivation for the LOCAL optimistic edit — both views-arrival
-// paths keep the active session's peek state current.)
-function postViews(v: SessionViews) {
-  pendingSessionViews = v; pendingViewsAge = 0;
+// (holdViews below runs the same re-derivation for the LOCAL optimistic edit — both views-arrival
+// paths keep the active session's peek state current.) The shared half of postViews / postTagEdit:
+// show the optimistic copy, mint and track the write — with what it did (`rec`: the op, or the
+// blob), so a refusal of some OTHER write can rebuild the copy without it.
+function holdViews(v: SessionViews, rec: Omit<InflightWrite, "id">): string {
+  pendingSessionViews = v; legacyViewsAge = 0;
   if (activeId) assertPeekFor(activeId);   // the optimistic edit re-derives the active session's peek too
-  if (vscodeApi) vscodeApi.postMessage({ type: "setTimelineViews", views: v });
+  const writeId = mintWriteId(++viewsWriteSeq);
+  viewsWrites.push({ id: writeId, ...rec });
+  return writeId;
+}
+// a WHOLE-BLOB write — the lens and order edits, which have no targeted op; the kernel's viewsAck
+// reports the stale-writer guard's refusals, if any
+function postViews(v: SessionViews, edited: string[] = []) {
+  const writeId = holdViews(v, { blob: v });
+  // `edited`: the tag ids this write CHANGED — none for a lens or order edit — so the kernel acks a
+  // refusal on a tag this page never touched (a stale copy of it) as ok, with the refusal listed, and
+  // no toast follows: nothing the user did was refused, and the ack's blob carries the newer tag
+  if (vscodeApi) vscodeApi.postMessage({ type: "setTimelineViews", views: v, writeId, edited });
   renderTabs();
+}
+// a LENS or ORDER write — the whole blob, built from the STORE's blob (sessionViews, the last one
+// adopted) plus the fields set, never from the pending copy: a copy carrying targeted edits still
+// in flight posted them as this page's claim on those tags, and a rename the kernel had refused as
+// a duplicate landed through the next lens toggle (round 4 of the 2026-09-05 review). The pending
+// copy the page SHOWS is the current one with the same fields applied, so in-flight edits stay
+// visible; the in-flight record keeps the fields, so a re-derivation re-applies exactly them.
+function postLens(fields: LensFields) {
+  const v = lensBlob(sessionViews, fields);
+  const writeId = holdViews(applyLensFields(effViews(), fields), { lens: fields });
+  if (vscodeApi) vscodeApi.postMessage({ type: "setTimelineViews", views: v, writeId, edited: [] });
+  renderTabs();
+}
+// the union display order (a group drag on the sectioned strip) — a lens write of tagOrder alone
+function postTagOrder(order: readonly string[]) { postLens({ tagOrder: order.slice() }); }
+// a TARGETED tag edit (the tab menu's Tags flyout): `nv` is the optimistic copy with the gesture
+// applied, `edit` the op the kernel applies by the tag's stored id through its /tag merge — never
+// judged stale against this page's own earlier writes (the 2026-09-05 loss: a New tag… then a Move
+// to, posted as whole blobs from the un-echoed copy, had the second refused). The op rides NESTED
+// under `edit`: the federation router sends the message to the local kernel, and no top-level field
+// of it can read as a session's address. Answered by tagEditAck. `newId` is a create's optimistic
+// row id (the `pending-…` placeholder the ack's blob replaces).
+function postTagEdit(nv: SessionViews, edit: TagEditOp, newId?: string) {
+  // no `tagEdit` capability announced (a kernel from before it): the PRE-2026-09-05 path — the whole
+  // blob, reconciled by the legacy exact-echo clear and three-frame yield in captureViews, since no
+  // ack will come. The copy already carries the gesture, so nothing else changes — except a create's
+  // row: the whole blob IS the store write on this path, so the placeholder id would be persisted
+  // as-is (round 3 of the 2026-09-05 review); the row takes a client-minted `g…` id, the scheme the
+  // dialog's own pre-2026-09-05 create used, and the write names it as edited, which a kernel that
+  // reads `edited` needs in order to tell a create from a stale copy re-creating a deleted tag.
+  if (!kernelCaps.has("tagEdit")) {
+    const edited = [edit.tid, edit.tid_from, edit.tid_to].filter((t): t is string => !!t);
+    const row = newId ? viewTags(nv).find((t) => t.id === newId) : undefined;
+    if (row) { if (/^pending-/.test(row.id)) row.id = "g" + Date.now().toString(36); edited.push(row.id); }
+    postViews(nv, edited);
+    return;
+  }
+  const writeId = holdViews(nv, { edit, newId });
+  if (vscodeApi) vscodeApi.postMessage({ type: "tagEdit", writeId, edit });
+  renderTabs();
+}
+// the LOCAL kernel's capabilities, sent on every `ready` — the page's own at load, and the shim's
+// re-send on a reconnected socket. A reconnect is the one event that can lose an ack (the socket died
+// between the write and its answer), so writes still in flight when this frame arrives are unknowable:
+// they are dropped, the copy reverts to what the kernel's frames show, and the user is told — never a
+// pinned copy faking success, never a silent revert. It is also the event that adopts the blob the
+// gate last turned away, when the frame names it (rounds 6 and 7 of the 2026-09-05 review;
+// capsAdopts): the kernel sends its connect push before this frame and `viewsSeq` is the seq of the
+// views blob that push served, so a push a restarted kernel served under an OLDER seq (a store
+// restored while it was down) was rejected a frame ago and is adopted here, the gate re-arming at its
+// seq; a healthy reconnect's push was adopted, nothing is kept, and the gate stands; a pusher frame
+// built before a concurrent write, kept because it arrived between the push and this frame, carries a
+// seq the frame does not name and is discarded. When nothing kept matches, `viewsSeq` (a number: the
+// served blob's seq, or the store's current seq when the push carried no views frame — a sentinel
+// cycle) is remembered as the kernel's announced store, and takeViews adopts the later blob that
+// carries it even below the held seq (round 8 of the review; announcedSeq) — the slot is one per
+// store, overwritten by each caps frame, cleared by the next adoption that changes the held blob
+// (announcedAfter); null (no store at all) and a
+// missing field announce nothing. A write in flight is dropped whatever the base became: its ack
+// cannot reach this socket, and one that somehow did would be an ack for a write this page no longer
+// tracks — its blob meets the gate like any other arrival, and nothing is re-pinned (onViewsAck).
+function onKernelCaps(m: { caps?: unknown; viewsSeq?: unknown }) {
+  kernelCaps = new Set(Array.isArray(m.caps) ? m.caps.filter((c): c is string => typeof c === "string") : []);
+  const adopted = capsAdopts(rejectedViews, m.viewsSeq);
+  if (adopted && rejectedViews) adoptBase(rejectedViews);
+  announcedViewsSeq = adopted ? null : announcedSeq(m.viewsSeq);
+  rejectedViews = null;
+  if (viewsWrites.length) {
+    viewsWrites = []; pendingSessionViews = null;
+    warnToast("The connection to romp was re-established; a tag edit made just before it may not have landed. Check the tag.");
+    syncNewTagInput();                     // a dropped create no longer gates the flyout's input
+  } else if (!adopted) return;             // nothing in flight, nothing adopted: the caps changed, nothing shown did
+  if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek
+  renderTabs();
+}
+// the kernel does not know an op this page posted (a dashboard newer than its kernel): the write is
+// refused — the copy reverts and the toast says why — and the capability is withdrawn, so the next
+// gesture takes the path that kernel does know
+function onUnknownOp(m: { op?: unknown; writeId?: unknown }) {
+  if (typeof m.op === "string") kernelCaps.delete(m.op);
+  if (typeof m.writeId === "string" && viewsWrites.some((w) => w.id === m.writeId))
+    onViewsAck({ type: "unknownOp", writeId: m.writeId, ok: false,
+                 error: "the kernel does not know the " + String(m.op) + " operation, so the edit was not applied — try again; this dashboard now uses the older path" });
+}
+// the kernel's answer to one of this page's writes: the returned blob is the base whatever the
+// verdict; the pending copy settles once nothing is in flight; a refusal reverts ITS change at once
+// — the copy is rebuilt from the base plus the writes still in flight, so a later gesture never
+// flaps off and back on — and says why: the warn toast, since the flyout has no error surface of
+// its own
+function onViewsAck(m: ViewsAck) {
+  const out = ackOutcome(viewsWrites, m);
+  viewsWrites = out.inflight;
+  takeViews(m.views);   // the ack's blob is the base unless a newer frame already overtook it (the seq decides)
+  if (out.clearPending) pendingSessionViews = null;
+  else if (out.rederive) pendingSessionViews = rederivePending(sessionViews, viewsWrites);
+  // the reason already names the tag once and says what was kept (the kernel composes it); no second prefix naming it
+  if (out.refusal) warnToast("Tag edit not applied — " + out.refusal);
+  if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek
+  syncNewTagInput();                       // a create's ack re-arms the flyout's New tag… input in place
+  renderTabs();
+}
+// The Tags flyout's New tag… input, while the flyout is open: DISABLED while a create is in flight
+// (round 3 of the 2026-09-05 review: a second Enter before the ack made a second tag), re-armed in
+// place by the ack — never by rebuilding the flyout, which would throw away text typed meanwhile.
+let tagsFlyNewInput: HTMLInputElement | null = null;
+function syncNewTagInput() {
+  if (!tagsFlyNewInput) return;
+  const busy = createInFlight(viewsWrites);
+  tagsFlyNewInput.disabled = busy;
+  tagsFlyNewInput.placeholder = busy ? "creating…" : "New tag…";
 }
 // ── EPHEMERAL PEEK TAB (the user 2026-08-24, superseding the kernel's reveal-rule view mutation):
 // activating a session the current view HIDES opens it as a TEMPORARY tab — real and scrollable,
@@ -555,6 +747,21 @@ function tabInView(id: string): boolean { return id === peekId || chatVisible(id
 // header. Keyboard cycling walks the VISIBLE order, and a folded tab is not visible — the active
 // tab's section never renders folded, so the active id is always in it.
 let collapsedTabIds = new Set<string>();
+/** Every tab the strip knows — the kernel's order plus any pushed tab not yet in it (a placeholder):
+ *  the "does this session still exist" of the pin prune (tab-groups.ts prunePinned). */
+function knownTabIds(): Set<string> { return new Set<string>([...order, ...tabMeta.keys()]); }
+/** The remote hosts whose sessions the strip CAN know right now — attached, tunnel up, and their tab list
+ *  already in this pane — from the federation router's published lists (tab-groups.ts reachableFrom states
+ *  the rule): the prune's "this entry can be judged" (prunePinned). A detached host's sessions left `order`
+ *  with it (closeRemote's hostDrop dismissals), a down host's never arrived on a page loaded during the
+ *  outage, and a pending host's are a relay hop away; none is a session's end, so their pins stand until
+ *  the host's tabs are here. Empty where no router runs (a single-kernel page): every sid is local there,
+ *  and local sids are always judged. */
+function reachableHosts(): Set<string> { return reachableFrom((window as any).__rompFed); }
+/** The tab-groups store as a WRITE reads it: with the current unions, so an entry in the store's earlier
+ *  shape is migrated faithfully before it is written back (tab-groups.ts parseTabGroups). A read that
+ *  only looks at `.on` needs none. */
+function tabGroups() { return readTabGroups(viewTagUnion(effViews())); }
 let draggedGroup: string | null = null;   // a section header mid-drag (reorders tagOrder) — never a tab
 // the tags a create in flight named (openProvisional): the provisional tab sections under its future
 // home from the first paint (planStrip's `pending`), instead of landing loose and jumping on the frame
@@ -569,7 +776,7 @@ const PHONE_LAYOUT_MEDIA = "(pointer:coarse) and (max-width:1024px)";
 function phoneLayout(): boolean {
   try { return window.matchMedia(PHONE_LAYOUT_MEDIA).matches; } catch { return false; }
 }
-function revealSession(id: string) { postViews(revealIn(effViews(), id)); }
+function revealSession(id: string) { const r = revealIn(effViews(), id); postLens({ active: r.active, actives: r.actives }); }
 
 let paletteColors: string[] = [];
 fetch(kernelUrl("/palette"), { cache: "no-store" }).then((r) => r.json())
@@ -1335,69 +1542,36 @@ function linkifyImgPaths(root: HTMLElement, paths: string[]): void {
   }
 }
 
-// A file:// URI → its local filesystem path: strip the scheme, percent-decode. file:///a/b → /a/b.
-function fileUriToPath(uri: string): string {
-  let p = uri.replace(/^file:\/\//i, "");   // file:///Users/… → /Users/… (host is empty for file:///)
-  try { p = decodeURIComponent(p); } catch { /* malformed %-escape — use verbatim */ }
-  return p;
-}
-// A clickable, VERBATIM file link — the SAME open-the-file path the caption/image links use (openPath:
-// the editor in VS Code, the feed pane's viewer on the web). `raw` is shown as written; `open` is what
-// gets opened. A bare file:// can't be followed by the browser from the http dashboard (blocked scheme)
-// and a VS Code editor won't render a PDF, so it's routed rather than navigated. `relative` bare paths
-// carry the active session id so whoever resolves them uses THAT session's cwd — a relative
-// `design/foo.md` is relative to the repo the agent runs in, not the kernel's cwd (the user 2026-07-06).
-// `sid` names that session explicitly when the text belongs to one other than the active tab —
-// a todo's note is written by the session that flagged it, wherever the card is read.
-function openPathLink(raw: string, open: string, relative = false, sid?: string | null): HTMLElement {
-  const a = el("span", "file-uri-link");
-  a.textContent = raw;                       // shown exactly as written, selectable/copyable in place
-  a.title = "Open " + open;
+// The path-token matcher — the regex, its shape gates, the trailing-punctuation trim and the span it emits —
+// lives in path-links.ts since Slice 0 of plans/file-review.md, so the Waiting-on-you pane (an iframe of
+// its own) links a todo's detail path with the SAME matcher this chat uses. That module marks and binds
+// nothing: every span it emits carries data-act="openpath", data-path, data-rel and data-sid, and the
+// hosting document decides what a click does. Here that is openPath — the editor in VS Code, the viewer
+// or the shell's relay on the web — bound per span, exactly as the chat always did: a `relative` bare
+// path (data-rel) carries the session id so whoever resolves it uses THAT session's cwd — a relative
+// `design/foo.md` is relative to the repo the agent runs in, not the kernel's cwd (the user 2026-07-06) —
+// the named session first (a todo's note belongs to the session that flagged it, whichever tab reads
+// it), the active tab otherwise; a file:// URI names an absolute path and sends none. stopPropagation
+// as before: a path inside a fold head or a card must open the file, not toggle its container.
+function bindPathLink(a: HTMLElement): HTMLElement {
+  const open = a.dataset.path || "", relative = a.dataset.rel === "1", sid = a.dataset.sid ?? null;
   a.addEventListener("click", (e) => {
     e.stopPropagation();
     openPath(open, relative ? (sid ?? activeId) : null);
   });
   return a;
 }
-function fileUriLink(uri: string): HTMLElement { return openPathLink(uri, fileUriToPath(uri)); }
-// Is this bare token (trailing punctuation already stripped) a file path worth linkifying? Requires a slash
-// and EITHER an absolute/anchored start (/, ~/, ./, ../) OR a file extension on the final segment — so
-// "and/or", "TCP/IP", "24/7", "read/write" stay as prose. URL-ish tokens (a ':' or '//') are rejected;
-// http(s) links are already <a> (skipped) — this just guards a rare un-autolinked one.
-function looksLikeFilePath(tok: string): boolean {
-  if (tok.includes(":") || tok.includes("//") || !tok.includes("/")) return false;
-  if (/^(?:~\/|\.{1,2}\/|\/)/.test(tok)) return true;                        // absolute or anchored (/, ~/, ./, ../)
-  return /\.[A-Za-z0-9]{1,8}$/.test(tok.slice(tok.lastIndexOf("/") + 1));    // relative → the last segment has an extension
-}
-// A BARE filename (no slash — `power2_watts.pdf`) is linkified ONLY inside inline <code> (the user
-// 2026-07-17: a reply listing its output files wasn't clickable). Backticks are where agents put
-// filenames, and the KNOWN-extension gate keeps backticked dotted identifiers (`np.array`, `s.color`,
-// `romp.kernelPort`) and version numbers (`0.4.293`) reading as prose — an unknown extension stays text.
-const BARE_FILE_EXTS = new Set([
-  "md", "txt", "rst", "py", "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "jsonl", "csv", "tsv",
-  "pdf", "png", "jpg", "jpeg", "gif", "svg", "webp", "html", "htm", "css", "scss", "sh", "bash", "zsh",
-  "bats", "yaml", "yml", "toml", "ini", "cfg", "conf", "xml", "ipynb", "rs", "go", "java", "c", "h",
-  "cpp", "hpp", "cc", "rb", "php", "sql", "log", "lock", "tex", "bib", "zip", "tar", "gz", "tgz",
-  "mp4", "mov", "mp3", "wav", "vsix", "plist", "diff", "patch",
-]);
-function looksLikeBareFileName(tok: string): boolean {
-  if (tok.includes("/") || tok.includes(":")) return false;
-  const dot = tok.lastIndexOf(".");
-  if (dot <= 0) return false;                                                // needs a name before the extension
-  return BARE_FILE_EXTS.has(tok.slice(dot + 1).toLowerCase());
-}
 // Make bare file:// URLs AND bare file paths inside a rendered CHAT message clickable (assistant replies +
 // your own bubbles) — a relative `design/foo.md` opens too, resolved against the session's cwd (the user
 // 2026-07-06). marked doesn't autolink these and DOMPurify strips the file: scheme, so without this they read
-// as dead text. Deliberately NOT applied to tool-use summaries. Linkifies inside INLINE <code> too — agents
-// routinely wrap a path in backticks; only FENCED <pre> blocks and text already inside a link are skipped.
-// Trailing sentence punctuation is left out, not swallowed.
-const CLICKABLE_PATH_RE = /file:\/\/\/?[^\s<>"'`)]+|[~.\w\-]*\/[~.\w\-/]*[\w\-]|[\w\-][\w\-.]*\.[A-Za-z0-9]{1,8}/gi;
+// as dead text. Deliberately NOT applied to tool-use summaries. The token walk itself is path-links.ts's
+// (shared with the Waiting-on-you pane); what follows here is chat-only: the code-span URL pass, the
+// kernel-verified spaced spans, the click binding, and the figure previews.
 // `skipThumbs`: paths this turn ALREADY renders as full in-bubble images (a pasted screenshot's
 // ev.images) — they stay clickable links but are excluded from the mentioned-path thumbnail strip,
 // otherwise the same picture renders twice (the user 2026-07-10).
 // `spacePaths` (the user 2026-08-04): backticked filenames WITH SPACES that the KERNEL verified exist
-// (build_session's _space_paths — resolved like a click, existence-checked). The token regex below can
+// (build_session's _space_paths — resolved like a click, existence-checked). The token regex can
 // never span a space — in prose that boundary is what keeps ordinary text unlinked — so a note titled
 // `Moving from correlation to causal components.md` linkified only its last word. For exactly these
 // verified spans, the whole inline-code content becomes ONE link; the filesystem is the authority, so a
@@ -1406,9 +1580,10 @@ const CLICKABLE_PATH_RE = /file:\/\/\/?[^\s<>"'`)]+|[~.\w\-]*\/[~.\w\-/]*[\w\-]|
 // (build_session's _path_links — tier 1 exact stat, tiers 2/3 a unique repo-list match that FIXES a
 // shortened mention to its real file). When the key is present, a token links ONLY if it's in the map,
 // and it opens the map's value — so `render.js` in prose stops 404ing, and hover shows the real target.
-// Every shape gate below still applies; the map only ever narrows. An event with NO pathLinks key at
+// Every shape gate still applies; the map only ever narrows. An event with NO pathLinks key at
 // all (an old kernel, a cached payload) keeps today's shape-only linking rather than unlinking history.
-// file:// URIs are explicit absolute paths — never gated on the map.
+// file:// URIs are explicit absolute paths — never gated on the map. (The gates and the map walk are
+// path-links.ts's; the map is threaded through to it.)
 function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: string[],
     pathLinks?: Record<string, string>, pathPins?: Record<string, string>, sid?: string | null): void {
   // A whole-backtick http(s) URL becomes a TAPPABLE link that still looks like code (the user
@@ -1437,7 +1612,7 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
       if (code.closest("a, .file-uri-link, pre")) continue;    // already linked, or a fenced block
       const tok = (code.textContent || "").trim();
       if (!verified.has(tok)) continue;
-      const link = openPathLink(tok, tok, true, sid);
+      const link = bindPathLink(openPathLink(tok, tok, true, sid));
       code.replaceChildren(link);                              // the <code> chrome stays; its content is the link
       kernelVerified.add(tok);
       if (previewKind(tok) && !previewable.includes(tok) && !(skipThumbs && skipThumbs.includes(tok))) {
@@ -1446,43 +1621,16 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
       }
     }
   }
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const nodes: Text[] = [];
-  let n: Node | null;
-  while ((n = walker.nextNode())) nodes.push(n as Text);
-  for (const tn of nodes) {
-    if (tn.parentElement?.closest("a, .file-uri-link, pre")) continue;   // already a link, or a fenced code block
-    const inCode = !!tn.parentElement?.closest("code");                  // inline code — where bare filenames may link
-    const text = tn.data;
-    if (!text.includes("/") && !(inCode && text.includes("."))) continue;   // cheap pre-filter: no slash (and, in code, no dot) → nothing here
-    const re = new RegExp(CLICKABLE_PATH_RE.source, "gi");
-    const frag = document.createDocumentFragment();
-    let last = 0, any = false, m: RegExpExecArray | null;
-    while ((m = re.exec(text))) {
-      let tok = m[0];
-      const trail = tok.match(/[.,;:!?)\]}>"'`]+$/);   // don't grab a sentence's closing punctuation
-      if (trail) tok = tok.slice(0, tok.length - trail[0].length);
-      if (!tok) continue;
-      const isUri = /^file:\/\//i.test(tok);
-      if (!isUri && !looksLikeFilePath(tok) && !(inCode && looksLikeBareFileName(tok))) continue;   // "and/or", `np.array` etc. — leave as prose
-      const fixed = !isUri && pathLinks ? pathLinks[tok] : undefined;   // the kernel's verdict, when it rendered one
-      if (!isUri && pathLinks && typeof fixed !== "string") continue;   // checked against the filesystem: no such file (or several) → prose
-      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
-      const open = isUri ? fileUriToPath(tok) : (fixed ?? tok);
-      const link = isUri ? fileUriLink(tok) : openPathLink(tok, open, true, sid);
-      frag.appendChild(link);
-      if (!isUri && typeof fixed === "string") kernelVerified.add(open);   // the kernel stat'd it this build
-      if (previewKind(open) && !previewable.includes(open) && !(skipThumbs && skipThumbs.includes(open))) {
-        previewable.push(open);
-        mentionAt.set(open, link);
-      }
-      last = m.index + tok.length;
-      re.lastIndex = last;
-      any = true;
+  // The token walk is the shared one (path-links.ts linkifyPathTokens): it marks every path-shaped token
+  // — the kernel's pathLinks verdict narrowing it when the event carries one — and hands back the hits in
+  // document order; this document binds each click and reads the hits for the figure pass below.
+  for (const { el: link, open, verified } of linkifyPathTokens(root, sid, pathLinks)) {
+    bindPathLink(link);
+    if (verified) kernelVerified.add(open);   // the kernel stat'd it this build
+    if (previewKind(open) && !previewable.includes(open) && !(skipThumbs && skipThumbs.includes(open))) {
+      previewable.push(open);
+      mentionAt.set(open, link);
     }
-    if (!any) continue;
-    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
-    tn.replaceWith(frag);
   }
   // A mentioned image/PDF renders FULL-SIZE at its MENTION — the figure lands right after the
   // paragraph/list item that names it, like figures in a document (the user 2026-08-15, whose four
@@ -4586,14 +4734,29 @@ function releaseTabStrip(): void {
   if (renderPendingWhilePressed) { renderPendingWhilePressed = false; setTimeout(() => renderTabs(), 0); }
 }
 
-// A SECTION HEADER for the tab strip (tab groups on tags, the user 2026-09-04): the tag's dot and
-// name at the tab's own type size; folded, the count and one pip for the gist. It carries
-// data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip rebuilds on every
-// push) and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted union
-// order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The untagged
-// trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the loose ones
-// never read as one run.
-function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false): HTMLElement {
+// A SECTION HEADER for the tab strip (tab groups on tags, the user 2026-09-04). It reads as a LABEL,
+// not a session (the user 2026-09-06): a disclosure chevron that flips with the fold, the tag's color
+// as a short bar, the name in the strip's small letter-spaced label style, and the member count — the
+// folded-away count while folded. None of a tab's own affordances: no close, no state class, no dot of
+// its own. Folded, it carries two MEMBER-derived marks after the count, small, so a fold hides no
+// "needs you": the summary pip (tab-state.ts's rule, the tab's own colors) and the user-todo flag. It
+// carries data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip
+// rebuilds on every push), is a button to the keyboard too (Enter or Space fold and open; the chevron
+// says which), and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted
+// union order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The
+// untagged trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the
+// loose ones never read as one run. `hidden` is what a folded header stands in for — its members less
+// the ones pinned to show through the fold (planStrip) — so its count and its flag read those, never a
+// member whose own tab is on screen; its words (count, title, spoken label) are headWords, pure.
+// To assistive tech (the 2026-09-06 review, checked against a real accessibility tree): the chevron,
+// the color bar and the pip are decoration (aria-hidden — the caret glyph was read aloud before the
+// name), the header's name is an aria-label in words (name and count, plus the pip's phrase and the
+// flag's when it wears them), so nothing runs into it unplanned; the flag's phrase rides it on purpose —
+// the flag is a button nested in a role=button header, whose children ARIA lets a tool prune (WebKit
+// does), so the count and the names have a spoken carrier there too; and the header holding the active
+// tab is a labeled group, not a button — it takes no action and no focus, and "button, expanded"
+// promised both.
+function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string[]): HTMLElement {
   if (sec.name === null) {
     const sep = el("div", "tab-group-sep");
     sep.title = "sessions in no tag";
@@ -4611,31 +4774,89 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false)
   // (data-folded), never from the store.
   head.dataset.act = holdsActive ? "group-active" : "toggle-group";
   head.dataset.folded = collapsed ? "1" : "0";
-  head.title = holdsActive
-    ? `${name} — this group holds the active tab; drag to reorder the groups`
-    : collapsed
-      ? `${name} — ${sec.ids.length} session${sec.ids.length === 1 ? "" : "s"} folded; click to open`
-      : `${name} — click to fold this group; drag to reorder the groups`;
-  const dot = el("span", "tab-group-dot");
-  if (sec.color) dot.style.background = sec.color;
-  head.appendChild(dot);
+  const total = sec.ids.length;
+  const words = headWords(name, total, hidden.length, collapsed, holdsActive);
+  head.title = words.title;
+  let spoken = words.label;
+  if (holdsActive) {
+    // no fold action and no tab stop (a stop that does nothing is noise in the tab order), so not a
+    // button either: a labeled group, read once, promising nothing
+    head.setAttribute("role", "group");
+  } else {
+    // a label the keyboard can fold: Enter or Space go through the same click → delegate path as the
+    // pointer. NOT when they land on the flag button inside the header: a native button activates
+    // itself (its own click → open-group), and cancelling its keydown here clicked the header instead.
+    head.setAttribute("role", "button");
+    head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    head.tabIndex = 0;
+    head.addEventListener("keydown", (e) => {
+      if ((e.target as HTMLElement | null)?.closest(".tab-group-flag")) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); head.click(); }
+    });
+  }
+  const caret = el("span", "tab-group-caret");
+  caret.textContent = "▸";                       // turned down by CSS while open (.tab-group-head:not(.collapsed))
+  caret.setAttribute("aria-hidden", "true");
+  head.appendChild(caret);
+  const swatch = el("span", "tab-group-swatch");  // the tag's color as a short bar — a dot beside a name is a session pip
+  if (sec.color) swatch.style.background = sec.color;
+  swatch.setAttribute("aria-hidden", "true");
+  head.appendChild(swatch);
   const label = el("span", "tab-group-name");
   label.textContent = name;
   head.appendChild(label);
+  const n = el("span", "tab-group-count");
+  n.textContent = words.count;   // folded: the hidden members — a pinned one shows itself; all pinned: the total (headWords)
+  head.appendChild(n);
   if (collapsed) {
-    const n = el("span", "tab-group-count");
-    n.textContent = String(sec.ids.length);
-    head.appendChild(n);
-    // the folded gist: one pip by the TAB's own state rule (tab-state.ts) — red for a member blocked
-    // on you or waiting for you, gold for working, amber for an API error retrying on its own (the
-    // tab strip renders that amber too; a red pip there was a false interrupt)
-    const kind = sectionPip(sec.ids.map((id) => sessions.get(id)?.status));
+    // the folded gist, MEMBER-derived: one pip by the TAB's own state rule (tab-state.ts) — red for a
+    // hidden member blocked on you or waiting for you, gold for working, amber for an API error
+    // retrying on its own (the tab renders that amber too; a red pip there was a false interrupt).
+    // After the count and small, so the header still reads as a label; the tooltip names the sessions.
+    // Over the HIDDEN members only: a pinned member's own tab shows its state. Not the header's own
+    // pip — it wears no state class — and never a tab pip class (the kernel's mobile scrape keys on those).
+    const kind = sectionPip(hidden.map((id) => sessions.get(id)?.status));
     if (kind) {
       const pip = el("span", "tab-group-pip" + (kind === "working" ? "" : " " + kind));
-      pip.title = SECTION_PIP_TITLE[kind];
+      pip.title = sectionPipTitle(kind, sectionPipMembers(kind, hidden.map((id) => sessions.get(id))));
+      pip.setAttribute("aria-hidden", "true");   // a dot says nothing aloud: its phrase rides the header's label
+      spoken += "; " + pip.title;
       head.appendChild(pip);
     }
+    // the USER-TODO flag (the user 2026-09-06): a member tab's ⚑ — "this session flagged something
+    // it needs from you" — must not vanish under a fold. Derived from the field the tab itself reads
+    // (the session's userTodos, refreshed by every chat delta → renderTabs), so the frame that
+    // resolves the todo clears both. Only a FOLDED header carries it: open, every member tab wears
+    // its own glyph, and a second flag over the same need would be noise. A real <button> — focusable,
+    // Enter opens the group — with its OWN data-act for the stable #tabs delegate (the nearest data-act
+    // wins, so a click never reads as the header's fold; the header's key handler stands down for it,
+    // so Enter and Space are the button's own click too) and its own dragstart guard, so a press that
+    // wanders never starts the header's group drag (tab-state.ts owns the count and the title). Over
+    // the HIDDEN members only: a pinned member's own tab shows its glyph.
+    const flag = sectionTodoFlag(hidden.map((id) => sessions.get(id)));
+    if (flag) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tab-group-flag";
+      b.dataset.act = "open-group";
+      b.dataset.group = name;
+      b.title = sectionTodoTitle(flag);
+      b.setAttribute("aria-label", b.title);
+      spoken += "; " + b.title;   // a tool that prunes the nested button (a role=button's children are presentational) still hears the count and names
+      const glyph = el("span", "tab-usertodo");   // the tab's own mark, same class
+      glyph.textContent = "⚑";
+      b.appendChild(glyph);
+      if (flag.count > 1) {
+        const c = el("span", "tab-group-count");   // the header's text size (font: inherit)
+        c.textContent = String(flag.count);
+        b.appendChild(c);
+      }
+      b.draggable = true;
+      b.addEventListener("dragstart", (e) => { e.preventDefault(); e.stopPropagation(); });
+      head.appendChild(b);
+    }
   }
+  head.setAttribute("aria-label", spoken);
   head.draggable = true;
   head.addEventListener("dragstart", (e) => {
     draggedGroup = name;
@@ -4822,6 +5043,14 @@ function renderTabs() {
   // of the chat iframe entirely), which silently killed ←/→/Enter nav after a send or any push: you were left
   // focused on nothing, so the keyboard model was dead until you clicked again. If a tab held focus, re-focus
   // the active tab after the rebuild so "tab mode" survives the repaint.
+  // A focused section HEADER (a label the keyboard folds; headers live only in this bar) re-focuses by
+  // its group name after the rebuild, so a push mid-read does not kick the user from the header onto
+  // the active tab. The header's ⚑ flag is a button INSIDE it, and closest() names the header from
+  // there too: remember which of the two held focus, so a push does not walk the user from the flag
+  // back onto the header. Captured before the tab rule below, which keeps its pinned two-line shape.
+  const focusedEl = document.activeElement as HTMLElement | null;
+  const focusedGroup = (focusedEl?.closest(".tab-group-head") as HTMLElement | null)?.dataset.group;
+  const focusedFlag = !!focusedEl?.classList.contains("tab-group-flag");
   const refocusTab = bar.contains(document.activeElement);
   bar.replaceChildren();
   // TABS-FIRST (the user 2026-06-26): render the WHOLE strip up front, in `order` — the kernel's order
@@ -4868,11 +5097,12 @@ function renderTabs() {
   // the phone layout (phoneLayout — the kernel page's own media rule) the plan is the flat strip,
   // since the phone's session list is scraped from every rendered tab and has no header to unfold.
   // A create in flight (the provisional tab) sections under the tags its request named.
-  const plan = planStrip(visibleIds, viewTagUnion(effViews()), readTabGroups(), activeId, phoneLayout(),
+  const unions = viewTagUnion(effViews());
+  const plan = planStrip(visibleIds, unions, readTabGroups(unions), activeId, phoneLayout(),
                          provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
   collapsedTabIds = plan.folded;
   for (const item of plan.items) {
-    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded, item.active)); continue; }
+    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded, item.active, item.hidden)); continue; }
     const id = item.id;
     const s = sessions.get(id);
     if (!s) { bar.appendChild(makePlaceholderTab(id)); continue; }
@@ -5042,18 +5272,14 @@ function renderTabs() {
     openTagMenu(btn, {
       lens: () => surfaceLens(effViews(), "chat"),
       unions: () => viewTagUnion(effViews()),
-      onApply: (l) => {
-        const v = JSON.parse(JSON.stringify(effViews() || { active: "all", tags: [] }));
-        v.actives = Object.assign({}, v.actives, { chat: l });
-        postViews(v);
-      },
+      onApply: (l) => { postLens({ actives: Object.assign({}, (effViews() || {}).actives, { chat: l }) }); },
       // "Group tabs by tag" (tab groups, the user 2026-09-04): the per-browser sectioned-strip
       // switch, at the foot beside Configure tags… — the write notifies and the strip re-renders.
       // Desktop only: the phone layout renders the flat strip (planStrip), so it offers no switch —
       // neither here nor on the phone mount below.
       ...(phoneLayout() ? {} : {
         groupToggle: { label: "Group tabs by tag", on: () => readTabGroups().on,
-                       toggle: () => { const st = readTabGroups(); writeTabGroups({ ...st, on: !st.on }); } } }),
+                       toggle: () => { const st = tabGroups(); writeTabGroups({ ...st, on: !st.on }); } } }),
       onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
     });
   });
@@ -5073,9 +5299,7 @@ function renderTabs() {
   {
     const v = effViews();
     syncTagFilter(tagBtn, tagChipsHost, surfaceLens(v, "chat"), viewTagUnion(v), (l) => {
-      const nv = JSON.parse(JSON.stringify(v || { active: "all", tags: [] }));
-      nv.actives = Object.assign({}, nv.actives, { chat: l });
-      postViews(nv);
+      postLens({ actives: Object.assign({}, (v || {}).actives, { chat: l }) });
     });
   }
   // T161 (the user 2026-08-28, Android: no tag control on mobile): the phone chat page hides the whole
@@ -5092,11 +5316,7 @@ function renderTabs() {
         openTagMenu(btn, {
           lens: () => surfaceLens(effViews(), "chat"),
           unions: () => viewTagUnion(effViews()),
-          onApply: (l) => {
-            const mv = JSON.parse(JSON.stringify(effViews() || { active: "all", tags: [] }));
-            mv.actives = Object.assign({}, mv.actives, { chat: l });
-            postViews(mv);
-          },
+          onApply: (l) => { postLens({ actives: Object.assign({}, (effViews() || {}).actives, { chat: l }) }); },
           onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
         });
       });
@@ -5109,15 +5329,19 @@ function renderTabs() {
     const mv2 = effViews();
     syncTagFilter(mslot.children[0] as HTMLElement, mslot.children[1] as HTMLElement,
       surfaceLens(mv2, "chat"), viewTagUnion(mv2), (l) => {
-        const nv = JSON.parse(JSON.stringify(mv2 || { active: "all", tags: [] }));
-        nv.actives = Object.assign({}, nv.actives, { chat: l });
-        postViews(nv);
+        postLens({ actives: Object.assign({}, (mv2 || {}).actives, { chat: l }) });
       });
   }
   paintTabRowLines(bar);
   ensureTabRowObserver(bar);
   // Restore tab-mode focus if a tab held it before this rebuild (see the top of renderTabs).
-  if (refocusTab) focusActiveTab();
+  if (focusedGroup !== undefined) {
+    const h = Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).find((x) => x.dataset.group === focusedGroup);
+    // back onto the flag when the flag held it — unless this very push resolved the todo and the rebuilt
+    // header has none, when the header takes it; the group gone, or now holding the active tab (no
+    // stop): the old rule
+    if (h && h.tabIndex >= 0) ((focusedFlag && h.querySelector<HTMLElement>(".tab-group-flag")) || h).focus(); else focusActiveTab();
+  } else if (refocusTab) focusActiveTab();
   // The rebuild destroyed every old tab node: a still-up tip's owner is detached and its mouseleave
   // can never fire. Re-show for the tab under the (unmoved) pointer or close — covers every rebuild
   // source, including one that REMOVED the hovered tab (view-hidden, closed): no tab there → close.
@@ -5145,6 +5369,7 @@ let ctxMenuEl: HTMLElement | null = null;
 function dismissTabMenu() {
   ctxMenuEl?.remove();
   ctxMenuEl = null;
+  tagsFlyNewInput = null;
 }
 
 // Right-clicking a SELECTION in the transcript pops a small menu with Reply (quote
@@ -5423,9 +5648,11 @@ function showTabMenu(e: MouseEvent, id: string) {
   // no host prefixes): an ADD lands on the local store when the name exists locally, else the
   // tag's single home over the editTag wire; a REMOVE removes the (name, member) pair from EVERY
   // store holding it; New tag… creates locally with the next unused palette colour. Local writes
-  // post the whole blob (postViews — pendingSessionViews echoes instantly); remote writes ride the
-  // editTag op and settle on the next push (a refused edit re-appears — the kernel's loud
-  // tagEditFailed lands on the timeline dialog, 628's surface).
+  // are TARGETED tagEdit ops on one optimistic blob (postTagEdit — pendingSessionViews shows it
+  // instantly, the kernel's ack settles it; the user 2026-09-05, whose whole-blob burst was
+  // refused as stale against itself); remote writes ride the editTag op and settle on the next
+  // push (a refused edit re-appears — the kernel's loud tagEditFailed lands on the timeline
+  // dialog, 628's surface).
   {
     const unionFor = () => viewTagUnion(effViews());
     const holding = () => unionFor().filter((g) => g.members.includes(id));
@@ -5439,54 +5666,78 @@ function showTabMenu(e: MouseEvent, id: string) {
     bodyEl.appendChild(sb);
     tagsItem.appendChild(bodyEl);
     const caret = el("span", "ctx-caret"); caret.textContent = "▸"; tagsItem.appendChild(caret);
+    // what one union edit did to the copy: the TARGETED ops to post for the local store, and whether
+    // a remote entry's mirror changed (presentation only — the remote's own next push is the truth)
+    type UnionEdit = { ops: TagEditOp[]; mirrored: boolean };
     const editUnion = (g: TagUnion, edit: { add?: string[]; remove?: string[] }) => {
       // ONE optimistic blob per gesture: the local store's edit AND the remote entries' mirror both
       // land in pendingSessionViews so the flyout reads true instantly. Echoed remoteTags are
       // DERIVED — the kernel drops them from the echo — so mutating the copy is presentation-only;
       // the remote's own next push is the durable truth (a refused edit re-appears there).
       const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
-      const dirty = applyUnionEdit(nv, g, edit);
-      if (dirty) postViews(nv);
+      postUnionEdits(nv, applyUnionEdit(nv, g, edit));
     };
     // the edit itself, applied to a blob the caller posts — so a MOVE between groups (below) is two
-    // edits on ONE blob, posted once
-    const applyUnionEdit = (nv: SessionViews, g: TagUnion, edit: { add?: string[]; remove?: string[] }): boolean => {
-      let dirty = false;
+    // edits on ONE blob, shown once
+    const applyUnionEdit = (nv: SessionViews, g: TagUnion, edit: { add?: string[]; remove?: string[] }): UnionEdit => {
+      const ops: TagEditOp[] = [];
+      let mirrored = false;
       const nvRemote = (rt: SessionTag) => (nv.remoteTags || []).find((x) => x.id === rt.id);
+      // a union whose local tag is a create still in flight (`pending`) takes no op: its id is the
+      // placeholder the ack replaces, and the kernel would refuse it as a tag that does not exist
+      // (round 4 of the 2026-09-05 review). The rows below offer no gesture on it either.
       if (edit.add?.length) {
-        if (g.localId) {
+        if (g.localId && !g.pending) {
           const t = viewTags(nv).find((x) => x.id === g.localId);
-          if (t) { t.members = Array.from(new Set((t.members || []).concat(edit.add))); dirty = true; }
+          if (t) {
+            t.members = Array.from(new Set((t.members || []).concat(edit.add)));
+            ops.push({ op: "addMember", tid: g.localId, sids: edit.add.slice() });
+          }
         } else if (g.remotes.length) {
           vscodeApi?.postMessage({ type: "editTag", edit: { host: g.remotes[0].host || "", name: g.name, add: edit.add.slice() } });
           const mine = nvRemote(g.remotes[0]);
-          if (mine) { mine.members = Array.from(new Set((mine.members || []).concat(edit.add))); dirty = true; }
+          if (mine) { mine.members = Array.from(new Set((mine.members || []).concat(edit.add))); mirrored = true; }
         }
       }
       if (edit.remove?.length) {
-        if (g.localId) {
+        if (g.localId && !g.pending) {
           const t = viewTags(nv).find((x) => x.id === g.localId);
           if (t && (t.members || []).some((m) => edit.remove!.includes(m))) {
             t.members = (t.members || []).filter((m) => !edit.remove!.includes(m));
-            dirty = true;
+            ops.push({ op: "removeMember", tid: g.localId, sids: edit.remove.slice() });
           }
         }
         for (const rt of g.remotes) {
           if (!(rt.members || []).some((m) => edit.remove!.includes(m))) continue;
           vscodeApi?.postMessage({ type: "editTag", edit: { host: rt.host || "", name: g.name, remove: edit.remove!.slice() } });
           const mine = nvRemote(rt);
-          if (mine) { mine.members = (mine.members || []).filter((m) => !edit.remove!.includes(m)); dirty = true; }
+          if (mine) { mine.members = (mine.members || []).filter((m) => !edit.remove!.includes(m)); mirrored = true; }
         }
       }
-      return dirty;
+      return { ops, mirrored };
+    };
+    // the writes for one gesture: N targeted ops, the ONE optimistic copy shown for all of them (the
+    // kernel applies them in order on this socket, so the strip never shows a half-moved state). A
+    // remote-only edit has no local op: its mirror shows until the next frame — remoteTags are not
+    // in the echo key, so that frame clears it — exactly the lifetime it had before.
+    const postUnionEdits = (nv: SessionViews, ...edits: UnionEdit[]) => {
+      const ops = edits.flatMap((e) => e.ops);
+      if (ops.length) { for (const op of ops) postTagEdit(nv, op); }
+      else if (edits.some((e) => e.mirrored)) { pendingSessionViews = nv; renderTabs(); }
     };
     // a MOVE between groups (tab groups, the user 2026-09-04): add the target tag, drop the HOME
-    // tag, leave every other tag alone — one blob, so the strip never shows the half-moved state
+    // tag, leave every other tag alone — one blob, so the strip never shows the half-moved state.
+    // With both tags local it is ONE `move` op the kernel applies under its lock, both halves or
+    // neither (the 2026-09-05 review: as two ops, a refused second half left the session in no
+    // group). A half with no local home rides its own wire (editTag) as before.
     const moveUnion = (from: TagUnion, to: TagUnion) => {
       const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
-      const added = applyUnionEdit(nv, to, { add: [id] });
-      const removed = applyUnionEdit(nv, from, { remove: [id] });
-      if (added || removed) postViews(nv);
+      const a = applyUnionEdit(nv, to, { add: [id] });
+      const r = applyUnionEdit(nv, from, { remove: [id] });
+      const add = a.ops.find((o) => o.op === "addMember"), rem = r.ops.find((o) => o.op === "removeMember");
+      if (add && rem && a.ops.length === 1 && r.ops.length === 1)
+        postUnionEdits(nv, { ops: [{ op: "move", tid_from: rem.tid, tid_to: add.tid, sid: id }], mirrored: a.mirrored || r.mirrored });
+      else postUnionEdits(nv, a, r);
     };
     // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
     // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
@@ -5514,20 +5765,31 @@ function showTabMenu(e: MouseEvent, id: string) {
           const bodyE = el("span", "ctx-item-body");
           const lb = el("span", "ctx-item-label"); lb.textContent = g.name; bodyE.appendChild(lb);
           row.appendChild(bodyE);
+          if (g.pending) {
+            // a create still in flight: the row shows, and takes no gesture until the ack names the
+            // tag (round 4 of the 2026-09-05 review: a ✕ here posted the placeholder id and was
+            // refused as a tag that does not exist) — the same "creating…" the input reads
+            const busy = el("span", "ctx-item-sub"); busy.textContent = "creating…"; row.appendChild(busy);
+            sub.appendChild(row);
+            continue;
+          }
           const x = el("button", "ctx-tag-x") as HTMLButtonElement;
           x.type = "button"; x.textContent = "✕"; x.title = "remove this tag from the session — everywhere it holds it";
           x.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { remove: [id] }); build(); sb.textContent = subText(); });
           row.appendChild(x);
           sub.appendChild(row);
         }
-        const others = unionFor().filter((g) => !g.members.includes(id));
+        const others = unionFor().filter((g) => !g.members.includes(id) && !g.pending);   // a tag being created is not joinable yet
         if (holding().length && others.length) sub.appendChild(el("div", "ctx-sep"));
         // ONE-CLICK MOVE (tab groups on tags, the user 2026-09-04): a session's section is its HOME
         // tag — the first holder in tagOrder — so while the strip is sectioned and the session has
         // one, each other tag's row reads "Move to <name>": one click adds that tag and drops the
         // home tag, leaving any other tag alone (they filter, they do not section). The row's "+"
-        // adds without moving. With no home tag, "+ <name>" IS the move.
-        const home = readTabGroups().on ? holding()[0] : undefined;
+        // adds without moving. With no home tag, "+ <name>" IS the move. A home tag whose create is
+        // still in flight cannot be moved out of (no id to address); the rows read "+ <name>" until
+        // the ack.
+        const home0 = readTabGroups().on ? holding()[0] : undefined;
+        const home = home0 && !home0.pending ? home0 : undefined;
         for (const g of others) {
           const row = el("div", "ctx-item ctx-item-toggle");
           const chip = el("span", "ctx-tag-dot"); chip.style.background = g.color || "var(--dim)"; row.appendChild(chip);
@@ -5548,6 +5810,36 @@ function showTabMenu(e: MouseEvent, id: string) {
           }
           sub.appendChild(row);
         }
+        // SHOW WHEN FOLDED (the user 2026-09-06): keep this tab visible under its folded group. A
+        // per-browser view preference like the fold itself (romp:tabgroups), PER SECTION: one entry per
+        // tab and section, storing the section's name and its local tag's id (tab-groups.ts PinnedRef),
+        // matched under either, so the pin follows the section through a host attaching or detaching,
+        // a same-named tag appearing on the other side, and the local tag's rename (adoptBase carries
+        // the name across). A move to another group starts unpinned there; on and off act on the home
+        // section's entry alone, so the row's copy — "while <home> is folded" — is the whole truth.
+        // Only while the strip is sectioned and the session has a home tag — there is no fold to show
+        // through otherwise. The row wears the home tag's chip and the menus' ✓ when on; the write
+        // prunes the pins of tags and sessions that are gone — judging only entries whose session this
+        // page can know about: a known tab, a local sid, or one on a host that is attached and up with
+        // its tabs in this pane (reachableHosts); a detached, down or still-arriving host's pins wait
+        // for it — (this is the one write path,
+        // and a prune here moves nothing on screen), notifies (TABGROUPS_EVENT), and the strip
+        // re-renders, the fold's own path.
+        if (home) {
+          const sec = sectionRef(home);
+          const on = isPinned(tabGroups(), sec, id);
+          sub.appendChild(el("div", "ctx-sep"));
+          const row = el("div", "ctx-item ctx-item-toggle ctx-item-pin" + (on ? " current" : ""));
+          const chip = el("span", "ctx-tag-dot"); chip.style.background = home.color || "var(--dim)"; row.appendChild(chip);
+          const bodyE = el("span", "ctx-item-body");
+          const lb = el("span", "ctx-item-label"); lb.textContent = "Show when folded"; bodyE.appendChild(lb);
+          const sb2 = el("span", "ctx-item-sub");
+          sb2.textContent = on ? `stays on the strip while ${home.name} is folded` : `keep this tab on the strip while ${home.name} is folded`;
+          bodyE.appendChild(sb2);
+          row.appendChild(bodyE);
+          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(prunePinned(togglePinned(tabGroups(), sec, id), unionFor(), knownTabIds(), reachableHosts())); build(); });
+          sub.appendChild(row);
+        }
         if (holding().length || others.length) sub.appendChild(el("div", "ctx-sep"));
         // New tag… — an inline input, never a native prompt (the menus vocabulary)
         const nrow = el("div", "ctx-item ctx-item-newtag");
@@ -5556,6 +5848,7 @@ function showTabMenu(e: MouseEvent, id: string) {
         inp.addEventListener("click", (e2) => e2.stopPropagation());
         inp.addEventListener("keydown", (e2) => {
           if (e2.key !== "Enter") return;
+          if (createInFlight(viewsWrites)) return;   // one create at a time: the ack re-arms the input (syncNewTagInput)
           const name = inp.value.trim();
           if (!name) return;
           const existing = unionFor().find((g) => g.name === name);
@@ -5563,12 +5856,18 @@ function showTabMenu(e: MouseEvent, id: string) {
           const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
           const used = new Set(viewTags(nv).map((t) => t.color));
           const color = paletteColors.find((c) => !used.has(c)) || paletteColors[0] || "#1EA1EB";
-          nv.tags = viewTags(nv).concat([{ id: "g" + Date.now().toString(36), name, color, members: [id] }]);
+          // the optimistic row wears a PLACEHOLDER id: the kernel mints the tag's id and the ack's
+          // blob (which carries it) replaces this copy — no client-minted id can collide with a
+          // store it has not read (the legacy path re-ids it: postTagEdit)
+          const tg = { id: "pending-" + Date.now().toString(36), name, color, members: [id] };
+          nv.tags = viewTags(nv).concat([tg]);
           delete nv.groups;
-          postViews(nv);
+          // ONE targeted create carrying the session — the tag and its first member land together
+          postTagEdit(nv, { op: "create", name, color, sids: [id] }, tg.id);
           build(); sb.textContent = subText();
         });
         nrow.appendChild(inp);
+        tagsFlyNewInput = inp; syncNewTagInput();
         sub.appendChild(nrow);
       };
       build();
@@ -13304,6 +13603,12 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
   // The identity palette changed (gear → Session colors): refresh the right-click menu's swatch set so a
   // menu opened after the switch offers the NEW palette (the kernel remaps + repaints sessions itself).
   else if (m.type === "palette" && Array.isArray(m.colors)) paletteColors = m.colors;
+  // the kernel's answer to one of THIS page's views writes (a targeted tag edit, or a whole-blob
+  // lens/order write) — the optimistic copy settles or reverts on it, never on a frame count
+  else if (m.type === "viewsAck" || m.type === "tagEditAck") onViewsAck(m);
+  // what the local kernel can do for this page (every `ready`, reconnects included); an op it does not know
+  else if (m.type === "caps") onKernelCaps(m);
+  else if (m.type === "unknownOp") onUnknownOp(m);
   // The kernel's pick memory moved (a pin, a Latest un-pin, a refused pin dropped) or its catalog grew:
   // re-read /models so the family rows send the fresh default — the models-list twin of the palette frame.
   else if (m.type === "models") loadModelChoices();
@@ -14753,11 +15058,18 @@ setupSettings();
     // toggle and a sibling pane's alike.
     "toggle-group": (el) => {
       const name = el.dataset.group;
-      if (name) writeTabGroups(setSectionCollapsed(readTabGroups(), name, el.dataset.folded !== "1"));
+      if (name) writeTabGroups(setSectionCollapsed(tabGroups(), name, el.dataset.folded !== "1"));
     },
     // the header of the section holding the ACTIVE tab (makeGroupHead): unfoldable while active, so
     // the click stores nothing — the delegate's flash is the whole acknowledgement
     "group-active": () => { /* acknowledged by the flash; nothing to store */ },
+    // the folded header's user-todo flag (makeGroupHead): OPEN that group — explicit, never a toggle.
+    // The flag exists only on a folded header, so a press that lands after a sibling pane already
+    // opened the group must still read as "open", not fold it back. Same render path as toggle-group.
+    "open-group": (el) => {
+      const name = el.dataset.group;
+      if (name) writeTabGroups(setSectionCollapsed(tabGroups(), name, false));
+    },
     close: (el) => {
       const id = el.dataset.id;
       if (!id || !vscodeApi) return;
@@ -14878,13 +15190,12 @@ setupSettings();
     if (draggedGroup) {
       // a GROUP drop (tab groups): the dragged tag takes the target section's slot in tagOrder —
       // the FULL union order, written through the same views path the timeline's pill drag uses
-      // (postViews → setTimelineViews), so both surfaces read one order. pendingSessionViews
-      // shows it instantly; the kernel's echo settles it.
+      // (postTagOrder → setTimelineViews; the kernel orders the stored tags array by it), so both
+      // surfaces read one order. pendingSessionViews shows it instantly; the kernel's ack settles it.
       e.preventDefault();
       const to = tabs.querySelector<HTMLElement>(".tab-group-head.drop-target")?.dataset.group;
       if (to && to !== draggedGroup) {
-        const v = effViews();
-        postViews(applyTagOrder(v, reorderTagOrder(viewTagUnion(v).map((u) => u.name), draggedGroup, to)));
+        postTagOrder(reorderTagOrder(viewTagUnion(effViews()).map((u) => u.name), draggedGroup, to));
       }
       return;
     }

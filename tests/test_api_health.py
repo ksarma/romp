@@ -1431,6 +1431,49 @@ class StateFile(unittest.TestCase):
         self.assertIn("restart", moves(boot)[0])
 
 
+class KeySourceBlock(unittest.TestCase):
+    """The `keySource` block beside `cliScope` (2026-09-05): the boot verdict's facts plus what is live
+    now. Additive — API_HEALTH_SCHEMA stays 1 — and value-free: fingerprints, names, reasons with
+    counts. The default (file mode, no command) is what every other test here sees."""
+
+    def setUp(self):
+        self._stash = sb._WORK_KEY
+        sb._WORK_KEY = ""
+
+    def tearDown(self):
+        sb._WORK_KEY = self._stash
+
+    def test_the_block_is_present_with_the_documented_fields(self):
+        be = _backend()
+        snap = be.api_health_snapshot()
+        self.assertEqual(snap["schema"], sb.API_HEALTH_SCHEMA)
+        self.assertEqual(sb.API_HEALTH_SCHEMA, 1)
+        ks = snap["keySource"]
+        self.assertEqual(set(ks), {"mode", "selector", "sessionKeyPath", "expectedAuth", "helperConfigured",
+                                   "execStartShell", "credentialNamesFound", "lastRun", "fingerprint",
+                                   "fingerprintKind", "setFingerprint", "names", "sessionsByFingerprint"})
+        self.assertEqual(ks["mode"], "file")
+        self.assertIn(ks["sessionKeyPath"], ("injected", "helper", "login"))
+        self.assertIsNone(ks["lastRun"], "file mode: no command ran")
+        self.assertEqual(ks["fingerprint"], "", "a keyless manager: nothing to fingerprint")
+        self.assertEqual(ks["sessionsByFingerprint"], {})
+        self.assertEqual(set(ks["credentialNamesFound"]), {"serviceEnv", "unit", "environment"})
+        json.dumps(snap)
+        self.assertIn("cliScope", snap, "the sibling block is untouched")
+
+    def test_live_sessions_are_counted_by_the_credential_they_launched_on(self):
+        be = _backend()
+        a, b, c = _session(be, sid=SID), _session(be, sid=SID[:-1] + "1"), _session(be, sid=SID[:-1] + "2")
+        a._launched_key_fp = b._launched_key_fp = "abcdefabcdef"
+        c._launched_key_fp = ""
+        for s in (a, b, c):
+            s.ended = False
+            be.sessions[s.sid] = s
+        self.assertEqual(be.api_health_snapshot()["keySource"]["sessionsByFingerprint"], {"abcdefabcdef": 2, "": 1})
+        c.ended = True
+        self.assertEqual(be.api_health_snapshot()["keySource"]["sessionsByFingerprint"], {"abcdefabcdef": 2})
+
+
 class Diagnostics(unittest.TestCase):
     def setUp(self):
         sb.SdkSession._retry_shape_logged = False

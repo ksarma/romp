@@ -20,16 +20,15 @@ MOON = "\U0001F319"
 
 class SetEmojiTool(unittest.TestCase):
     def setUp(self):
-        self._saved = (pm._kernel_post, pm.my_id, pm.my_name, pm._heartbeat)
+        self._saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
         self.posts = []
         self.reply = {"ok": True, "emoji": MOON}
         pm._kernel_post = lambda path, body, timeout=2: (self.posts.append((path, body)), self.reply)[1]
-        pm.my_id = lambda: SID
-        pm.my_name = lambda: "web"
+        pm._self_identity = lambda: (SID, "web")     # the one resolver every tool call reads (2026-09-06)
         pm._heartbeat = lambda *a, **k: None
 
     def tearDown(self):
-        pm._kernel_post, pm.my_id, pm.my_name, pm._heartbeat = self._saved
+        pm._kernel_post, pm._self_identity, pm._heartbeat = self._saved
 
     def test_the_tool_is_offered_with_a_required_emoji_argument(self):
         tools = {t["name"]: t for t in pm.MCP_TOOLS}
@@ -78,7 +77,7 @@ class SetEmojiTool(unittest.TestCase):
         self.assertIn("not changed", text)
 
     def test_outside_a_session_it_refuses(self):
-        pm.my_id = lambda: ""
+        pm._self_identity = lambda: ("", "web")     # no session id resolved
         text, is_err = pm._mcp_call("set_emoji", {"emoji": MOON})
         self.assertTrue(is_err)
         self.assertEqual(self.posts, [])

@@ -684,7 +684,7 @@ EOF
     _romp_cmd "romp update [host]"         romp-update  "Push this machine's committed romp to attached remotes and restart them"
     _romp_cmd "romp up"                    romp-manager "Run the kernel manager in the foreground (rare — the login service runs it)"
     _romp_cmd "romp version"               romp-version "Versions across the parts (tree, kernel, served vs built bundles)"
-    _romp_cmd "romp keyswap [--cycle <session,…>|--cycle-all]" romp-keyswap "Which API key the sessions bill (fingerprints only); --cycle/--cycle-all reconnect quiet sessions after a rotation. The named swap is refused: this fork does not write API keys to files"
+    _romp_cmd "romp keyswap [<name>] [--refresh] [--cycle <session,…>|--cycle-all]" romp-keyswap "Which API key the sessions bill (fingerprints only). With ROMP_CREDENTIAL_COMMAND set, <name> selects a declared credential and --refresh re-runs the command; --cycle/--cycle-all reconnect quiet sessions after a rotation. <name> is refused where the key lives in a file: this fork does not write API keys to files"
     _romp_cmd "romp uninstall"             romp-uninstall "Remove romp's installed footprint (--purge also deletes recorded state)"
     _romp_cmd "romp help"                  -            "Show this help"
     cat <<'EOF'
@@ -762,12 +762,15 @@ if [[ "${1:-}" == "update" ]]; then
     exec romp-update "$@"
 fi
 
-# `romp keyswap [--cycle <session,...> | --cycle-all]` — which API key the sessions bill, and the
-# reconnect that lets running sessions pick a ROTATED key up without restarting the manager (the
-# user 2026-09-04): each quiet session resumes its conversation in a new CLI process, history intact.
-# Upstream's `romp keyswap <name>` rewrote the ANTHROPIC_API_KEY= line of ~/.config/romp/service.env
-# from a sibling file; this fork refuses that form (the user 2026-09-05: the fork does not write
-# API keys to files) — romp-keyswap (python) says so and exits 2. Prints fingerprints, never keys.
+# `romp keyswap [<name>] [--refresh] [--cycle <session,...> | --cycle-all]` — which API key the
+# sessions bill, and the reconnect that lets running sessions pick a ROTATED key up without restarting
+# the manager (the user 2026-09-04): each quiet session resumes its conversation in a new CLI process,
+# history intact. With ROMP_CREDENTIAL_COMMAND set (the key-free mode, kernel/envsource.py) `<name>`
+# writes the one-token selector file the command reads as $1 and --refresh makes the kernel re-run it.
+# Without it, upstream's `romp keyswap <name>` rewrote the ANTHROPIC_API_KEY= line of
+# ~/.config/romp/service.env from a sibling file; this fork refuses that form (the user 2026-09-05:
+# the fork does not write API keys to files) — romp-keyswap (python) says so and exits 2. Prints
+# fingerprints, never keys.
 if [[ "${1:-}" == "keyswap" ]]; then
     shift
     exec romp-keyswap "$@"
@@ -1294,9 +1297,13 @@ for kind in ("full", "delta", "deduped"):
     parts.append("%s %s%s" % (kind, kb(tot), (" (%s)" % detail) if detail else ""))
 print("sends     " + "   ".join(parts))
 seen = dl("goals", "scan_hits") + dl("goals", "scan_parses")
-print("goals     %.1f loads/s   %.1f saves/s   %.1f writes/s   scan %.1f parses/s (%s memo hits)"
+checks = dl("goals", "disk_hits") + dl("goals", "disk_misses")
+print("goals     %.1f loads/s   %.1f saves/s   %.1f writes/s   scan %.1f parses/s (%s memo hits)   "
+      "save memo %s hits (%d hits, %d misses, %d seeds)"
       % (dl("goals", "loads") / dt, dl("goals", "saves") / dt, dl("goals", "writes") / dt,
-         dl("goals", "scan_parses") / dt, ("%.0f%%" % (100.0 * dl("goals", "scan_hits") / seen)) if seen else "no"))
+         dl("goals", "scan_parses") / dt, ("%.0f%%" % (100.0 * dl("goals", "scan_hits") / seen)) if seen else "no",
+         ("%.0f%%" % (100.0 * dl("goals", "disk_hits") / checks)) if checks else "no",
+         dl("goals", "disk_hits"), dl("goals", "disk_misses"), dl("goals", "disk_seeds")))
 jp = dl("judge", "passes")
 print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   chain memo %d hits / %d misses"
       % (jp, jp / dt, g(b, "judge", "ms_last"), ("%.0f" % (dl("judge", "ms_sum") / jp)) if jp else "-",

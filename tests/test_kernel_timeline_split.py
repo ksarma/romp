@@ -5,10 +5,17 @@ build_timeline(with_bars=False) builds only the LANES SKELETON (sessions/status,
 nudges); _push sends it as {type:"data"} FIRST, then the cached full build's detail rides a {type:"bars"}
 message. Profiling drove this: the timeline was 551ms/1940KB and ~95% of that is bars+judging, so the
 skeleton is tiny and lands immediately. (The dead `tokens` field — nothing reads it — was dropped too.)
+
+Since 2026-09-06 the skeleton build runs only on the cold live-first connect. A warm push PROJECTS the
+skeleton from the cached full build (_timeline_skeleton), serializes the frame once per build and dedups it
+per REBUILD (the frame carries the build's clock and _skeleton_sig keeps it) — see SkeletonFromCache below.
+An interval a session is still in ends at the build's clock on the wire (OpenIntervals below); the renderer
+reads an end within 2 s of data.now as open and draws it to its live edge.
 """
 import inspect
 import json
 import os
+import time
 import unittest
 from importlib.machinery import SourceFileLoader
 import tempfile
@@ -85,7 +92,7 @@ class TimelinePageLoader(unittest.TestCase):
 
 class PushSplit(unittest.TestCase):
     def test_push_ships_the_lanes_skeleton_before_the_bars(self):
-        sent = []
+        sent, builds = [], []
         client = {"app": "timeline", "send": sent.append, "sent": {}, "alive": True}
         SKEL = {"type": "timeline", "sessions": [{"id": "S"}], "turns": {}, "judging": [],
                 "messages": [], "now": 1, "usage": {}}
@@ -93,7 +100,8 @@ class PushSplit(unittest.TestCase):
                 "judging": [{"k": "planner"}], "messages": [{"m": 1}], "now": 1}
         o_bt, o_ct, o_tmux, o_sig = (km.build_timeline, km._cached_timeline,
                                      km._tmux_sessions, km._fleet_view_sig)
-        km.build_timeline = lambda now, tmux, with_bars=True, live_only=False: (FULL if with_bars else SKEL)
+        km.build_timeline = lambda now, tmux, with_bars=True, live_only=False: (
+            builds.append(with_bars) or (FULL if with_bars else SKEL))
         km._cached_timeline = lambda now, tmux, sig, connect=False: FULL
         km._tmux_sessions = lambda: {}
         km._fleet_view_sig = lambda now, tmux: ("sig",)
@@ -113,6 +121,275 @@ class PushSplit(unittest.TestCase):
         self.assertEqual(bars["turns"], {"S": [{"id": "b1"}]}, "the heavy bars ride the {type:bars} message")
         for k in ("judging", "messages"):
             self.assertIn(k, bars, "the whole time-plotted detail rides the bars message")
+        self.assertEqual(builds, [], "a warm push builds no skeleton: the lanes are projected from the cache")
+        self.assertEqual(skel["sessions"], FULL["sessions"], "…and they are the cached build's lanes")
+
+
+class SkeletonFromCache(unittest.TestCase):
+    """The warm-path skeleton is a PROJECTION of the cached full build (2026-09-06). Every pusher cycle
+    used to run build_timeline(with_bars=False) — no parse, but the same per-lane derivation the cached
+    full build had just done — and then sent the resulting frame to every timeline client unconditionally,
+    because the clock inside `data` defeated the dedup. A hit now serves the last rebuild's lanes
+    byte-for-byte, so a lane moves only when the timeline rebuilds: on a view-sig change, on
+    _mark_views_dirty, or at the 5 s bucket. The frame is deduped PER REBUILD: it carries the build's clock
+    and the sig keeps it, so every rebuild sends one frame — the pane's clock sample — and the cycles
+    between rebuilds send nothing."""
+
+    FULL = {"type": "timeline", "now": 1,
+            "sessions": [{"id": "S", "name": "web", "state": "working", "context": 10,
+                          "compactions": [{"t": 5}]}],
+            "turns": {"S": [{"id": "b1"}]}, "judging": [{"k": "planner"}], "messages": [{"m": 1}],
+            "views": {"active": "all"}, "usage": {"five": {"pct": 3}}}
+
+    class _Clock:
+        """km's `time` with a settable skew on time() — so two pushes can carry different clocks without
+        sleeping, and everything else (monotonic, sleep) passes through."""
+        def __init__(self, real):
+            self._real, self.skew = real, 0.0
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def time(self):
+            return self._real.time() + self.skew
+
+    def setUp(self):
+        self.saved = (km.build_timeline, km._cached_timeline, km._tmux_sessions, km._fleet_view_sig, km.time)
+        self.saved_built, self.saved_dirty = list(km._built_timeline), km._views_dirty[0]
+        self.saved_wire = (km._bars_wire, km._skel_wire)
+        km._bars_wire = km._skel_wire = None
+        self.builds = []
+        km.build_timeline = lambda now, tmux, with_bars=True, live_only=False: (
+            self.builds.append((with_bars, live_only)) or self.rebuilt())
+        km._cached_timeline = lambda now, tmux, sig, connect=False: self.FULL
+        km._tmux_sessions = lambda: {}
+        km._fleet_view_sig = lambda now, tmux: ("sig",)
+        self.clock = km.time = self._Clock(time)
+
+    def tearDown(self):
+        (km.build_timeline, km._cached_timeline, km._tmux_sessions, km._fleet_view_sig, km.time) = self.saved
+        km._built_timeline[:] = self.saved_built
+        km._views_dirty[0] = self.saved_dirty
+        km._bars_wire, km._skel_wire = self.saved_wire
+
+    def rebuilt(self):
+        return dict(self.FULL, now=2, sessions=[dict(self.FULL["sessions"][0], state="ready")])
+
+    @staticmethod
+    def _client():
+        frames = []
+        return {"app": "timeline", "send": frames.append, "sent": {}, "alive": True}, frames
+
+    @staticmethod
+    def _data_frames(frames):
+        return [json.loads(f) for f in frames if json.loads(f)["type"] == "data"]
+
+    def test_two_pushes_over_an_unchanged_cache_build_nothing_and_resend_no_lanes(self):
+        c, frames = self._client()
+        km._push([c])
+        first = list(frames)
+        self.clock.skew = 7.0                       # a later second AND a later 5 s bucket: only the clock moved
+        km._push([c])
+        self.assertEqual(self.builds, [], "a warm push runs no build_timeline at all — no skeleton build")
+        data = self._data_frames(first)
+        self.assertEqual(len(data), 1, "the first push ships the lanes frame")
+        self.assertEqual(data[0]["data"]["sessions"], self.FULL["sessions"], "…as the cached build's lanes")
+        self.assertEqual(data[0]["data"]["now"], self.FULL["now"], "…stamped with the BUILD's clock, not the cycle's")
+        self.assertEqual(data[0]["data"]["turns"], {})
+        self.assertEqual(data[0]["data"]["judging"], [])
+        self.assertEqual(data[0]["data"]["messages"], [])
+        self.assertEqual(data[0]["data"]["usage"], self.FULL["usage"], "usage rides the projected skeleton")
+        second = frames[len(first):]
+        self.assertEqual(sum(len(f) for f in second if json.loads(f)["type"] == "data"), 0,
+                         "the second push sent zero bytes on the lanes slot: the same cached build, nothing new")
+        self.assertEqual(self.FULL["turns"], {"S": [{"id": "b1"}]}, "the cached build itself is never mutated")
+        self.assertEqual(self.FULL["now"], 1)
+
+    def test_the_skeleton_sig_keys_the_build_clock_and_the_lanes(self):
+        skel = km._timeline_skeleton(self.FULL)
+        self.assertEqual(skel["now"], self.FULL["now"], "the projected frame carries the build's clock")
+        self.assertEqual(km._skeleton_sig(skel), km._skeleton_sig(km._timeline_skeleton(self.FULL)),
+                         "the same build compares equal")
+        self.assertNotEqual(km._skeleton_sig(skel), km._skeleton_sig(km._timeline_skeleton(dict(self.FULL, now=2))),
+                            "a new build clock compares different: one frame per rebuild, the pane's clock sample")
+        self.assertNotEqual(km._skeleton_sig(skel), km._skeleton_sig(km._timeline_skeleton(dict(self.rebuilt(), now=1))),
+                            "a lane state change compares different")
+        self.assertIsNot(skel, self.FULL)
+        self.assertEqual(self.FULL["turns"], {"S": [{"id": "b1"}]}, "a projection is a copy, not a mutation")
+
+    def test_the_lanes_frame_goes_once_per_rebuild_and_never_on_an_unchanged_cycle(self):
+        # Review 2026-09-06: deduped on the lanes alone, a quiet timeline got no frame of any kind until
+        # the 60 s repost — the bars frame dedups with its `now` stripped — and the pane's live edge, which
+        # glides at most 30 s past its last `data.now`, stalled and then jumped once a minute. The frame
+        # goes once per REBUILD instead: the same cached build sends nothing on a later cycle; a rebuild
+        # with identical lanes (the 5 s bucket rolling) sends a frame carrying the new build's clock.
+        km._cached_timeline = self.saved[1]             # the real cache
+        sig = [("sig",)]
+        km._fleet_view_sig = lambda now, tmux: sig[0]
+        km.build_timeline = lambda now, tmux, with_bars=True, live_only=False: (
+            self.builds.append((with_bars, live_only)) or dict(self.FULL, now=now))   # identical lanes, fresh clock
+        t = time.time()
+        km._built_timeline[:] = [("sig",), self.FULL, t, t]
+        km._views_dirty[0] = 0.0
+        c, frames = self._client()
+        km._push([c])                                   # cycle 1: a hit → the client's first frame
+        self.clock.skew = 1.0
+        km._push([c])                                   # cycle 2: the same build → nothing
+        self.assertEqual(self.builds, [])
+        data = self._data_frames(frames)
+        self.assertEqual(len(data), 1, "two cycles on one cached build send the lanes frame once")
+        self.assertEqual(data[0]["data"]["now"], self.FULL["now"])
+        n = len(frames)
+        self.clock.skew, sig[0] = 7.0, ("sig", "next bucket")   # the bucket rolled: a rebuild with identical lanes
+        km._push([c])
+        self.assertEqual(self.builds, [(True, False)], "the rebuild ran once, and built no skeleton")
+        data = self._data_frames(frames[n:])
+        self.assertEqual(len(data), 1, "a rebuild sends the lanes frame again, identical lanes or not")
+        self.assertGreaterEqual(data[0]["data"]["now"], int(t + 7), "…stamped with the new build's clock: the pane's sample")
+        self.assertLessEqual(data[0]["data"]["now"], int(self.clock.time()))
+        self.assertEqual([f for f in frames[n:] if json.loads(f)["type"] == "bars"], [],
+                         "the bars frame did not go (its dedup strips `now`): the lanes frame is the only clock source")
+        n = len(frames)
+        self.clock.skew = 8.0
+        km._push([c])                                   # a cycle between rebuilds → nothing
+        self.assertEqual(self.builds, [(True, False)])
+        self.assertEqual(frames[n:], [], "an unchanged cycle between rebuilds sends nothing at all")
+
+    def test_a_connect_push_stamps_the_cached_lanes_with_the_cycle_clock(self):
+        # Review 2026-09-06: a fresh pane anchors its live edge and window fit on the first data.now it
+        # sees, and the cache is as old as the last cycle that had a timeline client (a bucket on a
+        # reload; hours after the pane was closed), so the build clock made the axis hop forward on the
+        # next cycle's frame. The connect frame carries the cycle's clock; the steady-state cycles keep
+        # the build clock (deduped per rebuild), so the next identity-hit cycle re-sends this client the
+        # build-clock frame once — the pane ignores the older sample (isFreshNowSample) — and then nothing.
+        km._built_timeline[:] = [("sig",), self.FULL, 1.0, 1.0]     # a warm cache whose build clock (FULL["now"] = 1) is ancient
+        c, frames = self._client()
+        km._push([c], connect=True)
+        self.assertEqual(self.builds, [], "a warm connect builds nothing: the cached lanes are served")
+        data = self._data_frames(frames)
+        self.assertEqual(len(data), 1)
+        self.assertGreaterEqual(data[0]["data"]["now"], int(time.time()) - 1, "…under the cycle's clock, not the cached build's")
+        self.assertEqual(data[0]["data"]["sessions"], self.FULL["sessions"], "…over the cached lanes")
+        self.assertEqual(self.FULL["now"], 1, "the cached build is not restamped")
+        n = len(frames)
+        km._push([c])                                   # the next regular cycle: the build-clock frame, once
+        data = self._data_frames(frames[n:])
+        self.assertEqual([d["data"]["now"] for d in data], [self.FULL["now"]], "the build-clock frame goes once to this client")
+        n = len(frames)
+        km._push([c])
+        self.assertEqual(self._data_frames(frames[n:]), [], "…and unchanged cycles send nothing after that")
+
+    def test_a_dirty_mark_between_two_pushes_rebuilds_and_ships_the_new_lanes(self):
+        km._cached_timeline = self.saved[1]             # the real cache, warmed with FULL under the stubbed sig
+        km._built_timeline[:] = [("sig",), self.FULL, time.time(), time.time()]
+        km._views_dirty[0] = 0.0
+        c, frames = self._client()
+        km._push([c])
+        self.assertEqual(self.builds, [], "an unchanged sig on a warm cache is a hit")
+        n = len(frames)
+        km._mark_views_dirty()                          # an optimistic kernel-side mutation: the deciding event
+        km._push([c])
+        self.assertEqual(self.builds, [(True, False)], "the dirty mark rebuilt the FULL timeline, once, and no skeleton")
+        data = self._data_frames(frames[n:])
+        self.assertEqual(len(data), 1, "the rebuilt lanes ship")
+        self.assertEqual(data[0]["data"]["sessions"][0]["state"], "ready", "…carrying the rebuild's state")
+
+    def test_the_skeleton_carries_the_cached_builds_compactions(self):
+        # The built skeleton set session = {"turns": []}, so its `compactions` was always [] and the
+        # timeline never drew a compaction marker; the projection carries the full build's list, which
+        # comes from the fresh parse (the authoritative source). The stub below is the OLD skeleton's
+        # shape (no compactions), so a push that built a skeleton would ship [] here.
+        km.build_timeline = lambda now, tmux, with_bars=True, live_only=False: (
+            self.rebuilt() if with_bars else dict(self.FULL, turns={}, judging=[], messages=[],
+                                                  sessions=[dict(self.FULL["sessions"][0], compactions=[])]))
+        c, frames = self._client()
+        km._push([c])
+        lane = self._data_frames(frames)[0]["data"]["sessions"][0]
+        self.assertEqual(lane["compactions"], [{"t": 5}])
+
+    def test_the_view_sig_keys_every_row_field_the_lanes_read(self):
+        # The sig read `ctx`, which no liveness row carries (rows write `context`), so a context-% change
+        # never busted the cache; the other fields were never keyed. With the skeleton projected from the
+        # cache, each of these must bust it or the lane holds the old value until the bucket.
+        sig = self.saved[3]
+        row = {"state": "working", "model": "m", "effort": "high", "mode": "", "fast": "on", "since": 100,
+               "context": 10, "fastReason": "", "modelPending": False, "subagents": [], "bgTasks": []}
+        base = sig(1000, {"S": dict(row)})
+        self.assertEqual(base, sig(1000, {"S": dict(row)}), "stable on identical rows")
+        for k, v in (("context", 20), ("fastReason", "cooldown"), ("modelPending", True),
+                     ("subagents", [{"type": "Explore", "since": 90}]),
+                     ("bgTasks", [{"toolUseId": "t1", "desc": "watch the build", "since": 90}])):
+            self.assertNotEqual(base, sig(1000, {"S": {**row, k: v}}), "%s must bust the view sig" % k)
+        self.assertEqual(sig(1000, {"S": {**row, "bgTasks": [{"toolUseId": "t1", "lastTool": "Read"}]}}),
+                         sig(1000, {"S": {**row, "bgTasks": [{"toolUseId": "t1", "lastTool": "Grep"}]}}),
+                         "a task's progress fields are not a lane fact: keyed on the task ids only")
+        self.assertEqual(base, sig(1000, {"S": {**row, "snapT": 123456.0}}), "the snapshot's clock stays out")
+        self.assertEqual(base, sig(1000, {"S": {**row, "interrupting": True}}),
+                         "`interrupting` is not keyed: the merged liveness row never carries it (the SDK merge copies "
+                         "an explicit key list), and the stop click marks the views dirty itself")
+
+    def test_the_view_sig_stats_the_files_the_lanes_read(self):
+        sig = self.saved[3]
+        st = km.jd.STATE
+        st.mkdir(parents=True, exist_ok=True)
+        usage, views, watches = st / "usage.json", km._views_path(), km.WATCH_FILE
+        csid = "33333333-4444-4444-4444-555555555555"     # a private synthetic sid: a comment thread's parent
+        cdir, cfile = st / "comments", km._comments_path(csid)
+        for f in (usage, views, watches, cfile):
+            if f.exists():
+                f.unlink()
+        try:
+            base = sig(1000, {})
+            usage.write_text(json.dumps({"five_hour": {"pct": 12}}))
+            with_usage = sig(1000, {})
+            self.assertNotEqual(base, with_usage, "a usage.json write busts the sig: the lanes frame carries the usage bars")
+            views.write_text(json.dumps({"active": "all", "tags": []}))
+            with_views = sig(1000, {})
+            self.assertNotEqual(with_usage, with_views, "a timeline-views.json write busts the sig: the views blob rides every frame")
+            km._save_comments(csid, {"threads": [{"tid": "t1", "status": "open", "createdT": 900}]})
+            with_comment = sig(1000, {})
+            self.assertNotEqual(with_views, with_comment, "a first comment thread busts the sig: the lane's squares read the store")
+            # a REWRITE of the same file (a resolve on a dormant thread changes only the store): the atomic
+            # replace lands in the comments directory, so its mtime moves — aged first, so the check does
+            # not ride on the clock's granularity
+            os.utime(cdir, (1_000_000, 1_000_000))
+            aged = sig(1000, {})
+            km._save_comments(csid, {"threads": [{"tid": "t1", "status": "resolved", "createdT": 900}]})
+            self.assertNotEqual(aged, sig(1000, {}), "a resolve on an existing thread busts the sig too")
+            before_watch = sig(1000, {})
+            watches.write_text("[]")
+            self.assertNotEqual(before_watch, sig(1000, {}), "a watches.json write busts the sig: the awaiting badge reads the watches")
+        finally:
+            for f in (usage, views, watches, cfile):
+                if f.exists():
+                    f.unlink()
+            try:
+                cdir.rmdir()
+            except OSError:
+                pass
+
+    def test_the_skeleton_build_loads_a_store_for_a_dead_lane_only(self):
+        # The one skeleton build left (the cold live-first connect) reads the goal store only where it uses
+        # it: a DEAD lane's blocked badge. A live lane's load was never read; the full build still loads for
+        # every lane (its seams and judging marks read the store).
+        loads = []
+        o_ts, o_lg = km._timeline_sessions, km.jd.load_goals
+        km.build_timeline = self.saved[0]
+        km._timeline_sessions = lambda now, tmux, live_only=False: [
+            {"sid": "D", "name": "d", "path": "/no/such/transcript-d"},
+            {"sid": "L", "name": "l", "path": "/no/such/transcript-l"}]
+        km.jd.load_goals = lambda sid: (loads.append(sid), {"status": {"g1": "blocked"}} if sid == "D" else {"status": {}})[1]
+        live = {"L": {"state": "waiting", "since": 0, "model": "", "effort": "", "context": None,
+                      "compactPct": None, "color": None, "mode": ""}}
+        try:
+            lanes = {l["id"]: l for l in km.build_timeline(1000, live, with_bars=False)["sessions"]}
+            self.assertEqual(lanes["D"]["state"], "needsInput", "the dead lane still reads its blocked badge")
+            self.assertEqual(loads, ["D"], "the skeleton loaded the dead lane's store and nothing else")
+            del loads[:]
+            km.build_timeline(1000, live, with_bars=True)
+            self.assertEqual(sorted(loads), ["D", "L"], "the full build keeps its load for every lane")
+        finally:
+            km._timeline_sessions, km.jd.load_goals = o_ts, o_lg
 
     def test_a_steady_push_of_an_unchanged_timeline_sends_no_bars_and_a_rebuilt_one_sends_a_slotted_delta(self):
         """The pusher hands _send_slot the same bars object while the cached timeline's identity holds (_bars_wire),
@@ -156,6 +433,53 @@ class PushSplit(unittest.TestCase):
         self.assertEqual([k for k, _m in bars], [("timelinebars",), ("timelinebars",)],
                          "both bars frames went with the slot key on the client")
         self.assertEqual(set(bars[1][1]["coll"]["turns"]["set"]), {"S\u001fb2"}, "one bar crosses")
+
+
+class OpenIntervals(unittest.TestCase):
+    """An interval the session is STILL in ends at the build's clock on the wire — the contract the
+    renderer's open detection reads (an end within 2 s of the payload's `now` is open, drawn to the pane's
+    live edge). Pinned because the first cut shipped a null end instead: every already-loaded renderer took
+    Math.min(null, t1) = 0 and dropped the stripe for a lane blocked or compacting right now (review
+    2026-09-06). The clock-stamped end costs nothing on the wire: the lanes frame is deduped per rebuild."""
+
+    SID = "66666666-7777-8888-9999-aaaaaaaaaaaa"      # a private synthetic sid
+
+    def setUp(self):
+        self.p = km.jd.STATE / "states" / (self.SID + ".jsonl")
+        self.p.parent.mkdir(parents=True, exist_ok=True)
+        km._state_ev_cache.pop(str(self.p), None)
+        self.now = 1_000_000
+        with open(self.p, "w") as f:
+            for row in ({"t": self.now - 400, "state": "permission"}, {"t": self.now - 300, "state": "working"},
+                        {"t": self.now - 100, "state": "permission"}):
+                f.write(json.dumps(row) + "\n")
+
+    def tearDown(self):
+        if self.p.exists():
+            self.p.unlink()
+        km._state_ev_cache.pop(str(self.p), None)
+
+    def test_an_open_interval_ends_at_the_build_clock_and_a_closed_one_at_its_transition(self):
+        now = self.now
+        self.assertEqual(km._state_intervals(self.SID, km._NEEDS_INPUT_STATES, now),
+                         [[now - 400, now - 300], [now - 100, now]])
+        self.assertEqual(km._state_intervals(self.SID, "compacting", now), [])
+        wire = json.loads(json.dumps(km._state_intervals(self.SID, "permission", now)))
+        self.assertEqual(wire[-1][1], now, "the open end serializes as the numeric clock, never null")
+
+    def test_the_lane_payload_ends_the_open_interval_at_its_own_clock(self):
+        o_ts = km._timeline_sessions
+        km._timeline_sessions = lambda now, tmux, live_only=False: [
+            {"sid": self.SID, "name": "web", "path": "/no/such/transcript-web"}]
+        live = {self.SID: {"state": "permission", "since": self.now - 100, "model": "", "effort": "",
+                           "context": None, "compactPct": None, "color": None, "mode": ""}}
+        try:
+            tl = km.build_timeline(self.now, live, with_bars=False)
+        finally:
+            km._timeline_sessions = o_ts
+        lane = tl["sessions"][0]
+        self.assertEqual(lane["awaiting"], [[self.now - 400, self.now - 300], [self.now - 100, self.now]])
+        self.assertEqual(lane["awaiting"][-1][1], tl["now"], "the open end equals the payload's clock: what the renderer reads as open")
 
 
 class DeadLaneWindow(unittest.TestCase):

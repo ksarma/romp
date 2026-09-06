@@ -383,13 +383,71 @@ class CredentialPolicy(unittest.TestCase):
             os.environ.pop(k, None)
         self._fn = getattr(jd, "_WORK_KEY_FN", None)
         jd._WORK_KEY_FN = None
+        self._setfn = getattr(jd, "_ENV_SET_FN", None)
+        jd._ENV_SET_FN = None
+        self._okfn = getattr(jd, "_ENV_OK_FN", None)
+        jd._ENV_OK_FN = None
         self._stash = sb._WORK_KEY       # the claimer's process-lifetime stash: unclaimed, so a claim happens HERE
         sb._WORK_KEY = None
 
     def tearDown(self):
         sb._WORK_KEY = self._stash
         jd._WORK_KEY_FN = self._fn
+        jd._ENV_SET_FN = self._setfn
+        jd._ENV_OK_FN = self._okfn
         _restore_env(self._env)
+
+    def test_a_fetch_on_the_sets_lp_key_reports_the_set_accepted_and_nothing_else_does(self):
+        # the Models API accepted the credential: when it is the set's own direct-call key, that is a
+        # success of the set, and it re-arms envsource's once-per-credential refusal path through the
+        # judges' wire (no fingerprint: the set as a whole); any other rung says nothing about the set
+        ok = []
+        jd._ENV_OK_FN = lambda fp: ok.append(fp) or True      # the real wire answers whether it re-armed
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": " synthetic-set-lp-credential ", "A_TOKEN": "x"}
+        self.assertTrue(km._credential_accepted(km._models_api_credential()))
+        self.assertEqual(ok, [""])
+        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-env-lp-credential")), "the environment's key")
+        self.assertFalse(km._credential_accepted(("Authorization", "Bearer synthetic-bearer-credential")), "a bearer")
+        self.assertFalse(km._credential_accepted(None))
+        self.assertEqual(ok, [""])
+        jd._ENV_SET_FN = lambda: {"A_TOKEN": "x"}
+        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-set-lp-credential")), "the set carries no LP key now")
+        jd._ENV_SET_FN = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-set-lp-credential")), "a broken wire re-arms nothing")
+        jd._ENV_OK_FN = None
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": "synthetic-set-lp-credential"}
+        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-set-lp-credential")), "unwired: file mode")
+        self.assertEqual(ok, [""])
+        src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
+        self.assertIn("            _credential_accepted(cred)\n            added = _apply_model_catalog(", src,
+                      "fired on the fetch's success path, before the catalog is applied")
+
+    def test_the_command_sets_lp_key_comes_first(self):
+        # the command source (kernel/envsource.py, 2026-09-05): its ANTHROPIC_LP_API_KEY line is the
+        # direct-call credential on a box that keeps every credential out of files and out of the
+        # manager's environment — read through the judges' wire, ahead of anything in os.environ
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": " synthetic-set-lp-credential ", "A_TOKEN": "x"}
+        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-env-lp-credential"
+        jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-set-lp-credential"))
+
+    def test_a_set_without_an_lp_key_falls_to_the_environment_then_the_work_key(self):
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_API_KEY": "synthetic-set-work-credential", "A_TOKEN": "x"}
+        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-env-lp-credential"
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-env-lp-credential"))
+        os.environ.pop("ANTHROPIC_LP_API_KEY")
+        self.assertIsNone(km._models_api_credential(), "the set's work key is not read here: it rides the claimer")
+        jd._WORK_KEY_FN = lambda: "synthetic-set-work-credential"    # what the kernel wires in command mode
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-set-work-credential"))
+
+    def test_a_broken_or_empty_set_wire_changes_nothing(self):
+        jd._ENV_SET_FN = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-env-lp-credential"
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-env-lp-credential"))
+        jd._ENV_SET_FN = lambda: {}
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-env-lp-credential"))
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": "   "}
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-env-lp-credential"), "blank is absent")
 
     def test_the_lp_key_is_preferred_over_the_claimed_key(self):
         os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-lp-credential"
@@ -409,7 +467,7 @@ class CredentialPolicy(unittest.TestCase):
         os.environ["ANTHROPIC_API_KEY"] = "synthetic-manager-env-credential"
         jd._WORK_KEY_FN = sb.work_api_key
         self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-manager-env-credential"))
-        self.assertNotIn("ANTHROPIC_API_KEY", os.environ, "claimed OUT of os.environ — no session CLI inherits it")
+        self.assertFalse("ANTHROPIC_API_KEY" in os.environ, "claimed OUT of os.environ — no session CLI inherits it")
         self.assertEqual(jd._work_key(), "synthetic-manager-env-credential",
                          "one stash: what the judges bill to is what the catalog fetch bills to")
 
@@ -428,7 +486,7 @@ class CredentialPolicy(unittest.TestCase):
     def test_an_unwired_ambient_key_is_not_read_and_the_refresh_says_so(self):
         os.environ["ANTHROPIC_API_KEY"] = "synthetic-ambient-credential"
         self.assertIsNone(km._models_api_credential(), "no claimer wired → nothing claimed, nothing read")
-        self.assertIn("ANTHROPIC_API_KEY", os.environ, "…and the environment is left as it was")
+        self.assertTrue("ANTHROPIC_API_KEY" in os.environ, "…and the environment is left as it was")
         # …and the refresh's no-credential line names what a box that wants the catalog must carry —
         # the LP key, or the manager's own work key — honestly, so nobody exports a session-auth key
         os.environ.pop("ROMP_MODEL_CATALOG", None)

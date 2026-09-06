@@ -14,10 +14,21 @@ export const COLORMAPS: Record<string, Array<[number, number, number]>> = {
   plasma: [[13, 8, 135], [75, 3, 161], [125, 3, 168], [168, 34, 150], [203, 70, 121], [229, 107, 93], [248, 148, 65], [253, 195, 40], [240, 249, 33]],
   cividis: [[0, 34, 78], [33, 59, 110], [76, 85, 108], [108, 110, 114], [142, 137, 120], [177, 165, 112], [217, 197, 92], [254, 232, 56]],
 };
+// Memoised on the RAW settings string (2026-09-06): every tint on the board calls this — ~800 per render
+// and per 15 s live pass — and each call parsed the settings blob. Keyed on the raw string, the memo is
+// exact and needs no invalidation: a different string re-parses, the same string returns the same stops.
+// (A few ms per pass; the measured costs were elsewhere — see feed-card-gate.ts.)
+let stopsRaw: string | null | undefined;
+let stopsMemo: Array<[number, number, number]> = COLORMAPS.aurora;
 function selectedStops(): Array<[number, number, number]> {
+  let raw: string | null = null;
+  try { raw = localStorage.getItem("romp:settings"); } catch { /* no storage */ }
+  if (raw === stopsRaw) return stopsMemo;
   let name = "aurora";
-  try { name = String(JSON.parse(localStorage.getItem("romp:settings") || "{}").colormap || "aurora"); } catch { /* default */ }
-  return COLORMAPS[name.toLowerCase()] || COLORMAPS.aurora;
+  try { name = String(JSON.parse(raw || "{}").colormap || "aurora"); } catch { /* default */ }
+  stopsRaw = raw;
+  stopsMemo = COLORMAPS[name.toLowerCase()] || COLORMAPS.aurora;
+  return stopsMemo;
 }
 function ramp(v: number): [number, number, number] {
   const STOPS = selectedStops();

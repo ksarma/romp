@@ -70,7 +70,7 @@ test("the chip and the box gist take the kind word from ONE count (T225 rider)",
   assert.match(RENDER, /chip\.textContent = CHIP_LABEL\.awaitingBg \+ \(kw \? " " \+ kindWord\(s\.status\.awaitingKind, s\.status\.awaitingCount\) : ""\);/);
   assert.match(RENDER, /lab\.textContent = "Awaiting" \+ \(kw \? " " \+ kindWord\(s!\.status\.awaitingKind, s!\.status\.awaitingCount\) : ""\)/);
   // the feed pill and the spin caption derive their word the same way
-  assert.match(FEED, /import \{ spinFor, KIND_WORD, kindWord, waitedSuffix \} from "\.\/spin-caption";/);
+  assert.match(FEED, /import \{ spinFor, KIND_WORD, kindWord \} from "\.\/spin-caption";/);
   assert.match(FEED, /kindWord\(awKind, 1\)/);
   assert.match(FEED, /kindWord\(awKind, taskList\.length\)/);
   assert.match(SPIN, /const word = kindWord\(aw\.kind, aw\.count\);/);
