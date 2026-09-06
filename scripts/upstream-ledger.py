@@ -107,6 +107,17 @@ class Entry:
         return ""
 
 
+def calendar_date(s):
+    """True when `s` is YYYY-MM-DD and names a real day (the shape alone let 2026-02-30 through)."""
+    if not ISO_DATE.match(s):
+        return False
+    try:
+        date.fromisoformat(s)
+    except ValueError:
+        return False
+    return True
+
+
 def first_paragraph(body):
     lines = body.split("\n")
     i = 0
@@ -167,6 +178,10 @@ def parse_entry(name, text, path=None):
     for key in ("added", "closed"):
         if header.get(key) and not ISO_DATE.match(header[key]):
             problems.append(f"{name}: {key} must be an ISO date (YYYY-MM-DD), got {header[key]!r}")
+        elif header.get(key) and not calendar_date(header[key]):
+            problems.append(f"{name}: {key} {header[key]} is not a calendar date")
+    if m and not calendar_date(m.group(1)):
+        problems.append(f"{name}: the filename date {m.group(1)} is not a calendar date")
     if header.get("pr") and not header["pr"].isdigit():
         problems.append(f"{name}: pr must be blank or an integer, got {header['pr']!r}")
     if header.get("tier") and header["tier"] not in TIERS:
@@ -234,7 +249,7 @@ def front_problems(text, name=FRONT):
         if CONFLICT.match(line):
             out.append(f"{name}:{n}: git conflict marker: {line[:40]!r}")
         elif is_row(line):
-            out.append(f"{name}:{n}: {ROW_HINT} {json.dumps(line.strip()[:60] + ('…' if len(line.strip()) > 60 else ''))}")
+            out.append(f"{name}:{n}: {ROW_HINT} {json.dumps(line.strip()[:60] + ('…' if len(line.strip()) > 60 else ''), ensure_ascii=False)}")
     if "When offering:" not in text:
         out.append(f"{name}: the `When offering:` paragraph is gone; the offering guidance lives here")
     documented = documented_statuses(text)
@@ -311,6 +326,8 @@ def status_cell(e):
 
 def title_cell(e, link_base=""):
     title = cut(e.get("title"))
+    if link_base and not link_base.endswith("/"):   # `.../blob/main` and `.../blob/main/` both mean the tree
+        link_base += "/"
     target = f"{link_base}{DIR}/{e.name}"
     if "[" in title or "]" in title:   # brackets inside link text break the link; link beside the title instead
         return f"{escape_cell(title)} ([entry]({target}))"

@@ -333,6 +333,14 @@ class EntryRules(unittest.TestCase):
         _, got = _parse("2026-09-06-alpha.md", _entry(added="06/09/2026"))
         self.assertEqual(got, ["2026-09-06-alpha.md: added must be an ISO date (YYYY-MM-DD), got '06/09/2026'"])
 
+    def test_dates_must_name_a_real_day(self):
+        _, got = _parse("2026-09-06-alpha.md", _entry(closed="2026-02-30"))
+        self.assertEqual(got, ["2026-09-06-alpha.md: closed 2026-02-30 is not a calendar date"])
+        _, got = _parse("2026-13-45-alpha.md", _entry(added="2026-13-45"))
+        self.assertEqual(got, ["2026-13-45-alpha.md: added 2026-13-45 is not a calendar date",
+                               "2026-13-45-alpha.md: the filename date 2026-13-45 is not a calendar date"])
+        self.assertEqual(_parse("2028-02-29-alpha.md", _entry(added="2028-02-29", closed="2026-12-31"))[1], [])   # a leap day is real
+
     def test_pr_is_blank_or_an_integer(self):
         self.assertEqual(_parse("2026-09-06-alpha.md", _entry(pr="199"))[1], [])
         self.assertEqual(_parse("2026-09-06-alpha.md", _entry(pr=""))[1], [])
@@ -415,6 +423,13 @@ class FrontPage(unittest.TestCase):
         self.assertEqual(len(got), 1, got)
         self.assertTrue(got[0].startswith("UPSTREAM.md:9: a table row; entries live in upstream/ now: run scripts/upstream-ledger.py import --row"), got[0])
         self.assertIn("A straggler", got[0])
+        self.assertTrue(got[0].endswith("branch cu…\""), got[0])   # the row is quoted to 60 characters, then an ellipsis
+        got = L.front_problems(FRONT_OK + "\n| A straggler — with an em dash | `x.py` | candidate | appended by a branch cut before the migration |\n")
+        self.assertIn("A straggler — with an em dash", got[0])     # the em dash and the ellipsis print as themselves,
+        self.assertNotIn("\\u", got[0])                            # not as JSON escapes
+        short = "| Short | `x.py` | candidate | notes |"
+        got = L.front_problems(FRONT_OK + "\n" + short + "\n")
+        self.assertTrue(got[0].endswith(f"import --row \"{short}\""), got[0])   # a short row is quoted whole
 
     def test_a_conflict_marker_is_flagged(self):
         got = L.front_problems(FRONT_OK.replace("Prose about the queue.", "<<<<<<< HEAD\nProse.\n=======\nProse!\n>>>>>>> main"))
@@ -545,6 +560,7 @@ class Render(unittest.TestCase):
             self.assertTrue((self.d / name).exists(), name)
         with_base = L.render(self.entries, link_base="https://example.invalid/o/r/blob/abc/")
         self.assertIn("](https://example.invalid/o/r/blob/abc/upstream/2026-09-02-the-approved-one.md)", with_base)
+        self.assertEqual(L.render(self.entries, link_base="https://example.invalid/o/r/blob/abc"), with_base)   # a missing slash is supplied
 
     def test_pipes_in_cells_are_escaped_so_every_row_has_four_cells(self):
         row = next(r for r in self.rendered.split("\n") if "bracketed" in r)
