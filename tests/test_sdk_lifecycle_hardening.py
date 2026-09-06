@@ -7,7 +7,8 @@ Covers the backend half:
     re-seeded from it, so a kernel death can DELAY queued turns but never lose them;
   * last_state_value — the cut-turn discriminator reads the last STATE record through the
     interleaved awaiting overlays (the boot heal itself appends one);
-  * find_orphan_clis — matches only ORPHANED (ppid 1) SDK-driven CLIs (--resume <ours> +
+  * find_orphan_clis — matches only ORPHANED SDK-driven CLIs, i.e. whose parent is no live romp
+    kernel (ppid 1 on macOS; the `systemd --user` subreaper on Linux, 2026-09-05) (--resume <ours> +
     stream-json), never a tmux session's interactive `claude --resume` and never a LIVE CLI still
     parented to a kernel (2026-07-06: a duplicate backend's reconcile reaped live sessions);
   * _boot_reconcile — resumes exactly the cut-turn / queued sessions (a user-interrupted or
@@ -19,11 +20,16 @@ All deterministic: no SDK import, no real claude processes (ps/os.kill are patch
 """
 import json
 import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import signal
 import threading
 import time
+import types
 import unittest
+import uuid
 from pathlib import Path
 from unittest import mock
 from importlib.machinery import SourceFileLoader
@@ -81,14 +87,65 @@ class FindOrphanClis(unittest.TestCase):
         self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [4242])
 
     def test_live_children_are_never_orphans(self):
-        # Same command line as a true orphan, but still parented to a running kernel (ppid != 1):
-        # a LIVE session's CLI. Reaping these was the 2026-07-06 kill storm — a duplicate backend's
-        # reconcile SIGTERM'd freshly-resumed sessions mid-turn (exit 143).
+        # Same command line as a true orphan, but still parented to a running kernel (the kernel's
+        # own line is in the listing): a LIVE session's CLI. Reaping these was the 2026-07-06 kill
+        # storm — a duplicate backend's reconcile SIGTERM'd freshly-resumed sessions mid-turn (exit 143).
         lines = [
+            " 38438 901 /usr/bin/python3.12 /x/romp/bin/romp-kernel",
             " 4242 38438 /x/claude --output-format stream-json --resume %s --input-format stream-json" % self.SID,
             " 4245 1 /x/claude --output-format stream-json --resume %s --input-format stream-json" % self.SID,
         ]
         self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [4245])
+
+    # Orphaned = the parent is not a live romp kernel (2026-09-05). Until then the check was ppid 1,
+    # which is what an orphan gets under launchd — and never under `systemd --user`, whose
+    # PR_SET_CHILD_SUBREAPER re-parents an orphan to the user manager's pid, so the reap had matched
+    # nothing on Linux under the service.
+    def _cli(self, pid, ppid):
+        return " %d %d /x/claude --output-format stream-json --resume=%s --input-format stream-json" % (pid, ppid, self.SID)
+
+    def test_orphan_reparented_to_launchd(self):
+        # macOS: pid 1 is launchd, present in the listing and not a kernel
+        lines = [" 1 0 /sbin/launchd", self._cli(700, 1)]
+        self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [700])
+
+    def test_orphan_reparented_to_the_systemd_user_manager(self):
+        # Linux under the service: the orphan's ppid is the `systemd --user` pid, never 1
+        lines = [" 1 0 /sbin/init", " 901 1 /usr/lib/systemd/systemd --user", self._cli(701, 901)]
+        self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [701])
+
+    def test_orphan_whose_parent_is_absent_from_the_listing(self):
+        # the parent died between the CLI's line and its own (ps is not atomic) — an orphan
+        lines = [self._cli(702, 65000)]
+        self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [702])
+
+    def test_a_live_cli_parented_to_a_romp_kernel_is_never_reaped(self):
+        for kernel in (" 500 901 /usr/bin/python3.12 /x/romp/bin/romp-kernel",
+                       " 500 901 python3 bin/romp-kernel",
+                       " 500 901 python3 kernel/kernel.py",
+                       " 500 901 /usr/bin/python3 /x/romp/kernel/kernel.py"):
+            lines = [" 901 1 /usr/lib/systemd/systemd --user", kernel, self._cli(703, 500)]
+            self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [], kernel)
+
+    def test_a_cli_parented_to_a_different_live_kernel_is_that_kernels(self):
+        # another kernel (an aux port, a second install) owns this CLI — not ours to reap, whatever
+        # sid it carries; the orphan next to it, parented to the user manager, still is
+        lines = [" 901 1 /usr/lib/systemd/systemd --user",
+                 " 600 901 /usr/bin/python3.12 /elsewhere/romp/bin/romp-kernel",
+                 self._cli(704, 600), self._cli(705, 901)]
+        self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [705])
+
+    def test_kernel_match_is_on_argv_tokens_not_substrings(self):
+        self.assertTrue(sb._is_kernel_cmd("/usr/bin/python3.12 /x/romp/bin/romp-kernel"))
+        self.assertTrue(sb._is_kernel_cmd("python3 kernel/kernel.py"))
+        self.assertTrue(sb._is_kernel_cmd("python3 kernel.py"))
+        # a process merely mentioning the kernel is not one: its child would be an orphan
+        self.assertFalse(sb._is_kernel_cmd("tail -f /x/state/romp/romp-kernel.log"))
+        self.assertFalse(sb._is_kernel_cmd("node /x/romp/bin/romp-manager up"))
+        self.assertFalse(sb._is_kernel_cmd("/usr/lib/systemd/systemd --user"))
+        self.assertFalse(sb._is_kernel_cmd("python3 other/kernel.py"))
+        lines = [" 800 1 tail -f /x/state/romp/romp-kernel.log", self._cli(706, 800)]
+        self.assertEqual(sb.find_orphan_clis(lines, [self.SID]), [706])
 
     def test_empty_sids_match_nothing(self):
         lines = [" 1 1 claude --resume  --input-format stream-json"]
@@ -131,6 +188,83 @@ class QueuePersistence(unittest.TestCase):
         s = sb.SdkSession(be, reg)
         self.assertEqual(s.pending(), ["held over", "and this"],
                          "restores strings only — junk entries never wedge delivery")
+
+
+def _procps() -> bool:
+    """Whether this box's ps is procps (Linux; BSD ps has no --version). The truncation control below
+    pins procps behaviour, so it runs only there."""
+    try:
+        return "procps" in subprocess.run(["ps", "--version"], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return False
+
+
+class PsArgv(unittest.TestCase):
+    """The `ps` both process scans run. `-ww` is the point: procps truncates every line to $COLUMNS
+    when that variable is exported (BSD ps does by default), and an SDK CLI's sid sits ~2 KB into its
+    argv behind --append-system-prompt, so a kernel started with COLUMNS exported reaped nothing and
+    could not find its own child to signal, silently (2026-09-05; `COLUMNS=80 ps -axo` cut a 3200-char
+    argv at 80 columns on procps-ng 4.0.4, `-axwwo` printed it whole). The first three tests pin the
+    argv and its two call sites through mocks; the last two run this box's ps against a real long argv,
+    on Linux only, so the width property itself has an executable check."""
+
+    def test_the_argv_asks_for_unlimited_width(self):
+        self.assertEqual(sb.PS_ARGV, ["ps", "-axwwo", "pid=,ppid=,command="])
+
+    # GNU sleep rejects a non-numeric argument, so the sleeper with the >3000-character argv is this
+    # interpreter, given the marker as an argument it ignores; it is killed on the way out. The marker is
+    # minted per test so nothing else on the box (this process's own argv included) can carry it.
+    def _sleeper_with_a_long_argv(self):
+        marker = "romp-ps-ww-tail-" + uuid.uuid4().hex
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "x" * 3000 + marker],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(child.wait, timeout=10)
+        self.addCleanup(child.kill)
+        return child, marker
+
+    def _ps_line_for(self, pid, argv):
+        out = subprocess.run(argv, env={**os.environ, "COLUMNS": "80"}, capture_output=True, text=True,
+                             timeout=10).stdout
+        mine = [ln for ln in out.splitlines() if ln.split()[:1] == [str(pid)]]
+        self.assertEqual(len(mine), 1, "one line for the sleeper's pid: %r" % (mine,))
+        return mine[0]
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("ps"), "a real ps on Linux")
+    def test_a_real_ps_under_columns_80_prints_a_3000_character_argv_whole(self):
+        child, marker = self._sleeper_with_a_long_argv()
+        line = self._ps_line_for(child.pid, sb.PS_ARGV)
+        self.assertIn(marker, line, "the argv's tail survived COLUMNS=80 (line is %d chars)" % len(line))
+        self.assertGreater(len(line), 3000)
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and _procps(), "procps ps on Linux")
+    def test_without_ww_the_same_ps_cuts_the_argv_at_columns(self):
+        # the control: the argv PS_ARGV replaced (-axo) loses the marker on procps, so the test above
+        # passes because of -ww and not because this box's ps never truncates
+        child, marker = self._sleeper_with_a_long_argv()
+        line = self._ps_line_for(child.pid, ["ps", "-axo", "pid=,ppid=,command="])
+        self.assertNotIn(marker, line)
+        self.assertLessEqual(len(line), 80)
+
+    def test_the_interrupt_escalation_reads_ps_with_it(self):
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        sid = "11111111-aaaa-0000-0000-00000000000f"
+        _reg(d, sid)
+        # our own child (ppid = this process), its sid 2 KB into the argv — what -ww keeps intact
+        ps = "  4242 %d /x/claude --append-system-prompt %s --resume %s --input-format stream-json\n" % (
+            os.getpid(), "p" * 2100, sid)
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout=ps)) as run:
+            pid = be._session_cli_pid(types.SimpleNamespace(sid=sid, name="web"))
+        self.assertEqual(pid, 4242)
+        self.assertEqual(run.call_args_list[0][0][0], sb.PS_ARGV)
+
+    def test_the_boot_reaper_reads_ps_with_it(self):
+        # the reaper's own reap test (BootReconcile.test_reaps_orphans_but_never_tmux) pins the same
+        # argv on its call; this one pins that the two sites share ONE constant, so neither can drift
+        with open(sb.__file__) as f:
+            src = f.read()
+        self.assertNotIn('"-axo"', src, "every ps scan goes through PS_ARGV (-ww)")
+        self.assertEqual(src.count("subprocess.run(PS_ARGV"), 2, "the reaper and the escalation")
 
 
 class BootReconcile(unittest.TestCase):
@@ -242,15 +376,17 @@ class BootReconcile(unittest.TestCase):
         sb.append_state(Path(d), sid, "working")
         ps = ("  555 1 /x/claude --output-format stream-json --resume %s --input-format stream-json\n"
               "  556 1 claude --resume %s --name termsess\n"
+              "  90210 1 /usr/bin/python3 /x/romp/bin/romp-kernel\n"
               "  557 90210 /x/claude --output-format stream-json --resume %s --input-format stream-json\n"
               ) % (sid, sid, sid)
         killed = []
-        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout=ps)), \
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout=ps)) as run, \
              mock.patch.object(sb.os, "kill", side_effect=lambda p, s: killed.append((p, s))):
             be._boot_reconcile([sb.read_reg(Path(d), sid)])
         self.assertEqual(killed, [(555, sb.signal.SIGTERM)],
                          "the SDK orphan is reaped; the tmux CLI and the live (parented) CLI "
                          "on the same sid are untouched")
+        self.assertEqual(run.call_args_list[0][0][0], sb.PS_ARGV, "the listing is read with PS_ARGV")
 
     def test_reconcile_is_opt_in(self):
         # Constructing the backend plain (tests, ad-hoc) must NOT spawn a reconcile thread; the
