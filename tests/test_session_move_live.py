@@ -25,6 +25,7 @@ CI has none of these and skips cleanly. Synthetic content throughout (an invente
 codeword, temp folders)."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -208,8 +209,11 @@ class LiveSetCwd(unittest.TestCase):
             self.assertIs(res["same_dir"].get("changed"), False)
             self.assertEqual((res["missing"].get("status"), res["missing"].get("reason")), ("rejected", "not_found"))
             self.assertIn(CODEWORD, res["reply"], "the conversation is remembered after the move")
-            slug_b = "-".join(part for part in os.path.realpath(b).split("/") if part)
-            self.assertEqual(res["files"], [os.path.join("-" + slug_b, SID + ".jsonl")],
+            # The CLI's project slug: every non-alphanumeric character of the realpath becomes '-' (what
+            # sdk_backend.transcript_path mirrors). Joining on '/' alone misses the '.' of a temp root like
+            # ~/.cache and the '_' mkdtemp's suffix alphabet can produce, and fails the run for its path.
+            slug_b = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(b))
+            self.assertEqual(res["files"], [os.path.join(slug_b, SID + ".jsonl")],
                              "the transcript lives under the NEW slug only — moved, never copied")
         finally:
             shutil.rmtree(td, ignore_errors=True)
