@@ -11345,7 +11345,7 @@ class TmuxBackend(sb.SessionBackend):
         return True, ""
 
     def set_model(self, sid, value):
-        _tmux_send(_name_of(sid) or sid, "/model " + value, model_cmd=True)   # /model opens a confirm → 2nd Enter
+        _tmux_send(_name_of(sid) or sid, "/model " + value, model_cmd=True)   # /model opens a confirm → the 2nd Enter accepts it for the user
         return True
 
     def set_mode(self, sid, mode):
@@ -20489,9 +20489,14 @@ def _route_meta_command(be, sid, text, client=None, floating=False, state=None):
     The CLI would execute the text (verified on 2.1.257), but that path bypasses romp: the registry,
     sdk-defaults.json, the pick memory and the reconnect's --model all kept the OLD value, so a switch
     typed into the composer silently reverted at the next reconnect or restart. The setters are also
-    what parks the change mid-compaction. Returns True when it took the command. Anything else —
-    another slash command, a bare "/model" (the CLI's own picker), plain text that merely contains one
-    — is the caller's to send verbatim: the CLI owns what executes. A refused fast toggle is told to
+    what parks the change mid-compaction. Returns True when it took the command. Whichever surface
+    typed it — the composer, the lane menu, POST /send — the command is one gesture with one outcome;
+    how the setter then LANDS it is the backend's: an SDK session switches model live but reconnects
+    to apply an effort change (SdkBackend.set_effort), a tmux session gets the CLI's own command typed
+    into its pane with /model's confirmation accepted for the user (TmuxBackend.set_model) — the
+    SessionBackend.set_model / set_effort docstrings hold the split. Anything else — another slash
+    command, a bare "/model" (the CLI's own picker), plain text that merely contains one — is the
+    caller's to send verbatim: the CLI owns what executes. A refused fast toggle is told to
     the client (fail loudly): a dormant SDK session has no live CLI to apply it, and the typed text
     used to at least draw the CLI's own refusal. `state`, when given, receives {"queued": bool} — whether
     the setter PARKED the change (they park under _ops_gate, read here) — so POST /send answers `queued`

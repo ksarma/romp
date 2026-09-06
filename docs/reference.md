@@ -179,6 +179,26 @@ ghostty --working-directory={dir}   # Linux: Ghostty
 code {dir}                          # VS Code instead
 ```
 
+### Model and effort, from the statusline or a typed command
+
+Typing `/model X`, `/effort X`, or `/fast on|off` into the chat composer, or
+sending one with `romp send`, is the same setting change as a pick from the
+statusline's model and effort dropdowns: the kernel takes it through its own
+setters, so what it remembers (the value a reconnect relaunches with, the
+defaults new sessions start from) follows the switch. A bare `/model` (the
+CLI's own picker), a value the kernel cannot vouch for (a typo), or a longer
+message that merely opens with the command goes to the CLI verbatim, and the
+chat shows the CLI's own reply.
+
+The two backends apply the change differently. An SDK session switches model
+live but reloads to apply a new effort: the chat shows "Reloading session…"
+and the effort badge shows switching-dots until the reload completes, and a
+session that is mid-turn reloads when the turn ends. A terminal (tmux) session
+gets the CLI's own command typed into its pane. `/model` there asks for a
+confirmation, which the kernel accepts on your behalf so the pane is never
+left waiting on a keystroke the dashboard cannot send; `/effort` and `/fast`
+apply in place.
+
 ### Fast mode, from the chat statusline
 
 The statusline's badges — permission mode, model, effort — are each a small

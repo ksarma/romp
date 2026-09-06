@@ -115,14 +115,33 @@ class SessionBackend(ABC):
         return False
 
     @abstractmethod
-    def set_model(self, sid: str, value: str) -> bool: ...
+    def set_model(self, sid: str, value: str) -> bool:
+        """Switch the session's model. `value` is a family alias (opus — the CLI resolves it to the newest),
+        an explicit version id (a pin), or 'default'. Every surface lands here — the statusline picker, the
+        timeline lane menu, a '/model X' typed into the composer or sent by `romp send` (kernel
+        _route_meta_command) — so the registry and the remembered defaults never drift from what the CLI
+        runs. The SDK persists the value and applies it LIVE over the SDK's set_model control request, no
+        reconnect; a refusal reverts every layer (SdkBackend.set_model). tmux types the CLI's own '/model X'
+        into the pane and presses Enter once more to accept the confirmation the CLI asks for
+        (TmuxBackend.set_model, `_tmux_send(model_cmd=True)`): the dashboard cannot press it in the pane,
+        and the next send's clear-guard would refuse to paste over the open dialog.
+        False when it can't be applied (unknown sid, bad value) so the kernel can be loud instead of
+        pretending."""
 
     @abstractmethod
     def set_mode(self, sid: str, mode: str) -> bool:
         """Set the permission mode (auto/default/acceptEdits/plan/…)."""
 
     @abstractmethod
-    def set_effort(self, sid: str, value: str) -> bool: ...
+    def set_effort(self, sid: str, value: str) -> bool:
+        """Set the reasoning effort (one of the kernel's effort choices, 'low' through 'ultracode'). The two
+        backends land it differently from each other and from set_model: effort is a connect-time CLI flag
+        (--effort) with no SDK control request, so the SDK persists the value and RECONNECTS to apply it —
+        at once if the session is idle, at the end of the turn if it's busy — with `effortPending` driving
+        the badge's switching-dots and the chat's "Reloading session…" notice (SdkBackend.set_effort). tmux
+        types '/effort X' into the pane, which the TUI applies in place: no reconnect, no confirmation, so
+        no second Enter (TmuxBackend.set_effort). False when it can't be applied (unknown sid, bad value)
+        so the kernel can be loud instead of pretending."""
 
     @abstractmethod
     def set_fast(self, sid: str, value: str) -> bool:

@@ -119,6 +119,28 @@ class KernelWiring(unittest.TestCase):
             km._TMUX, km._name_of = saved, saved_name
             km._tmux_echo.pop("sid-tmux", None)                   # the optimistic echo wrote here — don't leak it
 
+    def test_a_typed_slash_model_or_effort_on_a_tmux_session_takes_the_setter_too(self):
+        # The routing is backend-agnostic: a typed "/model X" or "/effort X" on a tmux-owned sid reaches
+        # TmuxBackend's setters — which type the CLI's own command into the pane and, for /model, accept
+        # the confirmation the CLI asks for (SessionBackend.set_model) — never send() as literal text.
+        # The SDK-sid test below covers one door; this pins the other, so the two backends cannot drift
+        # apart at the router.
+        tm = FakeBackend(); tm._owned = set()
+        saved, saved_name = km._TMUX, km._name_of
+        km._TMUX = tm
+        km._name_of = lambda sid: "web"
+        try:
+            self.assertTrue(self._route({"type": "sendMessage", "id": "sid-tmux", "text": "/model opus"}))
+            self.assertTrue(self._route({"type": "sendMessage", "id": "sid-tmux", "text": "/effort high"}))
+            self.assertIn(("set_model", "sid-tmux", "opus"), tm.calls)
+            self.assertIn(("set_effort", "sid-tmux", "high"), tm.calls)
+            self.assertEqual([c for c in tm.calls if c[0] == "send"], [], "neither reaches the pane as text")
+            self.assertEqual(self.be.calls, [], "the SDK backend was untouched")
+        finally:
+            km._TMUX, km._name_of = saved, saved_name
+            km._tmux_echo.pop("sid-tmux", None)
+            km._model_switch_pending.pop("sid-tmux", None)        # the pick's switching-dots stamp — don't leak it
+
     def test_ui_op_falls_through_even_for_sdk_sid(self):
         # closeTab/openSession are backend-agnostic UI ops → never intercepted
         self.assertFalse(self._route({"type": "closeTab", "id": "sid-sdk"}))
