@@ -820,6 +820,73 @@ test("executed: the follow's memory is pruned PER HOST — a detached host's tag
     "g99 is not in the local store and A lists no t9: dropped; Z contributes no tag, so its memory waits with it");
 });
 
+test("executed: the follow's memory is checked against EVERY adopted blob — a remembered tag the blob names by another name was renamed on while no client watched, and its entry goes, so the tag's next rename to the remembered name is followed as owed; a tag under the remembered name keeps its entry (the late pane still stands down); an absent host's entries still wait; a DOWN host's rename back is watched", () => {
+  // host A's tag t1 (web) holds A:m1; the user pins A:m1 under web — a remote-only entry, nothing to follow by id
+  const t1 = (name: string) => rt("TESTHOST-A", "t1", name, ["TESTHOST-A:m1"]);
+  const g8 = (name: string) => ({ id: "g8", name, color: "#e0af68", members: ["tests"] });
+  const V0 = { active: "all", tags: [g8("x")], remoteTags: [t1("web")], tagOrder: ["web", "api", "x", "y"], seq: 4 };
+  const V1 = { ...V0, remoteTags: [t1("api")] };                 // A renames t1 web → api, watched (no seq change: a remote rename)
+  const D = { ...V1, remoteTags: [] };                          // A detaches: its cached tags leave the blob
+  const D2 = { ...D, tags: [g8("y")], seq: 5 };                 // while A is away, a local rename x → y
+  const V4 = { ...D2, remoteTags: [t1("web")] };                // A reattaches — t1 renamed BACK to web while detached, unwatched
+  const V5 = { ...V4, remoteTags: [t1("api")] };                // A renames web → api again, watched
+  const vis = ["TESTHOST-A:m1", "tests", "loose"];
+  const HOSTS = new Set(["TESTHOST-A"]);
+  let st = foldAll(parseTabGroups(null), "web", "api", "x", "y");
+  st = setPinned(st, secOf(viewTagUnion(V0), "web"), "TESTHOST-A:m1", true);
+  const st1 = followTagRenames(st, tagRenames(V0, V1), viewTagUnion(V1));
+  assert.deepEqual([st1.pinned, st1.followed], [[{ sid: "TESTHOST-A:m1", name: "api" }], { "TESTHOST-A:t1": "api" }]);
+  // the late pane (round 5): the user turns the pin off under api, and a pane adopting the rename frame late stands down —
+  // t1 is under api, where its pins were carried
+  const off = setPinned(st1, secOf(viewTagUnion(V1), "api"), "TESTHOST-A:m1", false);
+  assert.deepEqual(off.pinned, []);
+  assert.equal(followTagRenames(off, tagRenames(V0, V1), viewTagUnion(V1)), off, "the late pane stands down");
+  // the detach (round 6): A's memory waits with its host, through a local rename followed while A is away
+  assert.equal(followTagRenames(st1, tagRenames(V1, D), viewTagUnion(D)), st1, "the detach frame: the memory stands, nothing is written");
+  const away = followTagRenames(st1, tagRenames(D, D2), viewTagUnion(D2));
+  assert.deepEqual([away.pinned, away.followed], [[{ sid: "TESTHOST-A:m1", name: "api" }], { "TESTHOST-A:t1": "api", g8: "y" }]);
+  // ROUND 7's BUG: the reattach frame names t1 `web` — the tag moved on while no client watched, so the memory
+  // of its pins' last home is stale, and it goes on this adoption, renames or none (t1 was not in the held
+  // blob, so the frame names no rename). The api entry itself matches nothing now (THE LIMIT) …
+  assert.deepEqual(tagRenames(D2, V4), [], "(a tag absent from the held blob is no rename)");
+  const back = followTagRenames(away, tagRenames(D2, V4), viewTagUnion(V4));
+  assert.deepEqual([back.pinned, back.followed], [[{ sid: "TESTHOST-A:m1", name: "api" }], { g8: "y" }], "the stale memory goes; the entry stays for the pin row's prune");
+  assert.deepEqual(strip(vis, viewTagUnion(V4), back, "loose"), [["#web(folded)", "#y(folded)", "#null", "loose"], ["TESTHOST-A:m1", "tests"]], "m1 folded away under web: the pin named api");
+  // … so the user pins A:m1 under web again, and the write prunes the api entry (no union of the name holds the tab)
+  const repin = prunePinned(setPinned(back, secOf(viewTagUnion(V4), "web"), "TESTHOST-A:m1", true), viewTagUnion(V4), new Set(vis), HOSTS);
+  assert.deepEqual(repin.pinned, [{ sid: "TESTHOST-A:m1", name: "web" }]);
+  // A renames web → api again, watched: to a name the memory no longer holds for t1 — followed, and the tab stays on the strip
+  const again = followTagRenames(repin, tagRenames(V4, V5), viewTagUnion(V5));
+  assert.deepEqual([again.pinned, again.followed], [[{ sid: "TESTHOST-A:m1", name: "api" }], { "TESTHOST-A:t1": "api", g8: "y" }]);
+  assert.deepEqual(strip(vis, viewTagUnion(V5), again, "loose"), [["#api(folded)", "TESTHOST-A:m1", "#y(folded)", "#null", "loose"], ["tests"]]);
+  const kept = followTagRenames({ ...repin, followed: away.followed }, tagRenames(V4, V5), viewTagUnion(V5));
+  assert.deepEqual(kept.pinned, repin.pinned, "(had the memory survived the reattach frame, the rename read as already followed …");
+  assert.deepEqual(strip(vis, viewTagUnion(V5), kept, "loose"), [["#api(folded)", "#y(folded)", "#null", "loose"], ["TESTHOST-A:m1", "tests"]], "… and the tab folded away with no gesture on it)");
+  // no detach at all — the PAGE was closed while A renamed t1 back to web (the class round 6 widened): the reopened
+  // page's first frame has no held blob to name a rename, and the check alone clears the memory
+  const V1w = { ...V1, remoteTags: [t1("web")] };
+  const reopened = followTagRenames(st1, tagRenames(null, V1w), viewTagUnion(V1w));
+  assert.deepEqual([reopened.pinned, reopened.followed], [[{ sid: "TESTHOST-A:m1", name: "api" }], {}]);
+  const repin2 = prunePinned(setPinned(reopened, secOf(viewTagUnion(V1w), "web"), "TESTHOST-A:m1", true), viewTagUnion(V1w), new Set(vis), HOSTS);
+  assert.deepEqual(followTagRenames(repin2, tagRenames(V1w, V1), viewTagUnion(V1)).pinned, [{ sid: "TESTHOST-A:m1", name: "api" }], "web → api after the reopen: followed");
+  // A DOWN instead of detached: the kernel serves A's cached tags while it is unreachable, so the rename back
+  // lands in the blob as A answers again — WATCHED, api → web — and the entry follows it; no memory is stale
+  const downV = { ...V1, tags: [g8("y")], seq: 5 };              // A down: t1 still api in the blob; x → y followed meanwhile
+  const dAway = followTagRenames(st1, tagRenames(V1, downV), viewTagUnion(downV));
+  assert.deepEqual(dAway.followed, { "TESTHOST-A:t1": "api", g8: "y" }, "t1 is under api, as remembered: the memory stands");
+  const upV = { ...downV, remoteTags: [t1("web")] };            // A answers again: the supervisor's fresh read shows web
+  const dBack = followTagRenames(dAway, tagRenames(downV, upV), viewTagUnion(upV));
+  assert.deepEqual([dBack.pinned, dBack.followed], [[{ sid: "TESTHOST-A:m1", name: "web" }], { "TESTHOST-A:t1": "web", g8: "y" }], "the rename back was watched: the entry follows it, and the memory is re-stamped");
+  const upApi = { ...upV, remoteTags: [t1("api")] };
+  const dAgain = followTagRenames(dBack, tagRenames(upV, upApi), viewTagUnion(upApi));
+  assert.deepEqual([dAgain.pinned, dAgain.followed], [[{ sid: "TESTHOST-A:m1", name: "api" }], { "TESTHOST-A:t1": "api", g8: "y" }]);
+  // a memory whose host is absent still waits (round 6), and a deleted tag's still goes, on a frame with no renames too
+  const waiting = { ...back, followed: { g8: "y", "TESTHOST-Z:t9": "away", "TESTHOST-A:t9": "gone", g99: "gone" } };
+  assert.deepEqual(followTagRenames(waiting, [], viewTagUnion(V4)).followed, { g8: "y", "TESTHOST-Z:t9": "away" });
+  const stands = { ...back, followed: { g8: "y", "TESTHOST-Z:t9": "away" } };
+  assert.equal(followTagRenames(stands, [], viewTagUnion(V4)), stands, "…and nothing to drop is no write: the same object");
+});
+
 test("executed: a REMOTE host's rename of a MIXED section — the entry carries the local id, and the remote tag's new name gains a half while the local tag holds the tab under the old, as a local rename keeps the old-name half: pinned under either drag order, and when the new name already sits ahead in tagOrder the tab's home moves on the frame and stays on the strip", () => {
   // local infra (g9) and host A's infra both hold A:m1; the user pins A:m1 under the mixed section
   const A = rt("TESTHOST-A", "t1", "infra", ["TESTHOST-A:m1"]);
@@ -1096,10 +1163,12 @@ test("the toggle is a row in the tab menu's Tags flyout beside the Move-to rows:
   assert.equal((RENDER.match(/readTabGroups\(viewTagUnion\(effViews\(\)\)\)/g) || []).length, 1, "…tabGroups() for every write path…");
   assert.deepEqual(RENDER.match(/readTabGroups\(\)\.on/g), ["readTabGroups().on", "readTabGroups().on"], "…and the two bare reads look at `.on` alone (the switch's mark, the flyout's home) and write nothing");
   // the views adoption: the ONE base-assignment site reads the renames against the blob it replaces,
-  // moves the base, and rewrites the store only when an entry changed (views-writes.test pins that both
-  // adoption paths reach it)
+  // moves the base, and rewrites the store only when an entry or the memory changed (views-writes.test
+  // pins that both adoption paths reach it)
   const adopt = RENDER.slice(RENDER.indexOf("function adoptBase("), RENDER.indexOf("function captureViews("));
-  assert.match(adopt, /const renames = tagRenames\(sessionViews, v\);\s*\n\s*sessionViews = v;\s*\n\s*if \(!renames\.length\) return;\s*\n\s*const unions = viewTagUnion\(v\);\s*\n\s*const st = readTabGroups\(unions\);\s*\n\s*const next = followTagRenames\(st, renames, unions\);\s*\n\s*if \(next !== st\) writeTabGroups\(next\);/);
+  assert.match(adopt, /const renames = tagRenames\(sessionViews, v\);\s*\n\s*sessionViews = v;\s*\n\s*const unions = viewTagUnion\(v\);\s*\n\s*const st = readTabGroups\(unions\);\s*\n\s*const next = followTagRenames\(st, renames, unions\);\s*\n\s*if \(next !== st\) writeTabGroups\(next\);/,
+    "…and runs the follow on EVERY adoption, renames or none — the memory check needs the blob that names a remembered tag otherwise (round 7)");
+  assert.doesNotMatch(adopt, /if \(!renames\.length\) return;/, "no early return on a frame without renames");
   assert.equal(RENDER.split("followTagRenames(").length - 1, 1, "one call site: the adoption");
   // the phone layout's flat strip has no fold to show through: the plan ignores pins there (no-op by construction)
   const p = planStrip(["web", "old1", "old2"], viewTagUnion(VP), setPinned(parseTabGroups(null), ARCH, "old2", true), "web", true);

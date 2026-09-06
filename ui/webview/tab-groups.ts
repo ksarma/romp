@@ -244,12 +244,17 @@ export function togglePinned(st: TabGroupsState, sec: SectionRef, sid: string): 
  *  THE LIMITS: a LOCAL tab pinned under a section that only a remote host's tag made (the host tagged
  *  one of ours) is judged on that host's detach — the sid is local, and the entry names the section by
  *  name alone, a remote tag's id and so its host never being stored — and dropped, since no union of
- *  the name holds it; the user sets the pin again after the reattach. And a reattached host's tags reach
- *  the blob in the supervisor pass that marks it up, with its tabs — unless the kernel's first read of
- *  its /views fails while its /sessions probe answers, when the tags trail the tabs by one pass (15 s at
- *  most): a pin write in that window sees the host's sessions as known tabs that no union of the pinned
- *  name holds, and drops its remote-only pins (a mixed pin whose local tag holds the member stands); the
- *  user sets them again. */
+ *  the name holds it; the user sets the pin again after the reattach. And a reattached host's tabs and
+ *  tags reach this pane by two roads: the tabs over the relay, within a /tunnels poll (4 s) of the row
+ *  coming up and the socket's connect; the tags on the LOCAL kernel's views blob, which the tunnel
+ *  supervisor's pass that marks the host up reads and caches, and which the pusher ships on its next
+ *  tabOrder frame — the kernel wakes the pusher when a host's cached read changes
+ *  (`_cache_remote_views`), so that is the next cycle: sub-second on an idle box, the end of the cycle
+ *  in flight on a loaded one (20-40 s). So the tabs can lead the tags by up to a pusher cycle, and by
+ *  a supervisor pass (15 s) more when the kernel's first read of the host's /views fails while its
+ *  /sessions probe answers: a pin write in that window sees the host's sessions as known tabs that no
+ *  union of the pinned name holds, and drops its remote-only pins (a mixed pin whose local tag holds the
+ *  member stands); the user sets them again. */
 export function prunePinned(st: TabGroupsState, unions: readonly TagUnion[], knownIds: ReadonlySet<string>, hosts: ReadonlySet<string>): TabGroupsState {
   const judged = (sid: string) => { const h = hostOf(sid); return knownIds.has(sid) || h === "" || hosts.has(h); };
   const pinned = st.pinned.filter((p) => !judged(p.sid) || (knownIds.has(p.sid)
@@ -328,22 +333,46 @@ export function tagRenames(prev: SessionViews | null | undefined, next: SessionV
  *  local blob (remoteTags, the kernel's cached read of the host) with no change to the blob's write
  *  seq, so no seq could name it; and a tag renamed back and then forth again is followed each time,
  *  each being to a name the memory does not hold for it. Every rename the frame carries is remembered,
- *  matched or not, and the memory is pruned to the tags the blob still has — PER HOST: a local tag's
- *  entry goes when the local store lacks its id, a remote tag's (`host:tid`) when its host is in the
- *  blob without it (a deleted tag); a remote id whose host contributes no tag at all is KEPT, since the
- *  blob cannot say whether the tag is gone or the host is — a detach pops the host's cached read (a
- *  DOWN host's stays), and a reattach's tabs can run one supervisor pass ahead of it — and a rename
- *  followed in that window would otherwise erase the memory of the host's renames, for a stale pane
- *  to re-apply one after the reattach (round 6 of the 2026-09-06 review). Returns `st` itself when
- *  every rename is already followed — the late pane writes nothing and notifies no one.
+ *  matched or not, and the memory is checked against EVERY adopted blob, renames or none (adoptBase
+ *  runs this on each), and kept to what the blob confirms — PER HOST: an entry stands while the blob
+ *  names its tag by the remembered name (the late pane's case: the tag is where its pins were carried),
+ *  or while it is a remote host's (`host:tid`) and the blob carries none of that host's tags — a
+ *  detach pops the host's cached read (a DOWN host's stays), and a reattach's tabs can run ahead of it
+ *  (prunePinned's limits) — since the blob cannot say whether the tag is gone or the host is, and a
+ *  rename followed in that window would otherwise erase the memory of the host's renames, for a stale
+ *  pane to re-apply one after the reattach (round 6 of the 2026-09-06 review). Every other entry goes:
+ *  a local id the store lacks or a remote id its host lists without (a deleted tag), and a tag the
+ *  blob names by ANOTHER name — renamed on while no client watched (the page closed; the host
+ *  detached), so the memory is of a home its pins have left, and kept it would read the tag's next
+ *  rename to that name as already followed: a remote tag renamed web → api (followed), back to web
+ *  while its host was detached, and to api again after the user pinned the tab under web kept the pin
+ *  under web, and the tab folded away with no gesture on it (round 7). The frame's own renames re-stamp
+ *  the memory after the check, so a watched rename away from the remembered name is remembered under
+ *  its new one. Returns `st` itself when every rename is already followed and the memory stands — the
+ *  late pane writes nothing and notifies no one; a stale entry's drop alone is a write, pins untouched.
  *
  *  THE LIMIT: a remote-only pin has no id, so a rename of the remote tag that happens while no client
  *  of this browser is watching (the page closed, the blob's first frame after it) leaves the entry
- *  under the old name, where it matches nothing until the user pins the tab again. A local tag's pin
- *  carries the id and has no such gap. */
+ *  under the old name, where it matches nothing until the user pins the tab again — and the memory of
+ *  the tag's last followed rename goes with the first blob that names it otherwise, so the pin set
+ *  again follows the tag's next rename. A local tag's pin carries the id and has no such gap. */
 export function followTagRenames(st: TabGroupsState, renames: readonly TagRename[], unions: readonly TagUnion[]): TabGroupsState {
-  const fresh = renames.filter((r) => !(st.followed && st.followed[r.id] === r.to));
-  if (!fresh.length) return st;
+  // the memory, checked against the blob FIRST (the doc above): an entry stands while the blob names its
+  // tag by the remembered name, or while it is a remote host's and the blob carries none of that host's
+  // tags; a deleted tag's goes, and so does one the blob names otherwise — renamed on while no client
+  // watched, and a rename to that name is owed a follow, not already followed
+  const named = new Map<string, string>();
+  for (const u of unions) for (const id of u.ids) named.set(id, u.name);
+  const present = new Set([...named.keys()].map(hostOf).filter((h) => h !== ""));
+  const followed: Record<string, string> = {};
+  let stale = false;
+  for (const [id, name] of Object.entries(st.followed || {})) {
+    const h = hostOf(id);
+    if (named.get(id) === name || (!named.has(id) && h !== "" && !present.has(h))) followed[id] = name;
+    else stale = true;
+  }
+  const fresh = renames.filter((r) => followed[r.id] !== r.to);
+  if (!fresh.length) return stale ? { ...st, followed } : st;
   const matches = (p: PinnedRef, x: TagRename) => (p.id !== undefined && x.id === p.id)
     || ((p.id === undefined || !x.local) && x.from === p.name && x.members.includes(p.sid));
   const out: PinnedRef[] = [];
@@ -362,16 +391,7 @@ export function followTagRenames(st: TabGroupsState, renames: readonly TagRename
       if (rest) put(pinEntry(sectionRef(rest), p.sid));
     }
   }
-  // the memory, pruned per host (the doc above): an id stands while the blob carries it, or while it is
-  // a remote host's and the blob carries none of that host's tags
-  const live = new Set(unions.flatMap((u) => u.ids));
-  const present = new Set([...live].map(hostOf).filter((h) => h !== ""));
-  const followed: Record<string, string> = {};
-  for (const [id, name] of Object.entries(st.followed || {})) {
-    const h = hostOf(id);
-    if (live.has(id) || (h !== "" && !present.has(h))) followed[id] = name;
-  }
-  for (const r of fresh) followed[r.id] = r.to;
+  for (const r of fresh) followed[r.id] = r.to;   // the frame's renames re-stamp the checked memory
   return { ...st, pinned: out, followed };
 }
 

@@ -549,11 +549,13 @@ function takeViews(v: SessionViews | null | undefined): boolean {
 // through the rename. The store (romp:tabgroups) is rewritten only when an entry changed, and after
 // the base has moved, so the write's TABGROUPS_EVENT render reads the new blob. Renames follow the
 // ADOPTED blob, never the optimistic copy: the kernel's answer is the event, and a refused rename then
-// has nothing to undo here.
+// has nothing to undo here. The follow runs on EVERY adoption, renames or none: its memory of the name
+// each renamed tag's pins were last carried to is checked against the blob each time, so a tag the blob
+// names otherwise — renamed while no pane of this browser watched — sheds a memory that would have read
+// its next rename to that name as already followed (round 7 of the 2026-09-06 review).
 function adoptBase(v: SessionViews): void {
   const renames = tagRenames(sessionViews, v);
   sessionViews = v;
-  if (!renames.length) return;
   const unions = viewTagUnion(v);
   const st = readTabGroups(unions);
   const next = followTagRenames(st, renames, unions);

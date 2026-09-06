@@ -246,7 +246,7 @@ test("pins: every views arrival in render.ts goes through the ONE seq-gated adop
   assert.equal((RENDER.match(/(?<!pending)(?<!\w)sessionViews = /g) || []).length, 1,
     "the base is assigned in exactly one place — adoptBase, which also carries the tab strip's pins across a renamed tag (tab-groups.ts followTagRenames)");
   const adopt = RENDER.slice(RENDER.indexOf("function adoptBase("), RENDER.indexOf("function captureViews("));
-  assert.match(adopt, /const renames = tagRenames\(sessionViews, v\);\s*\n\s*sessionViews = v;\s*\n\s*if \(!renames\.length\) return;/,
+  assert.match(adopt, /const renames = tagRenames\(sessionViews, v\);\s*\n\s*sessionViews = v;\s*\n\s*const unions = viewTagUnion\(v\);/,
     "the renames are read against the blob being replaced, and the base moves before any store write (its TABGROUPS_EVENT render reads the new blob)");
   assert.equal((RENDER.match(/(?<!function )adoptBase\(/g) || []).length, 2,
     "reached from exactly two places: inside the gate, and the caps frame's adoption of the blob the gate last turned away (rounds 6 and 7)");
