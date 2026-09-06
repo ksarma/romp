@@ -27,8 +27,10 @@
 //     goes through this panel (`save`: the text, the records as the editor remapped them, the decisions taken in it),
 //     fenced on the sidecar the records came from and on the file the editor loaded; a refused save keeps the buffer.
 //     The change cards stay up meanwhile, but a decision from one is refused in place (DECIDE_IN_EDITOR): it would move
-//     the sidecar the editor's records came from, and the buffer could then never be saved. Reveal and the card links,
-//     which switch to Raw and scroll the read view, are not offered while the editor holds the body.
+//     the sidecar the editor's records came from, and the buffer could then never be saved. When a decision lands from
+//     elsewhere anyway (another browser, a session's CLI) the head says so from the status that shows it, before Save
+//     can refuse (CHANGES_MOVED_UNDER_EDIT). Reveal and the card links, which switch to Raw and scroll the read view,
+//     are not offered while the editor holds the body.
 //   • The kernel does the disk work on the OWNING kernel (the `fileComments` op runs a node host
 //     script over the vendored track-changents store); this module renders JSON and never holds a
 //     sidecar it writes back. Both ops carry `sid`, so federation routes a remote session's file to
@@ -87,6 +89,17 @@ const FILE_VERBS = new Set(["reject", "reject-all"]);
 const DECIDES = new Set(["accept", "reject", "accept-all", "reject-all"]);
 export const DECIDE_IN_EDITOR = "While you edit, decide in the editor: click a change to accept it, Alt-click (Cmd-click on a Mac, Ctrl-click elsewhere) to reject it. "
   + "Save writes the decisions with your text.";
+// The head's row when the sidecar's pending changes stop being the ones the editor carries while it is up (Slice 5): a
+// decision landed since Edit — another browser's card, a session's CLI, or a card's own click that was still in flight
+// when Edit began (the gate above reads editing() at the click, and the editor can open during the round trip) — and
+// the file's bytes did not move (a reject moves them, and MOVED_UNDER_EDIT is that row). Said at once, from the status
+// that shows it (noteChangesMovedUnderEdit, in applyStatus), not at Save: Save can only refuse then, since its fence is
+// the sidecar the records came from and the retry stands down when the records changed, and the editor cannot take the
+// new list (its handle is read-only), so the row names what is left — copy, Cancel, Edit again. One row per edit
+// (changesMovedUnderEdit latches it, so a dismissed row does not return with every later status); retired when the edit
+// ends (paintAll).
+export const CHANGES_MOVED_UNDER_EDIT = "Pending changes in this file were accepted or rejected after you opened the editor, which still shows them as pending. "
+  + "Save will refuse; copy anything you typed, then Cancel and Edit again.";
 // How long a `status` ask may stay unanswered before the panel says so. A kernel that has the op answers
 // within its own bound: the host script is cut off at 10 s (contract C2, _FILE_COMMENTS_TIMEOUT) and the
 // refusal is sent then, so an ask still open past that plus the relay was never received by a kernel with
@@ -431,6 +444,9 @@ class Panel {
   // and the re-read must still happen, or Cancel would leave the pre-rewrite bytes showing for good (the poll's baseline
   // already moved on to the new mtime when the status landed, so no later tick would notice).
   movedUnderEdit = false;
+  // the sidecar's pending changes stopped being the editor's (noteChangesMovedUnderEdit): the row was set once for this
+  // edit; a later status re-sets nothing, and the edit's end clears both (paintAll)
+  changesMovedUnderEdit = false;
   decideRows = new Set<string>();           // the slots whose row says to decide in the editor (refuseDecision): retired when the edit ends
   stopped = new Set<string>();              // poll targets a 413/415 retired
   timer: ReturnType<typeof setInterval> | null = null;
@@ -680,6 +696,7 @@ class Panel {
     this.button.title = s.store ? "Comments and changes kept beside this file" : "Comment on this file, or track a session's changes to it";
     // Edit is not refused for pending changes any more (Slice 5): they ride into the editor as marks (trackedEdit.begin),
     // and the viewer raises the Slice 2 wording itself when its editor bundle cannot carry them
+    this.noteChangesMovedUnderEdit();                  // every status lands here: the one place that can see the editor's records leave the sidecar
     this.paintAll();                                   // repaints the highlights and renders the panel
     return true;
   }
@@ -851,6 +868,9 @@ class Panel {
     } finally { this.busy.delete(slot); this.busyVerb.delete(slot); this.render(); }
   }
   private async mutateOnce(verb: string, args: Record<string, unknown>, slot: string, retried: boolean): Promise<Status | null> {
+    // the gate again, at the send: the editor can open during mutate's awaits (the consent's read, a status re-ask, a
+    // moved fence's refresh before the retry), and a decision sent then would move the sidecar under the records it just took
+    if (DECIDES.has(verb) && this.ctx.editing()) { this.refuseDecision(slot); return null; }
     const s = this.status;
     const fence: Record<string, string> = { storeMtimeNs: s && s.storeMtimeNs !== null ? s.storeMtimeNs : "", configMtimeNs: s && s.configMtimeNs !== null ? s.configMtimeNs : "" };
     if (FILE_VERBS.has(verb)) fence.fileMtimeNs = s ? s.fileMtimeNs : "";   // reject rewrites the file: the file's mtime as last seen (FILE_VERBS)
@@ -896,6 +916,7 @@ class Panel {
         if (!s || !hunks.length) { this.editSeed = null; this.render(); return null; }
         const records = pendingRecords(s.store);
         this.editSeed = { records, storeMtimeNs: s.storeMtimeNs ?? "", configMtimeNs: s.configMtimeNs ?? "" };
+        this.changesMovedUnderEdit = false;            // a new edit, a new latch: the records are the sidecar's own again
         this.render();
         return {
           records,
@@ -939,6 +960,7 @@ class Panel {
         const e = err as { code: string; error: string };
         if (attempt === 0 && (e.code === "store-moved" || e.code === "config-moved")) {
           await this.refresh();
+          this.noteMovedUnderEdit();                   // the re-read can show the file moved too: the head says so, as the poll's would
           const s = this.status;
           if (s && sameRecords(seed ? seed.records : [], pendingRecords(s.store))) {
             fence = { ...fenceOf(s), fileMtimeNs: this.ctx.mtimeNs() };
@@ -960,6 +982,19 @@ class Panel {
     this.movedUnderEdit = true;
     this.errors.set("edit", { text: MOVED_UNDER_EDIT, reload: false });
     this.render();
+  }
+  /** The sidecar's pending changes are no longer the ones that rode into the editor (a decision landed since Edit) and the
+   *  file did not move: the head says so (CHANGES_MOVED_UNDER_EDIT), once per edit, in the render the status gets
+   *  (applyStatus calls this before paintAll). Keyed on the records, not the sidecar's clock: a comment or reply moves the
+   *  clock and leaves the records, and Save's own retry covers that. A file that moved as well has MOVED_UNDER_EDIT for its
+   *  row (noteMovedUnderEdit), which says the same about Save and adds what Cancel shows; this one yields to it. */
+  private noteChangesMovedUnderEdit(): void {
+    const seed = this.editSeed; const s = this.status;
+    if (!seed || !s || !this.ctx.editing() || this.changesMovedUnderEdit) return;
+    if (laterNs(s.fileMtimeNs, this.ctx.mtimeNs())) return;   // the bytes moved too: that row (noteMovedUnderEdit) is the one to show
+    if (sameRecords(seed.records, pendingRecords(s.store))) return;
+    this.changesMovedUnderEdit = true;
+    this.errors.set("edit", { text: CHANGES_MOVED_UNDER_EDIT, reload: false });
   }
 
   // ── Track changes ──────────────────────────────────────────────────────────────────────────────
@@ -1192,6 +1227,9 @@ class Panel {
     // the edit ended over bytes that moved under it (Cancel — a Save would have refused): re-read them, whether or not
     // the head's row was dismissed with its ✕ meanwhile (movedUnderEdit: the latch, not the row, keys the re-read)
     if (this.movedUnderEdit) { this.movedUnderEdit = false; this.errors.delete("edit"); this.ctx.reload(); }
+    // the row that said the editor's changes left the sidecar is about an editor that is gone: retired with it, and the
+    // latch with it (nothing to re-read: the status that set the row is the one showing, and this paint marks its changes)
+    if (this.changesMovedUnderEdit) { this.changesMovedUnderEdit = false; if (this.errors.get("edit")?.text === CHANGES_MOVED_UNDER_EDIT) this.errors.delete("edit"); }
     this.located = new Map();
     this.paintedChanges = new Set();
     unpaintChanges(this.ctx.body());                   // before each repaint (D5): the marks are unwrapped, never stacked

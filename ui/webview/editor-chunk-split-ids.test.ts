@@ -21,10 +21,10 @@ const ins = (id: string, from: number, newText: string, author = "web"): TrackRe
 const idsOf = (l: TrackLedger) => [...l.accepted, ...l.rejected].map((e) => e.id);
 
 /** A headless tracked editor: the chunk's real extension set plus a track setup, seeded as mount() seeds it. */
-function editor(doc: string, records: TrackRecord[]) {
+function editor(doc: string, records: TrackRecord[], ext = "md") {
   const t = trackSetup({ suggestions: records, authorColor: () => null });
   const target = {
-    state: EditorState.create({ doc, extensions: extensionsFor("md", { onChange: noop, onSave: noop }, t) }).update(t.seed).state,
+    state: EditorState.create({ doc, extensions: extensionsFor(ext, { onChange: noop, onSave: noop }, t) }).update(t.seed).state,
     dispatch(tr: Transaction) { target.state = tr.state; },
   };
   const put = (spec: TransactionSpec): Transaction => { const tr = target.state.update(spec); target.state = tr.state; return tr; };
@@ -34,11 +34,17 @@ function editor(doc: string, records: TrackRecord[]) {
     ids: () => h.ops().map((o) => String(o.id)),
     ledger: () => t.ledger(target.state),
     type: (from: number, insert: string) => put({ changes: { from, to: from, insert }, annotations: [isolateHistory.of("full")] }),
+    /** A keystroke as the view dispatches one: user event `input.type`, the caret after the text — what indentOnInput
+     *  and history's grouping key on. */
+    keystroke: (from: number, insert: string) => put({ changes: { from, to: from, insert }, selection: { anchor: from + insert.length }, userEvent: "input.type" }),
+    apply: (spec: TransactionSpec) => put(spec),
     resolve: (from: number, reject: boolean) => { const s = t.resolve(target.state, from, reject); assert.ok(s, `a change starts at ${from}`); put(s!); },
     undo: () => undo(target),
     redo: () => redo(target),
     /** The save's invariant, the host's requireDecisions: no id is both pending and decided. */
     disjoint: () => { for (const id of idsOf(h.ledger())) assert.ok(!h.ids().includes(id), `${id} is decided and still pending`); },
+    /** The host's fitRecords rule: every record's text sits at its offset in the buffer being saved. */
+    fits: () => { const d = h.doc(); for (const o of h.ops()) { const t = o.newText || ""; assert.equal(d.slice(o.from, o.from + t.length), t, `${o.id} at ${o.from} holds ${JSON.stringify(t)}`); } },
   };
   return h;
 }
@@ -147,5 +153,60 @@ test("without a collision an ordinary keystroke is untouched: the records are ex
   const tr2 = h.type(0, ">> ");                                  // above every change: a shift, no split
   assert.ok(!tr2.effects.some((e) => e.is(setSuggestions)));
   assert.deepEqual(h.ops(), engine.ingestHumanChanges(mid, [{ from: 0, to: 0, insert: ">> " }]));
+  h.disjoint();
+});
+
+// ── Beyond the finding's sequence: the rename has to hold for every shape a keystroke's transaction takes ──────────
+
+test("a re-split keystroke that also reindents its line (indentOnInput adds a change to the same transaction) leaves records that fit the text", () => {
+  // A JS file: the chunk's own indentOnInput() is a transaction filter too, and a `}` typed on an otherwise blank line
+  // makes it ADD a change (the line's indentation rewritten) to the person's keystroke. The renamed list has to be
+  // computed over the transaction's final changes; a list computed over the keystroke alone describes another text,
+  // and the field would take it verbatim — the very desync the plan's "typing remaps the changes" rules out.
+  const h = editor("if (a) {\n  aa\n  \n}\n", [ins("X", 9, "  aa\n  ")], "js");
+  h.type(14, "-");                                                 // X splits: X('  aa\n', 9) + X~1('  ', 15)
+  assert.deepEqual(h.ids(), ["X", "X~1"]);
+  h.resolve(15, false);                                            // X~1 decided
+  const before = h.ops();
+  h.keystroke(11, "}");                                            // inside X, closing the block: "  }aa" reindents to "}aa"
+  assert.equal(h.doc(), "if (a) {\n}aa\n-  \n}\n", "the keystroke carried the reindent (indentOnInput fired)");
+  h.fits();
+  h.disjoint();
+  // the engine over the transaction's one composed change (9..11 replaced by '}'): X's right part survives under its own id
+  assert.deepEqual(h.ops(), engine.ingestHumanChanges(before, [{ from: 9, to: 11, insert: "}" }]));
+  assert.deepEqual(h.ledger().accepted.map((e) => e.id), ["X~1"]);
+});
+
+test("two splits of one parent in one transaction (a two-cursor keystroke): every fragment gets an id of its own, none the ledger holds", () => {
+  const h = editor(DOC, [X]);
+  h.type(8, "very ");
+  h.resolve(13, false);                                            // X~1 decided; field [X 'big ']
+  const before = h.ops();
+  const changes = [{ from: 5, to: 5, insert: "1" }, { from: 7, to: 7, insert: "2" }];
+  h.apply({ changes, annotations: [isolateHistory.of("full")] });
+  assert.equal(h.doc(), "The b1ig2 very fluffy cat sat.");
+  const raw = engine.ingestHumanChanges(before, changes);
+  assert.deepEqual(raw.map((o) => o.id), ["X", "X~2", "X~1"], "the engine's own result: the collision again, beside a fresh fragment");
+  assert.deepEqual(h.ids(), ["X", "X~2", "X~3"]);
+  h.fits();
+  h.disjoint();
+  assert.deepEqual(h.ops().map((o) => [o.from, o.newText]), raw.map((o) => [o.from, o.newText]), "only the colliding id changed");
+});
+
+test("keystrokes history groups into one event undo together across a rename: one undo restores the list before them, one redo the renamed list", () => {
+  const h = editor(DOC, [X]);
+  h.type(8, "very ");
+  h.resolve(13, false);                                            // X~1 decided; field [X]
+  h.keystroke(6, "g");                                             // X splits again: the fragment is renamed X~2
+  h.keystroke(7, "h");                                             // adjacent typing: history joins it to the first
+  assert.equal(h.doc(), "The bighg very fluffy cat sat.");
+  assert.deepEqual(h.ids(), ["X", "X~2"]);
+  const after = h.ops();
+  assert.equal(h.undo(), true);
+  assert.equal(h.doc(), "The big very fluffy cat sat.", "one undo takes both keystrokes");
+  assert.deepEqual(h.ops().map((o) => [o.id, o.from, o.newText]), [["X", 4, "big "]], "the list before the first keystroke, the last of the grouped inverses");
+  assert.deepEqual(h.ledger().accepted.map((e) => e.id), ["X~1"]);
+  assert.equal(h.redo(), true);
+  assert.deepEqual(h.ops(), after, "redo restores the recorded renamed list");
   h.disjoint();
 });

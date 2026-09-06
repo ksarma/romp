@@ -638,13 +638,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let editBlocked: string | null = null;
   editBtn.addEventListener("click", () => {
     if (editBlocked) { noteBar(editBlocked); return; }
-    // pending changes ride into the editor as marks (Slice 5) — unless the loaded bundle already proved it cannot carry
+    // pending changes enter the editor as marks (Slice 5) — unless the loaded bundle already proved it cannot carry
     // them (chunkTracks false), or the file's CRLF endings would: the editor normalizes them to LF (norm), which moves
     // every offset the records hold, so a save could not fit them back. Both refuse in words, in place, like editBlocked.
+    // The CRLF refusal states its consequence literally: it is copy the person acts on (docs/guide.md says the same).
     const pending = trackedEdit ? trackedEdit.begin() : null;
     if (pending && chunkTracks === false) { noteBar(pending.refusal); return; }
     if (pending && text !== null && /\r\n/.test(text)) {
-      noteBar("This file has CRLF line endings, which the editor rewrites as it loads the text, so its pending changes cannot ride into it. "
+      noteBar("The editor rewrites this file's CRLF line endings as it loads the text, and that would move the pending changes. "
         + pending.refusal);
       return;
     }

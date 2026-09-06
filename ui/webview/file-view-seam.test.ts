@@ -1139,7 +1139,9 @@ test("the chunk failing to load over pending changes: no fallback textarea (it c
   b.edit.click();
   await settle();
   assert.equal(ed.mounted, mounted, "no mount");
-  assert.match(errBar(body)!.textContent, /^This file has CRLF line endings, which the editor rewrites as it loads the text, so its pending changes cannot ride into it\. 1 change is pending/);
+  assert.match(errBar(body)!.textContent, /^The editor rewrites this file's CRLF line endings as it loads the text, and that would move the pending changes\. 1 change is pending/,
+    "the consequence stated literally, as docs/guide.md states it: this is copy the person acts on");
+  assert.doesNotMatch(errBar(body)!.textContent, /\bride/, "no metaphor in the refusal");
   assert.equal(b.save.hidden, true);
 });
 

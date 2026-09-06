@@ -28,8 +28,16 @@
 //     with it.
 //  4. Class names are romp's: tc-diff-ins on inserted text, tc-diff-del on struck old text shown in place,
 //     tc-diff-sub added to both halves of a substitution, tc-diff-del-block on the whole-paragraph form (with
-//     tc-diff-del-line rows). Each element carries the author's session colour as `--fc-author` when the mount
-//     supplies one, as the read view's fc-ins / fc-del marks do (styles.css, the fc block, which owns the CSS).
+//     tc-diff-del-line rows). Inside a block row that holds a KEPT embed — an `![[embed]]` token of the old
+//     paragraph that the current text still holds verbatim, so it moved rather than went — the row is split into
+//     spans: tc-diff-del-seg over each removed run and tc-diff-del-kept-embed over the kept token, which is meant
+//     to read un-struck (the vendored segmentsByKeptTokens' contract; a struck embed reads as "the picture is
+//     being deleted"). Each element carries the author's session colour as `--fc-author` when the mount supplies
+//     one, as the read view's fc-ins / fc-del marks do (styles.css, the fc block, which owns the CSS). The sheet
+//     owns every rule here, the kept token's included: its wrapper's line-through paints through an inline
+//     descendant, so the rule that un-strikes the kept span must also stop the propagation (an inline-block, or the
+//     strike moved onto the seg spans) rather than set text-decoration alone. CLS names the element-level classes;
+//     the two row-level ones are set where the widget builds the row.
 //  5. The field instances are closed over per extension set instead of module-level refs, so two editors on
 //     one page cannot read each other's field.
 //  6. Only a MOUSE press decides (romp's; upstream ran on desktop Obsidian and never asked). A finger or a pen
@@ -37,7 +45,12 @@
 //     a tap on tinted text is the ordinary gesture for placing the caret there. The browser fires a
 //     compatibility mousedown after a tap, before CodeMirror's own touch guard can run (plugin handlers run
 //     first), so both mousedown paths ask PointerTracker which pointer pressed and leave a touch or pen press to
-//     the browser: the caret lands, the change stays pending, and the panel's cards accept or reject it.
+//     the browser: the caret lands and the change stays pending. It is decided from the panel's cards once the
+//     editor is closed (Save carries the records back remapped; Cancel drops the buffer): while the editor is up a
+//     card's decision is refused in place, since it would move the sidecar the editor's records came from
+//     (file-comments.ts, DECIDE_IN_EDITOR). Verified in Chromium and Firefox with touch emulation: the pointerdown
+//     names the touch before the compatibility mousedown arrives in both (track-decorations.test.ts,
+//     track-decorations-firefox.test.ts).
 //  7. A decision focuses the editor (romp's). Both mousedown paths preventDefault and stop CodeMirror's own
 //     handler — the one that would have focused — and a prevented mousedown moves no focus natively, so an
 //     editor that had lost focus to the toolbar or the panel stayed unfocused after an accept, and the undo the
@@ -70,6 +83,9 @@ export const CLS = {
   line: "tc-diff-del-line",    // one row of that block
   hover: "tc-diff-hover",      // both halves of the change under the pointer
 } as const;
+// A block row that holds a kept embed is split into spans (departure 4): tc-diff-del-seg over each removed run,
+// tc-diff-del-kept-embed over the kept `![[embed]]` token (still in the current text: moved, not removed; reads
+// un-struck). Set where the widget builds the row; track-decorations-kept-embed.test.ts pins the names.
 
 /** Every clickable change element, both halves. */
 export const CHANGE_SEL = `.${CLS.ins}[data-hk-from], .${CLS.del}[data-hk-from]`;
@@ -216,7 +232,7 @@ class DelWidget extends WidgetType {
         for (const seg of segs) {
           if (!seg.text) continue;
           const span = document.createElement("span");
-          span.className = seg.kept ? "tc-diff-del-kept-embed" : "tc-diff-del-seg";
+          span.className = seg.kept ? "tc-diff-del-kept-embed" : "tc-diff-del-seg";   // departure 4: the split row's vocabulary
           span.textContent = seg.text;
           row.appendChild(span);
         }

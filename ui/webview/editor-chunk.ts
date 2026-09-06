@@ -18,7 +18,7 @@
 // derived track-decorations.ts, and both are curated here like every other extension. The handle
 // hands back the remapped records and a net ledger of decisions so a Save can send both, and the
 // one rule romp adds over the field's ids keeps those two lists disjoint: an id the ledger holds is
-// never minted again (the filter in trackSetup).
+// never minted again (the id rule in trackSetup).
 //
 // The SAVE PATH IS NOT THIS MODULE'S: the consent gate, the nanosecond conflict floor, and the
 // edit trace all live behind file-view's saveFile op — this is the text surface only, handing the
@@ -130,7 +130,7 @@ export interface TrackOpts {
 
 /** What the mount handle exposes when `track` was given. Both read the LIVE state: the records as the field
  *  holds them now (remapped through every keystroke since the mount), and the net ledger. No id is in both: a
- *  decided id is never minted again for a later split (trackSetup's id filter), which is what the host's save
+ *  decided id is never minted again for a later split (trackSetup's id rule), which is what the host's save
  *  requires of the two lists it is sent. */
 export interface TrackHandle { suggestions(): unknown[]; ledger(): TrackLedger }
 
@@ -217,21 +217,26 @@ export function trackSetup(opts: TrackOpts): TrackSetup {
   // fragment leaves the field for the ledger, so the next split of the same parent minted `X~1` a second time: a
   // save then named one id as decided AND pending, which the host refuses (requireDecisions) though the records fit
   // the text, and a decision on the new `X~1` replaced the earlier entry by id, so the first was never logged. This
-  // filter reads what the field made of the change and renames any id the ledger holds to the parent's next free
-  // suffix (the engine's own scheme); the renamed list lands as an explicit setSuggestions on the same transaction,
-  // which the field takes verbatim and history snapshots as it does any list. Undo and redo dispatch with
-  // filter:false and restore recorded lists, where the rule already held. Only a doc change can mint, an explicit
-  // list never does, and an empty ledger has nothing to collide with, so those three are checked before the
-  // transaction's state is read; when no id collides the transaction passes through and the state it computed is
-  // the one the dispatch uses.
+  // extender reads what the field made of the transaction's changes and renames any id the ledger holds to the
+  // parent's next free suffix (the engine's own scheme); the renamed list rides as an explicit setSuggestions on the
+  // same transaction, which the field takes verbatim and history snapshots as it does any list. It is a
+  // transactionExtender, not a transactionFilter, because the list must be computed over the changes the transaction
+  // FINALLY carries and extenders run after every filter: indentOnInput, a filter in this same extension set, runs
+  // after any filter declared later than it (CodeMirror applies filters last-declared first), and a `}` typed inside a
+  // change adds the line's reindent to the keystroke — as a filter, this rule fixed its list before that change
+  // existed and the field took a list describing another text (found 2026-09-06, the round-2 review). An extender can
+  // add effects only, which is all the rule needs; it also sees the filter:false transactions undo and redo dispatch,
+  // which carry the recorded lists as explicit effects and return at the first check. Only a doc change can mint, an
+  // explicit list never does, and an empty ledger has nothing to collide with, so those three are checked before the
+  // transaction's state is read; when no id collides the transaction stands as it is.
   const ledgerIds = (l: TrackLedger) => new Set([...l.accepted, ...l.rejected].map((e) => e.id));
-  const freshIds = EditorState.transactionFilter.of((tr) => {
-    if (!tr.docChanged || tr.effects.some((e) => e.is(setSuggestions))) return tr;
+  const freshIds = EditorState.transactionExtender.of((tr) => {
+    if (!tr.docChanged || tr.effects.some((e) => e.is(setSuggestions))) return null;
     const start = tr.startState.field(ledgerField);
-    if (!start.accepted.length && !start.rejected.length) return tr;
+    if (!start.accepted.length && !start.rejected.length) return null;
     const ops = tr.state.field(field);
     const decided = ledgerIds(tr.state.field(ledgerField));
-    if (!ops.some((o) => decided.has(String(o.id)))) return tr;
+    if (!ops.some((o) => decided.has(String(o.id)))) return null;
     const taken = new Set([...decided, ...ops.map((o) => String(o.id))]);
     const renamed = ops.map((o) => {
       const id = String(o.id);
@@ -242,7 +247,7 @@ export function trackSetup(opts: TrackOpts): TrackSetup {
       taken.add(fresh);
       return { ...o, id: fresh };
     });
-    return [tr, { effects: setSuggestions.of(renamed) }];
+    return { effects: setSuggestions.of(renamed) };
   });
   const records = opts.suggestions as TrackRecord[];
   const setup: TrackSetup = {

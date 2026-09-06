@@ -31928,10 +31928,12 @@ def _file_comments_after(msg, rep):
     direct edit changes it), and a body naming how many it rejected otherwise — the request's ledger,
     which the host applied whole or refused (see _save_trace). Nothing else follows a save: the host
     appended the log's `edit`, `accept` and `reject` entries itself, so the kernel never calls log-edit
-    here (the Slice 5 contract, H4). Nothing follows any other verb, a refusal, or a reject that resolved nothing
-    (an empty list: the file did not change). The count comes from the host's reply, never from the
-    client's request (the ids a client ASKED to reject may have landed, coalesced or been refused by
-    id), so a successful reject whose reply lacks the list is a contract break between the host and
+    here (The comments log: the log has one writer per entry, and for this verb the host is the one
+    process that holds the old text, the decisions and the mtime after the write). Nothing follows any
+    other verb, a refusal, or a reject that resolved nothing (an empty list: the file did not change).
+    A REJECT's count comes from the host's reply, never from the client's request (the ids a client
+    ASKED to reject may have landed, coalesced or been refused by id; a save's ledger is the record
+    itself, see _save_trace), so a successful reject whose reply lacks the list is a contract break between the host and
     the kernel: it is written to stderr and no trace goes, because a count the kernel would have to
     guess is not one to tell the session. The path is resolved as the op resolved it
     (_file_comments_path: the real file), so the owner lookup and the body name the same file the

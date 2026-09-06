@@ -702,3 +702,79 @@ test('save logs an edit only for a file with a sidecar, a log, or a tracked flag
   assert.deepEqual(r4.log.map((e) => e.kind), ['edit']);
   assert.equal(readSidecar(co.storePath).comments.length, 1, 'the comment is kept');
 });
+
+// The window the rule above closes. The panel decides the route (save through this host, or the
+// kernel's saveFile) from the status it holds, and the config is polled, so a save can arrive with
+// a status that said tracked after the flag is gone; save fences on the sidecar and the file, not
+// the config, so nothing refuses it. The flag can leave with no entry on this file's log — a
+// sibling file's panel turning the covering folder off (the set-tracked entry lands on the
+// sibling's log), a hand edit of config.json — and then the file has no sidecar, no log, and no
+// flag: logged from the status, the save would have created the file's log, and every later plain
+// save of it would be logged too. The host reads the disk as it is at the save.
+test('a save whose status predates a toggle-off that left no entry on this file\'s log is written, not logged, and creates no log; the mirror, a status predating a toggle-on, is logged', () => {
+  const w = world();
+  // Tracked by a folder entry covering docs/: the status at Edit says so; no sidecar, no log yet.
+  writeTrackedPaths(w.root, ['docs/']);
+  const atEdit = status(w, w.report);
+  assert.deepEqual(atEdit.trackedBy, { kind: 'folder', entry: 'docs/' });
+  assert.equal(atEdit.storeMtimeNs, null);
+  const lp = logPathFor(storePathFor(w.root, w.report));
+  assert.equal(fs.existsSync(lp), false);
+  // A sibling file's panel turns the folder off: the entry lands on that file's log, none on this one.
+  const other = path.join(w.root, 'docs', 'other.md');
+  fs.writeFileSync(other, 'Some text.\n');
+  const so = status(w, other);
+  assert.deepEqual(so.trackedBy, { kind: 'folder', entry: 'docs/' });
+  const off = ok(w, { verb: 'set-tracked', path: other, args: { on: false }, fence: { configMtimeNs: so.configMtimeNs } });
+  assert.equal(off.trackedBy, null);
+  assert.deepEqual(off.log.map((e) => [e.kind, e.on, e.entry]), [['set-tracked', false, 'docs/']]);
+  assert.equal(fs.existsSync(lp), false, 'the sibling\'s toggle leaves no entry on this file\'s log');
+  assert.equal(status(w, w.report).trackedBy, null);
+  const tc = path.join(w.root, '.trackchanges');
+  const listing = fs.readdirSync(tc).sort();
+  assert.deepEqual(listing, ['config.json', path.basename(logPathFor(so.storePath))]);
+  // The editor's Save, fenced on the status at Edit: not refused (save has no config fence), the
+  // file written, and the log left alone — the disk, not the browser's status, says whether the
+  // log has business with the file.
+  const content = w.text + 'Appendix.\n';
+  const r = ok(w, saveReq(w.report, atEdit, content, []));
+  assert.equal(fs.readFileSync(w.report, 'utf8'), content, 'the file is written');
+  assert.equal(r.fileMtimeNs, statNs(w.report));
+  assert.equal(r.logged, false);
+  assert.deepEqual(r.log, []);
+  assert.equal(r.trackedBy, null);
+  assert.equal(r.store, null);
+  assert.equal(r.storeMtimeNs, null);
+  assert.equal(fs.existsSync(lp), false, 'no log is created for a file nobody tracks');
+  assert.deepEqual(fs.readdirSync(tc).sort(), listing, 'nothing new in .trackchanges/');
+  // The plain-saveFile rule agrees afterwards: the file is still not the log's business.
+  const summary = { mtimeBeforeNs: '1', mtimeAfterNs: '2', bytesBefore: 10, bytesAfter: 12, diff: '@@ -1 +1 @@\n-a\n+b\n', truncated: false };
+  assert.equal(ok(w, { verb: 'log-edit', path: w.report, args: { summary } }).logged, false);
+  assert.equal(fs.existsSync(lp), false);
+  // The same with a file entry removed by a hand edit of config.json.
+  const w2 = world();
+  writeTrackedPaths(w2.root, ['docs/report.md']);
+  const s2 = status(w2, w2.report);
+  assert.deepEqual(s2.trackedBy, { kind: 'file', entry: 'docs/report.md' });
+  writeTrackedPaths(w2.root, []);
+  const r2 = ok(w2, saveReq(w2.report, s2, w2.text + 'Appendix.\n', []));
+  assert.equal(fs.readFileSync(w2.report, 'utf8'), w2.text + 'Appendix.\n');
+  assert.equal(r2.logged, false);
+  assert.deepEqual(r2.log, []);
+  assert.equal(r2.trackedBy, null);
+  assert.deepEqual(fs.readdirSync(path.join(w2.root, '.trackchanges')), ['config.json'], 'no log is created');
+  // The mirror: a status taken before the flag was written, the save after — logged, because the
+  // disk says tracked now. The fence still holds: no sidecar then, none now.
+  const w3 = world();
+  const s3 = status(w3, w3.report);
+  assert.equal(s3.trackedBy, null);
+  assert.equal(s3.root, w3.root);
+  writeTrackedPaths(w3.root, ['docs/report.md']);
+  const r3 = ok(w3, saveReq(w3.report, s3, w3.text + 'Appendix.\n', []));
+  assert.equal(fs.readFileSync(w3.report, 'utf8'), w3.text + 'Appendix.\n');
+  assert.equal(r3.logged, true);
+  assert.deepEqual(r3.trackedBy, { kind: 'file', entry: 'docs/report.md' });
+  assert.deepEqual(r3.log.map((e) => e.kind), ['edit']);
+  assert.deepEqual(readLogLines(logPathFor(storePathFor(w3.root, w3.report))).map((e) => e.kind), ['edit']);
+  assert.equal(fs.existsSync(storePathFor(w3.root, w3.report)), false, 'still no sidecar');
+});
