@@ -6,8 +6,8 @@
 #   romp-service install     write + load the agent (auto-start at login)
 #   romp-service uninstall    unload + remove it
 #   romp-service stop         stop the running agent and keep it stopped (`romp down` calls this);
-#                             exit 3 when no agent is installed, so the caller can stop the
-#                             manager some other way
+#                             exit 3 when no agent is installed, 4 when one is installed but not
+#                             running: either way the caller stops the manager some other way
 #   romp-service start        start the installed agent again (`romp up` calls this); exit 3 when
 #                             none is installed
 #   romp-service status       installed? running? which key source (file, or the credential
@@ -448,29 +448,41 @@ PYRENDER
 # kernel down: the manager exiting on its own is a crash to it (Restart=always / KeepAlive) and
 # it would respawn within seconds. On macOS the job is booted out (it comes back at the next login
 # or `start`); on Linux the unit is stopped (still enabled, so it comes back at the next login too).
+# A unit that is installed but NOT running is exit 4, never a "stopped": `systemctl --user stop` on
+# an inactive unit exits 0 and a bootout is skipped when the job is not loaded, and either read as a
+# stop while a manager started outside the service (`romp up --foreground`, a hand `romp-manager up`,
+# the auto-start) kept running (review 2026-09-06). On a 4 the caller stops that manager itself.
 _service_stop() {
     case "$os" in
       Darwin)
         [[ -f "$PLIST" ]] || { echo "romp-service: no login agent is installed" >&2; return 3; }
         if [[ -z "$NO_LOAD" ]]; then
+            if ! _darwin_loaded; then
+                echo "romp-service: the login agent is installed but not running; nothing to stop through it" >&2
+                return 4
+            fi
+            "$LAUNCHCTL" bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+            # bootout only STARTS the teardown (the install path's lesson): wait for the job to
+            # actually leave launchd, bounded, so "stopped" is true when we say it
+            for _ in $(seq 1 100); do
+                _darwin_loaded || break
+                sleep 0.3
+            done
             if _darwin_loaded; then
-                "$LAUNCHCTL" bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-                # bootout only STARTS the teardown (the install path's lesson): wait for the job to
-                # actually leave launchd, bounded, so "stopped" is true when we say it
-                for _ in $(seq 1 100); do
-                    _darwin_loaded || break
-                    sleep 0.3
-                done
-                if _darwin_loaded; then
-                    echo "romp-service: the login agent is still draining after 30s — check $LOG" >&2
-                    return 1
-                fi
+                echo "romp-service: the login agent is still draining after 30s — check $LOG" >&2
+                return 1
             fi
         fi
         echo "  Stopped the login agent; it stays stopped until \`romp up\` or the next login." ;;
       Linux)
         [[ -f "$UNIT" ]] || { echo "romp-service: no login service is installed" >&2; return 3; }
         if [[ -z "$NO_LOAD" ]]; then
+            local state; state="$(_linux_active)"
+            case "$state" in
+              inactive|failed)
+                echo "romp-service: the login service is installed but not running ($state); nothing to stop through it" >&2
+                return 4 ;;
+            esac
             if ! "$SYSTEMCTL" --user stop romp-manager.service; then
                 echo "romp-service: systemctl --user stop romp-manager.service failed" >&2
                 return 1

@@ -753,3 +753,37 @@ EOF
     ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" status
     [[ "$output" =~ stopped\ by\ romp\ down\ at\ [0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2} ]]
 }
+
+@test "stop (Linux): an installed unit that is not running is exit 4, says so, and is not stopped again" {
+    # `systemctl --user stop` on an inactive unit exits 0, which read as a stop while a manager started
+    # outside the service kept running (review 2026-09-06); the caller stops that one itself on a 4
+    unset ROMP_SERVICE_NO_LOAD
+    ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    local stub; stub="$(_systemctl_stub inactive)"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" stop
+    [ "$status" -eq 4 ]
+    [[ "$output" == *"installed but not running"* ]]
+    run grep -q -- '--user stop' "$TEST_DIR/systemctl-calls"
+    [ "$status" -ne 0 ]
+    run grep -q 'Stopped the login service' <<< "$output"
+    [ "$status" -ne 0 ]
+    # a failed unit is not running either
+    stub="$(_systemctl_stub failed)"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" stop
+    [ "$status" -eq 4 ]
+}
+
+@test "stop (macOS): an installed agent that is not loaded is exit 4, says so, and no bootout" {
+    unset ROMP_SERVICE_NO_LOAD
+    ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    local stub="$TEST_DIR/launchctl-stub" calls="$TEST_DIR/launchctl-calls"
+    printf '#!/bin/sh\necho "$1" >> "%s"\n[ "$1" = print ] && exit 1\nexit 0\n' "$calls" > "$stub"
+    chmod +x "$stub"
+    ROMP_LAUNCHCTL="$stub" ROMP_OS_OVERRIDE=Darwin run "$SVC" stop
+    [ "$status" -eq 4 ]
+    [[ "$output" == *"installed but not running"* ]]
+    run grep -q bootout "$calls"
+    [ "$status" -ne 0 ]
+    run grep -q 'Stopped the login agent' <<< "$output"
+    [ "$status" -ne 0 ]
+}
