@@ -3074,6 +3074,124 @@ class SpendRecord(unittest.TestCase):
                          {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
                           "cache_creation_input_tokens": 0})
 
+    # ── the resume guard (2026-09-05): a CLI that RESTORES its cost counters must not double-count ──
+    _FSID = "22222222-3333-4444-5555-dddddddddddd"
+
+    @staticmethod
+    def _cost_state(total, model_usage, fsid=_FSID):
+        return json.dumps({"type": "cost-state", "sessionId": fsid, "totalCostUSD": total,
+                           "totalAPIDuration": 1, "totalDuration": 2, "startTime": 3,
+                           "modelUsage": model_usage})
+
+    def _resumed_session(self, transcript_lines, sid="11111111-2222-3333-4444-eeeeeeeeeeee"):
+        """A session whose reg says it resumes _FSID, with that transcript on disk under a private
+        CLAUDE_CONFIG_DIR (transcript_path reads the env at call time)."""
+        cfg = tempfile.mkdtemp()
+        self._env = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": cfg})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+        p = Path(sb.transcript_path(self.d, self._FSID))
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("\n".join(transcript_lines) + "\n")
+        s = self._spend_session(sid)
+        s.cwd = self.d
+        s.resume_sid = self._FSID
+        return s
+
+    def test_connect_seeds_the_watermarks_from_the_transcripts_last_cost_state(self):
+        """The CLI's transcript loader files `cost-state` as last-wins and its writer emits totalCostUSD
+        + modelUsage — the two counters the settle diffs. A CLI that restores them reports its first
+        total_cost_usd as the WHOLE session's history plus this turn; zero watermarks would fold that
+        history as one turn. Seeding from the record the CLI restores keeps the first delta honest."""
+        mu_old = {"claude-fable-5-1": {"inputTokens": 400, "outputTokens": 40,
+                                       "cacheReadInputTokens": 9000, "cacheCreationInputTokens": 100}}
+        mu = {"claude-fable-5-1": {"inputTokens": 1000, "outputTokens": 200,
+                                   "cacheReadInputTokens": 50000, "cacheCreationInputTokens": 3000}}
+        s = self._resumed_session([
+            json.dumps({"type": "user", "uuid": "u1", "message": {"role": "user", "content": "hello"}}),
+            self._cost_state(4.0, mu_old),                     # an earlier snapshot — superseded (last-wins)
+            json.dumps({"type": "assistant", "uuid": "a1", "message": {"role": "assistant", "content": []}}),
+            self._cost_state(12.5, mu),
+            json.dumps({"type": "last-prompt", "lastPrompt": "x"}),   # uuid-less trailers after it are fine
+        ])
+        s._seed_spend_watermarks()
+        self.assertEqual(s._last_cost_total, 12.5, "the LAST record's total is the seed")
+        self.assertEqual(s._last_usage_totals, {"input_tokens": 1000, "output_tokens": 200,
+                                                "cache_read_input_tokens": 50000,
+                                                "cache_creation_input_tokens": 3000})
+        self.assertTrue(s._spend_first_result)
+        # the restoring CLI's first result: history + this turn → only THIS turn lands
+        self._feed(s, self._result(13.0, model_usage={"claude-fable-5-1": {
+            "inputTokens": 1500, "outputTokens": 260, "cacheReadInputTokens": 50000,
+            "cacheCreationInputTokens": 3000}}))
+        d = self._day()
+        self.assertAlmostEqual(d["usd"], 0.5)
+        self.assertEqual((d["tokIn"], d["tokOut"], d["tokCacheR"]), (500, 60, 0))
+        self.assertFalse(s._spend_first_result)
+        # a CLI that wrote the record but did NOT restore: its own first total sits below the seed, so
+        # the shrink rule folds it whole — the common case stays right without knowing which CLI it is
+        s._seed_spend_watermarks()
+        self._feed(s, self._result(0.7, model_usage={"claude-fable-5-1": {"inputTokens": 300}}))
+        self.assertAlmostEqual(self._day()["usd"], 1.2)
+        self.assertEqual(self._day()["tokIn"], 800)
+
+    def test_no_cost_state_record_and_no_resume_target_leave_the_watermarks_at_zero(self):
+        s = self._resumed_session([
+            json.dumps({"type": "user", "uuid": "u1", "message": {"role": "user", "content": "hello"}}),
+            json.dumps({"type": "assistant", "uuid": "a1", "message": {"role": "assistant", "content": [],
+                                                                        "usage": {"input_tokens": 5}}}),
+        ])
+        s._last_cost_total, s._last_usage_totals = 9.0, {"input_tokens": 9}   # stale from the old process
+        s._seed_spend_watermarks()
+        self.assertEqual((s._last_cost_total, s._last_usage_totals), (0.0, {}),
+                         "every romp SDK session today: no record → a fresh process starts at zero")
+        s.resume_sid = None
+        s._last_cost_total = 3.0
+        s._seed_spend_watermarks()
+        self.assertEqual((s._last_cost_total, s._last_usage_totals, s._spend_first_result), (0.0, {}, True))
+
+    def test_last_cost_state_reads_backwards_across_chunk_edges_and_takes_the_last_valid_record(self):
+        d = tempfile.mkdtemp()
+        p = Path(d) / "t.jsonl"
+        filler = json.dumps({"type": "user", "uuid": "u", "message": {"role": "user", "content": "x" * 900}})
+        mu = {"m": {"inputTokens": 7, "outputTokens": 3}}
+        # a valid record early in the file, then ~200 KB with no marker: the scan walks several 64 KB
+        # chunks back to it. A later record with an unusable total is skipped, not taken as "none".
+        lines = [filler, self._cost_state(2.25, mu)] + [filler] * 220
+        lines.append(json.dumps({"type": "cost-state", "totalCostUSD": "not a number", "modelUsage": mu}))
+        p.write_text("\n".join(lines) + "\n")
+        self.assertEqual(sb.last_cost_state(str(p)), {"total": 2.25, "tokens": {
+            "input_tokens": 7, "output_tokens": 3, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}})
+        # a record STRADDLING a chunk edge: pad so the record starts 20 bytes before the 64 KB boundary
+        rec = self._cost_state(5.5, mu)
+        pad_line = "x" * ((1 << 16) - 20 - 1)
+        p.write_text(pad_line + "\n" + rec + "\n" + "\n".join([filler] * 80) + "\n")
+        self.assertEqual(sb.last_cost_state(str(p))["total"], 5.5, "a line split by the chunk edge is reassembled")
+        # last-wins: two valid records → the later one; no trailing newline is fine
+        p.write_text(self._cost_state(1.0, mu) + "\n" + self._cost_state(9.0, {}))
+        self.assertEqual(sb.last_cost_state(str(p)), {"total": 9.0, "tokens": {}},
+                         "an empty modelUsage seeds no token watermarks")
+        self.assertIsNone(sb.last_cost_state(str(Path(d) / "missing.jsonl")))
+        p.write_text("")
+        self.assertIsNone(sb.last_cost_state(str(p)))
+        p.write_text(filler + "\n")
+        self.assertIsNone(sb.last_cost_state(str(p)), "no record → None, never a zero seed")
+
+    def test_a_first_result_after_connect_above_the_single_turn_ceiling_is_logged_and_still_recorded(self):
+        s = self._spend_session()
+        s._seed_spend_watermarks()                                    # no resume target → zero watermarks
+        self._feed(s, self._result(5.0, model_usage={"m": {"inputTokens": 10}}))
+        self.assertEqual(self.be._problems, [], "an ordinary first turn says nothing")
+        s._seed_spend_watermarks()                                    # a reconnect
+        self._feed(s, self._result(250.0, model_usage={"m": {"inputTokens": 20}}))
+        self.assertEqual(len(self.be._problems), 1, "one problem line for the implausible first delta")
+        self.assertIn("first result after connect", self.be._problems[0]["text"])
+        self.assertIn("250.00", self.be._problems[0]["text"])
+        self.assertAlmostEqual(self._day()["usd"], 255.0, msg="recorded anyway — the ledger drops nothing")
+        self._feed(s, self._result(251.0, model_usage={"m": {"inputTokens": 30}}))
+        self.assertEqual(len(self.be._problems), 1, "only the FIRST result after a connect is checked")
+        self.assertAlmostEqual(self._day()["usd"], 256.0)
+
 
 class RewindFiles(unittest.TestCase):
     """The bubble's restore-files affordance rides the SDK's designed rewind_files control request (the

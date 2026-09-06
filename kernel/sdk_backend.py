@@ -462,6 +462,71 @@ def result_token_totals(msg):
     return out
 
 
+# The most a SINGLE turn's cost delta can plausibly be before the recorder says something: a first
+# result after a connect that folds more than this looks like a CLI that RESTORED the session's whole
+# cost history into its counter (see last_cost_state) rather than one turn's work. Recorded anyway —
+# the ledger never drops a figure — but the log names it so the ledger can be read with that in mind.
+SANE_TURN_USD = 200.0
+
+
+def last_cost_state(path):
+    """The resumed transcript's LAST `cost-state` record, as the watermarks a resuming CLI restores
+    from it: {"total": totalCostUSD, "tokens": modelUsage summed per field} — or None when the file
+    has no such record (every romp SDK session as of Claude Code 2.1.261: the CLI's writer is gated
+    off there, so its counters start at zero on resume and the zero watermarks are right).
+
+    Why read it at all: the CLI HAS a restore-on-resume path for this record (its transcript loader
+    files `cost-state` as last-wins, and the writer emits totalCostUSD + modelUsage — the two counters
+    the settle diffs). The day it fires for these sessions, the first result after a reconnect carries
+    the whole session's history in total_cost_usd, and watermarks reset to zero would fold that history
+    as one turn's spend. Seeding them from the record the CLI restores makes the first delta this
+    turn's work again. If the CLI wrote the record but did NOT restore it, the shrink-folds-whole rule
+    catches the common case (the first turn's own total sits below the seed); the residual — a first
+    turn costlier than the whole recorded history — under-counts that one turn.
+
+    Scans BACKWARDS in chunks and stops at the first hit, so a transcript that carries the record
+    (near its tail: the CLI appends it per turn) costs a chunk or two, and one that never carried it
+    costs one sequential read of the file at connect time."""
+    marker = b'"cost-state"'
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            pos = f.tell()
+            carry = b""
+            while pos > 0:
+                step = min(pos, 1 << 16)
+                pos -= step
+                f.seek(pos)
+                chunk = f.read(step) + carry     # carry: the earlier-read chunk's first-line fragment,
+                #                                  which this chunk's last line continues into
+                head, nl, body = chunk.partition(b"\n")
+                if pos > 0:
+                    carry = head                 # the chunk's first line is a fragment: it completes in
+                    #                              the next (earlier) chunk, so it travels there whole
+                    if not nl:
+                        continue                 # no line boundary in this chunk at all
+                else:
+                    carry, body = b"", chunk     # the file's head: every line here is complete
+                if marker not in body:
+                    continue
+                for line in reversed(body.split(b"\n")):
+                    if marker not in line:
+                        continue
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(o, dict) or o.get("type") != "cost-state":
+                        continue
+                    total = o.get("totalCostUSD")
+                    if not isinstance(total, (int, float)) or total < 0:
+                        continue
+                    return {"total": float(total), "tokens": model_usage_totals(o.get("modelUsage")) or {}}
+    except OSError:
+        return None
+    return None
+
+
 def rewind_disposition(rewind_to: str, rewind_leaf: str, leaf_now: str) -> str:
     """Should a (re)connect apply a pending conversation rewind? ONE-SHOT and event-guarded:
     "apply"  — a rewind is pending and the transcript's leaf is still the one recorded at
@@ -3679,6 +3744,8 @@ class SdkSession:
         #   compounded the token readout exactly like the dollars (the user 2026-08-08, round two: the
         #   hover's 5h/7d/month $-per-token ratios diverged wildly because each window carried a
         #   different inflation factor).
+        self._spend_first_result = False   # True from a connect until its first result settles: that
+        #   result's delta is checked against SANE_TURN_USD (a restored cost history folding as one turn)
         # Pending conversation REWIND (the chat's edit-message branch): the target record uuid +
         # the transcript leaf recorded at request time (the one-shot guard — see rewind_disposition).
         # Seeded from the reg so a kernel death mid-rewind re-applies it iff nothing landed since.
@@ -4563,8 +4630,8 @@ class SdkSession:
                     # create, the ready chip landing at 5-12s with the cycle).
                     self.backend._push_session(self.sid)
                     self._connected.set()   # the control channel exists from here (move() waits on this)
-                    self._last_cost_total = 0.0   # a fresh CLI process starts its cumulative cost at zero
-                    self._last_usage_totals = {}  # …and its cumulative token counters
+                    self._seed_spend_watermarks()   # a fresh CLI process starts its cumulative counters at
+                    #   zero — or at what it restores from the resumed transcript's cost-state record
                     # The CLI is demonstrably up, so any recorded launch failure is HISTORY — clear it
                     # here, at the proof, rather than on a timer. This is what lifts the usage-limit
                     # hold once the window resets: the next _ensure connects, the error record goes, and
@@ -4909,6 +4976,25 @@ class SdkSession:
             if _lg:
                 _lg("api-health: give-up ingest failed: %s" % e)
 
+    def _seed_spend_watermarks(self):
+        """Reset the spend watermarks for the CLI process a connect just started. Zero for a fresh
+        process — or, when the resumed transcript carries a `cost-state` record, the counters that
+        record holds, because a CLI that restores them reports its first total_cost_usd as the whole
+        session's history plus this turn (last_cost_state has the full story). Arms the first-result
+        sanity check either way."""
+        self._last_cost_total = 0.0   # a fresh CLI process starts its cumulative cost at zero
+        self._last_usage_totals = {}  # …and its cumulative token counters
+        self._spend_first_result = True
+        if not self.resume_sid:
+            return
+        cs = last_cost_state(transcript_path(self.cwd, self.resume_sid))
+        if not cs:
+            return
+        self._last_cost_total = cs["total"]
+        self._last_usage_totals = dict(cs["tokens"])
+        self.backend._log("spend: %s resumes a transcript with a cost-state record — watermarks seeded at its "
+                  "totals (cumulative $%.2f) so the first result folds only this turn" % (self.name, cs["total"]))
+
     def _on_message(self, msg, AssistantMessage, ResultMessage, SystemMessage):
         if getattr(self, "_ping_feeding", False):   # getattr: __new__-built test doubles skip __init__
             # the ping's turn is streaming — the CLI demonstrably started it, so a message fed from
@@ -5156,6 +5242,17 @@ class SdkSession:
             if isinstance(total, (int, float)) and total > 0:
                 delta = total - self._last_cost_total if total >= self._last_cost_total else total
                 self._last_cost_total = float(total)
+                if getattr(self, "_spend_first_result", False):   # getattr: __new__-built test doubles
+                    self._spend_first_result = False
+                    if delta > SANE_TURN_USD:
+                        # a first-after-connect delta no single turn plausibly costs: the CLI most likely
+                        # RESTORED the session's cost history into its counter with no cost-state record
+                        # for the seed to read (last_cost_state). Recorded anyway — never drop a figure —
+                        # but said out loud, in the error center, so the ledger is read knowing it.
+                        self.backend._log("spend: %s's first result after connect folds $%.2f as ONE turn "
+                                  "(cumulative total $%.2f) — above the %.0f USD single-turn ceiling; a CLI "
+                                  "that restored the session's cost history looks like this. Recorded as is."
+                                  % (self.name, delta, total, SANE_TURN_USD), problem=True)
                 # the token counters are the SAME kind of counter — modelUsage summed across models,
                 # cumulative per process and subagent-inclusive; the per-turn main-loop `usage` dict only
                 # when the CLI emits no modelUsage (result_token_totals): per-field deltas, a shrunken
