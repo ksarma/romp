@@ -2,7 +2,7 @@
 title: Cost view cannot see fast mode (footnote + price-table comment)
 status: keep-private
 where: PR #18 (`890be196`)
-added: 2026-09-06
+added: 2026-08-08
 pr:
 tier:
 offered:

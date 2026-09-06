@@ -2,7 +2,7 @@
 title: `tests/test_model_fallback_card.py` `FallbackCard` mints its card under the SHARED placeholder sid, so another module's leftover override journal (replayed by `load_goals` on every load; node ids collide at `<sid>:g1`) can reopen the minted card mid-test — green alone, red only under whole-suite ordering; a parallel (xdist) run surfaced it
 status: merged
 where: the fold merge (`upfold0902`): the class takes a private synthetic sid and unlinks its journal in tearDown, exactly the shape the file's own `DedupeBackstop` already uses (reproduced red-first with a planted journaled follow-up, green after)
-added: 2026-09-06
+added: 2026-09-02
 pr:
 tier:
 offered: their PR #881
