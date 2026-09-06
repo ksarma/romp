@@ -811,9 +811,9 @@ class WiringPins(unittest.TestCase):
         import inspect
         self.src = inspect.getsource(km.Handler._dispatch_ws)
 
-    def test_auto_nudge_branch_passes_the_stamp(self):
-        self.assertIn('_set_auto_nudge(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None', self.src,
-                      "the branch hands the stamp over and gates on the apply")
+    def test_auto_nudge_branch_gates_on_the_stamp_and_skips_the_tick_on_stand_down(self):
+        self.assertIn('_set_auto_nudge(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None', self.src,
+                      "a stood-down toggle must not fire the nudge tick either — no new information")
 
     def test_file_editing_branch_passes_the_stamp(self):
         self.assertIn('_set_file_editing(bool(msg["enabled"]), gt=_gesture_ms(msg))', self.src)
@@ -856,6 +856,38 @@ class WiringPins(unittest.TestCase):
         self.assertNotIn(".write_text(", src, "no raw write_text — a torn write must not tear the store")
         self.assertLess(src.index('fname + ".gt"'), src.index("_atomic_write(jd.STATE / fname,"),
                         "the sidecar publishes FIRST — a crash between the two errs toward stand-down")
+
+
+class AutoNudgeTurnOnActsNow(_Base):
+    """Turning Auto Nudge on acts in the same handler call instead of waiting for the pusher's
+    next pass — and ONLY a real apply does: a stale stamp and the gesture's own echo carry no
+    new information, so neither fires a tick (T208's setCompactSuggest arm has the same shape).
+    #846 inserted that arm between the auto-nudge setter and its act-now tick, which moved the
+    tick onto the new arm without changing the tick line — a source pin alone would not have
+    noticed, so the handler is driven here."""
+
+    def setUp(self):
+        super().setUp()
+        self.ticks = []
+        km._auto_nudge_tick = lambda *a, **k: self.ticks.append((a, k))   # restored by _Base.tearDown
+
+    def test_a_real_turn_on_ticks_once_without_the_dead_wait_sweep(self):
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_NEW})
+        self.assertEqual(len(self.ticks), 1, "a real apply acts now")
+        (now, tmux), kw = self.ticks[0]
+        self.assertIsInstance(now, int)
+        self.assertEqual(kw, {"run_dead_wait": False}, "the WS tick never runs the one-observer sweep")
+        self.assertEqual(tmux, {}, "the tick takes the listing the handler fetched (_tmux_sessions)")
+
+    def test_a_stale_stamp_and_an_echo_fire_no_tick(self):
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_NEW})
+        self.dispatch({"type": "setAutoNudge", "enabled": False, "gt": T_OLD})   # stale: stands down
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_NEW})    # echo: the same pick again
+        self.assertEqual(len(self.ticks), 1, "only the applied gesture ticked")
+
+    def test_an_unstamped_toggle_applies_and_ticks(self):
+        self.dispatch({"type": "setAutoNudge", "enabled": True})                 # older dashboard, no gt
+        self.assertEqual(len(self.ticks), 1)
 
 
 class ThinkingSummariesSetting(_Base):
