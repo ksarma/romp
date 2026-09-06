@@ -420,6 +420,52 @@ one file; a service installed before that carries only the default. `romp
 keyswap` asks the running kernel which key it reads and says `MISMATCH` when
 that is not the file's — the check to make after a swap.
 
+### What survives a restart
+
+A kernel restart ends every session's CLI. On `romp refresh`, the manager's
+restart-all or a service stop, the kernel receives SIGTERM and drains: it
+closes each CLI, and a CLI still running when the drain's bound expires gets
+SIGTERM, then SIGKILL. A crash respawn has no drain: the kernel died without
+running one, its CLIs are orphaned, and the next kernel's boot reaper
+terminates them (see below). The CLI's harness background tasks do not all end
+with it. Its timers and monitors live inside the CLI process and end when it
+does. A background shell is a separate process the CLI started, and a CLI
+killed by SIGKILL runs no cleanup, so its shells are re-parented and may keep
+running. The session resumes with its history and is told what was cut: its
+in-flight turn, if it had one, and each background task, with a request to
+check whether each is still running before relaunching it. A kernel restart has
+never touched work a session deliberately detached: tmux servers, `setsid`
+children and other processes that outlive their shell.
+
+A service restart (`systemctl --user restart romp-manager`, or the machine's
+own service management) kills everything in the service's cgroup, so on Linux
+under systemd Romp runs each session's CLI, and the default tmux server the
+manager starts, in a transient systemd scope of its own, outside that cgroup
+(`systemctl --user list-units 'romp-session-*' 'romp-tmux-*'` lists them). A
+session's tmux servers, `setsid` children and other detached work live in the
+session's scope, and a service restart leaves them alive as a kernel restart
+does; before 2026-09-05 they were in the service's cgroup and died with it. The
+CLI itself still ends: the kernel receives the service's SIGTERM and runs the
+same drain. A scoped CLI outlives a service restart only when the drain does not
+reach it: a kernel killed before its drain finishes (SIGKILL at the service's
+stop timeout), or a CLI the drain could not find. The reaper handles that case:
+at the next kernel boot, an SDK-driven CLI holding one of the kernel's sessions
+whose parent is not a live romp kernel is treated as orphaned and terminated.
+Under `systemd --user` an orphan re-parents to the user manager, not to pid 1,
+so a ppid check alone would miss it and did, before 2026-09-05.
+
+One-time caveat when this lands: the first service restart after it still
+empties the current cgroup, tmux servers included, because the running manager
+and its tmux server predate the change and are still inside the service's
+cgroup. The guarantee holds from the following restart on.
+
+`ROMP_CLI_SCOPE=0` in the service environment turns the scopes off, for
+session CLIs and the tmux server alike. A manager run outside the service
+(`romp up`) scopes nothing unless `ROMP_CLI_SCOPE=1` is set, which turns both
+on. The kernel logs which it chose at start (`cli scope: on` or `off`, with the
+reason). The macOS launchd path is unchanged: there is no cgroup kill there,
+and the tmux server keeps its launchd lineage.
+
 ## Where things live
 
 State is written under `${XDG_STATE_HOME:-~/.local/state}/romp/`. Transcripts
