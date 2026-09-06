@@ -14,17 +14,24 @@
 //      data, so the output path must be under /tmp and outside any git checkout; the tool refuses
 //      anything else.
 //
-//   2. --replay <app> --frames FILE [--cpu-throttle K] [--iters N] [--fast] [--json OUT]
+//   2. --replay <app> --frames FILE [--cpu-throttle K] [--iters N] [--fast] [--json OUT] [--cpu-profile OUT]
 //      Serve the pane page and its bundles from the built dist and replay the recorded frames into a
 //      headless Chromium at their recorded pacing (or back-to-back with --fast), measuring per frame
 //      the bytes, the synchronous handler time, and the time until the main thread is free again
 //      (message receipt to the second requestAnimationFrame after it); plus long-animation-frame
-//      entries with script attribution, JS heap, DOM size, and page console errors.
+//      entries with script attribution (the task's entry point: the message handler, a rAF, a timer,
+//      a script's evaluation; not the bundle function), JS heap after a forced GC, DOM size, and page
+//      console errors. --cpu-profile OUT.cpuprofile samples the page's JavaScript with the V8 profiler
+//      across the replay, writes a file Chrome DevTools loads, and prints the functions with the most
+//      self and total time, overall and inside the first content frame and the largest frame of each
+//      type: the function-level attribution the long-animation-frame entries cannot give.
 //
 //      Serving design: the REAL kernel HTTP Handler runs in a python3 subprocess under an isolated
-//      environment (private XDG_STATE_HOME and TMUX_TMPDIR, the manager variables removed,
-//      ROMP_KERNEL_NO_OPEN=1, a fixed bench serve token), the pattern of tests/test_color_route.py,
-//      so the page HTML and the WebSocket shim are the kernel's own bytes. The shim connects its
+//      environment (private XDG_STATE_HOME and TMUX_TMPDIR; the manager variables, the API keys and
+//      the postal peer bus removed; ROMP_KERNEL_NO_OPEN=1; a serve token minted for the run), the
+//      pattern of tests/test_color_route.py, so the page HTML and the WebSocket shim are the kernel's
+//      own bytes. The subprocess holds a pipe from the parent and exits when it closes, so it cannot
+//      outlive the bench however the bench ends. The shim connects its
 //      socket to location.host, so a small Node front server sits in front: it answers /ws itself as
 //      the replay server and proxies every other request (the page, /dist/*, /media/*, the small
 //      JSON routes the bundles fetch) to the kernel Handler. Nothing is rewritten. The live kernel is
@@ -49,7 +56,9 @@
 //   node tools/ui-bench.mjs --compare /tmp/romp-perf/a.json /tmp/romp-perf/b.json
 //
 // tests/ui-bench.test.mjs covers the classifier, the compare arithmetic, the synthesizer's shapes,
-// the /tmp path guard, and a real replay of synthetic streams on the feed and timeline pages.
+// the /tmp path guard, the recording client against a local WebSocket server, the Handler subprocess's
+// environment and its exit with the parent, the CPU-profile aggregation, and a real replay of
+// synthetic streams on the feed and timeline pages.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -64,10 +73,6 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO = path.resolve(HERE, "..");
 const EXT_DIR = path.join(REPO, "vscode-extension");
 const requireExt = createRequire(path.join(EXT_DIR, "package.json"));
-
-// The serve token the in-process kernel Handler is given for a replay. Not a credential: the replay
-// server binds a random loopback port for the seconds a bench takes and serves the bench's own frames.
-export const BENCH_TOKEN = "ui-bench-local-page-token";
 
 // The wire capabilities each page's shim announces (kernel.py: the _shim(app, v, caps=…) call sites).
 export const APP_CAPS = {
@@ -128,16 +133,29 @@ export function summarize(values) {
 // ── paths ────────────────────────────────────────────────────────────────────────────────────────
 
 /** A recording holds real session data, so it may live only under /tmp and never inside a git
- *  checkout (a stray `git add` there would publish it). Returns the resolved path or throws. */
-export function assertTmpPath(p) {
+ *  checkout (a stray `git add` there would publish it). Both sides of the comparison are resolved
+ *  through symlinks: on macOS /tmp is a link to /private/tmp and os.tmpdir() lives under /var/folders,
+ *  so a root compared by name never matched a candidate compared by realpath. A directory that does
+ *  not exist yet is resolved through its deepest existing ancestor. A symlink at the leaf is refused:
+ *  a write through it lands wherever the link points. Returns the absolute path or throws. `roots` is
+ *  a test seam; the default is /tmp and os.tmpdir(). */
+export function assertTmpPath(p, { roots = ["/tmp", os.tmpdir()] } = {}) {
   const abs = path.resolve(p);
-  const tmpRoots = ["/tmp"];
-  const osTmp = safeReal(os.tmpdir()) || os.tmpdir();
-  if (osTmp && !tmpRoots.includes(osTmp)) tmpRoots.push(osTmp);
-  const real = safeReal(path.dirname(abs)) || path.dirname(abs);
-  const inTmp = tmpRoots.some((r) => real === r || real.startsWith(r + path.sep));
+  const resolvedRoots = new Set();
+  for (const r of roots) {
+    if (!r) continue;
+    const named = path.resolve(r);
+    resolvedRoots.add(named);
+    const real = safeReal(named);
+    if (real) resolvedRoots.add(real);
+  }
+  const dir = resolveExistingPrefix(path.dirname(abs));
+  const inTmp = [...resolvedRoots].some((r) => dir === r || dir.startsWith(r + path.sep));
   if (!inTmp) throw new Error(`refusing to write a recording outside /tmp: ${abs}`);
-  for (let d = real; ; d = path.dirname(d)) {
+  let leaf = null;
+  try { leaf = fs.lstatSync(abs); } catch (e) { if (e.code !== "ENOENT" && e.code !== "ENOTDIR") throw e; }
+  if (leaf && leaf.isSymbolicLink()) throw new Error(`refusing to write a recording through a symlink: ${abs}`);
+  for (let d = dir; ; d = path.dirname(d)) {
     if (fs.existsSync(path.join(d, ".git"))) throw new Error(`refusing to write a recording inside a git checkout: ${abs} (a .git lives at ${d})`);
     if (path.dirname(d) === d) break;
   }
@@ -146,6 +164,17 @@ export function assertTmpPath(p) {
 
 function safeReal(p) {
   try { return fs.realpathSync(p); } catch { return null; }
+}
+
+/** The realpath of the deepest existing ancestor of `p`, with the missing tail appended unchanged. */
+function resolveExistingPrefix(p) {
+  const missing = [];
+  for (let d = p; ; d = path.dirname(d)) {
+    const real = safeReal(d);
+    if (real) return missing.length ? path.join(real, ...missing) : real;
+    if (path.dirname(d) === d) return p;
+    missing.unshift(path.basename(d));
+  }
 }
 
 // ── JSONL frame files ────────────────────────────────────────────────────────────────────────────
@@ -164,11 +193,22 @@ export function loadFrames(file) {
   return { meta, frames: rows };
 }
 
+/** Write a frames file private to the user: directory 0700, file 0600 (re-applied when the file
+ *  already existed), and never through a symlink at the leaf (O_NOFOLLOW). A recording holds every
+ *  frame the kernel pushed, and /tmp is readable by every local account. */
 export function writeFrames(file, meta, frames) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const out = [JSON.stringify({ meta })];
   for (const f of frames) out.push(JSON.stringify({ t: f.t, bytes: Buffer.byteLength(f.data, "utf8"), data: f.data }));
-  fs.writeFileSync(file, out.join("\n") + "\n");
+  const buf = Buffer.from(out.join("\n") + "\n", "utf8");
+  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | (fs.constants.O_NOFOLLOW || 0);
+  const fd = fs.openSync(file, flags, 0o600);
+  try {
+    fs.fchmodSync(fd, 0o600);
+    for (let off = 0; off < buf.length;) off += fs.writeSync(fd, buf, off, buf.length - off);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // ── --record: a read-only client of the live kernel ──────────────────────────────────────────────
@@ -204,8 +244,17 @@ export async function recordFrames({ app, seconds, out, port, log = console.erro
   const meta = { tool: "ui-bench", mode: "record", app, caps, port, seconds, startedAt: new Date(started).toISOString(), iid };
   await new Promise((resolve, reject) => {
     let done = false;
-    const finish = (err) => { if (done) return; done = true; clearTimeout(timer); try { ws.close(); } catch {} err ? reject(err) : resolve(); };
+    const onInterrupt = () => { log("ui-bench: interrupted; writing what was recorded"); finish(); };
+    const finish = (err) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      process.removeListener("SIGINT", onInterrupt);   // one listener per recording, gone when it ends
+      try { ws.close(); } catch {}
+      err ? reject(err) : resolve();
+    };
     const timer = setTimeout(() => finish(), seconds * 1000);
+    process.once("SIGINT", onInterrupt);
     ws.on("open", () => {
       events.push({ t: Date.now(), event: "open" });
       ws.send(JSON.stringify({ type: "ready" }));   // the bundle's handshake: lifts the ready-gate hold and serves the cached frame
@@ -224,7 +273,6 @@ export async function recordFrames({ app, seconds, out, port, log = console.erro
       events.push({ t: Date.now(), event: "close", code, reason: String(reason || "") });
       if (!done) finish(new Error(`the kernel closed the socket early (code ${code}) after ${frames.length} frames`));
     });
-    process.once("SIGINT", () => { log("ui-bench: interrupted; writing what was recorded"); finish(); });
   }).finally(() => {
     meta.endedAt = new Date().toISOString();
     meta.frames = frames.length;
@@ -467,7 +515,8 @@ function synthTimelineStream(cards, r, now) {
 
 export function synthesizeFrames(app, cards, { seed = 7, now = SYNTH_NOW } = {}) {
   if (!APP_CAPS[app]) throw new Error(`unknown app ${app}; one of ${APPS.join(", ")}`);
-  if (app === "chat" || app === "files") throw new Error(`${app} frames are not synthesized (the chat's session frame is built by build_session and is too rich to fake); record them from the live kernel with --record`);
+  if (app === "chat") throw new Error("chat frames are not synthesized (the session frame is built by build_session and is too rich to fake); record them from the live kernel with --record");
+  if (app === "files") throw new Error("files frames are not synthesized (the Files pane parses no frames: its socket carries keepalives and op replies only); record its stream from the live kernel with --record");
   const r = rng(seed);
   if (app === "timeline") return synthTimelineStream(cards, r, now);
   return synthFeedStream(app, cards, r, now);
@@ -477,11 +526,23 @@ export function synthesizeFrames(app, cards, { seed = 7, now = SYNTH_NOW } = {})
 
 // The kernel's HTTP Handler, alone, in a python3 subprocess. The import pattern is tests/test_color_route.py's:
 // the two sibling modules first (they resolve their state root at import), then the kernel by its bin/ name.
+// The Handler is the kernel's whole route surface (the pages, /ws, the POST routes that spawn and revive
+// sessions), gated by the serve token, so it must not outlive the bench: a daemon thread blocks on stdin,
+// which the parent holds open as a pipe, and when the parent exits, however it exits, the read returns
+// EOF, the thread removes the private state directory and the process ends.
 const PAGE_SERVER_PY = `
-import os, sys
+import os, shutil, sys, threading
 from http.server import ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
-root = sys.argv[1]
+root, tmp = sys.argv[1], sys.argv[2]
+def _parent_gone():
+    try:
+        sys.stdin.buffer.read()
+    except Exception:
+        pass
+    shutil.rmtree(tmp, ignore_errors=True)
+    os._exit(0)
+threading.Thread(target=_parent_gone, daemon=True).start()
 b = os.path.join(root, "bin")
 SourceFileLoader("romp_event_model", os.path.join(b, "romp-event-model")).load_module()
 SourceFileLoader("romp_judge", os.path.join(b, "romp-judge")).load_module()
@@ -491,40 +552,51 @@ sys.stdout.write("PORT %d\\n" % srv.server_address[1]); sys.stdout.flush()
 srv.serve_forever()
 `;
 
-/** Start the kernel Handler subprocess under the isolated environment; resolves to {port, stop}. */
+/** The variables the Handler subprocess must not inherit: the manager's (so the kernel module never
+ *  believes it is the supervised live kernel), the live kernel's ports and state root, and the API keys
+ *  and Claude binary a spawned session would run with (nothing the bench needs reads them). */
+export const STRIPPED_ENV = ["ROMP_MANAGER_PORT", "ROMP_MANAGER_PID", "ROMP_SUPERVISED", "ROMP_STATE_DIR", "ROMP_SERVE_PORT", "ROMP_KERNEL_PORT", "ROMP_PERF", "TMUX", "ROMP_CLAUDE_BIN"];
+
+/** Start the kernel Handler subprocess under the isolated environment. Resolves to {port, token, pid,
+ *  tmp, stderr, stop}; on a start failure the child is gone and its directory removed before the
+ *  rejection. The serve token is minted per run: the Handler is the kernel's whole route surface on a
+ *  loopback port any local process can reach, and a token in the source would open it to all of them. */
 export async function startPageServer({ dist, python = "python3", log = () => {} } = {}) {
+  const distDir = dist || path.join(EXT_DIR, "dist");
+  if (!fs.existsSync(path.join(distDir, "feed.js"))) throw new Error(`no built bundles at ${distDir} (run: cd vscode-extension && npm run build)`);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "romp-ui-bench-"));
+  const token = crypto.randomBytes(18).toString("base64url");
   const env = { ...process.env };
-  for (const k of ["ROMP_MANAGER_PORT", "ROMP_MANAGER_PID", "ROMP_SUPERVISED", "ROMP_STATE_DIR", "ROMP_SERVE_PORT", "ROMP_KERNEL_PORT", "ROMP_PERF", "TMUX"]) delete env[k];
+  for (const k of Object.keys(env)) if (k.startsWith("ANTHROPIC_") || STRIPPED_ENV.includes(k)) delete env[k];
   env.XDG_STATE_HOME = path.join(tmp, "state");
   env.TMUX_TMPDIR = path.join(tmp, "tmux");
   fs.mkdirSync(env.XDG_STATE_HOME, { recursive: true });
   fs.mkdirSync(env.TMUX_TMPDIR, { recursive: true });
   env.ROMP_KERNEL_NO_OPEN = "1";
-  env.ROMP_SERVE_TOKEN = BENCH_TOKEN;
-  env.ROMP_DIST_DIR = dist || path.join(EXT_DIR, "dist");
-  if (!fs.existsSync(path.join(env.ROMP_DIST_DIR, "feed.js"))) throw new Error(`no built bundles at ${env.ROMP_DIST_DIR} (run: cd vscode-extension && npm run build)`);
-  const child = spawn(python, ["-c", PAGE_SERVER_PY, REPO], { env, stdio: ["ignore", "pipe", "pipe"] });
+  env.ROMP_POSTAL_PEERS = "0";   // the feed page polls /tunnels, which otherwise asks the LIVE postal bus for its peers
+  env.ROMP_SERVE_TOKEN = token;
+  env.ROMP_DIST_DIR = distDir;
+  const child = spawn(python, ["-c", PAGE_SERVER_PY, REPO, tmp], { env, stdio: ["pipe", "pipe", "pipe"] });
+  child.stdin.on("error", () => {});   // EPIPE once the child is gone
   let stderr = "";
   child.stderr.on("data", (c) => { stderr += c; if (stderr.length > 64_000) stderr = stderr.slice(-32_000); log(String(c)); });
+  let stopped = false;
+  const stop = (signal = "SIGTERM") => {
+    if (!stopped) { stopped = true; try { child.stdin.end(); } catch {} }
+    try { child.kill(signal); } catch {}
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+  };
   const port = await new Promise((resolve, reject) => {
     let buf = "";
-    const timer = setTimeout(() => reject(new Error(`the kernel page server did not start within 60s\n${stderr}`)), 60_000);
+    const timer = setTimeout(() => { stop("SIGKILL"); reject(new Error(`the kernel page server did not start within 60s\n${stderr}`)); }, 60_000);
     child.stdout.on("data", (c) => {
       buf += c;
       const m = /PORT (\d+)/.exec(buf);
       if (m) { clearTimeout(timer); resolve(Number(m[1])); }
     });
-    child.on("exit", (code) => { clearTimeout(timer); reject(new Error(`the kernel page server exited with ${code}\n${stderr}`)); });
+    child.on("exit", (code) => { clearTimeout(timer); try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} reject(new Error(`the kernel page server exited with ${code}\n${stderr}`)); });
   });
-  return {
-    port,
-    stderr: () => stderr,
-    stop() {
-      try { child.kill("SIGTERM"); } catch {}
-      try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
-    },
-  };
+  return { port, token, pid: child.pid, tmp, stderr: () => stderr, stop: () => stop() };
 }
 
 /** The front server: /ws is ours (the replay socket), everything else proxies to the kernel Handler. */
@@ -605,7 +677,9 @@ const INIT_SCRIPT = `
   R.collect = () => {
     if (R.obs) for (const e of R.obs.takeRecords()) R.loaf.push(R.loafKind === "long-animation-frame" ? loafRow(e) : { start: e.startTime, duration: e.duration, blocking: Math.max(0, e.duration - 50), scripts: [] });
     const mem = performance.memory ? { used: performance.memory.usedJSHeapSize, total: performance.memory.totalJSHeapSize, limit: performance.memory.jsHeapSizeLimit } : null;
-    return { recs: R.recs, loaf: R.loaf, loafKind: R.loafKind, domElements: document.getElementsByTagName("*").length, heap: mem, addListenerMessages: R.addListenerMessages };
+    const bar = document.getElementById("romp-stale-self");   // the shim's banner: "build" when a keepalive's dv outran the served dist, "conn" for a dead socket
+    return { recs: R.recs, loaf: R.loaf, loafKind: R.loafKind, domElements: document.getElementsByTagName("*").length, heap: mem, addListenerMessages: R.addListenerMessages,
+      banner: bar ? (bar.dataset.kind || "?") : null };
   };
 })();
 //# sourceURL=ui-bench-instrument.js
@@ -646,7 +720,7 @@ async function launchBrowser() {
   catch { return chromium.launch({ headless: true, executablePath: avail.exe }); }
 }
 
-async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, log }) {
+async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, token, cpuProfile = false, log }) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const consoleErrors = [], pageErrors = [];
@@ -659,6 +733,10 @@ async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, log 
   const cdp = await context.newCDPSession(page);
   await cdp.send("Performance.enable");
   if (cpuThrottle && cpuThrottle !== 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
+  if (cpuProfile) {
+    await cdp.send("Profiler.enable");
+    await cdp.send("Profiler.setSamplingInterval", { interval: PROFILE_INTERVAL_US });
+  }
 
   const session = { current: null, clientMessages: {}, clientDiag: {}, reconnects: 0, readyAt: 0 };
   let readyResolve;
@@ -680,9 +758,24 @@ async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, log 
   });
 
   const navT0 = Date.now();
-  await page.goto(`http://127.0.0.1:${front.port}/${app}?token=${BENCH_TOKEN}`, { waitUntil: "load", timeout: 60_000 });
-  await Promise.race([ready, sleep(30_000).then(() => { throw new Error("the pane never sent its {type:\"ready\"} handshake within 30s"); })]);
+  await page.goto(`http://127.0.0.1:${front.port}/${app}?token=${encodeURIComponent(token)}`, { waitUntil: "load", timeout: 60_000 });
+  let handshakeTimer;
+  try {
+    await Promise.race([ready, new Promise((_, rej) => { handshakeTimer = setTimeout(() => rej(new Error("the pane never sent its {type:\"ready\"} handshake within 30s")), 30_000); })]);
+  } finally {
+    clearTimeout(handshakeTimer);   // a losing timer left armed kept every replay process alive for the full 30 s
+  }
   const readyMs = session.readyAt - navT0;
+  // The profile's clock is V8's; the page's records are performance.now(). Bracketing Profiler.start
+  // with two reads of performance.now() puts the profile's startTime between them, so a page time maps to
+  // the profile's to within half the gap (alignMs, about a millisecond).
+  let profiling = null;
+  if (cpuProfile) {
+    const before = await page.evaluate(() => performance.now());
+    await cdp.send("Profiler.start");
+    const after = await page.evaluate(() => performance.now());
+    profiling = { p0: (before + after) / 2, alignMs: (after - before) / 2, profile: null };
+  }
 
   const sent = [];
   const t0 = Date.now();
@@ -702,6 +795,13 @@ async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, log 
   await waitFor(async () => (await page.evaluate(() => window.__rompBench.n)) >= sent.length, budget, `the page to dispatch all ${sent.length} frames`);
   await waitFor(async () => page.evaluate(() => window.__rompBench.recs.every((r) => r.settle >= 0)), 10_000, "every frame's settle stamp").catch((e) => log(`ui-bench: ${e.message}`));
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));
+  if (profiling) {
+    profiling.profile = (await cdp.send("Profiler.stop")).profile;
+    await cdp.send("Profiler.disable");
+  }
+  // Collect the heap after a forced GC: without it the figure is live objects plus whatever garbage
+  // happens to be pending, and two replays of the same page differed by a third.
+  await cdp.send("HeapProfiler.collectGarbage");
   const data = await page.evaluate(() => window.__rompBench.collect());
   const { metrics } = await cdp.send("Performance.getMetrics");
   const met = Object.fromEntries(metrics.map((m) => [m.name, m.value]));
@@ -709,12 +809,13 @@ async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, log 
 
   const perFrame = sent.map((s, i) => {
     const r = data.recs[i];
-    return { i, type: s.type, bytes: s.bytes, at: s.at, handlerMs: r ? r.handler : null, settleMs: r ? r.settle : null, lenMatch: r ? r.len === frames[i].data.length : false };
+    return { i, type: s.type, bytes: s.bytes, at: s.at, handlerMs: r ? r.handler : null, settleMs: r ? r.settle : null, t0: r ? r.t0 : null, lenMatch: r ? r.len === frames[i].data.length : false };
   });
   const misaligned = perFrame.filter((f) => f.handlerMs != null && !f.lenMatch).length;
   return {
     readyMs, replayMs, sent, perFrame, misaligned, reconnects: session.reconnects, clientMessages: session.clientMessages, clientDiag: session.clientDiag,
-    loaf: data.loaf, loafKind: data.loafKind, domElements: data.domElements, heap: data.heap, addListenerMessages: data.addListenerMessages,
+    loaf: data.loaf, loafKind: data.loafKind, domElements: data.domElements, heap: data.heap, addListenerMessages: data.addListenerMessages, banner: data.banner,
+    profiling,
     cdp: { nodes: met.Nodes, documents: met.Documents, jsEventListeners: met.JSEventListeners, layoutCount: met.LayoutCount, recalcStyleCount: met.RecalcStyleCount,
       layoutMs: (met.LayoutDuration || 0) * 1000, recalcStyleMs: (met.RecalcStyleDuration || 0) * 1000, scriptMs: (met.ScriptDuration || 0) * 1000,
       taskMs: (met.TaskDuration || 0) * 1000, heapUsed: met.JSHeapUsedSize, heapTotal: met.JSHeapTotalSize },
@@ -729,7 +830,10 @@ function attributeLoaf(loaf) {
       const url = s.url ? path.basename(s.url.split("?")[0]) : "(inline)";
       const inv = s.invoker || s.invokerType || "?";
       const invoker = /^https?:\/\//.test(inv) ? "script " + (path.basename(inv.split("?")[0]) || "/") : inv;   // a script's own evaluation is invoked by its URL; keep the basename, never the query
-      const key = `${url}:${s.fn || "(anonymous)"} <${invoker}>`;
+      // A long-animation-frame script entry names the task's ENTRY POINT. For every pushed frame that is
+      // the bench's own onmessage wrapper, inside which the shim's dispatch and the bundle's render run
+      // synchronously, so the row is labelled for what it holds rather than for the instrument's file.
+      const key = url === "ui-bench-instrument.js" ? `message handler (shim + bundle) <${invoker}>` : `${url}:${s.fn || "(anonymous)"} <${invoker}>`;
       const row = by.get(key) || { key, count: 0, durationMs: 0 };
       row.count++; row.durationMs += s.duration || 0;
       by.set(key, row);
@@ -743,20 +847,22 @@ const round1 = (x) => (x == null ? null : Math.round(x * 10) / 10);
 const roundStats = (s) => ({ n: s.n, p50: round1(s.p50), p90: round1(s.p90), max: round1(s.max), mean: round1(s.mean) });
 
 /** Fold one or more replay runs into the report shape --json writes and --compare reads. */
-export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser, runs }) {
+export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser, runs, cpuProfileFiles = [] }) {
   const frames = runs.flatMap((r) => r.perFrame);
   const byType = {};
   for (const f of frames) {
-    const s = (byType[f.type] ||= { count: 0, measured: 0, bytes: 0, bytesMax: 0, handler: [], settle: [] });
+    const s = (byType[f.type] ||= { count: 0, measured: 0, settleMissing: 0, bytes: 0, bytesMax: 0, handler: [], settle: [] });
     s.count++; s.bytes += f.bytes; if (f.bytes > s.bytesMax) s.bytesMax = f.bytes;
     if (f.handlerMs != null && f.handlerMs >= 0) { s.measured++; s.handler.push(f.handlerMs); }
     if (f.settleMs != null && f.settleMs >= 0) s.settle.push(f.settleMs);
+    else if (f.settleMs != null) s.settleMissing++;   // dispatched and timed, but the two-rAF settle stamp never landed
   }
   const types = {};
   for (const [type, s] of Object.entries(byType).sort((a, b) => b[1].bytes - a[1].bytes)) {
-    types[type] = { count: s.count / runs.length, measured: s.measured / runs.length, bytes: s.bytes / runs.length, bytesMax: s.bytesMax,
+    types[type] = { count: s.count / runs.length, measured: s.measured / runs.length, settleMissing: s.settleMissing, bytes: s.bytes / runs.length, bytesMax: s.bytesMax,
       handlerMs: roundStats(summarize(s.handler)), settleMs: roundStats(summarize(s.settle)) };
   }
+  const settleMissing = Object.values(byType).reduce((a, s) => a + s.settleMissing, 0);
   const firstIdx = runs[0].perFrame.findIndex((f) => f.type !== "ka");
   const first = firstIdx >= 0 ? runs.map((r) => r.perFrame[firstIdx]).filter(Boolean) : [];
   const loafAll = runs.flatMap((r) => r.loaf);
@@ -765,13 +871,15 @@ export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser
     tool: "ui-bench", version: 1, app, framesFile, cpuThrottle: cpuThrottle || 1, fast: !!fast, iters: runs.length, browser,
     generatedAt: new Date().toISOString(),
     frames: { total: runs[0].perFrame.length, bytes: runs[0].perFrame.reduce((a, f) => a + f.bytes, 0), replayMs: round1(mean(runs.map((r) => r.replayMs))),
-      readyMs: round1(mean(runs.map((r) => r.readyMs))), reconnects: runs.reduce((a, r) => a + r.reconnects, 0), misaligned: runs.reduce((a, r) => a + r.misaligned, 0) },
+      readyMs: round1(mean(runs.map((r) => r.readyMs))), reconnects: runs.reduce((a, r) => a + r.reconnects, 0), misaligned: runs.reduce((a, r) => a + r.misaligned, 0),
+      settleMissing, addListenerMessages: runs.reduce((a, r) => a + (r.addListenerMessages || 0), 0),
+      buildBannerRaised: runs.filter((r) => r.banner === "build").length, connBannerRaised: runs.filter((r) => r.banner === "conn").length },
     first: first.length ? { index: firstIdx, type: first[0].type, bytes: first[0].bytes, handlerMs: round1(mean(first.map((f) => f.handlerMs))), settleMs: round1(mean(first.map((f) => f.settleMs))) } : null,
     types,
     loaf: { kind: runs[0].loafKind, count: loafAll.length / runs.length, durationMs: round1(mean(runs.map((r) => r.loaf.reduce((a, e) => a + e.duration, 0)))),
       blockingMs: round1(mean(runs.map((r) => r.loaf.reduce((a, e) => a + (e.blocking || 0), 0)))), maxMs: round1(Math.max(0, ...loafAll.map((e) => e.duration))),
       topScripts: attributeLoaf(loafAll) },
-    end: { heapUsed: Math.round(mean(runs.map((r) => r.cdp.heapUsed ?? (r.heap ? r.heap.used : 0)))), heapTotal: Math.round(mean(runs.map((r) => r.cdp.heapTotal ?? (r.heap ? r.heap.total : 0)))),
+    end: { afterGc: true, heapUsed: Math.round(mean(runs.map((r) => r.cdp.heapUsed ?? (r.heap ? r.heap.used : 0)))), heapTotal: Math.round(mean(runs.map((r) => r.cdp.heapTotal ?? (r.heap ? r.heap.total : 0)))),
       domElements: Math.round(mean(runs.map((r) => r.domElements))), cdpNodes: Math.round(mean(runs.map((r) => r.cdp.nodes))), jsEventListeners: Math.round(mean(runs.map((r) => r.cdp.jsEventListeners))),
       layoutCount: Math.round(mean(runs.map((r) => r.cdp.layoutCount))), recalcStyleCount: Math.round(mean(runs.map((r) => r.cdp.recalcStyleCount))),
       layoutMs: round1(mean(runs.map((r) => r.cdp.layoutMs))), recalcStyleMs: round1(mean(runs.map((r) => r.cdp.recalcStyleMs))),
@@ -781,31 +889,188 @@ export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser
     clientMessages: runs.reduce((acc, r) => { for (const [k, v] of Object.entries(r.clientMessages)) acc[k] = (acc[k] || 0) + v; return acc; }, {}),
     clientDiag: runs.reduce((acc, r) => { for (const [k, v] of Object.entries(r.clientDiag)) acc[k] = (acc[k] || 0) + v; return acc; }, {}),
     perFrame: runs.length === 1 ? runs[0].perFrame.map((f) => ({ i: f.i, type: f.type, bytes: f.bytes, at: f.at, handlerMs: round1(f.handlerMs), settleMs: round1(f.settleMs) })) : undefined,
+    cpuProfile: runs.some((r) => r.profiling && r.profiling.profile) ? profileReport(runs, firstIdx, cpuProfileFiles) : undefined,
   };
 }
 
-export async function replay({ app, framesFile, cpuThrottle = 1, iters = 1, fast = false, dist, jsonOut, log = console.error }) {
+export async function replay({ app, framesFile, cpuThrottle = 1, iters = 1, fast = false, dist, jsonOut, cpuProfile, log = console.error }) {
   if (!APP_CAPS[app]) throw new Error(`unknown app ${app}; one of ${APPS.join(", ")}`);
   const { frames } = loadFrames(framesFile);
   if (!frames.length) throw new Error(`no frames in ${framesFile}`);
   const pageServer = await startPageServer({ dist, log: (s) => log("kernel page server: " + s.trimEnd()) });
   let front, browser;
+  // A signal aimed at this process stops both servers before it exits; the finally below covers every
+  // other way out. The Handler would also end on its own when its stdin pipe closes, but not the front.
+  const onSignal = (sig) => {
+    if (browser) browser.close().catch(() => {});
+    if (front) front.stop();
+    pageServer.stop();
+    process.exit(sig === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
   try {
     front = await startFront({ pagePort: pageServer.port });
     browser = await launchBrowser();
     const runs = [];
     for (let i = 0; i < iters; i++) {
       log(`ui-bench: replaying ${frames.length} frames into app=${app} (${fast ? "back-to-back" : "recorded pacing"}, cpu x${cpuThrottle})${iters > 1 ? ` iteration ${i + 1}/${iters}` : ""}`);
-      runs.push(await replayOnce({ browser, app, frames, fast, cpuThrottle, front, log }));
+      runs.push(await replayOnce({ browser, app, frames, fast, cpuThrottle, front, token: pageServer.token, cpuProfile: !!cpuProfile, log }));
     }
-    const report = buildReport({ app, framesFile, cpuThrottle, fast, iters, browser: browser.version(), runs });
+    const cpuProfileFiles = cpuProfile ? writeProfiles(cpuProfile, runs) : [];
+    const report = buildReport({ app, framesFile, cpuThrottle, fast, iters, browser: browser.version(), runs, cpuProfileFiles });
     if (jsonOut) { fs.mkdirSync(path.dirname(path.resolve(jsonOut)), { recursive: true }); fs.writeFileSync(jsonOut, JSON.stringify(report, null, 1) + "\n"); }
     return report;
   } finally {
+    process.removeListener("SIGINT", onSignal);
+    process.removeListener("SIGTERM", onSignal);
     if (browser) await browser.close().catch(() => {});
     if (front) front.stop();
     pageServer.stop();
   }
+}
+
+// ── --cpu-profile: V8 samples across the replay, folded by function ─────────────────────────────
+
+export const PROFILE_INTERVAL_US = 500;
+const PROFILE_META = new Set(["(root)", "(program)", "(idle)", "(garbage collector)"]);
+const TOP_OVERALL = 25, TOP_WINDOW = 20;
+
+/** The label a call frame files under: url-basename:function:line, the line 1-based as DevTools shows
+ *  it. V8's bookkeeping nodes ((program), (idle), (garbage collector), (root)) keep their bare names. */
+export function frameKey(cf) {
+  if (!cf) return "(unknown)";
+  const fn = cf.functionName || "";
+  if (PROFILE_META.has(fn) && !cf.url) return fn;
+  const url = cf.url ? (path.basename(cf.url.split("?")[0]) || cf.url) : "(inline)";
+  return `${url}:${fn || "(anonymous)"}:${(cf.lineNumber ?? -1) + 1}`;
+}
+
+/** Fold a V8 .cpuprofile ({nodes, samples, timeDeltas, startTime, endTime}, times in microseconds)
+ *  into per-function time. Sample i owns the interval to sample i+1 (the last owns the interval to
+ *  endTime): its node's function takes it as self time, and every distinct function on its stack takes
+ *  it once as total time, so recursion is not double counted. The bookkeeping nodes are reported in
+ *  `meta`, never ranked. `window` = [fromUs, toUs] on the profile's clock restricts the fold. */
+export function aggregateProfile(profile, window = null) {
+  const nodes = new Map(), parent = new Map(), keyOf = new Map(), stacks = new Map();
+  for (const n of profile.nodes || []) { nodes.set(n.id, n); for (const c of n.children || []) parent.set(c, n.id); }
+  const key = (id) => { let k = keyOf.get(id); if (k === undefined) { const n = nodes.get(id); k = frameKey(n && n.callFrame); keyOf.set(id, k); } return k; };
+  const stackKeys = (id) => {
+    let s = stacks.get(id);
+    if (s) return s;
+    const seen = new Set();
+    for (let cur = id; cur != null && nodes.has(cur); cur = parent.get(cur)) { const k = key(cur); if (!PROFILE_META.has(k)) seen.add(k); }
+    s = [...seen]; stacks.set(id, s); return s;
+  };
+  const self = new Map(), total = new Map(), count = new Map(), meta = {};
+  const samples = profile.samples || [], deltas = profile.timeDeltas || [];
+  let t = profile.startTime || 0, sampledUs = 0, inWindow = 0;
+  for (let i = 0; i < samples.length; i++) {
+    t += deltas[i] || 0;
+    const dur = i + 1 < samples.length ? (deltas[i + 1] || 0) : Math.max(0, (profile.endTime || t) - t);
+    if (window && (t < window[0] || t >= window[1])) continue;
+    sampledUs += dur; inWindow++;
+    const k = key(samples[i]);
+    if (PROFILE_META.has(k)) { meta[k] = (meta[k] || 0) + dur; continue; }
+    self.set(k, (self.get(k) || 0) + dur);
+    count.set(k, (count.get(k) || 0) + 1);
+    for (const sk of stackKeys(samples[i])) total.set(sk, (total.get(sk) || 0) + dur);
+  }
+  const functions = [...total.keys()].map((k) => ({ key: k, selfMs: (self.get(k) || 0) / 1000, totalMs: total.get(k) / 1000, samples: count.get(k) || 0 }));
+  return { durationMs: ((profile.endTime || 0) - (profile.startTime || 0)) / 1000, sampledMs: sampledUs / 1000, samples: inWindow,
+    meta: Object.fromEntries(Object.entries(meta).map(([k, v]) => [k, v / 1000])), functions };
+}
+
+const bySelf = (fns) => [...fns].sort((a, b) => b.selfMs - a.selfMs || b.totalMs - a.totalMs || a.key.localeCompare(b.key));
+const byTotal = (fns) => [...fns].sort((a, b) => b.totalMs - a.totalMs || b.selfMs - a.selfMs || a.key.localeCompare(b.key));
+const roundFn = (f) => ({ key: f.key, selfMs: round1(f.selfMs), totalMs: round1(f.totalMs), samples: f.samples });
+
+/** Sum aggregates from several runs (iterations) by function key. */
+export function mergeAggregates(aggs) {
+  const fns = new Map(), meta = {};
+  let durationMs = 0, sampledMs = 0, samples = 0;
+  for (const a of aggs) {
+    durationMs += a.durationMs; sampledMs += a.sampledMs; samples += a.samples;
+    for (const [k, v] of Object.entries(a.meta)) meta[k] = (meta[k] || 0) + v;
+    for (const f of a.functions) { const m = fns.get(f.key) || { key: f.key, selfMs: 0, totalMs: 0, samples: 0 }; m.selfMs += f.selfMs; m.totalMs += f.totalMs; m.samples += f.samples; fns.set(f.key, m); }
+  }
+  return { durationMs, sampledMs, samples, meta, functions: [...fns.values()] };
+}
+
+/** Rank an aggregate: the top functions by self time and by total time, the bookkeeping totals beside. */
+export function rankProfile(agg, top) {
+  return { durationMs: round1(agg.durationMs), sampledMs: round1(agg.sampledMs), samples: agg.samples, functions: agg.functions.length,
+    meta: Object.fromEntries(Object.entries(agg.meta).map(([k, v]) => [k, round1(v)])),
+    topSelf: bySelf(agg.functions).slice(0, top).map(roundFn), topTotal: byTotal(agg.functions).slice(0, top).map(roundFn) };
+}
+
+/** The frames worth their own window: the first content frame and the largest frame of every type
+ *  except keepalives. Windows cover the synchronous handler (t0 to t0 + handler), the part of a frame's
+ *  cost the JavaScript sampler can see; style, layout and paint after it are not JavaScript. */
+function profileWindows(perFrame, firstIdx) {
+  const picks = [];
+  if (firstIdx >= 0 && perFrame[firstIdx]) picks.push({ label: "first content frame", f: perFrame[firstIdx] });
+  const largest = new Map();
+  for (const f of perFrame) { if (f.type === "ka") continue; const cur = largest.get(f.type); if (!cur || f.bytes > cur.bytes) largest.set(f.type, f); }
+  for (const [type, f] of largest) if (!picks.some((p) => p.f.i === f.i)) picks.push({ label: `largest ${type}`, f });
+  return picks;
+}
+
+function profileReport(runs, firstIdx, files) {
+  const profiled = runs.filter((r) => r.profiling && r.profiling.profile);
+  const overall = rankProfile(mergeAggregates(profiled.map((r) => aggregateProfile(r.profiling.profile))), TOP_OVERALL);
+  const windows = [];
+  for (const { label, f } of profileWindows(runs[0].perFrame, firstIdx)) {
+    const aggs = [];
+    for (const r of profiled) {
+      const pf = r.perFrame[f.i];
+      if (!pf || pf.t0 == null || pf.handlerMs == null || pf.handlerMs < 0) continue;
+      const { profile, p0 } = r.profiling;
+      const toUs = (ms) => profile.startTime + (ms - p0) * 1000;
+      aggs.push(aggregateProfile(profile, [toUs(pf.t0), toUs(pf.t0 + pf.handlerMs)]));
+    }
+    if (!aggs.length) continue;
+    windows.push({ label, index: f.i, type: f.type, bytes: f.bytes, handlerMs: round1(f.handlerMs), ...rankProfile(mergeAggregates(aggs), TOP_WINDOW) });
+  }
+  return { files, samplingIntervalUs: PROFILE_INTERVAL_US, alignMs: round1(Math.max(...profiled.map((r) => r.profiling.alignMs))), ...overall, windows };
+}
+
+/** Write each profiled iteration's .cpuprofile (Chrome DevTools loads it); with several iterations the
+ *  index goes before the extension. Returns the paths written. */
+function writeProfiles(out, runs) {
+  const abs = path.resolve(out);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const profiled = runs.filter((r) => r.profiling && r.profiling.profile);
+  const files = [];
+  profiled.forEach((r, i) => {
+    const ext = path.extname(abs);
+    const file = profiled.length === 1 ? abs : path.join(path.dirname(abs), `${path.basename(abs, ext)}-${i + 1}${ext}`);
+    fs.writeFileSync(file, JSON.stringify(r.profiling.profile));
+    files.push(file);
+  });
+  return files;
+}
+
+const fmtFn = (f) => `${fmtMs(f.selfMs).padStart(9)} ${fmtMs(f.totalMs).padStart(9)} ${String(f.samples).padStart(7)}  ${f.key}`;
+const fmtMeta = (meta) => Object.entries(meta).map(([k, v]) => `${k} ${fmtMs(v)} ms`).join(", ") || "none";
+
+export function renderProfile(cp) {
+  const out = [];
+  out.push(`cpu profile: ${cp.samples} samples over ${fmtMs(cp.durationMs)} ms at ${cp.samplingIntervalUs} us, ${cp.functions} functions; bookkeeping: ${fmtMeta(cp.meta)}; page-to-profile clock alignment ±${fmtMs(cp.alignMs)} ms`);
+  for (const f of cp.files || []) out.push(`  written: ${f} (load it in Chrome DevTools, Performance panel)`);
+  const head = `${"self ms".padStart(9)} ${"total ms".padStart(9)} ${"samples".padStart(7)}  url:function:line`;
+  out.push(`  top ${cp.topSelf.length} by self time`, `  ${head}`);
+  for (const f of cp.topSelf) out.push(`  ${fmtFn(f)}`);
+  out.push(`  top ${cp.topTotal.length} by total time`, `  ${head}`);
+  for (const f of cp.topTotal) out.push(`  ${fmtFn(f)}`);
+  for (const w of cp.windows || []) {
+    out.push("", `  window: ${w.label} (${w.type}, ${fmtBytes(w.bytes)}, frame ${w.index}): handler ${fmtMs(w.handlerMs)} ms, ${w.samples} samples, ${fmtMs(w.sampledMs)} ms sampled; bookkeeping: ${fmtMeta(w.meta)}`);
+    out.push(`    top ${w.topSelf.length} by self time`, `    ${head}`);
+    for (const f of w.topSelf) out.push(`    ${fmtFn(f)}`);
+    out.push(`    top ${w.topTotal.length} by total time`, `    ${head}`);
+    for (const f of w.topTotal) out.push(`    ${fmtFn(f)}`);
+  }
+  return out.join("\n");
 }
 
 // ── text rendering ───────────────────────────────────────────────────────────────────────────────
@@ -827,18 +1092,25 @@ export function renderReport(r) {
   out.push("");
   out.push(`${"type".padEnd(14)} ${"count".padStart(7)} ${"bytes".padStart(10)} ${"max".padStart(10)}   ${"handler p50/p90/max ms".padEnd(26)} ${"settle p50/p90/max ms".padEnd(26)}`);
   for (const [type, s] of Object.entries(r.types)) {
-    out.push(`${type.padEnd(14)} ${String(s.count).padStart(7)} ${fmtBytes(s.bytes).padStart(10)} ${fmtBytes(s.bytesMax).padStart(10)}   ${stats3(s.handlerMs).padEnd(26)} ${stats3(s.settleMs).padEnd(26)}${s.measured < s.count ? `  (${s.count - s.measured} unmeasured)` : ""}`);
+    out.push(`${type.padEnd(14)} ${String(s.count).padStart(7)} ${fmtBytes(s.bytes).padStart(10)} ${fmtBytes(s.bytesMax).padStart(10)}   ${stats3(s.handlerMs).padEnd(26)} ${stats3(s.settleMs).padEnd(26)}${s.measured < s.count ? `  (${s.count - s.measured} unmeasured)` : ""}${s.settleMissing ? `  (${s.settleMissing} settle missing)` : ""}`);
   }
+  if (r.frames.settleMissing) out.push(`warning: ${r.frames.settleMissing} frame${r.frames.settleMissing === 1 ? "" : "s"} never received a settle stamp; the settle columns are computed over the frames that did`);
+  if (r.frames.addListenerMessages) out.push(`warning: ${r.frames.addListenerMessages} message listener${r.frames.addListenerMessages === 1 ? " was" : "s were"} added with addEventListener; the handler column does not time work done there`);
+  if (r.frames.buildBannerRaised) out.push(`warning: the page raised its "newer build" banner in ${r.frames.buildBannerRaised} run${r.frames.buildBannerRaised === 1 ? "" : "s"} (a keepalive's dv is newer than the dist under test): a few extra elements and a layout the frames did not cause`);
+  if (r.frames.connBannerRaised) out.push(`warning: the page raised its "connection stale" banner in ${r.frames.connBannerRaised} run${r.frames.connBannerRaised === 1 ? "" : "s"}`);
   out.push("");
   out.push(`long animation frames (${r.loaf.kind || "unsupported"}): ${r.loaf.count} entries, ${fmtMs(r.loaf.durationMs)} ms total, ${fmtMs(r.loaf.blockingMs)} ms blocking, longest ${fmtMs(r.loaf.maxMs)} ms`);
+  out.push("  script attribution names each task's entry point (the message handler, a rAF, a timer, a script's evaluation), not the bundle function; --cpu-profile gives functions");
   for (const s of r.loaf.topScripts) out.push(`  ${fmtMs(s.durationMs).padStart(8)} ms  x${String(s.count).padEnd(4)} ${s.key}`);
-  out.push(`end state: JS heap ${fmtBytes(r.end.heapUsed)} used of ${fmtBytes(r.end.heapTotal)}; DOM ${r.end.domElements} elements (${r.end.cdpNodes} nodes, ${r.end.jsEventListeners} listeners); ${r.end.layoutCount} layouts ${fmtMs(r.end.layoutMs)} ms; ${r.end.recalcStyleCount} style recalcs ${fmtMs(r.end.recalcStyleMs)} ms; script ${fmtMs(r.end.scriptMs)} ms; tasks ${fmtMs(r.end.taskMs)} ms`);
+  out.push(`end state: JS heap ${fmtBytes(r.end.heapUsed)} used of ${fmtBytes(r.end.heapTotal)} after a forced GC; DOM ${r.end.domElements} elements (${r.end.cdpNodes} nodes, ${r.end.jsEventListeners} listeners)`);
+  out.push(`  cumulative since navigation (page load and idle timers included; the timeline redraws every animation frame while it follows now): ${r.end.layoutCount} layouts ${fmtMs(r.end.layoutMs)} ms; ${r.end.recalcStyleCount} style recalcs ${fmtMs(r.end.recalcStyleMs)} ms; script ${fmtMs(r.end.scriptMs)} ms; tasks ${fmtMs(r.end.taskMs)} ms`);
   out.push(`console: ${r.console.errors.length} errors, ${r.console.pageErrors.length} uncaught exceptions, ${r.console.warnings} warnings`);
   for (const e of r.console.errors.slice(0, 10)) out.push(`  error: ${e.slice(0, 300)}`);
   for (const e of r.console.pageErrors.slice(0, 10)) out.push(`  uncaught: ${e.slice(0, 300)}`);
   for (const e of r.console.failedResources.slice(0, 10)) out.push(`  failed resource: ${e}`);
   out.push(`messages the pane sent: ${Object.entries(r.clientMessages).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}${Object.keys(r.clientDiag || {}).length ? ` (clientDiag: ${Object.entries(r.clientDiag).map(([k, v]) => `${k} ${v}`).join(", ")})` : ""}`);
   if (r.fast) out.push("note: back-to-back replay; a frame's settle time includes the frames dispatched after it before the next rendered frame, so settle percentiles overlap while handler times do not.");
+  if (r.cpuProfile) out.push("", renderProfile(r.cpuProfile));
   return out.join("\n");
 }
 
@@ -861,8 +1133,13 @@ export function compareReports(a, b) {
       settleP50: delta(sx.p50, sy.p50), settleP90: delta(sx.p90, sy.p90), settleMax: delta(sx.max, sy.max),
       handlerP50: delta(hx.p50, hy.p50), handlerP90: delta(hx.p90, hy.p90), handlerMax: delta(hx.max, hy.max) };
   }
+  // LayoutCount, ScriptDuration and TaskDuration are cumulative since navigation, so they scale with how
+  // long the page sat there: a percentage between runs of different pacing or length says nothing.
+  const replayMs = [a.frames?.replayMs ?? null, b.frames?.replayMs ?? null];
+  const sameLength = replayMs[0] > 0 && replayMs[1] > 0 && Math.max(replayMs[0] / replayMs[1], replayMs[1] / replayMs[0]) <= 1.25;
+  const endComparable = !!a.fast === !!b.fast && sameLength;
   return {
-    apps: [a.app, b.app], cpuThrottle: [a.cpuThrottle, b.cpuThrottle], fast: [a.fast, b.fast],
+    apps: [a.app, b.app], cpuThrottle: [a.cpuThrottle, b.cpuThrottle], fast: [a.fast, b.fast], replayMs, endComparable,
     first: { bytes: delta(a.first?.bytes, b.first?.bytes), handlerMs: delta(a.first?.handlerMs, b.first?.handlerMs), settleMs: delta(a.first?.settleMs, b.first?.settleMs) },
     types,
     loaf: { count: delta(a.loaf?.count, b.loaf?.count), durationMs: delta(a.loaf?.durationMs, b.loaf?.durationMs), blockingMs: delta(a.loaf?.blockingMs, b.loaf?.blockingMs), maxMs: delta(a.loaf?.maxMs, b.loaf?.maxMs) },
@@ -873,11 +1150,11 @@ export function compareReports(a, b) {
 }
 
 const fmtNum = (x) => (x == null ? "-" : Number.isInteger(x) ? String(x) : fmtMs(x));
-const fmtDelta = (d, unit = "") => {
+const fmtDelta = (d, unit = "", { pct = true } = {}) => {
   if (d.diff == null) return `${fmtNum(d.a)} → ${fmtNum(d.b)}${unit}`;
   if (d.diff === 0) return `${fmtNum(d.a)} → ${fmtNum(d.b)}${unit} (unchanged)`;
   const sign = (x) => (x > 0 ? "+" : "-");
-  return `${fmtNum(d.a)} → ${fmtNum(d.b)}${unit} (${sign(d.diff)}${fmtNum(Math.abs(d.diff))}${d.pct != null ? `, ${sign(d.pct)}${fmtNum(Math.abs(d.pct))}%` : ""})`;
+  return `${fmtNum(d.a)} → ${fmtNum(d.b)}${unit} (${sign(d.diff)}${fmtNum(Math.abs(d.diff))}${pct && d.pct != null ? `, ${sign(d.pct)}${fmtNum(Math.abs(d.pct))}%` : ""})`;
 };
 
 export function renderCompare(c) {
@@ -888,7 +1165,9 @@ export function renderCompare(c) {
     out.push(`${type.padEnd(14)} count ${fmtDelta(t.count)}; settle p50 ${fmtDelta(t.settleP50, " ms")}, p90 ${fmtDelta(t.settleP90, " ms")}, max ${fmtDelta(t.settleMax, " ms")}; handler p50 ${fmtDelta(t.handlerP50, " ms")}`);
   }
   out.push(`long animation frames: count ${fmtDelta(c.loaf.count)}; total ${fmtDelta(c.loaf.durationMs, " ms")}; blocking ${fmtDelta(c.loaf.blockingMs, " ms")}; longest ${fmtDelta(c.loaf.maxMs, " ms")}`);
-  out.push(`end state: heap ${fmtDelta(c.end.heapUsed, " B")}; DOM elements ${fmtDelta(c.end.domElements)}; layouts ${fmtDelta(c.end.layoutCount)}; script ${fmtDelta(c.end.scriptMs, " ms")}; tasks ${fmtDelta(c.end.taskMs, " ms")}`);
+  const pct = { pct: c.endComparable !== false };
+  out.push(`end state: heap ${fmtDelta(c.end.heapUsed, " B")}; DOM elements ${fmtDelta(c.end.domElements)}; layouts ${fmtDelta(c.end.layoutCount, "", pct)}; script ${fmtDelta(c.end.scriptMs, " ms", pct)}; tasks ${fmtDelta(c.end.taskMs, " ms", pct)}`);
+  if (c.endComparable === false) out.push(`  layouts, script and tasks are cumulative since navigation and the runs differ in pacing or length (replay ${fmtNum(c.replayMs?.[0])} → ${fmtNum(c.replayMs?.[1])} ms), so they carry no percentage`);
   out.push(`console errors: ${c.console.errors[0]} → ${c.console.errors[1]}`);
   return out.join("\n");
 }
@@ -897,7 +1176,7 @@ export function renderCompare(c) {
 
 const USAGE = `usage:
   node tools/ui-bench.mjs --record <app> --seconds N --out /tmp/…/frames.jsonl [--port P]
-  node tools/ui-bench.mjs --replay <app> --frames FILE [--cpu-throttle K] [--iters N] [--fast] [--json OUT] [--dist DIR]
+  node tools/ui-bench.mjs --replay <app> --frames FILE [--cpu-throttle K] [--iters N] [--fast] [--json OUT] [--dist DIR] [--cpu-profile OUT.cpuprofile]
   node tools/ui-bench.mjs --synthesize <app> --cards N --out FILE [--seed S]
   node tools/ui-bench.mjs --compare A.json B.json
 apps: ${APPS.join(", ")} (synthesize: feed, fleet, waiting, timeline)`;
@@ -938,7 +1217,7 @@ async function main(argv) {
   }
   if (o.replay) {
     if (!o.frames) throw new Error("--replay needs --frames FILE");
-    const report = await replay({ app: o.replay, framesFile: o.frames, cpuThrottle: num("cpu-throttle", 1), iters: num("iters", 1), fast: !!o.fast, dist: o.dist, jsonOut: o.json });
+    const report = await replay({ app: o.replay, framesFile: o.frames, cpuThrottle: num("cpu-throttle", 1), iters: num("iters", 1), fast: !!o.fast, dist: o.dist, jsonOut: o.json, cpuProfile: o["cpu-profile"] });
     console.log(renderReport(report));
     return 0;
   }

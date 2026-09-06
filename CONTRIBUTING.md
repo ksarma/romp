@@ -50,11 +50,25 @@ node tools/ui-bench.mjs --replay feed --frames /tmp/romp-perf/frames-feed.jsonl 
 A replay reports, per frame type, the bytes, the synchronous handler time, and
 the time until the main thread is free again (to the second
 `requestAnimationFrame` after the message) as p50, p90, and max; then the
-long-animation-frame entries with script attribution, the JavaScript heap, the
-DOM size, and every console error. The numbers come from the real pages: the
+long-animation-frame entries with script attribution, the JavaScript heap
+after a forced garbage collection, the DOM size, and every console error. The
+long-animation-frame attribution names each task's entry point (the message
+handler, a `requestAnimationFrame` callback, a timer, a script's evaluation),
+not the function inside the bundle that did the work; for that, add
+`--cpu-profile /tmp/romp-perf/feed.cpuprofile`, which samples the page's
+JavaScript with the V8 profiler across the replay, writes a file Chrome
+DevTools loads (Performance panel), and prints the functions with the most self
+and total time as `bundle.js:function:line`, overall and inside the first
+content frame and the largest frame of each type. The end-of-run layout, style,
+script and task counters are cumulative since navigation, so they include page
+load and idle timers (the timeline redraws every animation frame while it
+follows the present), and `--compare` shows them without percentages when the
+two runs differ in pacing or length. The numbers come from the real pages: the
 kernel's own HTTP handler serves the HTML, the shim, and the bundles from a
 `python3` subprocess under an isolated environment (the pattern of
-`tests/test_color_route.py`), and a Node front server answers the page's
+`tests/test_color_route.py`; the manager variables, the API keys and the postal
+peer bus are removed, the serve token is minted for the run, and the subprocess
+exits when the bench does), and a Node front server answers the page's
 WebSocket and proxies everything else to it. The default is no CPU throttling,
 a desktop; `--cpu-throttle 4` emulates a machine four times slower. `--iters 3`
 pools three runs. `--fast` sends the frames back-to-back instead of at their
@@ -63,14 +77,20 @@ recorded pacing; settle times then overlap, handler times do not.
 A recording holds real session data. `--record` connects to the running kernel
 as one more pane (the same URL and capabilities, the token as the page's
 cookie), sends the ready handshake and nothing else, and writes only under
-`/tmp`, refusing a path inside a git checkout. Never copy one into the repo;
-the tests use synthetic streams. Apps: `feed`, `fleet` (the Outline pane),
-`waiting`, `chat`, `timeline`, `files`. The chat's frames cannot be
-synthesized, only recorded.
+`/tmp` (private to your user: directory 0700, file 0600), refusing a path
+inside a git checkout or through a symlink. Never copy one into the repo; the
+tests use synthetic streams. Apps: `feed`, `fleet` (the Outline pane),
+`waiting`, `chat`, `timeline`, `files`. Two cannot be synthesized, only
+recorded: the chat's session frame is built by `build_session` and is too rich
+to fake, and the Files pane parses no frames at all (its socket carries
+keepalives and op replies).
 
 `tests/ui-bench.test.mjs` (`node --test tests/ui-bench.test.mjs`) covers the
-tool and replays synthetic feed and timeline streams in a real browser. It
-skips, saying why, when no Chromium or `python3` is available.
+tool, including the recording client against a local WebSocket server and the
+Handler subprocess's isolation, and replays synthetic feed and timeline streams
+in a real browser. The browser tests skip, saying why, when no Chromium, no
+`python3` or no built `dist/` is available; with `ROMP_UI_BENCH_REQUIRE=1` in
+the environment (CI sets it) that skip is a failure instead.
 
 ## Test environment
 
