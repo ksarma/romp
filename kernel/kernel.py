@@ -36725,7 +36725,7 @@ def _fleet_page():
 # styles.css for the .ut-* row / button / reply-modal dress the split card wears, so the two surfaces cannot
 # drift. Its layout CSS lives in ui/webview/waiting-pane.css — ONE file, read live here and bundled into
 # the VS Code VSIX by vscode-extension/esbuild.js. Browser shell only for now: the VS Code extension's
-# panel mirror is a separate change (UPSTREAM.md).
+# panel mirror is a separate change (upstream/2026-09-03-waiting-on-you-pane.md).
 def _waiting_page():
     try:
         waiting_css = (UI / "webview" / "waiting-pane.css").read_text()
@@ -36763,7 +36763,7 @@ def _waiting_page():
 # and a seat in the conserve-memory viewer list (or an open Files pane alone reads as a closed dashboard). The
 # shell's viewFile relay brings the pane forward and forwards a chat file-link click into it when fileLinkPane
 # is "pane" (render.ts openPath). Browser shell only for now: the VS Code extension's panel mirror is a
-# separate change (UPSTREAM.md).
+# separate change (upstream/2026-09-03-files-pane.md).
 def _files_page():
     try:
         files_css = (UI / "webview" / "files-pane.css").read_text()

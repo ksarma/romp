@@ -55,8 +55,8 @@ status with `scripts/upstream-ledger.py set <slug> status <value>` or by editing
   latest Ledger run on the Actions tab always shows `main`'s ledger.
 - `scripts/upstream-ledger.py list --status approved` prints one JSON object per entry, which is
   what the upstream session reads before opening an offer.
-- `scripts/upstream-ledger.py check` runs every rule the guard test (`tests/test_upstream_ledger.py`)
-  runs.
+- `scripts/upstream-ledger.py check` runs the entry and front-page rules the guard test
+  (`tests/test_upstream_ledger.py`) runs; the test also renders the table and checks the rendering.
 
 ## Offering
 
