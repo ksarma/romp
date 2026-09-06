@@ -64,7 +64,9 @@ Three properties this module holds, the same three keysource.py holds:
   briefly unreachable recovers at the next launch or call without an operator action; between
   runs the previous set stands and the record says `stale`. Concurrent callers coalesce on one
   lock — a boot that revives many sessions runs the command once, not once per session — and a
-  caller arriving mid-run takes that run's result, good or bad, rather than running again.
+  caller arriving mid-run takes that run's result, good or bad, rather than running again. Every
+  record carries `attempt`, the ordinal of the run or refusal that produced it (the callers that
+  coalesced on one run share it), so a reader that holds two records knows which is the newer.
 
 The apiKeyHelper fingerprint lives here too: on an installation whose set carries no work key the
 sessions authenticate through Claude Code's own `apiKeyHelper`, and the kernel never sees that
@@ -544,7 +546,9 @@ _values: dict = {}                # the LAST GOOD set — the one thing here tha
 _snap: dict | None = None         # the value-free record of the last run (None: never ran)
 _snap_selector_ident: tuple = ()  # the selector file's stat identity the record was taken under
 _runs = 0                         # command executions, total (tests count coalescing with this)
-_attempts = 0                     # _run_locked completions, total — what a waiting caller coalesces on
+_attempts = 0                     # _run_locked completions, total — what a waiting caller coalesces on, and
+                                  # the record's `attempt`; never rewound (a reader ordering records by it
+                                  # may outlive a _reset)
 _failures = 0                     # consecutive failed runs
 _last_ok_at: float | None = None  # wall-clock time of the last successful run (None: none yet)
 _set_seq = 0                      # moves when a run hands back a DIFFERENT set: the set's identity under one generation
@@ -633,7 +637,7 @@ def _empty_snapshot(env_cfg: bool) -> dict:
             "names": [], "dropped": [], "droppedAuth": [], "badLines": 0, "emptyValues": 0,
             "setFp": "", "keyFp": "", "hasKey": False, "stale": False,
             "runs": _runs, "failures": _failures, "lastOkAt": _last_ok_at, "generation": _gen,
-            "setSeq": _set_seq, "selector": "", "selectorNote": "", "timeoutProblem": ""}
+            "setSeq": _set_seq, "attempt": _attempts, "selector": "", "selectorNote": "", "timeoutProblem": ""}
 
 
 def _set_values(new: dict) -> None:
@@ -659,8 +663,9 @@ def _run_locked(environ) -> None:
         _set_values({})
         snap["generation"] = gen
         snap["setSeq"] = _set_seq
-        _snap = snap
         _attempts += 1
+        snap["attempt"] = _attempts
+        _snap = snap
         return
     _snap_selector_ident = _selector_ident(environ)
     sel, sel_err = read_selector(None, environ)
@@ -721,8 +726,9 @@ def _run_locked(environ) -> None:
     snap["hasKey"] = KEY_VAR in _values
     snap["generation"] = gen
     snap["setSeq"] = _set_seq
-    _snap = snap
     _attempts += 1                          # at completion: a caller that read the counter mid-run sees it move
+    snap["attempt"] = _attempts             # the record's ordinal: strictly newer than every record before it
+    _snap = snap
 
 
 def _ensure_locked(environ, retry_failed: bool = True) -> None:
@@ -773,8 +779,10 @@ def current(environ=None) -> dict:
     names (the set's variable names), dropped (ROMP_* names refused), badLines, emptyValues, setFp,
     keyFp (of the set's ANTHROPIC_API_KEY, "" when absent), hasKey, stale (a failed run is standing
     on the previous set), runs, failures, lastOkAt, generation, setSeq (the set's identity within the
-    generation: it moves when a run hands back a different set), selector (the token, when declared),
-    selectorNote ("(undeclared, N chars)" otherwise), timeoutProblem. Never a value."""
+    generation: it moves when a run hands back a different set), attempt (the ordinal of the run or
+    refusal that produced the record — callers that coalesced on one run share it; a reader holding
+    two records orders them by it), selector (the token, when declared), selectorNote ("(undeclared,
+    N chars)" otherwise), timeoutProblem. Never a value."""
     with _fresh(environ):
         return dict(_snap)
 
@@ -931,8 +939,11 @@ def helper_runs() -> int:
 
 
 def _reset() -> None:
-    """Tests only: forget everything, including the counters and the mode pin."""
-    global _gen, _values, _snap, _snap_selector_ident, _runs, _attempts, _failures, _last_ok_at, _FILE_CFG, _MODE_PIN
+    """Tests only: forget everything, including the counters and the mode pin — except the record
+    ordinal (_attempts), which moves forward like the generation does: a reader that orders records
+    by `attempt` (the backend's noter) may outlive a reset, and a rewound ordinal would have it take
+    every record after the reset for an older one."""
+    global _gen, _values, _snap, _snap_selector_ident, _runs, _failures, _last_ok_at, _FILE_CFG, _MODE_PIN
     global _auth_failed_for, _auth_failed_fps, _set_seq
     with _lock, _helper_lock:
         _gen += 1
@@ -942,7 +953,6 @@ def _reset() -> None:
         _snap = None
         _snap_selector_ident = ()
         _runs = 0
-        _attempts = 0
         _failures = 0
         _last_ok_at = None
         _set_seq = 0

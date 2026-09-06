@@ -58,6 +58,7 @@ These are for scripting and for agents rather than daily use:
 |---|---|
 | `romp url` | Print only the tokened dashboard URL, for piping |
 | `romp sessions [--json]` | The fleet with each session's state, identity colours, directory and backend |
+| `romp perf [--interval <s>] [--json]`, `romp perf log on\|off` | The kernel's performance counters as rates over two snapshots (below); `--json` prints one raw snapshot; `log on\|off` turns the `romp-perf` stderr log on or off without a restart |
 | `romp mail …` | The postal service from the shell (below) |
 | `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}` — a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text |
 | `romp new --model <id> <name>` | Model for the SDK session: a family alias such as `fable` (follows the family's newest release) or a full id such as `claude-fable-5` (a pin); re-asserted if `<name>` already runs |
@@ -375,9 +376,12 @@ whole environment sees them rather than for one command.
 Run `romp-service install` again after changing one, and on Linux restart the
 manager after it (`systemctl --user restart romp-manager`): the install
 rewrites the unit and reloads systemd but leaves a running manager as it is,
-while on macOS it reloads the job, which restarts it. The service unit bakes in
-whatever is set at install time, so a renumbered port that only lives in your
-shell leaves the supervised manager on the old one, and the two collide.
+while on macOS it reloads the job, which restarts it. Either rewrite drops a
+line you added to the unit or the plist by hand; a drop-in survives it (see
+[Two things still need a restart](#two-things-still-need-a-restart)). The
+service unit bakes in whatever is set at install time, so a renumbered port
+that only lives in your shell leaves the supervised manager on the old one, and
+the two collide.
 
 ### API keys on disk: the file mode
 
@@ -434,8 +438,10 @@ bill](#switching-which-api-key-the-sessions-bill-romp-keyswap)).
 
 For installations that forbid a credential in any file, the kernel has a
 second key source, **command mode**: a command it runs, whose output it hands
-to each process it starts. One line in `service.env` (or an `Environment=` line
-in the unit) selects it; with the line absent nothing about file mode changes.
+to each process it starts. One line in `service.env` selects it (a systemd
+drop-in works too; a line added to the unit or the plist by hand does not
+survive `romp-service install`, which rewrites both); with the line absent
+nothing about file mode changes.
 
     ROMP_CREDENTIAL_COMMAND=my-credentials "$1"
     ROMP_CREDENTIAL_NAMES=hp,lp
@@ -561,7 +567,9 @@ gui/$(id -u)/com.romp.manager`, repeated until it fails; then `launchctl
 bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.romp.manager.plist`,
 repeated if it is refused. On Linux `romp-service install` rewrites the unit
 and reloads systemd but leaves a running manager as it is, so the restart
-still follows. The other `ROMP_CREDENTIAL_*`
+still follows. The rewrite drops a line added to the unit by hand, as the
+plist rewrite does; a drop-in survives it, so a line of your own belongs in
+`service.env` or a drop-in. The other `ROMP_CREDENTIAL_*`
 values are read live, the environment first, with the same consequence: a
 line the manager's environment already carries is shadowed by that copy until
 the manager restarts, while a line the environment does not carry (one added
@@ -575,13 +583,16 @@ this shell reads, or leaves it unset where this shell sets it (the installer
 writes the line into the unit or the plist when the installing shell's path is
 not the default; a drop-in, a sourced profile or the shell that ran `romp up`
 can set it too; look for it there, then run `romp keyswap` with the same
-variable, or change it where it is and restart the manager: `romp-service
-install` from a shell with the wanted path rewrites the unit's or the plist's
-line, and a drop-in edit takes the `daemon-reload` above); a `service.env`
-line removed since the kernel started; and the shell that ran `romp up`. The
-same other-file cause is named
-under a kernel in file mode when the file this shell reads carries the line,
-since `romp refresh` reaches only the file the kernel reads.
+variable, or change it where it is and restart the manager; when it is
+nowhere, the kernel reads the default path, so unset the variable in your
+shell or install from that shell); a `service.env` line removed since the kernel
+started; and the shell that ran `romp up`. The restart per platform, the
+reload a unit, drop-in or plist line takes first and what the install does
+(it rewrites the unit or the plist, so a line added to either by hand is gone
+and a drop-in stays) close the report once, after the places. The same
+other-file cause is named under a kernel in file mode when the file this
+shell reads carries the line, since `romp refresh` reaches only the file the
+kernel reads.
 
 The kernel checks the configuration once at boot and logs one line per
 finding, names and fingerprints only. When the first run succeeds the line is
@@ -747,15 +758,21 @@ so the report lists the places, each with its remedy:
   restart](#two-things-still-need-a-restart))
 - another `service.env`, when the kernel's environment names a different file
   through `ROMP_SERVICE_ENV_FILE` (the installer's line in the unit or the
-  plist, a drop-in, a profile, or the shell that ran `romp up`): run `romp
-  keyswap` with the same variable, or change it where the kernel gets it and
-  restart the manager (`romp-service install` from a shell with the wanted
-  path rewrites the unit's or the plist's line; a drop-in edit takes the
-  reload under [Two things still need a
-  restart](#two-things-still-need-a-restart))
+  plist, a drop-in, a profile, or the shell that ran `romp up`), or names none
+  where your shell does: run `romp keyswap` with the same variable (unset,
+  when the kernel has none), or change it where the kernel gets it and restart
+  the manager (`romp-service install` from a shell with the wanted path
+  rewrites the unit's or the plist's line and drops a line added to either by
+  hand; a drop-in survives it and takes the reload under [Two things still
+  need a restart](#two-things-still-need-a-restart))
 - `service.env`, edited since the kernel read it at its start: `romp refresh`
 - the shell that ran `romp up`, which exported the line: start it again from a
   shell without the line
+
+The report closes with the restart per platform and the reload a unit,
+drop-in or plist line takes first, once, so the second and third places share
+one copy (the commands under [Two things still need a
+restart](#two-things-still-need-a-restart)).
 
 On the fingerprint: the kernel's last run used
 another selector (`--refresh` re-runs it), or the two environments differ (the
@@ -774,7 +791,8 @@ the key the kernel holds (as a fingerprint), the file it reads, and `MISMATCH`
 when the kernel is not reading this file's key, with the usual causes: the
 file is unreadable to the kernel, it has no key line and the kernel holds its
 startup key, or the kernel reads another `service.env` (the same other-file
-cause as above, with the places to look and the remedy per place); a cycle
+cause as above, with the places to look, the remedy per place and the restart
+and reload commands); a cycle
 reads and compares the same way first and stops on a mismatch. Rotate the key
 at its source, then run `--cycle-all` for the key-billed sessions. In file
 mode the kernel hands a
@@ -1069,6 +1087,61 @@ Earlier builds appended one row per transition to `STATE/api-health.jsonl`. A
 kernel that boots without a state file seeds one from that ledger's last 64 KB,
 once, and leaves the ledger alone; once the state file exists the ledger is
 never read again and can be deleted.
+
+## Kernel performance counters
+
+`GET /perf` returns one JSON document of counters the kernel keeps at all
+times: what its pusher, judge and HTTP threads have done since the process
+started. The route takes the serve token. The counters cost a lock and a few
+dictionary increments per event, so they stay on; nothing is formatted or
+serialized until a request reads them. `romp perf` takes two snapshots
+`--interval` seconds apart (default 10) and prints the difference as rates on
+one screen: pusher cycles and wakes per second, cycle time percentiles, the
+share of cycle time in each stage, CPU split between the pusher thread, the
+judge threads and the rest of the process, builds served from cache against
+rebuilds, bytes sent per slot as full frames, deltas and deduplicated frames,
+goal-store loads and writes per second, judge passes and their durations,
+memory and thread count. `romp perf --json` prints one raw snapshot. If the
+kernel restarted between the two snapshots the counters have started over, so
+the command says so and exits non-zero instead of printing negative rates; a
+refused token is reported as such, not as a dead kernel.
+
+The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
+
+- `now`, `since`, `uptime_s`, `log`: the clock, when the counters started,
+  seconds since the process started, and whether the `romp-perf` log is on.
+- `process`: `rss_kb`, `threads`, `cpu_s`, `pid`.
+- `pusher`: `cycles`, `wakes` (every wake call; a burst of wakes runs one
+  cycle), `wakes_event` and `wakes_backstop` (how the loop's wait ended),
+  `cycle_ms_sum`, `cycle_ms_max` (since start), `cycle_ms_last`,
+  `cycle_cpu_ms_sum` (the pusher thread's own CPU time), and `cycle_ms_p50`,
+  `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n` from the last 256 cycles.
+- `stages_ms`: `jobs` (the cycle's tick jobs outside the push), `push`, and
+  inside it `push.chat`, `push.feed`, `push.timeline`, `push.send`. The
+  `push.*` stages count every push, including the one a connecting page gets,
+  so they can add up to more than `push`.
+- `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
+- `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
+  `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
+  was built and compared, then not sent.
+- `goals`: `loads`, `saves`, `writes` on the goal stores. A save that would
+  rewrite identical bytes is a save without a write.
+- `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
+  on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
+  per-session worker they run; the workers' share is `cpu_ms_workers`).
+- `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
+  OPTIONS, the query string removed and `/dist/*`, `/media/*` and
+  `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
+  fold into `other`. A WebSocket upgrade is counted when it arrives and not
+  timed, since its handler runs for the life of the socket.
+
+`POST /perf` with the body `{"log": true}` or `{"log": false}` turns the
+`romp-perf` stderr log on or off in the running kernel (`romp perf log on|off`).
+The log prints one line per chat build and per frame sent or deduplicated. It
+goes where the manager's stderr goes: under systemd, `journalctl --user -u
+romp-manager -f | grep romp-perf`; under launchd (macOS), `tail -f
+~/.local/state/romp/manager.log | grep romp-perf`. Setting `ROMP_PERF=1` in the
+kernel's environment still turns it on at start.
 
 ## Where things live
 

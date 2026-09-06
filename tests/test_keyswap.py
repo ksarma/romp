@@ -721,7 +721,9 @@ class KeyswapCli(_EnvFile):
         self.assertIn("MISMATCH", said)
         self.assertIn("sha256:deadbeefcafe", said)
         self.assertIn("reads another service.env:", said)
-        self.assertIn("this shell reads %s." % self.path, said, "the other-file cause names this shell's path")
+        # flattened: a path too long for its sentence is rendered on a line of its own (cli._other_file), and
+        # a temp directory's length is the environment's, not this test's
+        self.assertIn("this shell reads %s." % self.path, " ".join(said.split()), "the other-file cause names this shell's path")
         self.assertNotIn("installed with another env-file path", said, "one direction of the cause; the general form replaced it")
         self.posted.clear()
         cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
@@ -952,11 +954,16 @@ class KeyswapCliCommandMode(unittest.TestCase):
         rc, out, _err = self.run_cli()
         self.assertEqual(rc, 1)
         self.assertIn("kernel      reads (none) in FILE mode", out)
-        self.assertIn("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in this shell's", out)
-        self.assertIn("environment only, not in service.env", out)
+        self.assertIn("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in this\n"
+                      "            shell's environment only, not in service.env", out)
         self.assertIn("keeps the mode it started in", out)
-        self.assertIn("Put the line in service.env, then `romp refresh` restarts the", out)
-        self.assertIn("kernels into command mode", out)
+        self.assertIn("Put the line in service.env, then\n            `romp refresh` restarts the kernels into command mode", out)
+        # a drop-in is the other place that survives `romp-service install`; a line added to the unit or the
+        # plist by hand does not (the install rewrites both), so the hint never sends the line there
+        self.assertIn("A drop-in line reaches them at the manager restart after `systemctl --user\n"
+                      "            daemon-reload` instead; not a line added to the unit or the plist by hand, which the\n"
+                      "            next `romp-service install` rewrites away.", out)
+        self.assertNotIn("a line in the unit's own Environment=", out)
         self.assertNotIn("set in service.env\n", out)
 
     def test_mismatch_when_the_kernel_is_in_file_mode_and_the_line_is_in_service_env_names_romp_refresh(self):
@@ -969,14 +976,15 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.kernel_view.update({"keySource": "file", "keyFp": "", "launched": {"": 3}})
         rc, out, _err = self.run_cli()
         self.assertEqual(rc, 1)
-        self.assertIn("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in service.env", out)
-        self.assertIn("A running kernel keeps the mode it started in: `romp refresh`", out)
-        self.assertIn("restarts the kernels into command mode (a kernel reads service.env at its start, so a line added", out)
-        self.assertIn("there needs no manager restart)", out)
-        # the other-file block that follows names the manager restart for ITS remedy (a changed
-        # ROMP_SERVICE_ENV_FILE in the unit); the advice for the line itself never does
+        self.assertIn("MISMATCH    the kernel is in file mode and this shell is not: ROMP_CREDENTIAL_COMMAND is set in\n"
+                      "            service.env and was not when the kernel started.", out)
+        self.assertIn("A running kernel keeps the mode it\n            started in: `romp refresh` restarts the kernels into command mode", out)
+        self.assertIn("so a line added there needs no manager restart)", out)
+        # the other-file block that follows, and the restart block after it, name the manager restart for
+        # THEIR remedy (a changed ROMP_SERVICE_ENV_FILE in the unit); the advice for the line itself never does
         self.assertNotIn("systemctl", out.split("reads another service.env:")[0], "adding the line is a kernel restart, never a manager restart")
         self.assertIn("reads another service.env:", out)
+        self.assertIn("The manager restart is `systemctl --user restart romp-manager` (Linux)", out)
         self.assertNotIn("set in this shell's", out)
 
     def test_mismatch_when_the_kernels_fingerprint_differs_names_the_two_environments(self):
@@ -986,8 +994,8 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.assertIn("MISMATCH    the kernel's run of the command and this shell's disagree on the credential "
                       "fingerprint and the set's fingerprint.", out)
         self.assertIn("service environment", out)
-        self.assertIn("a line added to service.env reaches the kernel at", out)
-        self.assertIn("a line changed or removed there, or one in the unit, at the", out)
+        self.assertIn("a line added to service.env reaches the", out)
+        self.assertIn("a line changed or removed there, or one in the", out)
         self.assertIn("next manager restart", out)
         self.assertIn("its next start, `romp refresh`;", out)
         self.assertIn("CLAUDE_CONFIG_DIR", out)

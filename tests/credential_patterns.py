@@ -56,13 +56,29 @@ beside it after a common prefix it leaves whole when that is 22 or fewer, so 63 
 prefix against either ellipsis is a truncated key, whatever follows, when 1 to CUT_HEAD_MAX (120)
 token characters sit between the prefix and the cut: every cut a tool makes at default verbosity
 leaves a head within that bound. A wider head (pytest's saferepr at `-v` keeps 1198) is a run the
-format rule takes on its own (20 characters or more), and the tail after the cut is a fragment under
-the rule below, so nothing of the key shows; the bound is there so a prefix inside a long run that
+format rule takes on its own (20 characters or more, 30 for `AIza`), and every format rule takes a cut
+against its run and the run after the cut in the same match, so a cut key is one marker whatever the
+width of its head and wherever it sits, quoted or bare (a line a test or a child process prints itself
+ends the tail with a newline or a space, not the quote the fragment rule below needs; until the format
+rules took the tail, such a line showed it). The bound is there so a prefix inside a long run that
 never reaches a cut costs a bounded scan (an unbounded head made the scrub quadratic: 80 seconds on
 a 200 KB line of repeated `hf_`, which is what the tests/test_env_value_redaction.py timing case
-guards). A cut JWT is the same with dotted segments in its head and tail
+guards). What a format rule cannot take whole is a body of characters its key does not have. A
+Hugging Face token is `hf_` and 34 letters and digits (gitleaks' rule, and the shape of a real one),
+so the `hf_` rule matches letters and digits; RunPod publishes the `rpa_` prefix and nothing of the
+body (checked 2026-09-06), and the `rpa_` rule is left as it was, letters and digits too. A body with
+`_` or `-` in it, whole or cut, is therefore taken up to that character under either prefix. Past
+the bound the rest of such a head shows in bare text, and in a quoted repr too once 20 letters and
+digits precede the `_` or `-` (with fewer the format rule fails, the whole head is a fragment between
+the quote and the cut, and the fragment rule takes it); within the bound the cut rule's head class
+takes it. That shape is no Hugging Face token; a real RunPod key carrying `_` or `-` would be the
+reason to widen the `rpa_` class, and the whole key in bare text, not the cut one, is what widening
+would fix first. The class stays narrow so an `hf_`-prefixed identifier of 20 characters or more
+(`hf_hub_download_to_cache_dir`) is not redacted. A cut JWT is the same with dotted segments in its head and tail
 (`'eyJ<header>.eyJ<payload>...<payload>.<signature>'`, and unittest's `['eyJ[35 chars]<rest>']`,
-whose head is the prefix alone). A run of 8 or more token characters against an ellipsis, with a
+whose head is the prefix alone); one whose head runs past the bound in a segment (a header of 121 to
+JWT_HEADER_MAX characters, a payload cut deep) is the JWT rule's match, which takes the cut and its
+dotted tail the same way. A run of 8 or more token characters against an ellipsis, with a
 quote or another ellipsis on its far side, or with a diff line's marker and sign before it and the
 ellipsis ending the line, is a fragment of an unknown-format value when it has a digit, or when it
 has a lower-case letter and an upper-case one anywhere after its first character (a base64 tail can
@@ -148,9 +164,25 @@ _QUOTED_LINE = r"^(?P<pfxq>E[ \t]+['\"])" + _GENERIC + r"(?=['\"]$)"
 # `sk-or-`, `sk-proj-` and `AIza` the format rule then took the run in one match, so the cost was paid
 # once; for `hf_` and `rpa_` the format rule (`[A-Za-z0-9]{20,}`) fails on a run holding `_` or `-`, the
 # run was never consumed, and every occurrence paid again: 80 seconds for a 200 KB line of repeated `hf_`.
+# A head past the bound is the format rule's match, and _CUT_TAIL (below) gives that match the cut and the
+# run after it, so a cut key of any head width is one match.
 _ELLIPSIS = r"(?:\.\.\.|\[\d+ chars\])"
 CUT_HEAD_MAX = 120
 _CUT_HEAD_BOUNDS = r"{1,%d}" % CUT_HEAD_MAX
+# A cut and the run after it, appended to each format rule and to the JWT rule: optional, so a whole key
+# matches as before, and taken when the run a format rule matched ends at `...` or `[N chars]`
+# (`sk-ant-<130>...<118>`, `hf_<130>[88 chars]<5>`). Without it a cut key whose head is past CUT_HEAD_MAX was
+# two matches, the head by the format rule and the tail by _ELLIPSIZED, which needs a quote or another cut
+# on the tail's far side: in a quoted repr the tail was redacted, but on a line a test or a child process
+# printed itself (end of line, a space, a sentence's dot after the tail) it showed (2026-09-06). The run
+# before it is greedy and its characters are disjoint from a cut's first, so the optional group is tried
+# once where the run ends and never sends the engine back through the run: the scrub stays linear. A
+# sentence's `...` right after a whole key is consumed with it, as _PREFIX_ELLIPSIZED already did for a
+# head within the bound. The JWT's tail is dotted (`...<payload>.<signature>`), so its form takes the
+# dotted rest too; a whole JWT's segment count (one to four after the header) is unchanged, because the
+# dotted rest is inside the optional cut group.
+_CUT_TAIL = r"(?:" + _ELLIPSIS + _TOKEN_CHARS + r"*)?"
+_CUT_TAIL_DOTTED = r"(?:" + _ELLIPSIS + _TOKEN_CHARS + r"*" + _DOTTED + r")?"
 _PREFIX_ELLIPSIZED = (r"(?:sk-ant-|sk-or-|sk-proj-|hf_|AIza|rpa_)" + _atomic_run("hk", _CUT_HEAD_BOUNDS)
                       + _ELLIPSIS + _TOKEN_CHARS + r"*")
 # A JWT's head is `eyJ` and up to three dotted segments, each within the bound (the first atomic: it is
@@ -173,13 +205,13 @@ _DIFF_LINE_CUT = r"^(?P<pfxc>E[ \t]+[-+][ \t]+)" + _FRAGMENT + r"(?=\.\.\.$)"
 TOKEN_RE = re.compile(
     _PREFIX_ELLIPSIZED +                            # a key of a known format that pytest or unittest cut
     r"|" + _JWT_ELLIPSIZED +                        # a JWT so cut
-    r"|sk-ant-[A-Za-z0-9_\-]{20,}"                  # Anthropic API keys
-    r"|sk-or-[A-Za-z0-9_\-]{20,}"                   # OpenRouter
-    r"|sk-proj-[A-Za-z0-9_\-]{20,}"                 # OpenAI project keys
-    r"|hf_[A-Za-z0-9]{20,}"                         # Hugging Face
-    r"|AIza[A-Za-z0-9_\-]{30,}"                     # Google API keys
-    r"|rpa_[A-Za-z0-9]{20,}"                        # RunPod
-    r"|" + _JWT +                                   # a JWT (JWS, unsecured or JWE), by its shape
+    r"|sk-ant-[A-Za-z0-9_\-]{20,}" + _CUT_TAIL +    # Anthropic API keys, each format whole or with a cut and its tail
+    r"|sk-or-[A-Za-z0-9_\-]{20,}" + _CUT_TAIL +     # OpenRouter
+    r"|sk-proj-[A-Za-z0-9_\-]{20,}" + _CUT_TAIL +   # OpenAI project keys
+    r"|hf_[A-Za-z0-9]{20,}" + _CUT_TAIL +           # Hugging Face (a token is 34 letters and digits: the class is what one has)
+    r"|AIza[A-Za-z0-9_\-]{30,}" + _CUT_TAIL +       # Google API keys
+    r"|rpa_[A-Za-z0-9]{20,}" + _CUT_TAIL +          # RunPod (letters and digits likewise)
+    r"|" + _JWT + _CUT_TAIL_DOTTED +                # a JWT (JWS, unsecured or JWE), by its shape, whole or cut with its dotted tail
     r"|" + _VALUE_POSITION + _GENERIC +             # a token of unknown format where a value sits...
     r"|^" + _GENERIC + r"$"                         # ...or alone on its line (an apiKeyHelper's stdout)...
     r"|" + _DIFF_LINE +                             # ...or one side of pytest's diff of two compared values...
