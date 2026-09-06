@@ -31811,7 +31811,7 @@ def _trackchanges_above(p):
     return False
 
 
-def _edit_diff(old, new, name):
+def _edit_log_diff(old, new, name):
     """A zero-context unified diff of a direct edit for the comments log, capped at
     _EDIT_DIFF_MAX_LINES lines or _EDIT_DIFF_MAX_BYTES bytes → (diff, truncated)."""
     import difflib
@@ -31976,7 +31976,7 @@ def _edit_log_after(pre, prior, content, new_ns):
                        "is no diff to record" % _tilde(p))
     old = prior["bytes"]
     new = content if isinstance(content, str) else ""
-    diff, truncated = _edit_diff(old.decode("utf-8", "replace"), new, os.path.basename(p))
+    diff, truncated = _edit_log_diff(old.decode("utf-8", "replace"), new, os.path.basename(p))
     summary = {"mtimeBeforeNs": str(prior["ns"]), "mtimeAfterNs": str(new_ns),
                "bytesBefore": len(old), "bytesAfter": len(new.encode("utf-8")),
                "diff": diff, "truncated": truncated}

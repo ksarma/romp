@@ -1004,31 +1004,42 @@ class TheSaveLogsTheEdit(_Wire):
 
 class TheEditDiff(unittest.TestCase):
     def test_zero_context_unified_diff(self):
-        diff, truncated = km._edit_diff("a\nb\nc\n", "a\nB\nc\n", "x.md")
+        diff, truncated = km._edit_log_diff("a\nb\nc\n", "a\nB\nc\n", "x.md")
         self.assertEqual(diff, "--- a/x.md\n+++ b/x.md\n@@ -2 +2 @@\n-b\n+B\n")
         self.assertIs(truncated, False)
 
     def test_a_missing_final_newline_still_yields_whole_lines(self):
-        diff, _ = km._edit_diff("a\nb", "a\nc", "x.md")
+        diff, _ = km._edit_log_diff("a\nb", "a\nc", "x.md")
         self.assertTrue(diff.endswith("+c\n"))
         self.assertEqual(diff.count("\n"), len(diff.splitlines()))
 
     def test_the_line_cap(self):
         old = "".join("line %d\n" % i for i in range(300))
         new = "".join("LINE %d\n" % i for i in range(300))
-        diff, truncated = km._edit_diff(old, new, "x.md")
+        diff, truncated = km._edit_log_diff(old, new, "x.md")
         self.assertIs(truncated, True)
         self.assertLessEqual(len(diff.splitlines()), km._EDIT_DIFF_MAX_LINES)
 
     def test_the_byte_cap(self):
         old = "".join("%d %s\n" % (i, "x" * 500) for i in range(60))
         new = "".join("%d %s\n" % (i, "y" * 500) for i in range(60))
-        diff, truncated = km._edit_diff(old, new, "x.md")
+        diff, truncated = km._edit_log_diff(old, new, "x.md")
         self.assertIs(truncated, True)
         self.assertLessEqual(len(diff.encode("utf-8")), km._EDIT_DIFF_MAX_BYTES)
 
     def test_no_change_is_an_empty_diff(self):
-        self.assertEqual(km._edit_diff("a\n", "a\n", "x.md"), ("", False))
+        self.assertEqual(km._edit_log_diff("a\n", "a\n", "x.md"), ("", False))
+
+    def test_the_log_diff_does_not_shadow_the_transcript_folds_diff(self):
+        """kernel.py holds two diff helpers: the transcript fold's one-argument _edit_diff(inp), which
+        renders an Edit/MultiEdit tool_use, and the comments log's _edit_log_diff(old, new, name).
+        The log helper was first defined under the fold's name, further down the module, so the
+        later def won and every fold of an Edit tool_use raised TypeError (77 tests across
+        test_kernel, test_chat_fold and test_kernel_patch_rows). Both names must exist, as
+        different functions, each answering its own call shape."""
+        self.assertIsNot(km._edit_diff, km._edit_log_diff)
+        self.assertEqual(km._edit_diff({"old_string": "a", "new_string": "b"}), "- a\n+ b")
+        self.assertEqual(km._edit_log_diff("a\n", "b\n", "x.md")[0].splitlines()[-2:], ["-a", "+b"])
 
 
 def _serve_get(path, headers=None):
