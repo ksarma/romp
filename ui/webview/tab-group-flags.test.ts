@@ -35,14 +35,14 @@ const V = {
 type Sess = { name: string; userTodos?: { id: string; text: string }[] };
 const todo = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `t${i + 1}`, text: `synthetic need ${i + 1}` }));
 const heads = (items: ReturnType<typeof planStrip>["items"]) =>
-  items.filter((i): i is { head: TabSection; folded: boolean; active: boolean } => "head" in i);
+  items.filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[] } => "head" in i);
 
 test("executed: a folded section with ONE member holding an open todo shows the flag, count 1, that session named", () => {
   const sessions = new Map<string, Sess>([["tests", { name: "tests", userTodos: todo(1) }], ["old1", { name: "old1", userTodos: [] }]]);
   const plan = planStrip(["web", "tests", "old1"], viewTagUnion(V), parseTabGroups(null), "web", false);
   const archived = heads(plan.items).find((h) => h.head.name === "archived")!;
   assert.equal(archived.folded, true, "archived starts folded — the fold that hid the tab's glyph");
-  const flag = sectionTodoFlag(archived.head.ids.map((id) => sessions.get(id)));
+  const flag = sectionTodoFlag(archived.hidden.map((id) => sessions.get(id)));   // the members the header stands in for
   assert.deepEqual(flag, { count: 1, names: ["tests"] });
   assert.equal(sectionTodoTitle(flag!), "waiting on you — tests flagged something it needs from you; click to open this group");
 });
@@ -62,7 +62,8 @@ test("executed: a resolved todo clears the flag on the next frame — the same f
   assert.equal(sectionTodoFlag([{ name: "tests", userTodos: null }]), null);
   assert.equal(sectionTodoFlag([{ name: "tests" }]), null, "a host too old to send the field contributes nothing");
   // render.ts: the header reads the live store at render time (sessions.get), never a copy…
-  assert.match(FOLDED, /const flag = sectionTodoFlag\(sec\.ids\.map\(\(id\) => sessions\.get\(id\)\)\);/);
+  assert.match(FOLDED, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => sessions\.get\(id\)\)\);/,
+    "…over the members the fold hides (a member pinned to show through carries its own glyph; tab-groups.test pins that)");
   // …and the chat delta that carries the field is followed by renderTabs() — the frame IS the event
   const delta = RENDER.slice(RENDER.indexOf('if ("userTodos" in msg) s.userTodos = msg.userTodos;'));
   assert.ok(delta.slice(0, 200).includes("renderTabs();"), "a userTodos delta repaints the strip within the same handler (no timer)");
@@ -88,7 +89,7 @@ test("executed: federation — a remote host's session counts for its section th
   const pool = heads(plan.items).find((h) => h.head.name === "remotepool")!;
   assert.equal(pool.folded, true);
   const sessions = new Map<string, Sess>([["TESTHOST-A:m1", { name: "TESTHOST-A:web", userTodos: todo(1) }], ["TESTHOST-A:m2", { name: "TESTHOST-A:api" }]]);
-  assert.deepEqual(sectionTodoFlag(pool.head.ids.map((id) => sessions.get(id))), { count: 1, names: ["TESTHOST-A:web"] },
+  assert.deepEqual(sectionTodoFlag(pool.hidden.map((id) => sessions.get(id))), { count: 1, names: ["TESTHOST-A:web"] },
     "the name is the one its tab shows — host-prefixed like the label");
 });
 

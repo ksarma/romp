@@ -31,7 +31,7 @@ import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from 
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
-import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed,
+import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionKey, isPinned, togglePinned,
          reorderTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
 import { tabStateClass, sectionPip, SECTION_PIP_TITLE, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
@@ -4724,8 +4724,10 @@ function releaseTabStrip(): void {
 // push) and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted union
 // order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The untagged
 // trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the loose ones
-// never read as one run.
-function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false): HTMLElement {
+// never read as one run. `hidden` is what a folded header stands in for — its members less the ones
+// pinned to show through the fold (planStrip) — so its count and its flag read those, never a member
+// whose own tab is on screen.
+function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string[]): HTMLElement {
   if (sec.name === null) {
     const sep = el("div", "tab-group-sep");
     sep.title = "sessions in no tag";
@@ -4746,7 +4748,7 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false)
   head.title = holdsActive
     ? `${name} — this group holds the active tab; drag to reorder the groups`
     : collapsed
-      ? `${name} — ${sec.ids.length} session${sec.ids.length === 1 ? "" : "s"} folded; click to open`
+      ? `${name} — ${hidden.length} session${hidden.length === 1 ? "" : "s"} folded; click to open`
       : `${name} — click to fold this group; drag to reorder the groups`;
   const dot = el("span", "tab-group-dot");
   if (sec.color) dot.style.background = sec.color;
@@ -4756,12 +4758,12 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false)
   head.appendChild(label);
   if (collapsed) {
     const n = el("span", "tab-group-count");
-    n.textContent = String(sec.ids.length);
+    n.textContent = String(hidden.length);   // the folded-away members: a pinned one shows itself
     head.appendChild(n);
     // the folded gist: one pip by the TAB's own state rule (tab-state.ts) — red for a member blocked
     // on you or waiting for you, gold for working, amber for an API error retrying on its own (the
     // tab strip renders that amber too; a red pip there was a false interrupt)
-    const kind = sectionPip(sec.ids.map((id) => sessions.get(id)?.status));
+    const kind = sectionPip(hidden.map((id) => sessions.get(id)?.status));
     if (kind) {
       const pip = el("span", "tab-group-pip" + (kind === "working" ? "" : " " + kind));
       pip.title = SECTION_PIP_TITLE[kind];
@@ -4774,8 +4776,9 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false)
     // its own glyph, and a second flag over the same need would be noise. A real <button> — focusable,
     // Enter opens the group — with its OWN data-act for the stable #tabs delegate (the nearest data-act
     // wins, so it never reads as the header's fold click) and its own dragstart guard, so a press that
-    // wanders never starts the header's group drag (tab-state.ts owns the count and the title).
-    const flag = sectionTodoFlag(sec.ids.map((id) => sessions.get(id)));
+    // wanders never starts the header's group drag (tab-state.ts owns the count and the title). Over
+    // the HIDDEN members only: a pinned member's own tab shows its glyph.
+    const flag = sectionTodoFlag(hidden.map((id) => sessions.get(id)));
     if (flag) {
       const b = document.createElement("button");
       b.type = "button";
@@ -5011,7 +5014,7 @@ function renderTabs() {
                          provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
   collapsedTabIds = plan.folded;
   for (const item of plan.items) {
-    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded, item.active)); continue; }
+    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded, item.active, item.hidden)); continue; }
     const id = item.id;
     const s = sessions.get(id);
     if (!s) { bar.appendChild(makePlaceholderTab(id)); continue; }
@@ -5679,6 +5682,27 @@ function showTabMenu(e: MouseEvent, id: string) {
             row.appendChild(bodyE);
             row.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
           }
+          sub.appendChild(row);
+        }
+        // SHOW WHEN FOLDED (the user 2026-09-06): keep this tab visible under its folded group. A
+        // per-browser view preference like the fold itself (romp:tabgroups), keyed by (tag id, sid)
+        // so it follows the tag, not its spelling, and a move to another group starts unpinned. Only
+        // while the strip is sectioned and the session has a home tag — there is no fold to show
+        // through otherwise. The row wears the home tag's chip and the menus' ✓ when on; the write
+        // notifies (TABGROUPS_EVENT) and the strip re-renders, the fold's own path.
+        if (home) {
+          const key = sectionKey(home);
+          const on = isPinned(readTabGroups(), key, id);
+          sub.appendChild(el("div", "ctx-sep"));
+          const row = el("div", "ctx-item ctx-item-toggle ctx-item-pin" + (on ? " current" : ""));
+          const chip = el("span", "ctx-tag-dot"); chip.style.background = home.color || "var(--dim)"; row.appendChild(chip);
+          const bodyE = el("span", "ctx-item-body");
+          const lb = el("span", "ctx-item-label"); lb.textContent = "Show when folded"; bodyE.appendChild(lb);
+          const sb2 = el("span", "ctx-item-sub");
+          sb2.textContent = on ? `stays on the strip while ${home.name} is folded` : `keep this tab on the strip while ${home.name} is folded`;
+          bodyE.appendChild(sb2);
+          row.appendChild(bodyE);
+          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(togglePinned(readTabGroups(), key, id)); build(); });
           sub.appendChild(row);
         }
         if (holding().length || others.length) sub.appendChild(el("div", "ctx-sep"));

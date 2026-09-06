@@ -20,14 +20,27 @@ export const TABGROUPS_EVENT = "romp-tabgroups";
 /** sections that start folded until the user opens them (remembered per browser once toggled) */
 export const DEFAULT_COLLAPSED: ReadonlySet<string> = new Set(["archived"]);
 
-/** One strip section: a tag's name + colour and the visible tabs homed in it. name null = the
- *  trailing untagged section (unlabeled by the user's ruling — a separator, not a header). */
-export interface TabSection { name: string | null; color: string; ids: string[] }
+/** One strip section: a tag's name + colour and the visible tabs homed in it, plus `key`, the tag's
+ *  stored id (sectionKey) — the per-browser pin state is keyed by it, so a pin follows the TAG, not its
+ *  spelling, and a session moved to another group starts unpinned. name null = the trailing untagged
+ *  section (unlabeled by the user's ruling — a separator, not a header; key ""). */
+export interface TabSection { name: string | null; key: string; color: string; ids: string[] }
+
+/** A member kept visible under its folded section — the tab menu's "Show when folded" (the user
+ *  2026-09-06) — keyed by (tag id, sid). A view preference like the fold itself: per browser. */
+export interface PinnedRef { tag: string; sid: string }
 
 export interface TabGroupsState {
   on: boolean;          // the sectioned strip (default true)
   collapsed: string[];  // sections the user folded
   expanded: string[];   // default-folded sections the user opened
+  pinned: PinnedRef[];  // members shown under their folded section
+}
+
+/** The id a section's pins are keyed by: the local tag's stored id, else the first remote's; a
+ *  union with no ids at all (never built by viewTagUnion) falls back to its name. */
+export function sectionKey(u: TagUnion): string {
+  return u.localId || u.ids[0] || u.name;
 }
 
 /** THE home-tag rule: the first union (they arrive in tagOrder) holding the id, or null. */
@@ -45,12 +58,12 @@ export function sectionTabs(visibleIds: readonly string[], unions: readonly TagU
     const home = homeTag(id, unions);
     if (!home) { loose.push(id); continue; }
     let s = byName.get(home.name);
-    if (!s) { s = { name: home.name, color: home.color || "", ids: [] }; byName.set(home.name, s); }
+    if (!s) { s = { name: home.name, key: sectionKey(home), color: home.color || "", ids: [] }; byName.set(home.name, s); }
     s.ids.push(id);
   }
   const out: TabSection[] = [];
   for (const u of unions) { const s = byName.get(u.name); if (s && !out.includes(s)) out.push(s); }
-  if (loose.length) out.push({ name: null, color: "", ids: loose });
+  if (loose.length) out.push({ name: null, key: "", color: "", ids: loose });
   return out;
 }
 
@@ -60,7 +73,7 @@ export function anySectioned(visibleIds: readonly string[], unions: readonly Tag
   return visibleIds.some((id) => homeTag(id, unions) !== null);
 }
 
-const fresh = (): TabGroupsState => ({ on: true, collapsed: [], expanded: [] });
+const fresh = (): TabGroupsState => ({ on: true, collapsed: [], expanded: [], pinned: [] });
 
 /** A stored blob; anything malformed reads as the default rather than throwing (view-order's rule:
  *  a corrupt entry may cost you a preference, never the dashboard). */
@@ -70,7 +83,11 @@ export function parseTabGroups(raw: string | null | undefined): TabGroupsState {
     const o = JSON.parse(raw);
     if (!o || typeof o !== "object" || Array.isArray(o)) return fresh();
     const strs = (xs: unknown) => (Array.isArray(xs) ? xs.filter((x): x is string => typeof x === "string") : []);
-    return { on: o.on !== false, collapsed: strs(o.collapsed), expanded: strs(o.expanded) };
+    const pins = (xs: unknown): PinnedRef[] => (Array.isArray(xs)
+      ? xs.filter((x) => !!x && typeof x === "object" && typeof x.tag === "string" && typeof x.sid === "string")
+          .map((x) => ({ tag: x.tag as string, sid: x.sid as string }))
+      : []);
+    return { on: o.on !== false, collapsed: strs(o.collapsed), expanded: strs(o.expanded), pinned: pins(o.pinned) };
   } catch {
     return fresh();
   }
@@ -88,7 +105,7 @@ export function readTabGroups(): TabGroupsState {
  *  window gets the same news through a CustomEvent (one notification path, two deliveries). */
 export function writeTabGroups(st: TabGroupsState): void {
   try {
-    localStorage.setItem(TABGROUPS_KEY, JSON.stringify({ on: st.on, collapsed: st.collapsed, expanded: st.expanded }));
+    localStorage.setItem(TABGROUPS_KEY, JSON.stringify({ on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned: st.pinned }));
   } catch {
     /* quota / private mode → this preference just doesn't outlive the page */
   }
@@ -116,15 +133,33 @@ export function setSectionCollapsed(st: TabGroupsState, name: string, folded: bo
   const expanded = st.expanded.filter((n) => n !== name);
   if (folded) { if (!DEFAULT_COLLAPSED.has(name)) collapsed.push(name); }
   else if (DEFAULT_COLLAPSED.has(name)) expanded.push(name);
-  return { on: st.on, collapsed, expanded };
+  return { on: st.on, collapsed, expanded, pinned: st.pinned };
 }
 
 export function toggleSectionCollapsed(st: TabGroupsState, name: string): TabGroupsState {
   return setSectionCollapsed(st, name, !isSectionCollapsed(st, name));
 }
 
-/** One strip item: a section header (folded or open; `active` = it holds the active tab) or a tab. */
-export type StripItem = { head: TabSection; folded: boolean; active: boolean } | { id: string };
+/** Is this member kept visible under its folded section? Keyed by (tag id, sid) — see PinnedRef. */
+export function isPinned(st: TabGroupsState, tag: string, sid: string): boolean {
+  return st.pinned.some((p) => p.tag === tag && p.sid === sid);
+}
+
+/** Set a member's pin EXPLICITLY (the fold's own idiom: the menu row passes the state it rendered). */
+export function setPinned(st: TabGroupsState, tag: string, sid: string, on: boolean): TabGroupsState {
+  const pinned = st.pinned.filter((p) => !(p.tag === tag && p.sid === sid));
+  if (on) pinned.push({ tag, sid });
+  return { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned };
+}
+
+export function togglePinned(st: TabGroupsState, tag: string, sid: string): TabGroupsState {
+  return setPinned(st, tag, sid, !isPinned(st, tag, sid));
+}
+
+/** One strip item: a section header (folded or open; `active` = it holds the active tab; `hidden` =
+ *  the member ids a folded header stands in for — its members less the pinned ones, [] when open) or
+ *  a tab. */
+export type StripItem = { head: TabSection; folded: boolean; active: boolean; hidden: string[] } | { id: string };
 export interface StripPlan {
   items: StripItem[];
   folded: Set<string>;   // the ids a folded header stands in for — keyboard cycling skips them
@@ -139,6 +174,9 @@ export interface StripPlan {
  *  - `pending`: a provisional tab (a create in flight) with the tags the request named. Its future
  *    home is the first of those in tagOrder — the kernel's own home-tag rule — so it renders there
  *    from the first paint instead of landing in the untagged trail and jumping when the frame arrives.
+ *  - A folded section hides its members EXCEPT the pinned ones (the tab menu's "Show when folded"),
+ *    which keep their place under the header in strip order; the header stands in for `hidden` alone
+ *    (its count and its flag read those), and only those ids join the `folded` set.
  *  - The ACTIVE tab's section never renders folded: keyboard focus must never land on a hidden node.
  *    Its header is marked `active`, and render.ts gives that header no fold action: a fold stored
  *    there could not render (nothing changed on screen, on every click) and then bit when the user
@@ -161,9 +199,9 @@ export function planStrip(visibleIds: readonly string[], unions: readonly TagUni
   for (const sec of sectionTabs(visibleIds, u)) {
     const active = activeId !== null && sec.ids.includes(activeId);
     const f = sec.name !== null && !active && isSectionCollapsed(st, sec.name);
-    items.push({ head: sec, folded: f, active });
-    if (f) { for (const id of sec.ids) folded.add(id); continue; }
-    for (const id of sec.ids) items.push({ id });
+    const hidden = f ? sec.ids.filter((id) => !isPinned(st, sec.key, id)) : [];
+    items.push({ head: sec, folded: f, active, hidden });
+    for (const id of sec.ids) { if (hidden.includes(id)) folded.add(id); else items.push({ id }); }
   }
   return { items, folded, sectioned };
 }
