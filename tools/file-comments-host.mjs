@@ -1,0 +1,741 @@
+#!/usr/bin/env node
+// The node host script behind the Files pane's comments panel (plans/file-review.md, "The host
+// script" and "The comments log"). The kernel runs it once per verb, on the machine that holds the
+// file, with one JSON request on stdin and reads one JSON object from stdout:
+//
+//   stdin   {"verb", "path", "args": {...}, "fence": {...}|null}
+//   stdout  {"ok": true, "verb", "root", "storePath", "trackedBy", "agentTooling", "fileMtimeNs",
+//            "storeMtimeNs", "configMtimeNs", "store", "hunks", "unsent", "log", "logTruncated",
+//            "baseline"?, "logged"?}
+//        or {"ok": false, "code", "error"}          — a refusal; exit status 0
+//   crash   a non-zero exit with the reason on stderr  — a malformed request or a program error
+//
+// Every verb is one load-mutate-write in this one process: root discovery, the sidecar path, the
+// load-time rebase that re-places changes after outside edits, anchor location, the write, the
+// comments-log append. The sidecar format is track-changents v3, read and written ONLY through the
+// vendored store-io (never a second implementation of the format); the comments log beside it is
+// romp's own, outside that contract. Two rules the file-review plan fixes and this script keeps:
+//   * a corrupt or newer-version sidecar is refused, never replaced (loadStoreStatus, not loadStore
+//     or ensureStore, which mint a fresh sidecar over anything they cannot read);
+//   * a reply or resolve into a comment the live sidecar lacks refuses `no-comment`; this script
+//     never calls reviveThreadFromSuperseded, which overwrites the live sidecar from a park.
+//
+// Vendored code: vendor/track-changents (MIT, LICENSE beside it).
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import engine from '../vendor/track-changents/engine.js';
+import {
+  findVaultRoot, storePathFor, relPathFor, configPathFor, trackedPaths, untrackedPaths,
+  trackedClosure, isTrackedFile, setTracked, loadStoreStatus, saveStore, STORE_VERSION,
+} from '../vendor/track-changents/store-io.mjs';
+import { addReply } from '../vendor/track-changents/cli/track-reply.mjs';
+
+// ── constants ───────────────────────────────────────────────────────
+
+// The kernel's _TEXT_MAX_BYTES: the cap on any text this script writes back to a file.
+export const TEXT_MAX_BYTES = 2 * 1024 * 1024;
+// The Log the panel shows: the newest LOG_TAIL entries of the comments log, oldest first.
+export const LOG_TAIL = 200;
+// Every human action and log entry is authored `you`, with no authorId (decision 6).
+export const AUTHOR = 'you';
+export const LOG_SUFFIX = '.comments-log.jsonl';
+
+// Slice 1 verbs. Slice 2 adds accept, reject, accept-all, reject-all; Slice 5 adds save. The
+// verbs that write the FILE (not only the sidecar) — reject, reject-all, save — also fence on
+// fileMtimeNs (requireFence with 'file-moved') and call checkTooLarge before any write; no Slice
+// 1 verb does either.
+const VERBS = new Set(['status', 'set-tracked', 'comment', 'reply', 'resolve', 'log-edit', 'log-send']);
+
+// ── outcome classes ─────────────────────────────────────────────────
+
+// A refusal: the disk state does not allow the verb. Printed as {ok:false, code, error}, exit 0.
+export class Refusal extends Error {
+  constructor(code, error, extra) {
+    super(error);
+    this.name = 'Refusal';
+    this.code = code;
+    this.extra = extra || null;
+  }
+}
+
+// A malformed request (unknown verb, a missing argument): a caller bug, so a crash (exit 2),
+// which the kernel reports as host-error with this message.
+export class BadRequest extends Error {
+  constructor(msg) { super(msg); this.name = 'BadRequest'; }
+}
+
+// ── small helpers ───────────────────────────────────────────────────
+
+// FILE_COMMENTS_HOME lets tests point "home" at a scratch directory; the kernel never sets it.
+export function homeDir() {
+  return process.env.FILE_COMMENTS_HOME || os.homedir();
+}
+
+// Tilde-collapse one path, for every text a person reads.
+export function tilde(p) {
+  const home = homeDir();
+  if (!home || typeof p !== 'string') return p;
+  if (p === home) return '~';
+  if (p.startsWith(home + path.sep)) return '~' + p.slice(home.length);
+  return p;
+}
+
+// Tilde-collapse every occurrence of the home path inside a text (an OS error message).
+function tildeText(s) {
+  const home = homeDir();
+  if (!home) return s;
+  return String(s).split(home + path.sep).join('~' + path.sep);
+}
+
+// Nanosecond mtime as a decimal string, the kernel's X-Romp-Mtime-Ns; null when the path is
+// absent. Only a bigint stat carries the full integer (mtimeMs is a float and loses the last
+// digits, so a fence built on it would refuse every write).
+export function statNs(p) {
+  try {
+    return fs.statSync(p, { bigint: true }).mtimeNs.toString();
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return null;
+    throw e;
+  }
+}
+
+function exists(p) {
+  try { fs.statSync(p); return true; } catch { return false; }
+}
+
+// The comments log sits beside the sidecar under the same encoded name, so the two are found
+// together and the other hosts' `.json`-only directory scans never read it.
+export function logPathFor(storePath) {
+  return storePath.replace(/\.json$/, LOG_SUFFIX);
+}
+
+function pathsFor(root, abs) {
+  const storePath = storePathFor(root, abs);
+  return {
+    root,
+    rel: relPathFor(root, abs),
+    storePath,
+    configPath: configPathFor(root),
+    logPath: logPathFor(storePath),
+  };
+}
+
+// "present" when the agent-side CLIs are linked on this machine (romp's install.sh, or
+// track-changents' own): without them the session cannot answer a comment.
+export function agentTooling() {
+  return exists(path.join(homeDir(), '.claude', 'hooks', 'track-reply.mjs')) ? 'present' : 'absent';
+}
+
+// ── the comments log ────────────────────────────────────────────────
+
+// Parse every line; a line that is not a JSON object is skipped and counted, never rewritten.
+export function readLog(logPath) {
+  let raw;
+  try {
+    raw = fs.readFileSync(logPath, 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { entries: [], bad: 0 };
+    throw e;
+  }
+  const entries = [];
+  let bad = 0;
+  for (const line of raw.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      const o = JSON.parse(t);
+      if (o && typeof o === 'object' && !Array.isArray(o)) entries.push(o); else bad++;
+    } catch { bad++; }
+  }
+  return { entries, bad };
+}
+
+// One line per entry, appended; the directory must already exist (the caller makes sure).
+export function appendLog(logPath, entry) {
+  fs.appendFileSync(logPath, JSON.stringify(entry) + '\n', 'utf8');
+}
+
+function logEntry(kind, fields) {
+  return { ts: new Date().toISOString(), kind, author: AUTHOR, ...fields };
+}
+
+function countChanges(entry) {
+  return Array.isArray(entry.changes) ? entry.changes.length : 0;
+}
+
+// What is unsent, derived from the log alone (decision 10: no browser state). The watermark is
+// the largest `watermark` any send entry recorded (a later send that carried only decisions has
+// none and must not un-send earlier comments); a `you` comment or reply is unsent when its ts is
+// later; accepts and rejects are counted from the entries after the last send.
+export function deriveUnsent(store, entries) {
+  let watermark = null;
+  let lastSend = -1;
+  entries.forEach((e, i) => {
+    if (!e || e.kind !== 'send') return;
+    lastSend = i;
+    if (typeof e.watermark === 'number' && (watermark == null || e.watermark > watermark)) watermark = e.watermark;
+  });
+  const later = (ts) => typeof ts === 'number' && (watermark == null || ts > watermark);
+  const comments = [];
+  const replies = [];
+  for (const c of (store && store.comments) || []) {
+    if (!c) continue;
+    if (c.author === AUTHOR && later(c.ts)) comments.push(c.id);
+    for (const r of c.replies || []) {
+      if (r && r.author === AUTHOR && later(r.ts)) replies.push({ commentId: c.id, ts: r.ts });
+    }
+  }
+  let accepted = 0;
+  let rejected = 0;
+  for (let i = lastSend + 1; i < entries.length; i++) {
+    const e = entries[i];
+    if (!e) continue;
+    if (e.kind === 'accept') accepted += countChanges(e);
+    else if (e.kind === 'reject') rejected += countChanges(e);
+  }
+  return { comments, replies, accepted, rejected, watermark };
+}
+
+// ── tracking ────────────────────────────────────────────────────────
+
+// Mirrors the link index store-io builds privately (walkVaultMd, buildLinkIndex,
+// resolveLinkTarget are not exported): every .md under the root, dot-dirs and node_modules
+// skipped; a link resolves against the full relative path first, then by basename, the shortest
+// path winning ties. Used only to NAME the parent note that makes a file inherit tracking; the
+// tracked-or-not verdict itself always comes from store-io's isTrackedFile.
+function linkIndex(root) {
+  const rels = [];
+  const walk = (dir) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p); } else if (e.isFile() && e.name.toLowerCase().endsWith('.md')) {
+        rels.push(path.relative(root, p));
+      }
+    }
+  };
+  walk(root);
+  const byLowerRel = new Map();
+  const byBasename = new Map();
+  for (const rel of rels) {
+    byLowerRel.set(rel.toLowerCase(), rel);
+    const base = path.basename(rel, path.extname(rel)).toLowerCase();
+    if (!byBasename.has(base)) byBasename.set(base, []);
+    byBasename.get(base).push(rel);
+  }
+  return { byLowerRel, byBasename };
+}
+
+function resolveLink(index, linkText) {
+  const t = String(linkText || '').trim().replace(/^\.?\//, '');
+  if (!t) return null;
+  const lower = t.toLowerCase();
+  const withMd = lower.endsWith('.md') ? lower : lower + '.md';
+  if (index.byLowerRel.has(withMd)) return index.byLowerRel.get(withMd);
+  const base = path.basename(lower, lower.endsWith('.md') ? '.md' : '');
+  const hits = index.byBasename.get(base) || [];
+  if (!hits.length) return null;
+  return [...hits].sort((a, b) => (a.split('/').length - b.split('/').length) || a.localeCompare(b))[0];
+}
+
+// The tracked note whose whole-line link makes `rel` inherit tracking, or null when none can be
+// named (the verdict said inherited, so one exists unless the tree changed under us).
+export function inheritedParent(root, rel) {
+  const closure = trackedClosure(root);
+  const index = linkIndex(root);
+  for (const parent of closure) {
+    if (parent === rel) continue;
+    let text;
+    try { text = fs.readFileSync(path.join(root, parent), 'utf8'); } catch { continue; }
+    for (const target of engine.childLinkLines(text)) {
+      if (resolveLink(index, target) === rel) return parent;
+    }
+  }
+  return null;
+}
+
+const normEntry = (s) => String(s).replace(/^\.?\//, '');
+
+// Which config.json entry covers the file: `{kind: "file"|"folder"|"inherited", entry}` or null.
+// A file entry wins over a folder entry; among folder entries the most specific one; `entry` is
+// the string as written in config.json so `off` can remove exactly it. An `untracked` veto wins
+// over everything, as it does for the guard and the CLIs.
+export function trackedByFor(root, abs) {
+  const rel = relPathFor(root, abs);
+  if (engine.isTracked(untrackedPaths(root), rel)) return null;
+  const list = trackedPaths(root);
+  const p = normEntry(rel);
+  let file = null;
+  let folder = null;
+  for (const raw of list) {
+    if (typeof raw !== 'string' || !raw) continue;
+    const e = normEntry(raw);
+    if (e.endsWith('/')) {
+      if (p.startsWith(e) && (folder == null || e.length > normEntry(folder).length)) folder = raw;
+    } else if (e === p && file == null) {
+      file = raw;
+    }
+  }
+  if (file != null) return { kind: 'file', entry: file };
+  if (folder != null) return { kind: 'folder', entry: folder };
+  if (!list.length) return null;
+  if (!isTrackedFile(root, abs)) return null;
+  return { kind: 'inherited', entry: inheritedParent(root, rel) };
+}
+
+// ── the file ────────────────────────────────────────────────────────
+
+// Every file is read as UTF-8 text, images and PDFs included, exactly as the CLIs read it, so
+// the fingerprint this script stamps equals theirs.
+function readFile(ctx) {
+  let text;
+  try {
+    text = fs.readFileSync(ctx.abs, 'utf8');
+  } catch (e) {
+    throw new Refusal('unreadable', `cannot read ${ctx.shown}: ${tildeText(e && e.message ? e.message : String(e))}`);
+  }
+  return { text, fileMtimeNs: statNs(ctx.abs) };
+}
+
+// `too-large`: only verbs that write the file check it, before any write (the kernel's cap).
+export function checkTooLarge(shown, text) {
+  if (Buffer.byteLength(text, 'utf8') > TEXT_MAX_BYTES) {
+    throw new Refusal('too-large', `${shown} exceeds the 2 MB text cap, so its contents cannot be written from the dashboard`);
+  }
+}
+
+// Atomic write of a file's new text, for the verbs that change file bytes (reject, save): a
+// temp file in the same directory whose name does not end in .json (so the other hosts' sidecar
+// scans skip it), written through the realpath (never over a symlink), mode preserved, renamed
+// into place. Returns the new mtime string. Nothing in Slice 1 calls it; it is the seam Slice 2's
+// reject and Slice 5's save write through.
+export function writeFileAtomic(absPath, text) {
+  const real = fs.realpathSync(absPath);
+  const st = fs.statSync(real);
+  const mode = st.mode & 0o7777;
+  const tmp = path.join(path.dirname(real), `.${path.basename(real)}.romp-fc-${process.pid}-${Date.now()}.tmp`);
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'w', mode);
+    fs.writeFileSync(fd, text, 'utf8');
+    try { fs.fsyncSync(fd); } catch { /* fsync unsupported on some filesystems */ }
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.chmodSync(tmp, mode);
+    fs.renameSync(tmp, real);
+  } catch (e) {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    throw e;
+  }
+  return statNs(real);
+}
+
+// ── the sidecar ─────────────────────────────────────────────────────
+
+// Load through loadStoreStatus, the only loader that says WHY there is no store. Returns the
+// normalized store (rebased against the current text), or null when absent; refuses the rest.
+function loadOrRefuse(ctx, paths, text) {
+  const { store, status } = loadStoreStatus(paths.storePath, text);
+  const sp = tilde(paths.storePath);
+  switch (status) {
+    case 'ok': return store;
+    case 'absent': return null;
+    case 'corrupt':
+      throw new Refusal('corrupt', `the comments for ${ctx.shown} could not be read: ${sp} is not valid JSON in the expected shape; nothing was changed`);
+    case 'unsupported':
+      throw new Refusal('unsupported-version', `the comments for ${ctx.shown} (${sp}) were written by a newer version of the format than this romp reads; nothing was changed`);
+    default:
+      throw new Refusal('unreadable', `cannot read the comments for ${ctx.shown} (${sp})`);
+  }
+}
+
+// The seed track-comment writes for a file with no sidecar yet (cli/track-comment.mjs).
+function seedStore(rel) {
+  return { v: STORE_VERSION, path: rel, suggestions: [], comments: [] };
+}
+
+// A file with no landmark above it (.obsidian, .git, .trackchanges): the first comment or
+// tracking toggle creates .trackchanges/ beside it, and that folder is its project's root from
+// then on, for this script and for the CLIs alike (decision 37).
+function createLandmark(ctx) {
+  const dir = path.dirname(ctx.abs);
+  fs.mkdirSync(path.join(dir, '.trackchanges'), { recursive: true });
+  const root = findVaultRoot(ctx.abs);
+  if (root !== dir) throw new Error(`created ${tilde(dir)}/.trackchanges but findVaultRoot answers ${tilde(String(root))}`);
+  return root;
+}
+
+// A fence compares the caller's mtime string with the current one; "" means the file must not
+// exist. Missing fences are a caller bug, never silently skipped.
+function requireFence(ctx, key, actual, code, describe) {
+  const v = ctx.fence[key];
+  if (typeof v !== 'string') throw new BadRequest(`fence.${key} is required for ${ctx.verb}`);
+  const expected = v === '' ? null : v;
+  if (expected === actual) return;
+  let how = 'changed on disk since you opened the file';
+  if (expected == null && actual != null) how = 'appeared on disk since you opened the file';
+  else if (expected != null && actual == null) how = 'disappeared from disk since you opened the file';
+  throw new Refusal(code, `${describe} ${how} — reload and retry`);
+}
+
+function findComment(store, id) {
+  return ((store && store.comments) || []).find((c) => c && String(c.id) === String(id)) || null;
+}
+
+function requireNote(args) {
+  const note = args.note;
+  if (typeof note !== 'string' || !note.trim()) throw new BadRequest('a non-empty note is required');
+  return note.trim();
+}
+
+function requireCommentId(args) {
+  const id = args.commentId;
+  if ((typeof id !== 'string' && typeof id !== 'number') || id === '') throw new BadRequest('commentId is required');
+  return id;
+}
+
+// Locate the browser's anchor in the file as it is now. The engine picks the best-scoring hit
+// and breaks ties by the hint; a stored comment carries no hint, so a passage that occurs twice
+// with the same 24 characters on both sides cannot be re-placed by any later reader and is
+// refused `anchor-ambiguous` rather than saved on a guess. Locating with the hint pinned to the
+// start and to the end of the text asks the engine for the earliest and the latest tied hit;
+// when they differ, a tie exists. The located text must equal the quote: the engine's fallback
+// to the surviving context is a relocation, not a match, and refuses `anchor-not-found`.
+export function locateExact(text, anchor, hint) {
+  const quote = anchor.quote;
+  const first = engine.locateAnchor(text, anchor, 0);
+  if (!first || text.slice(first.from, first.to) !== quote) return { error: 'anchor-not-found' };
+  const last = engine.locateAnchor(text, anchor, text.length);
+  if (!last || last.from !== first.from) return { error: 'anchor-ambiguous' };
+  const loc = engine.locateAnchor(text, anchor, typeof hint === 'number' ? hint : undefined);
+  if (!loc || loc.from !== first.from) return { error: 'anchor-ambiguous' };
+  return { from: loc.from, to: loc.to };
+}
+
+function validateAnchor(anchor) {
+  if (!anchor || typeof anchor !== 'object') throw new BadRequest('anchor must be an object {quote, prefix, suffix}');
+  if (typeof anchor.quote !== 'string' || !anchor.quote) throw new BadRequest('anchor.quote must be a non-empty string');
+  return {
+    quote: anchor.quote,
+    prefix: typeof anchor.prefix === 'string' ? anchor.prefix : '',
+    suffix: typeof anchor.suffix === 'string' ? anchor.suffix : '',
+  };
+}
+
+// The comment object in addComment's exact shape (cli/track-comment.mjs): id `${now}-${idx}`,
+// author `you`, no authorId, ts, anchor (a passage only), body, replies [], resolved false. A
+// whole-file comment has no anchor and the id `${now}-0`. `target` (a region on an image or a
+// PDF page, Slices 3 and 4) passes through untouched.
+export function buildComment(text, args, now) {
+  const note = requireNote(args);
+  let c;
+  if (args.anchor == null) {
+    c = { id: `${now}-0`, author: AUTHOR, ts: now, body: note, replies: [], resolved: false };
+  } else {
+    const anchor = validateAnchor(args.anchor);
+    const loc = locateExact(text, anchor, args.hintOffset);
+    if (loc.error) return { error: loc.error };
+    c = {
+      id: `${now}-${loc.from}`,
+      author: AUTHOR,
+      ts: now,
+      anchor: engine.makeAnchor(text, loc.from, loc.to),
+      body: note,
+      replies: [],
+      resolved: false,
+    };
+  }
+  if (args.target != null) c.target = args.target;
+  return { comment: c };
+}
+
+// ── the reply ───────────────────────────────────────────────────────
+
+function reply(ctx, state, extra) {
+  const { root, paths, store, text, fileMtimeNs } = state;
+  let log = [];
+  let logTruncated = false;
+  let entries = [];
+  if (paths) {
+    const read = readLog(paths.logPath);
+    entries = read.entries;
+    if (read.bad) process.stderr.write(`file-comments-host: ${read.bad} unreadable line(s) in ${tilde(paths.logPath)} skipped\n`);
+    logTruncated = entries.length > LOG_TAIL;
+    log = logTruncated ? entries.slice(entries.length - LOG_TAIL) : entries;
+  }
+  const out = {
+    ok: true,
+    verb: ctx.verb,
+    root,
+    storePath: paths ? paths.storePath : null,
+    trackedBy: root ? trackedByFor(root, ctx.abs) : null,
+    agentTooling: agentTooling(),
+    fileMtimeNs,
+    storeMtimeNs: paths ? statNs(paths.storePath) : null,
+    configMtimeNs: paths ? statNs(paths.configPath) : null,
+    store,
+    hunks: store ? engine.toHunks(store.suggestions) : [],
+    unsent: deriveUnsent(store, entries),
+    log,
+    logTruncated,
+  };
+  if (ctx.args.baseline === true) out.baseline = engine.baselineOf(text, store ? store.suggestions : []);
+  return Object.assign(out, extra || {});
+}
+
+// Re-read what was just written so the reply carries the sidecar as every later load sees it.
+function reloadSaved(ctx, paths, text) {
+  const store = loadOrRefuse(ctx, paths, text);
+  if (!store) throw new Error(`the sidecar ${tilde(paths.storePath)} vanished after its write`);
+  return store;
+}
+
+// ── verbs ───────────────────────────────────────────────────────────
+
+function doStatus(ctx) {
+  const file = readFile(ctx);
+  const root = findVaultRoot(ctx.abs);
+  if (!root) return reply(ctx, { root: null, paths: null, store: null, ...file });
+  const paths = pathsFor(root, ctx.abs);
+  const store = loadOrRefuse(ctx, paths, file.text);
+  return reply(ctx, { root, paths, store, ...file });
+}
+
+// comment, reply, resolve: fence on the sidecar, load, mutate, save, report.
+function withSidecar(ctx, create, mutate) {
+  const file = readFile(ctx);
+  let root = findVaultRoot(ctx.abs);
+  let paths = root ? pathsFor(root, ctx.abs) : null;
+  requireFence(ctx, 'storeMtimeNs', paths ? statNs(paths.storePath) : null, 'store-moved',
+    `the comments for ${ctx.shown}`);
+  let store = null;
+  if (root) store = loadOrRefuse(ctx, paths, file.text);
+  if (!store && !create) {
+    throw new Refusal('no-comment', `comment ${String(ctx.args.commentId)} is not among the comments for ${ctx.shown} — reload and retry`);
+  }
+  if (!root) {
+    root = createLandmark(ctx);
+    paths = pathsFor(root, ctx.abs);
+  }
+  if (!store) store = seedStore(paths.rel);
+  mutate(store, file.text, paths);
+  saveStore(root, paths.storePath, store, file.text);
+  return reply(ctx, { root, paths, store: reloadSaved(ctx, paths, file.text), ...file });
+}
+
+function doComment(ctx) {
+  return withSidecar(ctx, true, (store, text) => {
+    const built = buildComment(text, ctx.args, Date.now());
+    if (built.error === 'anchor-not-found') {
+      throw new Refusal('anchor-not-found', `the selected passage is no longer in ${ctx.shown} — reload and select it again`);
+    }
+    if (built.error === 'anchor-ambiguous') {
+      throw new Refusal('anchor-ambiguous', `the selected passage occurs more than once in ${ctx.shown} with the same surroundings, so a comment on it could not be placed again later — select more of the text around it`);
+    }
+    store.comments.push(built.comment);
+  });
+}
+
+function doReply(ctx) {
+  const id = requireCommentId(ctx.args);
+  const note = requireNote(ctx.args);
+  return withSidecar(ctx, false, (store) => {
+    if (!findComment(store, id)) {
+      throw new Refusal('no-comment', `comment ${String(id)} is not among the comments for ${ctx.shown} — reload and retry`);
+    }
+    const res = addReply(store, id, AUTHOR, note, Date.now(), null);
+    if (res.error) throw new BadRequest(res.error);
+  });
+}
+
+function doResolve(ctx) {
+  const id = requireCommentId(ctx.args);
+  if (typeof ctx.args.on !== 'boolean') throw new BadRequest('resolve needs on: true|false');
+  return withSidecar(ctx, false, (store) => {
+    const c = findComment(store, id);
+    if (!c) throw new Refusal('no-comment', `comment ${String(id)} is not among the comments for ${ctx.shown} — reload and retry`);
+    c.resolved = ctx.args.on;
+  });
+}
+
+// The folder entry that tracks a file's directory: `<dir>/` relative to the root. A file at the
+// root itself has no folder entry to write (an empty prefix matches nothing), so that refuses.
+function folderEntryFor(ctx, rel) {
+  const dir = path.dirname(rel);
+  if (!dir || dir === '.' || dir === '' || dir.startsWith('..')) {
+    throw new Refusal('folder-is-root', `${ctx.shown} sits at its project's root, so there is no folder to track; track the file itself, or open a file inside a folder`);
+  }
+  return dir + '/';
+}
+
+function doSetTracked(ctx) {
+  const { on, scope } = ctx.args;
+  if (typeof on !== 'boolean') throw new BadRequest('set-tracked needs on: true|false');
+  if (on && scope !== 'file' && scope !== 'folder') throw new BadRequest('set-tracked needs scope: "file"|"folder"');
+  const file = readFile(ctx);
+  let root = findVaultRoot(ctx.abs);
+  let paths = root ? pathsFor(root, ctx.abs) : null;
+  requireFence(ctx, 'configMtimeNs', paths ? statNs(paths.configPath) : null, 'config-moved',
+    `the tracking setting for ${ctx.shown}`);
+  const store = root ? loadOrRefuse(ctx, paths, file.text) : null;
+  if (!root && !on) return reply(ctx, { root: null, paths: null, store: null, ...file });
+  if (!root) {
+    root = createLandmark(ctx);
+    paths = pathsFor(root, ctx.abs);
+  }
+  let entry;
+  let kind;
+  if (on) {
+    kind = scope;
+    entry = scope === 'file' ? paths.rel : folderEntryFor(ctx, paths.rel);
+    setTracked(root, entry, true);
+  } else {
+    const before = trackedByFor(root, ctx.abs);
+    if (!before) return reply(ctx, { root, paths, store, ...file });
+    if (before.kind === 'inherited') {
+      const parent = before.entry ? tilde(path.join(root, before.entry)) : 'a tracked note';
+      throw new Refusal('tracked-inherited', `${ctx.shown} is tracked because ${parent} links to it — turn tracking off there instead`);
+    }
+    kind = before.kind;
+    entry = before.entry;
+    setTracked(root, entry, false);
+  }
+  appendLog(paths.logPath, logEntry('set-tracked', { on, scope: kind, entry }));
+  return reply(ctx, { root, paths, store, ...file });
+}
+
+const EDIT_SUMMARY_KEYS = ['mtimeBeforeNs', 'mtimeAfterNs', 'bytesBefore', 'bytesAfter', 'diff', 'truncated'];
+
+// A direct edit from the viewer (decision 33), logged by the kernel's saveFile path after the
+// save: only for a file that already has a sidecar, a comments log, or a tracked flag; never
+// creates a sidecar, a log, or a landmark. The append comes first so the record never depends on
+// the sidecar being readable.
+function doLogEdit(ctx) {
+  const summary = ctx.args.summary;
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) throw new BadRequest('log-edit needs summary: {...}');
+  const root = findVaultRoot(ctx.abs);
+  let logged = false;
+  let paths = null;
+  if (root) {
+    paths = pathsFor(root, ctx.abs);
+    if (exists(paths.storePath) || exists(paths.logPath) || isTrackedFile(root, ctx.abs)) {
+      const fields = {};
+      for (const k of EDIT_SUMMARY_KEYS) if (summary[k] !== undefined) fields[k] = summary[k];
+      appendLog(paths.logPath, logEntry('edit', fields));
+      logged = true;
+    }
+  }
+  try {
+    const file = readFile(ctx);
+    const store = root ? loadOrRefuse(ctx, paths, file.text) : null;
+    return reply(ctx, { root, paths, store, ...file }, { logged });
+  } catch (e) {
+    if (e instanceof Refusal) e.extra = { ...(e.extra || {}), logged };
+    throw e;
+  }
+}
+
+// The send entry the kernel appends after fileCommentsSend replied sent or queued: the message
+// as sent, so the log remembers what went and the unsent derivation moves its watermark.
+function doLogSend(ctx) {
+  const a = ctx.args;
+  if (typeof a.sid !== 'string' || !a.sid) throw new BadRequest('log-send needs sid');
+  if (!Array.isArray(a.comments)) throw new BadRequest('log-send needs comments: [{id, desc, body}]');
+  for (const c of a.comments) {
+    if (!c || typeof c !== 'object' || c.id === undefined) throw new BadRequest('every log-send comment needs an id');
+  }
+  if (typeof a.accepted !== 'number' || typeof a.rejected !== 'number') throw new BadRequest('log-send needs accepted and rejected counts');
+  if (typeof a.queued !== 'boolean') throw new BadRequest('log-send needs queued: true|false');
+  if (a.watermark !== null && typeof a.watermark !== 'number') throw new BadRequest('log-send needs watermark: number|null');
+  let root = findVaultRoot(ctx.abs);
+  if (!root) root = createLandmark(ctx);
+  const paths = pathsFor(root, ctx.abs);
+  fs.mkdirSync(path.dirname(paths.logPath), { recursive: true });
+  const fields = { sid: a.sid };
+  if (typeof a.sessionName === 'string') fields.sessionName = a.sessionName;
+  fields.comments = a.comments.map((c) => ({ id: c.id, desc: c.desc, body: c.body }));
+  fields.accepted = a.accepted;
+  fields.rejected = a.rejected;
+  fields.queued = a.queued;
+  fields.watermark = a.watermark;
+  appendLog(paths.logPath, logEntry('send', fields));
+  try {
+    const file = readFile(ctx);
+    const store = loadOrRefuse(ctx, paths, file.text);
+    return reply(ctx, { root, paths, store, ...file }, { logged: true });
+  } catch (e) {
+    if (e instanceof Refusal) e.extra = { ...(e.extra || {}), logged: true };
+    throw e;
+  }
+}
+
+const HANDLERS = {
+  status: doStatus,
+  'set-tracked': doSetTracked,
+  comment: doComment,
+  reply: doReply,
+  resolve: doResolve,
+  'log-edit': doLogEdit,
+  'log-send': doLogSend,
+};
+
+// One request in, one result object out; throws Refusal or BadRequest (or a program error).
+export function handle(req) {
+  if (!req || typeof req !== 'object' || Array.isArray(req)) throw new BadRequest('the request must be a JSON object');
+  const verb = req.verb;
+  if (typeof verb !== 'string' || !VERBS.has(verb)) throw new BadRequest(`unknown verb ${JSON.stringify(verb)}`);
+  if (typeof req.path !== 'string' || !req.path) throw new BadRequest('path is required');
+  const args = req.args == null ? {} : req.args;
+  if (typeof args !== 'object' || Array.isArray(args)) throw new BadRequest('args must be an object');
+  const fence = req.fence == null ? {} : req.fence;
+  if (typeof fence !== 'object' || Array.isArray(fence)) throw new BadRequest('fence must be an object');
+  const abs = path.resolve(req.path);
+  const ctx = { verb, abs, args, fence, shown: tilde(abs) };
+  return HANDLERS[verb](ctx);
+}
+
+// ── entry point ─────────────────────────────────────────────────────
+
+async function readStdin() {
+  const chunks = [];
+  for await (const c of process.stdin) chunks.push(c);
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+async function main() {
+  const raw = await readStdin();
+  let req;
+  try {
+    req = JSON.parse(raw);
+  } catch (e) {
+    process.stderr.write(`file-comments-host: the request on stdin is not JSON: ${e && e.message}\n`);
+    process.exit(2);
+  }
+  let out;
+  try {
+    out = handle(req);
+  } catch (e) {
+    if (e instanceof Refusal) {
+      out = { ok: false, code: e.code, error: e.message, ...(e.extra || {}) };
+    } else {
+      process.stderr.write(`file-comments-host: ${e && e.stack ? tildeText(e.stack) : String(e)}\n`);
+      process.exit(e instanceof BadRequest ? 2 : 1);
+    }
+  }
+  process.stdout.write(JSON.stringify(out) + '\n');
+}
+
+const invokedDirectly = (() => {
+  try {
+    return process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch { return false; }
+})();
+
+if (invokedDirectly) main();
