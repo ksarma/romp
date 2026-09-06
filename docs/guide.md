@@ -151,7 +151,7 @@ the bottom bar turns it on.
 the file (below it when the column is narrow). Select a passage in either view, Rendered or
 Raw, and press the **Comment** button that appears next to the selection; type the note
 and press Enter. **Comment on this file** leaves a comment on the file as a whole, which
-every file takes; for a PDF it is the only kind for now. When a passage cannot be mapped from the
+every file takes. When a passage cannot be mapped from the
 Rendered view (a table, a code block), the panel says so, keeps your note, and offers the
 Raw view with the passage selected. Comments are stored beside the file, in the
 `.trackchanges/` folder at the root of its project (the nearest git repository, vault, or
@@ -173,6 +173,16 @@ comment on an embedded figure is stored on its embed line, with the rectangle: t
 tools and the other editors place it on that line, and this viewer paints the rectangle on
 the picture. Drawing a rectangle needs a mouse or a trackpad; on a phone, comment on the
 file as a whole instead.
+
+**PDFs.** A PDF opens in the browser's own PDF viewer. While **Comments** is open, the viewer
+draws the pages itself instead, one below the other, so a rectangle can be dragged on a page
+the same way as on an image; the comment names its page, and its card shows that part of the
+page. A rectangle drawn on one page can be placed again on another. Pages are drawn only up to
+25 MB of PDF; above that, or when the page renderer cannot be loaded or the file cannot be
+opened, the browser's viewer stays with a line above it saying why, and a comment on the whole
+file still works. The renderer ships without pdf.js's standard fonts, CMaps, and JPEG 2000
+decoder, so a PDF that does not embed its fonts may show some text in a system font, and a
+JPEG 2000 image may render blank; the pages still draw.
 
 **Track changes** records a session's edits to the file as changes for you to accept or
 reject, instead of letting them land silently. Turn it on for the file or for its folder,
