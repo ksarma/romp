@@ -362,6 +362,11 @@ test('an ambiguous anchor (identical surroundings) refuses anchor-ambiguous and 
   assert.ok(r.error.includes('~/notes-api/docs/report.md'), r.error);
   assert.equal(fs.existsSync(path.join(w.root, '.trackchanges')), false);
   assert.deepEqual(locateExact(w.text, second.anchor, second.hintOffset), { error: 'anchor-ambiguous' });
+  // Selecting the FIRST occurrence is refused too: the hint would pick it now, but a later reader
+  // has no hint and would place the comment on whichever copy the engine picks then.
+  refused(w, { verb: 'comment', path: w.report, args: { anchor: first.anchor, note: 'Not yet.', hintOffset: first.hintOffset }, fence: { storeMtimeNs: '' } }, 'anchor-ambiguous');
+  assert.deepEqual(locateExact(w.text, first.anchor, first.hintOffset), { error: 'anchor-ambiguous' });
+  assert.deepEqual(locateExact(w.text, first.anchor, undefined), { error: 'anchor-ambiguous' });
 });
 
 test('a passage that is gone refuses anchor-not-found, also when only its surroundings survive', () => {
