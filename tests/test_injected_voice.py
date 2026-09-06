@@ -86,6 +86,153 @@ def prose(body):
     return body.split("<!--")[0]
 
 
+# ── the desc composers' source scan ──────────────────────────────────────────────────────────────
+# The Send to session message's parenthetical (`desc`) is composed in the webview and the kernel prints
+# it verbatim, so its fixed phrases are scanned at the SOURCE (test_the_client_composed_desc_speaks_
+# plainly_at_its_source). A composer's phrases are not all in its own body: regionDesc prints a
+# coordinate that is not a number as UNREADABLE, a module constant it reaches through fmt2, and the
+# first cut of the scan read only the function's span, so a romp noun in that constant would have
+# reached a session unscanned (review finding, 2026-09-06). The scan therefore follows every identifier
+# a composer's code references to its module-level definition — in the same file, or through a relative
+# `import { … } from "./…"` / `import * as … from "./…"` — and reads those too, transitively, so "every
+# fixed phrase a desc can carry" holds by construction rather than by a hand-kept list. Comments and
+# types are not emitted and are skipped; a template literal's `${…}` is code, followed but not scanned
+# as prose. A relative import that no longer resolves, or an imported name the module does not define,
+# fails loudly rather than being skipped (a silent skip is the gap this exists to close).
+_TOKEN = re.compile(r'"((?:[^"\\\n]|\\.)*)"|\'((?:[^\'\\\n]|\\.)*)\'|`((?:[^`\\]|\\.)*)`'
+                    r'|//[^\n]*|/\*.*?\*/', re.S)
+_INTERP = re.compile(r"\$\{([^{}]*)\}")
+_IDENT = re.compile(r"\b[A-Za-z_$][\w$]*\b")
+_MEMBER = re.compile(r"\b([A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)")
+# where the next module-level statement (or a comment) starts at column 0: the end of the one before it
+_TOP_START = re.compile(r"^(?:export|const|let|var|function|async|class|type|interface|enum|declare|import)\b"
+                        r"|^//|^/\*", re.M)
+_NAMED_IMPORT = re.compile(r"^import\s+(type\s+)?\{([^}]*)\}\s*from\s*[\"']([^\"']+)[\"']", re.M)
+_NS_IMPORT = re.compile(r"^import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*[\"']([^\"']+)[\"']", re.M)
+
+
+def _value_def(src, name):
+    """The module-level VALUE definition of `name` in `src` — const/let/var/function/class/enum at column 0 —
+    as the text from its head to the next column-0 statement or comment. None when there is none."""
+    m = re.search(r"^(?:export\s+(?:default\s+)?)?(?:const|let|var|(?:async\s+)?function\*?|class|(?:const\s+)?enum)"
+                  r"\s+%s\b" % re.escape(name), src, re.M)
+    if not m:
+        return None
+    line_end = src.find("\n", m.end())
+    if line_end < 0:
+        return src[m.start():]
+    nxt = _TOP_START.search(src, line_end + 1)
+    return src[m.start():nxt.start() if nxt else len(src)]
+
+
+def _is_type_def(src, name):
+    """A `type` or `interface` at column 0: imported without the `type` modifier it is still not a value."""
+    return re.search(r"^(?:export\s+)?(?:type|interface)\s+%s\b" % re.escape(name), src, re.M) is not None
+
+
+def _imports(src):
+    """(local name → (module spec, exported name)) for the file's named imports, type-only ones dropped, and
+    (namespace → module spec) for its `import * as` ones."""
+    named, spaces = {}, {}
+    for type_only, names, spec in _NAMED_IMPORT.findall(src):
+        if type_only:
+            continue
+        for part in names.split(","):
+            part = part.strip()
+            if not part or part.startswith("type "):
+                continue
+            exported, _, local = part.partition(" as ")
+            named[(local or exported).strip()] = (spec, exported.strip())
+    for ns, spec in _NS_IMPORT.findall(src):
+        spaces[ns] = spec
+    return named, spaces
+
+
+def _resolve_module(from_file, spec):
+    """The file a relative import spec names, or None: bare, with a TypeScript extension, an ESM `.js` spelling
+    of a `.ts` file, or a directory's index."""
+    base = os.path.normpath(os.path.join(os.path.dirname(from_file), spec))
+    cands = [base + ext for ext in ("", ".ts", ".tsx", ".mts", ".js", ".mjs")] + [os.path.join(base, "index.ts")]
+    stem, ext = os.path.splitext(base)
+    if ext in (".js", ".mjs"):
+        cands += [stem + ".ts", stem + ".mts"]
+    for c in cands:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def _code_of(span):
+    """The span as CODE: comments and string literals blanked, a template literal's `${…}` kept."""
+    return _TOKEN.sub(lambda m: " ".join(_INTERP.findall(m.group(3))) if m.group(3) is not None else " ", span)
+
+
+def _literals_of(span):
+    """The span's string literals as PROSE: comments dropped, a template literal's `${…}` blanked."""
+    return [a or b or _INTERP.sub(" ", c) for a, b, c in _TOKEN.findall(span) if a or b or c]
+
+
+def _desc_closure(path, name):
+    """Every string literal the composer `name` defined in `path` can emit: its own, and those of every
+    module-level value its code references, transitively, across relative imports. Returns (literals,
+    reached): literals as [(file basename, def name, literal)], reached as the set of (basename, def name)
+    read. Raises AssertionError when the composer has no column-0 definition in `path`, when a referenced
+    name is imported from a relative module that does not resolve to a file, or when that module defines no
+    such value (a re-export, or a rename): each is a case where the scan would otherwise read nothing and
+    pass."""
+    literals, reached, cache = [], set(), {}
+
+    def read(p):
+        if p not in cache:
+            cache[p] = Path(p).read_text(encoding="utf-8")
+        return cache[p]
+
+    def imported(p, local, spec, exported):
+        target = _resolve_module(p, spec)
+        if target is None:
+            raise AssertionError("%s imports %r from %r, which resolves to no file — the module moved or was "
+                                 "renamed; re-pin the composer's helpers, do not drop the scan"
+                                 % (os.path.basename(p), local, spec))
+        tsrc = read(target)
+        if _value_def(tsrc, exported) is None:
+            if _is_type_def(tsrc, exported):
+                return
+            raise AssertionError("%s imports %r from %r, but %s defines no such value at column 0 (a re-export, "
+                                 "or a rename) — re-pin it here, do not drop the scan"
+                                 % (os.path.basename(p), exported, spec, os.path.basename(target)))
+        visit(target, exported)
+
+    def visit(p, n):
+        if (p, n) in reached:
+            return
+        reached.add((p, n))
+        src = read(p)
+        span = _value_def(src, n)
+        base = os.path.basename(p)
+        literals.extend((base, n, lit) for lit in _literals_of(span))
+        code = _code_of(span)
+        named, spaces = _imports(src)
+        for ns, member in _MEMBER.findall(code):
+            if ns in spaces:
+                imported(p, ns + "." + member, spaces[ns], member)
+        for ident in sorted(set(_IDENT.findall(code))):
+            if ident != n and _value_def(src, ident) is not None:
+                visit(p, ident)
+            elif ident in named:
+                imported(p, ident, *named[ident])
+
+    if _value_def(Path(path).read_text(encoding="utf-8"), name) is None:
+        raise AssertionError("%s: no module-level definition of %s at column 0 — the desc composer moved or "
+                             "was renamed; re-pin it here" % (os.path.basename(path), name))
+    visit(path, name)
+    return literals, {(os.path.basename(p), n) for p, n in reached}
+
+
+def _romp_hits(literals):
+    """The (basename, def name, literal, word, why) of every romp word a scanned literal carries."""
+    return [(base, n, lit, word, why) for base, n, lit in literals for word, why in ROMP_WORDS if word in lit.lower()]
+
+
 class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -181,8 +328,9 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # form: a passage, this file, a change with the decision sentence, a region of a standalone
             # image, a region of a figure embedded in a text file (Slice 3, which names the figure by
             # its src), a region of a PDF page (the plan's own specimen). A copy catches a drift only
-            # when the editor propagates it, so the composers' own string literals are scanned at the
-            # source as well (test_the_client_composed_desc_speaks_plainly_at_its_source).
+            # when the editor propagates it, so the composers' string literals — and those of every
+            # helper they reach, such as the "?" a coordinate that is not a number prints as — are
+            # scanned at the source as well (test_the_client_composed_desc_speaks_plainly_at_its_source).
             "file comments message": km._file_comments_message(
                 "/TESTDIR/notes-api/docs/report.md",
                 [{"id": "1781100000000-0", "desc": 'on "shipping the cache in v1.2"',
@@ -259,33 +407,42 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         # The file-comments descs in _bodies are COPIES: the parenthetical is composed in the webview
         # (describeComment in file-comments-model.ts, regionDesc in region-geometry.ts) and the kernel
         # prints it verbatim, so a romp noun added to either composer would reach a session while the
-        # copies here stayed clean. This reads the two composers' own string literals — every fixed
-        # phrase a desc can carry — and scans them the way the rendered bodies are scanned. Comments
-        # in the source are skipped (they are not emitted); a composer that moved or was renamed
-        # fails loudly here — re-pin it, do not drop the scan. Each composer's known phrases must be
-        # among what was read, so the scan can never pass by reading nothing.
+        # copies here stayed clean. This reads the string literals of each composer AND of every
+        # module-level value its code reaches (_desc_closure) — every fixed phrase a desc can carry —
+        # and scans them the way the rendered bodies are scanned. The reach matters: regionDesc prints
+        # a coordinate that is not a number as UNREADABLE ("the region at 0.10, ?, 0.30, 0.40"), a
+        # constant it gets through fmt2, and describeComment names an embedded figure through decodeSrc
+        # and the region through region-geometry's regionDesc — none of them in the composer's own span.
+        # Comments in the source are skipped (they are not emitted); a composer that moved or was
+        # renamed, or a helper import that no longer resolves, fails loudly here — re-pin it, do not
+        # drop the scan. Each composer's known phrases must be among what was read, and its known
+        # helpers among what was reached, so the scan can never pass by reading nothing.
         ui = os.path.join(os.path.dirname(HERE), "ui", "webview")
-        composers = (("file-comments-model.ts", "describeComment", ("on this file", 'on "', "on your change")),
-                     ("region-geometry.ts", "regionDesc", ("the region at ", " of page ")))
-        token = re.compile(r'"((?:[^"\\\n]|\\.)*)"|\'((?:[^\'\\\n]|\\.)*)\'|`((?:[^`\\]|\\.)*)`'
-                           r'|//[^\n]*|/\*.*?\*/', re.S)
-        for fname, fn, expect in composers:
-            src = Path(ui, fname).read_text(encoding="utf-8")
-            m = re.search(r"^export function %s\b.*?^\}" % re.escape(fn), src, re.S | re.M)
-            self.assertIsNotNone(m, "%s: `export function %s` not found at column 0 — the desc composer "
-                                    "moved or was renamed; re-pin it here" % (fname, fn))
-            literals = [a or b or c for a, b, c in token.findall(m.group(0)) if a or b or c]
+        composers = (
+            ("file-comments-model.ts", "describeComment",
+             ("on this file", 'on "', "on your change", "the region at "),
+             (("region-geometry.ts", "regionDesc"), ("file-comments-model.ts", "decodeSrc"))),
+            ("region-geometry.ts", "regionDesc",
+             ("the region at ", " of page ", "?"),
+             (("region-geometry.ts", "fmt2"), ("region-geometry.ts", "UNREADABLE"))),
+        )
+        for fname, fn, expect, helpers in composers:
+            literals, reached = _desc_closure(os.path.join(ui, fname), fn)
+            for helper in helpers:
+                self.assertIn(helper, reached,
+                              "%s.%s no longer reaches %s.%s — the helper moved, was renamed, or the composer "
+                              "stopped using it; re-pin the reach here, do not drop the scan" % ((fname, fn) + helper))
             for phrase in expect:
-                self.assertTrue(any(phrase in lit for lit in literals),
+                self.assertTrue(any(phrase in lit for _, _, lit in literals),
                                 "%s.%s no longer carries %r — the scan read the wrong span, or the desc form "
                                 "changed; fix the pin AND the copies in _bodies" % (fname, fn, phrase))
-            for lit in literals:
+            for base, n, lit in literals:
                 for word, why in ROMP_WORDS:
-                    with self.subTest(composer=fn, literal=lit, word=word):
+                    with self.subTest(composer=fn, source=base + "." + n, literal=lit, word=word):
                         self.assertNotIn(word, lit.lower(),
-                                         "%s.%s would print %r into the Send to session message (%r: %s). "
-                                         "The desc reaches the session verbatim — write it as the person "
-                                         "would name the spot." % (fname, fn, lit, word, why))
+                                         "%s.%s would print %r into the Send to session message, through %s.%s "
+                                         "(%r: %s). The desc reaches the session verbatim — write it as the "
+                                         "person would name the spot." % (fname, fn, lit, base, n, word, why))
 
     def test_the_command_allowance_is_the_span_not_the_word(self):
         # the T212 allowance must never become a whitelist: bare "romp" in prose, or any other
@@ -393,6 +550,101 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                 self.assertTrue("stand" in text or "what's next" in text or "keep going" in text,
                                 "%r no longer asks for progress" % name)
                 self.assertIn("from me", text, "%r no longer asks what it needs from the user" % name)
+
+
+class TheDescSourceScanReadsWhatTheComposerReaches(unittest.TestCase):
+    """The source scan behind test_the_client_composed_desc_speaks_plainly_at_its_source, proven on SYNTHETIC
+    modules (invented names in a temporary directory): a romp noun in a constant the composer reaches only
+    through a helper — in its own module, through a named or aliased import, through a namespace import, or
+    inside a template literal's `${…}` — is caught; what is not emitted (a comment, a type, a value the
+    composer never references, the code inside `${…}`) is not scanned; and a helper that cannot be found
+    fails loudly. The first cut scanned the composer's span alone and let UNREADABLE through (review
+    finding, 2026-09-06); this pins the reach so it cannot narrow back."""
+
+    WORDS = '''// A coordinate that is not a number prints as SLOT. (This comment says card; comments are not emitted.)
+export const SLOT = "?";
+export const UNUSED = "card";     // no composer reaches this: its word must not be flagged
+export type Slot = string;
+export const fmt = (v: unknown): string => (typeof v === "number" ? v.toFixed(2) : SLOT);
+export function tail(n: number): string {
+  return " of page " + n;
+}
+'''
+    COMPOSER = '''import { fmt as two, Slot, tail } from "./desc-words";
+import * as words from "./desc-words";
+const AT = "the region at ";
+function join(parts: string[]): string {
+  return parts.join(", ");
+}
+export function compose(r: Record<string, unknown>, page?: number): string {
+  const at: Slot = AT + join(["x", "y"].map((k) => two(r[k])));
+  return page ? `${at}${tail(page)}` : at + words.fmt(r.w);
+}
+'''
+
+    def _modules(self, words=None, composer=None):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        Path(d.name, "desc-words.ts").write_text(words or self.WORDS, encoding="utf-8")
+        Path(d.name, "desc-composer.ts").write_text(composer or self.COMPOSER, encoding="utf-8")
+        return os.path.join(d.name, "desc-composer.ts")
+
+    def test_the_scan_reaches_helpers_in_its_module_and_across_imports(self):
+        literals, reached = _desc_closure(self._modules(), "compose")
+        self.assertEqual(reached, {("desc-composer.ts", "compose"), ("desc-composer.ts", "AT"),
+                                   ("desc-composer.ts", "join"), ("desc-words.ts", "fmt"),
+                                   ("desc-words.ts", "SLOT"), ("desc-words.ts", "tail")},
+                         "the composer's own constants and helpers, the aliased and the plain named import, the "
+                         "namespace member, and the constant a helper reaches — nothing unreferenced, no type")
+        phrases = {lit for _, _, lit in literals}
+        for phrase in ("the region at ", ", ", "x", "y", "?", " of page "):
+            self.assertIn(phrase, phrases, "every fixed phrase the desc can carry is read, wherever it is defined")
+        self.assertEqual(_romp_hits(literals), [],
+                         "the comment's word and the unreferenced constant's word are not emitted, so not scanned")
+
+    def test_a_noun_in_a_constant_reached_through_a_helper_is_caught(self):
+        # the gap the first cut had: the composer's own span is clean, the constant it reaches is not
+        hits = _romp_hits(_desc_closure(self._modules(words=self.WORDS.replace('SLOT = "?"', 'SLOT = "card"')),
+                                        "compose")[0])
+        self.assertEqual([(h[0], h[1], h[2], h[3]) for h in hits], [("desc-words.ts", "SLOT", "card", "card")],
+                         "a noun placed in the constant the helper prints reaches the session; the scan names "
+                         "the module and the definition it came from")
+
+    def test_a_noun_reached_through_each_import_form_is_caught(self):
+        # a named import (tail), a namespace member (words.fmt), and the composer's own module
+        for label, words, composer in (
+                ("named import", self.WORDS.replace('" of page "', '" of board "'), None),
+                ("namespace member", self.WORDS.replace('SLOT = "?"', 'SLOT = "goal"'),
+                 self.COMPOSER.replace("import { fmt as two, Slot, tail }", "import { Slot, tail }")
+                              .replace("two(r[k])", "words.fmt(r[k])")),
+                ("own module", None, self.COMPOSER.replace('AT = "the region at "', 'AT = "the card at "'))):
+            with self.subTest(form=label):
+                hits = _romp_hits(_desc_closure(self._modules(words=words, composer=composer), "compose")[0])
+                self.assertEqual(len(hits), 1, "exactly the planted noun, at its source: %r" % (hits,))
+
+    def test_code_inside_a_template_literal_is_followed_but_not_scanned_as_prose(self):
+        # `${cardinal(x)}` is code: the identifier is followed to its definition (its literals are read) and
+        # the code text itself is not a phrase the session sees
+        words = self.WORDS + 'export function cardinal(n: unknown): string {\n  return "no. " + String(n);\n}\n'
+        composer = self.COMPOSER.replace("import { fmt as two, Slot, tail }", "import { fmt as two, Slot, tail, cardinal }") \
+                                .replace("`${at}${tail(page)}`", "`${at}${cardinal(page)}`")
+        literals, reached = _desc_closure(self._modules(words=words, composer=composer), "compose")
+        self.assertIn(("desc-words.ts", "cardinal"), reached, "the identifier inside ${…} is followed")
+        self.assertIn("no. ", {lit for _, _, lit in literals}, "…and what it prints is read")
+        self.assertEqual(_romp_hits(literals), [], "the ${cardinal(page)} code is not a phrase; its name is not a hit")
+        self.assertNotIn(("desc-words.ts", "tail"), reached, "a helper the composer stopped using is not read")
+
+    def test_a_helper_that_cannot_be_found_fails_loudly(self):
+        # each is a case where a silent skip would let the scan pass by reading nothing
+        with self.assertRaisesRegex(AssertionError, "resolves to no file"):
+            _desc_closure(self._modules(composer=self.COMPOSER.replace('"./desc-words"', '"./desc-word"')), "compose")
+        with self.assertRaisesRegex(AssertionError, "defines no such value"):
+            _desc_closure(self._modules(composer=self.COMPOSER.replace("fmt as two", "fmt2 as two")), "compose")
+        with self.assertRaisesRegex(AssertionError, "no module-level definition of compose2"):
+            _desc_closure(self._modules(), "compose2")
+        # a type imported WITHOUT the `type` modifier (Slot above) is legal TypeScript and not a value: the clean
+        # modules resolve, so that case did not trip the loud path
+        _desc_closure(self._modules(), "compose")
 
 
 class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):

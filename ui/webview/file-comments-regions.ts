@@ -199,8 +199,12 @@ export class RegionLayer {
     if (this.carried) img.setAttribute("style", appendStyle(this.imgStyle, imgStyle));
     img.addEventListener("load", this.onLoad);
     // the exact event for "the drawn size changed": the aside opening narrows the body with no window resize;
-    // the window's resize stands in where the observer is missing. The wrapper is observed too: a picture centered
-    // in a block wrapper moves without changing size when the column does
+    // the window's resize stands in where the observer is missing. The wrapper is observed too, for the picture
+    // whose wrapper outgrows it (a carried percentage width with the picture capped by a pixel max-width, a
+    // percentage margin): there the picture moves inside the wrapper when the column changes while its own size
+    // does not, and the pixel offsets place() measures against the wrapper go stale. A picture the wrapper hugs
+    // needs neither: the sheet's inset: 0 follows it, and a move fires no observer at all
+    // (file-comments-regions-sizer.test.ts, and the -browser leg beside it).
     if (typeof ResizeObserver !== "undefined") { this.sizer = new ResizeObserver(() => this.place()); this.sizer.observe(img); this.sizer.observe(this.wrap); }
     else window.addEventListener("resize", this.onResize);
     this.arm();
@@ -234,8 +238,9 @@ export class RegionLayer {
 
   /** Size the overlay to the drawn image. The wrapper hugs the <img>, so the sheet's `inset: 0` is right
    *  whenever the picture fills its element (`fill`, or `contain` at the picture's own aspect); a picture drawn
-   *  smaller than its element (the `contain` letterbox) gets pixel offsets, re-measured on the image's load and
-   *  on every resize. A wrapper with no size yet (not laid out) claims nothing. */
+   *  smaller than its element (the `contain` letterbox), or than its wrapper (a wrapper that outgrows it), gets pixel
+   *  offsets, re-measured on the image's load and on every resize of the picture or the wrapper. A wrapper with no
+   *  size yet (not laid out) claims nothing. */
   place(): void {
     const w = boxOf(this.wrap);
     const off = w.width > 0 && w.height > 0 ? overlayOffsets(w, this.box()) : null;

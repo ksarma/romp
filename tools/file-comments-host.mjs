@@ -43,11 +43,20 @@
 //     embedded in a markdown file the bytes of the `src` the embed names, resolved
 //     against the file's directory and refused unless it is a regular file inside the project root,
 //     one the anchored passage embeds (`figure-mismatch`), of the kind the target claims, and no
-//     larger than the viewer shows (`too-large`); the region lies inside the unit square. Every
-//     reply carries the current hash to compare against — `fileHash` on a media file,
-//     `embeddedHashes` per src on a text file — with null for "unknown" (unreadable, or past the
-//     size cap), which is never the same as stale, and beside every null the reason
-//     (`fileHashReason`, `embeddedHashReasons`), so the panel can say what could not be checked;
+//     larger than the viewer shows (`too-large`); the region lies inside the unit square. And when
+//     the request says which bytes the person saw (`fence.figureHash`: the hash the last reply
+//     carried for that figure — `fileHash` on a media file, `embeddedHashes[src]` on a text file),
+//     the bytes hashed must be those, else `figure-changed` (figureFence, stampTarget): a figure
+//     regenerated between the drag and Enter would otherwise be stamped with a hash the person never
+//     saw, which the panel reads as current — the one write the hash exists to catch, missed at the
+//     moment it is made. That fence says what the caller saw and is checked when it says anything;
+//     a request without one is taken as before, since a caller has no hash for a figure no reply
+//     has hashed yet (a text file's replies hash the figures its region comments already name), and
+//     `retarget` is held to the same rule. Every reply carries the current hash to compare against
+//     — `fileHash` on a media file, `embeddedHashes` per src on a text file — with null for
+//     "unknown" (unreadable, or past the size cap), which is never the same as stale, and beside
+//     every null the reason (`fileHashReason`, `embeddedHashReasons`), so the panel can say what
+//     could not be checked;
 //   * the contract's own shape — the embed line's anchor plus `{kind, region, hash}` with no `src`,
 //     which the plan describes and another writer can leave — is read, never left "unknown": every
 //     reply names the figure such a comment is on from its anchored passage, located now, when that
@@ -112,7 +121,10 @@ const CONFIG_VERSION = 2;
 // The verbs through Slice 3 (retarget is Slice 3's re-place gesture); Slice 5 adds save. The verbs
 // that write the FILE (not only the sidecar) — reject, reject-all, and later save — also fence on
 // fileMtimeNs (requireFence with 'file-moved') and check the text (not-text, too-large) before any
-// write; no other verb does.
+// write; no other verb does. The verbs that stamp a figure's hash (comment with a target, retarget)
+// fence on the figure's BYTES instead, through fence.figureHash when the request carries it
+// (figureFence, then stampTarget with 'figure-changed'): a markdown file's mtime cannot fence a
+// figure embedded in it, and a hash is checked against the very bytes stamped.
 const VERBS = new Set([
   'status', 'set-tracked', 'comment', 'reply', 'resolve', 'log-edit', 'log-send',
   'accept', 'accept-all', 'reject', 'reject-all', 'retarget',
@@ -611,6 +623,25 @@ export function resolveSrc(ctx, rootDir, src) {
 
 const errText = (e) => tildeText(e && e.message ? e.message : String(e));
 
+// The figure's fence: `fence.figureHash`, the sha256 the caller last saw for the figure the region is
+// on — the reply's `fileHash` on a media file, `embeddedHashes[src]` on a text file — or null when
+// the request names none. Read before any disk read, like every fence key (a bad shape is a caller
+// bug): a hash this script never emitted (not 64 lowercase hex digits) could only ever refuse, so it
+// is refused as the bug it is rather than reported as a changed figure; and it fences a region, so a
+// `comment` carrying it with no target is a caller bug too (the caller checks that). Absent is
+// allowed, unlike the mtime fences: a caller has no hash for a figure no reply has hashed yet (a
+// text file's replies hash only the figures its region comments already name), so the fence says
+// what the caller saw, and is checked, in stampTarget, when it says anything.
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+function figureFence(ctx) {
+  const v = ctx.fence.figureHash;
+  if (v == null) return null;
+  if (typeof v !== 'string' || !SHA256_HEX.test(v)) {
+    throw new BadRequest(`fence.figureHash must be the sha256 hex a reply carried for the figure (fileHash, or embeddedHashes[src]), not ${JSON.stringify(v)}`);
+  }
+  return v;
+}
+
 // The target `comment` and `retarget` write: the validated shape plus the hash of the bytes it
 // is about — the figure `src` names, or the commented file itself for a standalone image or PDF.
 // Three checks stand between the shape and the hash, in this order. A region with no anchor is on
@@ -626,8 +657,16 @@ const errText = (e) => tildeText(e && e.message ? e.message : String(e));
 // long as the kernel's deadline allowed and then failed as a timeout. The constant, not the
 // environment override: the override belongs to the reply-side hashes alone (their tests cap a
 // tiny fixture; a write verb's cap is pinned with a sparse file). Key order is the contract's:
-// kind, region, page (pdf), hash, src (embedded).
-function stampTarget(ctx, rootDir, target) {
+// kind, region, page (pdf), hash, src (embedded). Then, when the request said which bytes the person
+// saw (`figureHash`, from figureFence), the hash taken must equal it — else the figure was
+// regenerated between the picture the person drew on and this write, and the target refuses
+// `figure-changed` rather than record a hash the person never saw as the one they did: every reply
+// would then equal it, and the panel would read a rectangle drawn on the old picture as current on
+// the new one, the very case the hash exists to mark stale. Deliberately NOT one of the `-moved`
+// codes: the panel re-issues status and retries those once, and a retry here would stamp the new
+// bytes — the person has to look at the picture as it is now and draw the region again, so this one
+// is shown to them.
+function stampTarget(ctx, rootDir, target, figureHash) {
   const what = target.src != null ? `the figure ${tilde(target.src)} in ${ctx.shown}` : ctx.shown;
   if (target.src == null && mediaKind(ctx.abs) == null) {
     throw new BadRequest(`a region with no anchor is on the file itself, and ${ctx.shown} is not an image or a PDF; a figure embedded in it takes the anchor of its embed line and target.src`);
@@ -651,6 +690,9 @@ function stampTarget(ctx, rootDir, target) {
   }
   if (hashed.hash == null) {
     throw new Refusal('too-large', `${what} is ${humanBytes(hashed.size)}, more than the ${humanBytes(FILE_HASH_CAP)} the viewer shows, so no region can be placed on it; nothing was changed`);
+  }
+  if (figureHash != null && hashed.hash !== figureHash) {
+    throw new Refusal('figure-changed', `${what} changed on disk since it was shown — reload to see it as it is now, then draw the region again; nothing was changed`);
   }
   const out = { kind: target.kind, region: target.region };
   if (target.page != null) out.page = target.page;
@@ -1261,9 +1303,13 @@ function noChange(ctx, ids) {
 // target's shape is checked first (a caller bug, before any disk read the anchor needs), the
 // anchor is placed, the anchored passage is checked to embed the figure the target names
 // (`figure-mismatch`), and only then is the figure hashed — the region's own refusals
-// (`unreadable` for a src outside the root or unreadable, `too-large` past the viewer's cap) come
-// after the passage's, and all of them before the landmark and the write.
+// (`unreadable` for a src outside the root or unreadable, `too-large` past the viewer's cap, and
+// `figure-changed` when the bytes are not the ones the request's fence.figureHash says were shown)
+// come after the passage's, and all of them before the landmark and the write. The fence's shape is
+// read first of all, before any disk read, as every fence key is.
 function doComment(ctx) {
+  const figureHash = figureFence(ctx);
+  if (figureHash != null && ctx.args.target == null) throw new BadRequest('fence.figureHash fences the figure a region is on, and this comment has no target');
   return withSidecar(ctx, true, (store, text, root) => {
     const target = ctx.args.target == null ? null : validateTarget(ctx.args.target, ctx.args.anchor != null);
     const built = buildComment(text, ctx.args, Date.now(), store ? store.suggestions : []);
@@ -1276,7 +1322,7 @@ function doComment(ctx) {
     if (built.error === 'no-change') throw noChange(ctx, [ctx.args.suggestionId]);
     if (target) {
       if (target.src != null) checkEmbedNamesSrc(ctx, text, built.range.from, built.range.to, target.src);
-      built.comment.target = stampTarget(ctx, root || path.dirname(ctx.abs), target);
+      built.comment.target = stampTarget(ctx, root || path.dirname(ctx.abs), target, figureHash);
     }
     return (s) => { s.comments.push(built.comment); };
   });
@@ -1297,10 +1343,14 @@ function doComment(ctx) {
 // target written carries its src. A stored src must be named by the request, as ever: the panel's
 // store view carries it (stored, or told by the passage on a reply), so a request without one is a
 // caller bug. A standalone one's target has none — the anchor decides, as it does for comment.
-// Fenced on the sidecar like every sidecar write; the anchor, id, body and replies stay as they
-// were; nothing is appended to the comments log, since a re-placed rectangle is not a decision.
+// Fenced on the sidecar like every sidecar write, and on the figure's bytes when the request says
+// which it saw (fence.figureHash, checked in stampTarget: a figure regenerated again between the
+// status that showed it stale and this re-place refuses `figure-changed`, and is never stamped with
+// bytes the person has not seen); the anchor, id, body and replies stay as they were; nothing is
+// appended to the comments log, since a re-placed rectangle is not a decision.
 function doRetarget(ctx) {
   const id = requireCommentId(ctx.args);
+  const figureHash = figureFence(ctx);
   if (ctx.args.target == null) throw new BadRequest('retarget needs target: {kind, region, page?, src?}');
   return withSidecar(ctx, false, (store, text, root) => {
     const c = findComment(store, id);
@@ -1326,7 +1376,7 @@ function doRetarget(ctx) {
         checkEmbedNamesSrc(ctx, text, loc.from, loc.to, validated.src);
       }
     }
-    const target = stampTarget(ctx, root || path.dirname(ctx.abs), validated);
+    const target = stampTarget(ctx, root || path.dirname(ctx.abs), validated, figureHash);
     return (s) => { findComment(s, id).target = target; };
   });
 }

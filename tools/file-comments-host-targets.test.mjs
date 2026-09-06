@@ -4,7 +4,9 @@
 // resolution of a src; this module covers the checks the Slice 3 review found missing:
 //   * an anchored region's `src` must be a figure the anchored passage embeds (`figure-mismatch`),
 //     and a re-place keeps the comment's figure — else the rectangle paints on one figure while the
-//     stale check follows another, and any client gets a hash of any in-root file it names;
+//     stale check follows another, and any client gets a hash of any in-root file it names; a stored
+//     target with no src (the contract's shape) is read by its passage: status hashes the figure the
+//     passage tells, and a re-place takes only that figure;
 //   * the target's `kind` must be what the named file's extension says, and a region with no anchor
 //     must be on an image or a PDF — a `pdf` target on a png, or a standalone region on a markdown
 //     file, is a caller bug and is not written;
@@ -222,12 +224,18 @@ test('retarget keeps the comment\'s figure: another src is a caller bug and noth
   crashed(w, { verb: 'retarget', path: w.figures, fence: fenceFor(st), args: { commentId: c.id, target: { kind: 'image', region: REGION2, src: '../secret.bin' } } },
     /retarget keeps the figure/);
   assert.deepEqual(fs.readFileSync(sp), bytes, 'byte-identical after the refusals');
-  // Another writer left the target with an anchor and no src: the new src must be what the anchored passage embeds.
+  // Another writer left the target with an anchor and no src (the contract's own shape): status tells the figure
+  // from the anchored passage and hashes it under that src, so the stale check has something to compare against
+  // (derivedSrcsFor; the plan-shape module pins the reply's store in full), and it does not rewrite the disk — so
+  // the re-place below still meets a stored target with no src, and its new src must be what the passage embeds.
   const disk = readSidecar(sp);
   delete disk.comments[0].target.src;
   fs.writeFileSync(sp, JSON.stringify(disk, null, 2) + '\n');
   st = status(w, w.figures);
-  assert.deepEqual(st.embeddedHashes, {}, 'no src, nothing to hash');
+  assert.deepEqual(st.embeddedHashes, { 'figs/latency.png': sha256(LATENCY) }, 'the figure the passage tells is hashed under its src');
+  assert.equal(st.derivedSrcs[c.id], 'figs/latency.png', 'the reply says the src is the passage\'s telling, not the disk\'s');
+  assert.deepEqual(st.derivedSrcReasons, {});
+  assert.equal('src' in readSidecar(sp).comments[0].target, false, 'a read never rewrites the sidecar');
   refused(w, { verb: 'retarget', path: w.figures, fence: fenceFor(st), args: { commentId: c.id, target: { kind: 'image', region: REGION2, src: 'figs/errors.png' } } }, 'figure-mismatch');
   r = ok(w, { verb: 'retarget', path: w.figures, fence: fenceFor(st), args: { commentId: c.id, target: { kind: 'image', region: REGION2, src: 'figs/latency.png' } } });
   assert.deepEqual(r.store.comments[0].target, { kind: 'image', region: REGION2, hash: sha256(LATENCY), src: 'figs/latency.png' });

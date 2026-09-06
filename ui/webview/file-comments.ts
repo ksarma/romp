@@ -62,7 +62,7 @@ import {
   regionTarget, regionState, figureTargets, figuresMoved, type PollBaseline, type FigureBaseline, type HeadVerdict,
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5)
-import { regionDesc, type Region } from "./region-geometry";
+import { regionDesc, isRegion, type Region } from "./region-geometry";
 
 const POLL_MS = 2500;
 const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
@@ -355,23 +355,56 @@ type Err = { text: string; reload: boolean; warn?: boolean };
 // comment saved without a hash, a host from before region comments (no hash field at all). Never a bare "unknown": a
 // deleted figure, one moved outside the project and one past the hash cap are three different things for the person to
 // do (CLAUDE.md: surface the error, never degrade silently).
-type HashReasons = { fileHashReason?: string | null; embeddedHashReasons?: Record<string, string | null> | null };
+// A text file's reply carries a third kind of reason, per COMMENT rather than per src (`derivedSrcReasons`, the host's
+// derivedSrcsFor): the contract's own shape for an embedded figure is the embed line's anchor plus `{kind, region, hash}`
+// with no `src` (the plan's contract; another writer can leave it), and the host reads such a comment by its passage —
+// one that embeds exactly one figure gives the reply's copy of the comment that src, so the panel never sees the gap;
+// one that cannot tell (two figures on it, none, the passage gone) is left src-less and the cause filed under the
+// comment's id. That cause is the answer for such a comment, and a text-file reply never carries `fileHash` — so before
+// it was read here, the card blamed a kernel that had answered correctly (the "may predate region comments" sentence
+// below, meant for a reply with no hash field at all) and sent the person to restart it (the 2026-09-06 review).
+type HashReasons = {
+  fileHashReason?: string | null; embeddedHashReasons?: Record<string, string | null> | null;
+  /** a text file: per comment id, why a src-less region's passage could not tell which figure it is on */
+  derivedSrcReasons?: Record<string, string | null> | null;
+};
 const UNKNOWN_GENERIC = "Whether the image changed since this region was drawn could not be checked.";
 /** The host's reason as the card shows it: capitalized, ending in a period (the host writes lowercase fragments). */
 const asSentence = (s: string): string => { const t = s.trim(); return t.charAt(0).toUpperCase() + t.slice(1) + (/[.!?]$/.test(t) ? "" : "."); };
-/** Why a region comment's staleness cannot be told (regionState "unknown"): the host's own reason when it sent one,
- *  else the panel-side cause it can see, else the generic sentence. */
-export function unknownReason(target: Target, s: Status | null): string {
+/** Whether a reply is a TEXT file's: the host puts `embeddedHashes` (an object, empty or not) on every text-file reply and
+ *  `fileHash` on every media reply; a kernel from before region comments sends neither. */
+const textFileReply = (r: Status & HashReasons): boolean => r.fileHash === undefined && !!r.embeddedHashes && typeof r.embeddedHashes === "object";
+/** Why a region comment's staleness cannot be told (regionState "unknown"): the host's own reason when it sent one —
+ *  for this comment (derivedSrcReasons), else for its figure or file (embeddedHashReasons / fileHashReason) — else the
+ *  panel-side cause it can see, else the generic sentence. `commentId` keys the per-comment reason; without it only the
+ *  per-src and per-file reasons are read. */
+export function unknownReason(target: Target, s: Status | null, commentId?: string): string {
   if (typeof target.hash !== "string" || !target.hash) return "This region was saved without the image's hash, so a later change to the image cannot be detected.";
   if (!s) return UNKNOWN_GENERIC;
   const r = s as Status & HashReasons;
   const src = typeof target.src === "string" && target.src ? target.src : null;
+  const derived = commentId !== undefined && r.derivedSrcReasons && typeof r.derivedSrcReasons === "object" ? r.derivedSrcReasons[commentId] : undefined;
+  if (typeof derived === "string" && derived.trim()) return asSentence(derived);
   const reason = src ? (r.embeddedHashReasons && typeof r.embeddedHashReasons === "object" ? r.embeddedHashReasons[src] : undefined) : r.fileHashReason;
   if (typeof reason === "string" && reason.trim()) return asSentence(reason);
   const current = src ? (r.embeddedHashes && typeof r.embeddedHashes === "object" ? r.embeddedHashes[src] : undefined) : r.fileHash;
-  if (current === undefined) return "The file's machine sent no hash for this image, so whether it changed since this region was drawn could not be checked. Its kernel may predate region comments: update and restart it.";
+  if (current === undefined) {
+    // a src-less region on a TEXT file with no reason filed for it: the comment names no figure (no src, and no passage
+    // the host could read one from — a region left with no embed line, or a host that does not read passages). The
+    // kernel answered; the "predate" sentence would send the person to restart a kernel that is current.
+    if (!src && textFileReply(r)) return "This region does not name the figure it is on, so there is no figure to check for changes since the region was drawn.";
+    return "The file's machine sent no hash for this image, so whether it changed since this region was drawn could not be checked. Its kernel may predate region comments: update and restart it.";
+  }
   return UNKNOWN_GENERIC;
 }
+/** A region the sidecar holds MALFORMED (isRegion fails: a coordinate missing, a string, a null — a hand edit, or a foreign
+ *  writer of the romp-only `target`): the card says so in words. It paints no rectangle and crops no thumbnail — a missing
+ *  `h` placed a rectangle with `height: NaN%` (a declaration the browser drops: a bar with the author's chip, as if it were
+ *  the region) and appended a 0×0 canvas (the 2026-09-06 review) — so the mark on the picture and the card's reference
+ *  ("the region at 0.10, 0.20, 0.30, ?") never disagree. The recourse follows (regionRecourse). */
+const UNREADABLE_REGION = "The region's coordinates could not be read from the comments file, so it is not drawn on the picture.";
+/** The stale card's own words: the tag's title collapsed, a sentence on the open card. */
+const STALE_REGION = "The image changed after this region was drawn, so it may no longer mark the right place.";
 
 // ── the wire: ONE window listener for the module, dispatching to the live panel by reqId ───────────
 // A reply is matched by reqId only — a REMOTE kernel's reply comes back with its sid host-prefixed
@@ -786,6 +819,13 @@ class Panel {
     this.ctx.aside(null);
     this.button.classList.remove("on"); this.button.setAttribute("aria-pressed", "false");
     this.float.hidden = true;
+    // A pending Re-place is a gesture of the OPEN panel: its instruction and Cancel are the composer box, and the drag it
+    // waits for is disarmed with the panel. Left pending, the closed panel's picture kept the cue (the dashed accent
+    // outline inviting a drag) over an overlay that took none, with nothing on screen saying why, and escapeReplace kept
+    // swallowing the document's Escape — the viewer's own close — for a re-place nothing showed (the 2026-09-06 review).
+    // Closing ends it, as Esc does: the comment keeps its place. A region composer holding a typed note stays: the words
+    // are the person's, and its pending rectangle is a mark like any other.
+    if (this.composer && this.composer.kind === "replace") this.closeComposer();
     this.paintRegions();                               // disarm: a closed panel leaves the pictures to the browser
     this.stopPoll();
   }
@@ -1340,13 +1380,13 @@ class Panel {
     const s = this.status;
     const c = this.composer;
     if (c && c.kind === "region" && !imgs.includes(c.img)) {
-      const again = this.ctx.mode() === "media" ? imgs[0]
-        : c.src ? imgs.find((i) => pictureIsEmbed(i, c.src!, this.ctx.path)) : undefined;
+      const again = this.ctx.mode() === "media" ? imgs[0] : this.composerImage(c, imgs);
       if (again) c.img = again;
     }
     const per = new Map<HTMLImageElement, RegionMark[]>();
     for (const card of this.cards()) {
-      if (card.resolved || !card.target || card.target.kind !== "image") continue;
+      // a malformed region (isRegion) paints nothing: the card says so (UNREADABLE_REGION), and Re-place redraws it
+      if (card.resolved || !card.target || card.target.kind !== "image" || !isRegion(card.target.region)) continue;
       const img = this.regionImageFor(card);
       if (!img) continue;
       const chip = this.chipFor(card.author, card.authorId);
@@ -1389,6 +1429,21 @@ class Panel {
     }
     this.refocusBody(keep);
   }
+  /** The picture a region composer's figure is now, after a repaint of rendered markdown: the one its embed line renders
+   *  — the range retargetComposer has re-found in the current text, through imgForRange, the way a saved region's picture
+   *  is found (regionImageFor) — else the first picture of its src (the passage not re-found: the "passage changed" state,
+   *  where Save hands the drag-time anchor to the host). By src alone, two embeds of ONE destination — a figure shown
+   *  twice — put the pending rectangle and the composer's thumbnail on the FIRST twin while `range` still named the second
+   *  and Save anchored the region there: the preview stood on one picture and the saved rectangle landed on another (the
+   *  2026-09-06 review). Both directions of the pairing count twins by order (embedOf); this one now does too. */
+  private composerImage(c: Extract<Composer, { kind: "region" }>, imgs: HTMLImageElement[]): HTMLImageElement | undefined {
+    const root = this.contentRoot(); const src = this.ctx.text();
+    if (root && src !== null && c.range && c.text === src) {
+      const img = imgForRange(root, src, c.range, this.ctx.path) as HTMLImageElement | null;
+      if (img && imgs.includes(img)) return img;
+    }
+    return c.src ? imgs.find((i) => pictureIsEmbed(i, c.src!, this.ctx.path)) : undefined;
+  }
   /** Whether any overlay in view takes a drag (the panel open, a fine pointer): the empty state names the gesture
    *  and the cards offer Re-place only then. */
   private drawsRegions(): boolean {
@@ -1403,16 +1458,25 @@ class Panel {
   onRegionDrawn(img: HTMLImageElement, region: Region): void {
     const c = this.composer;
     if (c && c.kind === "replace") {
+      // the drag's answer — the loader for the retarget's round trip, a refusal — is the card's own slot (card:<id>), which
+      // renderCard builds only in the OPEN card. startReplace opens it, but nothing kept it so: collapsed since (a click
+      // on its head while scrolling the panel), the drag gave no acknowledgement and a refusal showed nowhere while the
+      // composer still asked for the drag (the 2026-09-06 review; ui/CLAUDE.md: always acknowledge). The drag is a gesture
+      // about this comment, so its card opens for the answer, and is scrolled to.
+      const key = this.cardKey(c.commentId);
+      this.openCards.add(key);
       const own = this.replaceTarget(c.commentId);
       if (own !== img) {
         this.errors.set("card:" + c.commentId, { text: own ? "Draw the new place on the figure this comment is on, not on another one." : "The figure this comment is on is not shown here.", reload: false });
         this.render();
+        this.scrollCard(key);
         return;
       }
       this.composer = null;
       void this.mutate("retarget", { commentId: c.commentId, target: regionTarget(region, c.src) }, "card:" + c.commentId);
       this.repaintPresel();
       this.renderComposer();
+      this.scrollCard(key);
       return;
     }
     this.openPanel();
@@ -1447,7 +1511,7 @@ class Panel {
   }
   /** The card's thumbnail from the picture in view; a picture still loading re-renders the cards once, on its load. */
   private cropFor(img: HTMLImageElement, c: Card): HTMLCanvasElement | null {
-    if (!c.target) return null;
+    if (!c.target || !isRegion(c.target.region)) return null;   // a malformed region crops nothing (UNREADABLE_REGION): its NaN made a 0×0 canvas
     const crop = cropThumb(img, c.target.region);
     if (!crop && img.complete === false && !this.cropWait.has(img)) {
       this.cropWait.add(img);
@@ -1779,6 +1843,15 @@ class Panel {
     }
     return list;
   }
+  /** What the person can do about a region the card reports on (stale, unreadable), in the card's own words: Re-place
+   *  when THIS card offers it; otherwise resolve, and where Re-place is — the tag's title used to say "Re-place it" to a
+   *  phone that never gets the button (a coarse pointer draws nothing) and to a view that shows no picture (Raw, an SVG's
+   *  Source), so the line names the way there instead of a control that is not on the card. */
+  private regionRecourse(picture: HTMLImageElement | null, offered: boolean): string {
+    if (offered) return "Re-place it where it belongs now, or resolve it.";
+    if (!picture) return "Resolve it, or re-place it from the view that shows the image.";
+    return "Resolve it, or re-place it from a computer: drawing a region needs a mouse.";
+  }
   private renderCard(c: Card): HTMLElement {
     const isOpen = this.openCards.has(c.id);
     const loc = this.located.get(c.id);
@@ -1807,8 +1880,17 @@ class Panel {
     // names that button, and the unknown tag and note would point at nothing. Its card wears "resolved" alone (the
     // 2026-09-06 review, which found a resolved region wearing both).
     const shownSt = c.resolved ? "current" : regionSt;
-    if (shownSt === "stale") { const t = el("span", "fc-tag fc-tag-stale", "stale"); t.title = "The image changed after this region was drawn; Re-place it, or resolve it"; head.appendChild(t); }
-    if (shownSt === "unknown" && c.target) { const t = el("span", "fc-tag", "unknown"); t.title = unknownReason(c.target, this.status); head.appendChild(t); }
+    // Re-place is the way out of a stale or unreadable region, and the card offers it only with the picture in view and a
+    // pointer that can draw (below): the words about either state name what THIS card offers (regionRecourse), so a phone
+    // is never told to press a button it does not have
+    const replaceOffered = !!picture && !c.resolved && this.drawsRegions();
+    const recourse = this.regionRecourse(picture, replaceOffered);
+    if (shownSt === "stale") { const t = el("span", "fc-tag fc-tag-stale", "stale"); t.title = STALE_REGION + " " + recourse; head.appendChild(t); }
+    if (shownSt === "unknown" && c.target) { const t = el("span", "fc-tag", "unknown"); t.title = unknownReason(c.target, this.status, c.id); head.appendChild(t); }
+    // a region the sidecar holds malformed (isRegion): no rectangle, no crop, and the card says so — the reference already
+    // prints "?" in each slot it cannot read (regionDesc), and this names why the picture shows nothing for it
+    const unreadable = !!c.target && !c.resolved && !isRegion(c.target.region);
+    if (unreadable) { const t = el("span", "fc-tag", "unreadable"); t.title = UNREADABLE_REGION + " " + recourse; head.appendChild(t); }
     // a region whose picture this view does not show, with no passage to reveal in its place: a standalone image's region
     // seen in the SVG Source view (the XML). No seam call returns to the picture from here (setMode is the markdown
     // pair only), so the tag names the way back rather than leaving the card a dead end (ui/CLAUDE.md)
@@ -1827,13 +1909,18 @@ class Panel {
     if (!isOpen) { card.appendChild(el("div", "fc-preview", c.body.replace(/\s+/g, " ").trim())); return card; }
     if (picture) { const crop = this.cropFor(picture, c); if (crop) card.appendChild(crop); }   // the region cut from the picture (E5)
     card.appendChild(el("div", "fc-body", c.body));
-    // the open card says in words why the region's staleness is unknown (unknownReason): the tag's title never reaches touch
-    if (shownSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status)));
+    // the open card says in words what the region tags say — why the staleness is unknown (unknownReason), that the image
+    // changed, that the region could not be read — each with its way out: the tags' titles never reach touch, where the
+    // Re-place the stale title used to name is absent too (a coarse pointer draws nothing), so a phone saw a one-word tag
+    // and no way to learn that resolving ends it (the 2026-09-06 review; ui/CLAUDE.md: never dead-end a compact view)
+    if (shownSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status, c.id)));
+    if (shownSt === "stale") card.appendChild(el("div", "fc-note", STALE_REGION + " " + recourse));
+    if (unreadable) card.appendChild(el("div", "fc-note", UNREADABLE_REGION + " " + recourse));
     if (c.replies.length) card.appendChild(this.renderTurns(c.replies));
     const acts = el("div", "fc-actions");
     const reply = btn("Reply", "fcreply"); reply.dataset.id = c.id; acts.appendChild(reply);
     const res = btn(c.resolved ? "Reopen" : "Resolve", "fcresolve"); res.dataset.id = c.id; res.dataset.on = c.resolved ? "0" : "1"; acts.appendChild(res);
-    if (picture && !c.resolved && this.drawsRegions()) {   // Re-place needs the picture in view and a pointer that can draw
+    if (replaceOffered) {                              // Re-place needs the picture in view and a pointer that can draw
       const rp = btn("Re-place", "fcreplace"); rp.dataset.id = c.id;
       rp.title = regionSt === "stale" ? "The image changed: draw the region again where it belongs now" : "Draw the region again; the comment keeps its words";
       acts.appendChild(rp);

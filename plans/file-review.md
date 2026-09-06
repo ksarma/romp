@@ -207,16 +207,28 @@ Four properties of the contract shape the design:
   requires `--anchor`; the host script builds the comment itself. Every file gets this comment in
   Slice 1 (the user 2026-09-06); for images and PDFs it is the only comment until regions land.
 - **One optional field, `target`, carries a region.** `target: {kind: "image"|"pdf", region: {x,
-  y, w, h}, page?, hash}` with the rectangle in fractions of the rendered page or image, `page`
-  1-based for PDFs, and `hash` the sha256 of the file's bytes so a regenerated figure marks its
-  region comments stale the way a moved text anchor does. The text anchor stays absent for a
-  standalone image or PDF, so the other hosts show the comment as a discussion card and preserve
-  the field (both write the whole object back). For a figure embedded in a markdown file, the
-  comment carries both the anchor on the embed's source line, which every host can place, and the
-  region, which this viewer paints on the rendered image. The README's version rule says to bump
-  `v` only for a breaking change; an optional field older readers ignore is not one. The field is
-  built romp-only for now (the user 2026-09-05); documenting it in the track-changents README is a
-  later offer to its author, not a dependency.
+  y, w, h}, page?, hash, src?}` with the rectangle in fractions of the rendered page or image,
+  `page` 1-based for PDFs, `hash` the sha256 of the figure's bytes so a regenerated figure marks
+  its region comments stale the way a moved text anchor does, and `src` only on a figure embedded
+  in a markdown file: the embed's destination as written (the Slice 3 build, 2026-09-06; this plan
+  first stated the shape without it). The comment names its figure because the anchor's quote does
+  not always carry the destination (a reference-style embed's sits in a `[ref]: dest` definition
+  elsewhere in the file) and a passage can embed two figures; the reply's per-figure hashes and
+  the panel's re-place are keyed by that spelling. The host script, never the client, computes
+  `hash` from the bytes of the file the target is about: the commented file itself for a
+  standalone image or PDF, the file `src` names for an embedded figure, resolved and bounded as
+  Security posture states. A target on an anchored comment that names no `src` stays valid and is
+  read; it is the shape this plan first described, and one a writer with the contract alone can
+  leave. The host tells its figure from the anchored passage when that passage embeds exactly one,
+  says per comment where it could not, and never writes the sidecar on a read. The text anchor
+  stays absent for a standalone image or PDF, so the other hosts show the comment as a discussion
+  card and preserve the field (both write the whole object back). For a figure embedded in a
+  markdown file, the comment carries both the anchor on the embed's source line, which every host
+  can place, and the region, which this viewer paints on the rendered image. The README's version
+  rule says to bump `v` only for a breaking change; an optional field older readers ignore is not
+  one. The field is built romp-only for now (the user 2026-09-05); documenting it in the
+  track-changents README, in the five-key shape above, is a later offer to its author, not a
+  dependency.
 - **A file created through `track-edit` is one insertion** spanning the whole file, and while any
   same-author insertion is pending, that author's further edits inside or beside it coalesce
   into it (`engine.js:204-218`) and do not appear as separate changes. A first look at a file the
@@ -255,7 +267,9 @@ strings.
 request  {type:"fileComments", reqId, sid, path, verb, args?,
           fence?: {storeMtimeNs: str|"", fileMtimeNs?: str, configMtimeNs?: str|""}}
 reply    {type:"fileCommentsResult", reqId, verb, root, storePath, trackedBy, agentTooling,
-          fileMtimeNs, storeMtimeNs|null, configMtimeNs|null, store|null, hunks, unsent, baseline?}
+          fileMtimeNs, storeMtimeNs|null, configMtimeNs|null, store|null, hunks, unsent,
+          fileHash?, fileHashReason?, embeddedHashes?, embeddedHashReasons?, derivedSrcs?,
+          derivedSrcReasons?, baseline?}
 refusal  {type:"fileCommentsFailed", reqId, verb, code, error}
 ```
 
@@ -272,7 +286,13 @@ for the agent-side CLIs on the owning kernel; when absent the panel works but wa
 session cannot reply until romp's `install.sh` has run on that machine. `configMtimeNs` is null
 when `config.json` does not exist; the client sends `""` for null, the same convention as
 `storeMtimeNs`. The browser builds its cards from `store` and `hunks`; no card model crosses the
-wire.
+wire. The hash fields are Slice 3's: what a region comment's `target.hash` is compared with on
+every reply. On an image or PDF that is `fileHash`, the file's bytes now; on a text file it is
+`embeddedHashes`, one per distinct `src` its region comments name, and `store` carries the `src`
+each src-less anchored target names by its passage (`derivedSrcs` lists which, per comment id).
+Null is unknown, never stale, and each null has its reason beside it (`fileHashReason`,
+`embeddedHashReasons`, `derivedSrcReasons`), since the kernel keeps the host's stderr only when a
+call fails.
 
 Verbs by slice. Slice 1: `status`; `set-tracked {on, scope: "file"|"folder"}`, where `folder`
 writes `<dir>/` (refusing the root) so a folder can be tracked before its files exist, and `off`
@@ -282,7 +302,10 @@ inheritance, naming the parent note; `comment {anchor?, note, hintOffset?, targe
 present for a passage, absent for a whole-file comment, `target` from Slices 3 and 4);
 `reply {commentId, note}`; `resolve {commentId, on}`; `log-edit {summary}` (called by the kernel
 after a direct edit, see The comments log). Slice 2: `accept {ids}`, `reject {ids}`,
-`accept-all`, `reject-all`. Slice 5: `save {content, ops}`. Every mutating verb (all but
+`accept-all`, `reject-all`. Slice 3: `retarget {commentId, target}`, the re-place of a region
+comment (a new rectangle over the same figure, the hash recomputed from the bytes as they are
+now; not appended to the comments log, since a re-placed rectangle is not a decision). Slice 5:
+`save {content, ops}`. Every mutating verb (all but
 `status`) carries a fence: `storeMtimeNs` must equal the sidecar's current mtime, with `""`
 meaning the sidecar must not exist yet, so two browsers cannot both create it; `reject`,
 `reject-all`, and `save` also fence on `fileMtimeNs`; `set-tracked` fences on `configMtimeNs`
@@ -297,8 +320,10 @@ containing the phrase "file editing is off", the regex the viewer already matche
 comments: cannot write the comments for the file, dashboard file editing is off on this machine),
 `store-moved`, `file-moved`, `config-moved`, `unsupported-version`, `corrupt`, `unreadable` (with
 the OS error text), `anchor-not-found`, `anchor-ambiguous`, `tracked-inherited`, `no-comment`,
-`too-large`. There is no `no-root` code: a file with no landmark above it gets `.trackchanges/` created beside
-it on the first mutating verb other than `log-edit` (decision 37).
+`too-large`, and from Slice 3 `figure-mismatch` (the anchored passage does not embed the `src` the
+target names) and `no-figure` (a re-place of a src-less anchored target whose passage embeds no
+figure, or several). There is no `no-root` code: a file with no landmark above it gets
+`.trackchanges/` created beside it on the first mutating verb other than `log-edit` (decision 37).
 
 Kernel work, about 160 lines including the send op below: resolve `path` with
 `_resolve_open_path` (`kernel.py:30654`); refuse mutating verbs while `_file_editing_on()` is
@@ -681,8 +706,9 @@ Rendered view a click on the rendered image offers Comment, the anchor is the em
 text, and the highlight is a frame around the image; in Raw view the embed line is text like any
 other. A standalone image or PDF opened in the viewer takes the whole-file comment in Slice 1,
 which lands in the file's own sidecar; it renders as a card in every host and the agent replies to
-it with `track-reply`. Region comments, drawn as a rectangle on the image or on a PDF page, arrive
-in Slices 3 and 4 with the `target` field.
+it with `track-reply`. Region comments, drawn as a rectangle on the image or on a PDF page, carry
+the `target` field: on images from Slice 3 (its build note under Build slices says what the host
+stores and reads for them), on PDF pages from Slice 4.
 
 Acceptance criteria:
 
@@ -882,17 +908,44 @@ author's chip, and the card shows a thumbnail crop. When the image's bytes chang
 comments show as stale until resolved or re-placed. The sent message names the region. Desktop
 only in v1; on the phone the whole-file comment stands in.
 
-Acceptance: a region comment carries `target {kind: "image", region, hash}` in fractions of the
-image's natural size, plus the embed-line anchor when the figure is embedded, and no anchor when
-standalone; `track-reply` replies into it; the Obsidian and VS Code hosts show it as a discussion
-card (embedded: on the embed line) and preserve `target` on their next write; a regenerated image
-flips the comment to stale by `hash`; the rectangle re-paints correctly at any viewer width.
+Acceptance: a region comment carries `target {kind: "image", region, hash, src?}` in fractions of
+the image's natural size, plus the embed-line anchor and `src` when the figure is embedded, and no
+anchor when standalone; `track-reply` replies into it; the Obsidian and VS Code hosts show it as a
+discussion card (embedded: on the embed line) and preserve `target` on their next write; a
+regenerated image flips the comment to stale by `hash`; the rectangle re-paints correctly at any
+viewer width.
 
 Files: `file-comments.ts` (the overlay, the drag, the crop), `file-view.ts` (a hook exposing the
 rendered image elements), the host script (`comment` accepts `target`; `hash` computed from the
 bytes), `kernel.py` (none beyond passing the field), CSS. Dependency: the non-text refusal in the
 guard and `track-edit`, which lands in Slice 1; the `target` field is romp-only (decision 13).
 Size: ~250 / ~10 / ~40.
+
+The Slice 3 build (2026-09-06), host side: the stored target is `{kind, region, page?, hash, src?}`
+in that key order, `src` on an embedded figure only (the contract's `target` bullet says why the
+destination is stored rather than derived). `hash` is the host's sha256 of the figure's bytes,
+streamed and never decoded, since the UTF-8 read every other verb makes is lossy for an image; the
+client's value, if any, is ignored. `comment` runs its checks in a fixed order. The target's shape
+comes first, before any disk read, and a bad shape is a caller bug: `kind` image or pdf, the
+region inside the unit square at four decimals, `page` on a pdf only, `src` exactly when the
+comment has an anchor. Then the anchor is placed, and the anchored passage must embed the `src`
+the target names (`figure-mismatch`, a refusal rather than a caller bug: a reference definition can
+change on disk between the drag and Enter). Only then is the figure resolved and hashed:
+`unreadable` when the src is a URL, resolves outside the project root, or is not a regular file; a
+caller bug when its extension is not the kind the target claims, or one the viewer never shows as
+media; `too-large` past the 50 MB the viewer shows, refused before a byte is read (before this cap
+a multi-GB src pinned the host until the kernel's deadline). `retarget` is the same path for the
+same figure: a stored `src` must be named again, unchanged. The reply's hash fields are described
+under the op above. A text file's figures are hashed under one 200 MB budget per call; past it, or
+when a src fails a check, the hash is null with the reason beside it, not a refusal. A stored
+target with an anchor and no `src` (the contract's first shape) is told its figure from its
+passage on every reply and on a re-place that names none, and refuses `no-figure` when the passage
+embeds none or several. A `src` is decoded as the viewer decodes it before it resolves
+(`p95%20latency.png` is the file with the space) and stored as written. Panel side: the poll HEADs
+every figure a text file's region comments name beside the file and the sidecar, so a regenerated
+embedded figure re-asks `status` and flips by hash; the sent message names the figure of a region
+comment on an embedded figure; a stale card offers Re-place. `kernel.py` is unchanged, as the
+Files line says.
 
 ### Slice 4: PDFs rendered in the viewer, with page and region comments
 
@@ -960,14 +1013,39 @@ Unchanged in kind, and stated rather than silently widened, as the file-browser 
 saves. `fileComments` is issuable from any authenticated socket, like `saveFile`; every verb that
 writes disk sits behind the same server-side consent gate, checked before any content check; the
 server-side gate is the enforcement and the UI's checks are convenience. The host script runs
-only on the owning kernel, on paths resolved by the kernel, and writes only the sidecar, the
-comments log, `config.json`, and (on reject or save) the commented file. The mtime fences refuse
-and never merge. Both ops route by `sid` to the owning kernel over the existing federation
+only on the owning kernel, on paths resolved by the kernel (and, from Slice 3, on the figure
+paths the next paragraph describes, the one class of path it resolves itself), and writes only the
+sidecar, the comments log, `config.json`, and (on reject or save) the commented file. The mtime
+fences refuse and never merge. Both ops route by `sid` to the owning kernel over the existing federation
 splice; nothing new is exempt from `_authorize`, and the panel's verdict rides the authenticated
 `/defaults` payload rather than `/version`. The installer's new step registers a PreToolUse hook
 that runs on every Edit and Write in every Claude Code session on the machine; it exits at once
 in any session romp did not launch (no `ROMP_SID`), and in romp's sessions it is a path check
 that passes untracked files through.
+
+From Slice 3 the host also reads one class of path the kernel did not resolve: the figure a region
+comment's `target.src` names (the Slice 3 build, 2026-09-06). The client names that path on
+`comment` and on `retarget`, and every reply reads it back out of the sidecar; the host resolves
+it. It is only ever read, to hash it: the sha256 of its bytes is what the reply carries, and
+nothing under it is written or served. The host bounds the read itself. The src is decoded as the
+viewer decodes it, refused when it is a URL, resolved against the commented file's directory, and
+confirmed by realpath to lie inside the project root (never above it, not out through a symlink,
+and an absolute src held to the same check) and to be a regular file, opened non-blocking so a
+FIFO or a directory fails at once instead of hanging. On a write verb the src must also be a figure
+the anchored passage embeds (`figure-mismatch`), of the kind the target claims by its extension,
+and under the 50 MB the viewer shows, refused before a byte is read. On a reply the host hashes
+every in-root regular file the sidecar's srcs name, of any extension, under one 200 MB budget per
+call; a src that fails a check gives a null hash with its reason rather than a refusal, so a
+comment another writer left is shown as unknown and not hidden. The reply's read runs on `status`
+too, outside the consent gate, as reading the commented file does. This widens by one step what
+an authenticated client can learn, and the step is stated here rather than left implicit: a
+writer that can already put a src into a sidecar (the agent CLIs, or the viewer, whose Save edits
+a sidecar like any text file when the consent is on) can learn the sha256 of any regular file
+inside the project root by naming it there, never its bytes, including a file the viewer would not
+serve because it never renders that extension. A socket with no such write names only a figure its
+anchored passage embeds. Refusing on a reply what a write verb refuses (a non-media extension, a
+src the passage does not embed) is the follow-up if that hash is judged worth withholding; the
+Risks bullet on figure paths names the trade.
 
 ## Doctrines this respects
 
@@ -1009,6 +1087,16 @@ that passes untracked files through.
 - **Tracked folders that hold figures.** The guard would send an agent to `track-edit` on an
   image, which corrupts it. Mitigation: the non-text refusal lands in the vendored guard and
   `track-edit` in Slice 1, before folder tracking ships.
+- **A figure path the client names** (Slice 3). `target.src` is a path the host resolves itself,
+  and a reply hashes every src a sidecar holds. Mitigation, the bound Security posture states in
+  full: decoded as the viewer decodes it, no URLs, realpath containment in the project root, regular
+  files only, on a write the anchored passage must embed it and its extension must match the
+  target's kind, 50 MB per figure on a write and one 200 MB budget per reply, and on a reply a null
+  hash with its reason where a check fails. What the read yields is a hash, never bytes. The trade
+  left open: a reply hashes an in-root file of any extension so a comment another writer left is
+  not shown as unknown, which tells a client that can already edit the sidecar (the consent on)
+  the sha256 of an in-root file the viewer would not serve it; refusing such srcs on a reply is the
+  follow-up if that is judged worth withholding.
 - **A file moved or renamed by the session.** The sidecar is keyed by path. This plan first said
   the store layer re-finds a moved file by content hash on load. The Slice 1 build (2026-09-06)
   found otherwise: `store-io` heals only when `healOrphanStore` is called explicitly (the VS Code
@@ -1059,7 +1147,8 @@ that passes untracked files through.
   branch that holds the newer comments; nothing here changes the plan's shape.
 - **A PDF rendering dependency** (Slice 4). Mitigation: lazy chunk, size cap, frame fallback, and
   a slice of its own so the rest of the feature never waits on it.
-- **Polling cost.** Two HEAD requests every 2.5 s per open panel. Mitigation: only while the
+- **Polling cost.** Two HEAD requests every 2.5 s per open panel, plus one per figure the file's
+  region comments name (Slice 3). Mitigation: only while the
   panel is open and the tab visible. The poll's state per file is one of absent, present with an
   mtime, or unknown with a status; it starts after the first `status` supplies the sidecar path,
   takes its baseline from every `fileCommentsResult` so the person's own writes never fire it, and
@@ -1090,7 +1179,15 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   comments log gains one entry per send, accept, reject, toggle, and edit, is never rewritten, and
   the unsent derivation from it matches the panel's; the vendored copy matches a present checkout
   (the drift test: pin plus patches, and a present checkout at or past the pin); the guard exits at
-  once without `ROMP_SID` and passes a non-text file through.
+  once without `ROMP_SID` and passes a non-text file through. Slice 3, with figures generated as
+  tiny PNGs at run time (`tools/file-comments-host-regions.test.mjs`, `-targets`, `-embeds`,
+  `-plan-shape`): the target's shape and unit-square check; the hash is the bytes', not the
+  client's, and a `track-reply` into a region comment keeps it; containment of a relative and an
+  absolute src in both directions; `figure-mismatch` before any hash; `too-large` on a write
+  pinned with a sparse file, and a null hash with its reason on a reply; the decoded src; the
+  src-less contract shape told from its passage, and its re-place. `tools/file-review-plan.test.mjs`
+  pins what this plan states for the target's shape, the verbs, the codes, the caps and the read
+  bound against the host source, so a change to either side without the other fails a test.
 - `tests/install-sh.bats` gains the tooling links, the guard registration with its matcher,
   idempotency, the basename presence check against an expanded-path entry, and the
   replace-an-existing-install case (Slice 1).
@@ -1171,7 +1268,9 @@ document stands on its own, each with the reasoning it was given.
 11. **Turning tracking off on an inherited file.** Refuse with the parent named.
 12. **PDF rendering.** The lazily loaded pdf.js chunk, with the browser's frame as the fallback.
 13. **The region field.** Built romp-only for now; documenting it for the other hosts is a later
-    offer, not a dependency.
+    offer, not a dependency. (The Slice 3 build stores a fifth key, `src`, on a figure embedded in a
+    markdown file, and has the host resolve and hash the file it names; the offer documents the
+    shape as built; see the contract's `target` bullet and Security posture.)
 14. **The Slice 5 doctrine question.** Yes: a typed, internal `track` option in the editor chunk,
     with the header updated.
 15. **Ship the agent-side tooling with romp.** Yes (2026-09-06): the four CLIs, the guard hook,
