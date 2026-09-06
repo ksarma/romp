@@ -538,6 +538,13 @@ function stopKernel(id) {
   return true;
 }
 
+// How long a kernel gets to leave on SIGTERM before SIGKILL. The kernel's own drain is bounded at
+// about 2s (_graceful_term in kernel/kernel.py); one still there at 5s is wedged. The manager used to
+// exit 800ms after one SIGTERM and escalate to nothing, so a kernel that ignored the signal outlived
+// it, keeping its port and its sessions under a `romp down` marker that said otherwise (review
+// 2026-09-06, finding 1). The env seam is for the unit test, which cannot sit through 5s.
+const SHUTDOWN_GRACE_MS = Number(process.env.ROMP_SHUTDOWN_GRACE_MS) || 5000;
+
 let shuttingDown = false;
 function shutdownAll(exitCode) {
   if (shuttingDown) return;
@@ -545,8 +552,21 @@ function shutdownAll(exitCode) {
   clearPendingQuiet();           // never let a deferred refresh respawn what we're stopping
   log('shutting down — stopping all kernels');
   for (const id of kernels.keys()) stopKernel(id);
-  // give the kernels a moment to exit, then go regardless
-  setTimeout(() => process.exit(exitCode || 0), 800);
+  // exit as soon as every kernel has left; SIGKILL whatever is still there when the grace runs out,
+  // then exit regardless: neither the manager nor a kernel outlives this stop
+  const t0 = Date.now();
+  const alive = () => [...kernels.values()].filter((r) => r.child.exitCode === null && r.child.signalCode === null);
+  const tick = () => {
+    const left = alive();
+    if (left.length === 0) return process.exit(exitCode || 0);
+    if (Date.now() - t0 < SHUTDOWN_GRACE_MS) return setTimeout(tick, 100);
+    for (const r of left) {
+      log(`kernel '${r.spec.id}' (pid ${r.child.pid}) still running ${SHUTDOWN_GRACE_MS}ms after SIGTERM; sending SIGKILL`);
+      try { r.child.kill('SIGKILL'); } catch (e) { /* already gone */ }
+    }
+    setTimeout(() => process.exit(exitCode || 0), 200);
+  };
+  setTimeout(tick, 100);
 }
 
 // ── control endpoint (loopback only) ───────────────────────────────────────
