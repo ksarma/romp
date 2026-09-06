@@ -830,8 +830,6 @@ def main(argv=None):
     p.add_argument("--force", action="store_true", help="with --row: rewrite an existing entry whole from the row")
 
     a = ap.parse_args(argv)
-    if hasattr(signal, "SIGPIPE"):
-        signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # `render | head` ends quietly
     root = Path(a.root) if a.root else Path(__file__).resolve().parents[1]
     entries_dir = root / DIR
 
@@ -884,4 +882,9 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    # Only the command-line entry changes the process's SIGPIPE disposition (`render | head` ends
+    # quietly). A test that calls main() in-process must not inherit it: with SIG_DFL installed, the
+    # host's next write to a closed pipe kills the host instead of raising (CI's pytest died with 141).
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     sys.exit(main())
