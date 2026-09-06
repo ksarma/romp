@@ -11,8 +11,10 @@
 // now says both, and this module keeps it saying what the host does: every statement the plan
 // makes about the target's keys, the verbs, the refusal codes, the caps and the bound on the figure
 // read is checked against tools/file-comments-host.mjs (the exported shape check for behavior, the
-// source text for the codes and the reply fields, the constants for the caps), so a change to one
-// side without the other fails here. Synthetic: no session data, only the repo's own text.
+// source text for the codes and the reply fields, the constants for the caps); the figure fence
+// (`fence.figureHash`, `figure-changed`) against the host, the kernel's pass-through and whether
+// the panel sends it; and the poll's figures against the panel model, so a change to one side
+// without the other fails here. Synthetic: no session data, only the repo's own text.
 // Run: node --test tools/file-review-plan.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,6 +31,8 @@ const read = (...parts) => fs.readFileSync(path.join(REPO, ...parts), 'utf8');
 const plan = read('plans', 'file-review.md');
 const host = read('tools', 'file-comments-host.mjs');
 const kernel = read('kernel', 'kernel.py');
+const panel = read('ui', 'webview', 'file-comments.ts');
+const model = read('ui', 'webview', 'file-comments-model.ts');
 
 // The text between two headings, hard wraps collapsed so an assertion survives a rewrap.
 function section(from, to) {
@@ -71,6 +75,11 @@ test('the contract says the host, not the client, computes the hash, and that th
   assert.ok(contract.includes('names no `src`'));
   assert.ok(contract.includes('never writes the sidecar on a read'));
   assert.ok(host.includes('function derivedSrcsFor('), 'the host still derives a src-less target\'s figure from its passage');
+  // "exactly one distinct figure": passageFigure dedupes the passage's destinations before counting.
+  assert.ok(contract.includes('embeds exactly one distinct figure (one figure embedded twice still tells)'));
+  assert.ok(slice3.includes('several distinct ones (one figure embedded twice still tells)'));
+  const pf = host.slice(host.indexOf('function passageFigure('), host.indexOf('function namesFigureByPassage('));
+  assert.ok(/new Set\(embeds[\s\S]*?dests\.length === 1/.test(pf), 'passageFigure counts distinct destinations');
   assert.ok(contract.includes('in the five-key shape above'), 'the README offer (decision 13) documents the shape as built');
   assert.ok(decisions.includes('The Slice 3 build stores a fifth key, `src`'));
 });
@@ -87,15 +96,51 @@ test('every hash field the reply listing names is one the host sets, and the par
   assert.ok(op.includes('Null is unknown, never stale'));
 });
 
-test('the verb list names retarget, and the codes list names Slice 3\'s two refusals the host raises', () => {
+test('the verb list names retarget, and the codes list names Slice 3\'s three refusals the host raises', () => {
   assert.ok(op.includes('Slice 3: `retarget {commentId, target}`'));
   assert.ok(host.includes('function doRetarget('));
   assert.ok(op.includes('not appended to the comments log'));
-  for (const code of ['figure-mismatch', 'no-figure']) {
+  for (const code of ['figure-mismatch', 'no-figure', 'figure-changed']) {
     assert.ok(op.includes(`\`${code}\``), `the codes paragraph names ${code}`);
-    assert.ok(host.includes(`'${code}'`), `the host raises ${code}`);
+    assert.ok(host.includes(`'${code}'`), `the host names ${code}`);
   }
+  // Where each is raised: figure-mismatch and figure-changed directly; no-figure is passageFigure's
+  // code, raised through it by retarget (`new Refusal(f.code`).
   assert.ok(host.includes("new Refusal('figure-mismatch'"));
+  assert.ok(host.includes("new Refusal('figure-changed'"));
+  assert.ok(host.includes("code: 'no-figure'") && host.includes('new Refusal(f.code'));
+});
+
+// ── the figure fence ────────────────────────────────────────────────
+
+test('the op names fence.figureHash, optional, checked by the host when carried and passed through whole by the kernel', () => {
+  assert.ok(op.includes('configMtimeNs?: str|"", figureHash?: str}'), 'the request shape carries figureHash?');
+  assert.ok(op.includes('`comment` with a `target` and `retarget`, also fence on the figure\'s bytes through `figureHash`'));
+  assert.ok(op.includes('This key is optional where the mtime keys are not'));
+  assert.ok(op.includes('`figure-changed` is not retried'));
+  assert.ok(host.includes('function figureFence('), 'the host reads the fence');
+  assert.ok(/const v = ctx\.fence\.figureHash;\s*\n\s*if \(v == null\) return null;/.test(host), 'absent is allowed');
+  assert.ok(/if \(figureHash != null && hashed\.hash !== figureHash\) \{\s*\n\s*throw new Refusal\('figure-changed'/.test(host), 'a carried hash is compared with the bytes stamped');
+  assert.ok(kernel.includes('"fence": fence if isinstance(fence, dict) else None'), 'the kernel forwards the fence object whole, so the key reaches the host');
+  assert.ok(!/fence\[["']storeMtimeNs["']\]/.test(kernel), 'the kernel does not pick fence keys');
+});
+
+test('the build note says whether the panel sends figureHash, and the panel source agrees', () => {
+  assert.ok(slice3.includes('when the request\'s fence carries `figureHash`, `figure-changed` unless the bytes hashed are the ones it names'));
+  assert.ok(slice3.includes('the same fence applies'), 'retarget is held to the fence too');
+  const panelSends = /figureHash/.test(panel);
+  const planSaysUnsent = slice3.includes('sends the three mtime keys only, so none of its requests is fenced this way yet');
+  assert.equal(planSaysUnsent, !panelSends, 'the plan says the panel does not yet send figureHash exactly while ui/webview/file-comments.ts does not; when the panel sends it, rewrite the build note');
+});
+
+// ── the poll: open region comments only ─────────────────────────────
+
+test('the plan counts the poll\'s figures as the OPEN region comments\' figures, as the model does', () => {
+  assert.ok(slice3.includes('every figure a text file\'s open region comments name'));
+  assert.ok(slice3.includes('a figure only resolved comments name is not watched'));
+  assert.ok(risks.includes('plus one per figure the file\'s open region comments name (Slice 3)'), 'the poll\'s cost counts the open comments\' figures');
+  const ft = model.slice(model.indexOf('export function figureTargets('));
+  assert.ok(/if \(!c \|\| c\.resolved\) continue;/.test(ft.slice(0, ft.indexOf('\n}\n') + 1)), 'figureTargets skips resolved comments');
 });
 
 // ── Slice 3's build note and the UX paragraph ───────────────────────
@@ -146,15 +191,16 @@ test('Security posture says the reply hashes what the sidecar holds, on status, 
   assert.ok(posture.includes('the Risks bullet on figure paths names the trade'));
   assert.ok(risks.includes('**A figure path the client names** (Slice 3)'));
   assert.ok(risks.includes('refusing such srcs on a reply is the follow-up'));
-  assert.ok(risks.includes('plus one per figure the file\'s region comments name (Slice 3)'), 'the poll\'s cost counts the figures');
 });
 
 // ── Tests: the plan names the modules that exist ────────────────────
 
 test('the Tests section names Slice 3\'s host modules and this pin, and they exist', () => {
-  for (const f of ['file-comments-host-regions.test.mjs', 'file-comments-host-targets.test.mjs', 'file-comments-host-embeds.test.mjs', 'file-comments-host-plan-shape.test.mjs', 'file-review-plan.test.mjs']) {
+  for (const f of ['file-comments-host-regions.test.mjs', 'file-comments-host-targets.test.mjs', 'file-comments-host-embeds.test.mjs', 'file-comments-host-plan-shape.test.mjs', 'file-comments-host-review-3.test.mjs', 'file-review-plan.test.mjs']) {
     assert.ok(fs.existsSync(path.join(HERE, f)), `${f} exists`);
   }
-  assert.ok(tests.includes('`tools/file-comments-host-regions.test.mjs`, `-targets`, `-embeds`, `-plan-shape`'));
+  assert.ok(tests.includes('`tools/file-comments-host-regions.test.mjs`, `-targets`, `-embeds`, `-plan-shape`, `-review-3`'));
+  assert.ok(tests.includes('the figure fence: `figure-changed`'), 'the Tests section says what the review-3 module pins');
+  assert.ok(read('tools', 'file-comments-host-review-3.test.mjs').includes("'figure-changed'"), 'and it pins figure-changed');
   assert.ok(tests.includes('`tools/file-review-plan.test.mjs`'));
 });

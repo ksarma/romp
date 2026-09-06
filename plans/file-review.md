@@ -219,8 +219,9 @@ Four properties of the contract shape the design:
   standalone image or PDF, the file `src` names for an embedded figure, resolved and bounded as
   Security posture states. A target on an anchored comment that names no `src` stays valid and is
   read; it is the shape this plan first described, and one a writer with the contract alone can
-  leave. The host tells its figure from the anchored passage when that passage embeds exactly one,
-  says per comment where it could not, and never writes the sidecar on a read. The text anchor
+  leave. The host tells its figure from the anchored passage when that passage embeds exactly one
+  distinct figure (one figure embedded twice still tells), says per comment where it could not,
+  and never writes the sidecar on a read. The text anchor
   stays absent for a standalone image or PDF, so the other hosts show the comment as a discussion
   card and preserve the field (both write the whole object back). For a figure embedded in a
   markdown file, the comment carries both the anchor on the embed's source line, which every host
@@ -265,7 +266,8 @@ strings.
 
 ```
 request  {type:"fileComments", reqId, sid, path, verb, args?,
-          fence?: {storeMtimeNs: str|"", fileMtimeNs?: str, configMtimeNs?: str|""}}
+          fence?: {storeMtimeNs: str|"", fileMtimeNs?: str, configMtimeNs?: str|"",
+                   figureHash?: str}}
 reply    {type:"fileCommentsResult", reqId, verb, root, storePath, trackedBy, agentTooling,
           fileMtimeNs, storeMtimeNs|null, configMtimeNs|null, store|null, hunks, unsent,
           fileHash?, fileHashReason?, embeddedHashes?, embeddedHashReasons?, derivedSrcs?,
@@ -310,9 +312,17 @@ now; not appended to the comments log, since a re-placed rectangle is not a deci
 meaning the sidecar must not exist yet, so two browsers cannot both create it; `reject`,
 `reject-all`, and `save` also fence on `fileMtimeNs`; `set-tracked` fences on `configMtimeNs`
 the same way, since it writes `config.json`, not the sidecar, and the host script stats
-`config.json` before and after inside the same process. A moved fence refuses, and the client
-re-issues `status`, re-renders, and retries by stable change or comment id, surfacing a second
-refusal verbatim. Nothing merges.
+`config.json` before and after inside the same process. From Slice 3 the two verbs that stamp a
+figure's hash, `comment` with a `target` and `retarget`, also fence on the figure's bytes through
+`figureHash`: the hash the last reply carried for that figure (`fileHash` on an image or PDF,
+`embeddedHashes[src]` on a text file), checked against the bytes the host hashes for the target,
+and a mismatch refuses `figure-changed`. This key is optional where the mtime keys are not: a
+caller has no hash for a figure no reply has hashed yet, so a request naming none is checked on the
+mtime fences alone, and a value that is not a sha256 hex is a caller bug, refused before any disk
+read. A moved fence refuses, and the client re-issues `status`, re-renders, and retries by stable
+change or comment id, surfacing a second refusal verbatim. `figure-changed` is not retried, because
+a retry would stamp the new bytes: the person is told to reload and draw the region on the picture
+as it is now. Nothing merges.
 
 Refusal codes name the resolved path, tilde-collapsed: `no-node` (node absent on the owning
 kernel; `status` returns it quietly and the action never appears), `editing-off` (an `error`
@@ -321,9 +331,11 @@ comments: cannot write the comments for the file, dashboard file editing is off 
 `store-moved`, `file-moved`, `config-moved`, `unsupported-version`, `corrupt`, `unreadable` (with
 the OS error text), `anchor-not-found`, `anchor-ambiguous`, `tracked-inherited`, `no-comment`,
 `too-large`, and from Slice 3 `figure-mismatch` (the anchored passage does not embed the `src` the
-target names) and `no-figure` (a re-place of a src-less anchored target whose passage embeds no
-figure, or several). There is no `no-root` code: a file with no landmark above it gets
-`.trackchanges/` created beside it on the first mutating verb other than `log-edit` (decision 37).
+target names), `no-figure` (a re-place of a src-less anchored target whose passage embeds no
+figure, or several distinct ones) and `figure-changed` (the figure's bytes are not the ones the
+request's `figureHash` says were shown). There is no `no-root` code: a file with no landmark above
+it gets `.trackchanges/` created beside it on the first mutating verb other than `log-edit`
+(decision 37).
 
 Kernel work, about 160 lines including the send op below: resolve `path` with
 `_resolve_open_path` (`kernel.py:30654`); refuse mutating verbs while `_file_editing_on()` is
@@ -925,27 +937,38 @@ The Slice 3 build (2026-09-06), host side: the stored target is `{kind, region, 
 in that key order, `src` on an embedded figure only (the contract's `target` bullet says why the
 destination is stored rather than derived). `hash` is the host's sha256 of the figure's bytes,
 streamed and never decoded, since the UTF-8 read every other verb makes is lossy for an image; the
-client's value, if any, is ignored. `comment` runs its checks in a fixed order. The target's shape
-comes first, before any disk read, and a bad shape is a caller bug: `kind` image or pdf, the
-region inside the unit square at four decimals, `page` on a pdf only, `src` exactly when the
-comment has an anchor. Then the anchor is placed, and the anchored passage must embed the `src`
-the target names (`figure-mismatch`, a refusal rather than a caller bug: a reference definition can
-change on disk between the drag and Enter). Only then is the figure resolved and hashed:
-`unreadable` when the src is a URL, resolves outside the project root, or is not a regular file; a
-caller bug when its extension is not the kind the target claims, or one the viewer never shows as
-media; `too-large` past the 50 MB the viewer shows, refused before a byte is read (before this cap
-a multi-GB src pinned the host until the kernel's deadline). `retarget` is the same path for the
-same figure: a stored `src` must be named again, unchanged. The reply's hash fields are described
-under the op above. A text file's figures are hashed under one 200 MB budget per call; past it, or
-when a src fails a check, the hash is null with the reason beside it, not a refusal. A stored
-target with an anchor and no `src` (the contract's first shape) is told its figure from its
-passage on every reply and on a re-place that names none, and refuses `no-figure` when the passage
-embeds none or several. A `src` is decoded as the viewer decodes it before it resolves
+client's value, if any, is ignored. `comment` runs its checks in a fixed order. The fence's shape
+and the target's shape come first, before any disk read, and a bad shape is a caller bug: `kind`
+image or pdf, the region inside the unit square at four decimals, `page` on a pdf only, `src`
+exactly when the comment has an anchor, `figureHash` a sha256 hex and only with a target. Then the
+anchor is placed, and the anchored passage must embed the `src` the target names
+(`figure-mismatch`, a refusal rather than a caller bug: a reference definition can change on disk
+between the drag and Enter). Only then is the figure resolved and hashed: `unreadable` when the src
+is a URL, resolves outside the project root, or is not a regular file; a caller bug when its
+extension is not the kind the target claims, or one the viewer never shows as media; `too-large`
+past the 50 MB the viewer shows, refused before a byte is read (before this cap a multi-GB src
+pinned the host until the kernel's deadline); and last, when the request's fence carries
+`figureHash`, `figure-changed` unless the bytes hashed are the ones it names (the Slice 3 review,
+2026-09-06: before this fence a figure regenerated between the drag and Enter was stamped with the
+new bytes' hash, which every reply then equalled, so the panel read a rectangle drawn on the old
+picture as current on the new one, the one write the hash exists to catch). The host checks that
+fence whenever a request carries it, and the kernel passes the fence object through whole. The
+panel's Slice 3 build sends the three mtime keys only, so none of its requests is fenced this way
+yet; sending the hash its status holds for the figure is the panel's follow-up. `retarget` is the
+same path for the same figure: a stored `src` must be named again, unchanged, and the same fence
+applies. The reply's hash fields are described under the op above. A text file's figures are
+hashed under one 200 MB budget per call; past it, or when a src fails a check, the hash is null
+with the reason beside it, not a refusal. A stored target with an anchor and no `src` (the
+contract's first shape) is told its figure from its passage on every reply and on a re-place that
+names none, and refuses `no-figure` when the passage embeds none or several distinct ones (one
+figure embedded twice still tells). A `src` is decoded as the viewer decodes it before it resolves
 (`p95%20latency.png` is the file with the space) and stored as written. Panel side: the poll HEADs
-every figure a text file's region comments name beside the file and the sidecar, so a regenerated
-embedded figure re-asks `status` and flips by hash; the sent message names the figure of a region
-comment on an embedded figure; a stale card offers Re-place. `kernel.py` is unchanged, as the
-Files line says.
+every figure a text file's open region comments name beside the file and the sidecar, so a
+regenerated embedded figure re-asks `status` and flips by hash; a resolved comment's card shows the
+resolved tag alone (no stale tag, no Re-place, no rectangle), so a figure only resolved comments
+name is not watched, and reopening one is a write whose reply carries the hash to flip it by; the
+sent message names the figure of a region comment on an embedded figure; a stale card offers
+Re-place. `kernel.py` is unchanged, as the Files line says.
 
 ### Slice 4: PDFs rendered in the viewer, with page and region comments
 
@@ -1148,8 +1171,8 @@ Risks bullet on figure paths names the trade.
 - **A PDF rendering dependency** (Slice 4). Mitigation: lazy chunk, size cap, frame fallback, and
   a slice of its own so the rest of the feature never waits on it.
 - **Polling cost.** Two HEAD requests every 2.5 s per open panel, plus one per figure the file's
-  region comments name (Slice 3). Mitigation: only while the
-  panel is open and the tab visible. The poll's state per file is one of absent, present with an
+  open region comments name (Slice 3). Mitigation: only while the panel is open and the tab
+  visible. The poll's state per file is one of absent, present with an
   mtime, or unknown with a status; it starts after the first `status` supplies the sidecar path,
   takes its baseline from every `fileCommentsResult` so the person's own writes never fire it, and
   treats a 404 as the value "absent" so absent-to-present is a transition like any other; a 413
@@ -1181,13 +1204,17 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   (the drift test: pin plus patches, and a present checkout at or past the pin); the guard exits at
   once without `ROMP_SID` and passes a non-text file through. Slice 3, with figures generated as
   tiny PNGs at run time (`tools/file-comments-host-regions.test.mjs`, `-targets`, `-embeds`,
-  `-plan-shape`): the target's shape and unit-square check; the hash is the bytes', not the
-  client's, and a `track-reply` into a region comment keeps it; containment of a relative and an
+  `-plan-shape`, `-review-3`): the target's shape and unit-square check; the hash is the bytes', not
+  the client's, and a `track-reply` into a region comment keeps it; containment of a relative and an
   absolute src in both directions; `figure-mismatch` before any hash; `too-large` on a write
   pinned with a sparse file, and a null hash with its reason on a reply; the decoded src; the
-  src-less contract shape told from its passage, and its re-place. `tools/file-review-plan.test.mjs`
-  pins what this plan states for the target's shape, the verbs, the codes, the caps and the read
-  bound against the host source, so a change to either side without the other fails a test.
+  src-less contract shape told from its passage, and its re-place; the figure fence:
+  `figure-changed` on a standalone and on an embedded figure regenerated between the drag and
+  Enter, nothing written and no landmark created, a malformed `figureHash` refused before any disk
+  read, `too-large` before `figure-changed`. `tools/file-review-plan.test.mjs` pins what this plan
+  states for the target's shape, the verbs, the fence, the codes, the caps, the read bound and the
+  poll against the host, kernel and panel sources, so a change to either side without the other
+  fails a test.
 - `tests/install-sh.bats` gains the tooling links, the guard registration with its matcher,
   idempotency, the basename presence check against an expanded-path entry, and the
   replace-an-existing-install case (Slice 1).

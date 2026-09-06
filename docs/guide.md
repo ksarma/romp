@@ -167,13 +167,13 @@ show it.
 drag a rectangle to comment on that part of it. The rectangle stays on the picture with the
 author's chip, and the card shows that part of the image. When the image's bytes change the
 comment is shown as stale until you resolve it, or press **Re-place** and drag the rectangle
-again where it belongs now; the comment keeps its words. A figure embedded in a markdown
-file, such as `![](plot.png)`, is loaded from the file's own folder, so a relative
-path shows in the Rendered view; a web address or a `data:` image is left as written. A
-comment on an embedded figure is stored on its embed line, with the rectangle: the session's
-tools and the other editors place it on that line, and this viewer paints the rectangle on
-the picture. Drawing a rectangle needs a mouse or a trackpad; on a phone, comment on the
-file as a whole instead.
+again where it belongs now; the comment keeps its words and its replies, and only the
+rectangle changes. A figure embedded in a markdown file, such as `![](plot.png)`, is loaded
+from the file's own folder, so a relative path shows in the Rendered view; a web address or a
+`data:` image is left as written. A comment on an embedded figure is stored on its embed line,
+with the rectangle: the session's tools and the other editors place it on that line, and this
+viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or a trackpad;
+on a phone, comment on the file as a whole instead.
 
 **Track changes** records a session's edits to the file as changes for you to accept or
 reject, instead of letting them land silently. Turn it on for the file or for its folder,
