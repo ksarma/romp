@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 
-# `romp-manager ensure` is the no-`romp on` auto-start: the SessionStart hook
-# (romp-manager-ensure.sh) calls it so romp usage brings up the supervisor.
+# `romp-manager ensure` is the supervised start that needs no `romp up`: the far-host scripts of
+# `romp update <host>` and the dashboard's remote restart run it so the supervisor comes up there.
 # It must be idempotent (no second manager) and non-blocking (spawns detached).
 
 load tmux-private
@@ -272,7 +272,7 @@ PYEOF
     mkdir -p "$state"
     printf '{"t": %s, "cmd": "romp down"}\n' "$(date +%s)" > "$state/down-by-romp"
     run env ROMP_STATE_DIR="$state" ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKE" node "$MGR" ensure
-    [ "$status" -eq 0 ]                       # the SessionStart hook is not failing: the kernel is down on purpose
+    [ "$status" -eq 0 ]                       # the far-host update or restart is not failing: the kernel is down on purpose
     [[ "$output" == *"stopped by \`romp down\`"* ]]
     [[ "$output" == *"romp up"* ]]
     sleep 1                                   # a spawned manager would have bound the port by now
