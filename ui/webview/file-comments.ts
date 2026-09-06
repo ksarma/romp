@@ -22,6 +22,10 @@
 //     rectangle placed by percentages, dashed once the image's bytes changed under it (the host's hash against
 //     the stored one). The card shows the region cut from the picture and offers Re-place, which retargets the
 //     comment to the next region drawn. Desktop only; a coarse pointer reads and comments on the whole file.
+//     A PDF's pages are read from the chunk's shells (pdfPages): a page with no shell is one the regenerated document
+//     no longer has (pageGone: stale, Re-place on any page); a shell with no canvas is a page pdf.js could not draw
+//     (pageUnrendered: the card says so and reaches the page's own notice, and claims nothing about the file). A
+//     page's crop is kept once cut (crops), so a card keeps its picture after the chunk evicts the page's bitmap.
 //   • The kernel does the disk work on the OWNING kernel (the `fileComments` op runs a node host
 //     script over the vendored track-changents store); this module renders JSON and never holds a
 //     sidecar it writes back. Both ops carry `sid`, so federation routes a remote session's file to
@@ -386,6 +390,10 @@ class Panel {
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
   regionLayers = new Map<Pictured, RegionLayer>();            // the overlays, one per picture in view — an <img>, or a PDF page's canvas (Slice 3/4; paintRegions)
   cropWait = new WeakSet<HTMLImageElement>();                 // pictures whose load will re-render the cards for their thumbnails
+  // a PDF region's crop, kept from the last time its page was drawn (cropFor): the chunk keeps only the bitmaps near the
+  // reader (a far page's canvas is 0×0), and a card must not lose its picture because its page scrolled away. Keyed by
+  // what the crop was cut from, so a re-place or a regenerated file drops it (cropKey)
+  crops = new Map<string, { key: string; crop: HTMLCanvasElement }>();
   resolvedOpen = false;
   trackChoice = false;                      // the on-toggle's scope row (file / folder) is showing
   trackStop = false;                        // the folder-off confirm is showing
@@ -712,6 +720,7 @@ class Panel {
     this.stopPoll();
     for (const l of this.regionLayers.values()) l.dispose();
     this.regionLayers.clear();
+    this.crops.clear();
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     this.failAll("the file viewer closed");
@@ -1187,17 +1196,30 @@ class Panel {
     }
     return null;
   }
-  /** Whether a PDF region's page is no longer in the document shown: the pages are mounted (the chunk builds a shell
-   *  for every page of the CURRENT document, drawn or not), and none of them is the comment's. A regenerated PDF with
-   *  fewer pages leaves such a comment with no rectangle to paint and no page to crop — but not without a remedy: a
-   *  PDF re-place may land on any page (onRegionDrawn), so the card still offers Re-place, and says which page went.
-   *  False while no page is mounted (the frame fallback, the loader): nothing can be told about the pages then. */
-  private pageGone(c: Card): boolean {
-    if (!c.target || c.target.kind !== "pdf" || this.ctx.mode() !== "media") return false;
-    const imgs = this.regionImages();
-    if (!imgs.length || !isCanvas(imgs[0])) return false;
+  /** The shell of a PDF region's page in the document shown (the chunk's `div.fileview-pdf-page`, by its data-page):
+   *  null when the pages are mounted and none is the comment's; undefined while no page is mounted (the frame fallback,
+   *  the loader), when nothing can be told about the pages. The SHELLS are the page set, never the canvases: the chunk
+   *  builds a shell for every page of the CURRENT document, drawn or not, and takes the canvas out of a page pdf.js
+   *  could not draw (pdf-chunk.ts fail()) — a page that exists and has no picture, which is not a page the document lost. */
+  private pageShellFor(c: Card): HTMLElement | null | undefined {
+    if (!c.target || c.target.kind !== "pdf" || this.ctx.mode() !== "media") return undefined;
+    const shells = this.ctx.pdfPages();
+    if (!shells.length) return undefined;
     const page = c.target.page;
-    return !imgs.some((i) => pageOf(i) === page);
+    return shells.find((s) => pageOf(s) === page) || null;
+  }
+  /** Whether a PDF region's page is no longer in the document shown: the pages are mounted and none of them is the
+   *  comment's. A regenerated PDF with fewer pages leaves such a comment with no rectangle to paint and no page to crop —
+   *  but not without a remedy: a PDF re-place may land on any page (onRegionDrawn), so the card still offers Re-place,
+   *  and says which page went. False while no page is mounted. */
+  private pageGone(c: Card): boolean { return this.pageShellFor(c) === null; }
+  /** Whether a PDF region's page is mounted but has no picture: pdf.js could not draw it, and the chunk removed its
+   *  canvas and put its notice in the shell. The file is unchanged as far as the page can tell (the hashes say the
+   *  rest), so the card names the state — not rendered — and never calls the page gone or the PDF changed; there is no
+   *  rectangle, no fresh crop, and no Re-place (the comment's place is not in question, only the picture). */
+  private pageUnrendered(c: Card): boolean {
+    const shell = this.pageShellFor(c);
+    return !!shell && !isCanvas(shell.querySelector("canvas.fileview-pdf-canvas"));
   }
   /** The author chip a rectangle wears: the label, and the session's colours as `--fc-author` / `--fc-author-fg`
    *  when the colour map knows the author (the sheet's fallback otherwise, and for `you`). */
@@ -1335,16 +1357,35 @@ class Panel {
   }
   /** The word for the file a region sits on, in the tags and titles: the image, or the PDF (whose pages the regions are on). */
   private mediaNoun(): string { return this.ctx.media() === "pdf" ? "PDF" : "image"; }
-  /** The card's thumbnail from the picture in view (a page's crop is cut from the page's canvas); a picture still
-   *  loading re-renders the cards once, on its load. */
-  private cropFor(img: Pictured, c: Card): HTMLCanvasElement | null {
+  /** What a kept PDF crop was cut from: the page, the region, the target's hash and the file's hash as the status has
+   *  it — a re-place or a regenerated file changes the key, and the kept crop is not shown for it. Null for an image
+   *  region (its picture is always in view) and while the file's hash is unknown: nothing then says the bytes shown
+   *  are the bytes the crop was cut from, so none is kept or shown. */
+  private cropKey(c: Card): string | null {
+    const t = c.target; const s = this.status;
+    if (!t || t.kind !== "pdf" || !s || !s.fileHash) return null;
+    return t.page + "|" + JSON.stringify(t.region) + "|" + (t.hash || "") + "|" + s.fileHash;
+  }
+  /** The card's thumbnail: cut from the picture in view (a page's from its canvas) and, for a PDF page, kept — the
+   *  chunk gives a far page's bitmap back (a 0×0 canvas) and takes a failed page's canvas away, and the card then shows
+   *  the crop from the last draw of the same bytes rather than none. No picture and nothing kept: no thumbnail (a page
+   *  never drawn while the panel was open draws in when the reference scrolls it into view, and the crop comes with
+   *  that draw's repaint). A picture still loading re-renders the cards once, on its load. */
+  private cropFor(img: Pictured | null, c: Card): HTMLCanvasElement | null {
     if (!c.target) return null;
-    const crop = cropThumb(img, c.target.region);
-    if (!crop && !isCanvas(img) && img.complete === false && !this.cropWait.has(img)) {
+    const key = this.cropKey(c);
+    const fresh = img ? cropThumb(img, c.target.region) : null;
+    if (fresh) {
+      if (key) this.crops.set(c.id, { key, crop: fresh });
+      return fresh;
+    }
+    const kept = this.crops.get(c.id);
+    if (kept && key && kept.key === key) return kept.crop;
+    if (img && !isCanvas(img) && img.complete === false && !this.cropWait.has(img)) {
       this.cropWait.add(img);
       img.addEventListener("load", () => { this.cropWait.delete(img); this.render(); }, { once: true });
     }
-    return crop;
+    return null;
   }
   goTo(key: string): void {
     const mark = key.startsWith("chg:")
@@ -1368,6 +1409,8 @@ class Panel {
     if (card && card.target) {                         // a region: the picture it is on, when the view shows it
       const img = this.regionImageFor(card);
       if (img) { img.scrollIntoView({ block: "center" }); return; }
+      const shell = this.pageShellFor(card);           // a PDF page pdf.js could not draw: its shell holds the chunk's notice
+      if (shell) { shell.scrollIntoView({ block: "center" }); return; }
     }
     const loc = this.located.get(key);
     if (!loc || !loc.range) return;
@@ -1679,14 +1722,21 @@ class Panel {
     head.appendChild(this.chip(c.author, c.authorId));
     const ref = el("span", "fc-ref", c.kind === "passage" ? "“" + c.ref + "”" : c.ref);
     ref.title = c.kind === "passage" ? c.anchor?.quote || c.ref : c.ref;
+    // a PDF region whose page is mounted but did not render (pageUnrendered) has no rectangle to reach, so its reference
+    // reaches the page instead, where the chunk's notice says why (reveal): the compact card must not dead-end
+    const unrendered = this.pageUnrendered(c);
     if ((c.anchor || c.target) && loc && loc.painted) {
       ref.dataset.act = "fcgoto"; ref.dataset.id = c.id; ref.classList.add("fc-link"); ref.title = c.target ? "Scroll to the region" : "Scroll to the passage";
+      ref.tabIndex = 0; ref.setAttribute("role", "button");
+    } else if (unrendered) {
+      ref.dataset.act = "fcgoto"; ref.dataset.id = c.id; ref.classList.add("fc-link"); ref.title = "Scroll to the page; its notice says why it did not render";
       ref.tabIndex = 0; ref.setAttribute("role", "button");
     }
     head.appendChild(ref);
     // a region (Slice 3): whether the image still has the bytes it was drawn on (E2) — dashed on the picture, a tag here.
     // A PDF region whose page the document no longer has (Slice 4; pageGone) is stale whatever the hashes say: the
-    // page it was drawn on is not there to be current on
+    // page it was drawn on is not there to be current on. A page pdf.js could not draw is NOT gone (the shell is
+    // there): the hashes alone say whether the file changed, and a tag of its own says the page did not render
     const gone = this.pageGone(c);
     const regionSt = c.target ? regionState(c.target, this.status) : "current";
     if (gone || regionSt === "stale") {
@@ -1695,6 +1745,11 @@ class Panel {
         : "The " + this.mediaNoun() + " changed after this region was drawn; Re-place it, or resolve it";
       head.appendChild(t);
     } else if (regionSt === "unknown") { const t = el("span", "fc-tag", "unknown"); t.title = "Whether the " + this.mediaNoun() + " changed since this region was drawn could not be checked"; head.appendChild(t); }
+    if (unrendered) {
+      const t = el("span", "fc-tag", "not rendered");
+      t.title = "Page " + c.target!.page + " did not render, so this region is not shown; the PDF still has that page, and its notice says why";
+      head.appendChild(t);
+    }
     if (loc && loc.state === "context") head.appendChild(el("span", "fc-tag", "text changed"));
     if (loc && loc.state === "detached") head.appendChild(el("span", "fc-tag", "detached"));
     if (c.decision) { const d = el("span", "fc-tag", c.decision); d.title = "You " + c.decision + " the change this comment is on"; head.appendChild(d); }
@@ -1704,7 +1759,8 @@ class Panel {
     card.appendChild(head);
     if (!isOpen) { card.appendChild(el("div", "fc-preview", c.body.replace(/\s+/g, " ").trim())); return card; }
     const picture = c.target ? this.regionImageFor(c) : null;
-    if (picture) { const crop = this.cropFor(picture, c); if (crop) card.appendChild(crop); }   // the region cut from the picture (E5)
+    const crop = c.target ? this.cropFor(picture, c) : null;   // the region cut from the picture (E5), or a page's kept crop
+    if (crop) card.appendChild(crop);
     card.appendChild(el("div", "fc-body", c.body));
     if (c.replies.length) card.appendChild(this.renderTurns(c.replies));
     const acts = el("div", "fc-actions");

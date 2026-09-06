@@ -8,9 +8,18 @@
 // doctrine): what this module exposes is the one render() call below, curated for the viewer. pdf.js's
 // annotation, form, text-layer, printing and scripting machinery stay out.
 //
-// THE SIZE CAP IS LOUD: render() refuses bytes over `maxBytes` (25 MB by default) with an Error naming
-// the size and the cap, before pdf.js sees a byte. The caller shows the frame instead and says why;
-// nothing here degrades quietly.
+// THE CAPS ARE LOUD, AND THERE ARE TWO: render() refuses bytes over `maxBytes` (25 MB by default) with an
+// Error naming the size and the cap, before pdf.js sees a byte; and it refuses a page COUNT over `maxPages`
+// (5,000 by default) with an Error naming the count and the cap, once pdf.js has opened the document and
+// before a single page shell exists. The caller shows the frame instead and says why; nothing here
+// degrades quietly. The second cap exists because bytes do not bound pages: pdf.js reads the count from the
+// page tree's /Count and checks only that the LAST page resolves (a nested Pages node is skipped by its own
+// /Count on the way), so a PDF of a few hundred bytes can declare millions of pages, open, and draw page 1 —
+// while the shells below are built synchronously, two elements and one observed target per page, so an
+// unchecked count would hold the pane's thread for a minute or exhaust its memory before the first paint. A
+// real document rarely approaches the cap (even a text-only PDF at the byte cap runs to thousands of pages,
+// not millions), and 5,000 shells build in well under a second; over it, the person gets the browser's
+// frame, told why.
 //
 // THE WORKER: pdf.js parses in a Worker it creates from `GlobalWorkerOptions.workerSrc`. That URL is
 // derived at load from this chunk's OWN <script src> — same directory, same ?v= token — so a rebuilt
@@ -22,6 +31,7 @@
 //
 //   render(bytes: ArrayBuffer, container: HTMLElement, opts?: {
 //     maxBytes?: number;                                   // default DEFAULT_MAX_BYTES (25 MB)
+//     maxPages?: number;                                   // default DEFAULT_MAX_PAGES (5,000)
 //     onPage?: (page: { index: number; canvas: HTMLCanvasElement; width: number; height: number }) => void;
 //     onPageError?: (page: { index: number; message: string }) => void;
 //   }) => Promise<{ pages: number; dispose(): void }>
@@ -42,9 +52,11 @@
 //   near the reader, not of all of them. onPage fires after EVERY draw of a page — the first, a redraw on
 //   return, a redraw at a new width — with the canvas (the same element for the page's whole life) and its
 //   CSS size; an overlay that positions by fractions of that size stays correct without listening for
-//   resizes. The promise resolves once the first page is drawn (or at once for a page-less document); it
-//   rejects for bytes over the cap, a missing worker URL, or anything pdf.js refuses to open (a corrupt
-//   file, a password), each with pdf.js's or this module's own message. A LATER page pdf.js cannot read or
+//   resizes. The promise resolves once the first page is drawn (or at once for a page-less document — a
+//   /Count of zero or below reports `pages: 0`, so the caller's page-less path runs and no blank root is
+//   mounted); it rejects for bytes over the cap, a page count over the cap, a missing worker URL, or anything
+//   pdf.js refuses to open (a corrupt file, a password), each with pdf.js's or this module's own message —
+//   and in every one of those cases nothing of this module's is in the container. A LATER page pdf.js cannot read or
 //   draw (a damaged page object) is loud in place: its wrapper keeps the page's extent and shows the
 //   failure (div.fileview-err naming the page and pdf.js's message), its canvas is removed — a page that
 //   will never have a bitmap must not take a region comment, and the panel keys its overlays on the canvas —
@@ -84,6 +96,12 @@ import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 /** The default bytes cap: a PDF over this is refused, not rendered (the plan's stated cap). */
 export const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
 
+/** The default page-count cap: a PDF declaring more pages than this is refused once pdf.js has opened it and
+ *  before any page shell is built. Bytes do not bound this (see the header): the count comes from the page
+ *  tree's /Count, which pdf.js takes on faith once the last page resolves. Every page costs two elements and
+ *  an observed target up front, built synchronously, so the count is what bounds that work. */
+export const DEFAULT_MAX_PAGES = 5000;
+
 /** Largest canvas backing store this module allocates per page, in device pixels: under every current
  *  engine's canvas limit (Safari's is the lowest at 16.7 M), so a poster-sized page draws softer rather
  *  than not at all. */
@@ -91,7 +109,7 @@ export const MAX_CANVAS_PIXELS = 16 * 1024 * 1024;
 
 export interface PageInfo { index: number; canvas: HTMLCanvasElement; width: number; height: number }
 export interface PageError { index: number; message: string }
-export interface RenderOpts { maxBytes?: number; onPage?: (page: PageInfo) => void; onPageError?: (page: PageError) => void }
+export interface RenderOpts { maxBytes?: number; maxPages?: number; onPage?: (page: PageInfo) => void; onPageError?: (page: PageError) => void }
 export interface RenderHandle { pages: number; dispose(): void }
 /** What render() uses of pdf.js: the modern build in production, the legacy build (the one pdf.js supports
  *  under Node) or a stand-in in a test — see makeRender. */
@@ -107,6 +125,19 @@ export function fmtBytes(n: number): string {
 /** The refusal's exact text: the size AND the cap, so the person knows how far over they are (pure). */
 export function capMessage(size: number, cap: number): string {
   return `this PDF is ${fmtBytes(size)}, over the ${fmtBytes(cap)} cap for rendering pages in the viewer`;
+}
+
+/** An integer with thousands separators, locale-independent (pure; the page-cap message uses it, and a test
+ *  can pin the text on any machine). */
+export function fmtCount(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+$)/g, ",");
+}
+
+/** The page-count refusal, in the byte cap's shape: the count AND the cap (pure). "Has" is the file's own
+ *  claim — the count is what its page tree declares, which is all any viewer can report before reading
+ *  every page. */
+export function pageCapMessage(count: number, cap: number): string {
+  return `this PDF has ${fmtCount(count)} pages, over the ${fmtCount(cap)}-page cap for rendering pages in the viewer`;
 }
 
 /** The worker's URL from the chunk's own: the same directory and the same ?v= token, so the kernel's
@@ -184,7 +215,12 @@ export function makeRender(pdfjsLib: PdfLib) {
     // a copy: pdf.js transfers the buffer it is given to the worker, which would detach the caller's
     const task = pdfjsLib.getDocument({ data: new Uint8Array(bytes.slice(0)) });
     const doc: PDFDocumentProxy = await task.promise;
-    const n = doc.numPages;
+    // the count is the page tree's /Count, which pdf.js takes on faith (the header): over the cap it is refused
+    // HERE, before a shell exists or the container is touched, and the document and its worker are released.
+    // Below zero (an integer pdf.js accepts) it is no pages, so the caller's page-less path runs, not a blank root.
+    const pageCap = opts.maxPages ?? DEFAULT_MAX_PAGES;
+    if (doc.numPages > pageCap) { void task.destroy(); throw new Error(pageCapMessage(doc.numPages, pageCap)); }
+    const n = Math.max(0, doc.numPages);
     const root = document.createElement("div");
     root.className = "fileview-pdf";
 

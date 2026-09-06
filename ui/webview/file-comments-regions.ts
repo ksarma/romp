@@ -98,7 +98,7 @@ export class RegionLayer {
   readonly overlay: HTMLElement;
   /** whether `wrap` is this layer's own span (unwrapped on dispose) or a caller's anchor (left standing) */
   private readonly owned: boolean;
-  private press: { id: number; start: Point; fromRegion: boolean } | null = null;
+  private press: { id: number; start: Point; fromRegion: boolean; captured: boolean } | null = null;
   private band: HTMLElement | null = null;
   private drew = false;
   /** whether a drag draws here: the panel is open and the pointer is fine (setActive) */
@@ -158,29 +158,21 @@ export class RegionLayer {
    *  a rubber band and, on release, becomes a region; a press that does not move is the picture click the
    *  viewer already had (the embed-line Comment offer), unless it began on a rectangle — that click opens
    *  the card through the delegate root and needs nothing from here. Pointer capture keeps a drag that
-   *  leaves the picture alive; the region is clamped to the image. */
+   *  leaves the picture alive; the region is clamped to the image.
+   *
+   *  A press that begins on a RECTANGLE is not captured at the press: the browser fires the click it
+   *  synthesizes at the pointer's capture target, so capturing here sent that click to the overlay, where the
+   *  delegate root finds no data-act, and the card never opened while the panel was open (2026-09-06; with the
+   *  panel closed the handler returns before capturing, so the same click worked). Left alone, the click
+   *  targets the rectangle, whose data-act="fcopen" the row's delegate routes. Capture then waits for the
+   *  drag, if one comes: it is taken when the band appears, so a drag begun on a rectangle still survives
+   *  leaving the picture. The press's default is still cancelled (no selection starts behind the overlay),
+   *  and with it the focus the mousedown would have given the rectangle — so the rectangle is focused here. */
   private arm(): void {
     const o = this.overlay;
-    o.addEventListener("pointerdown", (ev: PointerEvent) => {
-      if (!this.active || (ev.button || 0) !== 0) return;
-      if (this.hooks.onPress) this.hooks.onPress();
-      this.drew = false;
-      const t = ev.target as Element | null;
-      const fromRegion = !!(t && typeof t.closest === "function" && t.closest(".fc-region"));
-      this.press = { id: ev.pointerId, start: { x: ev.clientX, y: ev.clientY }, fromRegion };
+    const capture = (ev: PointerEvent) => {
       try { o.setPointerCapture(ev.pointerId); } catch { /* a pointer the browser will not capture: leaving the picture ends the drag */ }
-      ev.preventDefault();                               // no native image drag, no selection behind the overlay
-    });
-    o.addEventListener("pointermove", (ev: PointerEvent) => {
-      const p = this.press;
-      if (!p || ev.pointerId !== p.id) return;
-      const cur = { x: ev.clientX, y: ev.clientY };
-      if (!this.band && dragIsClick(p.start, cur)) return;
-      const r = regionFromPoints(this.box(), p.start, cur);
-      if (!r) return;
-      if (!this.band) { this.band = mk(o.ownerDocument, "div", "fc-region fc-region-pending fc-draw"); o.appendChild(this.band); }
-      this.band.setAttribute("style", styleAttr(regionStyle(r)));
-    });
+    };
     const end = (ev: PointerEvent, cancelled: boolean) => {
       const p = this.press;
       if (!p || ev.pointerId !== p.id) return;
@@ -195,6 +187,34 @@ export class RegionLayer {
       this.drew = true;
       this.hooks.onDraw(this.img, r);
     };
+    o.addEventListener("pointerdown", (ev: PointerEvent) => {
+      if (!this.active || (ev.button || 0) !== 0) return;
+      if (this.hooks.onPress) this.hooks.onPress();
+      this.drew = false;
+      const t = ev.target as Element | null;
+      const region = t && typeof t.closest === "function" ? (t.closest(".fc-region") as HTMLElement | null) : null;
+      const fromRegion = !!region;
+      this.press = { id: ev.pointerId, start: { x: ev.clientX, y: ev.clientY }, fromRegion, captured: !fromRegion };
+      if (!fromRegion) capture(ev);
+      ev.preventDefault();                               // no native image drag, no selection behind the overlay
+      if (region && typeof region.focus === "function") region.focus();   // the focus the cancelled mousedown would have given it
+    });
+    o.addEventListener("pointermove", (ev: PointerEvent) => {
+      const p = this.press;
+      if (!p || ev.pointerId !== p.id) return;
+      // an uncaptured press whose release landed elsewhere (the pointer left the picture in one move): the button
+      // is up by the time the pointer is back, and the press is over
+      if (!p.captured && ev.buttons === 0) { end(ev, true); return; }
+      const cur = { x: ev.clientX, y: ev.clientY };
+      if (!this.band && dragIsClick(p.start, cur)) return;
+      const r = regionFromPoints(this.box(), p.start, cur);
+      if (!r) return;
+      if (!this.band) {
+        this.band = mk(o.ownerDocument, "div", "fc-region fc-region-pending fc-draw"); o.appendChild(this.band);
+        if (!p.captured) { capture(ev); p.captured = true; }   // the drag is on: keep it alive past the picture's edge
+      }
+      this.band.setAttribute("style", styleAttr(regionStyle(r)));
+    });
     o.addEventListener("pointerup", (ev: PointerEvent) => end(ev, false));
     o.addEventListener("pointercancel", (ev: PointerEvent) => end(ev, true));
     // the click a browser synthesizes after the drag must not reach the delegate root as an activation

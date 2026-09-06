@@ -520,7 +520,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // as before. `asideOpen` follows the seam's aside() — the panel mounting IS the event — and the body re-renders on the
   // flip. `pdfHandle` is the chunk's render handle (dispose() cancels the draws, releases the worker, removes the root);
   // `pdfSeq` invalidates a chunk load or a render still in flight when the body moved on (a close, a reload, the panel
-  // closing), so a late resolution never mounts over what shows now — the editSeq guard's shape.
+  // closing), so a late resolution never mounts over what shows now — the editSeq guard's shape. A frame already
+  // showing these bytes is kept through both flips (shownFrame, keepShownFrame, showPdfPages): rebuilding it reloads
+  // the document at page 1.
   let asideOpen = false;
   let pdfHandle: { pages: number; dispose(): void } | null = null;
   let pdfSeq = 0;
@@ -772,7 +774,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         return;
       }
       if (isPdf && asideOpen) { showPdfPages(); return; }   // the Comments panel is open: the chunk's pages, not the frame (Slice 4)
-      if (keepShownFrame()) return;           // the panel closing over the frame-with-notice fallback: the frame stays, the notice goes
+      if (keepShownFrame()) return;           // the panel closing over a frame at these bytes: the frame stays; the notice, or the attempt under way, goes
       notePdfPage();                          // the reader's page, off the shells, before dropPdf removes them
       dropPdf();                              // the frame (or a picture) replaces any pages a closed panel leaves behind
       const shown = isPdf ? pdfBlock(objUrl, path) : imgBlock(objUrl, path, imgFailed);
@@ -902,27 +904,41 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   };
   // Written back two ways. The FRAME takes the #page=N open parameter (Firefox's pdf.js viewer does on an object URL,
   // checked; Chromium's documents the same parameters; a viewer that ignores it opens at the top, as before), set as the
-  // frame's src after pdfBlock's
-  // plain treatment — a frame not yet in the document just takes it; one already showing navigates again and the bare
-  // URL's load is abandoned, the browser's viewer offering no other way to scroll it. Page 1 adds nothing and gets no
-  // fragment, so the src is the bare object URL exactly as before. The PAGES scroll their shell into view once the
-  // shells exist (they do when render() resolves), and the chunk draws that page as it scrolls in.
-  const aimFrame = (frame: Element | null) => {
-    if (!frame || objUrl === null || pdfPage <= 1 || !frame.matches("iframe.fileview-frame")) return;
+  // frame's src after pdfBlock's plain treatment — aimFrame takes the column pdfBlock builds, or the frame itself — a
+  // frame not yet in the document just takes it; one already showing navigates again and the bare URL's load is
+  // abandoned, the browser's viewer offering no other way to scroll it. Page 1 adds nothing and gets no fragment, so
+  // the src is the bare object URL exactly as before. The PAGES scroll their shell into view once the shells exist
+  // (they do when render() resolves), and the chunk draws that page as it scrolls in.
+  const aimFrame = (shown: Element | null) => {
+    const frame = shown && (shown.matches("iframe.fileview-frame") ? shown : shown.querySelector("iframe.fileview-frame"));
+    if (!frame || objUrl === null || pdfPage <= 1) return;
     (frame as HTMLIFrameElement).src = objUrl + "#page=" + pdfPage;
   };
   const scrollToPdfPage = () => {
     if (pdfPage > 1) body.querySelector('.fileview-pdf-page[data-page="' + pdfPage + '"]')?.scrollIntoView({ block: "start" });
   };
-  // A frame already showing THESE bytes stays: the panel closing over showPdfPages's fallback (the frame under a notice)
-  // takes the notice away and rebuilds nothing, because a rebuilt frame reloads the document and the place the reader
-  // had reached inside it — which the frame never reports — would be lost. A reload's frame shows other bytes (a fresh
-  // object URL) and is rebuilt like every other body. True when the frame was kept, and the paint has fired.
+  // The frame in the body at THESE bytes, when there is one — the open's own, or the one a failed pages attempt left
+  // under its notice. A reload's frame shows other bytes (a fresh object URL) and answers null, so it is rebuilt like
+  // every other body. Both the frame path below and showPdfPages keep the frame this finds, for the same reason: a
+  // rebuilt frame reloads the document, and the place the reader had reached inside it — which the frame never
+  // reports — would be lost.
+  const shownFrame = (): HTMLIFrameElement | null => {
+    if (!isPdf || objUrl === null) return null;
+    const f = body.querySelector("iframe.fileview-frame") as HTMLIFrameElement | null;
+    return f && f.src.replace(/#.*$/, "") === objUrl ? f : null;
+  };
+  // The panel closing over a frame at these bytes: the frame stays, the notice a fallback put above it goes, and an
+  // attempt still under way over it (the panel closed under the loader) ends here — its loader and host removed, its
+  // sequence retired, so a late resolution mounts nothing and a late failure notices nothing. Nothing is rebuilt.
+  // True when the frame was kept, and the paint has fired.
   const keepShownFrame = (): boolean => {
-    if (!isPdf || objUrl === null) return false;
-    const kept = body.querySelector("iframe.fileview-frame") as HTMLIFrameElement | null;
-    if (!kept || kept.src.replace(/#.*$/, "") !== objUrl) return false;
-    body.querySelector(".fileview-pdffall .fileview-err")?.remove();
+    const kept = shownFrame();
+    if (!kept) return false;
+    dropPdf();
+    const col = kept.parentElement!;
+    col.querySelector(".fileview-err")?.remove();
+    col.querySelector(".fileview-load")?.remove();
+    body.querySelector(".fileview-pdfhost")?.remove();
     whenShown(kept, fireRendered);
     return true;
   };
@@ -932,20 +948,36 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // whole file still works — bytes over the cap (refused HERE, before a megabyte of renderer is fetched for nothing),
   // an engine too old for the renderer (also before the fetch), a chunk or worker that will not load, a document
   // pdf.js will not open, a document it opens with no pages in it. Never a blank pane, never a silent frame.
+  // A frame already in the body at these bytes (shownFrame) is the frame those refusals show, IN PLACE: it stays
+  // through the attempt, under the loader at the top of its column, and takes the notice above it when the attempt
+  // fails; only the pages actually mounting remove it. Before this, every open of the panel over such a PDF (one over
+  // the cap, one pdf.js refuses, an engine or a network the chunk will not load on) built a fresh frame, which
+  // reloaded the document at page 1 — the place the reader had reached in the browser's viewer lost on every
+  // Comments click (the review, 2026-09-06). An iframe re-inserted anywhere reloads the same way, so nothing here
+  // moves the kept frame: the notice and the loader come and go around it inside pdfBlock's column, and the chunk's
+  // host is laid out after the column rather than inside it.
   const showPdfPages = () => {
     notePdfPage();                             // a reload with the panel open: the pages come back where they were
     dropPdf();
     const blob = mediaBlob; const url = objUrl;
     if (!blob || url === null) return;
     const my = pdfSeq;
+    const kept = shownFrame();
+    const col = kept ? kept.parentElement : null;
     const fallback = (why: string) => {
       if (my !== pdfSeq || !wrap.isConnected) return;   // the body moved on: whatever shows now is not this render's
-      const fall = el("div", "fileview-pdffall");
       const note = el("div", "fileview-err");
       note.textContent = why + " — showing the browser's PDF viewer instead; comments on the whole file still work.";
-      fall.appendChild(note);
-      fall.appendChild(pdfBlock(url, path));
-      aimFrame(fall.querySelector("iframe.fileview-frame"));   // the reader's page, here too, set before the frame is in the document
+      if (col) {                               // the kept frame: the attempt's loader and host go, the notice goes above it
+        col.querySelector(".fileview-load")?.remove();
+        body.querySelector(".fileview-pdfhost")?.remove();
+        col.prepend(note);
+        whenShown(col, fireRendered);
+        return;
+      }
+      const fall = pdfBlock(url, path);        // no frame to keep (the pages were up, or the bytes just landed): a fresh one
+      fall.prepend(note);
+      aimFrame(fall);                          // the reader's page, here too, set before the frame is in the document
       body.replaceChildren(fall);
       whenShown(fall, fireRendered);
     };
@@ -954,7 +986,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     wait.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
       + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
     const host = el("div", "fileview-pdfhost");
-    body.replaceChildren(wait, host);          // the host is laid out before render(): the chunk fits pages to its width
+    // the host is laid out before render(): the chunk fits pages to its width. Over a kept frame the loader heads the
+    // frame's column and the host follows the column, so the frame itself is never moved.
+    if (col) { col.prepend(wait); body.appendChild(host); }
+    else body.replaceChildren(wait, host);
     Promise.all([pdfChunkLoad(), blob.arrayBuffer()]).then(([pdf, bytes]) => {
       if (my !== pdfSeq || !wrap.isConnected) return;
       return pdf.render(bytes, host, {
@@ -967,7 +1002,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         // the blank pane this function exists to prevent, so the frame, told why, and the document released
         if (h.pages === 0) { h.dispose(); fallback("this PDF has no pages"); return; }
         pdfHandle = h;
-        wait.remove();                         // page 1 is drawn: the loader gives way to pixels
+        wait.remove();                         // page 1 is drawn: the loader gives way to pixels…
+        col?.remove();                         // …and the frame kept through the load goes with its column: the pages are the body
         scrollToPdfPage();                     // …at the reader's page, when the pages had shown one before
         fireRendered();
       });
@@ -1374,13 +1410,19 @@ function imgBlock(objUrl: string, path: string, onDecodeFail: () => void): HTMLE
 
 // The PDF body mirrors the lightbox's treatment exactly (openLightbox's pdf arm, preview.ts): the
 // browser's own viewer in a PLAIN iframe — className, src, title, nothing more — aimed at the
-// already-fetched bytes instead of a second network fetch. With the Comments panel closed this is the
-// PDF's body; with it open it is the fallback under showPdfPages's notice (Slice 4).
+// already-fetched bytes instead of a second network fetch. The frame comes in its column from the
+// first paint (.fileview-pdffall in the sheets: a flex column the frame fills), so that a notice can
+// go above it later WITHOUT the frame moving — an iframe re-inserted anywhere reloads its document,
+// and with it the place the reader had reached. With the Comments panel closed this is the PDF's
+// body; with it open it is what a failed pages attempt leaves showing, under showPdfPages's notice
+// (Slice 4).
 function pdfBlock(objUrl: string, path: string): HTMLElement {
+  const col = el("div", "fileview-pdffall");
   const frame = el("iframe", "fileview-frame") as HTMLIFrameElement;
   frame.src = objUrl;
   frame.title = path;
-  return frame;
+  col.appendChild(frame);
+  return col;
 }
 
 /** Bind the pane's WS poster and route saveFile + fileGitLink replies back to the open viewer.

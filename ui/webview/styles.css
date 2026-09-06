@@ -90,6 +90,10 @@ body.scheme-solarized-dark {
   --err: #c0392b;   /* unified with the awaiting/blocked red (the user 2026-06-24): one "needs you" red. API-error (--st-blocked-bg #e5484d) stays distinct. */
   --warn: #d7a23a;  /* the heads-up amber — "attention, not an error". Was referenced with fallbacks but never
                        defined (a phantom token) until 2026-08-26; mirrored in feed.css (own :root). */
+  --warn-on-white: #9A6A00;  /* the same heads-up, for text on a surface that is WHITE in every theme (the viewer's
+                                PDF page sheet, .fileview-pdf-page): --warn is tuned for the pane's ground and reads
+                                at 2.3:1 on white; this is the light theme's own amber, 4.7:1 there. Identical in
+                                both theme blocks — white is white. (styles-pdf-page-err.test.ts) */
   /* THE romp accent — light blue (the user 2026-06-24). Use var(--accent) for accent/highlight chrome
      (selected toggles, in-progress loading dots, the Fleet pill, focus) — NOT for STATUS colors, which keep
      their own meaning (--st-working-bg yellow = working, --st-blocked-bg red, etc.). --accent-fg reads on it. */
@@ -219,6 +223,7 @@ body.theme-light {
   --cmt-hl: #FFDF70;
   --fast: #D45500;
   --warn: #9A6A00;
+  --warn-on-white: #9A6A00;   /* the white sheet's amber is the same in both themes */
   --st-working-bg: #e0b020; --st-working-fg: #332600;   /* status FILLS carry their own fg — same chips, both themes */
   --st-ready-bg: #2b7fb8;   --st-ready-fg: #ffffff;
   --st-awaiting-bg: #c0392b;--st-awaiting-fg: #ffffff;
@@ -3689,6 +3694,11 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-pdf-canvas { display: block; width: 100%; height: auto; }
 .fileview-pdffall { display: flex; flex-direction: column; height: 100%; }
 .fileview-pdffall .fileview-frame { flex: 1 1 auto; min-height: 0; }
+/* a page pdf.js could not draw carries its failure IN the sheet (pdf-chunk.ts fail(): the .fileview-err dress, plus
+   .fileview-pdf-page-err as a hook). The dress's --warn amber is tuned for the pane's ground and sat at 2.3:1 on the
+   white sheet in the dark theme — the one loud error of the PDF view was its faintest text. On the sheet the dress
+   wears the on-white amber, 4.7:1 in every theme (styles-pdf-page-err.test.ts resolves the cascade and the ratio). */
+.fileview-pdf-page .fileview-err { color: var(--warn-on-white); }
 
 /* a MACHINE-sent message's notch (romp injections, ⚙-tagged sends — the same senderKind verdict the
    bubble wears): light gray, visibly quieter than the user's blue, so the scroll map separates "you
