@@ -2125,7 +2125,12 @@ def _names_fields_for_edit(sid, what):
     transcript (review round 3, 2026-09-06; set_emoji is the first names write an agent drives, so the
     collision no longer needs two human gestures). One re-read after a short pause (the window is a
     printf's worth of time) tells a window from damage; if the record still has no name it is left
-    EXACTLY as it is and the problem is reported, naming the sid."""
+    EXACTLY as it is and the problem is reported, naming the sid. The pause is a time heuristic kept on
+    purpose, as compatibility with the writers that do NOT publish atomically and may still be running:
+    an older bin/romp's tmux rename hook (its printf truncated the entry before rewriting it) and the
+    tmux status hook's cp of the entry to a new session id (hooks/tmux-status.sh). The kernel's own
+    writers and the current bin/romp all publish by rename, so between them there is no window to wait
+    out; when those older writers are gone, so is the reason for the pause."""
     p = NAMES / str(sid)
     for attempt in (0, 1):
         try:
@@ -45242,8 +45247,12 @@ class Handler(BaseHTTPRequestHandler):
                     _tm = _tmux_sessions()
                     _alive = _ordered_alive(int(time.time()), _tm)
                     _o = [s["sid"] for s in _alive]
-                    # name+color per tab → the client paints the whole strip as placeholders up front (tabs-first)
-                    _tabs = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in _alive]
+                    # name+color+emoji per tab → the client paints the whole strip as placeholders up front
+                    # (tabs-first). The SAME fields as the pusher's tab_meta: this frame is the first a fresh
+                    # connection sees, and it shipped without the emoji while the pusher's carried it, so every
+                    # tab opened with a bare name until the next push (review, 2026-09-07).
+                    _tabs = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
+                              "emoji": _name_emoji(s["sid"])} for s in _alive]
                     _frame = _tab_order_frame(_o, _tabs, _tm)
                     client["send"](json.dumps(_frame))
                     # sent on the raw socket, not through _send_client — so its views seq is captured here
@@ -45443,15 +45452,20 @@ class Handler(BaseHTTPRequestHandler):
             # tab right-click → Emoji… (the user 2026-09-06): the same store write POST /emoji and the
             # postal tool make, through the one validator. The kernel confirms with {emojiSet id emoji}
             # — the renamed-ack shape: the strip changes once the store has it, never on the click —
-            # or says why not in a warn; "" clears, and the key must be present.
+            # or says why not in a TYPED {emojiRefused id text}, the moveFailed shape; "" clears, and the
+            # key must be present. The refusal used to be a bare warn, which the client could only route
+            # by timing — every warn that arrived while a Set was pending went under the dialog's input,
+            # so an unrelated warn was taken for the refusal and a refusal for another session was
+            # misrouted (review, 2026-09-07). The id lets the client match it to the dialog that asked.
             emoji, err = _emoji_check(msg.get("emoji"))
             if err:
-                client["send"](json.dumps({"type": "warn", "text": err}))
+                client["send"](json.dumps({"type": "emojiRefused", "id": str(msg["id"]), "text": err}))
             elif _set_session_emoji(str(msg["id"]), emoji):
                 client["send"](json.dumps({"type": "emojiSet", "id": str(msg["id"]), "emoji": emoji}))
                 _mark_views_dirty()
             else:
-                client["send"](json.dumps({"type": "warn", "text": _names_refusal(str(msg["id"]))}))
+                client["send"](json.dumps({"type": "emojiRefused", "id": str(msg["id"]),
+                                           "text": _names_refusal(str(msg["id"]))}))
         elif msg and msg.get("type") == "loginStart":
             # the in-dashboard login (T157): spawn the PTY flow; the gear polls /version for state
             err = _login_start()

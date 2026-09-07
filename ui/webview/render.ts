@@ -20,7 +20,7 @@ import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, 
 import { mintWriteId, ackOutcome, adoptViews, seqOf, capsAdopts, announcedSeq, announcedAfter, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter, tagChip } from "./tag-menu";
-import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, emojiConfirmClosesDialog, PendingTabMeta } from "./tab-meta";
+import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, emojiConfirmClosesDialog, emojiRefusalIsForDialog, PendingTabMeta } from "./tab-meta";
 import { markerLabel, dayContext } from "./time-marker";
 import { compactDisplay, toolCounts, type DisplayItem } from "./compact";
 import { senderKind } from "./sender-identity";
@@ -5661,9 +5661,10 @@ function setSessionColor(id: string, bg: string) {
 }
 
 // Set or clear a session's tab emoji ("" clears). NOT optimistic, unlike the color swatch: the kernel is
-// the validator (exactly one emoji, nothing textual — its one-line reason comes back as a warn), so the
-// strip changes on its {emojiSet} confirm, the way a rename changes on {renamed}. The dialog that called
-// this has already acknowledged the click (its button reads "Setting…") and waits for that answer.
+// the validator (exactly one emoji, nothing textual — its one-line reason comes back as an {emojiRefused}
+// naming the session), so the strip changes on its {emojiSet} confirm, the way a rename changes on
+// {renamed}. The dialog that called this has already acknowledged the click (its button reads "Setting…")
+// and waits for that answer.
 function setSessionEmoji(id: string, emoji: string) {
   if (vscodeApi) vscodeApi.postMessage({ type: "setSessionEmoji", id, emoji });
 }
@@ -7556,14 +7557,14 @@ function onMoveDirCompletions(m: any): void {
 // locks (the repo's button rule) — while the dialog STAYS OPEN for the kernel's verdict, the move dialog's
 // shape (review, 2026-09-06; it shipped closing on the click, so a refusal arrived as a toast after the
 // input was gone and retrying meant reopening and finding the value again). The kernel's {emojiSet} for
-// this session closes it; a refusal (letters, two emoji, a bare text symbol) paints the kernel's one-line
-// reason under the input with the typed value still there to fix. The kernel's refusal is a bare warn
-// with no id (the rename precedent), so while a Set is pending the warn router hands warns to THIS dialog
-// first (emojiRefusedLocal), ahead of the create-failure branch that used to claim every warn during a
-// provisional create and so struck the opening tab for a refused emoji; what remains ambiguous — a
-// create's own failure landing in the moment between a Set and its answer — is bounded by that window.
-// Pane-local like the move dialog. The backstop covers a kernel that never answers (the loading rule: a
-// wait never traps); Cancel and Escape work throughout.
+// this session closes it; its {emojiRefused id text} (letters, two emoji, a bare text symbol) paints the
+// kernel's one-line reason under the input with the typed value still there to fix. Both answers are
+// TYPED and name the session (the moved/moveFailed shape), so the dialog matches them by id. The refusal
+// shipped as a bare warn, and the router handed EVERY warn to this dialog while a Set was pending: an
+// unrelated warn (a dropped federation route, a failed create) landed under the input as the refusal, and
+// a refusal for another session was misrouted (review, 2026-09-07). Pane-local like the move dialog. The
+// backstop covers a kernel that never answers (the loading rule: a wait never traps); Cancel and Escape
+// work throughout.
 let emojiPrompt: { sid: string; overlay: HTMLElement; input: HTMLInputElement; hint: HTMLElement;
                    go: HTMLButtonElement; clear: HTMLButtonElement; pending: boolean; close: () => void;
                    backstop?: number; asked?: string } | null = null;   // asked: the value the last Set/Clear posted
@@ -7604,13 +7605,13 @@ function showEmojiPrompt(sid: string): void {
     const p = emojiPrompt;
     if (!p || p.pending) return;   // one answer per press
     // acknowledge the click before the round trip (the repo's button rule); the kernel's answer — its
-    // emojiSet for this session, or a warn with the reason — is what changes this dialog next
+    // emojiSet for this session, or its emojiRefused with the reason — is what changes this dialog next
     p.pending = true; p.asked = value;
     btn.textContent = busy; go.disabled = true; clear.disabled = true; input.disabled = true;
     hint.textContent = ""; hint.title = ""; hint.className = "emoji-hint";
     setSessionEmoji(sid, value);
     p.backstop = window.setTimeout(
-      () => emojiRefusedLocal("still waiting — the kernel has not answered; check the kernel log"), 30000);
+      () => emojiRefusedLocal(sid, "still waiting — the kernel has not answered; check the kernel log"), 30000);
   };
   const start = () => {
     const v = input.value.trim();
@@ -7634,20 +7635,25 @@ function showEmojiPrompt(sid: string): void {
 // the kernel's answer to the dialog's Set/Clear. `emojiLanded`: its {emojiSet} for this session — the
 // handler has already put it on the strip — closes the dialog, while it is pending OR when the value is
 // the one this dialog asked for: the kernel answers only the client that asked, so a confirm for that sid
-// after the 30 s backstop (or an unrelated warn) has already un-pended the dialog is this dialog's own
-// answer arriving late, and leaving it open put a red "still waiting" under a value the tab already wore
-// (review round 3, 2026-09-06). The decision is emojiConfirmClosesDialog (tab-meta.ts, tested there): a
-// confirm for another session, or one landing on a dialog that has asked nothing yet, leaves it alone.
-// `emojiRefusedLocal`: a warn while a Set is pending is the refusal — the reason goes under the input, the
-// buttons come back, the typed value stays to fix. A warn while NOT pending is not this dialog's business
-// (it returns before touching anything; the router sends it on to the create branch or a toast).
+// after the 30 s backstop has already un-pended the dialog is this dialog's own answer arriving late, and
+// leaving it open put a red "still waiting" under a value the tab already wore (review round 3,
+// 2026-09-06). The decision is emojiConfirmClosesDialog (tab-meta.ts, tested there): a confirm for
+// another session, or one landing on a dialog that has asked nothing yet, leaves it alone.
+// `emojiRefusedLocal`: the kernel's {emojiRefused id text} (or the backstop's own "still waiting") FOR the
+// session this dialog asked about — the reason goes under the input, the buttons come back, the typed
+// value stays to fix. The decision is emojiRefusalIsForDialog (tab-meta.ts, tested there): a refusal for
+// another session, or one arriving when the dialog is gone or has asked nothing, is a toast naming the
+// session instead — never silence, and never under another dialog's input (the moveFailed arrangement).
 function emojiLanded(sid: string, emoji: string): void {
   if (emojiConfirmClosesDialog(emojiPrompt, sid, emoji)) closeEmojiPrompt();
 }
 
-function emojiRefusedLocal(text: string): void {
+function emojiRefusedLocal(sid: string, text: string): void {
   const p = emojiPrompt;
-  if (!p || !p.pending) return;
+  if (!p || !emojiRefusalIsForDialog(p, sid)) {
+    warnToast(`Emoji for “${sessions.get(sid)?.name || tabMeta.get(sid)?.name || sid}”: ${text}`);
+    return;
+  }
   if (p.backstop !== undefined) { clearTimeout(p.backstop); p.backstop = undefined; }
   p.pending = false;
   p.go.disabled = false; p.go.textContent = "Set";
@@ -14159,16 +14165,10 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
     warnToast(m.text);
   }
   else if (m.type === "warn" && typeof m.text === "string" && m.text) {
-    // A warn while the emoji dialog awaits its answer is the kernel refusing THAT value (the setSessionEmoji
-    // op answers with emojiSet or a bare warn, nothing else), so it goes under the dialog's input — checked
-    // FIRST, because the branch below used to claim every warn during a provisional create and so struck
-    // the opening tab as failed for a refused emoji (review, 2026-09-06). Otherwise a warn arriving while a
-    // create is in flight IS that create's verdict (a name the kernel won't take, an unreadable parent, the
-    // SDK setup hint). It gets a dialog naming the reason and takes the provisional tab down with it; a
-    // toast would slide past the one moment it needed to be read.
-    if (emojiPrompt?.pending) emojiRefusedLocal(m.text);
-    else if (provisionalId) failProvisional(m.text);
-    else warnToast(m.text);
+    // A warn arriving while a create is in flight IS that create's verdict (a name the kernel won't take,
+    // an unreadable parent, the SDK setup hint). It gets a dialog naming the reason and takes the
+    // provisional tab down with it; a toast would slide past the one moment it needed to be read.
+    if (provisionalId) failProvisional(m.text); else warnToast(m.text);
   }
   // `err` is the LOUD channel, deliberately distinct from `warn` (the user 2026-07-29): a warn toast fades
   // after 12s, which is right for "that name has a bad character" and wrong for "the message you just typed
@@ -14361,6 +14361,12 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
     if (s && (s.emoji || "") !== m.emoji) { s.emoji = m.emoji; renderTabs(); }
     else if (!s) renderTabs();   // a placeholder tab reads the meta directly
     emojiLanded(String(m.id), m.emoji);   // the dialog that asked, if it is still open, closes on the confirm
+  }
+  else if (m.type === "emojiRefused" && m.id && typeof m.text === "string") {
+    // the kernel's typed refusal for setSessionEmoji (the moveFailed shape): the reason goes under the input
+    // of the dialog that asked about THIS session, or to a toast when that dialog is gone or the refusal is
+    // another session's — matched by id, never claimed off a bare warn by timing (review, 2026-09-07)
+    emojiRefusedLocal(String(m.id), m.text || "unknown error");
   }
   else if (m.type === "droppedPath" && typeof m.path === "string") {   // host-saved drop/paste/pick → a thumbnail, not path text (the user 2026-08-04)
     const ackShip = typeof m.shipId === "string" && m.shipId ? m.shipId : undefined;

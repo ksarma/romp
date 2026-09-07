@@ -8,6 +8,7 @@ test_color_route.py pattern)."""
 import inspect
 import json
 import os
+import re
 import socket
 import tempfile
 import threading
@@ -549,20 +550,31 @@ class Frames(unittest.TestCase):
 
     def test_tab_meta_and_the_session_frame_carry_it(self):
         ksrc = Path(BIN, "romp-kernel").read_text()
-        self.assertEqual(ksrc.count('"emoji": _name_emoji(s["sid"])'), 3,
-                         "all three tab_meta builders (the pusher, the per-session push, the tabOrder frame)")
+        self.assertEqual(ksrc.count('"emoji": _name_emoji(s["sid"])'), 4,
+                         "all four tab builders: the pusher's tab_meta, _push_session_now, _confirm_close_now, and "
+                         "the WS 'ready' handler's connect-time frame (which shipped without it — review, 2026-09-07)")
+        # and the four carry the SAME fields, in the same spelling: a builder that drops one ships a strip that
+        # differs by which frame painted it (ReadyFrame below runs the ready handler for real)
+        same = re.findall(r'\{"id": s\["sid"\], "name": s\.get\("name", ""\), "color": _name_color\(s\["sid"\]\),\s*'
+                          r'"emoji": _name_emoji\(s\["sid"\]\)\} for s in (\w+)\]', ksrc)
+        self.assertEqual(sorted(same), ["_alive", "chat_list", "chat_list", "chat_list"])
         self.assertIn('"emoji": _name_emoji(sid),', inspect.getsource(km.build_session))
         self.assertIn('"emoji": _name_emoji(sid),', inspect.getsource(km._session_rows),
                       "GET /sessions rows carry it for `romp emoji <session>`")
 
-    def test_the_ws_op_confirms_or_warns_through_the_one_validator(self):
+    def test_the_ws_op_confirms_or_refuses_through_the_one_validator(self):
         ksrc = Path(BIN, "romp-kernel").read_text()
         self.assertIn('msg.get("type") == "setSessionEmoji" and msg.get("id") and "emoji" in msg', ksrc)
         i = ksrc.index('msg.get("type") == "setSessionEmoji"')
-        block = ksrc[i:i + 1400]
+        block = ksrc[i:ksrc.index('msg.get("type") == "loginStart"', i)]
         self.assertIn('emoji, err = _emoji_check(msg.get("emoji"))', block)
         self.assertIn('{"type": "emojiSet", "id": str(msg["id"]), "emoji": emoji}', block)
-        self.assertIn('{"type": "warn", "text": err}', block)
+        # the refusal is TYPED and names the session (the moveFailed shape) from both branches — never a bare
+        # warn, which the client could only route by timing (review, 2026-09-07; WsOp runs both)
+        self.assertIn('{"type": "emojiRefused", "id": str(msg["id"]), "text": err}', block)
+        self.assertIn('{"type": "emojiRefused", "id": str(msg["id"]),\n'
+                      '                                           "text": _names_refusal(str(msg["id"]))}', block)
+        self.assertNotIn('"type": "warn"', block)
         self.assertIn("_mark_views_dirty()", block)
 
 
@@ -899,7 +911,10 @@ class EmojiRoute(unittest.TestCase):
 
 
 class WsOp(unittest.TestCase):
-    """The tab menu's setSessionEmoji op: every refusal is a warn the dialog can show — never silence."""
+    """The tab menu's setSessionEmoji op: every refusal is a TYPED {emojiRefused id text} naming the session, so
+    the dialog that asked can match it — never silence, and never a bare warn the client had to route by timing
+    (an unrelated warn landed under the dialog's input, and a refusal for another session was misrouted —
+    review, 2026-09-07)."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -919,34 +934,50 @@ class WsOp(unittest.TestCase):
     def _op(self, emoji):
         km.Handler._dispatch_ws(types.SimpleNamespace(), {"type": "setSessionEmoji", "id": SID, "emoji": emoji}, self.client)
 
-    def test_a_valid_emoji_is_confirmed_and_a_refusal_is_a_warn(self):
+    def test_a_valid_emoji_is_confirmed_and_a_refusal_is_a_typed_frame_naming_the_session(self):
         (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
         self._op(MOON)
         self.assertEqual(self.sent, [{"type": "emojiSet", "id": SID, "emoji": MOON}])
         self.assertEqual(km._name_emoji(SID), MOON)
         self.assertEqual(len(self.dirty), 1)
         self._op("moon")
-        self.assertEqual(self.sent[-1]["type"], "warn")
+        self.assertEqual(self.sent[-1]["type"], "emojiRefused")
+        self.assertEqual(self.sent[-1]["id"], SID)
         self.assertIn("not an emoji", self.sent[-1]["text"])
+        self.assertEqual(sorted(self.sent[-1]), ["id", "text", "type"], "the moveFailed shape: type, the session, the reason")
 
-    def test_an_unpaired_surrogate_and_a_non_string_each_warn_instead_of_dropping_the_reply(self):
+    def test_a_refusal_names_the_session_it_is_for_so_a_dialog_open_for_another_session_never_claims_it(self):
+        # the client-side half — a refusal for session A does not reach a dialog pending for session B — runs
+        # in ui/webview/tab-meta.test.ts (emojiRefusalIsForDialog); this pins what it keys on: the id on the
+        # frame, from BOTH refusal branches (the validator's, and the store's), and no bare warn from either
+        (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
+        km.Handler._dispatch_ws(types.SimpleNamespace(), {"type": "setSessionEmoji", "id": SID, "emoji": "moon"}, self.client)
+        km.Handler._dispatch_ws(types.SimpleNamespace(), {"type": "setSessionEmoji", "id": SID2, "emoji": MOON}, self.client)
+        self.assertEqual([f["type"] for f in self.sent], ["emojiRefused", "emojiRefused"])
+        self.assertEqual([f["id"] for f in self.sent], [SID, SID2], "each refusal names its own session")
+        self.assertIn("not an emoji", self.sent[0]["text"])
+        self.assertIn("no names record", self.sent[1]["text"])
+        self.assertFalse(self.dirty)
+
+    def test_an_unpaired_surrogate_and_a_non_string_each_refuse_instead_of_dropping_the_reply(self):
         # both used to raise inside the op (a UnicodeEncodeError) or coerce to a clear; the dialog had
         # already closed as the click's acknowledgement, so the user saw nothing happen and no reason
         (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\t" + MOON + "\n")
         self._op("\ud83c")
         self.assertEqual(len(self.sent), 1, "exactly one frame came back")
-        self.assertEqual(self.sent[0]["type"], "warn")
+        self.assertEqual(self.sent[0]["type"], "emojiRefused")
+        self.assertEqual(self.sent[0]["id"], SID)
         self.assertIn("unpaired surrogate", self.sent[0]["text"])
         for v in (None, 7, ["x"]):
             with self.subTest(v=repr(v)):
                 self.sent.clear()
                 self._op(v)
-                self.assertEqual([f["type"] for f in self.sent], ["warn"])
+                self.assertEqual([(f["type"], f["id"]) for f in self.sent], [("emojiRefused", SID)])
                 self.assertIn("must be text", self.sent[0]["text"])
         self.assertEqual(km._name_emoji(SID), MOON, "nothing was cleared")
         self.assertFalse(self.dirty)
 
-    def test_a_record_with_no_name_warns_that_it_is_being_rewritten_not_that_it_is_missing(self):
+    def test_a_record_with_no_name_refuses_as_being_rewritten_not_as_missing(self):
         (self.names / SID).write_text("")
         saved = km.time.sleep
         km.time.sleep = lambda s: None
@@ -954,14 +985,58 @@ class WsOp(unittest.TestCase):
             self._op(MOON)
         finally:
             km.time.sleep = saved
-        self.assertEqual([f["type"] for f in self.sent], ["warn"])
+        self.assertEqual([(f["type"], f["id"]) for f in self.sent], [("emojiRefused", SID)])
         self.assertIn("reads with no name", self.sent[0]["text"])
         self.assertNotIn("no names record", self.sent[0]["text"])
         self.assertEqual((self.names / SID).read_text(), "")
         self.assertFalse(self.dirty)
         self.sent.clear()
         km.Handler._dispatch_ws(types.SimpleNamespace(), {"type": "setSessionEmoji", "id": SID2, "emoji": MOON}, self.client)
+        self.assertEqual((self.sent[-1]["type"], self.sent[-1]["id"]), ("emojiRefused", SID2))
         self.assertIn("no names record", self.sent[-1]["text"], "a missing record keeps its own words")
+
+
+class ReadyFrame(unittest.TestCase):
+    """The WS 'ready' handler's connect-time tabOrder frame — the FIRST frame a fresh connection paints its
+    strip from (tabs-first) — carries each tab's emoji like the pusher's tab_meta. It shipped without it while
+    the other three builders carried it, so every tab opened with a bare name until the next push (review,
+    2026-09-07). Runs the handler for real, with the live-session scan and the chat push stubbed out."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.names = Path(self.tmp) / "names"
+        self.names.mkdir()
+        self._saved = {k: getattr(km, k) for k in
+                       ("NAMES", "_client_reset_chat_base", "_ordered_alive", "_tmux_sessions", "_consume_pending_reveal")}
+        self._state = km.jd.STATE
+        km.NAMES = self.names
+        km.jd.STATE = Path(self.tmp) / "state"
+        km._client_reset_chat_base = lambda client: None
+        km._tmux_sessions = lambda: []
+        km._ordered_alive = lambda now, tm: [{"sid": SID, "name": "web"}, {"sid": SID2, "name": "api"}]
+        km._consume_pending_reveal = lambda client: None
+        self.sent = []
+        self.client = {"send": lambda frame: self.sent.append(json.loads(frame)), "app": "chat"}
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            setattr(km, k, v)
+        km.jd.STATE = self._state
+
+    def test_the_connect_time_tab_order_frame_carries_each_tabs_emoji(self):
+        (self.names / SID).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\t" + MOON + "\n")
+        (self.names / SID2).write_text("api\t/proj/TESTHOST/app\t#54B204\tblack\n")
+        handler = types.SimpleNamespace(_push_one=lambda client: None)
+        km.Handler._dispatch_ws(handler, {"type": "ready"}, self.client)
+        frames = [f for f in self.sent if f.get("type") == "tabOrder"]
+        self.assertEqual(len(frames), 1, "the ready handler sent its tabOrder frame (its try swallows a raise): %r" % self.sent)
+        self.assertEqual(frames[0]["order"], [SID, SID2])
+        tabs = {t["id"]: t for t in frames[0]["tabs"]}
+        self.assertEqual(tabs[SID]["emoji"], MOON, "the first frame a fresh connection sees carries the emoji")
+        self.assertEqual(tabs[SID2]["emoji"], "", "a tab without one carries the explicit empty string, as the pusher's does")
+        self.assertEqual(sorted(tabs[SID]), ["color", "emoji", "id", "name"], "the pusher's tab_meta fields, exactly")
+        self.assertEqual(tabs[SID]["name"], "web")
+        self.assertEqual(tabs[SID]["color"], km._name_color(SID))
 
 
 if __name__ == "__main__":

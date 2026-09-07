@@ -9,7 +9,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, emojiConfirmClosesDialog,
+import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, emojiConfirmClosesDialog, emojiRefusalIsForDialog,
          PENDING_META_MAX_AGE, TabSessionMeta, PendingTabMeta } from "./tab-meta";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -179,6 +179,26 @@ test("the emojiSet confirm closes the dialog that asked: while pending whatever 
                "another session's confirm, even while pending");
   assert.equal(emojiConfirmClosesDialog(null, "S1", moon), false, "no dialog open");
   assert.equal(emojiConfirmClosesDialog(undefined, "S1", moon), false);
+});
+
+test("the emojiRefused frame reaches the dialog only for the session it asked about: pending or late, never another session's", () => {
+  const moon = "\u{1F319}";
+  // the defect (review, 2026-09-07): the refusal travelled as a bare warn and the router handed every warn to
+  // whichever dialog was pending — a refusal for session A landed under a dialog open for session B, and an
+  // unrelated warn (a dropped federation route, a failed create) was taken for the refusal. The typed frame
+  // carries the id, and this is the whole routing decision.
+  assert.equal(emojiRefusalIsForDialog({ sid: "S2", pending: true, asked: moon }, "S1"), false,
+               "a refusal for session A while the dialog is pending for session B does not reach the dialog");
+  assert.equal(emojiRefusalIsForDialog({ sid: "S1", pending: true, asked: moon }, "S1"), true, "its own answer");
+  assert.equal(emojiRefusalIsForDialog({ sid: "S1", pending: true, asked: "" }, "S1"), true, "a Clear's refusal");
+  // late: the 30 s backstop un-pended the dialog before the real answer came — the reason still belongs under
+  // the input the ask was typed into, not in a toast beside a hint that says 'still waiting'
+  assert.equal(emojiRefusalIsForDialog({ sid: "S1", pending: false, asked: moon }, "S1"), true);
+  assert.equal(emojiRefusalIsForDialog({ sid: "S1", pending: false, asked: "" }, "S1"), true, "a late Clear refusal");
+  // a dialog that has asked nothing yet has nothing to be refused; no dialog at all → the caller toasts
+  assert.equal(emojiRefusalIsForDialog({ sid: "S1", pending: false }, "S1"), false);
+  assert.equal(emojiRefusalIsForDialog(null, "S1"), false, "no dialog open");
+  assert.equal(emojiRefusalIsForDialog(undefined, "S1"), false);
 });
 
 test("render.ts wires the emoji like name and color: tabMeta stores it, the confirm notes it, the strip reads it", () => {

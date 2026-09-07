@@ -1567,9 +1567,20 @@ else:
     _em_val="$2"
     [[ "$_em_val" == "--clear" ]] && _em_val=""
     _payload="$(python3 -c 'import json,sys; print(json.dumps({"target": sys.argv[1], "emoji": sys.argv[2]}, ensure_ascii=False))' "$1" "$_em_val")"
-    _resp="$(_romp_token_cfg | curl -sf -m 15 --config - -X POST "http://127.0.0.1:$_kport/emoji" \
+    # The status rides -w, not -f, as on the read above: -f turns every 4xx into exit 22, the exit a
+    # kernel that is DOWN produces, so a kernel from before this command (its POST falls through to a
+    # 404) was reported as 'not reachable' and sent the user to check a kernel that was up (review,
+    # 2026-09-07). A 404 names the version skew and the fix; 401/403 name the token.
+    _out="$(_romp_token_cfg | curl -s -m 15 --config - -w '\n%{http_code}' -X POST "http://127.0.0.1:$_kport/emoji" \
                   -H 'Content-Type: application/json; charset=utf-8' -d "$_payload")" \
         || { echo "romp emoji: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+    _code="${_out##*$'\n'}"; _resp="${_out%$'\n'*}"
+    case "$_code" in
+        2??) ;;
+        404)     echo "romp emoji: the kernel on :$_kport predates this command (no POST /emoji) — restart romp so the kernel matches this command" >&2; exit 1 ;;
+        401|403) echo "romp emoji: the kernel on :$_kport refused the serve token (HTTP $_code); is ROMP_KERNEL_PORT pointing at another kernel?" >&2; exit 1 ;;
+        *)       echo "romp emoji: the kernel on :$_kport answered HTTP $_code: $_resp" >&2; exit 1 ;;
+    esac
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
         # print what the kernel STORED (its reply's `emoji`, trimmed by the validator), not the raw
         # argument; a reply without the field (an older kernel) falls back to the argument

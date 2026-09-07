@@ -153,8 +153,10 @@ which share one validator and one store:
   `emoji: ""` clears, and **Clear** sends exactly that). The kernel answers with
   `{type: "emojiSet", id, emoji}` when the store has it, and the strip changes
   on that confirm, the way a rename changes on `renamed`; a refusal comes back
-  as a `warn` with the reason, which the dialog shows in place, under the input,
-  with the typed value still there to fix.
+  as `{type: "emojiRefused", id, text}` with the reason, which the dialog that
+  asked for that session shows in place, under the input, with the typed value
+  still there to fix. A refusal for another session, or one arriving after the
+  dialog is gone, is a toast; an unrelated `warn` never reaches the dialog.
 - **The session itself.** The `set_emoji(emoji)` tool, beside `set_working`, so
   a session can mark what it is doing (a moon while it runs unattended).
 - **The shell.** `romp emoji <session> <emoji>`, `romp emoji <session> --clear`,
@@ -217,7 +219,11 @@ entry atomically (a temp file in the same directory, moved into place). The
 kernel's writers never publish over an entry that reads with no name, which is
 another writer's window or a damaged file: the entry is re-read once, then left
 as it is, and the problem is reported with the session's id in the kernel log
-and the dashboard's error center. A five-field entry always carries all four
+and the dashboard's error center. The re-read covers the writers that do not
+publish atomically and may still be running, an older `bin/romp`'s tmux rename
+hook and the tmux status hook's copy of the entry to a new session id
+(`hooks/tmux-status.sh`); the kernel's own writers and the current `bin/romp`
+publish by rename and leave no window. A five-field entry always carries all four
 identity fields: an entry that had no color yet (one
 from before colors, or a Codex session whose launch failed) is given one when
 its emoji is set, as a launch would give it one. It reaches the browser

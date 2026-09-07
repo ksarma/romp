@@ -146,7 +146,9 @@ STUB
 # MOCK_CURL_NEW_400=1 makes the kernel answer /new with a 400 whose JSON body names
 # the problem — honoring the FLAGS romp passes, the way real curl splits on a 4xx:
 # a short-flag cluster carrying -f discards the body and exits 22; plain -s prints
-# the body and exits 0. So the test proves the flags, not just the message.
+# the body and exits 0. So the test proves the flags, not just the message. A call
+# carrying -w (the emoji set and read take their HTTP status off it) gets a 200
+# after the body, the way real curl appends the write-out.
 _stub_curl() {
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
@@ -155,8 +157,8 @@ echo "curl $*" >> "$MOCK_LOG"
 # it, but a mock that exits first hands the writer SIGPIPE, and under the script's pipefail that read
 # as a false "not reachable" — one random kernel-API test failed per run
 [[ " $* " == *" --config - "* ]] && cat >/dev/null
-url=""
-for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
+url=""; wfmt=0
+for a in "$@"; do [[ "$a" == http* ]] && url="$a"; [[ "$a" == "-w" ]] && wfmt=1; done
 if [[ -n "${MOCK_CURL_FAIL_SEND:-}" && "$url" == */send ]]; then exit 22; fi
 if [[ -n "${MOCK_CURL_FAIL_NEW:-}" && "$url" == */new ]]; then exit 7; fi
 if [[ -n "${MOCK_CURL_SEND_QUEUED:-}" && "$url" == */send ]]; then echo '{"ok": true, "queued": true}'; exit 0; fi
@@ -172,6 +174,8 @@ if [[ -n "${MOCK_CURL_NEW_400:-}" && "$url" == */new ]]; then
   exit 0
 fi
 echo '{"ok": true}'
+[[ $wfmt -eq 1 ]] && printf '\n200'
+exit 0
 MOCK
     chmod +x "$MOCK_DIR/curl"
 }
@@ -516,6 +520,8 @@ if [[ "$url" == */emoji?target=* ]]; then
   exit 0
 fi
 echo '{"ok": false, "error": "one emoji only"}'
+[[ $wfmt -eq 1 ]] && printf '\n200'      # a refusal is a 200 with ok:false; the set reads the status off -w too
+exit 0
 MOCK
     chmod +x "$MOCK_DIR/curl"
     # the kernel is the validator; its one-line reason is the whole refusal
@@ -592,7 +598,10 @@ MOCK
 #!/usr/bin/env bash
 echo "curl $*" >> "$MOCK_LOG"
 [[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
+wfmt=0; for a in "$@"; do [[ "$a" == "-w" ]] && wfmt=1; done
 printf '{"ok": true, "id": "11111111-2222-3333-4444-555555555555", "emoji": "%s"}\n' "${MOCK_EMOJI_REPLY-}"
+[[ $wfmt -eq 1 ]] && printf '\n200'
+exit 0
 MOCK
     chmod +x "$MOCK_DIR/curl"
     run run_romp emoji exp-web ''
@@ -704,6 +713,70 @@ MOCK
     [ "$status" -eq 1 ]
     [[ "$output" == *"refused the serve token (HTTP 403)"* ]]
     unset MOCK_GET_BODY MOCK_GET_CODE
+}
+
+@test "emoji: a set against a kernel from before POST /emoji names the version skew, not 'not reachable'; a refused token and a down kernel keep their own words" {
+    # the set took its status through curl -f, which turns every 4xx into exit 22 — the exit a kernel that
+    # is DOWN produces — so a kernel from before this command (its POST falls through to a 404) was reported
+    # as 'kernel not reachable' and sent the user to check a kernel that was up (review, 2026-09-07). The
+    # read form already took the status off -w; the set does the same now. The mock honors the flags the
+    # way real curl does (the _stub_curl idiom): -f on a 4xx drops the body and exits 22, so the test proves
+    # the flag change, not just the message.
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
+[[ -n "${MOCK_POST_DOWN:-}" ]] && exit 7             # no kernel: curl's own connection failure
+wfmt=0
+for a in "$@"; do
+  if [[ "$a" == "-f" || "$a" == -[!-]*f* ]] && [[ "${MOCK_POST_CODE:-200}" -ge 400 ]]; then exit 22; fi
+  [[ "$a" == "-w" ]] && wfmt=1
+done
+printf '%s' "${MOCK_POST_BODY-}"
+[[ $wfmt -eq 1 ]] && printf '\n%s' "${MOCK_POST_CODE:-200}"
+exit 0
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    # THIS kernel from before the route: a 404 names the skew and the fix, never 'not reachable'
+    export MOCK_POST_BODY='not found' MOCK_POST_CODE=404
+    run run_romp emoji exp-web '🌙'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"predates this command"* ]]
+    [[ "$output" == *"restart romp"* ]]
+    [[ "$output" != *"not reachable"* ]]
+    run run_romp emoji exp-web --clear
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"predates this command"* ]]
+    # another kernel's token → the token, not the network
+    export MOCK_POST_BODY='forbidden' MOCK_POST_CODE=403
+    run run_romp emoji exp-web '🌙'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refused the serve token (HTTP 403)"* ]]
+    [[ "$output" != *"not reachable"* ]]
+    # any other status is quoted with its body, so nothing is guessed
+    export MOCK_POST_BODY='service unavailable' MOCK_POST_CODE=503
+    run run_romp emoji exp-web '🌙'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"answered HTTP 503: service unavailable"* ]]
+    # a 200 still reads the body: the stored value on success, the kernel's reason on a refusal
+    export MOCK_POST_BODY='{"ok": true, "id": "11111111-2222-3333-4444-555555555555", "emoji": "🌙"}' MOCK_POST_CODE=200
+    run run_romp emoji exp-web '🌙'
+    [ "$status" -eq 0 ]
+    [ "$output" = 'romp emoji: "exp-web" now shows 🌙' ]
+    export MOCK_POST_BODY='{"ok": false, "error": "one emoji only"}' MOCK_POST_CODE=200
+    run run_romp emoji exp-web '🌙🌙'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refused — one emoji only"* ]]
+    # and a kernel that is really down is still 'not reachable' — curl itself fails, no status to read
+    export MOCK_POST_DOWN=1
+    run run_romp emoji exp-web '🌙'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel not reachable"* ]]
+    unset MOCK_POST_BODY MOCK_POST_CODE MOCK_POST_DOWN
+    [ "$(grep -c -- '-w .*-X POST .*/emoji' "$MOCK_LOG")" -eq 7 ]   # every set read its status off -w, never -f
+    [ "$(grep -c -- 'curl -sf' "$MOCK_LOG")" -eq 0 ]
 }
 
 @test "emoji: an id is read from the names registry with no kernel running; a name or an unknown id still needs the kernel" {

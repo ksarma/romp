@@ -115,7 +115,7 @@ test("the disabled Clear (nothing to clear) is dressed as disabled and says why;
   assert.ok(hover > 0 && rule > hover, "the disabled rule follows the hover rule it overrides");
 });
 
-test("the kernel's answer drives the dialog: emojiSet for its session closes it, a warn while pending puts the reason under the input", () => {
+test("the kernel's answer drives the dialog: emojiSet for its session closes it, emojiRefused for its session puts the reason under the input", () => {
   // the confirm handler applies the emoji to the strip, THEN closes the dialog that asked
   const handler = slice('m.type === "emojiSet" && m.id && typeof m.emoji === "string"', 'm.type === "droppedPath"');
   assert.match(handler, /else if \(!s\) renderTabs\(\);[^\n]*\n\s*emojiLanded\(String\(m\.id\), m\.emoji\);/);
@@ -128,10 +128,12 @@ test("the kernel's answer drives the dialog: emojiSet for its session closes it,
   assert.match(SRC, /import \{[^}]*\bemojiConfirmClosesDialog\b[^}]*\} from "\.\/tab-meta";/);
   assert.match(SRC, /backstop\?: number; asked\?: string \} \| null = null;/);
   // the refusal: buttons back, input unlocked with the value in place, the reason where the move dialog puts its
-  const refused = slice("function emojiRefusedLocal(text: string): void {", "\n// THE FORK MODAL");
-  // a warn while NOT pending is not this dialog's: it returns before touching the hint, the buttons or the
-  // input (the router then hands the warn to the create branch or a toast — pinned below)
-  assert.match(refused, /^function emojiRefusedLocal\(text: string\): void \{\n  const p = emojiPrompt;\n  if \(!p \|\| !p\.pending\) return;/);
+  const refused = slice("function emojiRefusedLocal(sid: string, text: string): void {", "\n// THE FORK MODAL");
+  // a refusal that is not this dialog's — another session's, or the dialog is gone or has asked nothing — is a
+  // toast naming the session, before the hint, the buttons or the input are touched; the decision is the pure
+  // emojiRefusalIsForDialog (tab-meta.ts; tab-meta.test.ts runs it, with the refusal-for-A-while-pending-for-B case)
+  assert.match(refused, /^function emojiRefusedLocal\(sid: string, text: string\): void \{\n  const p = emojiPrompt;\n  if \(!p \|\| !emojiRefusalIsForDialog\(p, sid\)\) \{\n    warnToast\(`Emoji for “\$\{sessions\.get\(sid\)\?\.name \|\| tabMeta\.get\(sid\)\?\.name \|\| sid\}”: \$\{text\}`\);\n    return;\n  \}/);
+  assert.match(SRC, /import \{[^}]*\bemojiRefusalIsForDialog\b[^}]*\} from "\.\/tab-meta";/);
   assert.match(refused, /p\.pending = false;/);
   assert.match(refused, /p\.go\.disabled = false; p\.go\.textContent = "Set";/);
   assert.match(refused, /p\.clear\.disabled = !\(sessions\.get\(p\.sid\)\?\.emoji \|\| tabMeta\.get\(p\.sid\)\?\.emoji\); p\.clear\.textContent = "Clear";/);
@@ -146,9 +148,19 @@ test("the kernel's answer drives the dialog: emojiSet for its session closes it,
   assert.match(CSS, /\.emoji-hint\.bad \{ color: #e5484d; \}/);
 });
 
-test("the warn router: a pending emoji dialog claims the warn BEFORE the create-failure branch, which used to strike the opening tab", () => {
+test("the refusal is a TYPED emojiRefused frame routed by session id; the warn router is back to create-failure-or-toast", () => {
+  // the refusal shipped as a bare warn, and the router handed EVERY warn to the dialog while a Set was pending:
+  // an unrelated warn (federation's dropped-route warn, a failed create) landed under the emoji input as the
+  // refusal, and a refusal for another session was misrouted (review, 2026-09-07). Typed like moveFailed, the
+  // frame names its session and the handler routes on that; no warn is claimed on timing any more.
+  const handler = slice('m.type === "emojiRefused" && m.id && typeof m.text === "string"', 'm.type === "droppedPath"');
+  assert.match(handler, /emojiRefusedLocal\(String\(m\.id\), m\.text \|\| "unknown error"\);/);
   const warn = slice('else if (m.type === "warn" && typeof m.text === "string" && m.text) {', 'else if (m.type === "err"');
-  assert.match(warn, /if \(emojiPrompt\?\.pending\) emojiRefusedLocal\(m\.text\);\n\s*else if \(provisionalId\) failProvisional\(m\.text\);\n\s*else warnToast\(m\.text\);/);
+  assert.match(warn, /if \(provisionalId\) failProvisional\(m\.text\); else warnToast\(m\.text\);/);
+  assert.doesNotMatch(warn, /emoji/i, "the warn router knows nothing of the emoji dialog");
+  // the backstop's own "still waiting" goes through the same door, for the dialog's own session
+  const body = slice("function showEmojiPrompt(sid: string): void {", "\nfunction emojiLanded(");
+  assert.match(body, /emojiRefusedLocal\(sid, "still waiting — the kernel has not answered; check the kernel log"\), 30000\);/);
 });
 
 test("setSessionEmoji posts the op and is NOT optimistic — the strip changes on the kernel's emojiSet confirm", () => {

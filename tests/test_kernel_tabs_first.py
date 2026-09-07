@@ -1,6 +1,7 @@
 """TABS-FIRST (the user 2026-06-26): the tabOrder push carries name+color per tab so the client can paint the
 WHOLE strip as placeholders up front (no one-by-one pop-in). Both emit sites — the periodic/connect _push and
-the WS 'ready' handler — send a `tabs` list of {id, name, color} alongside the sid `order`.
+the WS 'ready' handler — send a `tabs` list of {id, name, color, emoji} alongside the sid `order`, the
+SAME fields from every builder (the ready handler's shipped without the emoji, review 2026-09-07).
 """
 import inspect
 import os
@@ -55,7 +56,13 @@ class TabsFirst(unittest.TestCase):
         text = open(KPATH).read()
         self.assertIn('_frame = _tab_order_frame(_o, _tabs, _tm)', text,
                       "the WS 'ready' connect push also carries name+color tabs, in the frame's one spelling")
-        self.assertIn('_tabs = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])}', text)
+        # the SAME fields as the pusher's tab_meta, emoji included: this is the first frame a fresh connection
+        # paints its strip from, and it shipped without the emoji while the other three builders carried it, so
+        # every tab opened with a bare name until the next push (review, 2026-09-07; tests/test_session_emoji.py
+        # runs the handler and counts the four builders)
+        self.assertIn('_tabs = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),\n'
+                      '                          "emoji": _name_emoji(s["sid"])} for s in _alive]', text)
+        self.assertNotIn('"color": _name_color(s["sid"])} for s in _alive]', text, "no emoji-less builder remains")
 
     def test_name_color_shape_matches_the_client_color_type(self):
         # _name_color returns {bg,fg} or None — exactly the render.ts Color the placeholder applies.

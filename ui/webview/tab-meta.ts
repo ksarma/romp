@@ -44,6 +44,19 @@ export function emojiConfirmClosesDialog(d: { sid: string; pending: boolean; ask
   return d.pending || (d.asked !== undefined && d.asked === emoji);
 }
 
+/** The kernel's {emojiRefused id text} against the open Emoji… dialog: is the reason this dialog's to paint
+ *  under its input? Yes for the session it is FOR, when the dialog has asked something — pending, or after
+ *  its 30 s backstop un-pended it and the real answer arrives late. A refusal for another session, or one
+ *  landing on a dialog that has asked nothing yet, is not this dialog's (the caller toasts it). The
+ *  refusal used to travel as a bare warn, and the router handed EVERY warn to whichever dialog was
+ *  pending — an unrelated warn was taken for the refusal, and a refusal for another session was
+ *  misrouted (review, 2026-09-07); the typed frame's id is what this decision keys on. */
+export function emojiRefusalIsForDialog(d: { sid: string; pending: boolean; asked?: string } | null | undefined,
+                                        sid: string): boolean {
+  if (!d || d.sid !== sid) return false;
+  return d.pending || d.asked !== undefined;
+}
+
 /** Record a local optimistic edit so pushes built before it cannot revert the strip. */
 export function notePendingMeta(pending: Map<string, PendingTabMeta>, id: string,
                                 edit: { name?: string; colorBg?: string; emoji?: string }): void {
