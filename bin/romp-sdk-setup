@@ -17,7 +17,8 @@ VENV="$STATE/sdkvenv"
 # with a newer one alongside (e.g. a uv-managed 3.12 in ~/.local/bin — probed explicitly because a
 # non-login ssh shell doesn't have it on PATH). Order: ROMP_PYTHON (checked to be an executable
 # interpreter), then the interpreter the existing venv records (checked to run and to be the recorded
-# X.Y), then another python of that same X.Y on PATH or in ~/.local/bin, then the newest pythonX.Y found.
+# X.Y and the build its lib directory names), then another python of that same X.Y and build on PATH or
+# in ~/.local/bin, then the newest pythonX.Y found.
 # KEEP IN SYNC with bin/romp-serve's pick_python — the kernel must run the interpreter this venv
 # is built with.
 pick_python() {
@@ -45,19 +46,24 @@ pick_python() {
     # (or whose recorded interpreter is gone; then we say so and romp-sdk-setup rebuilds to match).
     # Builtins only in here: the unit tests run it on a bare PATH. Kept in sync with romp-sdk-setup.
     #
-    # A candidate must RUN, and when the cfg names a version it must BE that python X.Y: `home` is a
-    # directory, and a distro upgrade that removes python3.12 and repoints home/python3 at 3.14 leaves
-    # that path present and runnable while the venv's extensions are still 3.12's, the exact failure
-    # the recorded interpreter exists to prevent. The check is a version-tuple compare (builtins only),
-    # and it is bounded: this is the first place the picker executes a candidate, and an interpreter
-    # that blocks (a stalled network mount, a sitecustomize reaching for the network) would otherwise
-    # hang the launch with the manager watching a live pid. `timeout 5` where coreutils provides it (a
-    # bare test PATH does not); running out the clock counts as not runnable.
-    _runs_as() {   # $1 candidate, $2 the X.Y it must be, or "" for "runs at all"
+    # A candidate must RUN, and when the cfg names a version it must BE the python the venv was built for:
+    # the X.Y the cfg records plus the build, `t` for a free-threaded interpreter, read from the tag venv
+    # names lib/ with (lib/python3.14t; the cfg does not say). The kernel keys its venv match on that same
+    # tag (_running_python_tag), so a default-build 3.14 handed a 3.14t venv boots and then refuses the
+    # venv as a mismatch (review round 3). `home` is a directory, and a distro upgrade that removes
+    # python3.12 and repoints home/python3 at 3.14 leaves that path present and runnable while the venv's
+    # extensions are still 3.12's, the exact failure the recorded interpreter exists to prevent. The check
+    # reads sys.version_info and sys.abiflags (builtins only; the build is decided by the flags, never by
+    # the file name: uv's free-threaded install has python3.14 as a link to python3.14t), and it is
+    # bounded: this is the first place the picker executes a candidate, and an interpreter that blocks (a
+    # stalled network mount, a sitecustomize reaching for the network) would otherwise hang the launch
+    # with the manager watching a live pid. `timeout 5` where coreutils provides it (a bare test PATH does
+    # not); running out the clock counts as not runnable.
+    _runs_as() {   # $1 candidate, $2 the X.Y it must be ("" for "runs at all"), $3 the build: "t" or ""
         local -a run=("$1")
         if command -v timeout >/dev/null 2>&1; then run=(timeout 5 "$1"); fi
         if [[ -n "$2" ]]; then
-            "${run[@]}" -c "import sys; sys.exit(sys.version_info[:2] != (${2%%.*}, ${2#*.}))" >/dev/null 2>&1
+            "${run[@]}" -c "import sys; sys.exit(sys.version_info[:2] != (${2%%.*}, ${2#*.}) or ('t' in getattr(sys, 'abiflags', '')) != bool('${3:-}'))" >/dev/null 2>&1
         else
             "${run[@]}" -c pass >/dev/null 2>&1
         fi
@@ -65,7 +71,7 @@ pick_python() {
     local state="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
     local cfg="$state/sdkvenv/pyvenv.cfg"
     if [[ -r "$cfg" ]]; then
-        local key val exe="" home="" ver="" mm=""
+        local key val exe="" home="" ver="" mm="" abi="" tag=""
         while IFS='=' read -r key val || [[ -n "$key" ]]; do
             key="${key%%[[:space:]]*}"
             val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
@@ -76,31 +82,42 @@ pick_python() {
             esac
         done < "$cfg"
         [[ "$ver" =~ ^([0-9]+\.[0-9]+) ]] && mm="${BASH_REMATCH[1]}"
+        # The build, from the lib directory carrying the cfg's X.Y: lib/python3.14t is a free-threaded
+        # venv. A cfg with no such directory reads as the default build, as romp-sdk-setup's
+        # venv_built_for reads it.
+        if [[ -n "$mm" && ! -d "$state/sdkvenv/lib/python$mm" && -d "$state/sdkvenv/lib/python${mm}t" ]]; then abi="t"; fi
+        tag="$mm$abi"
         # The home candidates need the version. Without it `$home/python$mm` is the bare `$home/python`
         # (python2 on many boxes) and `$home/python3` can be checked against nothing, so a cfg with a
         # home but no version line (hand-edited or truncated; venv, uv and virtualenv all write one)
-        # offers only its `executable`, the recorded binary itself.
-        for c in "$exe" "${mm:+${home:+$home/python$mm}}" "${mm:+${home:+$home/python3}}"; do
+        # offers only its `executable`, the recorded binary itself. A tagged venv tries home/python3.14t
+        # and then home/python3.14 (a link to the t build in uv's layout; a default build under that name
+        # fails the flags check, where it used to be taken silently).
+        for c in "$exe" "${mm:+${home:+$home/python$tag}}" "${abi:+${mm:+${home:+$home/python$mm}}}" "${mm:+${home:+$home/python3}}"; do
             [[ -n "$c" && -x "$c" ]] || continue
-            if _runs_as "$c" "$mm"; then echo "$c"; return; fi
+            if _runs_as "$c" "$mm" "$abi"; then echo "$c"; return; fi
         done
-        local rec="${exe:-${home:-?}/python${mm:-?}}"
-        # SAME MINOR NEXT. The venv's site-packages are ABI-valid for any python $mm, so another python$mm
-        # on PATH or in ~/.local/bin keeps the kernel and the venv agreeing with nothing rebuilt:
+        local rec="${exe:-${home:-?}/python${tag:-?}}"
+        # THE SAME BUILD NEXT. The venv's site-packages are ABI-valid for any python of its tag, so another
+        # python$tag on PATH or in ~/.local/bin keeps the kernel and the venv agreeing with nothing rebuilt:
         # `executable` is a realpath into a patch-versioned install root (Homebrew's Cellar, a uv
-        # per-patch directory), which a patch upgrade removes while `python3.12` on PATH still runs.
-        # Newest-first is the last resort, and it costs a rebuild.
+        # per-patch directory), which a patch upgrade removes while `python3.12` on PATH still runs. A
+        # tagged venv tries python3.14t first and python3.14 after it; an untagged venv tries python3.14
+        # alone, and a free-threaded build under that name is refused. Newest-first is the last resort,
+        # and it costs a rebuild.
         if [[ -n "$mm" ]]; then
-            for c in "python$mm" "$HOME/.local/bin/python$mm"; do
+            local -a same=("python$tag" "$HOME/.local/bin/python$tag")
+            [[ -n "$abi" ]] && same+=("python$mm" "$HOME/.local/bin/python$mm")
+            for c in "${same[@]}"; do
                 c="$(command -v "$c" 2>/dev/null || true)"
                 [[ -n "$c" ]] || continue
-                if _runs_as "$c" "$mm"; then
-                    echo "romp: the SDK venv at $state/sdkvenv was built with $rec, which is gone, will not run, or is no longer python $mm; using $c, another python $mm, so the venv still matches." >&2
+                if _runs_as "$c" "$mm" "$abi"; then
+                    echo "romp: the SDK venv at $state/sdkvenv was built with $rec, which is gone, will not run, or is no longer python $tag; using $c, another python $tag (the same minor and the same build), so the venv still matches." >&2
                     echo "$c"; return
                 fi
             done
         fi
-        echo "romp: the SDK venv at $state/sdkvenv was built with $rec, which is gone, will not run, or is no longer python ${mm:-?}, and no other python ${mm:-?} was found; picking the newest python instead. Re-run bin/romp-sdk-setup to rebuild the venv for it." >&2
+        echo "romp: the SDK venv at $state/sdkvenv was built with $rec, which is gone, will not run, or is no longer python ${tag:-?}, and no other python ${tag:-?} was found; picking the newest python instead. Re-run bin/romp-sdk-setup to rebuild the venv for it." >&2
     fi
     # Newest first. The list has to GROW with each release: a machine whose only python is newer than
     # everything named here falls through to `python3`, which is right when that IS the new one and wrong

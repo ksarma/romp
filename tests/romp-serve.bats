@@ -283,12 +283,18 @@ write_venv_cfg() {   # $1 = state root, then the pyvenv.cfg lines
 }
 
 # ─── pick_python: the pin is checked, and the candidates are checked (review of the 2026-09-06 fix) ──
-# A fake interpreter that claims one X.Y: exits 0 for the version check naming it, 1 for any other
-# version check, 0 for `-c pass`. The bare `printf '#!/bin/sh\n'` fakes above answer every check with 0.
-fake_python() {   # $1 path, $2 the X.Y it claims
+# A fake interpreter that claims one X.Y and one build (the default, or `t` for free-threaded): exits 0
+# for the check naming both, 1 for any other version check, 0 for `-c pass`. The check's text carries
+# the wanted build as `bool('t')` or `bool('')`, so a stub named python3.14 can claim the t build (uv's
+# layout) and a stub named python3.14t is never taken for a default-build venv. The bare
+# `printf '#!/bin/sh\n'` fakes above answer every check with 0.
+fake_python() {   # $1 path, $2 the X.Y it claims, $3 its build: empty for the default, t for free-threaded
     mkdir -p "$(dirname "$1")"
-    printf '#!/bin/sh\ncase "$*" in *"(%s, %s)"*) exit 0 ;; *version_info*) exit 1 ;; esac\nexit 0\n' \
-        "${2%%.*}" "${2#*.}" > "$1"
+    cat > "$1" <<STUB
+#!/bin/sh
+case "\$*" in *"(${2%%.*}, ${2#*.})"*"bool('${3:-}')"*) exit 0 ;; *version_info*) exit 1 ;; esac
+exit 0
+STUB
     chmod +x "$1"
 }
 
@@ -435,4 +441,104 @@ fake_python() {   # $1 path, $2 the X.Y it claims
     [ $((SECONDS - t0)) -lt 20 ]                              # bounded: the fake would have slept 30 s
     [ "$out" = "$fakebin/python3.14" ]
     [[ "$err" == *"$TEST_DIR/hang/python3.12"* ]]
+}
+
+# ─── pick_python: the build is part of the match (review round 3) ─────────────────────────────────
+# venv names a free-threaded venv's lib directory python3.14t and the kernel keys its match on that tag,
+# so a default-build 3.14 is not "another python 3.14" for such a venv: handed one, the kernel boots and
+# refuses the venv as a mismatch, and every SDK session shows the mismatch card. The picker read the
+# minor alone, from the cfg's version line; the build is in the lib directory's name.
+write_venv_lib() { mkdir -p "$1/sdkvenv/lib/python$2/site-packages"; }   # $1 state root, $2 the lib tag
+
+@test "pick_python: a free-threaded venv whose interpreter is gone is NOT handed the default build of the same minor" {
+    # The t package removed, the default build still on PATH: the same-minor fallback took it and said the
+    # venv still matched. Now it falls through to newest-first with the rebuild line, as for any lost venv.
+    fakebin="$TEST_DIR/fakebin-ft1"; mkdir -p "$fakebin"
+    fake_python "$fakebin/python3.14" 3.14
+    fake_python "$fakebin/python3.13" 3.13
+    write_venv_cfg "$XDG_STATE_HOME/romp" "home = $TEST_DIR/gone" "version = 3.14.0" \
+        "executable = $TEST_DIR/gone/python3.14t"
+    write_venv_lib "$XDG_STATE_HOME/romp" 3.14t
+    eval "$(extract_pick "$ROMP_SERVE")"
+    out="$(ROMP_PYTHON= PATH="$fakebin" pick_python 2>"$TEST_DIR/stderr")"
+    err="$(cat "$TEST_DIR/stderr")"
+    [ "$out" = "$fakebin/python3.14" ]                        # newest-first, the only rule left
+    [[ "$err" == *"python 3.14t"* ]]                          # names the build the venv was built for
+    [[ "$err" == *"romp-sdk-setup"* ]]                        # and that the venv must be rebuilt for the pick
+    [[ "$err" != *"still matches"* ]]
+}
+
+@test "pick_python: a free-threaded venv whose interpreter is gone takes python3.14t on PATH, and says so" {
+    fakebin="$TEST_DIR/fakebin-ft2"; mkdir -p "$fakebin"
+    fake_python "$fakebin/python3.14" 3.14
+    fake_python "$fakebin/python3.14t" 3.14 t
+    write_venv_cfg "$XDG_STATE_HOME/romp" "version = 3.14.0" "executable = $TEST_DIR/gone/python3.14t"
+    write_venv_lib "$XDG_STATE_HOME/romp" 3.14t
+    eval "$(extract_pick "$ROMP_SERVE")"
+    out="$(ROMP_PYTHON= PATH="$fakebin" pick_python 2>"$TEST_DIR/stderr")"
+    err="$(cat "$TEST_DIR/stderr")"
+    [ "$out" = "$fakebin/python3.14t" ]
+    [[ "$err" == *"using $fakebin/python3.14t"* ]]
+    [[ "$err" == *"same minor and the same build"* ]]
+    [[ "$err" != *"romp-sdk-setup"* ]]                        # no rebuild is needed
+}
+
+@test "pick_python: the build is read from the interpreter's abi flags, never from its file name" {
+    # uv's free-threaded install has python3.14 as a link to python3.14t: the default name, the t build.
+    fakebin="$TEST_DIR/fakebin-ft3"; mkdir -p "$fakebin"
+    fake_python "$fakebin/python3.14" 3.14 t
+    write_venv_cfg "$XDG_STATE_HOME/romp" "version = 3.14.0" "executable = $TEST_DIR/gone/python3.14t"
+    write_venv_lib "$XDG_STATE_HOME/romp" 3.14t
+    eval "$(extract_pick "$ROMP_SERVE")"
+    out="$(ROMP_PYTHON= PATH="$fakebin" pick_python 2>"$TEST_DIR/stderr")"
+    err="$(cat "$TEST_DIR/stderr")"
+    [ "$out" = "$fakebin/python3.14" ]
+    [[ "$err" == *"using $fakebin/python3.14"* ]]
+    [[ "$err" != *"romp-sdk-setup"* ]]
+    # and the reverse: a default-build venv is not handed the t build that sits under the default name
+    rm -rf "$XDG_STATE_HOME/romp/sdkvenv"
+    write_venv_cfg "$XDG_STATE_HOME/romp" "version = 3.14.0" "executable = $TEST_DIR/gone/python3.14"
+    write_venv_lib "$XDG_STATE_HOME/romp" 3.14
+    out="$(ROMP_PYTHON= PATH="$fakebin" pick_python 2>"$TEST_DIR/stderr")"
+    err="$(cat "$TEST_DIR/stderr")"
+    [ "$out" = "$fakebin/python3.14" ]                        # newest-first: the only python there is
+    [[ "$err" == *"romp-sdk-setup"* ]]                        # with the rebuild line
+    [[ "$err" != *"still matches"* ]]
+}
+
+@test "pick_python: a home holding both builds yields the venv's build, silently; holding only the other, nothing" {
+    # A distro with python3.14 and python3.14t both under home, the recorded executable gone: the cfg
+    # candidate home/python3.14 ran, reported (3, 14) and was taken for a 3.14t venv with no line at all.
+    fakebin="$TEST_DIR/fakebin-ft4"; mkdir -p "$fakebin"
+    fake_python "$fakebin/python3.13" 3.13
+    fake_python "$TEST_DIR/usr/python3.14" 3.14
+    fake_python "$TEST_DIR/usr/python3.14t" 3.14 t
+    write_venv_cfg "$XDG_STATE_HOME/romp" "home = $TEST_DIR/usr" "version = 3.14.0" \
+        "executable = $TEST_DIR/usr/3.14.0/bin/python3.14t"
+    write_venv_lib "$XDG_STATE_HOME/romp" 3.14t
+    eval "$(extract_pick "$ROMP_SERVE")"
+    out="$(ROMP_PYTHON= PATH="$fakebin" pick_python 2>"$TEST_DIR/stderr")"
+    [ "$out" = "$TEST_DIR/usr/python3.14t" ]
+    [ ! -s "$TEST_DIR/stderr" ]
+    rm -f "$TEST_DIR/usr/python3.14t"                         # the t package removed; home/python3.14 stays
+    out="$(ROMP_PYTHON= PATH="$fakebin" pick_python 2>"$TEST_DIR/stderr")"
+    err="$(cat "$TEST_DIR/stderr")"
+    [ "$out" = "$fakebin/python3.13" ]                        # not home/python3.14: newest-first on PATH
+    [[ "$err" == *"romp-sdk-setup"* ]]
+}
+
+@test "pick_python: a default-build venv keeps the same-minor fallback it had, and never tries python3.14t by name" {
+    fakebin="$TEST_DIR/fakebin-ft5"; mkdir -p "$fakebin"
+    fake_python "$fakebin/python3.14t" 3.14 t                 # the only 3.14 on PATH is the t build
+    fake_python "$fakebin/python3.13" 3.13
+    write_venv_cfg "$XDG_STATE_HOME/romp" "version = 3.14.0" "executable = $TEST_DIR/gone/python3.14"
+    write_venv_lib "$XDG_STATE_HOME/romp" 3.14
+    eval "$(extract_pick "$ROMP_SERVE")"
+    out="$(ROMP_PYTHON= PATH="$fakebin" pick_python 2>"$TEST_DIR/stderr")"
+    err="$(cat "$TEST_DIR/stderr")"
+    [ "$out" = "$fakebin/python3.13" ]                        # newest-first never looks for python3.14t
+    [[ "$err" == *"no other python 3.14 was found"* ]]
+    fake_python "$fakebin/python3.14" 3.14                    # the default build back on PATH: taken
+    out="$(ROMP_PYTHON= PATH="$fakebin" pick_python 2>"$TEST_DIR/stderr")"
+    [ "$out" = "$fakebin/python3.14" ]
 }

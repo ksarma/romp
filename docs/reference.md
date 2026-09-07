@@ -498,13 +498,16 @@ free-threaded build's venv matches that build and no other. `bin/romp-serve`
 picks the interpreter in this order: `ROMP_PYTHON` if set, refused with one
 line when it is not an executable interpreter (a pin naming a removed path
 used to reach the exec and crash-loop the manager); otherwise the interpreter
-the venv's `pyvenv.cfg` records, if it still runs and still reports the
-recorded X.Y (an upgrade that repoints `python3` leaves the recorded path
-runnable while the venv is stale); otherwise another `pythonX.Y` of that same
-minor on `PATH` or in `~/.local/bin`, which the venv still matches, with a line
-saying so; otherwise the newest `pythonX.Y` on `PATH` or in `~/.local/bin`,
-the rule for a machine with no venv yet, with a line saying the venv must be
-rebuilt for it. So installing a newer Python does not change what the kernel
+the venv's `pyvenv.cfg` records, if it still runs and still reports the venv's
+tag, the recorded X.Y plus the build its `lib` directory names (an upgrade
+that repoints `python3` leaves the recorded path runnable while the venv is
+stale); otherwise another interpreter of that same minor and the same build on
+`PATH` or in `~/.local/bin`, which the venv still matches, with a line saying
+so (`python3.14t` and then `python3.14` for a free-threaded venv; the build is
+read from `sys.abiflags`, not from the file name, because uv's free-threaded
+install links `python3.14` to `python3.14t`); otherwise the newest `pythonX.Y`
+on `PATH` or in `~/.local/bin`, the rule for a machine with no venv yet, with a
+line saying the venv must be rebuilt for it. So installing a newer Python does not change what the kernel
 runs at its next restart. On a machine that runs romp as a service, pin it
 anyway: `ROMP_PYTHON=/usr/bin/python3.12` in `service.env` makes the choice
 explicit and holds if the venv is deleted or rebuilt. Pin the versioned path,
