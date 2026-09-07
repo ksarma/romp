@@ -2319,9 +2319,11 @@ class PostalDelegation(unittest.TestCase):
         self.assertEqual(store["nodes"][nid].get("promptUuid"), "p1",
                          "the planted goal carries the peer segment's anchor")
         import inspect
-        src = inspect.getsource(jd.run_courier)
-        self.assertIn("_seg_anchor(seg)", src, "run_courier collects the peer segment's anchor")
-        self.assertIn("prompt_uuid=anchor_uuid", src, "...and hands it to apply_courier")
+        # the anchor is collected by the gated per-session scan (_courier_scan, the evidence gate,
+        # 2026-09-07) and handed to apply_courier by run_courier's write loop: pin both halves
+        self.assertIn("_seg_anchor(seg)", inspect.getsource(jd._courier_scan),
+                      "the courier's scan collects the peer segment's anchor")
+        self.assertIn("prompt_uuid=anchor_uuid", inspect.getsource(jd.run_courier), "...and hands it to apply_courier")
 
     def test_delegation_files_work_under_G_with_full_expressivity(self):
         recs = [self._peer_msg(T0, "DELEGATE: build the export feature", "p1", "m1.1"),
