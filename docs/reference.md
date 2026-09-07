@@ -2031,7 +2031,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   failure episode, `captions-unreadable`, `session-archive-unreadable`,
   `units-cache-unreadable` or `units-cache-write-failed`, beside the
   `store-unreadable` row a goals file that does not read writes, and the
-  session runs again every pass until the file reads), `due_clock` (runs a
+  session runs again every pass until the file reads; an archive record that
+  reads but is not one is content, so the archiver rebuilds it, with the row
+  still written once), `due_clock` (runs a
   background task's deadline made due), plus `stamps`, the number of
   per-session records held. The index tier's signature is the session's
   parse pair, captions file, archive record and unit cache, and no goal
