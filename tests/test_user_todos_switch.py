@@ -23,7 +23,10 @@ Pinned here, kernel side:
 - the boot notice: N open rows stored while OFF → one stderr line; ON, or zero rows → silence;
 - the store-shape guard: a user-todos.json that is not sid → list (a settings blob, a JSON list,
   unparsable text) reads as EMPTY, says so once per file version, and every writer REFUSES to
-  overwrite that version (fail loudly, never silently replace) until the file is fixed or removed.
+  overwrite that version (fail loudly, never silently replace) until the file is fixed or removed;
+  and no writer can MINT a key the reader rejects: _add_user_todo raises before any write and
+  POST /usertodo answers 400 (before the switch and before any forward), so a store that already
+  holds a row stays readable.
 
 SYNTHETIC fixtures only: placeholder UUIDs, the notes-api demo world.
 """
@@ -661,6 +664,29 @@ class StoreShapeGuard(_Sandbox):
             self.assertEqual((code, res["ok"], pushed), (200, True, [True]))
         finally:
             km._push_all, km._push_soon = saved
+
+    def test_a_malformed_id_on_the_route_leaves_a_stored_row_readable(self):
+        # the route against a store that already holds a row: the 400 leaves the file byte-identical
+        # and the row still reads. One written bad key would have flagged the whole file and hidden
+        # this row on every surface — the reader pin above, seen from the one writer an agent drives
+        good = km._add_user_todo(SID, "Need the auth-scheme decision")
+        before = self.store.read_text()
+        saved = (km._push_all, km._push_soon)
+        km._push_all = km._push_soon = lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("nothing changed, nothing to push"))
+        try:
+            for bad in self._BAD_SIDS:
+                code, res = _post("/usertodo", {"id": bad, "text": "Need the staging port"})
+                self.assertEqual(code, 400, bad)
+                self.assertFalse(res.get("ok"), bad)
+        finally:
+            km._push_all, km._push_soon = saved
+        self.assertEqual(self.store.read_text(), before, "the route wrote nothing")
+        km._user_todos_cache.clear()                                # re-read the file, not the cache
+        d, err = self._read()
+        self.assertEqual(err, "", "the store is still a todo store")
+        self.assertEqual([t["id"] for t in d[SID]], [good], "the stored row still reads")
+        self.assertEqual(km._user_todos_bad, {})
 
     def test_a_shaped_store_is_never_flagged(self):
         self.store.write_text(json.dumps({SID: [{"id": "ut-1", "text": "x", "createdT": 1}], SID2: []}))
