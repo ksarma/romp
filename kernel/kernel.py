@@ -25363,10 +25363,10 @@ def _fold_tasks(session, sid=None):
         fp = _chat_turn_fp(turn)
         ent = prev.get(id(atoms)) if prev else None
         if ent is not None and ent[0] is atoms and ent[1] == fp:
-            _task_fold_stats["hit"] += 1
+            _chat_memo_bump(_task_fold_stats, "hit")
             part = ent[2]
         else:
-            _task_fold_stats["miss"] += 1
+            _chat_memo_bump(_task_fold_stats, "miss")
             part = _fold_tasks_turn(atoms)
         if sid is not None:
             cur[id(atoms)] = (atoms, fp, part)
@@ -25933,6 +25933,17 @@ def _chat_fold_demote(reason):
     """Count WHY a build could not reuse its cached prefix (g:<reason>) — the hit-rate diagnosis
     this cache lives or dies by, mirroring event_model._asm_demote."""
     _chat_fold_count("g:" + reason)
+
+
+_chat_memo_lock = threading.Lock()               # the chat memos' counters: one lock, dict increments only
+
+
+def _chat_memo_bump(stats, key, n=1):
+    """One counter increment on a chat-memo stats dict (_merge_sets_stats, _chat_postal_stats,
+    _ledger_memo_stats, _task_fold_stats) under one lock, the _chat_fold_count shape: the pusher, the WS
+    handlers and the backends all build, and a bare `+= 1` from two threads loses counts."""
+    with _chat_memo_lock:
+        stats[key] = stats.get(key, 0) + n
 
 
 def _chat_turn_fp(turn):
@@ -29122,9 +29133,9 @@ def _merge_tx_sets(session, sid):
     because sdk_backend.prune_live dispatches on isinstance(dict). Round-4 plan P3 (d), 2026-09-07."""
     ent = _merge_sets_memo.get(sid)
     if ent is not None and ent[0] is session:
-        _merge_sets_stats["hit"] += 1
+        _chat_memo_bump(_merge_sets_stats, "hit")
         return ent[1]
-    _merge_sets_stats["miss"] += 1
+    _chat_memo_bump(_merge_sets_stats, "miss")
     turns = session["turns"]
     tx_uuids = frozenset(a.get("uuid") for turn in turns for a in turn["atoms"] if a.get("uuid"))
     tx_text_uuids = frozenset(a.get("uuid") for turn in turns for a in turn["atoms"]
@@ -29711,7 +29722,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                     # different card means the prefix must be rebuilt. Every card, not only the pending ones
                     # (review find 2026-09-03): the judge writes a LIVE caption under an id it later overwrites
                     # with the final one, and a peer's colour can change — a card sealed complete was frozen
-                    _chat_postal_stats["gate"] += 1
+                    _chat_memo_bump(_chat_postal_stats, "gate")
                     _cards = _hydrate_postal(list(_fe["postal_raw"]), _pidx, sid, captions=_msum)
                     if _cards != _fe["postal_cards"]:
                         _fold_why = "postal"
@@ -29719,7 +29730,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                         _fe["postal_key"] = _pk         # the values observed NOW, never a fresh read at the commit
                         _fe["postal_deps"] = _postal_card_deps(_cards, _pidx, _msum) if _scoped else None
                 else:
-                    _chat_postal_stats["hit"] += 1
+                    _chat_memo_bump(_chat_postal_stats, "hit")
             if _fold_why is None and _fe["task_outs"]:
                 # a sealed task-notification card carries its output file's tail: a file that grew, appeared
                 # or vanished since the seal renders differently (review find 2026-09-03), so re-stat each
@@ -30155,7 +30166,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                 # cards (or re-hydrated them and found them equal) against the same index and caption map,
                 # and _hydrate_postal is per-event independent, so sealed + hydrate(new) == hydrate(all).
                 _pcards_new = _hydrate_postal(list(_praw_new), _pidx, sid, captions=_msum) if _praw_new else []
-                _chat_postal_stats["commit_new"] += len(_praw_new)
+                if _praw_new:
+                    _chat_memo_bump(_chat_postal_stats, "commit_new", len(_praw_new))
                 _pcards = (list(_fe["postal_cards"]) if _fold_ok else []) + _pcards_new
                 # The values the entry's cards embed (_postal_card_deps): the sealed part as the gate observed
                 # it, the new part read now from the objects the new cards were just built from. None
@@ -30474,18 +30486,18 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     _ck = _chat_cleared_key()
     _lkey, _lhit = None, None
     if session is not parsed:
-        _ledger_memo_stats["bypass_live"] += 1
+        _chat_memo_bump(_ledger_memo_stats, "bypass_live")
     elif _rewind_hold_get(sid):
-        _ledger_memo_stats["bypass_hold"] += 1
+        _chat_memo_bump(_ledger_memo_stats, "bypass_hold")
     elif not gstore.get("nodes"):
-        _ledger_memo_stats["bypass_empty"] += 1
+        _chat_memo_bump(_ledger_memo_stats, "bypass_empty")
     else:
         _lkey = (_seams_sig, _ck, _node_anchor_rev.get(sid, 0))
         _lent = _ledger_memo.get(sid)
         if _lent is not None and _lent[0] == _lkey and _lent[1] is parsed and _lent[2] is gstore:
             _lhit = _lent
     if _lhit is not None:
-        _ledger_memo_stats["hit"] += 1
+        _chat_memo_bump(_ledger_memo_stats, "hit")
         tree, _live_roots = _lhit[3], _lhit[4]       # the memo's own lists: the ledger slices them, nothing writes a row
     else:
         gnodes, gstatus, gcleared = gstore.get("nodes", {}), gstore.get("status", {}), _cleared_ids()
@@ -30619,7 +30631,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                        for nid, nd in gnodes.items()
                        if nd.get("parentId") is None and (nd.get("text") or "").strip()]
         if _lkey is not None:
-            _ledger_memo_stats["miss"] += 1
+            _chat_memo_bump(_ledger_memo_stats, "miss")
             _ledger_memo[sid] = (_lkey, parsed, gstore, tree, _live_roots)
     recent_tops = sorted(_live_roots + _archive_roots(sid), key=lambda r: r["t"] or 0, reverse=True)[:5]
     if _session_flag(sid, "hideFromFeed"):       # muted → out of task tracking: the ledger shows no goal tree / current task
@@ -41016,7 +41028,7 @@ def _push(targets, connect=False, tmux=None):
                 for sid in list(_ledger_memo):               # …and the two chat-only memos of tabs no longer shown
                     if sid not in shown_sids:
                         _ledger_memo.pop(sid, None)
-                        _ledger_memo_stats["evict"] += 1
+                        _chat_memo_bump(_ledger_memo_stats, "evict")
                 for sid in list(_task_fold_memo):
                     if sid not in shown_sids:
                         _task_fold_memo.pop(sid, None)

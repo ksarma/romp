@@ -15,6 +15,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime, timezone
@@ -215,6 +216,38 @@ class TwoTabAttribution(unittest.TestCase):
         finally:
             km._merge_sets_memo.pop(stray, None)
             km._merge_sets_memo.pop(SID_B, None)
+
+
+class MemoCounters(unittest.TestCase):
+    """The four memos' counters share one lock (_chat_memo_bump, the _chat_fold_count shape): the pusher,
+    the WS handlers and the backends all build, and a bare increment from two threads loses counts."""
+
+    STATS = ("_merge_sets_stats", "_chat_postal_stats", "_ledger_memo_stats", "_task_fold_stats")
+
+    def test_every_increment_goes_through_the_locked_helper(self):
+        src = inspect.getsource(km)
+        for name in self.STATS:
+            bare = [l for l in src.splitlines() if re.search(r"%s\[[^\]]+\]\s*[+-]?=" % name, l)]
+            self.assertEqual(bare, [], "%s: a write outside _chat_memo_bump" % name)
+            self.assertIn("_chat_memo_bump(%s, " % name, src, "%s is bumped through the helper" % name)
+        self.assertIn("with _chat_memo_lock:", inspect.getsource(km._chat_memo_bump))
+
+    def test_concurrent_bumps_land_exactly(self):
+        stats, n, per = {"hit": 0}, 8, 2000
+        gate = threading.Barrier(n)
+
+        def run():
+            gate.wait()
+            for _ in range(per):
+                km._chat_memo_bump(stats, "hit")
+        threads = [threading.Thread(target=run) for _ in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(stats["hit"], n * per)
+        km._chat_memo_bump(stats, "new", 3)
+        self.assertEqual(stats["new"], 3, "a missing key starts at zero; n adds n")
 
 
 # ── (d) the live-merge's transcript-side sets ────────────────────────────────────────────────────
