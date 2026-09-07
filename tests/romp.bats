@@ -1124,6 +1124,26 @@ _stale_server_globals() {
     [ "$status" -ne 0 ]
 }
 
+@test "resume: the background picker-check goes through ROMP_POSTAL_BIN, and the stand-in writes nothing" {
+    # bin/romp double-forks `romp-postal-service picker-check` on a resume and returns at once;
+    # the real service mints ~/.local/state/romp/serve-token when none exists, and did so after
+    # teardown had removed TEST_DIR, re-creating it. bin/romp's own directory leads PATH, so the
+    # seam is the only way a test can stand in for the service. The setup() stand-in leaves the
+    # state dir alone; a recording one for this test shows the resume path reaching the seam —
+    # the call is detached, so the check waits (bounded) for its record instead of racing it.
+    [ "$ROMP_POSTAL_BIN" = "$MOCK_DIR/romp-postal-service" ]
+    run "$ROMP_POSTAL_BIN" picker-check --name myproject --id abc123-uuid
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ ! -e "$HOME/.local/state/romp" ]
+
+    printf '#!/usr/bin/env bash\necho "postal $*" >> "%s"\n' "$TEST_DIR/postal.log" > "$MOCK_DIR/romp-postal-service"
+    run run_romp resume abc123-uuid
+    [ "$status" -eq 0 ]
+    local i; for i in $(seq 1 50); do [ -s "$TEST_DIR/postal.log" ] && break; sleep 0.1; done
+    grep -q '^postal picker-check --name myproject --id abc123-uuid$' "$TEST_DIR/postal.log"
+}
+
 # ─── Misc ────────────────────────────────────────────────────────────
 
 @test "unknown option shows error" {
