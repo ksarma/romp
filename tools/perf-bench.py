@@ -65,7 +65,9 @@ calls, reported as ms min/median/max:
                          warm-up). Reports the full frames' bytes per slot.
   push_connect:APP       _push([fresh client], connect=True) per app after a warming cycle: the path
                          a page load pays (pusher-warmed feed served, no baseline move). A fresh
-                         client with empty dedup state for every sample.
+                         client with empty dedup state for every sample, on a thread with NO
+                         pusher-cycle scope, as _push_one runs it (a handler thread): every read the
+                         cycle scope would have made free is paid here.
   push_steady            the periodic _push over the same clients, repeated; no warm-up of its own
                          (it follows the rows above). Each sample records whether _cached_feed /
                          _cached_timeline rebuilt inside it (they do whenever the 5 s view signature
@@ -933,13 +935,14 @@ def run(args, state, mirror_of, out, private):
 
                 def connect_before(_app=app):
                     holder["c"] = fake_client(km, _app, active if _app == "chat" else None)
-                    new_cycle()
+                    unscope()                          # a handler thread: no cycle scope (see the docstring)
 
                 def connect_push():
                     km._push([holder["c"]], connect=True, tmux=tmux)
                 st, _ = timed(connect_push, iters, before=connect_before)
                 st["bytes"] = client_bytes([holder["c"]])[app]
                 bench["push_connect:" + app] = st
+            scope(tmux)                                # back on the pusher's footing for the rows below
             reset_client_bytes(clients)
 
             # the periodic push, steady state; rebuild samples separated

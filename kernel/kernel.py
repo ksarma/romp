@@ -26017,42 +26017,26 @@ def _chat_ident(path):
     return (st.st_ino, st.st_mtime_ns, st.st_size)
 
 
-_names_rev_state = {"prev": None, "rev": 0}          # the last pusher cycle's names snapshot and its revision
-_names_rev_lock = threading.Lock()
-
-
-def _names_rev():
-    """The names registry's revision for the chat-build signature: advanced once per pusher cycle whose
-    names snapshot (_live_scope.names, {sid: tab fields}) differs from the previous cycle's, so a rename,
-    a colour or emoji change, a cwd move, a created or deleted entry moves it and a quiet registry does
-    not. build_session reads names in many places — the tab's own name, colour and emoji, a fork parent's
-    name, every postal card's peer, every awaited peer — all through the cycle's snapshot, so one
-    revision over the whole snapshot keys them all; a rename busts every tab once (2 of 79 entries moved
-    in 3 h on the profiled kernel). None outside a cycle: a handler-thread build reads the registry per
-    call and has no snapshot to compare, so its signature differs from the pusher's, and the pusher
-    rebuilds that tab once on its next cycle and caches it under a verified revision. Keyed on the
-    CYCLE scope (_live_scope.snapshot), not on the names snapshot alone: a handler-thread push opens a
-    names snapshot of its own for the loop (_chat_push_scopes_open), and comparing that against the
-    pusher's would flip the revision on both threads."""
-    if getattr(_live_scope, "snapshot", None) is None:
-        return None                                   # no pusher cycle on this thread (see _chat_push_scopes_open)
-    snap = getattr(_live_scope, "names", None)
-    if snap is None:
-        return None
-    with _names_rev_lock:
-        st = _names_rev_state
-        if st["prev"] is None or st["prev"] != snap:
-            st["prev"] = snap                            # the cycle's own dict; nothing writes into it
-            st["rev"] += 1
-        return st["rev"]
+def _names_digest(snap):
+    """The names registry's content as one value for the chat-build signature: a digest of every entry's
+    fields (the snapshot _names_snapshot returns, {sid: tab fields}). build_session reads names in many
+    places — the tab's own name, colour and emoji, a fork parent's name, every postal card's peer, every
+    awaited peer — all through the snapshot the thread holds, so one digest over the whole snapshot keys
+    them all; a rename busts every tab once (2 of 79 entries moved in 3 h on the profiled kernel). A
+    function of the CONTENT, not of the thread: a connect push on a handler thread (its own snapshot,
+    _chat_push_scopes_open) and the pusher's next cycle produce the same component for an unchanged
+    registry, so the one warms the other's cache instead of each rebuilding every tab (the review's
+    should-fix 1: a per-thread revision made every dashboard reload rebuild every background tab twice)."""
+    return hashlib.sha1(json.dumps(sorted((k, list(v)) for k, v in snap.items()), ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def _chat_sig_shared():
     """The chat-build signature's components that are the same for every tab, read ONCE per push (_push
     sets _live_scope.chat_shared for its chat loop; a caller outside a push reads them per call): the
     identities of session-flags.json and notify-cards.json, the colormap name, the login label with the
-    auth-choice bit, cleared.jsonl's identity, this host's name, the names revision and the count of
-    recorded host suspensions (_downtime, append-only, read by _session_working). A shared file that
+    auth-choice bit, cleared.jsonl's identity, this host's name, the names snapshot's digest
+    (_names_digest; the thread's snapshot, else one read here) and the count of recorded host
+    suspensions (_downtime, append-only, read by _session_working). A shared file that
     moves mid-push is read old here and new by that push's builds, which caches new content under the
     old identity: the next push takes the new identity, misses and rebuilds — one extra build, never a
     stale hit that lasts."""
@@ -26062,7 +26046,7 @@ def _chat_sig_shared():
             "acct": (_claude_account_label(), _auth_both()),
             "cleared": _chat_cleared_key(),
             "host": _self_host(),
-            "names": _names_rev(),
+            "names": _names_digest(getattr(_live_scope, "names", None) or _names_snapshot()),
             "downtime": len(_downtime)}
 
 
@@ -26075,7 +26059,7 @@ def _chat_push_scopes_open():
     absent ones are opened, and the names the record; _chat_push_scopes_close clears exactly what was
     opened here, so a cycle's own scopes are never touched. A names snapshot on a handler thread makes
     that push's postal values one read (the fold's `_scoped`), which is the condition the recorded
-    values rest on."""
+    values rest on, and gives the signature's names digest the same content the pusher's has."""
     owned = ["chat_shared"]
     if getattr(_live_scope, "msgsum", None) is None:
         _live_scope.msgsum = [_MSGSUM_UNSET]
@@ -26273,8 +26257,8 @@ def _chat_build_sig(sess, tmux=None, now=None, deps=None):
     _active_chat_sig, 2026-09-03; this is that key completed and shared), so the rule is the memo rule:
     a cached payload may only be what the uncached build would return NOW, which holds when every input
     is in the key — by identity (a file's stat), by value (a small in-memory input), by revision (the
-    live tail, the warm-anchor table, the names registry) or as the boolean a clock crossing produces
-    (so the key moves exactly at the crossing). It used to fold the global judge-pass counter
+    live tail, the warm-anchor table), by digest (the names registry) or as the boolean a clock crossing
+    produces (so the key moves exactly at the crossing). It used to fold the global judge-pass counter
     _judge_gen as a proxy for the judge's outputs and for every in-memory input it had no component
     for, so every judge pass rebuilt every background tab (about 360 of the 410 background rebuilds
     per 120 s on the profiled kernel); the proxy is gone and the inputs are named.

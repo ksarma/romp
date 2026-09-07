@@ -207,7 +207,7 @@ GLOBALS = {
     "_chat_postal_stats": ("out", "counters"),
     "_ledger_memo": ("memo", "see _ledger_memo.get"),
     "_ledger_memo_stats": ("out", "counters"),
-    "_live_scope": ("sig", "names", "the pusher cycle's names scope: whether the build read names from the cycle's snapshot"),
+    "_live_scope": ("sig", "names", "the names snapshot the thread holds (the cycle's, or the push's own), digested"),
     "_node_anchor_rev": ("sig", "anchors"),
     "_parse_mode": ("memo", "see _parse_mode.get"),
     "_pending_ops": ("sig", "ops"),
@@ -593,7 +593,7 @@ class Differential(_World):
         self.assertEqual(self.moved(b, c), ("stamp",),
                          "the peer's answer supersedes the wait: the chip changes with no card and no store write")
 
-    def test_the_anchor_revision_the_suspension_list_and_the_names_revision(self):
+    def test_the_anchor_revision_the_suspension_list_and_the_names_digest(self):
         a = self.sig()
         km._node_anchor_rev[SID] = 1
         b = self.sig()
@@ -601,18 +601,20 @@ class Differential(_World):
         km._downtime.append((NOW, NOW + 10))
         c = self.sig()
         self.assertEqual(self.moved(b, c), ("downtime",))
-        self.assertIsNone(c[km._CHAT_SIG_LABELS.index("names")], "outside a pusher cycle: no names revision")
         snap = km._names_snapshot()
-        km._live_scope.names = snap
-        self.assertEqual(self.sig(), c, "a names snapshot alone (a handler-thread push's) carries no revision")
+        self.assertEqual(c[km._CHAT_SIG_LABELS.index("names")], km._names_digest(snap),
+                         "with no snapshot on the thread the digest is of the registry read here")
+        km._live_scope.names = snap                            # a handler-thread push's own snapshot
+        self.assertEqual(self.sig(), c, "the same registry: the same component, whichever thread holds it")
         km._live_scope.snapshot = self.tmux                    # a pusher cycle's scope
-        d = self.sig()
-        self.assertEqual(self.moved(c, d), ("names",), "inside a cycle the revision is an integer")
-        self.assertEqual(self.sig(), d, "the same snapshot again: the same revision")
+        self.assertEqual(self.sig(), c, "…and a cycle scope changes nothing about it")
         renamed = dict(snap)
         renamed[SID] = ["web-2"] + list(snap[SID][1:])
         km._live_scope.names = renamed
-        self.assertEqual(self.moved(d, self.sig()), ("names",), "a rename moves it")
+        d = self.sig()
+        self.assertEqual(self.moved(c, d), ("names",), "a rename moves it")
+        km._live_scope.names = snap
+        self.assertEqual(self.sig(), c, "and back")
 
     def test_the_shared_files_each_miss_under_their_own_label(self):
         jd = km.jd
@@ -645,7 +647,8 @@ class Differential(_World):
         other = Path(self.td.name) / "otherdir"
         other.mkdir()
         (km.jd.NAMES / SID).write_text("web\t%s\t#1EA1EB\twhite\n" % other)
-        self.assertEqual(self.moved(b, self.sig()), ("claudemd", "cwd"), "a move: the cwd rows and the chain both follow")
+        self.assertEqual(self.moved(b, self.sig()), ("claudemd", "cwd", "names"),
+                         "a move: the cwd rows and the chain both follow, and the names entry that records the cwd moved too")
 
     def test_a_recorded_task_output_that_grows_misses_under_taskout(self):
         out = Path(self.td.name) / "task-out.log"
@@ -752,6 +755,48 @@ class RealBuildIdleBoard(_World):
         km._push([self.client])
         self.assertEqual(self._chat()["cached"] - c2["cached"], 1, "served again once nothing moves")
 
+    def _pusher_push(self, *clients):
+        """A push as _pusher_cycle runs it: the cycle's scopes open on this thread."""
+        km._live_scope.snapshot = self.tmux
+        km._live_scope.names = km._names_snapshot()
+        km._live_scope.msgsum = [km._MSGSUM_UNSET]
+        km._live_scope.paths, km._live_scope.sessions = {}, {}
+        try:
+            km._push(list(clients or (self.client,)), tmux=self.tmux)
+        finally:
+            for k in ("snapshot", "names", "msgsum", "paths", "sessions"):
+                setattr(km._live_scope, k, None)
+
+    def _connect_push(self, client=None):
+        """A page load as _push_one runs it: a handler thread with no cycle scope, connect=True."""
+        self.assertIsNone(getattr(km._live_scope, "snapshot", None))
+        km._push([client or self.client], connect=True, tmux=self.tmux)
+
+    def test_a_connect_push_and_the_pusher_share_the_cache(self):
+        c0 = self._chat()
+        self._pusher_push()
+        self._connect_push({"app": "chat", "alive": True, "sent": {}, "active": PEER, "send": lambda s: None})
+        self._pusher_push()
+        d = {k: self._chat()[k] - c0[k] for k in ("cached", "built", "bg_built")}
+        self.assertEqual(d, {"cached": 2, "built": 1, "bg_built": 1},
+                         "one build for three pushes: the handler thread's signature equals the pusher's (the review's should-fix 1)")
+        self.assertIsNone(getattr(km._live_scope, "names", None), "the connect push closed the scopes it opened")
+
+    def test_a_rename_between_two_connect_pushes_misses_once_under_names(self):
+        self._connect_push()
+        c1 = self._chat()
+        self._connect_push()
+        c2 = self._chat()
+        self.assertEqual(c2["cached"] - c1["cached"], 1, "the same registry: served")
+        (km.jd.NAMES / SID).write_text("web-renamed\t%s\t#1EA1EB\twhite\n" % self.cdir)
+        self._connect_push()
+        c3 = self._chat()
+        self.assertEqual(c3["bg_built"] - c2["bg_built"], 1)
+        self.assertEqual({k: v - c2["bg_miss"].get(k, 0) for k, v in c3["bg_miss"].items() if v - c2["bg_miss"].get(k, 0)},
+                         {"names": 1}, "the rename busts the tab once, under names")
+        self._connect_push()
+        self.assertEqual(self._chat()["cached"] - c3["cached"], 1, "…and it is served again")
+
 
 class KeyCost(_World):
     """The key's cost amendments: the pending-token pre-check vouches per directory, the row and the usage
@@ -809,7 +854,8 @@ class KeyCost(_World):
         self.assertIsNotNone(km._live_scope.chat_shared)
         self.assertIsNotNone(km._live_scope.names, "a names snapshot for the loop")
         self.assertEqual(km._live_scope.msgsum, [km._MSGSUM_UNSET])
-        self.assertIsNone(km._chat_sig_shared()["names"], "no cycle: the names revision stays None on this thread")
+        self.assertEqual(km._chat_sig_shared()["names"], km._names_digest(km._names_snapshot()),
+                         "no cycle: the digest is of the snapshot this push opened, the same content the pusher's has")
         km._chat_push_scopes_close()
         self.assertIsNone(km._live_scope.chat_shared)
         self.assertIsNone(km._live_scope.names)
