@@ -271,7 +271,8 @@ test("pages draw lazily through an IntersectionObserver, eagerly without one, an
   assert.match(CHUNK, /e instanceof pdfjsLib\.RenderingCancelledException/);
   // the first page is drawn before the promise resolves, so the caller removes its loader over a drawn page — and a
   // first page pdf.js cannot draw rejects with nothing left in the container and no live worker
-  assert.match(CHUNK, /pages\[0\]\.visible = true;\n\s*try \{ await paint\(pages\[0\]\); \} catch \(e\) \{ io\?\.disconnect\(\); ro\?\.disconnect\(\); void task\.destroy\(\); root\.remove\(\); throw e; \}/);
+  assert.match(CHUNK, /pages\[0\]\.visible = true;\n\s*try \{ await race\(paint\(pages\[0\]\)\); \}\n\s*catch \(e\) \{ disposed = true; io\?\.disconnect\(\); ro\?\.disconnect\(\); pages\[0\]\.task\?\.cancel\(\); pages\[0\]\.task = null; void task\.destroy\(\); root\.remove\(\); throw e; \}/,
+    "page 1's paint is raced against the caller's abort (pdf-chunk-abort.test.ts), and either failure cancels the draw in flight");
   assert.match(CHUNK, /\} catch \(e\) \{ void task\.destroy\(\); throw e; \}/, "a document whose first page cannot be read releases the worker too");
   assert.match(CHUNK, /byEl\.set\(wrap, p\);\n\s*\}\n\s*container\.appendChild\(root\);/,
     "the root joins the container once the shells exist, before the first draw reads its width");

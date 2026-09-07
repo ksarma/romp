@@ -211,7 +211,8 @@ test("the chunk: the port set for the one getDocument call and cleared after, th
   assert.match(c, /const owned = ownWorker\(pdfjsLib\.GlobalWorkerOptions\.workerSrc\);\n\s*if \(owned\) pdfjsLib\.GlobalWorkerOptions\.workerPort = owned\.port;/);
   assert.match(c, /finally \{ if \(owned\) pdfjsLib\.GlobalWorkerOptions\.workerPort = null; \}/, "cleared whether getDocument returned or threw");
   assert.match(c, /const task: Loading = owned \? adopt\(loading, owned\) : loading;/);
-  assert.match(c, /doc = await \(owned \? Promise\.race\(\[task\.promise, owned\.failed\]\) : task\.promise\);/, "a Worker that never loads is a refusal, not a hang");
+  assert.match(c, /doc = await race\(owned \? Promise\.race\(\[task\.promise, owned\.failed\]\) : task\.promise\);/,
+    "a Worker that never loads is a refusal, not a hang (race() adds the caller's abort — pdf-chunk-abort.test.ts)");
   assert.match(c, /Promise\.race\(\[done, owned\.failed\]\)\.then\(owned\.release, owned\.release\);/, "released after pdf.js's destroy, or at once if the Worker is what failed");
   assert.match(c, /port\.addEventListener\("error", [^\n]*\{ once: true \}\);/);
   assert.match(c, /failed\.catch\(\(\) => \{\}\);/, "a rejection nobody races is not an unhandled one");

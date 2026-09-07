@@ -425,7 +425,7 @@ test("the cue goes up in want() — the event that asks for the draw — and com
   assert.match(CHUNK, /p\.drawnAt = cssW;\n\s*uncue\(p\);\s*\/\/[^\n]*\n\s*opts\.onPage\?\.\(/, "down when the bitmap lands, before onPage");
   assert.match(CHUNK, /p\.failed = true;\n\s*p\.task = null;\n\s*uncue\(p\);/, "down when the page fails");
   assert.match(CHUNK, /p\.drawnAt = 0;\n\s*uncue\(p\);/, "down when the page is evicted");
-  assert.match(CHUNK, /cue\(pages\[0\]\);[^\n]*\n\s*pages\[0\]\.visible = true;\n\s*try \{ await paint\(pages\[0\]\); \}/, "page 1's first draw too, cued before the paint that ends it");
+  assert.match(CHUNK, /cue\(pages\[0\]\);[^\n]*\n\s*pages\[0\]\.visible = true;\n\s*try \{ await race\(paint\(pages\[0\]\)\); \}/, "page 1's first draw too, cued before the paint that ends it");
   assert.doesNotMatch(CHUNK, /setTimeout|setInterval/, "no timer anywhere in the chunk");
 });
 

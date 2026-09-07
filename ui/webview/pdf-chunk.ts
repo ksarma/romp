@@ -61,6 +61,7 @@
 //     onPage?: (page: { index: number; canvas: HTMLCanvasElement; width: number; height: number }) => void;
 //     onPageError?: (page: { index: number; message: string }) => void;
 //   }) => Promise<{ pages: number; dispose(): void }>
+//     signal?: AbortSignal;                                // cancels an UNSETTLED render(); spent at the resolve (below)
 //
 //   Appends ONE root element (div.fileview-pdf) to `container`, holding one wrapper per page
 //   (div.fileview-pdf-page, `position: relative`, data-page 1-based, sized to the page's aspect so the
@@ -103,7 +104,15 @@
 //   pdf.js refuses to open (a corrupt file, a password), each with pdf.js's or this module's own message —
 //   and in every one of those cases nothing of this module's is in the container and the Worker pdf.js made for
 //   the attempt is terminated (getDocument starts one per call, and pdf.js's own failure path only rejects, so
-//   without that a refused open held a live Worker per attempt for the tab's life). A LATER page pdf.js cannot read or
+//   without that a refused open held a live Worker per attempt for the tab's life). A `signal` aborted while the
+//   promise is pending ends the attempt where it stands, with the same guarantee: the Worker is terminated at once
+//   (a Worker hung in a pathological content stream answers nothing, and pdf.js's own destroy waits on that answer),
+//   the loading task destroyed, a first-page draw in flight cancelled, nothing of this module's left in the
+//   container, and the promise rejects with the signal's reason; a signal already aborted when render() is called
+//   starts nothing. pdf.js puts no deadline on an open or a draw, so this is the caller's one way to reach an attempt
+//   that never settles — file-view.ts aborts wherever it retires one: its own deadline, the panel closing under the
+//   loader, a reload, both of the viewer's exits (pdf-chunk-abort.test.ts). Once the promise has resolved the signal is
+//   spent: a later abort does nothing, and dispose() is the release. A LATER page pdf.js cannot read or
 //   draw (a damaged page object) is loud in place: its wrapper keeps the page's extent and shows the
 //   failure (div.fileview-err naming the page and pdf.js's message), its canvas is removed — a page that
 //   will never have a bitmap must not take a region comment, and the panel keys its overlays on the canvas —
@@ -175,7 +184,7 @@ export const MAX_CANVAS_PIXELS = 16 * 1024 * 1024;
 
 export interface PageInfo { index: number; canvas: HTMLCanvasElement; width: number; height: number }
 export interface PageError { index: number; message: string }
-export interface RenderOpts { maxBytes?: number; maxPages?: number; onPage?: (page: PageInfo) => void; onPageError?: (page: PageError) => void }
+export interface RenderOpts { maxBytes?: number; maxPages?: number; signal?: AbortSignal; onPage?: (page: PageInfo) => void; onPageError?: (page: PageError) => void }
 export interface RenderHandle { pages: number; dispose(): void }
 /** What render() uses of pdf.js: the modern build in production, the legacy build (the one pdf.js supports
  *  under Node) or a stand-in in a test — see makeRender. */
@@ -223,6 +232,12 @@ export function workerFailedMessage(detail?: string | null): string {
 /** The URL a Worker is started from, by pdf.js's own rule for its workerSrc: a same-origin script directly; a
  *  cross-origin one (the VS Code webview, a vscode-webview:// page whose bundles are vscode-resource:// URLs) through
  *  a same-origin blob module that imports it, since a Worker's script must be same-origin with its page. `pageHref`
+/** What an aborted render() rejects with: the signal's reason — the caller's own, or the AbortError the engine sets
+ *  when abort() is called with none; an Error of this module's only where a stand-in signal carries neither (pure). */
+export function abortReason(signal: AbortSignal): unknown {
+  return signal.reason === undefined ? new Error("the PDF render was aborted") : signal.reason;
+}
+
  *  is the hosting page's location; null (Node) means the URL is used as is. `blob` says whether `url` is an object
  *  URL of this module's making, to revoke when the Worker goes (pure but for the object URL). */
 export function workerScriptUrl(workerSrc: string, pageHref: string | null): { url: string; blob: boolean } {
@@ -372,6 +387,9 @@ export function makeRender(pdfjsLib: PdfLib) {
     const cap = opts.maxBytes ?? DEFAULT_MAX_BYTES;
     if (bytes.byteLength > cap) throw new Error(capMessage(bytes.byteLength, cap));
     if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    // an attempt the caller retired before render() ran (the header, `signal`): nothing is started for it, not even a refusal
+    const signal = opts.signal;
+    if (signal?.aborted) throw abortReason(signal);
       throw new Error("the PDF renderer could not locate its worker: no pdf-chunk.js script tag to derive pdf-worker.js from");
     }
     // the Worker is this module's own, handed to pdf.js as the port for this one getDocument call (the header, THE
@@ -389,9 +407,25 @@ export function makeRender(pdfjsLib: PdfLib) {
     let doc: PDFDocumentProxy;
     // a refused open (corrupt bytes, a password) releases the Worker started for it: pdf.js's failure path only
     // rejects, and the caller has no handle to release it with, so without this every attempt on such a file (each
+    // The attempt's cancel (the header, `signal`): while render() is unsettled, an abort ends it where it stands. The
+    // listener terminates the Worker AT ONCE — terminate() is synchronous, and a Worker hung in a pathological content
+    // stream answers nothing, so pdf.js's own destroy, which waits on the Worker's reply, would never release it — and
+    // rejects `aborted`, which every await below races: the catch on that await runs the cleanup its path already has
+    // (destroy the task; cancel page 1's draw and remove the root once they exist), and render() rejects with the
+    // signal's reason. `disposed` is set so a paint() resuming after its own await stops there. Spent at the resolve:
+    // the listener comes off before the handle is returned, and dispose() is the release from there. A rejection
+    // leaves the listener in place, inert — release() is idempotent, and that path's destroy has already run.
+    let disposed = false;
+    let onAbort = () => {};
+    const aborted = new Promise<never>((_res, rej) => {
+      if (signal) onAbort = () => { disposed = true; owned?.release(); rej(abortReason(signal)); };
+    });
+    aborted.catch(() => {});   // raced below; once the attempt has settled nobody races it, and it must not surface as unhandled
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+    const race = <T>(p: Promise<T>): Promise<T> => (signal ? Promise.race([p, aborted]) : p);
     // opening of the Comments panel renders again) left one more Worker running. A Worker that never loaded is a
     // refusal of its own, by name and at once: pdf.js's promise would otherwise hang until the caller's backstop.
-    try { doc = await (owned ? Promise.race([task.promise, owned.failed]) : task.promise); }
+    try { doc = await race(owned ? Promise.race([task.promise, owned.failed]) : task.promise); }
     catch (e) { void task.destroy(); throw e; }
     // the count is the page tree's /Count, which pdf.js does not verify (the header): over the cap it is refused
     // HERE, before a shell exists or the container is touched, and the document and its worker are released.
@@ -407,7 +441,7 @@ export function makeRender(pdfjsLib: PdfLib) {
     let aspect = "612 / 792";
     if (n > 0) {
       try {
-        const vp = (await doc.getPage(1)).getViewport({ scale: 1 });
+        const vp = (await race(doc.getPage(1))).getViewport({ scale: 1 });
         aspect = `${vp.width} / ${vp.height}`;
       } catch (e) { void task.destroy(); throw e; }   // nothing of ours is in the container yet
     }
@@ -437,7 +471,6 @@ export function makeRender(pdfjsLib: PdfLib) {
     }
     container.appendChild(root);                // attached before the first draw: width-fit reads its width
 
-    let disposed = false;
     const fitWidth = () => root.clientWidth || 0;
     // The romp loader over a sheet whose draw is pending and which has no bitmap meanwhile (the header; ui/CLAUDE.md's
     // loading-state rule): the viewer's own loader markup — swirl, wordmark, three accent dots — on the classes both
@@ -606,7 +639,8 @@ export function makeRender(pdfjsLib: PdfLib) {
     if (pages.length) {
       cue(pages[0]);                             // its sheet waits like any other's (a caller's own loader sits above the pages)
       pages[0].visible = true;
-      try { await paint(pages[0]); } catch (e) { io?.disconnect(); ro?.disconnect(); void task.destroy(); root.remove(); throw e; }
+      try { await race(paint(pages[0])); }
+      catch (e) { disposed = true; io?.disconnect(); ro?.disconnect(); pages[0].task?.cancel(); pages[0].task = null; void task.destroy(); root.remove(); throw e; }
     }
     if (io) for (const p of pages) io.observe(p.wrap);
     else for (const p of pages) want(p);
@@ -614,6 +648,7 @@ export function makeRender(pdfjsLib: PdfLib) {
     return {
       pages: n,
       dispose() {
+    if (signal) signal.removeEventListener("abort", onAbort);   // settled: the signal is spent, and dispose() is the release
         if (disposed) return;
         disposed = true;
         io?.disconnect(); ro?.disconnect();
