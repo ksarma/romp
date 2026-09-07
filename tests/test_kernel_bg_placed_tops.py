@@ -254,9 +254,16 @@ class PlacedTops(unittest.TestCase):
         self.assertEqual(self._delta("bg", "walk"), 1, "the positives learned on the writer copy served the shared read")
 
     def test_no_store_file_answers_nothing_and_publishes_nothing(self):
+        # a session with live tasks and no goal store yet (a new session, every render): one presence
+        # check, as on main, and neither a parse nor the shared loader's fallback load
         os.unlink(jd.GOALDIR / (SID + ".json"))
+        km._parse_cache.pop(self.path, None)
         self.assertEqual(km._bg_placed_tops(SID, self.path, ["t1"]), {})
         self.assertEqual(km._bg_tops_report()["entries"], 0)
+        self.assertEqual((self._delta("io", "loads"), self._delta("io", "loads_shared"), self._delta("sh", "absent")), (0, 0, 0),
+                         "no load of any kind")
+        self.assertNotIn(self.path, km._parse_cache, "no parse either")
+        self.assertEqual(self._delta("bg", "miss"), 0)
 
     # ---- eviction ----
     def test_an_empty_live_set_keeps_the_lifts_fill_while_the_parse_is_current(self):

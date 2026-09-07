@@ -23113,6 +23113,8 @@ def _bg_placed_tops(sid, path, tids, store=None):
             _PLACEMENT_IDX.pop(sid, None)
         return {}
     try:
+        if store is None and not os.path.exists(str(jd.GOALDIR / (sid + ".json"))):
+            return {}                                # no store yet → nothing placed: no parse, no fallback load
         ps = _parse(path, sid, time.time())
         if store is None:
             store = jd.load_goals_shared(sid)

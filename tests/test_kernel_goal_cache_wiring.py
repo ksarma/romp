@@ -76,7 +76,9 @@ class WiringPins(unittest.TestCase):
 
     def test_bg_placed_tops_keys_on_objects_not_on_a_stat(self):
         # the per-version map is keyed on the parse and store OBJECTS in hand (a stat taken after the
-        # read can describe a version the read did not see); the gate's three stats are not taken here
+        # read can describe a version the read did not see); the gate's three stats are not taken here.
+        # The one presence check (os.path.exists on the store file, an absent store answering nothing
+        # without a parse or a load) is not a key and is allowed.
         src = inspect.getsource(km._bg_placed_tops)
         self.assertEqual(src.count("_lift_gate_key("), 0)
         self.assertEqual(src.count(".stat()"), 0)
