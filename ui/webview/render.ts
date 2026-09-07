@@ -3651,6 +3651,56 @@ function parseAskRaw(ev: Extract<ChatEvent, { kind: "tool" }>): AskAnswerBlock[]
 // flagged for the person it works for, with Reply/Dismiss). Each section auto-hides when empty,
 // so today's behavior is unchanged when no user todos exist.
 const utDetailOpen = new Set<string>();   // keyed fold: which todo details are expanded — survives re-renders
+// Dismiss's two-step arm, KEYED like the fold: the todo event trails the transcript, so every transcript
+// change of a working session rebuilds this card — and an arm kept on the node (the "armed" class and
+// its text) was wiped by the rebuild before the confirming click could land, so the two-step never
+// completed while the session streamed. renderTodo paints the arm back from the Set on every rebuild and
+// the handler reads and writes the Set, never the node. The coarse-pointer one-shot cancel is keyed the
+// same way, so the REBUILT node's confirm can retire the listener the old node registered.
+const utArmed = new Set<string>();
+const utDisarmers = new Map<string, EventListener>();
+function paintUtDismiss(node: HTMLElement, armed: boolean): void {
+  node.classList.toggle("armed", armed);
+  node.textContent = armed ? "Really dismiss?" : "Dismiss";
+}
+function utRetireDisarmer(tid: string): void {
+  const one = utDisarmers.get(tid);
+  if (one) { document.removeEventListener("pointerdown", one, true); utDisarmers.delete(tid); }
+}
+// cancel an arm: the Set, the one-shot, and whichever rebuild of the button is on screen
+function utDisarm(tid: string): void {
+  utArmed.delete(tid); utRetireDisarmer(tid);
+  const node = document.querySelector<HTMLElement>(`[data-act="utdismiss"][data-tid="${tid}"]`);
+  if (node) paintUtDismiss(node, false);
+}
+// OPTIMISTIC REMOVAL (Reply sent / Dismiss confirmed): the client drops the row before any verdict and
+// the next push confirms. The ids awaiting that confirmation gate the warn-frame re-sync — a warn
+// carries no sid or todo id, so "this client has a removal pending" is the only gate it has — and a
+// push that no longer lists an id settles it (per session: an id absent from ANOTHER session's frame
+// says nothing about it).
+const utPendingRemoval = new Set<string>();
+function utSettlePending(before: UserTodo[] | undefined, now: UserTodo[] | undefined): void {
+  if (!utPendingRemoval.size && !utArmed.size) return;
+  const live = new Set((now || []).map((t) => t.id));
+  for (const t of before || []) {
+    if (live.has(t.id)) continue;
+    utPendingRemoval.delete(t.id);
+    if (utArmed.has(t.id)) utDisarm(t.id);   // a row the kernel dropped mid-two-step takes its arm (and one-shot) with it
+  }
+}
+// One helper for both removal sites: the row goes NOW and the heading's count follows it — a
+// "Waiting on you · 3" over two rows read wrong until the next push. The heading goes with the last
+// row, as renderTodo paints it (the section auto-hides when empty).
+function utDropRow(row: Element | null): void {
+  if (!row) return;
+  const card = row.closest(".todo-card");
+  row.remove();
+  if (!card) return;
+  const head = card.querySelector(".ut-head");
+  if (!head) return;
+  const n = card.querySelectorAll(".ut-item").length;
+  if (n) head.textContent = `Waiting on you · ${n}`; else head.remove();
+}
 // The "more behind this" hint on a row WITH detail (the user 2026-09-02): "▸ details" trails the text,
 // "▾ details" while the fold is open; a bare row renders nothing, so the two read differently at a
 // glance. The title doubles as the aria-label. Painted INSIDE .ut-text, the delegated uttoggle target —
@@ -3751,7 +3801,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       reply.title = "answer this — your reply goes straight to the session";
       const dis = el("button", "ut-btn ut-dismiss");
       dis.dataset.act = "utdismiss"; dis.dataset.tid = t.id; dis.dataset.sid = renderingSid || "";
-      dis.textContent = "Dismiss";
+      paintUtDismiss(dis, utArmed.has(t.id));   // keyed: a rebuild mid-two-step keeps "Really dismiss?"
       dis.title = "clear this without a reply (for moot or stale asks)";
       // arm-state disarm on pointer-out — cosmetic, so a local listener is fine. FINE POINTERS ONLY: on
       // a coarse pointer the pointer "leaves" the instant the finger lifts, so this disarmed the button
@@ -3759,7 +3809,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       // There the arm holds until a tap anywhere ELSE cancels it (the one-shot dismisser wired at arm
       // time in the utdismiss handler).
       if (!isCoarsePointer())
-        dis.addEventListener("pointerleave", () => { dis.classList.remove("armed"); dis.textContent = "Dismiss"; });
+        dis.addEventListener("pointerleave", () => { if (utArmed.has(t.id)) utDisarm(t.id); });
       line.append(reply, dis);
       row.appendChild(line);
       if (detail) {
@@ -8356,12 +8406,17 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
     vscodeApi?.postMessage({ type: "userTodoAnswer", id: sid, todoId, text });
     close();
     // optimistic: the row goes NOW (answering clears it); the next push confirms — and a stale
-    // click gets the kernel's loud warn instead of a silent nothing
-    document.querySelector(`.ut-item [data-tid="${todoId}"]`)?.closest(".ut-item")?.remove();
+    // click gets the kernel's loud warn instead of a silent nothing (the pending mark lets that
+    // warn repaint the row)
+    utPendingRemoval.add(todoId);
+    utDropRow(document.querySelector(`.ut-item [data-tid="${todoId}"]`)?.closest(".ut-item") ?? null);
   };
   cancel.addEventListener("click", close);
   send.addEventListener("click", go);
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
+  // Enter sends on a fine pointer only — the composer's own rule: on a phone Enter is a NEWLINE and
+  // the Send button sends (mobile keyboards often can't produce Shift+Enter); without the guard a
+  // two-line answer sent its first line alone there
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !isCoarsePointer()) { e.preventDefault(); go(); } });
   input.addEventListener("input", () => input.classList.remove("bad"));
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
   box.append(h, d); if (dd) box.appendChild(dd); box.append(input, actions);
@@ -15631,6 +15686,7 @@ function upsert(msg: any) {
   if (typeof msg.selfHost === "string" && msg.selfHost && !hostOf(msg.id)) adoptSelfHost(msg.selfHost);
   const existed = sessions.has(msg.id);
   const prev = sessions.get(msg.id);
+  if (prev && "userTodos" in msg) utSettlePending(prev.userTodos, msg.userTodos);   // a row gone from the payload is confirmed gone
   awaitingFull.delete(msg.id);   // a full session landed → this session is re-based; a later gap may ask again
   const wasSkeleton = onFull(skeletonTabs, msg.id);   // …and the tab is loaded: it leaves the skeleton set (the kernel released it when it sent this frame)
   // A frame that would take a HELD transcript from content to nothing is status-shaped, never a wipe (T249b,
@@ -15893,7 +15949,7 @@ function chatTail(msg: any) {
   // the top-level userTodos seam rides every delta (kernel _send_chat), like status: the chat's
   // steady state is chatTail frames, so a caught-up client that only merged the field from full
   // session frames kept it stale
-  if ("userTodos" in msg) s.userTodos = msg.userTodos;
+  if ("userTodos" in msg) { utSettlePending(s.userTodos, msg.userTodos); s.userTodos = msg.userTodos; }
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
   scheduleRenderTabs();   // once per animation frame however many tails a cycle lands (2026-09-04)
   if (msg.id === activeId) {
@@ -16417,12 +16473,17 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     // provisional tab down with it; a toast would slide past the one moment it needed to be read.
     if (provisionalId) failProvisional(m.text); else warnToast(m.text);
     // A warn is also the kernel REFUSING a gesture this client may have already painted — the
-    // user-todo Reply/Dismiss remove their row optimistically before any verdict. Re-sync the
-    // active view from its events so a refused row returns NOW: the kernel's state didn't change
-    // on a refusal, so the next push can dedup to nothing and the optimistic removal would
-    // otherwise stand until an unrelated repaint. Cheap — one tail-window rebuild, at warn rate.
-    const wv = activeId ? views.get(activeId) : null;
-    if (wv) { wv.stale = true; appendActive(); }
+    // user-todo Reply/Dismiss remove their row optimistically before any verdict. While one of those
+    // is pending, re-sync the active view from its events so a refused row returns NOW: the kernel's
+    // state didn't change on a refusal, so the next push can dedup to nothing and the optimistic
+    // removal would otherwise stand until an unrelated repaint. GATED on the pending set: the frame
+    // carries no sid or todo id, and a warn about anything else (a bad name on create, an MCP error)
+    // should repaint nothing. The re-sync settles whatever was pending.
+    if (utPendingRemoval.size) {
+      const wv = activeId ? views.get(activeId) : null;
+      if (wv) { wv.stale = true; appendActive(); }
+      utPendingRemoval.clear();
+    }
   }
   // `err` is the LOUD channel, deliberately distinct from `warn` (the user 2026-07-29): a warn toast fades
   // after 12s, which is right for "that name has a bad character" and wrong for "the message you just typed
@@ -18387,8 +18448,8 @@ setupSettings();
     utdismiss: (elx) => {
       const tid = elx.dataset.tid, sid = elx.dataset.sid || activeId;
       if (!tid || !sid) return;
-      if (!elx.classList.contains("armed")) {
-        elx.classList.add("armed"); elx.textContent = "Really dismiss?";
+      if (!utArmed.has(tid)) {   // the keyed Set, never the node's class: the card rebuilds every push (see utArmed)
+        utArmed.add(tid); paintUtDismiss(elx, true);
         // COARSE POINTERS have no hover, so the pointerleave disarm never wires there (renderTodo)
         // and the arm would otherwise latch forever: hold it until the next tap anywhere ELSE
         // cancels it (the folder-menu one-shot dismisser idiom). pointerdown, not click — it fires
@@ -18397,25 +18458,27 @@ setupSettings();
         // it is either the confirming tap (the click handler below settles it) or a scroll that
         // merely started on the button — an any-pointerdown removal would spend the one-shot on
         // that scroll, leaving the arm latched with the tap-elsewhere cancel gone. Only a
-        // pointerdown genuinely elsewhere disarms and removes.
+        // pointerdown genuinely elsewhere disarms and removes. The button is found by its DATA,
+        // not by node identity: a push between the two taps replaces the node, and the confirming
+        // tap lands on the rebuild.
         if (isCoarsePointer()) {
           const disarm = (ev: Event) => {
-            if (ev.target === elx) return;
-            document.removeEventListener("pointerdown", disarm, true);
-            (elx as any)._utDisarm = undefined;
-            elx.classList.remove("armed"); elx.textContent = "Dismiss";
+            if ((ev.target as Element | null)?.closest?.(`[data-act="utdismiss"][data-tid="${tid}"]`)) return;
+            utDisarm(tid);
           };
-          (elx as any)._utDisarm = disarm;
+          utRetireDisarmer(tid);   // never two one-shots for one id
+          utDisarmers.set(tid, disarm);
           document.addEventListener("pointerdown", disarm, true);
         }
         return;
       }
       // the confirming tap's pointerdown was ON the button, so it did not spend the one-shot —
-      // retire it here, or it lingers on document and fires once more against the removed row
-      const stale = (elx as any)._utDisarm;
-      if (stale) { document.removeEventListener("pointerdown", stale, true); (elx as any)._utDisarm = undefined; }
+      // retire it here (keyed, so a rebuilt node retires the listener the old one registered), or
+      // it lingers on document and fires once more against the removed row
+      utArmed.delete(tid); utRetireDisarmer(tid);
+      utPendingRemoval.add(tid);
       vscodeApi?.postMessage({ type: "userTodoDismiss", id: sid, todoId: tid });
-      elx.closest(".ut-item")?.remove();
+      utDropRow(elx.closest(".ut-item"));
     },
   });
 })();
