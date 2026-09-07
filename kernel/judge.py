@@ -4124,13 +4124,14 @@ def save_goals(fsid, store):
     the override journal still backstops the state. Stores built without load_goals carry no `_baseRev`
     and keep the old unconditional behavior (nothing to rebase onto).
 
-    A store that came through load_goals stays CAS-protected for EVERY save of its lifetime (review
-    2026-09-06): after a publish the base is re-stamped to the revision just written, which the file now
-    holds with exactly this content. Before that, the first publish popped the base and nothing restored
-    it, so every later save of the same object — _plan_session saves its store several times per pass,
-    _distill_session saves after titling and again after distilling — took the unconditional branch,
-    wrote over whatever a concurrent writer (the nudge tick, the unblocker, a peer tier) had published in
-    between, and skipped the no-op check as well.
+    A store that came through load_goals keeps a base across saves (review 2026-09-06): after a
+    successful publish the object carries the revision just written as its base, which the file now holds
+    with exactly this content, so the holder's next save is CAS-protected too. A publish that raises
+    mid-write leaves the base as it was, which still describes the file. Before that, the first publish
+    popped the base and nothing restored it, so every later save of the same object — _plan_session saves
+    its store several times per pass, _distill_session saves after titling and again after distilling —
+    took the unconditional branch, wrote over whatever a concurrent writer (the nudge tick, the unblocker,
+    a peer tier) had published in between, and skipped the no-op check as well.
 
     A publish that would write back EXACTLY what the file already holds is skipped (the user 2026-07-22).
     Callers save unconditionally on purpose — `_plan_session` ends every pass with a rollup + save whether or
