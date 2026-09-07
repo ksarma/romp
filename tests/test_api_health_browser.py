@@ -7,7 +7,10 @@ BEHAVIOR those pins approximate. A scratch copy of km._landing() is served from 
 HTTP with no kernel behind it (every fetch 404s and the shell socket never opens, which is exactly the
 pre-frame world the cell's hidden rule exists for), and playwright's chromium drives it: frames are handed
 to window.__rompApiHealth directly, presses are dispatched as pointer events, and the driver reports what
-the DOM did. Skips LOUDLY without the extension's node deps or a browser (CI installs none), the way
+the DOM did. The page's WebSocket is a shim installed before load (review round 3): it never opens on its
+own, so the first two phases see the same never-connected socket a refused connection gives, without the
+real socket's close-and-redial every two seconds; the third phase opens it, feeds it frames, drops it and
+watches the redial, the way a kernel behind a dropped tunnel would. Skips LOUDLY without the extension's node deps or a browser (CI installs none), the way
 tests/test_awaiting_box_sync.py does.
 
 Synthetic only: an invented sid family, the notes-api demo's session names, no real data."""
@@ -45,6 +48,19 @@ try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
 page.on("pageerror", () => {});                       // the scratch page has no kernel: its sockets and fetches fail
+// the WebSocket shim: every socket the page opens is recorded in window.__socks and does nothing until the driver
+// opens (__open), feeds (__msg) or drops (__drop) it. readyState follows the real constants.
+await page.addInitScript(() => {
+  function Fake(url) { this.url = String(url); this.readyState = 0; this.sent = []; this.onopen = this.onmessage = this.onclose = this.onerror = null;
+    (window.__socks = window.__socks || []).push(this); }
+  Fake.prototype.send = function (d) { if (this.readyState !== 1) throw new Error("not open"); this.sent.push(String(d)); };
+  Fake.prototype.close = function () { this.__drop(); };
+  Fake.prototype.__open = function () { this.readyState = 1; if (this.onopen) this.onopen({}); };
+  Fake.prototype.__msg = function (o) { if (this.onmessage) this.onmessage({ data: JSON.stringify(o) }); };
+  Fake.prototype.__drop = function () { if (this.readyState === 3) return; this.readyState = 3; if (this.onclose) this.onclose({}); };
+  Fake.CONNECTING = 0; Fake.OPEN = 1; Fake.CLOSING = 2; Fake.CLOSED = 3;
+  window.WebSocket = Fake;
+});
 await page.goto(cfg.url);
 await page.waitForFunction(() => typeof window.__rompApiHealth === "function", null, { timeout: 20000 });
 const R = await page.evaluate((SID) => {
@@ -262,6 +278,82 @@ await step2('rightButton', async () => {
   await page.mouse.up();
   R.primaryReleasedPainted = await page.evaluate(() => /6 waiting/.test(document.getElementById("ah-tip").textContent));
 });
+await step2('pressFocus', async () => {
+  // 16. a keyboard press on the pause button (review round 3): the button is disabled at once, and a disabled
+  //     element cannot hold focus, so focus fell to BODY, where the card's Tab trap no longer saw the keys and a
+  //     Shift+Tab walked out of the aria-modal dialog. Focus moves to the card before the disable; the trap holds.
+  await page.evaluate(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    window.__sent3 = []; window.__rompShellSend = (o) => { window.__sent3.push(o); return true; };
+    window.__rompApiHealth(window.__frame({ state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000010, seq: 12 }));
+    document.getElementById("rail-api").focus(); });
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  R.pressFocusBefore = await active();
+  await page.keyboard.press("Space");
+  R.pressSent = await page.evaluate(() => window.__sent3.map((o) => o.type + ":" + String(o.value)));
+  R.pressFocusAfter = await active();
+  R.pressButton = await page.evaluate(() => { const b = document.querySelector("#ah-tip button[data-act=pause]"); return { disabled: b.disabled, label: b.textContent }; });
+  await page.keyboard.press("Shift+Tab");
+  R.pressShiftTab = await active();
+  await page.keyboard.press("Tab");
+  R.pressTabBack = await active();
+  await page.evaluate(() => { document.getElementById("ah-tip").focus();
+    window.__rompApiHealth(window.__frame({ state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000020, seq: 13 })); });
+  R.pressAnswerFocus = await active();
+  await page.keyboard.press("Tab");
+  R.pressAnswerTab = await active();
+  await page.keyboard.press("Escape");
+});
+// ── phase 3: the shell socket itself (review round 3). The shim stands in for the kernel's end: the driver opens the
+// socket shellWS dialed at load, feeds it frames, presses through the REAL __rompShellSend, drops the socket and
+// waits for the redial. ──
+await step2('socket', async () => {
+  // 17. a press acknowledged on a socket that then dies: the redial's ready re-sends the last frame verbatim (same
+  //     seq), so nothing else would clear the acknowledgment; the close clears it and says why, the re-sent frame
+  //     repaints the truth, and the next press rides the new socket
+  const sock = (i) => page.evaluate((i) => { const s = window.__socks[i]; return s ? { url: s.url, state: s.readyState, sent: s.sent.slice() } : null; }, i);
+  const open = (i) => page.evaluate((i) => { window.__socks[i].__open(); }, i);
+  const drop = (i) => page.evaluate((i) => { window.__socks[i].__drop(); }, i);
+  const feed = (i, over) => page.evaluate(([i, over]) => { window.__socks[i].__msg(window.__frame(over)); }, [i, over]);
+  const redial = (n) => page.waitForFunction((n) => window.__socks.length >= n, n, { timeout: 8000 });
+  const press = () => page.evaluate(() => { const b = document.querySelector("#ah-tip button[data-act=pause]");
+    b.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); b.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); b.click(); });
+  const btnState = () => page.evaluate(() => { const b = document.querySelector("#ah-tip button[data-act=pause]"); const h = document.querySelector("#ah-tip .ah-hint");
+    return { disabled: b.disabled, label: b.textContent, acted: b.classList.contains("romp-acted"), hint: h ? h.textContent : "" }; });
+  const PAUSED = { state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000010, seq: 20 };
+  R.sockCount = await page.evaluate(() => window.__socks.length);
+  R.sock0 = await sock(0);
+  // the steps above replaced window.__rompShellSend with stubs; the redial binds the real one to the new socket
+  await drop(0);
+  await redial(2);
+  R.sockRedialed = await page.evaluate(() => window.__socks.length);
+  await open(1);
+  R.sock1Ready = (await sock(1)).sent;
+  await feed(1, PAUSED);
+  R.sockPainted = await page.evaluate(() => document.getElementById("rail-api").querySelector(".ah-text").textContent);
+  await page.evaluate(() => { document.getElementById("rail-api").click(); });
+  await press();
+  R.sockPressSent = (await sock(1)).sent;
+  R.sockAcked = await btnState();
+  await drop(1);
+  R.sockDropped = await btnState();
+  await redial(3);
+  R.sock2 = await sock(2);
+  await open(2);
+  R.sock2Ready = (await sock(2)).sent;
+  await feed(2, PAUSED);                                   // the redial's ready re-sends the last frame verbatim
+  R.sockResent = await btnState();
+  await press();
+  R.sock2Sent = (await sock(2)).sent;
+  R.sock1After = (await sock(1)).sent;
+  // and the other outcome: the kernel DID take the press before the socket died, so the re-sent frame's seq has moved
+  await drop(2);
+  await redial(4);
+  await open(3);
+  await feed(3, { text: "overloaded · 1 waiting", seq: 21 });
+  R.sockMoved = await btnState();
+  await page.evaluate(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+});
 if (cfg.shots) await page.screenshot({ path: cfg.shots });
 fs.writeSync(1, "RESULT:" + JSON.stringify(R) + "\n");
 await browser.close();
@@ -412,6 +504,46 @@ class ServedCell(unittest.TestCase):
         self.assertEqual(self.R["focusAfterFrame"], "DIV.reveal", "a frame re-renders the card; focus stays on the same row")
         self.assertEqual(self.R["usageOpened"], 1)
         self.assertTrue(self.R["usageClosedTip"])
+
+    def test_a_keyboard_press_on_the_pause_button_keeps_focus_inside_the_dialog(self):
+        # review round 3 (2026-09-07): the button was disabled with focus still on it, so focus fell to BODY, the
+        # card's Tab trap no longer saw the keys, and a Shift+Tab left the aria-modal dialog for the bottom bar
+        self.assertEqual(self.R["pressFocusBefore"], "BUTTON.pause", "errors: %r" % self.R.get("err2"))
+        self.assertEqual(self.R["pressSent"], ["setGlobalRetryPaused:false"], "Space ran the button once")
+        self.assertEqual(self.R["pressButton"], {"disabled": True, "label": "Stop all auto-retries"}, "acknowledged")
+        self.assertEqual(self.R["pressFocusAfter"], "DIV", "focus is on the card, inside the dialog, not on BODY")
+        self.assertEqual(self.R["pressShiftTab"], "SPAN.log", "the trap still applies: Shift+Tab wraps to the last control")
+        self.assertEqual(self.R["pressTabBack"], "DIV.reveal", "Tab from the last control wraps to the first enabled one (the disabled button is skipped)")
+        self.assertEqual(self.R["pressAnswerFocus"], "DIV", "the answering frame's re-render leaves focus on the card")
+        self.assertEqual(self.R["pressAnswerTab"], "BUTTON.pause", "and the first Tab reaches the re-enabled button")
+
+    def test_the_driver_s_socket_phase_hit_no_error(self):
+        self.assertNotIn("socket", self.R["err2"], self.R["err2"].get("socket"))
+
+    def test_a_press_the_socket_lost_is_cleared_on_the_close_and_the_redial_repaints_the_truth(self):
+        # review round 3 (2026-09-07): pending was cleared only by a failed send or a frame with a moved seq; the
+        # redial's ready re-sends the last frame verbatim, so a press the kernel never received kept the button
+        # disabled and relabeled across the reconnect until an unrelated pause write moved the seq
+        R = self.R
+        ready, pressed = '{"type":"ready"}', '{"type":"setGlobalRetryPaused","value":false}'
+        self.assertEqual(R["sockCount"], 1, "shellWS dialed once at load, and the shim let it stay unopened: %r" % R.get("err2"))
+        self.assertIn("/ws?app=shell", R["sock0"]["url"])
+        self.assertEqual(R["sockRedialed"], 2, "a close redials")
+        self.assertEqual(R["sock1Ready"], [ready], "the open sends ready")
+        self.assertEqual(R["sockPainted"], "paused · usage limit · 1 waiting", "a frame on the socket paints the cell")
+        self.assertEqual(R["sockPressSent"], [ready, pressed], "the press rode the real socket")
+        self.assertEqual(R["sockAcked"], {"disabled": True, "label": "Stop all auto-retries", "acted": True, "hint": ""})
+        self.assertEqual(R["sockDropped"], {"disabled": False, "label": "Resume all auto-retries", "acted": False,
+                                            "hint": "Connection lost before the answer arrived. When it is back, the button shows the current state."},
+                         "the close clears the acknowledgment and says why")
+        self.assertIn("/ws?app=shell", R["sock2"]["url"])
+        self.assertEqual(R["sock2Ready"], [ready], "the redial sends ready")
+        self.assertEqual(R["sockResent"], {"disabled": False, "label": "Resume all auto-retries", "acted": False, "hint": ""},
+                         "the re-sent frame (same seq) repaints the truth and drops the hint")
+        self.assertEqual(R["sock2Sent"], [ready, pressed], "the next press rides the new socket")
+        self.assertEqual(R["sock1After"], [ready, pressed], "and nothing more reached the dead one")
+        self.assertEqual(R["sockMoved"], {"disabled": False, "label": "Stop all auto-retries", "acted": False, "hint": ""},
+                         "a re-sent frame with a moved seq (the kernel took the press) repaints that truth")
 
     def test_only_a_primary_press_defers_a_frame(self):
         self.assertTrue(self.R["rightInside"], "the right press landed on the card; errors: %r" % self.R.get("err2"))

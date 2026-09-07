@@ -494,6 +494,27 @@ class Detail(unittest.TestCase):
         self.assertIn("(hint?'<div class=ah-hint>'+esc(hint)+'</div>':'')", self.JS)
         self.assertIn("LAST=m;hint='';", self.JS, "a frame means the socket is alive: the notice retires")
 
+    # ── review round 3 (2026-09-07): a press the socket lost, and focus across the disable ──
+    def test_a_press_the_socket_lost_clears_on_the_close_and_says_why(self):
+        # pending was cleared only by a failed send or a frame with a moved seq; the redial's ready re-sends the last
+        # frame verbatim, so a press the kernel never received held the button disabled and relabeled across the
+        # reconnect until an unrelated pause write moved the seq. The shell's onclose tells the detail (the socket
+        # that carried the press is gone) and the re-sent frame repaints the truth either way.
+        self.assertIn("window.__rompApiSocketLost=function(){if(pending===null)return;pending=null;pendSeq=null;hint=LOST;", self.JS)
+        self.assertIn("var LOST='Connection lost before the answer arrived. When it is back, the button shows the current state.';", self.JS)
+        self.assertIn("hint=LOST;\nif(tip.style.display!=='block')return;if(held){dirty=true;return;}render();};", self.JS,
+                      "painted on release under a held pointer, like a frame")
+        html = km._landing()
+        self.assertIn("ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}setTimeout(shellWS,2000);};", html,
+                      "the shell socket's close tells the detail before the redial")
+
+    def test_focus_moves_to_the_card_before_the_pressed_button_is_disabled(self):
+        # a disabled element cannot hold focus: it fell to BODY, where the card's Tab trap no longer saw the keys and
+        # a Shift+Tab left the aria-modal dialog
+        press = self.JS[self.JS.index("if(act==='pause')"):self.JS.index("else if(act==='reveal')")]
+        self.assertIn("try{tip.focus();}catch(e){}", press)
+        self.assertLess(press.index("try{tip.focus();}catch(e){}"), press.index("t.disabled=true"), "focus first, then the disable")
+
     def test_the_hover_re_anchors_after_a_re_render(self):
         self.assertIn("tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();", self.JS)
         self.assertIn("tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}", self.JS)

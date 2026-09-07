@@ -40325,6 +40325,7 @@ manual:'Auto-retry and the judges are paused: you stopped them.'};
 var OK='No session is waiting on the API. Auto-retry and the judges are running.';
 var RESUME='Resume all auto-retries',STOP='Stop all auto-retries';   // the chat card's own words
 var NOTSENT='Not sent: the dashboard is disconnected. Try again.';
+var LOST='Connection lost before the answer arrived. When it is back, the button shows the current state.';
 function clsWords(r){if(r.cls==='429')return '429 rate limited';if(r.cls==='529')return '529 overloaded';
 if(r.cls==='offline')return 'offline';return 'error'+(r.status?' '+r.status:'');}
 // The pause control. A press is acknowledged at once (disabled, flipped label, .romp-acted) and STAYS so across
@@ -40400,6 +40401,11 @@ document.addEventListener('pointercancel',release);
 function actOf(n){while(n&&n!==tip&&!(n.getAttribute&&n.getAttribute('data-act')))n=n.parentNode;return (n&&n!==tip)?n:null;}
 function run(t){var act=t.getAttribute('data-act');
 if(act==='pause'){var v=t.getAttribute('data-val')==='1';
+// focus moves to the dialog BEFORE the button is disabled (review round 3): a disabled element cannot hold focus, so
+// it fell to the page body, where the Tab trap below (a listener on the card) no longer saw the keys and a Shift+Tab
+// walked out of the aria-modal dialog. The card is where open() lands focus too; the answering frame's re-render
+// leaves it there (render restores a focused CONTROL only), and the first Tab reaches the first control.
+try{tip.focus();}catch(e){}
 t.disabled=true;t.textContent=v?RESUME:STOP;t.classList.add('romp-acted');pending=v?1:0;pendSeq=LAST?LAST.seq:null;hint='';   // acknowledged before any round trip
 // the shell socket carries the same op the chat card sends; the handler marks the views dirty, and the next
 // cycle's frame answers (its seq moved: the press wrote the pause file). A dead socket says so instead of a
@@ -40426,6 +40432,15 @@ else if(i<0||i===f.length-1){ev.preventDefault();f[0].focus();}
 return;}
 if(ev.key!=='Enter'&&ev.key!==' ')return;var t=actOf(ev.target);if(!t||t.tagName==='BUTTON')return;
 ev.preventDefault();run(t);flush();});
+// The shell socket closed (shellWS's onclose, before its redial). A press acknowledged on that socket can no longer be
+// answered: its frame would have come on the socket that died. The redial's ready handler re-sends the last frame
+// VERBATIM (_apih_resend), so a press the kernel never received would otherwise keep the button disabled and relabeled
+// across the reconnect, through closing and reopening the detail, until some unrelated pause write moved the seq
+// (review round 3). So the acknowledgment clears here, with the reason under the button; if the kernel DID take the
+// press, the re-sent frame's seq has moved and it repaints the truth either way. Painted on release under a held
+// pointer, like a frame.
+window.__rompApiSocketLost=function(){if(pending===null)return;pending=null;pendSeq=null;hint=LOST;
+if(tip.style.display!=='block')return;if(held){dirty=true;return;}render();};
 window.__rompApiHealth=function(m){if(!m||!m.state)return;LAST=m;hint='';   // a frame means the socket is alive
 // the frame that answers a press: the press wrote the pause file, so the kernel's seq moved past the one we saw (a
 // frame from before the press carries that one and keeps the acknowledgment). Whatever state it brings is the
@@ -41363,7 +41378,9 @@ else if(m&&m.type==='notifyAll'&&window.__rompNotifyAllPaint)window.__rompNotify
 else if(m&&m.type==='apiHealth'&&window.__rompApiHealth)window.__rompApiHealth(m);
 // the boot check found a newer romp release — raise the update banner on every open dashboard
 else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateOffer(m.cur||'',m.tag||'',m.drift||'',m.boot||'',m.state||'');};
-ws.onclose=function(){setTimeout(shellWS,2000);};}catch(e){}}
+// the API health detail's pause acknowledgment rides this socket: a press it carried cannot be answered now (the
+// redial's ready re-sends the last frame verbatim), so the detail is told before the redial (_LANDING_APIH_JS)
+ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}setTimeout(shellWS,2000);};}catch(e){}}
 shellWS();
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
 })();
