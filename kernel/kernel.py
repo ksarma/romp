@@ -6099,6 +6099,10 @@ def _prune_notify_cards(live_ids, gone_ids=()):
             pass                                     # filed once per episode by the write door; the next leaving card retries
 
 
+_PATH_UNRESOLVED = object()   # "no path was passed" for the helpers that take a caller's row path
+#                               (_compacting_now, _user_todo_idle) — None is a real value (no transcript)
+
+
 # ── user todos (plans/user-todos.md; docs/adr/0001 — the authority tier) ─────────────────────────
 # A need a session registers with the person it works for — a decision, input, or action only they
 # can provide — held open while the agent keeps working on whatever else it can. user-todos.json
@@ -6320,6 +6324,63 @@ def _user_todo_fp(sid):
     return json.dumps(rows, sort_keys=True)
 
 
+def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, peer_wait=None,
+                    tm=None, path=_PATH_UNRESOLVED):
+    """The idle-escalation floor's ARMING read (plans/user-todos.md): True only when this session
+    has SETTLED idle with nothing else in motion — the exact idle the auto-nudge tick requires —
+    so its open user todos ARE its frontier and the focus card may floor to needs-input. Read-side
+    and re-derived each build (never a verdict: the ADR bars anything diary-shaped from touching
+    this tier), but every input is an EVENT, not a per-build proxy:
+
+    - who_working (the event model's open turn) and sess_awaiting_why (dispatched agents/overlay)
+      say the frontier isn't empty; perm/compacting states and an API error are live stories that
+      outrank this one (one interrupt at a time — the perm floor's own rule);
+    - peer_wait (the caller's _wait_for_graph edge — the same event the waitingOn chip and the
+      nudge tick's skip read): the session's newest reply-expecting ask to a LIVE peer is still
+      unanswered, so this idle is explained by the PEER, and waiting on a peer is deliberately
+      NOT needs-you (2026-08-22; interrupt only when the human is the bottleneck). The floor
+      stands down until the peer's reply — a real postal event — drops the edge;
+    - queued intent (parked drive ops, the backend queue, an armed rewind) means a message already
+      arrived — the exact de-escalation event — so the floor never claims idle over it, and a user
+      interrupt means the user acted (the same suppression the nudge honors);
+    - THE NO-FLAP GUARD (the cards-move-on-new-information rule): the event model reads "no open
+      turn" during transient mid-turn lulls, so keying on it alone would strobe the card at every
+      turn boundary — the exact working↔needs-you flap jd.WHY_UNBLOCK_UNSETTLED documents. The
+      authoritative state log showing a PROGRESSING state at/after the parsed turn's end means the
+      stop is not real (the auto-nudge's genuine-stop discriminator: two real-event timestamps,
+      no time window); a progressing record from BEFORE the turn end is a stale lost-write and
+      must not wedge the floor off (the nudge learned the same lesson).
+
+    ps None / no turns reads UNKNOWN, never idle — the cache-warm idiom: the floor snaps in after
+    _warm_fleet_bg like every other parse-derived read, instead of guessing on a cold cache. The
+    interrupt read is this gate's own: build_feed's badge asks the same predicate a few lines
+    earlier, but reads an EXCEPTION as "not interrupted" where this gate must read "not idle".
+
+    `tm` / `path`: the caller's liveness row and transcript path for _compacting_now's gate (the
+    same hoist _session_rows makes): build_feed holds both, and without them the gate resolves
+    the path through _path_of's 48h search — nothing for a live session idle longer than that,
+    so its cached parse would go unread there."""
+    if ps is None or who_working or sess_awaiting_why or aerr or peer_wait:
+        return False
+    if perm_state in _NEEDS_INPUT_STATES or perm_state == "compacting" or _compacting_now(sid, tm=tm, path=path):
+        return False
+    if _pending_ops.get(str(sid)) or _backend_queued(sid) or _backend_rewind_pending(sid):
+        return False
+    turns = ps.get("turns") or []
+    if not turns:
+        return False
+    try:
+        if _interrupt_suppresses_nudge(turns, sid):
+            return False
+    except Exception:
+        return False                                 # an unreadable gate reads unknown, never idle
+    lt = turns[-1]
+    ls_val, ls_t = _last_state(sid)
+    if ls_val in _PROGRESSING_STATES and ls_t >= lt.get("end", lt.get("t", 0)):
+        return False
+    return True
+
+
 def _user_todo_answer_body(todo_text, reply):
     """The injected reply to a user todo: the todo's own short line anchors the user's words, so a
     terse reply lands unambiguously (plans/user-todos.md). VOICE (test_injected_voice.py renders
@@ -6380,6 +6441,10 @@ def _stamp_user_todo_answered(sid, tid, text, nonce=None):
         if not stood_down:
             _resolve_user_todo(sid, tid, "answered")
     if stood_down:
+        # a stand-down is a LOSS event: the user believes they answered, and the re-floor's push is
+        # the one signal the answer never arrived — the same un-latch the loss seam's reopen does
+        # (_notify_ut_unlatch), so the set dedup cannot eat that push
+        _notify_ut_unlatch(sid, tid)
         sys.stderr.write("user-todos: %s's answer for %s was refused by the pane before its "
                          "'answered' stamp landed — the stamp stands down: nothing is stamped, "
                          "the ask is still waiting on the user, and the refused mark is "
@@ -6502,6 +6567,12 @@ def _user_todo_answer_lost(sid, tid, text, wait=False, nonce=None):
             else:
                 verdict = "stale"
     if verdict == "reopened":
+        # the reopened ask is NEWS again (2026-08-22): the same id going back under the floor
+        # would be eaten by the push latch's set dedup, and this re-floor is the one signal
+        # telling the user their answer never arrived — the loss EVENT clears the id so the next
+        # floor pushes. The recall path (_cancel_backend_queued) deliberately does NOT do this:
+        # the user pulled that answer back themselves (see _notify_ut_unlatch).
+        _notify_ut_unlatch(sid, tid)
         sys.stderr.write("user-todos: %s's answer for %s died with its holder — the ask is "
                          "reopened and waiting on the user again\n" % (sid[:8], tid))
         _mark_views_dirty()
@@ -12235,6 +12306,19 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None, wake_only
     # follow-ups (the user 2026-06-28). Due goals COLLECT into to_fire and go out ONCE after the loop —
     # several in the same tick bundle into one message (the user 2026-07-24) instead of N separate ones.
     to_fire = []                                     # [(gid, count, stalled)] due THIS tick
+    # OPEN USER TODOS explain this idle (plans/user-todos.md, the escalation section): the todo IS
+    # the session's declared frontier — it told the user what it needs and kept going — so a STATUS
+    # NUDGE would fish for exactly what the todo already states, and the surface is the escalated
+    # card (build_feed's read-side floor), never a manufactured turn. Scoped to the status-nudge
+    # branch ALONE (2026-08-22 — the first cut returned at SESSION level and silenced two unrelated
+    # ladders): the awaiting WAKE below still fires, because it is the 6h LOST-WAKEUP backstop, not
+    # a status ask — suppressing it re-creates the 2026-08-11 wedge (dispatched background work
+    # whose completion wakeup died, asleep in Awaiting for days) — and the DEBT machinery at the
+    # bottom still runs, because it is the ONE mechanism that unparks a PEER silently waiting on
+    # this session's answer; a todo names what THIS session needs from the user and says nothing
+    # about what a peer needs from it. Lifts the moment the last todo clears: answer, dismiss, or
+    # withdraw, each a real event this store read sees live.
+    _todo_standdown = bool(_open_user_todos(sid))
     _pworld = {}                                     # the park gate's lazy world read (report + settle
     #                                                  key), shared with the judge batch below so the
     #                                                  tick's read count and sequencing don't change
@@ -12309,6 +12393,15 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None, wake_only
                                  ev_t=_cur_ts, parked_s=(now - _panch) if _panch else None)
                 nudged[gid] = dict(_prec, rearmEvT=_cur_ts, rearmSettleT=_cur_st)
                 _put_nudged(gid, nudged[gid])
+        if _todo_standdown:
+            continue                                 # the status nudge (and its failed-stamp surface, which
+            #                                          would file a SECOND needs-you story beside the floored
+            #                                          card) stands down while an open todo explains the idle;
+            #                                          the wake above and the debt reminder below flow past.
+            #                                          Sits BELOW the park gate on purpose: this is exactly the
+            #                                          "downstream hold" its re-armed stamp anticipates, so a
+            #                                          park lift during an open todo logs its one row and the
+            #                                          fire waits here.
         # LAST-RESORT GATE (the user 2026-07-22): every OTHER mechanism that could still move this card
         # off 'working' must be exhausted first. This is what the 2026-07-22 false interrupt needed: the
         # card's 'working' came from a STALE agent-to-do mirror, and the nudge fired before the sync that
@@ -30306,9 +30399,6 @@ def _save_pending_ops():
 _pending_ops = _load_pending_ops()   # sid -> [("send", text, echo[, qid]) | ("command", text, echo[, qid]) | ("model", v) | ("effort", v) | ("fast", v) | ("env", {…}) | ("cwd", path, busy_retries) | ("compact",), …] in park order
 
 
-_PATH_UNRESOLVED = object()   # _compacting_now's "no path was passed" sentinel — None is a real value (no transcript)
-
-
 def _compacting_now(sid, tm=None, path=_PATH_UNRESOLVED):
     """Is this session compacting RIGHT NOW — the same corroborated signal the chip uses (_compacting:
     live/optimistic state, disproved by resumed work or a compact_boundary, 180s optimistic cap), read
@@ -35690,6 +35780,39 @@ def _blocked_placeholder(s, name, color, fsid, live, now, perm_state, since):
             "provisional": True, "tree": []}
 
 
+# The escalated card's one-line story (plans/user-todos.md): why the column moved — the session ran
+# out of work it can do alone, and what remains is what it asked the user for. Parallel to the perm
+# floor's "stopped awaiting your approval"; shared by the floored focus card and the placeholder.
+_USER_TODO_BLOCK_WHAT = ("this session has run out of work it can do alone — "
+                         "what's left waits on what it asked you for")
+
+
+def _user_todo_placeholder(s, name, color, fsid, live, now, todos):
+    """A NEEDS-INPUT placeholder for a session IDLE on open USER TODOS with NO goal to floor — all
+    its goals completed/cleared, or none minted yet (plans/user-todos.md, slice 2). The goal-less
+    permission prompt's exact shape (_blocked_placeholder): without it the escalation would be
+    invisible precisely when the todos are the ONLY thing left of the session's frontier. The
+    oldest open ask titles the card (the list arrives createdT-sorted); the newest ask's time is
+    the card's current-state time, per the card-time rule. PROVISIONAL on purpose: the badge
+    counts the TODOS (the payload's userTodos map), and this card is a presentation of them — a
+    countable card here would double-count (the spec's dedup rule), and the bell's provisional
+    skip keeps placeholder churn silent, exactly like the permission twin. Appears and vanishes on
+    the floor's own events (the settle arms it; a new turn, an answer, a dismiss or a withdraw
+    stands it down), never on a timer."""
+    newest = max([int(t.get("createdT") or 0) for t in todos] or [now]) or now
+    text = str(todos[0].get("text") or "Waiting on you")
+    if len(todos) > 1:
+        text += "  (+%d more)" % (len(todos) - 1)
+    return {"itemId": "usertodo:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
+            "t": newest, "live": live, "trgb": list(cm.age_rgb(now - newest, _colormap())),
+            "turnId": None, "origin": None, "followupPending": None,
+            "summary": None, "blockSummary": None, "background": None,
+            "blocked": {"state": "userTodos", "count": len(todos),
+                        "what": _USER_TODO_BLOCK_WHAT},
+            "column": "needs_input",
+            "provisional": True, "tree": []}
+
+
 # LEGACY question-intent tell for postal rows that predate the schema `kind` field (QUESTION/ASK/Q lead
 # word). Rows that CARRY a kind use it directly — the sender's declared intent is the designed source; the
 # body regex is only the fallback for old log rows (the user 2026-06-22 / the 2026-07-22 unification).
@@ -36546,22 +36669,78 @@ def build_feed(now, tmux=None):
             if f in nodes and status.get(f) not in ("completed", "cleared"):
                 jauth_top = f
         # USER TODOS (plans/user-todos.md, slice 2): the open needs this session registered with the
-        # person it works for. The map feeds the quiet per-card marker; ENDED sessions hide theirs
-        # from every surface and aggregate — build_session's exact corroborated gate — and a muted
-        # session never reaches here (the hideFromFeed continue above), so the marker goes quiet for
-        # it. THE MUTE ASYMMETRY IS DESIGNED (2026-08-22 — do not "fix"): the TAB GLYPH reads
-        # build_session's userTodos field, which mute does not touch — mute means "stop interrupting
-        # me about this session" and quiets the feed and its aggregates; the tab stays truthful about
-        # what its session holds. Store values only: the map must serialize identically across builds
-        # when nothing changed.
+        # person it works for. The map feeds the quiet per-card marker and the widened badge; ENDED
+        # sessions hide theirs from every surface and aggregate — build_session's exact corroborated
+        # gate — and a muted session never reaches here (the hideFromFeed continue above), so the
+        # marker, the floor and the badge all go quiet for it. THE MUTE ASYMMETRY IS DESIGNED
+        # (2026-08-22 — do not "fix"): the TAB GLYPH reads build_session's userTodos field, which
+        # mute does not touch — mute means "stop interrupting me about this session" and quiets the
+        # feed and its aggregates; the tab stays truthful about what its session holds. Store values
+        # only: the map must serialize identically across builds when nothing changed.
         _ut_open = _open_user_todos(fsid)
         if _ut_open and _user_todo_session_ended(fsid):
             _ut_open = []
         if _ut_open:
             _ut_map[fsid] = len(_ut_open)
+        # THE IDLE-ESCALATION FLOOR (the spec's one earned card move): when the session has settled
+        # idle with open todos and nothing else dispatched, the todo IS its frontier — the focus card
+        # floors to needs-input, perm_top's own family. A READ-SIDE floor, never a judge verdict (the
+        # ADR bars the diary), so it re-derives away the build after an answer/withdraw/dismiss or a
+        # new turn opening. THE EVENTS BEHIND THE MOVE: it arms at the SETTLE (the parsed turn's end
+        # with the state log's post-turn record not progressing — _user_todo_idle's no-flap guard,
+        # so a mid-turn lull never moves the card) and stands down on the next turn opening, on a
+        # message queued for the session, on a peer owing it a reply, and on the todo's own
+        # resolution — each a real event, none a clock. _user_todo_idle carries the guard and the
+        # peer-wait stand-down (wmap's edge: a live peer owing this session a reply explains the
+        # idle — 2026-08-22). CONSTRAINT — the peer-wait edge is LOCAL-HOST scope (2026-08-22,
+        # documented not fixed): _wait_for_graph keeps an edge only to peers in THIS kernel's alive
+        # set, so an unanswered ask to a FEDERATED peer makes no edge and the floor still fires over
+        # an idle that remote peer explains. The waitingOn chip and the nudge tick's skip share the
+        # exact same scope, deliberately — cross-host wait tracking belongs in _wait_for_graph, where
+        # widening it lifts all three surfaces at once; a floor-only special case would fork the
+        # wait derivation (plans/user-todos.md, escalation; PeerWaitScopeIsLocalOnly is the pin).
+        # Yields to every LIVE interrupt (api / perm / judge-auth): one interrupt at a time, the
+        # present event first.
+        todo_top = None
+        _todo_idle = bool(_ut_open) and _user_todo_idle(fsid, ps, who_working, sess_awaiting_why,
+                                                        perm_state, aerr, wmap.get(fsid),
+                                                        tm=tm, path=s["path"])
+        if _todo_idle and api_top is None and perm_top is None and jauth_top is None:
+            f = store.get("lastNode")
+            while f and nodes.get(f, {}).get("parentId") is not None:
+                f = nodes[f]["parentId"]
+            # …and never a done-CONFIRMING top (2026-08-22): a top in the rollup's `confirming`
+            # export has its done verdict filed with only the settle pending — its col still
+            # reads 'working' (the steady doneConfirming cue), and the settle gate is already
+            # protecting that read. Flooring it here flapped the card working→needs-you→completed
+            # with no new information; the imminent completion is the settle's to deliver, so both
+            # the walk and the fallback skip the set (the same `confirming` the doneConfirming cue
+            # and the nudge's pop guard read — one completion truth, the rollup exports).
+            if (f in nodes and status.get(f) not in ("completed", "cleared")
+                    and f not in confirming):
+                todo_top = f
+            if todo_top is None or _pure_delegation_top(nodes, todo_top, sid=fsid, path=s["path"]):
+                # FOCUS-CHAIN MISS (2026-08-22): lastNode can point into a COMPLETED top — the
+                # session's last judged work finished — while another top still reads working. The
+                # walk above dead-ends there, the floor never fires, and had_working (the other
+                # top's card) suppresses the placeholder below: the escalation was invisible exactly
+                # when a card existed to carry it. On an IDLE session the todo is the frontier
+                # whichever top holds focus, so fall back to the first top that will actually make a
+                # plain-working card (the goal loop's own skips: cleared, pure delegation, and the
+                # confirming set above). Store order — deterministic, so the payload stays
+                # byte-stable across builds. Every yield above (api / perm / jauth win) still
+                # applies: this runs only inside their guard.
+                todo_top = next((g for g in children.get(None, [])
+                                 if status.get(g, "working") == "working"
+                                 and g not in cleared and not nodes[g].get("cleared")
+                                 and g not in confirming
+                                 and not _pure_delegation_top(nodes, g, sid=fsid, path=s["path"])), None)
         plain_user_t = _last_plain_user_turn_t(ps["turns"]) if ps else 0   # re-check: a plain reply after a soft block de-urgents it
         had_working = False                          # does this session show ANY working card? → drives the provisional placeholder
         had_awaiting = False                         # …and does any of them read AWAITING? → the session's await-green dot (below)
+        had_needs_input = False                      # …and does any card already interrupt (needs_input)? → the
+        #                                              goal-less todo placeholder yields to it: one session, one
+        #                                              interrupt story at a time (2026-08-22)
         # The live background-task set, once per session: OWNERSHIP for the blocked-yield below (any live
         # task counts there — the yield keys on the dispatch event, not on classification), and the
         # judge-classified SERVICES for the neutral per-session chip (the user 2026-07-24). Idle-gated
@@ -36875,15 +37054,23 @@ def build_feed(now, tmux=None):
                             else any(e.get("src") == "user" for e in _nlog))
             nudge_failed = (bool(nrec.get("failed")) and not _story_moved
                             and (col == "working" or (col == "blocked" and _lastblk == "nudge")))
+            # THE USER-TODO FLOOR fires on the focus card while it is PLAIN WORKING only (plans/
+            # user-todos.md): an awaiting flip, a soft block, and recheck/rejudging's de-urgent
+            # smoothing are each their own designed latches — the floor exists to catch the card
+            # that would otherwise sit mute in Working while the session's whole frontier waits on
+            # the user, never to displace another move.
+            _todo_block = bool(nid == todo_top and col == "working")
             # A live picker/permission floor (perm_top) is a GENUINE block, so the kernel reports its column as
             # needs_input — NOT "working" with the client re-routing it by it.blocked (which was crafty + split
             # the truth: build_feed said working while the card showed under Blocked, and the distiller line,
             # keyed on it.column, then stayed hidden). Now it.column is authoritative: the card IS blocked, the
             # client files by it.column, and the distiller line shows (the user 2026-06-29).
             column = ("needs_input" if (api_block or nid == jauth_top or nid == perm_top or _stall_block
+                                        or _todo_block
                                         or (col == "blocked" and not recheck and not rejudging))
                       else "completed" if col == "completed" else "working")
             had_working = had_working or column == "working"
+            had_needs_input = had_needs_input or column == "needs_input"
             had_awaiting = had_awaiting or col == "awaiting"   # the FLAVOR, not the column: awaiting rides Working
             # distillState (the user 2026-07-21): which distilled line the CARD should show — keyed on the
             # GENUINE resolution state, NOT the transient `column`. recheck/rejudging drop a still-blocked
@@ -37076,6 +37263,10 @@ def build_feed(now, tmux=None):
                             else {"state": perm_state,
                                   "what": ("this session is stopped awaiting your input" if perm_state == "picker"
                                            else "this session is stopped awaiting your approval")} if nid == perm_top
+                            # the idle-escalation floor's story (plans/user-todos.md): the count rides so
+                            # the badge can treat this card as a PRESENTATION of todos it already counted
+                            else {"state": "userTodos", "count": len(_ut_open),
+                                  "what": _USER_TODO_BLOCK_WHAT} if _todo_block
                             else None),
                 "retrying": (sess_retrying if column == "working" else None),   # api-retry storm in the OPEN turn → "retrying since HH:MM" chip on the working card; chip only, no column move (the user 2026-07-09)
                 "nudgeFailed": nudge_failed,         # the one auto-nudge didn't resolve the stall → "nudge failed" chip; never re-nudged (plans/stalled-open-todos-nudge.md)
@@ -37129,10 +37320,13 @@ def build_feed(now, tmux=None):
         # verdicts, so no sibling card is floored by it (what the session-wide _await_ok would have done).
         if had_awaiting and not who_working and name not in awaiting:
             awaiting.append(name)
-        if not had_working and perm_top is None and ps:   # cache-only: the live-prompt placeholder needs the parse → after the warm
+        if not had_working and perm_top is None and todo_top is None and ps:   # cache-only: the live-prompt placeholder needs the parse → after the warm
             # perm_top excluded: a live-blocked focus card no longer counts as "working" (it reports needs_input
             # now), so without this guard a session whose ONLY card is the picker-blocked one would ALSO get a
             # provisional working placeholder — a duplicate. A floored perm_top already covers the live prompt.
+            # todo_top excluded for the same reason (2026-08-22): the todo-floored focus card reports
+            # needs_input too, so during judge latency this chain painted a provisional Working "Analyzing:"
+            # placeholder BESIDE it — the exact duplicate the perm guard prevents; mirror it.
             # store_faulted excluded: "the planner has not placed this yet" is an inference from placements we
             # could not read, so a session whose store faulted gets no provisional card (its row says why).
             pc = _provisional_card(s, name, color, fsid, live, now, store) if not store_faulted else None
@@ -37145,6 +37339,15 @@ def build_feed(now, tmux=None):
                 # by the real card once the planner places the answered work.
                 asks.append(_blocked_placeholder(s, name, color, fsid, live, now, perm_state,
                                                  tm.get("since") if tm else None))
+            elif _todo_idle and _ut_open and todo_top is None and not had_needs_input:
+                # IDLE on open USER TODOS with no goal to floor (everything completed/cleared, or no
+                # goals yet): the goal-less permission prompt's shape (plans/user-todos.md). Provisional
+                # like that placeholder — a presentation of the todos, which the badge already counts.
+                # had_needs_input excluded (2026-08-22): todo_top None also means "yielded to
+                # jauth_top" (or any card already blocked), and the placeholder fired BESIDE that
+                # card's own story — one session shows ONE interrupt presentation at a time, and
+                # every floored/blocked card wins over this presentation of the todos.
+                asks.append(_user_todo_placeholder(s, name, color, fsid, live, now, _ut_open))
             elif sess_awaiting_why:
                 # AWAITING a dispatched background task with NO goal to floor (the user 2026-07-13): the
                 # session's work is all placed/done, but a background task it dispatched is still running
@@ -45115,6 +45318,55 @@ def _notify_prev_forget_gone(owned):
     sys.stderr.write("[notify] forgot %d card%s of %d session%s gone for good\n"
                      % (len(gone), "" if len(gone) == 1 else "s", len(sids), "" if len(sids) == 1 else "s"))
     return len(gone)
+# The todo-floor's PUSH latch (plans/user-todos.md, escalation; 2026-08-22): sid -> the frozenset of
+# open todo ids the floored card last PUSHED for. The floor stands down for every turn the session
+# takes and re-arms at the settle — the designed card move — but the column diff above read each
+# re-entry as news: an OS push per exchange and per monitor wake-cycle for the SAME deferred todo.
+# So the push is deduplicated here, event-keyed on the FLOORED TODO SET: it fires on first arm or
+# when a todo id joins the set (a new ask is news); an identical set re-entering is not. This latch
+# survives the card's Working dips, which is exactly what the per-build prev map cannot do. A
+# kernel restart re-baselines both together — and the baseline SEEDS this one from the
+# already-floored cards (2026-08-22): the floored world IS the already-notified state, so an
+# in-memory reset must not turn the first post-restart dip+re-entry into a spurious re-push of a
+# todo the user already deferred.
+_NOTIFY_UT_FIRED = [{}]
+_NOTIFY_UT_LOCK = threading.Lock()   # the latch has a THREADED writer (_notify_ut_unlatch, on the
+#                                      loss seam's daemon thread) beside the build-serial
+#                                      read-modify-writes below; every RMW holds this, or a stale
+#                                      fire-path write could silently overwrite a concurrent
+#                                      unlatch and eat the very push the loss seam re-armed
+
+
+def _notify_ut_open_ids(sid):
+    """The floored todo set for the latch, read from the authoritative store — the same read the
+    floor derived the card from, so a count-preserving change (one answered, one added) still
+    reads as the new id it is. Best-effort empty: a store hiccup must never break the push path."""
+    try:
+        return frozenset(t["id"] for t in _open_user_todos(str(sid)))
+    except Exception:
+        return frozenset()
+
+
+def _ut_floored(card):
+    """Is this feed card floored by open user todos (the escalation floor, blocked.state "userTodos")?
+    Such a card's news test in _feed_notifications is its floored-set diff, not the column transition."""
+    return card.get("column") == "needs_input" and (card.get("blocked") or {}).get("state") == "userTodos"
+
+
+def _notify_ut_unlatch(sid, tid):
+    """Clear ONE todo id from the floor-push latch — the LOSS seam's re-arm (2026-08-22).
+    _reopen_user_todo restores the very id the latch already holds, so the set dedup in
+    _feed_notifications would suppress the re-floor's push forever — but a corroborated answer
+    LOSS (_user_todo_answer_lost, or a stamp standing down to a refused paste) is exactly the
+    event the seam's never-quiet doctrine exists for: the user believes they answered, and the
+    re-floor's push is the one signal their answer never arrived. Keyed at the loss EVENT, never
+    on reopen itself: the user's own ✕ recall (_cancel_backend_queued) also reopens this way, and
+    rightly stays silent — they pulled the answer back themselves and need no interrupt saying
+    what they just did. Runs on the loss seam's thread, hence the lock."""
+    with _NOTIFY_UT_LOCK:
+        fired = _NOTIFY_UT_FIRED[0].get(str(sid))
+        if fired and tid in fired:
+            _NOTIFY_UT_FIRED[0][str(sid)] = fired - {tid}
 
 
 def _notify_title(name, needs_you=False):
@@ -45158,7 +45410,9 @@ def _feed_notifications(feed):
     on disk, and prunes armed ids whose card left the feed. sid rides along so a push notification's tap
     can land ON the session that fired (the user 2026-08-08, whose first real push opened the app on a
     different session); itemId joined it 2026-09-06 so the same tap can also scroll the feed to the card
-    itself."""
+    itself. A card FLOORED by open user todos (blocked.state "userTodos") is judged by its floored-set diff
+    on every build, not the column transition: the set is the news test for it (_NOTIFY_UT_FIRED), and the
+    first build of a kernel life seeds that latch from the already-floored cards (2026-08-22)."""
     with _notify_prev_lock:                          # read to swap as one step: the sweep prunes the same snapshot
         return _feed_notifications_diff(feed)
 
@@ -45167,6 +45421,7 @@ def _feed_notifications_diff(feed):
     """The diff itself, under the snapshot's lock (see _notify_prev_lock)."""
     prev = _NOTIFY_PREV[0]
     first_boot = False
+    first_build = prev is None                       # this kernel life's first build (with or without a snapshot on disk)
     if prev is None:                                 # the first build of this kernel life
         prev = _notify_prev_load()
         first_boot = prev is None
@@ -45188,6 +45443,20 @@ def _feed_notifications_diff(feed):
     #                                                until the sweep finds the session gone for good (_notify_prev_forget_gone)
     now_t = int(feed.get("now") or time.time())   # the build's own moment: wall clock, like the journal's t
     entered = []                                     # (itemId, card, column, entry): the cards that ENTERED a column
+    if first_build:
+        # the FIRST build of this kernel life SEEDS the todo-floor latch (2026-08-22): the latch is
+        # in-memory, so a kernel restart used to re-baseline it EMPTY, and the first routine dip+re-entry
+        # after every restart re-pushed a todo the user had already seen and deferred, one spurious
+        # interrupt per floored session per restart. A card already floored at this build either fired
+        # before the restart or is status this very build declines to push; either way its floored set
+        # IS the already-notified state, so it seeds the latch (event-derived from the build in hand;
+        # the persisted snapshot above records the column marks, never this set).
+        for iid, a in cur.items():
+            if (a.get("column") == "needs_input"
+                    and (a.get("blocked") or {}).get("state") == "userTodos"):
+                _usid = str(a.get("sid") or "")
+                with _NOTIFY_UT_LOCK:
+                    _NOTIFY_UT_FIRED[0][_usid] = _notify_ut_open_ids(_usid)
     for iid, a in cur.items():
         col, sid, ent = a.get("column"), str(a.get("sid") or ""), prev.get(iid)
         if col in _NOTIFY_COLUMNS:
@@ -45197,8 +45466,8 @@ def _feed_notifications_diff(feed):
             nxt[iid] = e
             if first_boot:
                 e["announced"], e["announcedAt"] = col, now_t     # the seed counts as told: the user has the board
-            elif ent is None or ent.get("column") != col:
-                entered.append((iid, a, col, e))
+            elif ent is None or ent.get("column") != col or _ut_floored(a):
+                entered.append((iid, a, col, e))     # a floored card is a candidate on EVERY build (its set is the test)
         elif ent is not None and ent.get("announced"):
             # in working now, but announced before: the mark is what keeps a return to that column silent
             nxt[iid] = {"sid": sid, "column": None, "announced": ent["announced"], "announcedAt": ent.get("announcedAt")}
@@ -45208,7 +45477,26 @@ def _feed_notifications_diff(feed):
         for iid, a, col, e in entered:
             if not _notify_card_effective(cards, iid, e["sid"]):
                 continue
-            if e["announced"] == col and not _notify_user_acted_since(e["sid"], iid, e["announcedAt"]):
+            if _ut_floored(a):
+                # the todo-floor dedup (_NOTIFY_UT_FIRED above): the CARD move stands exactly as
+                # built; only the push is deduplicated, keyed on the floored todo set. The set is
+                # read from the authoritative store (the same read the floor derived from), so a
+                # count-preserving change (one answered, one added) still reads as the new id it is.
+                # Evaluated on EVERY build the card is floored, independent of the column diff and
+                # of the announced mark (2026-08-22): a todo can register in a turn too quick for any
+                # build to observe the dip, leaving the card floored in both adjacent builds; the
+                # joining id is news with or without a column transition, and the column
+                # short-circuit was eating exactly that push. The latch advances only when a push
+                # FIRES: a suppressed build must not narrow it, or an id answered while floored and
+                # then RECALLED (the user's own recall, rightly silent, see _notify_ut_unlatch) would
+                # read as news.
+                _uids = _notify_ut_open_ids(e["sid"])
+                with _NOTIFY_UT_LOCK:
+                    _prev_ids = _NOTIFY_UT_FIRED[0].get(e["sid"])
+                    if _prev_ids is not None and not (_uids - _prev_ids):
+                        continue                     # floored with no new todo: not news
+                    _NOTIFY_UT_FIRED[0][e["sid"]] = _uids
+            elif e["announced"] == col and not _notify_user_acted_since(e["sid"], iid, e["announcedAt"]):
                 continue                             # the same (card, column), told already, nothing of the user's since
             e["announced"], e["announcedAt"] = col, now_t
             needs_you = col == "needs_input"            # the card's column: the authoritative state, not the words
@@ -45225,11 +45513,51 @@ def _feed_notifications_diff(feed):
     return out
 
 
+# The badge's PER-ITEM needs-input classes (2026-08-22): cards that are each an independent user
+# DECISION, not a state of their session — a quarantined peer mail is approve/deny/edit PER
+# MESSAGE, a parked handoff is deliver-or-dismiss PER SEND — so the per-session dedup was
+# absorbing real decisions (a permission stop + two held mails read badge 1). Enumerated
+# exhaustively from build_feed's own needs-input constructors: the goal cards and the two
+# goal-less placeholders are session-state (dedup by sid; placeholders don't count at all),
+# leaving exactly the parked-handoff cards (blocked.state "parkedHandoff") and the quarantine
+# cards (blocked.state "quarantine"). A new needs-input constructor must pick a side here;
+# tests/test_user_todos.py pins the list against the constructors.
+_NEEDS_YOU_PER_ITEM = ("parkedHandoff", "quarantine")
+
+
 def _needs_you_count(feed):
-    """How many real (non-provisional) cards sit in needs_input — the number the app icon wears.
-    Counted from the same feed build the notifications diff, so badge and bell can never disagree."""
-    return sum(1 for a in (feed.get("asks") or [])
-               if not a.get("provisional") and a.get("column") == "needs_input")
+    """The number the app icon wears: THINGS ONLY THE USER CAN MOVE (plans/user-todos.md, (d)) —
+    open user todos of non-ended sessions (the payload's sid-keyed map, built behind the ended
+    gate) PLUS hard-stopped needs-input sessions, counted per SESSION from the same feed build the
+    notifications diff, so badge and bell can never disagree. The spec's dedup rule, both halves:
+    the idle-escalation floor is a PRESENTATION of todos the count already includes (its cards
+    carry blocked.state "userTodos" and add nothing), while a session hard-stopped for a non-todo
+    reason — a permission prompt, an on-you API error, a judge-filed block — counts once AS
+    ITSELF beside whatever todos it holds. PER-ITEM decision cards (_NEEDS_YOU_PER_ITEM) count
+    per CARD: they are independent decisions, not session stops (2026-08-22). A sid-less
+    needs-input card (nothing to dedup against) still counts alone; provisional placeholders stay
+    out, as ever (churn is not news). Runs on the pusher: a malformed map (a stale or foreign
+    frame) contributes nothing rather than raising."""
+    n = 0
+    _utm = feed.get("userTodos")
+    if isinstance(_utm, dict):
+        for v in _utm.values():
+            try:
+                n += int(v or 0)
+            except (TypeError, ValueError):
+                pass
+    hard = set()
+    for a in (feed.get("asks") or []):
+        if a.get("provisional") or a.get("column") != "needs_input":
+            continue
+        _st = (a.get("blocked") or {}).get("state")
+        if _st == "userTodos":
+            continue                                 # the floor's presentation — the todos are already in n
+        if _st in _NEEDS_YOU_PER_ITEM:
+            hard.add("item:" + str(a.get("itemId")))   # one decision per CARD, never folded by sid
+            continue
+        hard.add(str(a.get("sid") or "") or ("item:" + str(a.get("itemId"))))
+    return n + len(hard)
 
 
 # The count the shell clients last heard (None = nothing sent since boot). The badge moves on feed
