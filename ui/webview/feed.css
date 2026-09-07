@@ -1406,10 +1406,16 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   background: var(--bg, #1e1e1e); border: 1px solid var(--box-border); border-radius: var(--radius-modal);
   box-shadow: var(--shadow-modal); }
 body.fileview-open { overflow: hidden; }
-.fileview-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-width: 0;
+.fileview-bar { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0;
   padding: 7px 10px; border-bottom: 1px solid var(--box-border); }
 /* Only the DIRECTORY may be truncated: the filename identifies the file, so it holds its width however
-   deep the path is, and the dimmed directory in front of it gives up room first. */
+   deep the path is, and the dimmed directory in front of it gives up room first. The bar WRAPS: the path keeps
+   at least 12em and the action row drops to a second line, right-aligned, when the two do not fit side by side.
+   The pane variant wrapped first (files-pane.css, review 2026-09-07: the row of buttons squeezed the directory
+   link to 0px in a 480px pane); the modal kept one rigid line until the text-size control's three buttons pushed
+   Download, Copy path and the close button off the card below about 600px (.fileview is overflow: hidden, and a
+   phone has no Escape), so the wrap is the bar's own now, in both sheets (review 2026-09-07, round 1): the two
+   .fileview-bar rules after .fileview-acts below. */
 .fileview-name { flex: 1 1 auto; min-width: 0; font-size: 0.86em; color: var(--fg);
   display: flex; align-items: baseline; white-space: nowrap; }
 .fileview-dir { flex: 0 1 auto; min-width: 0; color: var(--dim);
@@ -1432,6 +1438,15 @@ body.fileview-open { overflow: hidden; }
   background: var(--overlay-10, rgba(255, 255, 255, 0.12)); color: var(--fg); user-select: none; }
 .fileview-sess .host-prefix { color: inherit; opacity: 0.75; }
 .fileview-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+/* The wrap is the TITLE BAR's, not the classes' (review 2026-09-07, round 2). Two surfaces wear these classes
+   outside any bar: the Files pane's Recent rows (.fs-row, files.ts) wear .fileview-name, and the file browser's
+   action row (.fb-bar, file-browse.ts) wears .fileview-acts. Round 1 put the pane's wrap into the two base rules
+   and both surfaces changed shape: a 200px pane's Recent row overflowed under the name's 12em and pushed its
+   session chip past the row, and the browser's Hidden and close buttons stacked at 320-480px under a long crumb
+   trail (.fb-bar never wraps). Inside the bar the path keeps 12em and takes the rest of a wide bar, and the action
+   row shrinks and wraps to the right edge; elsewhere the plain flex above holds, as before the control. */
+.fileview-bar .fileview-name { flex: 1 1 0; min-width: 12em; }
+.fileview-bar .fileview-acts { flex: 0 1 auto; min-width: 0; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 .fileview-btn { font: inherit; font-size: 0.82em; cursor: pointer; flex: 0 0 auto;
   padding: 3px 9px; border-radius: 6px; background: transparent; color: var(--fg);   /* T151: the one button rest */
   border: 1px solid var(--card-border);
@@ -1452,11 +1467,20 @@ a.fileview-btn { text-decoration: none; display: inline-flex; align-items: cente
    dimmed button and the loader's dots (.fileview-dot, the pane's own) where the caption will go — a slow
    check must read as a wait, not as the old no-button state nor as a verdict (the loading-state rule) */
 .fileview-gh-dots { display: inline-flex; align-items: center; gap: 4px; }
-/* no link: a real disabled button, greyed, hover inert — never hidden (an absent button read as
-   "broken" when the file was simply not committed yet, 2026-09-05) */
-.fileview-gh .fileview-btn:disabled { opacity: 0.55; cursor: default; }
-.fileview-gh .fileview-btn:disabled:hover { border-color: var(--card-border); color: var(--fg); background: transparent; }
-.fileview-gh .fileview-btn:disabled:active { transform: none; }
+/* a disabled bar button, greyed, hover inert: the GitHub unit's no-link state (a real disabled button, never
+   hidden: an absent button read as "broken" when the file was simply not committed yet, 2026-09-05) and the
+   text-size control's end (A− at the smallest step, A+ at the largest; aria-disabled, so the button keeps the
+   keyboard focus it holds and the ring stays where the person left it). One treatment for every bar button
+   (review 2026-09-07: the end buttons kept the pointer cursor and the accent hover and read as live). */
+.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] { opacity: 0.55; cursor: default; }
+.fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover { border-color: var(--card-border); color: var(--fg); background: transparent; }
+.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active { transform: none; }
+/* the text-size readout between A− and A+ (file-view.ts): a slot of ONE width whatever it says, and at the
+   default (nothing to reset, nothing to say) an empty slot rather than none, so A− never moves under the
+   pointer when the readout appears after the first press (review 2026-09-07: the second press landed on the
+   reset and undid the first). visibility, not display: the box stays, the button leaves the tab order. */
+.fileview-size-reset { min-width: 5.5em; box-sizing: border-box; text-align: center; font-variant-numeric: tabular-nums; }
+.fileview-size-reset.fileview-size-default { visibility: hidden; }
 /* a link whose branch is not on origin yet: dashed, the caption carries the note */
 a.fileview-gh-note { border-style: dashed; }
 .fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
@@ -1465,11 +1489,11 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-code { display: flex; align-items: flex-start; min-height: 100%; }
 .fileview-gutter { flex: 0 0 auto; position: sticky; left: 0; z-index: 1;
   padding: 10px 8px 10px 10px; text-align: right; user-select: none;
-  font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5;
+  font-family: var(--mono, ui-monospace, monospace); font-size: calc(12px * var(--fv-scale, 1)); line-height: 1.5;
   color: var(--dim); opacity: 0.55; background: var(--bg, #1e1e1e);
   border-right: 1px solid var(--box-border); white-space: pre; }
 .fileview-pre { flex: 1 1 auto; margin: 0; padding: 10px 12px;
-  font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5;
+  font-family: var(--mono, ui-monospace, monospace); font-size: calc(12px * var(--fv-scale, 1)); line-height: 1.5;
   white-space: pre; tab-size: 4; }
 .fileview-pre code { background: none; padding: 0; font: inherit; }
 /* a refusal explains itself in place, in the kernel's own words (too large — with the size and the
@@ -1535,12 +1559,39 @@ a.fileview-gh-note { border-style: dashed; }
    have): dead, and it says so, since the title holds the reason (file-view-links.ts DEAD_LINK_CLASS). */
 .fileview-md a.fv-dead { color: inherit; opacity: 0.7; text-decoration: underline dotted; cursor: help; }
 
+/* ── text size and measure (the user 2026-09-07: the rendered markdown had to be zoomable, and a table did not
+   follow the Files pane's width) ── The A− / A+ buttons and Ctrl/Cmd + wheel over the body (file-view.ts) set
+   `data-fv-text` on the viewer root to one of TEXT_SIZES; this table turns the step into the ONE property the
+   text views read, --fv-scale. Every text size below is a multiple of it, so the prose, its headings (em of the
+   prose), inline and fenced code, and the Raw view's rows and gutter scale together, and the prose measure with
+   them (the same characters per line at every size). Nothing else reads it: the title bar, the aside, a figure's
+   region chip (--fs) and the editor keep the page's size. Absent (an older bundle) every fallback reads as 1:
+   today's sizes byte for byte. file-view-text-size.test.ts pins the table against TEXT_SIZES in both sheets.
+   The measure sits on the prose blocks, not the root: a table takes the pane's width when it needs it (the
+   root is fluid to the pane), and a table wider than that scrolls in its own box, whole words kept
+   (`overflow-wrap: normal` against the root's `anywhere`, which crushed every column to fit), so the page never
+   widens. Code blocks keep the measure and wrap their long lines (the user 2026-08-24: long lines always
+   soft-wrap): a short snippet has no use for a 1400px box beside 860px prose. The measure rule is written at
+   ZERO specificity (:where) so a picture's own cap below always beats it: a bare <img> line in a README is a
+   direct child of the root, and a plain :not() chain outranked `.fileview-md img`, laid the picture out at the
+   measure and scrolled a 380px pane sideways (review 2026-09-07). A picture that is itself a block of the page,
+   or the figure layer's wrapper around one, takes the measure AND the column, like an image paragraph. */
+.fileview[data-fv-text="70"] { --fv-scale: 0.7; }
+.fileview[data-fv-text="80"] { --fv-scale: 0.8; }
+.fileview[data-fv-text="90"] { --fv-scale: 0.9; }
+.fileview[data-fv-text="100"] { --fv-scale: 1; }
+.fileview[data-fv-text="115"] { --fv-scale: 1.15; }
+.fileview[data-fv-text="130"] { --fv-scale: 1.3; }
+.fileview[data-fv-text="150"] { --fv-scale: 1.5; }
+.fileview[data-fv-text="175"] { --fv-scale: 1.75; }
+.fileview[data-fv-text="200"] { --fv-scale: 2; }
 /* Rendered markdown (the Raw ⇄ Rendered toggle; Rendered is the default — the user 2026-08-09).
    Typography mirrors the chat's .md block in styles.css, the reference aesthetic (one treatment, two
    sheets — the .romp-acted precedent); font sizes reuse what this surface already wears (the page base,
    12px mono, the err-hint's 0.92em). Vars the feed sheet does not define carry the chat's literals as
    fallbacks (feed-css-vars.test.ts holds that line). */
-.fileview-md { padding: 14px 18px; max-width: 860px; overflow-wrap: anywhere; font-family: var(--font-prose); }
+.fileview-md { padding: 14px 18px; overflow-wrap: anywhere; font-family: var(--font-prose); font-size: calc(1em * var(--fv-scale, 1)); }
+.fileview-md > :where(:not(table)) { max-width: calc(860px * var(--fv-scale, 1)); }
 .fileview-md > :first-child { margin-top: 0; }
 .fileview-md > :last-child { margin-bottom: 0; }
 .fileview-md p { margin: 0.5em 0; }
@@ -1575,13 +1626,14 @@ a.fileview-gh-note { border-style: dashed; }
 }
 .fileview-md pre code {
   background: none; padding: 0; display: block;
-  font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5;
+  font-family: var(--mono, ui-monospace, monospace); font-size: calc(12px * var(--fv-scale, 1)); line-height: 1.5;
   color: var(--code-fg, #e1c08d); white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.fileview-md table { border-collapse: collapse; margin: 0.6em 0; }
+.fileview-md table { border-collapse: collapse; margin: 0.6em 0; display: block; width: max-content; max-width: 100%; overflow-x: auto; overflow-wrap: normal; }
 .fileview-md th, .fileview-md td { border: 1px solid var(--box-border); padding: 4px 10px; text-align: left; }
 .fileview-md th { background: var(--box-bg, rgba(255, 255, 255, 0.03)); }
 .fileview-md img { max-width: 100%; }
+.fileview-md > img, .fileview-md > .fc-imgwrap { max-width: min(100%, calc(860px * var(--fv-scale, 1))); }
 /* A figure's region layer (the file-comments block below wraps every <img>) wears the PAGE's size and face, not the
    heading's or the prose's. The author chip is 0.72em of its layer, and a layer inside an h1 (1.3em) put the chip at
    0.94em — the same chip a third larger than on a paragraph figure, on the standalone image, or in the aside (the README
@@ -1685,7 +1737,11 @@ a.fileview-gh-note { border-style: dashed; }
    node enters a row, so the Raw walks' row verification, the selection mapping and unpaint are untouched, and, like the
    row number, the label never enters a selection; a substitution is the point followed by the tint. Both wear the
    author's session colour as a 2px underline (--fc-author, set inline per mark; the accent when no session matches).
-   The tint and the struck wash are the chat diff's own tokens (.diff-add / .diff-del). */
+   The tint and the struck wash are the chat diff's own tokens (.diff-add / .diff-del). The Rendered view places the
+   same point in the prose (the inline-display follow-on, 2026-09-07): an inline span, so the label wraps with the words
+   around it and wears the block's own face (a heading's size in a heading); the block's normal white-space folds a
+   multi-line label onto its line, where the Raw rows show its line endings. Show changes inline, in the panel's head,
+   leaves every mark off in both views. */
 .fc-ins { background: color-mix(in srgb, var(--green) 12%, transparent); border-bottom: 2px solid var(--fc-author, var(--accent));
   color: inherit; cursor: pointer; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .fc-del { border-bottom: 2px solid var(--fc-author, var(--accent)); cursor: pointer; user-select: none; -webkit-user-select: none; }

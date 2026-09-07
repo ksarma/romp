@@ -19,7 +19,10 @@
 //   - paintChangesRaw / paintChangesRendered / unpaintChanges (Slice 2) paint a session's pending changes:
 //     an insertion is its new text wrapped, a deletion a ZERO-WIDTH point whose struck label is CSS
 //     content, and the author's chip is CSS content too (`data-fc-chip` on a change's last Raw element),
-//     so no text node is ever added under a row and every Raw walk above stays exact.
+//     so no text node is ever added under a row and every Raw walk above stays exact. The Rendered view
+//     places the same point through the index map (paintRenderedPoint; the inline-display follow-on,
+//     2026-09-07), so a deletion reads struck in the prose too and the Rendered walks stay exact for the
+//     same reason.
 //
 // Everything walks a MINIMAL structural DOM (nodeType, childNodes, parentNode, data, splitText,
 // ownerDocument.createElement/createTextNode, getAttribute/setAttribute, insertBefore/appendChild/
@@ -416,7 +419,7 @@ function suffixLineView(raw: View, text: string): View {
   return new View(text, null, map);
 }
 
-type Hole = { reason: string; startN: number };
+type Hole = { reason: string; startN: number; endN: number };
 /** The emitted characters of one top-level block: `chars` are its non-whitespace rendered characters in
  *  order; `pos[k]` is the N index of chars[k], or -(h+1) for a character inside holes[h] (a nested code
  *  block or table the renderer shows but the mapping refuses). */
@@ -598,13 +601,13 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
       case "code": {
         // shown by the renderer, refused by the mapping: a hole the selection may not touch
         const tt = t as Tokens.Code;
-        em.holes.push({ reason: tt.codeBlockStyle === "indented" ? "an indented code block" : "a code block", startN: view.n(p) });
+        em.holes.push({ reason: tt.codeBlockStyle === "indented" ? "an indented code block" : "a code block", startN: view.n(p), endN: view.n(p + raw.length) });
         em.putHole(tt.text, em.holes.length - 1);
         break;
       }
       case "table": {
         const tt = t as Tokens.Table;
-        em.holes.push({ reason: "a table", startN: view.n(p) });
+        em.holes.push({ reason: "a table", startN: view.n(p), endN: view.n(p + raw.length) });
         const h = em.holes.length - 1;
         for (const cell of tt.header) em.putHole(plainInline(cell.tokens), h);
         for (const row of tt.rows) for (const cell of row) em.putHole(plainInline(cell.tokens), h);
@@ -645,6 +648,10 @@ function normalizeSource(source: string): { N: string; nStart: Int32Array | null
 
 type Block = {
   startN: number; endN: number;
+  /** N index past the block's last non-newline character: the raw's trailing line feeds are its own line
+   *  ending and, after that, blank lines a token swallows (a heading's, an hr's, a blockquote's single moved
+   *  newline) — between blocks, not in one (renderedSpot's own-rows rule). */
+  textEndN: number;
   chars: string; pos: number[]; holes: Hole[];
   refused: string | null;
   dom: DNode[];
@@ -704,7 +711,9 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
       try { walkBlocks([t], View.identity(N, 0), em, pos); }
       catch (e) { if (e instanceof Refusal) refused = e.message; else throw e; }
     }
-    blocks.push({ startN: pos, endN: pos + t.raw.length, chars: em.chars, pos: em.pos, holes: em.holes,
+    let textEndN = pos + t.raw.length;
+    while (textEndN > pos && t.raw[textEndN - pos - 1] === "\n") textEndN--;
+    blocks.push({ startN: pos, endN: pos + t.raw.length, textEndN, chars: em.chars, pos: em.pos, holes: em.holes,
                   refused, dom: [], isHtml: t.type === "html", tag: tagOf(t) });
     if (broken === null) pos += t.raw.length;
   }
@@ -723,7 +732,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   const nodeText = new Map<DNode, string>();
   for (const n of content) nodeText.set(n, stripWs(isText(n) ? n.data : textOf(n)));
   if (lexError !== null) {
-    blocks.push({ startN: 0, endN: N.length, chars: "", pos: [], holes: [], refused: `markdown the lexer could not parse (${lexError})`,
+    blocks.push({ startN: 0, endN: N.length, textEndN: N.length, chars: "", pos: [], holes: [], refused: `markdown the lexer could not parse (${lexError})`,
                   dom: content.slice(), isHtml: false, tag: null });
   }
   // ── pair blocks with nodes, in order. Every token but `html` renders as exactly one element, so the
@@ -1105,8 +1114,11 @@ function occurrences(hay: string, needle: string): { start: number; end: number 
 // A session's pending changes arrive as hunks in CURRENT-text coordinates: an `ins` occupies
 // [curFrom, curTo) and its old text is empty; a `del` is a point (curFrom === curTo) whose old text is
 // gone from the file; a `sub` is both, the new text at [curFrom, curTo) and the old text beside it.
-// Raw view paints all three; Rendered paints the new text of an ins or sub and leaves a deletion to its
-// card (the plan: a deletion cannot be placed in rendered prose; Reveal switches to Raw).
+// Raw view paints all three. Rendered paints all three too: the new text of an ins or sub wrapped, and a
+// deletion — or a sub's old text — as the same zero-width point Raw draws, placed in the prose through the
+// index map (paintRenderedPoint; the inline-display follow-on, 2026-09-07). Only a change the map cannot
+// place there (a refused block, a hole, a blank line between blocks) is left to its card, whose Reveal
+// switches to Raw.
 //
 // The deleted text is NOT in the file, so it must never become a text node under a `.fv-cl` row: every
 // Raw walk above (rawIndex's row verification, boundaryIndex's counting, the selection self-check) reads
@@ -1148,8 +1160,9 @@ export type ChangePaint = {
  *  would hand the sheet's `::before` a string of line feeds and nothing to draw: the point sat there with a
  *  2px underline and no glyph, and the row grew by a blank visual line (the review, 2026-09-06). Such a
  *  label shows one ¶ per line ending instead, the mark a text editor draws for the same thing; spaces and
- *  tabs keep their own width and are left as they are. A label with any visible character keeps its line
- *  endings: the rows below show what was removed as it read. */
+ *  tabs keep their own width and are left as they are (the Raw rows are pre-wrap; the Rendered point carries
+ *  that white-space itself when its label is nothing else — renderedPointStyles). A label with any visible
+ *  character keeps its line endings: the rows below show what was removed as it read. */
 export const DEL_LABEL_MAX = 80;
 export const PILCROW = "¶";
 export function deletionLabel(oldText: string): string {
@@ -1191,11 +1204,90 @@ function offsetsIndex(c: ChangePaint, source: string): boolean {
 }
 const batchIndexes = (changes: ChangePaint[], source: string): boolean => changes.every((c) => offsetsIndex(c, source));
 
+/** The point element itself — a zero-width `span` with the change's data attributes, the label in
+ *  `data-fc-text` for the sheet's `::before` to draw, and the inline styles — shared by the Raw and the
+ *  Rendered painters so the two views' points are one element, byte for byte. */
+function makePoint(doc: DElement["ownerDocument"], className: string, data: Record<string, string>, label: string,
+                   styles: Record<string, string> | undefined): DElement {
+  if (!doc) throw new Error("anchor-map: node has no ownerDocument");
+  const m = doc.createElement("span");
+  m.setAttribute("class", className);
+  for (const k of Object.keys(data)) m.setAttribute("data-" + k, data[k]);
+  m.setAttribute("data-fc-text", label);
+  applyStyles(m, styles);
+  return m;
+}
+
+// ── where a point at a mark's boundary goes ─────────────────────────────────────────────────────────
+//
+// A mark's extent is its text, so a point at either end of a painter's mark — a change's `fc-ins`, a
+// comment's `fc-hl`, the composer's `fc-presel` — is not in it: a deletion right after an insertion sits
+// after the insertion's mark, as its sibling, and one right before it sits before the mark; a substitution
+// whose tint begins a comment highlight has its point before the highlight. This holds in both views and
+// whichever mark was painted first, however the marks nest. Without it the placement followed the paint
+// order: with the insertion painted first, the "after" position was the last text node INSIDE its mark,
+// and the point became the mark's last child, so in Rendered the struck old text wore the insertion's tint
+// and author underline as if it were part of the inserted run, while Raw, whose insertPointAt puts the
+// same offset before the NEXT text node, showed it after the tint (the review, 2026-09-07); at a mark's
+// start, and at a row's end in Raw, the point nested or not by the order the changes came in. The
+// renderer's own inline elements are left alone: a point after the last word of a `<strong>` stays in it.
+//
+// Points at one offset keep the order they were painted in — a later point goes after the points already
+// there — as Raw places a later point before the next text node, after the earlier ones.
+
+/** The painters' own wrappers, which a point climbs out of at their edges. */
+const isPaintMark = (n: DNode): boolean => hasClass(n, "fc-ins") || hasClass(n, "fc-hl") || hasClass(n, "fc-presel");
+const isPoint = (n: DNode): boolean => hasClass(n, "fc-del");
+const indexIn = (parent: DNode, n: DNode): number => {
+  let i = 0;
+  while (i < parent.childNodes.length && parent.childNodes[i] !== n) i++;
+  return i;
+};
+
+/** Insert `m` right after text node `t` — outside every painter's mark that ends with `t`, and after the
+ *  points already at that position. */
+function insertAfterText(t: DText, m: DElement): void {
+  let n: DNode = t;
+  while (n.parentNode && isPaintMark(n.parentNode) && n.parentNode.childNodes[n.parentNode.childNodes.length - 1] === n) n = n.parentNode;
+  const parent = n.parentNode as DElement;
+  let i = indexIn(parent, n) + 1;
+  while (i < parent.childNodes.length && isPoint(parent.childNodes[i])) i++;
+  parent.insertBefore(m, i < parent.childNodes.length ? parent.childNodes[i] : null);
+}
+
+/** Insert `m` right before node `n` (a text node, or a mark whose text begins at the offset) — outside every
+ *  painter's mark that begins with `n`, and so after the points already before it. */
+function insertBeforeNode(n: DNode, m: DElement): void {
+  while (n.parentNode && isPaintMark(n.parentNode) && n.parentNode.childNodes[0] === n) n = n.parentNode;
+  (n.parentNode as DElement).insertBefore(m, n);
+}
+
+/** Insert `m` at character `col` of the concatenated text of `nodes` (consecutive text nodes): before the
+ *  node the column begins, inside it after a split, or right after the last node when the column is the
+ *  text's end — at a painter's mark's edge, outside the mark (insertBeforeNode / insertAfterText). False
+ *  when there are no nodes to place it among. */
+function insertPointAt(nodes: DText[], col: number, m: DElement): boolean {
+  let cum = 0;
+  for (const t of nodes) {
+    const len = t.data.length;
+    if (col < cum + len) {
+      if (col === cum) insertBeforeNode(t, m);
+      else (t.parentNode as DElement).insertBefore(m, t.splitText(col - cum));
+      return true;
+    }
+    cum += len;
+  }
+  if (!nodes.length) return false;
+  insertAfterText(nodes[nodes.length - 1], m);
+  return true;
+}
+
 /**
  * A zero-width marker element at source `offset` in the Raw view: inserted between the row's text nodes,
  * splitting one when the offset falls inside it, never adding a text node. The label is carried in
  * `data-fc-text` for the sheet's `::before` to draw. An offset on a line ending sits at the end of its
- * row; the end of the file sits at the end of the last row. Returns null when the rows do not match
+ * row; the end of the file sits at the end of the last row; at the edge of another change's mark the point
+ * sits outside the mark (the boundary rule above insertAfterText). Returns null when the rows do not match
  * `source` (nothing is trusted then) or the file has no rows.
  */
 export function paintRawPoint(codeRoot: Element, source: string, offset: number, className: string,
@@ -1212,34 +1304,8 @@ export function paintRawPoint(codeRoot: Element, source: string, offset: number,
   // a CRLF row's DOM text ends in the "\n" the parser made of its CR: an offset on the line ending sits
   // before it, at the end of the visible text, so the label never opens a new line under the row
   if (col === row.text.length && col > 0 && row.text[col - 1] === "\n") col--;
-  const doc = row.el.ownerDocument;
-  if (!doc) throw new Error("anchor-map: node has no ownerDocument");
-  const m = doc.createElement("span");
-  m.setAttribute("class", className);
-  for (const k of Object.keys(data)) m.setAttribute("data-" + k, data[k]);
-  m.setAttribute("data-fc-text", label);
-  applyStyles(m, styles);
-  const nodes = textNodes(row.el);
-  let cum = 0;
-  for (const t of nodes) {
-    const len = t.data.length;
-    if (col < cum + len) {
-      const parent = t.parentNode as DElement;
-      if (col === cum) parent.insertBefore(m, t);
-      else parent.insertBefore(m, t.splitText(col - cum));
-      return m as unknown as Element;
-    }
-    cum += len;
-  }
-  if (nodes.length) {
-    // at the end of the row's text: right after its last text node
-    const t = nodes[nodes.length - 1];
-    const parent = t.parentNode as DElement;
-    let i = 0;
-    while (i < parent.childNodes.length && parent.childNodes[i] !== t) i++;
-    parent.insertBefore(m, i + 1 < parent.childNodes.length ? parent.childNodes[i + 1] : null);
-    return m as unknown as Element;
-  }
+  const m = makePoint(row.el.ownerDocument, className, data, label, styles);
+  if (insertPointAt(textNodes(row.el), col, m)) return m as unknown as Element;
   // an empty row: the point goes into the row's text cell (its `.fv-ct`), else the row itself
   let host: DElement = row.el;
   for (let i = 0; i < row.el.childNodes.length; i++) {
@@ -1247,6 +1313,88 @@ export function paintRawPoint(codeRoot: Element, source: string, offset: number,
     if (isElement(c) && hasClass(c, "fv-ct")) { host = c; break; }
   }
   host.appendChild(m);
+  return m as unknown as Element;
+}
+
+/** The source offsets a block's own rows hold, as [lo, hi): the block's text lines through the line ending
+ *  of the last of them (a deletion on that ending sits after the block's last character, as Raw puts it at
+ *  the row's end), and the end of the file when it comes right after that ending (Raw: the end of the file
+ *  sits at the end of the last row). The line feeds a token's raw carries after that are blank lines between
+ *  blocks — marked's heading, setext heading and hr regexes swallow every trailing newline, and its lexer
+ *  moves a lone newline onto the token before it — and hold nothing, as a `space` token's do (the plan: a
+ *  blank line between blocks leaves the change unpainted). Before this, the raw's extent decided: a deletion
+ *  on the blank line under a heading was struck inside the heading, after its last word, while the same
+ *  blank line under a paragraph, a `space` token, was left unpainted (the review, 2026-09-07). */
+function ownRows(idx: RenderedIndex, b: Block): { lo: number; hi: number } {
+  const lo = nOf(idx, b.startN);
+  if (b.textEndN >= idx.N.length) return { lo, hi: idx.source.length + 1 };   // the block's text ends the file
+  const hi = nOf(idx, b.textEndN + 1);                                        // past the last row's line ending
+  return { lo, hi: b.textEndN + 1 === idx.N.length ? hi + 1 : hi };          // …and the end of the file right after it
+}
+
+/** Where source `offset` falls in the rendered text: the text node and the offset in it BEFORE which a
+ *  point at that source position sits. The block is the mapped (not refused) one whose own rows hold the
+ *  offset (ownRows: its text lines, the last one's line ending, the end of the file right after it) — no
+ *  two blocks' rows overlap, so where one block's raw ends exactly as the next begins the one that begins
+ *  there has the offset. Inside the block the point goes before the first emitted character at or past
+ *  the offset — or right after the last one before it, when the offset follows that character directly
+ *  (a deletion at a word's end sits against the word, not past the space after it) or nothing follows.
+ *  Null when no block's rows hold the offset (a blank line between blocks, whichever token's raw carries
+ *  it), the block is refused or has no element, or the offset sits inside a hole (a nested code block or
+ *  table the renderer shows but the mapping does not place): a point there would land beside the wrong
+ *  words, so the change keeps its card and Reveal instead. */
+function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: number } | null {
+  let blk: Block | null = null;
+  for (const b of idx.blocks) {
+    const { lo, hi } = ownRows(idx, b);
+    if (lo <= offset && offset < hi) { blk = b; break; }
+  }
+  if (!blk || blk.refused !== null || !blk.dom.length) return null;
+  // j: the last mapped character before the offset; k: the first at or past it. The entries between them,
+  // if any, are hole characters (mapped characters are in source order, the Emitter's own rule).
+  let j = -1, k = -1;
+  for (let i = 0; i < blk.pos.length; i++) {
+    const p = blk.pos[i];
+    if (p < 0) continue;
+    if (nOf(idx, p) < offset) j = i; else { k = i; break; }
+  }
+  if (j < 0 && k < 0) return null;   // a block with no mapped text
+  const gapFrom = j + 1, gapTo = k < 0 ? blk.pos.length : k;
+  let after: boolean;
+  if (gapTo > gapFrom) {
+    // hole characters between the two: the point belongs before the hole or after it, never inside
+    const first = blk.holes[-blk.pos[gapFrom] - 1], last = blk.holes[-blk.pos[gapTo - 1] - 1];
+    if (first && j >= 0 && offset <= nOf(idx, first.startN)) after = true;
+    else if (last && k >= 0 && offset >= nOf(idx, last.endN)) after = false;
+    else return null;
+  } else if (k < 0) after = true;
+  else if (j < 0) after = false;
+  else after = nOf(idx, blk.pos[j]) + 1 === offset && nOf(idx, blk.pos[k]) !== offset;
+  if (!after) return nthNonWs(blk.dom[0], k);
+  const at = nthNonWs(blk.dom[0], j);
+  return at ? { t: at.t, off: at.off + 1 } : null;
+}
+
+/**
+ * The Rendered view's twin of paintRawPoint: the same zero-width element, placed in the rendered text at
+ * the position the index map gives source `offset` (renderedSpot), splitting a text node when the offset
+ * falls inside one and never adding a text node, so mapRenderedSelection and paintRendered read the body
+ * as before. At the edge of another change's mark the point sits outside the mark, as in Raw (the
+ * boundary rule above insertAfterText). Returns null when the offset cannot be placed (a refused block, a
+ * hole, a blank line between blocks — a `space` token's or one a heading's raw swallowed; ownRows): the
+ * change stays unpainted and keeps its card.
+ */
+export function paintRenderedPoint(renderedRoot: Element, source: string, offset: number, className: string,
+                                   data: Record<string, string>, label: string, styles?: Record<string, string>): Element | null {
+  const root = renderedRoot as unknown as DElement;
+  const spot = renderedSpot(renderedIndex(root, source), offset);
+  if (!spot) return null;
+  const m = makePoint(root.ownerDocument, className, data, label, styles);
+  const parent = spot.t.parentNode as DElement | null;
+  if (!parent) return null;
+  if (spot.off <= 0) insertBeforeNode(spot.t, m);
+  else if (spot.off >= spot.t.data.length) insertAfterText(spot.t, m);
+  else parent.insertBefore(m, spot.t.splitText(spot.off));
   return m as unknown as Element;
 }
 
@@ -1288,23 +1436,54 @@ export function paintChangesRaw(codeRoot: Element, source: string, changes: Chan
   return out;
 }
 
+/** The inline styles of a Rendered point: the caller's, plus the Raw rows' `white-space: pre-wrap` when the label
+ *  has no visible character. deletionLabel leaves spaces and tabs as they are, and the Raw rows show them at
+ *  their width; a rendered block's white-space is normal, and the sheet's generated content follows it, so a
+ *  label of one space beside a space that stayed (a doubled space a session collapsed) collapsed to nothing —
+ *  a 0px point with no struck mark, no underline and nothing to hover or tap, while the painter reported it
+ *  shown and its card offered a scroll to it (the review, 2026-09-07). With the rows' white-space on the point
+ *  the label keeps its width in Rendered as in Raw; the sheets need no rule, and a label with a visible
+ *  character keeps the block's white-space, which folds a multi-line label onto its line. */
+function renderedPointStyles(label: string, styles: Record<string, string>): Record<string, string> {
+  return /\S/.test(label) ? styles : { ...styles, "white-space": "pre-wrap" };
+}
+
 /**
  * Paint pending changes over the Rendered view: an `ins` or `sub` through paintRendered over its new
  * text (the source-offset path, the text-match fallback inside a refused block), class `fc-ins`, with the
- * same data attributes and styles as the Raw marks. A `del` is never painted here; its card offers
- * Reveal. Returns which ids got paint and which did not, so the panel can mark the rest card-only; a
- * batch whose offsets do not index `source` (offsetsIndex) paints nothing and reports every id unpainted.
+ * same data attributes and styles as the Raw marks; a `del` as the Raw view's zero-width `span.fc-del`
+ * point, placed through the index map (paintRenderedPoint) and labelled with the old text (deletionLabel);
+ * a `sub` as that point immediately before its tint, wherever the tint was found (and before a highlight the
+ * tint begins: the boundary rule above insertAfterText), so the struck old text and the new read together as
+ * they do in Raw. No chip: the plan gives the author chip to the Raw view. A
+ * point whose label has no visible character carries the Raw rows' white-space (renderedPointStyles), so a
+ * removed space is a struck space here too and not a 0px point the block's white-space collapsed.
+ * Returns which ids got paint and which did not — a deletion whose offset the map cannot place (a refused
+ * block, a hole), an insertion whose text is not on the page — so the panel can mark the rest card-only;
+ * a batch whose offsets do not index `source` (offsetsIndex) paints nothing and reports every id unpainted.
  */
 export function paintChangesRendered(renderedRoot: Element, source: string, changes: ChangePaint[],
                                      stylesFor: (c: ChangePaint) => Record<string, string>): { painted: string[]; unpainted: string[] } {
   const painted: string[] = [], unpainted: string[] = [];
   if (!batchIndexes(changes, source)) return { painted, unpainted: changes.map((c) => c.id) };
   for (const c of changes) {
-    if (c.kind === "del" || c.curFrom === c.curTo) { unpainted.push(c.id); continue; }
-    const marks = paintRendered(renderedRoot, source, { start: c.curFrom, end: c.curTo }, "fc-ins", changeData(c));
+    const data = changeData(c);
+    if (c.kind === "del") {
+      const label = deletionLabel(c.oldText);
+      const p = paintRenderedPoint(renderedRoot, source, c.curFrom, "fc-del", data, label, renderedPointStyles(label, stylesFor(c)));
+      (p ? painted : unpainted).push(c.id);
+      continue;
+    }
+    if (c.curFrom === c.curTo) { unpainted.push(c.id); continue; }
+    const marks = paintRendered(renderedRoot, source, { start: c.curFrom, end: c.curTo }, "fc-ins", data);
     if (!marks || !marks.length) { unpainted.push(c.id); continue; }
     const styles = stylesFor(c);
     for (const m of marks) applyStyles(m as unknown as DElement, styles);
+    if (c.kind === "sub") {
+      const first = marks[0] as unknown as DElement;
+      const label = deletionLabel(c.oldText);
+      if (first.parentNode) insertBeforeNode(first, makePoint(first.ownerDocument, "fc-del", data, label, renderedPointStyles(label, styles)));
+    }
     painted.push(c.id);
   }
   return { painted, unpainted };

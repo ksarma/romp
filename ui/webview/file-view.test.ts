@@ -296,7 +296,9 @@ test("selecting in the viewer seeds the composer's editor chip — the editorSel
   // and render.ts's existing editorSelection handler owns the chip end to end
   // one handler for the mouse's settle point and the phone's (touchend), since Slice 1 of
   // plans/file-review.md — the comments panel's floating Comment button rides the same gesture
-  assert.match(VIEW, /const onSelect = \(\) => \{/);
+  // the handler reads the event's target since the text-size change (review 2026-09-07): a press on a title-bar button
+  // with a passage still selected in the body settles no selection (file-view-text-size.test.ts pins the gate)
+  assert.match(VIEW, /const onSelect = \(ev: Event\) => \{/);
   assert.match(VIEW, /box\.addEventListener\("mouseup", onSelect\);\n\s*box\.addEventListener\("touchend", onSelect\);/);
   assert.match(VIEW, /seedTarget\.postMessage\(\{ type: "editorSelection", text: picked, sid: sid \|\| undefined, src: quoteSrcLabel\(path, doc, picked\) \}, "\*"\);/);
   // a collapsed or out-of-viewer selection seeds nothing, and CodeMirror selections are edits
@@ -810,7 +812,7 @@ test("the quote seed gates off RENDERED media only — the SVG Source view is a 
   // no-target (composer) gate comes after the hooks — the hooks are how the comments panel's
   // floating Comment works in a Files pane with no chat pane anywhere (upstream gates on the
   // composer first; the through-the-shell test above pins the composer gate itself)
-  const gesture = VIEW.split("const onSelect = () => {")[1].split("const seedTarget = composerWindow();")[0];
+  const gesture = VIEW.split("const onSelect = (ev: Event) => {")[1].split("const seedTarget = composerWindow();")[0];
   assert.match(gesture, /if \(\(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\)\) return;/);
   assert.ok(gesture.indexOf("!(svgSource && svgText !== null)) return;") < gesture.indexOf("for (const cb of selHooks)"),
     "media is gated before any hook sees a selection");

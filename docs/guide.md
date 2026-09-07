@@ -274,6 +274,19 @@ ordinary link look. Selecting text across a link, and commenting on a line that
 holds one, work as before, and a drag that starts or ends on a link selects
 rather than opens.
 
+**Text size and width.** The **A−** and **A+** buttons in the viewer's title bar make
+the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown
+file's Rendered and Raw views, and the code view of every other text file. They appear
+on every surface that shows the viewer (over the chat, over the feed, in this pane), and
+not for a picture or a PDF, which have no text to size. Ctrl (or Cmd) and the mouse
+wheel over the text do the same. Once the size is off 100%, the percentage appears
+between the buttons; click it to go back. The choice is kept in this browser and applies
+to every file you open here. Prose keeps a readable line length that grows with the
+text size, and code blocks keep that width and wrap long lines. A table is as wide as
+its columns need, up to the width of the pane, and scrolls inside its own box beyond
+that; a table inside a quote or a list item stays within the prose width. Pictures
+shrink to fit, so resizing the pane never leaves the page wider than the pane.
+
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file (below it when the column is narrow). Select a passage in either view, Rendered or
 Raw, and press the **Comment** button that appears next to the selection; type the note
@@ -324,14 +337,17 @@ reject, instead of letting them land silently. Turn it on for the file or for it
 and turn it on for the folder a session will write into *before* it writes: only edits made
 while tracking is on are recorded, and a folder can be tracked before its files exist.
 Each change is a card in the panel, grouped by the paragraph it falls in, and is marked in
-the file: an insertion is tinted, and a deletion is struck at its point in the Raw view.
-**Accept** keeps the text as it is and drops the record. **Reject** puts the old text back in
-the file. **Accept all** and **Reject all** decide every change at once; Reject all asks you to
-confirm. A deletion has nothing to mark in the Rendered view, so its card offers **Reveal**,
-which opens the Raw view at the deletion; any change the current view cannot show offers it
-too. Reply on a change's card leaves a comment on the change itself, and the session's answer
-comes back to that card. A session's tools refuse to rewrite an image or a PDF as text, so a
-tracked folder may hold figures.
+the file in both views: an insertion is tinted, a deletion is struck at its point, and a
+substitution shows both, the struck old text before the tinted new text. **Show changes
+inline**, beside Track changes, hides the marks and shows them again; with the marks hidden,
+the file reads as it is and the cards alone show the changes. The setting is kept for every
+file you open. **Accept** keeps the text as it is and drops the record. **Reject** puts the old
+text back in the file. **Accept all** and **Reject all** decide every change at once; Reject
+all asks you to confirm. A deletion's card offers **Reveal**, which opens the Raw view at the
+deletion, since a point is easy to miss; a change the current view does not mark, because it
+cannot or because the marks are hidden, offers it too. Reply on a change's card leaves a
+comment on the change itself, and the session's answer comes back to that card. A session's
+tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures.
 
 **Edit** works while changes are pending. The editor shows them inline, an insertion tinted
 and a deletion struck, and typing around them moves them with the text. Click a change to

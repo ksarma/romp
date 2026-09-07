@@ -127,6 +127,54 @@ function saveFmt(f: FileViewFmt): void {
   try { localStorage.setItem(FMT_KEY, JSON.stringify(f)); } catch { /* storage full */ }
 }
 
+// ── text size (the user 2026-09-07: the rendered markdown had to be zoomable) ──────────────────────
+// The viewer's text sizes, as percentages of the page's own size: a FIXED table with ends, not a free
+// multiplier, so the buttons, the wheel and the stored value all land on the same few sizes and a size can
+// never run away or go negative. 100 is the default and leaves every size exactly as before. The chosen
+// step rides the viewer root as `data-fv-text`, and the sheets turn it into the ONE property the text
+// views read (`--fv-scale`; the "text size and measure" block in styles.css / feed.css). Persisted like
+// the Rendered ⇄ Raw choice above: per browser, in localStorage, under its own key, and any malformed or
+// foreign value reads as the default (parseFmt's contract). The value stays a percentage, never a
+// multiplier, so the stored text and the readout say the same thing.
+export const TEXT_SIZES: readonly number[] = [70, 80, 90, 100, 115, 130, 150, 175, 200];
+export const TEXT_SIZE_DEFAULT = 100;
+const TEXT_SIZE_KEY = "romp:fileviewTextSize";
+/** A stored value back to a step of the table; anything else (absent, garbage, a size the table does not
+ *  hold) is the default, so a corrupt entry may cost the preference, never the viewer. */
+export function parseTextSize(raw: string | null | undefined): number {
+  if (raw === null || raw === undefined) return TEXT_SIZE_DEFAULT;
+  const n = Number(String(raw).trim());
+  return TEXT_SIZES.includes(n) ? n : TEXT_SIZE_DEFAULT;
+}
+/** The next step from `pct` in `dir`, clamped at the table's ends: at 200 a +1 answers 200. A `pct` off the
+ *  table (never stored, but the function is pure) steps from the default. */
+export function stepTextSize(pct: number, dir: 1 | -1): number {
+  const at = TEXT_SIZES.indexOf(TEXT_SIZES.includes(pct) ? pct : TEXT_SIZE_DEFAULT);
+  return TEXT_SIZES[Math.max(0, Math.min(TEXT_SIZES.length - 1, at + dir))];
+}
+function loadTextSize(): number {
+  try { return parseTextSize(localStorage.getItem(TEXT_SIZE_KEY)); } catch { return TEXT_SIZE_DEFAULT; }
+}
+function saveTextSize(pct: number): void {
+  try { localStorage.setItem(TEXT_SIZE_KEY, String(pct)); } catch { /* storage full */ }
+}
+// Ctrl/Cmd + wheel over the text is the pointer's way to the same steps. A wheel notch is one event of about
+// 100 pixels (Chrome) or a few LINES (Firefox, deltaMode 1); a trackpad pinch (which browsers report as a
+// ctrlKey wheel) is a burst of events a few pixels each. Stepping once per event would run a pinch through the
+// whole table in a moment, so the deltas are FOLDED: normalized to pixels, summed, and a step is taken each time
+// the sum passes WHEEL_STEP_PX (then cleared); a change of direction clears it too, so a reversal does not have to
+// pay off the other way's remainder first. Pure over the event's fields, so the fold is testable: `acc` is the
+// running sum the caller keeps, `dir` the step to take now (0 for none). Events without the modifier are not
+// the gesture (the caller lets them scroll) and never reach this.
+export const WHEEL_STEP_PX = 40;
+export function foldWheel(e: { deltaY: number; deltaMode: number }, acc: number): { acc: number; dir: 0 | 1 | -1 } {
+  const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+  if (!px) return { acc, dir: 0 };
+  const sum = (acc === 0 || Math.sign(acc) === Math.sign(px)) ? acc + px : px;
+  if (Math.abs(sum) < WHEEL_STEP_PX) return { acc: sum, dir: 0 };
+  return { acc: 0, dir: sum < 0 ? 1 : -1 };   // wheel up (negative deltaY) is larger, as in every zooming surface
+}
+
 function el(tag: string, cls?: string): HTMLElement {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -288,7 +336,13 @@ export interface FileViewActionCtx {
    *  Also once at Edit, as the editor takes the body (Slice 5), with editing() true: the panel's paint pass stands down
    *  then, and its cards, which read editing() at render time, take their edit-mode state from this render (the panel's
    *  own begin() ran before the flip, so its render could not). No other paint while the editor holds the body; the exit's
-   *  repaint hands the read-mode state back */
+   *  repaint hands the read-mode state back.
+   *  Also after a text view REFLOWS with its text unchanged: a text-size step (the A− / A+ buttons, the wheel) and a
+   *  change of the body's width (the pane resized, the aside opening or closing; a ResizeObserver on the body, so the
+   *  event is the layout's own, never a timer, folded to one call per animation frame and none when the width is back
+   *  where the last call left it). Every position measured from the text has moved by then, so the panel's paint pass
+   *  runs again; a media body's own observers (the figure layer's, the PDF chunk's) already cover theirs, and the
+   *  editor lays out its own text, so neither reflow fires for those */
   onRendered(cb: () => void): void;
   /** runs on mouseup/touchend with a non-collapsed selection inside the body — BEFORE the quote-chip gate, so it works with no chat pane */
   onSelection(cb: (sel: Selection) => void): void;
@@ -809,6 +863,46 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       acts.appendChild(b);
     }
   }
+  // ── text size (the user 2026-09-07) ── A− and A+ step the text views through TEXT_SIZES; between them the
+  // current size, said only once it is not the default, is the reset (progressive disclosure: at 100% there is
+  // nothing to reset and nothing to say). The readout's SLOT is there from the start, empty at the default
+  // (the sheet's .fileview-size-default, visibility not display): a slot that appeared after the first press
+  // moved A− under the pointer, and the second press landed on the reset and undid the first (review
+  // 2026-09-07). Built once per open like the format toggles above, so direct listeners are click-safe; each
+  // click acknowledges in the same tick (the readout, the dimmed end, the reflow itself). An end of the table
+  // is said with aria-disabled, not `disabled`: a button that disables under keyboard focus drops it (the ring
+  // vanished on the third Enter, and a fourth did nothing with no visible reason), while an aria-disabled one
+  // keeps the focus, wears the sheet's disabled dress, and its click is the no-op setTextSize already makes of
+  // a step to the size in force. The three hide until a TEXT body is known (renderBody, off the fetch that
+  // brought the kernel's Content-Type: a picture or a PDF opened over a slow link showed them beside the
+  // loader and then took them away), with the format toggles in edit mode (the editor keeps its own size) and
+  // over a media body (nothing there reads the property); the SVG Source view is a text view and keeps them.
+  // The step is applied as `data-fv-text` on the viewer root, which the sheets read (the "text size and
+  // measure" block).
+  let sizePct = loadTextSize();
+  const sizeDown = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
+  sizeDown.type = "button"; sizeDown.textContent = "A−"; sizeDown.title = "Smaller text (Ctrl/Cmd + wheel)";
+  sizeDown.setAttribute("aria-label", "Smaller text");
+  const sizeReset = el("button", "fileview-btn fileview-size fileview-size-reset") as HTMLButtonElement;
+  sizeReset.type = "button"; sizeReset.title = "Reset the text size";
+  const sizeUp = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
+  sizeUp.type = "button"; sizeUp.textContent = "A+"; sizeUp.title = "Larger text (Ctrl/Cmd + wheel)";
+  sizeUp.setAttribute("aria-label", "Larger text");
+  sizeDown.hidden = true; sizeReset.hidden = true; sizeUp.hidden = true;   // until renderBody knows a text body
+  // an end of the table: dimmed and inert, focus kept (the sheet dresses [aria-disabled="true"] as :disabled)
+  const atEnd = (b: HTMLButtonElement, end: boolean) => { if (end) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled"); };
+  // the property on the root, and the control's own state, from sizePct
+  const applyTextSize = () => {
+    box.dataset.fvText = String(sizePct);
+    sizeReset.textContent = sizePct + "%";
+    sizeReset.setAttribute("aria-label", "Text size " + sizePct + "%, reset to " + TEXT_SIZE_DEFAULT + "%");
+    atEnd(sizeDown, sizePct === TEXT_SIZES[0]);
+    atEnd(sizeUp, sizePct === TEXT_SIZES[TEXT_SIZES.length - 1]);
+    sizeReset.classList.toggle("fileview-size-default", sizePct === TEXT_SIZE_DEFAULT);   // the empty slot
+  };
+  applyTextSize();
+  acts.appendChild(sizeDown); acts.appendChild(sizeReset); acts.appendChild(sizeUp);
+
   // ── the SVG Source toggle ── an SVG is served (and shown) as an image, but it IS also XML worth
   // reading; the toggle swaps in the existing highlighted-code view (langFor maps svg → xml) built
   // from the SAME fetched bytes — no second request. Appears only once an image/svg+xml body landed.
@@ -906,6 +1000,39 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const selHooks: Array<(sel: Selection) => void> = [];
   const savedHooks: Array<(info: { mtimeNs: string; logged: boolean }) => void> = [];
   const fireRendered = () => { for (const cb of renderHooks) { try { cb(); } catch { /* a hook must never cost the view */ } } };
+  // A REFLOW's paint keeps the person's selection. The panel answers onRendered by unwrapping and re-wrapping every
+  // highlight (file-comments.ts paintAll), and a selection with an end inside a mark lost that end with the mark's
+  // node: 58 selected characters over a highlight came back as 21 after one A+, 45 as 7 after a pane resize (review
+  // 2026-09-07, round 2). The text has not changed, only its elements, so each end is kept before the hooks run
+  // (keepPoint: its node and offset, its offset into the body's text, and which side of a text node it sat on) and
+  // put back after (pointBack), direction kept (setBaseAndExtent), but only when the paint cost the selection an
+  // end. A selection the paint left standing (both ends in connected nodes, the same text between them) is not
+  // touched: the browser's record of it is exact where the offsets are not. A selection holding NO text (a figure
+  // alone, the shape a drag across a picture makes) has one offset for both ends, and put back from them it collapsed
+  // after every reflow though the paint had touched nothing near it (review 2026-09-07, round 3); such a selection is
+  // never rebuilt from offsets, so when a paint does disturb it, it stays as the paint left it. The test is the text,
+  // not the offsets alone: a selection of one line break, from the end of a highlight's text to the next row's first
+  // column, has one offset for both ends too, and skipped by the offsets its start was left where the repaint had put
+  // it, outside the new mark, so the highlighted word showed and copied with the newline (round 5); its ends go back
+  // like any other pair, the side bits below placing the start at the new mark's end. An end whose own node
+  // came through the paint (moved into a mark, or untouched) goes back to that node, and only an end whose node is
+  // gone is mapped from its offset (round 4: an end on a text-less line boundary, the end of a row's text or the first
+  // column of the next, has the offset of both sides, and mapped by its role as start or end it landed on the wrong
+  // one, losing the newline between). A collapsed selection, or one with an end outside the body (the bar, the
+  // aside's input), is not over the repainted text and is left alone. The paints that REPLACE the body (renderBody)
+  // keep nothing: there the text itself is new.
+  const fireRenderedKeepingSelection = () => {
+    const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    const kept = sel && !sel.isCollapsed && sel.anchorNode && sel.focusNode && typeof sel.setBaseAndExtent === "function"
+      && typeof document.createRange === "function"
+      ? { a: keepPoint(body, sel.anchorNode, sel.anchorOffset), f: keepPoint(body, sel.focusNode, sel.focusOffset), text: sel.toString() } : null;
+    fireRendered();
+    if (!sel || !kept || !kept.a || !kept.f) return;
+    if (!sel.isCollapsed && sel.anchorNode?.isConnected && sel.focusNode?.isConnected && sel.toString() === kept.text) return;   // the paint left it standing
+    if (kept.a.at === kept.f.at && kept.text === "") return;   // a figure alone: the offsets cannot rebuild it, and would collapse it
+    const a = pointBack(body, kept.a, kept.a.at < kept.f.at); const f = pointBack(body, kept.f, kept.f.at < kept.a.at);
+    try { sel.setBaseAndExtent(a[0], a[1], f[0], f[1]); } catch { /* a point the layout refuses: the selection stays as the paint left it */ }
+  };
   const ctx: FileViewActionCtx = {
     path, sid: sid || null, todoId: opts?.todoId ?? null,
     body: () => body,
@@ -955,6 +1082,72 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     setTrackedEdit: (t) => { trackedEdit = t; },
     guardClose: (ask) => { closeAsks.push(ask); },
   };
+  // A text view is showing: the editor does not hold the body, the body is not a picture or a PDF frame, and the
+  // text has landed (the SVG Source view counts, its decoded XML being the text). The gate for both reflow
+  // triggers below: a paint hook is for a body whose text has positions to re-measure.
+  const textShowing = (): boolean => !editing && ctx.mode() !== "media" && viewText() !== null;
+  // One step of the text size: store it, apply it, and let the panel re-measure over the reflowed text (the
+  // seam's onRendered, the same event every text paint fires; the highlights are re-wrapped and the floating
+  // Comment button hides, since the passage it sat by has moved; a standing selection is kept across the pass,
+  // see fireRenderedKeepingSelection). A step that changes nothing (the table's end) fires nothing: a card may
+  // move only on new information (CLAUDE.md), and no paint happened.
+  const setTextSize = (pct: number) => {
+    if (pct === sizePct) return;
+    sizePct = pct;
+    saveTextSize(pct);
+    applyTextSize();
+    if (textShowing()) fireRenderedKeepingSelection();
+  };
+  sizeDown.addEventListener("click", () => setTextSize(stepTextSize(sizePct, -1)));
+  sizeUp.addEventListener("click", () => setTextSize(stepTextSize(sizePct, 1)));
+  sizeReset.addEventListener("click", () => setTextSize(TEXT_SIZE_DEFAULT));
+  // Ctrl/Cmd + wheel over the BODY (not the bar, not the aside): the browser's page zoom is the same gesture, so it
+  // is taken over the viewer's text only, and only with the modifier held; a plain wheel scrolls as ever, and the
+  // keyboard's Ctrl+plus/minus stays the browser's. Non-passive so the page zoom can be prevented; the fold is
+  // foldWheel's (a pinch is a burst of small deltas).
+  let wheelAcc = 0;
+  body.addEventListener("wheel", (e: WheelEvent) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (!textShowing()) return;
+    e.preventDefault();
+    const r = foldWheel(e, wheelAcc);
+    wheelAcc = r.acc;
+    if (r.dir) setTextSize(stepTextSize(sizePct, r.dir));
+  }, { passive: false });
+  // The body's WIDTH: the Files pane dragged narrower or wider, the aside opening or closing, the window resized.
+  // The text reflows (the prose measure follows the pane up to its cap, a table takes the room or scrolls in its
+  // own box) and every position measured from it has moved, so the panel's paint pass runs again, off the
+  // layout's own report of the change (a ResizeObserver, never a timer). The observer's first report describes
+  // the size at observe(), not a change. The repaint is ONE per animation frame: the reports are folded into the
+  // next frame (requestAnimationFrame, the frame's own event) and the frame repaints only if the width it finds
+  // differs from the one last painted over, so a burst of reports (several observers' entries, a width that
+  // moved and came back, the body growing taller as a figure loaded) costs one paint pass or none. The panel's
+  // pass re-wraps every highlight and rebuilds its cards (file-comments.ts paintAll, about 10ms with twenty
+  // comments), so a drag at one report per frame still pays it per frame; a narrower reaction is the panel's to
+  // choose. Media bodies have their own observers (the figure layer's, the PDF chunk's), and the editor its own
+  // layout, so textShowing gates this too. Absent ResizeObserver (a stand-in, an old engine) there is no width
+  // event to key on, so nothing fires; absent requestAnimationFrame the report itself is the frame.
+  if (typeof ResizeObserver !== "undefined") {
+    let paintedWidth = -1;   // the width the last repaint (or the first report) saw
+    let seenWidth = -1;      // the latest report's width
+    let frame = 0;           // the pending frame's handle, 0 for none
+    const repaint = () => {
+      frame = 0;
+      if (seenWidth === paintedWidth) return;   // moved and came back within the frame: no text moved sideways
+      paintedWidth = seenWidth;
+      if (textShowing()) fireRenderedKeepingSelection();
+    };
+    const widthObserver = new ResizeObserver((entries) => {
+      const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
+      if (paintedWidth < 0) { paintedWidth = w; seenWidth = w; return; }
+      seenWidth = w;
+      if (w === paintedWidth || frame) return;
+      if (typeof requestAnimationFrame === "function") frame = requestAnimationFrame(repaint); else repaint();
+    });
+    widthObserver.observe(body);
+    ctx.onClose(() => { widthObserver.disconnect(); if (frame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame); frame = 0; });
+  }
+
   // Registered actions render after the built-ins — the registry walk is the ONE place row
   // conventions live (see registerFileViewAction above). The GitHub link and Comments mount here.
   for (const a of fileViewActions) {
@@ -1042,6 +1235,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       b.hidden = editing;                       // format choices leave with edit mode; Save/Cancel own the bar
     }
     editBtn.hidden = editing || text === null || !isText || !mtimeNs;
+    // the text-size control shows over a text view only, and only once one is KNOWN (textShowing: the bytes and
+    // the kernel's Content-Type landed, no editor, no picture or PDF frame; renderBody is every paint, so this
+    // follows every flip: the fetch landing, Source on an SVG, the editor taking the body, the exit handing it
+    // back). The readout's slot goes with the two buttons; the slot's own emptiness at the default is applyTextSize's
+    const sizeHidden = !textShowing();
+    sizeDown.hidden = sizeHidden; sizeUp.hidden = sizeHidden;
+    sizeReset.hidden = sizeHidden;
     saveBtn.hidden = !editing;
     cancelBtn.hidden = !editing;
     if (isImage || isPdf) {
@@ -1087,8 +1287,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // chip lands in the session the file was opened FOR even if the active tab changed while the
   // modal was up (the 2026-08-19 routing rule: the gesture's session, never activeId-at-gesture).
   let seedSeq = 0;                                 // last gesture wins if two fresh reads race
-  const onSelect = () => {
+  const onSelect = (ev: Event) => {
     if (editing) return;   // CodeMirror selections are edit gestures, not quotes
+    // A press on a title-bar CONTROL (A−, A+, the readout, Raw, Copy path, the GitHub link...) settles no selection:
+    // the mouseup lands on the button while a passage may still stand selected in the body, and running the hooks
+    // again re-seeded the quote chip and re-fetched the file for its label on every step of the text size (review
+    // 2026-09-07, round 1). The gate is the control under the lift, not the bar: a drag that starts in the body and
+    // is released over the bar's path or its padding (the overshoot when selecting back to a file's first line) is a
+    // selection like any other and settles (round 2: the round-1 guard read the whole bar and swallowed it, so the
+    // passage stood selected with no Comment button and no quote chip). The listener sits on the viewer root so a
+    // drag that ends over the aside or the margins settles too.
+    const at = ev.target as Element | null;
+    if (at && bar.contains(at) && typeof at.closest === "function" && at.closest("button, a")) return;
     // RENDERED media has no honest text to quote — an <img>/iframe body owns its own selection
     // surface; the SVG SOURCE view is a real text view and quotes like any other (renderBody's
     // media gate, same rule).
@@ -2287,6 +2497,69 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
     img.setAttribute("data-fv-src", src);
     img.setAttribute("src", fileUrl(rel.startsWith("/") ? rel : dir + rel, sid));
   });
+}
+
+// ── a selection across a repaint (fireRenderedKeepingSelection): each end kept, and put back ──
+/** One end of a selection as kept across a paint: the point itself (node, offset), its character offset into the body's
+ *  text (at), and the side of a text-node boundary it sat on (side: "end" for the end of a text node, "start" for the
+ *  beginning of one, null for a point inside one). The side is what the offset loses. The Raw view's rows (.fv-cl) carry
+ *  no newline text and a markdown <br> is no text either, so the end of a row's text and the first column of the next
+ *  have ONE offset; the point kept (a start after a row's last glyph, a triple-click's end at the next row's first
+ *  column) says which. An element point (a triple-click's end, the browser's point before or after a <br> or a picture)
+ *  is read by what stands beside it: before a child whose first leaf is text it is that text's start; before anything
+ *  else (a <br>, a picture, an empty row) it is where the text before ends. With no child after it: after a child whose
+ *  last leaf is text it is that text's end, after anything else the start of the text that follows. */
+type KeptPoint = { node: Node; offset: number; at: number; side: "start" | "end" | null };
+function keepPoint(root: Node, node: Node, offset: number): KeptPoint | null {
+  if (offset > nodeLength(node)) return null;
+  const at = textOffset(root, node, offset);
+  return at === null ? null : { node, offset, at, side: boundarySide(node, offset) };
+}
+const nodeLength = (n: Node): number => (n.nodeType === 3 ? (n as Text).data.length : n.childNodes.length);
+function boundarySide(node: Node, offset: number): "start" | "end" | null {
+  if (node.nodeType === 3) return offset >= (node as Text).data.length ? "end" : offset === 0 ? "start" : null;
+  const after = node.childNodes[offset]; const before = offset > 0 ? node.childNodes[offset - 1] : undefined;
+  if (after) return leafIsText(after, true) ? "start" : "end";
+  if (before) return leafIsText(before, false) ? "end" : "start";
+  return null;
+}
+/** Whether the first (or last) leaf under n, through its elements, is a text node. */
+function leafIsText(n: Node, first: boolean): boolean {
+  let c: Node | null = n;
+  while (c && c.nodeType !== 3) c = first ? c.firstChild : c.lastChild;
+  return !!c;
+}
+/** A point (node, offset) as a character offset into root's text: the data of root's text nodes in document order up to
+ *  the point (a Range's toString), the count the panel's re-wrapping of its marks leaves unchanged. null when the point
+ *  lies outside root. */
+function textOffset(root: Node, node: Node, offset: number): number | null {
+  if (!root.contains(node)) return null;
+  const r = document.createRange();
+  r.setStart(root, 0); r.setEnd(node, offset);
+  return r.toString().length;
+}
+/** The kept end, in the body as the paint left it. Its own point when that still stands: the node inside root, the
+ *  offset within it, and the same text before it (a text node the paint moved into a mark, or left alone; an element
+ *  whose children the paint split means something else at that index, and fails the last test). Otherwise the offset
+ *  mapped back into the text nodes root holds NOW, the side of a boundary chosen by the side kept — an end that sat at
+ *  the end of a text node goes to the end of the earlier node, one at the start to the start of the later — and, for a
+ *  point that sat inside a text node the paint has since split there, by its role (`earlier`: the selection's start
+ *  takes the later node, its end the earlier), the two homes holding the same text. */
+function pointBack(root: Node, k: KeptPoint, earlier: boolean): [Node, number] {
+  if (k.node.isConnected && root.contains(k.node) && k.offset <= nodeLength(k.node) && textOffset(root, k.node, k.offset) === k.at) return [k.node, k.offset];
+  return textPoint(root, k.at, k.side === null ? earlier : k.side === "start");
+}
+/** The point at character offset n of root's text, in the text nodes root holds NOW: inside the text node that holds n,
+ *  root's end when n lies past its text. A point BETWEEN two text nodes has two homes: `start` takes the beginning of the
+ *  later one, else the end of the earlier. */
+function textPoint(root: Node, n: number, start: boolean): [Node, number] {
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let seen = 0; let last: Text | null = null;
+  for (let t = w.nextNode() as Text | null; t; t = w.nextNode() as Text | null) {
+    if (start ? seen + t.data.length > n : seen + t.data.length >= n) return [t, n - seen];
+    seen += t.data.length; last = t;
+  }
+  return last ? [last, last.data.length] : [root, root.childNodes.length];
 }
 
 // The media body's "shown" moment, for the seam's onRendered (Slice 3: the region overlay sizes itself against

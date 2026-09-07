@@ -1173,7 +1173,22 @@ test("paintRawPoint: offset 0, a line ending, a lone CR, an empty row, the end o
   assert.deepEqual(paintChangesRaw(El(empty.code), "", [{ id: "z", kind: "del", curFrom: 0, curTo: 0, oldText: "gone", author: "web" }], () => ({})), []);
 });
 
-test("Rendered change marks: ins and sub paint their new text with the author's styles, a del is reported unpainted, unpaint restores the DOM", () => {
+/** The text of `block` before `point` and after it, in document order (the point itself holds none). */
+function around(block: FakeNode, point: FakeNode): [string, string] {
+  let pre = "", post = "", seen = false;
+  const visit = (n: FakeNode) => {
+    if (n === point) { seen = true; return; }
+    if (n.nodeType === 3) { if (seen) post += (n as FakeText).data; else pre += (n as FakeText).data; return; }
+    for (const c of n.childNodes) visit(c);
+  };
+  visit(block);
+  return [pre, post];
+}
+const nextSibling = (n: FakeNode): FakeNode | null => { const p = n.parentNode!; return p.childNodes[p.childNodes.indexOf(n) + 1] || null; };
+/** The nearest top-level block (a child of the .fileview-md box) holding `n`. */
+const blockOf = (box: FakeNode, n: FakeNode): FakeElement => { let x = n; while (x.parentNode && x.parentNode !== box) x = x.parentNode; return x as FakeElement; };
+
+test("Rendered change marks: ins and sub paint their new text with the author's styles, a del is a point at its place and a sub's point sits right before its tint, unpaint restores the DOM", () => {
   const source = fixture("report.md");
   const { box } = buildRendered(source);
   const before = serialize(box);
@@ -1193,13 +1208,17 @@ test("Rendered change marks: ins and sub paint their new text with the author's 
   const k0 = stripWs(p.textContent).indexOf("cutp95");
   const preSel = ok(mapRenderedSelection(sel({ node: pp[k0].t, offset: pp[k0].off }, { node: pp[k0 + 12].t, offset: pp[k0 + 12].off + 1 }), El(box), source));
   assert.equal(preSel.quote, insNew);
+  // …and one over the heading the deletion's point will sit in front of
+  const h2 = box.childNodes.filter((n) => n.nodeType === 1 && (n as FakeElement).tagName === "H2")[0] as FakeElement;
+  const hp = nonWsPositions(h2);
+  const preHead = ok(mapRenderedSelection(sel({ node: hp[0].t, offset: hp[0].off }, { node: hp[hp.length - 1].t, offset: hp[hp.length - 1].off + 1 }), El(box), source));
+  assert.equal(preHead.quote, "Second heading");
 
   const res = paintChangesRendered(El(box), source, changes, stylesFor);
-  assert.deepEqual(res, { painted: ["r-ins", "r-sub"], unpainted: ["r-del"] });
+  assert.deepEqual(res, { painted: ["r-ins", "r-del", "r-sub"], unpainted: [] }, "the deletion is painted too (the inline-display follow-on); ids in the hunks' order");
   assert.equal(stripWs(domText(box, null)), textBefore, "painting keeps the rendered text");
   const marks = withClass(box, "fc-ins");
   assert.ok(marks.length >= 2);
-  assert.equal(withClass(box, "fc-del").length, 0, "no deletion point in Rendered");
   const byId = Object.fromEntries(changes.map((c) => [c.id, c]));
   for (const m of marks) {
     assert.equal(m.tagName, "MARK");
@@ -1212,13 +1231,142 @@ test("Rendered change marks: ins and sub paint their new text with the author's 
   const textOfId = (id: string) => stripWs(marks.filter((m) => m.getAttribute("data-id") === id).map((m) => m.textContent).join(""));
   assert.equal(textOfId("r-ins"), stripWs(insNew));
   assert.equal(textOfId("r-sub"), "therenderednotesforfiveminutes", "the emphasis marks the renderer consumed are not text");
-  // the selection maps the same over the painted DOM, from inside the mark
+  // the points: the Raw view's element, byte for byte — a span, the change's data, the capped label in data-fc-text,
+  // the author's styles, no text node, no chip (the plan gives the chip to Raw)
+  const points = withClass(box, "fc-del");
+  assert.deepEqual(points.map((x) => x.getAttribute("data-id")), ["r-del", "r-sub"], "one point per deletion and substitution, in document order");
+  for (const x of points) {
+    const c = byId[x.getAttribute("data-id") as string];
+    assert.equal(x.tagName, "SPAN");
+    assert.equal(x.getAttribute("class"), "fc-del");
+    assert.equal(x.getAttribute("data-act"), "fcchange");
+    assert.equal(x.getAttribute("data-author"), c.author);
+    assert.equal(x.getAttribute("data-fc-text"), deletionLabel(c.oldText));
+    assert.equal(x.getAttribute("style"), "--fc-author: " + COLORS[c.author] + ";");
+    assert.equal(x.getAttribute("data-fc-chip"), null, "Rendered marks carry no chip");
+    assert.equal(x.childNodes.length, 0, "a point adds no text node");
+  }
+  // the deletion's point sits in the setext heading, before its first character: the old heading struck, then the new
+  const del = points[0];
+  assert.equal(blockOf(box, del), h2);
+  assert.deepEqual(around(h2, del), ["", "Second heading"]);
+  assert.equal(del.getAttribute("data-fc-text"), "An old heading\n\n", "the label keeps its line endings (the sheet folds them in prose)");
+  // the substitution's point is the node right before the first of its marks, in the same parent
+  const sub = points[1];
+  const subMarks = marks.filter((m) => m.getAttribute("data-id") === "r-sub");
+  assert.equal(nextSibling(sub), subMarks[0], "struck old text, then the tinted new text");
+  assert.equal(sub.getAttribute("data-fc-text"), "the notes for ten minutes");
+  // the selection maps the same over the painted DOM: from inside the mark, and over the heading with the point in it
   const insMark = marks.find((m) => m.getAttribute("data-id") === "r-ins")!;
   const inner = insMark.childNodes[0] as FakeText;
   const post = ok(mapRenderedSelection(sel({ node: inner, offset: 0 }, { node: inner, offset: inner.data.length }), El(box), source));
   assert.deepEqual(post, preSel);
+  const hp2 = nonWsPositions(h2);
+  const postHead = ok(mapRenderedSelection(sel({ node: hp2[0].t, offset: hp2[0].off }, { node: hp2[hp2.length - 1].t, offset: hp2[hp2.length - 1].off + 1 }), El(box), source));
+  assert.deepEqual(postHead, preHead, "the point adds no text, so the walk over the heading is unchanged");
+  // a selection that begins at the element boundary the point occupies (the browser reports a spot two ways)
+  const atPoint = ok(mapRenderedSelection(sel({ node: h2, offset: h2.childNodes.indexOf(del) + 1 }, { node: hp2[hp2.length - 1].t, offset: hp2[hp2.length - 1].off + 1 }), El(box), source));
+  assert.deepEqual(atPoint, preHead);
   unpaintChanges(El(box));
   assert.equal(serialize(box), before);
+});
+
+test("Rendered deletion points: before the word the offset is on, against the word a deletion followed, at a paragraph's end, at the end of the file, in a list item and a blockquote, with the label capped; a selection across a point maps as before; unpaint restores the DOM", () => {
+  const source = fixture("report.md");
+  const { box } = buildRendered(source);
+  const before = serialize(box);
+  const at = (s: string) => { const i = source.indexOf(s); assert.ok(i >= 0, s); return i; };
+  const longOld = "the p50 and the p75 and the p90 and the p95 and the p99 and every other percentile we once reported here";
+  assert.ok(longOld.length > DEL_LABEL_MAX);
+  const del = (id: string, curFrom: number, oldText: string, author = "web"): ChangePaint => ({ id, kind: "del", curFrom, curTo: curFrom, oldText, author });
+  const changes = [
+    del("d-on", at("p95 latency"), "median "),                                   // on a word: before it
+    del("d-after", at("endpoint.") + "endpoint".length, " today"),               // right after a word, before its period: against the word
+    del("d-space", at(" on the notes endpoint"), longOld),                        // right after "40%", on the space: against "40%", not past the space
+    del("d-end", at("Key points:") + "Key points:".length, " Three of them."),   // a paragraph's end
+    del("d-item", at("legacy~~ v1 route.") + "legacy~~ v1 route.".length, " Keep v2.", "api"),   // a list item's end
+    del("d-quote", at("Quoted second line."), "Quoted first line.\n> ", "api"),  // inside a blockquote, on a word
+    del("d-defs", source.length, "\nOne more line.\n"),                           // after the reference definitions, which render nothing
+  ];
+  const res = paintChangesRendered(El(box), source, changes, stylesFor);
+  assert.deepEqual(res, { painted: changes.slice(0, -1).map((c) => c.id), unpainted: ["d-defs"] }, "no rendered text stands where the definitions are: card-only");
+  const point = (id: string) => { const x = withClass(box, "fc-del").find((m) => m.getAttribute("data-id") === id); assert.ok(x, id + " painted"); return x!; };
+  const where = (id: string) => { const x = point(id); return around(blockOf(box, x), x); };
+  let [pre, post] = where("d-on");
+  assert.ok(pre.endsWith("session cut ") && post.startsWith("p95 latency"), "before the word: " + JSON.stringify([pre.slice(-12), post.slice(0, 12)]));
+  [pre, post] = where("d-after");
+  assert.ok(pre.endsWith("notes endpoint") && post.startsWith(". See the"), "against the word, before the period: " + JSON.stringify([pre.slice(-14), post.slice(0, 10)]));
+  [pre, post] = where("d-space");
+  assert.ok(pre.endsWith("by 40%") && post.startsWith(" on the notes"), "a deletion that followed a word directly sits against it, the space after: " + JSON.stringify([pre.slice(-6), post.slice(0, 13)]));
+  assert.equal(point("d-space").getAttribute("data-fc-text"), deletionLabel(longOld));
+  assert.equal(point("d-space").getAttribute("data-fc-text")!.length, DEL_LABEL_MAX, "capped like Raw's, with the ellipsis");
+  [pre, post] = where("d-end");
+  assert.equal(pre, "Key points:"); assert.equal(post, "");
+  [pre, post] = where("d-item");
+  assert.ok(pre.endsWith("v1 route.") && post.trimStart().startsWith("Nested: keep"), "at the item's own text's end, before its nested list: " + JSON.stringify([pre.slice(-9), post.slice(0, 12)]));
+  assert.equal(blockOf(box, point("d-item")).tagName, "UL");
+  [pre, post] = where("d-quote");
+  assert.ok(pre.endsWith("more week.\n") && post.startsWith("Quoted second line."), JSON.stringify([pre.slice(-11), post.slice(0, 19)]));
+  assert.equal(blockOf(box, point("d-quote")).tagName, "BLOCKQUOTE");
+  // the walks are unaffected: a selection from before a point to after it maps to the same source range as with no point
+  const para = blockOf(box, point("d-on"));
+  const pp = nonWsPositions(para);
+  const i0 = stripWs(para.textContent).indexOf("cutp95latency");
+  const selNow = ok(mapRenderedSelection(sel({ node: pp[i0].t, offset: pp[i0].off }, { node: pp[i0 + 12].t, offset: pp[i0 + 12].off + 1 }), El(box), source));
+  assert.equal(selNow.quote, "cut p95 latency");
+  unpaintChanges(El(box));
+  assert.equal(serialize(box), before);
+  const fresh = buildRendered(source);
+  const fp = nonWsPositions(fresh.box.childNodes.filter((n) => n.nodeType === 1)[1] as FakeElement);
+  const selClean = ok(mapRenderedSelection(sel({ node: fp[i0].t, offset: fp[i0].off }, { node: fp[i0 + 12].t, offset: fp[i0 + 12].off + 1 }), El(fresh.box), source));
+  assert.deepEqual(selNow, selClean);
+  // the end of a file whose last block ends it: after the last character; with a trailing blank line, nothing stands there
+  for (const [src, tail] of [["Alpha.\n\nOmega.\n", ""], ["Alpha.\n\nOmega.", ""], ["Alpha.\n\nOmega.\n\n", null]] as const) {
+    const small = buildRendered(src);
+    const r = paintChangesRendered(El(small.box), src, [del("e", src.length, "\nOne more line.")], stylesFor);
+    if (tail === null) { assert.deepEqual(r, { painted: [], unpainted: ["e"] }, JSON.stringify(src) + ": a blank line ends the file"); continue; }
+    assert.deepEqual(r, { painted: ["e"], unpainted: [] }, JSON.stringify(src));
+    const x = withClass(small.box, "fc-del")[0];
+    assert.deepEqual(around(blockOf(small.box, x), x), ["Omega.", tail], JSON.stringify(src));
+  }
+});
+
+test("Rendered deletion points that cannot be placed stay unpainted, never beside the wrong words: a code fence, a table, an HTML block, a blank line between blocks, a nested code block's inside; either side of a nested block is placed", () => {
+  const source = fixture("refusals.md");
+  const { box } = buildRendered(source);
+  const before = serialize(box);
+  const at = (s: string) => { const i = source.indexOf(s); assert.ok(i >= 0, s); return i; };
+  const del = (id: string, curFrom: number): ChangePaint => ({ id, kind: "del", curFrom, curTo: curFrom, oldText: "gone", author: "web" });
+  const res = paintChangesRendered(El(box), source, [
+    del("u-code", at("respond(request)")),
+    del("u-table", at("120 ms")),
+    del("u-html", at("An HTML block")),
+    del("u-blank", at("\n\n```python") + 1),                       // the blank line between the paragraph and the fence
+    del("p-prose", at("An aligned paragraph after everything.")),   // the control: a mapped paragraph
+  ], stylesFor);
+  assert.deepEqual(res, { painted: ["p-prose"], unpainted: ["u-code", "u-table", "u-html", "u-blank"] });
+  assert.equal(withClass(box, "fc-del").length, 1);
+  unpaintChanges(El(box));
+  assert.equal(serialize(box), before);
+  // a list item holding a nested code block: the block is a HOLE the item's own text surrounds. A deletion inside the
+  // hole is unpainted; one at the end of the text before it sits against that text; one at the start of the text
+  // after it sits before that text
+  const nested = "- Item one\n\n  ```\n  code line\n  ```\n\n  after code\n";
+  const { box: nb } = buildRendered(nested);
+  const nbefore = serialize(nb);
+  const r2 = paintChangesRendered(El(nb), nested, [
+    del("n-in", nested.indexOf("code line")),
+    del("n-before", nested.indexOf("Item one") + "Item one".length),
+    del("n-after", nested.indexOf("after code")),
+  ], stylesFor);
+  assert.deepEqual(r2, { painted: ["n-before", "n-after"], unpainted: ["n-in"] });
+  const pt = (id: string) => withClass(nb, "fc-del").find((m) => m.getAttribute("data-id") === id)!;
+  let [pre, post] = around(blockOf(nb, pt("n-before")), pt("n-before"));
+  assert.ok(pre.endsWith("Item one") && !post.startsWith("Item"), JSON.stringify([pre, post.slice(0, 10)]));
+  [pre, post] = around(blockOf(nb, pt("n-after")), pt("n-after"));
+  assert.ok(post.startsWith("after code") && pre.includes("code line"), JSON.stringify([pre.slice(-10), post]));
+  unpaintChanges(El(nb));
+  assert.equal(serialize(nb), nbefore);
 });
 
 test("Rendered change marks: an insertion inside a code fence paints through the text-match fallback; one whose text is not on the page does not", () => {

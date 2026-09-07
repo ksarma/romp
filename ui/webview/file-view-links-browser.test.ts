@@ -272,6 +272,16 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     await page.locator("#romp-fileview .file-uri-link").nth(1).hover();
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelectorAll("#romp-fileview .file-uri-link")[1]).textDecorationStyle), "solid", "solid under the pointer");
     assert.equal(served.length, 1, "one fetch so far: the file itself");
+    // ── a text-size step (A+; the viewer restyles and repaints its marks, keeping the selection): the links stand, the rows read
+    //    as before, the selection survives the repaint, and the click that follows still opens the file ──
+    await page.evaluate(() => { const l = document.querySelector("#romp-fileview .file-uri-link")!; getSelection()!.selectAllChildren(l.parentElement!); });
+    await page.locator("#romp-fileview .fileview-size", { hasText: "A+" }).click(); await settle();
+    assert.match((await page.locator("#romp-fileview .fileview-size-reset").textContent()) || "", /115/, "one step up from 100%");
+    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => l.text), links.map((l) => l.text), "the links stand at the new size");
+    assert.deepEqual(await rowTexts(page), APP_TEXT.split("\n").slice(0, -1), "every row still reads as the file's line");
+    assert.equal(await page.evaluate(() => !getSelection()!.isCollapsed), true, "the repaint kept the selection");
+    await page.evaluate(() => getSelection()!.removeAllRanges());
+    await page.locator("#romp-fileview .fileview-size-reset").click(); await settle();   // back to 100% for the row-in-view checks below
 
     // ── a path link opens the file it names, with the viewer's session, and the pane records it as recent ─
     await page.locator("#romp-fileview .file-uri-link", { hasText: "data/config.json" }).click();
