@@ -59,7 +59,7 @@ class T extends N {
     return tail;
   }
 }
-type Init = { key?: string; clientX?: number; clientY?: number; pointerId?: number; button?: number };
+type Init = { key?: string; ctrlKey?: boolean; metaKey?: boolean; clientX?: number; clientY?: number; pointerId?: number; button?: number };
 type Ev = Init & { type: string; target: N; currentTarget: N | null; defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
 const kebab = (k: string | symbol): string => String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 type Compound = { tag: string | null; classes: string[]; attrs: Array<[string, string | null]> };
@@ -355,7 +355,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "pd
     /** A fresh status the way the poll or a save brings one: the onSaved hook re-asks, the reply lands. */
     restatus: async (o: Partial<Status> = {}) => { saved[0]({ mtimeNs: "1757145600000000001", logged: true }); await tick(); await reply({ type: "fileCommentsResult", reqId: last().reqId, ...status(o) }); },
     float: () => { const f = doc.body.querySelectorAll(".fc-float"); return f[f.length - 1]; },
-    input: () => main.querySelector("input.fc-input")!,
+    input: () => main.querySelector("textarea.fc-input")!,
     dispose: () => { for (const cb of closers) cb(); },
   };
 }
@@ -393,7 +393,7 @@ const rawEmbedded = (over: Partial<StoreComment> = {}, target: Record<string, un
   anchor: { quote: RAW_IMG, prefix: "## Findings\n\n", suffix: "\n\nWe recommend shipping " }, ...over,
 }, { src: "figure.png", ...target });
 
-test("a rendered figure carrying data-page: the composer names no page, and Enter saves target {kind image, src} with the embed's anchor — never kind pdf on a markdown file", async () => {
+test("a rendered figure carrying data-page: the composer names no page, and the save chord saves target {kind image, src} with the embed's anchor — never kind pdf on a markdown file", async () => {
   drawn.length = 0;
   const h = await harness({ kind: "rendered", html: RAW_HTML, src: RAW_REPORT });
   await h.ok({ embeddedHashes: {} });
@@ -407,7 +407,7 @@ test("a rendered figure carrying data-page: the composer names no page, and Ente
   assert.equal(h.q(".fc-composer-ref .fc-note")!.textContent, "On the region at 0.17, 0.20, 0.33, 0.30", "no 'of page 2': the figure is not a PDF page");
   assert.ok(h.q('.fc-composer [data-act="fcsave"]'), "Save offered: the embed line anchors the region");
   h.input().value = "The axis label is wrong.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   const c = h.last();
   assert.equal(c.verb, "comment");
@@ -459,7 +459,7 @@ test("the chunk's pages still name theirs: a drag on page 2's canvas sends targe
   h.drag(overlays[1], [150, 656], [250, 716]);
   assert.equal(h.q(".fc-composer-ref .fc-note")!.textContent, "On the region at 0.16, 0.10, 0.33, 0.15 of page 2");
   h.input().value = "Crop the header.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.last().verb, "comment");
   assert.deepEqual(h.last().args.target, { kind: "pdf", region: { x: 0.1634, y: 0.101, w: 0.3268, h: 0.1515 }, page: 2 });
