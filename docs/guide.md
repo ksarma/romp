@@ -211,6 +211,20 @@ viewer over the chat. When no file is open, the pane lists the files most
 recently open here; click one to open it again. The pane is off by default;
 the bottom bar turns it on.
 
+**Links in a file.** Wherever the viewer shows a file's text, over the chat, over
+the feed, or in this pane, the links in that text work. A web address opens in a
+new browser tab. A file path opens that file in the viewer, in place of the one
+you were reading: a relative path such as `docs/guide.md` is taken from the
+folder of the file you are reading, an absolute or `~/` path as written, on the
+machine of the session the file belongs to, and a line written after the path
+(`src/app.py:12`, or `src/app.py#L12`) scrolls the code view to that line. In a
+Markdown file, a `[link](target)` follows the same two rules: a web target opens a
+tab, a file target opens the file. A path links only when it has a slash and a
+file extension, so import specifiers, routes and fractions stay plain text.
+Links are marked lightly, with a dotted underline that turns solid under the
+pointer; selecting text across a link, and commenting on a line that holds one,
+work as before, and a drag that ends on a link selects rather than opens.
+
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file (below it when the column is narrow). Select a passage in either view, Rendered or
 Raw, and press the **Comment** button that appears next to the selection; type the note
