@@ -345,6 +345,38 @@ class KeyInputs(_World):
         self.assertEqual(km._node_anchor_last[g1], warm, "the hit re-applied what a fresh build would have written")
 
 
+class TwoGestures(_World):
+    """A SECOND user gesture on the same sid within one judge pass (the review's reproduction): the first
+    punch copies the snapshot entry, and the second must land on a fresh copy too. Re-punching the first
+    copy in place kept its identity, so the memo hit on it and served the pre-gesture rows for the rest
+    of the pass."""
+
+    def test_the_second_gesture_in_one_pass_reaches_the_memoized_rows(self):
+        g1, g2, g4 = SID + ":g1", SID + ":g2", SID + ":g4"
+        self._build()                                    # live branch: the FrozenStore is the key
+        km._begin_goals_pass()                           # a judge pass in flight: the snapshot branch
+        try:
+            self._build()                                # the snapshot object is the key: stored
+            jd.append_override(SID, g2, "followup", NOW - 20)    # gesture 1: reopen the blocked top
+            km._note_user_goal_write(SID)
+            f1 = self._build()                           # copy-on-punch: the copy is a new key
+            self.assertEqual(_tops(f1, SID)[g2]["column"], "working", "gesture 1 landed")
+            self.assertEqual({r["id"]: r for r in _tops(f1, SID)[g1]["tree"]}[g4]["status"], "open")
+            jd.append_override(SID, g4, "resolve", NOW - 10)     # gesture 2, same pass: resolve an open sub
+            km._user_goal_write[SID] = km._user_goal_write[SID] + 1.0   # a moved mark, whatever the clock's tick
+            self._reset_deltas()
+            memoized = self._build()
+            self.assertEqual(self._delta("miss"), 1, "the fresh copy is a new key: the session recomputes")
+            fresh = self._fresh()
+        finally:
+            km._end_goals_pass()
+        rows_m = {r["id"]: r for r in _tops(memoized, SID)[g1]["tree"]}
+        rows_f = {r["id"]: r for r in _tops(fresh, SID)[g1]["tree"]}
+        self.assertEqual(rows_f[g4]["status"], "done", "a fresh build shows the second gesture")
+        self.assertEqual(rows_m[g4]["status"], "done", "…and so does the memoized one")
+        self.assertEqual(_loop_out(memoized), _loop_out(fresh))
+
+
 class Bypasses(_World):
     def test_live_atoms_bypass_the_memo_and_the_build_equals_the_unmemoized_one(self):
         self._build()
@@ -499,7 +531,8 @@ class Differential(_World):
 
         def perturb():
             sid = rng.choice(SIDS)
-            kind = rng.choice(("transcript", "store", "journal", "names", "working", "hold", "nothing", "anchor"))
+            kind = rng.choice(("transcript", "store", "journal", "names", "working", "hold", "nothing", "anchor",
+                               "pass", "gesture"))
             if kind == "transcript":
                 self._append_turn(sid)
             elif kind == "store":
@@ -518,6 +551,14 @@ class Differential(_World):
                     km._rewind_hold_set(sid, T0 + 55, "a0")
             elif kind == "anchor":
                 km._node_anchor_last[sid + ":g4"] = ("p", "w-%d" % rng.randrange(100))
+            elif kind == "pass":                     # a judge pass begins or ends: the snapshot branch comes and goes
+                if km._goals_snap[0] is None:
+                    km._begin_goals_pass()
+                else:
+                    km._end_goals_pass()
+            elif kind == "gesture":                  # a user gesture, noted as the routes note it: punches a mid-pass snapshot
+                jd.append_override(sid, sid + ":g4", rng.choice(("followup", "resolve")), NOW - rng.randrange(1, 3000))
+                km._user_goal_write[sid] = max(time.time(), km._user_goal_write.get(sid, 0.0) + 1e-3)
             return kind
         for i in range(200):
             kind = perturb()

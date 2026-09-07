@@ -404,8 +404,8 @@ class _PerfStats:
                                    _begin_goals_pass) -> hit / miss (stores served from the memo vs
                                    decoded, summed over passes), fail (versions that did not
                                    decode), evict (entries dropped for files gone from the
-                                   directory), punch (snapshot entries copied for a user gesture),
-                                   live / snap (_feed_goals_view serves: the live read through the
+                                   directory), punch (sids whose snapshot entry was copied for a
+                                   user gesture, once per pass each), live / snap (_feed_goals_view serves: the live read through the
                                    shared cache, or the pass snapshot), and the gauges entries /
                                    bytes (memoized paths and their summed file size); lift_gate
                                    (the awaiting-lift job's per-session
@@ -25488,11 +25488,12 @@ def _feed_goals_view(sid):
       object. Anything else the loader answers (the cache switched off after a write attempt, no store
       file, an unreadable journal, an archive that moved under the fill) is a private object per call
       with no identity guarantee: the key is a sentinel.
-    - SNAPSHOT branch: the pass's memoized decode is the key while nothing has been punched onto it, or
-      once a user gesture has been replayed onto the pass's private copy (the copy is then the key). A
+    - SNAPSHOT branch: the pass's memoized decode is the key while nothing has been punched onto it.
+      Every user gesture recorded since the snapshot is replayed onto a FRESH private copy (one per
+      moved mark, never in place on an earlier copy), and that copy is the key once the replay
+      succeeded, so an object an earlier build derived from is never re-punched under its identity. A
       punch that FAILED (the mark is newer than the snapshot and not recorded done) retries on the next
-      read and may change the copy in place under the same identity, so until it succeeds the key is a
-      sentinel.
+      read onto another fresh copy; until it succeeds the key is a sentinel.
     - A REWIND HOLD armed on the sid: _apply_rewind_hold serves a filtered view built per call, whose
       content also depends on the transcript (the kept-chain lookup); the key is a sentinel for as long
       as the hold stands.
@@ -25506,12 +25507,16 @@ def _feed_goals_view(sid):
             _goals_memo_stats["snap"] += 1
             store, mark = snap[sid], _user_goal_write.get(str(sid), 0.0)
             if mark >= _goals_snap_at[0] and _goals_snap_done.get(sid) != mark:
+                # COPY-ON-PUNCH, a FRESH copy per gesture: the entry is the memo's object, shared with every
+                # later pass that finds the file unchanged, so the replay and rollup below land on a copy
+                # of it (the _apply_rewind_hold idiom) — and a second gesture in the same pass copies
+                # again instead of re-punching the first copy in place. The served object's identity is
+                # the key build_feed's per-session memo holds a session's rows under, so an object an
+                # earlier build saw must never change under it (review 2026-09-07: re-punching the first
+                # copy in place made the memo serve the pre-gesture rows for the rest of the pass). One
+                # json round trip per gesture; `punch` counts the sids copied, once per pass each.
+                store = snap[sid] = json.loads(json.dumps(store))
                 if sid not in _goals_snap_owned:
-                    # COPY-ON-PUNCH: the entry is the memo's object, shared with every later pass that
-                    # finds the file unchanged, so the replay and rollup below must land on a copy of it
-                    # (the _apply_rewind_hold idiom). Once per pass per sid: a second gesture in the
-                    # same pass punches the copy this one made.
-                    store = snap[sid] = json.loads(json.dumps(store))
                     _goals_snap_owned.add(sid)
                     _goals_memo_stats["punch"] += 1
                 try:
@@ -31674,10 +31679,11 @@ def _state_unknown_names(alive, tmux, working, awaiting):
 #      whose parse is a live-merge copy (_merge_live_atoms returned a new object) bypasses, counted
 #      bypass_live, because that object exists for this build only;
 #   2. the STORE: _feed_goals_view's key, by identity; the key IS the served store where its identity
-#      implies its content (the shared cache's FrozenStore; the pass snapshot's object once every
-#      gesture on it is settled), and a never-equal sentinel otherwise (a rewind hold, a failed punch
-#      that retries in place, the shared cache switched off, no store file), which bypasses, counted
-#      bypass_unkeyed;
+#      implies its content (the shared cache's FrozenStore; the pass snapshot's object, or the fresh
+#      copy a settled gesture replay minted — one copy per gesture, so a store an earlier build saw is
+#      never re-punched under the same identity), and a never-equal sentinel otherwise (a rewind hold,
+#      a failed punch that will retry, the shared cache switched off, no store file), which bypasses,
+#      counted bypass_unkeyed;
 #   3. the NAMES registry, by value (_names_key over the cycle's snapshot): flatten resolves the
 #      session's colour and every handoff row's recipient name and colour through it;
 #   4. who_working, by value: every row carries it;

@@ -266,8 +266,34 @@ class SnapshotBranch(_World):
             km._end_goals_pass()
         self.assertIsNot(s1, s0, "the gesture is replayed onto a copy")
         self.assertIs(k1, s1, "a settled punch: the copy is the key")
-        self.assertIs(k2, s1, "…and stays the key for the rest of the pass")
+        self.assertIs(k2, s1, "…and stays the key while no further gesture lands")
         self.assertEqual(self._served("punch"), 1)
+
+    def test_a_second_gesture_in_the_same_pass_mints_a_fresh_copy_and_key(self):
+        # the served object's identity keys build_feed's per-session memo, so a second gesture must never
+        # re-punch the first copy in place (review 2026-09-07: it did, and the memo served the pre-gesture
+        # rows for the rest of the pass)
+        self._mint(SID, "Write the login flow")
+        g1 = SID + ":g1"
+        km._begin_goals_pass()
+        try:
+            jd.append_override(SID, g1, "followup", NOW)
+            km._note_user_goal_write(SID)
+            s1, k1 = km._feed_goals_view(SID)
+            jd.append_override(SID, g1, "resolve", NOW + 1)
+            km._user_goal_write[SID] = km._user_goal_write[SID] + 1.0   # a moved mark, whatever the clock's tick
+            s2, k2 = km._feed_goals_view(SID)
+            s3, k3 = km._feed_goals_view(SID)
+        finally:
+            km._end_goals_pass()
+        self.assertIs(k1, s1)
+        self.assertIsNot(s2, s1, "the second gesture lands on a fresh copy")
+        self.assertIsNot(k2, k1, "…under a new key")
+        self.assertIs(k2, s2)
+        self.assertTrue(s2["nodes"][g1].get("nodeComplete"), "the resolve is in the served view")
+        self.assertFalse(s1["nodes"][g1].get("nodeComplete"), "the first copy is untouched: a fixed value")
+        self.assertIs(s3, s2, "no further gesture: the second copy stays the key")
+        self.assertEqual(self._served("punch"), 1, "the counter says how many sids were copied this pass")
 
     def test_a_failed_punch_keeps_the_key_a_sentinel_until_the_replay_succeeds(self):
         self._mint(SID, "Write the login flow")
@@ -289,8 +315,9 @@ class SnapshotBranch(_World):
         finally:
             jd._replay_overrides = real
             km._end_goals_pass()
-        self.assertIs(s3, s1, "the retry lands on the same copy")
-        self.assertIs(k3, s3, "…and once it succeeds the copy is the key")
+        self.assertIsNot(s3, s1, "the retry lands on a fresh copy (the failed attempt's copy may have been read)")
+        self.assertIs(k3, s3, "…and once it succeeds that copy is the key")
+        self.assertTrue(any(e.get("kind") == "reopen" for e in s3["nodes"][SID + ":g1"].get("log") or []))
 
 
 class LandingGate(_World):

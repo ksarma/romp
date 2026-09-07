@@ -5376,8 +5376,9 @@ class ViewBuilder(unittest.TestCase):
         # unchanged, so the punch (the gesture's replay + rollup, both in place) must land on a copy:
         # otherwise the reopen would be baked into the object the NEXT pass serves for a file that does
         # not hold it. Contract: the memoized object always equals a fresh raw parse of its file
-        # version; the served copy carries the reopen; a second gesture in the same pass works the same
-        # copy; build_feed reads and never writes.
+        # version; the served copy carries the reopen; a second gesture in the same pass punches a FRESH
+        # copy (the served identity keys the feed's per-session memo, 2026-09-07); build_feed reads and
+        # never writes.
         g = self._settled_store()
         path = jd.GOALDIR / (SID + ".json")
         raw = json.loads(path.read_bytes())                # the version this pass memoizes
@@ -5398,7 +5399,9 @@ class ViewBuilder(unittest.TestCase):
             self.assertIs(km._feed_goals(SID), served, "later reads in the pass serve that one copy")
             self.assertTrue(jd.optimistic_followup(SID, g, text="and the null case", now=NOW + 1))
             km._note_user_goal_write(SID)
-            self.assertIs(km._feed_goals(SID), served, "a second gesture punches the copy already made")
+            served2 = km._feed_goals(SID)
+            self.assertIsNot(served2, served, "a second gesture punches a fresh copy, never the first one in place")
+            self.assertEqual(served2["status"].get(g), "working")
             self.assertEqual(memo_obj, raw)
             card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
             self.assertEqual(card["column"], "working")
