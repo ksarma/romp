@@ -447,7 +447,8 @@ test("the same move with the keyboard elsewhere leaves the view where the person
 
 test("source: render keys the scroll on the node the box stood in, so a card-to-card move scrolls too; the comments claim no more than the code keeps", () => {
   assert.match(SRC, /const home = this\.composerBox\.parentElement;[^\n]*\n\s*const typing = document\.activeElement === this\.input;/, "the box's node, read before the rebuild");
-  assert.match(SRC, /if \(typing && inCard !== cards\.contains\(this\.composerBox\)\) this\.composerBox\.scrollIntoView\(\{ block: "nearest" \}\);\n(?:\s*\/\/[^\n]*\n)*\s*else if \(typing && inCard && this\.composerBox\.parentElement !== home\) this\.composerBox\.scrollIntoView\(\{ block: "nearest" \}\);/, "between a card and the slot, or between two cards");
+  assert.match(SRC, /if \(typing && this\.composerBox\.parentElement !== home\) this\.composerBox\.scrollIntoView\(\{ block: "nearest" \}\);/, "between a card and the slot, or between two cards: one check, the node the box stood in against the one it stands in");
+  assert.doesNotMatch(SRC, /const inCard = cards\.contains\(this\.composerBox\)/, "no slot-or-card bit beside it: the parent check covers a move to or from the slot too");
   assert.doesNotMatch(SRC, /box leaves a card only when/, "swapCards no longer says the box leaves a card only when its card is gone");
   assert.doesNotMatch(SRC, /a rebuilt list never makes it move/, "placeComposer neither");
 });

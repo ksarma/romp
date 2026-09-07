@@ -2581,7 +2581,7 @@ class Panel {
     // scroll below: swapCards keeps that node whenever the box stays, so a different node afterwards is a move
     const home = this.composerBox.parentElement;
     const typing = document.activeElement === this.input;
-    const inCard = cards.contains(this.composerBox), scroll = this.input.scrollTop;
+    const scroll = this.input.scrollTop;
     this.latchReplyCard();                             // the reply's card stays open by key, whatever key the status gave it
     head.replaceChildren(this.renderHead(s));
     this.swapCards(this.renderCards(s));               // around the reply's box, when it stands in a card the fresh list keeps
@@ -2590,15 +2590,15 @@ class Panel {
     log.replaceChildren(this.renderLog(s));
     if (typing && document.activeElement !== this.input) this.input.focus({ preventScroll: true });
     if (this.input.scrollTop !== scroll) this.input.scrollTop = scroll;
-    // the box moved while the person was typing in it — its card left the list and it went to the slot, above the cards and
-    // off-screen when the list is long, or the card came back and it returned — so it is brought into view, the row saying
-    // why with it; a keyboard elsewhere leaves the view where the person put it
-    if (typing && inCard !== cards.contains(this.composerBox)) this.composerBox.scrollIntoView({ block: "nearest" });
-    // …or it moved from one card to another, and the other card may be off-screen as well: its comment bound to a change
-    // under the reply (the session's track-edit answering it) moves it onto the change's card, among the change cards at the
-    // top of the list; that change accepted (Accept on the card, Send's accept-all, a decision elsewhere) moves it to the
-    // comment's own card, among the comment cards below. In a card before and after, but not the same node
-    else if (typing && inCard && this.composerBox.parentElement !== home) this.composerBox.scrollIntoView({ block: "nearest" });
+    // the box moved while the person was typing in it: its card left the list and it went to the slot, above the cards and
+    // off-screen when the list is long; the card came back and it returned; or it went from one card to another, and the
+    // other card may be off-screen as well — its comment bound to a change under the reply (the session's track-edit
+    // answering it) moves it onto the change's card, among the change cards at the top of the list; that change accepted
+    // (Accept on the card, Send's accept-all, a decision elsewhere) moves it to the comment's own card, among the comment
+    // cards below. Every one of those puts the box in a node other than `home`, and a rebuild that keeps its card keeps that
+    // node (swapCards), so the one check covers them; the box is brought into view, the slot's row saying why with it, and a
+    // keyboard elsewhere leaves the view where the person put it
+    if (typing && this.composerBox.parentElement !== home) this.composerBox.scrollIntoView({ block: "nearest" });
     if (keep) this.refocus(keep, want);
   }
   /** The cards section takes the fresh list. While the reply's box stands in a card of the LIVE list and the fresh list has

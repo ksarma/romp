@@ -586,7 +586,7 @@ test("Escape, Cancel and a save hand the keyboard back to the card's Reply; a ke
 
 test("source: render builds the cards before the composer and puts the typing box's keyboard back; placeComposer finds the card by comment id and moves the box only when it is out of place; the sections' slot order stands", () => {
   assert.match(SRC, /this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/, "the slot's place: head, the box, cards, send, log");
-  assert.match(SRC, /const typing = document\.activeElement === this\.input;\n\s*const inCard = cards\.contains\(this\.composerBox\), scroll = this\.input\.scrollTop;\n\s*this\.latchReplyCard\(\);[^\n]*\n\s*head\.replaceChildren\(this\.renderHead\(s\)\);\n\s*this\.swapCards\(this\.renderCards\(s\)\);[^\n]*\n\s*this\.renderComposer\(\);/,
+  assert.match(SRC, /const typing = document\.activeElement === this\.input;\n\s*const scroll = this\.input\.scrollTop;\n\s*this\.latchReplyCard\(\);[^\n]*\n\s*head\.replaceChildren\(this\.renderHead\(s\)\);\n\s*this\.swapCards\(this\.renderCards\(s\)\);[^\n]*\n\s*this\.renderComposer\(\);/,
     "where the keyboard is, read before the rebuild; the cards swapped around the box first, then the composer: the box stands in a card of the FRESH list — the one the swap kept, or the one placeComposer moves it into");
   assert.match(SRC, /if \(typing && document\.activeElement !== this\.input\) this\.input\.focus\(\{ preventScroll: true \}\);/, "a moved node drops its focus; render puts it back");
   const place = SRC.slice(SRC.indexOf("  private placeComposer(): boolean {"), SRC.indexOf("  private renderCards("));

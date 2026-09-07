@@ -643,7 +643,7 @@ test("source: render latches the reply's key and swaps the cards around the box;
   assert.match(SRC, /this\.latchReplyCard\(\);[^\n]*\n\s*head\.replaceChildren\(this\.renderHead\(s\)\);\n\s*this\.swapCards\(this\.renderCards\(s\)\);[^\n]*\n\s*this\.renderComposer\(\);/, "the key first, then the cards around the box, then the composer");
   assert.match(SRC, /if \(!cards\.contains\(box\) \|\| !this\.graft\(cards, \[fresh\], box\)\) cards\.replaceChildren\(fresh\);/, "a wholesale swap only when the box is not in a card the fresh list keeps");
   assert.match(SRC, /if \(this\.input\.scrollTop !== scroll\) this\.input\.scrollTop = scroll;/, "a moved textarea keeps its scroll offset");
-  assert.match(SRC, /if \(typing && inCard !== cards\.contains\(this\.composerBox\)\) this\.composerBox\.scrollIntoView\(\{ block: "nearest" \}\);/, "a box moved while the person was typing in it is brought into view");
+  assert.match(SRC, /if \(typing && this\.composerBox\.parentElement !== home\) this\.composerBox\.scrollIntoView\(\{ block: "nearest" \}\);/, "a box moved while the person was typing in it is brought into view: a parent other than the one it stood in");
   assert.match(SRC, /const id = r === null \? null : cssId\(r\);/, "placeComposer's selector takes the id escaped");
   assert.match(SRC, /'\[data-act="fcreply"\]\[data-id="' \+ cssId\(was\.commentId\) \+ '"\]'/, "closeComposer's too");
   assert.match(SRC, /function cssId\(s: string\): string \{\n\s*return typeof CSS !== "undefined" && typeof CSS\.escape === "function" \? CSS\.escape\(s\) : s\.replace\(\/\["\\\\\]\/g, "\\\\\$&"\);/);
