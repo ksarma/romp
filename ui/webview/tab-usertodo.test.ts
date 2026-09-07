@@ -47,6 +47,11 @@ test("the glyph is not a pip and does not fight the pip/gauge/close layout", () 
 test("the glyph has a quiet style of its own", () => {
   assert.match(CSS, /\.tab-usertodo \{/);
   assert.doesNotMatch(CSS, /\.tab-dot\.usertodo/, "never a dot variant — pips encode turn state");
+  // themed through --dim like .tab-close, so it reads under body.theme-light too: classic tabs
+  // have no chip fill, and a hardcoded near-white glyph vanishes on the light theme's page
+  const rule = CSS.slice(CSS.indexOf(".tab-usertodo {"), CSS.indexOf("}", CSS.indexOf(".tab-usertodo {")));
+  assert.match(rule, /color: var\(--dim\)/, "the glyph's colour is a theme token");
+  assert.doesNotMatch(rule, /rgba\(255, 255, 255/, "never hardcoded white");
 });
 
 test("the coarse-pointer strip mirrors it (the mobile header scrapes the real tabs)", () => {

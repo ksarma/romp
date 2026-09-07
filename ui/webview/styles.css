@@ -540,8 +540,9 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-dot.opening { background: var(--accent); animation: opening-line-pulse 1.2s ease-in-out infinite; }
 /* USER-TODO glyph (plans/user-todos.md): ⚑ right after the name — the session flagged something it
    needs from you. Its own element, never a .tab-dot variant (pips encode turn state); quiet and
-   non-numeric, a soft white that reads on any colored chip. */
-.tab-usertodo { flex: 0 0 auto; color: rgba(255, 255, 255, 0.75); font-size: 10px; line-height: 1; }
+   non-numeric. Themed through --dim like .tab-close: classic tabs have no chip fill, so the glyph
+   sits on the page plane and a hardcoded white would vanish under body.theme-light. */
+.tab-usertodo { flex: 0 0 auto; color: var(--dim); font-size: 10px; line-height: 1; }
 /* Vertical context gauge right of the name (the user 2026-08-08): the statusline battery rotated
    upright — fills bottom-up with the context-used %, in the SAME global-colormap colour (fill set
    inline by tabCtxGauge, render.ts), no % text. A faint track so an empty gauge still reads as
