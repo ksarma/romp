@@ -66,6 +66,7 @@ Covered here, kernel-side:
 
 SYNTHETIC fixtures only: placeholder UUIDs, the notes-api demo world.
 """
+import ast
 import contextlib
 import inspect
 import io
@@ -3365,6 +3366,95 @@ class EscalationFloorLive(_StoreSandbox):
         self.wmap = {}
         self.turns.append(self._turn("t2", NOW - 3, self.PEER, ended=False))
         self.assertEqual(self._column(), "working", "no record to hold: the reply's turn is a plain turn")
+
+
+class NoInferenceWritesTheStore(unittest.TestCase):
+    """NoJudgeWritesTheStore's sibling, one file over. The authority tier (docs/adr/0001) bars
+    everything that reasons by inference from the store, and the kernel holds card movers of its
+    own outside judge.py — the nudge's fire list and its `failed` stamp, the interrupt block's
+    record and lift — which the judge pin's file boundary never sees: a three-line edit dismissing
+    every open todo from _lift_interrupt_block passed the suite. So this one parses kernel.py and
+    resolves EVERY call to a store writer to the def or method it runs in (a nested def folds into
+    its outermost one: TmuxBackend.send's refusal hook is TmuxBackend.send), and that set must be
+    EXACTLY the allow-list below. Each entry acts on an event the person or the agent produced —
+    a click, a tool call, a delivery verdict, a boot pass over persisted marks — never on a
+    judgment. A new caller is a deliberate act: add it here with the event it acts on."""
+
+    WRITERS = ("_add_user_todo", "_resolve_user_todo", "_reopen_user_todo", "_write_user_todos",
+               "_stamp_user_todo_answered", "_user_todo_answer_lost", "_withdraw_user_todo",
+               "_prune_user_todos")
+
+    ALLOWED = {
+        # the helpers calling each other: the tier's own plumbing
+        "_add_user_todo", "_resolve_user_todo", "_reopen_user_todo", "_stamp_user_todo_answered",
+        "_user_todo_answer_lost", "_withdraw_user_todo", "_prune_user_todos",
+        # the routes (the agent's tool call) and the drive handler (the person's click)
+        "Handler.do_POST", "_drive",
+        # delivery verdicts: the tmux refusal hook, the drain's stamp and merged-batch refusal
+        "TmuxBackend.send", "_deliver_send_batch",
+        # the person's own ✕ recall of a queued answer
+        "_cancel_backend_queued",
+        # the boot passes over persisted loss marks, and the prune sweep's ride
+        "_user_todo_loss_boot_pass", "_tmux_paste_loss_boot_pass", "_chat_tab_sessions",
+    }
+
+    @classmethod
+    def _callers(cls):
+        """{qualified caller -> {writer names it calls}} over kernel/kernel.py."""
+        src = (Path(HERE).parent / "kernel" / "kernel.py").read_text()
+        tree = ast.parse(src)
+        defs = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        found = {}
+
+        def qual(chain):
+            if not chain:
+                return "<module>"
+            kind, name = chain[0]
+            if kind == "class" and len(chain) > 1:
+                return name + "." + chain[1][1]
+            return name
+
+        def walk(node, chain):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.ClassDef):
+                    walk(child, chain + [("class", child.name)])
+                elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    walk(child, chain + [("def", child.name)])
+                else:
+                    if isinstance(child, ast.Call):
+                        f = child.func
+                        name = (f.id if isinstance(f, ast.Name)
+                                else f.attr if isinstance(f, ast.Attribute) else None)
+                        if name in cls.WRITERS:
+                            found.setdefault(qual(chain), set()).add(name)
+                    walk(child, chain)
+        walk(tree, [])
+        return defs, found
+
+    def test_every_store_writer_is_called_only_from_the_allow_list(self):
+        defs, found = self._callers()
+        for w in self.WRITERS:
+            self.assertIn(w, defs, "the writer list names a def kernel.py no longer has: %s" % w)
+        self.assertEqual(set(found), self.ALLOWED,
+                         "store writers are called from defs outside the allow-list (or an "
+                         "allow-listed def no longer calls one — prune it): %s"
+                         % sorted(set(found) ^ self.ALLOWED))
+
+    def test_the_kernels_own_card_movers_are_not_callers(self):
+        # the pin's reason for existing, named: none of these may reach the store
+        _defs, found = self._callers()
+        for mover in ("_mark_nudge_failed", "_nudge_fire_list", "_record_interrupt_block",
+                      "_lift_interrupt_block", "build_feed", "build_session", "_auto_nudge_tick"):
+            self.assertNotIn(mover, found)
+
+    def test_the_derivation_sees_the_helpers_calling_each_other(self):
+        # the floor that keeps the walk honest: a resolution that matched nothing would pass the
+        # membership test on an empty set
+        _defs, found = self._callers()
+        self.assertEqual(found["_add_user_todo"], {"_write_user_todos"})
+        self.assertEqual(found["_stamp_user_todo_answered"], {"_resolve_user_todo"})
+        self.assertIn("_user_todo_answer_lost", found["TmuxBackend.send"],
+                      "the nested refusal hook resolves to the method it is defined in")
 
 
 class PeerWaitScopeIsLocalOnly(_StoreSandbox):
