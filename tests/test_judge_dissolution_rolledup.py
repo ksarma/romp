@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""A dissolved container's rolled-up child reads as its own diary, and settles nothing it never earned
-(review 2026-09-06). rollup_status's roll-down folds a resolved top's open children
+"""A dissolved container's rolled-up child is judged by its own diary, and appends no settle row without a
+done verdict of its own (review 2026-09-06). rollup_status's roll-down folds a resolved top's open children
 into an eventless display cache (nodeComplete plus the rolledUp marker); _materialize_from_log and
 record_verdict both skip a rolledUp node, because an ANCESTOR's resolution owns those flags. Umbrella
 dissolution (T101) re-parented such a child to top level without dropping the marker, so the promoted top
@@ -12,8 +12,8 @@ child's own rolled-up descendants stayed done under a now-open top; and a healed
 bug's settle rows folded to settledDone on an open node, which reads Working but is sealed for every judge.
 
 Pins: (1) the dissolving rollup drops the marker on the child AND its rolled-up descendants, and each
-node's own diary rules (no row: open; a rolled-away block: blocked), with no settle row, no seam and no
-churn on later rollups; (2) a promoted child with its OWN done verdict settles exactly once, and a
+node's own diary decides (no row: open; a rolled-away block: blocked), with no settle row, no seam and no
+change on later rollups; (2) a promoted child with its OWN done verdict settles exactly once, and a
 descendant under it stays folded; (3) a child re-parented under a still-resolved solid ancestor is
 re-folded by the same rollup's roll-down; (4) a store already published with the stale marker, on the
 top or on a descendant, is repaired on its next rollup (one publish) and later rollups publish nothing;
@@ -107,13 +107,13 @@ class _Base(unittest.TestCase):
 
 
 class DissolutionDropsTheMarker(_Base):
-    def test_the_promoted_child_reads_its_own_diary_and_settles_nothing(self):
+    def test_the_promoted_child_reads_its_own_diary_and_appends_no_settle_row(self):
         st = self._umbrella_world()
         jd.rollup_status(st, True)
         c = st["nodes"][CHILD]
         self.assertNotIn(UMB, st["nodes"], "premise: the container dissolved")
         self.assertIsNone(c.get("parentId"), "premise: the child is a top now")
-        self.assertNotIn("rolledUp", c, "the marker leaves with the container whose resolution it mirrored")
+        self.assertNotIn("rolledUp", c, "the marker is dropped with the container whose resolution it mirrored")
         self.assertFalse(c.get("nodeComplete"), "no verdict of its own: its diary says open")
         self.assertEqual(st["status"][CHILD], "working")
         self.assertEqual(_settles(c), [], "nothing completed, so nothing settles: no settle row")
@@ -123,12 +123,12 @@ class DissolutionDropsTheMarker(_Base):
         jd.rollup_status(st, True)
         self.assertEqual(jd._store_content(st), before, "a second rollup changes nothing")
 
-    def test_a_rolled_away_block_resurfaces_on_the_promoted_child(self):
+    def test_a_rolled_away_block_is_blocked_again_on_the_promoted_child(self):
         st = self._umbrella_world(child_log=[_row("block", T - 5, why="which pane layout?")])
         jd.rollup_status(st, True)
         c = st["nodes"][CHILD]
         self.assertNotIn("rolledUp", c)
-        self.assertTrue(c.get("blocked"), "its own diary rules: the block the roll-down hid is back")
+        self.assertTrue(c.get("blocked"), "its own diary decides: the block the roll-down hid is blocked again")
         self.assertEqual(st["status"][CHILD], "blocked")
         self.assertEqual(_settles(c), [])
 
@@ -191,7 +191,7 @@ class DissolutionDropsTheMarker(_Base):
     def test_a_child_under_a_still_resolved_solid_ancestor_is_refolded_by_the_same_rollup(self):
         # nested: a solid done top over a container over a folded child. The child re-parents to the
         # top, whose own roll-down re-derives the cache in this very rollup (the marker is a mirror of
-        # the nearest resolved ancestor, and that ancestor still stands)
+        # the nearest resolved ancestor, and that ancestor is still resolved)
         st = self._store([
             _node(TOP, "ship the notes-api release", None, nodeComplete=True,
                   log=[_row("done", T, why="released")]),
@@ -201,15 +201,15 @@ class DissolutionDropsTheMarker(_Base):
         c = st["nodes"][CHILD]
         self.assertEqual(c.get("parentId"), TOP, "re-parented to the first solid ancestor")
         self.assertTrue(c.get("rolledUp") and c.get("nodeComplete"),
-                        "the resolved ancestor still stands over it: the roll-down re-folds it")
+                        "a resolved ancestor is still above it: the roll-down re-folds it")
         self.assertEqual(_settles(c), [], "a sub never settles")
         self.assertEqual(len(_settles(st["nodes"][TOP])), 1, "the top settles once")
 
 
 class StaleMarkerHeals(_Base):
-    def test_a_store_published_with_the_stale_marker_heals_on_its_next_rollup_then_goes_quiet(self):
-        # the shape HEAD left on disk: the container already gone, the child a top still wearing the
-        # marker, its diary holding the settle rows earlier rollups appended, seams stamped alongside
+    def test_a_store_published_with_the_stale_marker_is_repaired_on_its_next_rollup(self):
+        # the shape the bug left on disk: the container already gone, the child a top still marked, its
+        # diary holding the settle rows earlier rollups appended, seams stamped alongside
         spam = [_row("settle", T + 10, src="romp") for _ in range(3)]
         st = self._store([_rolled(CHILD, "add the web pane", None, spam)])
         st["seams"] = [{"t": T + 100 + i, "top": CHILD, "text": "add the web pane", "segs": []}
@@ -218,7 +218,7 @@ class StaleMarkerHeals(_Base):
         rev0 = jd._disk_rev(SID)
         s1 = jd.load_goals(SID)
         jd.rollup_status(s1, True)
-        jd.save_goals(SID, s1)                                   # the heal is one publish
+        jd.save_goals(SID, s1)                                   # the repair is one publish
         c = s1["nodes"][CHILD]
         self.assertNotIn("rolledUp", c, "a top has no ancestor to mirror: the marker is dropped")
         self.assertFalse(c.get("nodeComplete"), "its own diary has no done row")
@@ -226,11 +226,11 @@ class StaleMarkerHeals(_Base):
         self.assertEqual(len(_settles(c)), 3, "no settle row appended")
         self.assertEqual(len(s1["seams"]), 3, "no seam appended")
         rev1 = jd._disk_rev(SID)
-        self.assertGreater(rev1, rev0, "the heal is a real change: one publish")
+        self.assertGreater(rev1, rev0, "the repair is a real change: one publish")
         s2 = jd.load_goals(SID)
         jd.rollup_status(s2, True)
         jd.save_goals(SID, s2)
-        self.assertEqual(jd._disk_rev(SID), rev1, "then the store is quiet: no republish per pass")
+        self.assertEqual(jd._disk_rev(SID), rev1, "later passes republish nothing")
 
     def test_a_stale_descendant_under_a_stale_top_is_unrolled_through_the_file(self):
         # both marked, no settle rows (the top's rows are the next test's subject). The sub is inserted

@@ -79,7 +79,7 @@ class TailSaveRebases(unittest.TestCase):
         self.td.cleanup()
 
     def _distill_with_a_concurrent_writer(self, *a, **k):
-        # the distiller's model call is where the kernel's nudge tick gets in: it blocks the open top and
+        # the kernel's nudge tick runs during the distiller's model call: it blocks the open top and
         # publishes while the distiller holds its already-once-saved store across the call
         ks = jd.load_goals(SID)
         jd.record_verdict(ks, ks["nodes"][OPEN], "nudge", "block", T0 + 200, why="which pane layout?")
